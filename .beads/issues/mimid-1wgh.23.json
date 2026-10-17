@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.23",
+  "title": "Ciphersuite: MLS suite 1 only",
+  "description": "v1 supports only MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 (RFC 9420 MTI). No PQ/X-Wing in v1.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:25:28.562734951Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:25:28.602059447Z",
+  "closed_at": "2026-10-17T17:25:28.602059447Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.23",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:25:28.568017537Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

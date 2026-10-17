@@ -1,0 +1,38 @@
+{
+  "id": "mimid-1wgh.14",
+  "title": "Attachments (mimi-content ExternalPart)",
+  "description": "Client-side per-file encryption per mimi-content-09 ExternalPart (AES-128-GCM MTI, key/nonce/contentHash inline); upload/download via provider JMAP blobs; cross-provider fetch via protocol-06 proxyDownload / OHTTP gateway.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:13:23.330250951Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:13:23.330250951Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.14",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:13:23.335441618Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.14",
+      "depends_on_id": "mimid-1wgh.13",
+      "type": "blocks",
+      "created_at": "2026-10-17T17:13:23.673039914Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.14",
+      "depends_on_id": "mimid-1wgh.8",
+      "type": "blocks",
+      "created_at": "2026-10-17T17:13:23.700697019Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

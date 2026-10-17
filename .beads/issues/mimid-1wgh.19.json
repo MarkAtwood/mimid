@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.19",
+  "title": "No message history on new devices in v1",
+  "description": "New devices see only messages sent after they join (MLS default). Later: device-to-device transfer.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:25:28.258328837Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:25:28.29681076Z",
+  "closed_at": "2026-10-17T17:25:28.29681076Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.19",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:25:28.263689927Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

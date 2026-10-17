@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.27",
+  "title": "Hosting: private GitHub repo; no crates.io in v1",
+  "description": "Repo github.com/MarkAtwood/mimid, private (public later). Do not publish crates to crates.io in v1.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:25:28.874128291Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:25:28.91142467Z",
+  "closed_at": "2026-10-17T17:25:28.91142467Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.27",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:25:28.879409807Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

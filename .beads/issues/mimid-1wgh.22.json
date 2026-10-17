@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.22",
+  "title": "Admin tooling: small admin CLI",
+  "description": "v1 admin CLI: create user + issue dev bearer token, list users and rooms, ban/remove user. No web admin, no metrics.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:25:28.485784859Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:25:28.524003526Z",
+  "closed_at": "2026-10-17T17:25:28.524003526Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.22",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:25:28.490650139Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

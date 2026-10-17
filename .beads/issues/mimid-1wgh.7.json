@@ -1,14 +1,14 @@
 {
   "id": "mimid-1wgh.7",
-  "title": "Follower provider and client",
-  "description": "Follower provider server and client library; end-to-end tests across two providers via the hub.",
+  "title": "Server: follower role + e2e tests",
+  "description": "Follower role of the single mimid server binary: relay client submissions to remote hubs, receive notify/fanout, serve local users' KeyPackages via keyMaterial. End-to-end tests with two mimid instances on one machine (config map in place of DNS).",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T16:57:40.355019222Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T16:57:40.355019222Z",
+  "updated_at": "2026-10-17T17:25:29.008652871Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.7",
@@ -31,6 +31,22 @@
       "depends_on_id": "mimid-1wgh.2",
       "type": "blocks",
       "created_at": "2026-10-17T16:57:40.700631265Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.7",
+      "depends_on_id": "mimid-1wgh.11",
+      "type": "blocks",
+      "created_at": "2026-10-17T17:13:23.487601556Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.7",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "blocks",
+      "created_at": "2026-10-17T17:13:23.516314862Z",
       "created_by": "agent",
       "metadata": "{}"
     }

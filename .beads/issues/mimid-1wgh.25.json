@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.25",
+  "title": "Identifiers: protocol-06 MIMI URIs, email-style display",
+  "description": "Wire: mimi://domain (provider), /u/user, /d/client (random per-device ID), /r/room, /g/group per protocol-06 Table 1. Client UI shows users as alice@a.example mapped to mimi://a.example/u/alice. Provider discovery via /.well-known/mimi-protocol-directory.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:25:28.721080237Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:25:28.760343268Z",
+  "closed_at": "2026-10-17T17:25:28.760343268Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.25",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:25:28.726594924Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

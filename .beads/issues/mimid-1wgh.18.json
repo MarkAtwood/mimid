@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.18",
+  "title": "Server storage: SQLite via sqlx",
+  "description": "Each provider persists rooms, membership, queues and KeyPackages in one SQLite file via sqlx, keeping a later Postgres switch cheap.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:25:28.180672891Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:25:28.221959732Z",
+  "closed_at": "2026-10-17T17:25:28.221959732Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.18",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:25:28.185836219Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

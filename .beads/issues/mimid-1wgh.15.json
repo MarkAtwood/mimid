@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.15",
+  "title": "Single server binary: hub + follower roles",
+  "description": "Every MIMI provider is hub for rooms it hosts and follower for rooms hosted elsewhere, simultaneously. One mimid server binary implements both roles (.6 hub role, .7 follower role).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:25:27.942860168Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:25:27.984439288Z",
+  "closed_at": "2026-10-17T17:25:27.984439288Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.15",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:25:27.94938665Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

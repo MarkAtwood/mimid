@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.10",
+  "title": "senderMsgId derived from MIMI MessageId (R1)",
+  "description": "JMAP senderMsgId is derived deterministically from the MIMI MessageId so references (replyTo, threadRootId, reactions) resolve identically on every device without a shared table: ULID time = hub-accepted timestamp in ms; 80-bit randomness = MessageId octets 1..10. Collision ~2^-40 per same-ms pair (estimated). Source: agora/notes/mimi-vs-jmap-chat.md R1/A3.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:13:23.151938357Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:13:28.575541781Z",
+  "closed_at": "2026-10-17T17:13:28.575541781Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.10",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:13:23.158445593Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.16",
+  "title": "MLS credentials: BasicCredential for now",
+  "description": "v1 uses MLS BasicCredential. KNOWN WEAKNESS: no one vouches for the identity-to-key binding, so a malicious or impersonated provider can substitute keys undetected. Upgrade path: X.509 issued per provider (RustCrypto x509-cert), later key transparency.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:25:28.031125697Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:25:28.065986583Z",
+  "closed_at": "2026-10-17T17:25:28.065986583Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.16",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:25:28.035682518Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
