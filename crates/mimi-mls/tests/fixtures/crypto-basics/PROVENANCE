@@ -1,0 +1,25 @@
+# PROVENANCE: MLS crypto-basics test vectors (RFC 9420)
+#
+# Source repository: https://github.com/mlswg/mls-implementations
+# Commit:            2034fe72e0c805a683ba76165660c834f2a8142a
+#                    (2026-10-07, "Bump golang.org/x/net from 0.23.0 to 0.38.0 (#193)")
+# Path:              test-vectors/crypto-basics.json
+# Retrieved:         2026-10-17, shallow clone of the default branch
+# Format and verification steps: test-vectors.md, section "Crypto Basics",
+# same commit.
+#
+# The file is copied byte-for-byte and not modified. It holds entries for
+# ciphersuites 1-7; tests/label_crypto_basics.rs uses only the suite 1
+# entry's sign_with_label and encrypt_with_label vectors.
+#
+# This is the upstream mlswg copy, not the copy under openmls/test_vectors/
+# (that one differs: SHA-256 e42d1ad35b6b863ae5f23093515e34abc24d8008c55336fd978c35fbcf7f9572
+# at ~/GIT/openmls), so the oracle does not come from the library under test.
+#
+# License: the mlswg/mls-implementations repository has no LICENSE file and
+# test-vectors.md states no license. The file is vendored as test data only.
+#
+# Format: one row, whitespace-separated:
+#   <SHA-256 of the file>  <fixture file name>  <path in source repository>
+# Checked by tests/label_crypto_basics.rs.
+17cfcf89af9f51d0f2aa7af77f6f9ec99376a039214b6d42a6f11646b83e8c29  crypto-basics.json  test-vectors/crypto-basics.json
