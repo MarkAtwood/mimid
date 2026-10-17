@@ -10,3 +10,22 @@ license = "AGPL-3.0-or-later"
 # Exact pins: OpenMLS's extensions-draft API changes between releases.
 openmls = { version = "=0.9.1", features = ["extensions-draft"] }
 openmls_rust_crypto = { version = "=0.6.0", features = ["extensions-draft"] }
+openmls_sqlite_storage = { version = "=0.3.0", features = ["extensions-draft"] }
+
+# Exact pins: wire encodings and hashes the spec crates must reproduce byte for byte.
+# tls_codec must stay the version openmls uses, since mimi-mls re-exports it.
+tls_codec = { version = "=0.5.0", features = ["derive", "mls"] }
+minicbor = { version = "=2.3.0", features = ["alloc"] }
+sha2 = "=0.11.1"
+hmac = "=0.13.0"
+serde_json = "=1.0.154"
+
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+anyhow = "1.0.104"
+tokio = { version = "1.53.3", features = ["full"] }
+axum = "0.8.9"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
+toml = "1.1.8"
