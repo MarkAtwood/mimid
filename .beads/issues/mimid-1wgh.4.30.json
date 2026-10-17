@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.30",
+  "title": "DR-11: PartialGroupInfo rejects a ratchet_tree extension",
+  "description": "rto-01 §4: the PartialGroupInfo extension list omits ratchet_tree. Readings: (a) informative; (b) prohibition. Chosen: (b), decode rejects a ratchet_tree extension in PartialGroupInfo (fail closed).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T19:15:30.675802627Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T19:15:31.175234846Z",
+  "closed_at": "2026-10-17T19:15:31.175234846Z",
+  "close_reason": "Recorded during mimid-1wgh.4.23 / .4.3",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.30",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T19:15:30.693191242Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

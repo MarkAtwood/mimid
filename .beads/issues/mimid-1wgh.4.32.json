@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.32",
+  "title": "DR-12: authenticated_data dropped when Safe AAD is off",
+  "description": "mls-extensions-10 §4.9/DR-2: when safe_aad is not required, incoming MLS authenticated_data is accepted but not surfaced to the caller (mimid never sets raw AAD).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T19:15:30.823579809Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T19:15:31.301461386Z",
+  "closed_at": "2026-10-17T19:15:31.301461386Z",
+  "close_reason": "Recorded during mimid-1wgh.4.23 / .4.3",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.32",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T19:15:30.83916726Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

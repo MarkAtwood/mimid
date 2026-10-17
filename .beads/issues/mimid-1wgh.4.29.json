@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.29",
+  "title": "DR-10: rto-01 ratchet_tree is optional\u003cNode\u003e\u003cV\u003e",
+  "description": "draft-ietf-mls-ratchet-tree-options-01 §3 writes 'Node ratchet_tree\u003cV\u003e' but describes the field as the complete ratchet_tree extension. Readings: (a) literal Node\u003cV\u003e; (b) RFC 9420 ratchet_tree extension form optional\u003cNode\u003e ratchet_tree\u003cV\u003e. Chosen: (b) — blank nodes require optional\u003c\u003e. WG question filed.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T19:15:30.597935501Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T19:15:31.1185814Z",
+  "closed_at": "2026-10-17T19:15:31.1185814Z",
+  "close_reason": "Recorded during mimid-1wgh.4.23 / .4.3",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.29",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T19:15:30.617048197Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
