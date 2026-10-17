@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.2.11",
+  "title": "D2: MessageId hashes received bytes",
+  "description": "content-09 §3.3 'message' = the bytes as received, not a re-encoding (identical for conforming input).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:34.362022422Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:34.404411781Z",
+  "closed_at": "2026-10-17T18:05:34.404411781Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2.11",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:34.367770446Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

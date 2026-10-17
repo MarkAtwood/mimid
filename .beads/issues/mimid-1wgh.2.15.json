@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.2.15",
+  "title": "D7: extension value unrestricted",
+  "description": "content-09 §4.3 'any .size(0..4095)' vs Appendix A.1 'any'; follow A.1 (limit removed per changelog C.10).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:34.693184862Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:34.739445979Z",
+  "closed_at": "2026-10-17T18:05:34.739445979Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2.15",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:34.699512176Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.4.9",
+  "title": "mimi-mls: OpenMLS external AppDataUpdate patch",
+  "description": "~40-line patch on our openmls branch off v0.9.1 ([patch.crates-io]): ExternalProposal::new_app_data_update and accept external Proposal::AppDataUpdate in MlsGroup and PublicGroup external processing. Then Observer::propose_app_update. Upstream later together with the stale 'Application' label report (Mark approves text first).",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:32.143779236Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:32.143779236Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.9",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:32.150568969Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.4.9",
+      "depends_on_id": "mimid-1wgh.4.6",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:05:32.519784974Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.4.6",
+  "title": "mimi-mls: Observer (PublicGroup) + passive vectors",
+  "description": "Observer for hub/follower: from_group_info, process, merge. Oracle: passive-client-handling-commit.json.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:32.013279546Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:32.013279546Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.6",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:32.019156732Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.4.6",
+      "depends_on_id": "mimid-1wgh.4.3",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:05:32.374509951Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

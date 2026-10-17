@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.2.7",
+  "title": "CBOR crate: minicbor",
+  "description": "minicbor =2.3.0 (BlueOak-1.0.0) approved by Mark.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:33.433972602Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:33.477578338Z",
+  "closed_at": "2026-10-17T18:05:33.477578338Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2.7",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:33.439313418Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.4.7",
+  "title": "mimi-mls: RatchetTreeOption/PartialGroupInfo",
+  "description": "Wire structs per ratchet-tree-options-01 §3-4 and GroupInfo reconstruction (DR-4, DR-5). Oracle: signature verifies under committer leaf; matches mls-rs-exported GroupInfo.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:32.061882319Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:32.061882319Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.7",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:32.067386754Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.4.7",
+      "depends_on_id": "mimid-1wgh.4.6",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:05:32.410384122Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

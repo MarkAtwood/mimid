@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.2.18",
+  "title": "D10: reaction emoji prose vs bytes",
+  "description": "content-09 §5.3 prose says U+2665 but bytes are e29da4 (U+2764); keep fixture bytes.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:34.949034382Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:34.991115309Z",
+  "closed_at": "2026-10-17T18:05:34.991115309Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2.18",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:34.955443478Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

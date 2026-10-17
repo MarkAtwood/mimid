@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.11",
+  "title": "Patch OpenMLS for external AppDataUpdate",
+  "description": "Carry ~40-line patch on our openmls branch off v0.9.1 via [patch.crates-io] so the hub can send AppDataUpdate as an external proposal. Upstream later.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:33.017091382Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:33.056624638Z",
+  "closed_at": "2026-10-17T18:05:33.056624638Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.11",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:33.023272466Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

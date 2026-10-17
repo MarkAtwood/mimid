@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.2.19",
+  "title": "D11: limits split codec vs agent",
+  "description": "content-09 §9.1: codec enforces part count \u003c=1024 and topicId \u003c=4096; agent enforces expiry sanity (needs a clock).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:35.032863819Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:35.075995459Z",
+  "closed_at": "2026-10-17T18:05:35.075995459Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2.19",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:35.03818765Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

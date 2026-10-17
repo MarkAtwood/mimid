@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.12",
+  "title": "Defer SemiPrivateMessage",
+  "description": "protocol-06 L1468 allows PublicMessage handshakes; providers see group changes, never content. Fork-scale OpenMLS work deferred.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:33.09759808Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:33.142142716Z",
+  "closed_at": "2026-10-17T18:05:33.142142716Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.12",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:33.103364275Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "id": "mimid-1wgh.4.8",
+  "title": "mimi-mls: external commit join",
+  "description": "Member::join_external via GroupInfo + tree.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:32.101048017Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:32.101048017Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.8",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:32.106343445Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.4.8",
+      "depends_on_id": "mimid-1wgh.4.3",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:05:32.447033291Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.4.8",
+      "depends_on_id": "mimid-1wgh.4.7",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:05:32.484707343Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

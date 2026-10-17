@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.18",
+  "title": "DR-3: franking_signature_key = franking_agent",
+  "description": "protocol-06 §10.2 registers franking_signature_key 0x0021 while §5.4 calls it franking_agent. Treat as one component 0x0021 with FrankingAgentData.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:33.857653207Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:33.897326789Z",
+  "closed_at": "2026-10-17T18:05:33.897326789Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.18",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:33.86394008Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

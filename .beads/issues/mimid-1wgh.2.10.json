@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.2.10",
+  "title": "D1: MessageId URIs when extensions absent",
+  "description": "content-09 §3.3 vs §4.3/§4.6. Caller passes authenticated sender (user URI) and room URIs; agent checks extensions 1/2 equal them if present, else discard per §9.1. WG examples hold under this reading.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:34.283625768Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:34.320317898Z",
+  "closed_at": "2026-10-17T18:05:34.320317898Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2.10",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:34.289137845Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

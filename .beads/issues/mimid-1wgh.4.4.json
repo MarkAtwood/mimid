@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.4.4",
+  "title": "mimi-mls: app-data components via AppDataUpdate",
+  "description": "Member get/set of app_data_dictionary components via member AppDataUpdate (0x0008), per DR-1. Oracle: hand-encoded TLS-PL bytes from ext-10 §4.6-4.7.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:31.922862726Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:31.922862726Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.4",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:31.928834137Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.4.4",
+      "depends_on_id": "mimid-1wgh.4.3",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:05:32.302423291Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

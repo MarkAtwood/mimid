@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.16",
+  "title": "DR-1: AppSync = AppDataUpdate",
+  "description": "protocol-06 uses 'AppSync' (§2, §4.2 L889-903, §5.3 L1360) and 'AppDataUpdate' (§4.3.2, §5.4, §7.5, §7.6) for one operation; barnes-mls-appsync-01 §9 is the precursor of ext-10 §4.7. Read every AppSync proposal as ext-10 AppDataUpdate (0x0008); mimiParticipantList -\u003e participant_list 0x0022; mimiRoomPolicy -\u003e room-policy-04 §10.1 components.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:05:33.689451324Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:05:33.728467941Z",
+  "closed_at": "2026-10-17T18:05:33.728467941Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.16",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:05:33.695664374Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
