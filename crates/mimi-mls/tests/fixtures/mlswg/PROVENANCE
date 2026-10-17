@@ -1,0 +1,51 @@
+# PROVENANCE: mlswg MLS interoperability test vectors (RFC 9420)
+#
+# Source repository: https://github.com/mlswg/mls-implementations
+# Commit:            2034fe72e0c805a683ba76165660c834f2a8142a (2026-10-07)
+# Retrieved:         2026-10-17, from a local clone at that commit
+#
+# Upstream files used:
+#   test-vectors/messages.json         SHA-256 b194abe1561995223482dbad51c180146920dc2f637e74d01e07a388308791fb
+#   test-vectors/deserialization.json  SHA-256 1e394706e79f77df71454e5970f2aa736d4ab8b6c7e3219dd5609992388a953e
+#
+# deserialization.json is copied byte for byte. messages.json (2.6 MB of
+# hex) is not vendored whole: extract.py writes the hex-decoded bytes of
+# eight fields from entries 0, 100 and 200 (ciphersuites 0x0001, 0x0003 and
+# 0x0002) as messages-<entry>-<field>.bin, otherwise unchanged. Regenerate
+# with:
+#   python3 -I extract.py <clone>/test-vectors/messages.json .
+# extract.py is mimid's own script, not upstream.
+#
+# License: the source repository has no LICENSE file at that commit. The
+# files are vendored as test data only.
+#
+# Format: one row per file, whitespace-separated:
+#   <SHA-256 of the file>  <fixture file name>  <source>
+# where <source> is <upstream path>#<entry>/<field> for extracted files.
+# Checked by tests/wire_mlswg.rs.
+1e394706e79f77df71454e5970f2aa736d4ab8b6c7e3219dd5609992388a953e  deserialization.json  test-vectors/deserialization.json
+c45c67d1f72970e03c621177c548453901c9284eddc715ef868fa43fa6947abb  messages-000-mls_group_info.bin  test-vectors/messages.json#0/mls_group_info
+b3173e9c09a5d45afe9ad9ead0c568085aa6d25bceb81e3b4404e6d0399b38e6  messages-000-mls_key_package.bin  test-vectors/messages.json#0/mls_key_package
+ff1ce44c844481dbe924d6f8ff46225e26e9cbae78ec20afba2478cb27456726  messages-000-mls_welcome.bin  test-vectors/messages.json#0/mls_welcome
+738bc59f53fb33e8cdc53bb21ed2914f0f7ddb7d140c698e1bc73f66a5d7afde  messages-000-private_message.bin  test-vectors/messages.json#0/private_message
+d78d0c070bf72c2ee98be59895f390dfd239a1997ff2a2432869173cfcbd0a7c  messages-000-public_message_application.bin  test-vectors/messages.json#0/public_message_application
+ae047a88d4eba03b1fd86de0bf1e27246f8931fb30693695a17df6d047c7b83b  messages-000-public_message_commit.bin  test-vectors/messages.json#0/public_message_commit
+aacad547b1482f6afa5d5eb2cf031867548838050dc8fdbef609040169440a85  messages-000-public_message_proposal.bin  test-vectors/messages.json#0/public_message_proposal
+dfcce61996a5a65ade9471330b0bb630dcea680fd727174f0ad8fca7c54159ca  messages-000-ratchet_tree.bin  test-vectors/messages.json#0/ratchet_tree
+793766d706287724e71f54d32136dd75f1cb8703258b2159f8b4cdd5f55247ae  messages-100-mls_group_info.bin  test-vectors/messages.json#100/mls_group_info
+054a3e1e9e12702d2909793df4154fa6b462a72102031c18d2471d9c3bc6cab5  messages-100-mls_key_package.bin  test-vectors/messages.json#100/mls_key_package
+dc912995342956aa31e48b4350534f1abaaa623133da7feebb14bd79bac1e894  messages-100-mls_welcome.bin  test-vectors/messages.json#100/mls_welcome
+147068b9bfc65782bdb6507fe92ec91e084584a8c44dc7ab32b91337bc715492  messages-100-private_message.bin  test-vectors/messages.json#100/private_message
+64d55ccfe5f3fabdc3874e2e02a290d0ce2855c54b299da94bc5d805fcc24d04  messages-100-public_message_application.bin  test-vectors/messages.json#100/public_message_application
+9ab84968a48542da7f7d6ccda96123d88278db2fd321c8ae84c23b87de902a52  messages-100-public_message_commit.bin  test-vectors/messages.json#100/public_message_commit
+a638306776c22ba1870cd4022a7e74e2d9fcb2649fd9cd39789b5cb02c1cbc5a  messages-100-public_message_proposal.bin  test-vectors/messages.json#100/public_message_proposal
+5f6c6024a1d9526d23f90ce24c2a39c8d42599c8a59432511cc41c0d511a66ab  messages-100-ratchet_tree.bin  test-vectors/messages.json#100/ratchet_tree
+c2813e0d53d9a4d3aada113533d246310db1ec2cab467819bcbd1084064fccab  messages-200-mls_group_info.bin  test-vectors/messages.json#200/mls_group_info
+3f31a4825bf9bea1dc0afff2c119aadb1fa84054d854210e398b7e3dd0eaaff6  messages-200-mls_key_package.bin  test-vectors/messages.json#200/mls_key_package
+e1befa8f0b2475d645996ce0cfc807eefe514907ea07a47f8bb37e6fc3a4fb59  messages-200-mls_welcome.bin  test-vectors/messages.json#200/mls_welcome
+a03a3f3b21b0588db607fe1e1b6b7a4700b308769d0563ecfcd11f91226e7a5b  messages-200-private_message.bin  test-vectors/messages.json#200/private_message
+5b120107bdfe1c510c0d65d2ea555fb464847784cd10026f2fde761b113fa6ab  messages-200-public_message_application.bin  test-vectors/messages.json#200/public_message_application
+028664c2abe10a7bdc70ed08d0e931ba5d9d26c482d0382c99570c9658bc19c3  messages-200-public_message_commit.bin  test-vectors/messages.json#200/public_message_commit
+d8ec842fa14cd5a1743b3ae7be63ed180dfd0515698e8a098d44eff8964b2b5a  messages-200-public_message_proposal.bin  test-vectors/messages.json#200/public_message_proposal
+1bc887dc1796a4816a81dfb66694cbe831ccffcef9f1d1cd05e1790ef017a9c9  messages-200-ratchet_tree.bin  test-vectors/messages.json#200/ratchet_tree
+97a87c3ecb0312c453646c54bf1343c6f8d6e51b3999d82bd5793a59f649f424  extract.py  mimid
