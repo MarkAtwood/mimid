@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.4",
   "title": "MLS adapter over OpenMLS + missing drafts",
   "description": "Thin internal layer isolating all OpenMLS calls. Add what OpenMLS lacks (verify first): SemiPrivateMessage (mahy-07), AppSync proposals (barnes-appsync-01), ratchet-tree-options-01, mls-extensions -08-\u003e-10 deltas. Keep RFC 9420 interop vectors passing.",
-  "notes": "FIRST TASK: close-read protocol-06 use of AppSync (draft-barnes-mls-appsync-01) vs AppDataUpdate (draft-ietf-mls-extensions-10); decide whether both are needed, record a cited decision per the spec-ambiguity rule.",
+  "notes": "FIRST TASK: close-read protocol-06 use of AppSync (draft-barnes-mls-appsync-01) vs AppDataUpdate (draft-ietf-mls-extensions-10); decide whether both are needed, record a cited decision per the spec-ambiguity rule.\nPrior art: ~/PROJECT/nie uses openmls 0.8 + openmls_basic_credential; reference only.",
   "status": "open",
   "priority": 1,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T16:57:40.23807508Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T17:25:28.942418848Z",
+  "updated_at": "2026-10-17T17:38:54.338491825Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.4",

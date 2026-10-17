@@ -1,14 +1,15 @@
 {
   "id": "mimid-1wgh.13",
-  "title": "CLI/TUI client",
-  "description": "Rust client: MLS on-device via mimi-mls, local SQLite state, speaks JMAP Chat subset + MLS capability. Create DM/group rooms, invite, send/receive mimi-content, consent flow. No GUI in v1.",
+  "title": "mimid-agent local daemon",
+  "description": "Local user-agent daemon per decision mimid-1wgh.28: MLS on-device via mimi-mls, local SQLite state; outward JMAP Chat (E2EE) + MLS capability to provider; inward plaintext JMAP Chat server on a 0600 unix socket. Decodes/encodes mimi-content \u003c-\u003e JMAP Message (senderMsgId per R1). Room ops: create group, invite, send/receive.",
+  "notes": "Per mimid-1wgh.30: inward plaintext JMAP Chat via crate-jmap jmap-chat-server with an MLS-backed backend impl; outward via jmap-chat-client. See ~/PROJECT/nie daemon for prior art (localhost bearer-token daemon).",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T17:13:23.28906134Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T17:13:23.28906134Z",
+  "updated_at": "2026-10-17T17:38:54.305606462Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.13",

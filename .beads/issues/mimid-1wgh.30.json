@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.30",
+  "title": "Reuse kith-tui and crate-jmap for JMAP layers",
+  "description": "Reuse Mark's existing code instead of writing JMAP from scratch: (1) TUI (.29) adapts ~/PROJECT/kith/crates/kith-tui (ratatui, ~3.9k lines, AGPL-3.0-or-later, light coupling to kith-core JmapRequest/parse_sse_frame/StateChange), swapping its transport to crate-jmap jmap-chat-client if clean. (2) Provider JMAP Chat (.11) and agent inward plaintext side (.13) build on ~/PROJECT/crate-jmap jmap-chat-server + jmap-chat-types (0.1.2, MIT OR Apache-2.0); agent supplies an MLS-backed backend. (3) Agent outward connection uses jmap-chat-client. ~/PROJECT/nie (openmls 0.8, daemon+tui, own relay protocol) is reference only for .4. Each reuse starts with a diff vs current draft-atwood-jmap-chat-00; deltas become decisions per the spec-ambiguity rule.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T17:38:54.158082219Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T17:38:54.206009327Z",
+  "closed_at": "2026-10-17T17:38:54.206009327Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.30",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T17:38:54.164968471Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
