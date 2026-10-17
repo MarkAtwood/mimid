@@ -1,0 +1,45 @@
+# MULTIPART-2
+# message ID = h'01d65918c6c51c8e76546337276ae6f4
+#                bfd873d867d5cb57c76bcdca3d999dd7'
+# timestamp  = not specified in example
+[
+  h'8528dc2d92e4f1944d62042907ab94d0', # salt
+  null,                                # replaces
+  h'',                                 # topicId
+  null,                                # expires = never
+  null,                                # inReplyTo
+  {                                    # extensions
+    1: "mimi://example.com/u/alice-smith",
+    2: "mimi://example.com/r/engineering_team"
+  },
+  [                                    # body (NestedPart)
+                                         # partIndex = 0 (1st part)
+    2,                                   # disposition = reaction
+    "",                                  # language
+    3,                                   # cardinality = multi
+    2,                                   # partSemantics = processAll
+    [
+      [                                  # partIndex = 1
+        2,                               # disposition = reaction
+        "",                              # language
+        1,                               # cardinality = single
+        "text/plain;charset=utf-8",      # contentType
+        h'E2 9D A4'           # content = Unicode "heart"
+      ],
+      [                                  # partIndex = 2
+        2,                               # disposition = reaction
+        "",                              # language
+        1,                               # cardinality = single
+        "text/plain;charset=utf-8",      # contentType
+        h'F0 9F A5 B3'        # content = Unicode "party face"
+      ],
+      [                                  # partIndex = 3
+        2,                               # disposition = reaction
+        "",                              # language
+        1,                               # cardinality = single
+        "text/plain;charset=utf-8",      # contentType
+        h'F0 9F A4 9E'        # content = Unicode "fingers crossed"
+      ]
+    ]
+  ]
+]

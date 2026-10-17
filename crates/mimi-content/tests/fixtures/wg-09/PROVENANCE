@@ -1,0 +1,71 @@
+# PROVENANCE: mimi-content WG example fixtures (draft-ietf-mimi-content-09)
+#
+# Source repository: https://github.com/ietf-wg-mimi/draft-ietf-mimi-content
+# Tag:               draft-ietf-mimi-content-09
+#                    (annotated tag object 81d7a3c47abdb1fd4f32567c7fa9f43c1650a0d2)
+# Commit:            a89298c876ab805bdb2e882bc046fa341432783b
+# Retrieved:         2026-10-17, shallow clone of the tag
+#
+# Files are copied byte-for-byte; none are modified. Where the draft's
+# section 5 hex dumps disagree with the .cbor files here, the .cbor files
+# win (decision mimid-1wgh.2.17).
+#
+# License: these files are Contributions to the IETF Standards Process,
+# subject to BCP 78, BCP 79, and the IETF Trust Legal Provisions (TLP)
+# Relating to IETF Documents, <https://trustee.ietf.org/license-info>.
+# Under TLP section 4, code components extracted from IETF documents are
+# available under the Simplified (Revised) BSD License. They are vendored
+# here as test data only (decision mimid-1wgh.2.8). Copyright (c) the IETF
+# Trust and the persons identified as the document authors. All rights
+# reserved.
+#
+# Format: one row per file, whitespace-separated:
+#   <SHA-256 of the file>  <fixture file name>  <path in source repository>
+# Checked by tests/provenance.rs.
+0b5e2beaa2f2fdb9118a97f4b42082111d49ade9f53b4aaf8685ed495d2cc161  implied.cddl  implied.cddl
+895a0d4b4f920a1d65afc1aadbbe5832d386a03765e3a4a69535056c73170ec1  mimi-content.cddl  mimi-content.cddl
+3b408b62bc1b49ecef4a5d100e0726f4c805a94f37bc7885dce1fa97447cccb9  attachment.cbor  examples/attachment.cbor
+d7c9c09fa8799c449296f0b849618de33b1f387fffb0e7b284049ce6eaac975a  conferencing.cbor  examples/conferencing.cbor
+3806309c8b9f382172d90c2fe4c7990b1a7f8a172fb8217fc0306c132d5e3b0a  delete.cbor  examples/delete.cbor
+c9ca41afd2ed48936abb967755e51d3bf341b7fe26e88b1b176d0174749e4be3  edit.cbor  examples/edit.cbor
+8b7cc208f07a87b2d4a6f519aee6dc1d87bd80db2c4571a117c318449eceb45c  expiring.cbor  examples/expiring.cbor
+f60e341daef75c736eba117d6ad00d461a172e94d24e0f15cf322efcb332bef6  implied-original.cbor  examples/implied-original.cbor
+36ac44362bf988eae36da504aa24c1d58e87d03297d120c1c52f9d1065180e4f  mention.cbor  examples/mention.cbor
+171177f8c2a544fd7d5269b7a94cc7da2fe5208c206a0340b49410c9b8ae05cf  mention-html.cbor  examples/mention-html.cbor
+0c30b0daad3b1d7f2284a07dac2e1a3b7f8404a854163ca7532a644c509268d5  multipart-1.cbor  examples/multipart-1.cbor
+18c8b391245318d6f296a5b14791b1d37514e0d9761b48137e812ac612f5c83f  multipart-2.cbor  examples/multipart-2.cbor
+6e9b5e4661144de2b747eabb8ebf33b6aa9f55f9a181262e1e24383d9622ccd3  multipart-3.cbor  examples/multipart-3.cbor
+3168a4fbde49e3dccddba8a289861667d4a606040cd9ac38a62b4b0b18a2548c  original.cbor  examples/original.cbor
+1a68b54d0ca64c594ff3ba4d925a4f7cc22d4ab332f169db059b7b2a1c516fcb  reaction.cbor  examples/reaction.cbor
+a0c41933d1643746ef36b36681ddc21c5193c9bd05d04a741fe65fb7bc53f610  reply.cbor  examples/reply.cbor
+eca7c8a194a32815efae144b8bd4b295d0418673899dcd5f3103ba14fabb41e2  unlike.cbor  examples/unlike.cbor
+3d31867aae82e1c7fd38f113a64a2a8a5b629ba7b6422d01c033696838840e5c  attachment.edn  examples/attachment.edn
+22562ff5b055a91f8ad089eed8b280bc7ffd2a4136afa6303ed7afd96a4174ca  conferencing.edn  examples/conferencing.edn
+390f0f8aecfa5bfd5febbe1acff27d6a1cc0311745d7cbbe90f0e2e9a647d69b  delete.edn  examples/delete.edn
+881907e825afe3ef6c979e41f4fa8a23fbf5e32c8ae92745ef145cf53c78ecbc  edit.edn  examples/edit.edn
+b42fa6483eb8b5d0a18a81e8dea4cb5ddb15b1d6d235825f5afb992645b12ad6  expiring.edn  examples/expiring.edn
+ffefddee5292a88b20d5cb045bcbfb02e870d3fa17d979bfa115bfe3d9fe7084  implied-original.edn  examples/implied-original.edn
+b9b317cb4073652ea4009cdc9f9d96574b661d46b62fed9ae917eb3f19240833  mention.edn  examples/mention.edn
+f2ca4dfb9777f34a29d8e87ac304a97abf1495ea0fc7e552a9ad625c2e01437f  mention-html.edn  examples/mention-html.edn
+baafbece1bf719c62828a9baae1587ce8d6023cbe937408b79b8fdd568936fd7  multipart-1.edn  examples/multipart-1.edn
+85fab0a7807412333a0ddf9354e71d3365a08824d5820018cd97b80b221e8296  multipart-2.edn  examples/multipart-2.edn
+325586c3640efc97ebe2f559e5bbd3498127a31ba3d4ea3850c27a799c1676e9  multipart-3.edn  examples/multipart-3.edn
+fe09d5177540367727db32b9923f571928a53f1872e9d858e7e9ba99dc9b1c2f  original.edn  examples/original.edn
+08644cee09f123883e60f361a82aab786fed1e29a2a411b342b1093408ea5f04  reaction.edn  examples/reaction.edn
+5de46d14a02847326d63bd7d5e2c2889fbf63185205389da92dbd352b4ceba6f  reply.edn  examples/reply.edn
+af755ab3bc49575cdc1217f9ddc9f8efdebdde6319fcf7fe4e09ea1b919ad8c7  unlike.edn  examples/unlike.edn
+22b908a1c532f044626bdde62bd144008d04b53620ecd0c6e4358e63ea44229f  attachment.pretty  examples/attachment.pretty
+b7b45a16c886e4b169162531511703272ba8bd6bd00a37ffbeee2c78eca985dc  conferencing.pretty  examples/conferencing.pretty
+0faf3b84d3a0b42107421ff485e1e42d66022d0c624569bcd8abeed9db012102  delete.pretty  examples/delete.pretty
+1d884d2668dd05f855294ebe25d3bd7deb9b255c4faa0a89ff2403aa8abea007  edit.pretty  examples/edit.pretty
+5aa0e69c2a2b1b4e01bdf9c853e4ef477d54f81313a16a676cd4a37aaceb754f  expiring.pretty  examples/expiring.pretty
+43dd1e6a10dca0fcd96d5a730faa819d13efee7f9886bab7bd58798fdf5f110b  implied-original.pretty  examples/implied-original.pretty
+692a02a2a72f057d9b5b915a748b5f20d6c3c3564a26587cfd7deea3c6cf9ae2  mention-html.pretty  examples/mention-html.pretty
+4d1245a7558ca84099f4c7468e2018a6a880179a662a4829c35f192c06128af4  mention.pretty  examples/mention.pretty
+db5bf18c9f42af71605fe8ad6472c3a4c8c9175ec4d1510e47b86ba76001516d  multipart-1.pretty  examples/multipart-1.pretty
+6309f93401a7b0760b008035212c16b764aa6d82a5d328adb793b306f10604d0  multipart-2.pretty  examples/multipart-2.pretty
+d58d72d7afc61192a831242d21251f7e5cd4518dc874e93ed3d565f13fe4afbf  multipart-3.pretty  examples/multipart-3.pretty
+1569fd142878e25ca0e8c10db394400ccefdf9cff3c296e4ebae9ce793ddb634  original.pretty  examples/original.pretty
+9814cce0de604ead97183e5c2abde607fc55e53f07767c014348b74c55de6138  reaction.pretty  examples/reaction.pretty
+a592cc960c6577f8de2c6c700e901a86f0cd48765ff42586696151788ea1220b  reply.pretty  examples/reply.pretty
+62ba454911cb885eb32ad754c1c88cf4337797d66d7c4f3dd8f7d72efde144f8  unlike.pretty  examples/unlike.pretty

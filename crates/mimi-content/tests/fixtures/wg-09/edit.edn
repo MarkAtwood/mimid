@@ -1,0 +1,25 @@
+# EDIT
+# message ID = h'014028c0deddbdea56bec26172f6ede9
+#                53d11024cb82b8192b5e2aea62d7fb47'
+# timestamp  = 1644387248621 = 2022-02-08T22:14:08.621Z
+[
+  h'b8c2e6d8800ecf45df39be6c45f4c042', # salt
+  h'015354973c2b65ca937bf1e035ae53a5   # replaces =
+    ab80e947afa43d46920d4202e5cc0b27', #   Reply
+  h'',                                 # topicId
+  null,                                # expires
+  h'017ce54837404c3696e0c747b985cb17   # inReplyTo =
+    2716d0ed0a3d249ca63ace7d82a096f4', #   Original
+  {                                    # extensions
+    1: "mimi://example.com/u/bob-jones",
+    2: "mimi://example.com/r/engineering_team"
+  },
+  [                                    # body (NestedPart)
+    1,                                   # disposition = render
+    "",                                  # language
+    1,                                   # cardinality = single part
+    "text/markdown;variant=GFM-MIMI",    # contentType
+                                         # content
+    'Right on! _Congratulations_ y\'all!'
+  ]
+]

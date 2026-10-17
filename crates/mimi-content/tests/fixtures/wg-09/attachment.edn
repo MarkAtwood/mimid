@@ -1,0 +1,34 @@
+# ATTACHMENT
+# message ID = h'0176180c7d19a925021fe446d241134d
+#                05c38e0d999cdc0f39c391d2377ed9d1'
+# timestamp  = not specified in example
+[
+  h'18fac6371e4e53f1aeaf8a013155c166', # salt
+  null,                                # replaces
+  h'',                                 # topicId
+  null,                                # expires = never
+  null,                                # inReplyTo
+  {                                    # extensions
+    1: "mimi://example.com/u/bob-jones",
+    2: "mimi://example.com/r/engineering_team"
+  },
+  [                                    # body (NestedPart)
+    6,                                   # disposition = attachment
+    "en",                                # language
+    2,                                   # cardinality = external
+    "video/mp4",                         # contentType
+    # url
+    "https://example.com/storage/8ksB4bSrrRE.mp4",
+    0,                                   # expires
+    708234961,                           # size
+    1,                                   # encAlg = AES-128-GCM
+    h'21399320958a6f4c745dde670d95e0d8', # key
+    h'c86cf2c33f21527d1dd76f5b',         # nonce
+    h'',                                 # aad
+    1,                                   # hashAlg = sha256
+    h'9ab17a8cf0890baaae7ee016c7312fcc   # content hash
+      080ba46498389458ee44f0276e783163',
+    "2 hours of key signing video",      # description
+    "bigfile.mp4"                        # filename
+  ]
+]

@@ -1,0 +1,27 @@
+# EXPIRING
+# message ID = h'01e59db8173939facc2c8a4a0f0ae8d0
+#                c7a11a81239626630c9464a8d6717a03'
+# timestamp  = 1644389403227 = 2022-02-08T22:49:06.227Z
+[
+  h'33be993eb39f418f9295afc2ae160d2d', # salt
+  null,                                # replaces
+  h'',                                 # topicId
+  [                                    # expires
+    false,                               # absolute, not relative
+    1644390004           # expires = 10 minutes after it was sent
+  ],
+  null,                                # inReplyTo
+  {                                    # extensions
+    1: "mimi://example.com/u/alice-smith",
+    2: "mimi://example.com/r/engineering_team"
+  },
+  [                                    # body (NestedPart)
+    1,                                   # disposition = render
+    "",                                  # language
+    1,                                   # cardinality = single part
+    "text/markdown;variant=GFM-MIMI",    # contentType
+                                         # content
+    '__*VPN GOING DOWN*__ I\'m rebooting the VPN in ten minutes' +
+    ' unless anyone objects.'
+  ]
+]

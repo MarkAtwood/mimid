@@ -1,0 +1,24 @@
+[
+  / messageId = Original message /
+  h'017ce54837404c3696e0c747b985cb17
+    2716d0ed0a3d249ca63ace7d82a096f4',
+  
+  / hubAcceptedTimestamp = 2022-02-08T22:13:45.019Z /
+  1644387225019,
+
+  / mlsGroupId /
+  h'eeee0d12a7b5b5b78115ad1a1ddb1381
+    1c83fd7387c43e66799a594beeda26bf',
+  
+  / senderLeafIndex /
+  4,
+  
+  / senderClientUrl /
+  "mimi://example.com/d/3b52249d-68f9-45ce-8bf5-c799f3cad7ec/0003",
+
+  / senderUserUrl /
+  "mimi://example.com/u/alice-smith",
+  
+  / roomUrl /
+  "mimi://example.com/r/engineering_team"
+]

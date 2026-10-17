@@ -1,0 +1,10 @@
+[package]
+name = "mimi-content"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "draft-ietf-mimi-content-09 message format for the mimid MIMI reference implementation"
+
+[dependencies]
+minicbor.workspace = true
+sha2.workspace = true

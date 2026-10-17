@@ -1,0 +1,32 @@
+# CONFERENCING
+# message ID = h'01496d15a8dba28d7397f9868b70768e
+#                4a67f765d5b5b1ae9e03848c5fdeb0ba'
+# timestamp  = not specified in example
+[
+  h'678ac6cd54de049c3e9665cd212470fa', # salt
+  null,                                # replaces
+  'Foo 118',                           # topicId
+  null,                                # expires
+  null,                                # inReplyTo
+  {                                    # extensions
+    1: "mimi://example.com/u/alice-smith",
+    2: "mimi://example.com/r/engineering_team"
+  },
+  [                                    # body (NestedPart)
+    7,                                   # disposition = session
+    "",                                  # language
+    2,                                   # cardinality = external
+    "",                                  # contentType
+    "https://example.com/join/12345",    # url
+    0,                                   # expires
+    0,                                   # size
+    0,                                   # encAlg = none
+    h'',                                 # key
+    h'',                                 # nonce
+    h'',                                 # aad
+    0,                                   # hashAlg = none
+    h'',                                 # content hash
+    "Join the Foo 118 conference",       # description
+    ""                                   # filename
+  ]
+]

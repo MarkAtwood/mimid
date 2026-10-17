@@ -1,0 +1,26 @@
+87                                      # array(7)
+   50                                   # bytes(16)
+      b8c2e6d8800ecf45df39be6c45f4c042  # "\xB8\xC2\xE6؀\u000E\xCFE\xDF9\xBElE\xF4\xC0B"
+   58 20                                # bytes(32)
+      015354973c2b65ca937bf1e035ae53a5ab80e947afa43d46920d4202e5cc0b27 # "\u0001ST\x97<+eʓ{\xF1\xE05\xAES\xA5\xAB\x80\xE9G\xAF\xA4=F\x92\rB\u0002\xE5\xCC\v'"
+   40                                   # bytes(0)
+                                        # ""
+   f6                                   # primitive(22)
+   58 20                                # bytes(32)
+      017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4 # "\u0001|\xE5H7@L6\x96\xE0\xC7G\xB9\x85\xCB\u0017'\u0016\xD0\xED\n=$\x9C\xA6:\xCE}\x82\xA0\x96\xF4"
+   a2                                   # map(2)
+      01                                # unsigned(1)
+      78 1e                             # text(30)
+         6d696d693a2f2f6578616d706c652e636f6d2f752f626f622d6a6f6e6573 # "mimi://example.com/u/bob-jones"
+      02                                # unsigned(2)
+      78 25                             # text(37)
+         6d696d693a2f2f6578616d706c652e636f6d2f722f656e67696e656572696e675f7465616d # "mimi://example.com/r/engineering_team"
+   85                                   # array(5)
+      01                                # unsigned(1)
+      60                                # text(0)
+                                        # ""
+      01                                # unsigned(1)
+      78 1e                             # text(30)
+         746578742f6d61726b646f776e3b76617269616e743d47464d2d4d494d49 # "text/markdown;variant=GFM-MIMI"
+      58 22                             # bytes(34)
+         5269676874206f6e21205f436f6e67726174756c6174696f6e735f207927616c6c21 # "Right on! _Congratulations_ y'all!"

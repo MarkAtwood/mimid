@@ -1,0 +1,89 @@
+mimiContent = [
+  salt: bstr .size 16,
+  replaces: null / MessageId,
+  topicId: bstr,
+  expires: null / Expiration,
+  inReplyTo: null / MessageId,
+  mimiExtensions: extensions,
+  nestedPart: NestedPart
+]
+
+NestedPart = [
+  disposition: baseDispos / $extDispos / unknownDispos,
+  language: tstr,
+  ( NullPart // SinglePart // ExternalPart // MultiPart)
+]
+
+NullPart = ( cardinality: nullpart )
+
+SinglePart = (
+    cardinality: single,
+    contentType: tstr,
+    content: bstr
+)
+
+ExternalPart = (
+    cardinality: external,
+    contentType: tstr,
+    url: tstr,
+    expires: uint .size 4,
+    size: uint .size 8,
+    encAlg: uint .size 2,
+    key: bstr,
+    nonce: bstr,
+    aad: bstr,
+    hashAlg: uint .size 1,
+    contentHash: bstr,
+    description: tstr,
+    filename: tstr
+)
+
+MultiPart = (
+    cardinality: multi,
+    partSemantics: chooseOne / singleUnit / processAll,
+    parts: [2* NestedPart]
+)
+
+Expiration = [
+    relative: bool,
+    time: uint .size 4
+]
+
+baseDispos = &(
+    unspecified: 0,
+    render: 1,
+    reaction: 2,
+    profile: 3,
+    inline: 4,
+    icon: 5,
+    attachment: 6,
+    session: 7,
+    preview: 8
+)
+; Note: any ext_dispos take precedence
+unknownDispos = &( unknown: 9..255 )
+
+; MessageId is derived from SHA256 hash
+MessageId = bstr .size 32
+
+extensions = {
+  ? &(senderUri: 1) ^ => tstr,
+  ? &(roomUri: 2) ^ => tstr,
+  * $$otherKnownExtensions,
+  * unknownExtension
+}
+
+unknownExtension = (
+   name => value
+)
+name = int / tstr .size (1..255)
+value = any
+
+nullpart = 0
+single   = 1
+external = 2
+multi    = 3
+
+chooseOne  = 0
+singleUnit = 1
+processAll = 2

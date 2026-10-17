@@ -1,0 +1,22 @@
+# UNLIKE
+# message ID = h'013aadbb8f313253c8930f4e93c6ca54
+#                b2ed06d258185bdcec3870534c8a4ec4'
+# timestamp  = 1644387250389 = 2022-02-08T22:14:10.389Z
+[
+  h'c5ba86dc9fd272e58ca52ec805b79199', # salt
+  h'0158c4288911e50a8f6be3f47746b668   # replaces =
+    2f10fd91bc8c05557aa589a3157aff68', #   Reaction
+  h'',                                 # topicId
+  null,                                # expires
+  h'017ce54837404c3696e0c747b985cb17   # inReplyTo =
+    2716d0ed0a3d249ca63ace7d82a096f4', #   Original
+  {                                    # extensions
+    1: "mimi://example.com/u/cathy-washington",
+    2: "mimi://example.com/r/engineering_team"
+  },
+  [                                    # body (NestedPart)
+    2,                                   # disposition = reaction
+    "",                                  # language
+    0                                    # cardinality = null part
+  ]
+]

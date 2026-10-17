@@ -1,3 +1,11 @@
 [default]
 # Content hashes in generated Beads markers.
 extend-ignore-re = ["hash:[0-9a-f]+"]
+
+[default.extend-words]
+# CBOR Extended Diagnostic Notation (.edn files).
+edn = "edn"
+
+[files]
+# Vendored mimi-content WG examples: EDN and diagnostic dumps are full of hex.
+extend-exclude = ["*.edn", "*.pretty"]

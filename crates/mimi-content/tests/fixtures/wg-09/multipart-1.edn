@@ -1,0 +1,40 @@
+# MULTIPART-1
+# message ID = h'01da5a515ec5db42cc4dcc19b90c3c31
+#                245d8a1cfcce11318f24eb11dce0990e'
+# timestamp  = not specified in example
+[
+  h'261c953e178af653fe3d42641b91d814', # salt
+  null,                                # replaces
+  h'',                                 # topicId
+  null,                                # expires = never
+  null,                                # inReplyTo
+  {                                    # extensions
+    1: "mimi://example.com/u/alice-smith",
+    2: "mimi://example.com/r/engineering_team"
+  },
+  [                                    # body (NestedPart)
+                                         # partIndex = 0 (1st part)
+    1,                                   # disposition = render
+    "",                                  # language
+    3,                                   # cardinality = multi
+    0,                                   # partSemantics = chooseOne
+    [
+      [                                  # partIndex = 1
+        1,                               # disposition = render
+        "",                              # language
+        1,                               # cardinality = single
+        "text/markdown;variant=GFM-MIMI",# contentType
+        '# Welcome!'                     # content
+      ],
+      [                                  # partIndex = 2
+        1,                               # disposition = render
+        "",                              # language
+        1,                               # cardinality = single
+        # contentType
+        "application/vnd.examplevendor-fancy-im-message",
+        # content
+        h'dc861ebaa718fd7c3ca159f71a2001'
+      ]
+    ]
+  ]
+]
