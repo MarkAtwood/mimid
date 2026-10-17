@@ -1,0 +1,38 @@
+{
+  "id": "mimid-1wgh.7",
+  "title": "Follower provider and client",
+  "description": "Follower provider server and client library; end-to-end tests across two providers via the hub.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T16:57:40.355019222Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T16:57:40.355019222Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T16:57:40.359735516Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.7",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "blocks",
+      "created_at": "2026-10-17T16:57:40.662674128Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.7",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "blocks",
+      "created_at": "2026-10-17T16:57:40.700631265Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.2",
+  "title": "mimi-content-09 crate (CBOR)",
+  "description": "Implement draft-ietf-mimi-content-09 in CBOR per its CDDL (Appendix A), media type application/mimi-content. Oracle: WG examples (EDN/CBOR) at github.com/ietf-wg-mimi/draft-ietf-mimi-content/tree/main/examples, committed as fixtures; cross-check vs phnx-im/mimi-content.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T16:57:40.151609703Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T16:57:40.151609703Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T16:57:40.156499805Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.2",
+      "depends_on_id": "mimid-1wgh.1",
+      "type": "blocks",
+      "created_at": "2026-10-17T16:57:40.438667452Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
