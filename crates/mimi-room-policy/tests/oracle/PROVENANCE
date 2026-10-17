@@ -1,0 +1,22 @@
+# PROVENANCE: MediaType syntax oracle (decision mimid-1wgh.36)
+#
+# media_type_check.py is a hand transcription of RFC 6838 §4.2
+# (restricted-name), RFC 2045 §5.1 (token, tspecials) and RFC 5322 §3.2.4
+# (VCHAR / WSP inside a quoted-string) into Python regexes, written
+# without reference to the Rust code. Each case also carries a hand
+# verdict; the script fails on any disagreement. media_type_check.out is
+# its unmodified stdout.
+#
+# Regenerate: python3 -I media_type_check.py > media_type_check.out
+# Generated:  2026-10-17 with Python 3.12.3, standard library only.
+# Read by:    mimi-room-policy/tests/primitives.rs (offline).
+#
+# Sources (~/PROJECT/IETF/specs/):
+#   rfc6838.txt                       sha256 b08ccba7e5116e61085f2e1fe447d90eee785fb0efaa448a4b4ef6ea48b03b80
+#   rfc2045.txt                       sha256 9bb251635dd37fda97dcce6c08dea019432117a0f1e389051d2ecbf7b76350b0
+#   rfc5322.txt                       sha256 cb459acca15a2aa895863eaeff6f1d5b9c4ca15578ae3e3706f757787a385969
+#   draft-ietf-mls-extensions-10.txt  sha256 10ce29fb8d85a6cb80dc806bf58f26280a012c334c55be83b8d80018c8887b91
+#
+# Files:
+bbda5389d64b8a4a8de8ce5df8140553a9cb8ddd8d7d64031c1938ae2784dd3a  media_type_check.py
+62511d27e3b449d5eb64e0db25934f7f13010727e302a411606a977240cfe0d2  media_type_check.out

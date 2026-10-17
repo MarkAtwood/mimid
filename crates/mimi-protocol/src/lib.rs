@@ -18,19 +18,23 @@
 //!   conform to protocol-06's mutually authenticated TLS transport.
 //! - Only the primitives are implemented so far: [`Protocol`],
 //!   [`IdentifierUri`] and [`Utf8String`].
-//! - [`IdentifierUri`] is opaque bytes; URI syntax is not checked here.
+//! - [`IdentifierUri`] checks RFC 3986 `URI` syntax only (decision
+//!   mimid-1wgh.36). It does not check that a scheme is registered, that a
+//!   host resolves, or anything a specific URI scheme requires.
 //! - No per-field length caps beyond RFC 9420's 2^30 - 1 vector limit, which
 //!   tls_codec enforces. Callers bound total body size (decision
 //!   mimid-1wgh.5.34).
 
 #![forbid(unsafe_code)]
 
+mod identifier_uri;
 mod utf8_string;
 
+pub use identifier_uri::IdentifierUri;
 pub use tls_codec;
 pub use utf8_string::Utf8String;
 
-use tls_codec::{TlsDeserialize, TlsSerialize, TlsSize, VLBytes};
+use tls_codec::{TlsDeserialize, TlsSerialize, TlsSize};
 
 /// End-to-end protocol selector (protocol-06 §5).
 ///
@@ -43,18 +47,6 @@ use tls_codec::{TlsDeserialize, TlsSerialize, TlsSize, VLBytes};
 pub enum Protocol {
     /// MLS 1.0 (RFC 9420).
     Mls10 = 1,
-}
-
-/// A URI identifying a provider, user, client or room (protocol-06 §5.2).
-///
-/// Also used where the draft writes `IdentifierURI` or `RoomId`
-/// (decision mimid-1wgh.5.19). An empty `uri` is valid on the wire: a
-/// zero-length room ID means "absent" (decision mimid-1wgh.5.27). URI
-/// syntax is checked by consumers, not here (decision mimid-1wgh.5.35).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, TlsSerialize, TlsDeserialize, TlsSize)]
-pub struct IdentifierUri {
-    /// The URI bytes, uninterpreted.
-    pub uri: VLBytes,
 }
 
 /// Errors from constructing protocol-06 values.
@@ -70,4 +62,8 @@ pub enum Error {
     /// A [`Utf8String`] was not valid UTF-8 (protocol-06 §7.6).
     #[error("UTF8String is not valid UTF-8")]
     InvalidUtf8(#[source] std::string::FromUtf8Error),
+    /// An [`IdentifierUri`] was neither empty nor an RFC 3986 `URI`
+    /// (decision mimid-1wgh.36).
+    #[error("IdentifierUri is not an RFC 3986 URI")]
+    InvalidUri,
 }

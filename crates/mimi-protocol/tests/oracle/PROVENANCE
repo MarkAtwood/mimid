@@ -1,0 +1,21 @@
+# PROVENANCE: RFC 3986 URI oracle (decision mimid-1wgh.36)
+#
+# rfc3986_check.py is a hand transcription of RFC 3986 Appendix A (ABNF)
+# into a Python regex, written without reference to iri-string. Each case
+# also carries a hand verdict from the RFC text; the script fails on any
+# disagreement. rfc3986_check.out is its unmodified stdout.
+#
+# Regenerate: python3 -I rfc3986_check.py > rfc3986_check.out
+# Generated:  2026-10-17 with Python 3.12.3, standard library only.
+# Read by:    mimi-protocol/tests/primitives.rs and
+#             mimi-room-policy/tests/primitives.rs (both offline).
+#
+# Sources:
+#   RFC 3986  https://www.rfc-editor.org/rfc/rfc3986.txt
+#             sha256 3102dae4b68cebe40337730312fcb612297b8928547267e8b3d1ee6002b2d683
+#   RFC 5234  ~/PROJECT/IETF/specs/rfc5234.txt (Appendix B.1 core rules)
+#             sha256 fc871020f53baa6b60fc6835c557b433f38d53c5cc41ab56d03622b084f53a12
+#
+# Files:
+4baaf5651cfac1119cdd54a94fcaa1d7ffd456bc02f0b55ca65f0c606271c385  rfc3986_check.py
+f9c646b01be88fc3482cb177b1b0270a998e6cbd94567eafeb7e92f5389ed2a2  rfc3986_check.out

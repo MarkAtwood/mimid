@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Independent oracle for MediaType fields under decision mimid-1wgh.36.
+
+Rules, transcribed by hand from the RFC text (not from the Rust code):
+
+- TYPE: mls-extensions-10 §6.2.2 `type` is "an IANA top-level media type, a
+  "/" character, and the IANA media subtype". Each name is an RFC 6838 §4.2
+  restricted-name. It is never empty in room-policy-04: ext-10 §6.2.4 allows
+  a zero-length type only in ApplicationFraming, which room-policy does not
+  use.
+- PNAME: `parameter_name` is an RFC 2045 §5.1 `attribute := token`.
+- PVALUE: `parameter_value` is the RFC 2045 §5.1 `value := token /
+  quoted-string` with the quoting removed (ext-10 §6.2.2). The decoded content
+  of a quoted-string is read per RFC 5322 §3.2.4 (qtext, or a quoted-pair of
+  VCHAR / WSP), which ext-10 §6.2.2 itself cites: any of %x09 / %x20-7E,
+  possibly empty. RFC 822's obsolete quoted-pair of any CHAR (including NUL,
+  CR, LF) is not accepted.
+
+Usage: python3 -I media_type_check.py > media_type_check.out
+Output: one line per case, "<KIND><TAB>ACCEPT|REJECT<TAB><hex>", where <hex>
+is the lowercase hex of the case's UTF-8 bytes. The Rust tests in
+mimi-room-policy read the committed output file.
+
+Standard library only; offline.
+"""
+
+import re
+import sys
+
+# RFC 6838 §4.2.
+restricted_name_first = r"[A-Za-z0-9]"
+restricted_name_chars = r"[A-Za-z0-9!#$&\-^_.+]"
+restricted_name = rf"{restricted_name_first}{restricted_name_chars}{{0,126}}"
+TYPE = re.compile(rf"{restricted_name}/{restricted_name}", re.ASCII)
+
+# RFC 2045 §5.1: token := 1*<any (US-ASCII) CHAR except SPACE, CTLs, or
+# tspecials>. CTLs are %x00-1F and %x7F (RFC 822 §3.3), so the candidates
+# are %x21-7E minus tspecials.
+tspecials = '()<>@,;:\\"/[]?='
+token_chars = "".join(
+    re.escape(chr(c)) for c in range(0x21, 0x7F) if chr(c) not in tspecials
+)
+TOKEN = re.compile(rf"[{token_chars}]+", re.ASCII)
+
+# RFC 5322 §3.2.4 VCHAR / WSP.
+PVALUE = re.compile(r"[\t\x20-\x7e]*", re.ASCII)
+
+KINDS = {"TYPE": TYPE, "PNAME": TOKEN, "PVALUE": PVALUE}
+
+# (kind, value, hand verdict, reason)
+CASES = [
+    ("TYPE", "image/png", True, "ext-10 §6.2.2 example"),
+    ("TYPE", "text/plain", True, "ext-10 §6.2.2 example"),
+    ("TYPE", "application/json", True, "ext-10 §6.2.2 example"),
+    ("TYPE", "application/vnd.example.msgbus+cbor", True, "ext-10 §6.2.2 example"),
+    ("TYPE", "TEXT/Plain", True, "case is preserved, not folded"),
+    ("TYPE", "a/b", True, "one-character names"),
+    ("TYPE", "x" * 127 + "/" + "y" * 127, True, "127 characters each"),
+    ("TYPE", "a/b!#$&-^_.+", True, "every non-alphanumeric restricted-name-char"),
+    ("TYPE", "", False, "empty type not allowed in room-policy"),
+    ("TYPE", "image", False, "no subtype"),
+    ("TYPE", "image/", False, "empty subtype"),
+    ("TYPE", "/png", False, "empty top-level type"),
+    ("TYPE", "image/png/x", False, "second /"),
+    ("TYPE", "image/ png", False, "space"),
+    ("TYPE", "-a/b", False, "first char must be ALPHA / DIGIT"),
+    ("TYPE", "a/.b", False, "first char must be ALPHA / DIGIT"),
+    ("TYPE", "x" * 128 + "/b", False, "128-character name"),
+    ("TYPE", "a/" + "y" * 128, False, "128-character subtype"),
+    ("TYPE", "a/b;c=d", False, "parameters do not belong in type"),
+    ("TYPE", "a/b*", False, "* is not a restricted-name-char"),
+    ("TYPE", "a/b\x00", False, "null byte"),
+    ("TYPE", "téxt/plain", False, "raw non-ASCII"),
+    ("TYPE", "text/plain‮", False, "U+202E"),
+    ("TYPE", "text/plain​", False, "U+200B"),
+    ("PNAME", "charset", True, "ext-10 §6.2.2 example"),
+    ("PNAME", "title*", True, "RFC 2231 extended name is a token"),
+    ("PNAME", "x-foo", True, "token"),
+    ("PNAME", "!#$%&'*+-.^_`{|}~", True, "every non-alphanumeric token char"),
+    ("PNAME", "", False, "token is 1*"),
+    ("PNAME", "char set", False, "space"),
+    ("PNAME", "a=b", False, "= is a tspecial"),
+    ("PNAME", "a;b", False, "; is a tspecial"),
+    ("PNAME", 'a"', False, '" is a tspecial'),
+    ("PNAME", "a/b", False, "/ is a tspecial"),
+    ("PNAME", "a\tb", False, "HTAB is a CTL"),
+    ("PNAME", "a\x00", False, "null byte"),
+    ("PNAME", "\x7f", False, "DEL is a CTL"),
+    ("PNAME", "é", False, "raw non-ASCII"),
+    ("PNAME", "a​", False, "U+200B"),
+    ("PVALUE", "UTF-8", True, "ext-10 §6.2.2 example, quotes removed"),
+    ("PVALUE", "", True, 'quoted-string "" decodes to empty'),
+    ("PVALUE", "a b", True, "space, from a quoted-string"),
+    ("PVALUE", 'a"b', True, 'quoted-pair \\" decodes to "'),
+    ("PVALUE", "a\\b", True, "quoted-pair \\\\ decodes to \\"),
+    ("PVALUE", "(x)=;/?", True, "tspecials, from a quoted-string"),
+    ("PVALUE", "a\tb", True, "HTAB is WSP"),
+    ("PVALUE", "\x00", False, "null byte"),
+    ("PVALUE", "a\r\nb", False, "CR LF"),
+    ("PVALUE", "\n", False, "LF"),
+    ("PVALUE", "\x7f", False, "DEL"),
+    ("PVALUE", "é", False, "raw non-ASCII"),
+    ("PVALUE", "‮", False, "U+202E"),
+    ("PVALUE", "​", False, "U+200B"),
+]
+
+
+def main():
+    out = [
+        "# Generated by media_type_check.py; do not edit by hand.",
+        "# Format: TYPE|PNAME|PVALUE <TAB> ACCEPT|REJECT <TAB> lowercase hex of the UTF-8 bytes.",
+    ]
+    mismatches = 0
+    for kind, value, expected, reason in CASES:
+        got = KINDS[kind].fullmatch(value) is not None
+        if got != expected:
+            mismatches += 1
+            print(f"MISMATCH {kind} {value!r}: regex {got}, hand {expected} ({reason})", file=sys.stderr)
+        verdict = "ACCEPT" if got else "REJECT"
+        out.append(f"{kind}\t{verdict}\t{value.encode('utf-8').hex()}")
+    if mismatches:
+        sys.exit(1)
+    print("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()

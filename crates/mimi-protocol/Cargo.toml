@@ -8,3 +8,4 @@ description = "draft-ietf-mimi-protocol-06 wire types for the mimid MIMI referen
 [dependencies]
 thiserror.workspace = true
 tls_codec.workspace = true
+iri-string.workspace = true

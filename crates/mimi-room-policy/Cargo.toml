@@ -7,3 +7,5 @@ description = "draft-ietf-mimi-room-policy-04 codecs and policy evaluation for m
 
 [dependencies]
 tls_codec.workspace = true
+iri-string.workspace = true
+thiserror.workspace = true
