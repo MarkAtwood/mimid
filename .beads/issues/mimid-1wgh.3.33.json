@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.33",
+  "title": "P19: MediaType parameter_value is RFC 5322 quoted-string content",
+  "description": "mls-extensions-10 §6.2.2 stores a parameter value with quotes and quoted-pair backslashes removed, so a token-only rule (RFC 2045) contradicts it. Readings: (a) RFC 822 quoted-pair (any ASCII incl. NUL/CR/LF); (b) RFC 5322 §3.2.4 (cited by ext-10 §8): VCHAR/WSP, i.e. %x09 / %x20-7E, possibly empty; (c) token only. Chosen: (b). Rationale: matches the reference ext-10 itself cites; excludes NUL and CR/LF injection.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T19:03:49.420019154Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T19:03:49.573857114Z",
+  "closed_at": "2026-10-17T19:03:49.573857114Z",
+  "close_reason": "Recorded during mimid-1wgh.35 / mimid-1wgh.4.2",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.33",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-17T19:03:49.439299107Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
