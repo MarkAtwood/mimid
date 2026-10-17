@@ -7,3 +7,6 @@
 
 # Rust build output
 /target/
+
+# Claude Code agent worktrees
+/.claude/worktrees/
