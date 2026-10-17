@@ -30,3 +30,15 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
 toml = "1.1.8"
+
+# Our OpenMLS branch: v0.9.1 plus the GREASE KeyPackage extension fix
+# (decision mimid-1wgh.4.11). Every openmls-family crate comes from the same
+# commit so they share one openmls_traits; all but openmls are unchanged.
+[patch.crates-io]
+openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "5abd9e086ca3f8134982c5ea8cab37a228f4ca26" }
+openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "5abd9e086ca3f8134982c5ea8cab37a228f4ca26" }
+openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "5abd9e086ca3f8134982c5ea8cab37a228f4ca26" }
+openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "5abd9e086ca3f8134982c5ea8cab37a228f4ca26" }
+openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "5abd9e086ca3f8134982c5ea8cab37a228f4ca26" }
+openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "5abd9e086ca3f8134982c5ea8cab37a228f4ca26" }
+openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "5abd9e086ca3f8134982c5ea8cab37a228f4ca26" }
