@@ -1,1 +1,894 @@
 //! Group membership for a client: create, join, commit, process and send.
+//!
+//! A [`Member`] is one client's view of one MLS group (RFC 9420). It wraps
+//! an OpenMLS group, and every MLS message crosses its API as TLS-encoded
+//! bytes.
+//!
+//! The [`Member`] does not own the [`Identity`] whose leaf it is. Every
+//! method that needs keys or storage takes that [`Identity`] as an argument,
+//! so one client can be a member of many groups. Passing an identity that
+//! does not own the group's leaf fails with [`MemberError::WrongIdentity`].
+//!
+//! # Wire formats
+//!
+//! Commits and proposals go out as PublicMessage, so that the hub can
+//! validate them. Application data always goes out as PrivateMessage.
+//! Incoming messages may use either wire format. SemiPrivateMessage is not
+//! supported (design for mimid-1wgh.4, decision DR-7).
+//!
+//! # Application data
+//!
+//! The group's `app_data_dictionary` GroupContext extension
+//! (mls-extensions-10 §4.6) is set by [`Member::create`] and changed only
+//! through AppDataUpdate proposals (§4.7). This module enforces the §4.7
+//! validity rules. What a component's data means, and how an update changes
+//! it, is up to the caller's `apply` function (see [`ComponentOp`]).
+//!
+//! # Safe AAD
+//!
+//! When the GroupContext carries the `safe_aad` component, the whole
+//! `authenticated_data` of every message is a SafeAAD struct
+//! (mls-extensions-10 §4.9, decision mimid-1wgh.4.17). This module never
+//! sends raw authenticated data, and rejects incoming messages with bytes
+//! after the SafeAAD struct.
+//!
+//! # Limitations
+//!
+//! - A [`Member`] cannot be reloaded from the [`Store`](crate::Store) after
+//!   a restart.
+//! - Messages from an earlier epoch cannot be decrypted once a Commit has
+//!   been merged (OpenMLS keeps no past epoch secrets by default).
+//! - While a proposal received through [`Member::process`] is pending, OpenMLS
+//!   refuses to [`send`](Member::send) until a Commit covers it.
+//! - AppDataUpdate proposals are supported only inline in this member's own
+//!   Commits and in Commits it receives. Sending a standalone AppDataUpdate
+//!   proposal is not supported.
+
+use openmls::component::{ComponentData, ComponentId};
+use openmls::framing::SafeAadItem;
+use openmls::grease::random_grease_value;
+use openmls::group::{
+    AppDataDictionaryUpdater, MIXED_PLAINTEXT_WIRE_FORMAT_POLICY, MlsGroup, MlsGroupJoinConfig,
+    StagedCommit, StagedWelcome,
+};
+use openmls::messages::proposals::{AppDataUpdateOperation, AppDataUpdateProposal, Proposal};
+use openmls::prelude::{
+    AppDataDictionary, AppDataDictionaryExtension, BasicCredential, Credential, Extension,
+    Extensions, GroupId, KeyPackageIn, LeafNodeIndex, MlsMessageBodyIn, MlsMessageIn,
+    OpenMlsProvider, ProcessedMessage, ProcessedMessageContent, ProtocolVersion, RatchetTreeIn,
+};
+use tls_codec::{Deserialize, Serialize};
+
+use crate::identity::{CIPHERSUITE, leaf_capabilities, leaf_extensions};
+use crate::{ErrorSource, Identity};
+
+/// An external sender for the GroupContext `external_senders` extension
+/// (RFC 9420 §12.1.8.1), with a BasicCredential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalSender {
+    /// The sender's signature public key.
+    pub signature_key: Vec<u8>,
+    /// The BasicCredential `identity` (RFC 9420 §5.3).
+    pub identity: Vec<u8>,
+}
+
+/// One operation on a component's data, carried in an AppDataUpdate proposal
+/// (mls-extensions-10 §4.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppDataUpdate {
+    /// `op = update`: the opaque `update` is interpreted by the component.
+    Update {
+        /// The component whose data changes.
+        component_id: ComponentId,
+        /// The component-defined update.
+        update: Vec<u8>,
+    },
+    /// `op = remove`: the component's data is removed.
+    Remove {
+        /// The component whose data is removed.
+        component_id: ComponentId,
+    },
+}
+
+/// The operation the `apply` function of [`Member::commit`] and
+/// [`Member::process`] is asked to judge, for one component.
+///
+/// `apply(component_id, current_data, op)` must return:
+/// - for [`ComponentOp::Update`], `Ok(Some(new_data))`;
+/// - for [`ComponentOp::Remove`], `Ok(None)`;
+/// - `Err(_)` if the component is unknown or the update is invalid.
+///
+/// Any other answer makes the proposal list invalid
+/// (mls-extensions-10 §4.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComponentOp<'a> {
+    /// The `update` fields of every update proposal for the component, in
+    /// the order they appear in the Commit.
+    Update(&'a [&'a [u8]]),
+    /// A single remove proposal. The component has data at this point.
+    Remove,
+}
+
+/// Who sent a message (RFC 9420 §6, `Sender`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Sender {
+    /// A member, by leaf index.
+    Member(u32),
+    /// An external sender, by index into `external_senders`.
+    External(u32),
+    /// A new member proposing to join.
+    NewMemberProposal,
+    /// A new member joining by external Commit.
+    NewMemberCommit,
+}
+
+/// What a merged Commit changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CommitSummary {
+    /// Who sent the Commit.
+    pub committer: Sender,
+    /// The epoch the group is in after the Commit.
+    pub epoch: u64,
+    /// BasicCredential identities of the members added.
+    pub added: Vec<Vec<u8>>,
+    /// Leaf indices, in the previous epoch, of the members removed.
+    pub removed: Vec<u32>,
+    /// Whether this member was removed. The group is then inactive.
+    pub self_removed: bool,
+    /// Components whose data an AppDataUpdate proposal changed, ascending.
+    pub components: Vec<ComponentId>,
+}
+
+/// The result of [`Member::process`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Incoming {
+    /// Decrypted application data.
+    Application {
+        /// The sender's leaf index.
+        sender: u32,
+        /// The sender's BasicCredential identity.
+        sender_identity: Vec<u8>,
+        /// The application data.
+        data: Vec<u8>,
+        /// The SafeAAD items (mls-extensions-10 §4.9), in ascending
+        /// component order. Empty when the group does not use Safe AAD.
+        safe_aad: Vec<(ComponentId, Vec<u8>)>,
+    },
+    /// A proposal, now stored until a Commit covers it.
+    Proposal {
+        /// Who sent the proposal.
+        sender: Sender,
+    },
+    /// A Commit, now merged.
+    Commit(CommitSummary),
+    /// A PrivateMessage this member sent itself. It cannot be decrypted and
+    /// needs no action.
+    OwnMessage,
+}
+
+/// The messages produced by [`Member::commit`], each a TLS-encoded
+/// `MLSMessage` (RFC 9420 §6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CommitBundle {
+    /// The Commit, as a PublicMessage.
+    pub commit: Vec<u8>,
+    /// The Welcome for added members, if any were added.
+    pub welcome: Option<Vec<u8>>,
+    /// The GroupInfo for the new epoch, if OpenMLS produced one.
+    pub group_info: Option<Vec<u8>>,
+}
+
+/// Errors returned by [`Member`].
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum MemberError {
+    /// The [`Identity`] passed in does not own this member's leaf.
+    #[error("the identity does not own this group member's leaf")]
+    WrongIdentity,
+    /// Building the identity's LeafNode material failed.
+    #[error("cannot build the LeafNode")]
+    Identity(#[source] crate::Error),
+    /// Two initial components share an id (mls-extensions-10 §4.6).
+    #[error("component {0:#06x} is given more than once")]
+    DuplicateComponent(ComponentId),
+    /// The group could not be created.
+    #[error("cannot create the group")]
+    Create(#[source] ErrorSource),
+    /// The input is not a well-formed TLS encoding of the expected type.
+    #[error("cannot decode the MLS input")]
+    Decode(#[source] ErrorSource),
+    /// The input decoded, but is not the kind of message this call takes.
+    #[error("unexpected MLS message type")]
+    UnexpectedMessage,
+    /// A KeyPackage failed validation (RFC 9420 §10.1).
+    #[error("invalid KeyPackage")]
+    InvalidKeyPackage(#[source] ErrorSource),
+    /// The Welcome could not be processed.
+    #[error("cannot join from the Welcome")]
+    Join(#[source] ErrorSource),
+    /// The Commit could not be built.
+    #[error("cannot build the Commit")]
+    Commit(#[source] ErrorSource),
+    /// The message failed MLS validation or decryption. The group state is
+    /// unchanged.
+    #[error("the MLS message is invalid")]
+    Process(#[source] ErrorSource),
+    /// `authenticated_data` has bytes after the SafeAAD struct
+    /// (mls-extensions-10 §4.9, decision mimid-1wgh.4.17). The group state
+    /// is unchanged.
+    #[error("bytes follow the SafeAAD struct")]
+    TrailingAad,
+    /// SafeAAD items were given, but the group does not use Safe AAD.
+    #[error("the group does not use Safe AAD")]
+    SafeAadNotEnabled,
+    /// SafeAAD items are not in strictly ascending component order.
+    #[error("invalid SafeAAD items")]
+    InvalidSafeAad(#[source] ErrorSource),
+    /// The AppDataUpdate proposals for a component are invalid under
+    /// mls-extensions-10 §4.7.
+    #[error("invalid AppDataUpdate proposals for component {0:#06x}")]
+    InvalidAppDataUpdate(ComponentId),
+    /// The `apply` function rejected the AppDataUpdate proposals for a
+    /// component.
+    #[error("component {component_id:#06x} rejected its AppDataUpdate")]
+    AppDataRejected {
+        /// The component.
+        component_id: ComponentId,
+        /// Why `apply` rejected it.
+        #[source]
+        source: ErrorSource,
+    },
+    /// The application message could not be created.
+    #[error("cannot create the application message")]
+    Send(#[source] ErrorSource),
+    /// A Commit or proposal could not be stored or merged.
+    #[error("cannot update the group state")]
+    Merge(#[source] ErrorSource),
+    /// A secret could not be exported.
+    #[error("cannot export a secret")]
+    Export(#[source] ErrorSource),
+    /// A structure could not be TLS-encoded.
+    #[error("cannot encode an MLS structure")]
+    Encode(#[source] ErrorSource),
+}
+
+/// One client's membership in one MLS group.
+pub struct Member {
+    group: MlsGroup,
+    /// The signature public key of the [`Identity`] that owns this member.
+    /// Kept here because the leaf is gone from the tree after a removal.
+    owner_signature_key: Vec<u8>,
+}
+
+impl Member {
+    /// Creates a group with `group_id`, with this identity as its only
+    /// member, in epoch 0.
+    ///
+    /// The GroupContext carries `external_senders` (RFC 9420 §12.1.8.1) if
+    /// any are given, and an `app_data_dictionary` holding `components`
+    /// (mls-extensions-10 §4.6) if any are given. Including the `safe_aad`
+    /// component (0x0002) turns on Safe AAD framing for the group (§4.9).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::DuplicateComponent`] if a component id repeats,
+    /// [`MemberError::Identity`] if the LeafNode material cannot be built,
+    /// and [`MemberError::Create`] if OpenMLS rejects the group.
+    pub fn create(
+        identity: &Identity,
+        group_id: &[u8],
+        external_senders: &[ExternalSender],
+        components: &[(ComponentId, Vec<u8>)],
+    ) -> Result<Self, MemberError> {
+        let provider = identity.provider();
+        let rand = provider.rand();
+
+        // required_capabilities is left to the protocol layer (decision
+        // mimid-1wgh.4.33).
+        let mut extensions = Vec::with_capacity(2);
+        if !external_senders.is_empty() {
+            let senders = external_senders
+                .iter()
+                .map(|sender| {
+                    openmls::prelude::ExternalSender::new(
+                        sender.signature_key.clone().into(),
+                        BasicCredential::new(sender.identity.clone()).into(),
+                    )
+                })
+                .collect();
+            extensions.push(Extension::ExternalSenders(senders));
+        }
+        if !components.is_empty() {
+            let mut dictionary = AppDataDictionary::new();
+            for (component_id, data) in components {
+                if dictionary.contains(component_id) {
+                    return Err(MemberError::DuplicateComponent(*component_id));
+                }
+                dictionary.insert(*component_id, data.clone());
+            }
+            extensions.push(Extension::AppDataDictionary(
+                AppDataDictionaryExtension::new(dictionary),
+            ));
+        }
+        let extensions =
+            Extensions::from_vec(extensions).map_err(|e| MemberError::Create(e.into()))?;
+
+        let group = MlsGroup::builder()
+            .with_group_id(GroupId::from_slice(group_id))
+            .ciphersuite(CIPHERSUITE)
+            .with_wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
+            .with_capabilities(leaf_capabilities(rand, random_grease_value(rand)))
+            .with_leaf_node_extensions(leaf_extensions(rand).map_err(MemberError::Identity)?)
+            .map_err(|e| MemberError::Create(e.into()))?
+            .with_group_context_extensions(extensions)
+            .build(
+                provider,
+                identity.signer(),
+                identity.credential_with_key().clone(),
+            )
+            .map_err(|e| MemberError::Create(e.into()))?;
+        Ok(Self {
+            group,
+            owner_signature_key: identity.signature_public_key().to_vec(),
+        })
+    }
+
+    /// Joins a group from a TLS-encoded `MLSMessage` carrying a Welcome
+    /// (RFC 9420 §12.4.3.1), using a KeyPackage this identity published.
+    ///
+    /// `ratchet_tree` is a TLS-encoded ratchet tree (RFC 9420 §12.4.3.3),
+    /// needed when the Welcome's GroupInfo has no `ratchet_tree` extension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Decode`] for malformed input,
+    /// [`MemberError::UnexpectedMessage`] if the message is not a Welcome,
+    /// and [`MemberError::Join`] if the Welcome cannot be processed.
+    pub fn join_welcome(
+        identity: &Identity,
+        welcome: &[u8],
+        ratchet_tree: Option<&[u8]>,
+    ) -> Result<Self, MemberError> {
+        let message = MlsMessageIn::tls_deserialize_exact(welcome)
+            .map_err(|e| MemberError::Decode(e.into()))?;
+        let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
+            return Err(MemberError::UnexpectedMessage);
+        };
+        let ratchet_tree = ratchet_tree
+            .map(RatchetTreeIn::tls_deserialize_exact)
+            .transpose()
+            .map_err(|e| MemberError::Decode(e.into()))?;
+        let config = MlsGroupJoinConfig::builder()
+            .wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
+            .build();
+        let provider = identity.provider();
+        let group = StagedWelcome::new_from_welcome(provider, &config, welcome, ratchet_tree)
+            .map_err(|e| MemberError::Join(e.into()))?
+            .into_group(provider)
+            .map_err(|e| MemberError::Join(e.into()))?;
+        // The Welcome was decrypted with this identity's KeyPackage, so the
+        // new leaf belongs to it.
+        Ok(Self {
+            group,
+            owner_signature_key: identity.signature_public_key().to_vec(),
+        })
+    }
+
+    /// Builds a Commit that adds the TLS-encoded `KeyPackage`s in `adds`
+    /// (without an `MLSMessage` wrapper, as [`Identity::key_package`]
+    /// returns them), removes the members at leaf indices `removes`, applies
+    /// `app_updates`, and covers any stored proposals.
+    ///
+    /// `apply` computes the new component data for `app_updates` and any
+    /// stored AppDataUpdate proposals; see [`ComponentOp`]. Proposals for one
+    /// component are given to `apply` in the order OpenMLS puts them in the
+    /// Commit: stored proposals, then `app_updates` in order (decision
+    /// mimid-1wgh.4.34).
+    ///
+    /// The Commit is pending until [`Member::process`] sees it come back
+    /// from the hub, or [`Member::merge_pending_commit`] is called. If the
+    /// hub rejects it, call [`Member::clear_pending_commit`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::InvalidKeyPackage`] if a KeyPackage is
+    /// malformed or invalid, [`MemberError::InvalidAppDataUpdate`] or
+    /// [`MemberError::AppDataRejected`] if the AppDataUpdate proposals are
+    /// invalid, and [`MemberError::Commit`] if OpenMLS cannot build the
+    /// Commit. The group state is unchanged on error.
+    pub fn commit<E>(
+        &mut self,
+        identity: &Identity,
+        adds: &[&[u8]],
+        removes: &[u32],
+        app_updates: &[AppDataUpdate],
+        mut apply: impl FnMut(ComponentId, Option<&[u8]>, ComponentOp<'_>) -> Result<Option<Vec<u8>>, E>,
+    ) -> Result<CommitBundle, MemberError>
+    where
+        E: Into<ErrorSource>,
+    {
+        self.check_identity(identity)?;
+        let provider = identity.provider();
+
+        let key_packages = adds
+            .iter()
+            .map(|bytes| {
+                KeyPackageIn::tls_deserialize_exact(bytes)
+                    .map_err(|e| MemberError::InvalidKeyPackage(e.into()))?
+                    .validate(provider.crypto(), ProtocolVersion::Mls10)
+                    .map_err(|e| MemberError::InvalidKeyPackage(e.into()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let proposals = app_updates.iter().map(|update| {
+            let proposal = match update {
+                AppDataUpdate::Update {
+                    component_id,
+                    update,
+                } => AppDataUpdateProposal::update(*component_id, update.clone()),
+                AppDataUpdate::Remove { component_id } => {
+                    AppDataUpdateProposal::remove(*component_id)
+                }
+            };
+            Proposal::AppDataUpdate(Box::new(proposal))
+        });
+
+        let mut builder = self
+            .group
+            .commit_builder()
+            .propose_adds(key_packages)
+            .propose_removals(removes.iter().copied().map(LeafNodeIndex::new))
+            .add_proposals(proposals)
+            .load_psks(provider.storage())
+            .map_err(|e| MemberError::Commit(e.into()))?;
+
+        let app_data_proposals: Vec<AppDataUpdateProposal> =
+            builder.app_data_update_proposals().cloned().collect();
+        if !app_data_proposals.is_empty() {
+            let mut updater = builder.app_data_dictionary_updater();
+            resolve_app_data_updates(&mut updater, &app_data_proposals, &mut apply)?;
+            let changes = updater.changes();
+            builder.with_app_data_dictionary_updates(changes);
+        }
+
+        let bundle = builder
+            .build(
+                provider.rand(),
+                provider.crypto(),
+                identity.signer(),
+                |_| true,
+            )
+            .map_err(|e| MemberError::Commit(e.into()))?
+            .stage_commit(provider)
+            .map_err(|e| MemberError::Commit(e.into()))?;
+        let (commit, welcome, group_info) = bundle.into_messages();
+        Ok(CommitBundle {
+            commit: encode(&commit)?,
+            welcome: welcome.as_ref().map(encode).transpose()?,
+            group_info: group_info.as_ref().map(encode).transpose()?,
+        })
+    }
+
+    /// Merges this member's pending Commit, after the hub accepted it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Merge`] if the merge fails, for example after
+    /// this member was removed.
+    pub fn merge_pending_commit(&mut self, identity: &Identity) -> Result<(), MemberError> {
+        self.check_identity(identity)?;
+        self.group
+            .merge_pending_commit(identity.provider())
+            .map_err(|e| MemberError::Merge(e.into()))
+    }
+
+    /// Discards this member's pending Commit, after the hub rejected it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Merge`] if the state cannot be stored.
+    pub fn clear_pending_commit(&mut self, identity: &Identity) -> Result<(), MemberError> {
+        self.check_identity(identity)?;
+        self.group
+            .clear_pending_commit(identity.provider().storage())
+            .map_err(|e| MemberError::Merge(e.into()))
+    }
+
+    /// Processes one TLS-encoded `MLSMessage` carrying a PublicMessage or
+    /// PrivateMessage for this group.
+    ///
+    /// Commits are merged and proposals are stored before this returns. A
+    /// Commit carrying AppDataUpdate proposals is resolved with `apply`; see
+    /// [`ComponentOp`]. When this member's own pending Commit comes back, it
+    /// is merged.
+    ///
+    /// On any error the group state is left as it was: a message that fails
+    /// to decrypt or validate never deletes group state. Marking the group
+    /// out of sync when the hub accepted a Commit this member rejects is
+    /// mimid-1wgh.4.37.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Decode`] or [`MemberError::UnexpectedMessage`]
+    /// for input that is not a group message, [`MemberError::Process`] if MLS
+    /// validation or decryption fails, [`MemberError::TrailingAad`] if bytes
+    /// follow the SafeAAD struct, [`MemberError::InvalidAppDataUpdate`] or
+    /// [`MemberError::AppDataRejected`] for invalid AppDataUpdate proposals,
+    /// and [`MemberError::Merge`] if the new state cannot be stored.
+    pub fn process<E>(
+        &mut self,
+        identity: &Identity,
+        message: &[u8],
+        mut apply: impl FnMut(ComponentId, Option<&[u8]>, ComponentOp<'_>) -> Result<Option<Vec<u8>>, E>,
+    ) -> Result<Incoming, MemberError>
+    where
+        E: Into<ErrorSource>,
+    {
+        self.check_identity(identity)?;
+        let provider = identity.provider();
+        let message = MlsMessageIn::tls_deserialize_exact(message)
+            .map_err(|e| MemberError::Decode(e.into()))?
+            .try_into_protocol_message()
+            .map_err(|_| MemberError::UnexpectedMessage)?;
+        let processed = self
+            .group
+            .process_message(provider, message)
+            .map_err(|e| MemberError::Process(e.into()))?;
+        // mls-extensions-10 §4.9: the whole authenticated_data is SafeAAD.
+        // Checked before anything is stored or merged.
+        // OpenMLS parses a SafeAAD prefix exactly when the group requires it.
+        // Without Safe AAD, authenticated_data is accepted but not surfaced
+        // (decision mimid-1wgh.4.32).
+        if processed.safe_aad().is_some() && !processed.tail_aad().is_empty() {
+            return Err(MemberError::TrailingAad);
+        }
+
+        let sender = convert_sender(processed.sender())?;
+        let safe_aad: Vec<(ComponentId, Vec<u8>)> = processed
+            .safe_aad()
+            .map(|aad| {
+                aad.items()
+                    .iter()
+                    .map(|item| (item.component_id(), item.data().to_vec()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let sender_identity = basic_identity(processed.credential());
+        let processed = self.resolve(provider, processed, &mut apply)?;
+
+        match processed.into_content() {
+            ProcessedMessageContent::ApplicationMessage(message) => {
+                let Sender::Member(sender) = sender else {
+                    return Err(MemberError::UnexpectedMessage);
+                };
+                Ok(Incoming::Application {
+                    sender,
+                    sender_identity,
+                    data: message.into_bytes(),
+                    safe_aad,
+                })
+            }
+            ProcessedMessageContent::ProposalMessage(proposal)
+            | ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
+                self.group
+                    .store_pending_proposal(provider.storage(), *proposal)
+                    .map_err(|e| MemberError::Merge(e.into()))?;
+                Ok(Incoming::Proposal { sender })
+            }
+            ProcessedMessageContent::StagedCommitMessage(staged) => {
+                let summary = self.summarize(sender, &staged);
+                self.group
+                    .merge_staged_commit(provider, *staged)
+                    .map_err(|e| MemberError::Merge(e.into()))?;
+                Ok(Incoming::Commit(summary))
+            }
+            ProcessedMessageContent::OwnPendingCommit => {
+                let summary = self
+                    .group
+                    .pending_commit()
+                    .map(|staged| self.summarize(sender, staged))
+                    .ok_or(MemberError::UnexpectedMessage)?;
+                self.group
+                    .merge_pending_commit(provider)
+                    .map_err(|e| MemberError::Merge(e.into()))?;
+                Ok(Incoming::Commit(summary))
+            }
+            ProcessedMessageContent::OwnPrivateMessage => Ok(Incoming::OwnMessage),
+            _ => Err(MemberError::UnexpectedMessage),
+        }
+    }
+
+    /// Encrypts `data` as an application message (a TLS-encoded `MLSMessage`
+    /// carrying a PrivateMessage).
+    ///
+    /// When the group uses Safe AAD, `safe_aad` becomes the message's
+    /// `authenticated_data`, as a SafeAAD struct (mls-extensions-10 §4.9);
+    /// its items must be in strictly ascending component order. Otherwise
+    /// `safe_aad` must be empty, and `authenticated_data` is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::SafeAadNotEnabled`] or
+    /// [`MemberError::InvalidSafeAad`] for unusable `safe_aad`, and
+    /// [`MemberError::Send`] if OpenMLS refuses, for example while a
+    /// proposal or Commit is pending.
+    pub fn send(
+        &mut self,
+        identity: &Identity,
+        data: &[u8],
+        safe_aad: &[(ComponentId, Vec<u8>)],
+    ) -> Result<Vec<u8>, MemberError> {
+        self.check_identity(identity)?;
+        let safe_aad_required = self
+            .group
+            .public_group()
+            .group_context()
+            .safe_aad_required();
+        if safe_aad_required {
+            let items = safe_aad
+                .iter()
+                .map(|(component_id, data)| SafeAadItem::new(*component_id, data.clone()))
+                .collect();
+            self.group
+                .set_safe_aad(items)
+                .map_err(|e| MemberError::InvalidSafeAad(e.into()))?;
+        } else if !safe_aad.is_empty() {
+            return Err(MemberError::SafeAadNotEnabled);
+        }
+        // Raw authenticated data is never set: with Safe AAD the SafeAAD
+        // struct is all of it (decision mimid-1wgh.4.17).
+        let result = self
+            .group
+            .create_message(identity.provider(), identity.signer(), data);
+        match result {
+            Ok(message) => encode(&message),
+            Err(e) => {
+                // OpenMLS keeps staged items after a failure. Clear them so
+                // they cannot leak into a later Commit.
+                if safe_aad_required {
+                    self.group
+                        .set_safe_aad(Vec::new())
+                        .map_err(|e| MemberError::InvalidSafeAad(e.into()))?;
+                }
+                Err(MemberError::Send(e.into()))
+            }
+        }
+    }
+
+    /// The data of a component in the GroupContext `app_data_dictionary`.
+    pub fn component(&self, component_id: ComponentId) -> Option<&[u8]> {
+        self.group
+            .extensions()
+            .app_data_dictionary()
+            .and_then(|extension| extension.dictionary().get(&component_id))
+    }
+
+    /// The group ID.
+    pub fn group_id(&self) -> &[u8] {
+        self.group.group_id().as_slice()
+    }
+
+    /// The current epoch.
+    pub fn epoch(&self) -> u64 {
+        self.group.epoch().as_u64()
+    }
+
+    /// This member's leaf index.
+    pub fn own_leaf_index(&self) -> u32 {
+        self.group.own_leaf_index().u32()
+    }
+
+    /// Whether this member is still in the group.
+    pub fn is_active(&self) -> bool {
+        self.group.is_active()
+    }
+
+    /// The current members as (leaf index, BasicCredential identity).
+    pub fn members(&self) -> Vec<(u32, Vec<u8>)> {
+        self.group
+            .members()
+            .map(|member| (member.index.u32(), basic_identity(&member.credential)))
+            .collect()
+    }
+
+    /// The current epoch's `epoch_authenticator` (RFC 9420 §8.7).
+    pub fn epoch_authenticator(&self) -> &[u8] {
+        self.group.epoch_authenticator().as_slice()
+    }
+
+    /// `MLS-Exporter(label, context, length)` for the current epoch
+    /// (RFC 9420 §8.5).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Export`] if the export fails, for example
+    /// after this member was removed.
+    pub fn export_secret(
+        &self,
+        identity: &Identity,
+        label: &str,
+        context: &[u8],
+        length: usize,
+    ) -> Result<Vec<u8>, MemberError> {
+        self.check_identity(identity)?;
+        self.group
+            .export_secret(identity.provider().crypto(), label, context, length)
+            .map_err(|e| MemberError::Export(e.into()))
+    }
+
+    /// The TLS-encoded ratchet tree (RFC 9420 §12.4.3.3), for joiners whose
+    /// Welcome has no `ratchet_tree` extension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Encode`] if the tree cannot be encoded.
+    pub fn ratchet_tree(&self) -> Result<Vec<u8>, MemberError> {
+        self.group
+            .export_ratchet_tree()
+            .tls_serialize_detached()
+            .map_err(|e| MemberError::Encode(e.into()))
+    }
+
+    /// Fails unless `identity` owns this member.
+    fn check_identity(&self, identity: &Identity) -> Result<(), MemberError> {
+        if self.owner_signature_key == identity.signature_public_key() {
+            Ok(())
+        } else {
+            Err(MemberError::WrongIdentity)
+        }
+    }
+
+    /// Stages a Commit that carries AppDataUpdate proposals, after `apply`
+    /// has resolved them. Any other message is returned unchanged.
+    fn resolve<E: Into<ErrorSource>>(
+        &self,
+        provider: &crate::store::Provider,
+        processed: ProcessedMessage,
+        apply: &mut impl FnMut(
+            ComponentId,
+            Option<&[u8]>,
+            ComponentOp<'_>,
+        ) -> Result<Option<Vec<u8>>, E>,
+    ) -> Result<ProcessedMessage, MemberError> {
+        let ProcessedMessageContent::UnresolvedAppDataCommit(unresolved) = processed.content()
+        else {
+            return Ok(processed);
+        };
+        let proposals: Vec<AppDataUpdateProposal> =
+            unresolved.app_data_update_proposals().cloned().collect();
+        let mut updater = self.group.app_data_dictionary_updater();
+        resolve_app_data_updates(&mut updater, &proposals, apply)?;
+        let changes = updater.changes();
+        self.group
+            .resolve_app_data_commit(provider, processed, changes)
+            .map_err(|e| MemberError::Process(e.into()))
+    }
+
+    /// Describes a staged Commit, before it is merged.
+    fn summarize(&self, committer: Sender, staged: &StagedCommit) -> CommitSummary {
+        let added = staged
+            .add_proposals()
+            .map(|add| basic_identity(add.add_proposal().key_package().leaf_node().credential()))
+            .collect();
+        let removed = staged
+            .remove_proposals()
+            .map(|remove| remove.remove_proposal().removed().u32())
+            .collect();
+        let mut components: Vec<ComponentId> = staged
+            .app_data_update_proposals()
+            .map(|queued| queued.app_data_update_proposal().component_id())
+            .collect();
+        components.sort_unstable();
+        components.dedup();
+        CommitSummary {
+            committer,
+            epoch: staged.epoch().as_u64(),
+            added,
+            removed,
+            self_removed: staged.self_removed(),
+            components,
+        }
+    }
+}
+
+impl std::fmt::Debug for Member {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The OpenMLS group holds epoch secrets, so it is not printed.
+        f.debug_struct("Member")
+            .field("group_id", &self.group_id())
+            .field("epoch", &self.epoch())
+            .field("own_leaf_index", &self.own_leaf_index())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Applies mls-extensions-10 §4.7 to `proposals` (sorted by component id,
+/// in Commit order within a component) and records the resulting
+/// dictionary changes in `updater`.
+///
+/// OpenMLS checks only part of §4.7, so every rule is checked here: a
+/// component gets either a single remove, of data that exists, or one or
+/// more updates, which `apply` turns into new data.
+fn resolve_app_data_updates<E: Into<ErrorSource>>(
+    updater: &mut AppDataDictionaryUpdater<'_>,
+    proposals: &[AppDataUpdateProposal],
+    apply: &mut impl FnMut(ComponentId, Option<&[u8]>, ComponentOp<'_>) -> Result<Option<Vec<u8>>, E>,
+) -> Result<(), MemberError> {
+    for group in proposals.chunk_by(|a, b| a.component_id() == b.component_id()) {
+        let Some(first) = group.first() else {
+            continue;
+        };
+        let component_id = first.component_id();
+        let rejected = |e: E| MemberError::AppDataRejected {
+            component_id,
+            source: e.into(),
+        };
+        let updates: Vec<&[u8]> = group
+            .iter()
+            .filter_map(|proposal| match proposal.operation() {
+                AppDataUpdateOperation::Update(update) => Some(update.as_slice()),
+                AppDataUpdateOperation::Remove => None,
+            })
+            .collect();
+        let current = updater.old_value(component_id).map(<[u8]>::to_vec);
+
+        if updates.len() == group.len() {
+            match apply(
+                component_id,
+                current.as_deref(),
+                ComponentOp::Update(&updates),
+            ) {
+                Ok(Some(new_data)) => {
+                    updater.set(ComponentData::from_parts(component_id, new_data.into()));
+                }
+                Ok(None) => return Err(MemberError::InvalidAppDataUpdate(component_id)),
+                Err(e) => return Err(rejected(e)),
+            }
+        } else if group.len() == 1 && current.is_some() {
+            match apply(component_id, current.as_deref(), ComponentOp::Remove) {
+                Ok(None) => updater.remove(&component_id),
+                Ok(Some(_)) => return Err(MemberError::InvalidAppDataUpdate(component_id)),
+                Err(e) => return Err(rejected(e)),
+            }
+        } else {
+            // A remove mixed with other proposals, or a remove of a
+            // component that has no data.
+            return Err(MemberError::InvalidAppDataUpdate(component_id));
+        }
+    }
+    Ok(())
+}
+
+fn convert_sender(sender: &openmls::prelude::Sender) -> Result<Sender, MemberError> {
+    Ok(match sender {
+        openmls::prelude::Sender::Member(index) => Sender::Member(index.u32()),
+        openmls::prelude::Sender::External(index) => {
+            // OpenMLS keeps the u32 sender_index private; its TLS encoding
+            // is the four big-endian bytes (RFC 9420 §6).
+            let bytes: [u8; 4] = encode(index)?
+                .try_into()
+                .map_err(|_| MemberError::UnexpectedMessage)?;
+            Sender::External(u32::from_be_bytes(bytes))
+        }
+        openmls::prelude::Sender::NewMemberProposal => Sender::NewMemberProposal,
+        openmls::prelude::Sender::NewMemberCommit => Sender::NewMemberCommit,
+    })
+}
+
+/// The BasicCredential identity, or empty for any other credential type.
+/// Only BasicCredential is negotiated (decision mimid-1wgh.16), so OpenMLS
+/// rejects other types before this is reached.
+fn basic_identity(credential: &Credential) -> Vec<u8> {
+    BasicCredential::try_from(credential.clone())
+        .map(|basic| basic.identity().to_vec())
+        .unwrap_or_default()
+}
+
+fn encode(message: &impl Serialize) -> Result<Vec<u8>, MemberError> {
+    message
+        .tls_serialize_detached()
+        .map_err(|e| MemberError::Encode(e.into()))
+}

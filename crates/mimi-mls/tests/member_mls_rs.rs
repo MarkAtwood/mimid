@@ -1,0 +1,687 @@
+//! `mimi_mls::member::Member` checked against an independent MLS
+//! implementation, mls-rs (decision mimid-1wgh.4.13). Both sides must derive
+//! the same `epoch_authenticator` and exporter secrets and must decrypt each
+//! other's application messages. GroupContext extension bytes are compared
+//! with hand-encoded expectations.
+
+use mimi_mls::member::{ComponentOp, ExternalSender, Incoming, Member, MemberError, Sender};
+use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
+use mls_rs::extension::ExtensionType;
+use mls_rs::group::{CommitEffect, ExportedTree, ReceivedMessage};
+use mls_rs::identity::SigningIdentity;
+use mls_rs::identity::basic::{BasicCredential, BasicIdentityProvider};
+use mls_rs::{CipherSuite, CipherSuiteProvider, Client, CryptoProvider, MlsMessage};
+use mls_rs_crypto_rustcrypto::RustCryptoProvider;
+
+/// RFC 9420 §17.1: ciphersuite 0x0001.
+const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
+
+/// RFC 9420 §17.3: external_senders extension type.
+const EXTERNAL_SENDERS: ExtensionType = ExtensionType::new(0x0005);
+
+/// mls-extensions-10 §7.1.1: app_data_dictionary extension type.
+const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
+
+/// mls-extensions-10 §7.2: AppDataUpdate proposal type.
+const APP_DATA_UPDATE: u16 = 0x0008;
+
+/// mls-extensions-10 §7.5: the safe_aad component.
+const SAFE_AAD: u16 = 0x0002;
+
+/// mls-extensions-10 §7.5: a private-use component id, for tests only.
+const PRIVATE_COMPONENT: u16 = 0x8001;
+
+const EXPORTER_LABEL: &str = "mimid member cross-test";
+const EXPORTER_CONTEXT: &[u8] = b"context";
+
+fn identity(name: &[u8]) -> Identity {
+    Identity::generate(name, Store::open_in_memory().expect("in-memory store"))
+        .expect("generate identity")
+}
+
+/// An `apply` function for groups whose Commits carry no AppDataUpdate.
+fn no_components(
+    component_id: u16,
+    _current: Option<&[u8]>,
+    _op: ComponentOp<'_>,
+) -> Result<Option<Vec<u8>>, ErrorSource> {
+    Err(format!("unexpected AppDataUpdate for {component_id:#06x}").into())
+}
+
+/// An mls-rs client on suite 1 that also accepts the app_data_dictionary
+/// GroupContext extension (mls-rs treats it as opaque).
+fn mls_rs_client(name: &[u8]) -> Client<impl mls_rs::client_builder::MlsConfig> {
+    let crypto = RustCryptoProvider::default();
+    let suite = crypto
+        .cipher_suite_provider(SUITE_1)
+        .expect("mls-rs supports suite 1");
+    let (secret, public) = suite
+        .signature_key_generate()
+        .expect("mls-rs signature key");
+    let signing_identity = SigningIdentity::new(
+        BasicCredential::new(name.to_vec()).into_credential(),
+        public,
+    );
+    Client::builder()
+        .identity_provider(BasicIdentityProvider)
+        .crypto_provider(crypto)
+        .extension_type(APP_DATA_DICTIONARY)
+        .signing_identity(signing_identity, secret, SUITE_1)
+        .build()
+}
+
+/// A fresh Ed25519 public key, from mls-rs.
+fn signature_public_key() -> Vec<u8> {
+    let crypto = RustCryptoProvider::default();
+    let suite = crypto.cipher_suite_provider(SUITE_1).expect("suite 1");
+    let (_secret, public) = suite.signature_key_generate().expect("key");
+    public.as_bytes().to_vec()
+}
+
+/// RFC 9420 §6: an MLSMessage carrying a KeyPackage starts with
+/// `version = mls10 (0x0001)` and `wire_format = mls_key_package (0x0005)`.
+/// Strips that header, returning the bare KeyPackage.
+fn bare_key_package(message: &MlsMessage) -> Vec<u8> {
+    let bytes = message.to_bytes().expect("encode KeyPackage message");
+    assert_eq!(bytes[..4], [0x00, 0x01, 0x00, 0x05]);
+    bytes[4..].to_vec()
+}
+
+/// RFC 9420 §6: wraps a bare KeyPackage in an MLSMessage.
+fn key_package_message(key_package: &[u8]) -> MlsMessage {
+    let mut bytes = vec![0x00, 0x01, 0x00, 0x05];
+    bytes.extend_from_slice(key_package);
+    MlsMessage::from_bytes(&bytes).expect("mls-rs decodes the KeyPackage")
+}
+
+fn mls_rs_key_package(client: &Client<impl mls_rs::client_builder::MlsConfig>) -> Vec<u8> {
+    let message = client
+        .generate_key_package_message(Default::default(), Default::default(), None)
+        .expect("mls-rs KeyPackage");
+    bare_key_package(&message)
+}
+
+fn mls_rs_receive(
+    group: &mut mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+    bytes: &[u8],
+) -> ReceivedMessage {
+    let message = MlsMessage::from_bytes(bytes).expect("mls-rs decodes the message");
+    group
+        .process_incoming_message(message)
+        .expect("mls-rs accepts the message")
+}
+
+fn assert_same_epoch_secrets(
+    member: &Member,
+    member_identity: &Identity,
+    group: &mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+) {
+    assert_eq!(member.epoch(), group.current_epoch());
+    assert_eq!(
+        member.epoch_authenticator(),
+        group.epoch_authenticator().expect("mls-rs").as_bytes(),
+        "epoch_authenticator differs"
+    );
+    let ours = member
+        .export_secret(member_identity, EXPORTER_LABEL, EXPORTER_CONTEXT, 32)
+        .expect("export");
+    let theirs = group
+        .export_secret(EXPORTER_LABEL.as_bytes(), EXPORTER_CONTEXT, 32)
+        .expect("mls-rs export");
+    assert_eq!(ours, theirs.as_bytes(), "exporter secret differs");
+}
+
+/// (sender, sender_identity, data, safe_aad) of an application message.
+type Received = (u32, Vec<u8>, Vec<u8>, Vec<(u16, Vec<u8>)>);
+
+fn application(incoming: Incoming) -> Received {
+    match incoming {
+        Incoming::Application {
+            sender,
+            sender_identity,
+            data,
+            safe_aad,
+            ..
+        } => (sender, sender_identity, data, safe_aad),
+        other => panic!("expected an application message, got {other:?}"),
+    }
+}
+
+fn mls_rs_application(received: ReceivedMessage) -> (Vec<u8>, Vec<u8>) {
+    match received {
+        ReceivedMessage::ApplicationMessage(description) => (
+            description.data().to_vec(),
+            description.authenticated_data.clone(),
+        ),
+        other => panic!("expected an application message, got {other:?}"),
+    }
+}
+
+#[test]
+fn mimi_creates_group_and_adds_mls_rs_member() {
+    let alice = identity(b"alice");
+    let hub_key = signature_public_key();
+    let hub = ExternalSender {
+        signature_key: hub_key.clone(),
+        identity: b"hub.example".to_vec(),
+    };
+    // safe_aad with an empty ComponentsList (mls-extensions-10 §5): the TLS
+    // encoding of an empty component_ids<V> is the single byte 0x00.
+    let mut group =
+        Member::create(&alice, b"room-1", &[hub], &[(SAFE_AAD, vec![0x00])]).expect("create group");
+    assert_eq!(group.epoch(), 0);
+    assert_eq!(group.group_id(), b"room-1");
+
+    let bob_client = mls_rs_client(b"bob");
+    let bob_key_package = mls_rs_key_package(&bob_client);
+    let bundle = group
+        .commit(&alice, &[&bob_key_package], &[], &[], no_components)
+        .expect("commit Add");
+    group.merge_pending_commit(&alice).expect("merge");
+    let welcome = MlsMessage::from_bytes(&bundle.welcome.expect("Welcome")).expect("decode");
+    let tree = ExportedTree::from_bytes(&group.ratchet_tree().expect("tree")).expect("tree");
+    let (mut bob, _info) = bob_client
+        .join_group(Some(tree), &welcome, None)
+        .expect("mls-rs joins from the Welcome");
+
+    assert_same_epoch_secrets(&group, &alice, &bob);
+    assert_eq!(
+        group.members(),
+        vec![(0, b"alice".to_vec()), (1, b"bob".to_vec())]
+    );
+
+    // RFC 9420 §12.1.8.1 ExternalSender, hand-encoded.
+    let mut expected_senders = vec![
+        0x2f, // ExternalSender external_senders<V>: 47 bytes
+        0x20, // SignaturePublicKey signature_key<V>: 32 bytes
+    ];
+    expected_senders.extend_from_slice(&hub_key);
+    expected_senders.extend_from_slice(&[0x00, 0x01]); // CredentialType basic
+    expected_senders.push(0x0b); // opaque identity<V>: 11 bytes
+    expected_senders.extend_from_slice(b"hub.example");
+    let extensions = &bob.context().extensions;
+    assert_eq!(
+        extensions
+            .get(EXTERNAL_SENDERS)
+            .expect("external_senders")
+            .extension_data,
+        expected_senders
+    );
+    // mls-extensions-10 §4.6 AppDataDictionary, hand-encoded.
+    let expected_dictionary = [
+        0x04, // ComponentData component_data<V>: 4 bytes
+        0x00, 0x02, // component_id = safe_aad
+        0x01, // opaque data<V>: 1 byte
+        0x00, //   ComponentsList.component_ids<V>: empty
+    ];
+    assert_eq!(
+        extensions
+            .get(APP_DATA_DICTIONARY)
+            .expect("app_data_dictionary")
+            .extension_data,
+        expected_dictionary
+    );
+    // mls-extensions-10 §7.2: the creator's leaf advertises AppDataUpdate.
+    let creator = bob.member_at_index(0).expect("creator leaf");
+    assert!(
+        creator
+            .capabilities
+            .proposals
+            .iter()
+            .any(|p| u16::from(*p) == APP_DATA_UPDATE)
+    );
+
+    // mimi-mls -> mls-rs, with one SafeAAD item.
+    let message = group
+        .send(
+            &alice,
+            b"hello bob",
+            &[(PRIVATE_COMPONENT, b"abc".to_vec())],
+        )
+        .expect("send");
+    let (data, aad) = mls_rs_application(mls_rs_receive(&mut bob, &message));
+    assert_eq!(data, b"hello bob");
+    // mls-extensions-10 §4.9 SafeAAD, hand-encoded.
+    let expected_aad = [
+        0x06, // SafeAADItem aad_items<V>: 6 bytes
+        0x80, 0x01, // component_id
+        0x03, // opaque aad_item_data<V>: 3 bytes
+        b'a', b'b', b'c',
+    ];
+    assert_eq!(aad, expected_aad);
+
+    // mls-rs -> mimi-mls, with an empty SafeAAD (§4.9: zero-length vector).
+    let message = bob
+        .encrypt_application_message(b"hello alice", vec![0x00])
+        .expect("mls-rs encrypts")
+        .to_bytes()
+        .expect("encode");
+    let (sender, sender_identity, data, safe_aad) = application(
+        group
+            .process(&alice, &message, no_components)
+            .expect("process"),
+    );
+    assert_eq!(sender, 1);
+    assert_eq!(sender_identity, b"bob");
+    assert_eq!(data, b"hello alice");
+    assert!(safe_aad.is_empty());
+
+    // mls-rs -> mimi-mls, with a SafeAAD item.
+    let message = bob
+        .encrypt_application_message(b"with aad", expected_aad.to_vec())
+        .expect("mls-rs encrypts")
+        .to_bytes()
+        .expect("encode");
+    let (_, _, data, safe_aad) = application(
+        group
+            .process(&alice, &message, no_components)
+            .expect("process"),
+    );
+    assert_eq!(data, b"with aad");
+    assert_eq!(safe_aad, vec![(PRIVATE_COMPONENT, b"abc".to_vec())]);
+}
+
+#[test]
+fn safe_aad_with_trailing_bytes_is_rejected_and_group_stays_usable() {
+    let alice = identity(b"alice");
+    let mut group =
+        Member::create(&alice, b"room-aad", &[], &[(SAFE_AAD, vec![0x00])]).expect("create");
+    let bob_client = mls_rs_client(b"bob");
+    let bundle = group
+        .commit(
+            &alice,
+            &[&mls_rs_key_package(&bob_client)],
+            &[],
+            &[],
+            no_components,
+        )
+        .expect("commit");
+    group.merge_pending_commit(&alice).expect("merge");
+    let welcome = MlsMessage::from_bytes(&bundle.welcome.expect("Welcome")).expect("decode");
+    let tree = ExportedTree::from_bytes(&group.ratchet_tree().expect("tree")).expect("tree");
+    let (mut bob, _) = bob_client
+        .join_group(Some(tree), &welcome, None)
+        .expect("join");
+
+    // An empty SafeAAD (0x00) followed by one unsafe byte, which
+    // mls-extensions-10 §4.9 no longer allows (decision mimid-1wgh.4.17).
+    let message = bob
+        .encrypt_application_message(b"tail", vec![0x00, 0xff])
+        .expect("mls-rs encrypts")
+        .to_bytes()
+        .expect("encode");
+    let result = group.process(&alice, &message, no_components);
+    assert!(
+        matches!(result, Err(MemberError::TrailingAad)),
+        "{result:?}"
+    );
+
+    // No SafeAAD at all, in a group that requires it.
+    let message = bob
+        .encrypt_application_message(b"bare", Vec::new())
+        .expect("mls-rs encrypts")
+        .to_bytes()
+        .expect("encode");
+    let result = group.process(&alice, &message, no_components);
+    assert!(matches!(result, Err(MemberError::Process(_))), "{result:?}");
+
+    let message = bob
+        .encrypt_application_message(b"still here", vec![0x00])
+        .expect("mls-rs encrypts")
+        .to_bytes()
+        .expect("encode");
+    let (_, _, data, _) = application(
+        group
+            .process(&alice, &message, no_components)
+            .expect("process"),
+    );
+    assert_eq!(data, b"still here");
+
+    // Outgoing SafeAAD items must be strictly ascending.
+    let result = group.send(
+        &alice,
+        b"x",
+        &[(0x8002, Vec::new()), (PRIVATE_COMPONENT, Vec::new())],
+    );
+    assert!(
+        matches!(result, Err(MemberError::InvalidSafeAad(_))),
+        "{result:?}"
+    );
+    let message = group.send(&alice, b"after", &[]).expect("send");
+    let (data, aad) = mls_rs_application(mls_rs_receive(&mut bob, &message));
+    assert_eq!(data, b"after");
+    assert_eq!(aad, [0x00]);
+}
+
+#[test]
+fn mls_rs_creates_group_and_adds_mimi_member() {
+    let alice_client = mls_rs_client(b"alice");
+    let mut alice = alice_client
+        .create_group(Default::default(), Default::default(), None)
+        .expect("mls-rs group");
+    let bob = identity(b"bob");
+    let key_package = bob
+        .key_package(KeyPackageKind::OneTime)
+        .expect("KeyPackage");
+    let output = alice
+        .commit_builder()
+        .add_member(key_package_message(&key_package))
+        .expect("mls-rs accepts the KeyPackage")
+        .build()
+        .expect("mls-rs commits the Add");
+    alice.apply_pending_commit().expect("apply");
+
+    // mls-extensions-10 §7.2: the KeyPackage leaf advertises AppDataUpdate.
+    let joined = alice.member_at_index(1).expect("added leaf");
+    assert!(
+        joined
+            .capabilities
+            .proposals
+            .iter()
+            .any(|p| u16::from(*p) == APP_DATA_UPDATE)
+    );
+
+    // mls-rs puts the ratchet tree into the Welcome by default.
+    let welcome = output.welcome_messages[0].to_bytes().expect("encode");
+    let mut group = Member::join_welcome(&bob, &welcome, None).expect("join from Welcome");
+    assert_same_epoch_secrets(&group, &bob, &alice);
+    assert_eq!(group.own_leaf_index(), 1);
+
+    let message = group.send(&bob, b"hi from mimi", &[]).expect("send");
+    let (data, aad) = mls_rs_application(mls_rs_receive(&mut alice, &message));
+    assert_eq!(data, b"hi from mimi");
+    assert!(aad.is_empty(), "no Safe AAD, so no authenticated_data");
+    // The hub echoes bob's own PrivateMessage back to him.
+    let incoming = group
+        .process(&bob, &message, no_components)
+        .expect("own message");
+    assert_eq!(incoming, Incoming::OwnMessage);
+
+    let message = alice
+        .encrypt_application_message(b"hi from mls-rs", Vec::new())
+        .expect("encrypt")
+        .to_bytes()
+        .expect("encode");
+    let (sender, sender_identity, data, _) = application(
+        group
+            .process(&bob, &message, no_components)
+            .expect("process"),
+    );
+    assert_eq!(
+        (sender, sender_identity, data),
+        (0, b"alice".to_vec(), b"hi from mls-rs".to_vec())
+    );
+
+    // SafeAAD items cannot be sent in a group without Safe AAD.
+    let result = group.send(&bob, b"x", &[(PRIVATE_COMPONENT, Vec::new())]);
+    assert!(
+        matches!(result, Err(MemberError::SafeAadNotEnabled)),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn tampered_messages_are_rejected_and_group_stays_usable() {
+    let alice_client = mls_rs_client(b"alice");
+    let mut alice = alice_client
+        .create_group(Default::default(), Default::default(), None)
+        .expect("mls-rs group");
+    let bob = identity(b"bob");
+    let key_package = bob
+        .key_package(KeyPackageKind::OneTime)
+        .expect("KeyPackage");
+    let output = alice
+        .commit_builder()
+        .add_member(key_package_message(&key_package))
+        .expect("add")
+        .build()
+        .expect("commit");
+    alice.apply_pending_commit().expect("apply");
+    let welcome = output.welcome_messages[0].to_bytes().expect("encode");
+    let mut group = Member::join_welcome(&bob, &welcome, None).expect("join");
+
+    // A Commit with an UpdatePath, sent as a PublicMessage. Its last bytes
+    // are the membership_tag (RFC 9420 §6.2), so flipping the last bit
+    // breaks authentication.
+    let commit = alice
+        .commit_builder()
+        .build()
+        .expect("empty commit")
+        .commit_message
+        .to_bytes()
+        .expect("encode");
+    let mut tampered = commit.clone();
+    *tampered.last_mut().expect("non-empty") ^= 0x01;
+    let result = group.process(&bob, &tampered, no_components);
+    assert!(matches!(result, Err(MemberError::Process(_))), "{result:?}");
+    assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
+
+    let incoming = group
+        .process(&bob, &commit, no_components)
+        .expect("genuine Commit");
+    let Incoming::Commit(summary) = incoming else {
+        panic!("expected a Commit, got {incoming:?}");
+    };
+    assert_eq!(summary.committer, Sender::Member(0));
+    assert_eq!(summary.epoch, 2);
+    alice.apply_pending_commit().expect("apply");
+    assert_same_epoch_secrets(&group, &bob, &alice);
+
+    // A PrivateMessage whose AEAD tag is broken.
+    let message = alice
+        .encrypt_application_message(b"tampered", Vec::new())
+        .expect("encrypt")
+        .to_bytes()
+        .expect("encode");
+    let mut tampered = message;
+    *tampered.last_mut().expect("non-empty") ^= 0x01;
+    let result = group.process(&bob, &tampered, no_components);
+    assert!(matches!(result, Err(MemberError::Process(_))), "{result:?}");
+
+    let message = alice
+        .encrypt_application_message(b"genuine", Vec::new())
+        .expect("encrypt")
+        .to_bytes()
+        .expect("encode");
+    let (_, _, data, _) = application(
+        group
+            .process(&bob, &message, no_components)
+            .expect("process"),
+    );
+    assert_eq!(data, b"genuine");
+
+    // Truncated input and trailing bytes are rejected before any MLS work.
+    let mut trailing = message.clone();
+    trailing.push(0x00);
+    let result = group.process(&bob, &trailing, no_components);
+    assert!(matches!(result, Err(MemberError::Decode(_))), "{result:?}");
+    let result = group.process(&bob, &message[..message.len() - 1], no_components);
+    assert!(matches!(result, Err(MemberError::Decode(_))), "{result:?}");
+    let result = group.process(&bob, &welcome, no_components);
+    assert!(
+        matches!(result, Err(MemberError::UnexpectedMessage)),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn removal_is_seen_by_removed_member_and_remaining_members_agree() {
+    // mls-rs creates the group and adds both mimi-mls members.
+    let dave_client = mls_rs_client(b"dave");
+    let mut dave = dave_client
+        .create_group(Default::default(), Default::default(), None)
+        .expect("mls-rs group");
+    let alice = identity(b"alice");
+    let carol = identity(b"carol");
+    let output = dave
+        .commit_builder()
+        .add_member(key_package_message(
+            &alice
+                .key_package(KeyPackageKind::OneTime)
+                .expect("KeyPackage"),
+        ))
+        .expect("add alice")
+        .add_member(key_package_message(
+            &carol
+                .key_package(KeyPackageKind::OneTime)
+                .expect("KeyPackage"),
+        ))
+        .expect("add carol")
+        .build()
+        .expect("commit");
+    dave.apply_pending_commit().expect("apply");
+    let welcome = output.welcome_messages[0].to_bytes().expect("encode");
+    let mut alice_group = Member::join_welcome(&alice, &welcome, None).expect("alice joins");
+    let mut carol_group = Member::join_welcome(&carol, &welcome, None).expect("carol joins");
+    assert_same_epoch_secrets(&alice_group, &alice, &dave);
+    assert_same_epoch_secrets(&carol_group, &carol, &dave);
+    assert_eq!(alice_group.own_leaf_index(), 1);
+    assert_eq!(carol_group.own_leaf_index(), 2);
+
+    // alice (mimi-mls) removes carol (mimi-mls), with dave (mls-rs) watching.
+    let bundle = alice_group
+        .commit(&alice, &[], &[2], &[], no_components)
+        .expect("commit Remove");
+    assert!(bundle.welcome.is_none());
+    let incoming = alice_group
+        .process(&alice, &bundle.commit, no_components)
+        .expect("own Commit echoed by the hub");
+    let Incoming::Commit(summary) = incoming else {
+        panic!("expected a Commit, got {incoming:?}");
+    };
+    assert_eq!(summary.committer, Sender::Member(1));
+    assert_eq!(summary.removed, vec![2]);
+    assert!(!summary.self_removed);
+
+    let ReceivedMessage::Commit(description) = mls_rs_receive(&mut dave, &bundle.commit) else {
+        panic!("mls-rs expected a Commit");
+    };
+    assert!(matches!(description.effect, CommitEffect::NewEpoch(_)));
+    assert!(
+        dave.member_at_index(2).is_none(),
+        "mls-rs no longer has carol"
+    );
+    assert_same_epoch_secrets(&alice_group, &alice, &dave);
+
+    let incoming = carol_group
+        .process(&carol, &bundle.commit, no_components)
+        .expect("carol processes her removal");
+    let Incoming::Commit(summary) = incoming else {
+        panic!("expected a Commit, got {incoming:?}");
+    };
+    assert!(summary.self_removed);
+    assert_eq!(summary.removed, vec![2]);
+    assert!(!carol_group.is_active());
+    let result = carol_group.send(&carol, b"x", &[]);
+    assert!(matches!(result, Err(MemberError::Send(_))), "{result:?}");
+
+    // dave (mls-rs) removes alice (mimi-mls).
+    let commit = dave
+        .commit_builder()
+        .remove_member(1)
+        .expect("remove")
+        .build()
+        .expect("commit")
+        .commit_message
+        .to_bytes()
+        .expect("encode");
+    dave.apply_pending_commit().expect("apply");
+    let incoming = alice_group
+        .process(&alice, &commit, no_components)
+        .expect("alice processes her removal");
+    let Incoming::Commit(summary) = incoming else {
+        panic!("expected a Commit, got {incoming:?}");
+    };
+    assert_eq!(summary.committer, Sender::Member(0));
+    assert_eq!(summary.removed, vec![1]);
+    assert!(summary.self_removed);
+    assert!(!alice_group.is_active());
+}
+
+#[test]
+fn wrong_identity_is_refused() {
+    let alice = identity(b"alice");
+    let mallory = identity(b"mallory");
+    let mut group = Member::create(&alice, b"room-id", &[], &[]).expect("create");
+    let result = group.send(&mallory, b"x", &[]);
+    assert!(
+        matches!(result, Err(MemberError::WrongIdentity)),
+        "{result:?}"
+    );
+    let result = group.commit(&mallory, &[], &[], &[], no_components);
+    assert!(
+        matches!(result, Err(MemberError::WrongIdentity)),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn mimi_member_adds_mimi_key_package() {
+    // The KeyPackage carries the GREASE extension RFC 9420 §10 recommends;
+    // OpenMLS must accept it (fixed on the patched openmls pin). mls-rs
+    // watches as an independent party: it validates carol's KeyPackage
+    // inside the Commit and must reach the same epoch secrets.
+    let alice = identity(b"alice");
+    let carol = identity(b"carol");
+    let mut alice_group = Member::create(&alice, b"room-mimi", &[], &[]).expect("create");
+    let bob_client = mls_rs_client(b"bob");
+    let bundle = alice_group
+        .commit(
+            &alice,
+            &[&mls_rs_key_package(&bob_client)],
+            &[],
+            &[],
+            no_components,
+        )
+        .expect("add bob");
+    alice_group.merge_pending_commit(&alice).expect("merge");
+    let welcome = MlsMessage::from_bytes(&bundle.welcome.expect("Welcome")).expect("decode");
+    let tree = ExportedTree::from_bytes(&alice_group.ratchet_tree().expect("tree")).expect("tree");
+    let (mut bob, _) = bob_client
+        .join_group(Some(tree), &welcome, None)
+        .expect("join");
+
+    let carol_key_package = carol
+        .key_package(KeyPackageKind::OneTime)
+        .expect("KeyPackage");
+    let bundle = alice_group
+        .commit(&alice, &[&carol_key_package], &[], &[], no_components)
+        .expect("OpenMLS accepts a mimi-mls KeyPackage");
+    alice_group.merge_pending_commit(&alice).expect("merge");
+    let ReceivedMessage::Commit(_) = mls_rs_receive(&mut bob, &bundle.commit) else {
+        panic!("mls-rs expected a Commit");
+    };
+    let mut carol_group = Member::join_welcome(
+        &carol,
+        &bundle.welcome.expect("Welcome"),
+        Some(&alice_group.ratchet_tree().expect("tree")),
+    )
+    .expect("carol joins from the Welcome");
+
+    assert_eq!(carol_group.own_leaf_index(), 2);
+    assert_same_epoch_secrets(&alice_group, &alice, &bob);
+    assert_same_epoch_secrets(&carol_group, &carol, &bob);
+
+    let message = alice_group.send(&alice, b"hi carol", &[]).expect("send");
+    let (sender, sender_identity, data, _) = application(
+        carol_group
+            .process(&carol, &message, no_components)
+            .expect("process"),
+    );
+    assert_eq!(
+        (sender, sender_identity, data),
+        (0, b"alice".to_vec(), b"hi carol".to_vec())
+    );
+    let message = carol_group.send(&carol, b"hi alice", &[]).expect("send");
+    let (sender, sender_identity, data, _) = application(
+        alice_group
+            .process(&alice, &message, no_components)
+            .expect("process"),
+    );
+    assert_eq!(
+        (sender, sender_identity, data),
+        (2, b"carol".to_vec(), b"hi alice".to_vec())
+    );
+    let (data, _) = mls_rs_application(mls_rs_receive(&mut bob, &message));
+    assert_eq!(data, b"hi alice");
+}

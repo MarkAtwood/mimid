@@ -4,19 +4,24 @@ use openmls::component::{ComponentId, ComponentsList};
 use openmls::grease::random_grease_value;
 use openmls::prelude::{
     AppDataDictionary, AppDataDictionaryExtension, BasicCredential, Capabilities, Ciphersuite,
-    CredentialType, CredentialWithKey, Extension, ExtensionType, Extensions, KeyPackage,
-    OpenMlsProvider, UnknownExtension,
+    CredentialType, CredentialWithKey, Extension, ExtensionType, Extensions, KeyPackage, LeafNode,
+    OpenMlsProvider, OpenMlsRand, ProposalType, UnknownExtension,
 };
 use openmls_basic_credential::SignatureKeyPair;
 use tls_codec::Serialize;
 
+use crate::store::Provider;
 use crate::{Error, Store};
 
 /// RFC 9420 suite 1, the only suite mimid supports (decision mimid-1wgh.23).
-const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+pub(crate) const CIPHERSUITE: Ciphersuite =
+    Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 
 /// mls-extensions-10 §7.5 component registry: `app_components`.
 const APP_COMPONENTS: ComponentId = 0x0001;
+
+/// mls-extensions-10 §7.5 component registry: `safe_aad`.
+const SAFE_AAD: ComponentId = 0x0002;
 
 /// mls-extensions-10 §7.5 component registry: `last_resort_key_package`.
 const LAST_RESORT_KEY_PACKAGE: ComponentId = 0x0004;
@@ -73,16 +78,30 @@ impl Identity {
         self.signer.public()
     }
 
+    pub(crate) fn provider(&self) -> &Provider {
+        self.store.provider()
+    }
+
+    pub(crate) fn signer(&self) -> &SignatureKeyPair {
+        &self.signer
+    }
+
+    pub(crate) fn credential_with_key(&self) -> &CredentialWithKey {
+        &self.credential_with_key
+    }
+
     /// Generates a KeyPackage, stores its private keys in the [`Store`], and
     /// returns the TLS-serialized `KeyPackage` (RFC 9420 §10), without an
     /// `MLSMessage` wrapper.
     ///
-    /// The LeafNode advertises ciphersuite 1, BasicCredential and the
-    /// `app_data_dictionary` extension (mls-extensions-10 §4.6), plus GREASE
+    /// The LeafNode advertises ciphersuite 1, BasicCredential, the
+    /// `app_data_dictionary` extension (mls-extensions-10 §4.6) and the
+    /// `AppDataUpdate` proposal (mls-extensions-10 §4.7), plus GREASE
     /// values. Its `app_data_dictionary` carries an `app_components` entry,
     /// which §4.6 requires of any client that advertises
-    /// `app_data_dictionary`. That list currently names only
-    /// `last_resort_key_package`, the one component this crate implements.
+    /// `app_data_dictionary`. That list names the components this crate
+    /// implements: `safe_aad` (see [`crate::member`]) and
+    /// `last_resort_key_package`.
     ///
     /// For [`KeyPackageKind::LastResort`] the KeyPackage's own extensions
     /// carry an `app_data_dictionary` with the `last_resort_key_package`
@@ -101,30 +120,8 @@ impl Identity {
         // must be listed in the capabilities, so the GREASE extension type
         // put into the KeyPackage (RFC 9420 §13.5) is listed there too.
         let grease_extension = random_grease_value(rand);
-        let capabilities = Capabilities::builder()
-            .ciphersuites(vec![CIPHERSUITE])
-            .credentials(vec![CredentialType::Basic])
-            .extensions(vec![
-                ExtensionType::AppDataDictionary,
-                ExtensionType::Grease(grease_extension),
-            ])
-            .build()
-            .with_grease(rand);
-
-        // mls-extensions-10 §4.6 requires the app_components entry. It lists
-        // only implemented components (decision mimid-1wgh.4.25).
-        let app_components =
-            ComponentsList::new(vec![LAST_RESORT_KEY_PACKAGE, random_grease_value(rand)])
-                .tls_serialize_detached()
-                .map_err(|e| Error::Encode(e.into()))?;
-        let mut leaf_dictionary = AppDataDictionary::new();
-        leaf_dictionary.insert(APP_COMPONENTS, app_components);
-        // mls-extensions-10 §5.1: GREASE components in the dictionary.
-        leaf_dictionary.insert(random_grease_value(rand), Vec::new());
-        let leaf_extensions = Extensions::single(Extension::AppDataDictionary(
-            AppDataDictionaryExtension::new(leaf_dictionary),
-        ))
-        .map_err(|e| Error::KeyPackage(e.into()))?;
+        let capabilities = leaf_capabilities(rand, grease_extension);
+        let leaf_extensions = leaf_extensions(rand)?;
 
         let mut key_package_extensions = Vec::with_capacity(2);
         if kind == KeyPackageKind::LastResort {
@@ -160,6 +157,53 @@ impl Identity {
             .tls_serialize_detached()
             .map_err(|e| Error::Encode(e.into()))
     }
+}
+
+/// The LeafNode capabilities every mimid client advertises, in KeyPackages
+/// and as a group creator: ciphersuite 1, BasicCredential, the
+/// `app_data_dictionary` extension (mls-extensions-10 §4.6), the
+/// `AppDataUpdate` proposal (mls-extensions-10 §4.7) and the extension type
+/// `grease_extension`, plus random GREASE values (RFC 9420 §13.5).
+pub(crate) fn leaf_capabilities(rand: &impl OpenMlsRand, grease_extension: u16) -> Capabilities {
+    Capabilities::builder()
+        .ciphersuites(vec![CIPHERSUITE])
+        .credentials(vec![CredentialType::Basic])
+        .extensions(vec![
+            ExtensionType::AppDataDictionary,
+            ExtensionType::Grease(grease_extension),
+        ])
+        .proposals(vec![ProposalType::AppDataUpdate])
+        .build()
+        .with_grease(rand)
+}
+
+/// The LeafNode extensions every mimid client sends: an
+/// `app_data_dictionary` whose `app_components` entry lists the implemented
+/// components, plus GREASE (mls-extensions-10 §4.6, §5.1).
+///
+/// # Errors
+///
+/// Returns [`Error::Encode`] if the components list cannot be serialized,
+/// and [`Error::KeyPackage`] if the extension list is invalid.
+pub(crate) fn leaf_extensions(rand: &impl OpenMlsRand) -> Result<Extensions<LeafNode>, Error> {
+    // mls-extensions-10 §4.6 requires the app_components entry. It lists
+    // only implemented components (decision mimid-1wgh.4.25). No separate
+    // Safe AAD support list is sent (decision mimid-1wgh.4.35).
+    let app_components = ComponentsList::new(vec![
+        SAFE_AAD,
+        LAST_RESORT_KEY_PACKAGE,
+        random_grease_value(rand),
+    ])
+    .tls_serialize_detached()
+    .map_err(|e| Error::Encode(e.into()))?;
+    let mut leaf_dictionary = AppDataDictionary::new();
+    leaf_dictionary.insert(APP_COMPONENTS, app_components);
+    // mls-extensions-10 §5.1: GREASE components in the dictionary.
+    leaf_dictionary.insert(random_grease_value(rand), Vec::new());
+    Extensions::single(Extension::AppDataDictionary(
+        AppDataDictionaryExtension::new(leaf_dictionary),
+    ))
+    .map_err(|e| Error::KeyPackage(e.into()))
 }
 
 impl std::fmt::Debug for Identity {
