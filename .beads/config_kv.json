@@ -1,5 +1,6 @@
 {
   "issue_prefix": "mimid",
   "kv.memory.crypto-backend-policy": "mimid: Mark dislikes aws-lc/ring but decided (2026-10-17) NOT to enforce a ban; accept whatever deps pull in (e.g. rustls default provider) and fix later. Do not add cargo-deny bans for ring/aws-lc unless asked.",
-  "kv.memory.lang-and-spec-target": "mimid: MIMI reference implementation over MLS (RFC 9420). Language: Rust (decided 2026-10-17). Spec target: implement the LATEST version of each MIMI draft exactly as written, regardless of draft expiry/maturity; where a draft is ambiguous, pick the sane reading and document it."
+  "kv.memory.lang-and-spec-target": "mimid: MIMI reference implementation over MLS (RFC 9420). Language: Rust (decided 2026-10-17). Spec target: implement the LATEST version of each MIMI draft exactly as written, regardless of draft expiry/maturity; where a draft is ambiguous, pick the sane reading and document it.",
+  "kv.memory.toolchain-policy": "mimid: no MSRV. Support latest stable Rust only and latest crate releases (Mark, 2026-10-17: 'completely fine to need new rust and new crates'). No rust-version field, no MSRV CI job."
 }

@@ -1,0 +1,12 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+license = "AGPL-3.0-or-later"
+
+[workspace.dependencies]
+# Exact pins: OpenMLS's extensions-draft API changes between releases.
+openmls = { version = "=0.9.1", features = ["extensions-draft"] }
+openmls_rust_crypto = { version = "=0.6.0", features = ["extensions-draft"] }

@@ -1,0 +1,3 @@
+[default]
+# Content hashes in generated Beads markers.
+extend-ignore-re = ["hash:[0-9a-f]+"]
