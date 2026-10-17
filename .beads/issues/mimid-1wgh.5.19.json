@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.19",
+  "title": "P4: IdentifierURI and RoomId are IdentifierUri",
+  "description": "L1538, L2266 use undefined IdentifierURI/RoomId: read as IdentifierUri.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:59.302128346Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:59.352881235Z",
+  "closed_at": "2026-10-17T18:32:59.352881235Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.19",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:59.310769614Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

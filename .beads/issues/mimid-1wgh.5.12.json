@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.5.12",
+  "title": "protocol: §6 pseudonymous rooms (best guess)",
+  "description": "Implement protocol-06 §6 / PseudonymousCredential best guess per Mark; every invented part gets a decision record labeled INVENTED, NOT FROM SPEC. PseudonymousCredential allowed only in §6 rooms.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:21.363301163Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:21.363301163Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.12",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:21.370475696Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.5.12",
+      "depends_on_id": "mimid-1wgh.5.8",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:32:22.19853141Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

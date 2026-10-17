@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.20",
+  "title": "P8: XUpdate is full replacement",
+  "description": "§6.x XUpdate has the same type as XData: full replacement, as §3 and §4 state.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:58.112755831Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:58.162373982Z",
+  "closed_at": "2026-10-17T18:32:58.162373982Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.20",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:58.118782349Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

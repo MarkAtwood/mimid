@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.29",
+  "title": "P14: application_data scope",
+  "description": "L1731 'application_data' = full MLS application_data including ApplicationFraming when used.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:33:00.255999268Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:33:00.308596509Z",
+  "closed_at": "2026-10-17T18:33:00.308596509Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.29",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:33:00.265781368Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

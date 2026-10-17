@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.24",
+  "title": "mimi-mls exposes wire newtypes",
+  "description": "mimi_mls::wire newtypes delegate tls_codec to openmls so mimi-protocol can parse non-length-prefixed MLS structures; OpenMLS stays confined to mimi-mls; mimi-mls re-exports tls_codec.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:56.871637423Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:56.919382421Z",
+  "closed_at": "2026-10-17T18:32:56.919382421Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.24",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:56.880604065Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

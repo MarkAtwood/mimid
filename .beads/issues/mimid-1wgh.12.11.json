@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.11",
+  "title": "jmap-mimi types crate lives in crate-jmap",
+  "description": "Types crate in ~/PROJECT/crate-jmap (MIT OR Apache-2.0) next to jmap-chat-types. Writes to that repo need Mark's OK each time.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:56.22607585Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:56.276557764Z",
+  "closed_at": "2026-10-17T18:32:56.276557764Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.11",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:56.233178668Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

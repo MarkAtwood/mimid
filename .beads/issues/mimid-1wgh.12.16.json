@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.16",
+  "title": "Last-resort KeyPackages in v1",
+  "description": "Last-resort KeyPackages supported in v1 (Agora rules: returned only when nothing else remains, not consumed).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:56.690091422Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:56.736347843Z",
+  "closed_at": "2026-10-17T18:32:56.736347843Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.16",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:56.697881478Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

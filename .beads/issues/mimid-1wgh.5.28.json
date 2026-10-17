@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.28",
+  "title": "P13: franking_tag concatenation",
+  "description": "L1770 'franking_tag || context': raw 32-byte tag followed by TLS-encoded context.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:33:00.161969701Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:33:00.216055636Z",
+  "closed_at": "2026-10-17T18:33:00.216055636Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.28",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:33:00.170191717Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

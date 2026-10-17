@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.3.3",
+  "title": "room-policy: roles_list codec + validate",
+  "description": "RoleData/Role/RoleChange codec (hand-encoded hex) and validate() rules per §3, §5, §6.6, §8.1.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:19.962615798Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:19.962615798Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.3",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:19.970030156Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.3.3",
+      "depends_on_id": "mimid-1wgh.3.2",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:32:20.33595318Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

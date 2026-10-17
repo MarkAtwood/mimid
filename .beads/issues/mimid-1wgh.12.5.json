@@ -1,0 +1,46 @@
+{
+  "id": "mimid-1wgh.12.5",
+  "title": "jmap-mimi: provider KeyMaterial/fetch",
+  "description": "Local and via-hub routing; decode responses into JMAP results/errors.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:22.537022394Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:22.537022394Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.5",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:22.543223593Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.12.5",
+      "depends_on_id": "mimid-1wgh.12.3",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:32:23.015473809Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.12.5",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:32:23.053809453Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.12.5",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:32:23.096247408Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

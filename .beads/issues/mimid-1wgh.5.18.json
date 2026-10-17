@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.18",
+  "title": "P3: URIs in paths percent-encoded",
+  "description": "§5.2 L1069 vs §3 L584/640/818 (bare a.example/r/clubhouse, /submit, dropped /r/): percent-encode the whole URI (RFC 6570 simple expansion).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:59.199073655Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:59.252648162Z",
+  "closed_at": "2026-10-17T18:32:59.252648162Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.18",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:59.205955505Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

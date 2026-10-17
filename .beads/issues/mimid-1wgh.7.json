@@ -44,9 +44,17 @@
     },
     {
       "issue_id": "mimid-1wgh.7",
-      "depends_on_id": "mimid-1wgh.12",
+      "depends_on_id": "mimid-1wgh.31",
       "type": "blocks",
-      "created_at": "2026-10-17T17:13:23.516314862Z",
+      "created_at": "2026-10-17T18:18:52.965131707Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.7",
+      "depends_on_id": "mimid-1wgh.12.6",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:32:23.350031782Z",
       "created_by": "agent",
       "metadata": "{}"
     }

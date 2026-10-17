@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.26",
+  "title": "P11: response TBS only on success",
+  "description": "L2145 response TBS has no status select: computed only on success.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:59.968450799Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:33:00.020692672Z",
+  "closed_at": "2026-10-17T18:33:00.020692672Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.26",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:59.977256344Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

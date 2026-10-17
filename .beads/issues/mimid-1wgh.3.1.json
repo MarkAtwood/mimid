@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.3.1",
+  "title": "room-policy: scaffold + primitives",
+  "description": "crates/mimi-room-policy; workspace pin tls_codec =0.5.0 (derive, mls); local Bool (reject !=0/1), Uri, MediaType, ComponentID consts 0x0024-0x0030 (DR P15).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:19.870258435Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:19.870258435Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.1",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:19.876790246Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.24",
+  "title": "P9: fanout select arms",
+  "description": "L1935-1949 select on wire_format lists content types: welcome = mls_welcome; application = PrivateMessage; proposal/commit = PublicMessage by content_type.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:59.776914968Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:59.82495348Z",
+  "closed_at": "2026-10-17T18:32:59.82495348Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.24",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:59.784749449Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

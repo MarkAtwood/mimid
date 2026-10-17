@@ -1,0 +1,46 @@
+{
+  "id": "mimid-1wgh.7.1",
+  "title": "Two-provider flow tests",
+  "description": "Hub A + follower B, agents driven only via JMAP. Oracle: MLS agreement (epoch_authenticator + exporter equal, plaintext equality, removed agent sees removal). Flows: create, invite cross-provider, send, receive commit, external join, leave.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:23.389681813Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:23.389681813Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.1",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:23.397885266Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.7.1",
+      "depends_on_id": "mimid-1wgh.12.7",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:32:23.435743408Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.7.1",
+      "depends_on_id": "mimid-1wgh.12.8",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:32:23.47874329Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.7.1",
+      "depends_on_id": "mimid-1wgh.13",
+      "type": "blocks",
+      "created_at": "2026-10-17T18:32:23.523654399Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

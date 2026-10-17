@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.11",
+  "title": "MediaType duplicated with conversion",
+  "description": "MediaType (ext-10 §6.2.2) defined in mimi-room-policy and mimi-mls with a conversion at the hub; keeps room-policy free of MLS dependencies.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:57.318052835Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:57.366004248Z",
+  "closed_at": "2026-10-17T18:32:57.366004248Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.11",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:57.327084755Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

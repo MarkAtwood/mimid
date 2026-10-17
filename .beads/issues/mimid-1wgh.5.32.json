@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.32",
+  "title": "P17: AbuseType carries any u8",
+  "description": "L2605 AbuseType defines only reserved(0): carry any u8.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:33:00.542607196Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:33:00.595668739Z",
+  "closed_at": "2026-10-17T18:33:00.595668739Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.32",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:33:00.549928697Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

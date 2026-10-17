@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.15",
+  "title": "Creator's other devices self-join only",
+  "description": "A room creator's other devices join only by external join (GroupInfo/fetch + external commit), the same path as new devices. No Adds of own devices at creation.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:56.603243704Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:56.652015784Z",
+  "closed_at": "2026-10-17T18:32:56.652015784Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.15",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:56.609510838Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

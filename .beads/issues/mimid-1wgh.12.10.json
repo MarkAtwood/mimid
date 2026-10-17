@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.10",
+  "title": "URN urn:ietf:params:jmap:chat:mimi",
+  "description": "Capability identifier matches chat:push / chat:websocket naming.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:56.133936941Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:56.183418946Z",
+  "closed_at": "2026-10-17T18:32:56.183418946Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.10",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:56.141575441Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

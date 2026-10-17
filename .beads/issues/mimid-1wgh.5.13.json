@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.13",
+  "title": "New deps hmac, serde_json; Python fixture generator",
+  "description": "Approved: hmac =0.13.0 (RustCrypto), serde_json exact pin, committed Python fixture generator (stdlib hmac + cryptography); fixtures hardcoded, tests offline.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:56.963970631Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:57.010702797Z",
+  "closed_at": "2026-10-17T18:32:57.010702797Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.13",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:56.970851409Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

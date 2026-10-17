@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.14",
+  "title": "Random independent room and group IDs",
+  "description": "Hub generates random room IDs (16 bytes, base32) and a fresh random MLS group ID per MLS group, keeping the mapping; users see room_metadata display names. Verify whether protocol-06 constrains MLS group_id bytes; record a DR if it does.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:56.511646729Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:56.558446425Z",
+  "closed_at": "2026-10-17T18:32:56.558446425Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.14",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:56.518533112Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

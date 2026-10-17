@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.28",
+  "title": "P16: protocol-06 §3.1 capability names",
+  "description": "protocol-06 §3.1 uses canAddUser/canRemoveUser/canSetUserRole (absent from -04, cites -03): informative example; map to canAddParticipant/canRemoveParticipant/canChangeUserRole.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:58.825144431Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:58.877751701Z",
+  "closed_at": "2026-10-17T18:32:58.877751701Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.28",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:58.83249059Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

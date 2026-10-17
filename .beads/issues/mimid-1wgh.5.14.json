@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.14",
+  "title": "Pseudonymous rooms: implement best guess",
+  "description": "protocol-06 §6 (PseudonymousCredential) is incomplete (key management TODO, signature_public_key lacks \u003cV\u003e). Mark: implement a best guess; each invented part gets its own decision record labeled INVENTED, NOT FROM SPEC. PseudonymousCredential allowed only in §6 rooms (exception to BasicCredential-only).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:57.05474237Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:57.10116094Z",
+  "closed_at": "2026-10-17T18:32:57.10116094Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.14",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:57.062885362Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

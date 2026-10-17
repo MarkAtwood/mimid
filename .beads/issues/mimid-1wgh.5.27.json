@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.27",
+  "title": "P12: zero-length roomId means absent",
+  "description": "L1133 roomId not optional but §5.2 makes it conditional: zero-length URI = absent.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:33:00.059383823Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:33:00.116301996Z",
+  "closed_at": "2026-10-17T18:33:00.116301996Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.27",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:33:00.066510297Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

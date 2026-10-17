@@ -2,27 +2,20 @@
   "id": "mimid-1wgh.5",
   "title": "mimi-protocol-06 wire types",
   "description": "tls_codec types for all protocol-06 endpoint bodies (keyMaterial, update, notify, submitMessage, groupInfo, requestConsent, updateConsent, identifierQuery, reportAbuse, proxyDownload) and app components frank_aad, franking_signature_key, participant_list, room_metadata.",
+  "design": "# Plan: mimid-1wgh.5 — mimi-protocol (draft-ietf-mimi-protocol-06 wire types)\n\nApproved by Mark 2026-10-17.\n\n## Mark's decisions\n- mimi-mls gains a `wire` module of newtypes (S0) delegating tls_codec Serialize/Deserialize to openmls types; MLS structures are not length-prefixed in protocol-06, so this crate must parse them. mimi-mls re-exports tls_codec.\n- New pins approved: hmac =0.13.0, serde_json (exact). Committed Python fixture generator (stdlib hmac + `cryptography`) for franking/signature fixtures; tests stay offline.\n- Pseudonymous rooms (§6, PseudonymousCredential): implement best guess; each invented part gets a decision record marked \"invented, not from spec\"; PseudonymousCredential allowed only in §6 rooms (exception to BasicCredential-only). Low-priority sub-issue.\n- Incoming fanout: room URI comes from the /notify/{roomId} path (FanoutMessage body lacks it).\n\n## Inventory\n| Endpoint | Request | Response | § |\n|---|---|---|---|\n| directory | GET /.well-known/mimi-protocol-directory | JSON map | 5.1 |\n| keyMaterial | KeyMaterialRequest (+TBS, signed) | KeyMaterialResponse (ClientKeyMaterial, UserCode, ClientCode) | 5.2 |\n| update | UpdateRequest (HandshakeBundle, GroupInfoOption, GroupInfoRepresentation) | UpdateRoomResponse, UpdateResponseCode | 5.3 |\n| submitMessage | SubmitMessageRequest | SubmitMessageResponse, SubmitResponseCode, Frank | 5.4 |\n| notify | FanoutMessage (concatenated) | 201 | 5.5 |\n| groupInfo | GroupInfoRequest (+TBS) | GroupInfoResponse (+TBS), GroupInfoCode, GroupInfoRatchetTreeTBE, PendingProposal | 5.6 |\n| requestConsent / updateConsent | ConsentEntry, ConsentOperation | 201/404 | 5.7 |\n| identifierQuery | IdentifierRequest, QueryElement, SearchIdentifierType | IdentifierResponse, UserProfile, ProfileField, FieldSource, IdentifierQueryCode | 5.8 |\n| reportAbuse | AbuseReport, AbusiveMessage, AbuseType | none | 5.9 |\n| proxyDownload | GET {url} | asset bytes | 5.10.2 |\nComponents (§10): frank_aad 0x0020 FrankAAD; 0x0021 FrankingAgentData (DR-3); participant_list 0x0022 ParticipantListData/Update (§7.5); room_metadata 0x0023 RoomMetaData/Update + Uri, UTF8String, RichDescription (§7.6).\n\n## Encoding\nTLS-PL for all bodies (§5, L997); directory is JSON (§5.1, L1020); no CBOR in this crate (franking inputs salt/sender_uri/room_uri come from mimi-content as inputs). optional\u003cT\u003e per RFC 9420 §2.1.1.\n\n## MLS types needed from mimi-mls::wire\nCipherSuite, RequiredCapabilities, Capabilities, SignaturePublicKey, Credential, HPKEPublicKey, HPKECiphertext, KeyPackage, Welcome, GroupInfo, MLSMessage (+ wire_format(), content_type()), ExternalSender, ProposalRef, AppDataDictionary, RatchetTreeOption, PartialGroupInfo; sign/verify/encrypt_with_label.\n\n## Crypto computations and oracles\n| Value | Definition | Oracle |\n|---|---|---|\n| franking_tag | HMAC-SHA256(key=16-byte salt, application_data) §5.4.1.1 | Python stdlib hmac -\u003e hex fixtures |\n| server_frank | HMAC-SHA256(hub_key, franking_tag || TLS(ServerFrankingContext)) §5.4.1.2 | same, context hand-encoded |\n| franking_integrity_signature | SignWithLabel \"FrankingIntegrityTBS\" | hand-encoded TBS; Ed25519 deterministic -\u003e Python cryptography fixed key |\n| key_material_request_signature | SignWithLabel \"KeyMaterialRequestTBS\" §5.2 | same |\n| GroupInfoRequest/Response signatures | \"GroupInfoRequestTBS\"/\"GroupInfoResponseTBS\" §5.6 | same |\n| encrypted_groupinfo_and_tree | EncryptWithLabel(pk, \"GroupInfo and ratchet_tree encryption\", room_id, TBE) | TBE bytes by hand + decrypt round-trip; primitive covered by crypto-basics |\nNo hex in the draft. Fixtures: hand-written hex per struct with byte comments; negative tests (trailing bytes, unsorted AppDataDictionary per ext-10 §4.6, unknown select codes). phnx-im/mimi-protocol unusable as oracle.\n\n## Layout\ncrates/mimi-protocol/src/{lib.rs, directory.rs, component.rs, key_material.rs, update.rs, notify.rs, submit.rs, group_info.rs, consent.rs, identifier.rs, abuse.rs, frank.rs}. Spec selects -\u003e Rust enums; manual tls_codec only where a select needs it; open wire enums as u8 newtypes + consts; FanoutMessage::decode_all reads until input runs out (§5.5 L1921).\n\n## Decision records (filed): P1-P17, P19, notify-room-URI; P18 replaced by Mark's \"implement best guess\" decision.\n",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T16:57:40.274075582Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T16:57:40.274075582Z",
+  "updated_at": "2026-10-17T18:32:19.757766656Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.5",
       "depends_on_id": "mimid-1wgh",
       "type": "parent-child",
       "created_at": "2026-10-17T16:57:40.278455774Z",
-      "created_by": "agent",
-      "metadata": "{}"
-    },
-    {
-      "issue_id": "mimid-1wgh.5",
-      "depends_on_id": "mimid-1wgh.4",
-      "type": "blocks",
-      "created_at": "2026-10-17T16:57:40.559339603Z",
       "created_by": "agent",
       "metadata": "{}"
     }

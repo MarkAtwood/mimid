@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.27",
+  "title": "P15: suggested component IDs",
+  "description": "§10.1 values TBD; use suggested 0x0024-0x0030.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:32:58.729610298Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:32:58.783105024Z",
+  "closed_at": "2026-10-17T18:32:58.783105024Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.27",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:32:58.737394982Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
