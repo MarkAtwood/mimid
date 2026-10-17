@@ -8,3 +8,17 @@ description = "MLS layer for the mimid MIMI reference implementation"
 [dependencies]
 openmls.workspace = true
 openmls_rust_crypto.workspace = true
+openmls_sqlite_storage.workspace = true
+# Exact pin: must be the version openmls 0.9.1 itself depends on.
+openmls_basic_credential = "=0.6.0"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tls_codec.workspace = true
+
+[dev-dependencies]
+# test-utils exposes the private key, so the Debug redaction test can look for it.
+openmls_basic_credential = { version = "=0.6.0", features = ["test-utils"] }
+# Independent oracle, pinned per decision mimid-1wgh.4.13.
+mls-rs = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
+mls-rs-crypto-rustcrypto = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
