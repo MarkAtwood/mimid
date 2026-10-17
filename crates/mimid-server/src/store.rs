@@ -1,0 +1,139 @@
+//! SQLite persistence (decision mimid-1wgh.18). All SQL lives in this module.
+
+use std::path::Path;
+
+use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+
+use crate::config::Domain;
+
+/// A handle to the provider's database, with migrations applied.
+#[derive(Debug, Clone)]
+pub struct Store {
+    pool: SqlitePool,
+}
+
+impl Store {
+    /// Opens or creates the database at `path`, applies the embedded
+    /// migrations, and binds the database to `domain`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the database cannot be opened or
+    /// queried, [`StoreError::Migrate`] if a migration fails, and
+    /// [`StoreError::DomainMismatch`] if the database was created for a
+    /// different domain.
+    pub async fn open(path: &Path, domain: &Domain) -> Result<Self, StoreError> {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .foreign_keys(true);
+        let pool = SqlitePool::connect_with(options).await?;
+        sqlx::migrate!().run(&pool).await?;
+
+        sqlx::query("INSERT OR IGNORE INTO provider (id, domain) VALUES (1, ?)")
+            .bind(domain.as_str())
+            .execute(&pool)
+            .await?;
+        let stored: String = sqlx::query_scalar("SELECT domain FROM provider WHERE id = 1")
+            .fetch_one(&pool)
+            .await?;
+        if stored != domain.as_str() {
+            pool.close().await;
+            return Err(StoreError::DomainMismatch {
+                stored,
+                configured: domain.to_string(),
+            });
+        }
+        Ok(Self { pool })
+    }
+
+    /// Closes all connections, waiting for in-flight queries to finish.
+    pub async fn close(&self) {
+        self.pool.close().await;
+    }
+}
+
+/// An error opening or using the store.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum StoreError {
+    /// A database operation failed.
+    #[error("database error")]
+    Sqlx(#[from] sqlx::Error),
+    /// Applying the embedded migrations failed.
+    #[error("database migration failed")]
+    Migrate(#[from] sqlx::migrate::MigrateError),
+    /// The database belongs to a different provider domain.
+    #[error("database belongs to domain {stored:?}, but config says {configured:?}")]
+    DomainMismatch {
+        /// The domain recorded in the database.
+        stored: String,
+        /// The domain in the configuration file.
+        configured: String,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn domain(s: &str) -> Domain {
+        Domain::try_from(s.to_owned()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn open_applies_migrations_and_records_domain() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mimid.sqlite");
+        let store = Store::open(&path, &domain("a.example")).await.unwrap();
+
+        let applied: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(applied, [1]);
+
+        let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, domain FROM provider")
+            .fetch_all(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, [(1, "a.example".to_owned())]);
+        store.close().await;
+    }
+
+    #[tokio::test]
+    async fn reopen_with_same_domain_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mimid.sqlite");
+        Store::open(&path, &domain("a.example"))
+            .await
+            .unwrap()
+            .close()
+            .await;
+        Store::open(&path, &domain("a.example"))
+            .await
+            .unwrap()
+            .close()
+            .await;
+    }
+
+    #[tokio::test]
+    async fn reopen_with_other_domain_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mimid.sqlite");
+        Store::open(&path, &domain("a.example"))
+            .await
+            .unwrap()
+            .close()
+            .await;
+        let err = Store::open(&path, &domain("b.example")).await.unwrap_err();
+        assert!(
+            matches!(&err, StoreError::DomainMismatch { stored, configured }
+                if stored == "a.example" && configured == "b.example"),
+            "{err:?}"
+        );
+    }
+}
