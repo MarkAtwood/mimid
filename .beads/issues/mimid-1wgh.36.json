@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.36",
+  "title": "URI fields: full RFC 3986 URI syntax at decode",
+  "description": "Mark (2026-10-17). Supersedes mimid-1wgh.5.35. Applies to protocol-06 IdentifierUri (§5.2) and room-policy-04 Uri (Appendix B). A non-empty URI field must match the RFC 3986 §3 'URI' production (scheme required, fragment allowed, relative references rejected; implies ASCII-only). Empty still decodes and means absent where decisions allow it (mimid-1wgh.5.27, mimid-1wgh.3.18). Parse only, never normalize; re-encode emits received bytes. Parser: iri-string =0.7.14 (UriStr). MediaType in room-policy (and later mimi-mls) gets the same strictness: RFC 6838 §4.2 type/subtype and RFC 2045 parameter tokens, empty type only where ext-10 §6.2.2 allows it.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:54:47.531997674Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:54:47.584864538Z",
+  "closed_at": "2026-10-17T18:54:47.584864538Z",
+  "close_reason": "Decided by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.36",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:54:47.540838532Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

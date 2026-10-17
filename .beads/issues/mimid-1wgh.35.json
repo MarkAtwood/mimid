@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.35",
+  "title": "RFC 3986 URI validation in protocol and room-policy",
+  "description": "Mark (2026-10-17): validate URI fields with full RFC 3986 syntax at decode time in both mimi-protocol (IdentifierUri) and mimi-room-policy (Uri). Supersedes decision mimid-1wgh.5.35 (IdentifierUri opaque).",
+  "design": "# Plan (awaiting Mark's approval)\n\n## Rule (new decision, supersedes mimid-1wgh.5.35)\n- A non-empty URI field must match the RFC 3986 §3 `URI` production: scheme required, fragment allowed, relative references rejected. That implies ASCII only, so bidi and zero-width characters are rejected too.\n- An empty field still decodes and means absent, where existing decisions allow it: mimid-1wgh.5.27 (roomId) and mimid-1wgh.3.18 (room-policy Uri).\n- Parse only, never normalize: re-encoding emits the received bytes, so sign-and-hash-as-received stays intact.\n\n## Dependency\niri-string =0.7.14 (MIT OR Apache-2.0), exact workspace pin, default-features off plus alloc. Its `UriStr` is the RFC 3986 `URI` production. Rejected: url (WHATWG, not RFC 3986); fluent-uri 0.4 (recent API churn).\n\n## mimi-protocol\n- `IdentifierUri` moves to submodule `identifier_uri` with a private field (checked-constructor rule).\n- `new(\u0026str)` / `as_str()` / `is_empty()`; Deserialize = VLBytes -\u003e UTF-8 -\u003e empty-or-UriStr check.\n- New `Error::InvalidUri`.\n\n## mimi-room-policy\n- `Uri { uri: String }` gets the same check and a private field. About 20 duplicated lines, not shared, because room-policy must not depend on mimi-mls or mimi-protocol (same reasoning as decision mimid-1wgh.3.11).\n\n## Tests (independent oracle)\n- Accept, hand-written from the RFC 3986 text: mimi://a.example/u/alice, https://a.example/x?y#z, urn:ietf:params:mimi, the empty string, and IPv6 and percent-encoded forms.\n- Reject:\n  - relative refs (//a.example, /path, a.example);\n  - spaces, raw non-ASCII, U+202E and U+200B;\n  - a bad percent-encoding (%G1);\n  - a scheme starting with a digit;\n  - unbracketed IPv6.\n- Each accept and reject string is also checked against Python's rfc3986 grammar regex (RFC 3986 Appendix B is not a validator, so the oracle is the ABNF transcribed independently in a committed generator script). Fixture bytes are hand-encoded hex per AGENTS.md.\n- The existing fixture tests stay. Any that used non-URI bytes as an IdentifierUri are updated, because the decision changed, not to make them pass.\n\n## Open sub-question: MediaType strictness (room-policy decision proposal #2)\nProposal: apply the same strictness. MediaType.type must be an RFC 6838 §4.2 type/subtype and parameters RFC 2045 tokens, except that an empty type is allowed only where ext-10 §6.2.2 allows it. Applies to the mimi-mls copy too when it lands, so the hub conversion can't disagree. Mark to confirm or defer.\n\n## Files\nRoot Cargo.toml (pin); crates/mimi-protocol/src/{lib.rs, identifier_uri.rs}, tests/primitives.rs; crates/mimi-room-policy/src/lib.rs, tests/primitives.rs; a committed oracle script under each crate's tests/.",
+  "notes": "Plan approved by Mark 2026-10-17, MediaType strictness included. Decision: mimid-1wgh.36.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:51:51.114768621Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:54:47.678485223Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.35",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:51:51.124538062Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

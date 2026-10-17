@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.4.26",
+  "title": "mimi-mls: reload Identity from Store after restart",
+  "description": "From mimid-1wgh.4.1: Identity::generate keeps the signing key only in memory; the agent needs to reload its identity (credential + signer) from the Store across restarts. Listed under mimi-mls Limitations until done.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:52:25.607169659Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:52:25.607169659Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.26",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:52:25.6159417Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
