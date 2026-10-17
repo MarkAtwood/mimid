@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.36",
+  "title": "P22: Protocol reserved(0) and undefined values rejected",
+  "description": "protocol-06 §5 Protocol enum: reserved(0), mls10(1), (255). The draft does not say how to treat reserved or undefined values on decode. Chosen: reject both as unknown values (standard TLS reading), because the select(protocol) that follows cannot be parsed for them.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:47:21.521078349Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:47:21.65425311Z",
+  "closed_at": "2026-10-17T18:47:21.65425311Z",
+  "close_reason": "Recorded during mimid-1wgh.5.1; reading chosen as described",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.36",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:47:21.529123247Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

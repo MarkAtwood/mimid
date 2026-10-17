@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.34",
+  "title": "TLS terminated in front of mimid; http allowed for tests",
+  "description": "protocol-06 §5.1: the directory conveys HTTPS URLs. mimid listens on plain HTTP and expects a TLS-terminating proxy in front; config base_url and peer addresses accept http:// so offline tests run without certificates. Production deployments must use https base_url. Consistent with mimid-1wgh.17 (no inter-provider auth; no mTLS conformance claimed).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:48:10.234351675Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:48:10.45499845Z",
+  "closed_at": "2026-10-17T18:48:10.45499845Z",
+  "close_reason": "Recorded during mimid-1wgh.31",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.34",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:48:10.247940965Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

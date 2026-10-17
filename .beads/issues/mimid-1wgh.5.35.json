@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.35",
+  "title": "P21: IdentifierUri is opaque in mimi-protocol",
+  "description": "protocol-06 §5.2 defines IdentifierUri as opaque uri\u003cV\u003e, while other sections require a 'valid URI' (e.g. sendingUri, ~L1544). Readings: (a) validate URI syntax at decode; (b) keep the type opaque and validate where a section says the value must be a valid URI. Chosen: (b). Rationale: mirrors the wire definition exactly; zero-length roomId must decode (decision mimid-1wgh.5.27) and is not a URI.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:47:21.468971719Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:47:21.644175596Z",
+  "closed_at": "2026-10-17T18:47:21.644175596Z",
+  "close_reason": "Recorded during mimid-1wgh.5.1; reading chosen as described",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.35",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:47:21.476987201Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

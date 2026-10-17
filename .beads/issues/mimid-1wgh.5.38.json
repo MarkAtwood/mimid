@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.38",
+  "title": "P24: directory placeholders are literal {name} text",
+  "description": "protocol-06 §5.1 directory values contain {targetUser}-style placeholders but never say whether they are RFC 6570 templates or how to expand them; §5.2 says only 'with any necessary percent-encoding'. Chosen: serve literal '{name}' text; clients replace each placeholder with the value percent-encoded per decision mimid-1wgh.5.18 (simple string expansion, RFC 6570 level 1 semantics). WG question filed.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-17T18:48:10.383435575Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-17T18:48:10.494571363Z",
+  "closed_at": "2026-10-17T18:48:10.494571363Z",
+  "close_reason": "Recorded during mimid-1wgh.31",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.38",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-17T18:48:10.39878381Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
