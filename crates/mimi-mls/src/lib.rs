@@ -27,10 +27,14 @@
 #![forbid(unsafe_code)]
 
 mod identity;
+pub mod label;
+pub mod member;
 mod store;
+pub mod wire;
 
 pub use identity::{Identity, KeyPackageKind};
 pub use store::Store;
+pub use tls_codec;
 
 /// The boxed underlying cause carried by [`Error`] variants.
 ///
