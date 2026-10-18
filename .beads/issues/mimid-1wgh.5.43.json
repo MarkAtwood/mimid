@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.43",
+  "title": "P27: MAX_URL_LEN 8000 (INVENTED, NOT FROM SPEC)",
+  "description": "INVENTED, NOT FROM SPEC. protocol-06 sets no URL length limit. mimi-protocol caps directory templates (on decode) and expanded URLs at MAX_URL_LEN = 8000 octets, RFC 9110 §4.1's recommended minimum URI support. Explicit exception to P20 (mimid-1wgh.5.34): P20 rejects per-field caps on protocol primitives (IdentifierUri, UTF8String); this caps HTTP request URLs, which are not wire primitives, and keeps a peer's directory from making us build URLs other HTTP stacks reject. Mark chose to keep it 2026-10-17.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:11:42.093091378Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:11:42.232203877Z",
+  "closed_at": "2026-10-18T01:11:42.232203877Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.43",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:11:42.113955412Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

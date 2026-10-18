@@ -10,7 +10,8 @@
   "created_by": "agent",
   "updated_at": "2026-10-17T18:47:53.355034777Z",
   "labels": [
-    "wg"
+    "wg",
+    "spec:mimi-room-policy-04"
   ],
   "dependencies": [
     {

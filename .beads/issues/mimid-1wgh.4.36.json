@@ -10,7 +10,8 @@
   "created_by": "agent",
   "updated_at": "2026-10-17T19:15:31.546254334Z",
   "labels": [
-    "wg"
+    "wg",
+    "spec:mls-ratchet-tree-options-01"
   ],
   "dependencies": [
     {

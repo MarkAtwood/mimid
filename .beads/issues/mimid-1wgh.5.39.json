@@ -10,7 +10,8 @@
   "created_by": "agent",
   "updated_at": "2026-10-17T18:48:10.563826189Z",
   "labels": [
-    "wg"
+    "wg",
+    "spec:mimi-protocol-06"
   ],
   "dependencies": [
     {

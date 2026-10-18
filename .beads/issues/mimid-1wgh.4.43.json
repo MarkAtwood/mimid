@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.4.43",
+  "title": "upstream: OpenMLS PublicGroup lacks lifetime opt-out",
+  "description": "OpenMLS PublicGroup hard-codes leaf lifetime verification (from_external and commit validation); the skip path exists only under test cfg. RFC 9420 §7.3 makes the check RECOMMENDED for received leaves, and the mlswg passive-client vectors have expired leaves. Patched on our fork per mimid-1wgh.4.38 / .4.39. Related upstream issue #1810. Report/PR only with Mark's explicit per-action OK.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:16:31.991042296Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:16:31.991042296Z",
+  "labels": [
+    "upstream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.43",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:16:32.00656529Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

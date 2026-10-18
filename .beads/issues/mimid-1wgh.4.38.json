@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.38",
+  "title": "Observer skips lifetime checks on received leaves",
+  "description": "RFC 9420 §7.3: lifetime verification is MUST only for LeafNodes the client sends; for received LeafNodes (Proposal, Commit, or the ratchet tree of a group being joined) it is RECOMMENDED, 'because the LeafNode might have expired in the time between when the message was sent and when it was received'. Readings: (a) the hub/follower Observer verifies lifetimes like a member (OpenMLS PublicGroup default, no opt-out); (b) the Observer skips lifetime checks on all received leaves. Chosen: (b). The Observer only ever receives leaves; with (a) a hub cannot track any group containing a member whose leaf is older than its KeyPackage lifetime (84 days default), and the mlswg passive-client vectors (expired 2024-25) cannot be used. Signatures, tree hashes and all other leaf checks still apply. Requires patching the openmls mimid-0.9.1 branch (approved by Mark 2026-10-17). Members' policy is a separate bead.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:14:31.972712872Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:14:32.062387358Z",
+  "closed_at": "2026-10-18T01:14:32.062387358Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.38",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:14:31.999089788Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

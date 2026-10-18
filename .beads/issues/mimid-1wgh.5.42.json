@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.42",
+  "title": "P26: directory decode accepts any placeholder names",
+  "description": "protocol-06 §5.1 shows {targetUser}/{requesterUser} for consent endpoints; §5.7 and P1 (mimid-1wgh.5.16) use {targetDomain}/{requesterDomain}. Readings: (a) require the expected placeholder names when decoding a directory; (b) accept any valid RFC 6570 level-1 template and fail at expand() when the variable does not match. Chosen: (b), lenient decode: a peer that copies §5.1 literally still decodes, and a mismatch fails closed at expansion (P25).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:11:42.011247748Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:11:42.207404981Z",
+  "closed_at": "2026-10-18T01:11:42.207404981Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.42",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:11:42.029598527Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

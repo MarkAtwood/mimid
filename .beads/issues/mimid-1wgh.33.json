@@ -9,6 +9,9 @@
   "created_at": "2026-10-17T18:47:21.572002805Z",
   "created_by": "agent",
   "updated_at": "2026-10-17T18:47:21.572002805Z",
+  "labels": [
+    "upstream"
+  ],
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.33",
