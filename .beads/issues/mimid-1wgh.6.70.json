@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.6.70",
+  "title": "build: rustc 1.99 deprecates fetch_update (clippy -D warnings fails)",
+  "description": "rustc 1.99.1 (2026-10-13) deprecates Atomic::fetch_update (renamed try_update). crates/mimid-server/tests/common/fanout.rs:279 uses it, so clippy -D warnings fails and every landing is blocked. Mechanical rename to try_update (same signature and semantics); no assertion change.",
+  "status": "closed",
+  "priority": 0,
+  "issue_type": "bug",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T22:02:23.941157723Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T22:07:34.549922087Z",
+  "started_at": "2026-10-18T22:02:26.383584396Z",
+  "closed_at": "2026-10-18T22:07:34.549922087Z",
+  "close_reason": "Landed 206b962",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.70",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T22:02:24.673262486Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
