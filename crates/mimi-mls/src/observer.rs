@@ -46,6 +46,12 @@
 //! - [`Observer::group_info`] and [`Observer::verify_group_info`] require
 //!   the GroupInfo's `signer` to be the committer of the merged Commit,
 //!   since protocol-06 §5.3 has the committer send it with the Commit.
+//! - [`ProposalKind::AppDataUpdate`] reports the `update` bytes of a
+//!   proposal as it carries them, without decoding or checking them against
+//!   the component's semantics. [`Observer::process_proposal`] stores such a
+//!   proposal whatever its bytes; only the `apply` function of a later
+//!   [`Observer::process`] judges them, and the caller must decode them
+//!   itself to authorize the proposal.
 //! - [`ProposalDetail::reference`] is `None` for a proposal a Commit carries
 //!   inline: RFC 9420 §5.2 defines a ProposalRef only for proposals sent on
 //!   their own, and OpenMLS does not compute one for inline proposals.
@@ -64,7 +70,9 @@ use openmls::group::{
     LeafNodeLifetimePolicy, ProposalStore, PublicGroup, QueuedProposal, StagedCommit,
 };
 use openmls::messages::group_info::{GroupInfo as OpenMlsGroupInfo, VerifiableGroupInfo};
-use openmls::messages::proposals::{Proposal as OpenMlsProposal, ProposalOrRefType};
+use openmls::messages::proposals::{
+    AppDataUpdateOperation, Proposal as OpenMlsProposal, ProposalOrRefType,
+};
 use openmls::prelude::{
     Extension, Extensions, LeafNodeIndex, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider,
     ProcessedMessage, ProcessedMessageContent, ProtocolMessage, RatchetTreeExtension,
@@ -165,6 +173,11 @@ pub enum ProposalKind {
     AppDataUpdate {
         /// The component whose data it changes.
         component_id: ComponentId,
+        /// The `op` and its body: `Some` with the `update` field's bytes,
+        /// exactly as the proposal carries them, for `op = update`; `None`
+        /// for `op = remove`. The bytes are not interpreted (see the
+        /// module's `# Limitations`).
+        update: Option<Vec<u8>>,
     },
     /// `self_remove` (mls-extensions-10 §6.3).
     SelfRemove,
@@ -667,8 +680,12 @@ impl Observer {
             OpenMlsProposal::ReInit(_) => ProposalKind::ReInit,
             OpenMlsProposal::ExternalInit(_) => ProposalKind::ExternalInit,
             OpenMlsProposal::GroupContextExtensions(_) => ProposalKind::GroupContextExtensions,
-            OpenMlsProposal::AppDataUpdate(update) => ProposalKind::AppDataUpdate {
-                component_id: update.component_id(),
+            OpenMlsProposal::AppDataUpdate(proposal) => ProposalKind::AppDataUpdate {
+                component_id: proposal.component_id(),
+                update: match proposal.operation() {
+                    AppDataUpdateOperation::Update(update) => Some(update.as_slice().to_vec()),
+                    AppDataUpdateOperation::Remove => None,
+                },
             },
             OpenMlsProposal::SelfRemove => ProposalKind::SelfRemove,
             OpenMlsProposal::AppEphemeral(_) => ProposalKind::AppEphemeral,
