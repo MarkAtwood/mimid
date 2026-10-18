@@ -26,7 +26,7 @@ pub(super) fn user_domain(uri: &str) -> Option<&str> {
 
 /// The provider domain of a credential identity, which is a user URI
 /// (decision mimid-1wgh.6.1), or `None` if it names no valid domain.
-pub(super) fn identity_domain(identity: &[u8]) -> Option<Domain> {
+pub(crate) fn identity_domain(identity: &[u8]) -> Option<Domain> {
     std::str::from_utf8(identity)
         .ok()
         .and_then(user_domain)

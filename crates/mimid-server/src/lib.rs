@@ -15,7 +15,8 @@
 //!   impersonated provider.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
-//! - The follower endpoints are not served yet.
+//! - The follower endpoints are stubs: `/notify` and keyMaterial for users
+//!   of this provider answer `501` ([`follower`]).
 //! - The hub proxies keyMaterial only for users of other providers, and
 //!   only when given a [`peer::PeerClient`]; the binary does not give it
 //!   one yet. reportAbuse validates franks and logs the outcome; no action
@@ -64,6 +65,7 @@
 
 pub mod config;
 pub mod directory;
+pub mod follower;
 pub mod http;
 pub mod hub;
 pub mod peer;

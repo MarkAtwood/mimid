@@ -57,6 +57,7 @@ use crate::peer::{PeerClient, PeerError};
 use crate::store::{RoomSnapshot, Store, StoreError};
 use fanout::FanoutHandle;
 use keys::HubSigningKey;
+pub(crate) use state::identity_domain;
 
 /// A source of the current time, injectable for tests.
 pub trait Clock: Send + Sync {
@@ -186,6 +187,11 @@ impl Hub {
         if let Some(fanout) = &self.fanout {
             fanout.wake();
         }
+    }
+
+    /// The domain of the provider this hub serves.
+    pub fn domain(&self) -> &Domain {
+        &self.domain
     }
 
     /// The hub's Ed25519 public key: the only `external_senders` entry and

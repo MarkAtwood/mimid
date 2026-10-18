@@ -4,35 +4,42 @@
 //! Routes follow the directory's layout ([`Directory::new`]): `/v1/<endpoint>/
 //! {roomId}` and `/v1/keyMaterial/{targetUser}`. The placeholder is the
 //! whole URI, percent-encoded (decision mimid-1wgh.5.18), so it is one path
-//! segment; it reaches the hub percent-decoded.
+//! segment; it reaches the hub or follower percent-decoded.
+//!
+//! `/v1/notify/{roomId}` goes to the [`Follower`]. A keyMaterial request
+//! goes to the follower when `targetUser` is a user of this provider, and
+//! otherwise to the hub, which proxies it (plan of mimid-1wgh.7).
 //!
 //! Status mapping (decision mimid-1wgh.6.8): a protocol result is `200` with
 //! an `application/octet-stream` body; an undecodable request, including a
 //! missing or malformed `From` header, is `400`; a room not hosted here is
-//! `404`; a body over [`MAX_BODY_LEN`] is `413`. An endpoint the hub does
-//! not implement yet answers `501`. An abuse report whose franks do not
+//! `404`; a body over [`MAX_BODY_LEN`] is `413`. An endpoint not
+//! implemented yet answers `501`. An abuse report whose franks do not
 //! verify is `422` (decision mimid-1wgh.6.65), and a keyMaterial request
-//! for a local user is `501` and one the target provider fails is `502`
-//! (decision mimid-1wgh.6.64).
+//! the target provider fails is `502` (decision mimid-1wgh.6.64). An
+//! accepted `/notify` is `201` with no body (decision mimid-1wgh.7.4).
 //!
 //! # Limitations
 //!
 //! - The `Host` header is not checked (protocol-06 §4.1).
-//! - `/notify` and the consent, identifierQuery and proxyDownload endpoints
-//!   listed in the directory are not routed, so they answer `404`.
+//! - The follower endpoints, `/notify` and keyMaterial for users of this
+//!   provider, are stubs that answer `501`.
+//! - The consent, identifierQuery and proxyDownload endpoints listed in the
+//!   directory are not routed, so they answer `404`.
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, FromRef, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 
 use crate::config::Domain;
 use crate::directory::{self, Directory};
-use crate::hub::{Hub, HubError};
+use crate::follower::{Follower, FollowerError};
+use crate::hub::{Hub, HubError, identity_domain};
 
 /// The largest request body accepted, in bytes. INVENTED, NOT FROM SPEC
 /// (decision mimid-1wgh.6.8).
@@ -46,17 +53,38 @@ pub const PROTOCOL_CONTENT_TYPE: &str = "application/octet-stream";
 /// address.
 const FROM_PREFIX: &str = "mimi@";
 
+/// The state the protocol routes share.
+#[derive(Clone)]
+struct Roles {
+    hub: Arc<Hub>,
+    follower: Arc<Follower>,
+}
+
+impl FromRef<Roles> for Arc<Hub> {
+    fn from_ref(roles: &Roles) -> Self {
+        Arc::clone(&roles.hub)
+    }
+}
+
+impl FromRef<Roles> for Arc<Follower> {
+    fn from_ref(roles: &Roles) -> Self {
+        Arc::clone(&roles.follower)
+    }
+}
+
 /// Builds the server's HTTP router: the directory document and the hub's
-/// protocol endpoints.
+/// and follower's protocol endpoints. The follower serves the hub's domain.
 pub fn router(directory: Directory, hub: Arc<Hub>) -> Router {
+    let follower = Arc::new(Follower::new(hub.domain().clone()));
     let protocol = Router::new()
         .route("/v1/update/{roomId}", post(update))
         .route("/v1/submitMessage/{roomId}", post(submit_message))
         .route("/v1/groupInfo/{roomId}", post(group_info))
         .route("/v1/reportAbuse/{roomId}", post(report_abuse))
         .route("/v1/keyMaterial/{targetUser}", post(key_material))
+        .route("/v1/notify/{roomId}", post(notify))
         .layer(DefaultBodyLimit::max(MAX_BODY_LEN))
-        .with_state(hub);
+        .with_state(Roles { hub, follower });
     directory::router(directory).merge(protocol)
 }
 
@@ -108,14 +136,42 @@ async fn report_abuse(
     }
 }
 
+/// Sends a request for a user of this provider to the follower, and any
+/// other, including one whose `targetUser` names no domain, to the hub.
 async fn key_material(
-    State(hub): State<Arc<Hub>>,
+    State(Roles { hub, follower }): State<Roles>,
     Path(target_user): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let Some(from) = source_domain(&headers) else {
+        return bad_from();
+    };
+    if identity_domain(target_user.as_bytes()).as_ref() == Some(follower.domain()) {
+        respond_follower(
+            follower
+                .key_material(&target_user, &from, &body)
+                .await
+                .map(protocol_body),
+        )
+    } else {
+        respond(hub.key_material(&target_user, &from, &body).await)
+    }
+}
+
+async fn notify(
+    State(follower): State<Arc<Follower>>,
+    Path(room_id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     match source_domain(&headers) {
-        Some(from) => respond(hub.key_material(&target_user, &from, &body).await),
+        Some(from) => respond_follower(
+            follower
+                .accept_fanout(&room_id, &from, &body)
+                .await
+                .map(|()| StatusCode::CREATED.into_response()),
+        ),
         None => bad_from(),
     }
 }
@@ -137,15 +193,35 @@ fn bad_from() -> Response {
     (StatusCode::BAD_REQUEST, "missing or malformed From header").into_response()
 }
 
+/// A protocol result: `200` with an `application/octet-stream` body.
+fn protocol_body(body: Vec<u8>) -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, PROTOCOL_CONTENT_TYPE)],
+        body,
+    )
+        .into_response()
+}
+
+/// Maps a follower result to a response.
+fn respond_follower(result: Result<Response, FollowerError>) -> Response {
+    match result {
+        Ok(response) => response,
+        Err(FollowerError::InvalidRequest(_)) => {
+            (StatusCode::BAD_REQUEST, "undecodable request").into_response()
+        }
+        Err(FollowerError::NotImplemented(endpoint)) => (
+            StatusCode::NOT_IMPLEMENTED,
+            format!("{endpoint} is not implemented"),
+        )
+            .into_response(),
+    }
+}
+
 /// Maps a hub result to a response (decision mimid-1wgh.6.8).
 fn respond(result: Result<Vec<u8>, HubError>) -> Response {
     match result {
-        Ok(body) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, PROTOCOL_CONTENT_TYPE)],
-            body,
-        )
-            .into_response(),
+        Ok(body) => protocol_body(body),
         Err(HubError::NoSuchRoom) => (StatusCode::NOT_FOUND, "no such room").into_response(),
         Err(HubError::InvalidRequest(_)) => {
             (StatusCode::BAD_REQUEST, "undecodable request").into_response()

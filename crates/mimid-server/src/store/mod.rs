@@ -8,6 +8,8 @@
 //!   existing file that its group or others can access. SQLite gives its
 //!   `-wal` and `-shm` files the main file's mode.
 
+mod follower_log;
+mod key_packages;
 mod keys;
 mod log;
 mod outbox;
@@ -184,13 +186,42 @@ mod tests {
                 .fetch_all(&store.pool)
                 .await
                 .unwrap();
-        assert_eq!(applied, [1, 2]);
+        assert_eq!(applied, [1, 2, 3]);
 
         let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, domain FROM provider")
             .fetch_all(&store.pool)
             .await
             .unwrap();
         assert_eq!(rows, [(1, "a.example".to_owned())]);
+        store.close().await;
+    }
+
+    #[tokio::test]
+    async fn open_creates_follower_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mimid.sqlite");
+        let store = Store::open(&path, &domain("a.example")).await.unwrap();
+
+        let tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN \
+             ('follower_room', 'follower_event', 'welcome_ref', 'follower_member', \
+              'client', 'key_package', 'key_package_claim') ORDER BY name",
+        )
+        .fetch_all(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            tables,
+            [
+                "client",
+                "follower_event",
+                "follower_member",
+                "follower_room",
+                "key_package",
+                "key_package_claim",
+                "welcome_ref",
+            ]
+        );
         store.close().await;
     }
 
