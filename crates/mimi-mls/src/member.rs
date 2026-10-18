@@ -59,10 +59,14 @@
 //!   mimid-1wgh.4.52), so in a group whose `safe_aad` list requires any
 //!   other, this member refuses its own Commits that carry an UpdatePath.
 //!   [`Member::join_external`] checks only the joiner's own leaf.
-//! - [`Member::join_welcome`] and [`Member::join_external`] verify the
-//!   `lifetime` of the leaves in the tree they join (the OpenMLS default),
-//!   so they fail if any member's leaf has expired. The policy for members
-//!   is open (mimid-1wgh.4.40).
+//! - A member does not check the `lifetime` of leaves it receives: in the
+//!   tree of a group it joins, and in the Add, Update and UpdatePath leaves
+//!   of Proposals and Commits it processes (RFC 9420 §7.3, decision
+//!   mimid-1wgh.4.56). Signatures, the tree hash and every other leaf check
+//!   still apply. It checks the lifetime of the KeyPackages it adds itself,
+//!   but not of one in an Add proposal another member sent, even when its
+//!   own Commit includes that proposal by reference (decision
+//!   mimid-1wgh.4.58).
 //! - [`Member::join_external`] checks its own leaf before building the
 //!   Commit, and merges the Commit at once, so it cannot be rolled back if
 //!   the hub rejects it (decision mimid-1wgh.4.54). It sends no
@@ -77,8 +81,8 @@ use openmls::component::{ComponentData, ComponentId, ComponentsList};
 use openmls::framing::SafeAadItem;
 use openmls::grease::random_grease_value;
 use openmls::group::{
-    AppDataDictionaryUpdater, MIXED_PLAINTEXT_WIRE_FORMAT_POLICY, MlsGroup, MlsGroupJoinConfig,
-    StagedCommit, StagedWelcome,
+    AppDataDictionaryUpdater, LeafNodeLifetimePolicy, MIXED_PLAINTEXT_WIRE_FORMAT_POLICY, MlsGroup,
+    MlsGroupJoinConfig, StagedCommit, StagedWelcome,
 };
 use openmls::messages::group_info::VerifiableGroupInfo;
 use openmls::messages::proposals::{AppDataUpdateOperation, AppDataUpdateProposal, Proposal};
@@ -347,6 +351,19 @@ pub struct Member {
 }
 
 impl Member {
+    /// Wraps `group`, whose own leaf belongs to `identity`. The group stops
+    /// checking the `lifetime` of leaves it receives in Proposals and
+    /// Commits (RFC 9420 §7.3; decision mimid-1wgh.4.56). OpenMLS does not
+    /// store this policy, so every constructor, including
+    /// [`Member::load`], comes through here.
+    fn from_group(mut group: MlsGroup, identity: &Identity) -> Self {
+        group.set_leaf_node_lifetime_policy(LeafNodeLifetimePolicy::Skip);
+        Self {
+            group,
+            owner_signature_key: identity.signature_public_key().to_vec(),
+        }
+    }
+
     /// Creates a group with `group_id`, with this identity as its only
     /// member, in epoch 0.
     ///
@@ -422,10 +439,7 @@ impl Member {
                 identity.credential_with_key().clone(),
             )
             .map_err(|e| MemberError::Create(e.into()))?;
-        Ok(Self {
-            group,
-            owner_signature_key: identity.signature_public_key().to_vec(),
-        })
+        Ok(Self::from_group(group, identity))
     }
 
     /// Reloads this identity's membership in the group `group_id` from the
@@ -453,10 +467,7 @@ impl Member {
         {
             return Err(MemberError::WrongIdentity);
         }
-        Ok(Self {
-            group,
-            owner_signature_key: identity.signature_public_key().to_vec(),
-        })
+        Ok(Self::from_group(group, identity))
     }
 
     /// Joins a group from a TLS-encoded `MLSMessage` carrying a Welcome
@@ -488,16 +499,21 @@ impl Member {
             .wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
             .build();
         let provider = identity.provider();
-        let group = StagedWelcome::new_from_welcome(provider, &config, welcome, ratchet_tree)
+        let mut builder = StagedWelcome::build_from_welcome(provider, &config, welcome)
+            .map_err(|e| MemberError::Join(e.into()))?
+            // RFC 9420 §7.3; decision mimid-1wgh.4.56.
+            .skip_lifetime_validation();
+        if let Some(ratchet_tree) = ratchet_tree {
+            builder = builder.with_ratchet_tree(ratchet_tree);
+        }
+        let group = builder
+            .build()
             .map_err(|e| MemberError::Join(e.into()))?
             .into_group(provider)
             .map_err(|e| MemberError::Join(e.into()))?;
         // The Welcome was decrypted with this identity's KeyPackage, so the
         // new leaf belongs to it.
-        Ok(Self {
-            group,
-            owner_signature_key: identity.signature_public_key().to_vec(),
-        })
+        Ok(Self::from_group(group, identity))
     }
 
     /// Joins a group by external Commit (RFC 9420 §12.4.3.2), from a
@@ -577,12 +593,13 @@ impl Member {
         let config = MlsGroupJoinConfig::builder()
             .wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
             .build();
-        let mut builder = MlsGroup::external_commit_builder().with_config(config);
+        let mut builder = MlsGroup::external_commit_builder()
+            .with_config(config)
+            // RFC 9420 §7.3; decision mimid-1wgh.4.56.
+            .skip_lifetime_validation();
         if let Some(ratchet_tree) = ratchet_tree {
             builder = builder.with_ratchet_tree(ratchet_tree);
         }
-        // Leaf lifetimes in the tree are verified (OpenMLS default), as in
-        // join_welcome; the Member lifetime policy is mimid-1wgh.4.40.
         // build_group writes nothing to storage; finalize does.
         let builder = builder
             .build_group(provider, group_info, identity.credential_with_key().clone())
@@ -626,10 +643,7 @@ impl Member {
         let (commit, welcome, group_info) = bundle.into_messages();
         let group_info = group_info
             .ok_or_else(|| MemberError::Commit("OpenMLS exported no GroupInfo".into()))?;
-        let member = Self {
-            group,
-            owner_signature_key: identity.signature_public_key().to_vec(),
-        };
+        let member = Self::from_group(group, identity);
         let bundle = CommitBundle {
             commit: encode(&commit)?,
             welcome: welcome.as_ref().map(encode).transpose()?,
@@ -1080,12 +1094,14 @@ fn resync_leaf(
     identity: &Identity,
 ) -> Result<Option<u32>, MemberError> {
     let scratch = OpenMlsRustCrypto::default();
-    let (group, _) = PublicGroup::from_external(
+    // RFC 9420 §7.3; decision mimid-1wgh.4.56.
+    let (group, _) = PublicGroup::from_external_with_lifetime_policy(
         crypto,
         scratch.storage(),
         tree,
         group_info,
         ProposalStore::new(),
+        LeafNodeLifetimePolicy::Skip,
     )
     .map_err(|e| MemberError::Join(e.into()))?;
     let key = identity.signature_public_key();

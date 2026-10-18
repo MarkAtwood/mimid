@@ -44,6 +44,10 @@
 //!   lists are ignored, a malformed leaf list counts as empty, and a
 //!   malformed GroupContext list fails closed (decision mimid-1wgh.4.49).
 //!   Other implementations may accept leaves this crate refuses.
+//! - A [`member::Member`] does not check the `lifetime` of leaves it
+//!   receives, in the tree of a group it joins or in Proposals and Commits
+//!   (RFC 9420 §7.3, decision mimid-1wgh.4.56). It checks the KeyPackages
+//!   it adds itself.
 //! - An [`observer::Observer`] does not check the `membership_tag` of
 //!   members' PublicMessages (RFC 9420 §6.2): it has no `membership_key`.
 //!   Signatures are verified. It does not check the `lifetime` of received
