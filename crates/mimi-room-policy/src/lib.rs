@@ -13,10 +13,17 @@
 //!
 //! # Limitations
 //!
-//! - Only the primitives are implemented so far: [`Bool`], [`Uri`],
-//!   [`MediaType`], the [`component_id`] constants and the [`Capability`]
-//!   registry. The policy component codecs and evaluation are not yet
+//! - Implemented so far: the primitives ([`Bool`], [`Uri`], [`MediaType`],
+//!   the [`component_id`] constants, the [`Capability`] registry) and the
+//!   `roles_list` component ([`RoleData`], with [`RoleData::validate`]).
+//!   The other policy components and action authorization are not yet
 //!   present.
+//! - [`RoleData::validate`] checks only the structural rules the draft
+//!   states for a role list; it takes `fixed_membership` as a plain flag
+//!   because `BaseRoomPolicy` is not yet implemented. It does not check
+//!   that minimum constraints are at most the maximums, that role names
+//!   are unique or non-empty, or that a role 1 is named `banned`, because
+//!   the draft states none of these (decision mimid-1wgh.3.45).
 //! - The [`Capability`] values are Table 1 of §10.2 as drafted; IANA has
 //!   not created the registry. §10.2 puts 0xF000 in both the Specification
 //!   Required range and the private-use range;
@@ -41,6 +48,12 @@ pub use tls_codec;
 
 mod capability;
 pub use capability::Capability;
+
+mod role;
+pub use role::{
+    BANNED_ROLE_INDEX, BANNED_ROLE_NAME, NO_ROLE_INDEX, PolicyError, Role, RoleData, RoleUpdate,
+    SingleSourceRoleChangeTargets,
+};
 
 use std::io::Read;
 
