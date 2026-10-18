@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.34",
+  "title": "P-cap1: 0xF000 is private use",
+  "description": "draft-ietf-mimi-room-policy-04 §10.2: Specification Required range is '0x0000 to 0xF000' and Private Use is '0xF000 to 0xFFFF', so 0xF000 is in both. Readings: (a) 0xF000 is Specification Required; (b) 0xF000 is Private Use. Chosen: (b), the usual IANA convention (private range starts at the round boundary) and the more specific statement. Capability::is_private_use is true for 0xF000..=0xFFFF. WG item filed separately.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:06:55.738615917Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:07:24.135266337Z",
+  "closed_at": "2026-10-18T01:07:24.135266337Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.34",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:06:55.761400588Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

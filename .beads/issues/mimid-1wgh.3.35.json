@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.35",
+  "title": "P-cap2: '(reserved)' is not part of a capability name",
+  "description": "draft-ietf-mimi-room-policy-04 Table 1 prints names such as 'canCreateJoinCode (reserved)'. Readings: (a) the suffix is part of the registered name; (b) it is a status marker. Chosen: (b). §8.7 lists the same capabilities by bare name, and a name with a space and parentheses is not a camelCase identifier like every other entry. Capability::name returns the bare name.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:06:55.87009466Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:07:24.1657722Z",
+  "closed_at": "2026-10-18T01:07:24.1657722Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.35",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:06:55.886504987Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

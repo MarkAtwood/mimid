@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.36",
+  "title": "P-cap3: canUnBan name string follows Table 1",
+  "description": "Extends P11 (mimid-1wgh.3.23), which fixed value 0x000b but not the spelling. draft-ietf-mimi-room-policy-04 §8.1.3 says canUnban; Table 1 (the registry) says canUnBan. Chosen: Table 1, since it is the registry entry: const CAN_UN_BAN, name() returns \"canUnBan\". The const doc notes the §8.1.3 spelling.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:06:55.998901447Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:07:24.195508161Z",
+  "closed_at": "2026-10-18T01:07:24.195508161Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.36",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:06:56.017401942Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
