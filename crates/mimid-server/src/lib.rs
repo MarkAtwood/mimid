@@ -20,6 +20,35 @@
 //! - The hub's signing and franking keys are stored unencrypted in the
 //!   database, which must be readable by its owner only (mode 0600; see
 //!   [`store`]).
+//! - Room policy ([`hub::policy`]):
+//!   - Only BasicCredential is supported, and it carries no claims, so
+//!     preauthorization matches only `preauth_list` entries with an empty
+//!     `claimset` (room-policy-04 §4; decision mimid-1wgh.3.47).
+//!   - Join codes are not supported: `canUseJoinCode` never authorizes
+//!     anything, and a GroupInfo request with a joining code is refused
+//!     (decision mimid-1wgh.6.13).
+//!   - The §8.2 metadata capabilities are not enforced (decision
+//!     mimid-1wgh.6.2); updates to `room_metadata` and to the room-policy §6
+//!     and §7 components are carried without a capability check.
+//!   - The room-policy-04 §5 rule that ordinary users of a fixed-membership
+//!     room cannot leave or be removed is not enforced (decision
+//!     mimid-1wgh.3.50). The §5 `parent_dependant` subset rule and
+//!     `pseudonyms_allowed` are not checked: the hub has no parent room
+//!     state and BasicCredential has no notion of a pseudonym.
+//!   - `canDestroyRoom` is not enforced: the hub offers no way to destroy a
+//!     room.
+//!   - Proposals from an MLS external sender are refused: the hub is the
+//!     only external sender (decision mimid-1wgh.4.21) and v1 sends none
+//!     (decision mimid-1wgh.6.46).
+//!   - A new-member (external) proposal can only add a client of a user
+//!     already in the participant list (`canAddOwnClient`);
+//!     preauthorization is consulted only for external Commits (decision
+//!     mimid-1wgh.6.46).
+//!   - An AppDataUpdate `remove` of a hub-tracked component is refused, and
+//!     so is any AppDataUpdate of `franking_agent`, which must stay the
+//!     hub's key (decisions mimid-1wgh.6.3, mimid-1wgh.6.42).
+//!   - A `base_room_policy` update needs `canChangeRoomMembershipStyle`
+//!     whatever fields it changes (decision mimid-1wgh.6.43).
 
 #![forbid(unsafe_code)]
 

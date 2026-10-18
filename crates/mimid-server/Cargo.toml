@@ -14,6 +14,7 @@ anyhow.workspace = true
 axum.workspace = true
 mimi-mls = { path = "../mimi-mls" }
 mimi-protocol = { path = "../mimi-protocol" }
+mimi-room-policy = { path = "../mimi-room-policy" }
 # rustls with its default aws-lc-rs provider (decisions mimid-1wgh.26, .6.16).
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 serde.workspace = true

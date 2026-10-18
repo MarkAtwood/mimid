@@ -2031,6 +2031,7 @@ dependencies = [
  "base64 0.22.1",
  "mimi-mls",
  "mimi-protocol",
+ "mimi-room-policy",
  "mls-rs",
  "mls-rs-crypto-rustcrypto",
  "reqwest",

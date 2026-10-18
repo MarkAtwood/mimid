@@ -19,7 +19,9 @@
 //! - The hub's signing key and franking key are stored unencrypted; see
 //!   [`crate::store`].
 
+pub mod components;
 mod keys;
+pub mod policy;
 mod room;
 
 use std::collections::BTreeMap;
