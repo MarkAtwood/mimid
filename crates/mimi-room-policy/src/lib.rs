@@ -14,13 +14,19 @@
 //! # Limitations
 //!
 //! - Implemented so far: the primitives ([`Bool`], [`Uri`], [`MediaType`],
-//!   the [`component_id`] constants, the [`Capability`] registry) and the
-//!   `roles_list` component ([`RoleData`], with [`RoleData::validate`]).
-//!   The other policy components and action authorization are not yet
-//!   present.
+//!   the [`component_id`] constants, the [`Capability`] registry), the
+//!   `roles_list` component ([`RoleData`], with [`RoleData::validate`]) and
+//!   the `base_room_policy` component ([`BaseRoomPolicy`]). The other
+//!   policy components and action authorization are not yet present.
+//! - [`BaseRoomPolicy`] decoding enforces only the §5 `parent_room` rule.
+//!   The other §5 rules (participant subsets, `max_clients`, `max_users`,
+//!   `multi_device`, pseudonyms) concern room state, not the component,
+//!   and are not checked here. `policy_component_ids` is not checked for
+//!   duplicates or for which components it names.
 //! - [`RoleData::validate`] checks only the structural rules the draft
-//!   states for a role list; it takes `fixed_membership` as a plain flag
-//!   because `BaseRoomPolicy` is not yet implemented. It does not check
+//!   states for a role list; it takes the
+//!   [`BaseRoomPolicy::fixed_membership`] flag, not the whole policy. It
+//!   does not check
 //!   that minimum constraints are at most the maximums, that role names
 //!   are unique or non-empty, or that a role 1 is named `banned`, because
 //!   the draft states none of these (decision mimid-1wgh.3.45).
@@ -45,6 +51,9 @@
 #![forbid(unsafe_code)]
 
 pub use tls_codec;
+
+mod base;
+pub use base::{BaseRoomData, BaseRoomPolicy, BaseRoomUpdate};
 
 mod capability;
 pub use capability::Capability;

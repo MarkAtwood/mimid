@@ -85,7 +85,7 @@ pub struct RoleData {
 /// replaces the whole `roles_list` (decision mimid-1wgh.3.20).
 pub type RoleUpdate = RoleData;
 
-/// A rule of room-policy-04 that a [`RoleData`] breaks.
+/// A rule of room-policy-04 that a policy component breaks.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum PolicyError {
@@ -114,6 +114,11 @@ pub enum PolicyError {
     /// `roles_that_can_share` names a role that no role defines.
     #[error("roles_that_can_share names undefined role_index {0}")]
     UndefinedSharingRole(u32),
+    /// A `BaseRoomPolicy` `parent_room` does not hold exactly one
+    /// non-empty `Uri` when `parent_dependant` is true, or is not empty
+    /// when it is false (§5).
+    #[error("parent_room does not match parent_dependant")]
+    ParentRoomMismatch,
 }
 
 impl RoleData {
@@ -126,8 +131,7 @@ impl RoleData {
 
     /// Checks the structural rules room-policy-04 states for a role list.
     ///
-    /// Pass the `fixed_membership` flag of the room's `BaseRoomPolicy`
-    /// (§5).
+    /// Pass the room's [`crate::BaseRoomPolicy::fixed_membership`] (§5).
     ///
     /// The rules are:
     /// - every `role_index` is unique (§3);
