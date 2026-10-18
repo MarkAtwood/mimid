@@ -15,6 +15,7 @@ use axum::body::{Body, Bytes, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use common::*;
 use mimi_protocol::component_id;
+use mimi_room_policy::component_id::BASE_ROOM_POLICY;
 use mimid_server::config::BaseUrl;
 use mimid_server::directory::Directory;
 use mimid_server::http::{MAX_BODY_LEN, router};
@@ -134,6 +135,7 @@ async fn room_with_expired_leaf_loads_after_restart() {
                 component_id::PARTICIPANT_LIST,
                 &participant_list(&[ALICE, CAROL]),
             ),
+            (BASE_ROOM_POLICY, &base_room_policy()),
         ]),
     ));
     let mut alice = mls_rs_client(ALICE, 84 * ONE_DAY)
@@ -339,6 +341,41 @@ async fn create_room_rejects_missing_or_malformed_participant_list() {
     );
 }
 
+/// Decision mimid-1wgh.6.57: a hosted room needs a valid base_room_policy.
+#[tokio::test]
+async fn create_room_rejects_missing_or_malformed_base_room_policy() {
+    let err = rejected(
+        |hub| GroupSpec {
+            base_room_policy: None,
+            ..GroupSpec::valid_for(hub)
+        },
+        ALICE,
+    )
+    .await;
+    assert!(matches!(err, HubError::MissingBaseRoomPolicy), "{err:?}");
+
+    let mut trailing = base_room_policy();
+    trailing.push(0x00);
+    // room-policy-04 §5: the first field, `bool fixed_membership`, must be
+    // 0 or 1.
+    let mut bad_bool = base_room_policy();
+    bad_bool[0] = 0x02;
+    for malformed in [trailing, bad_bool, vec![]] {
+        let err = rejected(
+            |hub| GroupSpec {
+                base_room_policy: Some(malformed.clone()),
+                ..GroupSpec::valid_for(hub)
+            },
+            ALICE,
+        )
+        .await;
+        assert!(
+            matches!(err, HubError::InvalidBaseRoomPolicy(_)),
+            "{malformed:02x?}: {err:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn create_room_rejects_bad_ids_and_duplicates() {
     let dir = tempfile::tempdir().unwrap();
@@ -384,7 +421,8 @@ async fn hub_and_stored_secret_debug_redact_secrets() {
 }
 
 /// Every `tracing` event at TRACE, from create_room through a restart and
-/// a stub request, is free of the hub's signing key and `hub_key`.
+/// an undecodable update request, is free of the hub's signing key and
+/// `hub_key`.
 #[tokio::test]
 async fn trace_logs_never_contain_hub_secrets() {
     let logs = capture_logs();
@@ -403,7 +441,8 @@ async fn trace_logs_never_contain_hub_secrets() {
         vec![1, 2, 3],
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+    // Implemented (mimid-1wgh.6.27); the body does not decode.
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
     let secret = store.hub_secret().await.unwrap().unwrap();
     let text = logs.contents();
@@ -466,8 +505,9 @@ async fn http_routes_stubs_and_status_mapping() {
     ] {
         let uri = format!("/v1/{endpoint}/{ROOM_ID_ENCODED}");
         let (status, _, body) = send(&app, Method::POST, &uri, from, vec![0]).await;
-        if endpoint == "submitMessage" {
-            // Implemented (mimid-1wgh.6.29); the body does not decode.
+        if endpoint == "submitMessage" || endpoint == "update" {
+            // Implemented (mimid-1wgh.6.29, mimid-1wgh.6.27); the body does
+            // not decode.
             assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
         } else {
             assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{uri}");
@@ -537,7 +577,8 @@ async fn http_body_cap_is_enforced() {
     let from = Some("mimi@b.example");
 
     let (status, _, _) = send(&app, Method::POST, &uri, from, vec![0; MAX_BODY_LEN]).await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "at the cap");
+    // Implemented (mimid-1wgh.6.27); the body does not decode.
+    assert_eq!(status, StatusCode::BAD_REQUEST, "at the cap");
     let (status, _, _) = send(&app, Method::POST, &uri, from, vec![0; MAX_BODY_LEN + 1]).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "past the cap");
     let unknown = "/v1/submitMessage/mimi%3A%2F%2Fa.example%2Fr%2Fnope";

@@ -76,12 +76,7 @@ async fn submit_message(
     body: Bytes,
 ) -> Response {
     match source_domain(&headers) {
-        Some(from) => match hub.submit_message(&room_id, &from, &body).await {
-            Err(HubError::InvalidRequest(_)) => {
-                (StatusCode::BAD_REQUEST, "undecodable request").into_response()
-            }
-            result => respond(result),
-        },
+        Some(from) => respond(hub.submit_message(&room_id, &from, &body).await),
         None => bad_from(),
     }
 }
@@ -149,6 +144,9 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
         )
             .into_response(),
         Err(HubError::NoSuchRoom) => (StatusCode::NOT_FOUND, "no such room").into_response(),
+        Err(HubError::InvalidRequest(_)) => {
+            (StatusCode::BAD_REQUEST, "undecodable request").into_response()
+        }
         Err(HubError::NotImplemented(endpoint)) => (
             StatusCode::NOT_IMPLEMENTED,
             format!("{endpoint} is not implemented"),
@@ -183,6 +181,13 @@ mod tests {
             response.headers().get(header::CONTENT_TYPE).unwrap(),
             "application/octet-stream"
         );
+    }
+
+    #[test]
+    fn undecodable_requests_are_400() {
+        let error = mimi_mls::tls_codec::Error::EndOfStream;
+        let response = respond(Err(HubError::InvalidRequest(error)));
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]

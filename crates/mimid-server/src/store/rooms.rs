@@ -58,18 +58,24 @@ impl Store {
         )
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter()
-            .map(|row| {
-                Ok(RoomSnapshot {
-                    room_id: row.room_id,
-                    group_id: row.group_id,
-                    epoch: from_sql_int(row.epoch)?,
-                    group_info: row.group_info,
-                    ratchet_tree: row.ratchet_tree,
-                    created_at: from_sql_int(row.created_at)?,
-                })
-            })
-            .collect()
+        rows.into_iter().map(RoomRow::into_snapshot).collect()
+    }
+
+    /// Returns the snapshot of the room `room_id`, if it is stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails, and
+    /// [`StoreError::OutOfRange`] if a stored integer is negative.
+    pub async fn room(&self, room_id: &str) -> Result<Option<RoomSnapshot>, StoreError> {
+        let row: Option<RoomRow> = sqlx::query_as(
+            "SELECT room_id, group_id, epoch, group_info, ratchet_tree, created_at \
+             FROM room WHERE room_id = ?",
+        )
+        .bind(room_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(RoomRow::into_snapshot).transpose()
     }
 }
 
@@ -82,4 +88,17 @@ struct RoomRow {
     group_info: Vec<u8>,
     ratchet_tree: Vec<u8>,
     created_at: i64,
+}
+
+impl RoomRow {
+    fn into_snapshot(self) -> Result<RoomSnapshot, StoreError> {
+        Ok(RoomSnapshot {
+            room_id: self.room_id,
+            group_id: self.group_id,
+            epoch: from_sql_int(self.epoch)?,
+            group_info: self.group_info,
+            ratchet_tree: self.ratchet_tree,
+            created_at: from_sql_int(self.created_at)?,
+        })
+    }
 }

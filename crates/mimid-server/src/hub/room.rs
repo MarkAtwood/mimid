@@ -1,15 +1,15 @@
 //! Validation of a new room's group (plan of mimid-1wgh.6, S3).
 
 use mimi_mls::observer::Observer;
-use mimi_mls::tls_codec::{self, Deserialize, Serialize, VLBytes};
-use mimi_mls::wire::ExternalSender;
+use mimi_mls::tls_codec::{Deserialize, Serialize, VLBytes};
+use mimi_mls::wire::GroupInfo;
 use mimi_protocol::{FrankingAgentData, IdentifierUri, ParticipantListData, component_id};
+use mimi_room_policy::BaseRoomPolicy;
+use mimi_room_policy::component_id::BASE_ROOM_POLICY;
 
 use super::HubError;
+use super::components::decode;
 use crate::config::Domain;
-
-/// RFC 9420 §17.3: the `external_senders` extension type.
-const EXTERNAL_SENDERS: u16 = 0x0005;
 
 /// RFC 9420 §5.3: `CredentialType` basic (0x0001).
 const BASIC_CREDENTIAL_TYPE: [u8; 2] = [0x00, 0x01];
@@ -36,6 +36,23 @@ pub(super) fn check_room_id(room_id: &str, domain: &Domain) -> Result<(), HubErr
     Ok(())
 }
 
+/// RFC 9420 §6: the MLSMessage header of a GroupInfo, `version` mls10
+/// (0x0001) and `wire_format` mls_group_info (0x0004).
+pub(super) const GROUP_INFO_MESSAGE_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
+
+/// Refuses a GroupInfo `MLSMessage` that carries a ratchet_tree extension
+/// (protocol-06 §5.6; decision mimid-1wgh.6.11). The message has already
+/// been verified as a GroupInfo by [`Observer::from_group_info`].
+pub(super) fn check_no_embedded_tree(group_info: &[u8]) -> Result<(), HubError> {
+    let body = group_info
+        .strip_prefix(&GROUP_INFO_MESSAGE_HEADER)
+        .ok_or(HubError::GroupInfoHasRatchetTree)?;
+    match GroupInfo::tls_deserialize_exact(body) {
+        Ok(group_info) if !group_info.has_ratchet_tree_extension() => Ok(()),
+        _ => Err(HubError::GroupInfoHasRatchetTree),
+    }
+}
+
 /// Checks a new room's group, already verified by
 /// [`Observer::from_group_info`], against the hub's rules:
 ///
@@ -43,6 +60,8 @@ pub(super) fn check_room_id(room_id: &str, domain: &Domain) -> Result<(), HubErr
 ///   mimid-1wgh.4.21);
 /// - the `franking_agent` component names the hub (decisions
 ///   mimid-1wgh.6.3, mimid-1wgh.6.18);
+/// - a `base_room_policy` component is present and decodes
+///   (room-policy-04 §5; decision mimid-1wgh.6.57);
 /// - the participant list (protocol-06 §7.5) lists `creator` and the
 ///   credential identity of every member, which is the member's user URI
 ///   (decision mimid-1wgh.6.1).
@@ -68,7 +87,8 @@ pub(super) fn check_group(
     );
     let hub_sender = [key.as_slice(), credential.as_slice()].concat();
 
-    let senders = external_senders(&observer.group_context().map_err(HubError::Mls)?)
+    let senders = observer
+        .external_senders()
         .map_err(|_| HubError::WrongExternalSenders)?;
     match senders.as_slice() {
         [sender] if sender.as_bytes() == hub_sender => {}
@@ -85,6 +105,12 @@ pub(super) fn check_group(
     {
         return Err(HubError::WrongFrankingAgent);
     }
+
+    // Decision mimid-1wgh.6.57.
+    let base = observer
+        .component(BASE_ROOM_POLICY)
+        .ok_or(HubError::MissingBaseRoomPolicy)?;
+    decode::<BaseRoomPolicy>(BASE_ROOM_POLICY, base).map_err(HubError::InvalidBaseRoomPolicy)?;
 
     let participants = observer
         .component(component_id::PARTICIPANT_LIST)
@@ -104,37 +130,6 @@ pub(super) fn check_group(
         return Err(HubError::MemberNotListed { leaf_index });
     }
     Ok(())
-}
-
-/// Reads the `external_senders` extension (RFC 9420 §12.1.8.1) from a
-/// TLS-encoded GroupContext (RFC 9420 §8.1). Returns an empty list when the
-/// extension is absent.
-///
-/// TEMPORARY: mimi-mls has no accessor for GroupContext extensions, so the
-/// server walks the GroupContext here. Replace with the `Observer` accessor
-/// that follow-up bead mimid-1wgh.6.34 (M2) adds.
-/// The input is the Observer's own encoding of a verified GroupContext.
-fn external_senders(group_context: &[u8]) -> Result<Vec<ExternalSender>, tls_codec::Error> {
-    let mut reader = group_context;
-    u16::tls_deserialize(&mut reader)?; // ProtocolVersion version
-    u16::tls_deserialize(&mut reader)?; // CipherSuite cipher_suite
-    VLBytes::tls_deserialize(&mut reader)?; // opaque group_id<V>
-    u64::tls_deserialize(&mut reader)?; // uint64 epoch
-    VLBytes::tls_deserialize(&mut reader)?; // opaque tree_hash<V>
-    VLBytes::tls_deserialize(&mut reader)?; // opaque confirmed_transcript_hash<V>
-    let extensions = VLBytes::tls_deserialize(&mut reader)?; // Extension extensions<V>
-    if !reader.is_empty() {
-        return Err(tls_codec::Error::TrailingData);
-    }
-    let mut extensions = extensions.as_slice();
-    while !extensions.is_empty() {
-        let extension_type = u16::tls_deserialize(&mut extensions)?;
-        let extension_data = VLBytes::tls_deserialize(&mut extensions)?;
-        if extension_type == EXTERNAL_SENDERS {
-            return Vec::<ExternalSender>::tls_deserialize_exact(extension_data.as_slice());
-        }
-    }
-    Ok(Vec::new())
 }
 
 #[cfg(test)]
@@ -163,45 +158,5 @@ mod tests {
                 assert!(matches!(err, HubError::InvalidRoomId), "{room_id}: {err:?}");
             }
         }
-    }
-
-    /// A GroupContext hand-encoded from RFC 9420 §8.1, with one
-    /// external_senders extension holding one ExternalSender.
-    #[test]
-    fn reads_external_senders_from_hand_encoded_group_context() {
-        let mut sender = vec![0x20]; // SignaturePublicKey signature_key<V>: 32 bytes
-        sender.extend([0xab; 32]);
-        sender.extend([0x00, 0x01]); // CredentialType basic
-        sender.extend([0x03, b'h', b'u', b'b']); // opaque identity<V>: 3 bytes
-        let mut senders = vec![u8::try_from(sender.len()).unwrap()]; // ExternalSender<V>
-        senders.extend(&sender);
-
-        let mut context = vec![
-            0x00, 0x01, // version = mls10
-            0x00, 0x01, // cipher_suite = 1
-            0x02, b'g', b'1', // group_id<V>
-            0, 0, 0, 0, 0, 0, 0, 7, // epoch = 7
-            0x01, 0xaa, // tree_hash<V>
-            0x00, // confirmed_transcript_hash<V>: empty
-        ];
-        let mut extensions = vec![0x0a, 0x0a, 0x00]; // unknown GREASE type, empty data
-        extensions.extend([0x00, 0x05]); // extension_type = external_senders
-        extensions.push(u8::try_from(senders.len()).unwrap()); // extension_data<V>
-        extensions.extend(&senders);
-        context.push(u8::try_from(extensions.len()).unwrap()); // extensions<V>
-        context.extend(&extensions);
-
-        let found = external_senders(&context).unwrap();
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].as_bytes(), sender.as_slice());
-
-        let mut trailing = context.clone();
-        trailing.push(0);
-        assert!(external_senders(&trailing).is_err());
-
-        let none = [
-            0x00, 0x01, 0x00, 0x01, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, 0x00,
-        ];
-        assert!(external_senders(&none).unwrap().is_empty());
     }
 }

@@ -20,6 +20,9 @@
 //! Every update is decoded strictly: trailing bytes, non-minimal lengths
 //! and invalid enum values are rejected.
 //!
+//! [`apply_commit_op`] wraps it as the hub's `apply` function for every
+//! component a Commit updates (decision mimid-1wgh.6.53).
+//!
 //! # Limitations
 //!
 //! - A `roles_list` update is only decoded here. Its §3/§5 structural rules
@@ -27,14 +30,21 @@
 //!   [`crate::hub::policy::authorize_commit`] validates it.
 //! - A `participant_list` entry with role 0 is accepted here; room policy
 //!   denies an action that gives a user role 0 (room-policy-04 §3).
-//! - An AppDataUpdate `remove` operation is not handled here; room policy
-//!   refuses it for these components.
+//! - [`apply_updates`] does not handle an AppDataUpdate `remove`;
+//!   [`apply_commit_op`] passes it through and room policy refuses it for
+//!   these components.
+//! - AppDataUpdates for components other than these four,
+//!   `room_metadata` and `franking_agent` are invalid, including the
+//!   room-policy-04 §6 and §7 components (decision mimid-1wgh.6.53).
 
 use std::collections::HashSet;
 
-use mimi_protocol::component_id::PARTICIPANT_LIST;
+use mimi_mls::member::ComponentOp;
+use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_protocol::tls_codec::{self, Deserialize, Serialize};
-use mimi_protocol::{ParticipantListData, ParticipantListUpdate};
+use mimi_protocol::{
+    FrankingAgentUpdate, ParticipantListData, ParticipantListUpdate, RoomMetaUpdate,
+};
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ComponentID, PREAUTH_LIST, ROLES_LIST};
 use mimi_room_policy::{BaseRoomPolicy, PreAuthData, RoleData};
 
@@ -83,6 +93,10 @@ pub enum ComponentError {
     /// The component is not one the hub tracks.
     #[error("component {0:#06x} is not tracked by the hub")]
     NotHubTracked(ComponentID),
+    /// The component is unknown to the hub, so an AppDataUpdate for it is
+    /// invalid (mls-extensions-10 §4.7; decision mimid-1wgh.6.53).
+    #[error("component {0:#06x} is unknown to the hub")]
+    UnknownComponent(ComponentID),
 }
 
 /// One user's participant-list change, from the role before the update to
@@ -280,6 +294,46 @@ pub fn apply_updates(
         BASE_ROOM_POLICY => replace::<BaseRoomPolicy>(component_id, updates),
         other => Err(ComponentError::NotHubTracked(other)),
     }
+}
+
+/// The hub's mls-extensions-10 §4.7 application logic for one component
+/// of a Commit, as the `apply` function of
+/// [`mimi_mls::observer::Observer::process`] (decision mimid-1wgh.6.53):
+///
+/// - the four hub-tracked components go through [`apply_updates`];
+/// - `room_metadata` (protocol-06 §7.6) and `franking_agent` (§5.4.1)
+///   updates are decoded strictly, and the last one replaces the data. Room
+///   policy still refuses any `franking_agent` change (decision
+///   mimid-1wgh.6.42);
+/// - a `remove` of any of these components passes through; room policy
+///   refuses it for the hub-tracked ones;
+/// - every other component is unknown to the hub, and its AppDataUpdate is
+///   invalid.
+///
+/// # Errors
+///
+/// [`ComponentError::UnknownComponent`] for any other component, and the
+/// errors of [`apply_updates`] or of decoding an update.
+pub fn apply_commit_op(
+    component_id: ComponentID,
+    current: Option<&[u8]>,
+    op: ComponentOp<'_>,
+) -> Result<Option<Vec<u8>>, ComponentError> {
+    let known = is_hub_tracked(component_id)
+        || component_id == ROOM_METADATA
+        || component_id == FRANKING_AGENT;
+    if !known {
+        return Err(ComponentError::UnknownComponent(component_id));
+    }
+    let ComponentOp::Update(updates) = op else {
+        return Ok(None);
+    };
+    match component_id {
+        ROOM_METADATA => replace::<RoomMetaUpdate>(component_id, updates),
+        FRANKING_AGENT => replace::<FrankingAgentUpdate>(component_id, updates),
+        _ => apply_updates(component_id, current, updates),
+    }
+    .map(Some)
 }
 
 /// Full replacement (decision mimid-1wgh.3.20): every update must decode

@@ -1,7 +1,10 @@
 //! The `room_event` table, the hub's ordered log of accepted messages, and
-//! the `outbox` rows enqueued with each event in the same transaction.
+//! the rows written with each event in the same transaction: `outbox`
+//! rows, `pending_proposal` rows, and the room snapshot a Commit replaces.
 //!
 //! Only the write side of `outbox` is here; the delivery worker reads it.
+
+use sqlx::{Sqlite, Transaction};
 
 use super::{Store, StoreError, from_sql_int, to_sql_int};
 
@@ -46,6 +49,18 @@ pub struct NewEvent<'a> {
     pub hash: &'a [u8],
 }
 
+/// A room's state after a merged Commit: what replaces its snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EpochSnapshot<'a> {
+    /// The new epoch.
+    pub epoch: u64,
+    /// The new epoch's GroupInfo, a TLS-encoded MLSMessage without a
+    /// ratchet_tree extension (decision mimid-1wgh.6.11).
+    pub group_info: &'a [u8],
+    /// The new epoch's TLS-encoded ratchet tree.
+    pub ratchet_tree: &'a [u8],
+}
+
 /// A fanout request to enqueue for one destination provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboxEntry<'a> {
@@ -70,33 +85,102 @@ impl Store {
         event: &NewEvent<'_>,
         outbox: &[OutboxEntry<'_>],
     ) -> Result<u64, StoreError> {
-        let accepted_at = to_sql_int(event.accepted_at)?;
         let mut tx = self.pool.begin().await?;
-        let seq: i64 = sqlx::query_scalar(
-            "INSERT INTO room_event (room_id, epoch, accepted_at, kind, bytes, hash) \
-             VALUES (?, ?, ?, ?, ?, ?) RETURNING seq",
-        )
-        .bind(event.room_id)
-        .bind(to_sql_int(event.epoch)?)
-        .bind(accepted_at)
-        .bind(event.kind.as_sql())
-        .bind(event.bytes)
-        .bind(event.hash)
-        .fetch_one(&mut *tx)
-        .await?;
-        for entry in outbox {
+        let seq = insert_event(&mut tx, event, outbox).await?;
+        tx.commit().await?;
+        Ok(seq)
+    }
+
+    /// Appends the proposal `event` to its room's log, stores every message
+    /// in `proposals` as a pending proposal of `event.epoch` accepted at
+    /// `event.accepted_at`, in order, and enqueues `outbox`, all in one
+    /// transaction. Returns the event's sequence number.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::append_event`]. On error nothing is written.
+    pub async fn append_proposals(
+        &self,
+        event: &NewEvent<'_>,
+        proposals: &[&[u8]],
+        outbox: &[OutboxEntry<'_>],
+    ) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let seq = insert_event(&mut tx, event, outbox).await?;
+        for proposal in proposals {
             sqlx::query(
-                "INSERT INTO outbox (room_id, domain, body, next_attempt_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO pending_proposal (room_id, epoch, proposal, hub_accepted_time) \
+                 VALUES (?, ?, ?, ?)",
             )
             .bind(event.room_id)
-            .bind(entry.domain)
-            .bind(entry.body)
-            .bind(accepted_at)
+            .bind(to_sql_int(event.epoch)?)
+            .bind(proposal)
+            .bind(to_sql_int(event.accepted_at)?)
             .execute(&mut *tx)
             .await?;
         }
         tx.commit().await?;
-        from_sql_int(seq)
+        Ok(seq)
+    }
+
+    /// Appends the Commit `event` to its room's log, replaces the room's
+    /// snapshot with `snapshot`, drops the pending proposals of earlier
+    /// epochs, and enqueues `outbox`, all in one transaction. Returns the
+    /// event's sequence number.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::append_event`], and [`StoreError::Corrupt`] if the room
+    /// is not stored. On error nothing is written.
+    pub async fn append_commit(
+        &self,
+        event: &NewEvent<'_>,
+        snapshot: &EpochSnapshot<'_>,
+        outbox: &[OutboxEntry<'_>],
+    ) -> Result<u64, StoreError> {
+        let epoch = to_sql_int(snapshot.epoch)?;
+        let mut tx = self.pool.begin().await?;
+        let seq = insert_event(&mut tx, event, outbox).await?;
+        let updated = sqlx::query(
+            "UPDATE room SET epoch = ?, group_info = ?, ratchet_tree = ? WHERE room_id = ?",
+        )
+        .bind(epoch)
+        .bind(snapshot.group_info)
+        .bind(snapshot.ratchet_tree)
+        .bind(event.room_id)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::Corrupt("committed room is not stored"));
+        }
+        sqlx::query("DELETE FROM pending_proposal WHERE room_id = ? AND epoch < ?")
+            .bind(event.room_id)
+            .bind(epoch)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(seq)
+    }
+
+    /// The pending proposals of `epoch` in `room_id`, in the order they
+    /// were accepted, exactly as received.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::OutOfRange`] if `epoch` exceeds `i64::MAX`, and
+    /// [`StoreError::Sqlx`] if the query fails.
+    pub async fn pending_proposals(
+        &self,
+        room_id: &str,
+        epoch: u64,
+    ) -> Result<Vec<Vec<u8>>, StoreError> {
+        Ok(sqlx::query_scalar(
+            "SELECT proposal FROM pending_proposal WHERE room_id = ? AND epoch = ? ORDER BY seq",
+        )
+        .bind(room_id)
+        .bind(to_sql_int(epoch)?)
+        .fetch_all(&self.pool)
+        .await?)
     }
 
     /// The acceptance time of the logged event of `kind` in `room_id` whose
@@ -122,6 +206,40 @@ impl Store {
         .await?;
         accepted_at.map(from_sql_int).transpose()
     }
+}
+
+/// Inserts `event` and its `outbox` rows in `tx`. Each outbox row is due at
+/// `event.accepted_at`. Returns the event's sequence number.
+async fn insert_event(
+    tx: &mut Transaction<'_, Sqlite>,
+    event: &NewEvent<'_>,
+    outbox: &[OutboxEntry<'_>],
+) -> Result<u64, StoreError> {
+    let accepted_at = to_sql_int(event.accepted_at)?;
+    let seq: i64 = sqlx::query_scalar(
+        "INSERT INTO room_event (room_id, epoch, accepted_at, kind, bytes, hash) \
+         VALUES (?, ?, ?, ?, ?, ?) RETURNING seq",
+    )
+    .bind(event.room_id)
+    .bind(to_sql_int(event.epoch)?)
+    .bind(accepted_at)
+    .bind(event.kind.as_sql())
+    .bind(event.bytes)
+    .bind(event.hash)
+    .fetch_one(&mut **tx)
+    .await?;
+    for entry in outbox {
+        sqlx::query(
+            "INSERT INTO outbox (room_id, domain, body, next_attempt_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(event.room_id)
+        .bind(entry.domain)
+        .bind(entry.body)
+        .bind(accepted_at)
+        .execute(&mut **tx)
+        .await?;
+    }
+    from_sql_int(seq)
 }
 
 #[cfg(test)]

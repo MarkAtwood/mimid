@@ -13,6 +13,8 @@ use mimi_mls::tls_codec::{Deserialize, Serialize, VLBytes};
 use mimi_mls::wire::{Credential, SignaturePublicKey};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind};
 use mimi_protocol::{FrankingAgentData, ParticipantListData, UserRolePair, component_id};
+use mimi_room_policy::BaseRoomPolicy;
+use mimi_room_policy::component_id::BASE_ROOM_POLICY;
 use mimid_server::config::Domain;
 use mimid_server::hub::{Clock, Hub};
 use mimid_server::store::Store;
@@ -102,6 +104,26 @@ pub fn participant_list(users: &[&[u8]]) -> Vec<u8> {
     .unwrap()
 }
 
+/// A valid `BaseRoomPolicy` (room-policy-04 §5): open membership, multiple
+/// devices, no limits. Every hosted room needs one (decision
+/// mimid-1wgh.6.57).
+pub fn base_room_policy() -> Vec<u8> {
+    BaseRoomPolicy {
+        fixed_membership: false.into(),
+        parent_dependant: false.into(),
+        parent_room: vec![],
+        multi_device: true.into(),
+        max_clients: None,
+        max_users: None,
+        pseudonyms_allowed: false.into(),
+        persistent_room: true.into(),
+        discoverable: false.into(),
+        policy_component_ids: vec![],
+    }
+    .tls_serialize_detached()
+    .unwrap()
+}
+
 /// mls-extensions-10 §4.6 `ComponentData component_data<V>`, the data of an
 /// `app_data_dictionary` extension. `entries` must be in ascending order.
 pub fn app_data_dictionary(entries: &[(u16, &[u8])]) -> Vec<u8> {
@@ -127,6 +149,8 @@ pub struct GroupSpec {
     pub franking_agent: Option<Vec<u8>>,
     /// The encoded `participant_list` component, if any.
     pub participant_list: Option<Vec<u8>>,
+    /// The encoded `base_room_policy` component, if any.
+    pub base_room_policy: Option<Vec<u8>>,
 }
 
 impl GroupSpec {
@@ -138,6 +162,7 @@ impl GroupSpec {
             sender_identity: HUB_IDENTITY.to_vec(),
             franking_agent: Some(franking_agent(&key, HUB_IDENTITY)),
             participant_list: Some(participant_list(&[ALICE, BOB])),
+            base_room_policy: Some(base_room_policy()),
         }
     }
 }
@@ -169,6 +194,9 @@ pub fn build_group(spec: &GroupSpec, group_id: &[u8]) -> BuiltGroup {
     }
     if let Some(data) = &spec.participant_list {
         components.push((component_id::PARTICIPANT_LIST, data.clone()));
+    }
+    if let Some(data) = &spec.base_room_policy {
+        components.push((BASE_ROOM_POLICY, data.clone()));
     }
     let mut group = Member::create(&alice, group_id, &senders, &components).unwrap();
     let key_package = bob.key_package(KeyPackageKind::OneTime).unwrap();

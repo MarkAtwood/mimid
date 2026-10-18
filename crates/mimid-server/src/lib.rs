@@ -15,8 +15,8 @@
 //!   impersonated provider.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
-//! - The hub's protocol endpoints other than submitMessage are routed but
-//!   are stubs, and the follower endpoints are not served yet.
+//! - The hub's protocol endpoints other than update and submitMessage are
+//!   routed but are stubs, and the follower endpoints are not served yet.
 //! - [`peer`] sends `/notify` requests to configured peers, and
 //!   [`hub::fanout`] delivers the outbox through it, at least once, so
 //!   followers must deduplicate. Nothing starts the fanout worker yet: the
@@ -33,8 +33,10 @@
 //!     anything, and a GroupInfo request with a joining code is refused
 //!     (decision mimid-1wgh.6.13).
 //!   - The §8.2 metadata capabilities are not enforced (decision
-//!     mimid-1wgh.6.2); updates to `room_metadata` and to the room-policy §6
-//!     and §7 components are carried without a capability check.
+//!     mimid-1wgh.6.2); updates to `room_metadata` are carried without a
+//!     capability check. AppDataUpdates to the room-policy §6 and §7
+//!     components are refused as unknown to the hub (decision
+//!     mimid-1wgh.6.53).
 //!   - The room-policy-04 §5 rule that ordinary users of a fixed-membership
 //!     room cannot leave or be removed is not enforced (decision
 //!     mimid-1wgh.3.50). The §5 `parent_dependant` subset rule and

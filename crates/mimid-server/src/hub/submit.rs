@@ -35,6 +35,9 @@
 //!   hub cannot tell which client sent a PrivateMessage, so it does not.
 //! - A room whose GroupContext lacks `base_room_policy`, or has a malformed
 //!   policy component, refuses every message (decision mimid-1wgh.6.51).
+//!   [`Hub::create_room`] already refuses a group without a valid
+//!   `base_room_policy`, so this is defence in depth (decision
+//!   mimid-1wgh.6.57).
 //! - A retried request's response is rebuilt from the logged acceptance
 //!   time rather than stored. It is byte-identical because `server_frank`
 //!   is an HMAC and Ed25519 signatures are deterministic (RFC 8032 §5.1.6;
@@ -49,22 +52,19 @@ use std::collections::BTreeSet;
 use mimi_mls::observer::Observer;
 use mimi_mls::tls_codec::{self, Deserialize, Serialize, VLBytes};
 use mimi_mls::wire::CipherSuite;
-use mimi_protocol::component_id::{FRANK_AAD, PARTICIPANT_LIST};
+use mimi_protocol::component_id::FRANK_AAD;
 use mimi_protocol::{
     FanoutEvent, FanoutMessage, Frank, FrankAad, FrankingIntegrityTbs, IdentifierUri, Protocol,
     ServerFrankingContext, SubmitMessageRequest, SubmitMessageResponse, SubmitResult,
 };
-use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ComponentID, PREAUTH_LIST, ROLES_LIST};
+use mimi_room_policy::component_id::ComponentID;
 use sha2::{Digest, Sha256};
 
-use super::components::{ComponentError, decode};
-use super::policy::{self, RoomState};
+use super::policy;
+use super::state::{member_domains, room_state, user_domain};
 use super::{Hub, HubError, Room};
 use crate::config::Domain;
 use crate::store::{EventKind, NewEvent, OutboxEntry, StoreError};
-
-/// The URI scheme of MIMI identifiers (protocol-06 §3).
-const MIMI_SCHEME_PREFIX: &str = "mimi://";
 
 /// Runs [`Hub::submit_message`].
 pub(super) async fn submit_message(
@@ -143,6 +143,7 @@ pub(super) async fn submit_message(
         destinations = outbox.len(),
         "application message accepted"
     );
+    hub.wake_fanout();
     Ok(accepted.response)
 }
 
@@ -199,6 +200,9 @@ fn check(
         return refuse(room_id, "From domain is not the sendingUri domain");
     }
 
+    // create_room refuses a room without a valid base_room_policy, so a
+    // missing one here is defence in depth (decisions
+    // mimid-1wgh.6.51, mimid-1wgh.6.57).
     let state = match room_state(observer) {
         Ok(state) => state,
         Err(error) => {
@@ -260,15 +264,6 @@ fn respond(result: SubmitResult) -> Result<Vec<u8>, HubError> {
 fn refuse(room_id: &str, reason: &str) -> Result<Checked, HubError> {
     tracing::debug!(room_id, reason, "submitMessage refused");
     respond(SubmitResult::NotAllowed).map(Checked::Refused)
-}
-
-/// The domain of a `mimi://<domain>/...` user URI (protocol-06 §3), or
-/// `None` for any other URI.
-fn user_domain(uri: &str) -> Option<&str> {
-    uri.strip_prefix(MIMI_SCHEME_PREFIX)?
-        .split('/')
-        .next()
-        .filter(|domain| !domain.is_empty())
 }
 
 /// The `franking_tag` of the request's `frank_aad` Safe AAD item
@@ -360,75 +355,17 @@ fn cipher_suite(observer: &Observer) -> Result<CipherSuite, HubError> {
     CipherSuite::tls_deserialize(&mut reader).map_err(HubError::GroupContext)
 }
 
-/// Why a room's policy state cannot be read.
-#[derive(Debug, thiserror::Error)]
-enum StateError {
-    #[error("component {0:#06x} is absent")]
-    Missing(ComponentID),
-    #[error(transparent)]
-    Component(#[from] ComponentError),
-}
-
-/// The room's policy state from its GroupContext components. An absent
-/// participant list, role list or preauthorization list is empty; an
-/// absent `base_room_policy` is an error (decision mimid-1wgh.6.51).
-fn room_state(observer: &Observer) -> Result<RoomState, StateError> {
-    fn component_or_default<T: Deserialize + Default>(
-        observer: &Observer,
-        component_id: ComponentID,
-    ) -> Result<T, ComponentError> {
-        observer
-            .component(component_id)
-            .map_or_else(|| Ok(T::default()), |bytes| decode(component_id, bytes))
-    }
-    let base = observer
-        .component(BASE_ROOM_POLICY)
-        .ok_or(StateError::Missing(BASE_ROOM_POLICY))?;
-    Ok(RoomState {
-        roles: component_or_default(observer, ROLES_LIST)?,
-        preauth: component_or_default(observer, PREAUTH_LIST)?,
-        base: decode(BASE_ROOM_POLICY, base)?,
-        participants: component_or_default(observer, PARTICIPANT_LIST)?,
-        members: observer.members().into_iter().collect(),
-    })
-}
-
-/// The destination domains of an application message: the domains of the
-/// group's members (their credential identity is their user URI; decision
-/// mimid-1wgh.6.1) and the origin `from` (decision mimid-1wgh.6.17).
+/// The destination domains of an application message: the members'
+/// domains and the origin `from` (decision mimid-1wgh.6.17).
 fn destinations(observer: &Observer, from: &Domain) -> BTreeSet<String> {
-    let mut domains = BTreeSet::from([from.as_str().to_owned()]);
-    for (leaf_index, identity) in observer.members() {
-        let domain = std::str::from_utf8(&identity)
-            .ok()
-            .and_then(user_domain)
-            .and_then(|domain| Domain::try_from(domain.to_owned()).ok());
-        match domain {
-            Some(domain) => {
-                domains.insert(domain.as_str().to_owned());
-            }
-            None => tracing::warn!(leaf_index, "member identity names no domain; not delivered"),
-        }
-    }
+    let mut domains = member_domains(observer);
+    domains.insert(from.as_str().to_owned());
     domains
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn user_domain_is_the_mimi_authority() {
-        assert_eq!(user_domain("mimi://b.example/u/bob"), Some("b.example"));
-        assert_eq!(user_domain("mimi://b.example"), Some("b.example"));
-        for uri in ["https://b.example/u/bob", "mimi:///u/bob", "b.example", ""] {
-            assert_eq!(user_domain(uri), None, "{uri}");
-        }
-        assert_eq!(
-            user_domain("mimi://eve@b.example/u/bob"),
-            Some("eve@b.example")
-        );
-    }
 
     /// SafeAAD structs hand-encoded from mls-extensions-10 §4.9.
     #[test]

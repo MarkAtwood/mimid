@@ -3,23 +3,27 @@
 //!
 //! A [`Hub`] holds one [`Observer`] per hosted room, keyed by room URI. At
 //! startup each Observer is rebuilt from the room's stored GroupInfo and
-//! ratchet tree, in a fresh in-memory [`mimi_mls::Store`] (decision
-//! mimid-1wgh.6.6).
+//! ratchet tree, in a fresh in-memory [`mimi_mls::Store`], and the room's
+//! stored pending proposals are replayed into it (decision mimid-1wgh.6.6).
+//! The same rebuild undoes in-memory changes that a refused or failed
+//! request made after the Observer accepted them.
 //!
 //! # Limitations
 //!
-//! - The protocol endpoints [`Hub::update`], [`Hub::group_info`],
-//!   [`Hub::key_material`] and [`Hub::report_abuse`] are stubs that return
+//! - The protocol endpoints [`Hub::group_info`], [`Hub::key_material`] and
+//!   [`Hub::report_abuse`] are stubs that return
 //!   [`HubError::NotImplemented`].
 //! - [`Hub::submit_message`] has the limitations listed in `submit.rs`: the
 //!   hub cannot authenticate a PrivateMessage's sender, does not withhold
 //!   messages from clients whose removal is pending (protocol-06 §5.3), and
 //!   refuses messages in rooms without a usable `base_room_policy`.
-//! - Rebuilding does not yet replay stored pending proposals (decision
-//!   mimid-1wgh.6.6); nothing stores them until the update endpoint lands.
-//! - [`Hub::create_room`] does not refuse a GroupInfo that embeds a
-//!   ratchet_tree extension (decision mimid-1wgh.6.11): mimi-mls cannot yet
-//!   report GroupInfo extensions. Follow-up bead mimid-1wgh.6.34 adds it.
+//! - [`Hub::update`] has the limitations listed in `update.rs`.
+//! - If a room cannot be rebuilt after a failed request, it is dropped from
+//!   memory, and requests for it get [`HubError::NoSuchRoom`] until the hub
+//!   restarts. Its stored state is kept (decision mimid-1wgh.6.58).
+//! - The fanout worker is woken after each write only if
+//!   [`Hub::with_fanout`] gave the hub its handle; otherwise it finds the
+//!   rows on its next pass.
 //! - The hub's signing key and franking key are stored unencrypted; see
 //!   [`crate::store`].
 
@@ -28,17 +32,21 @@ pub mod fanout;
 mod keys;
 pub mod policy;
 mod room;
+mod state;
 mod submit;
+mod update;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mimi_mls::observer::{Observer, ObserverError, ObserverStart};
+use mimi_mls::wire::ProposalRef;
 use tokio::sync::Mutex;
 
 use crate::config::Domain;
 use crate::store::{RoomSnapshot, Store, StoreError};
+use fanout::FanoutHandle;
 use keys::HubSigningKey;
 
 /// A source of the current time, injectable for tests.
@@ -65,12 +73,12 @@ impl Clock for SystemClock {
 /// A hosted room's live MLS state.
 struct Room {
     /// Holds the Observer's group state; used by no other Observer.
-    #[expect(
-        dead_code,
-        reason = "kept alive with its Observer; passed to Observer::process by the update endpoint (mimid-1wgh.6.27)"
-    )]
     mls_store: mimi_mls::Store,
     observer: Observer,
+    /// The ProposalRefs of the current epoch's pending proposals, in hub
+    /// order: every one must be included in the next Commit (decision
+    /// mimid-1wgh.6.5).
+    pending: Vec<ProposalRef>,
 }
 
 /// The public state of a hosted room, as the hub tracks it.
@@ -95,6 +103,8 @@ pub struct Hub {
     /// matching SQLite's single writer (decision mimid-1wgh.6.7). Upgrade
     /// path: per-room locks, with no schema change.
     rooms: Mutex<BTreeMap<String, Room>>,
+    /// The fanout worker to wake after enqueuing rows, if any.
+    fanout: Option<FanoutHandle>,
 }
 
 impl std::fmt::Debug for Hub {
@@ -126,7 +136,10 @@ impl Hub {
         let signing_key = HubSigningKey::load(&store).await?;
         let mut rooms = BTreeMap::new();
         for snapshot in store.rooms().await? {
-            let room = rebuild(&snapshot)?;
+            let pending = store
+                .pending_proposals(&snapshot.room_id, snapshot.epoch)
+                .await?;
+            let room = rebuild(&snapshot, &pending)?;
             rooms.insert(snapshot.room_id, room);
         }
         tracing::info!(rooms = rooms.len(), "hub rooms rebuilt");
@@ -136,7 +149,23 @@ impl Hub {
             signing_key,
             clock,
             rooms: Mutex::new(rooms),
+            fanout: None,
         })
+    }
+
+    /// Gives the hub the running fanout worker, which it wakes after every
+    /// write that enqueues fanout.
+    #[must_use]
+    pub fn with_fanout(mut self, fanout: FanoutHandle) -> Self {
+        self.fanout = Some(fanout);
+        self
+    }
+
+    /// Wakes the fanout worker, if the hub has one.
+    fn wake_fanout(&self) {
+        if let Some(fanout) = &self.fanout {
+            fanout.wake();
+        }
     }
 
     /// The hub's Ed25519 public key: the only `external_senders` entry and
@@ -159,8 +188,10 @@ impl Hub {
     /// and the credential `mimi://<hub domain>` (decision
     /// mimid-1wgh.6.35), and the
     /// participant list lists `creator` and every member's credential
-    /// identity. `room_metadata.room_uri` is not checked (decision
-    /// mimid-1wgh.6.15).
+    /// identity, and the group must carry a valid `base_room_policy`
+    /// (decision mimid-1wgh.6.57). `room_metadata.room_uri` is not checked (decision
+    /// mimid-1wgh.6.15). The GroupInfo must not carry a ratchet_tree
+    /// extension (decision mimid-1wgh.6.11).
     ///
     /// The bytes are stored as received.
     ///
@@ -170,9 +201,12 @@ impl Hub {
     /// a bad `room_id`, [`HubError::RoomExists`] or
     /// [`HubError::GroupExists`] if the room or its group is already
     /// hosted, [`HubError::InvalidGroupInfo`] if the group fails MLS
-    /// validation, [`HubError::WrongExternalSenders`],
+    /// validation, [`HubError::GroupInfoHasRatchetTree`],
+    /// [`HubError::WrongExternalSenders`],
     /// [`HubError::MissingFrankingAgent`],
     /// [`HubError::WrongFrankingAgent`],
+    /// [`HubError::MissingBaseRoomPolicy`],
+    /// [`HubError::InvalidBaseRoomPolicy`],
     /// [`HubError::MissingParticipantList`],
     /// [`HubError::InvalidParticipantList`],
     /// [`HubError::CreatorNotListed`] or [`HubError::MemberNotListed`] if
@@ -201,6 +235,7 @@ impl Hub {
         {
             return Err(HubError::GroupExists);
         }
+        room::check_no_embedded_tree(group_info)?;
         room::check_group(&observer, self.signing_key.public(), &self.domain, creator)?;
 
         let snapshot = RoomSnapshot {
@@ -218,6 +253,7 @@ impl Hub {
             Room {
                 mls_store,
                 observer,
+                pending: Vec::new(),
             },
         );
         Ok(())
@@ -239,20 +275,33 @@ impl Hub {
         })
     }
 
-    /// protocol-06 §5.3 `POST /update/{roomId}`. Stub.
+    /// protocol-06 §5.3 `POST /update/{roomId}`: validates the Commit or
+    /// proposals in the TLS-encoded `UpdateRequest` `request`, checks them
+    /// against room policy, logs them and enqueues their fanout. `from` is
+    /// the domain of the request's `From` header.
+    ///
+    /// Returns the TLS-encoded `UpdateRoomResponse`: `success` with the
+    /// acceptance time, `wrongEpoch` with the current epoch, or
+    /// `notAllowed` with an `errorDescription` for anything refused. A
+    /// retry of an accepted request gets the same response and writes
+    /// nothing. The steps are listed in `update.rs`.
     ///
     /// # Errors
     ///
-    /// Returns [`HubError::NoSuchRoom`] if the room is not hosted here, and
-    /// otherwise [`HubError::NotImplemented`].
+    /// Returns [`HubError::InvalidRequest`] if `request` does not decode,
+    /// [`HubError::NoSuchRoom`] if the room is not hosted here, and
+    /// [`HubError::Encode`], [`HubError::Mls`], [`HubError::MlsStore`],
+    /// [`HubError::Rebuild`], [`HubError::SnapshotMismatch`] or
+    /// [`HubError::Store`] for internal failures. Nothing is written on
+    /// error, and the room's in-memory state is rebuilt from its stored
+    /// state.
     pub async fn update(
         &self,
         room_id: &str,
-        _from: &Domain,
-        _request: &[u8],
+        from: &Domain,
+        request: &[u8],
     ) -> Result<Vec<u8>, HubError> {
-        self.require_room(room_id).await?;
-        Err(HubError::NotImplemented("update"))
+        update::update(self, room_id, from, request).await
     }
 
     /// protocol-06 §5.4 `POST /submitMessage/{roomId}`: checks, franks and
@@ -342,16 +391,17 @@ impl Hub {
     }
 }
 
-/// Rebuilds a room's Observer from its snapshot (decision mimid-1wgh.6.6).
+/// Rebuilds a room's Observer from its snapshot and replays its stored
+/// `pending` proposals, in hub order (decision mimid-1wgh.6.6).
 /// [`Observer::from_group_info`] sets the leaf lifetime policy to Skip
 /// itself, so leaves that expired while the hub was down still load.
-fn rebuild(snapshot: &RoomSnapshot) -> Result<Room, HubError> {
+fn rebuild(snapshot: &RoomSnapshot, pending: &[Vec<u8>]) -> Result<Room, HubError> {
     let rebuild_error = |source| HubError::Rebuild {
         room_id: snapshot.room_id.clone(),
         source,
     };
     let mls_store = mimi_mls::Store::open_in_memory().map_err(HubError::MlsStore)?;
-    let ObserverStart { observer, .. } = Observer::from_group_info(
+    let ObserverStart { mut observer, .. } = Observer::from_group_info(
         &mls_store,
         &snapshot.group_info,
         Some(&snapshot.ratchet_tree),
@@ -362,10 +412,48 @@ fn rebuild(snapshot: &RoomSnapshot) -> Result<Room, HubError> {
             room_id: snapshot.room_id.clone(),
         });
     }
+    let mut references = Vec::with_capacity(pending.len());
+    for proposal in pending {
+        let detail = observer
+            .process_proposal(&mls_store, proposal)
+            .map_err(rebuild_error)?;
+        // A proposal sent on its own always has a ProposalRef.
+        let reference = detail.reference.ok_or_else(|| HubError::SnapshotMismatch {
+            room_id: snapshot.room_id.clone(),
+        })?;
+        references.push(reference);
+    }
     Ok(Room {
         mls_store,
         observer,
+        pending: references,
     })
+}
+
+/// Replaces the room `room_id` in `rooms` with one rebuilt from its stored
+/// snapshot and pending proposals, undoing in-memory changes that were not
+/// stored. If that fails, the room is left out of `rooms` (decision
+/// mimid-1wgh.6.58).
+async fn restore_room(
+    hub: &Hub,
+    rooms: &mut BTreeMap<String, Room>,
+    room_id: &str,
+) -> Result<(), HubError> {
+    rooms.remove(room_id);
+    let snapshot = hub
+        .store
+        .room(room_id)
+        .await?
+        .ok_or(StoreError::Corrupt("hosted room is not stored"))?;
+    let pending = hub.store.pending_proposals(room_id, snapshot.epoch).await?;
+    let room = rebuild(&snapshot, &pending)?;
+    tracing::debug!(
+        room_id,
+        epoch = snapshot.epoch,
+        "room rebuilt from its stored state"
+    );
+    rooms.insert(snapshot.room_id, room);
+    Ok(())
 }
 
 /// An error from the hub.
@@ -394,6 +482,10 @@ pub enum HubError {
     /// The room's MLS group is already hosted under another room ID.
     #[error("MLS group already hosted")]
     GroupExists,
+    /// The GroupInfo carries a ratchet_tree extension (decision
+    /// mimid-1wgh.6.11).
+    #[error("the GroupInfo embeds a ratchet_tree extension")]
+    GroupInfoHasRatchetTree,
     /// The GroupInfo or ratchet tree failed MLS validation.
     #[error("invalid GroupInfo or ratchet tree")]
     InvalidGroupInfo(#[source] ObserverError),
@@ -411,6 +503,14 @@ pub enum HubError {
     /// mimid-1wgh.6.18, mimid-1wgh.6.35).
     #[error("franking_agent is not the hub")]
     WrongFrankingAgent,
+    /// The group has no `base_room_policy` component (decision
+    /// mimid-1wgh.6.57).
+    #[error("no base_room_policy component")]
+    MissingBaseRoomPolicy,
+    /// The `base_room_policy` component does not decode (decision
+    /// mimid-1wgh.6.57).
+    #[error("malformed base_room_policy component")]
+    InvalidBaseRoomPolicy(#[source] components::ComponentError),
     /// The group has no `participant_list` component.
     #[error("no participant_list component")]
     MissingParticipantList,
@@ -427,18 +527,20 @@ pub enum HubError {
         /// The member's leaf index.
         leaf_index: u32,
     },
-    /// A stored room could not be rebuilt at startup.
+    /// A stored room could not be rebuilt, at startup or after a failed
+    /// request.
     #[error("cannot rebuild room {room_id}")]
     Rebuild {
         /// The room.
         room_id: String,
-        /// Why the stored GroupInfo or ratchet tree failed.
+        /// Why the stored GroupInfo, ratchet tree or a pending proposal
+        /// failed.
         #[source]
         source: ObserverError,
     },
     /// A stored room rebuilt to another group or epoch than its snapshot
-    /// records.
-    #[error("room {room_id} does not match its stored group ID or epoch")]
+    /// records, or a replayed pending proposal has no ProposalRef.
+    #[error("room {room_id} does not match its stored state")]
     SnapshotMismatch {
         /// The room.
         room_id: String,

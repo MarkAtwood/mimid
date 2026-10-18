@@ -24,7 +24,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use crate::config::Domain;
 
 pub use keys::StoredHubSecret;
-pub use log::{EventKind, NewEvent, OutboxEntry};
+pub use log::{EpochSnapshot, EventKind, NewEvent, OutboxEntry};
 pub use outbox::OutboxRow;
 pub use rooms::RoomSnapshot;
 
