@@ -4,7 +4,9 @@
 //! other's application messages. GroupContext extension bytes are compared
 //! with hand-encoded expectations.
 
-use mimi_mls::member::{ComponentOp, ExternalSender, Incoming, Member, MemberError, Sender};
+use mimi_mls::member::{
+    ComponentOp, ExternalSender, Incoming, Member, MemberError, Sender, WelcomeJoin,
+};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
 use mls_rs::extension::ExtensionType;
 use mls_rs::group::{CommitEffect, ExportedTree, ReceivedMessage};
@@ -441,7 +443,9 @@ fn mls_rs_creates_group_and_adds_mimi_member() {
 
     // mls-rs puts the ratchet tree into the Welcome by default.
     let welcome = output.welcome_messages[0].to_bytes().expect("encode");
-    let mut group = Member::join_welcome(&bob, &welcome, None).expect("join from Welcome");
+    let WelcomeJoin {
+        member: mut group, ..
+    } = Member::join_welcome(&bob, &welcome, None).expect("join from Welcome");
     assert_same_epoch_secrets(&group, &bob, &alice);
     assert_eq!(group.own_leaf_index(), 1);
 
@@ -496,7 +500,9 @@ fn tampered_messages_are_rejected_and_group_stays_usable() {
         .expect("commit");
     alice.apply_pending_commit().expect("apply");
     let welcome = output.welcome_messages[0].to_bytes().expect("encode");
-    let mut group = Member::join_welcome(&bob, &welcome, None).expect("join");
+    let WelcomeJoin {
+        member: mut group, ..
+    } = Member::join_welcome(&bob, &welcome, None).expect("join");
 
     // A Commit with an UpdatePath, sent as a PublicMessage. Its last bytes
     // are the membership_tag (RFC 9420 §6.2), so flipping the last bit
@@ -589,8 +595,14 @@ fn removal_is_seen_by_removed_member_and_remaining_members_agree() {
         .expect("commit");
     dave.apply_pending_commit().expect("apply");
     let welcome = output.welcome_messages[0].to_bytes().expect("encode");
-    let mut alice_group = Member::join_welcome(&alice, &welcome, None).expect("alice joins");
-    let mut carol_group = Member::join_welcome(&carol, &welcome, None).expect("carol joins");
+    let WelcomeJoin {
+        member: mut alice_group,
+        ..
+    } = Member::join_welcome(&alice, &welcome, None).expect("alice joins");
+    let WelcomeJoin {
+        member: mut carol_group,
+        ..
+    } = Member::join_welcome(&carol, &welcome, None).expect("carol joins");
     assert_same_epoch_secrets(&alice_group, &alice, &dave);
     assert_same_epoch_secrets(&carol_group, &carol, &dave);
     assert_eq!(alice_group.own_leaf_index(), 1);
@@ -709,7 +721,10 @@ fn mimi_member_adds_mimi_key_package() {
     let ReceivedMessage::Commit(_) = mls_rs_receive(&mut bob, &bundle.commit) else {
         panic!("mls-rs expected a Commit");
     };
-    let mut carol_group = Member::join_welcome(
+    let WelcomeJoin {
+        member: mut carol_group,
+        ..
+    } = Member::join_welcome(
         &carol,
         &bundle.welcome.expect("Welcome"),
         Some(&alice_group.ratchet_tree().expect("tree")),
@@ -835,7 +850,10 @@ fn mimi_key_package_joins_a_group_requiring_frank_aad() {
     let ReceivedMessage::Commit(_) = mls_rs_receive(&mut bob, &bundle.commit) else {
         panic!("mls-rs expected a Commit");
     };
-    let carol_group = Member::join_welcome(
+    let WelcomeJoin {
+        member: carol_group,
+        ..
+    } = Member::join_welcome(
         &carol,
         &bundle.welcome.expect("Welcome"),
         Some(&alice_group.ratchet_tree().expect("tree")),
@@ -848,10 +866,12 @@ fn mimi_key_package_joins_a_group_requiring_frank_aad() {
 
 #[test]
 fn adding_a_leaf_without_a_required_app_component_is_refused() {
-    // mls-extensions-10 §5 ComponentsList [0x8001], hand-encoded.
+    // mls-extensions-10 §5 ComponentsList [0x0020], hand-encoded. The
+    // creator's own leaf must list it (decision mimid-1wgh.4.57), and
+    // mimi-mls leaves list 0x0020 in app_components.
     let required = vec![
         0x02, // ComponentID component_ids<V>: 2 bytes
-        0x80, 0x01, // ComponentID 0x8001
+        0x00, 0x20, // ComponentID 0x0020
     ];
     let alice = identity(b"alice");
     let mut group =
@@ -860,22 +880,19 @@ fn adding_a_leaf_without_a_required_app_component_is_refused() {
     let absent = mls_rs_key_package(&mls_rs_client(b"absent"));
     let result = group.commit(&alice, &[&absent], &[], &[], no_components);
     assert!(
-        matches!(
-            result,
-            Err(MemberError::MissingAppComponent(PRIVATE_COMPONENT))
-        ),
+        matches!(result, Err(MemberError::MissingAppComponent(0x0020))),
         "{result:?}"
     );
     assert_alone_in_epoch_0(&mut group, &alice);
 
     // mls-extensions-10 §4.6 AppDataDictionary whose app_components list
-    // names 0x8001, hand-encoded.
+    // names 0x0020, hand-encoded.
     let dictionary = [
         0x06, // ComponentData component_data<V>: 6 bytes
         0x00, 0x01, // component_id = app_components
         0x03, // opaque data<V>: 3 bytes
         0x02, //   ComponentsList.component_ids<V>: 2 bytes
-        0x80, 0x01, //   ComponentID 0x8001
+        0x00, 0x20, //   ComponentID 0x0020
     ];
     let bob = bare_key_package(&mls_rs_key_package_with(
         &mls_rs_client(b"bob"),
@@ -883,7 +900,7 @@ fn adding_a_leaf_without_a_required_app_component_is_refused() {
     ));
     group
         .commit(&alice, &[&bob], &[], &[], no_components)
-        .expect("a leaf listing 0x8001 is accepted");
+        .expect("a leaf listing 0x0020 is accepted");
     group.merge_pending_commit(&alice).expect("merge");
     assert_eq!(group.epoch(), 1);
 }
@@ -999,5 +1016,105 @@ fn malformed_components_lists_are_refused_at_create() {
                 "{component:#06x} {bytes:02x?}: {result:?}"
             );
         }
+    }
+}
+
+/// Decision mimid-1wgh.4.57: the creator's own leaf must list every
+/// non-GREASE component the new GroupContext requires. mimi-mls leaves list
+/// neither Safe AAD component 0x0021 nor app component 0x8001, so a group
+/// requiring either is refused and nothing is stored.
+#[test]
+fn create_with_a_requirement_our_leaf_does_not_meet_is_refused() {
+    let cases: [(u16, Vec<u8>, u16); 2] = [
+        (
+            SAFE_AAD,
+            // mls-extensions-10 §5 ComponentsList [0x0021], hand-encoded.
+            vec![
+                0x02, // ComponentID component_ids<V>: 2 bytes
+                0x00, 0x21, // ComponentID 0x0021
+            ],
+            0x0021,
+        ),
+        (
+            APP_COMPONENTS,
+            // mls-extensions-10 §5 ComponentsList [0x8001], hand-encoded.
+            vec![
+                0x02, // ComponentID component_ids<V>: 2 bytes
+                0x80, 0x01, // ComponentID 0x8001
+            ],
+            PRIVATE_COMPONENT,
+        ),
+    ];
+    let alice = identity(b"alice");
+    for (component, list, missing) in cases {
+        let result = Member::create(&alice, b"room-unmet", &[], &[(component, list)]);
+        match (component, &result) {
+            (SAFE_AAD, Err(MemberError::MissingSafeAadComponent(id)))
+            | (APP_COMPONENTS, Err(MemberError::MissingAppComponent(id))) => {
+                assert_eq!(*id, missing, "{component:#06x}");
+            }
+            _ => panic!("{component:#06x}: {result:?}"),
+        }
+        let loaded = Member::load(&alice, b"room-unmet");
+        assert!(
+            matches!(loaded, Err(MemberError::GroupNotFound)),
+            "{component:#06x}: nothing is stored: {loaded:?}"
+        );
+    }
+}
+
+/// Decision mimid-1wgh.4.57: join_welcome accepts a group whose existing
+/// leaves miss a required component, and reports their leaf indices. The
+/// mls-rs creator, which does not enforce the rule, requires Safe AAD
+/// component 0x0020 and adds dave (whose leaf varies) at leaf 1 and the
+/// mimi-mls bob at leaf 2 in one Commit.
+#[test]
+fn join_welcome_reports_existing_leaves_missing_a_required_component() {
+    type Case<'a> = (&'a str, Option<&'a [u8]>, Vec<u32>);
+    let cases: [Case<'_>; 3] = [
+        ("dave lists 0x0020", Some(&LEAF_SAFE_AAD_0020), vec![]),
+        ("dave lists only 0x0021", Some(&LEAF_SAFE_AAD_0021), vec![1]),
+        ("dave has no dictionary", None, vec![1]),
+    ];
+    for (case, dave_dictionary, expected) in cases {
+        // The GroupContext dictionary has the same encoding as the leaf
+        // one: a safe_aad ComponentsList naming 0x0020.
+        let mut alice = mls_rs_client(b"alice")
+            .create_group(
+                leaf_dictionary(&LEAF_SAFE_AAD_0020),
+                leaf_dictionary(&LEAF_SAFE_AAD_0020),
+                None,
+            )
+            .expect("mls-rs group");
+        let dave_client = mls_rs_client(b"dave");
+        let dave_key_package = match dave_dictionary {
+            Some(dictionary) => mls_rs_key_package_with(&dave_client, dictionary),
+            None => key_package_message(&mls_rs_key_package(&dave_client)),
+        };
+        let bob = identity(b"bob");
+        let bob_key_package = bob
+            .key_package(KeyPackageKind::OneTime)
+            .expect("KeyPackage");
+        let output = alice
+            .commit_builder()
+            .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+            .add_member(dave_key_package)
+            .expect("mls-rs adds dave")
+            .add_member(key_package_message(&bob_key_package))
+            .expect("mls-rs adds bob")
+            .build()
+            .expect("mls-rs commits");
+        alice.apply_pending_commit().expect("apply");
+
+        let welcome = output.welcome_messages[0].to_bytes().expect("encode");
+        let WelcomeJoin {
+            member: group,
+            nonconforming_leaves: nonconforming,
+            ..
+        } = Member::join_welcome(&bob, &welcome, None)
+            .unwrap_or_else(|e| panic!("{case}: join_welcome: {e:?}"));
+        assert_eq!(group.own_leaf_index(), 2, "{case}");
+        assert_eq!(nonconforming, expected, "{case}");
+        assert_same_epoch_secrets(&group, &bob, &alice);
     }
 }

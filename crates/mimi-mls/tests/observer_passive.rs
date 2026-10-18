@@ -24,7 +24,7 @@ use std::path::Path;
 use mimi_mls::ErrorSource;
 use mimi_mls::Store;
 use mimi_mls::member::{ComponentOp, Sender};
-use mimi_mls::observer::{Observed, Observer};
+use mimi_mls::observer::{Observed, Observer, ObserverStart};
 use mls_rs::crypto::{HpkeSecretKey, SignatureSecretKey};
 use mls_rs::group::ExportedTree;
 use mls_rs::identity::basic::BasicIdentityProvider;
@@ -173,7 +173,7 @@ fn run(file: &str) -> (usize, usize) {
         // Step 2: the Observer starts from mls-rs's GroupInfo. When the
         // vector delivers the tree out of band, so does this test.
         let store = Store::open_in_memory().expect("store");
-        let mut observer = if vector_tree.is_some() {
+        let ObserverStart { mut observer, .. } = if vector_tree.is_some() {
             let group_info = group
                 .group_info_message(false)
                 .expect("mls-rs GroupInfo")

@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use mimi_mls::member::{ComponentOp, Incoming, Member, MemberError};
+use mimi_mls::member::{ComponentOp, Incoming, Member, MemberError, WelcomeJoin};
 use mimi_mls::{Error, ErrorSource, Identity, KeyPackageKind, Store};
 use mls_rs::group::ReceivedMessage;
 use mls_rs::identity::SigningIdentity;
@@ -160,7 +160,7 @@ fn reloaded_identity_keeps_its_signature_key_and_key_package_secrets() {
     // in the store, so the reloaded identity can join from its Welcome.
     let (group, welcome, signature_key) = mls_rs_adds(&before_restart);
     assert_eq!(signature_key, public_key);
-    let member =
+    let WelcomeJoin { member, .. } =
         Member::join_welcome(&alice, &welcome, None).expect("join with the old KeyPackage");
     assert_same_epoch_secrets(&member, &alice, &group);
 }
@@ -174,7 +174,9 @@ fn reloaded_member_keeps_working_with_mls_rs() {
         &bob.key_package(KeyPackageKind::OneTime)
             .expect("KeyPackage"),
     );
-    let mut group = Member::join_welcome(&bob, &welcome, None).expect("join");
+    let WelcomeJoin {
+        member: mut group, ..
+    } = Member::join_welcome(&bob, &welcome, None).expect("join");
     let group_id = group.group_id().to_vec();
     // A Commit sent before the restart, still pending when bob stops.
     let bundle = group
@@ -246,6 +248,7 @@ fn loading_a_member_checks_group_and_owner() {
     );
     let group_id = Member::join_welcome(&bob, &welcome, None)
         .expect("join")
+        .member
         .group_id()
         .to_vec();
 
@@ -339,6 +342,7 @@ fn hostile_group_state_and_foreign_files_are_errors_not_panics() {
     );
     let group_id = Member::join_welcome(&bob, &welcome, None)
         .expect("join")
+        .member
         .group_id()
         .to_vec();
     drop(bob);

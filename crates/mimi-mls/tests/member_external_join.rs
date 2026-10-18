@@ -13,8 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
-use mimi_mls::member::{ComponentOp, Member, MemberError, Sender};
-use mimi_mls::observer::{Observed, Observer};
+use mimi_mls::member::{ComponentOp, ExternalJoin, Member, MemberError, Sender};
+use mimi_mls::observer::{Observed, Observer, ObserverStart};
 use mimi_mls::{ErrorSource, Identity, Store};
 use mls_rs::client_builder::MlsConfig;
 use mls_rs::extension::ExtensionType;
@@ -67,6 +67,17 @@ const APP_COMPONENTS_8001: [u8; 7] = [
     0x03, // opaque data<V>: 3 bytes
     0x02, //   ComponentsList.component_ids<V>: 2 bytes
     0x80, 0x01, //   ComponentID 0x8001
+];
+
+/// mls-extensions-10 §4.6 AppDataDictionary, hand-encoded: an
+/// `app_components` (§5) list naming component 0x0020, which mimi-mls
+/// leaves list in `app_components` and mls-rs leaves here do not.
+const APP_COMPONENTS_0020: [u8; 7] = [
+    0x06, // ComponentData component_data<V>: 6 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, // opaque data<V>: 3 bytes
+    0x02, //   ComponentsList.component_ids<V>: 2 bytes
+    0x00, 0x20, //   ComponentID 0x0020
 ];
 
 /// mls-extensions-10 §4.6 AppDataDictionary, hand-encoded: `safe_aad` data
@@ -160,6 +171,20 @@ fn mls_rs_pair(
     Group<impl MlsConfig + use<>>,
     Vec<u8>,
 ) {
+    mls_rs_pair_with(suite, context_dictionary, Some(&SAFE_AAD_0020))
+}
+
+/// As [`mls_rs_pair`], but dave's leaf carries `dave_dictionary` (none if
+/// `None`). bob's leaf lists [`SAFE_AAD_0020`].
+fn mls_rs_pair_with(
+    suite: CipherSuite,
+    context_dictionary: Option<&[u8]>,
+    dave_dictionary: Option<&[u8]>,
+) -> (
+    Group<impl MlsConfig + use<>>,
+    Group<impl MlsConfig + use<>>,
+    Vec<u8>,
+) {
     let mut bob = mls_rs_client(b"bob", suite)
         .create_group(
             dictionary(context_dictionary),
@@ -170,7 +195,7 @@ fn mls_rs_pair(
     let epoch_0_tree = bob.export_tree().to_bytes().expect("tree");
     let dave = mls_rs_client(b"dave", suite);
     let key_package = dave
-        .generate_key_package_message(Default::default(), dictionary(Some(&SAFE_AAD_0020)), None)
+        .generate_key_package_message(Default::default(), dictionary(dave_dictionary), None)
         .expect("mls-rs KeyPackage");
     let welcome = bob
         .commit_builder()
@@ -265,14 +290,19 @@ fn joins_mls_rs_group_and_all_agree() {
         let tree = bob.export_tree().to_bytes().expect("tree");
         let from_bob = group_info(&bob, with_tree, true);
         let observer_store = Store::open_in_memory().expect("store");
-        let mut observer = Observer::from_group_info(&observer_store, &from_bob, Some(&tree))
-            .expect("from_group_info");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&observer_store, &from_bob, Some(&tree))
+                .expect("from_group_info");
 
         let (carol, carol_path) = file_identity("carol");
         let before = store_bytes(&carol_path);
-        let (mut member, bundle, resync_removed) =
-            Member::join_external(&carol, &from_bob, (!with_tree).then_some(&tree[..]))
-                .unwrap_or_else(|e| panic!("{case}: join_external: {e:?}"));
+        let ExternalJoin {
+            mut member,
+            commit_bundle: bundle,
+            resync_removed,
+            ..
+        } = Member::join_external(&carol, &from_bob, (!with_tree).then_some(&tree[..]))
+            .unwrap_or_else(|e| panic!("{case}: join_external: {e:?}"));
         assert_ne!(store_bytes(&carol_path), before, "{case}: state stored");
         assert_eq!(resync_removed, None, "{case}: not a resync");
         assert_eq!(member.group_id(), bob.group_id(), "{case}");
@@ -363,7 +393,7 @@ type Expected = fn(&MemberError) -> bool;
 /// Asserts that `result` is an error matching `expected`, and that the
 /// identity's Store file did not change.
 fn assert_rejected(
-    result: Result<(Member, mimi_mls::member::CommitBundle, Option<u32>), MemberError>,
+    result: Result<ExternalJoin, MemberError>,
     expected: Expected,
     path: &Path,
     before: &[Option<Vec<u8>>],
@@ -506,6 +536,80 @@ fn leaf_missing_a_required_component_is_rejected_without_writing_state() {
     }
 }
 
+/// Decision mimid-1wgh.4.57: join_external and Observer::from_group_info
+/// accept a group whose existing leaves miss a required component, and
+/// report their leaf indices. mls-rs, which does not enforce the rule,
+/// builds the groups: bob at leaf 0 lists [`SAFE_AAD_0020`]; dave at leaf
+/// 1 carries the dictionary of each case. A leaf list that is absent or
+/// malformed counts as empty (decision mimid-1wgh.4.49).
+#[test]
+fn join_and_observe_report_existing_leaves_missing_a_required_component() {
+    type Case<'a> = (&'a str, Option<&'a [u8]>, Option<&'a [u8]>, Vec<u32>);
+    let cases: [Case<'_>; 6] = [
+        (
+            "dave lists 0x0020",
+            Some(&SAFE_AAD_0020),
+            Some(&SAFE_AAD_0020),
+            vec![],
+        ),
+        (
+            "dave lists only 0x0021",
+            Some(&SAFE_AAD_0020),
+            Some(&SAFE_AAD_0021),
+            vec![1],
+        ),
+        (
+            "dave has no dictionary",
+            Some(&SAFE_AAD_0020),
+            None,
+            vec![1],
+        ),
+        (
+            "dave's list is malformed",
+            Some(&SAFE_AAD_0020),
+            Some(&SAFE_AAD_MALFORMED),
+            vec![1],
+        ),
+        (
+            "app_components requires 0x0020",
+            Some(&APP_COMPONENTS_0020),
+            Some(&SAFE_AAD_0020),
+            vec![0, 1],
+        ),
+        ("nothing is required", None, Some(&SAFE_AAD_0021), vec![]),
+    ];
+    for (case, context_dictionary, dave_dictionary, expected) in cases {
+        let (mut bob, _dave, _) = mls_rs_pair_with(SUITE_1, context_dictionary, dave_dictionary);
+        let from_bob = group_info(&bob, true, true);
+
+        let store = Store::open_in_memory().expect("store");
+        let ObserverStart {
+            observer,
+            nonconforming_leaves: observed,
+            ..
+        } = Observer::from_group_info(&store, &from_bob, None)
+            .unwrap_or_else(|e| panic!("{case}: from_group_info: {e:?}"));
+        assert_eq!(observed, expected, "{case}: Observer");
+        assert_eq!(observer.members().len(), 2, "{case}");
+
+        let carol = Identity::generate(b"carol", Store::open_in_memory().expect("store"))
+            .expect("generate identity");
+        let ExternalJoin {
+            member,
+            commit_bundle: bundle,
+            resync_removed,
+            nonconforming_leaves: joined,
+            ..
+        } = Member::join_external(&carol, &from_bob, None)
+            .unwrap_or_else(|e| panic!("{case}: join_external: {e:?}"));
+        assert_eq!(resync_removed, None, "{case}");
+        assert_eq!(member.own_leaf_index(), 2, "{case}");
+        assert_eq!(joined, expected, "{case}: join_external");
+        mls_rs_accepts_commit(&mut bob, &bundle.commit);
+        assert_same_epoch_secrets(&member, &carol, &bob);
+    }
+}
+
 /// Decision mimid-1wgh.4.55: a join by an identity whose signature key is
 /// already in the group is a resync (RFC 9420 §12.4.3.2), allowed but
 /// reported. carol joins at leaf 2; bob removes dave, freeing leaf 1; carol
@@ -517,8 +621,12 @@ fn resync_reports_the_removed_leaf() {
     let (mut bob, mut dave, _) = mls_rs_pair(SUITE_1, None);
     let carol = Identity::generate(b"carol", Store::open_in_memory().expect("in-memory store"))
         .expect("generate identity");
-    let (_first, bundle, resync_removed) =
-        Member::join_external(&carol, &group_info(&bob, true, true), None).expect("first join");
+    let ExternalJoin {
+        member: _first,
+        commit_bundle: bundle,
+        resync_removed,
+        ..
+    } = Member::join_external(&carol, &group_info(&bob, true, true), None).expect("first join");
     assert_eq!(resync_removed, None);
     mls_rs_accepts_commit(&mut bob, &bundle.commit);
     mls_rs_accepts_commit(&mut dave, &bundle.commit);
@@ -530,8 +638,12 @@ fn resync_reports_the_removed_leaf() {
         .expect("commit");
     bob.apply_pending_commit().expect("bob merges");
 
-    let (member, bundle, resync_removed) =
-        Member::join_external(&carol, &group_info(&bob, true, true), None).expect("resync");
+    let ExternalJoin {
+        member,
+        commit_bundle: bundle,
+        resync_removed,
+        ..
+    } = Member::join_external(&carol, &group_info(&bob, true, true), None).expect("resync");
     assert_eq!(resync_removed, Some(2));
     assert_eq!(member.own_leaf_index(), 1);
     assert_eq!(

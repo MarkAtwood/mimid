@@ -22,9 +22,9 @@
 //!   updated would otherwise lock the hub out of its group once the
 //!   lifetime ends. Signatures, the tree hash and all other leaf checks
 //!   still apply.
-//! - The required-components check (decision mimid-1wgh.4.45) covers only
-//!   leaves a Commit adds or updates, not the leaves in the tree given to
-//!   [`Observer::from_group_info`] (mimid-1wgh.4.51).
+//! - The required-components check (decision mimid-1wgh.4.45) refuses only
+//!   Commits. The leaves in the tree given to [`Observer::from_group_info`]
+//!   are reported, not refused (decision mimid-1wgh.4.57).
 //! - PrivateMessages cannot be processed; the hub forwards them unread.
 //! - Proposals from external senders are accepted only for the types OpenMLS
 //!   supports there (Add, Remove and GroupContextExtensions). An external
@@ -55,7 +55,7 @@ use tls_codec::{Deserialize, Serialize, VLBytes};
 
 use crate::member::{
     CommitSummary, ComponentOp, Sender, SharedError, basic_identity, check_staged_leaves,
-    convert_sender, resolve_app_data_updates, summarize,
+    convert_sender, nonconforming_leaves, required_lists, resolve_app_data_updates, summarize,
 };
 use crate::wire::{PartialGroupInfo, RatchetTreePresence};
 use crate::{ErrorSource, Store, label};
@@ -83,6 +83,22 @@ pub enum Observed {
     /// [`CommitSummary::self_removed`] is always `false`, since an
     /// [`Observer`] has no leaf.
     Commit(CommitSummary),
+}
+
+/// The result of [`Observer::from_group_info`].
+///
+/// A group whose leaves miss a required component is observed, not
+/// refused, and those leaves are reported (decisions mimid-1wgh.4.57,
+/// mimid-1wgh.4.59).
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct ObserverStart {
+    /// The new Observer.
+    pub observer: Observer,
+    /// The leaf indices, ascending, of the leaves that do not list a
+    /// component the GroupContext `safe_aad` or `app_components` list
+    /// requires (the check of [`crate::member`]'s `# Required components`).
+    pub nonconforming_leaves: Vec<u32>,
 }
 
 /// Errors returned by [`Observer`].
@@ -230,18 +246,24 @@ impl Observer {
     /// tree hash is checked, and every leaf in the tree is validated except
     /// for its `lifetime` (see the module's `# Limitations`).
     ///
+    /// The returned [`ObserverStart`] also reports the leaves that miss a
+    /// required component (decision mimid-1wgh.4.57).
+    ///
     /// # Errors
     ///
     /// Returns [`ObserverError::Decode`] for malformed input,
     /// [`ObserverError::UnexpectedMessage`] if the message is not a
     /// GroupInfo, [`ObserverError::MissingRatchetTree`] if there is no tree,
-    /// and [`ObserverError::InvalidGroupInfo`] if validation fails or the
-    /// state cannot be stored.
+    /// [`ObserverError::InvalidComponentsList`] if the GroupContext's
+    /// `safe_aad` or `app_components` data is malformed (decisions
+    /// mimid-1wgh.4.57, mimid-1wgh.4.59), and
+    /// [`ObserverError::InvalidGroupInfo`] if validation fails or the state
+    /// cannot be stored.
     pub fn from_group_info(
         store: &Store,
         group_info: &[u8],
         ratchet_tree: Option<&[u8]>,
-    ) -> Result<Self, ObserverError> {
+    ) -> Result<ObserverStart, ObserverError> {
         let message = MlsMessageIn::tls_deserialize_exact(group_info)
             .map_err(|e| ObserverError::Decode(e.into()))?;
         let MlsMessageBodyIn::GroupInfo(group_info) = message.extract() else {
@@ -256,6 +278,10 @@ impl Observer {
                 .map(|extension| extension.ratchet_tree().clone())
                 .ok_or(ObserverError::MissingRatchetTree)?,
         };
+        // Decoded before anything is stored, and fails closed (decisions
+        // mimid-1wgh.4.57, mimid-1wgh.4.59). Used only after the GroupInfo signature, which
+        // covers the GroupContext, has been verified below.
+        let required = required_lists(group_info.group_context().extensions())?;
         let provider = store.provider();
         // RFC 9420 §7.3; decision mimid-1wgh.4.38. The policy stays on the
         // group, covering later Add, Update and UpdatePath leaves too. It is
@@ -269,10 +295,15 @@ impl Observer {
             LeafNodeLifetimePolicy::Skip,
         )
         .map_err(|e| ObserverError::InvalidGroupInfo(e.into()))?;
-        Ok(Self {
-            group,
-            pending_commit: None,
-            committer: None,
+        // Decision mimid-1wgh.4.57. An Observer has no leaf of its own.
+        let nonconforming_leaves = nonconforming_leaves(&group, &required, None);
+        Ok(ObserverStart {
+            observer: Self {
+                group,
+                pending_commit: None,
+                committer: None,
+            },
+            nonconforming_leaves,
         })
     }
 

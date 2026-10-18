@@ -8,8 +8,10 @@
 
 use std::cell::RefCell;
 
-use mimi_mls::member::{AppDataUpdate, CommitBundle, ComponentOp, Incoming, Member, Sender};
-use mimi_mls::observer::{Observed, Observer, ObserverError};
+use mimi_mls::member::{
+    AppDataUpdate, CommitBundle, ComponentOp, Incoming, Member, Sender, WelcomeJoin,
+};
+use mimi_mls::observer::{Observed, Observer, ObserverError, ObserverStart};
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::wire::{PartialGroupInfo, RatchetTreeOption, RatchetTreePresence};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
@@ -218,7 +220,8 @@ fn setup() -> (
         .to_bytes()
         .expect("encode");
     let store = Store::open_in_memory().expect("store");
-    let observer = Observer::from_group_info(&store, &group_info, None).expect("from_group_info");
+    let ObserverStart { observer, .. } =
+        Observer::from_group_info(&store, &group_info, None).expect("from_group_info");
     assert_eq!(observer.group_id(), b"room-observer");
     assert_eq!(observer.epoch(), 1);
     assert_eq!(
@@ -400,7 +403,10 @@ fn wrong_message_types_are_rejected() {
         "{result:?}"
     );
     let tree = bob.export_tree().to_bytes().expect("tree");
-    let from_tree = Observer::from_group_info(&other_store, &without_tree, Some(&tree))
+    let ObserverStart {
+        observer: from_tree,
+        ..
+    } = Observer::from_group_info(&other_store, &without_tree, Some(&tree))
         .expect("tree given out of band");
     assert_same_public_state(&from_tree, &bob);
     let result = Observer::from_group_info(&other_store, &without_tree, Some(&tree[1..]));
@@ -788,7 +794,9 @@ fn rebuilt_group_info_is_accepted_by_mls_rs_and_openmls() {
 
     // OpenMLS verifies it as a fresh Observer would.
     let other_store = Store::open_in_memory().expect("store");
-    let fresh = Observer::from_group_info(&other_store, &rebuilt, Some(&tree))
+    let ObserverStart {
+        observer: fresh, ..
+    } = Observer::from_group_info(&other_store, &rebuilt, Some(&tree))
         .expect("OpenMLS accepts the rebuilt GroupInfo");
     assert_eq!(
         fresh.group_context().expect("context"),
@@ -1039,7 +1047,7 @@ fn commit_with_a_leaf_missing_a_required_component_is_rejected() {
         .to_bytes()
         .expect("encode");
     let store = Store::open_in_memory().expect("store");
-    let mut observer =
+    let ObserverStart { mut observer, .. } =
         Observer::from_group_info(&store, &group_info, None).expect("from_group_info");
     let before = snapshot(&observer);
 
@@ -1147,7 +1155,7 @@ fn update_path_commits_from_mimi_leaves_meet_a_required_frank_aad() {
         .to_bytes()
         .expect("encode");
     let store = Store::open_in_memory().expect("store");
-    let mut observer =
+    let ObserverStart { mut observer, .. } =
         Observer::from_group_info(&store, &group_info, None).expect("from_group_info");
 
     // alice, the creator, sends an empty Commit with an UpdatePath.
@@ -1171,7 +1179,10 @@ fn update_path_commits_from_mimi_leaves_meet_a_required_frank_aad() {
         &mut observer,
         &[&carol_key_package],
     );
-    let mut carol_member = Member::join_welcome(
+    let WelcomeJoin {
+        member: mut carol_member,
+        ..
+    } = Member::join_welcome(
         &carol,
         &bundle.welcome.expect("Welcome"),
         Some(&member.ratchet_tree().expect("tree")),

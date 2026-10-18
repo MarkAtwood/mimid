@@ -41,6 +41,12 @@
 //! `required_capabilities` (INTERPRETATION, decision mimid-1wgh.4.45). The
 //! [`Observer`](crate::observer::Observer) applies the same check.
 //!
+//! [`Member::create`] refuses a group whose lists the creator's own leaf
+//! does not meet. [`Member::join_welcome`], [`Member::join_external`] and
+//! [`Observer::from_group_info`](crate::observer::Observer::from_group_info)
+//! accept a group whose existing leaves do not meet them, and return those
+//! leaves' indices (decision mimid-1wgh.4.57).
+//!
 //! # Limitations
 //!
 //! - Messages from an earlier epoch cannot be decrypted once a Commit has
@@ -50,15 +56,15 @@
 //! - AppDataUpdate proposals are supported only inline in this member's own
 //!   Commits and in Commits it receives. Sending a standalone AppDataUpdate
 //!   proposal is not supported.
-//! - The required-components check covers only leaves a Commit adds or
-//!   updates, judged against the post-Commit GroupContext (decision
-//!   mimid-1wgh.4.49). [`Member::create`] does not check the creator's own
-//!   leaf, and [`Member::join_welcome`] does not check the leaves already
-//!   in the tree (mimid-1wgh.4.51). This crate's leaves list only
+//! - A Commit is refused only for the leaves it adds or updates, judged
+//!   against the post-Commit GroupContext (decision mimid-1wgh.4.49). Leaves
+//!   already in a joined group's tree are reported, not refused, and only
+//!   at join time (decision mimid-1wgh.4.57). [`Member::join_welcome`] does
+//!   not check this identity's own leaf. This crate's leaves list only
 //!   `frank_aad` (0x0020) as a Safe AAD component (decision
-//!   mimid-1wgh.4.52), so in a group whose `safe_aad` list requires any
-//!   other, this member refuses its own Commits that carry an UpdatePath.
-//!   [`Member::join_external`] checks only the joiner's own leaf.
+//!   mimid-1wgh.4.52), so it cannot create or externally join a group
+//!   whose `safe_aad` list requires any other, and after joining one by
+//!   Welcome it refuses its own Commits that carry an UpdatePath.
 //! - A member does not check the `lifetime` of leaves it receives: in the
 //!   tree of a group it joins, and in the Add, Update and UpdatePath leaves
 //!   of Proposals and Commits it processes (RFC 9420 §7.3, decision
@@ -225,6 +231,47 @@ pub struct CommitBundle {
     pub group_info: Vec<u8>,
 }
 
+/// The result of [`Member::join_welcome`].
+///
+/// A group whose existing leaves miss a required component is joined, not
+/// refused, and those leaves are reported (decisions mimid-1wgh.4.57,
+/// mimid-1wgh.4.59).
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct WelcomeJoin {
+    /// The new member.
+    pub member: Member,
+    /// The leaf indices, ascending, of the other members whose leaves do
+    /// not list a component the GroupContext `safe_aad` or `app_components`
+    /// list requires (see the module's `# Required components`). This
+    /// identity's own leaf is not checked.
+    pub nonconforming_leaves: Vec<u32>,
+}
+
+/// The result of [`Member::join_external`].
+///
+/// A group whose existing leaves miss a required component is joined, not
+/// refused, and those leaves are reported (decisions mimid-1wgh.4.57,
+/// mimid-1wgh.4.59).
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct ExternalJoin {
+    /// The new member, already in the new epoch.
+    pub member: Member,
+    /// The external Commit and the new epoch's GroupInfo, for the hub. It
+    /// has no Welcome.
+    pub commit_bundle: CommitBundle,
+    /// For a resync, the leaf index, in the previous epoch, of the old
+    /// leaf the Commit removes; `None` for a plain join (decision
+    /// mimid-1wgh.4.55).
+    pub resync_removed: Option<u32>,
+    /// The leaf indices, ascending and in the new epoch, of the other
+    /// members whose leaves do not list a component the GroupContext
+    /// `safe_aad` or `app_components` list requires (see the module's
+    /// `# Required components`).
+    pub nonconforming_leaves: Vec<u32>,
+}
+
 /// Errors returned by [`Member`].
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -373,13 +420,17 @@ impl Member {
     /// component (0x0002) turns on Safe AAD framing for the group (§4.9).
     /// The data of `safe_aad` and `app_components` (0x0001) must be a
     /// canonical `ComponentsList` (§5): the components every member must
-    /// support.
+    /// support. This identity's own leaf must support them too (decision
+    /// mimid-1wgh.4.57).
     ///
     /// # Errors
     ///
     /// Returns [`MemberError::DuplicateComponent`] if a component id repeats,
     /// [`MemberError::InvalidComponentsList`] if the `safe_aad` or
     /// `app_components` data is not a canonical `ComponentsList`,
+    /// [`MemberError::MissingSafeAadComponent`] or
+    /// [`MemberError::MissingAppComponent`] if this identity's leaf does not
+    /// list a non-GREASE component one of them requires,
     /// [`MemberError::Identity`] if the LeafNode material cannot be built,
     /// and [`MemberError::Create`] if OpenMLS rejects the group.
     pub fn create(
@@ -412,10 +463,6 @@ impl Member {
                 if dictionary.contains(component_id) {
                     return Err(MemberError::DuplicateComponent(*component_id));
                 }
-                // mls-extensions-10 §5; decision mimid-1wgh.4.45.
-                if matches!(*component_id, SAFE_AAD | APP_COMPONENTS) {
-                    decode_components_list(*component_id, data)?;
-                }
                 dictionary.insert(*component_id, data.clone());
             }
             extensions.push(Extension::AppDataDictionary(
@@ -424,13 +471,18 @@ impl Member {
         }
         let extensions =
             Extensions::from_vec(extensions).map_err(|e| MemberError::Create(e.into()))?;
+        // mls-extensions-10 §5: the lists are decoded strictly (decision
+        // mimid-1wgh.4.45), and our own leaf must meet them before anything
+        // is stored (decision mimid-1wgh.4.57).
+        let leaf_extensions = leaf_extensions(rand).map_err(MemberError::Identity)?;
+        check_leaf(&leaf_extensions, &required_lists(&extensions)?)?;
 
         let group = MlsGroup::builder()
             .with_group_id(GroupId::from_slice(group_id))
             .ciphersuite(CIPHERSUITE)
             .with_wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
             .with_capabilities(leaf_capabilities(rand, random_grease_value(rand)))
-            .with_leaf_node_extensions(leaf_extensions(rand).map_err(MemberError::Identity)?)
+            .with_leaf_node_extensions(leaf_extensions)
             .map_err(|e| MemberError::Create(e.into()))?
             .with_group_context_extensions(extensions)
             .build(
@@ -476,16 +528,22 @@ impl Member {
     /// `ratchet_tree` is a TLS-encoded ratchet tree (RFC 9420 §12.4.3.3),
     /// needed when the Welcome's GroupInfo has no `ratchet_tree` extension.
     ///
+    /// The returned [`WelcomeJoin`] also reports the existing leaves that
+    /// miss a required component (decision mimid-1wgh.4.57).
+    ///
     /// # Errors
     ///
     /// Returns [`MemberError::Decode`] for malformed input,
     /// [`MemberError::UnexpectedMessage`] if the message is not a Welcome,
-    /// and [`MemberError::Join`] if the Welcome cannot be processed.
+    /// [`MemberError::Join`] if the Welcome cannot be processed, and
+    /// [`MemberError::InvalidComponentsList`] if the GroupContext's
+    /// `safe_aad` or `app_components` data is malformed (decisions
+    /// mimid-1wgh.4.57, mimid-1wgh.4.59).
     pub fn join_welcome(
         identity: &Identity,
         welcome: &[u8],
         ratchet_tree: Option<&[u8]>,
-    ) -> Result<Self, MemberError> {
+    ) -> Result<WelcomeJoin, MemberError> {
         let message = MlsMessageIn::tls_deserialize_exact(welcome)
             .map_err(|e| MemberError::Decode(e.into()))?;
         let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
@@ -506,14 +564,25 @@ impl Member {
         if let Some(ratchet_tree) = ratchet_tree {
             builder = builder.with_ratchet_tree(ratchet_tree);
         }
-        let group = builder
-            .build()
-            .map_err(|e| MemberError::Join(e.into()))?
+        let staged = builder.build().map_err(|e| MemberError::Join(e.into()))?;
+        // Decoded before into_group stores the group; fails closed
+        // (decisions mimid-1wgh.4.57, mimid-1wgh.4.59).
+        let required = required_lists(staged.group_context().extensions())?;
+        let group = staged
             .into_group(provider)
             .map_err(|e| MemberError::Join(e.into()))?;
+        // Decision mimid-1wgh.4.57.
+        let nonconforming_leaves = nonconforming_leaves(
+            group.public_group(),
+            &required,
+            Some(group.own_leaf_index()),
+        );
         // The Welcome was decrypted with this identity's KeyPackage, so the
         // new leaf belongs to it.
-        Ok(Self::from_group(group, identity))
+        Ok(WelcomeJoin {
+            member: Self::from_group(group, identity),
+            nonconforming_leaves,
+        })
     }
 
     /// Joins a group by external Commit (RFC 9420 §12.4.3.2), from a
@@ -529,16 +598,18 @@ impl Member {
     ///
     /// A resync is allowed but reported (decision mimid-1wgh.4.55): RFC 9420
     /// §12.4.3.2 notes that it lets anyone holding a member's signature
-    /// private key replace that member in a single Commit. The third value
-    /// returned is the leaf index, in the previous epoch, of the old leaf
-    /// the Commit removes, or `None` for a plain join.
+    /// private key replace that member in a single Commit:
+    /// [`ExternalJoin::resync_removed`] names the old leaf.
     ///
-    /// Also returns the new member and a [`CommitBundle`] holding the external
-    /// Commit (as a PublicMessage, with an empty SafeAAD as its
-    /// `authenticated_data` when the group uses Safe AAD) and the new
-    /// epoch's GroupInfo, for the hub. It has no Welcome. Unlike
-    /// [`Member::commit`], the Commit is already merged: the member is in
-    /// the new epoch. If the hub rejects the Commit, drop the member.
+    /// Existing leaves that miss a required component are reported in
+    /// [`ExternalJoin::nonconforming_leaves`], not refused (decision
+    /// mimid-1wgh.4.57); this identity's own leaf must list them all.
+    ///
+    /// [`ExternalJoin::commit_bundle`] holds the external Commit (as a
+    /// PublicMessage, with an empty SafeAAD as its `authenticated_data` when
+    /// the group uses Safe AAD) and the new epoch's GroupInfo, for the hub.
+    /// Unlike [`Member::commit`], the Commit is already merged: the member
+    /// is in the new epoch. If the hub rejects the Commit, drop the member.
     ///
     /// # Errors
     ///
@@ -561,7 +632,7 @@ impl Member {
         identity: &Identity,
         group_info: &[u8],
         ratchet_tree: Option<&[u8]>,
-    ) -> Result<(Self, CommitBundle, Option<u32>), MemberError> {
+    ) -> Result<ExternalJoin, MemberError> {
         let message = MlsMessageIn::tls_deserialize_exact(group_info)
             .map_err(|e| MemberError::Decode(e.into()))?;
         let MlsMessageBodyIn::GroupInfo(group_info) = message.extract() else {
@@ -624,7 +695,10 @@ impl Member {
         // holds only ExternalInit and possibly a Remove, so the GroupContext
         // extensions it leads to are these (decision mimid-1wgh.4.49).
         let leaf_extensions = leaf_extensions(rand).map_err(MemberError::Identity)?;
-        check_leaf(&leaf_extensions, &required_lists(&group_context)?)?;
+        // A malformed list fails closed (decisions mimid-1wgh.4.57,
+        // mimid-1wgh.4.59).
+        let required = required_lists(group_context.extensions())?;
+        check_leaf(&leaf_extensions, &required)?;
         let leaf = LeafNodeParameters::builder()
             .with_capabilities(leaf_capabilities(rand, random_grease_value(rand)))
             .with_extensions(leaf_extensions)
@@ -643,13 +717,23 @@ impl Member {
         let (commit, welcome, group_info) = bundle.into_messages();
         let group_info = group_info
             .ok_or_else(|| MemberError::Commit("OpenMLS exported no GroupInfo".into()))?;
-        let member = Self::from_group(group, identity);
-        let bundle = CommitBundle {
+        // Decision mimid-1wgh.4.57. A resync's old leaf is gone by now.
+        let nonconforming_leaves = nonconforming_leaves(
+            group.public_group(),
+            &required,
+            Some(group.own_leaf_index()),
+        );
+        let commit_bundle = CommitBundle {
             commit: encode(&commit)?,
             welcome: welcome.as_ref().map(encode).transpose()?,
             group_info: encode(&group_info)?,
         };
-        Ok((member, bundle, resync_removed))
+        Ok(ExternalJoin {
+            member: Self::from_group(group, identity),
+            commit_bundle,
+            resync_removed,
+            nonconforming_leaves,
+        })
     }
 
     /// Builds a Commit that adds the TLS-encoded `KeyPackage`s in `adds`
@@ -1231,7 +1315,7 @@ fn decode_components_list(
 /// decision mimid-1wgh.4.49.
 pub(crate) fn check_staged_leaves(staged: &StagedCommit) -> Result<(), SharedError> {
     // The GroupContext after the Commit; decision mimid-1wgh.4.49.
-    let required = required_lists(staged.group_context())?;
+    let required = required_lists(staged.group_context().extensions())?;
     for add in staged.add_proposals() {
         check_leaf(
             add.add_proposal().key_package().leaf_node().extensions(),
@@ -1247,19 +1331,20 @@ pub(crate) fn check_staged_leaves(staged: &StagedCommit) -> Result<(), SharedErr
     Ok(())
 }
 
-/// The components that `context` requires every leaf to support: the
+/// The components that a GroupContext requires every leaf to support: the
 /// strictly decoded `safe_aad` and `app_components` lists of its
 /// `app_data_dictionary`, each empty when absent.
-struct RequiredLists {
+pub(crate) struct RequiredLists {
     safe_aad: Vec<ComponentId>,
     app_components: Vec<ComponentId>,
 }
 
-/// Decodes the [`RequiredLists`] of `context`; a malformed list fails
-/// closed (decision mimid-1wgh.4.49).
-fn required_lists(context: &GroupContext) -> Result<RequiredLists, SharedError> {
-    let dictionary = context
-        .extensions()
+/// Decodes the [`RequiredLists`] of the GroupContext `extensions`; a
+/// malformed list fails closed (decision mimid-1wgh.4.49).
+pub(crate) fn required_lists(
+    extensions: &Extensions<GroupContext>,
+) -> Result<RequiredLists, SharedError> {
+    let dictionary = extensions
         .app_data_dictionary()
         .map(AppDataDictionaryExtension::dictionary);
     let required = |component_id| match dictionary.and_then(|d| d.get(&component_id)) {
@@ -1272,7 +1357,29 @@ fn required_lists(context: &GroupContext) -> Result<RequiredLists, SharedError> 
     })
 }
 
-/// Checks the extensions of one new or updated leaf against `required`.
+/// The leaf indices, ascending, of the leaves in `group`'s tree, other than
+/// `own`, that fail [`check_leaf`] against `required`. A group is joined or
+/// observed with such leaves, and they are reported (decision
+/// mimid-1wgh.4.57).
+pub(crate) fn nonconforming_leaves(
+    group: &PublicGroup,
+    required: &RequiredLists,
+    own: Option<LeafNodeIndex>,
+) -> Vec<u32> {
+    group
+        .members()
+        .map(|member| member.index)
+        .filter(|index| Some(*index) != own)
+        .filter(|index| {
+            group
+                .leaf(*index)
+                .is_some_and(|leaf| check_leaf(leaf.extensions(), required).is_err())
+        })
+        .map(|index| index.u32())
+        .collect()
+}
+
+/// Checks the extensions of one leaf against `required`.
 fn check_leaf(
     extensions: &Extensions<LeafNode>,
     required: &RequiredLists,

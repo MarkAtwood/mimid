@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use mimi_mls::member::{ComponentOp, Incoming, Member, MemberError};
+use mimi_mls::member::{ComponentOp, ExternalJoin, Incoming, Member, MemberError, WelcomeJoin};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
 use mls_rs::client_builder::MlsConfig;
 use mls_rs::extension::ExtensionType;
@@ -165,7 +165,8 @@ fn join_welcome_accepts_an_expired_leaf_in_the_tree() {
     let bob = identity(b"bob");
     let welcome = mls_rs_add_mimi(&mut alice, &bob);
 
-    let group = Member::join_welcome(&bob, &welcome, None).expect("join from Welcome");
+    let WelcomeJoin { member: group, .. } =
+        Member::join_welcome(&bob, &welcome, None).expect("join from Welcome");
     assert_eq!(
         group.members(),
         vec![
@@ -184,7 +185,9 @@ fn process_accepts_a_commit_adding_an_expired_key_package() {
     let mut alice = mls_rs_group();
     let bob = identity(b"bob");
     let welcome = mls_rs_add_mimi(&mut alice, &bob);
-    let mut group = Member::join_welcome(&bob, &welcome, None).expect("join from Welcome");
+    let WelcomeJoin {
+        member: mut group, ..
+    } = Member::join_welcome(&bob, &welcome, None).expect("join from Welcome");
 
     let commit = mls_rs_add_expired(&mut alice, expired_key_package(b"carol"));
     let incoming = group
@@ -219,8 +222,12 @@ fn join_external_accepts_an_expired_leaf_in_the_tree() {
         .expect("encode");
 
     let bob = identity(b"bob");
-    let (group, bundle, resync_removed) =
-        Member::join_external(&bob, &group_info, None).expect("join by external Commit");
+    let ExternalJoin {
+        member: group,
+        commit_bundle: bundle,
+        resync_removed,
+        ..
+    } = Member::join_external(&bob, &group_info, None).expect("join by external Commit");
     assert_eq!(resync_removed, None);
     let commit = MlsMessage::from_bytes(&bundle.commit).expect("mls-rs decodes the Commit");
     let received = alice

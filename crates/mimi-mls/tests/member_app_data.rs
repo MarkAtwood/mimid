@@ -11,7 +11,7 @@
 
 use std::cell::RefCell;
 
-use mimi_mls::member::{AppDataUpdate, ComponentOp, Incoming, Member, MemberError};
+use mimi_mls::member::{AppDataUpdate, ComponentOp, Incoming, Member, MemberError, WelcomeJoin};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
 use mls_rs::extension::ExtensionType;
 use mls_rs::group::ExportedTree;
@@ -162,7 +162,10 @@ fn two_mimi_members() -> (Identity, Member, Identity, Member) {
         .commit(&alice, &[&carol_key_package], &[], &[], handler(&calls))
         .expect("add carol");
     alice_group.merge_pending_commit(&alice).expect("merge");
-    let carol_group = Member::join_welcome(
+    let WelcomeJoin {
+        member: carol_group,
+        ..
+    } = Member::join_welcome(
         &carol,
         &bundle.welcome.expect("Welcome"),
         Some(&alice_group.ratchet_tree().expect("tree")),
