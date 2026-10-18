@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.59",
+  "title": "DR-21b: malformed GroupContext list fails closed at join",
+  "description": "Extends DR-21 (mimid-1wgh.4.57) and DR-15c (mimid-1wgh.4.49). A malformed GroupContext safe_aad/app_components ComponentsList at join_welcome, join_external or Observer::from_group_info fails closed with InvalidComponentsList, decoded before anything is stored. Join results use small #[non_exhaustive] structs with named fields instead of tuples (clarity). Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T16:28:02.21453309Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T16:28:02.289516657Z",
+  "closed_at": "2026-10-18T16:28:02.289516657Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.59",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-18T16:28:02.229432082Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
