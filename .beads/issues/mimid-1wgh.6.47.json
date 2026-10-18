@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.47",
+  "title": "H34: failed external join reports preauth denial if an entry matched",
+  "description": "When both open join and preauthorization fail for an external join, the preauth denial is reported if a preauth entry matched; otherwise the open-join denial. PENDING Mark.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:03:22.495347276Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:10:56.209039271Z",
+  "closed_at": "2026-10-18T18:10:56.209039271Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.47",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:03:22.520186776Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -41,6 +41,14 @@
       "created_at": "2026-10-18T17:11:40.966290145Z",
       "created_by": "agent",
       "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.6.27",
+      "depends_on_id": "mimid-1wgh.6.34",
+      "type": "blocks",
+      "created_at": "2026-10-18T17:59:06.784878648Z",
+      "created_by": "agent",
+      "metadata": "{}"
     }
   ]
 }

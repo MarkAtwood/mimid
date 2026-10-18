@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.45",
+  "title": "H32: only the user's adder may add its clients",
+  "description": "room-policy-04 §8.1.1 'the holder': adding another user's clients is allowed only to the proposer who added that user to the participant list in the same commit (complements H21). PENDING Mark.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:03:22.320138943Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:10:56.15114127Z",
+  "closed_at": "2026-10-18T18:10:56.15114127Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.45",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:03:22.346210547Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

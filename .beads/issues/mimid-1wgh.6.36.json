@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.36",
+  "title": "H23: hub hosts only rooms under its own domain",
+  "description": "create_room refuses a room id that is not mimi://\u003cown domain\u003e/...; plan scope 'host rooms under own domain' (not a spec MUST). Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:03:02.733589005Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:03:02.974512768Z",
+  "closed_at": "2026-10-18T18:03:02.974512768Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.36",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:03:02.760575925Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

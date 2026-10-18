@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.6.34",
+  "title": "hub M2: Observer external_senders and GroupInfo tree accessors",
+  "description": "Follow-ups from S3/M1: (1) an Observer (or wire GroupContext) accessor for the GroupContext external_senders extension, replacing S3's TEMPORARY tls_codec walk in hub/room.rs; (2) an accessor telling whether a wire::GroupInfo embeds a ratchet_tree extension, for create_room and S5 per H11 (.6.11). mimi-mls only. Oracle: mls-rs-built GroupInfos with/without the extension; hand-encoded external_senders.",
+  "status": "in_progress",
+  "priority": 1,
+  "issue_type": "task",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:59:06.697073114Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:11:03.106238053Z",
+  "started_at": "2026-10-18T18:11:03.106238053Z",
+  "lease_expires_at": "2026-10-18T18:16:03.106238053Z",
+  "heartbeat_at": "2026-10-18T18:11:03.106238053Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.34",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:59:06.716472614Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

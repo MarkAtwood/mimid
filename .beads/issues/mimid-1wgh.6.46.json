@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.46",
+  "title": "H33: external-sender proposals refused; new-member proposals limited",
+  "description": "MLS external-sender proposals are refused (the hub is the only external sender and sends none in v1). An external new-member proposal works only for a user already in the participant list (canAddOwnClient). Preauthorization applies only to external commits. PENDING Mark.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:03:22.411868521Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:10:56.181829215Z",
+  "closed_at": "2026-10-18T18:10:56.181829215Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.46",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:03:22.432279441Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.44",
+  "title": "H31: Remove authorization at proposal and commit time",
+  "description": "At proposal time a Remove/SelfRemove passes if any action it could be is authorized (kick, user removal, ban, leave). At commit time a client removal not covered by that user's removal or ban counts as a kick or own-client removal — checked for by-reference proposals too (the one place a by-reference sender is re-checked). PENDING Mark.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:03:22.231257493Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:10:56.125259017Z",
+  "closed_at": "2026-10-18T18:10:56.125259017Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.44",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:03:22.254565238Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

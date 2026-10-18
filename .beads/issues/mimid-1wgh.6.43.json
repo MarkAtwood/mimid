@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.43",
+  "title": "H30: any base_room_policy update needs canChangeRoomMembershipStyle",
+  "description": "room-policy-04 §8.6 does not define 'membership style'; any base_room_policy update requires canChangeRoomMembershipStyle regardless of which fields change. PENDING Mark.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:03:22.1495871Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:10:56.095120775Z",
+  "closed_at": "2026-10-18T18:10:56.095120775Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.43",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:03:22.168597079Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

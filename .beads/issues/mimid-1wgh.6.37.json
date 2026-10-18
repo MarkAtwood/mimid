@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.37",
+  "title": "H24: unrebuildable room fails startup",
+  "description": "If a stored room cannot be rebuilt at startup the hub refuses to start (fail closed) rather than skipping it; nothing is deleted. Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:03:02.825387456Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:03:03.004813231Z",
+  "closed_at": "2026-10-18T18:03:03.004813231Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.37",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:03:02.852033144Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
