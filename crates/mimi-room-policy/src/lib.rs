@@ -15,9 +15,23 @@
 //!
 //! - Implemented so far: the primitives ([`Bool`], [`Uri`], [`MediaType`],
 //!   the [`component_id`] constants, the [`Capability`] registry), the
-//!   `roles_list` component ([`RoleData`], with [`RoleData::validate`]) and
-//!   the `base_room_policy` component ([`BaseRoomPolicy`]). The other
-//!   policy components and action authorization are not yet present.
+//!   `roles_list` component ([`RoleData`], with [`RoleData::validate`]),
+//!   the `preauth_list` component ([`PreAuthData`], with
+//!   [`PreAuthData::first_match`]) and the `base_room_policy` component
+//!   ([`BaseRoomPolicy`]). The other policy components and action
+//!   authorization are not yet present.
+//! - [`PreAuthData::first_match`] compares claims the caller supplies; this
+//!   crate does not extract claims from MLS credentials. A BasicCredential,
+//!   the only credential mimid v1 uses, carries no claims, so it matches
+//!   only entries with an empty `claimset`; such an entry preauthorizes
+//!   anyone and shadows later entries (room-policy-04 §4; decision
+//!   mimid-1wgh.3.47). [`ClaimId`] `id` and `claim_value` are opaque and
+//!   compared byte for byte, with no normalization; §4 does not define the
+//!   binary form of an OID or CWT claim key (wg mimid-1wgh.37.58). Any one
+//!   of several claims with the same [`ClaimId`] may match (decision
+//!   mimid-1wgh.3.48). Nothing here checks that an entry's `target_role`
+//!   matches, or exists in, `roles_list` (decisions mimid-1wgh.3.16,
+//!   mimid-1wgh.3.49).
 //! - [`BaseRoomPolicy`] decoding enforces only the §5 `parent_room` rule.
 //!   The other §5 rules (participant subsets, `max_clients`, `max_users`,
 //!   `multi_device`, pseudonyms) concern room state, not the component,
@@ -57,6 +71,9 @@ pub use base::{BaseRoomData, BaseRoomPolicy, BaseRoomUpdate};
 
 mod capability;
 pub use capability::Capability;
+
+mod preauth;
+pub use preauth::{Claim, ClaimId, CredentialType, PreAuthData, PreAuthRoleEntry, PreAuthUpdate};
 
 mod role;
 pub use role::{
