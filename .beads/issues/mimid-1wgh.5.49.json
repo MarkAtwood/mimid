@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.49",
+  "title": "P32: empty proposal lists and notify body accepted",
+  "description": "protocol-06 §5.3/§5.5: moreProposals, externalProposals, invalidProposals and the /notify body are \u003cV\u003e vectors with no MUST requiring an entry. Readings: (a) reject empty; (b) accept. Chosen: (b), implement as written.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T02:15:44.009280036Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T02:35:41.347901268Z",
+  "closed_at": "2026-10-18T02:35:41.347901268Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.49",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T02:15:44.033668259Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

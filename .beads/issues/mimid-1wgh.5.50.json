@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.50",
+  "title": "P33: empty roomId in notify path rejected",
+  "description": "protocol-06 §5.5 /notify/{roomId}: a zero-length room ID means absent (P12 mimid-1wgh.5.27), but a notify must name a room (needed for frank verification, mimid-1wgh.5.15). Chosen: NotifyRequest::decode rejects an empty roomId.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T02:15:44.162502137Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T02:35:41.368411019Z",
+  "closed_at": "2026-10-18T02:35:41.368411019Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.50",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T02:15:44.187938586Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

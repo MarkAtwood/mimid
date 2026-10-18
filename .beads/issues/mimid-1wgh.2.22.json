@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.2.22",
+  "title": "D13: extension integer keys limited to ±(2^53-1)",
+  "description": "mimi-content-09 §4.3 CDDL types extension keys as int; §6.2 limits integer map keys to ±(2^53-1). Readings: (a) §6.2 applies to extension keys; (b) any CBOR int. Chosen: (a), the strict reading, consistent with §6.2's general rule for map keys; out-of-range keys rejected on decode (MapKeyOutOfRange) and encode.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T02:35:41.471228514Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T02:36:04.5384717Z",
+  "closed_at": "2026-10-18T02:36:04.5384717Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2.22",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "parent-child",
+      "created_at": "2026-10-18T02:35:41.485925279Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

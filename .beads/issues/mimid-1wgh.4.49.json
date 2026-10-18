@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.49",
+  "title": "DR-15c: safe_aad check uses post-Commit GroupContext",
+  "description": "Refines DR-15b (mimid-1wgh.4.45). A Commit may change the GroupContext required safe_aad/app_components lists and add members at once. Readings: (a) judge new/updated leaves against the pre-Commit lists; (b) against the post-Commit lists. Chosen: (b): the leaves must be able to operate in the epoch they join. GREASE in a GroupContext list is ignored (not rejected at create), per DR-15b. A malformed leaf list counts as empty (AGENTS.md untrusted-extension rule); a malformed GroupContext list after a Commit fails closed (refusing an AppDataUpdate that writes one).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T02:35:41.602901856Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T02:36:04.564895826Z",
+  "closed_at": "2026-10-18T02:36:04.564895826Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.49",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-18T02:35:41.619364651Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

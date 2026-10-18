@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.51",
+  "title": "P34: proposal-list entries must be PublicMessage proposals",
+  "description": "protocol-06 §5.3 HandshakeBundle.moreProposals and §5.5 FanoutMessage externalProposals are commented as 'additional proposals ... as either PublicMessage or SemiPrivateMessage' but the content type is not constrained in the syntax. Readings: (a) any MLSMessage; (b) only proposal content. Chosen: (b), entries must be PublicMessages with content_type proposal (SemiPrivateMessage deferred, mimid-1wgh.4.12); others rejected on decode and encode.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T02:15:44.289644436Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T02:35:41.387439886Z",
+  "closed_at": "2026-10-18T02:35:41.387439886Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.51",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T02:15:44.319759869Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
