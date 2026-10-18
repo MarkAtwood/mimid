@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.65",
+  "title": "P-op1: ProtocolVersion accepted as any u16",
+  "description": "room-policy-04 §7 lists ProtocolVersion values; RFC 9420 §6 declares ProtocolVersion a closed enum (mls10(1)) with no registry. Readings: (a) strict enum, reject unknown versions; (b) any u16 round-trips. Chosen: (b): a strict enum would make the whole operational-policy component undecodable for any room listing a future version; the codec carries it and enforces nothing (§7 codec only).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T05:46:46.869757313Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T05:47:23.224497097Z",
+  "closed_at": "2026-10-18T05:47:23.224497097Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.65",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T05:46:46.895584687Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
