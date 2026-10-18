@@ -15,8 +15,11 @@
 //!   impersonated provider.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
-//! - The hub and follower endpoints listed in the directory are not served
-//!   yet; [`hub`], [`http`] and [`peer`] are empty.
+//! - The hub's protocol endpoints are routed but are stubs, and the
+//!   follower endpoints are not served yet; [`peer`] is empty.
+//! - The hub's signing and franking keys are stored unencrypted in the
+//!   database, which must be readable by its owner only (mode 0600; see
+//!   [`store`]).
 
 #![forbid(unsafe_code)]
 

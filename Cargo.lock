@@ -2028,6 +2028,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
+ "mimi-mls",
+ "mimi-protocol",
  "mls-rs",
  "mls-rs-crypto-rustcrypto",
  "reqwest",

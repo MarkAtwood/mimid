@@ -2,8 +2,8 @@
 //!
 //! One binary plays both MIMI roles at once: hub for the rooms this provider
 //! hosts and follower for rooms hosted elsewhere (decision mimid-1wgh.15).
-//! It currently serves only the directory document of
-//! draft-ietf-mimi-protocol-06 §5.1 at `/.well-known/mimi-protocol-directory`.
+//! It serves the directory document of draft-ietf-mimi-protocol-06 §5.1 at
+//! `/.well-known/mimi-protocol-directory` and routes the hub endpoints.
 //!
 //! Usage: `mimid <config.toml>`. See `mimid_server::config` for the file
 //! format. Log filtering follows `RUST_LOG` and defaults to `info`.
@@ -17,16 +17,21 @@
 //!   impersonated provider.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
-//! - The hub and follower endpoints listed in the directory are not served
-//!   yet.
+//! - The hub's protocol endpoints are stubs, and the follower endpoints are
+//!   not served yet.
+//! - The hub's signing and franking keys are stored unencrypted in the
+//!   database file, which must be mode 0600.
 
 #![forbid(unsafe_code)]
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use mimid_server::config::Config;
-use mimid_server::directory::{Directory, router};
+use mimid_server::directory::Directory;
+use mimid_server::http::router;
+use mimid_server::hub::{Hub, SystemClock};
 use mimid_server::store::Store;
 use tracing_subscriber::EnvFilter;
 
@@ -45,6 +50,9 @@ async fn main() -> anyhow::Result<()> {
     let store = Store::open(&config.database, &config.domain)
         .await
         .with_context(|| format!("opening database {}", config.database.display()))?;
+    let hub = Hub::open(store.clone(), config.domain.clone(), Arc::new(SystemClock))
+        .await
+        .context("starting the hub")?;
 
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
@@ -57,10 +65,13 @@ async fn main() -> anyhow::Result<()> {
         "mimid listening"
     );
 
-    axum::serve(listener, router(Directory::new(&config.base_url)))
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("serving HTTP")?;
+    axum::serve(
+        listener,
+        router(Directory::new(&config.base_url), Arc::new(hub)),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("serving HTTP")?;
 
     store.close().await;
     tracing::info!("mimid stopped");
