@@ -8,3 +8,4 @@ description = "draft-ietf-mimi-content-09 message format for the mimid MIMI refe
 [dependencies]
 minicbor.workspace = true
 sha2.workspace = true
+thiserror.workspace = true
