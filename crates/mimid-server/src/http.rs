@@ -76,7 +76,12 @@ async fn submit_message(
     body: Bytes,
 ) -> Response {
     match source_domain(&headers) {
-        Some(from) => respond(hub.submit_message(&room_id, &from, &body).await),
+        Some(from) => match hub.submit_message(&room_id, &from, &body).await {
+            Err(HubError::InvalidRequest(_)) => {
+                (StatusCode::BAD_REQUEST, "undecodable request").into_response()
+            }
+            result => respond(result),
+        },
         None => bad_from(),
     }
 }

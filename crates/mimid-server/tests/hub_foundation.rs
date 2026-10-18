@@ -466,8 +466,13 @@ async fn http_routes_stubs_and_status_mapping() {
     ] {
         let uri = format!("/v1/{endpoint}/{ROOM_ID_ENCODED}");
         let (status, _, body) = send(&app, Method::POST, &uri, from, vec![0]).await;
-        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{uri}");
-        assert_eq!(body, format!("{name} is not implemented"), "{uri}");
+        if endpoint == "submitMessage" {
+            // Implemented (mimid-1wgh.6.29); the body does not decode.
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+        } else {
+            assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{uri}");
+            assert_eq!(body, format!("{name} is not implemented"), "{uri}");
+        }
 
         let unknown = format!("/v1/{endpoint}/mimi%3A%2F%2Fa.example%2Fr%2Fnope");
         let (status, _, _) = send(&app, Method::POST, &unknown, from, vec![0]).await;

@@ -9,6 +9,7 @@
 //!   `-wal` and `-shm` files the main file's mode.
 
 mod keys;
+mod log;
 mod outbox;
 mod rooms;
 
@@ -23,6 +24,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use crate::config::Domain;
 
 pub use keys::StoredHubSecret;
+pub use log::{EventKind, NewEvent, OutboxEntry};
 pub use outbox::OutboxRow;
 pub use rooms::RoomSnapshot;
 

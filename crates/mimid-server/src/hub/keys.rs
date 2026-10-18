@@ -4,11 +4,10 @@
 //! §5.4.1.2).
 //!
 //! All are generated on first start and stored in the `hub_secret` row.
-//! Later starts load them. Only the key pair is kept in memory for now:
-//! nothing in the hub uses `hub_key` until submitMessage franking
-//! (mimid-1wgh.6.29) loads it.
+//! Later starts load them.
 
 use mimi_mls::label;
+use mimi_protocol::{Frank, FrankingIntegrityTbs, HubKey};
 
 use super::HubError;
 use crate::store::{Store, StoredHubSecret};
@@ -17,10 +16,12 @@ use crate::store::{Store, StoredHubSecret};
 /// is never sent, so it cannot be confused with a protocol signature.
 const SELF_TEST_LABEL: &str = "mimid hub key self-test";
 
-/// The hub's Ed25519 signing key pair. `Debug` prints only the public key.
+/// The hub's Ed25519 signing key pair and its franking HMAC key. `Debug`
+/// prints only the public key.
 pub(crate) struct HubSigningKey {
     private: [u8; 32],
     public: [u8; 32],
+    hub_key: HubKey,
 }
 
 impl HubSigningKey {
@@ -41,6 +42,7 @@ impl HubSigningKey {
         let key = Self {
             private: stored.signature_private_key,
             public: stored.signature_public_key,
+            hub_key: HubKey::new(stored.hub_key),
         };
         let signature = label::sign_with_label(&key.private, SELF_TEST_LABEL, &[])
             .map_err(|_| HubError::CorruptHubSecret)?;
@@ -52,6 +54,21 @@ impl HubSigningKey {
     /// The 32-byte Ed25519 public key.
     pub(crate) fn public(&self) -> &[u8; 32] {
         &self.public
+    }
+
+    /// The franking HMAC key `hub_key` (protocol-06 §5.4.1.2).
+    pub(crate) fn hub_key(&self) -> &HubKey {
+        &self.hub_key
+    }
+
+    /// Signs `tbs` with the hub's key as franking agent (protocol-06
+    /// §5.4.1.2; decision mimid-1wgh.6.18).
+    ///
+    /// # Errors
+    ///
+    /// As [`FrankingIntegrityTbs::sign`].
+    pub(crate) fn sign_frank(&self, tbs: &FrankingIntegrityTbs) -> Result<Frank, HubError> {
+        tbs.sign(&self.private).map_err(HubError::Franking)
     }
 }
 
@@ -115,6 +132,7 @@ mod tests {
         let key = HubSigningKey {
             private: secret.signature_private_key,
             public: secret.signature_public_key,
+            hub_key: HubKey::new(secret.hub_key),
         };
         for text in [format!("{key:?}"), format!("{secret:?}")] {
             let private = format!("{:?}", secret.signature_private_key);

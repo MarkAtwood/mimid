@@ -8,9 +8,13 @@
 //!
 //! # Limitations
 //!
-//! - The protocol endpoints [`Hub::update`], [`Hub::submit_message`],
-//!   [`Hub::group_info`], [`Hub::key_material`] and [`Hub::report_abuse`]
-//!   are stubs that return [`HubError::NotImplemented`].
+//! - The protocol endpoints [`Hub::update`], [`Hub::group_info`],
+//!   [`Hub::key_material`] and [`Hub::report_abuse`] are stubs that return
+//!   [`HubError::NotImplemented`].
+//! - [`Hub::submit_message`] has the limitations listed in `submit.rs`: the
+//!   hub cannot authenticate a PrivateMessage's sender, does not withhold
+//!   messages from clients whose removal is pending (protocol-06 §5.3), and
+//!   refuses messages in rooms without a usable `base_room_policy`.
 //! - Rebuilding does not yet replay stored pending proposals (decision
 //!   mimid-1wgh.6.6); nothing stores them until the update endpoint lands.
 //! - [`Hub::create_room`] does not refuse a GroupInfo that embeds a
@@ -24,6 +28,7 @@ pub mod fanout;
 mod keys;
 pub mod policy;
 mod room;
+mod submit;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -250,20 +255,34 @@ impl Hub {
         Err(HubError::NotImplemented("update"))
     }
 
-    /// protocol-06 §5.4 `POST /submitMessage/{roomId}`. Stub.
+    /// protocol-06 §5.4 `POST /submitMessage/{roomId}`: checks, franks and
+    /// logs the application message in the TLS-encoded
+    /// `SubmitMessageRequest` `request`, and enqueues it for fanout.
+    /// `from` is the domain of the request's `From` header.
+    ///
+    /// Returns the TLS-encoded `SubmitMessageResponse`: `accepted` with the
+    /// hub's frank, `epochTooOld` with the current epoch, or `notAllowed`
+    /// for a message in the wrong group or a newer epoch, a `From` domain
+    /// that is not the `sendingUri` domain (decision mimid-1wgh.6.9), a
+    /// sender room policy refuses, or a message without a `frank_aad` Safe
+    /// AAD item (decision mimid-1wgh.6.3). A retry of an accepted request
+    /// gets the same response and writes nothing. The steps are listed in
+    /// `submit.rs`.
     ///
     /// # Errors
     ///
-    /// Returns [`HubError::NoSuchRoom`] if the room is not hosted here, and
-    /// otherwise [`HubError::NotImplemented`].
+    /// Returns [`HubError::InvalidRequest`] if `request` does not decode,
+    /// [`HubError::NoSuchRoom`] if the room is not hosted here, and
+    /// [`HubError::Franking`], [`HubError::GroupContext`],
+    /// [`HubError::Encode`], [`HubError::Mls`] or [`HubError::Store`] for
+    /// internal failures. Nothing is written on error.
     pub async fn submit_message(
         &self,
         room_id: &str,
-        _from: &Domain,
-        _request: &[u8],
+        from: &Domain,
+        request: &[u8],
     ) -> Result<Vec<u8>, HubError> {
-        self.require_room(room_id).await?;
-        Err(HubError::NotImplemented("submitMessage"))
+        submit::submit_message(self, room_id, from, request).await
     }
 
     /// protocol-06 §5.6 `POST /groupInfo/{roomId}`. Stub.
@@ -359,6 +378,9 @@ pub enum HubError {
     /// The endpoint is not implemented yet.
     #[error("{0} is not implemented")]
     NotImplemented(&'static str),
+    /// The request body does not decode.
+    #[error("undecodable request")]
+    InvalidRequest(#[source] mimi_mls::tls_codec::Error),
     /// The room ID is not a non-empty URI.
     #[error("invalid room ID")]
     InvalidRoomId,
@@ -430,6 +452,12 @@ pub enum HubError {
     /// An in-memory MLS store could not be created.
     #[error("cannot create an MLS store")]
     MlsStore(#[source] mimi_mls::Error),
+    /// A frank could not be computed or signed (protocol-06 §5.4.1.2).
+    #[error("cannot frank the message")]
+    Franking(#[source] mimi_protocol::Error),
+    /// A room's GroupContext could not be read.
+    #[error("cannot read the GroupContext")]
+    GroupContext(#[source] mimi_mls::tls_codec::Error),
     /// A hub structure could not be TLS-encoded.
     #[error("cannot encode a hub structure")]
     Encode(#[source] mimi_mls::tls_codec::Error),
