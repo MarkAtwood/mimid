@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.55",
+  "title": "P-link1: JoinLinkPolicy.join_link decodes as Uri",
+  "description": "room-policy-04 §6.2 types JoinLinkPolicy.join_link as opaque\u003cV\u003e; decision mimid-1wgh.3.21 says it carries the request URI and empty means none. Chosen: decode as the crate's Uri (same wire bytes): non-empty values must be RFC 3986 syntax (mimid-1wgh.36), empty = absent.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T04:34:02.254970762Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:43:45.535257042Z",
+  "closed_at": "2026-10-18T04:43:45.535257042Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.55",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T04:34:02.289923672Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

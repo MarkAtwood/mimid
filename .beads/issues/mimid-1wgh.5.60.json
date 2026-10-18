@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.60",
+  "title": "P43: AbuseReport note stays opaque",
+  "description": "protocol-06 §5.9 says note is UTF-8 but types it opaque\u003cV\u003e. Chosen: opaque, not validated, consistent with P30/P31 (mimid-1wgh.5.46, .5.47).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T04:43:46.293387694Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:44:21.706275244Z",
+  "closed_at": "2026-10-18T04:44:21.706275244Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.60",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T04:43:46.315486166Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

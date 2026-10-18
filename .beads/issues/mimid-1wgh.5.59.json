@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.59",
+  "title": "P42: AbuseReport reportingUser empty means absent",
+  "description": "protocol-06 §5.9 says reportingUser is optional but the syntax is a bare IdentifierUri. Chosen: zero-length means absent, extending P12 (mimid-1wgh.5.27).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T04:43:46.200360195Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:44:21.679753164Z",
+  "closed_at": "2026-10-18T04:44:21.679753164Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.59",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T04:43:46.221167806Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

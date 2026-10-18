@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.59",
+  "title": "P-link5: autodetect_hyperlinks required rejected",
+  "description": "room-policy-04 §6.3 rule on autodetect_hyperlinks_in_text 'mandatory', read as Optionality required (mimid-1wgh.3.13). Chosen: LinkPreviewPolicy::validate (called by decode) rejects the combination the spec forbids, per the agent's reading of §6.3.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T04:34:02.860541666Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:43:45.6675489Z",
+  "closed_at": "2026-10-18T04:43:45.6675489Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.59",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T04:34:02.887596406Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.57",
+  "title": "P-link3: link_preview_proxy needs at least one non-empty Uri",
+  "description": "room-policy-04 §6.3: when link_preview_proxy_use is optional/required the policy 'MUST include the URI' of the proxy, but link_preview_proxy is a vector. Chosen: at least one non-empty Uri; extra entries (including empty ones) are kept; not 'exactly one' (unlike parent_room).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T04:34:02.580689878Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:43:45.609235892Z",
+  "closed_at": "2026-10-18T04:43:45.609235892Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.57",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T04:34:02.603884306Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

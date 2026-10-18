@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.58",
+  "title": "P-link4: removedIndices may be unordered",
+  "description": "room-policy-04 §6.2 JoinLinksUpdate.removedIndices: decision mimid-1wgh.3.19 does not require sorting. Chosen: any order accepted; when several indices are invalid, the first in wire order is reported.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T04:34:02.715565374Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:43:45.641478797Z",
+  "closed_at": "2026-10-18T04:43:45.641478797Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.58",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T04:34:02.741429993Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.56",
+  "title": "P-link2: JoinLink.join_link stays opaque",
+  "description": "room-policy-04 §6.2 JoinLink.join_link is opaque\u003cV\u003e and the text mentions invite codes, never saying it is a URI. Chosen: opaque bytes, unchecked.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T04:34:02.435181315Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:43:45.570933477Z",
+  "closed_at": "2026-10-18T04:43:45.570933477Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.56",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T04:34:02.462898692Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

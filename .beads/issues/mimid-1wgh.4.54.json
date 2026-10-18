@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.54",
+  "title": "DR-18: external join checks own leaf before building",
+  "description": "OpenMLS exposes no staged external Commit before finalize stores it. Member::join_external checks the joiner's own leaf against the required safe_aad/app_components lists (DR-15b) using the GroupContext from the verified GroupInfo, before building. An external Commit carries only ExternalInit plus an optional resync Remove, so the post-Commit lists equal the pre-Commit ones and DR-15c (mimid-1wgh.4.49) still holds. finalize merges immediately; a hub-rejected external Commit cannot be rolled back and the caller drops the Member (documented).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T04:43:45.746607973Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:44:21.523960221Z",
+  "closed_at": "2026-10-18T04:44:21.523960221Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.54",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-18T04:43:45.771220669Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
