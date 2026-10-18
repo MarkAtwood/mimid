@@ -136,6 +136,24 @@ pub enum PolicyError {
     /// (§6.3).
     #[error("link_preview_proxy holds no URI")]
     MissingLinkPreviewProxy,
+    /// An `AssetPolicy` `asset_upload_location` is `hub` but
+    /// `upload_domains` does not hold exactly one entry (§6.4). The value
+    /// is the number of entries.
+    #[error("asset_upload_location is hub but upload_domains holds {0} entries, not 1")]
+    HubUploadDomainCount(usize),
+    /// A `LoggingPolicy` `logging` is `required` but `logging_clients`
+    /// holds no non-empty `Uri` (§6.5).
+    #[error("logging is required but logging_clients holds no URI")]
+    MissingLoggingClient,
+    /// A `Bot` has `local_client_bot` true and a non-zero
+    /// `bot_role_index` (§6.7).
+    #[error("allowed_bots entry {bot} is a local client bot with bot_role_index {bot_role_index}")]
+    LocalClientBotWithRole {
+        /// The position of the bot in `allowed_bots`.
+        bot: usize,
+        /// Its `bot_role_index`.
+        bot_role_index: u32,
+    },
 }
 
 impl RoleData {

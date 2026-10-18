@@ -18,13 +18,15 @@
 //!   [`Capability`] registry), the `roles_list` component ([`RoleData`],
 //!   with [`RoleData::validate`]), the `preauth_list` component
 //!   ([`PreAuthData`], with [`PreAuthData::first_match`]), the
-//!   `base_room_policy` component ([`BaseRoomPolicy`]), the §6.1-§6.3
+//!   `base_room_policy` component ([`BaseRoomPolicy`]), the §6
 //!   components ([`StatusNotificationPolicy`], [`JoinLinkPolicy`],
-//!   [`JoinLinksData`] with [`JoinLinksUpdate::apply`], and
-//!   [`LinkPreviewPolicy`]), and authorization ([`RoleData::authorize`],
+//!   [`JoinLinksData`] with [`JoinLinksUpdate::apply`],
+//!   [`LinkPreviewPolicy`], [`AssetPolicy`], [`LoggingPolicy`],
+//!   [`HistoryPolicy`], [`BotPolicy`] and [`MessageExpiration`]), and
+//!   authorization ([`RoleData::authorize`],
 //!   [`RoleData::authorize_send_message`],
-//!   [`RoleData::check_constraints`]). The `mls_operational_policy` and
-//!   §6.4-§6.8 components are not yet present.
+//!   [`RoleData::check_constraints`]). The `mls_operational_policy`
+//!   component is not yet present.
 //! - Authorization covers the §8.1 membership capabilities and
 //!   `canSendMessage` only, which is what the mimid v1 hub enforces
 //!   (decision mimid-1wgh.3.10). Every other capability is decoded and
@@ -77,6 +79,27 @@
 //!   join link's expiration; that involves both components and the clock.
 //!   [`JoinLinksUpdate::apply`] does not limit how many links the result
 //!   holds beyond the vector length limit.
+//! - The §6.4-§6.8 components are likewise decoded and carried but not
+//!   enforced. Decoding checks only the rules those sections state for the
+//!   component itself: a `hub` [`AssetPolicy`] has exactly one
+//!   `upload_domains` entry (§6.4; decision mimid-1wgh.3.60), a `required`
+//!   [`LoggingPolicy`] has a non-empty logging client [`Uri`] (§6.5;
+//!   decision mimid-1wgh.3.61), [`HistoryPolicy`]
+//!   `roles_that_can_share` omits indexes 0 and 1 (§6.6), and a local
+//!   client [`Bot`] has `bot_role_index` 0 (§6.7).
+//!   [`HistoryPolicy::check_roles`] checks the rest of the §6.6 rule
+//!   against a role list. Not checked: that the `hub` entry's provider is
+//!   the hub's domain, that asset URLs or media types match the
+//!   [`AssetPolicy`] lists, that the download type lists are disjoint or
+//!   contain the default, that each provider has at most one logging
+//!   client (§6.5 "should"), that a [`Bot`] `bot_role_index` names a
+//!   defined role, and that [`MessageExpiration`] minimums, maximums and
+//!   defaults are ordered (§6.4-§6.8 state none of these as a rule;
+//!   decision mimid-1wgh.3.64). A zero-length [`Bot`] `homepage` means
+//!   absent (decision mimid-1wgh.3.64). [`DomainName`] `domain` (decision
+//!   mimid-1wgh.3.63) and [`Bot`] `name` and `description` (decision
+//!   mimid-1wgh.3.62) are opaque and not checked, since the draft gives
+//!   them no syntax.
 //! - The [`Capability`] values are Table 1 of §10.2 as drafted; IANA has
 //!   not created the registry. §10.2 puts 0xF000 in both the Specification
 //!   Required range and the private-use range;
@@ -99,14 +122,31 @@
 
 pub use tls_codec;
 
+mod asset;
+pub use asset::{
+    AssetPolicy, AssetPolicyData, AssetPolicyUpdate, AssetUploadLocation, DomainName,
+    DownloadPrivacy, DownloadPrivacyType, ProviderAssetUploadDomains,
+};
+
 mod authorize;
 pub use authorize::{Denied, MembershipAction, Occupancy};
 
 mod base;
 pub use base::{BaseRoomData, BaseRoomPolicy, BaseRoomUpdate};
 
+mod bot;
+pub use bot::{Bot, BotPolicy, BotPolicyData, BotPolicyUpdate};
+
 mod capability;
 pub use capability::Capability;
+
+mod expiration;
+pub use expiration::{
+    ExpirationDurations, MessageExpiration, MessageExpirationData, MessageExpirationUpdate,
+};
+
+mod history;
+pub use history::{HistoryPolicy, HistoryPolicyData, HistoryPolicyUpdate, HistorySharing};
 
 mod join_link;
 pub use join_link::{
@@ -118,6 +158,9 @@ mod link_preview;
 pub use link_preview::{
     LinkPreviewPolicy, LinkPreviewPolicyData, LinkPreviewPolicyUpdate, LinkPreviewProxyUse,
 };
+
+mod logging;
+pub use logging::{LoggingPolicy, LoggingPolicyData, LoggingPolicyUpdate, LoggingSettings};
 
 mod preauth;
 pub use preauth::{Claim, ClaimId, CredentialType, PreAuthData, PreAuthRoleEntry, PreAuthUpdate};
@@ -133,10 +176,10 @@ pub use status::{
     StatusNotificationPolicy, StatusNotificationPolicyData, StatusNotificationPolicyUpdate,
 };
 
-use std::io::Read;
+use std::io::{Read, Write};
 
 use iri_string::types::UriStr;
-use tls_codec::{Deserialize, TlsDeserialize, TlsSerialize, TlsSize};
+use tls_codec::{Deserialize, Serialize, Size, TlsDeserialize, TlsSerialize, TlsSize};
 
 /// The largest vector length, in bytes, that decoding accepts.
 ///
@@ -218,6 +261,69 @@ pub enum Optionality {
     Required = 1,
     /// `forbidden(2)`.
     Forbidden = 2,
+}
+
+/// A `select` on an [`Optionality`] whose `case mandatory` and `case
+/// optional` arms carry the same fields `T` and whose `case forbidden` arm
+/// is `struct {}`.
+///
+/// room-policy-04 §6.5, §6.6 and §6.8 use this shape. It is encoded as the
+/// [`Optionality`] byte followed, unless `forbidden`, by `T`. The draft's
+/// `case mandatory` arm is [`OptionalitySelect::Required`] (decision
+/// mimid-1wgh.3.13).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum OptionalitySelect<T> {
+    /// `optional(0)`, with the arm's fields.
+    Optional(T),
+    /// `required(1)` (`case mandatory`), with the arm's fields.
+    Required(T),
+    /// `forbidden(2)`: no further fields.
+    Forbidden,
+}
+
+impl<T> OptionalitySelect<T> {
+    /// The selector value.
+    pub fn optionality(&self) -> Optionality {
+        match self {
+            Self::Optional(_) => Optionality::Optional,
+            Self::Required(_) => Optionality::Required,
+            Self::Forbidden => Optionality::Forbidden,
+        }
+    }
+
+    /// The arm's fields, or `None` when `forbidden`.
+    pub fn fields(&self) -> Option<&T> {
+        match self {
+            Self::Optional(fields) | Self::Required(fields) => Some(fields),
+            Self::Forbidden => None,
+        }
+    }
+}
+
+impl<T: Size> Size for OptionalitySelect<T> {
+    fn tls_serialized_len(&self) -> usize {
+        self.optionality().tls_serialized_len() + self.fields().map_or(0, Size::tls_serialized_len)
+    }
+}
+
+impl<T: Serialize> Serialize for OptionalitySelect<T> {
+    fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
+        let mut written = self.optionality().tls_serialize(writer)?;
+        if let Some(fields) = self.fields() {
+            written += fields.tls_serialize(writer)?;
+        }
+        Ok(written)
+    }
+}
+
+impl<T: Deserialize> Deserialize for OptionalitySelect<T> {
+    fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
+        Ok(match Optionality::tls_deserialize(bytes)? {
+            Optionality::Optional => Self::Optional(T::tls_deserialize(bytes)?),
+            Optionality::Required => Self::Required(T::tls_deserialize(bytes)?),
+            Optionality::Forbidden => Self::Forbidden,
+        })
+    }
 }
 
 /// The `Uri` struct of room-policy-04 Appendix B: `opaque uri<V>`, "a valid
