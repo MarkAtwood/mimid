@@ -119,6 +119,23 @@ pub enum PolicyError {
     /// when it is false (§5).
     #[error("parent_room does not match parent_dependant")]
     ParentRoomMismatch,
+    /// A `JoinLinksUpdate` `removedIndices` entry is not an index into the
+    /// list before the update (§6.2; decision mimid-1wgh.3.19).
+    #[error("removedIndices entry {0} is out of range")]
+    RemovedIndexOutOfRange(u32),
+    /// A `JoinLinksUpdate` `removedIndices` entry appears more than once
+    /// (§6.2; decision mimid-1wgh.3.19).
+    #[error("removedIndices entry {0} appears more than once")]
+    DuplicateRemovedIndex(u32),
+    /// A `LinkPreviewPolicy` `autodetect_hyperlinks_in_text` is `required`
+    /// (§6.3; decision mimid-1wgh.3.13).
+    #[error("autodetect_hyperlinks_in_text is required")]
+    AutodetectHyperlinksRequired,
+    /// A `LinkPreviewPolicy` `link_preview_proxy_use` is `required` or
+    /// `optional` but `link_preview_proxy` holds no non-empty `Uri`
+    /// (§6.3).
+    #[error("link_preview_proxy holds no URI")]
+    MissingLinkPreviewProxy,
 }
 
 impl RoleData {

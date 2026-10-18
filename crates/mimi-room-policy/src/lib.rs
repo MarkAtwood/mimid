@@ -7,21 +7,24 @@
 //! Decode with [`tls_codec::Deserialize::tls_deserialize_exact`], which
 //! rejects trailing bytes. Decoding also rejects non-minimal varint
 //! lengths, lengths above [`MAX_VECTOR_LENGTH`], [`Bool`] values other than
-//! 0 and 1, invalid UTF-8 in fields the drafts define as text, and [`Uri`]
+//! 0 and 1, [`Optionality`] values other than 0, 1 and 2, invalid UTF-8 in fields the drafts define as text, and [`Uri`]
 //! and [`MediaType`] values whose syntax is invalid (decision
 //! mimid-1wgh.36).
 //!
 //! # Limitations
 //!
-//! - Implemented so far: the primitives ([`Bool`], [`Uri`], [`MediaType`],
-//!   the [`component_id`] constants, the [`Capability`] registry), the
-//!   `roles_list` component ([`RoleData`], with [`RoleData::validate`]),
-//!   the `preauth_list` component ([`PreAuthData`], with
-//!   [`PreAuthData::first_match`]) and the `base_room_policy` component
-//!   ([`BaseRoomPolicy`]), and authorization ([`RoleData::authorize`],
+//! - Implemented so far: the primitives ([`Bool`], [`Optionality`],
+//!   [`Uri`], [`MediaType`], the [`component_id`] constants, the
+//!   [`Capability`] registry), the `roles_list` component ([`RoleData`],
+//!   with [`RoleData::validate`]), the `preauth_list` component
+//!   ([`PreAuthData`], with [`PreAuthData::first_match`]), the
+//!   `base_room_policy` component ([`BaseRoomPolicy`]), the §6.1-§6.3
+//!   components ([`StatusNotificationPolicy`], [`JoinLinkPolicy`],
+//!   [`JoinLinksData`] with [`JoinLinksUpdate::apply`], and
+//!   [`LinkPreviewPolicy`]), and authorization ([`RoleData::authorize`],
 //!   [`RoleData::authorize_send_message`],
-//!   [`RoleData::check_constraints`]). The other policy components are not
-//!   yet present.
+//!   [`RoleData::check_constraints`]). The `mls_operational_policy` and
+//!   §6.4-§6.8 components are not yet present.
 //! - Authorization covers the §8.1 membership capabilities and
 //!   `canSendMessage` only, which is what the mimid v1 hub enforces
 //!   (decision mimid-1wgh.3.10). Every other capability is decoded and
@@ -67,6 +70,13 @@
 //!   that minimum constraints are at most the maximums, that role names
 //!   are unique or non-empty, or that a role 1 is named `banned`, because
 //!   the draft states none of these (decision mimid-1wgh.3.45).
+//! - The §6.1-§6.3 components are decoded and carried but not enforced:
+//!   clients act on them. [`JoinLink`] `join_link` is opaque and not
+//!   checked. Nothing here checks the §6.2 statement that at most one join
+//!   link is persisted when [`JoinLinkPolicy::on_request`] is true, or a
+//!   join link's expiration; that involves both components and the clock.
+//!   [`JoinLinksUpdate::apply`] does not limit how many links the result
+//!   holds beyond the vector length limit.
 //! - The [`Capability`] values are Table 1 of §10.2 as drafted; IANA has
 //!   not created the registry. §10.2 puts 0xF000 in both the Specification
 //!   Required range and the private-use range;
@@ -98,6 +108,17 @@ pub use base::{BaseRoomData, BaseRoomPolicy, BaseRoomUpdate};
 mod capability;
 pub use capability::Capability;
 
+mod join_link;
+pub use join_link::{
+    JoinLink, JoinLinkPolicy, JoinLinkPolicyData, JoinLinkPolicyUpdate, JoinLinksData,
+    JoinLinksUpdate,
+};
+
+mod link_preview;
+pub use link_preview::{
+    LinkPreviewPolicy, LinkPreviewPolicyData, LinkPreviewPolicyUpdate, LinkPreviewProxyUse,
+};
+
 mod preauth;
 pub use preauth::{Claim, ClaimId, CredentialType, PreAuthData, PreAuthRoleEntry, PreAuthUpdate};
 
@@ -105,6 +126,11 @@ mod role;
 pub use role::{
     BANNED_ROLE_INDEX, BANNED_ROLE_NAME, NO_ROLE_INDEX, PolicyError, Role, RoleData, RoleUpdate,
     SingleSourceRoleChangeTargets,
+};
+
+mod status;
+pub use status::{
+    StatusNotificationPolicy, StatusNotificationPolicyData, StatusNotificationPolicyUpdate,
 };
 
 use std::io::Read;
@@ -175,6 +201,23 @@ impl From<Bool> for bool {
     fn from(value: Bool) -> Self {
         value == Bool::True
     }
+}
+
+/// The `Optionality` enum of room-policy-04 §6.1, shared by the §6
+/// policy components.
+///
+/// It is encoded as one byte. Decoding rejects every value other than 0, 1
+/// and 2 with [`tls_codec::Error::UnknownValue`]. Where the draft writes
+/// `case mandatory`, it means `required(1)` (decision mimid-1wgh.3.13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TlsSize, TlsSerialize, TlsDeserialize)]
+#[repr(u8)]
+pub enum Optionality {
+    /// `optional(0)`: each client follows its local configuration.
+    Optional = 0,
+    /// `required(1)`.
+    Required = 1,
+    /// `forbidden(2)`.
+    Forbidden = 2,
 }
 
 /// The `Uri` struct of room-policy-04 Appendix B: `opaque uri<V>`, "a valid
