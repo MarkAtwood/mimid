@@ -276,7 +276,7 @@ impl LocalDelivery for RecordingLocal {
             .push((room_id.to_owned(), body.to_vec()));
         let failed = self
             .failures
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
             .is_ok();
         if failed {
             Err(std::io::Error::other("local delivery refused"))
