@@ -155,7 +155,8 @@ impl Identity {
     /// values. Its `app_data_dictionary` carries an `app_components` entry,
     /// which §4.6 requires of any client that advertises
     /// `app_data_dictionary`. That list names the components this crate
-    /// implements: `safe_aad` (see [`crate::member`]),
+    /// implements: `app_components` itself, which §4.6 says to advertise,
+    /// `safe_aad` (see [`crate::member`]),
     /// `last_resort_key_package` and protocol-06's `frank_aad` (0x0020). It
     /// also carries a `safe_aad` entry (§5) listing the supported Safe AAD
     /// components: `frank_aad` (decisions mimid-1wgh.4.45,
@@ -277,9 +278,12 @@ where
     R: OpenMlsRand,
     R::Error: Send + Sync + 'static,
 {
-    // mls-extensions-10 §4.6 requires the app_components entry. It lists
-    // only implemented components (decision mimid-1wgh.4.25).
+    // mls-extensions-10 §4.6 requires the app_components entry and says to
+    // "advertise the app_components component", so the list names
+    // app_components itself along with the other implemented components
+    // (decision mimid-1wgh.4.25).
     let app_components = ComponentsList::new(vec![
+        APP_COMPONENTS,
         SAFE_AAD,
         LAST_RESORT_KEY_PACKAGE,
         FRANK_AAD,

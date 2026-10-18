@@ -199,8 +199,9 @@ fn check_common(kind: KeyPackageKind) -> (KeyPackage, mls_rs::group::Member) {
 }
 
 /// mls-extensions-10 §4.6 and §5: the LeafNode's app_data_dictionary holds
-/// an app_components entry listing safe_aad, last_resort_key_package,
-/// frank_aad and a GREASE id; a safe_aad entry listing the supported Safe
+/// an app_components entry listing app_components itself (§4.6: "MUST
+/// understand and advertise the app_components component"), safe_aad,
+/// last_resort_key_package, frank_aad and a GREASE id; a safe_aad entry listing the supported Safe
 /// AAD components, frank_aad (protocol-06 §5.4.1, decision
 /// mimid-1wgh.4.52), and a GREASE id (decision mimid-1wgh.4.45); and one
 /// GREASE component with empty data. Every GREASE id is from the §7.5 set.
@@ -209,10 +210,10 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
         .get(APP_DATA_DICTIONARY)
         .expect("LeafNode app_data_dictionary")
         .extension_data;
-    assert_eq!(data.len(), 24, "leaf dictionary: {data:02x?}");
-    let listed_grease = u16::from_be_bytes([data[11], data[12]]);
-    let safe_aad_grease = u16::from_be_bytes([data[19], data[20]]);
-    let component_grease = u16::from_be_bytes([data[21], data[22]]);
+    assert_eq!(data.len(), 26, "leaf dictionary: {data:02x?}");
+    let listed_grease = u16::from_be_bytes([data[13], data[14]]);
+    let safe_aad_grease = u16::from_be_bytes([data[21], data[22]]);
+    let component_grease = u16::from_be_bytes([data[23], data[24]]);
     for grease in [listed_grease, safe_aad_grease, component_grease] {
         assert!(is_component_grease(grease), "{grease:#06x}");
     }
@@ -220,10 +221,11 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
     let [sg_hi, sg_lo] = safe_aad_grease.to_be_bytes();
     let [cg_hi, cg_lo] = component_grease.to_be_bytes();
     let expected = [
-        0x17, // component_data<V>: 23 bytes follow
+        0x19, // component_data<V>: 25 bytes follow
         0x00, 0x01, // ComponentData.component_id = app_components
-        0x09, // ComponentData.data<V>: 9 bytes (a ComponentsList)
-        0x08, //   ComponentsList.component_ids<V>: 8 bytes
+        0x0b, // ComponentData.data<V>: 11 bytes (a ComponentsList)
+        0x0a, //   ComponentsList.component_ids<V>: 10 bytes
+        0x00, 0x01, //   ComponentID = app_components
         0x00, 0x02, //   ComponentID = safe_aad
         0x00, 0x04, //   ComponentID = last_resort_key_package
         0x00, 0x20, //   ComponentID = frank_aad (protocol-06 §10.1)
