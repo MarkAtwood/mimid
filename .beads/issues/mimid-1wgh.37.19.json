@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.19",
   "title": "wg: content-09 §4.5/§4.6 use uri (tag 32) where A.1 uses tstr",
   "description": "Erratum. §4.5 url: uri (L744) and §4.6 senderClientUrl/senderUserUrl/roomUrl: uri (L807-809); CDDL uri is #6.32(tstr), so these would be tagged. §4.4 (L582), A.1 (L2788), A.2 (MsgUri = tstr, L2881) use tstr, and the changelog (L3327) says \"remove tag from URLs in ExternalPart and implied headers\". mimid uses tstr (decision mimid-1wgh.2.16). Fix: tstr in §4.5/§4.6.",
-  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED: uri tag in §4.5/§4.6 despite content#12 decision and C.7. Also missing comma L807. Editorial PR cite #12.",
+  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/draft-ietf-mimi-content/pull/84",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:09.539561368Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T18:29:44.918011512Z",
+  "updated_at": "2026-10-18T19:21:27.74426023Z",
   "labels": [
     "wg",
     "spec:mimi-content-09"
