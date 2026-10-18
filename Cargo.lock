@@ -2030,6 +2030,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "httpdate",
+ "mimi-content",
  "mimi-mls",
  "mimi-protocol",
  "mimi-room-policy",

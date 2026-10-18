@@ -497,22 +497,12 @@ async fn http_routes_stubs_and_status_mapping() {
     let app = app(Arc::clone(&hub));
     let from = Some("mimi@b.example");
 
-    for (endpoint, name) in [
-        ("update", "update"),
-        ("submitMessage", "submitMessage"),
-        ("groupInfo", "groupInfo"),
-        ("reportAbuse", "reportAbuse"),
-    ] {
+    for endpoint in ["update", "submitMessage", "groupInfo", "reportAbuse"] {
         let uri = format!("/v1/{endpoint}/{ROOM_ID_ENCODED}");
-        let (status, _, body) = send(&app, Method::POST, &uri, from, vec![0]).await;
-        if endpoint == "submitMessage" || endpoint == "update" || endpoint == "groupInfo" {
-            // Implemented (mimid-1wgh.6.29, mimid-1wgh.6.27,
-            // mimid-1wgh.6.30); the body does not decode.
-            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
-        } else {
-            assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{uri}");
-            assert_eq!(body, format!("{name} is not implemented"), "{uri}");
-        }
+        let (status, _, _) = send(&app, Method::POST, &uri, from, vec![0]).await;
+        // Every endpoint is implemented (mimid-1wgh.6.27, mimid-1wgh.6.29,
+        // mimid-1wgh.6.30, mimid-1wgh.6.31); the body does not decode.
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
 
         let unknown = format!("/v1/{endpoint}/mimi%3A%2F%2Fa.example%2Fr%2Fnope");
         let (status, _, _) = send(&app, Method::POST, &unknown, from, vec![0]).await;
@@ -533,8 +523,9 @@ async fn http_routes_stubs_and_status_mapping() {
         vec![0],
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(body, "keyMaterial is not implemented");
+    // Implemented (mimid-1wgh.6.31); the body does not decode.
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, "undecodable request");
 
     // The unencoded URI spans several path segments and matches no route.
     let (status, _, _) = send(

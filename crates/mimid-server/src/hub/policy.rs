@@ -21,6 +21,8 @@
 //!   with its sender as the actor.
 //! - [`authorize_send`]: a listed participant whose role holds
 //!   `canSendMessage` (room-policy-04 §8.3).
+//! - [`authorize_key_material`]: a listed participant whose role holds
+//!   `canAddParticipant` (decision mimid-1wgh.6.20).
 //! - [`authorize_group_info`]: a listed participant holding
 //!   `canAddOwnClient`, or a user that may join by `canOpenJoin` or by
 //!   preauthorization (room-policy-04 §8.1.1).
@@ -991,6 +993,26 @@ pub fn authorize_send(state: &RoomState, sending_user: &[u8]) -> Result<(), Deni
         .roles
         .authorize_send_message(role)
         .map_err(Denied::Capability)
+}
+
+/// Authorizes `requester` to fetch key material through the hub for a
+/// user to add to the room: a listed, not banned participant whose role
+/// holds `canAddParticipant` (protocol-06 §3.3 leaves the check undefined;
+/// decision mimid-1wgh.6.20).
+///
+/// # Errors
+///
+/// [`Denied::NotParticipant`], [`Denied::RemovedOrBanned`] or
+/// [`Denied::Capability`].
+pub fn authorize_key_material(state: &RoomState, requester: &[u8]) -> Result<(), Denied> {
+    let role = state.role_of(requester);
+    if role == NO_ROLE_INDEX {
+        return Err(Denied::NotParticipant);
+    }
+    if state.is_banned(role) {
+        return Err(Denied::RemovedOrBanned);
+    }
+    state.capability(role, Capability::CAN_ADD_PARTICIPANT)
 }
 
 /// Authorizes `requester` to fetch the GroupInfo for an external join: a

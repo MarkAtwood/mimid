@@ -10,11 +10,14 @@
 //!
 //! # Limitations
 //!
-//! - The protocol endpoints [`Hub::key_material`] and [`Hub::report_abuse`]
-//!   are stubs that return [`HubError::NotImplemented`].
 //! - [`Hub::group_info`] has the limitations listed in `group_info.rs`:
 //!   with BasicCredential, anyone claiming a participant's identity gets
 //!   the GroupInfo, and join codes are not supported.
+//! - [`Hub::key_material`] only proxies requests for users of other
+//!   providers, and only if [`Hub::with_peers`] gave the hub a peer client;
+//!   its limitations are listed in `key_material.rs`.
+//! - [`Hub::report_abuse`] validates franks and logs; no action follows
+//!   (decision mimid-1wgh.21). Its limitations are listed in `abuse.rs`.
 //! - [`Hub::submit_message`] has the limitations listed in `submit.rs`: the
 //!   hub cannot authenticate a PrivateMessage's sender, does not withhold
 //!   messages from clients whose removal is pending (protocol-06 §5.3), and
@@ -29,9 +32,11 @@
 //! - The hub's signing key and franking key are stored unencrypted; see
 //!   [`crate::store`].
 
+mod abuse;
 pub mod components;
 pub mod fanout;
 mod group_info;
+mod key_material;
 mod keys;
 pub mod policy;
 mod room;
@@ -48,6 +53,7 @@ use mimi_mls::wire::ProposalRef;
 use tokio::sync::Mutex;
 
 use crate::config::Domain;
+use crate::peer::{PeerClient, PeerError};
 use crate::store::{RoomSnapshot, Store, StoreError};
 use fanout::FanoutHandle;
 use keys::HubSigningKey;
@@ -108,6 +114,8 @@ pub struct Hub {
     rooms: Mutex<BTreeMap<String, Room>>,
     /// The fanout worker to wake after enqueuing rows, if any.
     fanout: Option<FanoutHandle>,
+    /// The client that forwards keyMaterial requests, if any.
+    peers: Option<PeerClient>,
 }
 
 impl std::fmt::Debug for Hub {
@@ -153,6 +161,7 @@ impl Hub {
             clock,
             rooms: Mutex::new(rooms),
             fanout: None,
+            peers: None,
         })
     }
 
@@ -161,6 +170,14 @@ impl Hub {
     #[must_use]
     pub fn with_fanout(mut self, fanout: FanoutHandle) -> Self {
         self.fanout = Some(fanout);
+        self
+    }
+
+    /// Gives the hub the client it forwards keyMaterial requests through
+    /// (decision mimid-1wgh.6.20).
+    #[must_use]
+    pub fn with_peers(mut self, peers: PeerClient) -> Self {
+        self.peers = Some(peers);
         self
     }
 
@@ -366,44 +383,56 @@ impl Hub {
         group_info::group_info(self, room_id, from, request).await
     }
 
-    /// protocol-06 §5.9 `POST /reportAbuse/{roomId}`. Stub.
+    /// protocol-06 §5.9 `POST /reportAbuse/{roomId}`: validates the frank
+    /// of every message in the TLS-encoded `AbuseReport` `request` and logs
+    /// the outcome. No action is taken (decision mimid-1wgh.21). `from` is
+    /// the domain of the request's `From` header; it is not used.
+    ///
+    /// Returns an empty body if the report is accepted. The steps are
+    /// listed in `abuse.rs`.
     ///
     /// # Errors
     ///
-    /// Returns [`HubError::NoSuchRoom`] if the room is not hosted here, and
-    /// otherwise [`HubError::NotImplemented`].
+    /// Returns [`HubError::NoSuchRoom`] if the room is not hosted here,
+    /// [`HubError::InvalidRequest`] if `request` does not decode,
+    /// [`HubError::UnverifiedAbusiveMessage`] if a reported message's frank
+    /// does not verify, and [`HubError::MissingFrankingAgent`] or
+    /// [`HubError::WrongFrankingAgent`] if the room's `franking_agent`
+    /// cannot be read.
     pub async fn report_abuse(
         &self,
         room_id: &str,
-        _from: &Domain,
-        _request: &[u8],
+        from: &Domain,
+        request: &[u8],
     ) -> Result<Vec<u8>, HubError> {
-        self.require_room(room_id).await?;
-        Err(HubError::NotImplemented("reportAbuse"))
+        abuse::report_abuse(self, room_id, from, request).await
     }
 
-    /// protocol-06 §5.2 `POST /keyMaterial/{targetUser}`, proxied for
-    /// hosted rooms (decision mimid-1wgh.6.20). Stub.
+    /// protocol-06 §5.2 `POST /keyMaterial/{targetUser}`, proxied for a
+    /// hosted room to the provider of `target_user`, the percent-decoded
+    /// path value (protocol-06 §3.3; decision mimid-1wgh.6.20). `from` is
+    /// the domain of the request's `From` header.
+    ///
+    /// Returns the target provider's TLS-encoded `KeyMaterialResponse` as
+    /// received, or a `noConsent` response if the hub refuses the request.
+    /// The steps are listed in `key_material.rs`.
     ///
     /// # Errors
     ///
-    /// Always returns [`HubError::NotImplemented`].
+    /// Returns [`HubError::InvalidRequest`] if `request` does not decode,
+    /// [`HubError::NoSuchRoom`] if its `roomId` is not hosted here,
+    /// [`HubError::NotImplemented`] if `target_user` is a user of this
+    /// provider, [`HubError::Peer`] if the target provider cannot be
+    /// reached or refuses the request, [`HubError::InvalidPeerResponse`] if
+    /// its response does not decode, and [`HubError::Encode`] for internal
+    /// failures.
     pub async fn key_material(
         &self,
-        _target_user: &str,
-        _from: &Domain,
-        _request: &[u8],
+        target_user: &str,
+        from: &Domain,
+        request: &[u8],
     ) -> Result<Vec<u8>, HubError> {
-        Err(HubError::NotImplemented("keyMaterial"))
-    }
-
-    /// Fails with [`HubError::NoSuchRoom`] unless `room_id` is hosted here.
-    async fn require_room(&self, room_id: &str) -> Result<(), HubError> {
-        if self.rooms.lock().await.contains_key(room_id) {
-            Ok(())
-        } else {
-            Err(HubError::NoSuchRoom)
-        }
+        key_material::key_material(self, target_user, from, request).await
     }
 }
 
@@ -588,4 +617,16 @@ pub enum HubError {
     /// The database failed.
     #[error("database error")]
     Store(#[from] StoreError),
+    /// A request to a peer provider failed.
+    #[error("peer provider request failed")]
+    Peer(#[source] PeerError),
+    /// A peer provider's response does not decode.
+    #[error("undecodable peer response")]
+    InvalidPeerResponse(#[source] mimi_mls::tls_codec::Error),
+    /// A reported message's frank does not verify (protocol-06 §5.9).
+    #[error("the frank of reported message {index} does not verify")]
+    UnverifiedAbusiveMessage {
+        /// The message's position in the report.
+        index: usize,
+    },
 }

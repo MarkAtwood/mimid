@@ -10,7 +10,10 @@
 //! an `application/octet-stream` body; an undecodable request, including a
 //! missing or malformed `From` header, is `400`; a room not hosted here is
 //! `404`; a body over [`MAX_BODY_LEN`] is `413`. An endpoint the hub does
-//! not implement yet answers `501`.
+//! not implement yet answers `501`. An abuse report whose franks do not
+//! verify is `422` (decision mimid-1wgh.6.65), and a keyMaterial request
+//! for a local user is `501` and one the target provider fails is `502`
+//! (decision mimid-1wgh.6.64).
 //!
 //! # Limitations
 //!
@@ -152,6 +155,17 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
             format!("{endpoint} is not implemented"),
         )
             .into_response(),
+        // Decision mimid-1wgh.6.65.
+        Err(HubError::UnverifiedAbusiveMessage { .. }) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "a reported message's frank does not verify",
+        )
+            .into_response(),
+        // Decision mimid-1wgh.6.64.
+        Err(error @ (HubError::Peer(_) | HubError::InvalidPeerResponse(_))) => {
+            tracing::warn!(%error, "peer provider failed");
+            (StatusCode::BAD_GATEWAY, "peer provider failed").into_response()
+        }
         Err(error) => {
             tracing::error!(%error, "hub request failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()

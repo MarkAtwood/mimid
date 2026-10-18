@@ -1,5 +1,6 @@
 //! Client for peer providers: directory fetch and cache, and outbound
-//! `/notify` requests over reqwest (plan of mimid-1wgh.6).
+//! `/notify` and `/keyMaterial` requests over reqwest (plan of
+//! mimid-1wgh.6).
 //!
 //! A peer's base URL comes from the configured peer map, which replaces DNS
 //! discovery (decision mimid-1wgh.17). Its directory (protocol-06 §5.1) is
@@ -14,7 +15,7 @@
 //!   (decision mimid-1wgh.34).
 //! - The endpoint URLs in a peer's directory are used as given (decision
 //!   mimid-1wgh.6.48). A misconfigured or hostile peer can therefore direct
-//!   fanout POSTs to arbitrary hosts, including ones on the hub's internal
+//!   fanout and keyMaterial POSTs to arbitrary hosts, including ones on the hub's internal
 //!   network. Peers are configured by the operator (decision
 //!   mimid-1wgh.17), so only list peers you trust with this.
 //! - Redirects are not followed; a redirect counts as a failed request.
@@ -29,7 +30,7 @@ use reqwest::{StatusCode, redirect};
 
 use crate::config::{BaseUrl, Domain};
 use crate::directory::DIRECTORY_PATH;
-use crate::http::PROTOCOL_CONTENT_TYPE;
+use crate::http::{MAX_BODY_LEN, PROTOCOL_CONTENT_TYPE};
 
 /// The longest directory document accepted, in bytes. INVENTED, NOT FROM
 /// SPEC: protocol-06 §5.1 sets no limit, and a ten-entry document of
@@ -44,6 +45,10 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The `roomId` variable of the `notify` template (protocol-06 §5.1, §5.5).
 const ROOM_ID_VARIABLE: &str = "roomId";
+
+/// The `targetUser` variable of the `keyMaterial` template (protocol-06
+/// §5.1, §5.2).
+const TARGET_USER_VARIABLE: &str = "targetUser";
 
 /// The guidance of a `Retry-After` header (RFC 9110 §10.2.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +142,53 @@ impl PeerClient {
         }
     }
 
+    /// protocol-06 §5.2 `POST /keyMaterial/{targetUser}`: sends `body`, a
+    /// KeyMaterialRequest for `target_user`, to `domain` and returns the
+    /// response body as received. Only a `200` response counts, and its
+    /// body may be at most [`MAX_BODY_LEN`] bytes (decision mimid-1wgh.6.67).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PeerError::UnknownPeer`] if `domain` is not a configured
+    /// peer, any error from fetching its directory,
+    /// [`PeerError::KeyMaterialUrl`] if the `keyMaterial` template cannot be
+    /// expanded with `target_user`, [`PeerError::Http`] if the request
+    /// fails, [`PeerError::Rejected`] for any status other than `200`, and
+    /// [`PeerError::ResponseTooLarge`] for an oversized body.
+    pub async fn key_material(
+        &self,
+        domain: &Domain,
+        target_user: &str,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, PeerError> {
+        let directory = self.directory(domain).await?;
+        // protocol-06 §5.2; decision mimid-1wgh.5.18
+        let url = directory
+            .key_material
+            .expand(TARGET_USER_VARIABLE, target_user)
+            .map_err(PeerError::KeyMaterialUrl)?;
+        let response = self
+            .http
+            .post(url)
+            .headers(self.headers(domain)?)
+            .header(CONTENT_TYPE, PROTOCOL_CONTENT_TYPE)
+            .body(body)
+            .send()
+            .await
+            .map_err(PeerError::Http)?;
+        if response.status() != StatusCode::OK {
+            return Err(PeerError::Rejected {
+                status: response.status().as_u16(),
+                retry_after: retry_after(response.headers()),
+            });
+        }
+        // The request body cap bounds the response too (decision
+        // mimid-1wgh.6.67).
+        read_capped(response, MAX_BODY_LEN)
+            .await?
+            .ok_or(PeerError::ResponseTooLarge)
+    }
+
     /// The directory of `domain`, from the cache or fetched.
     async fn directory(&self, domain: &Domain) -> Result<Directory, PeerError> {
         if let Some(directory) = self.cache().get(domain) {
@@ -146,7 +198,7 @@ impl PeerClient {
             .peers
             .get(domain)
             .ok_or_else(|| PeerError::UnknownPeer(domain.clone()))?;
-        let mut response = self
+        let response = self
             .http
             .get(format!("{base}{DIRECTORY_PATH}"))
             .headers(self.headers(domain)?)
@@ -156,19 +208,9 @@ impl PeerClient {
         if response.status() != StatusCode::OK {
             return Err(PeerError::DirectoryStatus(response.status().as_u16()));
         }
-        if response
-            .content_length()
-            .is_some_and(|len| len > MAX_DIRECTORY_LEN as u64)
-        {
-            return Err(PeerError::DirectoryTooLarge);
-        }
-        let mut text = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(PeerError::Http)? {
-            if text.len() + chunk.len() > MAX_DIRECTORY_LEN {
-                return Err(PeerError::DirectoryTooLarge);
-            }
-            text.extend_from_slice(&chunk);
-        }
+        let text = read_capped(response, MAX_DIRECTORY_LEN)
+            .await?
+            .ok_or(PeerError::DirectoryTooLarge)?;
         let directory: Directory =
             mimi_protocol::serde_json::from_slice(&text).map_err(PeerError::InvalidDirectory)?;
         self.cache().insert(domain.clone(), directory.clone());
@@ -190,6 +232,28 @@ impl PeerClient {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// Reads `response`'s body, or returns `None` once it exceeds `limit`
+/// bytes.
+async fn read_capped(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Option<Vec<u8>>, PeerError> {
+    if response
+        .content_length()
+        .is_some_and(|len| len > limit as u64)
+    {
+        return Ok(None);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(PeerError::Http)? {
+        if body.len() + chunk.len() > limit {
+            return Ok(None);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Some(body))
 }
 
 fn header_value(text: &str) -> Result<HeaderValue, PeerError> {
@@ -238,7 +302,15 @@ pub enum PeerError {
     /// The `notify` template could not be expanded with the room ID.
     #[error("cannot build the notify URL")]
     NotifyUrl(#[source] mimi_protocol::Error),
-    /// The peer answered with a status other than `201`.
+    /// The `keyMaterial` template could not be expanded with the target
+    /// user.
+    #[error("cannot build the keyMaterial URL")]
+    KeyMaterialUrl(#[source] mimi_protocol::Error),
+    /// A response body exceeds [`MAX_BODY_LEN`].
+    #[error("response body too large")]
+    ResponseTooLarge,
+    /// The peer answered with a status other than the one the request
+    /// expects: `201` for `/notify`, `200` for `/keyMaterial`.
     #[error("peer answered {status}")]
     Rejected {
         /// The response status code.
