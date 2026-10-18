@@ -60,6 +60,18 @@
 //!   `frank_aad` (0x0020) as a Safe AAD component (decision
 //!   mimid-1wgh.4.52), so in a group whose `safe_aad` list requires any
 //!   other, this member refuses its own Commits that carry an UpdatePath.
+//!   [`Member::join_external`] checks only the joiner's own leaf.
+//! - [`Member::join_welcome`] and [`Member::join_external`] verify the
+//!   `lifetime` of the leaves in the tree they join (the OpenMLS default),
+//!   so they fail if any member's leaf has expired. The policy for members
+//!   is open (mimid-1wgh.4.40).
+//! - [`Member::join_external`] checks its own leaf before building the
+//!   Commit, and merges the Commit at once, so it cannot be rolled back if
+//!   the hub rejects it (decision mimid-1wgh.4.54). It sends no
+//!   PreSharedKey proposals. A join by an identity already in the group
+//!   becomes a resync, allowed but reported to the caller (RFC 9420
+//!   §12.4.3.2, decision mimid-1wgh.4.55). Finding the removed leaf
+//!   verifies the GroupInfo and tree a second time.
 
 use std::collections::BTreeSet;
 
@@ -70,12 +82,16 @@ use openmls::group::{
     AppDataDictionaryUpdater, MIXED_PLAINTEXT_WIRE_FORMAT_POLICY, MlsGroup, MlsGroupJoinConfig,
     StagedCommit, StagedWelcome,
 };
+use openmls::messages::group_info::VerifiableGroupInfo;
 use openmls::messages::proposals::{AppDataUpdateOperation, AppDataUpdateProposal, Proposal};
 use openmls::prelude::{
     AppDataDictionary, AppDataDictionaryExtension, BasicCredential, Credential, Extension,
-    Extensions, GroupId, KeyPackageIn, LeafNode, LeafNodeIndex, MlsMessageBodyIn, MlsMessageIn,
-    OpenMlsProvider, ProcessedMessage, ProcessedMessageContent, ProtocolVersion, RatchetTreeIn,
+    Extensions, ExternalCommitBuilderError, GroupContext, GroupId, KeyPackageIn, LeafNode,
+    LeafNodeIndex, LeafNodeParameters, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider,
+    ProcessedMessage, ProcessedMessageContent, ProposalStore, ProtocolVersion, PublicGroup,
+    RatchetTreeIn,
 };
+use openmls_rust_crypto::OpenMlsRustCrypto;
 use tls_codec::{Deserialize, Serialize};
 
 use crate::identity::{
@@ -232,9 +248,23 @@ pub enum MemberError {
     /// A KeyPackage failed validation (RFC 9420 §10.1).
     #[error("invalid KeyPackage")]
     InvalidKeyPackage(#[source] ErrorSource),
-    /// The Welcome could not be processed.
-    #[error("cannot join from the Welcome")]
+    /// The Welcome, or the GroupInfo for an external join, could not be
+    /// processed.
+    #[error("cannot join the group")]
     Join(#[source] ErrorSource),
+    /// No ratchet tree was given, and the GroupInfo has no `ratchet_tree`
+    /// extension (RFC 9420 §12.4.3.3).
+    #[error("no ratchet tree was given and the GroupInfo carries none")]
+    MissingRatchetTree,
+    /// The GroupInfo has no `external_pub` extension, so the group cannot
+    /// be joined by external Commit (RFC 9420 §12.4.3.2).
+    #[error("the GroupInfo has no external_pub extension")]
+    MissingExternalPub,
+    /// The GroupInfo or ratchet tree failed validation, for example its
+    /// signature or tree hash (RFC 9420 §12.4.3.1), or the group does not
+    /// use ciphersuite 1.
+    #[error("invalid GroupInfo or ratchet tree")]
+    InvalidGroupInfo(#[source] ErrorSource),
     /// The Commit could not be built.
     #[error("cannot build the Commit")]
     Commit(#[source] ErrorSource),
@@ -291,7 +321,9 @@ pub enum MemberError {
     /// The application message could not be created.
     #[error("cannot create the application message")]
     Send(#[source] ErrorSource),
-    /// A Commit or proposal could not be stored or merged.
+    /// A Commit or proposal could not be stored or merged. After
+    /// [`Member::join_external`], part of the new state may have been
+    /// stored (decision mimid-1wgh.4.54).
     #[error("cannot update the group state")]
     Merge(#[source] ErrorSource),
     /// A secret could not be exported.
@@ -431,6 +463,144 @@ impl Member {
             group,
             owner_signature_key: identity.signature_public_key().to_vec(),
         })
+    }
+
+    /// Joins a group by external Commit (RFC 9420 §12.4.3.2), from a
+    /// TLS-encoded `MLSMessage` carrying the group's current GroupInfo.
+    ///
+    /// The GroupInfo must have an `external_pub` extension. `ratchet_tree`
+    /// is a TLS-encoded ratchet tree (RFC 9420 §12.4.3.3), needed when the
+    /// GroupInfo has no `ratchet_tree` extension; it is ignored when it
+    /// does. The new leaf is built exactly as [`Member::create`] builds the
+    /// creator's, and goes at the leftmost free leaf. If the group already
+    /// has a leaf with this identity's signature key, the Commit also
+    /// removes it (a "resync" Commit, RFC 9420 §12.4.3.2).
+    ///
+    /// A resync is allowed but reported (decision mimid-1wgh.4.55): RFC 9420
+    /// §12.4.3.2 notes that it lets anyone holding a member's signature
+    /// private key replace that member in a single Commit. The third value
+    /// returned is the leaf index, in the previous epoch, of the old leaf
+    /// the Commit removes, or `None` for a plain join.
+    ///
+    /// Also returns the new member and a [`CommitBundle`] holding the external
+    /// Commit (as a PublicMessage, with an empty SafeAAD as its
+    /// `authenticated_data` when the group uses Safe AAD) and the new
+    /// epoch's GroupInfo, for the hub. It has no Welcome. Unlike
+    /// [`Member::commit`], the Commit is already merged: the member is in
+    /// the new epoch. If the hub rejects the Commit, drop the member.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Decode`] for malformed input,
+    /// [`MemberError::UnexpectedMessage`] if the message is not a GroupInfo,
+    /// [`MemberError::MissingRatchetTree`] if no tree is available,
+    /// [`MemberError::InvalidGroupInfo`] if the GroupInfo or tree fails
+    /// validation or the group does not use ciphersuite 1,
+    /// [`MemberError::MissingExternalPub`] if the GroupInfo lacks
+    /// `external_pub`, [`MemberError::InvalidComponentsList`],
+    /// [`MemberError::MissingSafeAadComponent`] or
+    /// [`MemberError::MissingAppComponent`] if this identity's leaf fails
+    /// the required-components check (see the module's `# Required
+    /// components`), [`MemberError::Identity`] if the LeafNode material
+    /// cannot be built, [`MemberError::Join`] or [`MemberError::Commit`] if
+    /// OpenMLS cannot build the Commit, and [`MemberError::Merge`] if the new
+    /// state cannot be stored. Nothing is stored unless the call succeeds,
+    /// except after [`MemberError::Merge`].
+    pub fn join_external(
+        identity: &Identity,
+        group_info: &[u8],
+        ratchet_tree: Option<&[u8]>,
+    ) -> Result<(Self, CommitBundle, Option<u32>), MemberError> {
+        let message = MlsMessageIn::tls_deserialize_exact(group_info)
+            .map_err(|e| MemberError::Decode(e.into()))?;
+        let MlsMessageBodyIn::GroupInfo(group_info) = message.extract() else {
+            return Err(MemberError::UnexpectedMessage);
+        };
+        let ratchet_tree = ratchet_tree
+            .map(RatchetTreeIn::tls_deserialize_exact)
+            .transpose()
+            .map_err(|e| MemberError::Decode(e.into()))?;
+        // Decision mimid-1wgh.23: the identity's key and leaf are suite 1.
+        if group_info.ciphersuite() != CIPHERSUITE {
+            return Err(MemberError::InvalidGroupInfo(
+                "the group does not use ciphersuite 1".into(),
+            ));
+        }
+        // Read only after build_group has verified the GroupInfo signature,
+        // which covers the GroupContext.
+        let group_context = group_info.group_context().clone();
+        // The tree build_group uses: the GroupInfo's own, else the one given.
+        let resync_lookup = group_info
+            .extensions()
+            .ratchet_tree()
+            .map(|extension| extension.ratchet_tree().clone())
+            .or_else(|| ratchet_tree.clone())
+            .map(|tree| (tree, group_info.clone()));
+
+        let provider = identity.provider();
+        let rand = provider.rand();
+        let config = MlsGroupJoinConfig::builder()
+            .wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
+            .build();
+        let mut builder = MlsGroup::external_commit_builder().with_config(config);
+        if let Some(ratchet_tree) = ratchet_tree {
+            builder = builder.with_ratchet_tree(ratchet_tree);
+        }
+        // Leaf lifetimes in the tree are verified (OpenMLS default), as in
+        // join_welcome; the Member lifetime policy is mimid-1wgh.4.40.
+        // build_group writes nothing to storage; finalize does.
+        let builder = builder
+            .build_group(provider, group_info, identity.credential_with_key().clone())
+            .map_err(|e| match e {
+                ExternalCommitBuilderError::MissingRatchetTree => MemberError::MissingRatchetTree,
+                ExternalCommitBuilderError::MissingExternalPub => MemberError::MissingExternalPub,
+                ExternalCommitBuilderError::PublicGroupError(e) => {
+                    MemberError::InvalidGroupInfo(e.into())
+                }
+                e => MemberError::Join(e.into()),
+            })?;
+
+        // Decision mimid-1wgh.4.55. Without a tree, build_group has failed.
+        let resync_removed = match resync_lookup {
+            Some((tree, group_info)) => resync_leaf(provider.crypto(), tree, group_info, identity)?,
+            None => None,
+        };
+
+        // Decision mimid-1wgh.4.54: OpenMLS gives no access to the staged
+        // external Commit before finalize stores it, so the new leaf is
+        // checked here. The Commit
+        // holds only ExternalInit and possibly a Remove, so the GroupContext
+        // extensions it leads to are these (decision mimid-1wgh.4.49).
+        let leaf_extensions = leaf_extensions(rand).map_err(MemberError::Identity)?;
+        check_leaf(&leaf_extensions, &required_lists(&group_context)?)?;
+        let leaf = LeafNodeParameters::builder()
+            .with_capabilities(leaf_capabilities(rand, random_grease_value(rand)))
+            .with_extensions(leaf_extensions)
+            .build();
+
+        let (group, bundle) = builder
+            .leaf_node_parameters(leaf)
+            .load_psks(provider.storage())
+            .map_err(|e| MemberError::Commit(e.into()))?
+            // Without a ratchet_tree extension, as in Member::commit.
+            .create_group_info(true)
+            .build(rand, provider.crypto(), identity.signer(), |_| true)
+            .map_err(|e| MemberError::Commit(e.into()))?
+            .finalize(provider)
+            .map_err(|e| MemberError::Merge(e.into()))?;
+        let (commit, welcome, group_info) = bundle.into_messages();
+        let group_info = group_info
+            .ok_or_else(|| MemberError::Commit("OpenMLS exported no GroupInfo".into()))?;
+        let member = Self {
+            group,
+            owner_signature_key: identity.signature_public_key().to_vec(),
+        };
+        let bundle = CommitBundle {
+            commit: encode(&commit)?,
+            welcome: welcome.as_ref().map(encode).transpose()?,
+            group_info: encode(&group_info)?,
+        };
+        Ok((member, bundle, resync_removed))
     }
 
     /// Builds a Commit that adds the TLS-encoded `KeyPackage`s in `adds`
@@ -858,6 +1028,38 @@ impl Member {
     }
 }
 
+/// The leaf index of `identity`'s existing leaf in the group that
+/// `group_info` and `tree` describe: the leaf OpenMLS's external Commit
+/// builder removes for a resync, the first with the same signature key.
+///
+/// ponytail: OpenMLS exposes neither the staged external Commit nor the
+/// leaf positions of a `RatchetTreeIn`, so the GroupInfo and tree, already
+/// verified by `build_group`, are loaded again into a throwaway in-memory
+/// PublicGroup (never the identity's Store). Ceiling: every external join
+/// verifies the tree twice. Upgrade: an OpenMLS accessor for the staged
+/// external Commit (an openmls fork change, which needs Mark's approval).
+fn resync_leaf(
+    crypto: &impl openmls::prelude::OpenMlsCrypto,
+    tree: RatchetTreeIn,
+    group_info: VerifiableGroupInfo,
+    identity: &Identity,
+) -> Result<Option<u32>, MemberError> {
+    let scratch = OpenMlsRustCrypto::default();
+    let (group, _) = PublicGroup::from_external(
+        crypto,
+        scratch.storage(),
+        tree,
+        group_info,
+        ProposalStore::new(),
+    )
+    .map_err(|e| MemberError::Join(e.into()))?;
+    let key = identity.signature_public_key();
+    Ok(group
+        .members()
+        .find(|member| member.signature_key == key)
+        .map(|member| member.index.u32()))
+}
+
 impl std::fmt::Debug for Member {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // The OpenMLS group holds epoch secrets, so it is not printed.
@@ -978,8 +1180,34 @@ fn decode_components_list(
 /// decision mimid-1wgh.4.49.
 pub(crate) fn check_staged_leaves(staged: &StagedCommit) -> Result<(), SharedError> {
     // The GroupContext after the Commit; decision mimid-1wgh.4.49.
-    let dictionary = staged
-        .group_context()
+    let required = required_lists(staged.group_context())?;
+    for add in staged.add_proposals() {
+        check_leaf(
+            add.add_proposal().key_package().leaf_node().extensions(),
+            &required,
+        )?;
+    }
+    for update in staged.update_proposals() {
+        check_leaf(update.update_proposal().leaf_node().extensions(), &required)?;
+    }
+    if let Some(leaf) = staged.update_path_leaf_node() {
+        check_leaf(leaf.extensions(), &required)?;
+    }
+    Ok(())
+}
+
+/// The components that `context` requires every leaf to support: the
+/// strictly decoded `safe_aad` and `app_components` lists of its
+/// `app_data_dictionary`, each empty when absent.
+struct RequiredLists {
+    safe_aad: Vec<ComponentId>,
+    app_components: Vec<ComponentId>,
+}
+
+/// Decodes the [`RequiredLists`] of `context`; a malformed list fails
+/// closed (decision mimid-1wgh.4.49).
+fn required_lists(context: &GroupContext) -> Result<RequiredLists, SharedError> {
+    let dictionary = context
         .extensions()
         .app_data_dictionary()
         .map(AppDataDictionaryExtension::dictionary);
@@ -987,40 +1215,36 @@ pub(crate) fn check_staged_leaves(staged: &StagedCommit) -> Result<(), SharedErr
         Some(data) => decode_components_list(component_id, data),
         None => Ok(Vec::new()),
     };
-    let safe_aad = required(SAFE_AAD)?;
-    let app_components = required(APP_COMPONENTS)?;
-    let check = |leaf: &LeafNode| {
-        if let Some(id) = first_unsupported(leaf, SAFE_AAD, &safe_aad) {
-            return Err(SharedError::MissingSafeAadComponent(id));
-        }
-        if let Some(id) = first_unsupported(leaf, APP_COMPONENTS, &app_components) {
-            return Err(SharedError::MissingAppComponent(id));
-        }
-        Ok(())
-    };
-    for add in staged.add_proposals() {
-        check(add.add_proposal().key_package().leaf_node())?;
+    Ok(RequiredLists {
+        safe_aad: required(SAFE_AAD)?,
+        app_components: required(APP_COMPONENTS)?,
+    })
+}
+
+/// Checks the extensions of one new or updated leaf against `required`.
+fn check_leaf(
+    extensions: &Extensions<LeafNode>,
+    required: &RequiredLists,
+) -> Result<(), SharedError> {
+    if let Some(id) = first_unsupported(extensions, SAFE_AAD, &required.safe_aad) {
+        return Err(SharedError::MissingSafeAadComponent(id));
     }
-    for update in staged.update_proposals() {
-        check(update.update_proposal().leaf_node())?;
-    }
-    if let Some(leaf) = staged.update_path_leaf_node() {
-        check(leaf)?;
+    if let Some(id) = first_unsupported(extensions, APP_COMPONENTS, &required.app_components) {
+        return Err(SharedError::MissingAppComponent(id));
     }
     Ok(())
 }
 
-/// The first non-GREASE id in `required` that the `component_id` list of
-/// `leaf`'s `app_data_dictionary` does not name. A leaf's list is untrusted
-/// input: an absent or malformed one counts as empty, and GREASE ids in
-/// `required` are skipped (decision mimid-1wgh.4.49).
+/// The first non-GREASE id in `required` that the `component_id` list of a
+/// leaf's `app_data_dictionary` (in `extensions`) does not name. A leaf's
+/// list is untrusted input: an absent or malformed one counts as empty, and
+/// GREASE ids in `required` are skipped (decision mimid-1wgh.4.49).
 fn first_unsupported(
-    leaf: &LeafNode,
+    extensions: &Extensions<LeafNode>,
     component_id: ComponentId,
     required: &[ComponentId],
 ) -> Option<ComponentId> {
-    let supported: BTreeSet<ComponentId> = leaf
-        .extensions()
+    let supported: BTreeSet<ComponentId> = extensions
         .app_data_dictionary()
         .and_then(|extension| extension.dictionary().get(&component_id))
         .and_then(|data| ComponentsList::tls_deserialize_exact(data).ok())
