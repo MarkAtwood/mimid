@@ -39,8 +39,12 @@
 //! - Apart from [`MLSMessage`]'s clear header fields
 //!   ([`MLSMessage::wire_format`], [`MLSMessage::content_type`],
 //!   [`MLSMessage::group_id`], [`MLSMessage::epoch`] and
-//!   [`MLSMessage::authenticated_data`]), [`AppDataDictionary`]'s entries and the fields of the
+//!   [`MLSMessage::authenticated_data`]), [`AppDataDictionary`]'s entries,
+//!   [`ExternalSender`]'s fields, a basic [`Credential`]'s `identity`,
+//!   [`GroupInfo::has_ratchet_tree_extension`] and the fields of the
 //!   ratchet-tree-options-01 types, the types expose only their encoding.
+//! - [`Credential::identity`] exposes only the `basic` credential type. The
+//!   content of any other type is available only inside its encoding.
 //! - Decoding checks structure only. No signature, MAC or membership check
 //!   happens here.
 

@@ -53,6 +53,11 @@
 //!   external Commit: the joiner has no earlier leaf to compare with. In a
 //!   resync, compare [`UpdatePathDetail::identity`] with the identity of the
 //!   leaf its Remove proposal removes.
+//! - [`Observer::external_senders`] returns an empty list both when the
+//!   GroupContext has no `external_senders` extension and when the
+//!   extension lists no sender. It does not check that an entry's
+//!   credential is a BasicCredential; [`crate::wire::Credential::identity`]
+//!   is `None` for any other type.
 
 use openmls::component::ComponentId;
 use openmls::group::{
@@ -72,7 +77,9 @@ use crate::member::{
     CommitSummary, ComponentOp, Sender, SharedError, basic_identity, check_staged_leaves,
     convert_sender, nonconforming_leaves, required_lists, resolve_app_data_updates, summarize,
 };
-use crate::wire::{GroupInfo, KeyPackageRef, PartialGroupInfo, ProposalRef, RatchetTreePresence};
+use crate::wire::{
+    ExternalSender, GroupInfo, KeyPackageRef, PartialGroupInfo, ProposalRef, RatchetTreePresence,
+};
 use crate::{ErrorSource, Store, label};
 
 /// RFC 9420 §6: the MLSMessage header for a GroupInfo, `version` mls10
@@ -723,6 +730,25 @@ impl Observer {
             .extensions()
             .app_data_dictionary()
             .and_then(|extension| extension.dictionary().get(&component_id))
+    }
+
+    /// The entries of the current GroupContext's `external_senders`
+    /// extension (RFC 9420 §12.1.8.1), in the order the extension lists
+    /// them. Empty if the extension is absent (see the module's
+    /// `# Limitations`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::Encode`] if an entry cannot be encoded.
+    pub fn external_senders(&self) -> Result<Vec<ExternalSender>, ObserverError> {
+        self.group
+            .group_context()
+            .extensions()
+            .external_senders()
+            .map_or_else(
+                || Ok(Vec::new()),
+                |senders| senders.iter().map(to_wire).collect(),
+            )
     }
 
     /// The TLS-encoded GroupContext (RFC 9420 §8.1) of the current epoch.
