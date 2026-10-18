@@ -26,10 +26,13 @@
 //!   database file (for example mode 0600) is the caller's job.
 //! - KeyPackages use OpenMLS's default lifetime: valid from one hour in the
 //!   past until 84 days in the future.
-//! - The `app_components` list in each KeyPackage's LeafNode names only the
-//!   components this crate implements today, and its `safe_aad` list names
-//!   none (see [`Identity::key_package`]). A group whose GroupContext
-//!   requires a Safe AAD component cannot add these clients.
+//! - The `app_components` and `safe_aad` lists in each LeafNode name only
+//!   the components this crate implements, plus protocol-06's `frank_aad`
+//!   (0x0020), which every mimid client implements through `mimi-protocol`
+//!   (decision mimid-1wgh.4.52; see [`Identity::key_package`]). A group
+//!   whose GroupContext requires any other component cannot add these
+//!   clients, and a client that does not implement franking must not use
+//!   these leaves.
 //! - Required `safe_aad` and `app_components` lists are enforced as
 //!   RFC 9420 §11.1 enforces `required_capabilities`; mls-extensions-10 §5
 //!   gives no rule (INTERPRETATION, decision mimid-1wgh.4.45). Leaves are

@@ -797,6 +797,56 @@ fn adding_a_leaf_without_a_required_safe_aad_component_is_refused() {
 }
 
 #[test]
+fn mimi_key_package_joins_a_group_requiring_frank_aad() {
+    // Decision mimid-1wgh.4.52: every mimi-mls leaf lists frank_aad 0x0020
+    // (protocol-06 §5.4.1) in its safe_aad list, so a group whose
+    // GroupContext requires it can add a mimi-mls KeyPackage. mls-rs
+    // validates carol's KeyPackage inside the Commit and must reach the
+    // same epoch secrets.
+    let alice = identity(b"alice");
+    let mut alice_group = Member::create(
+        &alice,
+        b"room-frank",
+        &[],
+        &[(SAFE_AAD, REQUIRE_0020.to_vec())],
+    )
+    .expect("create");
+    let bob_client = mls_rs_client(b"bob");
+    let bob_key_package =
+        bare_key_package(&mls_rs_key_package_with(&bob_client, &LEAF_SAFE_AAD_0020));
+    let bundle = alice_group
+        .commit(&alice, &[&bob_key_package], &[], &[], no_components)
+        .expect("add bob");
+    alice_group.merge_pending_commit(&alice).expect("merge");
+    let welcome = MlsMessage::from_bytes(&bundle.welcome.expect("Welcome")).expect("decode");
+    let tree = ExportedTree::from_bytes(&alice_group.ratchet_tree().expect("tree")).expect("tree");
+    let (mut bob, _) = bob_client
+        .join_group(Some(tree), &welcome, None)
+        .expect("mls-rs joins");
+
+    let carol = identity(b"carol");
+    let carol_key_package = carol
+        .key_package(KeyPackageKind::OneTime)
+        .expect("KeyPackage");
+    let bundle = alice_group
+        .commit(&alice, &[&carol_key_package], &[], &[], no_components)
+        .expect("a mimi-mls leaf lists frank_aad 0x0020");
+    alice_group.merge_pending_commit(&alice).expect("merge");
+    let ReceivedMessage::Commit(_) = mls_rs_receive(&mut bob, &bundle.commit) else {
+        panic!("mls-rs expected a Commit");
+    };
+    let carol_group = Member::join_welcome(
+        &carol,
+        &bundle.welcome.expect("Welcome"),
+        Some(&alice_group.ratchet_tree().expect("tree")),
+    )
+    .expect("carol joins from the Welcome");
+    assert_eq!(carol_group.own_leaf_index(), 2);
+    assert_same_epoch_secrets(&alice_group, &alice, &bob);
+    assert_same_epoch_secrets(&carol_group, &carol, &bob);
+}
+
+#[test]
 fn adding_a_leaf_without_a_required_app_component_is_refused() {
     // mls-extensions-10 §5 ComponentsList [0x8001], hand-encoded.
     let required = vec![

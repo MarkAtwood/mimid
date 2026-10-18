@@ -199,19 +199,20 @@ fn check_common(kind: KeyPackageKind) -> (KeyPackage, mls_rs::group::Member) {
 }
 
 /// mls-extensions-10 §4.6 and §5: the LeafNode's app_data_dictionary holds
-/// an app_components entry listing safe_aad, last_resort_key_package and a
-/// GREASE id; a safe_aad entry listing the supported Safe AAD components
-/// (none yet) and a GREASE id (decision mimid-1wgh.4.45); and one GREASE
-/// component with empty data. Every GREASE id is from the §7.5 set.
+/// an app_components entry listing safe_aad, last_resort_key_package,
+/// frank_aad and a GREASE id; a safe_aad entry listing the supported Safe
+/// AAD components, frank_aad (protocol-06 §5.4.1, decision
+/// mimid-1wgh.4.52), and a GREASE id (decision mimid-1wgh.4.45); and one
+/// GREASE component with empty data. Every GREASE id is from the §7.5 set.
 fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
     let data = leaf_extensions
         .get(APP_DATA_DICTIONARY)
         .expect("LeafNode app_data_dictionary")
         .extension_data;
-    assert_eq!(data.len(), 20, "leaf dictionary: {data:02x?}");
-    let listed_grease = u16::from_be_bytes([data[9], data[10]]);
-    let safe_aad_grease = u16::from_be_bytes([data[15], data[16]]);
-    let component_grease = u16::from_be_bytes([data[17], data[18]]);
+    assert_eq!(data.len(), 24, "leaf dictionary: {data:02x?}");
+    let listed_grease = u16::from_be_bytes([data[11], data[12]]);
+    let safe_aad_grease = u16::from_be_bytes([data[19], data[20]]);
+    let component_grease = u16::from_be_bytes([data[21], data[22]]);
     for grease in [listed_grease, safe_aad_grease, component_grease] {
         assert!(is_component_grease(grease), "{grease:#06x}");
     }
@@ -219,16 +220,18 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
     let [sg_hi, sg_lo] = safe_aad_grease.to_be_bytes();
     let [cg_hi, cg_lo] = component_grease.to_be_bytes();
     let expected = [
-        0x13, // component_data<V>: 19 bytes follow
+        0x17, // component_data<V>: 23 bytes follow
         0x00, 0x01, // ComponentData.component_id = app_components
-        0x07, // ComponentData.data<V>: 7 bytes (a ComponentsList)
-        0x06, //   ComponentsList.component_ids<V>: 6 bytes
+        0x09, // ComponentData.data<V>: 9 bytes (a ComponentsList)
+        0x08, //   ComponentsList.component_ids<V>: 8 bytes
         0x00, 0x02, //   ComponentID = safe_aad
         0x00, 0x04, //   ComponentID = last_resort_key_package
+        0x00, 0x20, //   ComponentID = frank_aad (protocol-06 §10.1)
         lg_hi, lg_lo, //   ComponentID = GREASE
         0x00, 0x02, // ComponentData.component_id = safe_aad
-        0x03, // ComponentData.data<V>: 3 bytes (a ComponentsList)
-        0x02, //   ComponentsList.component_ids<V>: 2 bytes
+        0x05, // ComponentData.data<V>: 5 bytes (a ComponentsList)
+        0x04, //   ComponentsList.component_ids<V>: 4 bytes
+        0x00, 0x20, //   ComponentID = frank_aad
         sg_hi, sg_lo, //   ComponentID = GREASE
         cg_hi, cg_lo, // ComponentData.component_id = GREASE
         0x00,  // ComponentData.data<V>: empty

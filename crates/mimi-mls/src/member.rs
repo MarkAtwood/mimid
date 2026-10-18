@@ -56,9 +56,10 @@
 //!   updates, judged against the post-Commit GroupContext (decision
 //!   mimid-1wgh.4.49). [`Member::create`] does not check the creator's own
 //!   leaf, and [`Member::join_welcome`] does not check the leaves already
-//!   in the tree (mimid-1wgh.4.51). This crate's leaves list no Safe AAD component yet, so in a group
-//!   whose `safe_aad` list requires one, this member refuses its own Commits
-//!   that carry an UpdatePath.
+//!   in the tree (mimid-1wgh.4.51). This crate's leaves list only
+//!   `frank_aad` (0x0020) as a Safe AAD component (decision
+//!   mimid-1wgh.4.52), so in a group whose `safe_aad` list requires any
+//!   other, this member refuses its own Commits that carry an UpdatePath.
 
 use std::collections::BTreeSet;
 

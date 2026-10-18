@@ -34,6 +34,12 @@ pub(crate) const COMPONENT_GREASE: [ComponentId; 8] = [
 /// mls-extensions-10 §7.5 component registry: `last_resort_key_package`.
 const LAST_RESORT_KEY_PACKAGE: ComponentId = 0x0004;
 
+/// protocol-06 §5.4.1 and §10.1: `frank_aad`, the Safe AAD component that
+/// carries a message's franking tag. It is a MIMI component, not an MLS
+/// one. This crate knows it by decision mimid-1wgh.4.52: every mimid client
+/// implements franking through `mimi-protocol`, so every leaf lists it.
+const FRANK_AAD: ComponentId = 0x0020;
+
 /// Whether a KeyPackage may be used more than once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyPackageKind {
@@ -108,11 +114,12 @@ impl Identity {
     /// values. Its `app_data_dictionary` carries an `app_components` entry,
     /// which §4.6 requires of any client that advertises
     /// `app_data_dictionary`. That list names the components this crate
-    /// implements: `safe_aad` (see [`crate::member`]) and
-    /// `last_resort_key_package`. It also carries a `safe_aad` entry (§5)
-    /// listing the supported Safe AAD components: none yet, only GREASE
-    /// (decision mimid-1wgh.4.45). Every GREASE component id is from the
-    /// §7.5 set.
+    /// implements: `safe_aad` (see [`crate::member`]),
+    /// `last_resort_key_package` and protocol-06's `frank_aad` (0x0020). It
+    /// also carries a `safe_aad` entry (§5) listing the supported Safe AAD
+    /// components: `frank_aad` (decisions mimid-1wgh.4.45,
+    /// mimid-1wgh.4.52). Every list also holds a GREASE component id from
+    /// the §7.5 set.
     ///
     /// For [`KeyPackageKind::LastResort`] the KeyPackage's own extensions
     /// carry an `app_data_dictionary` with the `last_resort_key_package`
@@ -225,14 +232,14 @@ where
     let app_components = ComponentsList::new(vec![
         SAFE_AAD,
         LAST_RESORT_KEY_PACKAGE,
+        FRANK_AAD,
         random_component_grease(rand)?,
     ])
     .tls_serialize_detached()
     .map_err(|e| Error::Encode(e.into()))?;
-    // mls-extensions-10 §5: the supported Safe AAD components. No component
-    // that uses Safe AAD is implemented yet, so the list holds only GREASE
-    // (decision mimid-1wgh.4.45).
-    let safe_aad = ComponentsList::new(vec![random_component_grease(rand)?])
+    // mls-extensions-10 §5: the supported Safe AAD components, plus GREASE
+    // (decisions mimid-1wgh.4.45, mimid-1wgh.4.52).
+    let safe_aad = ComponentsList::new(vec![FRANK_AAD, random_component_grease(rand)?])
         .tls_serialize_detached()
         .map_err(|e| Error::Encode(e.into()))?;
     let mut leaf_dictionary = AppDataDictionary::new();

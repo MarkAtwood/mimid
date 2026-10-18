@@ -12,7 +12,7 @@ use mimi_mls::member::{AppDataUpdate, CommitBundle, ComponentOp, Incoming, Membe
 use mimi_mls::observer::{Observed, Observer, ObserverError};
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::wire::{PartialGroupInfo, RatchetTreeOption, RatchetTreePresence};
-use mimi_mls::{ErrorSource, Identity, Store};
+use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
 use mls_rs::extension::ExtensionType;
 use mls_rs::group::{ExportedTree, ReceivedMessage};
 use mls_rs::identity::SigningIdentity;
@@ -1108,6 +1108,112 @@ fn commit_with_a_leaf_missing_a_required_component_is_rejected() {
     assert_eq!(summary.added, vec![b"dave".to_vec()]);
     observer.merge_pending_commit(&store).expect("merge");
     assert_same_public_state(&observer, &bob);
+}
+
+/// Decision mimid-1wgh.4.52: every mimi-mls leaf lists frank_aad 0x0020
+/// (protocol-06 §5.4.1) in its safe_aad list, so in a group whose
+/// GroupContext requires it, UpdatePath Commits from mimi-mls members are
+/// accepted by a mimi-mls Member, the Observer and mls-rs. That holds both
+/// for the group creator's leaf and for a leaf from a mimi-mls KeyPackage.
+/// The ratchet tree that mls-rs exports changes with each Commit, which
+/// shows each Commit carried an UpdatePath (an empty Commit without one
+/// leaves the tree unchanged, RFC 9420 §12.4).
+#[test]
+fn update_path_commits_from_mimi_leaves_meet_a_required_frank_aad() {
+    let alice = identity(b"alice");
+    let mut member = Member::create(
+        &alice,
+        b"room-frank",
+        &[],
+        &[(SAFE_AAD, REQUIRE_0020.to_vec())],
+    )
+    .expect("create");
+    let bob_client = mls_rs_client(b"bob");
+    let bob_key_package = mls_rs_key_package_with(&bob_client, &LEAF_SAFE_AAD_0020)
+        .to_bytes()
+        .expect("encode");
+    let bundle = member
+        .commit(&alice, &[&bob_key_package[4..]], &[], &[], no_components)
+        .expect("commit Add");
+    member.merge_pending_commit(&alice).expect("merge");
+    let welcome = MlsMessage::from_bytes(&bundle.welcome.expect("Welcome")).expect("decode");
+    let tree = ExportedTree::from_bytes(&member.ratchet_tree().expect("tree")).expect("tree");
+    let (mut bob, _) = bob_client
+        .join_group(Some(tree), &welcome, None)
+        .expect("mls-rs joins");
+    let group_info = bob
+        .group_info_message(true)
+        .expect("mls-rs GroupInfo")
+        .to_bytes()
+        .expect("encode");
+    let store = Store::open_in_memory().expect("store");
+    let mut observer =
+        Observer::from_group_info(&store, &group_info, None).expect("from_group_info");
+
+    // alice, the creator, sends an empty Commit with an UpdatePath.
+    let tree_before = bob.export_tree().to_bytes().expect("mls-rs tree");
+    alice_commits(&alice, &mut member, &mut bob, &store, &mut observer, &[]);
+    assert_ne!(
+        bob.export_tree().to_bytes().expect("mls-rs tree"),
+        tree_before
+    );
+
+    // alice adds carol from a mimi-mls KeyPackage.
+    let carol = identity(b"carol");
+    let carol_key_package = carol
+        .key_package(KeyPackageKind::OneTime)
+        .expect("KeyPackage");
+    let bundle = alice_commits(
+        &alice,
+        &mut member,
+        &mut bob,
+        &store,
+        &mut observer,
+        &[&carol_key_package],
+    );
+    let mut carol_member = Member::join_welcome(
+        &carol,
+        &bundle.welcome.expect("Welcome"),
+        Some(&member.ratchet_tree().expect("tree")),
+    )
+    .expect("carol joins");
+
+    // carol sends an empty Commit with an UpdatePath.
+    let tree_before = bob.export_tree().to_bytes().expect("mls-rs tree");
+    let bundle = carol_member
+        .commit(&carol, &[], &[], &[], no_components)
+        .expect("carol commits");
+    carol_member.merge_pending_commit(&carol).expect("merge");
+    let Incoming::Commit(summary) = member
+        .process(&alice, &bundle.commit, no_components)
+        .expect("alice accepts carol's Commit")
+    else {
+        panic!("not a Commit");
+    };
+    assert_eq!(summary.committer, Sender::Member(2));
+    let Observed::Commit(summary) = observer
+        .process(&store, &bundle.commit, no_components)
+        .expect("Observer accepts carol's Commit")
+    else {
+        panic!("not a Commit");
+    };
+    assert_eq!(summary.committer, Sender::Member(2));
+    observer.merge_pending_commit(&store).expect("merge");
+    bob.process_incoming_message(MlsMessage::from_bytes(&bundle.commit).expect("decode"))
+        .expect("mls-rs accepts carol's Commit");
+    assert_ne!(
+        bob.export_tree().to_bytes().expect("mls-rs tree"),
+        tree_before
+    );
+    assert_same_public_state(&observer, &bob);
+    assert_eq!(
+        member.epoch_authenticator(),
+        carol_member.epoch_authenticator()
+    );
+    assert_eq!(
+        member.epoch_authenticator(),
+        bob.epoch_authenticator().expect("mls-rs").as_bytes()
+    );
 }
 
 // ---- Member::commit exports the new epoch's GroupInfo ----
