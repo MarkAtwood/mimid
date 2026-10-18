@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.54",
+  "title": "P37: GroupInfo pending proposals are PublicMessage proposals",
+  "description": "protocol-06 §5.6 GroupInfoResponse pending proposals: the allowed message kind is unstated. Chosen: same rule as P34 (mimid-1wgh.5.51): PublicMessage with content_type proposal; others rejected on decode and encode.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T03:20:44.569068588Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:17:47.286912359Z",
+  "closed_at": "2026-10-18T04:17:47.286912359Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.54",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T03:20:44.584867243Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.51",
+  "title": "P-auth2: canBan may add a non-member as banned",
+  "description": "room-policy-04 §8.1: canBan says 'another user', canChangeUserRole says 'another participant'. Appendix A.1 policy_enforcer's (from 0, [1]) role-change entry only makes sense if a non-member can be added directly as banned. Chosen: AddParticipant{target 1} is authorized by canBan (with is_banned_role, mimid-1wgh.3.42).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T03:20:33.194831073Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:17:47.193735057Z",
+  "closed_at": "2026-10-18T04:17:47.193735057Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.51",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T03:20:33.208713524Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

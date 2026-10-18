@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.55",
+  "title": "P38: GroupInfo encryption uses suite 1 HPKE",
+  "description": "protocol-06 §5.6 ties cipher_suite only to the signatures and never says which suite's HPKE encrypts encrypted_groupinfo_and_tree. Readings: (a) the request's cipher_suite; (b) the room's MLS suite; (c) fixed. Chosen: suite 1 (the only suite mimid supports, decision mimid-1wgh.23), which (a)/(b)/(c) coincide on today. wg item filed.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T03:20:44.641276728Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:17:47.308680645Z",
+  "closed_at": "2026-10-18T04:17:47.308680645Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.55",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T03:20:44.658442775Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.53",
+  "title": "P-auth4: preauthorization never grants role index 1",
+  "description": "mimid-1wgh.3.49 says the preauthorized target must not be 0/1. Applied literally, index 1 is excluded regardless of its name, so a renamed role 1 (legal ordinary role per mimid-1wgh.3.42) cannot be joined via preauthorization. Chosen: literal, the stricter reading.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T03:20:33.353644393Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:17:47.24080025Z",
+  "closed_at": "2026-10-18T04:17:47.24080025Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.53",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T03:20:33.369043836Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

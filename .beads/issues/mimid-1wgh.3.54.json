@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.54",
+  "title": "P-auth5: role 0 active participants count non-member clients",
+  "description": "room-policy-04 §3 constraints on role 0 (A.1 max active 0 vs A.3 null): Occupancy::active_participants(0) counts users with no role who still have clients in the MLS group. Definition is INVENTED, NOT FROM SPEC beyond the appendix intent; documented on the Occupancy trait.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T03:20:33.417126038Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:17:47.262394908Z",
+  "closed_at": "2026-10-18T04:17:47.262394908Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.54",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T03:20:33.432967148Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
