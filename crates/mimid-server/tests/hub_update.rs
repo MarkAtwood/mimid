@@ -359,8 +359,18 @@ async fn welcome_goes_to_added_users_domains_with_full_tree() {
     assert_eq!(room_id, ROOM_ID);
     assert!(matches!(fanout(body).event, FanoutEvent::Commit { .. }));
 
-    // Rows for unconfigured peers stay queued (parked).
+    // The worker deletes the own-domain row only after `deliver` returns,
+    // so wait for that before reading the outbox.
     let db = connect(&path).await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while outbox(&db).await.iter().any(|(d, _)| d == DOMAIN) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("own-domain outbox row delivered");
+
+    // Rows for unconfigured peers stay queued (parked).
     let rows = outbox(&db).await;
     let mut commits = Vec::new();
     let mut welcomes = Vec::new();
