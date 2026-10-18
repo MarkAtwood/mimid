@@ -14,8 +14,14 @@
 //! # Limitations
 //!
 //! - Only the primitives are implemented so far: [`Bool`], [`Uri`],
-//!   [`MediaType`] and the [`component_id`] constants. The policy component
-//!   codecs and evaluation are not yet present.
+//!   [`MediaType`], the [`component_id`] constants and the [`Capability`]
+//!   registry. The policy component codecs and evaluation are not yet
+//!   present.
+//! - The [`Capability`] values are Table 1 of §10.2 as drafted; IANA has
+//!   not created the registry. §10.2 puts 0xF000 in both the Specification
+//!   Required range and the private-use range;
+//!   [`Capability::is_private_use`] counts it as private use (decision
+//!   mimid-1wgh.3.34).
 //! - [`Uri`] checks RFC 3986 `URI` syntax only. It does not check that a
 //!   scheme is registered, that a host resolves, or anything a specific URI
 //!   scheme requires.
@@ -32,6 +38,9 @@
 #![forbid(unsafe_code)]
 
 pub use tls_codec;
+
+mod capability;
+pub use capability::Capability;
 
 use std::io::Read;
 
