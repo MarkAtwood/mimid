@@ -1,0 +1,40 @@
+# PROVENANCE: protocol-06 §5.6 groupInfo crypto oracle (task mimid-1wgh.5.11)
+#
+# group_info_gen.py computes the GroupInfoRequestTBS and
+# GroupInfoResponseTBS signatures (SignWithLabel, RFC 9420 §5.1.2) and
+# encrypted_groupinfo_and_tree (EncryptWithLabel, RFC 9420 §5.1.3; HPKE base
+# mode per RFC 9180, written out because pyca/cryptography 41 has no HPKE)
+# from the text of draft-ietf-mimi-protocol-06 §5.6, with its own TLS
+# encoding. It never calls or reads mimid code. Before printing anything it
+# checks its SignWithLabel and DecryptWithLabel against the suite 1 entry
+# of the mlswg crypto-basics.json vectors. group_info_gen.out is its
+# unmodified stdout. Keys are fixed seeds, and the HPKE ephemeral key is
+# fixed, so the output is reproducible. Decisions applied:
+# mimid-1wgh.5.22 (joiningCode optional in TBS and request),
+# mimid-1wgh.5.26 (response TBS only on success, status success(1)),
+# mimid-1wgh.5.30 (room_id context is the raw URI bytes),
+# mimid-1wgh.5.23 ("Protocol version" is the Protocol field).
+#
+# Regenerate (from this directory):
+#   python3 -I group_info_gen.py \
+#     ../../../../mimi-mls/tests/fixtures/crypto-basics/crypto-basics.json \
+#     ../../../../mimi-mls/tests/fixtures/mlswg/messages-000-mls_group_info.bin \
+#     ../../../../mimi-mls/tests/fixtures/mlswg/messages-000-public_message_proposal.bin \
+#     > group_info_gen.out
+# Generated:  2026-10-18 with Python 3.12.3 and pyca/cryptography 41.0.7
+#             (Ed25519, X25519, AES-GCM) plus the standard library (hmac,
+#             hashlib, struct, json).
+# Read by:    mimi-protocol/tests/group_info.rs, which embeds
+#             group_info_gen.out with include_str! (offline).
+#
+# Sources:
+#   draft-ietf-mimi-protocol-06  ~/PROJECT/IETF/specs/draft-ietf-mimi-protocol-06.txt
+#                                sha256 1cb7c8e6cc9dbf6d2d165e3f0688ac6eeedc0bebd69e9d53f6b972f42da8b9da
+#   Inputs (see their own PROVENANCE files in crates/mimi-mls/tests/fixtures):
+17cfcf89af9f51d0f2aa7af77f6f9ec99376a039214b6d42a6f11646b83e8c29  crypto-basics/crypto-basics.json
+c45c67d1f72970e03c621177c548453901c9284eddc715ef868fa43fa6947abb  mlswg/messages-000-mls_group_info.bin
+aacad547b1482f6afa5d5eb2cf031867548838050dc8fdbef609040169440a85  mlswg/messages-000-public_message_proposal.bin
+#
+# Files:
+9ec7521c538197488eddb7a0ace9cc24710a9da3bb5aaa1cd2e31bd3ef095977  group_info_gen.py
+a9f136b118dec7bf53ee1d4500c6e55ba110b889bc026a9ab3ef455823108b42  group_info_gen.out

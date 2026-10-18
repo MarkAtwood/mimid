@@ -26,7 +26,10 @@
 //!   ([`ParticipantListData`], [`ParticipantListUpdate`]) and room_metadata
 //!   ([`RoomMetaData`]) components, the update endpoint ([`UpdateRequest`],
 //!   [`UpdateRoomResponse`]), the notify endpoint ([`FanoutMessage`],
-//!   [`NotifyRequest`]) and [`Frank`], and the franking HMACs
+//!   [`NotifyRequest`]) and [`Frank`], the groupInfo endpoint
+//!   ([`GroupInfoRequest`], [`GroupInfoResponse`], with
+//!   [`encrypt_group_info`] and [`decrypt_group_info`]), and the franking
+//!   HMACs
 //!   ([`franking_tag`], [`server_frank`] over a [`ServerFrankingContext`],
 //!   with constant-time [`verify_franking_tag`] and
 //!   [`verify_server_frank`]).
@@ -43,6 +46,20 @@
 //!   rejected; only PublicMessage handshakes are accepted (decision
 //!   mimid-1wgh.4.12). `moreProposals` and `externalProposals` entries
 //!   must be PublicMessage proposals (decision mimid-1wgh.5.51).
+//! - groupInfo signing, verification and encryption support ciphersuite 1
+//!   only, the one [`mimi_mls::label`] implements; other suites decode but
+//!   [`GroupInfoRequest::verify`], [`GroupInfoSuccess::verify`] and the
+//!   `sign` methods return [`Error::UnsupportedCipherSuite`]. HPKE for
+//!   `encrypted_groupinfo_and_tree` always uses suite 1, since protocol-06
+//!   §5.6 ties `cipher_suite` only to signing (decision mimid-1wgh.5.55;
+//!   wg mimid-1wgh.37.59). Each `verify` checks the
+//!   signature against the key carried in the same message: binding the
+//!   requester's key to its credential, checking that `hub_sender` is the
+//!   room's hub and that `room_id` is the room asked for, and authorizing
+//!   the request are left to the caller. The `groupInfo` inside a
+//!   [`GroupInfoRatchetTreeTbe`] is not checked to lack a ratchet_tree
+//!   extension, and [`PendingProposal`] entries must be PublicMessage
+//!   proposals, as for `moreProposals` (decision mimid-1wgh.5.54).
 //! - [`FanoutMessage`] arms follow decision mimid-1wgh.5.24: an application
 //!   message must be a PrivateMessage, so a PublicMessage application
 //!   message or a PrivateMessage proposal or commit is rejected.
@@ -81,6 +98,7 @@
 mod component;
 mod directory;
 mod frank;
+mod group_info;
 mod identifier_uri;
 mod notify;
 mod update;
@@ -95,6 +113,11 @@ pub use directory::Directory;
 pub use frank::{
     Frank, FrankAad, HubKey, ServerFrankingContext, franking_tag, server_frank,
     verify_franking_tag, verify_server_frank,
+};
+pub use group_info::{
+    GroupInfoCode, GroupInfoRatchetTreeTbe, GroupInfoRequest, GroupInfoRequestTbs,
+    GroupInfoResponse, GroupInfoResponseTbs, GroupInfoSuccess, PendingProposal, decrypt_group_info,
+    encrypt_group_info,
 };
 pub use identifier_uri::IdentifierUri;
 pub use notify::{FanoutEvent, FanoutMessage, NotifyRequest};
@@ -183,4 +206,18 @@ pub enum Error {
     /// A value could not be TLS-encoded.
     #[error("TLS encoding failed")]
     Encoding(#[source] tls_codec::Error),
+    /// A key, ciphertext or decrypted plaintext could not be TLS-decoded.
+    #[error("TLS decoding failed")]
+    Decoding(#[source] tls_codec::Error),
+    /// Signing, signature verification, encryption or decryption failed
+    /// (RFC 9420 §5.1.2, §5.1.3).
+    #[error("labeled signature or encryption failed")]
+    Label(#[source] mimi_mls::label::Error),
+    /// A signature was requested or checked under a ciphersuite other than
+    /// 1, the only one supported (decision mimid-1wgh.23).
+    #[error("ciphersuite {cipher_suite:#06x} is not supported")]
+    UnsupportedCipherSuite {
+        /// The ciphersuite named in the message.
+        cipher_suite: u16,
+    },
 }
