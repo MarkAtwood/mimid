@@ -7,7 +7,8 @@
 //! Decode with [`tls_codec::Deserialize::tls_deserialize_exact`], which
 //! rejects trailing bytes. Decoding also rejects non-minimal varint
 //! lengths, lengths above [`MAX_VECTOR_LENGTH`], [`Bool`] values other than
-//! 0 and 1, [`Optionality`] values other than 0, 1 and 2, invalid UTF-8 in fields the drafts define as text, and [`Uri`]
+//! 0 and 1, [`Optionality`] values other than 0, 1 and 2, [`ContentType`]
+//! values other than 1, 2 and 3, invalid UTF-8 in fields the drafts define as text, and [`Uri`]
 //! and [`MediaType`] values whose syntax is invalid (decision
 //! mimid-1wgh.36).
 //!
@@ -25,8 +26,8 @@
 //!   [`HistoryPolicy`], [`BotPolicy`] and [`MessageExpiration`]), and
 //!   authorization ([`RoleData::authorize`],
 //!   [`RoleData::authorize_send_message`],
-//!   [`RoleData::check_constraints`]). The `mls_operational_policy`
-//!   component is not yet present.
+//!   [`RoleData::check_constraints`]), and the `mls_operational_policy`
+//!   component ([`OperationalParameters`]).
 //! - Authorization covers the §8.1 membership capabilities and
 //!   `canSendMessage` only, which is what the mimid v1 hub enforces
 //!   (decision mimid-1wgh.3.10). Every other capability is decoded and
@@ -100,6 +101,22 @@
 //!   mimid-1wgh.3.63) and [`Bot`] `name` and `description` (decision
 //!   mimid-1wgh.3.62) are opaque and not checked, since the draft gives
 //!   them no syntax.
+//! - [`OperationalParameters`] (§7) is decoded and carried but not
+//!   enforced: nothing here applies its capabilities, wire formats,
+//!   pending-proposal strategy, lifetimes, buffering or message limits to
+//!   an MLS group. §7 states no rules for the component itself, so decoding
+//!   checks only the wire format; it does not check that a
+//!   [`MinDefaultMaxTime`] or a `random_delay` range is ordered, or that the
+//!   mandatory, default and forbidden capability lists are consistent,
+//!   and §7 gives no units for the times and lifetimes (wg
+//!   mimid-1wgh.37.65). `WireFormats` fields are read as vectors of [`WireFormat`], strategy
+//!   values 3 to 255 as [`PendingProposalPolicy::Extension`], and
+//!   `unit64` as `uint64` (decision mimid-1wgh.3.22). The
+//!   [`ExtensionStrategy`] arm's `id_of_strategy_params` is carried but not
+//!   resolved to a component. [`ProtocolVersion`] values other than
+//!   `mls10` are accepted and carried unchanged (decision
+//!   mimid-1wgh.3.65); [`ContentType`] `reserved(0)` and 4 to 255 are
+//!   rejected (decision mimid-1wgh.3.66).
 //! - The [`Capability`] values are Table 1 of §10.2 as drafted; IANA has
 //!   not created the registry. §10.2 puts 0xF000 in both the Specification
 //!   Required range and the private-use range;
@@ -161,6 +178,13 @@ pub use link_preview::{
 
 mod logging;
 pub use logging::{LoggingPolicy, LoggingPolicyData, LoggingPolicyUpdate, LoggingSettings};
+
+mod operational;
+pub use operational::{
+    AppMessagePolicy, CipherSuite, ContentType, ExtendedCapabilities, ExtensionStrategy,
+    ExtensionType, MinDefaultMaxTime, OperationalParameters, OperationalParametersData,
+    OperationalParametersUpdate, PendingProposalPolicy, ProposalType, ProtocolVersion, WireFormat,
+};
 
 mod preauth;
 pub use preauth::{Claim, ClaimId, CredentialType, PreAuthData, PreAuthRoleEntry, PreAuthUpdate};
