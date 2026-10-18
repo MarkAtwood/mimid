@@ -1,5 +1,6 @@
-//! Authorization of room-policy-04 §8.1 membership actions and of
-//! `canSendMessage` (§8.3), and the §3 participant constraints.
+//! Authorization of room-policy-04 §8.1 membership actions, of single
+//! capabilities such as `canSendMessage` (§8.3) and the §8.6 disruptive
+//! policy changes, and the §3 participant constraints.
 
 use crate::{BANNED_ROLE_INDEX, Capability, NO_ROLE_INDEX, Role, RoleData};
 
@@ -471,6 +472,37 @@ impl RoleData {
         }
     }
 
+    /// Checks that an actor with `actor_role` holds `capability`: the role
+    /// is defined in `roles_list` and its `role_capabilities` contain the
+    /// capability (§8).
+    ///
+    /// `actor_role` is the actor's role in the participant list, or 0 if it
+    /// is not in it (§3). No role is special-cased: the banned role and
+    /// role 0 hold exactly the capabilities their `role_capabilities` list,
+    /// which is none for `banned` in Appendix A.
+    ///
+    /// The mimid v1 hub uses this for the §8.6 capabilities
+    /// [`Capability::CAN_CHANGE_ROLE_DEFINITIONS`],
+    /// [`Capability::CAN_CHANGE_PREAUTHORIZED_USER_LIST`],
+    /// [`Capability::CAN_CHANGE_ROOM_MEMBERSHIP_STYLE`] and
+    /// [`Capability::CAN_SEND_MLS_REINIT_PROPOSAL`] (decision
+    /// mimid-1wgh.6.2), and through [`RoleData::authorize_send_message`]
+    /// for `canSendMessage`. The §8.1 membership capabilities carry
+    /// conditions beyond holding them (`authorized_role_changes`,
+    /// preauthorization, banned role); judge those with
+    /// [`RoleData::authorize`], not with this.
+    ///
+    /// # Errors
+    ///
+    /// [`Denied::UndefinedRole`] or [`Denied::MissingCapability`].
+    pub fn authorize_capability(
+        &self,
+        actor_role: u32,
+        capability: Capability,
+    ) -> Result<(), Denied> {
+        self.holder(actor_role, capability).map(drop)
+    }
+
     /// Checks that an actor with `actor_role` may send instant messages to
     /// the room: its role holds `canSendMessage` (§8.3).
     ///
@@ -478,8 +510,7 @@ impl RoleData {
     ///
     /// [`Denied::UndefinedRole`] or [`Denied::MissingCapability`].
     pub fn authorize_send_message(&self, actor_role: u32) -> Result<(), Denied> {
-        self.holder(actor_role, Capability::CAN_SEND_MESSAGE)
-            .map(drop)
+        self.authorize_capability(actor_role, Capability::CAN_SEND_MESSAGE)
     }
 
     /// Checks every role's §3 participant constraints against the room's

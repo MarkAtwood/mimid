@@ -25,14 +25,19 @@
 //!   [`LinkPreviewPolicy`], [`AssetPolicy`], [`LoggingPolicy`],
 //!   [`HistoryPolicy`], [`BotPolicy`] and [`MessageExpiration`]), and
 //!   authorization ([`RoleData::authorize`],
+//!   [`RoleData::authorize_capability`],
 //!   [`RoleData::authorize_send_message`],
 //!   [`RoleData::check_constraints`]), and the `mls_operational_policy`
 //!   component ([`OperationalParameters`]).
-//! - Authorization covers the §8.1 membership capabilities and
-//!   `canSendMessage` only, which is what the mimid v1 hub enforces
-//!   (decision mimid-1wgh.3.10). Every other capability is decoded and
-//!   carried but never evaluated here; most can only be enforced by
-//!   clients (§8.3).
+//! - The mimid v1 hub enforces the §8.1 membership capabilities,
+//!   `canSendMessage` and the §8.6 capabilities `canChangeRoleDefinitions`,
+//!   `canChangePreauthorizedUserList`, `canChangeRoomMembershipStyle` and
+//!   `canSendMLSReinitProposal` (decisions mimid-1wgh.3.10,
+//!   mimid-1wgh.6.2). [`RoleData::authorize_capability`] only checks that
+//!   a role holds a capability; mapping a commit to the capabilities it
+//!   needs is the hub's job. The §8.2 metadata capabilities are not
+//!   enforced in v1. Every other capability is decoded and carried but
+//!   never evaluated here; most can only be enforced by clients (§8.3).
 //! - [`RoleData::authorize`] judges one [`MembershipAction`] at a time from
 //!   role indexes the caller supplies. The caller (the hub) maps MLS
 //!   proposals to actions, decides self versus other, looks up current

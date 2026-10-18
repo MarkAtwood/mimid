@@ -1,5 +1,6 @@
 //! Authorization tests for room-policy-04 §8.1 membership capabilities,
-//! `canSendMessage` (§8.3) and the §3 participant constraints.
+//! `canSendMessage` (§8.3), the §8.6 disruptive policy capabilities and
+//! the §3 participant constraints.
 //!
 //! The oracle is independent of the code under test: the role lists are
 //! Appendix A.1-A.4 transcribed as values (`appendix_a`), and each
@@ -700,6 +701,188 @@ fn send_message_follows_appendix_a() {
             );
         }
     }
+}
+
+// --- §8.6 disruptive policy changes ------------------------------------------------
+
+// The four §8.6 capabilities the hub enforces (decision mimid-1wgh.6.2).
+const STYLE: C = C::CAN_CHANGE_ROOM_MEMBERSHIP_STYLE;
+const ROLES: C = C::CAN_CHANGE_ROLE_DEFINITIONS;
+const PREAUTH: C = C::CAN_CHANGE_PREAUTHORIZED_USER_LIST;
+const REINIT: C = C::CAN_SEND_MLS_REINIT_PROPOSAL;
+
+/// One `authorize_capability` row: actor role, capability, whether the
+/// appendix lists it for that role, and the appendix role it comes from.
+type CapRow = (u32, C, bool, &'static str);
+
+fn check_capabilities(name: &str, roles: &RoleData, rows: &[CapRow]) {
+    assert_eq!(
+        roles.validate(false),
+        Ok(()),
+        "{name} fixture must validate"
+    );
+    for (actor, capability, held, why) in rows {
+        let expected = if *held {
+            OK
+        } else {
+            missing(*actor, *capability)
+        };
+        assert_eq!(
+            roles.authorize_capability(*actor, *capability),
+            expected,
+            "{name} §8.6 {why}: actor role {actor}, {capability:?}"
+        );
+    }
+}
+
+#[test]
+fn a1_disruptive_capabilities() {
+    check_capabilities(
+        "A.1",
+        &a1(),
+        &[
+            // super_admin lists canChangeRoomMembershipStyle and
+            // canChangePreauthorizedUserList, not canChangeRoleDefinitions
+            // or canSendMLSReinitProposal.
+            (4, STYLE, true, "super_admin"),
+            (4, PREAUTH, true, "super_admin"),
+            (4, ROLES, false, "super_admin"),
+            (4, REINIT, false, "super_admin"),
+            // policy_enforcer lists all but canChangeRoomMembershipStyle.
+            (5, ROLES, true, "policy_enforcer"),
+            (5, PREAUTH, true, "policy_enforcer"),
+            (5, REINIT, true, "policy_enforcer"),
+            (5, STYLE, false, "policy_enforcer"),
+            // group_admin lists only §8.2 canChangeRoomDescription.
+            (3, STYLE, false, "group_admin"),
+            (3, ROLES, false, "group_admin"),
+            (3, PREAUTH, false, "group_admin"),
+            (3, REINIT, false, "group_admin"),
+            (2, ROLES, false, "ordinary_user"),
+            (2, PREAUTH, false, "ordinary_user"),
+            (1, ROLES, false, "banned lists none"),
+            (1, REINIT, false, "banned lists none"),
+            (0, STYLE, false, "no_role lists none"),
+            (0, PREAUTH, false, "no_role lists none"),
+        ],
+    );
+}
+
+#[test]
+fn a2_disruptive_capabilities() {
+    check_capabilities(
+        "A.2",
+        &a2(),
+        &[
+            // super_admin lists all four.
+            (4, STYLE, true, "super_admin"),
+            (4, ROLES, true, "super_admin"),
+            (4, PREAUTH, true, "super_admin"),
+            (4, REINIT, true, "super_admin"),
+            (5, ROLES, true, "policy_enforcer"),
+            (5, PREAUTH, true, "policy_enforcer"),
+            (5, REINIT, true, "policy_enforcer"),
+            (5, STYLE, false, "policy_enforcer"),
+            (3, STYLE, false, "group_admin"),
+            (3, ROLES, false, "group_admin"),
+            (3, PREAUTH, false, "group_admin"),
+            (3, REINIT, false, "group_admin"),
+            (2, PREAUTH, false, "ordinary_user"),
+            (0, ROLES, false, "no_role lists only canUseJoinCode"),
+        ],
+    );
+}
+
+#[test]
+fn a3_disruptive_capabilities() {
+    check_capabilities(
+        "A.3",
+        &a3(),
+        &[
+            (6, STYLE, true, "super_admin"),
+            (6, ROLES, true, "super_admin"),
+            (6, PREAUTH, true, "super_admin"),
+            (6, REINIT, true, "super_admin"),
+            (7, ROLES, true, "policy_enforcer"),
+            (7, PREAUTH, true, "policy_enforcer"),
+            (7, REINIT, true, "policy_enforcer"),
+            (7, STYLE, false, "policy_enforcer"),
+            (5, ROLES, false, "moderator"),
+            (5, PREAUTH, false, "moderator"),
+            (4, REINIT, false, "speaker"),
+            (3, STYLE, false, "attendee"),
+            (2, ROLES, false, "guest"),
+        ],
+    );
+}
+
+#[test]
+fn a4_disruptive_capabilities() {
+    check_capabilities(
+        "A.4",
+        &a4(),
+        &[
+            (8, STYLE, true, "super_admin"),
+            (8, ROLES, true, "super_admin"),
+            (8, PREAUTH, true, "super_admin"),
+            (8, REINIT, true, "super_admin"),
+            (9, ROLES, true, "policy_enforcer"),
+            (9, PREAUTH, true, "policy_enforcer"),
+            (9, REINIT, true, "policy_enforcer"),
+            (9, STYLE, false, "policy_enforcer"),
+            (5, ROLES, false, "org_a_admin"),
+            (5, PREAUTH, false, "org_a_admin"),
+            (6, STYLE, false, "org_b_admin"),
+            (7, REINIT, false, "org_c_admin"),
+            (2, PREAUTH, false, "org_a_user"),
+        ],
+    );
+    assert_eq!(
+        a4().authorize_capability(10, ROLES),
+        Err(Denied::UndefinedRole(10)),
+        "A.4 has no role 10"
+    );
+}
+
+#[test]
+fn wrong_actor_role_is_rejected_for_disruptive_capabilities() {
+    // AGENTS.md: the hub's authorization check is room policy. In A.2 the
+    // super_admin (4) holds each §8.6 capability the hub enforces;
+    // group_admin (3), ordinary_user (2), banned (1), no_role (0) and an
+    // undefined role (9) do not.
+    let roles = a2();
+    for capability in [STYLE, ROLES, PREAUTH, REINIT] {
+        assert_eq!(
+            roles.authorize_capability(4, capability),
+            OK,
+            "{capability:?}"
+        );
+        for wrong in [3, 2, 1, 0] {
+            assert_eq!(
+                roles.authorize_capability(wrong, capability),
+                missing(wrong, capability),
+                "actor role {wrong}, {capability:?}"
+            );
+        }
+        assert_eq!(
+            roles.authorize_capability(9, capability),
+            Err(Denied::UndefinedRole(9)),
+            "{capability:?}"
+        );
+    }
+}
+
+#[test]
+fn capability_follows_role_capabilities_without_special_roles() {
+    // §8: the holder's "role_capabilities list contains the relevant
+    // capability". The spec gives the banned role and role 0 no special
+    // rule, so a list that grants them a capability is honoured.
+    let mut roles = a2();
+    roles.roles[0].role_capabilities.push(PREAUTH);
+    roles.roles[1].role_capabilities.push(ROLES);
+    assert_eq!(roles.authorize_capability(0, PREAUTH), OK);
+    assert_eq!(roles.authorize_capability(1, ROLES), OK);
+    assert_eq!(roles.authorize_capability(1, PREAUTH), missing(1, PREAUTH));
 }
 
 // --- check_constraints -----------------------------------------------------------

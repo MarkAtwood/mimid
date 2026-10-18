@@ -4,9 +4,10 @@
 //!
 //! Each role carries its role_index, role_name (the appendix bullet name),
 //! constraints and authorized_role_changes exactly as listed, the §8.1
-//! membership capabilities it lists, and `canSendMessage` (§8.3) where it
-//! lists that, with "include all the capabilities of X" resolved. Other
-//! capabilities are omitted: validation and authorization read only these.
+//! membership capabilities it lists, `canSendMessage` (§8.3) and the §8.6
+//! disruptive policy capabilities where it lists them, with "include all
+//! the capabilities of X" resolved. Other capabilities are omitted:
+//! validation and authorization read only these.
 //! A.1's canRevokeVoice and canGrantVoice are not in Table 1 and are
 //! dropped (decision mimid-1wgh.3.23).
 
@@ -67,11 +68,25 @@ const ADMIN_EXTRA_A1: &[C] = &[
     C::CAN_KICK,
     C::CAN_CHANGE_USER_ROLE,
 ];
+/// A.1-A.4 policy_enforcer, identical in all four. canChangeMlsOperationalPolicies
+/// (§8.7 reserved) is omitted.
 const ENFORCER: &[C] = &[
     C::CAN_REMOVE_PARTICIPANT,
     C::CAN_CHANGE_USER_ROLE,
     C::CAN_BAN,
     C::CAN_UN_BAN,
+    C::CAN_CHANGE_ROLE_DEFINITIONS,
+    C::CAN_CHANGE_PREAUTHORIZED_USER_LIST,
+    C::CAN_DESTROY_ROOM,
+    C::CAN_SEND_MLS_REINIT_PROPOSAL,
+];
+/// The §8.6 capabilities of the A.2, A.3 and A.4 super_admin.
+const SUPER_ADMIN_DISRUPTIVE: &[C] = &[
+    C::CAN_CHANGE_ROOM_MEMBERSHIP_STYLE,
+    C::CAN_CHANGE_ROLE_DEFINITIONS,
+    C::CAN_CHANGE_PREAUTHORIZED_USER_LIST,
+    C::CAN_DESTROY_ROOM,
+    C::CAN_SEND_MLS_REINIT_PROPOSAL,
 ];
 
 fn no_role(caps: &[C], max_active: Option<u32>, changes: &[(u32, &[u32])]) -> Role {
@@ -80,6 +95,15 @@ fn no_role(caps: &[C], max_active: Option<u32>, changes: &[(u32, &[u32])]) -> Ro
 
 pub fn a1() -> RoleData {
     let admin = [ORDINARY_A1, ADMIN_EXTRA_A1].concat();
+    let super_admin = [
+        &admin[..],
+        &[
+            C::CAN_CHANGE_ROOM_MEMBERSHIP_STYLE,
+            C::CAN_CHANGE_PREAUTHORIZED_USER_LIST,
+            C::CAN_DESTROY_ROOM,
+        ],
+    ]
+    .concat();
     RoleData {
         roles: vec![
             no_role(&[], Some(0), &[]),
@@ -112,7 +136,7 @@ pub fn a1() -> RoleData {
             role(
                 4,
                 "super_admin",
-                &admin,
+                &super_admin,
                 0,
                 None,
                 0,
@@ -166,6 +190,7 @@ pub fn a2() -> RoleData {
         ],
     ]
     .concat();
+    let super_admin = [&admin[..], SUPER_ADMIN_DISRUPTIVE].concat();
     RoleData {
         roles: vec![
             no_role(&[C::CAN_USE_JOIN_CODE], Some(0), &[(0, &[2])]),
@@ -198,7 +223,7 @@ pub fn a2() -> RoleData {
             role(
                 4,
                 "super_admin",
-                &admin,
+                &super_admin,
                 0,
                 None,
                 0,
@@ -254,6 +279,7 @@ pub fn a3() -> RoleData {
         C::CAN_KICK,
         C::CAN_CHANGE_USER_ROLE,
     ];
+    let super_admin = [&moderator[..], SUPER_ADMIN_DISRUPTIVE].concat();
     RoleData {
         roles: vec![
             no_role(&[C::CAN_USE_JOIN_CODE], None, &[(0, &[2, 3])]),
@@ -308,7 +334,7 @@ pub fn a3() -> RoleData {
             role(
                 6,
                 "super_admin",
-                &moderator,
+                &super_admin,
                 0,
                 None,
                 0,
@@ -366,7 +392,7 @@ pub fn a4() -> RoleData {
     ]
     .concat();
     let org_a_admin = [&org_b_admin[..], &host_extra].concat();
-    let super_admin = [&org_a_admin[..], &[C::CAN_UN_BAN]].concat();
+    let super_admin = [&org_a_admin[..], &[C::CAN_UN_BAN], SUPER_ADMIN_DISRUPTIVE].concat();
     RoleData {
         roles: vec![
             no_role(&[], Some(0), &[]),
