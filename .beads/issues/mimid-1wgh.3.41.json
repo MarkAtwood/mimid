@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.41",
+  "title": "P-role2: role_name/description must be UTF-8",
+  "description": "room-policy-04 §3 types role_name and role_description as opaque\u003cV\u003e but calls them text strings. Readings: (a) opaque bytes; (b) strict UTF-8. Chosen: (b), matching the crate's text policy; invalid UTF-8 rejected at decode.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:50:44.86360526Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:51:25.911970796Z",
+  "closed_at": "2026-10-18T01:51:25.911970796Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.41",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:50:44.880286978Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

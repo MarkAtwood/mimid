@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.47",
+  "title": "DR-17: previous-epoch ratchet_tree_presence not checked",
+  "description": "mls-ratchet-tree-options-01 §4 PartialGroupInfo carries ratchet_tree_presence covering the previous epoch too. That half is not covered by the GroupInfo signature and is not needed to rebuild it; checking it would require per-epoch history in the Observer. Chosen: Observer::group_info checks only the half it uses; documented in # Limitations.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:50:44.560133338Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:51:25.868294381Z",
+  "closed_at": "2026-10-18T01:51:25.868294381Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.47",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:50:44.581480038Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

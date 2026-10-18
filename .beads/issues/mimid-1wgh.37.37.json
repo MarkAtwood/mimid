@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.37.37",
   "title": "wg: rto-01 §4 PartialGroupInfo reconstruction unspecified",
   "description": "Suggestion. §4 (L255-320) never says how to rebuild the GroupInfo (which epoch's GroupContext, where confirmation_tag comes from); hub and joiner must agree exactly for the signature to verify. Senders omit ratchet_tree from group_info_extensions (L295, L314) but receiver behaviour if present is unstated. L316-317 calls external_pub \"the public key of the external commiter\"; in RFC 9420 it is the group's external-join HPKE key (and \"commiter\" is misspelled). mimid uses the new epoch after merge and rejects a present ratchet_tree (decisions mimid-1wgh.4.20, .4.30).",
+  "notes": "Also (from .4.7): the position of the ratchet_tree extension in the rebuilt GroupInfo is unspecified and implementations differ (OpenMLS prepends, mls-rs appends); mimid prepends (mimid-1wgh.4.46).",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:11.024987401Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T01:24:11.024987401Z",
+  "updated_at": "2026-10-18T01:50:44.722254351Z",
   "labels": [
     "wg",
     "spec:mls-ratchet-tree-options-01"

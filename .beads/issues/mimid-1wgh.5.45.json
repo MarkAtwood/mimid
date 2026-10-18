@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.45",
+  "title": "P29: room_avatar https not enforced at decode",
+  "description": "protocol-06 §7.6 comments room_avatar as 'an https URI'. Readings: (a) reject non-https when decoding RoomMetaData; (b) decode any URI; the fetcher enforces https. Chosen: (b): rejecting would fail the whole component over one cosmetic field; consistent with mimid-1wgh.34. Whoever fetches the avatar MUST require https.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:41:57.316193681Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:50:44.356681836Z",
+  "closed_at": "2026-10-18T01:50:44.356681836Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.45",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:41:57.336354713Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.40",
+  "title": "P-role1: dangling role references rejected",
+  "description": "room-policy-04 §3/§6.6 do not say whether a referenced role index must exist. Readings: (a) allow dangling; (b) reject. Chosen: (b): RoleData::validate rejects undefined non-zero indices in authorized_role_changes and roles_that_can_share; index 0 keeps its §3 meaning (no role). Fail closed.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:50:44.787405643Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:51:25.892354003Z",
+  "closed_at": "2026-10-18T01:51:25.892354003Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.40",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:50:44.807258623Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

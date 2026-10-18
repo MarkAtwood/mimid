@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.44",
+  "title": "Draft feedback bundle: ratchet-tree-options",
+  "description": "Draft from the open wg beads labelled spec:mls-ratchet-tree-options-01 (repo mlswg/mls-ratchet-tree-options, list mls@ietf.org). Draft only: PR text (editorial, bundled), one issue text per technical item, and a short list message; Larry-mode style; cite version, section, editor's-copy line, mimid decision IDs and running code. Store drafts in the bead's design field (no repo files). Mark reviews and approves each send; nothing goes out without his per-action OK.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:39:07.454861014Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:39:07.454861014Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.44",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:39:07.468543303Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

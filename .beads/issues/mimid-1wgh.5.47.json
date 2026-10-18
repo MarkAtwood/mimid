@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.47",
+  "title": "P31: RichDescription fields opaque",
+  "description": "protocol-06 §7.6 RichDescription media_type, language_tag, description_content are opaque\u003cV\u003e. Readings: (a) validate UTF-8 / RFC 6838 / BCP 47 at decode; (b) opaque as written. Chosen: (b), implement as written; renderers validate before use. wg item filed.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:41:57.589408125Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:50:44.414538139Z",
+  "closed_at": "2026-10-18T01:50:44.414538139Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.47",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:41:57.614891754Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

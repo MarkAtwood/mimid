@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.44",
+  "title": "P28: §7.6 Uri is IdentifierUri",
+  "description": "protocol-06 §7.6 defines struct Uri { opaque uri\u003cV\u003e; } with the same wire form as §5.2 IdentifierUri. Readings: (a) separate type that must be non-empty; (b) opaque, unchecked; (c) the same type. Chosen: (c) type alias Uri = IdentifierUri: empty means absent (e.g. no avatar), otherwise an RFC 3986 URI (consistent with P4 mimid-1wgh.5.19 and P12 mimid-1wgh.5.27).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:41:57.184613448Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:50:44.32967222Z",
+  "closed_at": "2026-10-18T01:50:44.32967222Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.44",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:41:57.207659554Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
