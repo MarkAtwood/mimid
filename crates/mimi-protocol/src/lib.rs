@@ -40,7 +40,8 @@
 //!   ([`FrankingIntegrityTbs::sign`], [`Frank::verify_integrity`]), the
 //!   §5.4.1.3 receiver checks ([`ReceivedFrank::verify`]), and the
 //!   reportAbuse body ([`AbuseReport`], [`AbusiveMessage`],
-//!   [`AbuseType`]).
+//!   [`AbuseType`]), and the requestConsent and updateConsent body
+//!   ([`ConsentEntry`], [`ConsentOperation`], [`ConsentScope`]).
 //! - Franking takes the salt, sender URI and room URI as inputs: the caller
 //!   extracts them from the MIMI content. [`ServerFrankingContext`] URIs
 //!   are [`IdentifierUri`]s, so a non-ASCII URI must arrive percent-encoded.
@@ -96,6 +97,15 @@
 //!   mimid-1wgh.5.64). It does not check that a KeyPackage uses an acceptable
 //!   ciphersuite, meets `requiredCapabilities`, is unexpired or was never
 //!   handed out before: those need the request, a clock or provider state.
+//! - [`ConsentEntry`] codecs check the wire form only. They do not check
+//!   that the operation suits the endpoint (`request` or `cancel` for
+//!   requestConsent, `grant` or `revoke` for updateConsent), that the URIs
+//!   are in the sending and receiving providers' domains, or that a
+//!   `cancel` matches an earlier request's [`ConsentScope`]: §5.7 leaves
+//!   those to the receiving server. An empty `requesterUri` or `targetUri`
+//!   (decision mimid-1wgh.5.68) and a present but empty `roomId` (decision
+//!   mimid-1wgh.5.69) are rejected. Granted KeyPackages are
+//!   not checked beyond their wire form.
 //! - [`FanoutMessage`] arms follow decision mimid-1wgh.5.24: an application
 //!   message must be a PrivateMessage, so a PublicMessage application
 //!   message or a PrivateMessage proposal or commit is rejected.
@@ -140,6 +150,7 @@
 
 mod abuse;
 mod component;
+mod consent;
 mod directory;
 mod frank;
 mod group_info;
@@ -156,6 +167,7 @@ pub use component::{
     ParticipantListData, ParticipantListUpdate, RichDescription, RoomMetaData, RoomMetaUpdate, Uri,
     UserRolePair, UserindexRolePair,
 };
+pub use consent::{ConsentEntry, ConsentOperation, ConsentScope};
 pub use directory::Directory;
 pub use frank::{
     Frank, FrankAad, FrankingAgentData, FrankingAgentUpdate, FrankingIntegrityTbs, HubKey,
@@ -288,6 +300,21 @@ pub enum Error {
     KeyMaterialClientsMismatch {
         /// The response's `userStatus`.
         user_status: KeyMaterialUserCode,
+    },
+    /// A [`ConsentEntry`] or [`ConsentScope`] had an empty `requesterUri`
+    /// or `targetUri` (protocol-06 §5.7).
+    #[error("consent requesterUri or targetUri is empty")]
+    EmptyConsentUri,
+    /// A [`ConsentEntry`] or [`ConsentScope`] had a `roomId` that is present
+    /// but empty, a non-canonical way to say "any room" (protocol-06 §5.7).
+    #[error("consent roomId is present but empty")]
+    EmptyConsentRoomId,
+    /// A [`ConsentEntry`] other than `grant` carried KeyPackages, which only
+    /// the `grant` arm has (protocol-06 §5.7).
+    #[error("{consent_operation:?} consent entry carries KeyPackages")]
+    ClientKeyPackagesWithoutGrant {
+        /// The entry's `consentOperation`.
+        consent_operation: ConsentOperation,
     },
     /// A value could not be TLS-encoded.
     #[error("TLS encoding failed")]
