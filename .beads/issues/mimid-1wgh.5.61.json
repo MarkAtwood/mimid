@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.61",
+  "title": "P44: keyMaterial request signed with suite 1",
+  "description": "protocol-06 §5.2 KeyMaterialRequest has acceptableCiphersuites\u003cV\u003e but no single cipher_suite, so the signature scheme for key_material_request_signature is unstated. Readings: (a) first listed suite; (b) require suite 1 in the list and sign/verify with its Ed25519 (mimid-1wgh.23). Chosen: (b); list order has no stated meaning. wg item filed.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T05:11:40.588983184Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T05:13:38.577108281Z",
+  "closed_at": "2026-10-18T05:13:38.577108281Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.61",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T05:11:40.609831036Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

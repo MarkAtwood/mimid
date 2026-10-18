@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.64",
+  "title": "P-pol5: unstated §6.4-6.8 rules not enforced",
+  "description": "Following mimid-1wgh.3.45: not enforced because the draft does not state them: §6.8 min\u003c=max and default within range; §6.4 download type lists disjoint or containing the default; bot_role_index names a defined role; one logging client per provider (§6.5 lowercase 'should'). Zero-length homepage Uri treated as absent (mimid-1wgh.3.18).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T05:11:52.80048198Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T05:13:38.997928671Z",
+  "closed_at": "2026-10-18T05:13:38.997928671Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.64",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T05:11:52.824420783Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

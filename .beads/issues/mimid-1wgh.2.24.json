@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.2.24",
+  "title": "upstream: cddl-rs rejects choice-typed map keys",
+  "description": "cddl crate 0.10.7 rejects map entries whose key is a type choice (mimi-content A.1: '* unknownExtension' with 'name = int / tstr .size (1..255)'): integer keys -\u003e 'unexpected key', text keys -\u003e 'map requires entry key of type int'. Also default-features=false + cbor fails to compile (needs json, additional-controls, ast-span). Repro CDDL and CBOR in the 2.6 spike notes. Report upstream only with Mark's per-action OK.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T04:59:32.08937513Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T04:59:32.08937513Z",
+  "labels": [
+    "upstream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2.24",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "parent-child",
+      "created_at": "2026-10-18T04:59:32.122766255Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

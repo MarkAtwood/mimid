@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.4.40",
   "title": "mimi-mls: Member lifetime policy on join",
   "description": "Member::join_welcome uses OpenMLS's default lifetime Verify policy, so joining a group with any member whose leaf outlived its KeyPackage lifetime fails. RFC 9420 §7.3 makes this check RECOMMENDED for received leaves. Needs a decision (members may differ from the Observer decision mimid-1wgh.4.38) and use of OpenMLS's Welcome JoinBuilder skip option. Found during .4.6.",
+  "notes": "Decided: mimid-1wgh.4.56 (skip on received leaves). Implement: Member join_welcome/join_external/process use LeafNodeLifetimePolicy::Skip where OpenMLS allows (JoinBuilder skip_lifetime_validation; processing path may need the fork's policy hooks — stop and ask if a fork change is needed).",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:14:32.278843702Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T01:14:32.278843702Z",
+  "updated_at": "2026-10-18T04:57:14.331346461Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.4.40",

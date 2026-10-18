@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.61",
+  "title": "P-pol2: required logging needs a non-empty logging URI",
+  "description": "room-policy-04 §6.5 'at least one logging URI' when logging is required: at least one non-empty Uri, by analogy with mimid-1wgh.3.18 and .3.57.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T05:11:52.535421316Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T05:13:38.848202342Z",
+  "closed_at": "2026-10-18T05:13:38.848202342Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.61",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T05:11:52.55765298Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.64",
+  "title": "P47: keyMaterialExhausted carries no fields",
+  "description": "protocol-06 §5.2 ClientKeyMaterial select (clientStatus) has no arm for keyMaterialExhausted. Chosen: no further fields follow. wg item filed.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T05:11:40.819182772Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T05:13:38.712596563Z",
+  "closed_at": "2026-10-18T05:13:38.712596563Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.64",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T05:11:40.842656187Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.4.51",
   "title": "mimi-mls: apply DR-15b check to existing leaves",
   "description": "Gaps left by .4.44: Member::create does not check the creator's own leaf against the required safe_aad/app_components lists, and join_welcome / Observer::from_group_info do not check leaves already in the tree. Decide (decision) whether to check and what to do on failure (refuse to join vs warn), then implement with mls-rs-built negative cases.",
+  "notes": "Decided: mimid-1wgh.4.57 (check own at create; report others at join/observe).",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T02:35:41.741202089Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T02:35:41.741202089Z",
+  "updated_at": "2026-10-18T04:57:14.375714621Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.4.51",

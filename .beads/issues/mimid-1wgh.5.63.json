@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.63",
+  "title": "P46: keyMaterial clients must agree with userStatus",
+  "description": "protocol-06 §5.2: the explicit MUST NOT (failure codes other than noCompatibleMaterial carry no clients) is enforced; additionally the code meanings are enforced as rules: success = every client succeeded (empty list passes), partialSuccess = at least one succeeded, noCompatibleMaterial = none succeeded. Mismatches rejected on decode and encode.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T05:11:40.73859052Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T05:13:38.66776574Z",
+  "closed_at": "2026-10-18T05:13:38.66776574Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.63",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T05:11:40.76194741Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
