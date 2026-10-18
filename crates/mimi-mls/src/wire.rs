@@ -36,8 +36,10 @@
 //!   those reject ciphersuites OpenMLS does not implement, because OpenMLS
 //!   parses the ciphersuite as a closed enum. [`CipherSuite`] itself accepts
 //!   any value.
-//! - Apart from [`MLSMessage::wire_format`], [`MLSMessage::content_type`],
-//!   [`AppDataDictionary`]'s entries and the fields of the
+//! - Apart from [`MLSMessage`]'s clear header fields
+//!   ([`MLSMessage::wire_format`], [`MLSMessage::content_type`],
+//!   [`MLSMessage::group_id`], [`MLSMessage::epoch`] and
+//!   [`MLSMessage::authenticated_data`]), [`AppDataDictionary`]'s entries and the fields of the
 //!   ratchet-tree-options-01 types, the types expose only their encoding.
 //! - Decoding checks structure only. No signature, MAC or membership check
 //!   happens here.
@@ -56,8 +58,8 @@ pub use ratchet_tree_options::{
 };
 pub use rfc9420::{
     Capabilities, CipherSuite, ContentType, Credential, ExternalSender, GroupInfo, HPKECiphertext,
-    HPKEPublicKey, KeyPackage, MLSMessage, ProposalRef, RequiredCapabilities, SignaturePublicKey,
-    Welcome, WireFormat,
+    HPKEPublicKey, KeyPackage, KeyPackageRef, MLSMessage, ProposalRef, RequiredCapabilities,
+    SignaturePublicKey, Welcome, WireFormat,
 };
 
 /// A reader that keeps a copy of every byte read through it.

@@ -61,6 +61,12 @@ opaque_wire_type! {
 }
 
 opaque_wire_type! {
+    /// RFC 9420 §5.2: `HashReference KeyPackageRef`, where
+    /// `opaque HashReference<V>`.
+    KeyPackageRef => openmls::ciphersuite::hash_ref::KeyPackageRef
+}
+
+opaque_wire_type! {
     /// RFC 9420 §5.3: `Credential`.
     ///
     /// The credential content is kept as received; credential types other
@@ -154,6 +160,9 @@ pub struct MLSMessage {
     bytes: Vec<u8>,
     wire_format: WireFormat,
     content_type: Option<ContentType>,
+    group_id: Option<Vec<u8>>,
+    epoch: Option<u64>,
+    authenticated_data: Option<Vec<u8>>,
 }
 
 impl_encoding_from_bytes!(MLSMessage);
@@ -172,26 +181,65 @@ impl MLSMessage {
     pub fn content_type(&self) -> Option<ContentType> {
         self.content_type
     }
+
+    /// Returns the `group_id` of a PublicMessage (from its `FramedContent`)
+    /// or PrivateMessage, or `None` for the other wire formats.
+    ///
+    /// Both carry it in the clear (RFC 9420 §6.2, §6.3); nothing is
+    /// decrypted or authenticated.
+    pub fn group_id(&self) -> Option<&[u8]> {
+        self.group_id.as_deref()
+    }
+
+    /// Returns the `epoch` of a PublicMessage (from its `FramedContent`) or
+    /// PrivateMessage, or `None` for the other wire formats.
+    ///
+    /// Both carry it in the clear (RFC 9420 §6.2, §6.3); nothing is
+    /// decrypted or authenticated.
+    pub fn epoch(&self) -> Option<u64> {
+        self.epoch
+    }
+
+    /// Returns the `authenticated_data` of a PrivateMessage, exactly as
+    /// received, or `None` for the other wire formats.
+    ///
+    /// A PrivateMessage carries it in the clear (RFC 9420 §6.3). It is not
+    /// authenticated here: only a member that decrypts the message can
+    /// check it.
+    pub fn authenticated_data(&self) -> Option<&[u8]> {
+        self.authenticated_data.as_deref()
+    }
 }
 
 impl Deserialize for MLSMessage {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
         let (message, bytes) = decode_canonical::<MlsMessageIn, R>(bytes)?;
-        let (wire_format, content_type) = match message.extract() {
+        let body = message.extract();
+        let mut message = Self {
+            bytes,
+            wire_format: WireFormat::MlsPublicMessage,
+            content_type: None,
+            group_id: None,
+            epoch: None,
+            authenticated_data: None,
+        };
+        match body {
             MlsMessageBodyIn::PublicMessage(m) => {
-                (WireFormat::MlsPublicMessage, Some(m.content_type().into()))
+                message.content_type = Some(m.content_type().into());
+                message.group_id = Some(m.group_id().as_slice().to_vec());
+                message.epoch = Some(m.epoch().as_u64());
             }
             MlsMessageBodyIn::PrivateMessage(m) => {
-                (WireFormat::MlsPrivateMessage, Some(m.content_type().into()))
+                message.wire_format = WireFormat::MlsPrivateMessage;
+                message.content_type = Some(m.content_type().into());
+                message.group_id = Some(m.group_id().as_slice().to_vec());
+                message.epoch = Some(m.epoch().as_u64());
+                message.authenticated_data = Some(m.aad().to_vec());
             }
-            MlsMessageBodyIn::Welcome(_) => (WireFormat::MlsWelcome, None),
-            MlsMessageBodyIn::GroupInfo(_) => (WireFormat::MlsGroupInfo, None),
-            MlsMessageBodyIn::KeyPackage(_) => (WireFormat::MlsKeyPackage, None),
-        };
-        Ok(Self {
-            bytes,
-            wire_format,
-            content_type,
-        })
+            MlsMessageBodyIn::Welcome(_) => message.wire_format = WireFormat::MlsWelcome,
+            MlsMessageBodyIn::GroupInfo(_) => message.wire_format = WireFormat::MlsGroupInfo,
+            MlsMessageBodyIn::KeyPackage(_) => message.wire_format = WireFormat::MlsKeyPackage,
+        }
+        Ok(message)
     }
 }

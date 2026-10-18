@@ -9,6 +9,11 @@
 //! or public key for signatures, a 32-byte X25519 private or public key for
 //! HPKE.
 //!
+//! [`SignatureKeyPair::generate`] and [`random_array`] give the hub its
+//! Ed25519 key and its randomness from OpenMLS's crypto provider, so that
+//! no other crate needs a random number generator of its own (decisions
+//! mimid-1wgh.6.16, mimid-1wgh.6.18).
+//!
 //! # Limitations
 //!
 //! - Only ciphersuite 1 (`MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`) is
@@ -16,9 +21,11 @@
 //! - Private keys arrive as plain byte slices. The caller owns them and is
 //!   responsible for zeroizing them; this module neither copies them into
 //!   long-lived storage nor logs them.
+//! - A [`SignatureKeyPair`] does not zeroize its private key when dropped.
+//!   Its `Debug` output redacts it.
 
 use openmls::prelude::{
-    Ciphersuite, HpkeCiphertext as OpenMlsHpkeCiphertext, OpenMlsCrypto, SignContent,
+    Ciphersuite, HpkeCiphertext as OpenMlsHpkeCiphertext, OpenMlsCrypto, OpenMlsRand, SignContent,
 };
 use openmls_rust_crypto::RustCrypto;
 use tls_codec::{Serialize, TlsSerialize, TlsSize, VLBytes};
@@ -53,6 +60,74 @@ pub enum Error {
     /// key or KEM output, or tampered ciphertext.
     #[error("decryption failed")]
     Decrypt,
+    /// A signature key pair could not be generated.
+    #[error("cannot generate a signature key pair")]
+    KeyGeneration(#[source] ErrorSource),
+    /// The random number generator failed.
+    #[error("cannot generate random bytes")]
+    Random(#[source] ErrorSource),
+}
+
+/// An Ed25519 signature key pair for [`sign_with_label`] and
+/// [`verify_with_label`], such as the hub's key (decision mimid-1wgh.6.18).
+///
+/// Its `Debug` output never shows the private key.
+#[derive(Clone)]
+pub struct SignatureKeyPair {
+    signature_key: Vec<u8>,
+    verification_key: Vec<u8>,
+}
+
+impl SignatureKeyPair {
+    /// Generates a fresh Ed25519 key pair with OpenMLS's crypto provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::KeyGeneration`] if the random number generator
+    /// fails.
+    pub fn generate() -> Result<Self, Error> {
+        let (signature_key, verification_key) = RustCrypto::default()
+            .signature_key_gen(CIPHERSUITE.signature_algorithm())
+            .map_err(|e| Error::KeyGeneration(e.into()))?;
+        Ok(Self {
+            signature_key,
+            verification_key,
+        })
+    }
+
+    /// The 32-byte Ed25519 private key (RFC 8032 seed): the `SignatureKey`
+    /// argument of [`sign_with_label`].
+    pub fn signature_key(&self) -> &[u8] {
+        &self.signature_key
+    }
+
+    /// The 32-byte Ed25519 public key: the `VerificationKey` argument of
+    /// [`verify_with_label`].
+    pub fn verification_key(&self) -> &[u8] {
+        &self.verification_key
+    }
+}
+
+impl std::fmt::Debug for SignatureKeyPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SignatureKeyPair")
+            .field("signature_key", &"<redacted>")
+            .field("verification_key", &self.verification_key)
+            .finish()
+    }
+}
+
+/// Returns `N` bytes from OpenMLS's cryptographically secure random number
+/// generator, for example the 32 bytes of the hub's `hub_key`
+/// (protocol-06 §5.4.1.2).
+///
+/// # Errors
+///
+/// Returns [`Error::Random`] if the random number generator fails.
+pub fn random_array<const N: usize>() -> Result<[u8; N], Error> {
+    RustCrypto::default()
+        .random_array()
+        .map_err(|e| Error::Random(e.into()))
 }
 
 /// RFC 9420 §7.6 `HPKECiphertext`: the output of [`encrypt_with_label`].

@@ -43,21 +43,36 @@
 //!   `ratchet_tree_presence` (whether the previous GroupInfo had a
 //!   ratchet_tree extension). It uses only the current-epoch half, which the
 //!   signature covers (decision mimid-1wgh.4.47).
+//! - [`Observer::group_info`] and [`Observer::verify_group_info`] require
+//!   the GroupInfo's `signer` to be the committer of the merged Commit,
+//!   since protocol-06 §5.3 has the committer send it with the Commit.
+//! - [`ProposalDetail::reference`] is `None` for a proposal a Commit carries
+//!   inline: RFC 9420 §5.2 defines a ProposalRef only for proposals sent on
+//!   their own, and OpenMLS does not compute one for inline proposals.
+//! - [`UpdatePathDetail::identity_changed`] is always `false` in an
+//!   external Commit: the joiner has no earlier leaf to compare with. In a
+//!   resync, compare [`UpdatePathDetail::identity`] with the identity of the
+//!   leaf its Remove proposal removes.
 
 use openmls::component::ComponentId;
-use openmls::group::{LeafNodeLifetimePolicy, ProposalStore, PublicGroup, StagedCommit};
-use openmls::messages::group_info::GroupInfo as OpenMlsGroupInfo;
+use openmls::group::{
+    LeafNodeLifetimePolicy, ProposalStore, PublicGroup, QueuedProposal, StagedCommit,
+};
+use openmls::messages::group_info::{GroupInfo as OpenMlsGroupInfo, VerifiableGroupInfo};
+use openmls::messages::proposals::{Proposal as OpenMlsProposal, ProposalOrRefType};
 use openmls::prelude::{
     Extension, Extensions, LeafNodeIndex, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider,
-    ProcessedMessageContent, ProtocolMessage, RatchetTreeExtension, RatchetTreeIn,
+    ProcessedMessage, ProcessedMessageContent, ProtocolMessage, RatchetTreeExtension,
+    RatchetTreeIn,
 };
+use openmls_rust_crypto::RustCrypto;
 use tls_codec::{Deserialize, Serialize, VLBytes};
 
 use crate::member::{
     CommitSummary, ComponentOp, Sender, SharedError, basic_identity, check_staged_leaves,
     convert_sender, nonconforming_leaves, required_lists, resolve_app_data_updates, summarize,
 };
-use crate::wire::{PartialGroupInfo, RatchetTreePresence};
+use crate::wire::{GroupInfo, KeyPackageRef, PartialGroupInfo, ProposalRef, RatchetTreePresence};
 use crate::{ErrorSource, Store, label};
 
 /// RFC 9420 §6: the MLSMessage header for a GroupInfo, `version` mls10
@@ -83,6 +98,107 @@ pub enum Observed {
     /// [`CommitSummary::self_removed`] is always `false`, since an
     /// [`Observer`] has no leaf.
     Commit(CommitSummary),
+}
+
+/// One proposal, from [`Observer::process_proposal`] or in a
+/// [`CommitDetail`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ProposalDetail {
+    /// Who sent the proposal. For a proposal a Commit carries inline, this
+    /// is the committer.
+    pub sender: Sender,
+    /// The RFC 9420 §5.2 ProposalRef of a proposal sent on its own: one
+    /// [`Observer::process_proposal`] stored, or one a Commit includes by
+    /// reference (`ProposalOrRefType` `reference`, RFC 9420 §12.4). `None`
+    /// for a proposal a Commit carries inline.
+    pub reference: Option<ProposalRef>,
+    /// What the proposal does.
+    pub proposal: ProposalKind,
+}
+
+/// RFC 9420 §12.1 `Proposal`, by `ProposalType`, with the fields the hub
+/// checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ProposalKind {
+    /// `add` (RFC 9420 §12.1.1).
+    Add {
+        /// The BasicCredential identity of the KeyPackage's LeafNode.
+        identity: Vec<u8>,
+        /// The KeyPackageRef of the added KeyPackage (RFC 9420 §5.2).
+        key_package_ref: KeyPackageRef,
+    },
+    /// `update` (RFC 9420 §12.1.2).
+    Update {
+        /// The BasicCredential identity of the new LeafNode.
+        identity: Vec<u8>,
+        /// Whether `identity` differs from the identity of the sender's
+        /// current leaf. Always `true` if the sender is not a member, which
+        /// MLS validation does not allow.
+        identity_changed: bool,
+    },
+    /// `remove` (RFC 9420 §12.1.3).
+    Remove {
+        /// The leaf index to remove, in the current epoch.
+        removed: u32,
+        /// The BasicCredential identity of that leaf, or empty if the leaf
+        /// is blank, which MLS validation does not allow.
+        identity: Vec<u8>,
+    },
+    /// `psk` (RFC 9420 §12.1.4).
+    PreSharedKey,
+    /// `reinit` (RFC 9420 §12.1.5).
+    ReInit,
+    /// `external_init` (RFC 9420 §12.1.6).
+    ExternalInit,
+    /// `group_context_extensions` (RFC 9420 §12.1.7).
+    GroupContextExtensions,
+    /// `app_data_update` (mls-extensions-10 §4.7).
+    AppDataUpdate {
+        /// The component whose data it changes.
+        component_id: ComponentId,
+    },
+    /// `self_remove` (mls-extensions-10 §6.3).
+    SelfRemove,
+    /// `app_ephemeral` (mls-extensions-10 §4.8).
+    AppEphemeral,
+    /// Any other proposal type, by its RFC 9420 §17.4 `ProposalType` value.
+    Custom(u16),
+}
+
+/// The UpdatePath of a pending Commit (RFC 9420 §12.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UpdatePathDetail {
+    /// The BasicCredential identity of the UpdatePath's LeafNode.
+    pub identity: Vec<u8>,
+    /// Whether `identity` differs from the identity of the committer's
+    /// current leaf. Always `false` in an external Commit (see the module's
+    /// `# Limitations`).
+    pub identity_changed: bool,
+}
+
+/// What a pending Commit does, from [`Observer::pending_commit_detail`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CommitDetail {
+    /// Who sent the Commit: a member, or a new member joining by external
+    /// Commit.
+    pub committer: Sender,
+    /// The committer's leaf index in the new epoch. For an external Commit,
+    /// the leaf the joiner takes (RFC 9420 §12.4.3.2).
+    pub committer_leaf: u32,
+    /// The BasicCredential identity whose signature key signed the Commit:
+    /// the committer's current leaf for a member, the UpdatePath's LeafNode
+    /// for an external joiner.
+    pub committer_identity: Vec<u8>,
+    /// The epoch the group is in after the Commit.
+    pub epoch: u64,
+    /// The proposals the Commit covers, in the order the Commit lists them.
+    pub proposals: Vec<ProposalDetail>,
+    /// The UpdatePath, if the Commit carries one.
+    pub path: Option<UpdatePathDetail>,
 }
 
 /// The result of [`Observer::from_group_info`].
@@ -116,7 +232,9 @@ pub enum ObserverError {
     #[error("no ratchet tree was given and the GroupInfo carries none")]
     MissingRatchetTree,
     /// The GroupInfo or ratchet tree failed validation, for example its
-    /// signature or tree hash (RFC 9420 §12.4.3.1).
+    /// signature or tree hash (RFC 9420 §12.4.3.1). From
+    /// [`Observer::verify_group_info`]: the GroupInfo does not match the
+    /// current epoch, or its signature does not verify.
     #[error("invalid GroupInfo or ratchet tree")]
     InvalidGroupInfo(#[source] ErrorSource),
     /// The message failed MLS validation. The group state is unchanged.
@@ -227,8 +345,8 @@ impl From<SharedError> for ObserverError {
 pub struct Observer {
     group: PublicGroup,
     /// The Commit staged by [`Observer::process`], not yet merged, with its
-    /// committer's leaf index in the new epoch.
-    pending_commit: Option<(StagedCommit, LeafNodeIndex)>,
+    /// sender and its committer's leaf index in the new epoch.
+    pending_commit: Option<(StagedCommit, Sender, LeafNodeIndex)>,
     /// The leaf index of the committer of the last merged Commit.
     committer: Option<LeafNodeIndex>,
 }
@@ -344,26 +462,8 @@ impl Observer {
     where
         E: Into<ErrorSource>,
     {
-        if self.pending_commit.is_some() {
-            return Err(ObserverError::PendingCommit);
-        }
+        let processed = self.validate(store, message)?;
         let provider = store.provider();
-        let message = MlsMessageIn::tls_deserialize_exact(message)
-            .map_err(|e| ObserverError::Decode(e.into()))?
-            .try_into_protocol_message()
-            .map_err(|_| ObserverError::UnexpectedMessage)?;
-        if let ProtocolMessage::PrivateMessage(_) = message {
-            return Err(ObserverError::UnexpectedMessage);
-        }
-        let processed = self
-            .group
-            .process_message(provider.crypto(), message)
-            .map_err(|e| ObserverError::Process(e.into()))?;
-        // mls-extensions-10 §4.9: the whole authenticated_data is SafeAAD,
-        // as in Member::process.
-        if processed.safe_aad().is_some() && !processed.tail_aad().is_empty() {
-            return Err(ObserverError::TrailingAad);
-        }
         let sender = convert_sender(processed.sender())?;
 
         let processed = if let ProcessedMessageContent::UnresolvedAppDataCommit(unresolved) =
@@ -403,11 +503,175 @@ impl Observer {
                     }
                 };
                 let summary = summarize(sender, &staged, false);
-                self.pending_commit = Some((*staged, committer));
+                self.pending_commit = Some((*staged, sender, committer));
                 Ok(Observed::Commit(summary))
             }
             _ => Err(ObserverError::UnexpectedMessage),
         }
+    }
+
+    /// Processes one TLS-encoded `MLSMessage` carrying a PublicMessage
+    /// proposal for this group, stores it as [`Observer::process`] does, and
+    /// describes it, with its ProposalRef (RFC 9420 §5.2).
+    ///
+    /// On any error the group state is left as it was.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::PendingCommit`] while a Commit is pending,
+    /// [`ObserverError::Decode`] for malformed input,
+    /// [`ObserverError::UnexpectedMessage`] for anything but a PublicMessage
+    /// proposal (a Commit included),
+    /// [`ObserverError::Process`] if MLS validation fails,
+    /// [`ObserverError::TrailingAad`] if bytes follow the SafeAAD struct,
+    /// [`ObserverError::Encode`] if a reference cannot be computed, and
+    /// [`ObserverError::Merge`] if the proposal cannot be stored.
+    pub fn process_proposal(
+        &mut self,
+        store: &Store,
+        message: &[u8],
+    ) -> Result<ProposalDetail, ObserverError> {
+        let processed = self.validate(store, message)?;
+        match processed.into_content() {
+            ProcessedMessageContent::ProposalMessage(proposal)
+            | ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
+                let detail = self.proposal_detail(&proposal)?;
+                self.group
+                    .add_proposal(store.provider().storage(), *proposal)
+                    .map_err(|e| ObserverError::Merge(e.into()))?;
+                Ok(detail)
+            }
+            _ => Err(ObserverError::UnexpectedMessage),
+        }
+    }
+
+    /// Checks that `message` is a PublicMessage for this group and passes
+    /// MLS validation. Changes nothing.
+    fn validate(&self, store: &Store, message: &[u8]) -> Result<ProcessedMessage, ObserverError> {
+        if self.pending_commit.is_some() {
+            return Err(ObserverError::PendingCommit);
+        }
+        let message = MlsMessageIn::tls_deserialize_exact(message)
+            .map_err(|e| ObserverError::Decode(e.into()))?
+            .try_into_protocol_message()
+            .map_err(|_| ObserverError::UnexpectedMessage)?;
+        if let ProtocolMessage::PrivateMessage(_) = message {
+            return Err(ObserverError::UnexpectedMessage);
+        }
+        let processed = self
+            .group
+            .process_message(store.provider().crypto(), message)
+            .map_err(|e| ObserverError::Process(e.into()))?;
+        // mls-extensions-10 §4.9: the whole authenticated_data is SafeAAD,
+        // as in Member::process.
+        if processed.safe_aad().is_some() && !processed.tail_aad().is_empty() {
+            return Err(ObserverError::TrailingAad);
+        }
+        Ok(processed)
+    }
+
+    /// Describes the pending Commit: its committer, every proposal it
+    /// covers, and its UpdatePath. Identities are compared with the leaves
+    /// of the current epoch, before the Commit is merged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::NoPendingCommit`] if no Commit is pending,
+    /// and [`ObserverError::Encode`] if a reference cannot be computed.
+    pub fn pending_commit_detail(&self) -> Result<CommitDetail, ObserverError> {
+        let (staged, committer, committer_leaf) = self
+            .pending_commit
+            .as_ref()
+            .ok_or(ObserverError::NoPendingCommit)?;
+        let path_identity = staged
+            .update_path_leaf_node()
+            .map(|leaf| basic_identity(leaf.credential()));
+        let committer_identity = match committer {
+            Sender::Member(index) => self
+                .leaf_identity(LeafNodeIndex::new(*index))
+                .unwrap_or_default(),
+            // RFC 9420 §12.4.3.2: an external Commit is signed with the key
+            // of the joiner's UpdatePath leaf, which it must carry.
+            _ => path_identity.clone().unwrap_or_default(),
+        };
+        let path = path_identity.map(|identity| UpdatePathDetail {
+            identity_changed: matches!(committer, Sender::Member(_))
+                && identity != committer_identity,
+            identity,
+        });
+        let proposals = staged
+            .queued_proposals()
+            .map(|queued| self.proposal_detail(queued))
+            .collect::<Result<_, _>>()?;
+        Ok(CommitDetail {
+            committer: *committer,
+            committer_leaf: committer_leaf.u32(),
+            committer_identity,
+            epoch: staged.epoch().as_u64(),
+            proposals,
+            path,
+        })
+    }
+
+    /// The BasicCredential identity of a leaf in the current epoch, or
+    /// `None` if the leaf is blank.
+    fn leaf_identity(&self, index: LeafNodeIndex) -> Option<Vec<u8>> {
+        self.group
+            .leaf(index)
+            .map(|leaf| basic_identity(leaf.credential()))
+    }
+
+    /// Describes a proposal against the current epoch's leaves.
+    fn proposal_detail(&self, queued: &QueuedProposal) -> Result<ProposalDetail, ObserverError> {
+        let sender = convert_sender(queued.sender())?;
+        let reference = match queued.proposal_or_ref_type() {
+            ProposalOrRefType::Reference => Some(to_wire(queued.proposal_reference_ref())?),
+            // OpenMLS gives an inline proposal an internal hash, not an
+            // RFC 9420 §5.2 ProposalRef, so it is not reported.
+            ProposalOrRefType::Proposal => None,
+        };
+        let proposal = match queued.proposal() {
+            OpenMlsProposal::Add(add) => {
+                let key_package = add.key_package();
+                let key_package_ref = key_package
+                    .hash_ref(&RustCrypto::default())
+                    .map_err(|e| ObserverError::Encode(e.into()))?;
+                ProposalKind::Add {
+                    identity: basic_identity(key_package.leaf_node().credential()),
+                    key_package_ref: to_wire(&key_package_ref)?,
+                }
+            }
+            OpenMlsProposal::Update(update) => {
+                let identity = basic_identity(update.leaf_node().credential());
+                let current = match sender {
+                    Sender::Member(index) => self.leaf_identity(LeafNodeIndex::new(index)),
+                    _ => None,
+                };
+                ProposalKind::Update {
+                    identity_changed: current.as_deref() != Some(identity.as_slice()),
+                    identity,
+                }
+            }
+            OpenMlsProposal::Remove(remove) => ProposalKind::Remove {
+                removed: remove.removed().u32(),
+                identity: self.leaf_identity(remove.removed()).unwrap_or_default(),
+            },
+            OpenMlsProposal::PreSharedKey(_) => ProposalKind::PreSharedKey,
+            OpenMlsProposal::ReInit(_) => ProposalKind::ReInit,
+            OpenMlsProposal::ExternalInit(_) => ProposalKind::ExternalInit,
+            OpenMlsProposal::GroupContextExtensions(_) => ProposalKind::GroupContextExtensions,
+            OpenMlsProposal::AppDataUpdate(update) => ProposalKind::AppDataUpdate {
+                component_id: update.component_id(),
+            },
+            OpenMlsProposal::SelfRemove => ProposalKind::SelfRemove,
+            OpenMlsProposal::AppEphemeral(_) => ProposalKind::AppEphemeral,
+            OpenMlsProposal::Custom(custom) => ProposalKind::Custom(custom.proposal_type()),
+        };
+        Ok(ProposalDetail {
+            sender,
+            reference,
+            proposal,
+        })
     }
 
     /// Merges the pending Commit, moving the group to the next epoch.
@@ -417,7 +681,7 @@ impl Observer {
     /// Returns [`ObserverError::NoPendingCommit`] if no Commit is pending,
     /// and [`ObserverError::Merge`] if the new state cannot be stored.
     pub fn merge_pending_commit(&mut self, store: &Store) -> Result<(), ObserverError> {
-        let (staged, committer) = self
+        let (staged, _, committer) = self
             .pending_commit
             .take()
             .ok_or(ObserverError::NoPendingCommit)?;
@@ -540,12 +804,7 @@ impl Observer {
                 .map_err(|e| ObserverError::InvalidPartialGroupInfo(e.into()))?;
         }
 
-        // RFC 9420 §12.4.3: GroupInfoTBS.
-        let mut tbs = encode(self.group.group_context())?;
-        tbs.extend(encode(&extensions)?);
-        tbs.extend(encode(self.group.confirmation_tag())?);
-        tbs.extend(encode(&committer)?);
-
+        let tbs = self.group_info_tbs(&extensions, committer)?;
         let leaf = self.group.leaf(committer).ok_or_else(|| {
             ObserverError::InvalidPartialGroupInfo("the committer's leaf is blank".into())
         })?;
@@ -562,6 +821,75 @@ impl Observer {
         message.extend(encode(&VLBytes::new(partial.signature().to_vec()))?);
         Ok(message)
     }
+
+    /// Verifies a full GroupInfo (RFC 9420 §12.4.3), as a Commit carries it
+    /// in protocol-06's `GroupInfoOption` `full`, against the current epoch.
+    ///
+    /// Call it after [`Observer::merge_pending_commit`] has merged the
+    /// Commit the GroupInfo came with. The GroupInfo's bytes, as received,
+    /// must be exactly a GroupInfoTBS with this Observer's current
+    /// GroupContext, the merged Commit's confirmation tag and its committer
+    /// as `signer`, followed by a signature that verifies under the
+    /// committer's leaf signature key. The extensions are the GroupInfo's
+    /// own; a `ratchet_tree` extension among them is not compared with the
+    /// tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::PendingCommit`] while a Commit is pending,
+    /// [`ObserverError::NoMergedCommit`] if this Observer has not merged a
+    /// Commit, [`ObserverError::Decode`] if the extensions cannot be read,
+    /// [`ObserverError::InvalidGroupInfo`] if the GroupInfo does not match
+    /// the current epoch or its signature does not verify, and
+    /// [`ObserverError::Encode`] if a structure cannot be encoded.
+    pub fn verify_group_info(&self, group_info: &GroupInfo) -> Result<(), ObserverError> {
+        if self.pending_commit.is_some() {
+            return Err(ObserverError::PendingCommit);
+        }
+        let committer = self.committer.ok_or(ObserverError::NoMergedCommit)?;
+        let received = group_info.as_bytes();
+        let decoded = VerifiableGroupInfo::tls_deserialize_exact(received)
+            .map_err(|e| ObserverError::Decode(e.into()))?;
+        let tbs = self.group_info_tbs(decoded.extensions(), committer)?;
+        let signature = received.strip_prefix(tbs.as_slice()).ok_or_else(|| {
+            ObserverError::InvalidGroupInfo(
+                "the GroupInfo's GroupContext, confirmation tag or signer is not the current epoch's"
+                    .into(),
+            )
+        })?;
+        let signature = VLBytes::tls_deserialize_exact(signature)
+            .map_err(|e| ObserverError::InvalidGroupInfo(e.into()))?;
+        let leaf = self.group.leaf(committer).ok_or_else(|| {
+            ObserverError::InvalidGroupInfo("the committer's leaf is blank".into())
+        })?;
+        label::verify_with_label(
+            leaf.signature_key().as_slice(),
+            GROUP_INFO_LABEL,
+            &tbs,
+            signature.as_slice(),
+        )
+        .map_err(|e| ObserverError::InvalidGroupInfo(e.into()))
+    }
+
+    /// RFC 9420 §12.4.3: the GroupInfoTBS of the current epoch with
+    /// `extensions`, signed by `signer`.
+    fn group_info_tbs(
+        &self,
+        extensions: &Extensions<OpenMlsGroupInfo>,
+        signer: LeafNodeIndex,
+    ) -> Result<Vec<u8>, ObserverError> {
+        let mut tbs = encode(self.group.group_context())?;
+        tbs.extend(encode(extensions)?);
+        tbs.extend(encode(self.group.confirmation_tag())?);
+        tbs.extend(encode(&signer)?);
+        Ok(tbs)
+    }
+}
+
+/// Converts an OpenMLS value to the [`crate::wire`] type with the same TLS
+/// encoding.
+fn to_wire<T: Deserialize>(value: &impl Serialize) -> Result<T, ObserverError> {
+    T::tls_deserialize_exact(encode(value)?).map_err(|e| ObserverError::Encode(e.into()))
 }
 
 /// TLS-encodes `value`.
