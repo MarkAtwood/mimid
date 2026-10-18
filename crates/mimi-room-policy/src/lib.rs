@@ -18,8 +18,30 @@
 //!   `roles_list` component ([`RoleData`], with [`RoleData::validate`]),
 //!   the `preauth_list` component ([`PreAuthData`], with
 //!   [`PreAuthData::first_match`]) and the `base_room_policy` component
-//!   ([`BaseRoomPolicy`]). The other policy components and action
-//!   authorization are not yet present.
+//!   ([`BaseRoomPolicy`]), and authorization ([`RoleData::authorize`],
+//!   [`RoleData::authorize_send_message`],
+//!   [`RoleData::check_constraints`]). The other policy components are not
+//!   yet present.
+//! - Authorization covers the §8.1 membership capabilities and
+//!   `canSendMessage` only, which is what the mimid v1 hub enforces
+//!   (decision mimid-1wgh.3.10). Every other capability is decoded and
+//!   carried but never evaluated here; most can only be enforced by
+//!   clients (§8.3).
+//! - [`RoleData::authorize`] judges one [`MembershipAction`] at a time from
+//!   role indexes the caller supplies. The caller (the hub) maps MLS
+//!   proposals to actions, decides self versus other, looks up current
+//!   roles in the participant list, checks join codes, and applies the
+//!   commit-level rules: a `roles_list` or `preauth_list` update may not
+//!   share a commit with participant list changes (§3, §4), clients of a
+//!   removed or banned user must all be removed, and adding clients is
+//!   only authorized together with the participant addition (§8.1.1,
+//!   §8.1.3). The §5 rules on `max_clients`, `max_users` and
+//!   `multi_device`, and the §5 rule that "ordinary users cannot leave or
+//!   be removed" from a fixed-membership room, are not checked here
+//!   (room-policy-04 §5; decision mimid-1wgh.3.50).
+//! - [`RoleData::check_constraints`] checks only roles defined in
+//!   `roles_list`; participants holding an undefined role are not
+//!   counted against any constraint.
 //! - [`PreAuthData::first_match`] compares claims the caller supplies; this
 //!   crate does not extract claims from MLS credentials. A BasicCredential,
 //!   the only credential mimid v1 uses, carries no claims, so it matches
@@ -29,9 +51,10 @@
 //!   compared byte for byte, with no normalization; §4 does not define the
 //!   binary form of an OID or CWT claim key (wg mimid-1wgh.37.58). Any one
 //!   of several claims with the same [`ClaimId`] may match (decision
-//!   mimid-1wgh.3.48). Nothing here checks that an entry's `target_role`
-//!   matches, or exists in, `roles_list` (decisions mimid-1wgh.3.16,
-//!   mimid-1wgh.3.49).
+//!   mimid-1wgh.3.48). [`PreAuthData::first_match`] does not check that an
+//!   entry's `target_role` matches, or exists in, `roles_list` (decision
+//!   mimid-1wgh.3.16); [`RoleData::authorize`] checks that the index names
+//!   a defined role other than 0 and 1 (decision mimid-1wgh.3.49).
 //! - [`BaseRoomPolicy`] decoding enforces only the §5 `parent_room` rule.
 //!   The other §5 rules (participant subsets, `max_clients`, `max_users`,
 //!   `multi_device`, pseudonyms) concern room state, not the component,
@@ -65,6 +88,9 @@
 #![forbid(unsafe_code)]
 
 pub use tls_codec;
+
+mod authorize;
+pub use authorize::{Denied, MembershipAction, Occupancy};
 
 mod base;
 pub use base::{BaseRoomData, BaseRoomPolicy, BaseRoomUpdate};
