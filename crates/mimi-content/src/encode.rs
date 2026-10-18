@@ -28,15 +28,15 @@ pub const MAX_TOPIC_ID_LEN: usize = 4096;
 pub const MIN_MULTIPART_PARTS: usize = 2;
 
 /// Extension map key of `senderUri` (§8.2.1, Table 1).
-const SENDER_URI_KEY: u8 = 1;
+pub(crate) const SENDER_URI_KEY: u8 = 1;
 /// Extension map key of `roomUri` (§8.2.1, Table 1).
-const ROOM_URI_KEY: u8 = 2;
+pub(crate) const ROOM_URI_KEY: u8 = 2;
 
 /// `cardinality` values (§4.4).
-const CARDINALITY_NULLPART: u8 = 0;
-const CARDINALITY_SINGLE: u8 = 1;
-const CARDINALITY_EXTERNAL: u8 = 2;
-const CARDINALITY_MULTI: u8 = 3;
+pub(crate) const CARDINALITY_NULLPART: u8 = 0;
+pub(crate) const CARDINALITY_SINGLE: u8 = 1;
+pub(crate) const CARDINALITY_EXTERNAL: u8 = 2;
+pub(crate) const CARDINALITY_MULTI: u8 = 3;
 
 /// Why a [`MimiContent`] could not be encoded.
 #[derive(Debug, thiserror::Error)]
