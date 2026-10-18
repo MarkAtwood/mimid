@@ -29,20 +29,40 @@
 //! - An [`Observer`] cannot be reloaded from the [`Store`] after a restart.
 //!   OpenMLS does not persist the lifetime policy, so a future reload must
 //!   set it to Skip again.
+//! - [`Observer::group_info`] works only after this Observer has merged a
+//!   Commit, since the GroupInfo signer is the committer. It cannot rebuild
+//!   the GroupInfo of the epoch the Observer started in.
+//! - [`Observer::group_info`] puts a rebuilt ratchet_tree extension first in
+//!   the extension list. ratchet-tree-options-01 §4 does not say where it
+//!   goes; a committer that put it elsewhere signed different bytes, and the
+//!   signature check fails (decision mimid-1wgh.4.46).
+//! - [`Observer::group_info`] does not check the previous-epoch half of
+//!   `ratchet_tree_presence` (whether the previous GroupInfo had a
+//!   ratchet_tree extension). It uses only the current-epoch half, which the
+//!   signature covers (decision mimid-1wgh.4.47).
 
 use openmls::component::ComponentId;
 use openmls::group::{LeafNodeLifetimePolicy, ProposalStore, PublicGroup, StagedCommit};
+use openmls::messages::group_info::GroupInfo as OpenMlsGroupInfo;
 use openmls::prelude::{
-    MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider, ProcessedMessageContent, ProtocolMessage,
-    RatchetTreeIn,
+    Extension, Extensions, LeafNodeIndex, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider,
+    ProcessedMessageContent, ProtocolMessage, RatchetTreeExtension, RatchetTreeIn,
 };
-use tls_codec::{Deserialize, Serialize};
+use tls_codec::{Deserialize, Serialize, VLBytes};
 
 use crate::member::{
     CommitSummary, ComponentOp, Sender, SharedError, basic_identity, convert_sender,
     resolve_app_data_updates, summarize,
 };
-use crate::{ErrorSource, Store};
+use crate::wire::{PartialGroupInfo, RatchetTreePresence};
+use crate::{ErrorSource, Store, label};
+
+/// RFC 9420 §6: the MLSMessage header for a GroupInfo, `version` mls10
+/// (0x0001) and `wire_format` mls_group_info (0x0004).
+const GROUP_INFO_MESSAGE_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
+
+/// RFC 9420 §12.4.3: the SignWithLabel label of a GroupInfo signature.
+const GROUP_INFO_LABEL: &str = "GroupInfoTBS";
 
 /// The result of [`Observer::process`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +129,15 @@ pub enum ObserverError {
     /// [`Observer::merge_pending_commit`] was called with no Commit pending.
     #[error("no Commit is pending")]
     NoPendingCommit,
+    /// [`Observer::group_info`] was called before this Observer merged any
+    /// Commit, so the GroupInfo signer is unknown.
+    #[error("no Commit has been merged")]
+    NoMergedCommit,
+    /// The GroupInfo rebuilt from a PartialGroupInfo is invalid: its
+    /// signature does not verify under the committer's leaf signature key
+    /// (RFC 9420 §12.4.3), or its extensions are not valid in a GroupInfo.
+    #[error("the rebuilt GroupInfo is invalid")]
+    InvalidPartialGroupInfo(#[source] ErrorSource),
     /// The group state could not be stored.
     #[error("cannot update the group state")]
     Merge(#[source] ErrorSource),
@@ -144,8 +173,11 @@ impl From<SharedError> for ObserverError {
 /// both by group ID.
 pub struct Observer {
     group: PublicGroup,
-    /// The Commit staged by [`Observer::process`], not yet merged.
-    pending_commit: Option<StagedCommit>,
+    /// The Commit staged by [`Observer::process`], not yet merged, with its
+    /// committer's leaf index in the new epoch.
+    pending_commit: Option<(StagedCommit, LeafNodeIndex)>,
+    /// The leaf index of the committer of the last merged Commit.
+    committer: Option<LeafNodeIndex>,
 }
 
 impl Observer {
@@ -203,6 +235,7 @@ impl Observer {
         Ok(Self {
             group,
             pending_commit: None,
+            committer: None,
         })
     }
 
@@ -284,8 +317,20 @@ impl Observer {
                 Ok(Observed::Proposal { sender })
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {
+                let committer = match sender {
+                    Sender::Member(index) => LeafNodeIndex::new(index),
+                    // RFC 9420 §12.4.3.2: the joiner takes the leftmost
+                    // leaf left free after the Commit's Removes.
+                    Sender::NewMemberCommit => self
+                        .group
+                        .ext_commit_sender_index(&staged)
+                        .map_err(|e| ObserverError::Process(e.into()))?,
+                    Sender::External(_) | Sender::NewMemberProposal => {
+                        return Err(ObserverError::UnexpectedMessage);
+                    }
+                };
                 let summary = summarize(sender, &staged, false);
-                self.pending_commit = Some(*staged);
+                self.pending_commit = Some((*staged, committer));
                 Ok(Observed::Commit(summary))
             }
             _ => Err(ObserverError::UnexpectedMessage),
@@ -299,13 +344,15 @@ impl Observer {
     /// Returns [`ObserverError::NoPendingCommit`] if no Commit is pending,
     /// and [`ObserverError::Merge`] if the new state cannot be stored.
     pub fn merge_pending_commit(&mut self, store: &Store) -> Result<(), ObserverError> {
-        let staged = self
+        let (staged, committer) = self
             .pending_commit
             .take()
             .ok_or(ObserverError::NoPendingCommit)?;
         self.group
             .merge_commit(store.provider().storage(), staged)
-            .map_err(|e| ObserverError::Merge(e.into()))
+            .map_err(|e| ObserverError::Merge(e.into()))?;
+        self.committer = Some(committer);
+        Ok(())
     }
 
     /// Drops the pending Commit, if any. Stored proposals are kept.
@@ -365,6 +412,90 @@ impl Observer {
             .tls_serialize_detached()
             .map_err(|e| ObserverError::Encode(e.into()))
     }
+
+    /// Rebuilds the GroupInfo of the current epoch from a PartialGroupInfo
+    /// (ratchet-tree-options-01 §4) and returns it as a TLS-encoded
+    /// `MLSMessage` (RFC 9420 §6, §12.4.3).
+    ///
+    /// Call it after [`Observer::merge_pending_commit`] has merged the
+    /// Commit that `partial` came with. The GroupInfo is built from this
+    /// Observer's state in the new epoch (decision mimid-1wgh.4.20):
+    ///
+    /// - `group_context`: the current GroupContext;
+    /// - `extensions`: `partial`'s `group_info_extensions`, preceded by a
+    ///   ratchet_tree extension carrying the current tree when
+    ///   `ratchet_tree_presence` is `present` or `added`;
+    /// - `confirmation_tag`: the merged Commit's;
+    /// - `signer`: the merged Commit's committer;
+    /// - `signature`: `partial`'s.
+    ///
+    /// The signature is verified with the committer's leaf signature key
+    /// before anything is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::PendingCommit`] while a Commit is pending,
+    /// [`ObserverError::NoMergedCommit`] if this Observer has not merged a
+    /// Commit, [`ObserverError::InvalidPartialGroupInfo`] if the signature
+    /// does not verify (for example, because `partial` belongs to another
+    /// epoch), and [`ObserverError::Encode`] if a structure cannot be
+    /// encoded.
+    pub fn group_info(&self, partial: &PartialGroupInfo) -> Result<Vec<u8>, ObserverError> {
+        if self.pending_commit.is_some() {
+            return Err(ObserverError::PendingCommit);
+        }
+        let committer = self.committer.ok_or(ObserverError::NoMergedCommit)?;
+        // PartialGroupInfo decoding has already checked the list.
+        let mut extensions =
+            Extensions::<OpenMlsGroupInfo>::tls_deserialize_exact(partial.group_info_extensions())
+                .map_err(|e| ObserverError::InvalidPartialGroupInfo(e.into()))?;
+        // Only the current-epoch half of ratchet_tree_presence is used; the
+        // previous-epoch half is not checked. ratchet-tree-options-01 §4;
+        // decision mimid-1wgh.4.47.
+        if matches!(
+            partial.ratchet_tree_presence(),
+            RatchetTreePresence::Present | RatchetTreePresence::Added
+        ) {
+            // ratchet-tree-options-01 §4 does not say where the extension
+            // goes. It goes first, as OpenMLS puts it.
+            // ratchet-tree-options-01 §4; decision mimid-1wgh.4.46
+            let mut list = vec![Extension::RatchetTree(RatchetTreeExtension::new(
+                self.group.export_ratchet_tree(),
+            ))];
+            list.extend(extensions.iter().cloned());
+            extensions = Extensions::from_vec(list)
+                .map_err(|e| ObserverError::InvalidPartialGroupInfo(e.into()))?;
+        }
+
+        // RFC 9420 §12.4.3: GroupInfoTBS.
+        let mut tbs = encode(self.group.group_context())?;
+        tbs.extend(encode(&extensions)?);
+        tbs.extend(encode(self.group.confirmation_tag())?);
+        tbs.extend(encode(&committer)?);
+
+        let leaf = self.group.leaf(committer).ok_or_else(|| {
+            ObserverError::InvalidPartialGroupInfo("the committer's leaf is blank".into())
+        })?;
+        label::verify_with_label(
+            leaf.signature_key().as_slice(),
+            GROUP_INFO_LABEL,
+            &tbs,
+            partial.signature(),
+        )
+        .map_err(|e| ObserverError::InvalidPartialGroupInfo(e.into()))?;
+
+        let mut message = GROUP_INFO_MESSAGE_HEADER.to_vec();
+        message.extend(tbs);
+        message.extend(encode(&VLBytes::new(partial.signature().to_vec()))?);
+        Ok(message)
+    }
+}
+
+/// TLS-encodes `value`.
+fn encode(value: &impl Serialize) -> Result<Vec<u8>, ObserverError> {
+    value
+        .tls_serialize_detached()
+        .map_err(|e| ObserverError::Encode(e.into()))
 }
 
 impl std::fmt::Debug for Observer {

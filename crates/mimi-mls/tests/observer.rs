@@ -10,6 +10,8 @@ use std::cell::RefCell;
 
 use mimi_mls::member::{AppDataUpdate, ComponentOp, Member, Sender};
 use mimi_mls::observer::{Observed, Observer, ObserverError};
+use mimi_mls::tls_codec::{Deserialize, Serialize};
+use mimi_mls::wire::{PartialGroupInfo, RatchetTreeOption, RatchetTreePresence};
 use mimi_mls::{ErrorSource, Identity, Store};
 use mls_rs::extension::ExtensionType;
 use mls_rs::group::{ExportedTree, ReceivedMessage};
@@ -595,4 +597,362 @@ fn app_data_update_commit_from_member() {
         .expect("process Add");
     observer.merge_pending_commit(&store).expect("merge");
     assert_same_public_state(&observer, &eve);
+}
+
+// ---- ratchet-tree-options-01 §4: GroupInfo rebuilt from a PartialGroupInfo ----
+//
+// Oracle: the GroupInfo an mls-rs committer exports for the new epoch. The
+// rebuilt GroupInfo must equal it byte for byte, and mls-rs must accept it
+// for an external join, which verifies its signature under the committer's
+// leaf key.
+
+/// RFC 9420 §12.4.3: an Ed25519 GroupInfo ends with `signature<V>`, a
+/// 2-byte length 0x4040 and 64 bytes. Returns the signature.
+fn group_info_signature(group_info: &[u8]) -> &[u8] {
+    let len = group_info.len();
+    assert_eq!(
+        group_info[len - 66..len - 64],
+        [0x40, 0x40],
+        "signature length"
+    );
+    &group_info[len - 64..]
+}
+
+/// The PartialGroupInfo a committer would send with the Commit that
+/// produced `group_info` (an mls-rs MLSMessage): its extensions without
+/// ratchet_tree, and its signature.
+fn partial_from(group_info: &[u8], presence: RatchetTreePresence) -> PartialGroupInfo {
+    let message = MlsMessage::from_bytes(group_info).expect("decode");
+    let mut extensions = message
+        .as_group_info()
+        .expect("a GroupInfo")
+        .extensions()
+        .clone();
+    extensions.remove(ExtensionType::RATCHET_TREE);
+    let extensions = extensions.mls_encode_to_vec().expect("encode");
+    PartialGroupInfo::new(presence, &extensions, group_info_signature(group_info))
+        .expect("PartialGroupInfo")
+}
+
+/// bob (mls-rs, leaf 1) commits with no proposals; the Observer and bob
+/// merge it.
+fn bob_commits(
+    bob: &mut mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+    store: &Store,
+    observer: &mut Observer,
+) {
+    let commit = bob
+        .commit(Vec::new())
+        .expect("mls-rs commits")
+        .commit_message
+        .to_bytes()
+        .expect("encode");
+    let Observed::Commit(summary) = observer
+        .process(store, &commit, no_components)
+        .expect("Observer stages bob's Commit")
+    else {
+        panic!("not a Commit");
+    };
+    assert_eq!(summary.committer, Sender::Member(1));
+    observer.merge_pending_commit(store).expect("merge");
+    bob.apply_pending_commit().expect("mls-rs merges");
+    assert_same_public_state(observer, bob);
+}
+
+fn mls_rs_group_info(
+    group: &mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+    with_tree: bool,
+    allow_external_commit: bool,
+) -> Vec<u8> {
+    let message = if allow_external_commit {
+        group.group_info_message_allowing_ext_commit(with_tree)
+    } else {
+        group.group_info_message(with_tree)
+    };
+    message
+        .expect("mls-rs GroupInfo")
+        .to_bytes()
+        .expect("encode")
+}
+
+fn assert_invalid_partial(result: Result<Vec<u8>, ObserverError>) {
+    match result {
+        Err(ObserverError::InvalidPartialGroupInfo(_)) => {}
+        other => panic!("unexpected result {other:?}"),
+    }
+}
+
+#[test]
+fn group_info_rebuilt_from_partial_matches_mls_rs_committer() {
+    let (_alice, _member, mut bob, store, mut observer) = setup();
+    bob_commits(&mut bob, &store, &mut observer);
+
+    // (with_tree, allow_external_commit, presences): mls-rs's extension
+    // list is [], [ratchet_tree] and [external_pub]. The rebuilt
+    // ratchet_tree extension carries the Observer's own tree.
+    let cases = [
+        (
+            false,
+            false,
+            [
+                RatchetTreePresence::NoRatchetTree,
+                RatchetTreePresence::Removed,
+            ],
+        ),
+        (
+            true,
+            false,
+            [RatchetTreePresence::Present, RatchetTreePresence::Added],
+        ),
+        (
+            false,
+            true,
+            [
+                RatchetTreePresence::NoRatchetTree,
+                RatchetTreePresence::Removed,
+            ],
+        ),
+    ];
+    for (with_tree, allow_external_commit, presences) in cases {
+        let expected = mls_rs_group_info(&bob, with_tree, allow_external_commit);
+        for presence in presences {
+            let rebuilt = observer
+                .group_info(&partial_from(&expected, presence))
+                .expect("rebuild");
+            assert_eq!(
+                rebuilt, expected,
+                "with_tree={with_tree} external={allow_external_commit} {presence:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rebuilt_group_info_is_accepted_by_mls_rs_and_openmls() {
+    let (_alice, _member, mut bob, store, mut observer) = setup();
+    bob_commits(&mut bob, &store, &mut observer);
+    let from_bob = mls_rs_group_info(&bob, false, true);
+    let rebuilt = observer
+        .group_info(&partial_from(&from_bob, RatchetTreePresence::NoRatchetTree))
+        .expect("rebuild");
+    let tree = observer.ratchet_tree().expect("tree");
+
+    // OpenMLS verifies it as a fresh Observer would.
+    let other_store = Store::open_in_memory().expect("store");
+    let fresh = Observer::from_group_info(&other_store, &rebuilt, Some(&tree))
+        .expect("OpenMLS accepts the rebuilt GroupInfo");
+    assert_eq!(
+        fresh.group_context().expect("context"),
+        observer.group_context().expect("context")
+    );
+
+    // mls-rs verifies it while joining by external Commit (RFC 9420
+    // §12.4.3.2).
+    let carol = mls_rs_client(b"carol");
+    let (_carol_group, commit) = carol
+        .external_commit_builder()
+        .expect("builder")
+        .with_tree_data(ExportedTree::from_bytes(&tree).expect("tree").into_owned())
+        .build(MlsMessage::from_bytes(&rebuilt).expect("decode"))
+        .expect("mls-rs joins from the rebuilt GroupInfo");
+    let Observed::Commit(summary) = observer
+        .process(&store, &commit.to_bytes().expect("encode"), no_components)
+        .expect("Observer stages the external Commit")
+    else {
+        panic!("not a Commit");
+    };
+    assert_eq!(summary.committer, Sender::NewMemberCommit);
+}
+
+/// After an external Commit the signer is the joiner's new leaf, which the
+/// Observer derives from the tree (RFC 9420 §12.4.3.2).
+#[test]
+fn group_info_after_external_commit_uses_joiner_leaf() {
+    let (_alice, _member, mut bob, store, mut observer) = setup();
+    let from_bob = mls_rs_group_info(&bob, true, true);
+    let carol = mls_rs_client(b"carol");
+    let (carol_group, commit) = carol
+        .external_commit_builder()
+        .expect("builder")
+        .build(MlsMessage::from_bytes(&from_bob).expect("decode"))
+        .expect("mls-rs joins");
+    observer
+        .process(&store, &commit.to_bytes().expect("encode"), no_components)
+        .expect("process");
+    observer.merge_pending_commit(&store).expect("merge");
+    bob.process_incoming_message(commit).expect("bob merges");
+    assert_eq!(carol_group.current_member_index(), 2);
+    assert_same_public_state(&observer, &carol_group);
+
+    for (with_tree, presence) in [
+        (false, RatchetTreePresence::Removed),
+        (true, RatchetTreePresence::Present),
+    ] {
+        let expected = mls_rs_group_info(&carol_group, with_tree, false);
+        assert_eq!(
+            observer
+                .group_info(&partial_from(&expected, presence))
+                .expect("rebuild"),
+            expected
+        );
+    }
+    // bob's GroupInfo for the same epoch is signed by leaf 1, not by the
+    // committer, so it does not verify as the committer's.
+    let from_bob = mls_rs_group_info(&bob, false, false);
+    assert_invalid_partial(
+        observer.group_info(&partial_from(&from_bob, RatchetTreePresence::NoRatchetTree)),
+    );
+}
+
+#[test]
+fn group_info_needs_a_merged_commit_and_none_pending() {
+    let (_alice, _member, mut bob, store, mut observer) = setup();
+    // The epoch the Observer started in has no known committer.
+    let epoch_1 = partial_from(
+        &mls_rs_group_info(&bob, false, false),
+        RatchetTreePresence::NoRatchetTree,
+    );
+    assert!(matches!(
+        observer.group_info(&epoch_1),
+        Err(ObserverError::NoMergedCommit)
+    ));
+
+    bob_commits(&mut bob, &store, &mut observer);
+    let epoch_2 = partial_from(
+        &mls_rs_group_info(&bob, false, false),
+        RatchetTreePresence::NoRatchetTree,
+    );
+    observer.group_info(&epoch_2).expect("rebuild");
+
+    // While the next Commit is pending, nothing is rebuilt.
+    let next = bob
+        .commit(Vec::new())
+        .expect("mls-rs commits")
+        .commit_message
+        .to_bytes()
+        .expect("encode");
+    observer
+        .process(&store, &next, no_components)
+        .expect("stage");
+    assert!(matches!(
+        observer.group_info(&epoch_2),
+        Err(ObserverError::PendingCommit)
+    ));
+    observer.clear_pending_commit();
+    observer.group_info(&epoch_2).expect("rebuild after clear");
+}
+
+#[test]
+fn group_info_from_another_epoch_is_rejected() {
+    let (_alice, _member, mut bob, store, mut observer) = setup();
+    bob_commits(&mut bob, &store, &mut observer);
+    let epoch_2 = partial_from(
+        &mls_rs_group_info(&bob, false, false),
+        RatchetTreePresence::NoRatchetTree,
+    );
+    bob_commits(&mut bob, &store, &mut observer);
+    assert_invalid_partial(observer.group_info(&epoch_2));
+}
+
+#[test]
+fn tampered_partial_group_info_is_rejected() {
+    let (_alice, _member, mut bob, store, mut observer) = setup();
+    bob_commits(&mut bob, &store, &mut observer);
+    let plain = mls_rs_group_info(&bob, false, false);
+
+    // Wrong current-epoch half of ratchet_tree_presence.
+    for presence in [RatchetTreePresence::Present, RatchetTreePresence::Added] {
+        assert_invalid_partial(observer.group_info(&partial_from(&plain, presence)));
+    }
+    let with_tree = mls_rs_group_info(&bob, true, false);
+    assert_invalid_partial(observer.group_info(&partial_from(
+        &with_tree,
+        RatchetTreePresence::NoRatchetTree,
+    )));
+
+    // An extension dropped: the signature over [external_pub] with an
+    // empty list.
+    let with_external_pub = mls_rs_group_info(&bob, false, true);
+    let dropped = PartialGroupInfo::new(
+        RatchetTreePresence::NoRatchetTree,
+        &[0x00],
+        group_info_signature(&with_external_pub),
+    )
+    .expect("PartialGroupInfo");
+    assert_invalid_partial(observer.group_info(&dropped));
+
+    // Bit 0 of each signature byte flipped in turn, then a truncated
+    // signature.
+    let signature = group_info_signature(&plain).to_vec();
+    for i in 0..signature.len() {
+        let mut flipped = signature.clone();
+        flipped[i] ^= 0x01;
+        let partial = PartialGroupInfo::new(RatchetTreePresence::NoRatchetTree, &[0x00], &flipped)
+            .expect("PartialGroupInfo");
+        assert_invalid_partial(observer.group_info(&partial));
+    }
+    let partial = PartialGroupInfo::new(
+        RatchetTreePresence::NoRatchetTree,
+        &[0x00],
+        &signature[..63],
+    )
+    .expect("PartialGroupInfo");
+    assert_invalid_partial(observer.group_info(&partial));
+}
+
+/// A PartialGroupInfo keeping mls-rs's ratchet_tree extension is rejected
+/// at decode (decision mimid-1wgh.4.30), a real one re-encodes byte for
+/// byte, and every truncation of it fails to decode.
+#[test]
+fn partial_group_info_from_mls_rs_decodes_strictly() {
+    let (_alice, _member, mut bob, store, mut observer) = setup();
+    bob_commits(&mut bob, &store, &mut observer);
+    let with_tree = mls_rs_group_info(&bob, true, true);
+    let message = MlsMessage::from_bytes(&with_tree).expect("decode");
+    let extensions = message
+        .as_group_info()
+        .expect("GroupInfo")
+        .extensions()
+        .mls_encode_to_vec()
+        .expect("encode");
+    assert!(
+        PartialGroupInfo::new(
+            RatchetTreePresence::Present,
+            &extensions,
+            group_info_signature(&with_tree)
+        )
+        .is_err()
+    );
+
+    let encoded = partial_from(&with_tree, RatchetTreePresence::Present)
+        .tls_serialize_detached()
+        .expect("encode");
+    let decoded = PartialGroupInfo::tls_deserialize_exact(&encoded).expect("decode");
+    assert_eq!(decoded.tls_serialize_detached().expect("encode"), encoded);
+    for len in 0..encoded.len() {
+        assert!(
+            PartialGroupInfo::tls_deserialize_exact(&encoded[..len]).is_err(),
+            "prefix of {len} bytes decoded"
+        );
+    }
+}
+
+/// A `full` RatchetTreeOption carrying mls-rs's exported tree decodes to
+/// that tree and re-encodes byte for byte; the Observer's tree gives the
+/// same option.
+#[test]
+fn full_ratchet_tree_option_carries_mls_rs_tree() {
+    let (_alice, _member, mut bob, store, mut observer) = setup();
+    bob_commits(&mut bob, &store, &mut observer);
+    let tree = bob.export_tree().to_bytes().expect("mls-rs tree");
+    // ratchet-tree-options-01 §3: representation full(1), then the tree.
+    let mut encoded = vec![0x01];
+    encoded.extend_from_slice(&tree);
+    let option = RatchetTreeOption::tls_deserialize_exact(&encoded).expect("decode");
+    assert_eq!(option.ratchet_tree(), Some(&tree[..]));
+    assert_eq!(option.tls_serialize_detached().expect("encode"), encoded);
+    assert_eq!(
+        RatchetTreeOption::full(&observer.ratchet_tree().expect("tree")).expect("full"),
+        option
+    );
 }
