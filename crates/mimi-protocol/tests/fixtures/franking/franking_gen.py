@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent oracle for protocol-06 franking HMACs (mimid-1wgh.5.4).
+"""Independent oracle for protocol-06 franking (mimid-1wgh.5.4, .5.6).
 
 Computes, from the text of draft-ietf-mimi-protocol-06 alone:
 
@@ -19,15 +19,38 @@ big-endian (RFC 8446 §3.3), and "||" is the raw 32-byte tag followed by the
 encoded context (decision mimid-1wgh.5.28). application_data is opaque here
 (decision mimid-1wgh.5.29).
 
-Standard library only (hmac, hashlib, struct). It does not call or read any
-mimid code. Regenerate:
+It also computes the hub's integrity signature (§5.4.1.2):
 
-  python3 -I franking_gen.py > franking_gen.out
+  struct {
+      opaque server_frank[32];
+      CipherSuite franking_signature_ciphersuite;   /* uint16 */
+      ServerFrankingContext context;
+  } FrankingIntegrityTBS;
+
+  franking_integrity_signature = SignWithLabel(franking_private_key,
+      "FrankingIntegrityTBS", FrankingIntegrityTBS)
+
+with RFC 9420 §5.1.2 SignWithLabel over Ed25519, which is deterministic
+(RFC 8032 §5.1.6). Before printing anything it self-checks SignWithLabel
+against the suite 1 entry of the mlswg crypto-basics.json vectors.
+
+Standard library (hmac, hashlib, struct, json) plus pyca/cryptography for
+Ed25519. It does not call or read any mimid code. Regenerate (from this
+directory):
+
+  python3 -I franking_gen.py \\
+    ../../../../mimi-mls/tests/fixtures/crypto-basics/crypto-basics.json \\
+    > franking_gen.out
 """
 
 import hashlib
 import hmac
+import json
 import struct
+import sys
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 def varint(n):
@@ -79,6 +102,29 @@ def extensions_map(sender_uri, room_uri):
     opaque.
     """
     return bytes([0xA2, 0x01]) + cbor_tstr(sender_uri) + bytes([0x02]) + cbor_tstr(room_uri)
+
+
+def sign_with_label(seed, label, content):
+    """RFC 9420 §5.1.2: sign SignContent { "MLS 1.0 " + label, content }."""
+    sign_content = opaque_v(b"MLS 1.0 " + label) + opaque_v(content)
+    return Ed25519PrivateKey.from_private_bytes(seed).sign(sign_content)
+
+
+def ed25519_pub(seed):
+    return Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+
+
+def self_check_sign(crypto_basics_path):
+    """mlswg crypto-basics.json, cipher_suite 1, sign_with_label."""
+    with open(crypto_basics_path, encoding="utf-8") as f:
+        entry = next(e for e in json.load(f) if e["cipher_suite"] == 1)
+    v = entry["sign_with_label"]
+    seed = bytes.fromhex(v["priv"])
+    assert ed25519_pub(seed).hex() == v["pub"], "Ed25519 public key self-check failed"
+    sig = sign_with_label(seed, v["label"].encode(), bytes.fromhex(v["content"]))
+    assert sig.hex() == v["signature"], "SignWithLabel self-check failed"
 
 
 def self_check():
@@ -151,8 +197,26 @@ def show(label, b):
         print(f"  {label} = len {len(b)} sha256 {hashlib.sha256(b).hexdigest()} head {b[:8].hex()}")
 
 
+FRANKING_SEED = bytes([0x55] * 32)
+SUITE_1 = 0x0001
+SUITE_3 = 0x0003  # MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519
+
+
+def integrity_cases():
+    """Each case signs the server_frank and context of a frank_cases entry."""
+    return [
+        # (name, frank_cases name, franking_signature_ciphersuite)
+        ("basic", "basic", SUITE_1),
+        ("empty_uris_zero_timestamp", "empty_uris_zero_timestamp", SUITE_1),
+        ("max_timestamp", "max_timestamp", SUITE_1),
+        ("long_room_uri_4byte_prefix", "long_room_uri_4byte_prefix", SUITE_1),
+        ("suite_3", "basic", SUITE_3),
+    ]
+
+
 def main():
     self_check()
+    self_check_sign(sys.argv[1])
     print("# franking_gen.py output: see PROVENANCE. Hex is lowercase.")
     for name, salt, data, desc in TAG_CASES:
         print(f"franking_tag {name}")
@@ -168,6 +232,22 @@ def main():
         print(f"  sender_uri len {len(sender)}, room_uri len {len(room)}, accepted_timestamp = {ts}")
         show("context", ctx)
         print(f"  server_frank = {hmac_sha256(key, tag + ctx).hex()}")
+    franks = {}
+    for name, key, tag, sender, room, ts in frank_cases():
+        ctx = server_franking_context(sender, room, ts)
+        franks[name] = (hmac_sha256(key, tag + ctx), ctx)
+    print("franking_key")
+    print(f"  seed = {FRANKING_SEED.hex()}")
+    print(f"  franking_signature_key = {ed25519_pub(FRANKING_SEED).hex()}")
+    for name, frank_case, suite in integrity_cases():
+        frank, ctx = franks[frank_case]
+        tbs = frank + struct.pack(">H", suite) + ctx
+        print(f"franking_integrity {name}")
+        print(f"  server_frank = {frank.hex()} (server_frank {frank_case})")
+        print(f"  franking_signature_ciphersuite = {suite:#06x}")
+        show("tbs", tbs)
+        sig = sign_with_label(FRANKING_SEED, b"FrankingIntegrityTBS", tbs)
+        print(f"  franking_integrity_signature = {sig.hex()}")
 
 
 if __name__ == "__main__":

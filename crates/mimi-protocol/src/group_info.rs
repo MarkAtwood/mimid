@@ -65,7 +65,7 @@ impl<R: Read> Read for Recorder<'_, R> {
     }
 }
 
-fn check_cipher_suite(cipher_suite: CipherSuite) -> Result<(), Error> {
+pub(crate) fn check_cipher_suite(cipher_suite: CipherSuite) -> Result<(), Error> {
     match u16::from(cipher_suite) {
         SUPPORTED_CIPHER_SUITE => Ok(()),
         other => Err(Error::UnsupportedCipherSuite {
@@ -75,7 +75,7 @@ fn check_cipher_suite(cipher_suite: CipherSuite) -> Result<(), Error> {
 }
 
 /// Returns the raw key bytes of an `opaque key<V>` encoding.
-fn key_bytes(encoded: &[u8]) -> Result<VLBytes, Error> {
+pub(crate) fn key_bytes(encoded: &[u8]) -> Result<VLBytes, Error> {
     VLBytes::tls_deserialize_exact(encoded).map_err(Error::Decoding)
 }
 

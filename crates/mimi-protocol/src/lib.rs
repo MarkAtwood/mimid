@@ -32,14 +32,32 @@
 //!   HMACs
 //!   ([`franking_tag`], [`server_frank`] over a [`ServerFrankingContext`],
 //!   with constant-time [`verify_franking_tag`] and
-//!   [`verify_server_frank`]).
-//! - Franking computes and checks the HMACs only. The
-//!   franking_integrity_signature is not here (task mimid-1wgh.5.6), and
-//!   the caller extracts the salt, sender URI and room URI from the MIMI
-//!   content. [`ServerFrankingContext`] URIs are [`IdentifierUri`]s, so a
-//!   non-ASCII URI must arrive percent-encoded. [`HubKey`] redacts `Debug`
-//!   but is not zeroized on drop (protocol-06 §5.4.1.2; decision
-//!   mimid-1wgh.5.53).
+//!   [`verify_server_frank`]), the franking_agent component
+//!   ([`FrankingAgentData`]), the franking_integrity_signature
+//!   ([`FrankingIntegrityTbs::sign`], [`Frank::verify_integrity`]), the
+//!   §5.4.1.3 receiver checks ([`ReceivedFrank::verify`]), and the
+//!   reportAbuse body ([`AbuseReport`], [`AbusiveMessage`],
+//!   [`AbuseType`]).
+//! - Franking takes the salt, sender URI and room URI as inputs: the caller
+//!   extracts them from the MIMI content. [`ServerFrankingContext`] URIs
+//!   are [`IdentifierUri`]s, so a non-ASCII URI must arrive percent-encoded.
+//!   [`HubKey`] redacts `Debug` but is not zeroized on drop (protocol-06
+//!   §5.4.1.2; decision mimid-1wgh.5.53). The franking_integrity_signature
+//!   supports ciphersuite 1 only, like groupInfo signing.
+//! - [`ReceivedFrank::verify`] does not check that the franking_agent
+//!   credential names the hub's domain, which §5.4.1.3 requires: credentials
+//!   are only encoded bytes here, so the caller checks it (decision
+//!   mimid-1wgh.5.56). A frank whose ciphersuite is not the group's is an
+//!   error (decision mimid-1wgh.5.57). A receiver cannot check
+//!   `server_frank` at all; only the hub, holding the [`HubKey`], can. The
+//!   signed context uses the content URIs, compared byte for byte, without
+//!   normalization (decision mimid-1wgh.5.58).
+//! - [`AbuseReport`] codecs check the wire form only. Validating an
+//!   [`AbusiveMessage`] is left to the hub, composing the franking
+//!   functions above. An empty [`AbuseReport::reporting_user`] means absent
+//!   (decision mimid-1wgh.5.59). [`AbuseReport::note`] is opaque bytes, not
+//!   checked to be UTF-8 (decision mimid-1wgh.5.60), and any [`AbuseType`]
+//!   value is accepted (decision mimid-1wgh.5.32).
 //! - MLS structures come from [`mimi_mls::wire`], which cannot decode a
 //!   SemiPrivateMessage. A [`HandshakeBundle`] or [`FanoutMessage`] whose
 //!   handshake is a SemiPrivateMessage, which §5.3 and §5.5 allow, is
@@ -95,6 +113,7 @@
 
 #![forbid(unsafe_code)]
 
+mod abuse;
 mod component;
 mod directory;
 mod frank;
@@ -105,14 +124,16 @@ mod update;
 mod uri_template;
 mod utf8_string;
 
+pub use abuse::{AbuseReport, AbuseType, AbusiveMessage};
 pub use component::{
     ParticipantListData, ParticipantListUpdate, RichDescription, RoomMetaData, RoomMetaUpdate, Uri,
     UserRolePair, UserindexRolePair,
 };
 pub use directory::Directory;
 pub use frank::{
-    Frank, FrankAad, HubKey, ServerFrankingContext, franking_tag, server_frank,
-    verify_franking_tag, verify_server_frank,
+    Frank, FrankAad, FrankingAgentData, FrankingAgentUpdate, FrankingIntegrityTbs, HubKey,
+    ReceivedFrank, ServerFrankingContext, franking_tag, server_frank, verify_franking_tag,
+    verify_server_frank,
 };
 pub use group_info::{
     GroupInfoCode, GroupInfoRatchetTreeTbe, GroupInfoRequest, GroupInfoRequestTbs,
@@ -138,6 +159,11 @@ pub mod component_id {
     /// `frank_aad` (§10.1), a Safe AAD component carrying
     /// [`FrankAad`](crate::FrankAad).
     pub const FRANK_AAD: u16 = 0x0020;
+    /// `franking_signature_key` (§10.2), the GroupContext component §5.4.1
+    /// calls `franking_agent`, carrying
+    /// [`FrankingAgentData`](crate::FrankingAgentData) (decision
+    /// mimid-1wgh.4.18).
+    pub const FRANKING_AGENT: u16 = 0x0021;
     /// `participant_list` (§10.3), a GroupContext component carrying
     /// [`ParticipantListData`](crate::ParticipantListData).
     pub const PARTICIPANT_LIST: u16 = 0x0022;
@@ -203,6 +229,23 @@ pub enum Error {
     /// context (§5.4.1.2).
     #[error("server_frank does not match")]
     ServerFrankMismatch,
+    /// A frank's `franking_signature_ciphersuite` is not the group's
+    /// ciphersuite (§5.4.1.3; decision mimid-1wgh.5.57).
+    #[error("frank ciphersuite {frank:#06x} is not the group's {group:#06x}")]
+    FrankCipherSuiteMismatch {
+        /// The ciphersuite named in the frank.
+        frank: u16,
+        /// The group's ciphersuite.
+        group: u16,
+    },
+    /// The sender URI in a franked message's content is not the sender's
+    /// authenticated identity (§5.4.1.3).
+    #[error("franked sender URI does not match the authenticated sender")]
+    FrankSenderMismatch,
+    /// The room URI in a franked message's content is not the room it
+    /// arrived for (§5.4.1.3).
+    #[error("franked room URI does not match the room")]
+    FrankRoomMismatch,
     /// A value could not be TLS-encoded.
     #[error("TLS encoding failed")]
     Encoding(#[source] tls_codec::Error),
