@@ -5,13 +5,17 @@
 //! §4.2.1, which content-09 §6.1 requires of senders. It rejects
 //! indefinite lengths, heads that are not in shortest form, map keys out
 //! of bytewise order or repeated, trailing bytes, and anything the CDDL of
-//! Appendix A.1 does not allow. Limits are the encoder's, and each is
+//! Appendix A.1 does not allow. Unknown extension values are checked
+//! against the rules of §6 and kept as their exact bytes. Limits are the
+//! encoder's, and each is
 //! checked as soon as the value that could break it is read, before the
 //! data it guards is copied.
 //!
 //! It reads CBOR heads itself instead of through minicbor, because
 //! minicbor's decoder accepts integers and lengths that are not in
 //! shortest form.
+
+use core::cmp::Ordering;
 
 use crate::content::{
     Disposition, Expiration, Extensions, ExternalPart, MessageId, MimiContent, NestedPart, Part,
@@ -22,14 +26,29 @@ use crate::encode::{
     MAX_NESTING_DEPTH, MAX_PARTS, MAX_TOPIC_ID_LEN, MIN_MULTIPART_PARTS, ROOM_URI_KEY,
     SENDER_URI_KEY,
 };
+use crate::extension::{
+    ExtensionKey, MAX_EXTENSION_DEPTH, MAX_EXTENSION_KEY_LEN, MAX_INTEGER_KEY, RawValue,
+};
 
 /// CBOR major types (RFC 8949 §3.1).
-const MAJOR_UNSIGNED: u8 = 0;
-const MAJOR_NEGATIVE: u8 = 1;
+pub(crate) const MAJOR_UNSIGNED: u8 = 0;
+pub(crate) const MAJOR_NEGATIVE: u8 = 1;
 const MAJOR_BYTES: u8 = 2;
-const MAJOR_TEXT: u8 = 3;
+pub(crate) const MAJOR_TEXT: u8 = 3;
 const MAJOR_ARRAY: u8 = 4;
 const MAJOR_MAP: u8 = 5;
+const MAJOR_TAG: u8 = 6;
+const MAJOR_SIMPLE: u8 = 7;
+
+/// Tags for unsigned and negative bignums (RFC 8949 §3.4.3).
+const TAG_POSITIVE_BIGNUM: u64 = 2;
+const TAG_NEGATIVE_BIGNUM: u64 = 3;
+/// Longest bignum content that still fits a plain integer, in octets.
+const MAX_PLAIN_INTEGER_LEN: usize = 8;
+/// The only NaN encoding §6.2 permits: half-width quiet NaN, `0xf97e00`.
+const HALF_QUIET_NAN: u16 = 0x7e00;
+/// Smallest simple value that may use the two-byte form (RFC 8949 §3.3).
+const MIN_TWO_BYTE_SIMPLE: u8 = 32;
 
 /// The one-byte encodings of `false`, `true` and `null` (RFC 8949 §3.3).
 const SIMPLE_FALSE: u8 = 0xf4;
@@ -65,8 +84,9 @@ pub enum DecodeError {
         count: usize,
     },
     /// A CBOR head is not well-formed: reserved additional information
-    /// 28 to 30, or additional information 31 where no indefinite length
-    /// is possible (RFC 8949 §3).
+    /// 28 to 30, additional information 31 where no indefinite length is
+    /// possible, or a simple value below 32 in the two-byte form (RFC 8949
+    /// §3, §3.3).
     #[error("malformed CBOR head at offset {offset}")]
     Malformed {
         /// Offset of the head.
@@ -78,8 +98,9 @@ pub enum DecodeError {
         /// Offset of the head.
         offset: usize,
     },
-    /// An integer or length is not in its shortest form (§6.1).
-    #[error("CBOR head at offset {offset} is not in shortest form")]
+    /// An integer, length, tag or float is not in its shortest form, or a
+    /// bignum fits a plain integer or has leading zero octets (§6.1).
+    #[error("CBOR item at offset {offset} is not in shortest form")]
     NotShortestForm {
         /// Offset of the head.
         offset: usize,
@@ -162,12 +183,25 @@ pub enum DecodeError {
         /// Offset of the key.
         offset: usize,
     },
-    /// The extensions map holds a key other than `senderUri` (1) or
-    /// `roomUri` (2). Such messages are valid, but this crate cannot yet
-    /// represent them, so it rejects them rather than drop data.
-    #[error("unsupported extension key at offset {offset}")]
-    UnsupportedExtension {
+    /// An integer map key has magnitude above [`MAX_INTEGER_KEY`] (§6.2),
+    /// or a text extension key is empty or longer than
+    /// [`MAX_EXTENSION_KEY_LEN`] octets (§4.3).
+    #[error("map key at offset {offset} is out of range")]
+    MapKeyOutOfRange {
         /// Offset of the key.
+        offset: usize,
+    },
+    /// Maps, arrays and tags in the extensions map nest deeper than
+    /// [`MAX_EXTENSION_DEPTH`] (§6.3; decision mimid-1wgh.2.14).
+    #[error("extension nesting exceeds {MAX_EXTENSION_DEPTH} levels at offset {offset}")]
+    ExtensionTooDeep {
+        /// Offset of the first item past the limit.
+        offset: usize,
+    },
+    /// A float is a NaN other than half-width quiet NaN, `0xf97e00` (§6.2).
+    #[error("disallowed NaN encoding at offset {offset}")]
+    DisallowedNaN {
+        /// Offset of the item.
         offset: usize,
     },
 }
@@ -183,9 +217,9 @@ impl MimiContent {
     /// Returns a [`DecodeError`] if `input` is not exactly one
     /// deterministically encoded item matching the schema of §4, or if it
     /// breaks a limit: nesting deeper than [`MAX_NESTING_DEPTH`], more than
-    /// [`MAX_PARTS`] parts, or a `topicId` longer than [`MAX_TOPIC_ID_LEN`].
-    /// It also fails on extension keys other than 1 and 2 (see
-    /// [`DecodeError::UnsupportedExtension`]).
+    /// [`MAX_PARTS`] parts, a `topicId` longer than [`MAX_TOPIC_ID_LEN`],
+    /// or extension nesting deeper than [`MAX_EXTENSION_DEPTH`]. Extension
+    /// keys and values must also meet the rules of §4.3 and §6.2.
     pub fn decode(input: &[u8]) -> Result<Self, DecodeError> {
         let mut r = Reader { input, pos: 0 };
         let content = read_content(&mut r)?;
@@ -338,6 +372,57 @@ impl<'a> Reader<'a> {
         read(self).map(Some)
     }
 
+    /// Reads past a major type 7 item: a simple value or a float. Floats
+    /// must be in shortest form (RFC 8949 §4.2.1), and the only NaN allowed
+    /// is half-width quiet NaN (§6.2).
+    fn simple_or_float(&mut self) -> DecodeResult<()> {
+        let offset = self.pos;
+        let not_shortest = || Err(DecodeError::NotShortestForm { offset });
+        let nan = || Err(DecodeError::DisallowedNaN { offset });
+        match self.byte()? & 0x1f {
+            0..=23 => Ok(()),
+            24 => {
+                if self.byte()? < MIN_TWO_BYTE_SIMPLE {
+                    return Err(DecodeError::Malformed { offset });
+                }
+                Ok(())
+            }
+            25 => {
+                let bits = u16::from_be_bytes(self.take_array()?);
+                let is_nan = bits & 0x7c00 == 0x7c00 && bits & 0x03ff != 0;
+                if is_nan && bits != HALF_QUIET_NAN {
+                    return nan();
+                }
+                Ok(())
+            }
+            26 => {
+                let value = f32::from_be_bytes(self.take_array()?);
+                if value.is_nan() {
+                    nan()
+                } else if fits_f16(f64::from(value)) {
+                    not_shortest()
+                } else {
+                    Ok(())
+                }
+            }
+            27 => {
+                let value = f64::from_be_bytes(self.take_array()?);
+                if value.is_nan() {
+                    nan()
+                } else if f64::from(value as f32) == value {
+                    // Every half float is also a single float, so this
+                    // catches values that fit either.
+                    not_shortest()
+                } else {
+                    Ok(())
+                }
+            }
+            // 28 to 30 are reserved; 31 is a break outside an
+            // indefinite-length item.
+            _ => Err(DecodeError::Malformed { offset }),
+        }
+    }
+
     fn message_id(&mut self, field: &'static str) -> DecodeResult<MessageId> {
         self.fixed_bytes(field).map(MessageId)
     }
@@ -385,47 +470,191 @@ fn read_expiration(r: &mut Reader<'_>) -> DecodeResult<Expiration> {
     })
 }
 
-/// Reads the extensions map (§4.3). Keys must be in RFC 8949 §4.2.1
-/// bytewise order with no repeats; comparing each key's encoded bytes with
-/// the previous key's enforces both.
+/// Reads the extensions map (§4.3), level 1 of [`MAX_EXTENSION_DEPTH`].
+/// Keys 1 and 2 must hold text (the `^` cut in the CDDL); every other key,
+/// including reserved key 0 (decision mimid-1wgh.2.20), is kept with its
+/// value's exact bytes.
 fn read_extensions(r: &mut Reader<'_>) -> DecodeResult<Extensions> {
     let count = r.head(MAJOR_MAP, "mimiExtensions")?;
     let mut extensions = Extensions::default();
-    let mut previous_key: Option<&[u8]> = None;
+    let mut previous_key = None;
     // Each entry consumes input or fails, so a huge declared count only
     // runs until the input ends.
     for _ in 0..count {
         let offset = r.pos;
-        let key = match r.peek()? >> 5 {
-            MAJOR_UNSIGNED => r.uint("extension key")?,
-            MAJOR_NEGATIVE | MAJOR_TEXT => {
-                return Err(DecodeError::UnsupportedExtension { offset });
+        let key = read_extension_key(r)?;
+        check_key_order(r, &mut previous_key, offset)?;
+        match key {
+            ExtensionKey::Uint(SENDER_URI_KEY) => {
+                extensions.sender_uri = Some(r.text("senderUri")?.to_owned());
             }
-            _ => {
-                return Err(DecodeError::UnexpectedType {
-                    field: "extension key",
-                    offset,
-                });
+            ExtensionKey::Uint(ROOM_URI_KEY) => {
+                extensions.room_uri = Some(r.text("roomUri")?.to_owned());
             }
-        };
-        let key_bytes = r.input.get(offset..r.pos).ok_or(DecodeError::Truncated)?;
-        if let Some(previous) = previous_key {
-            match key_bytes.cmp(previous) {
-                core::cmp::Ordering::Less => return Err(DecodeError::MapKeysNotSorted { offset }),
-                core::cmp::Ordering::Equal => return Err(DecodeError::DuplicateMapKey { offset }),
-                core::cmp::Ordering::Greater => {}
+            key => {
+                let start = r.pos;
+                validate_item(r, 2)?;
+                let value = r.input.get(start..r.pos).ok_or(DecodeError::Truncated)?;
+                extensions
+                    .other
+                    .insert(key, RawValue::from_validated(value));
             }
-        }
-        previous_key = Some(key_bytes);
-        if key == u64::from(SENDER_URI_KEY) {
-            extensions.sender_uri = Some(r.text("senderUri")?.to_owned());
-        } else if key == u64::from(ROOM_URI_KEY) {
-            extensions.room_uri = Some(r.text("roomUri")?.to_owned());
-        } else {
-            return Err(DecodeError::UnsupportedExtension { offset });
         }
     }
     Ok(extensions)
+}
+
+/// Reads an extensions map key: an integer of magnitude at most
+/// [`MAX_INTEGER_KEY`] (§6.2), or text of 1 to [`MAX_EXTENSION_KEY_LEN`]
+/// octets (§4.3). The text length is checked before its octets are read.
+fn read_extension_key(r: &mut Reader<'_>) -> DecodeResult<ExtensionKey> {
+    const FIELD: &str = "extension key";
+    let offset = r.pos;
+    let key = match r.peek()? >> 5 {
+        MAJOR_UNSIGNED => ExtensionKey::Uint(r.uint(FIELD)?),
+        MAJOR_NEGATIVE => ExtensionKey::Nint(r.head(MAJOR_NEGATIVE, FIELD)?),
+        MAJOR_TEXT => {
+            let len = r.head(MAJOR_TEXT, FIELD)?;
+            if !(1..=MAX_EXTENSION_KEY_LEN as u64).contains(&len) {
+                return Err(DecodeError::MapKeyOutOfRange { offset });
+            }
+            let raw = r.take(len)?;
+            let text = core::str::from_utf8(raw).map_err(|_| DecodeError::InvalidUtf8 {
+                field: FIELD,
+                offset,
+            })?;
+            ExtensionKey::Text(text.to_owned())
+        }
+        _ => {
+            return Err(DecodeError::UnexpectedType {
+                field: FIELD,
+                offset,
+            });
+        }
+    };
+    if !key.is_valid() {
+        return Err(DecodeError::MapKeyOutOfRange { offset });
+    }
+    Ok(key)
+}
+
+/// Checks that the map key just read, from `offset` to the reader's
+/// position, sorts after `previous` in RFC 8949 §4.2.1 bytewise order.
+/// That one comparison rejects both misordered and repeated keys (§4.3,
+/// §6.1). Records the key as the new `previous`.
+fn check_key_order<'a>(
+    r: &Reader<'a>,
+    previous: &mut Option<&'a [u8]>,
+    offset: usize,
+) -> DecodeResult<()> {
+    let key = r.input.get(offset..r.pos).ok_or(DecodeError::Truncated)?;
+    if let Some(previous) = previous {
+        match key.cmp(previous) {
+            Ordering::Less => return Err(DecodeError::MapKeysNotSorted { offset }),
+            Ordering::Equal => return Err(DecodeError::DuplicateMapKey { offset }),
+            Ordering::Greater => {}
+        }
+    }
+    *previous = Some(key);
+    Ok(())
+}
+
+/// Checks that `bytes` is exactly one extension value (see
+/// [`RawValue::new`]).
+pub(crate) fn validate_raw_value(bytes: &[u8]) -> DecodeResult<()> {
+    let mut r = Reader {
+        input: bytes,
+        pos: 0,
+    };
+    validate_item(&mut r, 2)?;
+    let count = bytes.len() - r.pos;
+    if count != 0 {
+        return Err(DecodeError::TrailingBytes { count });
+    }
+    Ok(())
+}
+
+/// Reads past one item inside an extension, checking the rules of §6.
+/// `depth` is the level a map, array or tag at this position occupies
+/// (decision mimid-1wgh.2.14); one past [`MAX_EXTENSION_DEPTH`] fails
+/// before its contents are read, which bounds the recursion.
+fn validate_item(r: &mut Reader<'_>, depth: usize) -> DecodeResult<()> {
+    const FIELD: &str = "extension value";
+    let offset = r.pos;
+    let major = r.peek()? >> 5;
+    if major == MAJOR_SIMPLE {
+        return r.simple_or_float();
+    }
+    let arg = r.head(major, FIELD)?;
+    if matches!(major, MAJOR_ARRAY | MAJOR_MAP | MAJOR_TAG) && depth > MAX_EXTENSION_DEPTH {
+        return Err(DecodeError::ExtensionTooDeep { offset });
+    }
+    match major {
+        MAJOR_BYTES => {
+            r.take(arg)?;
+        }
+        MAJOR_TEXT => {
+            let raw = r.take(arg)?;
+            core::str::from_utf8(raw).map_err(|_| DecodeError::InvalidUtf8 {
+                field: FIELD,
+                offset,
+            })?;
+        }
+        MAJOR_ARRAY => {
+            for _ in 0..arg {
+                validate_item(r, depth + 1)?;
+            }
+        }
+        MAJOR_MAP => {
+            let mut previous_key = None;
+            for _ in 0..arg {
+                let key_offset = r.pos;
+                read_nested_key(r)?;
+                check_key_order(r, &mut previous_key, key_offset)?;
+                validate_item(r, depth + 1)?;
+            }
+        }
+        MAJOR_TAG if matches!(arg, TAG_POSITIVE_BIGNUM | TAG_NEGATIVE_BIGNUM) => {
+            // RFC 8949 §3.4.3 preferred serialization, required by §4.2.1
+            // and content-09 §6.1: no leading zeros, and a value that fits
+            // major type 0 or 1 is written that way.
+            let content_offset = r.pos;
+            let content = r.bytes("bignum")?;
+            if content.len() <= MAX_PLAIN_INTEGER_LEN || content.first() == Some(&0) {
+                return Err(DecodeError::NotShortestForm {
+                    offset: content_offset,
+                });
+            }
+        }
+        MAJOR_TAG => validate_item(r, depth + 1)?,
+        // Integers carry their value in the head.
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Reads a key of a map nested in an extension: an integer of magnitude
+/// at most [`MAX_INTEGER_KEY`], a text string, or a byte string (§6.2).
+fn read_nested_key(r: &mut Reader<'_>) -> DecodeResult<()> {
+    const FIELD: &str = "map key";
+    let offset = r.pos;
+    let in_range = match r.peek()? >> 5 {
+        MAJOR_UNSIGNED => r.uint(FIELD)? <= MAX_INTEGER_KEY,
+        // -1 - n >= -MAX_INTEGER_KEY
+        MAJOR_NEGATIVE => r.head(MAJOR_NEGATIVE, FIELD)? < MAX_INTEGER_KEY,
+        MAJOR_TEXT => r.text(FIELD).map(|_| true)?,
+        MAJOR_BYTES => r.bytes(FIELD).map(|_| true)?,
+        _ => {
+            return Err(DecodeError::UnexpectedType {
+                field: FIELD,
+                offset,
+            });
+        }
+    };
+    if !in_range {
+        return Err(DecodeError::MapKeyOutOfRange { offset });
+    }
+    Ok(())
 }
 
 /// Reads one `NestedPart` at nesting level `depth` (root = 1, decision
@@ -536,4 +765,27 @@ fn read_external(r: &mut Reader<'_>) -> DecodeResult<ExternalPart> {
         description: r.text("description")?.to_owned(),
         filename: r.text("filename")?.to_owned(),
     })
+}
+
+/// Whether `value`, which is not NaN, is exactly representable as an IEEE
+/// 754 half float. Finite half floats are the multiples of 2^-24 up to
+/// 65504 in magnitude whose odd part, in units of 2^-24, is below 2^11
+/// (the 11-bit significand). Infinities are representable.
+fn fits_f16(value: f64) -> bool {
+    /// 2^24: scales the smallest half-float subnormal to 1.
+    const SCALE: f64 = 16_777_216.0;
+    /// The largest finite half float.
+    const MAX_HALF: f64 = 65_504.0;
+    /// 2^11: one past the largest half-float significand.
+    const SIGNIFICAND_LIMIT: u64 = 2048;
+    if value.is_infinite() {
+        return true;
+    }
+    let scaled = value.abs() * SCALE;
+    if scaled > MAX_HALF * SCALE || scaled.fract() != 0.0 {
+        return false;
+    }
+    // Exact: `scaled` is a whole number no larger than 2^40.
+    let units = scaled as u64;
+    units == 0 || units >> units.trailing_zeros() < SIGNIFICAND_LIMIT
 }

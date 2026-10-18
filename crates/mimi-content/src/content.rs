@@ -3,6 +3,10 @@
 //! Each type mirrors one CDDL rule. Field names follow the CDDL member
 //! names, converted to snake case.
 
+use std::collections::BTreeMap;
+
+use crate::extension::{ExtensionKey, RawValue};
+
 /// A 32-octet message ID (`MessageId = bstr .size 32`, §3.3).
 ///
 /// The first octet names the hash algorithm; the other 31 are a truncated
@@ -42,14 +46,17 @@ pub enum Expiration {
 
 /// The extensions map (`extensions`, §4.3).
 ///
-/// Holds the two registered extensions (§8.2.1, Table 1). An absent field
-/// is omitted from the map.
+/// Holds the two registered extensions (§8.2.1, Table 1) and every other
+/// extension (`unknownExtension`). An absent field is omitted from the map.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Extensions {
     /// Extension key 1, `senderUri`: the sender as a MIMI participant.
     pub sender_uri: Option<String>,
     /// Extension key 2, `roomUri`: the MIMI room URI.
     pub room_uri: Option<String>,
+    /// Every other extension, with its value as received. Keys 1 and 2
+    /// belong to the fields above; the encoder rejects them here.
+    pub other: BTreeMap<ExtensionKey, RawValue>,
 }
 
 /// One body part, possibly containing nested parts (`NestedPart`, §4.4).

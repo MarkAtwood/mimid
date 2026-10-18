@@ -2,7 +2,10 @@
 //!
 //! minicbor always writes definite lengths and the shortest form of every
 //! integer and length (RFC 8949 §4.2.1). The only map is the extensions
-//! map, and its keys are written in bytewise order.
+//! map, and its keys are written in bytewise order. Unknown extension
+//! values are written as the exact bytes their [`RawValue`] holds.
+//!
+//! [`RawValue`]: crate::RawValue
 
 use core::convert::Infallible;
 
@@ -11,6 +14,8 @@ use minicbor::Encoder;
 use crate::content::{
     Expiration, Extensions, ExternalPart, MessageId, MimiContent, NestedPart, Part, PartSemantics,
 };
+use crate::decode::MAJOR_TEXT;
+use crate::extension::{ExtensionKey, encode_head};
 
 /// Deepest allowed `NestedPart` nesting; the root part is level 1
 /// (§6.3; decision mimid-1wgh.2.13).
@@ -28,9 +33,9 @@ pub const MAX_TOPIC_ID_LEN: usize = 4096;
 pub const MIN_MULTIPART_PARTS: usize = 2;
 
 /// Extension map key of `senderUri` (§8.2.1, Table 1).
-pub(crate) const SENDER_URI_KEY: u8 = 1;
+pub(crate) const SENDER_URI_KEY: u64 = 1;
 /// Extension map key of `roomUri` (§8.2.1, Table 1).
-pub(crate) const ROOM_URI_KEY: u8 = 2;
+pub(crate) const ROOM_URI_KEY: u64 = 2;
 
 /// `cardinality` values (§4.4).
 pub(crate) const CARDINALITY_NULLPART: u8 = 0;
@@ -60,6 +65,22 @@ pub enum EncodeError {
         /// Length found, in octets.
         len: usize,
     },
+    /// A key in [`Extensions::other`] is an integer of magnitude above
+    /// [`MAX_INTEGER_KEY`](crate::MAX_INTEGER_KEY) (§6.2), or text that is
+    /// empty or longer than [`MAX_EXTENSION_KEY_LEN`](crate::MAX_EXTENSION_KEY_LEN)
+    /// octets (§4.3).
+    #[error("extension key {key:?} is out of range")]
+    ExtensionKeyOutOfRange {
+        /// The key.
+        key: ExtensionKey,
+    },
+    /// [`Extensions::other`] holds key 1 or 2, which belong to
+    /// [`Extensions::sender_uri`] and [`Extensions::room_uri`].
+    #[error("extension key {key} is registered and has its own field")]
+    RegisteredKeyInOther {
+        /// The key.
+        key: u64,
+    },
     /// The CBOR writer failed. Writing to memory does not fail, so this is
     /// not expected; it exists so a failure is reported, not panicked on.
     #[error("CBOR writer failed")]
@@ -75,8 +96,9 @@ impl MimiContent {
     ///
     /// Returns an [`EncodeError`] if the message breaks a structural rule
     /// or limit: a `MultiPart` with fewer than two parts, nesting deeper
-    /// than [`MAX_NESTING_DEPTH`], more than [`MAX_PARTS`] parts, or a
-    /// `topicId` longer than [`MAX_TOPIC_ID_LEN`].
+    /// than [`MAX_NESTING_DEPTH`], more than [`MAX_PARTS`] parts, a
+    /// `topicId` longer than [`MAX_TOPIC_ID_LEN`], or an extension key in
+    /// [`Extensions::other`] that is out of range or registered.
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         self.validate()?;
         let mut e = Encoder::new(Vec::new());
@@ -89,6 +111,17 @@ impl MimiContent {
             return Err(EncodeError::TopicIdTooLong {
                 len: self.topic_id.len(),
             });
+        }
+        for key in self.mimi_extensions.other.keys() {
+            match key {
+                ExtensionKey::Uint(key @ (SENDER_URI_KEY | ROOM_URI_KEY)) => {
+                    return Err(EncodeError::RegisteredKeyInOther { key: *key });
+                }
+                key if !key.is_valid() => {
+                    return Err(EncodeError::ExtensionKeyOutOfRange { key: key.clone() });
+                }
+                _ => {}
+            }
         }
         let mut part_count = 0;
         validate_part(&self.nested_part, 1, &mut part_count)
@@ -146,19 +179,35 @@ fn write_optional_message_id(e: &mut Encoder<Vec<u8>>, id: Option<&MessageId>) -
     Ok(())
 }
 
-/// Keys 1 and 2 encode as the single octets 0x01 and 0x02, so writing
-/// them in numeric order is the RFC 8949 §4.2.1 bytewise order.
+/// Writes the extensions map with its entries in RFC 8949 §4.2.1 order,
+/// the bytewise order of the encoded keys (§6.1). [`MimiContent::validate`]
+/// has made sure `other` repeats neither registered key, so keys are
+/// unique.
 fn write_extensions(e: &mut Encoder<Vec<u8>>, extensions: &Extensions) -> WriteResult {
-    let entries = [
-        (SENDER_URI_KEY, extensions.sender_uri.as_deref()),
-        (ROOM_URI_KEY, extensions.room_uri.as_deref()),
+    let registered = [
+        (SENDER_URI_KEY, &extensions.sender_uri),
+        (ROOM_URI_KEY, &extensions.room_uri),
     ];
-    let present = entries.iter().filter(|(_, value)| value.is_some()).count();
-    e.map(present as u64)?;
+    let mut entries: Vec<(Vec<u8>, Vec<u8>)> = registered
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let value = value.as_deref()?;
+            let mut item = encode_head(MAJOR_TEXT, value.len() as u64);
+            item.extend_from_slice(value.as_bytes());
+            Some((ExtensionKey::Uint(key).encoded(), item))
+        })
+        .chain(
+            extensions
+                .other
+                .iter()
+                .map(|(key, value)| (key.encoded(), value.as_bytes().to_vec())),
+        )
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    e.map(entries.len() as u64)?;
     for (key, value) in entries {
-        if let Some(value) = value {
-            e.u8(key)?.str(value)?;
-        }
+        e.writer_mut().extend_from_slice(&key);
+        e.writer_mut().extend_from_slice(&value);
     }
     Ok(())
 }

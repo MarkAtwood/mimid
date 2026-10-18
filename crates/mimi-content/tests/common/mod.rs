@@ -93,6 +93,7 @@ fn extensions(sender: &str) -> Extensions {
     Extensions {
         sender_uri: Some(sender.to_owned()),
         room_uri: Some(ROOM.to_owned()),
+        ..Extensions::default()
     }
 }
 

@@ -10,11 +10,13 @@
 //!
 //! # Limitations
 //!
-//! - Only the registered extensions `senderUri` (1) and `roomUri` (2) can
-//!   be represented. Unknown extension keys cannot be built or encoded,
-//!   and the decoder rejects a message that carries one
-//!   ([`DecodeError::UnsupportedExtension`]), even though such a message is
-//!   valid.
+//! - Only the registered extensions `senderUri` (1) and `roomUri` (2) are
+//!   interpreted. Every other extension is kept as an [`ExtensionKey`] and
+//!   the exact bytes of its value ([`RawValue`]), checked only against the
+//!   generic rules of §6.
+//! - Extension values have no size limit of their own (decision
+//!   mimid-1wgh.2.15); they are bounded only by the input and by
+//!   [`MAX_EXTENSION_DEPTH`].
 //! - MessageId values are carried, not computed.
 //! - The encoder and decoder enforce the structural rules and limits of
 //!   §4.4, §6.3 and §9.1 (MultiPart part count, nesting depth, total parts,
@@ -34,6 +36,7 @@
 mod content;
 mod decode;
 mod encode;
+mod extension;
 
 pub use content::{
     Disposition, Expiration, Extensions, ExternalPart, MessageId, MimiContent, NestedPart, Part,
@@ -42,6 +45,9 @@ pub use content::{
 pub use decode::DecodeError;
 pub use encode::{
     EncodeError, MAX_NESTING_DEPTH, MAX_PARTS, MAX_TOPIC_ID_LEN, MIN_MULTIPART_PARTS,
+};
+pub use extension::{
+    ExtensionKey, MAX_EXTENSION_DEPTH, MAX_EXTENSION_KEY_LEN, MAX_INTEGER_KEY, RawValue,
 };
 /// Re-exported because [`EncodeError::Cbor`] carries a minicbor error.
 pub use minicbor;

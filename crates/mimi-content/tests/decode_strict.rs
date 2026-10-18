@@ -10,8 +10,8 @@ mod common;
 
 use common::{FIXTURES, fixture, hex};
 use mimi_content::{
-    DecodeError, Disposition, Expiration, Extensions, ExternalPart, MAX_PARTS, MAX_TOPIC_ID_LEN,
-    MimiContent, NestedPart, Part, PartSemantics,
+    DecodeError, Disposition, Expiration, ExtensionKey, Extensions, ExternalPart, MAX_PARTS,
+    MAX_TOPIC_ID_LEN, MimiContent, NestedPart, Part, PartSemantics, RawValue,
 };
 
 /// The fields before `mimiExtensions`, offsets 0 to 21.
@@ -214,6 +214,7 @@ fn nul_bidi_and_zero_width_text_is_kept() {
     expected.mimi_extensions = Extensions {
         sender_uri: Some("a\u{0}b".to_owned()),
         room_uri: Some("\u{202e}\u{200b}zy".to_owned()),
+        ..Extensions::default()
     };
     assert_eq!(decoded, Ok(expected));
 }
@@ -1119,29 +1120,27 @@ fn invalid_utf8_is_rejected() {
     }
 }
 
-// Extension keys this crate cannot represent yet (mimid-1wgh.2.4).
+// Unknown extension keys (mimid-1wgh.2.4).
 
-/// §4.3 allows these keys; the decoder fails closed instead of dropping
-/// them. Key 0 is reserved but kept as unknown (decision mimid-1wgh.2.20).
+/// §4.3 allows these keys, so they are kept with their values. Key 0 is
+/// reserved but kept as unknown (decision mimid-1wgh.2.20).
 #[test]
-fn unrepresentable_extension_keys_fail_closed() {
-    for key in [
-        "00",   // key 0, reserved
-        "03",   // key 3, unregistered
-        "20",   // key -1, private use
-        "6178", // key "x", private use
+fn unknown_extension_keys_are_kept() {
+    for (key_hex, key) in [
+        ("00", ExtensionKey::Uint(0)),                // key 0, reserved
+        ("03", ExtensionKey::Uint(3)),                // key 3, unregistered
+        ("20", ExtensionKey::Nint(0)),                // key -1, private use
+        ("6178", ExtensionKey::Text("x".to_owned())), // key "x", private use
     ] {
         let decoded = decode(&[
-            BEHAVIOR, "a1", // 22: mimiExtensions: map(1)
-            key,  // 23: key
-            "f6", // value: null
+            BEHAVIOR, "a1",    // 22: mimiExtensions: map(1)
+            key_hex, // 23: key
+            "f6",    // value: null
             NULL_PART,
         ]);
-        assert_eq!(
-            decoded,
-            Err(DecodeError::UnsupportedExtension { offset: 23 }),
-            "key {key}"
-        );
+        let mut expected = minimal();
+        expected.mimi_extensions.other.insert(key, null_value());
+        assert_eq!(decoded, Ok(expected), "key {key_hex}");
     }
 
     let after_known = decode(&[
@@ -1152,8 +1151,16 @@ fn unrepresentable_extension_keys_fail_closed() {
         "f6",   // value: null
         NULL_PART,
     ]);
-    assert_eq!(
-        after_known,
-        Err(DecodeError::UnsupportedExtension { offset: 26 })
-    );
+    let mut expected = minimal();
+    expected.mimi_extensions.sender_uri = Some("a".to_owned());
+    expected
+        .mimi_extensions
+        .other
+        .insert(ExtensionKey::Uint(3), null_value());
+    assert_eq!(after_known, Ok(expected));
+}
+
+/// The extension value `null` (RFC 8949 §3.3: 0xf6).
+fn null_value() -> RawValue {
+    RawValue::new(&[0xf6]).expect("null is a valid extension value")
 }
