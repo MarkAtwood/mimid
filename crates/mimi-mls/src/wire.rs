@@ -41,12 +41,32 @@
 //!   [`MLSMessage::group_id`], [`MLSMessage::epoch`] and
 //!   [`MLSMessage::authenticated_data`]), [`AppDataDictionary`]'s entries,
 //!   [`ExternalSender`]'s fields, a basic [`Credential`]'s `identity`,
-//!   [`GroupInfo::has_ratchet_tree_extension`] and the fields of the
+//!   [`GroupInfo::has_ratchet_tree_extension`], [`Welcome::new_member_refs`],
+//!   what [`KeyPackage::verify`] returns and the fields of the
 //!   ratchet-tree-options-01 types, the types expose only their encoding.
-//! - [`Credential::identity`] exposes only the `basic` credential type. The
-//!   content of any other type is available only inside its encoding.
+//! - [`Credential::identity`] and [`VerifiedKeyPackageInfo::identity`]
+//!   expose only the `basic` credential type. The content of any other type
+//!   is available only inside its encoding.
 //! - Decoding checks structure only. No signature, MAC or membership check
-//!   happens here.
+//!   happens here. [`KeyPackage::verify`] is the one exception: it checks a
+//!   KeyPackage's signatures, ciphersuite and lifetime on request.
+//! - [`KeyPackage::verify`] checks the lifetime at the time it is given and
+//!   also at the system clock, because OpenMLS's KeyPackage validation
+//!   always checks the system clock, and the OpenMLS fork is deliberately
+//!   not changed to skip it. A KeyPackage outside its lifetime by either
+//!   time is refused.
+//! - [`KeyPackage::verify`] refuses a lifetime longer than
+//!   [`MAX_KEY_PACKAGE_LIFETIME_SECONDS`] (365 days plus one hour), the
+//!   RFC 9420 §7.2 maximum mimid chose (decision mimid-1wgh.7.25). Other
+//!   implementations may allow longer lifetimes.
+//! - [`KeyPackage::verify`] does not validate the credential (RFC 9420
+//!   §5.3.1). It returns a basic credential's identity for the caller to
+//!   check.
+//! - A `last_resort_key_package` component whose data is not empty
+//!   (mls-extensions-10 §6.4.2) is ignored, so
+//!   [`VerifiedKeyPackageInfo::is_last_resort`] is `false` for it (decision
+//!   mimid-1wgh.7.26). OpenMLS's
+//!   pre-standard `last_resort` extension (type 10) is not recognized.
 
 mod app_data;
 mod ratchet_tree_options;
@@ -62,8 +82,9 @@ pub use ratchet_tree_options::{
 };
 pub use rfc9420::{
     Capabilities, CipherSuite, ContentType, Credential, ExternalSender, GroupInfo, HPKECiphertext,
-    HPKEPublicKey, KeyPackage, KeyPackageRef, MLSMessage, ProposalRef, RequiredCapabilities,
-    SignaturePublicKey, Welcome, WireFormat,
+    HPKEPublicKey, KeyPackage, KeyPackageError, KeyPackageRef, MAX_KEY_PACKAGE_LIFETIME_SECONDS,
+    MLSMessage, ProposalRef, RequiredCapabilities, SignaturePublicKey, VerifiedKeyPackageInfo,
+    Welcome, WireFormat,
 };
 
 /// A reader that keeps a copy of every byte read through it.
