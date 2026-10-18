@@ -505,9 +505,9 @@ async fn http_routes_stubs_and_status_mapping() {
     ] {
         let uri = format!("/v1/{endpoint}/{ROOM_ID_ENCODED}");
         let (status, _, body) = send(&app, Method::POST, &uri, from, vec![0]).await;
-        if endpoint == "submitMessage" || endpoint == "update" {
-            // Implemented (mimid-1wgh.6.29, mimid-1wgh.6.27); the body does
-            // not decode.
+        if endpoint == "submitMessage" || endpoint == "update" || endpoint == "groupInfo" {
+            // Implemented (mimid-1wgh.6.29, mimid-1wgh.6.27,
+            // mimid-1wgh.6.30); the body does not decode.
             assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
         } else {
             assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{uri}");

@@ -7,7 +7,7 @@
 //! Later starts load them.
 
 use mimi_mls::label;
-use mimi_protocol::{Frank, FrankingIntegrityTbs, HubKey};
+use mimi_protocol::{Frank, FrankingIntegrityTbs, GroupInfoResponseTbs, GroupInfoSuccess, HubKey};
 
 use super::HubError;
 use crate::store::{Store, StoredHubSecret};
@@ -69,6 +69,19 @@ impl HubSigningKey {
     /// As [`FrankingIntegrityTbs::sign`].
     pub(crate) fn sign_frank(&self, tbs: &FrankingIntegrityTbs) -> Result<Frank, HubError> {
         tbs.sign(&self.private).map_err(HubError::Franking)
+    }
+
+    /// Signs a groupInfo response with the hub's key as `hub_sender`
+    /// (protocol-06 §5.6; decision mimid-1wgh.6.18).
+    ///
+    /// # Errors
+    ///
+    /// As [`GroupInfoResponseTbs::sign`].
+    pub(crate) fn sign_group_info_response(
+        &self,
+        tbs: GroupInfoResponseTbs,
+    ) -> Result<GroupInfoSuccess, HubError> {
+        tbs.sign(&self.private).map_err(HubError::GroupInfoResponse)
     }
 }
 

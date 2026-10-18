@@ -183,6 +183,32 @@ impl Store {
         .await?)
     }
 
+    /// The pending proposals of `epoch` in `room_id`, in hub order, each
+    /// with its `hub_accepted_time` (protocol-06 §5.6 `PendingProposal`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails, and
+    /// [`StoreError::OutOfRange`] if `epoch` or a stored time is out of
+    /// range.
+    pub async fn pending_proposals_with_times(
+        &self,
+        room_id: &str,
+        epoch: u64,
+    ) -> Result<Vec<(Vec<u8>, u64)>, StoreError> {
+        let rows: Vec<(Vec<u8>, i64)> = sqlx::query_as(
+            "SELECT proposal, hub_accepted_time FROM pending_proposal \
+             WHERE room_id = ? AND epoch = ? ORDER BY seq",
+        )
+        .bind(room_id)
+        .bind(to_sql_int(epoch)?)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|(proposal, time)| Ok((proposal, from_sql_int(time)?)))
+            .collect()
+    }
+
     /// The acceptance time of the logged event of `kind` in `room_id` whose
     /// request hashed to `hash`, if there is one.
     ///

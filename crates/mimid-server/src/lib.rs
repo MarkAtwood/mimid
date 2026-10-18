@@ -15,8 +15,9 @@
 //!   impersonated provider.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
-//! - The hub's protocol endpoints other than update and submitMessage are
-//!   routed but are stubs, and the follower endpoints are not served yet.
+//! - The hub's protocol endpoints other than update, submitMessage and
+//!   groupInfo are routed but are stubs, and the follower endpoints are not
+//!   served yet.
 //! - [`peer`] sends `/notify` requests to configured peers, and
 //!   [`hub::fanout`] delivers the outbox through it, at least once, so
 //!   followers must deduplicate. Nothing starts the fanout worker yet: the

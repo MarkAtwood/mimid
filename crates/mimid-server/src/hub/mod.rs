@@ -10,9 +10,11 @@
 //!
 //! # Limitations
 //!
-//! - The protocol endpoints [`Hub::group_info`], [`Hub::key_material`] and
-//!   [`Hub::report_abuse`] are stubs that return
-//!   [`HubError::NotImplemented`].
+//! - The protocol endpoints [`Hub::key_material`] and [`Hub::report_abuse`]
+//!   are stubs that return [`HubError::NotImplemented`].
+//! - [`Hub::group_info`] has the limitations listed in `group_info.rs`:
+//!   with BasicCredential, anyone claiming a participant's identity gets
+//!   the GroupInfo, and join codes are not supported.
 //! - [`Hub::submit_message`] has the limitations listed in `submit.rs`: the
 //!   hub cannot authenticate a PrivateMessage's sender, does not withhold
 //!   messages from clients whose removal is pending (protocol-06 §5.3), and
@@ -29,6 +31,7 @@
 
 pub mod components;
 pub mod fanout;
+mod group_info;
 mod keys;
 pub mod policy;
 mod room;
@@ -334,20 +337,33 @@ impl Hub {
         submit::submit_message(self, room_id, from, request).await
     }
 
-    /// protocol-06 §5.6 `POST /groupInfo/{roomId}`. Stub.
+    /// protocol-06 §5.6 `POST /groupInfo/{roomId}`: checks the TLS-encoded
+    /// `GroupInfoRequest` `request` and, if room policy allows the
+    /// requester an external join, answers with the room's GroupInfo,
+    /// ratchet tree and pending proposals, encrypted to the requester.
+    /// `from` is the domain of the request's `From` header.
+    ///
+    /// Returns the TLS-encoded `GroupInfoResponse`: `success`, signed by
+    /// the hub's key, or `notAuthorized` for a request whose signature does
+    /// not verify, whose `From` domain is not the requesting credential's
+    /// domain (decision mimid-1wgh.6.9), that room policy refuses, or that
+    /// carries a joining code (decision mimid-1wgh.6.13). The steps are
+    /// listed in `group_info.rs`. Nothing is written.
     ///
     /// # Errors
     ///
-    /// Returns [`HubError::NoSuchRoom`] if the room is not hosted here, and
-    /// otherwise [`HubError::NotImplemented`].
+    /// Returns [`HubError::InvalidRequest`] if `request` does not decode,
+    /// [`HubError::NoSuchRoom`] if the room is not hosted here, and
+    /// [`HubError::Encode`], [`HubError::GroupInfoResponse`],
+    /// [`HubError::SnapshotMismatch`] or [`HubError::Store`] for internal
+    /// failures.
     pub async fn group_info(
         &self,
         room_id: &str,
-        _from: &Domain,
-        _request: &[u8],
+        from: &Domain,
+        request: &[u8],
     ) -> Result<Vec<u8>, HubError> {
-        self.require_room(room_id).await?;
-        Err(HubError::NotImplemented("groupInfo"))
+        group_info::group_info(self, room_id, from, request).await
     }
 
     /// protocol-06 §5.9 `POST /reportAbuse/{roomId}`. Stub.
@@ -557,6 +573,9 @@ pub enum HubError {
     /// A frank could not be computed or signed (protocol-06 §5.4.1.2).
     #[error("cannot frank the message")]
     Franking(#[source] mimi_protocol::Error),
+    /// A groupInfo response could not be signed (protocol-06 §5.6).
+    #[error("cannot sign the GroupInfo response")]
+    GroupInfoResponse(#[source] mimi_protocol::Error),
     /// A room's GroupContext could not be read.
     #[error("cannot read the GroupContext")]
     GroupContext(#[source] mimi_mls::tls_codec::Error),

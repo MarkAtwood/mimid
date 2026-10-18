@@ -53,6 +53,26 @@ pub(super) fn check_no_embedded_tree(group_info: &[u8]) -> Result<(), HubError> 
     }
 }
 
+/// The hub's encoded `SignaturePublicKey` (RFC 9420 §5.1.1) and
+/// BasicCredential (§5.3) whose identity is `mimi://<hub domain>`
+/// (decision mimid-1wgh.6.35). Concatenated, they are the hub's
+/// `ExternalSender` (§12.1.8.1).
+pub(super) fn hub_sender(
+    hub_public_key: &[u8; 32],
+    domain: &Domain,
+) -> Result<(Vec<u8>, Vec<u8>), HubError> {
+    let key = VLBytes::new(hub_public_key.to_vec())
+        .tls_serialize_detached()
+        .map_err(HubError::Encode)?;
+    let mut credential = BASIC_CREDENTIAL_TYPE.to_vec();
+    credential.extend(
+        VLBytes::new(format!("{MIMI_SCHEME_PREFIX}{domain}").into_bytes())
+            .tls_serialize_detached()
+            .map_err(HubError::Encode)?,
+    );
+    Ok((key, credential))
+}
+
 /// Checks a new room's group, already verified by
 /// [`Observer::from_group_info`], against the hub's rules:
 ///
@@ -75,16 +95,7 @@ pub(super) fn check_group(
     domain: &Domain,
     creator: &[u8],
 ) -> Result<(), HubError> {
-    // RFC 9420 §5.1.1 SignaturePublicKey and §5.3 Credential (basic).
-    let key = VLBytes::new(hub_public_key.to_vec())
-        .tls_serialize_detached()
-        .map_err(HubError::Encode)?;
-    let mut credential = BASIC_CREDENTIAL_TYPE.to_vec();
-    credential.extend(
-        VLBytes::new(format!("{MIMI_SCHEME_PREFIX}{domain}").into_bytes())
-            .tls_serialize_detached()
-            .map_err(HubError::Encode)?,
-    );
+    let (key, credential) = hub_sender(hub_public_key, domain)?;
     let hub_sender = [key.as_slice(), credential.as_slice()].concat();
 
     let senders = observer
