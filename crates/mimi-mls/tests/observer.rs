@@ -18,7 +18,9 @@ use mls_rs::group::{ExportedTree, ReceivedMessage};
 use mls_rs::identity::SigningIdentity;
 use mls_rs::identity::basic::{BasicCredential, BasicIdentityProvider};
 use mls_rs::mls_rs_codec::MlsEncode;
-use mls_rs::{CipherSuite, CipherSuiteProvider, Client, CryptoProvider, MlsMessage};
+use mls_rs::{
+    CipherSuite, CipherSuiteProvider, Client, CryptoProvider, Extension, ExtensionList, MlsMessage,
+};
 use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 
 /// RFC 9420 §17.1: ciphersuite 0x0001.
@@ -29,6 +31,40 @@ const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
 /// mls-extensions-10 §7.5: a private-use component id, for tests only.
 const LOG: u16 = 0x8001;
+
+/// mls-extensions-10 §7.5: the safe_aad component.
+const SAFE_AAD: u16 = 0x0002;
+
+/// mls-extensions-10 §5 ComponentsList [0x0020], hand-encoded: a
+/// GroupContext `safe_aad` list requiring component 0x0020.
+const REQUIRE_0020: [u8; 3] = [
+    0x02, // ComponentID component_ids<V>: 2 bytes
+    0x00, 0x20, // ComponentID 0x0020
+];
+
+/// mls-extensions-10 §4.9: an empty SafeAAD, the whole `authenticated_data`
+/// of an mls-rs message in a group that uses Safe AAD.
+const EMPTY_SAFE_AAD: [u8; 1] = [
+    0x00, // SafeAADItem aad_items<V>: empty
+];
+
+/// mls-extensions-10 §4.6 AppDataDictionary for a LeafNode, hand-encoded:
+/// its `safe_aad` list names component 0x0020.
+const LEAF_SAFE_AAD_0020: [u8; 7] = [
+    0x06, // ComponentData component_data<V>: 6 bytes
+    0x00, 0x02, // component_id = safe_aad
+    0x03, // opaque data<V>: 3 bytes
+    0x02, //   ComponentsList.component_ids<V>: 2 bytes
+    0x00, 0x20, //   ComponentID 0x0020
+];
+
+/// As [`LEAF_SAFE_AAD_0020`], but the `safe_aad` list is empty.
+const LEAF_SAFE_AAD_EMPTY: [u8; 5] = [
+    0x04, // ComponentData component_data<V>: 4 bytes
+    0x00, 0x02, // component_id = safe_aad
+    0x01, // opaque data<V>: 1 byte
+    0x00, //   ComponentsList.component_ids<V>: empty
+];
 
 fn identity(name: &[u8]) -> Identity {
     Identity::generate(name, Store::open_in_memory().expect("in-memory store"))
@@ -101,6 +137,19 @@ fn mls_rs_key_package(client: &Client<impl mls_rs::client_builder::MlsConfig>) -
         .expect("encode");
     assert_eq!(bytes[..4], [0x00, 0x01, 0x00, 0x05]);
     bytes[4..].to_vec()
+}
+
+/// An mls-rs KeyPackage message whose LeafNode carries the
+/// `app_data_dictionary` encoded as `dictionary`.
+fn mls_rs_key_package_with(
+    client: &Client<impl mls_rs::client_builder::MlsConfig>,
+    dictionary: &[u8],
+) -> MlsMessage {
+    let mut leaf = ExtensionList::new();
+    leaf.set(Extension::new(APP_DATA_DICTIONARY, dictionary.to_vec()));
+    client
+        .generate_key_package_message(Default::default(), leaf, None)
+        .expect("mls-rs KeyPackage")
 }
 
 /// `member` adds a new mls-rs client named `name` and merges. Returns the
@@ -955,4 +1004,108 @@ fn full_ratchet_tree_option_carries_mls_rs_tree() {
         RatchetTreeOption::full(&observer.ratchet_tree().expect("tree")).expect("full"),
         option
     );
+}
+
+/// INTERPRETATION, decision mimid-1wgh.4.45: a Commit whose new or updated
+/// leaf has a `safe_aad` list (absent = empty) missing a component that the
+/// GroupContext requires is invalid. mls-rs does not enforce the rule, so
+/// it builds such Commits.
+#[test]
+fn commit_with_a_leaf_missing_a_required_component_is_rejected() {
+    let alice = identity(b"alice");
+    let mut member = Member::create(
+        &alice,
+        b"room-required",
+        &[],
+        &[(SAFE_AAD, REQUIRE_0020.to_vec())],
+    )
+    .expect("create");
+    let bob_client = mls_rs_client(b"bob");
+    let bob_key_package = mls_rs_key_package_with(&bob_client, &LEAF_SAFE_AAD_0020)
+        .to_bytes()
+        .expect("encode");
+    let bundle = member
+        .commit(&alice, &[&bob_key_package[4..]], &[], &[], no_components)
+        .expect("commit Add");
+    member.merge_pending_commit(&alice).expect("merge");
+    let welcome = MlsMessage::from_bytes(&bundle.welcome.expect("Welcome")).expect("decode");
+    let tree = ExportedTree::from_bytes(&member.ratchet_tree().expect("tree")).expect("tree");
+    let (mut bob, _) = bob_client
+        .join_group(Some(tree), &welcome, None)
+        .expect("mls-rs joins");
+    let group_info = bob
+        .group_info_message(true)
+        .expect("mls-rs GroupInfo")
+        .to_bytes()
+        .expect("encode");
+    let store = Store::open_in_memory().expect("store");
+    let mut observer =
+        Observer::from_group_info(&store, &group_info, None).expect("from_group_info");
+    let before = snapshot(&observer);
+
+    // bob adds carol, whose leaf lists no Safe AAD component.
+    let bad_add = bob
+        .commit_builder()
+        .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+        .add_member(mls_rs_key_package_with(
+            &mls_rs_client(b"carol"),
+            &LEAF_SAFE_AAD_EMPTY,
+        ))
+        .expect("mls-rs adds")
+        .build()
+        .expect("mls-rs commits")
+        .commit_message
+        .to_bytes()
+        .expect("encode");
+    bob.clear_pending_commit();
+    let result = observer.process(&store, &bad_add, no_components);
+    assert_rejected_unchanged(
+        result,
+        |e| matches!(e, ObserverError::MissingSafeAadComponent(0x0020)),
+        &observer,
+        &before,
+    );
+
+    // bob's UpdatePath leaf drops its app_data_dictionary.
+    let bad_path = bob
+        .commit_builder()
+        .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+        .set_leaf_node_extensions(ExtensionList::new())
+        .build()
+        .expect("mls-rs commits")
+        .commit_message
+        .to_bytes()
+        .expect("encode");
+    bob.clear_pending_commit();
+    let result = observer.process(&store, &bad_path, no_components);
+    assert_rejected_unchanged(
+        result,
+        |e| matches!(e, ObserverError::MissingSafeAadComponent(0x0020)),
+        &observer,
+        &before,
+    );
+
+    let good_add = bob
+        .commit_builder()
+        .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+        .add_member(mls_rs_key_package_with(
+            &mls_rs_client(b"dave"),
+            &LEAF_SAFE_AAD_0020,
+        ))
+        .expect("mls-rs adds")
+        .build()
+        .expect("mls-rs commits")
+        .commit_message
+        .to_bytes()
+        .expect("encode");
+    bob.apply_pending_commit().expect("apply");
+    let observed = observer
+        .process(&store, &good_add, no_components)
+        .expect("a leaf listing 0x0020 is accepted");
+    let Observed::Commit(summary) = observed else {
+        panic!("expected a Commit, got {observed:?}");
+    };
+    assert_eq!(summary.added, vec![b"dave".to_vec()]);
+    observer.merge_pending_commit(&store).expect("merge");
+    assert_same_public_state(&observer, &bob);
 }

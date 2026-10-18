@@ -18,10 +18,18 @@ pub(crate) const CIPHERSUITE: Ciphersuite =
     Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 
 /// mls-extensions-10 §7.5 component registry: `app_components`.
-const APP_COMPONENTS: ComponentId = 0x0001;
+pub(crate) const APP_COMPONENTS: ComponentId = 0x0001;
 
 /// mls-extensions-10 §7.5 component registry: `safe_aad`.
-const SAFE_AAD: ComponentId = 0x0002;
+pub(crate) const SAFE_AAD: ComponentId = 0x0002;
+
+/// mls-extensions-10 §7.5 component registry: the GREASE component ids.
+/// RFC 9420 §13.5 GREASE goes on to 0xeaea, but 0x8a8a and above are
+/// component ids for Private Use, so OpenMLS's `random_grease_value` is
+/// not used for components.
+pub(crate) const COMPONENT_GREASE: [ComponentId; 8] = [
+    0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a,
+];
 
 /// mls-extensions-10 §7.5 component registry: `last_resort_key_package`.
 const LAST_RESORT_KEY_PACKAGE: ComponentId = 0x0004;
@@ -101,7 +109,10 @@ impl Identity {
     /// which §4.6 requires of any client that advertises
     /// `app_data_dictionary`. That list names the components this crate
     /// implements: `safe_aad` (see [`crate::member`]) and
-    /// `last_resort_key_package`.
+    /// `last_resort_key_package`. It also carries a `safe_aad` entry (§5)
+    /// listing the supported Safe AAD components: none yet, only GREASE
+    /// (decision mimid-1wgh.4.45). Every GREASE component id is from the
+    /// §7.5 set.
     ///
     /// For [`KeyPackageKind::LastResort`] the KeyPackage's own extensions
     /// carry an `app_data_dictionary` with the `last_resort_key_package`
@@ -129,7 +140,7 @@ impl Identity {
             let mut dictionary = AppDataDictionary::new();
             dictionary.insert(LAST_RESORT_KEY_PACKAGE, Vec::new());
             // mls-extensions-10 §5.1: GREASE components in the dictionary.
-            dictionary.insert(random_grease_value(rand), Vec::new());
+            dictionary.insert(random_component_grease(rand)?, Vec::new());
             key_package_extensions.push(Extension::AppDataDictionary(
                 AppDataDictionaryExtension::new(dictionary),
             ));
@@ -177,29 +188,58 @@ pub(crate) fn leaf_capabilities(rand: &impl OpenMlsRand, grease_extension: u16) 
         .with_grease(rand)
 }
 
-/// The LeafNode extensions every mimid client sends: an
-/// `app_data_dictionary` whose `app_components` entry lists the implemented
-/// components, plus GREASE (mls-extensions-10 §4.6, §5.1).
+/// A random GREASE component id from the mls-extensions-10 §7.5 set.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Encode`] if the components list cannot be serialized,
-/// and [`Error::KeyPackage`] if the extension list is invalid.
-pub(crate) fn leaf_extensions(rand: &impl OpenMlsRand) -> Result<Extensions<LeafNode>, Error> {
+/// Returns [`Error::KeyPackage`] if the random source fails.
+fn random_component_grease<R>(rand: &R) -> Result<ComponentId, Error>
+where
+    R: OpenMlsRand,
+    R::Error: Send + Sync + 'static,
+{
+    let [byte] = rand
+        .random_array::<1>()
+        .map_err(|e| Error::KeyPackage(e.into()))?;
+    // 256 is a multiple of the set's size, so every id is equally likely.
+    Ok(COMPONENT_GREASE[usize::from(byte) % COMPONENT_GREASE.len()])
+}
+
+/// The LeafNode extensions every mimid client sends: an
+/// `app_data_dictionary` whose `app_components` entry lists the implemented
+/// components and whose `safe_aad` entry lists the implemented Safe AAD
+/// components, plus GREASE (mls-extensions-10 §4.6, §5, §5.1).
+///
+/// # Errors
+///
+/// Returns [`Error::Encode`] if a components list cannot be serialized,
+/// and [`Error::KeyPackage`] if the random source fails or the extension
+/// list is invalid.
+pub(crate) fn leaf_extensions<R>(rand: &R) -> Result<Extensions<LeafNode>, Error>
+where
+    R: OpenMlsRand,
+    R::Error: Send + Sync + 'static,
+{
     // mls-extensions-10 §4.6 requires the app_components entry. It lists
-    // only implemented components (decision mimid-1wgh.4.25). No separate
-    // Safe AAD support list is sent (decision mimid-1wgh.4.35).
+    // only implemented components (decision mimid-1wgh.4.25).
     let app_components = ComponentsList::new(vec![
         SAFE_AAD,
         LAST_RESORT_KEY_PACKAGE,
-        random_grease_value(rand),
+        random_component_grease(rand)?,
     ])
     .tls_serialize_detached()
     .map_err(|e| Error::Encode(e.into()))?;
+    // mls-extensions-10 §5: the supported Safe AAD components. No component
+    // that uses Safe AAD is implemented yet, so the list holds only GREASE
+    // (decision mimid-1wgh.4.45).
+    let safe_aad = ComponentsList::new(vec![random_component_grease(rand)?])
+        .tls_serialize_detached()
+        .map_err(|e| Error::Encode(e.into()))?;
     let mut leaf_dictionary = AppDataDictionary::new();
     leaf_dictionary.insert(APP_COMPONENTS, app_components);
+    leaf_dictionary.insert(SAFE_AAD, safe_aad);
     // mls-extensions-10 §5.1: GREASE components in the dictionary.
-    leaf_dictionary.insert(random_grease_value(rand), Vec::new());
+    leaf_dictionary.insert(random_component_grease(rand)?, Vec::new());
     Extensions::single(Extension::AppDataDictionary(
         AppDataDictionaryExtension::new(leaf_dictionary),
     ))

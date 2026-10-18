@@ -36,8 +36,18 @@ const GREASE: [u16; 15] = [
 /// openmls default lifetime: 84 days ahead.
 const MAX_LIFETIME_SECONDS: u64 = 84 * 24 * 60 * 60;
 
+/// mls-extensions-10 §7.5: the GREASE component ids. 0x8a8a and above,
+/// GREASE elsewhere in MLS, fall in the component Private Use range.
+const COMPONENT_GREASE: [u16; 8] = [
+    0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a,
+];
+
 fn is_grease(value: u16) -> bool {
     GREASE.contains(&value)
+}
+
+fn is_component_grease(value: u16) -> bool {
+    COMPONENT_GREASE.contains(&value)
 }
 
 fn now() -> u64 {
@@ -190,27 +200,36 @@ fn check_common(kind: KeyPackageKind) -> (KeyPackage, mls_rs::group::Member) {
 
 /// mls-extensions-10 §4.6 and §5: the LeafNode's app_data_dictionary holds
 /// an app_components entry listing safe_aad, last_resort_key_package and a
-/// GREASE id, followed by one GREASE component with empty data.
+/// GREASE id; a safe_aad entry listing the supported Safe AAD components
+/// (none yet) and a GREASE id (decision mimid-1wgh.4.45); and one GREASE
+/// component with empty data. Every GREASE id is from the §7.5 set.
 fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
     let data = leaf_extensions
         .get(APP_DATA_DICTIONARY)
         .expect("LeafNode app_data_dictionary")
         .extension_data;
-    assert_eq!(data.len(), 14, "leaf dictionary: {data:02x?}");
+    assert_eq!(data.len(), 20, "leaf dictionary: {data:02x?}");
     let listed_grease = u16::from_be_bytes([data[9], data[10]]);
-    let component_grease = u16::from_be_bytes([data[11], data[12]]);
-    assert!(is_grease(listed_grease), "{listed_grease:#06x}");
-    assert!(is_grease(component_grease), "{component_grease:#06x}");
+    let safe_aad_grease = u16::from_be_bytes([data[15], data[16]]);
+    let component_grease = u16::from_be_bytes([data[17], data[18]]);
+    for grease in [listed_grease, safe_aad_grease, component_grease] {
+        assert!(is_component_grease(grease), "{grease:#06x}");
+    }
     let [lg_hi, lg_lo] = listed_grease.to_be_bytes();
+    let [sg_hi, sg_lo] = safe_aad_grease.to_be_bytes();
     let [cg_hi, cg_lo] = component_grease.to_be_bytes();
     let expected = [
-        0x0d, // component_data<V>: 13 bytes follow
+        0x13, // component_data<V>: 19 bytes follow
         0x00, 0x01, // ComponentData.component_id = app_components
         0x07, // ComponentData.data<V>: 7 bytes (a ComponentsList)
         0x06, //   ComponentsList.component_ids<V>: 6 bytes
         0x00, 0x02, //   ComponentID = safe_aad
         0x00, 0x04, //   ComponentID = last_resort_key_package
         lg_hi, lg_lo, //   ComponentID = GREASE
+        0x00, 0x02, // ComponentData.component_id = safe_aad
+        0x03, // ComponentData.data<V>: 3 bytes (a ComponentsList)
+        0x02, //   ComponentsList.component_ids<V>: 2 bytes
+        sg_hi, sg_lo, //   ComponentID = GREASE
         cg_hi, cg_lo, // ComponentData.component_id = GREASE
         0x00,  // ComponentData.data<V>: empty
     ];
@@ -236,7 +255,7 @@ fn last_resort_key_package_carries_component_0x0004() {
         .extension_data;
     assert_eq!(data.len(), 7, "KeyPackage dictionary: {data:02x?}");
     let grease = u16::from_be_bytes([data[4], data[5]]);
-    assert!(is_grease(grease), "{grease:#06x}");
+    assert!(is_component_grease(grease), "{grease:#06x}");
     let [g_hi, g_lo] = grease.to_be_bytes();
     // mls-extensions-10 §4.6 AppDataDictionary, entries sorted by id.
     let expected = [

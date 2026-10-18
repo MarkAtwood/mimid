@@ -27,7 +27,16 @@
 //! - KeyPackages use OpenMLS's default lifetime: valid from one hour in the
 //!   past until 84 days in the future.
 //! - The `app_components` list in each KeyPackage's LeafNode names only the
-//!   components this crate implements today (see [`Identity::key_package`]).
+//!   components this crate implements today, and its `safe_aad` list names
+//!   none (see [`Identity::key_package`]). A group whose GroupContext
+//!   requires a Safe AAD component cannot add these clients.
+//! - Required `safe_aad` and `app_components` lists are enforced as
+//!   RFC 9420 §11.1 enforces `required_capabilities`; mls-extensions-10 §5
+//!   gives no rule (INTERPRETATION, decision mimid-1wgh.4.45). Leaves are
+//!   judged against the post-Commit GroupContext, GREASE ids in required
+//!   lists are ignored, a malformed leaf list counts as empty, and a
+//!   malformed GroupContext list fails closed (decision mimid-1wgh.4.49).
+//!   Other implementations may accept leaves this crate refuses.
 //! - An [`observer::Observer`] does not check the `membership_tag` of
 //!   members' PublicMessages (RFC 9420 §6.2): it has no `membership_key`.
 //!   Signatures are verified. It does not check the `lifetime` of received

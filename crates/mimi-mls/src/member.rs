@@ -32,6 +32,15 @@
 //! sends raw authenticated data, and rejects incoming messages with bytes
 //! after the SafeAAD struct.
 //!
+//! # Required components
+//!
+//! The GroupContext `safe_aad` and `app_components` lists name the
+//! components every member must support (mls-extensions-10 §5). A Commit
+//! this module builds or receives is refused if a leaf it adds or updates
+//! lacks one of them in its own list, as RFC 9420 §11.1 does for
+//! `required_capabilities` (INTERPRETATION, decision mimid-1wgh.4.45). The
+//! [`Observer`](crate::observer::Observer) applies the same check.
+//!
 //! # Limitations
 //!
 //! - A [`Member`] cannot be reloaded from the [`Store`](crate::Store) after
@@ -43,8 +52,17 @@
 //! - AppDataUpdate proposals are supported only inline in this member's own
 //!   Commits and in Commits it receives. Sending a standalone AppDataUpdate
 //!   proposal is not supported.
+//! - The required-components check covers only leaves a Commit adds or
+//!   updates, judged against the post-Commit GroupContext (decision
+//!   mimid-1wgh.4.49). [`Member::create`] does not check the creator's own
+//!   leaf, and [`Member::join_welcome`] does not check the leaves already
+//!   in the tree (mimid-1wgh.4.51). This crate's leaves list no Safe AAD component yet, so in a group
+//!   whose `safe_aad` list requires one, this member refuses its own Commits
+//!   that carry an UpdatePath.
 
-use openmls::component::{ComponentData, ComponentId};
+use std::collections::BTreeSet;
+
+use openmls::component::{ComponentData, ComponentId, ComponentsList};
 use openmls::framing::SafeAadItem;
 use openmls::grease::random_grease_value;
 use openmls::group::{
@@ -54,12 +72,14 @@ use openmls::group::{
 use openmls::messages::proposals::{AppDataUpdateOperation, AppDataUpdateProposal, Proposal};
 use openmls::prelude::{
     AppDataDictionary, AppDataDictionaryExtension, BasicCredential, Credential, Extension,
-    Extensions, GroupId, KeyPackageIn, LeafNodeIndex, MlsMessageBodyIn, MlsMessageIn,
+    Extensions, GroupId, KeyPackageIn, LeafNode, LeafNodeIndex, MlsMessageBodyIn, MlsMessageIn,
     OpenMlsProvider, ProcessedMessage, ProcessedMessageContent, ProtocolVersion, RatchetTreeIn,
 };
 use tls_codec::{Deserialize, Serialize};
 
-use crate::identity::{CIPHERSUITE, leaf_capabilities, leaf_extensions};
+use crate::identity::{
+    APP_COMPONENTS, CIPHERSUITE, COMPONENT_GREASE, SAFE_AAD, leaf_capabilities, leaf_extensions,
+};
 use crate::{ErrorSource, Identity};
 
 /// An external sender for the GroupContext `external_senders` extension
@@ -242,6 +262,27 @@ pub enum MemberError {
         #[source]
         source: ErrorSource,
     },
+    /// The data of the `safe_aad` (0x0002) or `app_components` (0x0001)
+    /// component in the GroupContext is not a canonical `ComponentsList`
+    /// (mls-extensions-10 §5).
+    #[error("component {component_id:#06x} is not a valid ComponentsList")]
+    InvalidComponentsList {
+        /// The component whose data is malformed.
+        component_id: ComponentId,
+        /// Why decoding failed.
+        #[source]
+        source: ErrorSource,
+    },
+    /// A new or updated leaf's `safe_aad` list does not name a component
+    /// that the GroupContext `safe_aad` list requires (decision
+    /// mimid-1wgh.4.45). The group state is unchanged.
+    #[error("a leaf does not support required Safe AAD component {0:#06x}")]
+    MissingSafeAadComponent(ComponentId),
+    /// A new or updated leaf's `app_components` list does not name a
+    /// component that the GroupContext `app_components` list requires
+    /// (decision mimid-1wgh.4.45). The group state is unchanged.
+    #[error("a leaf does not support required component {0:#06x}")]
+    MissingAppComponent(ComponentId),
     /// The application message could not be created.
     #[error("cannot create the application message")]
     Send(#[source] ErrorSource),
@@ -272,10 +313,15 @@ impl Member {
     /// any are given, and an `app_data_dictionary` holding `components`
     /// (mls-extensions-10 §4.6) if any are given. Including the `safe_aad`
     /// component (0x0002) turns on Safe AAD framing for the group (§4.9).
+    /// The data of `safe_aad` and `app_components` (0x0001) must be a
+    /// canonical `ComponentsList` (§5): the components every member must
+    /// support.
     ///
     /// # Errors
     ///
     /// Returns [`MemberError::DuplicateComponent`] if a component id repeats,
+    /// [`MemberError::InvalidComponentsList`] if the `safe_aad` or
+    /// `app_components` data is not a canonical `ComponentsList`,
     /// [`MemberError::Identity`] if the LeafNode material cannot be built,
     /// and [`MemberError::Create`] if OpenMLS rejects the group.
     pub fn create(
@@ -307,6 +353,10 @@ impl Member {
             for (component_id, data) in components {
                 if dictionary.contains(component_id) {
                     return Err(MemberError::DuplicateComponent(*component_id));
+                }
+                // mls-extensions-10 §5; decision mimid-1wgh.4.45.
+                if matches!(*component_id, SAFE_AAD | APP_COMPONENTS) {
+                    decode_components_list(*component_id, data)?;
                 }
                 dictionary.insert(*component_id, data.clone());
             }
@@ -398,8 +448,13 @@ impl Member {
     /// Returns [`MemberError::InvalidKeyPackage`] if a KeyPackage is
     /// malformed or invalid, [`MemberError::InvalidAppDataUpdate`] or
     /// [`MemberError::AppDataRejected`] if the AppDataUpdate proposals are
-    /// invalid, and [`MemberError::Commit`] if OpenMLS cannot build the
-    /// Commit. The group state is unchanged on error.
+    /// invalid, [`MemberError::MissingSafeAadComponent`] or
+    /// [`MemberError::MissingAppComponent`] if a new or updated leaf lacks a
+    /// required component (see the module's `# Required components`),
+    /// [`MemberError::InvalidComponentsList`] if the new GroupContext's
+    /// `safe_aad` or `app_components` data is malformed, and
+    /// [`MemberError::Commit`] if OpenMLS cannot build the Commit. The group
+    /// state is unchanged on error.
     pub fn commit<E>(
         &mut self,
         identity: &Identity,
@@ -464,6 +519,18 @@ impl Member {
             .map_err(|e| MemberError::Commit(e.into()))?
             .stage_commit(provider)
             .map_err(|e| MemberError::Commit(e.into()))?;
+        // The staged Commit shows every new or updated leaf, including those
+        // of stored proposals, and the GroupContext it leads to.
+        let checked = match self.group.pending_commit() {
+            Some(staged) => check_staged_leaves(staged).map_err(MemberError::from),
+            None => Err(MemberError::Commit("OpenMLS left no Commit pending".into())),
+        };
+        if let Err(e) = checked {
+            self.group
+                .clear_pending_commit(provider.storage())
+                .map_err(|e| MemberError::Merge(e.into()))?;
+            return Err(e);
+        }
         let (commit, welcome, group_info) = bundle.into_messages();
         Ok(CommitBundle {
             commit: encode(&commit)?,
@@ -517,7 +584,12 @@ impl Member {
     /// validation or decryption fails, [`MemberError::TrailingAad`] if bytes
     /// follow the SafeAAD struct, [`MemberError::InvalidAppDataUpdate`] or
     /// [`MemberError::AppDataRejected`] for invalid AppDataUpdate proposals,
-    /// and [`MemberError::Merge`] if the new state cannot be stored.
+    /// [`MemberError::MissingSafeAadComponent`],
+    /// [`MemberError::MissingAppComponent`] or
+    /// [`MemberError::InvalidComponentsList`] if a Commit fails the
+    /// required-components check (see the module's `# Required
+    /// components`), and [`MemberError::Merge`] if the new state cannot be
+    /// stored.
     pub fn process<E>(
         &mut self,
         identity: &Identity,
@@ -579,6 +651,7 @@ impl Member {
                 Ok(Incoming::Proposal { sender })
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {
+                check_staged_leaves(&staged)?;
                 let summary = summarize(sender, &staged, staged.self_removed());
                 self.group
                     .merge_staged_commit(provider, *staged)
@@ -821,6 +894,12 @@ pub(crate) enum SharedError {
         component_id: ComponentId,
         source: ErrorSource,
     },
+    InvalidComponentsList {
+        component_id: ComponentId,
+        source: ErrorSource,
+    },
+    MissingSafeAadComponent(ComponentId),
+    MissingAppComponent(ComponentId),
 }
 
 impl From<SharedError> for MemberError {
@@ -838,8 +917,102 @@ impl From<SharedError> for MemberError {
                 component_id,
                 source,
             },
+            SharedError::InvalidComponentsList {
+                component_id,
+                source,
+            } => Self::InvalidComponentsList {
+                component_id,
+                source,
+            },
+            SharedError::MissingSafeAadComponent(component_id) => {
+                Self::MissingSafeAadComponent(component_id)
+            }
+            SharedError::MissingAppComponent(component_id) => {
+                Self::MissingAppComponent(component_id)
+            }
         }
     }
+}
+
+/// Strictly decodes `data`, the GroupContext data of `component_id`, as a
+/// canonical mls-extensions-10 §5 `ComponentsList`.
+fn decode_components_list(
+    component_id: ComponentId,
+    data: &[u8],
+) -> Result<Vec<ComponentId>, SharedError> {
+    ComponentsList::tls_deserialize_exact(data)
+        .map(ComponentsList::into_ids)
+        .map_err(|e| SharedError::InvalidComponentsList {
+            component_id,
+            source: e.into(),
+        })
+}
+
+/// Checks every leaf that `staged` adds or updates (Add, Update and the
+/// UpdatePath leaf) against the `safe_aad` and `app_components` lists of
+/// the GroupContext the Commit leads to (mls-extensions-10 §5).
+///
+/// INTERPRETATION, decision mimid-1wgh.4.45 (wg mimid-1wgh.37.39): §5 gives
+/// no enforcement rule, so the rule mirrors RFC 9420 §11.1
+/// `required_capabilities`. A leaf's list must name every non-GREASE id in
+/// the GroupContext's list; an absent list is empty. GREASE ids are ignored
+/// (§5.1). The GroupContext lists are decoded strictly and fail closed.
+/// Post-Commit GroupContext, GREASE ignored, and fail-closed decoding:
+/// decision mimid-1wgh.4.49.
+pub(crate) fn check_staged_leaves(staged: &StagedCommit) -> Result<(), SharedError> {
+    // The GroupContext after the Commit; decision mimid-1wgh.4.49.
+    let dictionary = staged
+        .group_context()
+        .extensions()
+        .app_data_dictionary()
+        .map(AppDataDictionaryExtension::dictionary);
+    let required = |component_id| match dictionary.and_then(|d| d.get(&component_id)) {
+        Some(data) => decode_components_list(component_id, data),
+        None => Ok(Vec::new()),
+    };
+    let safe_aad = required(SAFE_AAD)?;
+    let app_components = required(APP_COMPONENTS)?;
+    let check = |leaf: &LeafNode| {
+        if let Some(id) = first_unsupported(leaf, SAFE_AAD, &safe_aad) {
+            return Err(SharedError::MissingSafeAadComponent(id));
+        }
+        if let Some(id) = first_unsupported(leaf, APP_COMPONENTS, &app_components) {
+            return Err(SharedError::MissingAppComponent(id));
+        }
+        Ok(())
+    };
+    for add in staged.add_proposals() {
+        check(add.add_proposal().key_package().leaf_node())?;
+    }
+    for update in staged.update_proposals() {
+        check(update.update_proposal().leaf_node())?;
+    }
+    if let Some(leaf) = staged.update_path_leaf_node() {
+        check(leaf)?;
+    }
+    Ok(())
+}
+
+/// The first non-GREASE id in `required` that the `component_id` list of
+/// `leaf`'s `app_data_dictionary` does not name. A leaf's list is untrusted
+/// input: an absent or malformed one counts as empty, and GREASE ids in
+/// `required` are skipped (decision mimid-1wgh.4.49).
+fn first_unsupported(
+    leaf: &LeafNode,
+    component_id: ComponentId,
+    required: &[ComponentId],
+) -> Option<ComponentId> {
+    let supported: BTreeSet<ComponentId> = leaf
+        .extensions()
+        .app_data_dictionary()
+        .and_then(|extension| extension.dictionary().get(&component_id))
+        .and_then(|data| ComponentsList::tls_deserialize_exact(data).ok())
+        .map(|list| list.into_ids().into_iter().collect())
+        .unwrap_or_default();
+    required
+        .iter()
+        .copied()
+        .find(|id| !COMPONENT_GREASE.contains(id) && !supported.contains(id))
 }
 
 /// Applies mls-extensions-10 §4.7 to `proposals` (sorted by component id,

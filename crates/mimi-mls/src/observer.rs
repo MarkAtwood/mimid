@@ -22,6 +22,9 @@
 //!   updated would otherwise lock the hub out of its group once the
 //!   lifetime ends. Signatures, the tree hash and all other leaf checks
 //!   still apply.
+//! - The required-components check (decision mimid-1wgh.4.45) covers only
+//!   leaves a Commit adds or updates, not the leaves in the tree given to
+//!   [`Observer::from_group_info`] (mimid-1wgh.4.51).
 //! - PrivateMessages cannot be processed; the hub forwards them unread.
 //! - Proposals from external senders are accepted only for the types OpenMLS
 //!   supports there (Add, Remove and GroupContextExtensions). An external
@@ -51,8 +54,8 @@ use openmls::prelude::{
 use tls_codec::{Deserialize, Serialize, VLBytes};
 
 use crate::member::{
-    CommitSummary, ComponentOp, Sender, SharedError, basic_identity, convert_sender,
-    resolve_app_data_updates, summarize,
+    CommitSummary, ComponentOp, Sender, SharedError, basic_identity, check_staged_leaves,
+    convert_sender, resolve_app_data_updates, summarize,
 };
 use crate::wire::{PartialGroupInfo, RatchetTreePresence};
 use crate::{ErrorSource, Store, label};
@@ -122,6 +125,27 @@ pub enum ObserverError {
         #[source]
         source: ErrorSource,
     },
+    /// The data of the `safe_aad` (0x0002) or `app_components` (0x0001)
+    /// component in the GroupContext is not a canonical `ComponentsList`
+    /// (mls-extensions-10 §5).
+    #[error("component {component_id:#06x} is not a valid ComponentsList")]
+    InvalidComponentsList {
+        /// The component whose data is malformed.
+        component_id: ComponentId,
+        /// Why decoding failed.
+        #[source]
+        source: ErrorSource,
+    },
+    /// A new or updated leaf's `safe_aad` list does not name a component
+    /// that the GroupContext `safe_aad` list requires (decision
+    /// mimid-1wgh.4.45). The group state is unchanged.
+    #[error("a leaf does not support required Safe AAD component {0:#06x}")]
+    MissingSafeAadComponent(ComponentId),
+    /// A new or updated leaf's `app_components` list does not name a
+    /// component that the GroupContext `app_components` list requires
+    /// (decision mimid-1wgh.4.45). The group state is unchanged.
+    #[error("a leaf does not support required component {0:#06x}")]
+    MissingAppComponent(ComponentId),
     /// A Commit is pending; merge or clear it before processing more
     /// messages.
     #[error("a Commit is pending")]
@@ -161,6 +185,19 @@ impl From<SharedError> for ObserverError {
                 component_id,
                 source,
             },
+            SharedError::InvalidComponentsList {
+                component_id,
+                source,
+            } => Self::InvalidComponentsList {
+                component_id,
+                source,
+            },
+            SharedError::MissingSafeAadComponent(component_id) => {
+                Self::MissingSafeAadComponent(component_id)
+            }
+            SharedError::MissingAppComponent(component_id) => {
+                Self::MissingAppComponent(component_id)
+            }
         }
     }
 }
@@ -261,8 +298,12 @@ impl Observer {
     /// [`ObserverError::TrailingAad`] if bytes follow the SafeAAD struct,
     /// [`ObserverError::InvalidAppDataUpdate`] or
     /// [`ObserverError::AppDataRejected`] for invalid AppDataUpdate
-    /// proposals, and [`ObserverError::Merge`] if a proposal cannot be
-    /// stored.
+    /// proposals, [`ObserverError::MissingSafeAadComponent`],
+    /// [`ObserverError::MissingAppComponent`] or
+    /// [`ObserverError::InvalidComponentsList`] if a Commit fails the
+    /// required-components check of [`crate::member`] (decision
+    /// mimid-1wgh.4.45), and [`ObserverError::Merge`] if a proposal cannot
+    /// be stored.
     pub fn process<E>(
         &mut self,
         store: &Store,
@@ -317,6 +358,7 @@ impl Observer {
                 Ok(Observed::Proposal { sender })
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {
+                check_staged_leaves(&staged)?;
                 let committer = match sender {
                     Sender::Member(index) => LeafNodeIndex::new(index),
                     // RFC 9420 §12.4.3.2: the joiner takes the leftmost
