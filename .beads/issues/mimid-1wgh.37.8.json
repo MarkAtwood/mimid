@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.8",
   "title": "wg: protocol-06 §5.5 GroupInfo request/response encoding gaps",
   "description": "Erratum. joiningCode is \"optional opaque joiningCode\u003cV\u003e\" in GroupInfoRequestTBS (L2085) but plain in GroupInfoRequest (L2097), so a verifier can't rebuild the TBS. GroupInfoResponseTBS (L2145-2155) lacks the select (status) that GroupInfoResponse has. The room_id EncryptWithLabel context (L2142) doesn't say raw URI bytes or \u003cV\u003e encoding. Divergent readings break signatures or decryption. mimid: optional in both, TBS only on success, raw bytes (decisions mimid-1wgh.5.22, .5.26, .5.30). Fix: align the structs and state the context bytes.",
-  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/154\nReconciled 2026-10-18: PARTIAL: #154 covers joiningCode only; GroupInfoResponseTBS select(status) and room_id context bytes NOT filed.",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): PARTLY. §5.6 not §5.5. Only joiningCode optional mismatch changes wire; TBS/status mismatch cosmetic; room_id context weak. New issue (joiningCode).\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/154\nReconciled 2026-10-18: PARTIAL: #154 covers joiningCode only; GroupInfoResponseTBS select(status) and room_id context bytes NOT filed.\nFiled 2026-10-18 (Mark-authorized): remaining part as https://github.com/ietf-wg-mimi/mimi-protocol/issues/154#issuecomment-6254578715",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:08.519434767Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T19:52:31.719558255Z",
+  "updated_at": "2026-10-18T20:31:03.165070867Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.3.37",
   "title": "wg: room-policy-04 §10.2 ranges overlap at 0xF000",
   "description": "draft-ietf-mimi-room-policy-04 §10.2 gives Specification Required as 0x0000 to 0xF000 and Private Use as 0xF000 to 0xFFFF; 0xF000 is in both. mimid treats it as Private Use (decision P-cap1). Report to the MIMI WG.",
-  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/pull/39",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED: 0xF000 in both ranges; use 0x0000-0xEFFF. Editorial PR.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/pull/39",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:06:56.124155212Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T19:21:27.120117771Z",
+  "updated_at": "2026-10-18T20:30:53.630079077Z",
   "labels": [
     "wg",
     "spec:mimi-room-policy-04"

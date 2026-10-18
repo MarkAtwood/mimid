@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.63",
+  "title": "H48: keyMaterial without roomId is 404",
+  "description": "An absent roomId is answered like a room not hosted here: HTTP 404 (H8). Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T20:13:44.225094132Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T20:13:44.676137868Z",
+  "closed_at": "2026-10-18T20:13:44.676137868Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.63",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T20:13:44.243813703Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

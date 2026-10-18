@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.62",
+  "title": "H47: hub keyMaterial refusals are 200 noConsent",
+  "description": "protocol-06 §5.2 has no code for a refusal by the hub. Path mismatch, bad signature, H1/H9 failures, policy denial and unparsable target all answer noConsent with empty clients, HTTP 200. Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T20:13:44.144691432Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T20:13:44.650302727Z",
+  "closed_at": "2026-10-18T20:13:44.650302727Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.62",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T20:13:44.165481714Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

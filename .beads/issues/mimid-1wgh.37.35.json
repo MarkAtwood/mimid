@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.35",
   "title": "wg: ext-10 §4.6 app_components content unspecified",
   "description": "Suggestion. L585-587 a client \"MUST understand and advertise the app_components component\"; §5 (L913-916) defines it as the list of supported components but not whether it includes 0x0001 itself or every implemented component, which affects the check against the GroupContext required list. mimid lists only implemented components plus GREASE (decision mimid-1wgh.4.25). Fix: clarify.",
-  "notes": "Sent 2026-10-18: built-ins question folded into the #102 comment (issuecomment-6253376957)\nUpdate 2026-10-18: mimid now reads §4.6 'MUST ... advertise the app_components component' as listing 0x0001 itself in the LeafNode app_components list (decision mimid-1wgh.4.25 reading B, 7ea4456). The wg question remains whether the list must also include every implemented component.\nReconciled 2026-10-18: PARTIAL: mls-extensions#102 comment asks only about built-ins in leaf lists; 'must every implemented component be listed' NOT asked.",
+  "notes": "Editor's-copy check 2026-10-17: related open issues mlswg/mls-extensions#102 (enforcement) and #103 (update semantics); neither asks what app_components contains. Reference them.\n\nVerified 2026-10-18: ALREADY-RAISED as mlswg/mls-extensions#88 (closed via PR #93, which added 'MUST understand and advertise'). §6.2.3 implies the list carries every supported component, so that claim was wrong. Leftover: whether built-ins 0x0001/0x0002 must appear for the GroupContext check, one line on #102. Possible mimid bug if LeafNode list omits 0x0001 (see mimid-1wgh.4.62).\n\nSent 2026-10-18: built-ins question folded into the #102 comment (issuecomment-6253376957)\nUpdate 2026-10-18: mimid now reads §4.6 'MUST ... advertise the app_components component' as listing 0x0001 itself in the LeafNode app_components list (decision mimid-1wgh.4.25 reading B, 7ea4456). The wg question remains whether the list must also include every implemented component.\nReconciled 2026-10-18: PARTIAL: mls-extensions#102 comment asks only about built-ins in leaf lists; 'must every implemented component be listed' NOT asked.\nFiled 2026-10-18 (Mark-authorized): remaining part as https://github.com/mlswg/mls-extensions/issues/102#issuecomment-6254579217",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:10.903152531Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T19:52:31.822375696Z",
+  "updated_at": "2026-10-18T20:30:59.15626746Z",
   "labels": [
     "wg",
     "spec:mls-extensions-10"

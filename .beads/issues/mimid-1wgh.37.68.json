@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.68",
   "title": "wg: protocol-06 §5.6 GroupInfo ratchet_tree presence vs serving",
   "description": "Suggestion. §5.6 serves GroupInfo without an embedded ratchet_tree, but a PartialGroupInfo with ratchet_tree_presence=present was signed over one; the spec doesn't say whether the hub must strip it (invalidating the signature) or refuse. mimid refuses such commits (decision mimid-1wgh.6.11).",
-  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/152",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): PARTLY. 'omit ratchet_tree' only in struct comments (L1411, L2122); ask to make it MUST, present/added invalid, hub rejects. New issue.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/152",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T17:11:10.861046964Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T18:36:56.059642817Z",
+  "updated_at": "2026-10-18T20:31:02.687944547Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

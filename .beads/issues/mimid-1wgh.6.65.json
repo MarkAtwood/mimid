@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.65",
+  "title": "H50: reportAbuse 200 empty on accept, 422 whole refusal",
+  "description": "protocol-06 §5.9 says only that the code shows acceptance. An accepted report is 200 with an empty body; a report containing any unverifiable message is refused whole with 422. No enforcement (decision mimid-1wgh.21). Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T20:13:44.373575307Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T20:13:44.735221348Z",
+  "closed_at": "2026-10-18T20:13:44.735221348Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.65",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T20:13:44.393051291Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

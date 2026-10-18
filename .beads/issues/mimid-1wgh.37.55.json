@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.55",
   "title": "wg: room-policy-04 §3 role well-formedness rules unstated",
   "description": "Suggestion. §3 gives no well-formedness rules for role references (must referenced indices exist?) or constraints (min\u003c=max, unique names, duplicate capabilities/from_role_index). Implementations will accept different role lists. mimid decisions mimid-1wgh.3.40, mimid-1wgh.3.45. Fix: state the rules.",
-  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/issues/33",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): PARTLY: lead with role_index uniqueness; drop unique names; acknowledge scattered rules. New issue.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/issues/33",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:50:45.793882629Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T19:21:26.133861285Z",
+  "updated_at": "2026-10-18T20:31:01.23264497Z",
   "labels": [
     "wg",
     "spec:mimi-room-policy-04"

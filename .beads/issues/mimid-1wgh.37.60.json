@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.60",
   "title": "wg: room-policy-04 §5 fixed_membership 'ordinary users' undefined",
   "description": "Suggestion. §5 says in a fixed_membership room 'ordinary users cannot leave or be removed' but never defines 'ordinary' (all participants? roles without remove capabilities? non-banned?), and it is unclear how this interacts with canRemoveSelf/canRemoveParticipant/canKick. mimid does not enforce it in v1 (decision mimid-1wgh.3.50). Fix: define it in terms of roles/capabilities.",
-  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/issues/37",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED minor: fixed_membership leave/remove not tied to capabilities. New issue.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/issues/37",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T04:17:47.358696706Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T19:21:26.442307769Z",
+  "updated_at": "2026-10-18T20:31:01.853519871Z",
   "labels": [
     "wg",
     "spec:mimi-room-policy-04"

@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.6.61",
+  "title": "hub: flaky welcome fanout test (race)",
+  "description": "tests/hub_update.rs::welcome_goes_to_added_users_domains_with_full_tree (from S5, on main e846771) races: RecordingLocal::deliver records an attempt BEFORE the fanout worker deletes the outbox row, and the test reads the outbox as soon as it sees an attempt, so under load the a.example row may still be present (left: [a,b,c], right: [b,c]). Failed S8's landing gates (2 of 2 workspace runs in S9's worktree; passes alone). Fix the synchronization: wait until the a.example outbox row is gone (or the worker's pass completes) before asserting; no assertion weakened.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "bug",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T20:10:54.738834254Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T20:25:59.864638427Z",
+  "started_at": "2026-10-18T20:13:44.840604475Z",
+  "closed_at": "2026-10-18T20:25:59.864638427Z",
+  "close_reason": "Landed 207c700",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.61",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T20:10:54.760683891Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

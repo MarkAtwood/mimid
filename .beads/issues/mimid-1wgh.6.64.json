@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.64",
+  "title": "H49: keyMaterial local target 501, peer failure 502",
+  "description": "New HTTP mappings beyond H8: a local target (not proxied by the hub in v1, H20) answers 501; target-provider failures (unknown peer, non-200, undecodable or oversized response) answer 502. Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T20:13:44.297481146Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T20:13:44.70523893Z",
+  "closed_at": "2026-10-18T20:13:44.70523893Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.64",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T20:13:44.315211848Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.67",
   "title": "wg: protocol-06 credential identity vs user URI unspecified",
   "description": "Suggestion. §3 Table 1 and §7.5 do not say how an MLS credential identity maps to a participant-list user (user URI vs client URI). Every room-policy check needs this mapping. mimid: BasicCredential identity = user URI (decision mimid-1wgh.6.1). Fix: state the mapping.",
-  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/150",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): PARTLY. Implied user-URI equality in franking; §4.2 TODO acknowledges. New issue, merge with 37.70.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/150",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T17:11:10.783058372Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T18:37:03.508584705Z",
+  "updated_at": "2026-10-18T20:31:02.593882357Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

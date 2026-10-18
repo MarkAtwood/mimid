@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.65",
   "title": "wg: room-policy-04 §7 time units and ordering unstated",
   "description": "Suggestion. §7 MinDefaultMaxTime and the *_lifetime fields give no units (seconds? ms?), and no ordering rules (min \u003c= default \u003c= max; minimum_delay_ms \u003c= maximum_delay_ms; consistency of mandatory/default/forbidden capability lists). mimid carries them without checks (decisions mimid-1wgh.3.45, .3.64). Fix: state units and constraints.",
-  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/issues/38",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED: MinDefaultMaxTime units/consistency undefined; unit64 typo L1314. Issue P3 + editorial.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/issues/38",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T05:46:47.051483626Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T19:21:26.506406183Z",
+  "updated_at": "2026-10-18T20:31:02.383741944Z",
   "labels": [
     "wg",
     "spec:mimi-room-policy-04"

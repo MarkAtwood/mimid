@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.66",
   "title": "wg: protocol-06 §5.7 operation/endpoint mismatch unspecified",
   "description": "Suggestion. §5.7 defines request/cancel for requestConsent and grant/revoke for updateConsent, but never says what a server does when an operation is posted to the wrong endpoint (e.g. grant to requestConsent). mimid's codec leaves it to the server. Fix: state the required error response.",
-  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/163",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED minor: no 4xx for wrong consentOperation. Low-priority issue.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/163",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T16:56:09.957242522Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T18:36:56.841045061Z",
+  "updated_at": "2026-10-18T20:31:02.49056796Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

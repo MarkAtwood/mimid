@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.60",
+  "title": "H46: unknown room on /groupInfo is HTTP 404",
+  "description": "Per H8 (.6.8), a room not hosted here returns HTTP 404 rather than a 200 body with §5.6's noSuchRoom code. Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T20:04:35.280362519Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T20:04:37.009003464Z",
+  "closed_at": "2026-10-18T20:04:37.009003464Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.60",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T20:04:36.554375901Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
