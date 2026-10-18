@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.14",
+  "title": "F-Q13: last-resort reuse is a documented deviation",
+  "description": "Keep .12.16 last-resort KeyPackage reuse as a documented deviation from protocol-06 §5.2 'MUST NOT be provided in any other response' (tension with RFC 9420 §16.8). wg item needed. Approved by Mark 2026-10-18 (plan .7).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:31.555409841Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:32.347306929Z",
+  "closed_at": "2026-10-18T21:17:32.347306929Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.14",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:31.574439457Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

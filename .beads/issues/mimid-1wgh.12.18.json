@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.12.18",
+  "title": "J3: Chat.mimiRoomUri and Chat.fixedMembership properties",
+  "description": "JMAP has no field for the MIMI room URI and cannot tell a Group DM (fixed membership, \u003e2 users) from a group. Recommended: read-only extension properties Chat.mimiRoomUri and Chat.fixedMembership. PENDING Mark (from the JMAP Chat \u003c-\u003e MIMI comparison 2026-10-18); decide when mimid-1wgh.12 is planned.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:59.329639996Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:59.329639996Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.18",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:59.347010605Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

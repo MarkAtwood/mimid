@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.16",
+  "title": "F-Q15: relay synchronous, no outbox",
+  "description": "Relay is synchronous; peer failure returns a typed error the JMAP layer maps; clients retry; hub dedups. Approved by Mark 2026-10-18 (plan .7).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:31.703292572Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:32.396095708Z",
+  "closed_at": "2026-10-18T21:17:32.396095708Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.16",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:31.720025697Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

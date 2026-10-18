@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.13.1",
+  "title": "J1: JMAP contact id encoding for MIMI user URIs",
+  "description": "RFC 8620 Ids exclude ':' and '/', so mimi://a.example/u/alice cannot be a ChatContact id. Recommended: id = unpadded base64url of the user URI (fits while URI \u003c= 191 bytes; else a hash), login = the URI. PENDING Mark (from the JMAP Chat \u003c-\u003e MIMI comparison 2026-10-18); decide when mimid-1wgh.13 is planned.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:59.168147374Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:59.168147374Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.13.1",
+      "depends_on_id": "mimid-1wgh.13",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:59.189627312Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

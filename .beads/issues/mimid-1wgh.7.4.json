@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.4",
+  "title": "F-Q3: /notify status codes and peer requirement",
+  "description": "201 accepted or duplicate; 400 undecodable or bad From; From != room's hub 403 (INVENTED); unknown rooms accepted and created (fanout may precede the relay response); From must be a configured peer. Approved by Mark 2026-10-18 (plan .7).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:30.77530277Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:32.067476201Z",
+  "closed_at": "2026-10-18T21:17:32.067476201Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.4",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:30.793963145Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.73",
+  "title": "wg: room-policy-04 §5 call-room example contradicts itself",
+  "description": "§5 (L542) cites a call room that is both fixed-membership and parent-dependent 'in a Group DM'; the strict-subset rule forbids it containing all Group DM participants and §5 (L530) 'only a single fixed-membership room per participant set' forbids duplicating the Group DM's set. Fix the example or the rules. Found by the JMAP Chat \u003c-\u003e MIMI comparison 2026-10-18.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:59.716933781Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:59.716933781Z",
+  "labels": [
+    "wg",
+    "spec:mimi-room-policy-04"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.73",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:59.74580832Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

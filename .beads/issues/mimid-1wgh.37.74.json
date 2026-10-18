@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.74",
+  "title": "wg: room-policy-04 §5 fixed-room uniqueness across hubs unspecified",
+  "description": "§5 (L530) 'only a single fixed-membership room for any unique set of participants' does not say how uniqueness is enforced across hubs or who resolves simultaneous creation (JMAP Chat federation uses min(ULID)). Fix: specify the rule. Found by the JMAP Chat \u003c-\u003e MIMI comparison 2026-10-18.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:59.800700705Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:59.800700705Z",
+  "labels": [
+    "wg",
+    "spec:mimi-room-policy-04"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.74",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:59.827854577Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

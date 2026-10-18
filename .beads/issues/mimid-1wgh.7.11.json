@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.11",
+  "title": "F-Q10: hub serves local keyMaterial targets in-process",
+  "description": "Supersedes H49's local-target 501 (mimid-1wgh.6.64): after its policy check (H20) the hub serves local targets via an injected LocalKeyMaterial trait (like LocalDelivery). Approved by Mark 2026-10-18 (plan .7).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:31.323997181Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:32.265491321Z",
+  "closed_at": "2026-10-18T21:17:32.265491321Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.11",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:31.342362259Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

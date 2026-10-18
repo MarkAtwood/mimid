@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.3",
+  "title": "F-Q2: /notify dedup per FanoutMessage SHA-256 per room",
+  "description": "protocol-06 §5.5 dedups per body; mimid dedups per FanoutMessage (SHA-256 of exact bytes, unique per room), covering the per-body rule and surviving re-batching on retry. wg item needed (§5.5 NOTE). Approved by Mark 2026-10-18 (plan .7).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:30.707608728Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:32.040007423Z",
+  "closed_at": "2026-10-18T21:17:32.040007423Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.3",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:30.723853671Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

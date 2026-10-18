@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.17",
+  "title": "F-Q16: follower delivery in arrival order",
+  "description": "Arrival order, no timestamp reordering (Limitation; non-mimid hubs may pipeline). Approved by Mark 2026-10-18 (plan .7).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:31.775299487Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:32.421240496Z",
+  "closed_at": "2026-10-18T21:17:32.421240496Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.17",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:31.796603851Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

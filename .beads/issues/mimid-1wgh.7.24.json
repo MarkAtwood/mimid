@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.7.24",
+  "title": "follower F6: three-provider e2e",
+  "description": "tests/follower_e2e.rs + tests/common/providers.rs: A/B/C full stacks on loopback; scenario per protocol-06 §3 (create, keyMaterial across providers, Welcome routing, relayed commits/messages, leave by proposals, external join); faults (503 retries, B restart); oracle epoch_authenticator agreement, plaintext equality, per-provider streams == A's outbox, since_seq; mls-rs KP served and Welcome routed; whole-run canary. See .7 design field (approved plan) and decisions mimid-1wgh.7.2..mimid-1wgh.7.17.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:32.914443612Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:32.914443612Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.24",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:32.93124133Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.7.24",
+      "depends_on_id": "mimid-1wgh.7.23",
+      "type": "blocks",
+      "created_at": "2026-10-18T21:17:33.628718872Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

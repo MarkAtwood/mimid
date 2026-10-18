@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.13.2",
+  "title": "J2: JMAP chat id derived from the room URI",
+  "description": "JMAP chat ids are ULIDs; MIMI rooms are URIs; no derivation is defined. Recommended: derive the ULID deterministically from SHA-256(room URI) so every device's agent agrees (or add a 'Chat identifiers' section to draft-atwood-jmap-chat-mimi-00). PENDING Mark (from the JMAP Chat \u003c-\u003e MIMI comparison 2026-10-18); decide when mimid-1wgh.13 is planned.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:59.250022793Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:59.250022793Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.13.2",
+      "depends_on_id": "mimid-1wgh.13",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:59.269812639Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

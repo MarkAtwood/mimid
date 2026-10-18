@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.13.3",
+  "title": "J4: MIMI role to JMAP admin/member rule",
+  "description": "JMAP group chats have only admin/member. Recommended: admin if the user's MIMI role holds any membership or metadata capability; optionally read-only ChatMember.mimiRole {index, name}; banned users omitted from members; ChatMember.active for inactive participants. PENDING Mark (from the JMAP Chat \u003c-\u003e MIMI comparison 2026-10-18); decide when mimid-1wgh.13 is planned.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:59.404086163Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:59.404086163Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.13.3",
+      "depends_on_id": "mimid-1wgh.13",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:59.422899329Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.12.1",
   "title": "jmap-mimi: draft-atwood-jmap-chat-mimi-00",
   "description": "Write the spec in ~/PROJECT/jmap-chat-spec (style of draft-atwood-jmap-chat-push-00), JSON example per method. ASK MARK before writing to jmap-chat-spec. State that application/mimi-content bodies here carry a PrivateMessage.",
-  "notes": "2026-10-17: Another Claude session (cwd ~/PROJECT) committed jmap-chat-spec 0b2ee28 'feat: add MIMI alignment and read expiry' (+42/-9 in draft-atwood-jmap-chat-00.md and -federation-00.md): pins mimi-content-09/protocol-06/room-policy-04/mahy-mimi-message-status-01 refs; MIMI expired/hidden/error statuses are not read acks (no readAt); adds expiresAfterReadSeconds; attachment keys come from E2EE scheme; read-triggered deletion decoupled from senderExpiresAt in Peer/deliver. When starting .12.1 (still needs Mark's OK to write in jmap-chat-spec): build on 0b2ee28, check jmap-chat-spec git log for later commits first, and avoid duplicating that text.",
+  "notes": "2026-10-17: Another Claude session (cwd ~/PROJECT) committed jmap-chat-spec 0b2ee28 'feat: add MIMI alignment and read expiry' (+42/-9 in draft-atwood-jmap-chat-00.md and -federation-00.md): pins mimi-content-09/protocol-06/room-policy-04/mahy-mimi-message-status-01 refs; MIMI expired/hidden/error statuses are not read acks (no readAt); adds expiresAfterReadSeconds; attachment keys come from E2EE scheme; read-triggered deletion decoupled from senderExpiresAt in Peer/deliver. When starting .12.1 (still needs Mark's OK to write in jmap-chat-spec): build on 0b2ee28, check jmap-chat-spec git log for later commits first, and avoid duplicating that text.\n2026-10-18: drafting of the draft-atwood-jmap-chat-mimi-00 extension is being done by Mark in jmap-chat-spec (see .12 notes); this bead should track/align with that, not write it independently.",
   "status": "open",
   "priority": 1,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T18:32:22.352036173Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T01:03:42.187133921Z",
+  "updated_at": "2026-10-18T20:56:35.615634603Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.12.1",

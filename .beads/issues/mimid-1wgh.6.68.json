@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.6.68",
+  "title": "docs: document multi-device interop limit of H1",
+  "description": "Add to mimid-server and mimi-mls # Limitations: under H1 (credential identity = user URI, mimid-1wgh.6.1) stock mls-rs clients reject a second leaf with the same BasicCredential, so a user with two devices cannot share a group with them. Docs only.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:59.092364205Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:59.092364205Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.68",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:59.110600049Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

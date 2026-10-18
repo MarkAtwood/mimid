@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.7",
+  "title": "F-Q6: follower membership and visibility",
+  "description": "A local user joins a room's delivery set on a Welcome KeyPackageRef match, an accepted relayed update, or creating the room; leaves explicitly; since_seq hides pre-join history; Welcomes visible only to ref-matched users (.12.17). Approved by Mark 2026-10-18 (plan .7).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:17:31.003198206Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:17:32.150358886Z",
+  "closed_at": "2026-10-18T21:17:32.150358886Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.7",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:17:31.021745044Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
