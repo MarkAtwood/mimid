@@ -1,6 +1,6 @@
 //! Client for peer providers: directory fetch and cache, and outbound
-//! `/notify` and `/keyMaterial` requests over reqwest (plan of
-//! mimid-1wgh.6).
+//! `/notify`, `/keyMaterial`, `/update`, `/submitMessage` and `/groupInfo`
+//! requests over reqwest (plans of mimid-1wgh.6 and mimid-1wgh.7).
 //!
 //! A peer's base URL comes from the configured peer map, which replaces DNS
 //! discovery (decision mimid-1wgh.17). Its directory (protocol-06 §5.1) is
@@ -15,8 +15,8 @@
 //!   (decision mimid-1wgh.34).
 //! - The endpoint URLs in a peer's directory are used as given (decision
 //!   mimid-1wgh.6.48). A misconfigured or hostile peer can therefore direct
-//!   fanout and keyMaterial POSTs to arbitrary hosts, including ones on the hub's internal
-//!   network. Peers are configured by the operator (decision
+//!   every POST to arbitrary hosts, including ones on this provider's
+//!   internal network. Peers are configured by the operator (decision
 //!   mimid-1wgh.17), so only list peers you trust with this.
 //! - Redirects are not followed; a redirect counts as a failed request.
 
@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
-use mimi_protocol::Directory;
+use mimi_protocol::{Directory, UriTemplate};
 use reqwest::header::{CONTENT_TYPE, FROM, HOST, HeaderMap, HeaderValue, RETRY_AFTER};
 use reqwest::{StatusCode, redirect};
 
@@ -43,12 +43,52 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long connecting to a peer may take. INVENTED, NOT FROM SPEC.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The `roomId` variable of the `notify` template (protocol-06 §5.1, §5.5).
-const ROOM_ID_VARIABLE: &str = "roomId";
+/// A protocol-06 §5.1 directory endpoint that [`PeerClient`] posts to.
+#[derive(Debug, Clone, Copy)]
+enum Endpoint {
+    /// §5.2 `POST /keyMaterial/{targetUser}`.
+    KeyMaterial,
+    /// §5.3 `POST /update/{roomId}`.
+    Update,
+    /// §5.4 `POST /submitMessage/{roomId}`.
+    SubmitMessage,
+    /// §5.5 `POST /notify/{roomId}`.
+    Notify,
+    /// §5.6 `POST /groupInfo/{roomId}`.
+    GroupInfo,
+}
 
-/// The `targetUser` variable of the `keyMaterial` template (protocol-06
-/// §5.1, §5.2).
-const TARGET_USER_VARIABLE: &str = "targetUser";
+impl Endpoint {
+    /// The endpoint's name in the directory.
+    fn name(self) -> &'static str {
+        match self {
+            Self::KeyMaterial => "keyMaterial",
+            Self::Update => "update",
+            Self::SubmitMessage => "submitMessage",
+            Self::Notify => "notify",
+            Self::GroupInfo => "groupInfo",
+        }
+    }
+
+    /// The template variable the endpoint's URL is expanded with.
+    fn variable(self) -> &'static str {
+        match self {
+            Self::KeyMaterial => "targetUser",
+            Self::Update | Self::SubmitMessage | Self::Notify | Self::GroupInfo => "roomId",
+        }
+    }
+
+    /// The endpoint's URL template in `directory`.
+    fn template(self, directory: &Directory) -> &UriTemplate {
+        match self {
+            Self::KeyMaterial => &directory.key_material,
+            Self::Update => &directory.update,
+            Self::SubmitMessage => &directory.submit_message,
+            Self::Notify => &directory.notify,
+            Self::GroupInfo => &directory.group_info,
+        }
+    }
+}
 
 /// The guidance of a `Retry-After` header (RFC 9110 §10.2.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,13 +142,13 @@ impl PeerClient {
 
     /// protocol-06 §5.5 `POST /notify/{roomId}`: sends `body`, the
     /// concatenated FanoutMessages, for the room `room_id` to `domain`.
-    /// Only a `201` response counts as accepted.
+    /// Only a `201` response counts as accepted; its body is not read.
     ///
     /// # Errors
     ///
     /// Returns [`PeerError::UnknownPeer`] if `domain` is not a configured
-    /// peer, any error from fetching its directory, [`PeerError::NotifyUrl`]
-    /// if the `notify` template cannot be expanded with `room_id`,
+    /// peer, any error from fetching its directory, [`PeerError::Url`] if
+    /// the `notify` template cannot be expanded with `room_id`,
     /// [`PeerError::Http`] if the request fails, and [`PeerError::Rejected`]
     /// for any status other than `201`.
     pub async fn notify(
@@ -117,29 +157,10 @@ impl PeerClient {
         room_id: &str,
         body: Vec<u8>,
     ) -> Result<(), PeerError> {
-        let directory = self.directory(domain).await?;
-        // protocol-06 §5.5; decisions mimid-1wgh.5.15, mimid-1wgh.5.18
-        let url = directory
-            .notify
-            .expand(ROOM_ID_VARIABLE, room_id)
-            .map_err(PeerError::NotifyUrl)?;
-        let response = self
-            .http
-            .post(url)
-            .headers(self.headers(domain)?)
-            .header(CONTENT_TYPE, PROTOCOL_CONTENT_TYPE)
-            .body(body)
-            .send()
+        // protocol-06 §5.5; decision mimid-1wgh.5.15
+        self.post(domain, Endpoint::Notify, room_id, body, StatusCode::CREATED)
             .await
-            .map_err(PeerError::Http)?;
-        if response.status() == StatusCode::CREATED {
-            Ok(())
-        } else {
-            Err(PeerError::Rejected {
-                status: response.status().as_u16(),
-                retry_after: retry_after(response.headers()),
-            })
-        }
+            .map(drop)
     }
 
     /// protocol-06 §5.2 `POST /keyMaterial/{targetUser}`: sends `body`, a
@@ -149,24 +170,92 @@ impl PeerClient {
     ///
     /// # Errors
     ///
-    /// Returns [`PeerError::UnknownPeer`] if `domain` is not a configured
-    /// peer, any error from fetching its directory,
-    /// [`PeerError::KeyMaterialUrl`] if the `keyMaterial` template cannot be
-    /// expanded with `target_user`, [`PeerError::Http`] if the request
-    /// fails, [`PeerError::Rejected`] for any status other than `200`, and
-    /// [`PeerError::ResponseTooLarge`] for an oversized body.
+    /// As for [`PeerClient::update`], with `target_user` in place of the
+    /// room ID.
     pub async fn key_material(
         &self,
         domain: &Domain,
         target_user: &str,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, PeerError> {
+        self.post_read(domain, Endpoint::KeyMaterial, target_user, body)
+            .await
+    }
+
+    /// protocol-06 §5.3 `POST /update/{roomId}`: sends `body`, an
+    /// UpdateRequest for the room `room_id`, to `domain`, the room's hub,
+    /// and returns the response body as received. Only a `200` response
+    /// counts, and its body may be at most [`MAX_BODY_LEN`] bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PeerError::UnknownPeer`] if `domain` is not a configured
+    /// peer, any error from fetching its directory, [`PeerError::Url`] if
+    /// the template cannot be expanded with `room_id`, [`PeerError::Http`]
+    /// if the request fails, [`PeerError::Rejected`] for any status other
+    /// than `200`, and [`PeerError::ResponseTooLarge`] for an oversized
+    /// body.
+    pub async fn update(
+        &self,
+        domain: &Domain,
+        room_id: &str,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, PeerError> {
+        self.post_read(domain, Endpoint::Update, room_id, body)
+            .await
+    }
+
+    /// protocol-06 §5.4 `POST /submitMessage/{roomId}`: as
+    /// [`PeerClient::update`], for a SubmitMessageRequest.
+    ///
+    /// # Errors
+    ///
+    /// As for [`PeerClient::update`].
+    pub async fn submit_message(
+        &self,
+        domain: &Domain,
+        room_id: &str,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, PeerError> {
+        self.post_read(domain, Endpoint::SubmitMessage, room_id, body)
+            .await
+    }
+
+    /// protocol-06 §5.6 `POST /groupInfo/{roomId}`: as
+    /// [`PeerClient::update`], for a GroupInfoRequest.
+    ///
+    /// # Errors
+    ///
+    /// As for [`PeerClient::update`].
+    pub async fn group_info(
+        &self,
+        domain: &Domain,
+        room_id: &str,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, PeerError> {
+        self.post_read(domain, Endpoint::GroupInfo, room_id, body)
+            .await
+    }
+
+    /// Posts `body` to `endpoint` of `domain`, with the endpoint's template
+    /// expanded with `value` (decision mimid-1wgh.5.18), and returns the
+    /// response if its status is `expect`.
+    async fn post(
+        &self,
+        domain: &Domain,
+        endpoint: Endpoint,
+        value: &str,
+        body: Vec<u8>,
+        expect: StatusCode,
+    ) -> Result<reqwest::Response, PeerError> {
         let directory = self.directory(domain).await?;
-        // protocol-06 §5.2; decision mimid-1wgh.5.18
-        let url = directory
-            .key_material
-            .expand(TARGET_USER_VARIABLE, target_user)
-            .map_err(PeerError::KeyMaterialUrl)?;
+        let url = endpoint
+            .template(&directory)
+            .expand(endpoint.variable(), value)
+            .map_err(|source| PeerError::Url {
+                endpoint: endpoint.name(),
+                source,
+            })?;
         let response = self
             .http
             .post(url)
@@ -176,14 +265,29 @@ impl PeerClient {
             .send()
             .await
             .map_err(PeerError::Http)?;
-        if response.status() != StatusCode::OK {
-            return Err(PeerError::Rejected {
+        if response.status() == expect {
+            Ok(response)
+        } else {
+            Err(PeerError::Rejected {
                 status: response.status().as_u16(),
                 retry_after: retry_after(response.headers()),
-            });
+            })
         }
-        // The request body cap bounds the response too (decision
-        // mimid-1wgh.6.67).
+    }
+
+    /// [`PeerClient::post`] expecting `200`, returning a body of at most
+    /// [`MAX_BODY_LEN`] bytes: the request body cap bounds responses too
+    /// (decision mimid-1wgh.6.67).
+    async fn post_read(
+        &self,
+        domain: &Domain,
+        endpoint: Endpoint,
+        value: &str,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, PeerError> {
+        let response = self
+            .post(domain, endpoint, value, body, StatusCode::OK)
+            .await?;
         read_capped(response, MAX_BODY_LEN)
             .await?
             .ok_or(PeerError::ResponseTooLarge)
@@ -299,18 +403,21 @@ pub enum PeerError {
     /// The directory document is not a valid protocol-06 §5.1 directory.
     #[error("invalid directory document")]
     InvalidDirectory(#[source] mimi_protocol::serde_json::Error),
-    /// The `notify` template could not be expanded with the room ID.
-    #[error("cannot build the notify URL")]
-    NotifyUrl(#[source] mimi_protocol::Error),
-    /// The `keyMaterial` template could not be expanded with the target
-    /// user.
-    #[error("cannot build the keyMaterial URL")]
-    KeyMaterialUrl(#[source] mimi_protocol::Error),
+    /// An endpoint's template could not be expanded with the room ID or
+    /// target user.
+    #[error("cannot build the {endpoint} URL")]
+    Url {
+        /// The endpoint's name in the directory.
+        endpoint: &'static str,
+        /// Why the expansion failed.
+        #[source]
+        source: mimi_protocol::Error,
+    },
     /// A response body exceeds [`MAX_BODY_LEN`].
     #[error("response body too large")]
     ResponseTooLarge,
     /// The peer answered with a status other than the one the request
-    /// expects: `201` for `/notify`, `200` for `/keyMaterial`.
+    /// expects: `201` for `/notify`, `200` for every other endpoint.
     #[error("peer answered {status}")]
     Rejected {
         /// The response status code.
