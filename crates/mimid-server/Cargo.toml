@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+# rustls with its default aws-lc-rs provider (decisions mimid-1wgh.26, .6.16).
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 serde.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
@@ -21,6 +23,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+# Independent oracle, at the pin mimi-mls uses (decisions mimid-1wgh.4.13, .6.16).
+mls-rs = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
+mls-rs-crypto-rustcrypto = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
 serde_json.workspace = true
 tempfile = "=3.23.0"
 tower = { version = "=0.5.2", features = ["util"] }

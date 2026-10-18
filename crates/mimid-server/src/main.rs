@@ -5,7 +5,7 @@
 //! It currently serves only the directory document of
 //! draft-ietf-mimi-protocol-06 §5.1 at `/.well-known/mimi-protocol-directory`.
 //!
-//! Usage: `mimid <config.toml>`. See the `config` module for the file
+//! Usage: `mimid <config.toml>`. See `mimid_server::config` for the file
 //! format. Log filtering follows `RUST_LOG` and defaults to `info`.
 //!
 //! # Limitations
@@ -22,18 +22,13 @@
 
 #![forbid(unsafe_code)]
 
-mod config;
-mod directory;
-mod store;
-
 use std::path::PathBuf;
 
 use anyhow::{Context, bail};
+use mimid_server::config::Config;
+use mimid_server::directory::{Directory, router};
+use mimid_server::store::Store;
 use tracing_subscriber::EnvFilter;
-
-use crate::config::Config;
-use crate::directory::{Directory, router};
-use crate::store::Store;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
