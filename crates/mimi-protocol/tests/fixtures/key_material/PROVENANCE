@@ -1,0 +1,33 @@
+# PROVENANCE: protocol-06 §5.2 keyMaterial signature oracle (task mimid-1wgh.5.8)
+#
+# key_material_gen.py builds two KeyMaterialRequestTBS values (one with a
+# roomId, one with a zero-length roomId) with its own TLS encoding from the
+# text of draft-ietf-mimi-protocol-06 §5.2, and signs each with
+# SignWithLabel (RFC 9420 §5.1.2), label "KeyMaterialRequestTBS", Ed25519
+# (ciphersuite 1's scheme). It never calls or reads mimid code. Before
+# printing anything it checks its SignWithLabel against the suite 1 entry
+# of the mlswg crypto-basics.json vectors. key_material_gen.out is its
+# unmodified stdout. The key is a fixed seed and Ed25519 is deterministic,
+# so the output is reproducible. Decisions applied:
+# mimid-1wgh.5.27 (zero-length roomId means absent).
+#
+# Regenerate (from this directory):
+#   python3 -I key_material_gen.py \
+#     ../../../../mimi-mls/tests/fixtures/crypto-basics/crypto-basics.json \
+#     > key_material_gen.out
+# Generated:  2026-10-17 with Python 3.12.3 and pyca/cryptography 41.0.7
+#             (Ed25519) plus the standard library (struct, json).
+# Read by:    mimi-protocol/tests/key_material.rs, which embeds
+#             key_material_gen.out with include_str! (offline). The test
+#             also embeds the mlswg KeyPackage below, hand-framed.
+#
+# Sources:
+#   draft-ietf-mimi-protocol-06  ~/PROJECT/IETF/specs/draft-ietf-mimi-protocol-06.txt
+#                                sha256 1cb7c8e6cc9dbf6d2d165e3f0688ac6eeedc0bebd69e9d53f6b972f42da8b9da
+#   Inputs (see their own PROVENANCE files in crates/mimi-mls/tests/fixtures):
+17cfcf89af9f51d0f2aa7af77f6f9ec99376a039214b6d42a6f11646b83e8c29  crypto-basics/crypto-basics.json
+b3173e9c09a5d45afe9ad9ead0c568085aa6d25bceb81e3b4404e6d0399b38e6  mlswg/messages-000-mls_key_package.bin
+#
+# Files:
+47638034c15a492dc9b609218c4d87d95866f78d3063070b65e48bb9d5114bf4  key_material_gen.py
+1471784b2da7a1b5782e9bd785e592efd622985aad30fd8f4954bb4fb22e73d7  key_material_gen.out

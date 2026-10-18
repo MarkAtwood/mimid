@@ -40,13 +40,13 @@ const SUPPORTED_CIPHER_SUITE: u16 = 0x0001;
 
 /// A reader that keeps a copy of every byte read through it, so a TBS can
 /// be verified over the bytes as received.
-struct Recorder<'a, R> {
+pub(crate) struct Recorder<'a, R> {
     inner: &'a mut R,
-    consumed: Vec<u8>,
+    pub(crate) consumed: Vec<u8>,
 }
 
 impl<'a, R: Read> Recorder<'a, R> {
-    fn new(inner: &'a mut R) -> Self {
+    pub(crate) fn new(inner: &'a mut R) -> Self {
         Self {
             inner,
             consumed: Vec::new(),

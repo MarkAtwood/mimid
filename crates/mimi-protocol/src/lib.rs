@@ -21,8 +21,10 @@
 //!   protect against a malicious or impersonated provider, and mimid does not
 //!   conform to protocol-06's mutually authenticated TLS transport.
 //! - Implemented so far: the primitives ([`Protocol`], [`IdentifierUri`],
-//!   [`Utf8String`]), the directory ([`Directory`], [`UriTemplate`]), and
-//!   the codecs for the frank_aad ([`FrankAad`]), participant_list
+//!   [`Utf8String`]), the directory ([`Directory`], [`UriTemplate`]), the
+//!   keyMaterial endpoint ([`KeyMaterialRequest`], with
+//!   [`KeyMaterialRequestTbs::sign`] and [`KeyMaterialRequest::verify`],
+//!   and [`KeyMaterialResponse`]), and the codecs for the frank_aad ([`FrankAad`]), participant_list
 //!   ([`ParticipantListData`], [`ParticipantListUpdate`]) and room_metadata
 //!   ([`RoomMetaData`]) components, the update endpoint ([`UpdateRequest`],
 //!   [`UpdateRoomResponse`]), the notify endpoint ([`FanoutMessage`],
@@ -78,6 +80,21 @@
 //!   [`GroupInfoRatchetTreeTbe`] is not checked to lack a ratchet_tree
 //!   extension, and [`PendingProposal`] entries must be PublicMessage
 //!   proposals, as for `moreProposals` (decision mimid-1wgh.5.54).
+//! - keyMaterial signing and verification use suite 1's signature scheme
+//!   (Ed25519) and require suite 1 in `acceptableCiphersuites`, because
+//!   protocol-06 §5.2 names no suite for the signature (decision
+//!   mimid-1wgh.5.61). An empty `acceptableCiphersuites` is rejected
+//!   (decision mimid-1wgh.5.62). [`KeyMaterialRequest::verify`]
+//!   checks the signature against the key in the same request only:
+//!   binding it to the credential and the requesting provider, matching
+//!   `targetUser` to the request path, and checking consent are left to the
+//!   caller. An empty [`KeyMaterialRequestTbs::room_id`] means absent
+//!   (decision mimid-1wgh.5.27). [`KeyMaterialResponse`] checks `clients`
+//!   against `userStatus` (decision mimid-1wgh.5.63), and a
+//!   `keyMaterialExhausted` client carries no fields (decision
+//!   mimid-1wgh.5.64). It does not check that a KeyPackage uses an acceptable
+//!   ciphersuite, meets `requiredCapabilities`, is unexpired or was never
+//!   handed out before: those need the request, a clock or provider state.
 //! - [`FanoutMessage`] arms follow decision mimid-1wgh.5.24: an application
 //!   message must be a PrivateMessage, so a PublicMessage application
 //!   message or a PrivateMessage proposal or commit is rejected.
@@ -119,6 +136,7 @@ mod directory;
 mod frank;
 mod group_info;
 mod identifier_uri;
+mod key_material;
 mod notify;
 mod update;
 mod uri_template;
@@ -141,6 +159,10 @@ pub use group_info::{
     encrypt_group_info,
 };
 pub use identifier_uri::IdentifierUri;
+pub use key_material::{
+    ClientKeyMaterial, KeyMaterialClientCode, KeyMaterialRequest, KeyMaterialRequestTbs,
+    KeyMaterialResponse, KeyMaterialUserCode,
+};
 pub use notify::{FanoutEvent, FanoutMessage, NotifyRequest};
 pub use serde_json;
 pub use tls_codec;
@@ -246,6 +268,17 @@ pub enum Error {
     /// arrived for (§5.4.1.3).
     #[error("franked room URI does not match the room")]
     FrankRoomMismatch,
+    /// A [`KeyMaterialRequestTbs`]'s `acceptableCiphersuites` list was
+    /// empty; protocol-06 §5.2 requires a non-empty list.
+    #[error("acceptableCiphersuites is empty")]
+    EmptyCipherSuites,
+    /// A [`KeyMaterialResponse`]'s `clients` list contradicts its
+    /// `userStatus` (protocol-06 §5.2).
+    #[error("clients list does not match userStatus {user_status:?}")]
+    KeyMaterialClientsMismatch {
+        /// The response's `userStatus`.
+        user_status: KeyMaterialUserCode,
+    },
     /// A value could not be TLS-encoded.
     #[error("TLS encoding failed")]
     Encoding(#[source] tls_codec::Error),
