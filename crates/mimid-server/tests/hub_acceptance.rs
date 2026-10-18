@@ -1222,6 +1222,23 @@ async fn room_lifecycle_across_restart() {
     // Restart mid-stream: c.example refused its first delivery, so its row
     // waits for its backoff. The worker and hub stop as on process exit.
     streams.c.wait_for(1).await;
+    // The mock answers after signalling arrival, and the worker records the
+    // attempt only after `deliver` returns, so wait for that before reading
+    // the outbox. Polling on "!= 0" leaves a double count to the assert.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !provider
+            .store
+            .outbox_heads()
+            .await
+            .unwrap()
+            .iter()
+            .any(|head| head.domain.as_str() == "c.example" && head.attempts != 0)
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("c.example delivery attempt recorded within 10 s");
     let heads = provider.store.outbox_heads().await.unwrap();
     assert_eq!(heads.len(), 1, "{heads:?}");
     assert_eq!(heads[0].domain.as_str(), "c.example");
