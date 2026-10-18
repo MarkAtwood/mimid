@@ -1,6 +1,7 @@
 //! Routing of the follower endpoints (bead mimid-1wgh.7.18): `/v1/notify`
-//! and keyMaterial for users of this provider reach the follower,
-//! and keyMaterial for anyone else still reaches the hub.
+//! and keyMaterial for users of this provider in rooms hosted elsewhere
+//! reach the follower, and keyMaterial for anyone else, or for a room
+//! hosted here, reaches the hub (decision mimid-1wgh.7.27).
 //!
 //! The provider hosts no rooms, so the two paths answer a decodable
 //! keyMaterial request differently: the hub with `404` (protocol-06 §5.2
@@ -31,6 +32,7 @@ const ALICE_ENCODED: &str = "mimi%3A%2F%2Fa.example%2Fu%2Falice";
 /// A user of another provider.
 const CATHY: &str = "mimi://c.example/u/cathy";
 const CATHY_ENCODED: &str = "mimi%3A%2F%2Fc.example%2Fu%2Fcathy";
+const DEN: &str = "mimi://b.example/r/den";
 const DEN_ENCODED: &str = "mimi%3A%2F%2Fb.example%2Fr%2Fden";
 
 /// `opaque<V>` holding `bytes` (RFC 9420 §2.1.2), for fewer than 64 bytes.
@@ -39,8 +41,8 @@ fn opaque(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// A KeyMaterialRequest from bob at b.example for `target_user` in
-/// [`ROOM_ID`], signed with a fresh Ed25519 key.
-fn key_material_request(target_user: &str) -> Vec<u8> {
+/// `room_id`, signed with a fresh Ed25519 key.
+fn key_material_request(target_user: &str, room_id: &str) -> Vec<u8> {
     let pair = SignatureKeyPair::generate().unwrap();
     // RFC 9420 §5.1.1, §5.3 (basic = 1), §11.1 (three empty lists), §17.1.
     let key = SignaturePublicKey::tls_deserialize_exact(opaque(pair.verification_key())).unwrap();
@@ -51,7 +53,7 @@ fn key_material_request(target_user: &str) -> Vec<u8> {
         protocol: Protocol::Mls10,
         requesting_user: uri(BOB),
         target_user: uri(target_user.as_bytes()),
-        room_id: uri(ROOM_ID.as_bytes()),
+        room_id: uri(room_id.as_bytes()),
         acceptable_ciphersuites: vec![CipherSuite::tls_deserialize_exact([0x00, 0x01]).unwrap()],
         required_capabilities: RequiredCapabilities::tls_deserialize_exact([0x00, 0x00, 0x00])
             .unwrap(),
@@ -103,18 +105,27 @@ async fn notify_without_from_is_400() {
 }
 
 #[tokio::test]
-async fn key_material_for_a_local_user_reaches_the_follower() {
+async fn key_material_for_a_local_user_in_a_room_hosted_elsewhere_reaches_the_follower() {
     let path = format!("/v1/keyMaterial/{ALICE_ENCODED}");
-    let request = key_material_request("mimi://a.example/u/alice");
+    let request = key_material_request("mimi://a.example/u/alice", DEN);
     let (status, body) = post(&path, Some("mimi@b.example"), request).await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(body, "keyMaterial for local users is not implemented");
 }
 
 #[tokio::test]
+async fn key_material_for_a_local_user_in_a_room_hosted_here_reaches_the_hub() {
+    let path = format!("/v1/keyMaterial/{ALICE_ENCODED}");
+    let request = key_material_request("mimi://a.example/u/alice", ROOM_ID);
+    let (status, body) = post(&path, Some("mimi@b.example"), request).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, "no such room");
+}
+
+#[tokio::test]
 async fn undecodable_key_material_for_a_local_user_is_400() {
     let path = format!("/v1/keyMaterial/{ALICE_ENCODED}");
-    let mut request = key_material_request("mimi://a.example/u/alice");
+    let mut request = key_material_request("mimi://a.example/u/alice", ROOM_ID);
     request.push(0x00);
     let (status, body) = post(&path, Some("mimi@b.example"), request).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -124,7 +135,12 @@ async fn undecodable_key_material_for_a_local_user_is_400() {
 #[tokio::test]
 async fn key_material_for_a_remote_user_reaches_the_hub() {
     let path = format!("/v1/keyMaterial/{CATHY_ENCODED}");
-    let (status, body) = post(&path, Some("mimi@b.example"), key_material_request(CATHY)).await;
+    let (status, body) = post(
+        &path,
+        Some("mimi@b.example"),
+        key_material_request(CATHY, ROOM_ID),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body, "no such room");
 }
@@ -136,7 +152,7 @@ async fn key_material_for_a_non_user_reaches_the_hub() {
     let (status, body) = post(
         "/v1/keyMaterial/not-a-user-uri",
         Some("mimi@b.example"),
-        key_material_request(CATHY),
+        key_material_request(CATHY, ROOM_ID),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

@@ -18,8 +18,9 @@
 //!
 //! # Limitations
 //!
-//! - [`Follower::key_material`] is a stub that returns
-//!   [`FollowerError::NotImplemented`].
+//! - [`Follower::key_material`] serves only if
+//!   [`Follower::with_key_packages`] gave the follower its
+//!   [`KeyPackages`]; its limitations are listed in `key_packages.rs`.
 //! - The `From` header is not authenticated (decision mimid-1wgh.17), so
 //!   any party that can reach the endpoint can store fanout as a
 //!   configured peer for that peer's rooms. Nothing in a FanoutMessage is
@@ -50,6 +51,7 @@ use crate::config::Domain;
 use crate::hub::Clock;
 use crate::peer::PeerClient;
 use crate::store::{FollowerEvent, Store, StoreError};
+use key_packages::{KeyMaterialError, KeyPackages};
 use relay::LocalUser;
 
 /// The most events [`Follower::events`] returns at once. INVENTED, NOT
@@ -69,6 +71,8 @@ pub struct Follower {
     peers: Option<PeerClient>,
     /// Announces each new event as (room ID, seq).
     appended: broadcast::Sender<(String, u64)>,
+    /// The local users' KeyPackages, if keyMaterial is served.
+    key_packages: Option<Arc<KeyPackages>>,
 }
 
 impl std::fmt::Debug for Follower {
@@ -92,6 +96,7 @@ impl Follower {
             clock,
             peers: None,
             appended,
+            key_packages: None,
         }
     }
 
@@ -99,6 +104,14 @@ impl Follower {
     #[must_use]
     pub fn with_peers(mut self, peers: PeerClient) -> Self {
         self.peers = Some(peers);
+        self
+    }
+
+    /// Gives the follower the local users' KeyPackages, which it serves
+    /// through keyMaterial.
+    #[must_use]
+    pub fn with_key_packages(mut self, key_packages: Arc<KeyPackages>) -> Self {
+        self.key_packages = Some(key_packages);
         self
     }
 
@@ -156,22 +169,33 @@ impl Follower {
 
     /// Handles protocol-06 §5.2 `POST /keyMaterial/{targetUser}` for a user
     /// of this provider: `request` is the body and `from` the domain of the
-    /// request's `From` header. The request is decoded, and nothing more.
+    /// request's `From` header. Returns the TLS-encoded
+    /// `KeyMaterialResponse` ([`KeyPackages::serve_key_material`]).
     ///
     /// # Errors
     ///
     /// Returns [`FollowerError::InvalidRequest`] if `request` is not exactly
-    /// one [`KeyMaterialRequest`], and otherwise
-    /// [`FollowerError::NotImplemented`]: the endpoint is a stub.
+    /// one [`KeyMaterialRequest`], [`FollowerError::NotImplemented`] if the
+    /// follower has no [`KeyPackages`], and [`FollowerError::KeyMaterial`]
+    /// if serving fails.
     pub async fn key_material(
         &self,
-        _target_user: &str,
-        _from: &Domain,
+        target_user: &str,
+        from: &Domain,
         request: &[u8],
     ) -> Result<Vec<u8>, FollowerError> {
-        KeyMaterialRequest::tls_deserialize_exact(request)
-            .map_err(FollowerError::InvalidRequest)?;
-        Err(FollowerError::NotImplemented("keyMaterial for local users"))
+        let Some(key_packages) = &self.key_packages else {
+            KeyMaterialRequest::tls_deserialize_exact(request)
+                .map_err(FollowerError::InvalidRequest)?;
+            return Err(FollowerError::NotImplemented("keyMaterial for local users"));
+        };
+        key_packages
+            .serve_key_material(from, target_user, request)
+            .await
+            .map_err(|error| match error {
+                KeyMaterialError::InvalidRequest(error) => FollowerError::InvalidRequest(error),
+                error => FollowerError::KeyMaterial(error),
+            })
     }
 }
 
@@ -207,4 +231,7 @@ pub enum FollowerError {
     /// The endpoint is not implemented yet.
     #[error("{0} is not implemented")]
     NotImplemented(&'static str),
+    /// Serving keyMaterial failed.
+    #[error("keyMaterial failed")]
+    KeyMaterial(#[source] KeyMaterialError),
 }

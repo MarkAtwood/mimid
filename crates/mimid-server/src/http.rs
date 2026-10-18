@@ -7,8 +7,11 @@
 //! segment; it reaches the hub or follower percent-decoded.
 //!
 //! `/v1/notify/{roomId}` goes to the [`Follower`]. A keyMaterial request
-//! goes to the follower when `targetUser` is a user of this provider, and
-//! otherwise to the hub, which proxies it (plan of mimid-1wgh.7).
+//! for a user of this provider goes to the hub when its `roomId` is under
+//! this provider's domain, so the room policy check runs before the hub
+//! serves it locally, and otherwise to the follower (decision
+//! mimid-1wgh.7.27). Any other keyMaterial request goes to the hub, which
+//! proxies it (plan of mimid-1wgh.7).
 //!
 //! Status mapping (decision mimid-1wgh.6.8): a protocol result is `200` with
 //! an `application/octet-stream` body; an undecodable request, including a
@@ -37,6 +40,9 @@ use axum::extract::{DefaultBodyLimit, FromRef, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+
+use mimi_mls::tls_codec::Deserialize;
+use mimi_protocol::KeyMaterialRequest;
 
 use crate::config::Domain;
 use crate::directory::{self, Directory};
@@ -137,8 +143,10 @@ async fn report_abuse(
     }
 }
 
-/// Sends a request for a user of this provider to the follower, and any
-/// other, including one whose `targetUser` names no domain, to the hub.
+/// Sends a request for a user of this provider to the hub if its `roomId`
+/// is under this provider's domain and to the follower otherwise (decision
+/// mimid-1wgh.7.27). Any other request, including one whose `targetUser`
+/// names no domain, goes to the hub.
 async fn key_material(
     State(Roles { hub, follower }): State<Roles>,
     Path(target_user): Path<String>,
@@ -148,15 +156,23 @@ async fn key_material(
     let Some(from) = source_domain(&headers) else {
         return bad_from();
     };
-    if identity_domain(target_user.as_bytes()).as_ref() == Some(follower.domain()) {
+    if identity_domain(target_user.as_bytes()).as_ref() != Some(follower.domain()) {
+        return respond(hub.key_material(&target_user, &from, &body).await);
+    }
+    // Decision mimid-1wgh.7.27.
+    let Ok(request) = KeyMaterialRequest::tls_deserialize_exact(&body[..]) else {
+        return (StatusCode::BAD_REQUEST, "undecodable request").into_response();
+    };
+    let room_domain = identity_domain(request.tbs().room_id.as_str().as_bytes());
+    if room_domain.as_ref() == Some(hub.domain()) {
+        respond(hub.key_material(&target_user, &from, &body).await)
+    } else {
         respond_follower(
             follower
                 .key_material(&target_user, &from, &body)
                 .await
                 .map(protocol_body),
         )
-    } else {
-        respond(hub.key_material(&target_user, &from, &body).await)
     }
 }
 
@@ -227,7 +243,7 @@ fn respond_follower(result: Result<Response, FollowerError>) -> Response {
             format!("{endpoint} is not implemented"),
         )
             .into_response(),
-        Err(error @ FollowerError::Store(_)) => {
+        Err(error @ (FollowerError::Store(_) | FollowerError::KeyMaterial(_))) => {
             tracing::error!(%error, "follower request failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
         }

@@ -13,9 +13,11 @@
 //! - [`Hub::group_info`] has the limitations listed in `group_info.rs`:
 //!   with BasicCredential, anyone claiming a participant's identity gets
 //!   the GroupInfo, and join codes are not supported.
-//! - [`Hub::key_material`] only proxies requests for users of other
-//!   providers, and only if [`Hub::with_peers`] gave the hub a peer client;
-//!   its limitations are listed in `key_material.rs`.
+//! - [`Hub::key_material`] proxies requests for users of other providers
+//!   only if [`Hub::with_peers`] gave the hub a peer client, and serves
+//!   users of this provider only if [`Hub::with_local_key_material`] gave
+//!   it a [`LocalKeyMaterial`]; its limitations are listed in
+//!   `key_material.rs`.
 //! - [`Hub::report_abuse`] validates franks and logs; no action follows
 //!   (decision mimid-1wgh.21). Its limitations are listed in `abuse.rs`.
 //! - [`Hub::submit_message`] has the limitations listed in `submit.rs`: the
@@ -56,6 +58,7 @@ use crate::config::Domain;
 use crate::peer::{PeerClient, PeerError};
 use crate::store::{RoomSnapshot, Store, StoreError};
 use fanout::FanoutHandle;
+pub use key_material::{LocalKeyMaterial, LocalKeyMaterialError, LocalKeyMaterialFuture};
 use keys::HubSigningKey;
 pub(crate) use state::identity_domain;
 
@@ -117,6 +120,8 @@ pub struct Hub {
     fanout: Option<FanoutHandle>,
     /// The client that forwards keyMaterial requests, if any.
     peers: Option<PeerClient>,
+    /// The server of keyMaterial for users of this provider, if any.
+    local_key_material: Option<Arc<dyn LocalKeyMaterial>>,
 }
 
 impl std::fmt::Debug for Hub {
@@ -163,6 +168,7 @@ impl Hub {
             rooms: Mutex::new(rooms),
             fanout: None,
             peers: None,
+            local_key_material: None,
         })
     }
 
@@ -179,6 +185,14 @@ impl Hub {
     #[must_use]
     pub fn with_peers(mut self, peers: PeerClient) -> Self {
         self.peers = Some(peers);
+        self
+    }
+
+    /// Gives the hub the server of keyMaterial for users of this provider,
+    /// which it calls after its own checks (decision mimid-1wgh.7.11).
+    #[must_use]
+    pub fn with_local_key_material(mut self, local: Arc<dyn LocalKeyMaterial>) -> Self {
+        self.local_key_material = Some(local);
         self
     }
 
@@ -416,8 +430,10 @@ impl Hub {
 
     /// protocol-06 §5.2 `POST /keyMaterial/{targetUser}`, proxied for a
     /// hosted room to the provider of `target_user`, the percent-decoded
-    /// path value (protocol-06 §3.3; decision mimid-1wgh.6.20). `from` is
-    /// the domain of the request's `From` header.
+    /// path value (protocol-06 §3.3; decision mimid-1wgh.6.20), or served
+    /// in-process if `target_user` is a user of this provider (decision
+    /// mimid-1wgh.7.11). `from` is the domain of the request's `From`
+    /// header.
     ///
     /// Returns the target provider's TLS-encoded `KeyMaterialResponse` as
     /// received, or a `noConsent` response if the hub refuses the request.
@@ -428,7 +444,9 @@ impl Hub {
     /// Returns [`HubError::InvalidRequest`] if `request` does not decode,
     /// [`HubError::NoSuchRoom`] if its `roomId` is not hosted here,
     /// [`HubError::NotImplemented`] if `target_user` is a user of this
-    /// provider, [`HubError::Peer`] if the target provider cannot be
+    /// provider and the hub has no [`LocalKeyMaterial`],
+    /// [`HubError::LocalKeyMaterial`] if that fails, [`HubError::Peer`] if
+    /// the target provider cannot be
     /// reached or refuses the request, [`HubError::InvalidPeerResponse`] if
     /// its response does not decode, and [`HubError::Encode`] for internal
     /// failures.
@@ -626,6 +644,9 @@ pub enum HubError {
     /// A request to a peer provider failed.
     #[error("peer provider request failed")]
     Peer(#[source] PeerError),
+    /// The server of keyMaterial for users of this provider failed.
+    #[error("local keyMaterial failed")]
+    LocalKeyMaterial(#[source] LocalKeyMaterialError),
     /// A peer provider's response does not decode.
     #[error("undecodable peer response")]
     InvalidPeerResponse(#[source] mimi_mls::tls_codec::Error),

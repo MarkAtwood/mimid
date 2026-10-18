@@ -17,10 +17,11 @@
 //!    mimid-1wgh.6.63).
 //! 6. Room policy must let `requestingUser` add participants
 //!    ([`policy::authorize_key_material`]).
-//! 7. A target user at this provider gets [`HubError::NotImplemented`]
-//!    (decision mimid-1wgh.6.64):
-//!    serving local key material is the follower's (mimid-1wgh.7,
-//!    mimid-1wgh.12.3).
+//! 7. A target user at this provider is served in-process by the
+//!    [`LocalKeyMaterial`] the hub was given ([`Hub::with_local_key_material`]),
+//!    with the hub's domain as `From`, and its response is returned as is
+//!    (decision mimid-1wgh.7.11). A hub given none answers
+//!    [`HubError::NotImplemented`] (decision mimid-1wgh.6.64).
 //! 8. The request bytes, as received, go to the target user's provider
 //!    ([`PeerClient::key_material`]); its `200` body must decode as a
 //!    [`KeyMaterialResponse`] and is returned as received.
@@ -39,9 +40,13 @@
 //! - The hub does not record the KeyPackageRefs it relays (§4.3.1);
 //!   Welcomes are routed by the domains of added users instead (decision
 //!   mimid-1wgh.6.10).
-//! - Key material for users of this provider is not served.
+//! - Key material for users of this provider is served only if the hub
+//!   was given a [`LocalKeyMaterial`].
 //! - The relayed response is checked to decode, not to answer for the
 //!   target user, and its KeyPackages are not verified.
+
+use std::future::Future;
+use std::pin::Pin;
 
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_protocol::{
@@ -53,6 +58,27 @@ use super::state::{identity_domain, room_state};
 use super::{Hub, HubError};
 use crate::config::Domain;
 use crate::peer::PeerError;
+
+/// Why a [`LocalKeyMaterial`] failed.
+pub type LocalKeyMaterialError = Box<dyn std::error::Error + Send + Sync>;
+
+/// The future a [`LocalKeyMaterial`] returns.
+pub type LocalKeyMaterialFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<u8>, LocalKeyMaterialError>> + Send + 'a>>;
+
+/// Serves keyMaterial for users of the hub's own provider: the follower
+/// side of the same server (decision mimid-1wgh.7.11).
+pub trait LocalKeyMaterial: Send + Sync {
+    /// Answers the TLS-encoded `KeyMaterialRequest` `request` for
+    /// `target_user`, a user of this provider, as if it had arrived from
+    /// `from`. Returns the TLS-encoded `KeyMaterialResponse`.
+    fn key_material<'a>(
+        &'a self,
+        target_user: &'a str,
+        from: &'a Domain,
+        request: &'a [u8],
+    ) -> LocalKeyMaterialFuture<'a>;
+}
 
 /// Runs [`Hub::key_material`].
 pub(super) async fn key_material(
@@ -108,9 +134,19 @@ pub(super) async fn key_material(
     let Some(target_domain) = identity_domain(target_user.as_bytes()) else {
         return refuse(target_user, "targetUser names no provider domain");
     };
-    // Decision mimid-1wgh.6.64.
     if target_domain == hub.domain {
-        return Err(HubError::NotImplemented("keyMaterial for local users"));
+        // Decision mimid-1wgh.7.11; without a server, decision
+        // mimid-1wgh.6.64.
+        let local = hub
+            .local_key_material
+            .as_ref()
+            .ok_or(HubError::NotImplemented("keyMaterial for local users"))?;
+        let response = local
+            .key_material(target_user, &hub.domain, request)
+            .await
+            .map_err(HubError::LocalKeyMaterial)?;
+        tracing::info!(room_id = tbs.room_id.as_str(), "keyMaterial served locally");
+        return Ok(response);
     }
     let peers = hub
         .peers
