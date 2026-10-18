@@ -10,7 +10,7 @@ use crate::extension::{ExtensionKey, RawValue};
 /// A 32-octet message ID (`MessageId = bstr .size 32`, §3.3).
 ///
 /// The first octet names the hash algorithm; the other 31 are a truncated
-/// hash. This type only carries the bytes and does not compute them.
+/// hash. [`MessageId::compute`] derives it from a received message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MessageId(pub [u8; 32]);
 

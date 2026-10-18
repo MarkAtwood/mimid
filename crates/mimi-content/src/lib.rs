@@ -17,7 +17,11 @@
 //! - Extension values have no size limit of their own (decision
 //!   mimid-1wgh.2.15); they are bounded only by the input and by
 //!   [`MAX_EXTENSION_DEPTH`].
-//! - MessageId values are carried, not computed.
+//! - [`MessageId::compute`] supports only SHA-256 (hash algorithm ID 1),
+//!   the §3.3 default. It trusts the caller to pass the authenticated
+//!   sender and room URIs and the salt of the hashed message, and does not
+//!   compare them with the `senderUri` and `roomUri` extensions
+//!   (decision mimid-1wgh.2.10).
 //! - The encoder and decoder enforce the structural rules and limits of
 //!   §4.4, §6.3 and §9.1 (MultiPart part count, nesting depth, total parts,
 //!   topicId length). The other §9.1 checks (message IDs, timestamps,
@@ -37,6 +41,7 @@ mod content;
 mod decode;
 mod encode;
 mod extension;
+mod message_id;
 
 pub use content::{
     Disposition, Expiration, Extensions, ExternalPart, MessageId, MimiContent, NestedPart, Part,
@@ -49,5 +54,6 @@ pub use encode::{
 pub use extension::{
     ExtensionKey, MAX_EXTENSION_DEPTH, MAX_EXTENSION_KEY_LEN, MAX_INTEGER_KEY, RawValue,
 };
+pub use message_id::{MAX_MESSAGE_ID_URI_LEN, MessageIdError};
 /// Re-exported because [`EncodeError::Cbor`] carries a minicbor error.
 pub use minicbor;

@@ -14,10 +14,10 @@ use mimi_content::{
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/wg-09");
 
-const ROOM: &str = "mimi://example.com/r/engineering_team";
+pub const ROOM: &str = "mimi://example.com/r/engineering_team";
 pub const ALICE: &str = "mimi://example.com/u/alice-smith";
-const BOB: &str = "mimi://example.com/u/bob-jones";
-const CATHY: &str = "mimi://example.com/u/cathy-washington";
+pub const BOB: &str = "mimi://example.com/u/bob-jones";
+pub const CATHY: &str = "mimi://example.com/u/cathy-washington";
 
 const ORIGINAL_ID: &str = "017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4";
 const REPLY_ID: &str = "015354973c2b65ca937bf1e035ae53a5ab80e947afa43d46920d4202e5cc0b27";
