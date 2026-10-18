@@ -30,6 +30,7 @@ use mimi_protocol::{
 };
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::Directory;
+use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use mimid_server::hub::{Hub, HubError};
 use mimid_server::store::Store;
@@ -136,15 +137,20 @@ impl Fixture {
 
     async fn post(&self, room_encoded: &str, body: Vec<u8>) -> (StatusCode, Vec<u8>) {
         let base = BaseUrl::try_from("https://a.example".to_owned()).unwrap();
-        let response = router(Directory::new(&base), Arc::clone(&self.hub))
-            .oneshot(
-                Request::post(format!("/v1/reportAbuse/{room_encoded}"))
-                    .header(header::FROM, "mimi@b.example")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let follower = Follower::new(domain(), self.store.clone(), Arc::new(FixedClock(0)));
+        let response = router(
+            Directory::new(&base),
+            Arc::clone(&self.hub),
+            Arc::new(follower),
+        )
+        .oneshot(
+            Request::post(format!("/v1/reportAbuse/{room_encoded}"))
+                .header(header::FROM, "mimi@b.example")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
         let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         (status, body.to_vec())

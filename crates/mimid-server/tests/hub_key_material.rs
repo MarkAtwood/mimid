@@ -36,6 +36,7 @@ use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{Capability, Role, RoleData};
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::Directory;
+use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use mimid_server::hub::{Hub, HubError};
 use mimid_server::peer::{PeerClient, PeerError};
@@ -341,19 +342,22 @@ async fn serve_key_material(
 struct Fixture {
     _dir: tempfile::TempDir,
     hub: Arc<Hub>,
+    follower: Arc<Follower>,
     provider: Provider,
 }
 
 async fn fixture(replies: Vec<Reply>) -> Fixture {
     let provider = Provider::start(replies).await;
     let dir = tempfile::tempdir().unwrap();
-    let (_store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let follower = Follower::new(domain(), store, Arc::new(FixedClock(0)));
     let peers = BTreeMap::from([(domain_of(TARGET_DOMAIN), provider.base.clone())]);
     let hub = hub.with_peers(PeerClient::new(&domain(), peers).unwrap());
     create_room(&hub).await;
     Fixture {
         _dir: dir,
         hub: Arc::new(hub),
+        follower: Arc::new(follower),
         provider,
     }
 }
@@ -366,15 +370,19 @@ impl Fixture {
     /// Sends `body` through the HTTP router as `mimi@<from>`.
     async fn post(&self, target_encoded: &str, from: &str, body: Vec<u8>) -> (StatusCode, Bytes) {
         let base = BaseUrl::try_from("https://a.example".to_owned()).unwrap();
-        let response = router(Directory::new(&base), Arc::clone(&self.hub))
-            .oneshot(
-                Request::post(format!("/v1/keyMaterial/{target_encoded}"))
-                    .header(header::FROM, format!("mimi@{from}"))
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = router(
+            Directory::new(&base),
+            Arc::clone(&self.hub),
+            Arc::clone(&self.follower),
+        )
+        .oneshot(
+            Request::post(format!("/v1/keyMaterial/{target_encoded}"))
+                .header(header::FROM, format!("mimi@{from}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
         let status = response.status();
         (
             status,

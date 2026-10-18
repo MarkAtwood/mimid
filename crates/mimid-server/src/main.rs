@@ -17,8 +17,9 @@
 //!   impersonated provider.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
-//! - The follower endpoints are stubs: `/notify` and keyMaterial for users
-//!   of this provider answer `501`.
+//! - keyMaterial for users of this provider answers `501`. The follower is
+//!   given no peers, so `/notify` is refused (`403`) from every provider,
+//!   and no fanout worker delivers the hub's own domain to it.
 //! - The hub's signing and franking keys are stored unencrypted in the
 //!   database file, which must be mode 0600.
 
@@ -30,6 +31,7 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use mimid_server::config::Config;
 use mimid_server::directory::Directory;
+use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use mimid_server::hub::{Hub, SystemClock};
 use mimid_server::store::Store;
@@ -53,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
     let hub = Hub::open(store.clone(), config.domain.clone(), Arc::new(SystemClock))
         .await
         .context("starting the hub")?;
+    let follower = Follower::new(config.domain.clone(), store.clone(), Arc::new(SystemClock));
 
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
@@ -67,7 +70,11 @@ async fn main() -> anyhow::Result<()> {
 
     axum::serve(
         listener,
-        router(Directory::new(&config.base_url), Arc::new(hub)),
+        router(
+            Directory::new(&config.base_url),
+            Arc::new(hub),
+            Arc::new(follower),
+        ),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await

@@ -1,0 +1,42 @@
+# PROVENANCE: follower /notify oracle (bead mimid-1wgh.7.21)
+#
+# generate.rs drives mls-rs only (never mimid code): alice
+# (mimi://a.example/u/alice) creates group "notify-fixture" on ciphersuite
+# 1 with BasicCredentials, adds carol (mimi://b.example/u/carol), sends an
+# application message, adds bob (mimi://b.example/u/bob), and sends another.
+# It writes each MLSMessage exactly as mls-rs encodes it, and each added
+# KeyPackage's raw KeyPackageRef as mls-rs computes it (RFC 9420 §5.2).
+# mls-rs output is random, so regenerating writes new bytes; these files are
+# the output of one run, unmodified.
+#
+#   commit_carol.bin   MLSMessage PublicMessage Commit, epoch 0, adds carol
+#   welcome_carol.bin  MLSMessage Welcome for carol
+#   carol_ref.bin      carol's KeyPackageRef, 32 raw bytes (no length prefix)
+#   application_1.bin  MLSMessage PrivateMessage application, epoch 1
+#   commit_bob.bin     MLSMessage PublicMessage Commit, epoch 1, adds bob
+#   welcome_bob.bin    MLSMessage Welcome for bob
+#   bob_ref.bin        bob's KeyPackageRef, 32 raw bytes
+#   application_2.bin  MLSMessage PrivateMessage application, epoch 2
+#
+# The tests (tests/follower_notify.rs) frame these into protocol-06 §5.5
+# FanoutMessages by hand, with byte-by-byte comments, in
+# tests/common/notify.rs, and embed them with include_bytes! (offline).
+#
+# Regenerate (from the workspace root):
+#   cargo test -p mimid-server --test follower_notify -- --ignored \
+#     generate_notify_fixtures
+# Generated:  2026-10-18 with rustc 1.99.1, mls-rs and
+#             mls-rs-crypto-rustcrypto at git rev
+#             d9af9507223e4c915db9599f6038da1de5d68d4b
+#             (https://github.com/awslabs/mls-rs).
+#
+# Files:
+247acb36f7bfee177e8446763781269998d841a0911c9e79fbdec30624461efe  generate.rs
+114f2a2fa30ab5b86db711f5181f6f1dba26406a9bc9a5e88188f647951eb49d  application_1.bin
+a03ef951182dba62460f60cf939b8bbade10a63ca01d1666dd68dd268f04a258  application_2.bin
+d74f799f34856a3e007babd4a5c7d7d6b0dcb1b2b51c98b3bed3e6c5efdc7d2f  bob_ref.bin
+ac2df9717fcf82d76910ad7680f77ae939d7abaded9ca2e73087c0a181470983  carol_ref.bin
+a985a41fe0fcba8f597ee24648a4349eb23f8a2627379c31053f44ce4935178b  commit_bob.bin
+73965cdb282651dd68d57396d90a914ec9ea2e7cbb8ba44c90589660091c7b9b  commit_carol.bin
+4c45f476471c4fd445c3eee7df66f41ef5b182380004cda799f67f895eb8a976  welcome_bob.bin
+8c1677e296c2b5150f227c1a6046b5a19bcd902b8ba3a1e38d0fc731a722f3ea  welcome_carol.bin

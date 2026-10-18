@@ -7,31 +7,99 @@
 //! (decision mimid-1wgh.7.5). It validates decoding and envelope
 //! consistency only; it runs no MLS Observer (decision mimid-1wgh.7.2).
 //!
+//! Fanout, from `/notify` ([`Follower::accept_fanout`]) or from this
+//! provider's own hub ([`LocalDelivery`](crate::hub::fanout::LocalDelivery)),
+//! must come from the room's hub. Its FanoutMessages are stored exactly as
+//! received, in arrival order, each once per room by SHA-256 (decision
+//! mimid-1wgh.7.3). A Welcome makes members of the local users holding a
+//! claim on one of its KeyPackageRefs (decision mimid-1wgh.7.7). Users read
+//! the log through [`Follower::rooms`] and [`Follower::events`], and learn
+//! of new events through [`Follower::subscribe`].
+//!
 //! # Limitations
 //!
-//! - Every endpoint is a stub: [`Follower::accept_fanout`] and
-//!   [`Follower::key_material`] return [`FollowerError::NotImplemented`].
+//! - [`Follower::key_material`] is a stub that returns
+//!   [`FollowerError::NotImplemented`].
+//! - The `From` header is not authenticated (decision mimid-1wgh.17), so
+//!   any party that can reach the endpoint can store fanout as a
+//!   configured peer for that peer's rooms. Nothing in a FanoutMessage is
+//!   verified: with no Observer, the follower cannot check MLS signatures
+//!   (decision mimid-1wgh.7.2).
+//! - A user removed from a group stays a member of the room here, and
+//!   keeps receiving its ciphertext, until leaving is recorded (decision
+//!   mimid-1wgh.7.2).
+//! - Events are delivered in arrival order, not reordered by hub timestamp
+//!   (decision mimid-1wgh.7.17).
+//! - ponytail: the follower log keeps every event forever; the ceiling is
+//!   unbounded storage growth. Upgrade path: a retention limit.
+//! - A Welcome stays visible only while its KeyPackage claim is kept, so
+//!   claim cleanup must keep claims a stored Welcome names.
 
 pub mod consent;
 pub mod key_packages;
 pub mod notify;
 pub mod relay;
 
+use std::sync::Arc;
+
 use mimi_mls::tls_codec::Deserialize;
 use mimi_protocol::KeyMaterialRequest;
+use tokio::sync::broadcast;
 
 use crate::config::Domain;
+use crate::hub::Clock;
+use crate::peer::PeerClient;
+use crate::store::{FollowerEvent, Store, StoreError};
+use relay::LocalUser;
+
+/// The most events [`Follower::events`] returns at once. INVENTED, NOT
+/// FROM SPEC.
+pub const MAX_EVENTS_PER_PAGE: u32 = 1_000;
+
+/// How many announcements [`Follower::subscribe`] buffers for a slow
+/// receiver before it lags. INVENTED, NOT FROM SPEC.
+pub const SUBSCRIBE_CAPACITY: usize = 1_024;
 
 /// The follower role of the provider for `domain`.
-#[derive(Debug)]
 pub struct Follower {
     domain: Domain,
+    store: Store,
+    clock: Arc<dyn Clock>,
+    /// The configured peers: the providers `/notify` is accepted from.
+    peers: Option<PeerClient>,
+    /// Announces each new event as (room ID, seq).
+    appended: broadcast::Sender<(String, u64)>,
+}
+
+impl std::fmt::Debug for Follower {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Follower")
+            .field("domain", &self.domain)
+            .field("peers", &self.peers)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Follower {
-    /// Starts the follower for the provider `domain`.
-    pub fn new(domain: Domain) -> Self {
-        Self { domain }
+    /// Starts the follower for the provider `domain` on `store`. Until
+    /// [`Follower::with_peers`] names the configured peers, `/notify` is
+    /// refused from every provider.
+    pub fn new(domain: Domain, store: Store, clock: Arc<dyn Clock>) -> Self {
+        let (appended, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
+        Self {
+            domain,
+            store,
+            clock,
+            peers: None,
+            appended,
+        }
+    }
+
+    /// Gives the follower the configured peers (decision mimid-1wgh.7.4).
+    #[must_use]
+    pub fn with_peers(mut self, peers: PeerClient) -> Self {
+        self.peers = Some(peers);
+        self
     }
 
     /// The domain of the provider this follower serves.
@@ -39,19 +107,51 @@ impl Follower {
         &self.domain
     }
 
-    /// Handles protocol-06 §5.5 `POST /notify/{roomId}`: `request` is the
-    /// body and `from` the domain of the request's `From` header.
+    /// The followed rooms `user` is a member of, by room ID.
     ///
     /// # Errors
     ///
-    /// Returns [`FollowerError::NotImplemented`]: the endpoint is a stub.
-    pub async fn accept_fanout(
+    /// Returns [`FollowerError::Store`] if the store fails.
+    pub async fn rooms(&self, user: &LocalUser) -> Result<Vec<String>, FollowerError> {
+        Ok(self.store.follower_rooms(user.as_str()).await?)
+    }
+
+    /// Up to `limit` (at most [`MAX_EVENTS_PER_PAGE`]) events of the room
+    /// `room_id` with a seq above `after_seq` that `user` may see, in
+    /// arrival order (decision mimid-1wgh.7.7). A user who is not a member
+    /// sees none, a member sees nothing from before joining, and a Welcome
+    /// is seen only by users holding a claim on one of its KeyPackageRefs
+    /// (decision mimid-1wgh.12.17).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FollowerError::Store`] if the store fails or `after_seq`
+    /// exceeds `i64::MAX`.
+    pub async fn events(
         &self,
-        _room_id: &str,
-        _from: &Domain,
-        _request: &[u8],
-    ) -> Result<(), FollowerError> {
-        Err(FollowerError::NotImplemented("notify"))
+        user: &LocalUser,
+        room_id: &str,
+        after_seq: u64,
+        limit: u32,
+    ) -> Result<Vec<FollowerEvent>, FollowerError> {
+        Ok(self
+            .store
+            .follower_events(
+                user.as_str(),
+                room_id,
+                after_seq,
+                limit.min(MAX_EVENTS_PER_PAGE),
+            )
+            .await?)
+    }
+
+    /// Announces, as (room ID, seq), every event stored from now on, for
+    /// every room and user. Receivers read the events through
+    /// [`Follower::events`], which applies visibility. A receiver more than
+    /// [`SUBSCRIBE_CAPACITY`] announcements behind gets
+    /// [`broadcast::error::RecvError::Lagged`] and should re-read.
+    pub fn subscribe(&self) -> broadcast::Receiver<(String, u64)> {
+        self.appended.subscribe()
     }
 
     /// Handles protocol-06 §5.2 `POST /keyMaterial/{targetUser}` for a user
@@ -82,6 +182,28 @@ pub enum FollowerError {
     /// The request body does not decode.
     #[error("undecodable request")]
     InvalidRequest(#[source] mimi_mls::tls_codec::Error),
+    /// The request body is larger than
+    /// [`MAX_BODY_LEN`](crate::http::MAX_BODY_LEN).
+    #[error("request body too large")]
+    BodyTooLarge,
+    /// The room ID is not a `mimi://<domain>/...` URI, so it names no hub.
+    #[error("invalid room ID")]
+    InvalidRoomId,
+    /// The `/notify` source is this provider or not a configured peer
+    /// (decision mimid-1wgh.7.4).
+    #[error("source provider is not a configured peer")]
+    NotAPeer,
+    /// The fanout source is not the room's hub (decisions mimid-1wgh.7.4,
+    /// mimid-1wgh.7.5).
+    #[error("source provider is not the room's hub")]
+    NotRoomHub,
+    /// A FanoutMessage `timestamp` exceeds `i64::MAX`, which the log cannot
+    /// store.
+    #[error("fanout timestamp out of range")]
+    TimestampOutOfRange,
+    /// The database failed.
+    #[error("database error")]
+    Store(#[from] StoreError),
     /// The endpoint is not implemented yet.
     #[error("{0} is not implemented")]
     NotImplemented(&'static str),

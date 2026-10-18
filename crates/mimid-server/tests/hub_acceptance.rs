@@ -55,7 +55,7 @@ use std::time::Duration;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use common::{
-    ALICE, BOB, DOMAIN, HUB_IDENTITY, ROOM_ID, ROOM_ID_ENCODED, app_data_dictionary,
+    ALICE, BOB, DOMAIN, FixedClock, HUB_IDENTITY, ROOM_ID, ROOM_ID_ENCODED, app_data_dictionary,
     assert_secret_absent, base_room_policy, capture_logs, close_hub, domain, franking_agent,
     no_components,
 };
@@ -519,15 +519,24 @@ impl Provider {
     /// `From: mimi@{from}`, then wakes the fanout worker.
     async fn post(&self, endpoint: &str, from: &str, body: Vec<u8>) -> (StatusCode, Vec<u8>) {
         let base = BaseUrl::try_from("https://a.example".to_owned()).unwrap();
-        let response = router(Directory::new(&base), Arc::clone(&self.hub))
-            .oneshot(
-                Request::post(format!("/v1/{endpoint}/{ROOM_ID_ENCODED}"))
-                    .header(header::FROM, format!("mimi@{from}"))
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let follower = mimid_server::follower::Follower::new(
+            domain(),
+            self.store.clone(),
+            Arc::new(FixedClock(0)),
+        );
+        let response = router(
+            Directory::new(&base),
+            Arc::clone(&self.hub),
+            Arc::new(follower),
+        )
+        .oneshot(
+            Request::post(format!("/v1/{endpoint}/{ROOM_ID_ENCODED}"))
+                .header(header::FROM, format!("mimi@{from}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
         let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         self.worker.wake();

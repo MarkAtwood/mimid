@@ -17,13 +17,15 @@
 //! implemented yet answers `501`. An abuse report whose franks do not
 //! verify is `422` (decision mimid-1wgh.6.65), and a keyMaterial request
 //! the target provider fails is `502` (decision mimid-1wgh.6.64). An
-//! accepted `/notify` is `201` with no body (decision mimid-1wgh.7.4).
+//! accepted `/notify` is `201` with no body; one from a provider that is not
+//! a configured peer, or not the room's hub, is `403` (decision
+//! mimid-1wgh.7.4).
 //!
 //! # Limitations
 //!
 //! - The `Host` header is not checked (protocol-06 §4.1).
-//! - The follower endpoints, `/notify` and keyMaterial for users of this
-//!   provider, are stubs that answer `501`.
+//! - keyMaterial for users of this provider is a follower stub that answers
+//!   `501`.
 //! - The consent, identifierQuery and proxyDownload endpoints listed in the
 //!   directory are not routed, so they answer `404`.
 
@@ -73,9 +75,8 @@ impl FromRef<Roles> for Arc<Follower> {
 }
 
 /// Builds the server's HTTP router: the directory document and the hub's
-/// and follower's protocol endpoints. The follower serves the hub's domain.
-pub fn router(directory: Directory, hub: Arc<Hub>) -> Router {
-    let follower = Arc::new(Follower::new(hub.domain().clone()));
+/// and follower's protocol endpoints. `follower` must serve the hub's domain.
+pub fn router(directory: Directory, hub: Arc<Hub>, follower: Arc<Follower>) -> Router {
     let protocol = Router::new()
         .route("/v1/update/{roomId}", post(update))
         .route("/v1/submitMessage/{roomId}", post(submit_message))
@@ -207,14 +208,29 @@ fn protocol_body(body: Vec<u8>) -> Response {
 fn respond_follower(result: Result<Response, FollowerError>) -> Response {
     match result {
         Ok(response) => response,
-        Err(FollowerError::InvalidRequest(_)) => {
+        Err(FollowerError::InvalidRequest(_) | FollowerError::TimestampOutOfRange) => {
             (StatusCode::BAD_REQUEST, "undecodable request").into_response()
+        }
+        Err(FollowerError::InvalidRoomId) => {
+            (StatusCode::BAD_REQUEST, "invalid room ID").into_response()
+        }
+        Err(FollowerError::BodyTooLarge) => {
+            (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response()
+        }
+        // Decision mimid-1wgh.7.4.
+        Err(error @ (FollowerError::NotAPeer | FollowerError::NotRoomHub)) => {
+            tracing::warn!(%error, "fanout refused");
+            (StatusCode::FORBIDDEN, error.to_string()).into_response()
         }
         Err(FollowerError::NotImplemented(endpoint)) => (
             StatusCode::NOT_IMPLEMENTED,
             format!("{endpoint} is not implemented"),
         )
             .into_response(),
+        Err(error @ FollowerError::Store(_)) => {
+            tracing::error!(%error, "follower request failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
+        }
     }
 }
 

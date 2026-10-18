@@ -512,7 +512,19 @@ async fn remote_update_reaches_a_real_hub_over_http() {
     let mut room = update::member_room(&hub_a, ROOM_ID, b"group-relay-http").await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = BaseUrl::try_from(format!("http://{}", listener.local_addr().unwrap())).unwrap();
-    let app = router(Directory::new(&base), Arc::clone(&hub_a));
+    let store_a = mimid_server::store::Store::open(&_dir_a.path().join("mimid.sqlite"), &domain())
+        .await
+        .unwrap();
+    let follower_a = mimid_server::follower::Follower::new(
+        domain(),
+        store_a,
+        Arc::new(FixedClock(1_700_000_000_000)),
+    );
+    let app = router(
+        Directory::new(&base),
+        Arc::clone(&hub_a),
+        Arc::new(follower_a),
+    );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
     // Provider B relays bob's UpdatePath Commit to A.

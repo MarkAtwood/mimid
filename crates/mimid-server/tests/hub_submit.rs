@@ -24,6 +24,7 @@ use mimi_protocol::{
 };
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::Directory;
+use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use mimid_server::hub::{Hub, HubError};
 use mimid_server::store::Store;
@@ -377,13 +378,13 @@ async fn undecodable_request_or_unknown_room_is_an_error() {
 }
 
 async fn post(
-    hub: &Arc<Hub>,
+    (hub, follower): (&Arc<Hub>, &Arc<Follower>),
     room: &str,
     from: Option<&str>,
     body: Vec<u8>,
 ) -> (StatusCode, Vec<u8>) {
     let base = BaseUrl::try_from("https://mimi.a.example".to_owned()).unwrap();
-    let app = router(Directory::new(&base), Arc::clone(hub));
+    let app = router(Directory::new(&base), Arc::clone(hub), Arc::clone(follower));
     let mut request = Request::post(format!("/v1/submitMessage/{room}"));
     if let Some(from) = from {
         request = request.header(header::FROM, from);
@@ -403,9 +404,14 @@ async fn http_route_maps_results() {
     let (message, tag) = f.alice.franked(b"over http", &[10; 16]);
     let request = submit_request(&message, ALICE);
     let hub = Arc::new(f.hub);
+    let follower = Arc::new(Follower::new(
+        domain(),
+        f.store.clone(),
+        Arc::new(FixedClock(0)),
+    ));
 
     let (status, body) = post(
-        &hub,
+        (&hub, &follower),
         ROOM_ID_ENCODED,
         Some("mimi@a.example"),
         request.clone(),
@@ -422,7 +428,7 @@ async fn http_route_maps_results() {
 
     // The retry is answered from the log, before the From check.
     let (status, body) = post(
-        &hub,
+        (&hub, &follower),
         ROOM_ID_ENCODED,
         Some("mimi@b.example"),
         request.clone(),
@@ -440,7 +446,7 @@ async fn http_route_maps_results() {
     // A refusal is a protocol result.
     let (refused, _) = f.alice.franked(b"refused over http", &[13; 16]);
     let (status, body) = post(
-        &hub,
+        (&hub, &follower),
         ROOM_ID_ENCODED,
         Some("mimi@b.example"),
         submit_request(&refused, ALICE),
@@ -449,12 +455,18 @@ async fn http_route_maps_results() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(decode(&body), SubmitResult::NotAllowed);
 
-    let (status, _) = post(&hub, ROOM_ID_ENCODED, Some("mimi@a.example"), vec![1, 2, 3]).await;
+    let (status, _) = post(
+        (&hub, &follower),
+        ROOM_ID_ENCODED,
+        Some("mimi@a.example"),
+        vec![1, 2, 3],
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = post(&hub, ROOM_ID_ENCODED, None, request.clone()).await;
+    let (status, _) = post((&hub, &follower), ROOM_ID_ENCODED, None, request.clone()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = post(
-        &hub,
+        (&hub, &follower),
         "mimi%3A%2F%2Fa.example%2Fr%2Fnope",
         Some("mimi@a.example"),
         request,

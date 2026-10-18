@@ -18,8 +18,10 @@ use mimi_protocol::component_id;
 use mimi_room_policy::component_id::BASE_ROOM_POLICY;
 use mimid_server::config::BaseUrl;
 use mimid_server::directory::Directory;
+use mimid_server::follower::Follower;
 use mimid_server::http::{MAX_BODY_LEN, router};
 use mimid_server::hub::{Hub, HubError};
+use mimid_server::store::Store;
 use mls_rs::client_builder::MlsConfig;
 use mls_rs::crypto::SignaturePublicKey;
 use mls_rs::extension::ExtensionType;
@@ -434,7 +436,7 @@ async fn trace_logs_never_contain_hub_secrets() {
     let (store, hub) = open_hub(&path).await;
     let hub = Arc::new(hub);
     let (status, _, _) = send(
-        &app(Arc::clone(&hub)),
+        &app(Arc::clone(&hub), &store),
         Method::POST,
         &format!("/v1/update/{ROOM_ID_ENCODED}"),
         Some("mimi@b.example"),
@@ -458,9 +460,10 @@ async fn trace_logs_never_contain_hub_secrets() {
     store.close().await;
 }
 
-fn app(hub: Arc<Hub>) -> Router {
+fn app(hub: Arc<Hub>, store: &Store) -> Router {
     let base = BaseUrl::try_from("https://mimi.a.example".to_owned()).unwrap();
-    router(Directory::new(&base), hub)
+    let follower = Follower::new(domain(), store.clone(), Arc::new(FixedClock(0)));
+    router(Directory::new(&base), hub, Arc::new(follower))
 }
 
 async fn send(
@@ -494,7 +497,7 @@ async fn http_routes_stubs_and_status_mapping() {
     let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     create_valid_room(&hub, ROOM_ID, b"group-http").await;
     let hub = Arc::new(hub);
-    let app = app(Arc::clone(&hub));
+    let app = app(Arc::clone(&hub), &store);
     let from = Some("mimi@b.example");
 
     for endpoint in ["update", "submitMessage", "groupInfo", "reportAbuse"] {
@@ -563,7 +566,7 @@ async fn http_body_cap_is_enforced() {
     let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     create_valid_room(&hub, ROOM_ID, b"group-cap").await;
     let hub = Arc::new(hub);
-    let app = app(Arc::clone(&hub));
+    let app = app(Arc::clone(&hub), &store);
     let uri = format!("/v1/update/{ROOM_ID_ENCODED}");
     let from = Some("mimi@b.example");
 

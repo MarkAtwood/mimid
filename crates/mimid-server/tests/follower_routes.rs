@@ -1,5 +1,5 @@
 //! Routing of the follower endpoints (bead mimid-1wgh.7.18): `/v1/notify`
-//! and keyMaterial for users of this provider reach the follower stubs,
+//! and keyMaterial for users of this provider reach the follower,
 //! and keyMaterial for anyone else still reaches the hub.
 //!
 //! The provider hosts no rooms, so the two paths answer a decodable
@@ -22,6 +22,7 @@ use mimi_protocol::{
 };
 use mimid_server::config::BaseUrl;
 use mimid_server::directory::Directory;
+use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use tower::ServiceExt;
 
@@ -73,7 +74,8 @@ async fn post(path: &str, from: Option<&str>, body: Vec<u8>) -> (StatusCode, Byt
     if let Some(from) = from {
         request = request.header(header::FROM, from);
     }
-    let response = router(Directory::new(&base), Arc::new(hub))
+    let follower = Follower::new(domain(), store.clone(), Arc::new(FixedClock(0)));
+    let response = router(Directory::new(&base), Arc::new(hub), Arc::new(follower))
         .oneshot(request.body(Body::from(body)).unwrap())
         .await
         .unwrap();
@@ -83,12 +85,14 @@ async fn post(path: &str, from: Option<&str>, body: Vec<u8>) -> (StatusCode, Byt
     (status, body)
 }
 
+/// The follower refuses the request: the provider has no configured peers
+/// (decision mimid-1wgh.7.4).
 #[tokio::test]
-async fn notify_is_a_follower_stub() {
+async fn notify_reaches_the_follower() {
     let path = format!("/v1/notify/{DEN_ENCODED}");
     let (status, body) = post(&path, Some("mimi@b.example"), Vec::new()).await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(body, "notify is not implemented");
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, "source provider is not a configured peer");
 }
 
 #[tokio::test]

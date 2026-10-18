@@ -25,6 +25,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 
 use crate::config::Domain;
 
+pub use follower_log::{AppendedFanout, FanoutKind, FollowerEvent, NewFanout};
 pub use keys::StoredHubSecret;
 pub use log::{EpochSnapshot, EventKind, NewEvent, OutboxEntry};
 pub use outbox::OutboxRow;

@@ -10,9 +10,11 @@
 //! private halves of each KeyPackage are kept in a [`Store`], an SQLite
 //! database, so that a later Welcome can be processed.
 //!
-//! A client joins groups as a [`member::Member`]. The hub and followers,
-//! which are not members, track each group's public state as an
-//! [`observer::Observer`].
+//! A client joins groups as a [`member::Member`]. The hub, which is not a
+//! member, tracks each hosted group's public state as an
+//! [`observer::Observer`]. Followers run no Observer: they cannot bootstrap
+//! one, since the GroupContext travels only inside encrypted Welcome and
+//! GroupInfo messages (decision mimid-1wgh.7.2).
 //!
 //! # Limitations
 //!
