@@ -1,14 +1,15 @@
 {
   "id": "mimid-1wgh.4.50",
-  "title": "upstream: check OpenMLS component GREASE uses RFC 9420 set",
+  "title": "upstream: OpenMLS ComponentType maps 0x8A8A+ to GREASE",
   "description": "Found in .4.44: OpenMLS random_grease_value picks from the 15 RFC 9420 GREASE values, but mls-extensions-10 §7.5 defines only 8 GREASE component IDs (0x0A0A-0x7A7A); 0x8A8A+ are component Private Use. mimi-mls now uses a §7.5-only generator for component GREASE. Check whether the OpenMLS fork uses random_grease_value for component IDs internally; if so, minimal repro and report upstream only with Mark's OK.",
+  "notes": "Upstream check 2026-10-17: the original suspicion is NOT A BUG — random_grease_value is only used in Capabilities::with_grease for RFC 9420 registries (ciphersuite, extension, proposal, credential types), where the 15 values are correct; OpenMLS never generates component-ID GREASE. Smaller related issue, NOT REPORTED: component.rs ComponentType has Grease8A8A..GreaseEAEA and From\u003cComponentId\u003e maps 0x8A8A-0xEAEA to those instead of Private, contradicting mls-extensions-10 §7.5 (only 0x0A0A-0x7A7A are GREASE). Impact looks cosmetic (ComponentType only used to build named IDs; UnknownComponentId::new accepts IDs \u003c 0x8000). mimi-mls's own §7.5 generator stays correct either way.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T02:35:41.671157262Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T02:35:41.671157262Z",
+  "updated_at": "2026-10-18T05:30:26.630201695Z",
   "labels": [
     "upstream"
   ],

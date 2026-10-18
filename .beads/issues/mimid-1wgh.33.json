@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.33",
   "title": "tls_codec 0.5.0 DeserializeBytes panics debug builds on truncated input",
   "description": "Reproduced: VLBytes::tls_deserialize_bytes(\u0026[0x05,0xaa,0xbb]) hits debug_assert_eq! in quic_vec.rs:370 (also :469) and panics (exit 101) in debug builds; release returns DecodingError. Any untrusted input decoded via DeserializeBytes is a debug-build DoS. Rule for mimid: decode untrusted input only via the Read-based Deserialize path (tls_deserialize_exact). To do: (1) check whether openmls 0.9.1 decodes MlsMessageIn/KeyPackage/Welcome/GroupInfo via DeserializeBytes, and if so make mimi-mls wire decode via the Read path; (2) add a truncated-input regression test in mimi-mls; (3) consider reporting upstream to tls_codec (needs Mark's OK).",
+  "notes": "Upstream check 2026-10-17: FIXED UPSTREAM, UNRELEASED. RustCrypto/formats PR #2414 'tls_codec: return an error instead of panicking on truncated VLBytes' merged 2026-10-13 (commit 13a0390), https://github.com/RustCrypto/formats/pull/2414 — removes the debug_assert from VLBytes and VLByteVec tls_deserialize_bytes; covers our case exactly. crates.io latest is still 0.5.0 (2026-07-13). Related open PR #2461 (DeserializeBytes to enforce the mls-feature vector length limit). Action: nothing to file; keep the Read-path-only rule until a release with #2414; then re-evaluate.",
   "status": "open",
   "priority": 1,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T18:47:21.572002805Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T18:47:21.572002805Z",
+  "updated_at": "2026-10-18T05:30:26.34064976Z",
   "labels": [
     "upstream"
   ],

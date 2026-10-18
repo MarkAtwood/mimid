@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.4.42",
   "title": "upstream: OpenMLS checks only part of mls-ext §4.7",
   "description": "OpenMLS 0.9.1 AppDataUpdate commit validation implements only part of draft-ietf-mls-extensions-10 §4.7 (a component gets either a single remove of existing data, or one or more updates). mimi-mls re-checks every rule in member.rs resolve_app_data_updates (found in mimid-1wgh.4.3). Needs a minimal repro listing exactly which rules OpenMLS misses before reporting. Report upstream only with Mark's explicit per-action OK.",
+  "notes": "Upstream check 2026-10-17: NOT REPORTED (no issue/PR on §4.7 validation gaps; related merged PRs #2125, #2092, #2098 don't cover it). Unverified lead: in validate_app_data_update_proposals_and_group_context (public_group/validation.rs on main) the Remove branch returns Ok(()) instead of continue when the commit has no GroupContextExtensions proposal or it has no dictionary — would skip duplicate-remove and remove-plus-update checks for remaining components, and never checks 'remove of nonexistent state'. Needs a minimal repro before any report (Mark's OK required).",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:16:31.923098067Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T01:16:31.923098067Z",
+  "updated_at": "2026-10-18T05:30:26.453470803Z",
   "labels": [
     "upstream"
   ],
