@@ -20,6 +20,7 @@
 //!   [`crate::store`].
 
 pub mod components;
+pub mod fanout;
 mod keys;
 pub mod policy;
 mod room;

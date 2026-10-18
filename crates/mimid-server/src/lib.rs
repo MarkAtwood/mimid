@@ -16,7 +16,12 @@
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
 //! - The hub's protocol endpoints are routed but are stubs, and the
-//!   follower endpoints are not served yet; [`peer`] is empty.
+//!   follower endpoints are not served yet.
+//! - [`peer`] sends `/notify` requests to configured peers, and
+//!   [`hub::fanout`] delivers the outbox through it, at least once, so
+//!   followers must deduplicate. Nothing starts the fanout worker yet: the
+//!   binary does not spawn it until the follower and acceptance beads wire
+//!   it in.
 //! - The hub's signing and franking keys are stored unencrypted in the
 //!   database, which must be readable by its owner only (mode 0600; see
 //!   [`store`]).

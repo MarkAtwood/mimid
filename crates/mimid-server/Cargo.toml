@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+# Retry-After HTTP-date parsing (RFC 9110 §10.2.3); already in the lockfile.
+httpdate = "1.0.3"
 mimi-mls = { path = "../mimi-mls" }
 mimi-protocol = { path = "../mimi-protocol" }
 mimi-room-policy = { path = "../mimi-room-policy" }

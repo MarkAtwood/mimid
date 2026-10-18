@@ -9,6 +9,7 @@
 //!   `-wal` and `-shm` files the main file's mode.
 
 mod keys;
+mod outbox;
 mod rooms;
 
 use std::fs::OpenOptions;
@@ -22,6 +23,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use crate::config::Domain;
 
 pub use keys::StoredHubSecret;
+pub use outbox::OutboxRow;
 pub use rooms::RoomSnapshot;
 
 /// Permission bits a database file must not have: any access by group or
