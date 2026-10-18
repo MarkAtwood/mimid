@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.49",
+  "title": "P-preauth3: target_role index checked at authorization",
+  "description": "room-policy-04 §4 PreAuthRoleEntry.target_role: first_match returns target_role.role_index (decision mimid-1wgh.3.16) without checking it exists in roles_list or is not 0/1. Consistent with mimid-1wgh.3.40, the check that the index names a defined, usable role belongs to authorization (.3.9), which has roles_list.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T02:52:45.300100428Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T02:53:28.176645251Z",
+  "closed_at": "2026-10-18T02:53:28.176645251Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.49",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T02:52:45.315623094Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

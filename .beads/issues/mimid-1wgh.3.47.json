@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.3.47",
+  "title": "P-preauth1: empty claimset matches every requester",
+  "description": "room-policy-04 §4: an entry matches when 'every Claim.claim_id' has a corresponding claim. With an empty claimset that is vacuously true, so the entry preauthorizes ANY requester (including every BasicCredential user, which carries no claims) and shadows all later entries. Readings: (a) literal: empty claimset matches everyone; (b) empty claimset never matches; (c) reject empty claimsets at decode. Chosen: (a), implement as written, and document it prominently as a policy-author hazard (security note in rustdoc). wg item filed.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T02:52:45.169933832Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T02:53:28.128094452Z",
+  "closed_at": "2026-10-18T02:53:28.128094452Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.3.47",
+      "depends_on_id": "mimid-1wgh.3",
+      "type": "parent-child",
+      "created_at": "2026-10-18T02:52:45.184373296Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

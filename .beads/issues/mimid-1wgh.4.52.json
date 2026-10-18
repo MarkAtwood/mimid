@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.52",
+  "title": "DR-15d: mimi-mls leaves list frank_aad 0x0020",
+  "description": "Answers the question deferred to mimid-1wgh.5.6 by DR-15b (mimid-1wgh.4.45). protocol-06 §5.4.1 defines frank_aad (0x0020) as a Safe AAD component; mimi-protocol (which implements franking) depends on mimi-mls, so mimi-mls cannot discover it. Readings: (a) caller-supplied supported-components list threaded through Identity::key_package and leaf rebuilds; (b) mimi-mls hard-codes 0x0020 as a MIMI component every mimid client supports. Chosen: (b), a fixed rule with no new API; true because every mimid client uses mimi-protocol franking. Cost: mimi-mls knows one MIMI constant (document it). The leaf safe_aad list becomes [0x0020, GREASE]; whether 0x0020 also goes in app_components follows DR-8 (mimid-1wgh.4.25) — list it there too since the client implements it.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T02:42:21.341904952Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T02:42:21.412249976Z",
+  "closed_at": "2026-10-18T02:42:21.412249976Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.52",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-18T02:42:21.358323375Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

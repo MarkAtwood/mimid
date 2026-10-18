@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.53",
+  "title": "P36: hub_key is 32 bytes, local, not zeroized",
+  "description": "protocol-06 §5.4.1.2 server_frank = HMAC-SHA256 keyed by hub_key, with no length or management stated. Chosen: HubKey is a fixed 32-byte key (SHA-256 output size; RFC 2104 recommends at least L bytes), local to the hub and never on the wire. Debug redacts it. Not zeroized on drop (zeroize is not an approved dependency; noted in # Limitations). Key rotation/identification is a wg item.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T02:52:45.025460464Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T02:53:28.098115264Z",
+  "closed_at": "2026-10-18T02:53:28.098115264Z",
+  "close_reason": "Approved by Mark 2026-10-17",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.53",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T02:52:45.040848732Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
