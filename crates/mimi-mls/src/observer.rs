@@ -1,0 +1,378 @@
+//! A group's public state, as the hub and followers track it.
+//!
+//! An [`Observer`] is a non-member's view of one MLS group (RFC 9420). It
+//! wraps an OpenMLS `PublicGroup`: the ratchet tree, the GroupContext and the
+//! pending proposals, and no secrets. It validates PublicMessage proposals
+//! and Commits, so that the hub can decide which Commit wins an epoch.
+//!
+//! A Commit is staged by [`Observer::process`] and applied only by
+//! [`Observer::merge_pending_commit`]. Between the two, the hub checks room
+//! policy: MLS validity picks the winning Commit, and policy is checked
+//! afterwards.
+//!
+//! # Limitations
+//!
+//! - The `membership_tag` of a member's PublicMessage (RFC 9420 §6.2) is not
+//!   checked, because computing it needs the epoch's `membership_key`, which
+//!   an [`Observer`] does not have. The sender's signature is verified.
+//! - The `lifetime` of received leaves (RFC 9420 §7.3, RECOMMENDED only) is
+//!   not checked: not in the ratchet tree given to
+//!   [`Observer::from_group_info`], nor in Add (KeyPackage), Update or
+//!   UpdatePath leaves (decision mimid-1wgh.4.38). A leaf that is never
+//!   updated would otherwise lock the hub out of its group once the
+//!   lifetime ends. Signatures, the tree hash and all other leaf checks
+//!   still apply.
+//! - PrivateMessages cannot be processed; the hub forwards them unread.
+//! - Proposals from external senders are accepted only for the types OpenMLS
+//!   supports there (Add, Remove and GroupContextExtensions). An external
+//!   AppDataUpdate proposal is rejected.
+//! - An [`Observer`] cannot be reloaded from the [`Store`] after a restart.
+//!   OpenMLS does not persist the lifetime policy, so a future reload must
+//!   set it to Skip again.
+
+use openmls::component::ComponentId;
+use openmls::group::{LeafNodeLifetimePolicy, ProposalStore, PublicGroup, StagedCommit};
+use openmls::prelude::{
+    MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider, ProcessedMessageContent, ProtocolMessage,
+    RatchetTreeIn,
+};
+use tls_codec::{Deserialize, Serialize};
+
+use crate::member::{
+    CommitSummary, ComponentOp, Sender, SharedError, basic_identity, convert_sender,
+    resolve_app_data_updates, summarize,
+};
+use crate::{ErrorSource, Store};
+
+/// The result of [`Observer::process`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Observed {
+    /// A proposal, now stored until a Commit covers it.
+    Proposal {
+        /// Who sent the proposal.
+        sender: Sender,
+    },
+    /// A valid Commit, now pending. Merge it with
+    /// [`Observer::merge_pending_commit`] or drop it with
+    /// [`Observer::clear_pending_commit`].
+    ///
+    /// [`CommitSummary::self_removed`] is always `false`, since an
+    /// [`Observer`] has no leaf.
+    Commit(CommitSummary),
+}
+
+/// Errors returned by [`Observer`].
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ObserverError {
+    /// The input is not a well-formed TLS encoding of the expected type.
+    #[error("cannot decode the MLS input")]
+    Decode(#[source] ErrorSource),
+    /// The input decoded, but is not the kind of message this call takes.
+    #[error("unexpected MLS message type")]
+    UnexpectedMessage,
+    /// No ratchet tree was given, and the GroupInfo has no `ratchet_tree`
+    /// extension (RFC 9420 §12.4.3.3).
+    #[error("no ratchet tree was given and the GroupInfo carries none")]
+    MissingRatchetTree,
+    /// The GroupInfo or ratchet tree failed validation, for example its
+    /// signature or tree hash (RFC 9420 §12.4.3.1).
+    #[error("invalid GroupInfo or ratchet tree")]
+    InvalidGroupInfo(#[source] ErrorSource),
+    /// The message failed MLS validation. The group state is unchanged.
+    #[error("the MLS message is invalid")]
+    Process(#[source] ErrorSource),
+    /// `authenticated_data` has bytes after the SafeAAD struct
+    /// (mls-extensions-10 §4.9, decision mimid-1wgh.4.17). The group state
+    /// is unchanged.
+    #[error("bytes follow the SafeAAD struct")]
+    TrailingAad,
+    /// The AppDataUpdate proposals for a component are invalid under
+    /// mls-extensions-10 §4.7.
+    #[error("invalid AppDataUpdate proposals for component {0:#06x}")]
+    InvalidAppDataUpdate(ComponentId),
+    /// The `apply` function rejected the AppDataUpdate proposals for a
+    /// component.
+    #[error("component {component_id:#06x} rejected its AppDataUpdate")]
+    AppDataRejected {
+        /// The component.
+        component_id: ComponentId,
+        /// Why `apply` rejected it.
+        #[source]
+        source: ErrorSource,
+    },
+    /// A Commit is pending; merge or clear it before processing more
+    /// messages.
+    #[error("a Commit is pending")]
+    PendingCommit,
+    /// [`Observer::merge_pending_commit`] was called with no Commit pending.
+    #[error("no Commit is pending")]
+    NoPendingCommit,
+    /// The group state could not be stored.
+    #[error("cannot update the group state")]
+    Merge(#[source] ErrorSource),
+    /// A structure could not be TLS-encoded.
+    #[error("cannot encode an MLS structure")]
+    Encode(#[source] ErrorSource),
+}
+
+impl From<SharedError> for ObserverError {
+    fn from(error: SharedError) -> Self {
+        match error {
+            SharedError::Encode(source) => Self::Encode(source),
+            SharedError::UnexpectedMessage => Self::UnexpectedMessage,
+            SharedError::InvalidAppDataUpdate(component_id) => {
+                Self::InvalidAppDataUpdate(component_id)
+            }
+            SharedError::AppDataRejected {
+                component_id,
+                source,
+            } => Self::AppDataRejected {
+                component_id,
+                source,
+            },
+        }
+    }
+}
+
+/// The public state of one MLS group, without membership.
+///
+/// Every method that reads or writes storage takes the [`Store`] holding
+/// this group's state. Use a [`Store`] that no
+/// [`Member`](crate::member::Member) of the same group uses: OpenMLS keys
+/// both by group ID.
+pub struct Observer {
+    group: PublicGroup,
+    /// The Commit staged by [`Observer::process`], not yet merged.
+    pending_commit: Option<StagedCommit>,
+}
+
+impl Observer {
+    /// Starts tracking a group from a TLS-encoded `MLSMessage` carrying a
+    /// GroupInfo (RFC 9420 §12.4.3).
+    ///
+    /// `ratchet_tree` is a TLS-encoded ratchet tree (RFC 9420 §12.4.3.3).
+    /// When it is `None`, the tree comes from the GroupInfo's `ratchet_tree`
+    /// extension. When both are present, `ratchet_tree` is used; either way
+    /// its tree hash must match the GroupContext.
+    ///
+    /// The GroupInfo signature is verified against the signer's leaf, the
+    /// tree hash is checked, and every leaf in the tree is validated except
+    /// for its `lifetime` (see the module's `# Limitations`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::Decode`] for malformed input,
+    /// [`ObserverError::UnexpectedMessage`] if the message is not a
+    /// GroupInfo, [`ObserverError::MissingRatchetTree`] if there is no tree,
+    /// and [`ObserverError::InvalidGroupInfo`] if validation fails or the
+    /// state cannot be stored.
+    pub fn from_group_info(
+        store: &Store,
+        group_info: &[u8],
+        ratchet_tree: Option<&[u8]>,
+    ) -> Result<Self, ObserverError> {
+        let message = MlsMessageIn::tls_deserialize_exact(group_info)
+            .map_err(|e| ObserverError::Decode(e.into()))?;
+        let MlsMessageBodyIn::GroupInfo(group_info) = message.extract() else {
+            return Err(ObserverError::UnexpectedMessage);
+        };
+        let ratchet_tree = match ratchet_tree {
+            Some(bytes) => RatchetTreeIn::tls_deserialize_exact(bytes)
+                .map_err(|e| ObserverError::Decode(e.into()))?,
+            None => group_info
+                .extensions()
+                .ratchet_tree()
+                .map(|extension| extension.ratchet_tree().clone())
+                .ok_or(ObserverError::MissingRatchetTree)?,
+        };
+        let provider = store.provider();
+        // RFC 9420 §7.3; decision mimid-1wgh.4.38. The policy stays on the
+        // group, covering later Add, Update and UpdatePath leaves too. It is
+        // not persisted: a future reload must set Skip again.
+        let (group, _group_info) = PublicGroup::from_external_with_lifetime_policy(
+            provider.crypto(),
+            provider.storage(),
+            ratchet_tree,
+            group_info,
+            ProposalStore::new(),
+            LeafNodeLifetimePolicy::Skip,
+        )
+        .map_err(|e| ObserverError::InvalidGroupInfo(e.into()))?;
+        Ok(Self {
+            group,
+            pending_commit: None,
+        })
+    }
+
+    /// Processes one TLS-encoded `MLSMessage` carrying a PublicMessage
+    /// proposal or Commit for this group.
+    ///
+    /// A valid proposal is stored. A valid Commit is staged, not merged: see
+    /// [`Observed::Commit`]. A Commit carrying AppDataUpdate proposals is
+    /// resolved with `apply`, exactly as [`Member::process`] does; see
+    /// [`ComponentOp`].
+    ///
+    /// On any error the group state is left as it was.
+    ///
+    /// [`Member::process`]: crate::member::Member::process
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::PendingCommit`] while a Commit is pending,
+    /// [`ObserverError::Decode`] for malformed input,
+    /// [`ObserverError::UnexpectedMessage`] for anything but a PublicMessage
+    /// proposal or Commit (a PrivateMessage included),
+    /// [`ObserverError::Process`] if MLS validation fails,
+    /// [`ObserverError::TrailingAad`] if bytes follow the SafeAAD struct,
+    /// [`ObserverError::InvalidAppDataUpdate`] or
+    /// [`ObserverError::AppDataRejected`] for invalid AppDataUpdate
+    /// proposals, and [`ObserverError::Merge`] if a proposal cannot be
+    /// stored.
+    pub fn process<E>(
+        &mut self,
+        store: &Store,
+        message: &[u8],
+        mut apply: impl FnMut(ComponentId, Option<&[u8]>, ComponentOp<'_>) -> Result<Option<Vec<u8>>, E>,
+    ) -> Result<Observed, ObserverError>
+    where
+        E: Into<ErrorSource>,
+    {
+        if self.pending_commit.is_some() {
+            return Err(ObserverError::PendingCommit);
+        }
+        let provider = store.provider();
+        let message = MlsMessageIn::tls_deserialize_exact(message)
+            .map_err(|e| ObserverError::Decode(e.into()))?
+            .try_into_protocol_message()
+            .map_err(|_| ObserverError::UnexpectedMessage)?;
+        if let ProtocolMessage::PrivateMessage(_) = message {
+            return Err(ObserverError::UnexpectedMessage);
+        }
+        let processed = self
+            .group
+            .process_message(provider.crypto(), message)
+            .map_err(|e| ObserverError::Process(e.into()))?;
+        // mls-extensions-10 §4.9: the whole authenticated_data is SafeAAD,
+        // as in Member::process.
+        if processed.safe_aad().is_some() && !processed.tail_aad().is_empty() {
+            return Err(ObserverError::TrailingAad);
+        }
+        let sender = convert_sender(processed.sender())?;
+
+        let processed = if let ProcessedMessageContent::UnresolvedAppDataCommit(unresolved) =
+            processed.content()
+        {
+            let proposals: Vec<_> = unresolved.app_data_update_proposals().cloned().collect();
+            let mut updater = self.group.app_data_dictionary_updater();
+            resolve_app_data_updates(&mut updater, &proposals, &mut apply)?;
+            let changes = updater.changes();
+            self.group
+                .resolve_app_data_commit(provider.crypto(), processed, changes)
+                .map_err(|e| ObserverError::Process(e.into()))?
+        } else {
+            processed
+        };
+
+        match processed.into_content() {
+            ProcessedMessageContent::ProposalMessage(proposal)
+            | ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
+                self.group
+                    .add_proposal(provider.storage(), *proposal)
+                    .map_err(|e| ObserverError::Merge(e.into()))?;
+                Ok(Observed::Proposal { sender })
+            }
+            ProcessedMessageContent::StagedCommitMessage(staged) => {
+                let summary = summarize(sender, &staged, false);
+                self.pending_commit = Some(*staged);
+                Ok(Observed::Commit(summary))
+            }
+            _ => Err(ObserverError::UnexpectedMessage),
+        }
+    }
+
+    /// Merges the pending Commit, moving the group to the next epoch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::NoPendingCommit`] if no Commit is pending,
+    /// and [`ObserverError::Merge`] if the new state cannot be stored.
+    pub fn merge_pending_commit(&mut self, store: &Store) -> Result<(), ObserverError> {
+        let staged = self
+            .pending_commit
+            .take()
+            .ok_or(ObserverError::NoPendingCommit)?;
+        self.group
+            .merge_commit(store.provider().storage(), staged)
+            .map_err(|e| ObserverError::Merge(e.into()))
+    }
+
+    /// Drops the pending Commit, if any. Stored proposals are kept.
+    pub fn clear_pending_commit(&mut self) {
+        self.pending_commit = None;
+    }
+
+    /// The group ID.
+    pub fn group_id(&self) -> &[u8] {
+        self.group.group_id().as_slice()
+    }
+
+    /// The current epoch.
+    pub fn epoch(&self) -> u64 {
+        self.group.group_context().epoch().as_u64()
+    }
+
+    /// The current members as (leaf index, BasicCredential identity).
+    pub fn members(&self) -> Vec<(u32, Vec<u8>)> {
+        self.group
+            .members()
+            .map(|member| (member.index.u32(), basic_identity(&member.credential)))
+            .collect()
+    }
+
+    /// The data of a component in the GroupContext `app_data_dictionary`
+    /// (mls-extensions-10 §4.6).
+    pub fn component(&self, component_id: ComponentId) -> Option<&[u8]> {
+        self.group
+            .group_context()
+            .extensions()
+            .app_data_dictionary()
+            .and_then(|extension| extension.dictionary().get(&component_id))
+    }
+
+    /// The TLS-encoded GroupContext (RFC 9420 §8.1) of the current epoch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::Encode`] if it cannot be encoded.
+    pub fn group_context(&self) -> Result<Vec<u8>, ObserverError> {
+        self.group
+            .group_context()
+            .tls_serialize_detached()
+            .map_err(|e| ObserverError::Encode(e.into()))
+    }
+
+    /// The TLS-encoded ratchet tree (RFC 9420 §12.4.3.3) of the current
+    /// epoch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::Encode`] if it cannot be encoded.
+    pub fn ratchet_tree(&self) -> Result<Vec<u8>, ObserverError> {
+        self.group
+            .export_ratchet_tree()
+            .tls_serialize_detached()
+            .map_err(|e| ObserverError::Encode(e.into()))
+    }
+}
+
+impl std::fmt::Debug for Observer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Observer")
+            .field("group_id", &self.group_id())
+            .field("epoch", &self.epoch())
+            .field("pending_commit", &self.pending_commit.is_some())
+            .finish_non_exhaustive()
+    }
+}

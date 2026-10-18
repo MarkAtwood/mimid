@@ -10,6 +10,10 @@
 //! private halves of each KeyPackage are kept in a [`Store`], an SQLite
 //! database, so that a later Welcome can be processed.
 //!
+//! A client joins groups as a [`member::Member`]. The hub and followers,
+//! which are not members, track each group's public state as an
+//! [`observer::Observer`].
+//!
 //! # Limitations
 //!
 //! - Only BasicCredential is supported (decision mimid-1wgh.16). Nothing
@@ -24,11 +28,19 @@
 //!   past until 84 days in the future.
 //! - The `app_components` list in each KeyPackage's LeafNode names only the
 //!   components this crate implements today (see [`Identity::key_package`]).
+//! - An [`observer::Observer`] does not check the `membership_tag` of
+//!   members' PublicMessages (RFC 9420 §6.2): it has no `membership_key`.
+//!   Signatures are verified. It does not check the `lifetime` of received
+//!   leaves (RFC 9420 §7.3, decision mimid-1wgh.4.38). It cannot process
+//!   PrivateMessages, accepts
+//!   external proposals only of the types OpenMLS supports (not
+//!   AppDataUpdate), and cannot be reloaded after a restart.
 #![forbid(unsafe_code)]
 
 mod identity;
 pub mod label;
 pub mod member;
+pub mod observer;
 mod store;
 pub mod wire;
 

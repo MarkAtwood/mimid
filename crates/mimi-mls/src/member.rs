@@ -579,7 +579,7 @@ impl Member {
                 Ok(Incoming::Proposal { sender })
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {
-                let summary = self.summarize(sender, &staged);
+                let summary = summarize(sender, &staged, staged.self_removed());
                 self.group
                     .merge_staged_commit(provider, *staged)
                     .map_err(|e| MemberError::Merge(e.into()))?;
@@ -589,7 +589,7 @@ impl Member {
                 let summary = self
                     .group
                     .pending_commit()
-                    .map(|staged| self.summarize(sender, staged))
+                    .map(|staged| summarize(sender, staged, staged.self_removed()))
                     .ok_or(MemberError::UnexpectedMessage)?;
                 self.group
                     .merge_pending_commit(provider)
@@ -766,32 +766,6 @@ impl Member {
             .resolve_app_data_commit(provider, processed, changes)
             .map_err(|e| MemberError::Process(e.into()))
     }
-
-    /// Describes a staged Commit, before it is merged.
-    fn summarize(&self, committer: Sender, staged: &StagedCommit) -> CommitSummary {
-        let added = staged
-            .add_proposals()
-            .map(|add| basic_identity(add.add_proposal().key_package().leaf_node().credential()))
-            .collect();
-        let removed = staged
-            .remove_proposals()
-            .map(|remove| remove.remove_proposal().removed().u32())
-            .collect();
-        let mut components: Vec<ComponentId> = staged
-            .app_data_update_proposals()
-            .map(|queued| queued.app_data_update_proposal().component_id())
-            .collect();
-        components.sort_unstable();
-        components.dedup();
-        CommitSummary {
-            committer,
-            epoch: staged.epoch().as_u64(),
-            added,
-            removed,
-            self_removed: staged.self_removed(),
-            components,
-        }
-    }
 }
 
 impl std::fmt::Debug for Member {
@@ -805,6 +779,69 @@ impl std::fmt::Debug for Member {
     }
 }
 
+/// Describes a staged Commit, before it is merged. `self_removed` says
+/// whether the Commit removes the caller's own leaf.
+pub(crate) fn summarize(
+    committer: Sender,
+    staged: &StagedCommit,
+    self_removed: bool,
+) -> CommitSummary {
+    let added = staged
+        .add_proposals()
+        .map(|add| basic_identity(add.add_proposal().key_package().leaf_node().credential()))
+        .collect();
+    let removed = staged
+        .remove_proposals()
+        .map(|remove| remove.remove_proposal().removed().u32())
+        .collect();
+    let mut components: Vec<ComponentId> = staged
+        .app_data_update_proposals()
+        .map(|queued| queued.app_data_update_proposal().component_id())
+        .collect();
+    components.sort_unstable();
+    components.dedup();
+    CommitSummary {
+        committer,
+        epoch: staged.epoch().as_u64(),
+        added,
+        removed,
+        self_removed,
+        components,
+    }
+}
+
+/// Errors from the helpers that [`Member`] and
+/// [`Observer`](crate::observer::Observer) share. Each converts into the
+/// public error variant of the same name.
+pub(crate) enum SharedError {
+    Encode(ErrorSource),
+    UnexpectedMessage,
+    InvalidAppDataUpdate(ComponentId),
+    AppDataRejected {
+        component_id: ComponentId,
+        source: ErrorSource,
+    },
+}
+
+impl From<SharedError> for MemberError {
+    fn from(error: SharedError) -> Self {
+        match error {
+            SharedError::Encode(source) => Self::Encode(source),
+            SharedError::UnexpectedMessage => Self::UnexpectedMessage,
+            SharedError::InvalidAppDataUpdate(component_id) => {
+                Self::InvalidAppDataUpdate(component_id)
+            }
+            SharedError::AppDataRejected {
+                component_id,
+                source,
+            } => Self::AppDataRejected {
+                component_id,
+                source,
+            },
+        }
+    }
+}
+
 /// Applies mls-extensions-10 §4.7 to `proposals` (sorted by component id,
 /// in Commit order within a component) and records the resulting
 /// dictionary changes in `updater`.
@@ -812,17 +849,17 @@ impl std::fmt::Debug for Member {
 /// OpenMLS checks only part of §4.7, so every rule is checked here: a
 /// component gets either a single remove, of data that exists, or one or
 /// more updates, which `apply` turns into new data.
-fn resolve_app_data_updates<E: Into<ErrorSource>>(
+pub(crate) fn resolve_app_data_updates<E: Into<ErrorSource>>(
     updater: &mut AppDataDictionaryUpdater<'_>,
     proposals: &[AppDataUpdateProposal],
     apply: &mut impl FnMut(ComponentId, Option<&[u8]>, ComponentOp<'_>) -> Result<Option<Vec<u8>>, E>,
-) -> Result<(), MemberError> {
+) -> Result<(), SharedError> {
     for group in proposals.chunk_by(|a, b| a.component_id() == b.component_id()) {
         let Some(first) = group.first() else {
             continue;
         };
         let component_id = first.component_id();
-        let rejected = |e: E| MemberError::AppDataRejected {
+        let rejected = |e: E| SharedError::AppDataRejected {
             component_id,
             source: e.into(),
         };
@@ -844,33 +881,35 @@ fn resolve_app_data_updates<E: Into<ErrorSource>>(
                 Ok(Some(new_data)) => {
                     updater.set(ComponentData::from_parts(component_id, new_data.into()));
                 }
-                Ok(None) => return Err(MemberError::InvalidAppDataUpdate(component_id)),
+                Ok(None) => return Err(SharedError::InvalidAppDataUpdate(component_id)),
                 Err(e) => return Err(rejected(e)),
             }
         } else if group.len() == 1 && current.is_some() {
             match apply(component_id, current.as_deref(), ComponentOp::Remove) {
                 Ok(None) => updater.remove(&component_id),
-                Ok(Some(_)) => return Err(MemberError::InvalidAppDataUpdate(component_id)),
+                Ok(Some(_)) => return Err(SharedError::InvalidAppDataUpdate(component_id)),
                 Err(e) => return Err(rejected(e)),
             }
         } else {
             // A remove mixed with other proposals, or a remove of a
             // component that has no data.
-            return Err(MemberError::InvalidAppDataUpdate(component_id));
+            return Err(SharedError::InvalidAppDataUpdate(component_id));
         }
     }
     Ok(())
 }
 
-fn convert_sender(sender: &openmls::prelude::Sender) -> Result<Sender, MemberError> {
+pub(crate) fn convert_sender(sender: &openmls::prelude::Sender) -> Result<Sender, SharedError> {
     Ok(match sender {
         openmls::prelude::Sender::Member(index) => Sender::Member(index.u32()),
         openmls::prelude::Sender::External(index) => {
             // OpenMLS keeps the u32 sender_index private; its TLS encoding
             // is the four big-endian bytes (RFC 9420 §6).
-            let bytes: [u8; 4] = encode(index)?
+            let bytes: [u8; 4] = index
+                .tls_serialize_detached()
+                .map_err(|e| SharedError::Encode(e.into()))?
                 .try_into()
-                .map_err(|_| MemberError::UnexpectedMessage)?;
+                .map_err(|_| SharedError::UnexpectedMessage)?;
             Sender::External(u32::from_be_bytes(bytes))
         }
         openmls::prelude::Sender::NewMemberProposal => Sender::NewMemberProposal,
@@ -881,7 +920,7 @@ fn convert_sender(sender: &openmls::prelude::Sender) -> Result<Sender, MemberErr
 /// The BasicCredential identity, or empty for any other credential type.
 /// Only BasicCredential is negotiated (decision mimid-1wgh.16), so OpenMLS
 /// rejects other types before this is reached.
-fn basic_identity(credential: &Credential) -> Vec<u8> {
+pub(crate) fn basic_identity(credential: &Credential) -> Vec<u8> {
     BasicCredential::try_from(credential.clone())
         .map(|basic| basic.identity().to_vec())
         .unwrap_or_default()

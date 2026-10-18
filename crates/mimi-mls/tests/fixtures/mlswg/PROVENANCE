@@ -7,13 +7,19 @@
 # Upstream files used:
 #   test-vectors/messages.json         SHA-256 b194abe1561995223482dbad51c180146920dc2f637e74d01e07a388308791fb
 #   test-vectors/deserialization.json  SHA-256 1e394706e79f77df71454e5970f2aa736d4ab8b6c7e3219dd5609992388a953e
+#   test-vectors/passive-client-handling-commit.json  SHA-256 b24949fdf857bf79d511f57504a8bdc7ce3247eb199684745e439c11b1a1da21
+#   test-vectors/passive-client-random.json           SHA-256 0095d863e9d316872e237fc708debcd20ba2687ee905a3e831f97dd3e578d3c1
+#   test-vectors/passive-client-welcome.json          SHA-256 92ebb04b67b1aca4290965ae363650921842ceebe275bd79a2733414078d849c
 #
 # deserialization.json is copied byte for byte. messages.json (2.6 MB of
 # hex) is not vendored whole: extract.py writes the hex-decoded bytes of
 # eight fields from entries 0, 100 and 200 (ciphersuites 0x0001, 0x0003 and
-# 0x0002) as messages-<entry>-<field>.bin, otherwise unchanged. Regenerate
-# with:
-#   python3 -I extract.py <clone>/test-vectors/messages.json .
+# 0x0002) as messages-<entry>-<field>.bin, otherwise unchanged. From each
+# passive-client-*.json, extract.py keeps only the cipher_suite 1 test cases
+# (handling-commit: 13 cases, 26 epochs; random: 1 case, 200 epochs;
+# welcome: 8 cases, no epochs) as <name>-suite1.json, values unchanged,
+# re-serialized with one-space indentation. Regenerate with:
+#   python3 -I extract.py <clone>/test-vectors .
 # extract.py is mimid's own script, not upstream.
 #
 # License: the source repository has no LICENSE file at that commit. The
@@ -21,8 +27,10 @@
 #
 # Format: one row per file, whitespace-separated:
 #   <SHA-256 of the file>  <fixture file name>  <source>
-# where <source> is <upstream path>#<entry>/<field> for extracted files.
-# Checked by tests/wire_mlswg.rs.
+# where <source> is <upstream path>#<entry>/<field> for extracted .bin files
+# and <upstream path>#cipher_suite=1 for the passive-client subsets.
+# Checked by tests/wire_mlswg.rs; the passive-client subsets are used by
+# tests/observer_passive.rs.
 1e394706e79f77df71454e5970f2aa736d4ab8b6c7e3219dd5609992388a953e  deserialization.json  test-vectors/deserialization.json
 c45c67d1f72970e03c621177c548453901c9284eddc715ef868fa43fa6947abb  messages-000-mls_group_info.bin  test-vectors/messages.json#0/mls_group_info
 b3173e9c09a5d45afe9ad9ead0c568085aa6d25bceb81e3b4404e6d0399b38e6  messages-000-mls_key_package.bin  test-vectors/messages.json#0/mls_key_package
@@ -48,4 +56,7 @@ a03a3f3b21b0588db607fe1e1b6b7a4700b308769d0563ecfcd11f91226e7a5b  messages-200-p
 028664c2abe10a7bdc70ed08d0e931ba5d9d26c482d0382c99570c9658bc19c3  messages-200-public_message_commit.bin  test-vectors/messages.json#200/public_message_commit
 d8ec842fa14cd5a1743b3ae7be63ed180dfd0515698e8a098d44eff8964b2b5a  messages-200-public_message_proposal.bin  test-vectors/messages.json#200/public_message_proposal
 1bc887dc1796a4816a81dfb66694cbe831ccffcef9f1d1cd05e1790ef017a9c9  messages-200-ratchet_tree.bin  test-vectors/messages.json#200/ratchet_tree
-97a87c3ecb0312c453646c54bf1343c6f8d6e51b3999d82bd5793a59f649f424  extract.py  mimid
+c4494de56c05d54cdfb95f829a3156bbc55219b77f1b335595d8cfa596b4689c  passive-client-handling-commit-suite1.json  test-vectors/passive-client-handling-commit.json#cipher_suite=1
+710c42618b7d346fd189a673b3eac4c6e563e46eb44459a1bb2bb01819edbd54  passive-client-random-suite1.json  test-vectors/passive-client-random.json#cipher_suite=1
+baa9c9a8adea9adebf94a75df7f6958910e47317b6e69654d397198d2a061437  passive-client-welcome-suite1.json  test-vectors/passive-client-welcome.json#cipher_suite=1
+2eef7d4835b8458e1072afe161df6c7ed39ef0e11863d16464eaf0dfc1376549  extract.py  mimid

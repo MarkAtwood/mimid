@@ -2116,7 +2116,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "openmls"
 version = "0.9.1"
-source = "git+https://github.com/MarkAtwood/openmls?rev=5abd9e086ca3f8134982c5ea8cab37a228f4ca26#5abd9e086ca3f8134982c5ea8cab37a228f4ca26"
+source = "git+https://github.com/MarkAtwood/openmls?rev=d052e729e7b92c851ec2a6f97002a23817e8562c#d052e729e7b92c851ec2a6f97002a23817e8562c"
 dependencies = [
  "log",
  "openmls_serialization_helpers",
@@ -2132,7 +2132,7 @@ dependencies = [
 [[package]]
 name = "openmls_basic_credential"
 version = "0.6.0"
-source = "git+https://github.com/MarkAtwood/openmls?rev=5abd9e086ca3f8134982c5ea8cab37a228f4ca26#5abd9e086ca3f8134982c5ea8cab37a228f4ca26"
+source = "git+https://github.com/MarkAtwood/openmls?rev=d052e729e7b92c851ec2a6f97002a23817e8562c#d052e729e7b92c851ec2a6f97002a23817e8562c"
 dependencies = [
  "ed25519-dalek",
  "ml-dsa",
@@ -2148,7 +2148,7 @@ dependencies = [
 [[package]]
 name = "openmls_memory_storage"
 version = "0.6.0"
-source = "git+https://github.com/MarkAtwood/openmls?rev=5abd9e086ca3f8134982c5ea8cab37a228f4ca26#5abd9e086ca3f8134982c5ea8cab37a228f4ca26"
+source = "git+https://github.com/MarkAtwood/openmls?rev=d052e729e7b92c851ec2a6f97002a23817e8562c#d052e729e7b92c851ec2a6f97002a23817e8562c"
 dependencies = [
  "log",
  "openmls_traits",
@@ -2160,7 +2160,7 @@ dependencies = [
 [[package]]
 name = "openmls_rust_crypto"
 version = "0.6.0"
-source = "git+https://github.com/MarkAtwood/openmls?rev=5abd9e086ca3f8134982c5ea8cab37a228f4ca26#5abd9e086ca3f8134982c5ea8cab37a228f4ca26"
+source = "git+https://github.com/MarkAtwood/openmls?rev=d052e729e7b92c851ec2a6f97002a23817e8562c#d052e729e7b92c851ec2a6f97002a23817e8562c"
 dependencies = [
  "aes-gcm",
  "chacha20poly1305",
@@ -2186,7 +2186,7 @@ dependencies = [
 [[package]]
 name = "openmls_serialization_helpers"
 version = "0.1.0"
-source = "git+https://github.com/MarkAtwood/openmls?rev=5abd9e086ca3f8134982c5ea8cab37a228f4ca26#5abd9e086ca3f8134982c5ea8cab37a228f4ca26"
+source = "git+https://github.com/MarkAtwood/openmls?rev=d052e729e7b92c851ec2a6f97002a23817e8562c#d052e729e7b92c851ec2a6f97002a23817e8562c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2197,7 +2197,7 @@ dependencies = [
 [[package]]
 name = "openmls_sqlite_storage"
 version = "0.3.0"
-source = "git+https://github.com/MarkAtwood/openmls?rev=5abd9e086ca3f8134982c5ea8cab37a228f4ca26#5abd9e086ca3f8134982c5ea8cab37a228f4ca26"
+source = "git+https://github.com/MarkAtwood/openmls?rev=d052e729e7b92c851ec2a6f97002a23817e8562c#d052e729e7b92c851ec2a6f97002a23817e8562c"
 dependencies = [
  "openmls_traits",
  "refinery",
@@ -2208,7 +2208,7 @@ dependencies = [
 [[package]]
 name = "openmls_traits"
 version = "0.6.0"
-source = "git+https://github.com/MarkAtwood/openmls?rev=5abd9e086ca3f8134982c5ea8cab37a228f4ca26#5abd9e086ca3f8134982c5ea8cab37a228f4ca26"
+source = "git+https://github.com/MarkAtwood/openmls?rev=d052e729e7b92c851ec2a6f97002a23817e8562c#d052e729e7b92c851ec2a6f97002a23817e8562c"
 dependencies = [
  "serde",
  "tls_codec",
