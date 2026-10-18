@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.37.13",
   "title": "wg: protocol-06 presentation-language syntax errors",
   "description": "Erratum. Undefined types IdentifierURI (L1538), RoomId (L2266), string (L1489, L2543). \"optional Frank\" not optional\u003cFrank\u003e (L1596, L1937; same at L2085). case success where SubmitResponseCode defines accepted(0) (L1592 vs L1574). success(0); semicolons in an enum (L1237). select(type) where field is searchType (L2428). Missing ; (L3058) and brace (L1419). \"opaque signature_public_key;\" with no \u003cV\u003e (L2875, L2897). mimid reads intent (decisions mimid-1wgh.5.19, .5.20, .5.21, .5.25, .5.31, .5.14). Fix: correct the syntax.",
+  "notes": "Editorial part in PR https://github.com/ietf-wg-mimi/mimi-protocol/pull/164",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:08.984809843Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T01:24:08.984809843Z",
+  "updated_at": "2026-10-18T18:43:43.724997827Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

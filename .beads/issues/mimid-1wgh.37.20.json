@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.20",
   "title": "wg: content-09 §5.2/§5.3 example hex and prose mismatch",
   "description": "Erratum. Hex dumps (L1132, L1244) carry the -07 inReplyTo 01b00844..., but the EDN uses 017ce548... (L1015, L1215). L1169-1170 describes the reaction as U+2665 (0xe299a5) but EDN (L1226) and bytes (L1269 e29da4) are U+2764. mimid follows the repo .cbor files (decisions mimid-1wgh.2.17, .2.18). Fix: regenerate dumps, correct prose.",
-  "notes": "Root cause: repo example files disagree: examples/implied-original.pretty has 01b00844... while implied-original.edn has 017ce548...; examples/reaction.edn:21 labels the heart U+2665 though it is U+2764. Fix files and inline hex together.\nAlso (from .2.5): implied-original.cbor/.pretty carry the -07 MessageId 01b00844... while .edn and §5.1 say 017ce548... (the -09 algorithm's output). Upstream generate-examples.py uses len(str) (characters) for URI lengths where §3.3 says octets; same result for the ASCII example URIs.",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): PARTLY: generated .pretty files are right; stale hex pasted inline in md; implied-original.cbor itself stale; U+2665 text vs U+2764 bytes. Editorial PR.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:09.644366078Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T02:52:45.500812212Z",
+  "updated_at": "2026-10-18T18:29:45.035803542Z",
   "labels": [
     "wg",
     "spec:mimi-content-09"

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.73",
+  "title": "P56: empty identifierQuery query_elements decodes",
+  "description": "protocol-06 §5.8: an empty query_elements list decodes; refusing it is target-provider policy (forbidden code), not a decode error (under AND semantics it would otherwise match everyone). Alternative was rejecting at decode as P45. PENDING Mark.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:42:51.992746043Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:45:58.798005495Z",
+  "closed_at": "2026-10-18T18:45:58.798005495Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.73",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:42:52.012012156Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.4.41",
   "title": "upstream: OpenMLS GREASE KeyPackage extension rejected",
   "description": "OpenMLS 0.9.1 (still on main be2368a): Extension::Unknown(kind,_) maps to ExtensionType::Unknown while the same GREASE value in capabilities decodes as ExtensionType::Grease; contains_extensions compares them in a HashSet, so key_package_in.rs:191 rejects a valid KeyPackage carrying a GREASE extension (RFC 9420 §13.5) with UnsupportedExtension. Fixed on our fork MarkAtwood/openmls mimid-0.9.1 (5abd9e0) with regression test key_package_validation_with_grease_extension. Report upstream (issue + PR) only with Mark's explicit per-action OK.",
-  "notes": "Upstream check 2026-10-17: CORRECTION — the earlier note 'still on main be2368a' is wrong; be2368a contains the fix. REPORTED: openmls/openmls issue #2156 '[Bug] GREASE extensions are rejected even when listed in the leaf node capabilities' (opened 2026-08-06, closed), https://github.com/openmls/openmls/issues/2156. FIXED: PR #2162 'fix: classify GREASE extensions as ExtensionType::Grease' merged 2026-09-21, listed under Unreleased; not in v0.9.1 (2026-10-07). Action: nothing to file; drop our fork patch 5abd9e0 when OpenMLS releases with #2162.",
+  "notes": "Upstream check 2026-10-17: CORRECTION — the earlier note 'still on main be2368a' is wrong; be2368a contains the fix. REPORTED: openmls/openmls issue #2156 '[Bug] GREASE extensions are rejected even when listed in the leaf node capabilities' (opened 2026-08-06, closed), https://github.com/openmls/openmls/issues/2156. FIXED: PR #2162 'fix: classify GREASE extensions as ExtensionType::Grease' merged 2026-09-21, listed under Unreleased; not in v0.9.1 (2026-10-07). Action: nothing to file; drop our fork patch 5abd9e0 when OpenMLS releases with #2162.\n2026-10-18: fork commit 5abd9e0 duplicates merged upstream #2162 — no PR; drop at next OpenMLS release.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:16:31.855403983Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T05:30:26.39405174Z",
+  "updated_at": "2026-10-18T18:36:52.178067158Z",
   "labels": [
     "upstream"
   ],

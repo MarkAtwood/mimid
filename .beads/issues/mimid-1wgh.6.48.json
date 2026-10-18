@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.48",
+  "title": "H35: fanout trusts peer directory URLs as given",
+  "description": "A peer's /.well-known/mimi-protocol-directory may point notify at any URL. Readings: (a) require the peer's configured origin (scheme, host, port; decision mimid-1wgh.17); (b) use the URLs as given. Chosen by Mark 2026-10-18: (b), with the risk documented: a misconfigured or hostile peer can make the hub POST fanout bodies to arbitrary hosts (SSRF-like). Peers are operator-configured (.17), not discovered.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:34:23.031224653Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:34:25.544701327Z",
+  "closed_at": "2026-10-18T18:34:25.544701327Z",
+  "close_reason": "Chosen by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.48",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:34:23.844248965Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

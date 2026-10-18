@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.51",
+  "title": "H38: rooms without usable base policy refuse messages",
+  "description": "A room with no base_room_policy component, or a malformed policy component, refuses every submitMessage (logged at warn). Absent roles/preauth/participant lists count as empty. PENDING Mark.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:42:52.140056289Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:45:58.863861874Z",
+  "closed_at": "2026-10-18T18:45:58.863861874Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.51",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:42:52.158042762Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

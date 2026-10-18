@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.50",
+  "title": "H37: submitMessage retry returns rebuilt identical response",
+  "description": "No response column: a retry (same request hash) rebuilds the response from the logged accepted_at; byte-identical because the frank is an HMAC and Ed25519 is deterministic (tested with an advancing clock). The retry check runs before the From envelope check, so a retry with a different From gets the original response and writes nothing. PENDING Mark.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:42:52.066537767Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:45:58.83130355Z",
+  "closed_at": "2026-10-18T18:45:58.83130355Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.50",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:42:52.084738492Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

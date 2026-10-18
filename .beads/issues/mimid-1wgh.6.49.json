@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.49",
+  "title": "H36: Retry-After capped at 24 hours (INVENTED)",
+  "description": "INVENTED, NOT FROM SPEC. Fanout honours Retry-After but caps it at MAX_RETRY_AFTER_MS = 24 h so a hostile or broken value cannot stall a queue indefinitely; delay = max(doubling backoff 1 s..5 min, capped Retry-After). Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:34:24.846135595Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:34:26.531231029Z",
+  "closed_at": "2026-10-18T18:34:26.531231029Z",
+  "close_reason": "Chosen by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.49",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:34:25.024491009Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

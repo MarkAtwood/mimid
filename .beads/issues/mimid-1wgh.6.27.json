@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.6.27",
   "title": "hub S5: /update endpoint",
   "description": "Full update pipeline (both arms), retry dedup, pending-proposal inclusion (H5), external commit refused while proposals pending (H4), GroupInfo snapshot (H11), fanout enqueue (H17), Welcome destinations (H10, H12). Oracle mls-rs (validity) + mimi-mls Members (policy). Tests: concurrent same-epoch race (one success, one wrongEpoch, tree == winner's); envelope mismatch refused with row counts unchanged (H9); tampered signature no write; policy denial no outbox row; injected post-merge failure restores snapshot. See the .6 design field (approved plan) and decisions .6.1-.6.21.",
+  "notes": "Also in S5 scope: replace the TEMPORARY external_senders walker in hub/room.rs with Observer::external_senders() (M2), and add the H11 check (wire::GroupInfo::has_ratchet_tree_extension) in create_room as well as on /update. Start after S7 lands (both touch store/log.rs and hub/mod.rs).\nFrom S6: enqueue_fanout runs on the pool, not in a transaction; S5 (and S7's store/log.rs) needs a transactional enqueue variant writing log + outbox in one tx, then FanoutHandle::wake().\nFrom S7: reuse/share submit.rs's private room_state(\u0026Observer) helper; update stub row in hub_foundation (501) and http.rs in-handler 400 mapping need the same treatment; wake FanoutHandle after commit (Hub has no handle yet — add in S5 or S10).",
   "status": "open",
   "priority": 1,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T17:11:39.956613215Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T17:11:39.956613215Z",
+  "updated_at": "2026-10-18T18:55:24.509489095Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.6.27",

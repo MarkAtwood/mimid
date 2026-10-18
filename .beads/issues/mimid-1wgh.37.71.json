@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.71",
+  "title": "wg: protocol-06 §5.8 identifierQuery result semantics unspecified",
+  "description": "Suggestion. (1) Relation of IdentifierResponse.uri\u003cV\u003e to foundProfiles[].stableUri is unspecified (parallel? subset? duplicates?). (2) Response codes are described but no MUST ties them to the results (mimid: mimid-1wgh.5.71). (3) searchValue is commented 'a UTF8 string' but typed opaque (like §5.9 note). (4) Empty query_elements has no defined meaning (mimid: mimid-1wgh.5.73).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T18:42:52.274693471Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T18:42:52.274693471Z",
+  "labels": [
+    "wg",
+    "spec:mimi-protocol-06"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.71",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-18T18:42:52.300231018Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
