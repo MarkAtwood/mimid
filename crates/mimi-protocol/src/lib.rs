@@ -28,7 +28,8 @@
 //!   ([`ParticipantListData`], [`ParticipantListUpdate`]) and room_metadata
 //!   ([`RoomMetaData`]) components, the update endpoint ([`UpdateRequest`],
 //!   [`UpdateRoomResponse`]), the notify endpoint ([`FanoutMessage`],
-//!   [`NotifyRequest`]) and [`Frank`], the groupInfo endpoint
+//!   [`NotifyRequest`]) and [`Frank`], the submitMessage endpoint
+//!   ([`SubmitMessageRequest`], [`SubmitMessageResponse`]), the groupInfo endpoint
 //!   ([`GroupInfoRequest`], [`GroupInfoResponse`], with
 //!   [`encrypt_group_info`] and [`decrypt_group_info`]), and the franking
 //!   HMACs
@@ -98,6 +99,13 @@
 //! - [`FanoutMessage`] arms follow decision mimid-1wgh.5.24: an application
 //!   message must be a PrivateMessage, so a PublicMessage application
 //!   message or a PrivateMessage proposal or commit is rejected.
+//! - [`SubmitMessageRequest`] requires a PrivateMessage carrying an
+//!   application message and a non-empty `sendingUri` (decision
+//!   mimid-1wgh.5.65); it does not check
+//!   that the sender is a participant of the room. The spec's `case
+//!   success` is read as `accepted` (decision mimid-1wgh.5.25). Its
+//!   `protocol` byte is on the wire (decision mimid-1wgh.5.66), and
+//!   `notAllowed` carries no fields (decision mimid-1wgh.5.67).
 //! - Endpoint codecs check the wire form only: no signature, frank, epoch
 //!   or policy check happens here, and an empty `moreProposals`,
 //!   `externalProposals` or `invalidProposals` list, or an empty `/notify`
@@ -138,6 +146,7 @@ mod group_info;
 mod identifier_uri;
 mod key_material;
 mod notify;
+mod submit;
 mod update;
 mod uri_template;
 mod utf8_string;
@@ -165,6 +174,7 @@ pub use key_material::{
 };
 pub use notify::{FanoutEvent, FanoutMessage, NotifyRequest};
 pub use serde_json;
+pub use submit::{SubmitMessageRequest, SubmitMessageResponse, SubmitResponseCode, SubmitResult};
 pub use tls_codec;
 pub use update::{
     GroupInfoOption, HandshakeBundle, UpdateRequest, UpdateResponseCode, UpdateResult,

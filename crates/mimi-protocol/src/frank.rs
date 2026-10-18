@@ -59,7 +59,7 @@ pub struct FrankAad {
 }
 
 /// `Frank` (protocol-06 §5.4): the hub's frank on an application message,
-/// carried in a `SubmitMessageResponse` and a [`FanoutMessage`](crate::FanoutMessage).
+/// carried in a [`SubmitMessageResponse`](crate::SubmitMessageResponse) and a [`FanoutMessage`](crate::FanoutMessage).
 ///
 /// Decoding checks the wire form only. Neither `server_frank` nor the
 /// signature is verified here.
