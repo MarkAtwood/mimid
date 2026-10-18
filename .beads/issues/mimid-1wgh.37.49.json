@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.49",
   "title": "wg: protocol-06 §7.6 redefines Uri and UTF8String",
   "description": "Erratum/editorial. §7.6 defines struct Uri { opaque uri\u003cV\u003e; } duplicating §5.2 IdentifierUri, and repeats the UTF8String definition from earlier sections. mimid treats Uri as IdentifierUri (decision mimid-1wgh.5.44). Fix: reuse IdentifierUri and reference the single UTF8String definition.",
-  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/162",
+  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/162\nReconciled 2026-10-18: PARTIAL: mimi-protocol#162 covers duplicate Uri; duplicate UTF8String definition NOT filed.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:41:58.26367572Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T18:37:04.042005663Z",
+  "updated_at": "2026-10-18T19:52:31.873930541Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

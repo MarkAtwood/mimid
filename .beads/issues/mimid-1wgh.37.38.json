@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.38",
   "title": "wg: mlswg passive-client vectors have expired leaf lifetimes",
   "description": "Suggestion to mlswg/mls-implementations (commit 2034fe72). Suite-1 passive-client-welcome.json leaf lifetimes end 2024-03-02 (visible in the vector). passive-client-handling-commit.json KeyPackages use (0, 2^64-1), but its group ratchet trees are inside the encrypted Welcome and OpenMLS PublicGroup fails all 13 suite-1 cases with LeafNodeValidation(Lifetime(Expired)) when built from them (mimid-1wgh.4.6). RFC 9420 §7.3 only RECOMMENDS checking received leaves, but implementations that check cannot run the vectors. mimid patched OpenMLS to skip (decision mimid-1wgh.4.38). Fix: regenerate with not_after = 2^64-1, or document that verifiers must skip lifetime checks.",
-  "notes": "Sent 2026-10-18: comment on awslabs/mls-rs#385",
+  "notes": "Sent 2026-10-18: comment on awslabs/mls-rs#385\nReconciled 2026-10-18: Filed on awslabs/mls-rs#385 (https://github.com/awslabs/mls-rs/issues/385#issuecomment-6253451583), not on mlswg/mls-implementations#181.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:11.085320586Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T18:20:14.728280583Z",
+  "updated_at": "2026-10-18T19:52:32.025554255Z",
   "labels": [
     "wg",
     "spec:mlswg-test-vectors"

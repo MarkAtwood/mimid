@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.27",
   "title": "wg: room-policy-04 optional URI fields lack optional\u003c\u003e encoding",
   "description": "Suggestion. §6.5 says machine_readable_policy and human_readable_policy \"optionally contain pointers\" but types them as bare Uri (L919-966); \"Uri parent_room\u003cV\u003e\" (L573) has no stated cardinality relative to parent_dependant. mimid: zero-length uri is absent; parent_room has one entry exactly when parent_dependant is set (decisions mimid-1wgh.3.15, .3.18). Fix: optional\u003cUri\u003e.",
-  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/issues/36",
+  "notes": "Filed 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/issues/36\nReconciled 2026-10-18: PARTIAL: room-policy#36 covers logging policy URIs; parent_room cardinality NOT filed.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:10.362135934Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T19:21:26.383460466Z",
+  "updated_at": "2026-10-18T19:52:31.771421501Z",
   "labels": [
     "wg",
     "spec:mimi-room-policy-04"

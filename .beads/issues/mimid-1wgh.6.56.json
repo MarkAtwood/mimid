@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.56",
+  "title": "H42: envelope check on the primary sender only",
+  "description": "H9 for the proposal arm: the From domain is checked against the sender of proposalOrCommit; each moreProposals entry is authorized against its own sender but has no envelope check. Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T19:40:41.921351629Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T19:40:42.203684896Z",
+  "closed_at": "2026-10-18T19:40:42.203684896Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.56",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T19:40:41.938029647Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

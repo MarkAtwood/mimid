@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.37.45",
   "title": "Draft follow-up on mls-implementations#181",
   "description": "From wg bead mimid-1wgh.37.38: a comment on mlswg/mls-implementations#181 asking to reopen/regenerate passive-client-welcome.json and the leaf lifetimes inside Welcome ratchet trees. Draft only: PR text (editorial, bundled), one issue text per technical item, and a short list message; Larry-mode style; cite version, section, editor's-copy line, mimid decision IDs and running code. Store drafts in the bead's design field (no repo files). Mark reviews and approves each send; nothing goes out without his per-action OK.",
+  "notes": "Reconciled 2026-10-18: Not done as written: no comment on mls-implementations#181; the substance went to mls-rs#385 under 37.38. Mark to decide whether #181 still needs a comment.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:39:07.520513693Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T01:39:07.520513693Z",
+  "updated_at": "2026-10-18T19:52:32.074760786Z",
   "labels": [
     "wg"
   ],
