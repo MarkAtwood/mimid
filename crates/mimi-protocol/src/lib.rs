@@ -41,7 +41,8 @@
 //!   §5.4.1.3 receiver checks ([`ReceivedFrank::verify`]), and the
 //!   reportAbuse body ([`AbuseReport`], [`AbusiveMessage`],
 //!   [`AbuseType`]), and the requestConsent and updateConsent body
-//!   ([`ConsentEntry`], [`ConsentOperation`], [`ConsentScope`]).
+//!   ([`ConsentEntry`], [`ConsentOperation`], [`ConsentScope`]), and the
+//!   identifierQuery bodies ([`IdentifierRequest`], [`IdentifierResponse`]).
 //! - Franking takes the salt, sender URI and room URI as inputs: the caller
 //!   extracts them from the MIMI content. [`ServerFrankingContext`] URIs
 //!   are [`IdentifierUri`]s, so a non-ASCII URI must arrive percent-encoded.
@@ -106,6 +107,16 @@
 //!   (decision mimid-1wgh.5.68) and a present but empty `roomId` (decision
 //!   mimid-1wgh.5.69) are rejected. Granted KeyPackages are
 //!   not checked beyond their wire form.
+//! - [`IdentifierRequest`] and [`IdentifierResponse`] codecs check the wire
+//!   form only: matching a query against profiles and applying search
+//!   policy are the target provider's job. `searchValue`, `claimName`,
+//!   `propertyName` and `fieldValue` are opaque bytes, not checked to be
+//!   UTF-8 (as decision mimid-1wgh.5.60), and an empty `query_elements`
+//!   decodes (decision mimid-1wgh.5.73). [`IdentifierResponse`] rejects an
+//!   empty `uri` entry or `stableUri` (decision mimid-1wgh.5.72) and a
+//!   `responseCode` that contradicts the results (decision
+//!   mimid-1wgh.5.71); it does not
+//!   check how `uri` relates to the profiles' `stableUri`s.
 //! - [`FanoutMessage`] arms follow decision mimid-1wgh.5.24: an application
 //!   message must be a PrivateMessage, so a PublicMessage application
 //!   message or a PrivateMessage proposal or commit is rejected.
@@ -154,6 +165,7 @@ mod consent;
 mod directory;
 mod frank;
 mod group_info;
+mod identifier;
 mod identifier_uri;
 mod key_material;
 mod notify;
@@ -178,6 +190,10 @@ pub use group_info::{
     GroupInfoCode, GroupInfoRatchetTreeTbe, GroupInfoRequest, GroupInfoRequestTbs,
     GroupInfoResponse, GroupInfoResponseTbs, GroupInfoSuccess, PendingProposal, decrypt_group_info,
     encrypt_group_info,
+};
+pub use identifier::{
+    FieldSource, IdentifierQueryCode, IdentifierRequest, IdentifierResponse, ProfileField,
+    QueryElement, QuerySearch, SearchIdentifierType, UserProfile,
 };
 pub use identifier_uri::IdentifierUri;
 pub use key_material::{
@@ -315,6 +331,18 @@ pub enum Error {
     ClientKeyPackagesWithoutGrant {
         /// The entry's `consentOperation`.
         consent_operation: ConsentOperation,
+    },
+    /// An [`IdentifierResponse`] `uri` entry or a [`UserProfile`]
+    /// `stableUri` was empty (protocol-06 §5.8).
+    #[error("identifierQuery uri or stableUri is empty")]
+    EmptyIdentifierQueryUri,
+    /// An [`IdentifierResponse`]'s results contradict its `responseCode`:
+    /// `success` needs at least one result and other codes none
+    /// (protocol-06 §5.8).
+    #[error("identifierQuery results do not match responseCode {response_code:?}")]
+    IdentifierResultsMismatch {
+        /// The response's `responseCode`.
+        response_code: IdentifierQueryCode,
     },
     /// A value could not be TLS-encoded.
     #[error("TLS encoding failed")]
