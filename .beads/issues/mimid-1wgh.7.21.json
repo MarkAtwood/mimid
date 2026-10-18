@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.7.21",
   "title": "follower F3: inbound /notify + follower log",
   "description": "accept_fanout, LocalDelivery impl, per-message dedup, Welcome refs, membership on ref match, events/rooms/subscribe API. [follower/notify.rs, store/follower_log.rs, tests/follower_notify.rs]. Oracle: hand-encoded /notify bodies with PROVENANCE wrapping mls-rs commits/Welcomes. Tests: duplicate -\u003e 201 one row; wrong From refused nothing written; non-member sees nothing; canary. See .7 design field (approved plan) and decisions mimid-1wgh.7.2..mimid-1wgh.7.17.",
+  "notes": "Also do here: F-Q1 (.7.2) correction of the mimi-mls lib.rs doc that says followers track an Observer (F1 left it out of scope).",
   "status": "open",
   "priority": 1,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T21:17:32.691780038Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T21:17:32.691780038Z",
+  "updated_at": "2026-10-18T21:36:06.378490055Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.7.21",

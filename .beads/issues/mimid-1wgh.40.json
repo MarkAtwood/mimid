@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.40",
+  "title": "Native mobile client (iOS/Android)",
+  "description": "Placeholder epic (Mark 2026-10-18): a native mobile MIMI client built on mimid-agent-core (decision mimid-1wgh.39) via a mobile binding. Not decomposed yet (decompose just in time). Open questions: UI technology (native SwiftUI/Compose over a UniFFI core vs a shared toolkit such as Flutter via flutter_rust_bridge, as the Aura spec planned); provider push (wake-only APNs/FCM: provider-side bead needed); keys at rest in Keychain/Keystore (mimi-mls Store is unencrypted today); background limits and catch-up; mobile TLS provider; distribution and signing. Depends on .13.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:47:29.549177252Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:47:29.549177252Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.40",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:47:29.57658735Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.40",
+      "depends_on_id": "mimid-1wgh.13",
+      "type": "blocks",
+      "created_at": "2026-10-18T21:47:29.64768607Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

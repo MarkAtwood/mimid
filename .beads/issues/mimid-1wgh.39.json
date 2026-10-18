@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.39",
+  "title": "Agent is a library: mimid-agent-core + daemon/mobile wrappers",
+  "description": "Chosen by Mark 2026-10-18. mimid-agent (.13) is structured as a Rust library crate (mimid-agent-core: MLS state via mimi-mls, mimi-content \u003c-\u003e message conversion, provider client, local SQLite store) with thin wrappers: (1) the desktop daemon serving plaintext JMAP Chat locally to stock clients (decision mimid-1wgh.38); (2) a mobile binding (e.g. UniFFI for Swift/Kotlin) calling the core in-process, no local JMAP hop. Constraints for .13 planning: the core has no daemon/socket/HTTP-server code; keys-at-rest encryption must be pluggable (platform Keychain/Keystore on mobile); push is wake-only (content-free APNs/FCM sent by the provider; app fetches and decrypts); catch-up after long sleep via follower events(after_seq) and out-of-sync recovery (.4.37) or external rejoin; check that the TLS provider (aws-lc via reqwest) builds on mobile targets or use ring/RustCrypto for mobile.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:47:29.374904554Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:47:29.479748939Z",
+  "closed_at": "2026-10-18T21:47:29.479748939Z",
+  "close_reason": "Chosen by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.39",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:47:29.405253698Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

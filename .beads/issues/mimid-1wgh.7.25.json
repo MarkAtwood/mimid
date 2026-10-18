@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.25",
+  "title": "F-Q17: max KeyPackage lifetime 1 year + 1 hour",
+  "description": "RFC 9420 §7.2: applications MUST define a maximum total lifetime. Chosen by Mark 2026-10-18: longer than OpenMLS's 84-day default, so stock mls-rs KeyPackages (1-year default lifetime) are accepted: MAX_KEY_PACKAGE_LIFETIME_SECONDS = 365 days + 1 hour (margin mirrors the 84d+1h one). Lifetime is checked against both the supplied now and the system clock (OpenMLS; kept by Mark, no fork change).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T21:36:05.769268964Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T21:37:23.884356266Z",
+  "closed_at": "2026-10-18T21:37:23.884356266Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.25",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T21:36:05.844004317Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
