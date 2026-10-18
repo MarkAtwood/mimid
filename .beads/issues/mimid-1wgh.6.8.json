@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.8",
+  "title": "H8: HTTP mapping and body cap",
+  "description": "Every decodable protocol result -\u003e 200 with body; undecodable -\u003e 400; room not hosted -\u003e 404; oversized -\u003e 413; notify -\u003e 201 (spec). Content-Type application/octet-stream (no media type registered, .5.33). MAX_BODY_LEN = 4 MiB, INVENTED, NOT FROM SPEC. From header required and parsed, used only for envelope consistency. Chosen (plan recommendation approved by Mark 2026-10-18).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:09.776279299Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:11.232300322Z",
+  "closed_at": "2026-10-18T17:11:11.232300322Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.8",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:09.79411548Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

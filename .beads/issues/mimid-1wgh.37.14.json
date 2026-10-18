@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.14",
   "title": "wg: protocol-06 editorial typos in §3.1, §5.1, §5.4",
   "description": "Erratum. Directory JSON: update{roomId} missing slash (L1028), \"proxyDownload\" missing colon (L1042). §3.1 (L372, L379) uses room-policy-03 capability names (canAddUser, canRemoveUser, canSetUserRole) absent from -04, and \"permisions\". \"ExternerSender\" (L1654). Broken markup {Section 6.2 of !I-D.ietf-mls-extensions} (L1727-1728). Decisions mimid-1wgh.5.17, .3.28.",
-  "notes": "Editor's copy also has §5.5 'groupInfoPublcKey' (typo for groupInfoPublicKey).\nDrafting check: canAddUser/canRemoveUser/canSetUserRole appear in neither room-policy-03 nor -04; the 'room-policy-03 names' claim (and decision 3.28's) is unverified; PR says only 'not in -04'.\nAlso §5.4 notAllowed description says 'accepting the UpdateRequest' (copied from §5.3); should be SubmitMessageRequest. Already fixed in the drafted PR diff on mimid-1wgh.37.40.",
+  "notes": "Editor's copy also has §5.5 'groupInfoPublcKey' (typo for groupInfoPublicKey).\nDrafting check: canAddUser/canRemoveUser/canSetUserRole appear in neither room-policy-03 nor -04; the 'room-policy-03 names' claim (and decision 3.28's) is unverified; PR says only 'not in -04'.\nAlso §5.4 notAllowed description says 'accepting the UpdateRequest' (copied from §5.3); should be SubmitMessageRequest. Already fixed in the drafted PR diff on mimid-1wgh.37.40.\nAlso §5.7 spells both 'requestor' and 'requester'. ('requestContent' -\u003e requestConsent is already in the drafted PR on mimid-1wgh.37.40.)",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:09.071444782Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T05:39:03.666738212Z",
+  "updated_at": "2026-10-18T16:56:09.897728039Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

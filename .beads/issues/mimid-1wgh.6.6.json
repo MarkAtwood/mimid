@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.6",
+  "title": "H6: rebuild Observer from stored GroupInfo and tree",
+  "description": "Refines .4.14. After restart each room's Observer is rebuilt with a fresh in-memory mimi_mls Store via Observer::from_group_info(stored GroupInfo, stored ratchet tree) (which sets lifetime Skip itself), then stored pending proposals are replayed through process. No Observer::load with file storage; no atomicity needed across the two SQLite stacks. Chosen (plan recommendation approved by Mark 2026-10-18).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:09.631632868Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:11.1828153Z",
+  "closed_at": "2026-10-18T17:11:11.1828153Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.6",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:09.649676325Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

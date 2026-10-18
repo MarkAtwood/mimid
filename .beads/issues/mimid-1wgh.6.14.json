@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.14",
+  "title": "H14: no groupInfo request / external commit correlation in v1",
+  "description": "protocol-06 §5.6 correlation between a groupInfo request and the subsequent external commit is not implemented in v1. Chosen (plan recommendation approved by Mark 2026-10-18).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:10.206909121Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:11.378573938Z",
+  "closed_at": "2026-10-18T17:11:11.378573938Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.14",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:10.223361976Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

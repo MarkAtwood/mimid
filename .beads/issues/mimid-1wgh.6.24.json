@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.6.24",
+  "title": "hub P1: room-policy authorize_capability for §8.6",
+  "description": "mimi-room-policy: public RoleData::authorize_capability(actor_role, Capability) for §8.6 (canChangeRoleDefinitions, canChangePreauthorizedUserList, canChangeRoomMembershipStyle, canSendMLSReinitProposal) per H2. File authorize.rs. Oracle Appendix A policies. Test: role without the capability refused. See the .6 design field (approved plan) and decisions .6.1-.6.21.",
+  "status": "in_progress",
+  "priority": 1,
+  "issue_type": "task",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:39.735624794Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:14:48.645354543Z",
+  "started_at": "2026-10-18T17:14:48.645354543Z",
+  "lease_expires_at": "2026-10-18T17:19:48.645354543Z",
+  "heartbeat_at": "2026-10-18T17:14:48.645354543Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.24",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:39.753955988Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

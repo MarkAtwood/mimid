@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.4",
+  "title": "H4: refuse external commits while proposals are pending",
+  "description": "RFC 9420 §12.4.3.2 forbids proposals by reference in an external Commit, so any external Commit would invalidate pending proposals. Readings: (A) refuse external Commits while any proposal is pending; (B) hub regenerates and staples proposals (§5.5; needs .4.9 + external Remove signing). Chosen by Mark 2026-10-18: (A) now; (B) as a follow-up bead.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:08:37.232019895Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:08:37.389886072Z",
+  "closed_at": "2026-10-18T17:08:37.389886072Z",
+  "close_reason": "Chosen by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.4",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:08:37.245815731Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

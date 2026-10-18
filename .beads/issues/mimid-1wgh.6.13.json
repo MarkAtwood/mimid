@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.13",
+  "title": "H13: join codes unsupported in v1",
+  "description": "Any groupInfo request carrying a joiningCode gets notAuthorized in v1. Chosen (plan recommendation approved by Mark 2026-10-18).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:10.139346463Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:11.352905058Z",
+  "closed_at": "2026-10-18T17:11:11.352905058Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.13",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:10.154257865Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

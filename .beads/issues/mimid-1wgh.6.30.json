@@ -1,0 +1,46 @@
+{
+  "id": "mimid-1wgh.6.30",
+  "title": "hub S8: /groupInfo endpoint",
+  "description": "Verify request, envelope (H9), authorize_group_info (H13), payload GroupInfo without tree + RatchetTreeOption::full + pending proposals (H11), encrypt_group_info, sign; notAuthorized/noSuchRoom; no correlation (H14). Oracle: decrypt + external join accepted at /update. Tests: non-participant without open join/preauth notAuthorized; credential/From mismatch refused. See the .6 design field (approved plan) and decisions .6.1-.6.21.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:40.179236594Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:40.179236594Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.30",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:40.199112048Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.6.30",
+      "depends_on_id": "mimid-1wgh.6.25",
+      "type": "blocks",
+      "created_at": "2026-10-18T17:11:41.317137957Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.6.30",
+      "depends_on_id": "mimid-1wgh.6.26",
+      "type": "blocks",
+      "created_at": "2026-10-18T17:11:41.380515129Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.6.30",
+      "depends_on_id": "mimid-1wgh.6.27",
+      "type": "blocks",
+      "created_at": "2026-10-18T17:11:41.45620446Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.67",
+  "title": "wg: protocol-06 credential identity vs user URI unspecified",
+  "description": "Suggestion. §3 Table 1 and §7.5 do not say how an MLS credential identity maps to a participant-list user (user URI vs client URI). Every room-policy check needs this mapping. mimid: BasicCredential identity = user URI (decision mimid-1wgh.6.1). Fix: state the mapping.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:10.783058372Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:10.783058372Z",
+  "labels": [
+    "wg",
+    "spec:mimi-protocol-06"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.67",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:10.809685143Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

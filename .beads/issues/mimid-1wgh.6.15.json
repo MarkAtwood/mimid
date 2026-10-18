@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.15",
+  "title": "H15: create_room does not check room_metadata.room_uri",
+  "description": "With .12.4 the hub chooses the room id after the client built the group (.12.14), so create_room does not verify room_metadata.room_uri (or a reserve-then-create step is added later). Coordinate with .12.4. Chosen (plan recommendation approved by Mark 2026-10-18).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:10.277558653Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:11.401101669Z",
+  "closed_at": "2026-10-18T17:11:11.401101669Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.15",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:10.293899395Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

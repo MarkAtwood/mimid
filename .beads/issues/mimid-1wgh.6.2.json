@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.2",
+  "title": "H2: hub enforces §8.6; refuses GCE and PSK (revises .3.10)",
+  "description": "Revises decision mimid-1wgh.3.10 (hub enforces only §8.1 membership + canSendMessage), which let any participant rewrite roles_list/preauth or replace the app_data_dictionary. Chosen by Mark 2026-10-18: also enforce room-policy-04 §8.6 (canChangeRoleDefinitions, canChangePreauthorizedUserList, canChangeRoomMembershipStyle, canSendMLSReinitProposal); refuse GroupContextExtensions and PSK proposals in v1. §8.2 metadata not enforced in v1. Needs room-policy bead P1 (RoleData::authorize_capability).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:08:37.096216961Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:08:37.346966523Z",
+  "closed_at": "2026-10-18T17:08:37.346966523Z",
+  "close_reason": "Chosen by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.2",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:08:37.113413238Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

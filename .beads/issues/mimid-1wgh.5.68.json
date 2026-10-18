@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.5.68",
+  "title": "P51: empty consent requester/target URI rejected",
+  "description": "protocol-06 §5.7: the body 'includes the URI' of each user. Readings: (a) empty means absent (P42 mimid-1wgh.5.59); (b) reject empty. Chosen: (b), required fields, as P48 (mimid-1wgh.5.65) for sendingUri.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T16:56:09.757384198Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T16:56:41.079715772Z",
+  "closed_at": "2026-10-18T16:56:41.079715772Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.68",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-18T16:56:09.777621501Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

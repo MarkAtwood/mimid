@@ -1,0 +1,46 @@
+{
+  "id": "mimid-1wgh.6.27",
+  "title": "hub S5: /update endpoint",
+  "description": "Full update pipeline (both arms), retry dedup, pending-proposal inclusion (H5), external commit refused while proposals pending (H4), GroupInfo snapshot (H11), fanout enqueue (H17), Welcome destinations (H10, H12). Oracle mls-rs (validity) + mimi-mls Members (policy). Tests: concurrent same-epoch race (one success, one wrongEpoch, tree == winner's); envelope mismatch refused with row counts unchanged (H9); tampered signature no write; policy denial no outbox row; injected post-merge failure restores snapshot. See the .6 design field (approved plan) and decisions .6.1-.6.21.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:39.956613215Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:39.956613215Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.27",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:39.974545426Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.6.27",
+      "depends_on_id": "mimid-1wgh.6.23",
+      "type": "blocks",
+      "created_at": "2026-10-18T17:11:40.821913054Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.6.27",
+      "depends_on_id": "mimid-1wgh.6.25",
+      "type": "blocks",
+      "created_at": "2026-10-18T17:11:40.890920461Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.6.27",
+      "depends_on_id": "mimid-1wgh.6.26",
+      "type": "blocks",
+      "created_at": "2026-10-18T17:11:40.966290145Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

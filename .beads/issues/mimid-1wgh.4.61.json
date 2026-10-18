@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.61",
+  "title": "DR-23: caller persists the out-of-sync mark",
+  "description": "openmls_sqlite_storage keeps its connection private; sharing it would make Store !Send. Readings: (a) fork accessor + mimi-mls table; (b) the caller (agent) persists the mark and restores it via a setter after Member::load; (c) in-memory only. Chosen by Mark 2026-10-18: (b).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:10:42.83686844Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:10:42.950847373Z",
+  "closed_at": "2026-10-18T17:10:42.950847373Z",
+  "close_reason": "Chosen by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.61",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:10:42.855968062Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

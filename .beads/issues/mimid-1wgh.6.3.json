@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.3",
+  "title": "H3: franking is mandatory in mimid rooms",
+  "description": "The hub cannot authenticate the sender of a PrivateMessage; only receiver-side frank verification binds sendingUri to the MLS sender. Chosen by Mark 2026-10-18: every mimid room's franking_agent is the hub key; submitMessage without a frank_aad SafeAAD item -\u003e notAllowed.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:08:37.166594883Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:08:37.369066926Z",
+  "closed_at": "2026-10-18T17:08:37.369066926Z",
+  "close_reason": "Chosen by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.3",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:08:37.181508592Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

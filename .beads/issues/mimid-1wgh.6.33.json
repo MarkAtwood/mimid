@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.6.33",
+  "title": "hub: re-issue pending proposals on external commit (H4 option B)",
+  "description": "Follow-up to H4: instead of refusing external commits while proposals are pending, the hub regenerates them as external sender and staples them (§5.5). Needs .4.9 (external AppDataUpdate) and external Remove signing. See the .6 design field (approved plan) and decisions .6.1-.6.21.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:40.399587535Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:40.399587535Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.33",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:40.418514602Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.6.33",
+      "depends_on_id": "mimid-1wgh.4.9",
+      "type": "blocks",
+      "created_at": "2026-10-18T17:11:42.310445911Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

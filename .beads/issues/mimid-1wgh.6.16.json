@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.16",
+  "title": "H16: new deps reqwest and mls-rs dev-dep; keygen via mimi-mls",
+  "description": "mimid-server adds reqwest (rustls; per .26) and mls-rs as a dev-dependency at the .4.13 pin. Randomness and Ed25519 key generation come from mimi-mls helpers, not a new rand dependency. Chosen (plan recommendation approved by Mark 2026-10-18).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:10.347600642Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:11.426271117Z",
+  "closed_at": "2026-10-18T17:11:11.426271117Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.16",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:10.363180797Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

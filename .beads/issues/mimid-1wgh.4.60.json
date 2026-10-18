@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.60",
+  "title": "DR-22: out-of-sync only after authenticated current-epoch Commit fails",
+  "description": "AGENTS.md: never delete group state on failure; mark out of sync and wait. Chosen by Mark 2026-10-18: a Member is marked out of sync only when a Commit for our current epoch (content type/epoch from the clear header) fails after OpenMLS verified its signature (InvalidCommit, or any error after process_message succeeds: AppDataRejected, InvalidAppDataUpdate, Missing*Component, InvalidComponentsList, TrailingAad on a Commit, merge errors). NOT marked: garbage, non-group messages, other groups (even same epoch number), past-epoch replays, future-epoch Commits (unauthenticatable), bad membership tags (checked before the signature), failed decryption, refused proposals or application messages. While marked, process/send/commit/merge_pending_commit/clear_pending_commit refuse with MemberError::OutOfSync and change nothing; recovery = a fresh Member via join_external or join_welcome.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:10:42.758145978Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:10:42.925786733Z",
+  "closed_at": "2026-10-18T17:10:42.925786733Z",
+  "close_reason": "Chosen by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.60",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:10:42.776427022Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.9",
+  "title": "H9: per-endpoint envelope checks are consistency checks",
+  "description": "update: From domain == authenticated committer's user domain; submitMessage: From domain == sendingUri domain; groupInfo/keyMaterial: From domain == requesting credential's domain. All checked before any write. With BasicCredential, unauthenticated From and no mTLS (.16, .17) these are consistency checks, NOT security; never described otherwise. The hub cannot authenticate PrivateMessage senders (H3 franking covers it). Chosen (plan recommendation approved by Mark 2026-10-18).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:09.852834741Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:11.259501728Z",
+  "closed_at": "2026-10-18T17:11:11.259501728Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.9",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:09.870065875Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

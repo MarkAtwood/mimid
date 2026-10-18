@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.6.25",
+  "title": "hub S3: server foundation (store, keys, Hub, http)",
+  "description": "Split store/ (all SQL), migration 0002_hub.sql with all hub tables, hub/keys.rs (signing key + HubKey, Debug redacted), Hub service (writer lock H7, clock, stubs), create_room validation (external_senders==[hub], franking_agent==hub key H3, participant list contains creator, members' users listed), rebuild from snapshot (H6), http.rs framing (H8), log canary infra. Oracle: restart byte-identical group_context/ratchet_tree; expired-leaf mlswg GroupInfo loads/processes after restart. Tests: secrets Debug redacted; TRACE canary for keys. See the .6 design field (approved plan) and decisions .6.1-.6.21.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:39.809604249Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:39.809604249Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.25",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:39.824893593Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.6.25",
+      "depends_on_id": "mimid-1wgh.6.22",
+      "type": "blocks",
+      "created_at": "2026-10-18T17:11:40.477950401Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

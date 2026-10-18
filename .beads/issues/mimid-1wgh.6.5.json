@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.5",
+  "title": "H5: policy-refused commit leaves the epoch open; codes",
+  "description": "protocol-06 §5.3. A commit that is MLS-valid but refused by room policy does not consume the epoch (the next valid and allowed commit wins: 'first valid commit per epoch in hub order; policy afterwards'). A commit missing pending proposals, or with an invalid/partial GroupInfo, gets notAllowed with an errorDescription (not invalidProposal). Chosen (plan recommendation approved by Mark 2026-10-18).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:09.550088109Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:11.154868733Z",
+  "closed_at": "2026-10-18T17:11:11.154868733Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.5",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:09.568120918Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

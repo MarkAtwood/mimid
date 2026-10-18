@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.6.17",
+  "title": "H17: fanout destinations before and after the commit",
+  "description": "Fanout goes to the union of member domains before and after the commit (removed clients still get their Commit, §5.5 SHOULD), origin provider included (followers deduplicate), own domain via the LocalDelivery hook. Chosen (plan recommendation approved by Mark 2026-10-18).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T17:11:10.41784811Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T17:11:11.450053771Z",
+  "closed_at": "2026-10-18T17:11:11.450053771Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.17",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T17:11:10.436940936Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
