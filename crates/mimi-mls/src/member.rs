@@ -47,6 +47,31 @@
 //! accept a group whose existing leaves do not meet them, and return those
 //! leaves' indices (decision mimid-1wgh.4.57).
 //!
+//! # Out of sync
+//!
+//! The hub orders Commits, and the first valid Commit of an epoch wins.
+//! Suppose MLS has authenticated a Commit for this member's current epoch,
+//! but the member then refuses it or cannot apply it. The hub and the other
+//! members have then moved on without this member. [`Member::process`]
+//! returns the error as usual, keeps all group state as it was, and marks
+//! the member out of sync ([`Member::out_of_sync`]). From then on every call
+//! that would change the group state fails with [`MemberError::OutOfSync`].
+//! The way back is a fresh [`Member`], from [`Member::join_external`] (a
+//! resync) or [`Member::join_welcome`].
+//!
+//! The mark is not written to the [`Store`](crate::Store). The caller (the
+//! agent) persists the [`OutOfSync`] it reads from [`Member::out_of_sync`],
+//! and hands it back through [`Member::restore_out_of_sync`] after
+//! [`Member::load`] (decision mimid-1wgh.4.61).
+//!
+//! Which failures mark the member is decision mimid-1wgh.4.60. Input that
+//! fails before MLS authenticates it never marks the member: it
+//! may come from anyone, and could otherwise wedge the group. This covers
+//! undecodable input, another group's messages, messages from another epoch
+//! (stale replays, and messages from epochs this member has not reached),
+//! and failed signatures, membership tags or decryption. Only Commits mark
+//! the member; a refused proposal or application message does not.
+//!
 //! # Limitations
 //!
 //! - Messages from an earlier epoch cannot be decrypted once a Commit has
@@ -80,6 +105,16 @@
 //!   becomes a resync, allowed but reported to the caller (RFC 9420
 //!   §12.4.3.2, decision mimid-1wgh.4.55). Finding the removed leaf
 //!   verifies the GroupInfo and tree a second time.
+//! - The out-of-sync mark is not stored: the OpenMLS SQLite storage gives
+//!   this crate no access to its database connection. The caller persists
+//!   it and restores it with [`Member::restore_out_of_sync`] after
+//!   [`Member::load`]; a member loaded without that is not marked (decision
+//!   mimid-1wgh.4.61).
+//! - A Commit whose membership tag (RFC 9420 §6.2) fails does not mark the
+//!   member, because the tag is checked before the signature. The hub
+//!   cannot check membership tags, so it may accept such a Commit. Nor does
+//!   a Commit from an epoch this member has not reached, which it cannot
+//!   authenticate (decision mimid-1wgh.4.60).
 
 use std::collections::BTreeSet;
 
@@ -93,11 +128,11 @@ use openmls::group::{
 use openmls::messages::group_info::VerifiableGroupInfo;
 use openmls::messages::proposals::{AppDataUpdateOperation, AppDataUpdateProposal, Proposal};
 use openmls::prelude::{
-    AppDataDictionary, AppDataDictionaryExtension, BasicCredential, Credential, Extension,
-    Extensions, ExternalCommitBuilderError, GroupContext, GroupId, KeyPackageIn, LeafNode,
-    LeafNodeIndex, LeafNodeParameters, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider,
-    ProcessedMessage, ProcessedMessageContent, ProposalStore, ProtocolVersion, PublicGroup,
-    RatchetTreeIn,
+    AppDataDictionary, AppDataDictionaryExtension, BasicCredential, ContentType, Credential,
+    Extension, Extensions, ExternalCommitBuilderError, GroupContext, GroupId, KeyPackageIn,
+    LeafNode, LeafNodeIndex, LeafNodeParameters, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider,
+    ProcessMessageError, ProcessedMessage, ProcessedMessageContent, ProposalStore, ProtocolVersion,
+    PublicGroup, RatchetTreeIn,
 };
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use tls_codec::{Deserialize, Serialize};
@@ -272,6 +307,27 @@ pub struct ExternalJoin {
     pub nonconforming_leaves: Vec<u32>,
 }
 
+/// Why a [`Member`] is out of sync (see the module's `# Out of sync`).
+///
+/// The caller persists it and restores it with
+/// [`Member::restore_out_of_sync`] (decision mimid-1wgh.4.61).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct OutOfSync {
+    /// The epoch of the refused Commit. The member is still in it.
+    pub epoch: u64,
+    /// The error [`Member::process`] returned for the Commit, followed by
+    /// its causes, as text.
+    pub reason: String,
+}
+
+impl OutOfSync {
+    /// Rebuilds a saved [`OutOfSync`] from its fields.
+    pub fn new(epoch: u64, reason: String) -> Self {
+        Self { epoch, reason }
+    }
+}
+
 /// Errors returned by [`Member`].
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -381,6 +437,11 @@ pub enum MemberError {
     /// stored (decision mimid-1wgh.4.54).
     #[error("cannot update the group state")]
     Merge(#[source] ErrorSource),
+    /// The member is out of sync, and the call would change group state
+    /// that no longer matches the hub's (see the module's `# Out of sync`).
+    /// Nothing was changed.
+    #[error("the group is out of sync")]
+    OutOfSync,
     /// A secret could not be exported.
     #[error("cannot export a secret")]
     Export(#[source] ErrorSource),
@@ -395,6 +456,9 @@ pub struct Member {
     /// The signature public key of the [`Identity`] that owns this member.
     /// Kept here because the leaf is gone from the tree after a removal.
     owner_signature_key: Vec<u8>,
+    /// Set when this member refuses a Commit for its current epoch that MLS
+    /// authenticated.
+    out_of_sync: Option<OutOfSync>,
 }
 
 impl Member {
@@ -408,6 +472,7 @@ impl Member {
         Self {
             group,
             owner_signature_key: identity.signature_public_key().to_vec(),
+            out_of_sync: None,
         }
     }
 
@@ -506,6 +571,10 @@ impl Member {
     /// or decoded, and [`MemberError::WrongIdentity`] if the group's own
     /// leaf has another signature key. A member that has been removed has
     /// no own leaf, so its owner cannot be checked.
+    ///
+    /// The loaded member is not out of sync, because that mark is not
+    /// stored. A caller that saved one restores it with
+    /// [`Member::restore_out_of_sync`] (decision mimid-1wgh.4.61).
     pub fn load(identity: &Identity, group_id: &[u8]) -> Result<Self, MemberError> {
         let group = MlsGroup::load(
             identity.provider().storage(),
@@ -764,7 +833,8 @@ impl Member {
     /// required component (see the module's `# Required components`),
     /// [`MemberError::InvalidComponentsList`] if the new GroupContext's
     /// `safe_aad` or `app_components` data is malformed, and
-    /// [`MemberError::Commit`] if OpenMLS cannot build the Commit. The group
+    /// [`MemberError::Commit`] if OpenMLS cannot build the Commit, and
+    /// [`MemberError::OutOfSync`] if the member is out of sync. The group
     /// state is unchanged on error.
     pub fn commit<E>(
         &mut self,
@@ -778,6 +848,7 @@ impl Member {
         E: Into<ErrorSource>,
     {
         self.check_identity(identity)?;
+        self.check_in_sync()?;
         let provider = identity.provider();
 
         let key_packages = adds
@@ -864,9 +935,11 @@ impl Member {
     /// # Errors
     ///
     /// Returns [`MemberError::Merge`] if the merge fails, for example after
-    /// this member was removed.
+    /// this member was removed, and [`MemberError::OutOfSync`] if the member
+    /// is out of sync: the hub then ordered another Commit in its place.
     pub fn merge_pending_commit(&mut self, identity: &Identity) -> Result<(), MemberError> {
         self.check_identity(identity)?;
+        self.check_in_sync()?;
         self.group
             .merge_pending_commit(identity.provider())
             .map_err(|e| MemberError::Merge(e.into()))
@@ -876,9 +949,11 @@ impl Member {
     ///
     /// # Errors
     ///
-    /// Returns [`MemberError::Merge`] if the state cannot be stored.
+    /// Returns [`MemberError::Merge`] if the state cannot be stored, and
+    /// [`MemberError::OutOfSync`] if the member is out of sync.
     pub fn clear_pending_commit(&mut self, identity: &Identity) -> Result<(), MemberError> {
         self.check_identity(identity)?;
+        self.check_in_sync()?;
         self.group
             .clear_pending_commit(identity.provider().storage())
             .map_err(|e| MemberError::Merge(e.into()))
@@ -893,9 +968,9 @@ impl Member {
     /// is merged.
     ///
     /// On any error the group state is left as it was: a message that fails
-    /// to decrypt or validate never deletes group state. Marking the group
-    /// out of sync when the hub accepted a Commit this member rejects is
-    /// mimid-1wgh.4.37.
+    /// to decrypt or validate never deletes group state. If the message is a
+    /// Commit for the current epoch that MLS authenticated, the error also
+    /// marks the member out of sync (see the module's `# Out of sync`).
     ///
     /// # Errors
     ///
@@ -908,8 +983,9 @@ impl Member {
     /// [`MemberError::MissingAppComponent`] or
     /// [`MemberError::InvalidComponentsList`] if a Commit fails the
     /// required-components check (see the module's `# Required
-    /// components`), and [`MemberError::Merge`] if the new state cannot be
-    /// stored.
+    /// components`), [`MemberError::Merge`] if the new state cannot be
+    /// stored, and [`MemberError::OutOfSync`] if the member was already out
+    /// of sync.
     pub fn process<E>(
         &mut self,
         identity: &Identity,
@@ -920,15 +996,49 @@ impl Member {
         E: Into<ErrorSource>,
     {
         self.check_identity(identity)?;
+        self.check_in_sync()?;
         let provider = identity.provider();
         let message = MlsMessageIn::tls_deserialize_exact(message)
             .map_err(|e| MemberError::Decode(e.into()))?
             .try_into_protocol_message()
             .map_err(|_| MemberError::UnexpectedMessage)?;
-        let processed = self
-            .group
-            .process_message(provider, message)
-            .map_err(|e| MemberError::Process(e.into()))?;
+        // Decision mimid-1wgh.4.60. Read from the unauthenticated header, so
+        // it counts only once OpenMLS has verified the message. OpenMLS also
+        // rejects other groups and epochs before that; the epoch is compared
+        // here too.
+        let current_epoch_commit =
+            message.content_type() == ContentType::Commit && message.epoch() == self.group.epoch();
+        let processed = match self.group.process_message(provider, message) {
+            Ok(processed) => processed,
+            Err(e) => {
+                // OpenMLS returns InvalidCommit only after verifying the
+                // signature; every earlier failure has another variant.
+                let authenticated = matches!(e, ProcessMessageError::InvalidCommit(_));
+                let error = MemberError::Process(e.into());
+                return Err(if current_epoch_commit && authenticated {
+                    self.mark_out_of_sync(error)
+                } else {
+                    error
+                });
+            }
+        };
+        match self.apply_processed(provider, processed, &mut apply) {
+            Err(error) if current_epoch_commit => Err(self.mark_out_of_sync(error)),
+            result => result,
+        }
+    }
+
+    /// Finishes [`Member::process`] for a message OpenMLS has verified.
+    fn apply_processed<E: Into<ErrorSource>>(
+        &mut self,
+        provider: &crate::store::Provider,
+        processed: ProcessedMessage,
+        apply: &mut impl FnMut(
+            ComponentId,
+            Option<&[u8]>,
+            ComponentOp<'_>,
+        ) -> Result<Option<Vec<u8>>, E>,
+    ) -> Result<Incoming, MemberError> {
         // mls-extensions-10 §4.9: the whole authenticated_data is SafeAAD.
         // Checked before anything is stored or merged.
         // OpenMLS parses a SafeAAD prefix exactly when the group requires it.
@@ -949,7 +1059,7 @@ impl Member {
             })
             .unwrap_or_default();
         let sender_identity = basic_identity(processed.credential());
-        let processed = self.resolve(provider, processed, &mut apply)?;
+        let processed = self.resolve(provider, processed, apply)?;
 
         match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(message) => {
@@ -1007,7 +1117,8 @@ impl Member {
     /// Returns [`MemberError::SafeAadNotEnabled`] or
     /// [`MemberError::InvalidSafeAad`] for unusable `safe_aad`, and
     /// [`MemberError::Send`] if OpenMLS refuses, for example while a
-    /// proposal or Commit is pending.
+    /// proposal or Commit is pending, and [`MemberError::OutOfSync`] if the
+    /// member is out of sync.
     pub fn send(
         &mut self,
         identity: &Identity,
@@ -1015,6 +1126,7 @@ impl Member {
         safe_aad: &[(ComponentId, Vec<u8>)],
     ) -> Result<Vec<u8>, MemberError> {
         self.check_identity(identity)?;
+        self.check_in_sync()?;
         let safe_aad_required = self
             .group
             .public_group()
@@ -1079,6 +1191,21 @@ impl Member {
         self.group.is_active()
     }
 
+    /// Why this member is out of sync, or `None` if it is not (see the
+    /// module's `# Out of sync`). The other accessors describe the last
+    /// epoch it applied.
+    pub fn out_of_sync(&self) -> Option<&OutOfSync> {
+        self.out_of_sync.as_ref()
+    }
+
+    /// Marks this member out of sync with `state`, which the caller saved
+    /// from [`Member::out_of_sync`] for this group before a restart, after
+    /// [`Member::load`] (decision mimid-1wgh.4.61). It replaces any mark
+    /// already set.
+    pub fn restore_out_of_sync(&mut self, state: OutOfSync) {
+        self.out_of_sync = Some(state);
+    }
+
     /// The current members as (leaf index, BasicCredential identity).
     pub fn members(&self) -> Vec<(u32, Vec<u8>)> {
         self.group
@@ -1123,6 +1250,31 @@ impl Member {
             .export_ratchet_tree()
             .tls_serialize_detached()
             .map_err(|e| MemberError::Encode(e.into()))
+    }
+
+    /// Fails while this member is out of sync.
+    fn check_in_sync(&self) -> Result<(), MemberError> {
+        match self.out_of_sync {
+            Some(_) => Err(MemberError::OutOfSync),
+            None => Ok(()),
+        }
+    }
+
+    /// Marks this member out of sync because of `error`, which refused a
+    /// Commit for the current epoch, and returns `error`.
+    fn mark_out_of_sync(&mut self, error: MemberError) -> MemberError {
+        let mut reason = error.to_string();
+        let mut source = std::error::Error::source(&error);
+        while let Some(cause) = source {
+            reason.push_str(": ");
+            reason.push_str(&cause.to_string());
+            source = cause.source();
+        }
+        self.out_of_sync = Some(OutOfSync {
+            epoch: self.epoch(),
+            reason,
+        });
+        error
     }
 
     /// Fails unless `identity` owns this member.
@@ -1202,6 +1354,7 @@ impl std::fmt::Debug for Member {
             .field("group_id", &self.group_id())
             .field("epoch", &self.epoch())
             .field("own_leaf_index", &self.own_leaf_index())
+            .field("out_of_sync", &self.out_of_sync.is_some())
             .finish_non_exhaustive()
     }
 }

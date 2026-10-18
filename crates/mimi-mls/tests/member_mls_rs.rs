@@ -905,8 +905,13 @@ fn adding_a_leaf_without_a_required_app_component_is_refused() {
     assert_eq!(group.epoch(), 1);
 }
 
-#[test]
-fn received_commit_with_a_leaf_missing_a_required_component_is_rejected() {
+/// alice (mimi-mls) and bob (mls-rs) in a fresh group whose GroupContext
+/// `safe_aad` list requires 0x0020, at epoch 1.
+fn alice_and_bob_requiring_0020() -> (
+    Identity,
+    Member,
+    mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+) {
     let alice = identity(b"alice");
     let mut group = Member::create(
         &alice,
@@ -924,12 +929,19 @@ fn received_commit_with_a_leaf_missing_a_required_component_is_rejected() {
     group.merge_pending_commit(&alice).expect("merge");
     let welcome = MlsMessage::from_bytes(&bundle.welcome.expect("Welcome")).expect("decode");
     let tree = ExportedTree::from_bytes(&group.ratchet_tree().expect("tree")).expect("tree");
-    let (mut bob, _) = bob_client
+    let (bob, _) = bob_client
         .join_group(Some(tree), &welcome, None)
         .expect("mls-rs joins");
+    (alice, group, bob)
+}
 
+/// Each refused Commit marks the member out of sync (decision
+/// mimid-1wgh.4.60), so each case uses a fresh group.
+#[test]
+fn received_commit_with_a_leaf_missing_a_required_component_is_rejected() {
     // bob (mls-rs, which does not enforce the rule) adds carol, whose leaf
     // lists only 0x0021.
+    let (alice, mut group, mut bob) = alice_and_bob_requiring_0020();
     let bad_add = bob
         .commit_builder()
         .authenticated_data(EMPTY_SAFE_AAD.to_vec())
@@ -950,8 +962,10 @@ fn received_commit_with_a_leaf_missing_a_required_component_is_rejected() {
         "{result:?}"
     );
     assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
+    assert_eq!(group.out_of_sync().map(|o| o.epoch), Some(1));
 
     // bob's UpdatePath leaf drops its app_data_dictionary.
+    let (alice, mut group, mut bob) = alice_and_bob_requiring_0020();
     let bad_path = bob
         .commit_builder()
         .authenticated_data(EMPTY_SAFE_AAD.to_vec())
@@ -968,7 +982,9 @@ fn received_commit_with_a_leaf_missing_a_required_component_is_rejected() {
         "{result:?}"
     );
     assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
+    assert_eq!(group.out_of_sync().map(|o| o.epoch), Some(1));
 
+    let (alice, mut group, mut bob) = alice_and_bob_requiring_0020();
     let good_add = bob
         .commit_builder()
         .authenticated_data(EMPTY_SAFE_AAD.to_vec())
@@ -991,6 +1007,7 @@ fn received_commit_with_a_leaf_missing_a_required_component_is_rejected() {
     };
     assert_eq!(summary.added, vec![b"dave".to_vec()]);
     assert_same_epoch_secrets(&group, &alice, &bob);
+    assert_eq!(group.out_of_sync(), None);
 }
 
 #[test]

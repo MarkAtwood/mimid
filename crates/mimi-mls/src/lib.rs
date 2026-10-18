@@ -48,6 +48,11 @@
 //!   receives, in the tree of a group it joins or in Proposals and Commits
 //!   (RFC 9420 §7.3, decision mimid-1wgh.4.56). It checks the KeyPackages
 //!   it adds itself.
+//! - A [`member::Member`] that refuses an authenticated Commit for its
+//!   current epoch is marked out of sync (decision mimid-1wgh.4.60). The
+//!   mark is not stored: the caller persists it and restores it with
+//!   [`member::Member::restore_out_of_sync`] after [`member::Member::load`]
+//!   (decision mimid-1wgh.4.61).
 //! - An [`observer::Observer`] does not check the `membership_tag` of
 //!   members' PublicMessages (RFC 9420 §6.2): it has no `membership_key`.
 //!   Signatures are verified. It does not check the `lifetime` of received

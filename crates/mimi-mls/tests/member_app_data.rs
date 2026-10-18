@@ -521,15 +521,10 @@ fn receiver_rejection_keeps_group_state() {
     assert_eq!(carol_group.epoch_authenticator(), authenticator);
     assert_eq!(carol_group.component(LOG), None);
     assert!(carol_group.is_active());
+    // Decision mimid-1wgh.4.60: a refused current-epoch Commit marks the
+    // member out of sync.
+    assert_eq!(carol_group.out_of_sync().map(|o| o.epoch), Some(epoch));
 
-    // The hub rejected the Commit too; alice discards it and goes on.
+    // alice can still discard her own pending Commit.
     alice_group.clear_pending_commit(&alice).expect("clear");
-    let message = alice_group.send(&alice, b"after", &[]).expect("send");
-    let incoming = carol_group
-        .process(&carol, &message, handler(&calls))
-        .expect("carol decrypts");
-    assert!(
-        matches!(incoming, Incoming::Application { ref data, .. } if data == b"after"),
-        "{incoming:?}"
-    );
 }
