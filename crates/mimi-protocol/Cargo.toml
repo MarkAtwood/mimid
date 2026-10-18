@@ -6,6 +6,7 @@ license.workspace = true
 description = "draft-ietf-mimi-protocol-06 wire types for the mimid MIMI reference implementation"
 
 [dependencies]
+mimi-mls = { path = "../mimi-mls" }
 thiserror.workspace = true
 tls_codec.workspace = true
 iri-string.workspace = true

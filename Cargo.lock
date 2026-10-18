@@ -1822,6 +1822,7 @@ name = "mimi-protocol"
 version = "0.1.0"
 dependencies = [
  "iri-string",
+ "mimi-mls",
  "serde",
  "serde_json",
  "thiserror",

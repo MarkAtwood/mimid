@@ -24,7 +24,23 @@
 //!   [`Utf8String`]), the directory ([`Directory`], [`UriTemplate`]), and
 //!   the codecs for the frank_aad ([`FrankAad`]), participant_list
 //!   ([`ParticipantListData`], [`ParticipantListUpdate`]) and room_metadata
-//!   ([`RoomMetaData`]) components.
+//!   ([`RoomMetaData`]) components, the update endpoint ([`UpdateRequest`],
+//!   [`UpdateRoomResponse`]), the notify endpoint ([`FanoutMessage`],
+//!   [`NotifyRequest`]) and [`Frank`].
+//! - MLS structures come from [`mimi_mls::wire`], which cannot decode a
+//!   SemiPrivateMessage. A [`HandshakeBundle`] or [`FanoutMessage`] whose
+//!   handshake is a SemiPrivateMessage, which §5.3 and §5.5 allow, is
+//!   rejected; only PublicMessage handshakes are accepted (decision
+//!   mimid-1wgh.4.12). `moreProposals` and `externalProposals` entries
+//!   must be PublicMessage proposals (decision mimid-1wgh.5.51).
+//! - [`FanoutMessage`] arms follow decision mimid-1wgh.5.24: an application
+//!   message must be a PrivateMessage, so a PublicMessage application
+//!   message or a PrivateMessage proposal or commit is rejected.
+//! - Endpoint codecs check the wire form only: no signature, frank, epoch
+//!   or policy check happens here, and an empty `moreProposals`,
+//!   `externalProposals` or `invalidProposals` list, or an empty `/notify`
+//!   body, decodes (decision mimid-1wgh.5.49). [`NotifyRequest::decode`]
+//!   rejects an empty `roomId` (decision mimid-1wgh.5.50).
 //! - Component codecs check the wire form only. Applying a
 //!   [`ParticipantListUpdate`] (index ranges, at most one change per user
 //!   per commit) and authorizing any update are left to the caller (task
@@ -56,6 +72,8 @@ mod component;
 mod directory;
 mod frank;
 mod identifier_uri;
+mod notify;
+mod update;
 mod uri_template;
 mod utf8_string;
 
@@ -64,10 +82,15 @@ pub use component::{
     UserRolePair, UserindexRolePair,
 };
 pub use directory::Directory;
-pub use frank::FrankAad;
+pub use frank::{Frank, FrankAad};
 pub use identifier_uri::IdentifierUri;
+pub use notify::{FanoutEvent, FanoutMessage, NotifyRequest};
 pub use serde_json;
 pub use tls_codec;
+pub use update::{
+    GroupInfoOption, HandshakeBundle, UpdateRequest, UpdateResponseCode, UpdateResult,
+    UpdateRoomResponse,
+};
 pub use uri_template::{MAX_URL_LEN, UriTemplate};
 pub use utf8_string::Utf8String;
 
