@@ -1,0 +1,3 @@
+{"id":"01a14c9b-f15c-701c-a52e-e67f5c062f34","issue_id":"mimid-1wgh.37.32","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-18T01:24:10.716007865Z"}
+{"id":"01a14c9b-f15e-7246-89ac-652d9467f1b5","issue_id":"mimid-1wgh.37.32","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-18T01:24:10.718149507Z"}
+{"id":"01a14c9b-f160-7367-9c00-8712f145d6e5","issue_id":"mimid-1wgh.37.32","event_type":"label_added","actor":"agent","comment":"Added label: spec:mimi-room-policy-04","created_at":"2026-10-18T01:24:10.720223475Z"}

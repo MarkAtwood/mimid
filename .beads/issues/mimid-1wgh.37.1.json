@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.1",
+  "title": "File backfilled wg beads from decision sweep",
+  "description": "File, deduplicated against existing wg beads, the spec errata/suggestions found by the read-only sweep of all decision beads, epic designs and code comments. Each: type task, labels wg + spec:\u003cdoc-rev\u003e, title 'wg: \u003cdoc\u003e §\u003csec\u003e \u003cissue\u003e', description with section, quoted text, problem, mimid decision ID, suggested fix. Show Mark the list.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:21:27.605421205Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:24:21.747649175Z",
+  "closed_at": "2026-10-18T01:24:21.747649175Z",
+  "close_reason": "Filed 36 wg beads mimid-1wgh.37.3-.37.38; list shown to Mark",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.1",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:21:27.619956856Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

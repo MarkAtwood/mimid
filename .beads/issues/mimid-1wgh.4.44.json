@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.4.44",
+  "title": "Re-check DR-15: ext-10 §5 per-leaf safe_aad list",
+  "description": "Decision mimid-1wgh.4.35 (DR-15) says mls-extensions-10 does not define a per-leaf Safe AAD support list, but ext-10 §5 (L887-890) defines the safe_aad component in a LeafNode as 'the list of supported components that use Safe AAD'. If DR-15 misread the draft, mimi-mls may be non-conformant (leaf advertisement and/or the check against the group's safe_aad). Re-read §4.9 and §5, compare with identity.rs/member.rs, and either reaffirm DR-15 with the reasoning or file a corrected decision plus a fix. Found by the 2026-10-17 errata sweep.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T01:24:21.64270651Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T01:24:21.64270651Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.44",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-18T01:24:21.65279065Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

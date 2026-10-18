@@ -1,0 +1,3 @@
+{"id":"01a14c9b-eccb-7c6b-8eb5-09aeb52708d5","issue_id":"mimid-1wgh.37.19","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-18T01:24:09.547814798Z"}
+{"id":"01a14c9b-ecd4-7563-a1fa-d7581304f17d","issue_id":"mimid-1wgh.37.19","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-18T01:24:09.556353703Z"}
+{"id":"01a14c9b-ecdc-7d5b-bc2c-a2eb8091f825","issue_id":"mimid-1wgh.37.19","event_type":"label_added","actor":"agent","comment":"Added label: spec:mimi-content-09","created_at":"2026-10-18T01:24:09.564876147Z"}

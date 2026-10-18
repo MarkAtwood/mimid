@@ -1,0 +1,3 @@
+{"id":"01a14c99-7438-76dc-afc6-5ad7d9b85c38","issue_id":"mimid-1wgh.37.1","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-18T01:21:27.608450343Z"}
+{"id":"01a14c99-743b-7442-8356-7eb7042d255f","issue_id":"mimid-1wgh.37.1","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-18T01:21:27.611279713Z"}
+{"id":"01a14c9c-1c76-731d-bf87-646858af259b","issue_id":"mimid-1wgh.37.1","event_type":"closed","actor":"agent","old_value":"","new_value":"Filed 36 wg beads mimid-1wgh.37.3-.37.38; list shown to Mark","created_at":"2026-10-18T01:24:21.750205075Z"}
