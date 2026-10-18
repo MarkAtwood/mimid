@@ -1,0 +1,34 @@
+# PROVENANCE: mimi-content-09 CDDL oracle (T7, bead mimid-1wgh.2.6)
+#
+# cddl_check.py validates CBOR against the WG CDDL with the Ruby cddl tool,
+# outside cargo test. cddl_check.out is its unmodified stdout.
+#
+# Regenerate: CDDL=/path/to/cddl python3 -I cddl_check.py > cddl_check.out
+# Generated:  2026-10-18 with cddl tool version 0.12.14 (Ruby gem "cddl",
+#             https://rubygems.org/gems/cddl), ruby 3.2.3, Python 3.12.3,
+#             standard library only.
+#
+# Schemas (vendored, see ../fixtures/wg-09/PROVENANCE; tag
+# draft-ietf-mimi-content-09, commit a89298c876ab805bdb2e882bc046fa341432783b).
+# Their content equals Appendix A.1/A.2 of -09, the version decisions
+# mimid-1wgh.2.15 (extension value `any`, no size limit) and mimid-1wgh.2.16
+# (url is tstr) follow:
+#   895a0d4b4f920a1d65afc1aadbbe5832d386a03765e3a4a69535056c73170ec1  mimi-content.cddl
+#   0b5e2beaa2f2fdb9118a97f4b42082111d49ade9f53b4aaf8685ed495d2cc161  implied.cddl
+#
+# t6-message.cbor holds the bytes of t6_message_hex() in ../extensions.rs,
+# extracted mechanically from that file's hex literals and cross-checked
+# byte for byte against an independent hand transcription.
+# extensions.rs::unknown_extensions_encode_in_bytewise_key_order asserts
+# that the encoder's output for the T6 struct equals these bytes, and
+# encode_wg.rs asserts the same for every hand-built struct and its WG
+# example, so this oracle covers the encoder's output.
+#
+# The Rust cddl crate (0.10.7) was evaluated first and rejected: it
+# rejects every unknown extension (int, negative-int and text keys alike)
+# in the extensions map, whose key type is a choice `int / tstr`.
+#
+# Files:
+d990423cc58a23403ee37fff3e0c51d0ba31df07081c771104eedde667525317  cddl_check.py
+5d9c7f1d589dff9f594cab241c892ccde9b0c17d84e9585aeacae112c3ee4239  cddl_check.out
+f54945d0c6d7bc8d51391e9df961bf09c2dc2b33821a6fe450b32a4e0dfe91e1  t6-message.cbor
