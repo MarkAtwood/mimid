@@ -1,0 +1,25 @@
+# PROVENANCE: protocol-06 franking HMAC oracle (task mimid-1wgh.5.4)
+#
+# franking_gen.py computes franking_tag (§5.4.1.1) and server_frank
+# (§5.4.1.2) from the text of draft-ietf-mimi-protocol-06, with its own
+# TLS encoding of ServerFrankingContext (RFC 9420 §2.1.2 <V> prefixes,
+# big-endian uint64). It never calls or reads mimid code. It self-checks its
+# varint encoder against the RFC 9420 §2.1.2 examples and HMAC-SHA-256
+# against RFC 4231 test cases 1 and 2 before printing anything.
+# franking_gen.out is its unmodified stdout. Decisions applied:
+# mimid-1wgh.5.28 (tag || context is raw concatenation) and mimid-1wgh.5.29
+# (application_data is opaque, ApplicationFraming included when used).
+#
+# Regenerate: python3 -I franking_gen.py > franking_gen.out
+# Generated:  2026-10-17 with Python 3.12.3, standard library only
+#             (hmac, hashlib, struct).
+# Read by:    mimi-protocol/tests/franking.rs, which hardcodes the outputs
+#             (offline).
+#
+# Sources:
+#   draft-ietf-mimi-protocol-06  ~/PROJECT/IETF/specs/draft-ietf-mimi-protocol-06.txt
+#                                sha256 1cb7c8e6cc9dbf6d2d165e3f0688ac6eeedc0bebd69e9d53f6b972f42da8b9da
+#
+# Files:
+5bf079bc6e815c8f443b20a1eb20990964596ddd3aed5f8919843eb3208ac874  franking_gen.py
+c3bec9de0330b95769f32fa27ca9e4eaf8c82780ae3998e66f5990af1c80df05  franking_gen.out

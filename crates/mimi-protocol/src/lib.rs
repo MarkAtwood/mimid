@@ -26,7 +26,17 @@
 //!   ([`ParticipantListData`], [`ParticipantListUpdate`]) and room_metadata
 //!   ([`RoomMetaData`]) components, the update endpoint ([`UpdateRequest`],
 //!   [`UpdateRoomResponse`]), the notify endpoint ([`FanoutMessage`],
-//!   [`NotifyRequest`]) and [`Frank`].
+//!   [`NotifyRequest`]) and [`Frank`], and the franking HMACs
+//!   ([`franking_tag`], [`server_frank`] over a [`ServerFrankingContext`],
+//!   with constant-time [`verify_franking_tag`] and
+//!   [`verify_server_frank`]).
+//! - Franking computes and checks the HMACs only. The
+//!   franking_integrity_signature is not here (task mimid-1wgh.5.6), and
+//!   the caller extracts the salt, sender URI and room URI from the MIMI
+//!   content. [`ServerFrankingContext`] URIs are [`IdentifierUri`]s, so a
+//!   non-ASCII URI must arrive percent-encoded. [`HubKey`] redacts `Debug`
+//!   but is not zeroized on drop (protocol-06 §5.4.1.2; decision
+//!   mimid-1wgh.5.53).
 //! - MLS structures come from [`mimi_mls::wire`], which cannot decode a
 //!   SemiPrivateMessage. A [`HandshakeBundle`] or [`FanoutMessage`] whose
 //!   handshake is a SemiPrivateMessage, which §5.3 and §5.5 allow, is
@@ -82,7 +92,10 @@ pub use component::{
     UserRolePair, UserindexRolePair,
 };
 pub use directory::Directory;
-pub use frank::{Frank, FrankAad};
+pub use frank::{
+    Frank, FrankAad, HubKey, ServerFrankingContext, franking_tag, server_frank,
+    verify_franking_tag, verify_server_frank,
+};
 pub use identifier_uri::IdentifierUri;
 pub use notify::{FanoutEvent, FanoutMessage, NotifyRequest};
 pub use serde_json;
@@ -123,7 +136,7 @@ pub enum Protocol {
     Mls10 = 1,
 }
 
-/// Errors from constructing protocol-06 values.
+/// Errors from constructing or checking protocol-06 values.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -159,4 +172,15 @@ pub enum Error {
         /// The variable's name as written in the template.
         name: String,
     },
+    /// A `franking_tag` did not match its salt and application_data
+    /// (§5.4.1.3).
+    #[error("franking_tag does not match")]
+    FrankingTagMismatch,
+    /// A `server_frank` did not match its hub key, `franking_tag` and
+    /// context (§5.4.1.2).
+    #[error("server_frank does not match")]
+    ServerFrankMismatch,
+    /// A value could not be TLS-encoded.
+    #[error("TLS encoding failed")]
+    Encoding(#[source] tls_codec::Error),
 }
