@@ -20,9 +20,21 @@
 //! - There is no authentication between providers. This crate does not
 //!   protect against a malicious or impersonated provider, and mimid does not
 //!   conform to protocol-06's mutually authenticated TLS transport.
-//! - Only the primitives and the directory are implemented so far:
-//!   [`Protocol`], [`IdentifierUri`], [`Utf8String`], [`Directory`] and
-//!   [`UriTemplate`].
+//! - Implemented so far: the primitives ([`Protocol`], [`IdentifierUri`],
+//!   [`Utf8String`]), the directory ([`Directory`], [`UriTemplate`]), and
+//!   the codecs for the frank_aad ([`FrankAad`]), participant_list
+//!   ([`ParticipantListData`], [`ParticipantListUpdate`]) and room_metadata
+//!   ([`RoomMetaData`]) components.
+//! - Component codecs check the wire form only. Applying a
+//!   [`ParticipantListUpdate`] (index ranges, at most one change per user
+//!   per commit) and authorizing any update are left to the caller (task
+//!   mimid-1wgh.5.48).
+//! - Opaque fields stay opaque: [`UserRolePair::user`] is not checked to be
+//!   a URI (decision mimid-1wgh.5.46), and [`RichDescription`]'s fields are
+//!   not checked to be UTF-8, a media type or a language tag (decision
+//!   mimid-1wgh.5.47). [`RoomMetaData::room_avatar`] is not required to use
+//!   `https` (decision mimid-1wgh.5.45). [`Uri`] is [`IdentifierUri`]
+//!   (decision mimid-1wgh.5.44).
 //! - [`UriTemplate`] supports RFC 6570 level 1 only (`{name}`), the only form
 //!   §5.1 uses. Expanding a template that names a variable other than the
 //!   one supplied is an error, not an empty expansion as RFC 6570 §3.2.1
@@ -40,12 +52,19 @@
 
 #![forbid(unsafe_code)]
 
+mod component;
 mod directory;
+mod frank;
 mod identifier_uri;
 mod uri_template;
 mod utf8_string;
 
+pub use component::{
+    ParticipantListData, ParticipantListUpdate, RichDescription, RoomMetaData, RoomMetaUpdate, Uri,
+    UserRolePair, UserindexRolePair,
+};
 pub use directory::Directory;
+pub use frank::FrankAad;
 pub use identifier_uri::IdentifierUri;
 pub use serde_json;
 pub use tls_codec;
@@ -53,6 +72,20 @@ pub use uri_template::{MAX_URL_LEN, UriTemplate};
 pub use utf8_string::Utf8String;
 
 use tls_codec::{TlsDeserialize, TlsSerialize, TlsSize};
+
+/// MLS application component IDs (`uint16 ComponentID`, mls-extensions-10
+/// §4.1) registered by protocol-06 §10.
+pub mod component_id {
+    /// `frank_aad` (§10.1), a Safe AAD component carrying
+    /// [`FrankAad`](crate::FrankAad).
+    pub const FRANK_AAD: u16 = 0x0020;
+    /// `participant_list` (§10.3), a GroupContext component carrying
+    /// [`ParticipantListData`](crate::ParticipantListData).
+    pub const PARTICIPANT_LIST: u16 = 0x0022;
+    /// `room_metadata` (§10.4), a GroupContext component carrying
+    /// [`RoomMetaData`](crate::RoomMetaData).
+    pub const ROOM_METADATA: u16 = 0x0023;
+}
 
 /// End-to-end protocol selector (protocol-06 §5).
 ///
