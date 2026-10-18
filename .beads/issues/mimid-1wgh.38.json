@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.38",
+  "title": "No TUI: mimid-agent is the JMAP Chat bridge",
+  "description": "Chosen by Mark 2026-10-18. mimid ships no UI. mimid-agent (.13) is the JMAP Chat \u003c-\u003e MIMI bridge: it keeps all MLS keys and plaintext on the device and serves standard plaintext JMAP Chat to any existing JMAP Chat client (e.g. crate-jmapchat-client, jmap-chat-js). The previously planned TUI is dropped. End-to-end encryption is preserved (no server-side gateway). Open for .13 planning: the agent's local endpoint transport — stock clients may need loopback HTTP/WebSocket with a local token rather than only a 0600 unix socket (decide then).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T20:50:02.955416373Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T20:50:03.046461845Z",
+  "closed_at": "2026-10-18T20:50:03.046461845Z",
+  "close_reason": "Chosen by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.38",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-18T20:50:02.976132261Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

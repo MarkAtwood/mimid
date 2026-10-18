@@ -56,8 +56,9 @@ Dependencies point down this table, never up.
 | `mimi-room-policy` | room-policy-04 codecs and policy evaluation | Depend on `mimi-mls` |
 | `mimi-protocol` | protocol-06 wire types and franking | Use openmls directly (MLS types come only through `mimi_mls::wire`); do I/O |
 | `mimid-server` | Hub and follower roles, the provider's JMAP Chat endpoint, admin CLI | Parse or decrypt application ciphertext; put SQL outside its store module |
-| `mimid-agent` | MLS keys and plaintext. It is the only component that sees either | Serve plaintext anywhere except its 0600 unix socket |
-| TUI | Rendering | Do crypto, do MLS, or contact a provider |
+| `mimid-agent` | MLS keys and plaintext. It is the only component that sees either. It is the JMAP Chat ↔ MIMI bridge: users run a standard JMAP Chat client against its local endpoint | Serve plaintext anywhere except its local endpoint |
+
+mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat client talks plaintext JMAP Chat to the local agent.
 
 - The spec crates (`mimi-*`) are synchronous and pure. Only the server and agent are async.
 - JMAP Chat types come from `~/PROJECT/crate-jmap`. Build its `#[non_exhaustive]` types through serde, not new constructors.
@@ -123,7 +124,7 @@ Dependencies point down this table, never up.
   - secret-bearing types redact their `Debug` output;
   - a canary test captures `tracing` output and proves no secret appears in it;
   - never log full request bodies at INFO.
-- **The TUI treats everything a server or peer sends as untrusted:** isolate bidi text, never render raw HTML, and show nothing that could spoof another user.
+- **The agent treats everything a server or peer sends as untrusted:** it passes content to clients as data, never interprets HTML, and never lets a peer-supplied field claim another user's identity (the sender is always the authenticated MLS sender). Rendering safety (bidi isolation, no raw HTML) is the JMAP client's job.
 
 ## Agent workflow
 
