@@ -8,7 +8,7 @@
 
 use std::cell::RefCell;
 
-use mimi_mls::member::{AppDataUpdate, ComponentOp, Member, Sender};
+use mimi_mls::member::{AppDataUpdate, CommitBundle, ComponentOp, Incoming, Member, Sender};
 use mimi_mls::observer::{Observed, Observer, ObserverError};
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::wire::{PartialGroupInfo, RatchetTreeOption, RatchetTreePresence};
@@ -1108,4 +1108,144 @@ fn commit_with_a_leaf_missing_a_required_component_is_rejected() {
     assert_eq!(summary.added, vec![b"dave".to_vec()]);
     observer.merge_pending_commit(&store).expect("merge");
     assert_same_public_state(&observer, &bob);
+}
+
+// ---- Member::commit exports the new epoch's GroupInfo ----
+//
+// Oracles, none of them OpenMLS's GroupInfo encoder: (a) mls-rs joins by
+// external Commit from it, which verifies its signature and contents; (b)
+// the Observer rebuilds it byte for byte from the PartialGroupInfo that
+// mls-rs derives from it; (c) mls-rs member bob's own GroupInfo for the same
+// epoch matches it in every field except signer and signature.
+
+/// RFC 9420 §6, §12.4.3: an MLSMessage carrying an Ed25519 GroupInfo ends
+/// with `uint32 signer` and `signature<V>` (2-byte length 0x4040, 64
+/// bytes). Returns the bytes before `signer`, and `signer`.
+fn split_signer(group_info: &[u8]) -> (&[u8], u32) {
+    group_info_signature(group_info);
+    let signer_at = group_info.len() - 66 - 4;
+    let signer: [u8; 4] = group_info[signer_at..signer_at + 4]
+        .try_into()
+        .expect("4 bytes");
+    (&group_info[..signer_at], u32::from_be_bytes(signer))
+}
+
+/// alice (mimi-mls, leaf 0) commits `adds`; alice, the Observer and bob
+/// merge it. Returns alice's CommitBundle.
+fn alice_commits(
+    alice: &Identity,
+    member: &mut Member,
+    bob: &mut mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+    store: &Store,
+    observer: &mut Observer,
+    adds: &[&[u8]],
+) -> CommitBundle {
+    let bundle = member
+        .commit(alice, adds, &[], &[], no_components)
+        .expect("commit");
+    member.merge_pending_commit(alice).expect("merge");
+    let Observed::Commit(summary) = observer
+        .process(store, &bundle.commit, no_components)
+        .expect("Observer stages alice's Commit")
+    else {
+        panic!("not a Commit");
+    };
+    assert_eq!(summary.committer, Sender::Member(0));
+    observer.merge_pending_commit(store).expect("merge");
+    bob.process_incoming_message(MlsMessage::from_bytes(&bundle.commit).expect("decode"))
+        .expect("mls-rs merges alice's Commit");
+    assert_same_public_state(observer, bob);
+    bundle
+}
+
+#[test]
+fn member_group_info_is_rebuilt_by_observer_from_partial() {
+    let (alice, mut member, mut bob, store, mut observer) = setup();
+    // An empty Commit, then one with an Add, and so a Welcome.
+    let eve = mls_rs_key_package(&mls_rs_client(b"eve"));
+    for adds in [&[][..], &[eve.as_slice()][..]] {
+        let bundle = alice_commits(&alice, &mut member, &mut bob, &store, &mut observer, adds);
+        assert_eq!(bundle.welcome.is_some(), !adds.is_empty());
+        let group_info = bundle.group_info;
+        assert_eq!(group_info[..4], [0x00, 0x01, 0x00, 0x04], "mls_group_info");
+        let rebuilt = observer
+            .group_info(&partial_from(
+                &group_info,
+                RatchetTreePresence::NoRatchetTree,
+            ))
+            .expect("rebuild");
+        assert_eq!(rebuilt, group_info, "adds={}", adds.len());
+    }
+}
+
+#[test]
+fn member_group_info_matches_mls_rs_member_except_signer() {
+    let (alice, mut member, mut bob, store, mut observer) = setup();
+    let group_info =
+        alice_commits(&alice, &mut member, &mut bob, &store, &mut observer, &[]).group_info;
+
+    // protocol-06 §5.3: the GroupInfo omits the ratchet_tree. external_pub
+    // lets a new client join by external Commit (RFC 9420 §12.4.3.2).
+    let message = MlsMessage::from_bytes(&group_info).expect("mls-rs decodes");
+    let extensions = message.as_group_info().expect("GroupInfo").extensions();
+    assert!(extensions.has_extension(ExtensionType::EXTERNAL_PUB));
+    assert!(!extensions.has_extension(ExtensionType::RATCHET_TREE));
+    assert_eq!(extensions.len(), 1);
+
+    // bob's GroupInfo for the same epoch, with [external_pub]: the same
+    // GroupContext, extensions and confirmation_tag, signed by leaf 1.
+    let from_bob = mls_rs_group_info(&bob, false, true);
+    let (ours, our_signer) = split_signer(&group_info);
+    let (theirs, their_signer) = split_signer(&from_bob);
+    assert_eq!(
+        ours, theirs,
+        "GroupContext, extensions or confirmation_tag differ"
+    );
+    assert_eq!((our_signer, their_signer), (0, 1));
+}
+
+#[test]
+fn mls_rs_joins_by_external_commit_from_member_group_info() {
+    let (alice, mut member, mut bob, store, mut observer) = setup();
+    let group_info =
+        alice_commits(&alice, &mut member, &mut bob, &store, &mut observer, &[]).group_info;
+
+    // The tree comes from mls-rs, not from mimi-mls.
+    let tree = bob.export_tree().into_owned();
+    let carol = mls_rs_client(b"carol");
+    let (carol_group, commit) = carol
+        .external_commit_builder()
+        .expect("builder")
+        .with_tree_data(tree)
+        .build(MlsMessage::from_bytes(&group_info).expect("decode"))
+        .expect("mls-rs joins from alice's GroupInfo");
+    let commit = commit.to_bytes().expect("encode");
+
+    let Observed::Commit(summary) = observer
+        .process(&store, &commit, no_components)
+        .expect("Observer stages the external Commit")
+    else {
+        panic!("not a Commit");
+    };
+    assert_eq!(summary.committer, Sender::NewMemberCommit);
+    observer.merge_pending_commit(&store).expect("merge");
+    let Incoming::Commit(summary) = member
+        .process(&alice, &commit, no_components)
+        .expect("alice merges the external Commit")
+    else {
+        panic!("not a Commit");
+    };
+    assert_eq!(summary.committer, Sender::NewMemberCommit);
+    bob.process_incoming_message(MlsMessage::from_bytes(&commit).expect("decode"))
+        .expect("bob merges the external Commit");
+    assert_same_public_state(&observer, &carol_group);
+    assert_same_public_state(&observer, &bob);
+    assert_eq!(
+        member.members(),
+        vec![
+            (0, b"alice".to_vec()),
+            (1, b"bob".to_vec()),
+            (2, b"carol".to_vec())
+        ]
+    );
 }

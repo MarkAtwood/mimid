@@ -198,8 +198,12 @@ pub struct CommitBundle {
     pub commit: Vec<u8>,
     /// The Welcome for added members, if any were added.
     pub welcome: Option<Vec<u8>>,
-    /// The GroupInfo for the new epoch, if OpenMLS produced one.
-    pub group_info: Option<Vec<u8>>,
+    /// The signed GroupInfo for the new epoch (RFC 9420 §12.4.3), with
+    /// signer this member's leaf. Its extensions are exactly
+    /// `[external_pub]`: no ratchet_tree, which protocol-06 §5.3 sends
+    /// separately. A PartialGroupInfo (ratchet-tree-options-01 §4) is this
+    /// GroupInfo's extensions and signature.
+    pub group_info: Vec<u8>,
 }
 
 /// Errors returned by [`Member`].
@@ -439,6 +443,9 @@ impl Member {
     /// Commit: stored proposals, then `app_updates` in order (decision
     /// mimid-1wgh.4.34).
     ///
+    /// The returned [`CommitBundle`] always carries the new epoch's signed
+    /// GroupInfo, for the hub (protocol-06 §5.3).
+    ///
     /// The Commit is pending until [`Member::process`] sees it come back
     /// from the hub, or [`Member::merge_pending_commit`] is called. If the
     /// hub rejects it, call [`Member::clear_pending_commit`].
@@ -498,7 +505,10 @@ impl Member {
             .propose_removals(removes.iter().copied().map(LeafNodeIndex::new))
             .add_proposals(proposals)
             .load_psks(provider.storage())
-            .map_err(|e| MemberError::Commit(e.into()))?;
+            .map_err(|e| MemberError::Commit(e.into()))?
+            // Without a ratchet_tree extension: the group's config leaves
+            // use_ratchet_tree_extension off (protocol-06 §5.3).
+            .create_group_info(true);
 
         let app_data_proposals: Vec<AppDataUpdateProposal> =
             builder.app_data_update_proposals().cloned().collect();
@@ -519,23 +529,29 @@ impl Member {
             .map_err(|e| MemberError::Commit(e.into()))?
             .stage_commit(provider)
             .map_err(|e| MemberError::Commit(e.into()))?;
+        let (commit, welcome, group_info) = bundle.into_messages();
         // The staged Commit shows every new or updated leaf, including those
         // of stored proposals, and the GroupContext it leads to.
         let checked = match self.group.pending_commit() {
             Some(staged) => check_staged_leaves(staged).map_err(MemberError::from),
             None => Err(MemberError::Commit("OpenMLS left no Commit pending".into())),
-        };
-        if let Err(e) = checked {
-            self.group
-                .clear_pending_commit(provider.storage())
-                .map_err(|e| MemberError::Merge(e.into()))?;
-            return Err(e);
         }
-        let (commit, welcome, group_info) = bundle.into_messages();
+        .and_then(|()| {
+            group_info.ok_or_else(|| MemberError::Commit("OpenMLS exported no GroupInfo".into()))
+        });
+        let group_info = match checked {
+            Ok(group_info) => group_info,
+            Err(e) => {
+                self.group
+                    .clear_pending_commit(provider.storage())
+                    .map_err(|e| MemberError::Merge(e.into()))?;
+                return Err(e);
+            }
+        };
         Ok(CommitBundle {
             commit: encode(&commit)?,
             welcome: welcome.as_ref().map(encode).transpose()?,
-            group_info: group_info.as_ref().map(encode).transpose()?,
+            group_info: encode(&group_info)?,
         })
     }
 
