@@ -20,10 +20,14 @@
 //!   binds the identity to the signature key, so a malicious or impersonated
 //!   provider can substitute keys undetected.
 //! - Only ciphersuite 1 is supported (decision mimid-1wgh.23).
-//! - The signature key lives only in memory: an [`Identity`] cannot yet be
-//!   reloaded from its [`Store`] after a restart.
-//! - The [`Store`] keeps KeyPackage private keys unencrypted. Protecting the
-//!   database file (for example mode 0600) is the caller's job.
+//! - [`Identity::load`] needs the BasicCredential identity and the signature
+//!   public key from the caller: OpenMLS storage keys signature key pairs by
+//!   public key and has no place for the credential. It checks that the
+//!   stored key pair is an Ed25519 pair for that public key, but not that
+//!   its private half matches its public half.
+//! - The [`Store`] keeps the signature private key, KeyPackage private keys
+//!   and group secrets unencrypted. Protecting the database file (for
+//!   example mode 0600) is the caller's job.
 //! - KeyPackages use OpenMLS's default lifetime: valid from one hour in the
 //!   past until 84 days in the future.
 //! - The `app_components` and `safe_aad` lists in each LeafNode name only
@@ -76,6 +80,21 @@ pub enum Error {
     /// A signature key pair could not be generated.
     #[error("cannot generate a signature key pair")]
     KeyGeneration(#[source] ErrorSource),
+    /// The MLS state database could not be written.
+    #[error("cannot write to the MLS state database")]
+    StoreWrite(#[source] ErrorSource),
+    /// The MLS state database could not be read, or held data that cannot
+    /// be decoded.
+    #[error("cannot read from the MLS state database")]
+    StoreRead(#[source] ErrorSource),
+    /// The MLS state database holds no signature key pair for the requested
+    /// public key.
+    #[error("no stored identity has this signature public key")]
+    IdentityNotFound,
+    /// The stored signature key pair is not an Ed25519 key pair for the
+    /// requested public key.
+    #[error("the stored signature key pair does not match the requested public key")]
+    InvalidStoredKey,
     /// A KeyPackage could not be built or stored.
     #[error("cannot build a KeyPackage")]
     KeyPackage(#[source] ErrorSource),

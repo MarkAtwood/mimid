@@ -7,7 +7,8 @@ use openmls::prelude::{
     CredentialType, CredentialWithKey, Extension, ExtensionType, Extensions, KeyPackage, LeafNode,
     OpenMlsProvider, OpenMlsRand, ProposalType, UnknownExtension,
 };
-use openmls_basic_credential::SignatureKeyPair;
+use openmls::storage::StorageProvider;
+use openmls_basic_credential::{SignatureKeyPair, StorageId};
 use tls_codec::Serialize;
 
 use crate::store::Provider;
@@ -61,25 +62,65 @@ pub struct Identity {
 
 impl Identity {
     /// Generates a fresh Ed25519 signature key for the BasicCredential
-    /// `identity` (RFC 9420 §5.3, `opaque identity<V>`).
+    /// `identity` (RFC 9420 §5.3, `opaque identity<V>`) and writes the key
+    /// pair to `store`, so that [`Identity::load`] can reload it.
     ///
     /// # Errors
     ///
     /// Returns [`Error::KeyGeneration`] if the signature key cannot be
-    /// generated.
+    /// generated, and [`Error::StoreWrite`] if it cannot be stored.
     pub fn generate(identity: &[u8], store: Store) -> Result<Self, Error> {
         let signer = SignatureKeyPair::new(CIPHERSUITE.signature_algorithm())
             .map_err(|e| Error::KeyGeneration(e.into()))?;
+        signer
+            .store(store.provider().storage())
+            .map_err(|e| Error::StoreWrite(e.into()))?;
+        Ok(Self::new(identity, signer, store))
+    }
+
+    /// Reloads an identity that [`Identity::generate`] stored in `store`,
+    /// for example after a restart.
+    ///
+    /// The signature key pair is found by `signature_public_key`, the value
+    /// [`Identity::signature_public_key`] returned before. That is how
+    /// OpenMLS keys stored signature key pairs. OpenMLS storage has no place
+    /// for the credential, so the caller passes the BasicCredential
+    /// `identity` again. It must be the `identity` given to
+    /// [`Identity::generate`]; nothing checks this.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::IdentityNotFound`] if `store` holds no key pair for
+    /// `signature_public_key`, [`Error::StoreRead`] if the stored key pair
+    /// cannot be read or decoded, and [`Error::InvalidStoredKey`] if it is
+    /// not an Ed25519 key pair for `signature_public_key`.
+    pub fn load(identity: &[u8], signature_public_key: &[u8], store: Store) -> Result<Self, Error> {
+        let scheme = CIPHERSUITE.signature_algorithm();
+        // OpenMLS derives the storage key from the public key and scheme
+        // alone; this key pair is built only to ask OpenMLS for that key.
+        let storage_id =
+            SignatureKeyPair::from_raw(scheme, Vec::new(), signature_public_key.to_vec()).id();
+        // Not SignatureKeyPair::read, which turns storage errors into None.
+        let signer = read_signature_key_pair(store.provider().storage(), &storage_id)
+            .map_err(|e| Error::StoreRead(e.into()))?
+            .ok_or(Error::IdentityNotFound)?;
+        if signer.signature_scheme() != scheme || signer.public() != signature_public_key {
+            return Err(Error::InvalidStoredKey);
+        }
+        Ok(Self::new(identity, signer, store))
+    }
+
+    fn new(identity: &[u8], signer: SignatureKeyPair, store: Store) -> Self {
         let credential_with_key = CredentialWithKey {
             credential: BasicCredential::new(identity.to_vec()).into(),
             signature_key: signer.to_public_vec().into(),
         };
-        Ok(Self {
+        Self {
             store,
             signer,
             credential_with_key,
             identity: identity.to_vec(),
-        })
+        }
     }
 
     /// The BasicCredential identity bytes.
@@ -175,6 +216,15 @@ impl Identity {
             .tls_serialize_detached()
             .map_err(|e| Error::Encode(e.into()))
     }
+}
+
+/// Reads the signature key pair stored under `storage_id`, keeping storage
+/// and decoding errors.
+fn read_signature_key_pair<S: StorageProvider>(
+    storage: &S,
+    storage_id: &StorageId,
+) -> Result<Option<SignatureKeyPair>, S::Error> {
+    storage.signature_key_pair(storage_id)
 }
 
 /// The LeafNode capabilities every mimid client advertises, in KeyPackages
@@ -275,11 +325,7 @@ mod tests {
         vec![format!("{bytes:?}"), lower_hex, upper_hex]
     }
 
-    #[test]
-    fn debug_output_never_contains_the_signature_private_key() {
-        let identity =
-            Identity::generate(b"alice", Store::open_in_memory().expect("in-memory store"))
-                .expect("generate identity");
+    fn assert_debug_redacts_private_key(identity: &Identity) {
         let private = identity.signer.private().to_vec();
         assert_eq!(private.len(), 32, "an Ed25519 seed is 32 bytes");
 
@@ -291,5 +337,36 @@ mod tests {
             );
         }
         assert!(debug.contains("<redacted>"));
+    }
+
+    #[test]
+    fn debug_output_never_contains_the_signature_private_key() {
+        let identity =
+            Identity::generate(b"alice", Store::open_in_memory().expect("in-memory store"))
+                .expect("generate identity");
+        assert_debug_redacts_private_key(&identity);
+    }
+
+    #[test]
+    fn debug_output_of_a_reloaded_identity_never_contains_the_private_key() {
+        let path = std::env::temp_dir().join(format!(
+            "mimi-mls-debug-canary-{}.sqlite",
+            std::process::id()
+        ));
+        let generated = Identity::generate(b"alice", Store::open(&path).expect("open store"))
+            .expect("generate identity");
+        let public_key = generated.signature_public_key().to_vec();
+        let private = generated.signer.private().to_vec();
+        drop(generated);
+
+        let reloaded = Identity::load(
+            b"alice",
+            &public_key,
+            Store::open(&path).expect("reopen store"),
+        )
+        .expect("load identity");
+        std::fs::remove_file(&path).expect("remove the test database");
+        assert_eq!(reloaded.signer.private(), private, "the same key came back");
+        assert_debug_redacts_private_key(&reloaded);
     }
 }

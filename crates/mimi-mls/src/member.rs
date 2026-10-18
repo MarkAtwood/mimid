@@ -43,8 +43,6 @@
 //!
 //! # Limitations
 //!
-//! - A [`Member`] cannot be reloaded from the [`Store`](crate::Store) after
-//!   a restart.
 //! - Messages from an earlier epoch cannot be decrypted once a Commit has
 //!   been merged (OpenMLS keeps no past epoch secrets by default).
 //! - While a proposal received through [`Member::process`] is pending, OpenMLS
@@ -236,6 +234,12 @@ pub enum MemberError {
     /// Two initial components share an id (mls-extensions-10 §4.6).
     #[error("component {0:#06x} is given more than once")]
     DuplicateComponent(ComponentId),
+    /// The store holds no group with the requested group id.
+    #[error("no stored group has this group id")]
+    GroupNotFound,
+    /// The stored group could not be read or decoded.
+    #[error("cannot load the group from the MLS state database")]
+    Load(#[source] ErrorSource),
     /// The group could not be created.
     #[error("cannot create the group")]
     Create(#[source] ErrorSource),
@@ -418,6 +422,37 @@ impl Member {
                 identity.credential_with_key().clone(),
             )
             .map_err(|e| MemberError::Create(e.into()))?;
+        Ok(Self {
+            group,
+            owner_signature_key: identity.signature_public_key().to_vec(),
+        })
+    }
+
+    /// Reloads this identity's membership in the group `group_id` from the
+    /// identity's [`Store`](crate::Store), for example after a restart.
+    /// OpenMLS writes the group state to the store on every change, so the
+    /// member is as it was after the last call that changed it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::GroupNotFound`] if the store holds no group
+    /// `group_id`, [`MemberError::Load`] if the stored group cannot be read
+    /// or decoded, and [`MemberError::WrongIdentity`] if the group's own
+    /// leaf has another signature key. A member that has been removed has
+    /// no own leaf, so its owner cannot be checked.
+    pub fn load(identity: &Identity, group_id: &[u8]) -> Result<Self, MemberError> {
+        let group = MlsGroup::load(
+            identity.provider().storage(),
+            &GroupId::from_slice(group_id),
+        )
+        .map_err(|e| MemberError::Load(e.into()))?
+        .ok_or(MemberError::GroupNotFound)?;
+        if group
+            .own_leaf()
+            .is_some_and(|leaf| leaf.signature_key().as_slice() != identity.signature_public_key())
+        {
+            return Err(MemberError::WrongIdentity);
+        }
         Ok(Self {
             group,
             owner_signature_key: identity.signature_public_key().to_vec(),
