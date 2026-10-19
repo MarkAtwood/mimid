@@ -76,11 +76,20 @@
 //!
 //! - Messages from an earlier epoch cannot be decrypted once a Commit has
 //!   been merged (OpenMLS keeps no past epoch secrets by default).
-//! - While a proposal received through [`Member::process`] is pending, OpenMLS
-//!   refuses to [`send`](Member::send) until a Commit covers it.
-//! - AppDataUpdate proposals are supported only inline in this member's own
-//!   Commits and in Commits it receives. Sending a standalone AppDataUpdate
-//!   proposal is not supported.
+//! - While a proposal received through [`Member::process`] or sent with
+//!   [`Member::propose_app_data_update`] is pending, OpenMLS refuses to
+//!   [`send`](Member::send) until a Commit covers it.
+//! - [`Member::commit`] covers every stored proposal. If a stored
+//!   AppDataUpdate proposal is invalid (mls-extensions-10 §4.7), or `apply`
+//!   rejects it, every Commit this member tries in that epoch fails. It does
+//!   not leave the proposal out, although RFC 9420 §12.4 lets a committer
+//!   include only the proposals that form a valid list (decision
+//!   mimid-1wgh.4.65).
+//! - The only size limit on an AppDataUpdate `update` or on component data
+//!   is tls_codec's: at most 2^30 - 1 bytes per vector. The caller bounds
+//!   the size of each message it passes in. mls-extensions-10 §4.7 notes
+//!   that large data may hurt performance; hashing it instead (MAY) is not
+//!   offered (decision mimid-1wgh.4.67).
 //! - A Commit is refused only for the leaves it adds or updates, judged
 //!   against the post-Commit GroupContext (decision mimid-1wgh.4.49). Leaves
 //!   already in a joined group's tree are reported, not refused, and only
@@ -168,6 +177,18 @@ pub enum AppDataUpdate {
         /// The component whose data is removed.
         component_id: ComponentId,
     },
+}
+
+impl AppDataUpdate {
+    fn to_proposal(&self) -> AppDataUpdateProposal {
+        match self {
+            Self::Update {
+                component_id,
+                update,
+            } => AppDataUpdateProposal::update(*component_id, update.clone()),
+            Self::Remove { component_id } => AppDataUpdateProposal::remove(*component_id),
+        }
+    }
 }
 
 /// The operation the `apply` function of [`Member::commit`] and
@@ -379,6 +400,9 @@ pub enum MemberError {
     /// The Commit could not be built.
     #[error("cannot build the Commit")]
     Commit(#[source] ErrorSource),
+    /// The proposal could not be built or stored.
+    #[error("cannot build the proposal")]
+    Propose(#[source] ErrorSource),
     /// The message failed MLS validation or decryption. The group state is
     /// unchanged.
     #[error("the MLS message is invalid")]
@@ -860,18 +884,9 @@ impl Member {
                     .map_err(|e| MemberError::InvalidKeyPackage(e.into()))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let proposals = app_updates.iter().map(|update| {
-            let proposal = match update {
-                AppDataUpdate::Update {
-                    component_id,
-                    update,
-                } => AppDataUpdateProposal::update(*component_id, update.clone()),
-                AppDataUpdate::Remove { component_id } => {
-                    AppDataUpdateProposal::remove(*component_id)
-                }
-            };
-            Proposal::AppDataUpdate(Box::new(proposal))
-        });
+        let proposals = app_updates
+            .iter()
+            .map(|update| Proposal::AppDataUpdate(Box::new(update.to_proposal())));
 
         let mut builder = self
             .group
@@ -885,6 +900,10 @@ impl Member {
             // use_ratchet_tree_extension off (protocol-06 §5.3).
             .create_group_info(true);
 
+        // An invalid stored AppDataUpdate fails the whole Commit instead of
+        // being left out, although RFC 9420 §12.4 says a committer SHOULD
+        // include the valid proposals that form a valid list (decision
+        // mimid-1wgh.4.65).
         let app_data_proposals: Vec<AppDataUpdateProposal> =
             builder.app_data_update_proposals().cloned().collect();
         if !app_data_proposals.is_empty() {
@@ -928,6 +947,52 @@ impl Member {
             welcome: welcome.as_ref().map(encode).transpose()?,
             group_info: encode(&group_info)?,
         })
+    }
+
+    /// Builds a standalone AppDataUpdate proposal (mls-extensions-10 §4.7),
+    /// as a TLS-encoded `MLSMessage` carrying a PublicMessage, for example
+    /// the AppSync proposal a leaving client sends the hub (protocol-06
+    /// §3.5, decision mimid-1wgh.4.16).
+    ///
+    /// The proposal is also stored, as a received one would be: this
+    /// member's next [`Member::commit`] covers it by reference, and `apply`
+    /// judges it then. Until a Commit covers it, OpenMLS refuses to
+    /// [`send`](Member::send).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::InvalidAppDataUpdate`] for a remove of a
+    /// component that has no data (§4.7), [`MemberError::Propose`] if
+    /// OpenMLS cannot build or store the proposal, and
+    /// [`MemberError::OutOfSync`] if the member is out of sync. The group
+    /// state is unchanged on error.
+    pub fn propose_app_data_update(
+        &mut self,
+        identity: &Identity,
+        update: &AppDataUpdate,
+    ) -> Result<Vec<u8>, MemberError> {
+        self.check_identity(identity)?;
+        self.check_in_sync()?;
+        let proposal = update.to_proposal();
+        let component_id = proposal.component_id();
+        // §4.7: "invalid if ... it specifies the removal of state for a
+        // component_id that has no state present". Whether the application
+        // knows the component is judged by `apply` at Commit time.
+        if matches!(proposal.operation(), AppDataUpdateOperation::Remove)
+            && self.component(component_id).is_none()
+        {
+            return Err(MemberError::InvalidAppDataUpdate(component_id));
+        }
+        let (message, _) = self
+            .group
+            .propose_app_data_update(
+                identity.provider(),
+                identity.signer(),
+                component_id,
+                proposal.operation().clone(),
+            )
+            .map_err(|e| MemberError::Propose(e.into()))?;
+        encode(&message)
     }
 
     /// Merges this member's pending Commit, after the hub accepted it.
@@ -1075,9 +1140,20 @@ impl Member {
             }
             ProcessedMessageContent::ProposalMessage(proposal)
             | ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
-                self.group
-                    .store_pending_proposal(provider.storage(), *proposal)
-                    .map_err(|e| MemberError::Merge(e.into()))?;
+                // A proposal that arrives again, such as this member's own
+                // proposal echoed by the hub, is stored once. OpenMLS keeps
+                // duplicates, and a Commit built over them would reference
+                // an AppDataUpdate once but apply it twice.
+                let reference = proposal.proposal_reference_ref();
+                if !self
+                    .group
+                    .pending_proposals()
+                    .any(|stored| stored.proposal_reference_ref() == reference)
+                {
+                    self.group
+                        .store_pending_proposal(provider.storage(), *proposal)
+                        .map_err(|e| MemberError::Merge(e.into()))?;
+                }
                 Ok(Incoming::Proposal { sender })
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {

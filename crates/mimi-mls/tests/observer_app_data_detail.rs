@@ -12,9 +12,9 @@
 //!   given, so the bytes reported are the bytes on the wire.
 //!
 //! Inline proposals come from a `mimi_mls::member::Member` Commit.
-//! `Member` cannot send a standalone AppDataUpdate proposal (see its
-//! `# Limitations`), so standalone proposals come from a plain OpenMLS
-//! client, not from `mimi_mls`; the Member then commits them by reference.
+//! Standalone proposals come from a plain OpenMLS client, so an
+//! implementation other than `mimi_mls` frames them; the Member then
+//! commits them by reference.
 
 use mimi_mls::member::{ComponentOp, Incoming, Member, Sender};
 use mimi_mls::observer::{Observed, Observer, ObserverStart, ProposalDetail, ProposalKind};

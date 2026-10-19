@@ -25,7 +25,8 @@
 //! 11. bob rejoins with a new client by external Commit through b.
 //! 12. alice sends; every current client decrypts.
 //!
-//! mimi-mls Members cannot send standalone proposals, so the member who
+//! mimi-mls Members can send standalone AppDataUpdate proposals but not
+//! standalone Remove proposals, so the member who
 //! leaves by proposal is dave, the mls-rs client, who also kicks bob; and
 //! the hub lets a committer add another user's client only with a
 //! participant list update in the same Commit, which mls-rs cannot make,
