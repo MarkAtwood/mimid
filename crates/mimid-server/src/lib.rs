@@ -30,6 +30,10 @@
 //! - The hub's signing and franking keys are stored unencrypted in the
 //!   database, which must be readable by its owner only (mode 0600; see
 //!   [`store`]).
+//! - Every client of a user carries the same BasicCredential identity, the
+//!   user URI (decision mimid-1wgh.6.1). Stock mls-rs clients reject two
+//!   leaves with the same identity, so a user with two devices cannot share
+//!   a group with mls-rs-based members.
 //! - Room policy ([`hub::policy`]):
 //!   - Only BasicCredential is supported, and it carries no claims, so
 //!     preauthorization matches only `preauth_list` entries with an empty

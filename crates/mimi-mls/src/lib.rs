@@ -21,6 +21,10 @@
 //! - Only BasicCredential is supported (decision mimid-1wgh.16). Nothing
 //!   binds the identity to the signature key, so a malicious or impersonated
 //!   provider can substitute keys undetected.
+//! - Every client of a user carries the same BasicCredential identity, the
+//!   user URI (decision mimid-1wgh.6.1). Stock mls-rs clients reject two
+//!   leaves with the same identity, so a user with two devices cannot share
+//!   a group with mls-rs-based members.
 //! - Only ciphersuite 1 is supported (decision mimid-1wgh.23).
 //! - [`Identity::load`] needs the BasicCredential identity and the signature
 //!   public key from the caller: OpenMLS storage keys signature key pairs by
