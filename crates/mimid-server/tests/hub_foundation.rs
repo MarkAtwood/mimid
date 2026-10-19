@@ -6,7 +6,10 @@
 //! mimid-1wgh.4.13) supply the expected ratchet tree and GroupContext bytes.
 
 mod common;
+#[path = "fixtures/suite/generate.rs"]
+mod generate;
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,7 +24,7 @@ use mimid_server::directory::Directory;
 use mimid_server::follower::Follower;
 use mimid_server::http::{MAX_BODY_LEN, router};
 use mimid_server::hub::{Hub, HubError};
-use mimid_server::store::Store;
+use mimid_server::store::{Store, StoreError, StoredHubSecret};
 use mls_rs::client_builder::MlsConfig;
 use mls_rs::crypto::SignaturePublicKey;
 use mls_rs::extension::ExtensionType;
@@ -403,6 +406,87 @@ async fn create_room_rejects_bad_ids_and_duplicates() {
         .unwrap_err();
     assert!(matches!(err, HubError::InvalidGroupInfo(_)), "{err:?}");
     assert_eq!(store.rooms().await.unwrap().len(), 1);
+    close_hub(store, hub).await;
+}
+
+/// Opens the store at `path` with the RFC 8032 TEST 1 key pair as the hub
+/// key, the key the ciphersuite fixtures name (`tests/fixtures/suite`), and
+/// starts a hub on it.
+async fn open_suite_fixture_hub(path: &Path) -> (Store, Hub) {
+    let store = Store::open(path, &domain()).await.unwrap();
+    store
+        .hub_secret_or_insert(|| {
+            Ok::<_, StoreError>(StoredHubSecret {
+                signature_private_key: generate::HUB_PRIVATE_KEY,
+                signature_public_key: generate::HUB_PUBLIC_KEY,
+                hub_key: [0x42; 32],
+            })
+        })
+        .await
+        .unwrap();
+    let hub = Hub::open(
+        store.clone(),
+        domain(),
+        Arc::new(FixedClock(1_700_000_000_000)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(*hub.signature_public_key(), generate::HUB_PUBLIC_KEY);
+    (store, hub)
+}
+
+/// Control for the suite 3 test: the mls-rs suite 1 group, built the same
+/// way, meets every hub rule. Its GroupContext starts with version mls10
+/// (0x0001) and ciphersuite 0x0001 (RFC 9420 §6, §8.1).
+#[tokio::test]
+async fn create_room_accepts_mls_rs_suite_1_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_suite_fixture_hub(&dir.path().join("mimid.sqlite")).await;
+    hub.create_room(
+        ROOM_ID,
+        ALICE,
+        include_bytes!("fixtures/suite/group_info_suite1.bin"),
+        include_bytes!("fixtures/suite/ratchet_tree_suite1.bin"),
+    )
+    .await
+    .unwrap();
+    let state = hub.public_state(ROOM_ID).await.unwrap();
+    assert_eq!(state.group_context[..4], [0x00, 0x01, 0x00, 0x01]);
+    close_hub(store, hub).await;
+}
+
+/// An mls-rs group on ciphersuite 3 that otherwise meets every hub rule is
+/// refused, and nothing is stored (decision mimid-1wgh.23).
+#[tokio::test]
+async fn create_room_rejects_suite_3_group() {
+    let group_info = include_bytes!("fixtures/suite/group_info_suite3.bin");
+    // RFC 9420 §6: MLSMessage version mls10 (0x0001), wire_format
+    // mls_group_info (0x0004); §12.4.3 GroupInfo, §8.1 GroupContext:
+    // version mls10 (0x0001), cipher_suite 0x0003.
+    assert_eq!(
+        group_info[..8],
+        [0x00, 0x01, 0x00, 0x04, 0x00, 0x01, 0x00, 0x03]
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_suite_fixture_hub(&dir.path().join("mimid.sqlite")).await;
+    let err = hub
+        .create_room(
+            ROOM_ID,
+            ALICE,
+            group_info,
+            include_bytes!("fixtures/suite/ratchet_tree_suite3.bin"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, HubError::UnsupportedCipherSuite { cipher_suite: 3 }),
+        "{err:?}"
+    );
+    assert!(store.rooms().await.unwrap().is_empty(), "nothing stored");
+    assert!(matches!(
+        hub.public_state(ROOM_ID).await,
+        Err(HubError::NoSuchRoom)
+    ));
     close_hub(store, hub).await;
 }
 

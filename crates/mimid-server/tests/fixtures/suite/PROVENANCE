@@ -1,0 +1,44 @@
+# PROVENANCE: hub ciphersuite oracle (bead mimid-1wgh.6.71)
+#
+# generate.rs drives mls-rs for every MLS structure (never the hub code
+# under test): alice (mimi://a.example/u/alice) creates a group with
+# BasicCredentials and adds bob (mimi://b.example/u/bob), once on
+# ciphersuite 1 (group ID "suite1-fixture") and once on ciphersuite 3,
+# MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519 (group ID
+# "suite3-fixture"). Both GroupContexts carry the same hub rules:
+# external_senders is exactly the RFC 8032 §7.1 TEST 1 Ed25519 public key
+# with credential mimi://a.example, and an app_data_dictionary holds
+# franking_agent (same key and credential), participant_list (alice, bob)
+# and base_room_policy. The component data comes from the shared test
+# encoders in tests/common/mod.rs. The two groups differ only in
+# ciphersuite, so the suite 1 control shows the suite 3 group breaks no
+# other hub rule.
+#
+# It writes each structure exactly as mls-rs encodes it. mls-rs output is
+# random, so regenerating writes new bytes; these files are the output of
+# one run, unmodified.
+#
+#   group_info_suite1.bin    MLSMessage GroupInfo, suite 1, epoch 1, no
+#                            ratchet_tree extension
+#   ratchet_tree_suite1.bin  its ratchet tree, as mls-rs exports it
+#   group_info_suite3.bin    MLSMessage GroupInfo, suite 3, epoch 1, no
+#                            ratchet_tree extension
+#   ratchet_tree_suite3.bin  its ratchet tree, as mls-rs exports it
+#
+# The tests (tests/hub_foundation.rs) seed the hub store with the RFC 8032
+# TEST 1 key pair and embed these with include_bytes! (offline).
+#
+# Regenerate (from the workspace root):
+#   cargo test -p mimid-server --test hub_foundation -- --ignored \
+#     generate_suite_fixtures
+# Generated:  2026-10-18 with rustc 1.99.1, mls-rs and
+#             mls-rs-crypto-rustcrypto at git rev
+#             d9af9507223e4c915db9599f6038da1de5d68d4b
+#             (https://github.com/awslabs/mls-rs).
+#
+# Files:
+ddb6f3b6f8015bb5748bdee10cacb082941cbe434dbe79ca538a921d96a92889  generate.rs
+f4a43c87d4c9c7a3723e9cc61d95a403cc27d06c8733f27a891b6d7ababd9ea6  group_info_suite1.bin
+78681c2246aae7bc70571449954f8fa669d92a3cccc7d5b21795f89b74dff4bb  ratchet_tree_suite1.bin
+b0b0fcf4730c13adab0ce68bac52ae8cdac8a592d6a6811f2a59d8becfe2d19e  group_info_suite3.bin
+94d8e7761bf75b9c6e13407c9ea9679513640f9014fc9f2d13ee52b4493f6dd5  ratchet_tree_suite3.bin

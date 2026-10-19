@@ -348,7 +348,7 @@ fn frank(
 /// The group's ciphersuite, read from the start of its GroupContext
 /// (RFC 9420 §8.1: `ProtocolVersion version; CipherSuite cipher_suite;`).
 /// The input is the Observer's own encoding of a verified GroupContext.
-fn cipher_suite(observer: &Observer) -> Result<CipherSuite, HubError> {
+pub(super) fn cipher_suite(observer: &Observer) -> Result<CipherSuite, HubError> {
     let group_context = observer.group_context().map_err(HubError::Mls)?;
     let mut reader = group_context.as_slice();
     u16::tls_deserialize(&mut reader).map_err(HubError::GroupContext)?; // version

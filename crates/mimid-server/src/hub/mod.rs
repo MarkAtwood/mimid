@@ -62,6 +62,10 @@ pub use key_material::{LocalKeyMaterial, LocalKeyMaterialError, LocalKeyMaterial
 use keys::HubSigningKey;
 pub(crate) use state::identity_domain;
 
+/// RFC 9420 §17.1: `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`, the only
+/// ciphersuite supported (decision mimid-1wgh.23).
+const SUITE_1: u16 = 0x0001;
+
 /// A source of the current time, injectable for tests.
 pub trait Clock: Send + Sync {
     /// Milliseconds since the UNIX epoch.
@@ -222,7 +226,8 @@ impl Hub {
     /// and `ratchet_tree` the group's TLS-encoded ratchet tree. `creator`
     /// is the creating user's URI. The group is verified as
     /// [`Observer::from_group_info`] does, and then checked against the
-    /// hub's rules: `room_id` is under this provider's domain (decision
+    /// hub's rules: the group uses ciphersuite 1 (decision mimid-1wgh.23),
+    /// `room_id` is under this provider's domain (decision
     /// mimid-1wgh.6.36), `external_senders` is exactly the hub, the
     /// `franking_agent` component names the hub, both with the hub's key
     /// and the credential `mimi://<hub domain>` (decision
@@ -241,7 +246,8 @@ impl Hub {
     /// a bad `room_id`, [`HubError::RoomExists`] or
     /// [`HubError::GroupExists`] if the room or its group is already
     /// hosted, [`HubError::InvalidGroupInfo`] if the group fails MLS
-    /// validation, [`HubError::GroupInfoHasRatchetTree`],
+    /// validation, [`HubError::UnsupportedCipherSuite`],
+    /// [`HubError::GroupInfoHasRatchetTree`],
     /// [`HubError::WrongExternalSenders`],
     /// [`HubError::MissingFrankingAgent`],
     /// [`HubError::WrongFrankingAgent`],
@@ -250,8 +256,9 @@ impl Hub {
     /// [`HubError::MissingParticipantList`],
     /// [`HubError::InvalidParticipantList`],
     /// [`HubError::CreatorNotListed`] or [`HubError::MemberNotListed`] if
-    /// it breaks a hub rule, and [`HubError::MlsStore`], [`HubError::Mls`]
-    /// or [`HubError::Store`] for internal failures. Nothing is stored on
+    /// it breaks a hub rule, and [`HubError::MlsStore`], [`HubError::Mls`],
+    /// [`HubError::GroupContext`] or [`HubError::Store`] for internal
+    /// failures. Nothing is stored on
     /// error.
     pub async fn create_room(
         &self,
@@ -269,6 +276,11 @@ impl Hub {
         let ObserverStart { observer, .. } =
             Observer::from_group_info(&mls_store, group_info, Some(ratchet_tree))
                 .map_err(HubError::InvalidGroupInfo)?;
+        // Decision mimid-1wgh.23: ciphersuite 1 only.
+        let cipher_suite = u16::from(submit::cipher_suite(&observer)?);
+        if cipher_suite != SUITE_1 {
+            return Err(HubError::UnsupportedCipherSuite { cipher_suite });
+        }
         if rooms
             .values()
             .any(|room| room.observer.group_id() == observer.group_id())
@@ -558,6 +570,13 @@ pub enum HubError {
     /// The GroupInfo or ratchet tree failed MLS validation.
     #[error("invalid GroupInfo or ratchet tree")]
     InvalidGroupInfo(#[source] ObserverError),
+    /// The group uses a ciphersuite other than 1, the only one supported
+    /// (decision mimid-1wgh.23).
+    #[error("ciphersuite {cipher_suite:#06x} is not supported")]
+    UnsupportedCipherSuite {
+        /// The group's ciphersuite.
+        cipher_suite: u16,
+    },
     /// `external_senders` is missing, malformed, or not exactly the hub's
     /// key and credential (protocol-06 §7.4; decisions mimid-1wgh.4.21,
     /// mimid-1wgh.6.35).
