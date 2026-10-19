@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.6.73",
+  "title": "hub: refuse §4.7-invalid standalone AppDataUpdate proposals",
+  "description": "Per decision mimid-1wgh.4.65: a member holding an invalid stored AppDataUpdate cannot commit that epoch, and the hub forces cached proposals into the next Commit (protocol-06 §3.5). So the hub must refuse, on arrival, a standalone AppDataUpdate proposal that breaks mls-extensions-10 §4.7 (an unknown component; a remove of absent data; two removes, or a remove plus an update, for one id across the cached proposals). Regression test first, with input from an independent implementation.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T02:42:56.729137135Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T02:42:56.729137135Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.73",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-19T02:42:56.759163414Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

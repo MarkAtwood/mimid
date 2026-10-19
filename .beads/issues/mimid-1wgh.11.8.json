@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.11.8",
+  "title": "Decision: refused Message/set creates fail the whole call with invalidArguments",
+  "description": "draft-atwood-jmap-chat-mimi-00 (cefc217) L424/L430: the server MUST reject a Message/set create (roomed Chat / mimi-fanout body type) 'with invalidArguments'. RFC 8620 L1189 defines invalidArguments as a method-level error; its SetError list has no invalidArguments. Readings: per-object SetError vs method-level error. Chosen (Mark, 2026-10-19): method-level; the whole Message/set call is answered with error invalidArguments. Also applies to the L426 body/bodyType/reactions update rule.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T18:17:36.284770836Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T18:17:36.39844971Z",
+  "closed_at": "2026-10-19T18:17:36.39844971Z",
+  "close_reason": "Decided by Mark 2026-10-19",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.11.8",
+      "depends_on_id": "mimid-1wgh.11",
+      "type": "parent-child",
+      "created_at": "2026-10-19T18:17:36.31623946Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.12.3",
   "title": "jmap-mimi: provider KeyPackage/get,set",
   "description": "Session capability + KeyPackage store with validation (suite, Basic, identity, duplicate), last-resort, StateChange on consume.",
+  "notes": "2026-10-18: re-scoped by the approved .12 plan (see the mimid-1wgh.12 design field §1 and §6); detailed when it is next. Target draft: jmap-chat-spec 5630c10.\nConstraint (decision mimid-1wgh.12.38, 2026-10-18): never delete from key_package_claim; Welcome visibility depends on it.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T18:32:22.44569267Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T18:32:22.44569267Z",
+  "updated_at": "2026-10-19T03:53:23.751406345Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.12.3",
@@ -31,14 +32,6 @@
       "depends_on_id": "mimid-1wgh.11",
       "type": "blocks",
       "created_at": "2026-10-17T18:32:22.807020965Z",
-      "created_by": "agent",
-      "metadata": "{}"
-    },
-    {
-      "issue_id": "mimid-1wgh.12.3",
-      "depends_on_id": "mimid-1wgh.4",
-      "type": "blocks",
-      "created_at": "2026-10-17T18:32:22.850204498Z",
       "created_by": "agent",
       "metadata": "{}"
     },

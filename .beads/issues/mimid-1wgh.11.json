@@ -1,7 +1,7 @@
 {
   "id": "mimid-1wgh.11",
   "title": "Provider JMAP Chat subset",
-  "description": "Implement JMAP Chat C2S subset on the provider: Session, Chat (read-only projection of MIMI room state), Message (E2EE mode, application/mimi-content, senderMsgId per R1 decision), WSS delivery. Dev bearer-token auth issued via admin CLI. See decision mimid-1wgh.9.",
+  "description": "Provider-side base JMAP Chat subset needed by the urn:ietf:params:jmap:chat:mimi capability, per the approved .12 plan (mimid-1wgh.12 design field) and decision JM-4 (mimid-1wgh.12.22). Spec target: jmap-chat-spec cefc217 (identity model: local ChatContact.id, identity, owner = accountId). crate-jmap pin: b8b6f251. The provider never decrypts; Message bodies are application/mimi-fanout. Landed: .11.1 auth (c0fff18), .11.2 HTTP surface/Session/dispatch (ab91235), .11.3 read projection (9007853). Open: .11.6 EventSource. Decisions: .11.4 (notJSON for deep JSON), .11.5 (per-account maxConcurrentRequests), .11.7 (deliveryState delivered), .11.8 (whole-call invalidArguments), .11.9 (empty name after leaving).",
   "notes": "Per mimid-1wgh.30: build on ~/PROJECT/crate-jmap jmap-chat-server + jmap-chat-types. First: check their conformance to current draft-atwood-jmap-chat-00 and whether E2EE mode is supported.",
   "status": "open",
   "priority": 1,
@@ -9,21 +9,13 @@
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T17:13:23.200553259Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T17:38:54.274900279Z",
+  "updated_at": "2026-10-19T18:45:49.359188136Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.11",
       "depends_on_id": "mimid-1wgh",
       "type": "parent-child",
       "created_at": "2026-10-17T17:13:23.205346374Z",
-      "created_by": "agent",
-      "metadata": "{}"
-    },
-    {
-      "issue_id": "mimid-1wgh.11",
-      "depends_on_id": "mimid-1wgh.2",
-      "type": "blocks",
-      "created_at": "2026-10-17T17:13:23.402556362Z",
       "created_by": "agent",
       "metadata": "{}"
     },

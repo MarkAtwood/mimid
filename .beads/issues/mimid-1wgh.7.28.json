@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.28",
+  "title": "follower: concurrent KeyPackage claims intermittently fail",
+  "description": "follower_key_material.rs concurrent_claims_fall_back_to_the_last_resort_only_when_one_time_ones_are_gone failed in the .6.71 land run (2026-10-18): 3 of 12 concurrent serve_key_material calls returned Err (error text lost); it passed in the two earlier runs. Suspected SQLite write contention in the claim transaction, which would be a production bug under load. Under investigation; blocks landing .6.71 and F5 (.7.23), since every land run executes this test.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T23:24:36.869427514Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T00:28:39.532274812Z",
+  "closed_at": "2026-10-19T00:28:39.532274812Z",
+  "close_reason": "Landed c9dcd38 (decision mimid-1wgh.42)",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.28",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T23:24:36.896345304Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

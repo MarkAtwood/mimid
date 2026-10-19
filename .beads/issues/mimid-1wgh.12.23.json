@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.12.23",
+  "title": "Decision JM-6: hub errors map to serverUnavailable or invalidArguments",
+  "description": "The draft defines only serverUnavailable ('if the hub cannot be reached'). Chosen: transport errors and hub 5xx -\u003e serverUnavailable; hub 4xx -\u003e invalidArguments with a description.",
+  "notes": "Amended 2026-10-18 (Mark, audit item 9): transport errors, 5xx and 429 (PeerError::Rejected, peer.rs:422) -\u003e serverUnavailable; other 4xx -\u003e invalidArguments with description; RelayError::InvalidResponse -\u003e serverFail; RelayError::Hub(HubError) from the local hub (no HTTP status) uses respond()'s classes at http.rs:262-289: InvalidRequest -\u003e invalidArguments, everything else -\u003e serverFail.\nCORRECTION 2026-10-18 (Mark): supersedes the local-HubError clause above. A local HubError is first mapped to the HTTP status respond() gives it (http.rs:262-289: NoSuchRoom 404, InvalidRequest 400, UnverifiedAbusiveMessage 422, NotImplemented 501, Peer/InvalidPeerResponse 502, other 500), then the same status rule as a remote hub applies (429/5xx -\u003e serverUnavailable, other 4xx -\u003e invalidArguments). One rule for local and remote hubs.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:09:03.3192994Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T03:51:39.906445139Z",
+  "closed_at": "2026-10-19T03:09:03.536055988Z",
+  "close_reason": "Decided by Mark 2026-10-18 (plan .12)",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.23",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:09:03.356435527Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

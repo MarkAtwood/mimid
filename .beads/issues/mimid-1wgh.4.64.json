@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.4.64",
   "title": "Test gaps: Observer TrailingAad; GroupInfo rebuild with ratchet_tree + external_pub",
   "description": "From the mimid-1wgh.4.62 audit: (1) ObserverError::TrailingAad (observer.rs:574-576) has no test; Member path is covered (member_mls_rs.rs:345). (2) tests/observer.rs:740-776 never rebuilds a GroupInfo with both ratchet_tree and external_pub, the only case where prepend (observer.rs:813-829) vs mls-rs append matters for the signature. Add once upstream decides order (mimid-1wgh.37.37, mlswg/mls-ratchet-tree-options#4).",
+  "notes": "2026-10-18: part (1) done in worktree agent-a6026eed8b20cd486 (test safe_aad_with_trailing_bytes_is_rejected_and_state_is_unchanged, mls-rs hostile input plus a control case). Mark approved the commit 'test: cover Observer trailing Safe AAD'; it lands after .7.28. Part (2) still waits on upstream.\nPart (1) landed ead42db. Part (2) still waits on upstream.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T18:29:03.804606385Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T18:29:03.804606385Z",
+  "updated_at": "2026-10-19T00:28:39.845814909Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.4.64",

@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.4.68",
+  "title": "mimi-mls: external AppDataUpdate cannot carry SafeAAD",
+  "description": "Found while doing mimid-1wgh.4.9. OpenMLS AuthenticatedContent::new_external_proposal (openmls/src/framing/mls_auth_content.rs:196 at 24f3eb6) hardcodes an empty authenticated_data, and ExternalProposal::new_app_data_update has no AAD parameter. mls-extensions-10 section 4.9 (txt lines 809-813, 900-904) says that once the GroupContext app_data_dictionary carries safe_aad, authenticated_data always starts with a SafeAAD struct (an empty one is the byte 0x00). So in a safe_aad room (real MIMI rooms carry it; hub/submit.rs:280 requires SafeAAD) every receiver rejects the hub's external proposal: confirmed, check_safe_aad fails with EndOfStream. Observer::propose_app_update therefore fails closed with ObserverError::SafeAadRequired. Options: (A) extend the openmls fork so new_app_data_update (or new_external_proposal) takes authenticated_data, and pass EMPTY SafeAAD 0x00; (B) hand-frame the external PublicMessage in mimi-mls (FramedContent + SignWithLabel FramedContentTBS, RFC 9420 section 6.1; about 30 lines) without the OpenMLS builder. Recommendation: A, since it keeps framing in OpenMLS and is a natural part of the upstream report. Mark decides; any openmls write needs his approval.",
+  "notes": "DECIDED 2026-10-19 (Mark): option A, an authenticated_data parameter in the openmls fork (branch mimid-0.9.1); fork change approved, push needs a separate OK. .4.9 lands together with this fix, not before.\n2026-10-19: option A done. Fork commit a36719847c81a7722cadf21462995077a6325632 on /home/mark/GIT/openmls mimid-0.9.1, LOCAL ONLY, NOT PUSHED: ExternalProposal::new_app_data_update gains authenticated_data: Vec\u003cu8\u003e; new pub(crate) AuthenticatedContent::new_external_proposal_with_aad, existing new_external_proposal delegates with empty AAD (Add/Remove/GCE builders unchanged). 2 tests pass vec![], new test external_app_data_update_proposal_authenticated_data_is_signed. cargo test -p openmls: plain 360 pass; with extensions-draft,extensions-draft-test-dependencies 422 pass (termion stubbed via --config, not committed). mimid worktree uses file:// patch for testing; awaiting Mark's push approval then GitHub URL switch.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T05:11:06.170687372Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T17:12:56.203200033Z",
+  "started_at": "2026-10-19T16:50:02.384793485Z",
+  "closed_at": "2026-10-19T17:12:56.203200033Z",
+  "close_reason": "Landed 99c4d49 (2026-10-19): Observer::propose_app_data_update with SafeAAD via openmls fork a367198 (pushed); patch rev bumped.",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.68",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-19T05:11:08.465241214Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.65",
+  "title": "Decision: committer fails on invalid stored AppDataUpdate",
+  "description": "RFC 9420 §12.4: a committer SHOULD include valid proposals 'as long as this results in a valid proposal list'. Readings: (a) drop invalid/conflicting stored proposals and commit the rest; (b) refuse to commit while an invalid one is held. Chosen (Mark): (b). protocol-06 §3.5 has the hub force cached proposals into the next Commit, so dropping one only gets the Commit refused. The hub refuses §4.7-invalid standalone proposals on arrival instead. mimi-mls documents the SHOULD deviation with a comment citing this bead.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T02:42:56.171351643Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T02:42:56.277321108Z",
+  "closed_at": "2026-10-19T02:42:56.277321108Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.65",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-19T02:42:56.198792062Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

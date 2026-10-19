@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.38",
+  "title": "Decision: key_package_claim never pruned; follower_member gets explicit id",
+  "description": "Audit item 12. Welcome visibility joins key_package_claim (store/follower_log.rs:311, :369); no code deletes from it today. follower_member has no INTEGER PRIMARY KEY (migrations/0003_follower.sql:52-59), so its implicit rowid, used for Chat/ChatContact state, may change on VACUUM (not run today). Chosen (Mark, 2026-10-18): (a) .12.3 must never delete from key_package_claim; (b) migration 0006 (.11.3) rebuilds follower_member with id INTEGER PRIMARY KEY, and state strings use it.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:53:21.082425561Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T03:53:23.370623028Z",
+  "closed_at": "2026-10-19T03:53:23.370623028Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.38",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:53:22.792525596Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

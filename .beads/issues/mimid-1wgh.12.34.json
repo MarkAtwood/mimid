@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.34",
+  "title": "Decision: relay-join and leave publish to the change bus",
+  "description": "Audit item 6. The only change signal is follower/notify.rs:192 (per appended event). Follower::relay_update's add_follower_member (follower/mod.rs:187) and Follower::leave (follower/mod.rs:259) change Chat visibility without signalling, so EventSource clients miss new and unbound Chats. Audit correction: Welcome-driven joins go through append_fanout and already signal. Chosen (Mark, 2026-10-18): both paths publish a membership change to the bus; done in .11.3 (after .7.31 lands), with tests that a StateChange follows each.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:48:40.898265332Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T03:48:45.111625819Z",
+  "closed_at": "2026-10-19T03:48:45.111625819Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.34",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:48:43.411123974Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

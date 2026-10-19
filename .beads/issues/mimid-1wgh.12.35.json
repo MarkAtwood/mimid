@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.35",
+  "title": "Decision: membership-write ownership is serialized .7.31 -\u003e .11.3 -\u003e .12.4",
+  "description": "Audit item 7. Migration 0006 writers (left/joined tracking, Message ULID) live in store/follower_log.rs (add_follower_member L208, leave_follower_room L250, Welcome insert L368), contradicting the plan's '.7.31 owns follower_log.rs, .11.3 only reads'. Hub::create_room writes only insert_room, no follower_member, so the creator has no Chat. Chosen (Mark, 2026-10-18): .7.31 lands first; then .11.3 owns follower_log.rs edits and migration 0006; .12.4 adds the creator's membership and is ordered after .11.3.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:49:51.290291305Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T03:49:51.398023056Z",
+  "closed_at": "2026-10-19T03:49:51.398023056Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.35",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:49:51.315019004Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

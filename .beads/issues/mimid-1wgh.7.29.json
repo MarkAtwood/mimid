@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.7.29",
+  "title": "server: run signature/KeyPackage checks off async workers",
+  "description": "From the .7.28 investigation: CPU-heavy signature and KeyPackage verification runs directly on tokio worker threads; under load this can starve a task holding the SQLite write lock. Consider spawn_blocking for those checks. Per clarity-over-performance, do it only with a measured problem; it is not needed for the .7.28 fix (decision mimid-1wgh.42).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T23:43:11.016798154Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T23:43:11.016798154Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.29",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T23:43:11.034987367Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

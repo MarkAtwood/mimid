@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.24",
+  "title": "Decision JM-7: FanoutMessage dedup per room, not per Chat",
+  "description": "The draft dedups 'in the Chat'; mimid's follower log is per room. They differ only for a duplicate of a message stored while an account was unbound, which that account couldn't decrypt anyway. Chosen: per-room dedup, documented as a Limitation.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:09:03.678200218Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T03:09:03.890886451Z",
+  "closed_at": "2026-10-19T03:09:03.890886451Z",
+  "close_reason": "Decided by Mark 2026-10-18 (plan .12)",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.24",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:09:03.722887608Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

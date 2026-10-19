@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.12.33",
+  "title": "Decision: crate-jmap fixes handle_query; mimid filters properties; add ChatContact/query",
+  "description": "Audit item 5. crate-jmap-server/src/handlers.rs:320 maps every query_objects error to serverFail, so mimid cannot return unsupportedFilter for a Message/query without chatId (base draft-atwood-jmap-chat-00 L1180); anchor is never read in handlers.rs (RFC 8620 §5.5 anchor/anchorNotFound). Audit correction: properties IS passed to the backend (handlers.rs:160-166), so filtering is mimid's backend's job. Chosen (Mark, 2026-10-18): (1) crate-jmap-50 fixes handle_query in crate-jmap (typed error passthrough, anchor support); Mark approved that crate-jmap write; mimid waits rather than wrapping. (2) mimid's JmapBackend filters properties. (3) mimid implements ChatContact/query (base L971) over hub contacts; filters blocked/presence.",
+  "notes": "2026-10-18 crate-jmap-50: filed JMAP-yt1w.21 (typed method-error pass-through from query_objects) and JMAP-yt1w.22 (anchor/anchorOffset, depends on .21). Not started; awaiting Mark's plan approval in that session. Both change the query_objects trait signature (new error type, anchor params): mimid's backend must adapt when pinning the new rev.\n2026-10-18: Mark approved the JMAP-yt1w.21/.22 plan; runs after crate-jmap-50's current workflow, .21 first. Hash pending.\n2026-10-18 crate-jmap-50: committed locally, not pushed, CI running: 77725c9d (JMAP-yt1w.21) and d8a60f02 (JMAP-yt1w.22). Do not pin until CI passes and Mark approves the push. API: query_objects -\u003e Result\u003cQueryResult, BackendQueryError\u003cSelf::Error\u003e\u003e with BackendQueryError { Method(JmapError), Other(E) }; unsupportedFilter = Err(BackendQueryError::Method(JmapError::unsupported_filter(..))); trailing params anchor: Option\u003c\u0026Id\u003e, anchor_offset: i64 (RFC 8620 §5.5; anchor not found -\u003e Method(anchor_not_found()); real start in QueryResult::position); helpers jmap_server::resolve_query_start, query_anchor_args.\n2026-10-18: crate-jmap d8a60f02 pushed (origin/main; contains 77725c9d; CI passed stable/beta/1.88). Pin that rev (JM-5). crate-jmap's chat-server does not yet implement the identity model (epic JMAP-405z: still emits 'self').",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:47:52.107663037Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T04:48:46.123855182Z",
+  "closed_at": "2026-10-19T03:47:52.216695634Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.33",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:47:52.138666969Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

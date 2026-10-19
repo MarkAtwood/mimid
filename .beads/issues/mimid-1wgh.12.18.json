@@ -2,13 +2,16 @@
   "id": "mimid-1wgh.12.18",
   "title": "J3: Chat.mimiRoomUri and Chat.fixedMembership properties",
   "description": "JMAP has no field for the MIMI room URI and cannot tell a Group DM (fixed membership, \u003e2 users) from a group. Recommended: read-only extension properties Chat.mimiRoomUri and Chat.fixedMembership. PENDING Mark (from the JMAP Chat \u003c-\u003e MIMI comparison 2026-10-18); decide when mimid-1wgh.12 is planned.",
-  "status": "open",
+  "notes": "2026-10-18: the mimiRoomUri part is superseded by draft-atwood-jmap-chat-mimi-00's Chat.roomId (jmap-chat-spec 1e33ec7); fixedMembership remains open.\nDECIDED: provider side: Chat.roomId (mimi-00) replaces mimiRoomUri; no fixedMembership property (mimi-00 L236: clients take name/participants from MLS group state). Agent side: a room-policy-04 fixed_membership room with 2 participants maps to kind 'direct' with contactId = the other user's URI; every other room is 'group'. Creating a direct Chat on the agent creates a fixed_membership 2-participant room. Add/remove in a fixed-membership group gets 'forbidden'. The hub still enforces policy.",
+  "status": "closed",
   "priority": 2,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T21:17:59.329639996Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T21:17:59.329639996Z",
+  "updated_at": "2026-10-19T02:56:25.149187306Z",
+  "closed_at": "2026-10-19T02:56:25.149187306Z",
+  "close_reason": "Decided by Mark 2026-10-18 (checked against jmap-chat-spec 5630c10)",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.12.18",

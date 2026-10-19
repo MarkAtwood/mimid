@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.27",
+  "title": "F-Q19: keyMaterial for own users routed by room domain",
+  "description": "Fixes a gap in the approved .7 plan: HTTP /v1/keyMaterial/{targetUser} for one of our users decodes the request; if the request's roomId is hosted here (room URI authority == our domain) it goes to the hub (H20 policy check, then the hub serves the local target in-process via LocalKeyMaterial, F-Q10); otherwise to the follower (F-Q9 checks). Without this, users at other providers could not add our users to rooms we host. The F0 routing test that pinned this case to the 501 stub changes to the real behaviour. Approved by Mark 2026-10-18.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T22:43:30.882368646Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T22:43:31.593195506Z",
+  "closed_at": "2026-10-18T22:43:31.593195506Z",
+  "close_reason": "Approved by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.27",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-18T22:43:31.338589499Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

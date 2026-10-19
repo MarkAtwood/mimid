@@ -3,11 +3,14 @@
 //!
 //! One server plays both MIMI roles at once: hub for the rooms this provider
 //! hosts and follower for rooms hosted elsewhere (decision mimid-1wgh.15).
-//! The binary is a thin wrapper; the modules live here so integration tests
-//! can use them.
+//! It also serves the provider's JMAP Chat endpoint to local users
+//! ([`jmap`]). The binary is a thin wrapper; the modules live here so
+//! integration tests can use them.
 //!
 //! # Limitations
 //!
+//! - The JMAP Chat endpoint is a subset of draft-atwood-jmap-chat-00 and
+//!   -mimi-00; [`jmap`] lists what is missing (decision mimid-1wgh.12.22).
 //! - There is no authentication between providers (decision mimid-1wgh.17).
 //!   protocol-06 requires mutually authenticated TLS; mimid does not
 //!   implement it and does not claim conformance to it. Combined with

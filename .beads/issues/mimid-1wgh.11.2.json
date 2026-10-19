@@ -1,0 +1,35 @@
+{
+  "id": "mimid-1wgh.11.2",
+  "title": "jmap: HTTP surface, Session, API dispatch",
+  "description": "Per the approved .12 plan §3. jmap/{mod,session,api,bus}.rs plus empty register() stubs for every methods/*.rs file (chat_set, message_set, key_package, key_material, room_create, room_update, room_send, room_unbind, group_info), so later beads edit only their own file. The router merges into http::router on the same listener under /jmap/* and /.well-known/jmap (JM-11, .12.28). Session (RFC 8620): uploadUrl/downloadUrl point at a route that answers 404 (Limitation: no blobs); account capability urn:ietf:params:jmap:chat:mimi (userUri, roomIdPrefix, hubSender via a new public Hub accessor, cipherSuites [1], maxKeyPackages from config with a named default, labelled INVENTED VALUE); supportedBodyTypes text/plain and application/mimi-fanout. API dispatch on crate-jmap jmap_server, depended on by git rev pin (JM-5, .12.21; pinning needs a pushed crate-jmap rev, so ask before any crate-jmap write). Named limits: maxSizeRequest covering base64 growth of MAX_BODY_LEN, maxCallsInRequest, maxObjectsInSet. ChangeBus fed by Follower::subscribe. Tests: Session JSON checked against hand-written JSON from the draft; hostile requests (huge, deep, too many calls); unknown capability refused. Depends on .11.1.",
+  "notes": "2026-10-18 checkpoint: implemented in worktree agent-a01e9739501f13336 (fast-forwarded to main c0fff18 first), uncommitted, awaiting Mark's approval. jmap mod/session/api/bus, methods stubs, pub Hub::hub_sender, router merged in main.rs; crate-jmap pinned d8a60f0219aef0127d88a8d7214303a38da89b02 in mimid-server Cargo.toml only. All six gates pass. Open for Mark: maxKeyPackages config knob not wired (a new Config field breaks the parses_valid_config literal test at src/config.rs:216); no bead owns EventSource push or Room/unbind; depth-limit error type notJSON vs notRequest; ownerUserId included (MAY); crate-jmap enforce_max_objects_in_set returns limit, RFC 8620 5.3 says requestTooLarge.\n2026-10-18 orchestrator: agent report received (worktree agent-a01e9739501f13336, six gates green, no existing tests edited). Premises verified: config.rs:216 struct literal; RFC 8620 L1663/L2169 requestTooLarge; crate-jmap helpers.rs:897 returns limit (reported to crate-jmap-50); base L258 ownerUserId MAY. Questions for Mark pending after .4.9.\ncrate-jmap-50 filed JMAP-yt1w.30 (maxObjectsInSet returns limit, should be requestTooLarge; helpers.rs:918) and JMAP-yt1w.31 (no maxObjectsInGet enforcement in crate-jmap servers). Unfixed; mimid's own checks cover both.\n2026-10-19 Mark approved: maxKeyPackages in Config (default 100 when absent) with the one-field addition to parses_valid_config's expected Config.\n2026-10-19 Mark: decisions .11.4 (notJSON for too-deep JSON) and .11.5 (maxConcurrentRequests per account). INVENTED values approved: REQUEST_ENVELOPE_ALLOWANCE 64 KiB, MAX_REQUEST_DEPTH 32, CHANGE_BUS_CAPACITY 1024; DEFAULT_MAX_KEY_PACKAGES changed to 97 (Mark's choice: the largest prime below 100).\n2026-10-19 checkpoint: Mark's .11.2 decisions applied in worktree agent-a01e9739501f13336, fast-forwarded to main 99c4d49, lockfile regenerated, uncommitted. Config.max_key_packages (optional, default DEFAULT_MAX_KEY_PACKAGES = 97, INVENTED VALUE) plumbed into JmapOptions; parses_valid_config literal gained only that field (approved); default and explicit-value tests added. Code cites mimid-1wgh.11.4 (depth -\u003e notJSON) and mimid-1wgh.11.5 (per-account maxConcurrentRequests); Limitations cite mimid-1wgh.11.6 for eventSourceUrl. All six gates exit 0.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "task",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:09:36.39825135Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T17:29:49.779572216Z",
+  "started_at": "2026-10-19T04:58:37.279246641Z",
+  "closed_at": "2026-10-19T17:29:49.779572216Z",
+  "close_reason": "Landed ab91235 (2026-10-19): JMAP router, Session, API dispatch, ChangeBus, method stubs, hub_sender, config max_key_packages (default 97); decisions .11.4, .11.5; EventSource is .11.6.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.11.2",
+      "depends_on_id": "mimid-1wgh.11",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:09:37.043586052Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.11.2",
+      "depends_on_id": "mimid-1wgh.11.1",
+      "type": "blocks",
+      "created_at": "2026-10-19T03:09:41.314970667Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

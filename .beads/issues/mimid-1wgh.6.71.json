@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.6.71",
+  "title": "hub: refuse non-suite-1 GroupInfo at room creation",
+  "description": "Hub::create_room has no explicit cipher_suite check (found by the crate-jmap-50 audit, 2026-10-18; grep of hub/ confirms). OpenMLS may already refuse an unsupported suite while verifying the GroupInfo, but no test proves it. Decision mimid-1wgh.23: suite 1 only. Start with a regression test: create_room with a valid GroupInfo for a group in another suite (e.g. suite 3, from mls-rs or plain OpenMLS, with a PROVENANCE file) must be refused. If it already fails closed, keep the test and add an explicit check with a clear HubError, citing .23. Read the cipher suite from the GroupContext as submit.rs::cipher_suite does.",
+  "notes": "2026-10-18: land run exited 101 on an unrelated flaky test (follower_key_material concurrent claims); main unchanged. I closed this bead in error and reopened it. Worktree agent-a6cfe0dde28a624eb is intact; re-land after the claim-race fix.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T23:03:26.90753952Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T00:28:39.742440263Z",
+  "closed_at": "2026-10-19T00:28:39.742440263Z",
+  "close_reason": "Landed d92afdd",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.71",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-18T23:03:27.744477879Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

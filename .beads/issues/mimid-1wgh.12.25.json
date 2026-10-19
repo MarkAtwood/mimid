@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.12.25",
+  "title": "Decision JM-8: provider Chat.name is always empty",
+  "description": "The draft sets Chat.name 'when it knows it'. Followers have no Observer (F-Q1), and clients MUST take the name from MLS state. Chosen: always \"\", documented as a Limitation.",
+  "notes": "2026-10-18 RE-DECIDED by Mark (supersedes 'always empty'): the original rationale (no Observer, F-Q1) covers only followers. mimid's hub decodes room_metadata (protocol-06 §7.6) from the GroupContext of rooms it hosts (hub/components.rs:323-332; mimi-protocol component.rs room_name), so it knows the name. Provider Chat.name = the current room_metadata.room_name for rooms this server hosts, and \"\" for followed rooms, which conforms to mimi-00 L236 ('when it knows it') in both cases. The Chat state bumps when a commit changes room_metadata. Raised by crate-jmap-50.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:09:04.037688575Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T03:22:50.790433584Z",
+  "closed_at": "2026-10-19T03:09:04.249258675Z",
+  "close_reason": "Decided by Mark 2026-10-18 (plan .12)",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.25",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:09:04.077155037Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

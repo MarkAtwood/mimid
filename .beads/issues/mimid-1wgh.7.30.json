@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.7.30",
+  "title": "Decision: store own messages on hub accept (supersedes F-Q5)",
+  "description": "Supersedes mimid-1wgh.7.6 (F-Q5, echo-only). protocol-06 §5.5 (lines 1968-1971): 'The hub is not expected to forward the client's own message to the client or its provider. However, the client and its provider need to be prepared to receive the client's (effectively duplicate) message.' Under F-Q5 a non-mimid hub would leave the sender's provider without the user's own messages and commits, so the user's other clients drop out of the group. Chosen (Mark, 2026-10-18; matches draft-atwood-jmap-chat-mimi-00 as now written): on hub accept, the relay stores in the owner's log a FanoutMessage with timestamp = accepted_timestamp, copying frank (SubmitMessage) or moreProposals/externalProposals (Update). The server MUST NOT store a FanoutMessage whose inner message is byte-identical to one already stored for the room; that absorbs the mimid hub's own echo (H17) and failover duplicates.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T02:43:36.050854196Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T02:43:36.156875172Z",
+  "closed_at": "2026-10-19T02:43:36.156875172Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.30",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-10-19T02:43:36.0781318Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

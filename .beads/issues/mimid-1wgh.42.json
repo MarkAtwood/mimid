@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.42",
+  "title": "Decision: mimid-server store uses one writer connection",
+  "description": "Problem (.7.28): concurrent store writers fail with SQLITE_BUSY after sqlx's default 5s busy_timeout under load (reproduced: about 5 in 1200 runs at 40-way load; BEGIN IMMEDIATE in claim_key_packages). Options: raise busy_timeout (rarer, not gone; SQLite retries are unfair), a 1-connection write pool, a mutex around writes (each method must remember it). Chosen (Mark, 2026-10-18): Store holds a separate 1-connection pool for ALL writes and keeps the existing pool for reads. In-process writers queue FIFO in sqlx, so SQLITE_BUSY between them cannot occur. Keep a busy_timeout for other processes (the admin CLI). It matches the hub's single-writer model (H7). ponytail: write throughput is capped at one transaction at a time; upgrade path would be per-table databases.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T23:43:10.861890932Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T23:43:10.956180172Z",
+  "closed_at": "2026-10-18T23:43:10.956180172Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.42",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-18T23:43:10.883588803Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

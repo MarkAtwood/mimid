@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.37",
+  "title": "Decision: public Hub::hub_sender returns the ExternalSender encoding",
+  "description": "Audit item 11. room::hub_sender (hub/room.rs:60, pub(super)) builds the TLS SignaturePublicKey + BasicCredential that concatenated form the hub's ExternalSender (RFC 9420 §12.1.8.1); the only public accessor, Hub::signature_public_key (hub/mod.rs:218), returns the raw 32 bytes. The account capability's hubSender must be the ExternalSender encoding. Chosen (Mark, 2026-10-18): add pub Hub::hub_sender() returning the concatenated bytes via the existing builder; hubSender = base64url of it.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:52:28.574031185Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T03:52:28.70009051Z",
+  "closed_at": "2026-10-19T03:52:28.70009051Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.37",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:52:28.608661272Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

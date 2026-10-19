@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.41",
+  "title": "Decision: client-driven Chat unbind (draft binding vs F-Q1)",
+  "description": "Conflict: draft-atwood-jmap-chat-mimi-00 (jmap-chat-spec 1e33ec7) has the server unbind a roomed Chat when it stores a commit removing every one of the account's clients. A mimid follower keeps no ratchet tree (decision F-Q1, mimid-1wgh.7.2), so it cannot map Remove leaf indices to the account's clients. Readings: (a) followers track the tree (revisit F-Q1); (b) the client, which processes the commit and knows it was removed, tells the server via JMAP and the server then unbinds. Chosen (Mark, 2026-10-18): (b) client-driven unbind; F-Q1 stands. The draft text must change to allow it; Mark edits the draft (jmap-chat-spec writes need his approval). The JMAP shape of the unbind signal is decided when the JMAP layer (.12) is planned.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-18T22:47:19.279422912Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-18T22:47:19.374875772Z",
+  "closed_at": "2026-10-18T22:47:19.374875772Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.41",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-18T22:47:19.305538845Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

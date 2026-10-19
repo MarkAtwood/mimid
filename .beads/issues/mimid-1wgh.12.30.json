@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.30",
+  "title": "Decision: provider push is EventSource only (supersedes .9 WSS)",
+  "description": "Decision mimid-1wgh.9 put WSS in the v1 JMAP subset. The approved .12 plan and JM-4 (.12.22, approved by Mark 2026-10-18) make the provider EventSource-only (RFC 8620 §7.3), with no WSS and no PushSubscription; the agent is a long-running daemon, so EventSource suffices. This records the supersession so .9 and .12.22 don't drift.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:18:21.40221524Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T03:18:21.567399737Z",
+  "closed_at": "2026-10-19T03:18:21.567399737Z",
+  "close_reason": "Records Mark's JM-4 approval, 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.30",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:18:21.45479278Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

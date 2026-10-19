@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.19",
+  "title": "Decision JM-1: credential identity stays the user URI (H1)",
+  "description": "draft-atwood-jmap-chat-mimi-00 (5630c10) §keypackage and Room/create rule 2 make the credential identity a 'client URI bound to the account'; H1 (mimid-1wgh.6.1) makes it the user URI, which the hub participant check, relay identity checks and KeyPackage upload rely on. Readings: (a) revisit H1, which needs a client-to-user mapping protocol-06 lacks; (b) keep H1 and read 'client URI' as mimid's derived client URI (.7.8, from the leaf signature key), with the existing client table as the binding. Chosen: (b). The draft is to be reworded (via crate-jmap-50).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:07:10.448965042Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T03:07:12.776149684Z",
+  "closed_at": "2026-10-19T03:07:12.776149684Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.19",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:07:11.412988078Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

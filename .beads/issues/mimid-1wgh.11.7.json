@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.11.7",
+  "title": "Decision: received Messages have deliveryState delivered",
+  "description": "Base draft-atwood-jmap-chat-00 (cefc217) ~L665-668 defines deliveryState pending/delivered/failed/received only from the sender's view (received = read receipt). Silent on Messages stored in the recipient's mailbox. Chosen (Mark, 2026-10-19): 'delivered' (it arrived; 'received' would claim it was read; 'pending' is meaningless on arrival). Implemented in .11.3 projection.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T18:16:41.824439011Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T18:16:41.946043511Z",
+  "closed_at": "2026-10-19T18:16:41.946043511Z",
+  "close_reason": "Decided by Mark 2026-10-19",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.11.7",
+      "depends_on_id": "mimid-1wgh.11",
+      "type": "parent-child",
+      "created_at": "2026-10-19T18:16:41.860330033Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

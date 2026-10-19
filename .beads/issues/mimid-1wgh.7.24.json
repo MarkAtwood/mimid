@@ -2,13 +2,16 @@
   "id": "mimid-1wgh.7.24",
   "title": "follower F6: three-provider e2e",
   "description": "tests/follower_e2e.rs + tests/common/providers.rs: A/B/C full stacks on loopback; scenario per protocol-06 §3 (create, keyMaterial across providers, Welcome routing, relayed commits/messages, leave by proposals, external join); faults (503 retries, B restart); oracle epoch_authenticator agreement, plaintext equality, per-provider streams == A's outbox, since_seq; mls-rs KP served and Welcome routed; whole-run canary. See .7 design field (approved plan) and decisions mimid-1wgh.7.2..mimid-1wgh.7.17.",
-  "status": "open",
+  "notes": "Approved by Mark 2026-10-18: dave@b is the mls-rs client (proposes self-remove and kicks bob) instead of bob; extra step: bob rejoins by external Commit (covers F5 relayed-update membership); test-only outbox_capture trigger. 200/200 under load. Not covered: Member private keys and KeyMaterialRequest signing keys in the canary; restart of a.",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T21:17:32.914443612Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T21:17:32.914443612Z",
+  "updated_at": "2026-10-19T02:18:02.213570242Z",
+  "closed_at": "2026-10-19T02:18:02.213570242Z",
+  "close_reason": "Landed 2da1cd8",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.7.24",

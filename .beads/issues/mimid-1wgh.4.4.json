@@ -2,13 +2,16 @@
   "id": "mimid-1wgh.4.4",
   "title": "mimi-mls: app-data components via AppDataUpdate",
   "description": "Member get/set of app_data_dictionary components via member AppDataUpdate (0x0008), per DR-1. Oracle: hand-encoded TLS-PL bytes from ext-10 §4.6-4.7.",
-  "status": "open",
+  "notes": "Decisions 2026-10-18: mimid-1wgh.4.65, mimid-1wgh.4.66, mimid-1wgh.4.67; hub follow-up mimid-1wgh.6.73; wg mimid-1wgh.37.78. Stale doc comments to fix when landing: tests/observer_app_data_detail.rs:15-16 and mimid-server tests/follower_e2e.rs:28 (they say Member can't send standalone proposals). Open: Observer stores proposals without dedup (observer.rs:507,560); unverified whether it matters.",
+  "status": "closed",
   "priority": 1,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T18:05:31.922862726Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T18:05:31.922862726Z",
+  "updated_at": "2026-10-19T03:13:42.194421748Z",
+  "closed_at": "2026-10-19T03:13:42.194421748Z",
+  "close_reason": "Landed aa79df5",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.4.4",

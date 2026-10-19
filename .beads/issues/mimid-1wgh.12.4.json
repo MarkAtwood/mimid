@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.12.4",
   "title": "jmap-mimi: provider Room/create + Chat.roomId",
   "description": "Random independent room/group IDs; hub mapping.",
+  "notes": "2026-10-18: re-scoped by the approved .12 plan (see the mimid-1wgh.12 design field §1 and §6); detailed when it is next. Target draft: jmap-chat-spec 5630c10.\nFrom .11.2 report (2026-10-19): MAX_SIZE_REQUEST (jmap/api.rs) is sized for base64 of MAX_BODY_LEN plus a 64 KiB envelope; Room/create carries a GroupInfo plus a separate ratchet tree, and the in-process Hub::create_room path is not capped at MAX_BODY_LEN. Check the request limit covers both, or cap the create path. Also per .12.35: add the creator's follower_member row (creator has no Chat today).",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T18:32:22.491042268Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T18:32:22.491042268Z",
+  "updated_at": "2026-10-19T18:46:03.463826207Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.12.4",
@@ -36,9 +37,9 @@
     },
     {
       "issue_id": "mimid-1wgh.12.4",
-      "depends_on_id": "mimid-1wgh.4",
+      "depends_on_id": "mimid-1wgh.11.3",
       "type": "blocks",
-      "created_at": "2026-10-17T18:32:22.974562167Z",
+      "created_at": "2026-10-19T03:49:51.487668406Z",
       "created_by": "agent",
       "metadata": "{}"
     }

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.11.5",
+  "title": "Decision: maxConcurrentRequests enforced per account",
+  "description": "RFC 8620 §2 (rfc8620.txt L534-537): maxConcurrentRequests is 'the maximum number of concurrent requests the server will accept to the API endpoint'. Readings: server-wide (literal) vs per account. Chosen (Mark, 2026-10-19): per account; a server-wide cap lets one user block all others and advertises a shared number to each user. Over the cap: request error urn:ietf:params:jmap:error:limit with limit maxConcurrentRequests (L1100-1104). Value 4 (RFC suggested minimum).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T17:17:57.536910415Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T17:17:57.650469435Z",
+  "closed_at": "2026-10-19T17:17:57.650469435Z",
+  "close_reason": "Decided by Mark 2026-10-19",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.11.5",
+      "depends_on_id": "mimid-1wgh.11",
+      "type": "parent-child",
+      "created_at": "2026-10-19T17:17:57.561789758Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

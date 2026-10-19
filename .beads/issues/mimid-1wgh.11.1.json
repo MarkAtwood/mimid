@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.11.1",
+  "title": "jmap: accounts, bearer tokens, auth extractor",
+  "description": "Per the approved .12 plan §3 (design field of mimid-1wgh.12). Migration 0005 (fixed number): jmap_account (ULID account_id, UNIQUE user_uri), jmap_token (SHA-256 of the token, account_id, created_at, revoked_at). Store API in store/jmap.rs (all SQL there; writes on the writer pool, decision .42): create account, issue token (32 random bytes, base64url; only the hash is stored), revoke, look up by token hash with a constant-time compare. jmap/auth.rs: an axum extractor turning Authorization: Bearer into Account { account_id, user: LocalUser }; it is the ONLY JMAP authorization point (AGENTS.md) and the only non-test caller of LocalUser::authenticated. 401 for a missing/wrong/revoked token; a foreign accountId gives method error accountNotFound (enforced where accountId is checked). Tests: wrong identity rejected, revoked token rejected, cross-account accountId rejected, token type Debug redacted, tracing canary proves no token appears in logs. No HTTP routes beyond what the tests need; .11.2 wires the router.",
+  "notes": "CHECKPOINT 2026-10-18 (night): implemented in worktree .claude/worktrees/agent-a05e6b754a728d9b3, uncommitted; all six gates green (1011 passed). NOT landed: waits for Mark's OK. For Mark in the morning: (A) EXISTING ASSERTION CHANGED: store/mod.rs open_applies_migrations_and_records_domain expects [1,2,3,5] instead of [1,2,3] (a new migration must extend the list); after .7.31 merges, it becomes [1,2,3,4,5]. Needs approval as a test change. (B) Decisions raised: 1) the 401 body is RFC 7807 about:blank (RFC 8620 defines no auth error type); 2) revocation by token value only, while the admin CLI (.32) will probably need 'revoke all for account'; 3) a second account for the same user is an error (AccountExists); 4) create_account takes the Domain as a parameter; 5) a hand-rolled ULID (~10 lines, no ulid crate in the lockfile), private for now, which .11.3 makes pub(crate). Deps: base64 moved to deps; subtle =2.6.1 added (already in the lockfile). Premises still to verify before asking Mark (rule verify-before-asking).\n2026-10-18 Mark: removed the no-op ct_eq (row already selected WHERE token_hash = ?) and the subtle dependency; rule saved as bd memory no-ct-compare-zeroize. Rebased onto main 22d0459; migration list [1,2,3,4,5] approved.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:09:36.104163976Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T04:57:15.594613948Z",
+  "closed_at": "2026-10-19T04:57:15.594613948Z",
+  "close_reason": "Landed c0fff18 (2026-10-18): accounts, hashed bearer tokens, auth extractor; ct_eq/subtle removed; ulid 3.0.0 replaces the hand-rolled ULID (Mark); migrations [1,2,3,4,5].",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.11.1",
+      "depends_on_id": "mimid-1wgh.11",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:09:36.152968566Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "mimid-1wgh.4.69",
+  "title": "openmls fork: rebase mimid-0.9.1 onto upstream main",
+  "description": "Fork MarkAtwood/openmls branch mimid-0.9.1 = v0.9.1 + 5 commits. Upstream main (b817aef, v0.9.1 + 6) already has: 5abd9e0's GREASE KeyPackage fix (identical code via openmls#2133, merged 2026-10-14) and the problem of d052e72/6968f3f solved differently by openmls#2257 (merged 2026-10-19: per-call LeafNodeLifetimePolicy incl. VerifyAt; process_message_with_lifetime_policy, PublicGroup::from_external_with_lifetime_policy). Plan: new branch from upstream main carrying only 24f3eb6 + a367198 (external AppDataUpdate + authenticated_data); move mimid's lifetime-policy calls (Observer/Member) to the #2257 API; bump [patch.crates-io]. Fork push needs Mark's OK. Note upstream removed termion (#2287), so the stub workaround goes away. Decided by Mark 2026-10-19 (file the bead; not yet scheduled).",
+  "notes": "2026-10-19 Mark (upstream PR prep), part of this rebase: (1) new_app_data_update returns Result\u003cMlsMessageOut, LibraryError\u003e like upstream's newest builders new_pre_shared_key/new_reinit (external_proposals.rs:177-217 at b817aef), dropping the Provider generic; update mimid's call site (mimi-mls observer.rs:649). (2) Rebased patches and #2205 test-fixture fix (.ciphersuites(vec![ciphersuite]).credentials(vec![CredentialType::Basic])) are in the session scratchpad openmls-rebased-patches/ (0001/0002 git-am onto b817aef, 0003 diff); the upstream PR draft is openmls-pr-draft.md there. Scratchpad is session-local: copy what's needed into the fork branch when this bead runs.\nDurable copy: /home/mark/Cache/openmls-pr-4.69/ (openmls-pr-draft.md, openmls-rebased-patches/).\n2026-10-19 Mark: open a short upstream issue first ('Support external AppDataUpdate proposals', draft-ietf-mls-extensions-10 §4.7) and link the PR to it; text drafted for Mark's approval before posting.\n2026-10-19 Mark: when rebasing, reword a367198's message: 'members that enforce draft-ietf-mls-extensions-10 §4.9 reject it' instead of 'members of such a group rejected it' (OpenMLS does not enforce §4.9 on receipt).\n2026-10-19: posted openmls issue #2290 'Support external AppDataUpdate proposals' (Mark authorized posting the issues and PRs when ready). The PR closes #2290.\n2026-10-19: opened openmls PR #2292 'feat: external AppDataUpdate proposals' (closes #2290) from MarkAtwood:external-app-data-update (dbd3497, 6987f7c on upstream b817aef; LibraryError return; #2205 fixture fix; reworded §4.9 message; CHANGELOG links #2290). Upstream-side done; this bead's remaining work is mimid's fork rebase and the lifetime-API migration. Worktree /home/mark/Cache/openmls-wt-adu kept until the PR merges.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T17:32:03.06955255Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T17:59:53.708767017Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.69",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-10-19T17:32:03.098454334Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

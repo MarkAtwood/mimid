@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.11.4",
+  "title": "Decision: too-deep JMAP request JSON gets notJSON",
+  "description": "RFC 8620 §3.6.1 (rfc8620.txt L1090-1104) has no request error for exceeding a nesting-depth limit. Readings: notJSON (L1092 'did not parse as I-JSON'; RFC 8259 §9 lets a parser limit nesting depth), notRequest (L1095; but refusal happens before parsing completes), limit (L1100-1103; only for limits defined on the capability object, and depth is not one). Chosen (Mark, 2026-10-19): notJSON. MAX_REQUEST_DEPTH = 32 is an INVENTED value (.11.2).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T17:16:30.90605438Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T17:16:31.003425087Z",
+  "closed_at": "2026-10-19T17:16:31.003425087Z",
+  "close_reason": "Decided by Mark 2026-10-19",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.11.4",
+      "depends_on_id": "mimid-1wgh.11",
+      "type": "parent-child",
+      "created_at": "2026-10-19T17:16:30.93473827Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

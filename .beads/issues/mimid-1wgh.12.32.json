@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.12.32",
+  "title": "Decision: provider serves real unreadCount and lastMessageAt",
+  "description": "Audit item 2. Base draft-atwood-jmap-chat-00 L545: with no ReadPosition.lastReadMessageId all messages count as unread; L541 lastMessageAt = received time of the most recent message. The provider has no ReadPosition (.12.29), so the plan's unreadCount 0 is nonconformant. Chosen (Mark, 2026-10-18): unreadCount = count of Messages visible to the account in the Chat; lastMessageAt = latest visible receivedAt; Chat state string folds in the message cursor so each new visible Message changes Chat state.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T03:45:21.192634164Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T03:45:21.303303058Z",
+  "closed_at": "2026-10-19T03:45:21.303303058Z",
+  "close_reason": "Decided by Mark 2026-10-18",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.32",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-10-19T03:45:21.223451179Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
