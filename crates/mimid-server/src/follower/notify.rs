@@ -108,7 +108,7 @@ fn welcome_of(message: &MLSMessage) -> Result<Welcome, tls_codec::Error> {
 
 /// The domain of the hub of the room `room_id`: its URI authority
 /// (decision mimid-1wgh.7.5).
-fn room_hub(room_id: &str) -> Result<Domain, FollowerError> {
+pub(super) fn room_hub(room_id: &str) -> Result<Domain, FollowerError> {
     // An empty roomId names no room (decision mimid-1wgh.5.50), and gives
     // no domain here.
     IdentifierUri::new(room_id).map_err(|_| FollowerError::InvalidRoomId)?;

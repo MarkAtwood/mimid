@@ -43,8 +43,8 @@
 //!   here; the hub verifies them.
 //! - A keyMaterial request without a `roomId` is refused: mimid sends
 //!   keyMaterial only through the hub of the room being joined.
-//! - Accepting a relayed update does not yet record the user's room
-//!   membership (decision mimid-1wgh.7.7); the caller must.
+//! - [`Relay`] records no room membership (decision mimid-1wgh.7.7);
+//!   [`Follower::relay_update`](super::Follower::relay_update) does.
 
 use mimi_mls::tls_codec::{self, Deserialize};
 use mimi_protocol::{

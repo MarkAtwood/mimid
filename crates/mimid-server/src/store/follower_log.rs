@@ -179,6 +179,93 @@ impl Store {
         Ok(AppendedFanout { new_seqs, group_id })
     }
 
+    /// The seq the next event appended to the follower log, in any room,
+    /// gets at least.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails, and
+    /// [`StoreError::OutOfRange`] for a seq the schema should have refused.
+    pub async fn follower_next_seq(&self) -> Result<u64, StoreError> {
+        let seq: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) + 1 FROM follower_event")
+            .fetch_one(&self.reader)
+            .await?;
+        from_sql_int(seq)
+    }
+
+    /// Makes `user_uri` a member of the room `room_id`, hosted by
+    /// `hub_domain`, from the event `since_seq` on, for a join other than a
+    /// Welcome match (decision mimid-1wgh.7.7). The room is followed first,
+    /// as [`Store::follow`] does with `now` as its first-seen time. A
+    /// current membership is kept as it is. Returns whether a membership
+    /// was added.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::OutOfRange`] if `since_seq` or `now` exceeds
+    /// `i64::MAX`, and [`StoreError::Sqlx`] if a query fails. Nothing is
+    /// written on error.
+    pub async fn add_follower_member(
+        &self,
+        room_id: &str,
+        hub_domain: &Domain,
+        user_uri: &str,
+        since_seq: u64,
+        now: u64,
+    ) -> Result<bool, StoreError> {
+        let since_seq = to_sql_int(since_seq)?;
+        let now = to_sql_int(now)?;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO follower_room (room_id, hub_domain, first_seen) VALUES (?, ?, ?) \
+             ON CONFLICT (room_id) DO NOTHING",
+        )
+        .bind(room_id)
+        .bind(hub_domain.as_str())
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        // OR IGNORE keeps a current membership, and its since_seq, as is.
+        let added = sqlx::query(
+            "INSERT OR IGNORE INTO follower_member (room_id, user_uri, since_seq) \
+             VALUES (?, ?, ?)",
+        )
+        .bind(room_id)
+        .bind(user_uri)
+        .bind(since_seq)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        tx.commit().await?;
+        Ok(added == 1)
+    }
+
+    /// Ends `user_uri`'s current membership of the room `room_id` at `now`
+    /// (decision mimid-1wgh.7.7). Returns whether there was one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::OutOfRange`] if `now` exceeds `i64::MAX`, and
+    /// [`StoreError::Sqlx`] if the update fails.
+    pub async fn leave_follower_room(
+        &self,
+        room_id: &str,
+        user_uri: &str,
+        now: u64,
+    ) -> Result<bool, StoreError> {
+        let left = sqlx::query(
+            "UPDATE follower_member SET left_at = ? \
+             WHERE room_id = ? AND user_uri = ? AND left_at IS NULL",
+        )
+        .bind(to_sql_int(now)?)
+        .bind(room_id)
+        .bind(user_uri)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(left == 1)
+    }
+
     /// The followed rooms `user_uri` is a member of, by room ID.
     ///
     /// # Errors

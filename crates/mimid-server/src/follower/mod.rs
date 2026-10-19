@@ -16,6 +16,12 @@
 //! the log through [`Follower::rooms`] and [`Follower::events`], and learn
 //! of new events through [`Follower::subscribe`].
 //!
+//! Users' requests to rooms' hubs go through the follower's [`Relay`]
+//! ([`Follower::set_relay`]). A relayed update the hub accepts makes the
+//! user a member of the room, and [`Follower::leave`] ends a membership
+//! (decision mimid-1wgh.7.7). The relay writes nothing to the log: the
+//! user's own messages come back through fanout (decision mimid-1wgh.7.6).
+//!
 //! # Limitations
 //!
 //! - [`Follower::key_material`] serves only if
@@ -27,8 +33,12 @@
 //!   verified: with no Observer, the follower cannot check MLS signatures
 //!   (decision mimid-1wgh.7.2).
 //! - A user removed from a group stays a member of the room here, and
-//!   keeps receiving its ciphertext, until leaving is recorded (decision
-//!   mimid-1wgh.7.2).
+//!   keeps receiving its ciphertext, until [`Follower::leave`] records the
+//!   leaving (decision mimid-1wgh.7.2). Leaving is recorded locally only;
+//!   nothing is sent to the hub.
+//! - A user who creates a room becomes a member of it only when the caller
+//!   records it with [`Store::add_follower_member`] (plan of
+//!   mimid-1wgh.7).
 //! - Events are delivered in arrival order, not reordered by hub timestamp
 //!   (decision mimid-1wgh.7.17).
 //! - ponytail: the follower log keeps every event forever; the ceiling is
@@ -41,10 +51,10 @@ pub mod key_packages;
 pub mod notify;
 pub mod relay;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use mimi_mls::tls_codec::Deserialize;
-use mimi_protocol::KeyMaterialRequest;
+use mimi_protocol::{KeyMaterialRequest, UpdateResult, UpdateRoomResponse};
 use tokio::sync::broadcast;
 
 use crate::config::Domain;
@@ -52,7 +62,7 @@ use crate::hub::Clock;
 use crate::peer::PeerClient;
 use crate::store::{FollowerEvent, Store, StoreError};
 use key_packages::{KeyMaterialError, KeyPackages};
-use relay::LocalUser;
+use relay::{LocalUser, Relay, RelayError};
 
 /// The most events [`Follower::events`] returns at once. INVENTED, NOT
 /// FROM SPEC.
@@ -73,6 +83,10 @@ pub struct Follower {
     appended: broadcast::Sender<(String, u64)>,
     /// The local users' KeyPackages, if keyMaterial is served.
     key_packages: Option<Arc<KeyPackages>>,
+    /// The relay to rooms' hubs, once [`Follower::set_relay`] gave it.
+    /// Set after construction: the relay holds this provider's hub, whose
+    /// fanout worker holds the follower.
+    relay: OnceLock<Relay>,
 }
 
 impl std::fmt::Debug for Follower {
@@ -97,6 +111,7 @@ impl Follower {
             peers: None,
             appended,
             key_packages: None,
+            relay: OnceLock::new(),
         }
     }
 
@@ -115,9 +130,141 @@ impl Follower {
         self
     }
 
+    /// Gives the follower the relay its users' requests go through.
+    ///
+    /// # Errors
+    ///
+    /// Returns `relay` back if the follower already has one.
+    pub fn set_relay(&self, relay: Relay) -> Result<(), Relay> {
+        self.relay.set(relay)
+    }
+
     /// The domain of the provider this follower serves.
     pub fn domain(&self) -> &Domain {
         &self.domain
+    }
+
+    fn relay(&self) -> Result<&Relay, FollowerError> {
+        self.relay
+            .get()
+            .ok_or(FollowerError::NotImplemented("relay"))
+    }
+
+    /// Relays `user`'s TLS-encoded `UpdateRequest` to the hub of `room_id`
+    /// ([`Relay::relay_update`]) and returns the hub's
+    /// `UpdateRoomResponse` as received. If the hub accepted the update,
+    /// `user` becomes a member of the room, seeing every event stored
+    /// after the request was sent (decision mimid-1wgh.7.7). Nothing is
+    /// written to the log (decision mimid-1wgh.7.6).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FollowerError::NotImplemented`] if the follower has no
+    /// relay, [`FollowerError::Relay`] if relaying fails, and
+    /// [`FollowerError::Store`] if the store fails. If recording the
+    /// membership fails after the hub accepted, the caller retries; the
+    /// hub answers a retry with the same response.
+    pub async fn relay_update(
+        &self,
+        user: &LocalUser,
+        room_id: &str,
+        request: &[u8],
+    ) -> Result<Vec<u8>, FollowerError> {
+        let relay = self.relay()?;
+        // Taken before sending, so that fanout racing the response, such
+        // as the echo of the user's own Commit, stays visible.
+        let since_seq = self.store.follower_next_seq().await?;
+        let response = relay
+            .relay_update(user, room_id, request)
+            .await
+            .map_err(FollowerError::Relay)?;
+        let decoded = UpdateRoomResponse::tls_deserialize_exact(&response)
+            .map_err(|error| FollowerError::Relay(RelayError::InvalidResponse(error)))?;
+        if let UpdateResult::Success { .. } = decoded.result {
+            let hub = notify::room_hub(room_id)?;
+            if self
+                .store
+                .add_follower_member(room_id, &hub, user.as_str(), since_seq, self.clock.now_ms())
+                .await?
+            {
+                tracing::info!(room_id, user = user.as_str(), "user joined followed room");
+            }
+        }
+        Ok(response)
+    }
+
+    /// Relays `user`'s TLS-encoded `SubmitMessageRequest` to the hub of
+    /// `room_id` ([`Relay::relay_submit_message`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FollowerError::NotImplemented`] if the follower has no
+    /// relay, and [`FollowerError::Relay`] if relaying fails.
+    pub async fn relay_submit_message(
+        &self,
+        user: &LocalUser,
+        room_id: &str,
+        request: &[u8],
+    ) -> Result<Vec<u8>, FollowerError> {
+        self.relay()?
+            .relay_submit_message(user, room_id, request)
+            .await
+            .map_err(FollowerError::Relay)
+    }
+
+    /// Relays `user`'s TLS-encoded `GroupInfoRequest` to the hub of
+    /// `room_id` ([`Relay::relay_group_info`]).
+    ///
+    /// # Errors
+    ///
+    /// As for [`Follower::relay_submit_message`].
+    pub async fn relay_group_info(
+        &self,
+        user: &LocalUser,
+        room_id: &str,
+        request: &[u8],
+    ) -> Result<Vec<u8>, FollowerError> {
+        self.relay()?
+            .relay_group_info(user, room_id, request)
+            .await
+            .map_err(FollowerError::Relay)
+    }
+
+    /// Relays `user`'s TLS-encoded `KeyMaterialRequest` to the hub of its
+    /// `roomId` ([`Relay::relay_key_material`]).
+    ///
+    /// # Errors
+    ///
+    /// As for [`Follower::relay_submit_message`].
+    pub async fn relay_key_material(
+        &self,
+        user: &LocalUser,
+        request: &[u8],
+    ) -> Result<Vec<u8>, FollowerError> {
+        self.relay()?
+            .relay_key_material(user, request)
+            .await
+            .map_err(FollowerError::Relay)
+    }
+
+    /// Ends `user`'s membership of the followed room `room_id`: events
+    /// stored from now on are not shown to the user, until the user joins
+    /// again (decision mimid-1wgh.7.7). Does nothing if `user` is not a
+    /// member. Only the local record changes: leaving the MLS group is the
+    /// client's own update.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FollowerError::Store`] if the store fails.
+    pub async fn leave(&self, user: &LocalUser, room_id: &str) -> Result<(), FollowerError> {
+        if self
+            .store
+            .leave_follower_room(room_id, user.as_str(), self.clock.now_ms())
+            .await?
+        {
+            tracing::info!(room_id, user = user.as_str(), "user left followed room");
+        }
+        Ok(())
     }
 
     /// The followed rooms `user` is a member of, by room ID.
@@ -234,4 +381,7 @@ pub enum FollowerError {
     /// Serving keyMaterial failed.
     #[error("keyMaterial failed")]
     KeyMaterial(#[source] KeyMaterialError),
+    /// Relaying a user's request failed.
+    #[error("relay failed")]
+    Relay(#[source] RelayError),
 }

@@ -15,17 +15,18 @@
 //!   impersonated provider.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
-//! - keyMaterial for users of this provider is a follower stub that answers
-//!   `501` ([`follower`]).
-//! - The hub proxies keyMaterial only for users of other providers, and
-//!   only when given a [`peer::PeerClient`]; the binary does not give it
-//!   one yet. reportAbuse validates franks and logs the outcome; no action
-//!   follows (decision mimid-1wgh.21).
+//! - keyMaterial for users of this provider is served from the KeyPackages
+//!   they upload, with implicit consent ([`follower::key_packages`];
+//!   decision mimid-1wgh.7.9). The hub proxies keyMaterial for users of
+//!   other providers. reportAbuse validates franks and logs the outcome;
+//!   no action follows (decision mimid-1wgh.21).
 //! - [`peer`] sends `/notify` requests to configured peers, and
 //!   [`hub::fanout`] delivers the outbox through it, at least once, so
-//!   followers must deduplicate. Nothing starts the fanout worker yet: the
-//!   binary does not spawn it until the follower and acceptance beads wire
-//!   it in.
+//!   followers must deduplicate ([`follower`] does, decision
+//!   mimid-1wgh.7.3).
+//! - The follower runs no MLS Observer: it checks decoding and envelope
+//!   consistency only (decision mimid-1wgh.7.2). Its other limitations are
+//!   listed in [`follower`].
 //! - The hub's signing and franking keys are stored unencrypted in the
 //!   database, which must be readable by its owner only (mode 0600; see
 //!   [`store`]).

@@ -27,8 +27,8 @@
 //! # Limitations
 //!
 //! - The `Host` header is not checked (protocol-06 §4.1).
-//! - keyMaterial for users of this provider is a follower stub that answers
-//!   `501`.
+//! - keyMaterial for users of this provider answers `501` if the follower
+//!   was not given its KeyPackages ([`Follower::with_key_packages`]).
 //! - The consent, identifierQuery and proxyDownload endpoints listed in the
 //!   directory are not routed, so they answer `404`.
 
@@ -243,7 +243,11 @@ fn respond_follower(result: Result<Response, FollowerError>) -> Response {
             format!("{endpoint} is not implemented"),
         )
             .into_response(),
-        Err(error @ (FollowerError::Store(_) | FollowerError::KeyMaterial(_))) => {
+        Err(
+            error @ (FollowerError::Store(_)
+            | FollowerError::KeyMaterial(_)
+            | FollowerError::Relay(_)),
+        ) => {
             tracing::error!(%error, "follower request failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
         }
