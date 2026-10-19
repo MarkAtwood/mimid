@@ -1542,6 +1542,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jmap-chat-types"
+version = "0.2.0"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=d8a60f0219aef0127d88a8d7214303a38da89b02#d8a60f0219aef0127d88a8d7214303a38da89b02"
+dependencies = [
+ "jmap-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jmap-server"
+version = "0.2.0"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=d8a60f0219aef0127d88a8d7214303a38da89b02#d8a60f0219aef0127d88a8d7214303a38da89b02"
+dependencies = [
+ "http",
+ "jmap-types",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "jmap-types"
+version = "0.2.0"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=d8a60f0219aef0127d88a8d7214303a38da89b02#d8a60f0219aef0127d88a8d7214303a38da89b02"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2030,6 +2062,8 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "httpdate",
+ "jmap-chat-types",
+ "jmap-server",
  "mimi-content",
  "mimi-mls",
  "mimi-protocol",

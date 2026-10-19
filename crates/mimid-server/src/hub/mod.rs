@@ -219,6 +219,21 @@ impl Hub {
         self.signing_key.public()
     }
 
+    /// The hub's TLS-encoded `ExternalSender` (RFC 9420 §12.1.8.1): its
+    /// `SignaturePublicKey` followed by the BasicCredential whose identity
+    /// is `mimi://<hub domain>` (decisions mimid-1wgh.6.35,
+    /// mimid-1wgh.12.37). It is the only `external_senders` entry a hosted
+    /// room may carry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HubError::Encode`] if the encoding fails, which a domain
+    /// accepted by [`Domain`] cannot cause.
+    pub fn hub_sender(&self) -> Result<Vec<u8>, HubError> {
+        let (key, credential) = room::hub_sender(self.signature_public_key(), &self.domain)?;
+        Ok([key, credential].concat())
+    }
+
     /// Starts hosting the room `room_id` for the group a client created
     /// (in-process API for mimid-1wgh.12.4).
     ///

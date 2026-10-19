@@ -5,6 +5,7 @@
 //! listen = "127.0.0.1:8080"
 //! base_url = "https://mimi.a.example"
 //! database = "/var/lib/mimid/mimid.sqlite"
+//! max_key_packages = 97   # optional
 //!
 //! [peers]
 //! "b.example" = "http://127.0.0.1:9080"
@@ -20,6 +21,8 @@ use std::path::{Path, PathBuf};
 
 use axum::http::Uri;
 use serde::Deserialize;
+
+use crate::jmap::session::DEFAULT_MAX_KEY_PACKAGES;
 
 /// The longest domain name accepted (RFC 1035 §2.3.4, without the root dot).
 pub const MAX_DOMAIN_LEN: usize = 253;
@@ -44,6 +47,15 @@ pub struct Config {
     /// It replaces DNS discovery (decision mimid-1wgh.17).
     #[serde(default)]
     pub peers: BTreeMap<Domain, BaseUrl>,
+    /// The most KeyPackage records the server stores per account, advertised
+    /// as `maxKeyPackages` (draft-atwood-jmap-chat-mimi-00 L166). Defaults to
+    /// [`DEFAULT_MAX_KEY_PACKAGES`].
+    #[serde(default = "default_max_key_packages")]
+    pub max_key_packages: u64,
+}
+
+fn default_max_key_packages() -> u64 {
+    DEFAULT_MAX_KEY_PACKAGES
 }
 
 impl Config {
@@ -224,8 +236,24 @@ mod tests {
                 (domain("b.example"), base("http://127.0.0.1:9080")),
                 (domain("c.example"), base("https://mimi.c.example:8443")),
             ]),
+            max_key_packages: 97,
         };
         assert_eq!(config, expected);
+    }
+
+    /// Mark's choice of default (mimid-1wgh.11.2): 97.
+    #[test]
+    fn max_key_packages_defaults_when_absent() {
+        assert!(!VALID.contains("max_key_packages"));
+        assert_eq!(Config::parse(VALID).unwrap().max_key_packages, 97);
+    }
+
+    #[test]
+    fn max_key_packages_is_parsed() {
+        let config = parse_with("[peers]", "max_key_packages = 5\n[peers]").unwrap();
+        assert_eq!(config.max_key_packages, 5);
+        let err = parse_with("[peers]", "max_key_packages = -1\n[peers]").unwrap_err();
+        assert!(matches!(err, ConfigError::Parse(_)), "{err:?}");
     }
 
     #[test]

@@ -21,10 +21,11 @@
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
 //! - `/notify` is accepted only from configured peers (decision
 //!   mimid-1wgh.7.4), so fanout from any other provider is refused (`403`).
-//! - No JMAP endpoint is served yet, so local users can neither upload
-//!   KeyPackages nor send requests through the relay. keyMaterial for a
-//!   local user therefore answers `noConsent`, as for an unknown user
-//!   (decision mimid-1wgh.7.9).
+//! - The JMAP endpoint ([`mimid_server::jmap`]) serves the Session and
+//!   `Core/echo` only, so local users can neither upload KeyPackages nor
+//!   send requests through the relay. keyMaterial for a local user
+//!   therefore answers `noConsent`, as for an unknown user (decision
+//!   mimid-1wgh.7.9).
 //! - The hub, follower, relay and fanout worker each have their own
 //!   [`PeerClient`], so each fetches and caches peer directories
 //!   separately.
@@ -47,6 +48,7 @@ use mimid_server::follower::relay::Relay;
 use mimid_server::http::router;
 use mimid_server::hub::fanout::Fanout;
 use mimid_server::hub::{Clock, Hub, SystemClock};
+use mimid_server::jmap::{self, JmapOptions};
 use mimid_server::peer::PeerClient;
 use mimid_server::store::Store;
 use tracing_subscriber::EnvFilter;
@@ -105,6 +107,19 @@ async fn main() -> anyhow::Result<()> {
         bail!("the follower already has a relay");
     }
 
+    // JMAP shares the protocol listener (decision mimid-1wgh.12.28).
+    let mut jmap_options = JmapOptions::default();
+    jmap_options.max_key_packages = config.max_key_packages;
+    let jmap = jmap::router(
+        &config.base_url,
+        store.clone(),
+        Arc::clone(&hub),
+        Arc::clone(&follower),
+        jmap_options,
+    )
+    .context("building the JMAP router")?;
+    let app = router(Directory::new(&config.base_url), hub, follower).merge(jmap);
+
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("binding {}", config.listen))?;
@@ -116,13 +131,10 @@ async fn main() -> anyhow::Result<()> {
         "mimid listening"
     );
 
-    axum::serve(
-        listener,
-        router(Directory::new(&config.base_url), hub, follower),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .context("serving HTTP")?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("serving HTTP")?;
 
     store.close().await;
     tracing::info!("mimid stopped");

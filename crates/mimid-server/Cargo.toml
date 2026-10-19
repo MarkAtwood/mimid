@@ -14,6 +14,10 @@ anyhow.workspace = true
 axum.workspace = true
 # Unpadded base64url JMAP bearer tokens (mimid-1wgh.11.1); already in the lockfile.
 base64 = "=0.22.1"
+# JMAP request parsing and method dispatch (RFC 8620), and the JMAP Chat
+# capability types; exact rev pin (decision mimid-1wgh.12.21).
+jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "d8a60f0219aef0127d88a8d7214303a38da89b02" }
+jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "d8a60f0219aef0127d88a8d7214303a38da89b02" }
 # Retry-After HTTP-date parsing (RFC 9110 §10.2.3); already in the lockfile.
 httpdate = "1.0.3"
 # Reads the salt and URIs of reported messages (protocol-06 §5.9).
@@ -24,6 +28,7 @@ mimi-room-policy = { path = "../mimi-room-policy" }
 # rustls with its default aws-lc-rs provider (decisions mimid-1wgh.26, .6.16).
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 serde.workspace = true
+serde_json.workspace = true
 # Request hashes for submitMessage retry deduplication.
 sha2.workspace = true
 sqlx.workspace = true
@@ -39,6 +44,5 @@ ulid = "=3.0.0"
 # Independent oracle, at the pin mimi-mls uses (decisions mimid-1wgh.4.13, .6.16).
 mls-rs = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
 mls-rs-crypto-rustcrypto = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
-serde_json.workspace = true
 tempfile = "=3.23.0"
 tower = { version = "=0.5.2", features = ["util"] }
