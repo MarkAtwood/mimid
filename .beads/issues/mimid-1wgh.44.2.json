@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.44.2",
   "title": "File one assay bead per in-scope draft (beads about writing beads)",
   "description": "After the inventory: for each draft marked 'assay', file a task 'assay: \u003cdraft\u003e-\u003crev\u003e' under this epic with the epic's output contract copied by reference, the local file path, and any known hooks into mimid (grep the beads and code for the draft name first, e.g. draft-mahy-mimi-msgid-aad vs MessageId/senderMsgId, draft-mahy-mls-semiprivatemessage vs the JMAP-MIMI SemiPrivateMessage note on .12, draft-mahy-mimi-hub-retracted-messages vs retractions). Set priority by relevance to open mimid work (active drafts touching protocol-06/content-09/room-policy-04 first; expired ones P4). Each assay bead depends on the retrieval bead. List the filed beads in this bead's notes. Do not assay here.",
+  "notes": "From the identity-05 assay: assay draft-mahy-mls-sd-cwt-credential early (identity-05 L868-873 points at it as an MLS credential option). Consider asking Mark whether draft-barnes-mimi-identity-arch (cited L145) should be added despite the draft-mahy-* scope rule.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-19T19:28:37.909147947Z",
   "created_by": "agent",
-  "updated_at": "2026-10-19T19:28:37.909147947Z",
+  "updated_at": "2026-10-19T19:39:47.50170393Z",
   "labels": [
     "spec-assay"
   ],

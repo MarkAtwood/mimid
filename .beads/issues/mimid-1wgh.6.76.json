@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.6.76",
+  "title": "localfix: local user URIs must be mimi://\u003cprovider\u003e/u/\u003cid\u003e",
+  "description": "Assay of draft-mahy-mimi-identity-05 (~/PROJECT/IETF/specs, sha256 c95f8c88a7be37c298db977250e5fbf1dfb6894e0a779ae7032940af8778381a). LocalUser::authenticated (crates/mimid-server/src/follower/relay.rs:80-88) and Store::create_account (crates/mimid-server/src/store/jmap.rs:140) accept any URI whose authority is this provider, including the provider URI itself (mimi://a.example, which is the hub's own BasicCredential identity per decision mimid-1wgh.6.35) and room (/r/) or client (/d/) URIs. identity-05 L407-408: 'The first path segment in a MIMI URI discriminates the type of identifier and makes the type of resource unambiguous' (Table 3, L410-429: /u/ user, /d/ client, /r/ room, /g/ MLS group, /p/ pseudonym, /t/ team). protocol-06 shows the same forms only as examples (§3 Table 1, L317-345; not normative), so this is hardening, not conformance. Decide (Mark): require exactly mimi://\u003cprovider\u003e/u/\u003cone segment\u003e for local users (accounts, KeyPackage credential identities, relay identity checks), refusing the provider URI so no user can share the hub's identity. If yes: regression test first (a user URI equal to the hub identity and one with /r/ are refused), decision bead, wg item below.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T19:39:46.559802159Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T19:39:46.559802159Z",
+  "labels": [
+    "localfix",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.76",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-19T19:39:46.607406017Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

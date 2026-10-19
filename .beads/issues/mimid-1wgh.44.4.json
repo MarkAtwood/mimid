@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.4",
+  "title": "Decision: draft-mahy-mimi-identity-05 is track-only for mimid",
+  "description": "Assay of draft-mahy-mimi-identity-05 (~/PROJECT/IETF/specs, sha256 c95f8c88a7be37c298db977250e5fbf1dfb6894e0a779ae7032940af8778381a). RECOMMEND: track only (nothing to implement now). Why: Intended status Informational (L7); no normative keyword outside the BCP 14 boilerplate (L175-176); stated goal is to explore the problem space so the IETF can later write a consensus requirements document (L158-160); §8 Security Considerations is 'TBC' (L1102) and the §6.1 cascading-cert figure is 'TBC' (L792). It does not give a normative credential-to-domain rule, which is what mimi-protocol#159 deferred to it. USEFUL POINTERS (feature beads to file only if Mark adopts a non-Basic credential): (a) X.509 'Single Combined Cert' per client whose subjectAltName carries both the client URI and the user URI (L492-499; mock cert L765-767); MLS already has an X.509 credential type (L677-678). This would lift mimid's H1 multi-device limit (crates/mimid-server/src/lib.rs Limitations: stock mls-rs rejects two leaves with the same BasicCredential identity) because each client gets a distinct credential that still asserts the user URI, and it gives #159 a domain rule (URI authority in a SAN vouched for by a CA 'run by or on behalf of the domain', L478-480). (b) SD-CWT credentials via draft-mahy-mls-sd-cwt-credential (L868-873), in this epic's scope: assay it next. Out of the epic's scope rule but cited as the roles basis (L145, L1212): draft-barnes-mimi-identity-arch-03; Mark may want it assayed too.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T19:39:46.249770407Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T19:39:46.249770407Z",
+  "labels": [
+    "human",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.4",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-10-19T19:39:46.455936648Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
