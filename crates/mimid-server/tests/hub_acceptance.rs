@@ -1234,6 +1234,9 @@ async fn room_lifecycle_across_restart() {
     // The mock answers after signalling arrival, and the worker records the
     // attempt only after `deliver` returns, so wait for that before reading
     // the outbox. Polling on "!= 0" leaves a double count to the assert.
+    // The worker logs the failure only after the attempt is committed, and
+    // stopping it aborts the task, so also wait for the warning the canary
+    // below requires; nothing logs it after the restart.
     tokio::time::timeout(Duration::from_secs(10), async {
         while !provider
             .store
@@ -1242,12 +1245,13 @@ async fn room_lifecycle_across_restart() {
             .unwrap()
             .iter()
             .any(|head| head.domain.as_str() == "c.example" && head.attempts != 0)
+            || !logs.contents().contains("fanout delivery failed")
         {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("c.example delivery attempt recorded within 10 s");
+    .expect("c.example delivery attempt recorded and logged within 10 s");
     let heads = provider.store.outbox_heads().await.unwrap();
     assert_eq!(heads.len(), 1, "{heads:?}");
     assert_eq!(heads[0].domain.as_str(), "c.example");
