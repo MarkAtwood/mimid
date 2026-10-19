@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.6.74",
+  "title": "localfix: hub requires frank_aad 0x0020 in the room's required safe_aad list",
+  "description": "Per rohanmahy on mimi-protocol#166 (2026-10-19): 'if your implementation requires franking, then include 0x0020 as a required component'. mimid's hub requires a frank_aad item on every message (hub/submit.rs:94, :275-287; mandatory franking), but room creation (hub/room.rs) never checks that the GroupContext safe_aad list (mls-extensions-10 §5, required Safe AAD components) contains 0x0020, so a member that doesn't understand frank_aad can be in a room whose messages the hub then refuses. Fix: create_room refuses a group whose GroupContext safe_aad list lacks 0x0020; check commits that change it (GroupContextExtensions/AppDataUpdate of safe_aad) the same way; test fixtures that build groups with an empty list (e.g. mimi-mls tests Member::create(.., \u0026[(SAFE_AAD, vec![0x00])])) are only affected where they go through the hub. Regression test first. Also give mimi-mls's group-creation helpers a way to set the required list including 0x0020 for the agent (.13).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T19:19:51.941061369Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T19:19:51.941061369Z",
+  "labels": [
+    "localfix"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.6.74",
+      "depends_on_id": "mimid-1wgh.6",
+      "type": "parent-child",
+      "created_at": "2026-10-19T19:19:51.967986793Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

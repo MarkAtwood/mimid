@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.82",
+  "title": "wg followup: propose path convention on mimi-protocol#158",
+  "description": "mimi-protocol#158 (question). Rohan: 'one option is just to make all the entries in the directory use different path conventions. Unfortunately we are still limited to 72 characters.' Draft a concrete proposal (how /v1 and {roomId}/{targetUser} placeholders are filled, percent-encoding, a consistent convention per directory entry within 72-column lines), cross-check mimid's directory/peer code (decision behind mimid-1wgh.5.39). Post needs Mark's OK.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T19:19:51.383022463Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T19:19:51.383022463Z",
+  "labels": [
+    "wg",
+    "human",
+    "spec:mimi-protocol-06"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.82",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-19T19:19:51.41810575Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

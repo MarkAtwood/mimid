@@ -1,0 +1,4 @@
+{"id":"01a1559b-1eca-74e2-b69a-ef01183781d3","issue_id":"mimid-1wgh.37.86","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-19T19:19:51.754320786Z"}
+{"id":"01a1559b-1ece-7703-b3d0-762adb4a3a00","issue_id":"mimid-1wgh.37.86","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-19T19:19:51.758460222Z"}
+{"id":"01a1559b-1ed2-7904-a199-ca46dee94073","issue_id":"mimid-1wgh.37.86","event_type":"label_added","actor":"agent","comment":"Added label: human","created_at":"2026-10-19T19:19:51.762591562Z"}
+{"id":"01a1559b-1ed6-797c-84b4-3773ae00fce5","issue_id":"mimid-1wgh.37.86","event_type":"label_added","actor":"agent","comment":"Added label: spec:mimi-protocol-06","created_at":"2026-10-19T19:19:51.766622479Z"}

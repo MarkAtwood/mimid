@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.61",
   "title": "wg: protocol-06 §5.4.1.3 franking checks underspecified",
   "description": "Suggestion. §5.4.1.3: (1) requires the franking_agent credential to name the hub's domain but does not say how a credential (e.g. BasicCredential identity) maps to a domain (mimid mimid-1wgh.5.56); (2) proceeds 'if' the ciphersuite matches without saying what to do otherwise (mimid fails closed, mimid-1wgh.5.57); (3) 'matches' for URIs is not defined as byte-exact or normalized (mimid-1wgh.5.58).",
-  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED technical: credential-\u003edomain undefined, no else branch, URI comparison undefined. New issue (merge comparison part with 37.46).\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/159",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED technical: credential-\u003edomain undefined, no else branch, URI comparison undefined. New issue (merge comparison part with 37.46).\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/159\n2026-10-19 #159 ready-for-PR; followup mimid-1wgh.37.84.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T04:43:46.379297919Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:01.958297723Z",
+  "updated_at": "2026-10-19T19:20:02.204192649Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

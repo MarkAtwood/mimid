@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.37",
   "title": "WG feedback: send spec errata and suggestions",
   "description": "Get the accumulated wg beads (label wg + spec:\u003cdoc\u003e) to the standards bodies the Right Way. Channels: MIMI drafts via their GitHub repos (ietf-wg-mimi/draft-ietf-mimi-content, ietf-wg-mimi/mimi-room-policy, ietf-wg-mimi/mimi-arch, ietf-wg-mimi/mimi-protocol (bifurcation/ietf-mimi-protocol redirects here) plus mimi@ietf.org; MLS drafts via mlswg/mls-extensions and mlswg/mls-ratchet-tree-options plus mls@ietf.org; test vectors via mlswg/mls-implementations; RFC 9420 errors only via the RFC Editor errata form (suggestions go to mls@ietf.org). Editorial items: one bundled PR per draft. Technical items: one GitHub issue each plus a short list message (technical discussion belongs on the list). Mark sends under his own name (IETF contributions are personal, Note Well); every external send needs Mark's explicit per-action OK. Offer mimid for an RFC 7942 Implementation Status section. Timing: protocol-06 expires 2026-10-27.",
+  "notes": "STATUS 2026-10-19: all 4 list posts archived (mimi x3, mls x1), no replies. GitHub: nothing merged or closed. mimi-protocol triaged 2026-10-19 by rohanmahy: ready-for-PR #157 #159 #161 #163 #165; wontfix #160 (also question) #166; question #158; chore #162. Rohan asked Mark a direct question on #166 ('-09 and -06 of which drafts?') and replied substantively on #158 #159 #160 #161 #165. mls-implementations#181: mulmarta's PR #206 regenerates passive-client-welcome.json and asks for confirmation. No maintainer response yet on content #82-#84, room-policy #28-#39, mls-extensions #106/#107 (kkohbrok opened #102), ratchet-tree-options #3/#4, mls-rs#385.",
   "status": "open",
   "priority": 2,
   "issue_type": "epic",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:21:27.539896774Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T01:31:43.614049921Z",
+  "updated_at": "2026-10-19T19:16:16.22427846Z",
   "labels": [
     "wg"
   ],

@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.5.74",
+  "title": "localfix: IdentifierResponse drops uri\u003cV\u003e and selects foundProfiles on success",
+  "description": "rohanmahy on mimi-protocol#165 (2026-10-19): 'IdentifierUri uri\u003cV\u003e' in IdentifierResponse 'was included in error. I'll delete it.' and 'I can wrap foundProfiles in a select with case: success'. mimi-protocol crate (identifier.rs:277-285) implements -06 as written (uri + found_profiles). Per lang-and-spec-target, follow the published draft: apply when the editor's change is in a published revision (or Mark says to follow the editor's copy). Update the type, fixtures (hand-encoded), and the hub's identifierQuery handling. Blocked on the upstream edit.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T19:19:52.206472743Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T19:19:52.206472743Z",
+  "labels": [
+    "localfix"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.5.74",
+      "depends_on_id": "mimid-1wgh.5",
+      "type": "parent-child",
+      "created_at": "2026-10-19T19:19:52.231958451Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

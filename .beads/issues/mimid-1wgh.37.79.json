@@ -1,0 +1,36 @@
+{
+  "id": "mimid-1wgh.37.79",
+  "title": "Reply to rohanmahy on mimi-protocol #166, #160, #158 and take up ready-for-PR #157 #159 #161 #163 #165",
+  "description": "Triage of our protocol-06 issues by editor rohanmahy, 2026-10-19. Direct question to Mark on #166: '-09 and -06 of which drafts?' (our text meant mls-extensions-09 vs mimi-protocol-06); he also says safe_aad is mandatory per mls-extensions PR #96 and marked #166 wontfix. #160 wontfix ('implementer picks hub_key selection, no interop impact'). #158 question: he suggests distinct path conventions per directory entry, 72-char limit. ready-for-PR #157 #159 #161 #163 #165: he answered the rules on #161 and #165 and points #159's credential-domain question at draft-mahy-mimi-identity. Decide: reply texts, and whether Mark sends PRs for the ready-for-PR issues. Every post needs Mark's per-action OK; text drafted first.",
+  "notes": "Split 2026-10-19 into followups mimid-1wgh.37.81 mimid-1wgh.37.82 mimid-1wgh.37.83 mimid-1wgh.37.84 mimid-1wgh.37.85 mimid-1wgh.37.86 mimid-1wgh.37.87.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T19:16:16.304473429Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T19:19:52.373444054Z",
+  "closed_at": "2026-10-19T19:19:52.313228664Z",
+  "labels": [
+    "human",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.79",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-19T19:16:16.34491234Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.37.79",
+      "depends_on_id": "mimid-1wgh.37.81",
+      "type": "supersedes",
+      "created_at": "2026-10-19T19:19:52.3088786Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

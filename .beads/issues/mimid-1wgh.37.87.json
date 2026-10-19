@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.87",
+  "title": "wg followup: PR for mimi-protocol#165 (empty query_elements, searchValue type)",
+  "description": "mimi-protocol#165 ready-for-PR. Rohan will himself delete IdentifierResponse 'IdentifierUri uri\u003cV\u003e' ('included in error') and can wrap foundProfiles in select(success). He has no objection to UTF8String searchValue (same encoding) and says 'Feel free to propose something' for empty query_elements (matches every searchable user under AND). PR: propose a rule for empty query_elements (e.g. MUST contain at least one element, else badRequest-style code) and optionally UTF8String searchValue; coordinate with or wait for his uri\u003cV\u003e edit to avoid conflicts. Bead mimid-1wgh.37.71. Post needs Mark's OK.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T19:19:51.846311229Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T19:19:51.846311229Z",
+  "labels": [
+    "wg",
+    "human",
+    "spec:mimi-protocol-06"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.87",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-19T19:19:51.881899231Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
