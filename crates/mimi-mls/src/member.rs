@@ -149,6 +149,7 @@ use tls_codec::{Deserialize, Serialize};
 use crate::identity::{
     APP_COMPONENTS, CIPHERSUITE, COMPONENT_GREASE, SAFE_AAD, leaf_capabilities, leaf_extensions,
 };
+use crate::wire::check_safe_aad;
 use crate::{ErrorSource, Identity};
 
 /// An external sender for the GroupContext `external_senders` extension
@@ -1041,7 +1042,8 @@ impl Member {
     ///
     /// Returns [`MemberError::Decode`] or [`MemberError::UnexpectedMessage`]
     /// for input that is not a group message, [`MemberError::Process`] if MLS
-    /// validation or decryption fails, [`MemberError::TrailingAad`] if bytes
+    /// validation or decryption fails or a required SafeAAD is malformed,
+    /// [`MemberError::TrailingAad`] if bytes
     /// follow the SafeAAD struct, [`MemberError::InvalidAppDataUpdate`] or
     /// [`MemberError::AppDataRejected`] for invalid AppDataUpdate proposals,
     /// [`MemberError::MissingSafeAadComponent`],
@@ -1063,10 +1065,22 @@ impl Member {
         self.check_identity(identity)?;
         self.check_in_sync()?;
         let provider = identity.provider();
-        let message = MlsMessageIn::tls_deserialize_exact(message)
+        let bytes = message;
+        let message = MlsMessageIn::tls_deserialize_exact(bytes)
             .map_err(|e| MemberError::Decode(e.into()))?
             .try_into_protocol_message()
             .map_err(|_| MemberError::UnexpectedMessage)?;
+        // Bug mimid-1wgh.33: checked before OpenMLS parses the SafeAAD. Like
+        // the decode above, the refusal leaves the group, and the out-of-sync
+        // mark, untouched: the message is not yet authenticated.
+        if self
+            .group
+            .public_group()
+            .group_context()
+            .safe_aad_required()
+        {
+            check_safe_aad(bytes).map_err(|e| MemberError::Process(e.into()))?;
+        }
         // Decision mimid-1wgh.4.60. Read from the unauthenticated header, so
         // it counts only once OpenMLS has verified the message. OpenMLS also
         // rejects other groups and epochs before that; the epoch is compared

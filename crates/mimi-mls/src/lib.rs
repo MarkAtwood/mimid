@@ -51,6 +51,13 @@
 //!   lists are ignored, a malformed leaf list counts as empty, and a
 //!   malformed GroupContext list fails closed (decision mimid-1wgh.4.49).
 //!   Other implementations may accept leaves this crate refuses.
+//! - In a group that uses Safe AAD, OpenMLS parses each message's SafeAAD
+//!   with tls_codec's `DeserializeBytes`, which panics in debug builds on a
+//!   truncated item (bug mimid-1wgh.33). [`member::Member::process`] and
+//!   [`observer::Observer`] check the SafeAAD with the Read-based decoders
+//!   first and refuse the message, unauthenticated and with no state
+//!   change, so OpenMLS never sees such input. A malformed SafeAAD on a
+//!   current-epoch Commit therefore does not mark the member out of sync.
 //! - A [`member::Member`] does not check the `lifetime` of leaves it
 //!   receives, in the tree of a group it joins or in Proposals and Commits
 //!   (RFC 9420 §7.3, decision mimid-1wgh.4.56). It checks the KeyPackages

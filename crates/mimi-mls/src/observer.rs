@@ -87,6 +87,7 @@ use crate::member::{
 };
 use crate::wire::{
     ExternalSender, GroupInfo, KeyPackageRef, PartialGroupInfo, ProposalRef, RatchetTreePresence,
+    check_safe_aad,
 };
 use crate::{ErrorSource, Store, label};
 
@@ -463,7 +464,8 @@ impl Observer {
     /// [`ObserverError::Decode`] for malformed input,
     /// [`ObserverError::UnexpectedMessage`] for anything but a PublicMessage
     /// proposal or Commit (a PrivateMessage included),
-    /// [`ObserverError::Process`] if MLS validation fails,
+    /// [`ObserverError::Process`] if MLS validation fails or a required
+    /// SafeAAD is malformed,
     /// [`ObserverError::TrailingAad`] if bytes follow the SafeAAD struct,
     /// [`ObserverError::InvalidAppDataUpdate`] or
     /// [`ObserverError::AppDataRejected`] for invalid AppDataUpdate
@@ -542,7 +544,8 @@ impl Observer {
     /// [`ObserverError::Decode`] for malformed input,
     /// [`ObserverError::UnexpectedMessage`] for anything but a PublicMessage
     /// proposal (a Commit included),
-    /// [`ObserverError::Process`] if MLS validation fails,
+    /// [`ObserverError::Process`] if MLS validation fails or a required
+    /// SafeAAD is malformed,
     /// [`ObserverError::TrailingAad`] if bytes follow the SafeAAD struct,
     /// [`ObserverError::Encode`] if a reference cannot be computed, and
     /// [`ObserverError::Merge`] if the proposal cannot be stored.
@@ -571,12 +574,18 @@ impl Observer {
         if self.pending_commit.is_some() {
             return Err(ObserverError::PendingCommit);
         }
-        let message = MlsMessageIn::tls_deserialize_exact(message)
+        let bytes = message;
+        let message = MlsMessageIn::tls_deserialize_exact(bytes)
             .map_err(|e| ObserverError::Decode(e.into()))?
             .try_into_protocol_message()
             .map_err(|_| ObserverError::UnexpectedMessage)?;
         if let ProtocolMessage::PrivateMessage(_) = message {
             return Err(ObserverError::UnexpectedMessage);
+        }
+        // Bug mimid-1wgh.33: checked before OpenMLS parses the SafeAAD, as
+        // in Member::process.
+        if self.group.group_context().safe_aad_required() {
+            check_safe_aad(bytes).map_err(|e| ObserverError::Process(e.into()))?;
         }
         let processed = self
             .group

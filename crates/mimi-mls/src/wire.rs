@@ -74,7 +74,7 @@ mod rfc9420;
 
 use std::io::{self, Read, Write};
 
-use tls_codec::{Deserialize, Serialize};
+use tls_codec::{Deserialize, Serialize, VLBytes};
 
 pub use app_data::AppDataDictionary;
 pub use ratchet_tree_options::{
@@ -127,6 +127,60 @@ where
         ));
     }
     Ok((value, recorder.consumed))
+}
+
+/// Checks that the `authenticated_data` of a TLS-encoded PublicMessage or
+/// PrivateMessage `MLSMessage` starts with one canonical SafeAAD struct
+/// (mls-extensions-10 §4.9), using only the Read-based decoders. Other wire
+/// formats pass.
+///
+/// OpenMLS parses the SafeAAD itself with `DeserializeBytes`, which in
+/// tls_codec 0.5.0 panics in debug builds on a truncated item (bug
+/// mimid-1wgh.33). Callers run this on a message that `MlsMessageIn` has
+/// already decoded, before OpenMLS sees it, so OpenMLS parses only a
+/// SafeAAD whose items all fit inside it. Bytes after the SafeAAD pass
+/// here: callers refuse them once OpenMLS has verified the message, so a
+/// current-epoch Commit carrying them marks the group out of sync
+/// (decisions mimid-1wgh.4.17, mimid-1wgh.4.60).
+pub(crate) fn check_safe_aad(message: &[u8]) -> Result<(), tls_codec::Error> {
+    let Some(aad) = framed_authenticated_data(message)? else {
+        return Ok(());
+    };
+    decode_canonical::<openmls::framing::SafeAad, _>(&mut aad.as_slice())?;
+    Ok(())
+}
+
+/// Reads the clear `authenticated_data` of a PublicMessage (RFC 9420 §6.2,
+/// from its FramedContent) or PrivateMessage (§6.3) `MLSMessage`, or
+/// returns `None` for the other wire formats.
+fn framed_authenticated_data(mut message: &[u8]) -> Result<Option<VLBytes>, tls_codec::Error> {
+    let reader = &mut message;
+    u16::tls_deserialize(reader)?; // ProtocolVersion version
+    match u16::tls_deserialize(reader)? {
+        // mls_public_message: FramedContent starts with group_id, epoch,
+        // sender.
+        1 => {
+            VLBytes::tls_deserialize(reader)?; // opaque group_id<V>
+            u64::tls_deserialize(reader)?; // uint64 epoch
+            match u8::tls_deserialize(reader)? {
+                // member: uint32 leaf_index; external: uint32 sender_index
+                1 | 2 => {
+                    u32::tls_deserialize(reader)?;
+                }
+                // new_member_proposal, new_member_commit: no field
+                3 | 4 => {}
+                other => return Err(tls_codec::Error::UnknownValue(other.into())),
+            }
+        }
+        // mls_private_message: group_id, epoch, content_type.
+        2 => {
+            VLBytes::tls_deserialize(reader)?; // opaque group_id<V>
+            u64::tls_deserialize(reader)?; // uint64 epoch
+            u8::tls_deserialize(reader)?; // ContentType content_type
+        }
+        _ => return Ok(None),
+    }
+    VLBytes::tls_deserialize(reader).map(Some) // opaque authenticated_data<V>
 }
 
 /// Writes the kept bytes of a wire type.
