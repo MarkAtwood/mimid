@@ -245,6 +245,7 @@ fn respond_follower(result: Result<Response, FollowerError>) -> Response {
             .into_response(),
         Err(
             error @ (FollowerError::Store(_)
+            | FollowerError::Encode(_)
             | FollowerError::KeyMaterial(_)
             | FollowerError::Relay(_)),
         ) => {

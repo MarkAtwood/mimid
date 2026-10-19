@@ -28,10 +28,10 @@
 //!    received. Over HTTP the response is capped at [`MAX_BODY_LEN`] bytes
 //!    (decision mimid-1wgh.6.67).
 //!
-//! The relay writes nothing locally: the user's own messages come back
-//! through fanout, in hub order (decision mimid-1wgh.7.6). A failure is
-//! returned to the caller, which retries; the hub deduplicates retries
-//! (decision mimid-1wgh.7.16).
+//! The relay writes nothing locally: on the hub's success
+//! [`Follower`](super::Follower) stores the user's own message (decision
+//! mimid-1wgh.7.30). A failure is returned to the caller, which retries;
+//! the hub deduplicates retries (decision mimid-1wgh.7.16).
 //!
 //! # Limitations
 //!

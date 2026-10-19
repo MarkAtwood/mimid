@@ -54,6 +54,12 @@ pub struct NewFanout<'a> {
     pub bytes: &'a [u8],
     /// SHA-256 of `bytes` (decision mimid-1wgh.7.3).
     pub hash: [u8; 32],
+    /// SHA-256 of the FanoutMessage's inner `message` octets (decision
+    /// mimid-1wgh.7.30).
+    pub message_hash: [u8; 32],
+    /// The draft-atwood-jmap-chat-mimi-00 `senderMsgId` as a 16-byte
+    /// binary ULID: the 48-bit `timestamp`, big-endian, then `hash[..10]`.
+    pub sender_msg_id: [u8; 16],
     /// The FanoutMessage `timestamp`, milliseconds since the UNIX epoch.
     pub hub_timestamp: u64,
     /// The FanoutMessage arm.
@@ -127,7 +133,9 @@ impl Store {
     /// - the room is followed, as [`Store::follow`] does, and its group ID
     ///   is set from the first message carrying one if it has none;
     /// - each message is inserted in order unless the room already has one
-    ///   with the same hash (decision mimid-1wgh.7.3);
+    ///   with a byte-identical inner `message` (decision mimid-1wgh.7.30)
+    ///   or the same `senderMsgId` (draft-atwood-jmap-chat-mimi-00
+    ///   §fanout-messages), per room (decision mimid-1wgh.12.24);
     /// - a new Welcome's KeyPackageRefs are recorded, and every local user
     ///   holding a claim on one of them who is not a member of the room
     ///   becomes one from that Welcome on (decision mimid-1wgh.7.7).
@@ -332,7 +340,8 @@ impl Store {
     }
 }
 
-/// Inserts `message` in `tx` unless the room has its hash already, with
+/// Inserts `message` in `tx` unless the room has its inner message or its
+/// `senderMsgId` already (or, from migration 0003, its hash), with
 /// its Welcome refs and the memberships they grant. Returns the new
 /// event's sequence number, or `None` for a duplicate.
 async fn insert_fanout(
@@ -342,8 +351,9 @@ async fn insert_fanout(
     message: &NewFanout<'_>,
 ) -> Result<Option<i64>, StoreError> {
     let seq: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO follower_event (room_id, received_at, hub_timestamp, kind, bytes, hash) \
-         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (room_id, hash) DO NOTHING RETURNING seq",
+        "INSERT INTO follower_event \
+         (room_id, received_at, hub_timestamp, kind, bytes, hash, message_hash, sender_msg_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING seq",
     )
     .bind(room_id)
     .bind(received_at)
@@ -351,6 +361,8 @@ async fn insert_fanout(
     .bind(message.kind.as_sql())
     .bind(message.bytes)
     .bind(&message.hash[..])
+    .bind(&message.message_hash[..])
+    .bind(&message.sender_msg_id[..])
     .fetch_optional(&mut **tx)
     .await?;
     let Some(seq) = seq else {

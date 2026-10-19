@@ -1,6 +1,8 @@
 //! Inbound protocol-06 §5.5 `/notify`: FanoutMessages from a room's hub,
-//! deduplicated per FanoutMessage (decision mimid-1wgh.7.3) and appended to
-//! the follower log in arrival order (decision mimid-1wgh.7.17).
+//! deduplicated per room by inner message and by `senderMsgId` (decisions
+//! mimid-1wgh.7.30, mimid-1wgh.12.24) and appended to the follower log in
+//! arrival order (decision mimid-1wgh.7.17). The local users' own accepted
+//! messages take the same path when the hub accepts them.
 //!
 //! Nothing is decrypted. The follower reads only what MLS carries in the
 //! clear: each message's wire format, content type and group ID, and a
@@ -8,7 +10,7 @@
 
 use std::sync::Arc;
 
-use mimi_mls::tls_codec::{self, Deserialize};
+use mimi_mls::tls_codec::{self, Deserialize, Serialize};
 use mimi_mls::wire::{MLSMessage, Welcome};
 use mimi_protocol::{FanoutEvent, FanoutMessage, IdentifierUri};
 use sha2::{Digest, Sha256};
@@ -23,6 +25,11 @@ use crate::store::{FanoutKind, NewFanout};
 /// RFC 9420 §6: the MLSMessage header of a Welcome, `version` mls10
 /// (0x0001) and `wire_format` mls_welcome (0x0003).
 const WELCOME_MESSAGE_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x03];
+
+/// The largest FanoutMessage `timestamp` stored: 2^48 - 1 ms, the largest
+/// time a ULID `senderMsgId` holds (draft-atwood-jmap-chat-mimi-00
+/// §fanout-messages; decision mimid-1wgh.12.26).
+pub const MAX_FANOUT_TIMESTAMP: u64 = (1 << 48) - 1;
 
 /// One FanoutMessage of a `/notify` body.
 struct Received<'a> {
@@ -45,9 +52,12 @@ impl Received<'_> {
             FanoutEvent::Proposal { .. } => FanoutKind::Proposal,
             FanoutEvent::Commit { .. } => FanoutKind::Commit,
         };
+        let hash: [u8; 32] = Sha256::digest(self.bytes).into();
         NewFanout {
             bytes: self.bytes,
-            hash: Sha256::digest(self.bytes).into(),
+            hash,
+            message_hash: Sha256::digest(event_message(&self.message.event).as_bytes()).into(),
+            sender_msg_id: sender_msg_id(self.message.timestamp, &hash),
             hub_timestamp: self.message.timestamp,
             kind,
             group_id: self.group_id(),
@@ -60,6 +70,18 @@ impl Received<'_> {
             }),
         }
     }
+}
+
+/// The `senderMsgId` of a FanoutMessage with `timestamp` and SHA-256
+/// `hash`, as a 16-byte binary ULID: the low 48 bits of `timestamp`,
+/// big-endian, then `hash[..10]` (draft-atwood-jmap-chat-mimi-00
+/// §fanout-messages). `timestamp` must not exceed
+/// [`MAX_FANOUT_TIMESTAMP`].
+fn sender_msg_id(timestamp: u64, hash: &[u8; 32]) -> [u8; 16] {
+    let mut id = [0; 16];
+    id[..6].copy_from_slice(&timestamp.to_be_bytes()[2..]);
+    id[6..].copy_from_slice(&hash[..10]);
+    id
 }
 
 fn event_message(event: &FanoutEvent) -> &MLSMessage {
@@ -162,7 +184,7 @@ impl Follower {
         let received = split(body).map_err(FollowerError::InvalidRequest)?;
         if received
             .iter()
-            .any(|message| i64::try_from(message.message.timestamp).is_err())
+            .any(|message| message.message.timestamp > MAX_FANOUT_TIMESTAMP)
         {
             return Err(FollowerError::TimestampOutOfRange);
         }
@@ -192,6 +214,29 @@ impl Follower {
             let _ = self.appended.send((room_id.to_owned(), seq));
         }
         Ok(())
+    }
+
+    /// Stores `fanout`, the FanoutMessage of a local user's request that
+    /// the hub of `room_id` accepted, as if that hub had sent it, since the
+    /// hub need not echo it (protocol-06 §5.5; decision mimid-1wgh.7.30).
+    /// The usual deduplication absorbs a later echo, and an earlier one
+    /// absorbs this copy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FollowerError::Encode`] if `fanout` does not encode, and
+    /// otherwise the errors of [`Follower::accept_fanout`] other than
+    /// [`FollowerError::NotAPeer`] and [`FollowerError::NotRoomHub`].
+    pub(super) async fn store_accepted(
+        &self,
+        room_id: &str,
+        fanout: &FanoutMessage,
+    ) -> Result<(), FollowerError> {
+        let hub = room_hub(room_id)?;
+        let body = fanout
+            .tls_serialize_detached()
+            .map_err(FollowerError::Encode)?;
+        self.store_fanout(room_id, &hub, &body).await
     }
 }
 

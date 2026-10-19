@@ -195,19 +195,21 @@ async fn accepted_update_joins_from_the_request_on() {
 
     assert_eq!(p.relay_update().await.unwrap(), UPDATE_SUCCESS);
     assert_eq!(mock.received().len(), 1);
-    // Decision mimid-1wgh.7.6: the relay writes nothing to the log.
-    assert_eq!(p.stored().await, before);
+    // Decision mimid-1wgh.7.30: the relay stores its own copy.
+    let stored = p.stored().await;
+    assert_eq!(stored.len(), 2);
     assert_eq!(
         p.follower.rooms(&user(BOB_URI)).await.unwrap(),
         [ROOM.to_owned()]
     );
-    // Pre-join history is hidden (decision mimid-1wgh.7.7).
-    assert!(p.visible().await.is_empty());
+    // Pre-join history is hidden (decision mimid-1wgh.7.7); the own copy
+    // is not.
+    assert_eq!(p.visible().await, [stored[1]]);
 
     p.notify(&application_fanout(T2, APPLICATION_1)).await;
     let stored = p.stored().await;
-    assert_eq!(stored.len(), 2);
-    assert_eq!(p.visible().await, [stored[1]]);
+    assert_eq!(stored.len(), 3);
+    assert_eq!(p.visible().await, [stored[1], stored[2]]);
     let since = i64::try_from(before[0] + 1).unwrap();
     assert_eq!(p.memberships().await, [(since, None)]);
 
@@ -248,7 +250,8 @@ async fn leave_hides_later_events_until_rejoining() {
     let p = Provider::start(&mock.base, true).await;
     p.relay_update().await.unwrap();
     p.notify(&commit_fanout(T1, COMMIT_CAROL)).await;
-    assert_eq!(p.visible().await.len(), 1);
+    // The relay's own copy (decision mimid-1wgh.7.30) and Carol's commit.
+    assert_eq!(p.visible().await.len(), 2);
 
     p.follower.leave(&user(BOB_URI), ROOM).await.unwrap();
     assert!(p.follower.rooms(&user(BOB_URI)).await.unwrap().is_empty());
@@ -264,10 +267,10 @@ async fn leave_hides_later_events_until_rejoining() {
     p.relay_update().await.unwrap();
     p.notify(&application_fanout(T3, APPLICATION_2)).await;
     let stored = p.stored().await;
-    assert_eq!(stored.len(), 3);
-    // Only what arrived after rejoining is seen.
-    assert_eq!(p.visible().await, [stored[2]]);
-    let since = i64::try_from(stored[1] + 1).unwrap();
+    assert_eq!(stored.len(), 5);
+    // Only what arrived from rejoining on is seen: the own copy and T3.
+    assert_eq!(p.visible().await, [stored[3], stored[4]]);
+    let since = i64::try_from(stored[2] + 1).unwrap();
     assert_eq!(p.memberships().await, [(1, Some(left)), (since, None)]);
     p.close().await;
 }
@@ -341,9 +344,12 @@ async fn fanout_overtaking_the_response_is_seen() {
     p.notify(&commit_fanout(T1, COMMIT_CAROL)).await;
 
     p.relay_update().await.unwrap();
+    // The racing COMMIT_BOB and the relay's own copy of a different commit
+    // (decision mimid-1wgh.7.30); echo_before_the_stored_copy_is_kept
+    // covers a matching echo.
     let stored = p.stored().await;
-    assert_eq!(stored.len(), 2);
-    assert_eq!(p.visible().await, [stored[1]]);
+    assert_eq!(stored.len(), 3);
+    assert_eq!(p.visible().await, [stored[1], stored[2]]);
     p.close().await;
 }
 

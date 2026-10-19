@@ -10,8 +10,11 @@
 //! Fanout, from `/notify` ([`Follower::accept_fanout`]) or from this
 //! provider's own hub ([`LocalDelivery`](crate::hub::fanout::LocalDelivery)),
 //! must come from the room's hub. Its FanoutMessages are stored exactly as
-//! received, in arrival order, each once per room by SHA-256 (decision
-//! mimid-1wgh.7.3). A Welcome makes members of the local users holding a
+//! received, in arrival order. A room never stores two FanoutMessages with
+//! byte-identical inner `message`s (decision mimid-1wgh.7.30), nor two with
+//! the same draft-atwood-jmap-chat-mimi-00 `senderMsgId`, and refuses a
+//! `timestamp` above [`notify::MAX_FANOUT_TIMESTAMP`] (decision
+//! mimid-1wgh.12.26). A Welcome makes members of the local users holding a
 //! claim on one of its KeyPackageRefs (decision mimid-1wgh.7.7). Users read
 //! the log through [`Follower::rooms`] and [`Follower::events`], and learn
 //! of new events through [`Follower::subscribe`].
@@ -19,8 +22,14 @@
 //! Users' requests to rooms' hubs go through the follower's [`Relay`]
 //! ([`Follower::set_relay`]). A relayed update the hub accepts makes the
 //! user a member of the room, and [`Follower::leave`] ends a membership
-//! (decision mimid-1wgh.7.7). The relay writes nothing to the log: the
-//! user's own messages come back through fanout (decision mimid-1wgh.7.6).
+//! (decision mimid-1wgh.7.7). The hub need not echo a user's own message
+//! (protocol-06 §5.5), so when it accepts a relayed SubmitMessage or update
+//! the follower stores the FanoutMessage the hub would have sent: the
+//! response's `accepted_timestamp`, the request's message, and the
+//! response's `frank` or the request's `moreProposals` (decision
+//! mimid-1wgh.7.30). The log is per room, so this reaches every local
+//! member. An echo, from the mimid hub (which echoes) or after a failover,
+//! is absorbed by the inner-message rule.
 //!
 //! # Limitations
 //!
@@ -45,6 +54,20 @@
 //!   unbounded storage growth. Upgrade path: a retention limit.
 //! - A Welcome stays visible only while its KeyPackage claim is kept, so
 //!   claim cleanup must keep claims a stored Welcome names.
+//! - Deduplication is per room, not per JMAP Chat as the draft words it
+//!   (decision mimid-1wgh.12.24). Events stored before migration 0004 have
+//!   no inner-message hash or `senderMsgId` and are not deduplicated
+//!   against.
+//! - The stored copy of a user's own Commit carries an empty
+//!   `externalProposals`: a hub's response does not carry the proposals it
+//!   staples to an external Commit, so the user's other clients and the
+//!   room's other local members miss them unless the hub also echoes the
+//!   Commit and the echo arrives first. mimid's hub staples none
+//!   (`hub/update.rs`), so its echo and the stored copy are byte-identical.
+//! - The stored copy is appended when the response arrives, so it can
+//!   precede earlier hub events still on their way here; the log keeps
+//!   arrival order (decision mimid-1wgh.7.17), and clients must cope with
+//!   a Commit or message arriving before an earlier epoch's Commit.
 
 pub mod consent;
 pub mod key_packages;
@@ -54,7 +77,10 @@ pub mod relay;
 use std::sync::{Arc, OnceLock};
 
 use mimi_mls::tls_codec::Deserialize;
-use mimi_protocol::{KeyMaterialRequest, UpdateResult, UpdateRoomResponse};
+use mimi_protocol::{
+    FanoutEvent, FanoutMessage, HandshakeBundle, KeyMaterialRequest, SubmitMessageRequest,
+    SubmitMessageResponse, SubmitResult, UpdateRequest, UpdateResult, UpdateRoomResponse,
+};
 use tokio::sync::broadcast;
 
 use crate::config::Domain;
@@ -153,17 +179,22 @@ impl Follower {
     /// Relays `user`'s TLS-encoded `UpdateRequest` to the hub of `room_id`
     /// ([`Relay::relay_update`]) and returns the hub's
     /// `UpdateRoomResponse` as received. If the hub accepted the update,
-    /// `user` becomes a member of the room, seeing every event stored
-    /// after the request was sent (decision mimid-1wgh.7.7). Nothing is
-    /// written to the log (decision mimid-1wgh.7.6).
+    /// its FanoutMessage is stored in the room's log, with
+    /// `accepted_timestamp` as its `timestamp`, the request's
+    /// `moreProposals`, and an empty `externalProposals` for a Commit
+    /// (decision mimid-1wgh.7.30), and `user` becomes a member of the
+    /// room, seeing every event stored after the request was sent
+    /// (decision mimid-1wgh.7.7).
     ///
     /// # Errors
     ///
     /// Returns [`FollowerError::NotImplemented`] if the follower has no
-    /// relay, [`FollowerError::Relay`] if relaying fails, and
-    /// [`FollowerError::Store`] if the store fails. If recording the
-    /// membership fails after the hub accepted, the caller retries; the
-    /// hub answers a retry with the same response.
+    /// relay, [`FollowerError::Relay`] if relaying fails, and the errors of
+    /// storing the FanoutMessage, among them [`FollowerError::Store`] and
+    /// [`FollowerError::TimestampOutOfRange`]. If storing fails after the
+    /// hub accepted, the caller retries; the hub answers a retry with the
+    /// same response, and a FanoutMessage already stored is not stored
+    /// again.
     pub async fn relay_update(
         &self,
         user: &LocalUser,
@@ -180,7 +211,30 @@ impl Follower {
             .map_err(FollowerError::Relay)?;
         let decoded = UpdateRoomResponse::tls_deserialize_exact(&response)
             .map_err(|error| FollowerError::Relay(RelayError::InvalidResponse(error)))?;
-        if let UpdateResult::Success { .. } = decoded.result {
+        if let UpdateResult::Success { accepted_timestamp } = decoded.result {
+            // The relay decoded the request already.
+            let request = UpdateRequest::tls_deserialize_exact(request)
+                .map_err(FollowerError::InvalidRequest)?;
+            let event = match request.bundle {
+                HandshakeBundle::Commit {
+                    proposal_or_commit, ..
+                } => FanoutEvent::Commit {
+                    message: proposal_or_commit,
+                    external_proposals: Vec::new(),
+                },
+                HandshakeBundle::Proposal {
+                    proposal_or_commit,
+                    more_proposals,
+                } => FanoutEvent::Proposal {
+                    message: proposal_or_commit,
+                    more_proposals,
+                },
+            };
+            let fanout = FanoutMessage {
+                timestamp: accepted_timestamp,
+                event,
+            };
+            self.store_accepted(room_id, &fanout).await?;
             let hub = notify::room_hub(room_id)?;
             if self
                 .store
@@ -194,22 +248,49 @@ impl Follower {
     }
 
     /// Relays `user`'s TLS-encoded `SubmitMessageRequest` to the hub of
-    /// `room_id` ([`Relay::relay_submit_message`]).
+    /// `room_id` ([`Relay::relay_submit_message`]) and returns the hub's
+    /// `SubmitMessageResponse` as received. If the hub accepted the
+    /// message, its FanoutMessage is stored in the room's log, with
+    /// `accepted_timestamp` as its `timestamp` and the response's `frank`
+    /// (decision mimid-1wgh.7.30).
     ///
     /// # Errors
     ///
     /// Returns [`FollowerError::NotImplemented`] if the follower has no
-    /// relay, and [`FollowerError::Relay`] if relaying fails.
+    /// relay, [`FollowerError::Relay`] if relaying fails, and the errors of
+    /// storing the FanoutMessage, which the caller handles by retrying as
+    /// for [`Follower::relay_update`].
     pub async fn relay_submit_message(
         &self,
         user: &LocalUser,
         room_id: &str,
         request: &[u8],
     ) -> Result<Vec<u8>, FollowerError> {
-        self.relay()?
+        let response = self
+            .relay()?
             .relay_submit_message(user, room_id, request)
             .await
-            .map_err(FollowerError::Relay)
+            .map_err(FollowerError::Relay)?;
+        let decoded = SubmitMessageResponse::tls_deserialize_exact(&response)
+            .map_err(|error| FollowerError::Relay(RelayError::InvalidResponse(error)))?;
+        if let SubmitResult::Accepted {
+            accepted_timestamp,
+            frank,
+        } = decoded.result
+        {
+            // The relay decoded the request already.
+            let request = SubmitMessageRequest::tls_deserialize_exact(request)
+                .map_err(FollowerError::InvalidRequest)?;
+            let fanout = FanoutMessage {
+                timestamp: accepted_timestamp,
+                event: FanoutEvent::Application {
+                    message: request.app_message,
+                    frank,
+                },
+            };
+            self.store_accepted(room_id, &fanout).await?;
+        }
+        Ok(response)
     }
 
     /// Relays `user`'s TLS-encoded `GroupInfoRequest` to the hub of
@@ -368,10 +449,14 @@ pub enum FollowerError {
     /// mimid-1wgh.7.5).
     #[error("source provider is not the room's hub")]
     NotRoomHub,
-    /// A FanoutMessage `timestamp` exceeds `i64::MAX`, which the log cannot
-    /// store.
+    /// A FanoutMessage `timestamp` exceeds
+    /// [`notify::MAX_FANOUT_TIMESTAMP`], so it has no ULID `senderMsgId`
+    /// (decision mimid-1wgh.12.26).
     #[error("fanout timestamp out of range")]
     TimestampOutOfRange,
+    /// A FanoutMessage built from an accepted request does not encode.
+    #[error("cannot encode fanout")]
+    Encode(#[source] mimi_mls::tls_codec::Error),
     /// The database failed.
     #[error("database error")]
     Store(#[from] StoreError),
