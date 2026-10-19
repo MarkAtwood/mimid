@@ -7,6 +7,8 @@
 //!   [`Store::open`] creates the database file with mode 0600 and refuses an
 //!   existing file that its group or others can access. SQLite gives its
 //!   `-wal` and `-shm` files the main file's mode.
+//! - One write transaction runs at a time (decision mimid-1wgh.42; see
+//!   [`Store`]).
 
 mod follower_log;
 mod key_packages;
@@ -19,9 +21,10 @@ use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
+use std::time::Duration;
 
 use sqlx::SqlitePool;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
 use crate::config::Domain;
 
@@ -38,10 +41,30 @@ pub use rooms::RoomSnapshot;
 /// others, since it holds secrets in the clear.
 const FORBIDDEN_MODE_BITS: u32 = 0o077;
 
+/// How long a connection waits for a lock held by another process, such as
+/// the admin CLI. Writers in this process queue for the one write
+/// connection instead.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// A handle to the provider's database, with migrations applied.
+///
+/// All writes go through `pool`, which holds exactly one connection, so
+/// writers in this process queue in order for it instead of racing for
+/// SQLite's write lock and failing with `SQLITE_BUSY` once the busy timeout
+/// runs out (decision mimid-1wgh.42). Reads go through `reader`, whose
+/// connections are read-only: a write sent there by mistake fails with
+/// `SQLITE_READONLY` instead of bypassing the queue.
 #[derive(Debug, Clone)]
 pub struct Store {
+    /// The single read-write connection. Every write, inside a transaction
+    /// or not, uses it.
+    // ponytail: one write transaction at a time, and each holds the writer
+    // across its awaits. Upgrade path if write throughput becomes the
+    // limit: shorten transactions or batch writes per transaction; SQLite
+    // never runs two writers at once anyway.
     pool: SqlitePool,
+    /// Read-only connections for queries outside a write transaction.
+    reader: SqlitePool,
 }
 
 impl Store {
@@ -62,10 +85,22 @@ impl Store {
         create_private(path)?;
         let options = SqliteConnectOptions::new()
             .filename(path)
-            .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(BUSY_TIMEOUT)
             .foreign_keys(true);
-        let pool = SqlitePool::connect_with(options).await?;
+        // The writer keeps its connection open for the pool's lifetime, so
+        // the `-wal` and `-shm` files the read-only connections need exist.
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .min_connections(1)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .connect_with(
+                options
+                    .clone()
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal),
+            )
+            .await?;
         sqlx::migrate!().run(&pool).await?;
 
         sqlx::query("INSERT OR IGNORE INTO provider (id, domain) VALUES (1, ?)")
@@ -82,11 +117,13 @@ impl Store {
                 configured: domain.to_string(),
             });
         }
-        Ok(Self { pool })
+        let reader = SqlitePool::connect_with(options.read_only(true)).await?;
+        Ok(Self { pool, reader })
     }
 
     /// Closes all connections, waiting for in-flight queries to finish.
     pub async fn close(&self) {
+        self.reader.close().await;
         self.pool.close().await;
     }
 }
@@ -197,6 +234,28 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows, [(1, "a.example".to_owned())]);
+        store.close().await;
+    }
+
+    // Decision mimid-1wgh.42: a write sent to the read pool must fail, not
+    // bypass the single writer. 8 is SQLite's SQLITE_READONLY.
+    #[tokio::test]
+    async fn reader_refuses_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("mimid.sqlite"), &domain("a.example"))
+            .await
+            .unwrap();
+        let error = sqlx::query("UPDATE provider SET domain = 'b.example'")
+            .execute(&store.reader)
+            .await
+            .unwrap_err();
+        let code = error.as_database_error().and_then(|e| e.code());
+        assert_eq!(code.as_deref(), Some("8"), "{error}");
+        let stored: String = sqlx::query_scalar("SELECT domain FROM provider")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(stored, "a.example");
         store.close().await;
     }
 

@@ -56,7 +56,7 @@ impl Store {
             "SELECT room_id, group_id, epoch, group_info, ratchet_tree, created_at \
              FROM room ORDER BY room_id",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.reader)
         .await?;
         rows.into_iter().map(RoomRow::into_snapshot).collect()
     }
@@ -73,7 +73,7 @@ impl Store {
              FROM room WHERE room_id = ?",
         )
         .bind(room_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.reader)
         .await?;
         row.map(RoomRow::into_snapshot).transpose()
     }

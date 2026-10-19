@@ -87,7 +87,7 @@ impl Store {
              WHERE id IN (SELECT MIN(id) FROM outbox GROUP BY room_id, domain) \
              ORDER BY id",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.reader)
         .await?;
         rows.into_iter()
             .map(|row| {

@@ -190,7 +190,7 @@ impl Store {
              ORDER BY room_id",
         )
         .bind(user_uri)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.reader)
         .await?)
     }
 
@@ -229,7 +229,7 @@ impl Store {
         .bind(room_id)
         .bind(to_sql_int(after_seq)?)
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.reader)
         .await?;
         rows.into_iter()
             .map(|(seq, received_at, hub_timestamp, kind, bytes)| {

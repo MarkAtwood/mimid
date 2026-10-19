@@ -164,7 +164,7 @@ impl Store {
                 "SELECT client_id FROM client WHERE user_uri = ? ORDER BY client_id",
             )
             .bind(user_uri)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.reader)
             .await?,
         )
     }
@@ -189,7 +189,7 @@ impl Store {
              ORDER BY kp.client_id, kp.last_resort, kp.not_after, kp.ref",
         )
         .bind(user_uri)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.reader)
         .await?;
         rows.into_iter()
             .map(|(reference, client_id, bytes, last_resort, not_after)| {

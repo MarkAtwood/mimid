@@ -179,7 +179,7 @@ impl Store {
         )
         .bind(room_id)
         .bind(to_sql_int(epoch)?)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.reader)
         .await?)
     }
 
@@ -202,7 +202,7 @@ impl Store {
         )
         .bind(room_id)
         .bind(to_sql_int(epoch)?)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.reader)
         .await?;
         rows.into_iter()
             .map(|(proposal, time)| Ok((proposal, from_sql_int(time)?)))
@@ -228,7 +228,7 @@ impl Store {
         .bind(room_id)
         .bind(kind.as_sql())
         .bind(hash)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.reader)
         .await?;
         accepted_at.map(from_sql_int).transpose()
     }

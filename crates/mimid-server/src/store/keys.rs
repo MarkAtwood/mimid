@@ -72,7 +72,7 @@ impl Store {
             "SELECT signature_private_key, signature_public_key, hub_key \
              FROM hub_secret WHERE id = 1",
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.reader)
         .await?;
         let Some((private, public, hub_key)) = row else {
             return Ok(None);
