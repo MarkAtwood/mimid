@@ -181,7 +181,7 @@ pub enum AppDataUpdate {
 }
 
 impl AppDataUpdate {
-    fn to_proposal(&self) -> AppDataUpdateProposal {
+    pub(crate) fn to_proposal(&self) -> AppDataUpdateProposal {
         match self {
             Self::Update {
                 component_id,

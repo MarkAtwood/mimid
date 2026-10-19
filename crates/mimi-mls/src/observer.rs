@@ -27,8 +27,7 @@
 //!   are reported, not refused (decision mimid-1wgh.4.57).
 //! - PrivateMessages cannot be processed; the hub forwards them unread.
 //! - Proposals from external senders are accepted only for the types OpenMLS
-//!   supports there (Add, Remove and GroupContextExtensions). An external
-//!   AppDataUpdate proposal is rejected.
+//!   supports there: Add, Remove, GroupContextExtensions and AppDataUpdate.
 //! - An [`Observer`] cannot be reloaded from the [`Store`] after a restart.
 //!   OpenMLS does not persist the lifetime policy, so a future reload must
 //!   set it to Skip again.
@@ -74,17 +73,21 @@ use openmls::messages::proposals::{
     AppDataUpdateOperation, Proposal as OpenMlsProposal, ProposalOrRefType,
 };
 use openmls::prelude::{
-    Extension, Extensions, LeafNodeIndex, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider,
-    ProcessedMessage, ProcessedMessageContent, ProtocolMessage, RatchetTreeExtension,
-    RatchetTreeIn,
+    Extension, Extensions, ExternalProposal, LeafNodeIndex, MlsMessageBodyIn, MlsMessageIn,
+    OpenMlsProvider, ProcessedMessage, ProcessedMessageContent, ProtocolMessage,
+    RatchetTreeExtension, RatchetTreeIn, SenderExtensionIndex,
 };
+use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::RustCrypto;
 use tls_codec::{Deserialize, Serialize, VLBytes};
 
+use crate::identity::CIPHERSUITE;
 use crate::member::{
-    CommitSummary, ComponentOp, Sender, SharedError, basic_identity, check_staged_leaves,
-    convert_sender, nonconforming_leaves, required_lists, resolve_app_data_updates, summarize,
+    AppDataUpdate, CommitSummary, ComponentOp, Sender, SharedError, basic_identity,
+    check_staged_leaves, convert_sender, nonconforming_leaves, required_lists,
+    resolve_app_data_updates, summarize,
 };
+use crate::store::Provider;
 use crate::wire::{
     ExternalSender, GroupInfo, KeyPackageRef, PartialGroupInfo, ProposalRef, RatchetTreePresence,
     check_safe_aad,
@@ -94,6 +97,9 @@ use crate::{ErrorSource, Store, label};
 /// RFC 9420 §6: the MLSMessage header for a GroupInfo, `version` mls10
 /// (0x0001) and `wire_format` mls_group_info (0x0004).
 const GROUP_INFO_MESSAGE_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
+
+/// mls-extensions-10 §4.9: a SafeAAD struct with an empty `aad_items<V>`.
+const EMPTY_SAFE_AAD: [u8; 1] = [0x00];
 
 /// RFC 9420 §12.4.3: the SignWithLabel label of a GroupInfo signature.
 const GROUP_INFO_LABEL: &str = "GroupInfoTBS";
@@ -317,6 +323,10 @@ pub enum ObserverError {
     /// (RFC 9420 §12.4.3), or its extensions are not valid in a GroupInfo.
     #[error("the rebuilt GroupInfo is invalid")]
     InvalidPartialGroupInfo(#[source] ErrorSource),
+    /// The proposal could not be built: `sender_index` names no entry of
+    /// the `external_senders` extension, or the signature key is malformed.
+    #[error("cannot build the proposal")]
+    Propose(#[source] ErrorSource),
     /// The group state could not be stored.
     #[error("cannot update the group state")]
     Merge(#[source] ErrorSource),
@@ -566,6 +576,89 @@ impl Observer {
             }
             _ => Err(ObserverError::UnexpectedMessage),
         }
+    }
+
+    /// Builds an AppDataUpdate proposal (mls-extensions-10 §4.7) from the
+    /// external sender at `sender_index` in the GroupContext
+    /// `external_senders` extension (RFC 9420 §12.1.8.1), such as the hub
+    /// (decision mimid-1wgh.4.21). Returns it as a TLS-encoded `MLSMessage`
+    /// carrying a PublicMessage for the current epoch. Its
+    /// `authenticated_data` is an empty SafeAAD struct if the GroupContext
+    /// carries the `safe_aad` component (mls-extensions-10 §4.9), and empty
+    /// otherwise.
+    ///
+    /// `signature_key` is the sender's 32-byte Ed25519 private key (RFC 8032
+    /// seed), as for [`crate::label::sign_with_label`].
+    ///
+    /// The proposal is verified against the `external_senders` entry and
+    /// stored, as [`Observer::process_proposal`] would store it, so that a
+    /// Commit that covers it by reference can be processed. Do not pass
+    /// the returned message back to this Observer. Whether the application
+    /// knows the component, and what the `update` means, is judged by the
+    /// `apply` function when a Commit covers the proposal.
+    ///
+    /// On any error the group state is left as it was.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::PendingCommit`] while a Commit is pending,
+    /// [`ObserverError::InvalidAppDataUpdate`] for a remove of a component
+    /// that has no data (§4.7), [`ObserverError::Propose`] if `sender_index`
+    /// names no `external_senders` entry or the proposal cannot be signed,
+    /// [`ObserverError::Process`] if `signature_key` does not match that
+    /// entry's key, [`ObserverError::Encode`] if the message cannot be
+    /// encoded, and [`ObserverError::Merge`] if it cannot be stored.
+    pub fn propose_app_data_update(
+        &mut self,
+        store: &Store,
+        signature_key: &[u8],
+        sender_index: u32,
+        update: &AppDataUpdate,
+    ) -> Result<Vec<u8>, ObserverError> {
+        if self.pending_commit.is_some() {
+            return Err(ObserverError::PendingCommit);
+        }
+        let context = self.group.group_context();
+        // mls-extensions-10 §4.9: with safe_aad present, the whole
+        // authenticated_data is a SafeAAD struct, here with no items.
+        let authenticated_data = if context.safe_aad_required() {
+            EMPTY_SAFE_AAD.to_vec()
+        } else {
+            Vec::new()
+        };
+        let proposal = update.to_proposal();
+        let component_id = proposal.component_id();
+        // §4.7: "invalid if ... it specifies the removal of state for a
+        // component_id that has no state present".
+        if matches!(proposal.operation(), AppDataUpdateOperation::Remove)
+            && self.component(component_id).is_none()
+        {
+            return Err(ObserverError::InvalidAppDataUpdate(component_id));
+        }
+        let senders = self.external_senders()?;
+        let sender = senders.get(sender_index as usize).ok_or_else(|| {
+            ObserverError::Propose(
+                format!("no external_senders entry at index {sender_index}").into(),
+            )
+        })?;
+        let signer = SignatureKeyPair::from_raw(
+            CIPHERSUITE.signature_algorithm(),
+            signature_key.to_vec(),
+            sender.signature_key().to_vec(),
+        );
+        let message = ExternalProposal::new_app_data_update::<Provider>(
+            component_id,
+            proposal.operation().clone(),
+            self.group.group_id().clone(),
+            context.epoch(),
+            &signer,
+            SenderExtensionIndex::new(sender_index),
+            authenticated_data,
+        )
+        .map_err(|e| ObserverError::Propose(e.into()))?;
+        let message = encode(&message)?;
+        self.process_proposal(store, &message)?;
+        Ok(message)
     }
 
     /// Checks that `message` is a PublicMessage for this group and passes
