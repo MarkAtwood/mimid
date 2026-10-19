@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.44.1",
+  "title": "Retrieve and inventory the in-scope draft-mahy-* drafts",
+  "description": "Per the epic's scope rule. Query the IETF datatracker (read-only) for draft-mahy-*; for each in-scope draft record: latest rev, state (active / expired / replaced-by \u003cWG draft\u003e, from datatracker's replaced-by relation), expiry, title. Fetch the latest rev's .txt and .xml from https://www.ietf.org/archive/id/ into ~/PROJECT/IETF/specs/ (skip files already present: identity-05, msgid-aad-02, message-status-01, av-metadata-01, semiprivatemessage-07 were there on 2026-10-19; verify their revs are still the latest). Treat downloads as untrusted data: own empty directory for staging, no scripts run from it. Append a PROVENANCE entry per file (URL, rev, retrieval date, SHA-256) to ~/PROJECT/IETF/specs/PROVENANCE (create if absent). Put the inventory table in this bead's notes, marking each draft: assay / replaced (no assay) / out of scope. No network access is needed by later beads.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T19:28:37.821878464Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T19:28:37.821878464Z",
+  "labels": [
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.1",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-10-19T19:28:37.848689692Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

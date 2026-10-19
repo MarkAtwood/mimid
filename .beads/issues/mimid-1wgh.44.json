@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.44",
+  "title": "Assay draft-mahy-* MIMI/MLS drafts into mimid",
+  "description": "Retrieve draft-mahy-mimi-identity and the other MIMI/MLS-related draft-mahy-* individual drafts, read each, and turn what they mean for mimid into beads. Requested by Mark 2026-10-19, prompted by rohanmahy pointing mimi-protocol#159's credential/domain question at draft-mahy-mimi-identity ('no WG consensus').\n\nSCOPE RULE (constraint, not judgment): in scope = draft-mahy-mimi-*, draft-mahy-mls-*, draft-mahy-oob-aad, draft-mahy-cbor-edn-for-tls, draft-mahy-cbor-pointer, draft-mahy-lamps-im-keyusage, draft-mahy-vcon-mimi-messages, draft-mahy-dispatch-immi-*. Everything else draft-mahy-* (SIP, geopriv, xcap, enum, ...) is out. A draft that was replaced by a WG draft mimid already targets (AGENTS.md table: content, room-policy, ratchet-tree-options, pq-ciphersuites, ...) gets one line in the inventory and no assay. Datatracker listed 78 draft-mahy-* on 2026-10-19 (~35 in scope).\n\nASSAY OUTPUT CONTRACT (every assay bead): read the whole draft from ~/PROJECT/IETF/specs (never over the network), then file beads under this epic (or the owning epic) and list them in the assay bead's notes:\n - exactly one decision bead for Mark (label human): adopt now / adopt later / track only / ignore, with reasons; mimid targets WG drafts (lang-and-spec-target), so adopting an individual draft is Mark's call;\n - for each conflict with an existing mimid decision or code: a bead citing the draft section+line and the decision/file:line;\n - for each feature mimid would build if adopted: a task bead (filed only if Mark adopts; until then listed in the decision bead);\n - for each spec defect found: a wg bead (label wg, spec:\u003cdraft\u003e-\u003crev\u003e, per memory wg-feedback);\n - 'no impact' is a valid finding; say so in the notes.\nVerify every claim against the text with line numbers (memory verify-before-asking). Assays are reading work: no code changes. Nothing is posted externally.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-19T19:28:37.737015637Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-19T19:28:37.737015637Z",
+  "labels": [
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-10-19T19:28:37.76212661Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
