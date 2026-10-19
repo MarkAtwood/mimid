@@ -21,13 +21,15 @@
 //!   RFC 8620 §2 requires it, but answers `404` until EventSource
 //!   (mimid-1wgh.11.6) lands. There is no PushSubscription (decision
 //!   mimid-1wgh.12.30).
-//! - Only `Core/echo` is implemented; every other method answers
-//!   `unknownMethod` until its bead lands.
+//! - Besides `Core/echo`, only the read projection ([`projection`]) and
+//!   the refusing `Chat/set` and `Message/set` are implemented; every
+//!   other method answers `unknownMethod` until its bead lands.
 
 pub mod api;
 pub mod auth;
 pub mod bus;
 mod methods;
+pub mod projection;
 pub mod session;
 
 use std::sync::Arc;
@@ -109,7 +111,9 @@ pub fn router(
     );
     let bus = ChangeBus::new();
     bus.forward(follower.subscribe());
+    bus.forward_membership(follower.subscribe_membership());
     let authenticator = Authenticator::new(store.clone(), hub.domain().clone());
+    let projection = Arc::new(projection::Projection::new(store.clone(), Arc::clone(&hub)));
     let mut methods = Methods::new();
     methods::register_all(
         &mut methods,
@@ -118,6 +122,7 @@ pub fn router(
             hub,
             follower,
             bus,
+            projection,
         },
     );
     let state = JmapState(Arc::new(Inner {

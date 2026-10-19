@@ -1,10 +1,11 @@
 //! The change bus: one stream of the provider changes that move JMAP state
 //! (plan of mimid-1wgh.12 §3).
 //!
-//! For now it carries only the follower's stored events, forwarded from
-//! [`Follower::subscribe`](crate::follower::Follower::subscribe).
-//! Membership changes (decision mimid-1wgh.12.34) and KeyPackage writes
-//! join it in later beads.
+//! It carries the follower's stored events, forwarded from
+//! [`Follower::subscribe`](crate::follower::Follower::subscribe), and its
+//! relayed joins and leavings, forwarded from
+//! [`Follower::subscribe_membership`](crate::follower::Follower::subscribe_membership)
+//! (decision mimid-1wgh.12.34). KeyPackage writes join it in a later bead.
 //!
 //! # Limitations
 //!
@@ -31,6 +32,14 @@ pub enum Change {
         room_id: String,
         /// The event's sequence number in the follower log.
         seq: u64,
+    },
+    /// A local user joined the room `room_id` by a relayed update, or left
+    /// it.
+    Membership {
+        /// The room's ID.
+        room_id: String,
+        /// The user's URI.
+        user_uri: String,
     },
     /// Changes were lost before reaching the bus; every state may have
     /// moved.
@@ -81,6 +90,31 @@ impl ChangeBus {
                     Ok((room_id, seq)) => bus.publish(Change::RoomEvent { room_id, seq }),
                     Err(RecvError::Lagged(missed)) => {
                         tracing::warn!(missed, "change bus lagged behind the follower");
+                        bus.publish(Change::Lagged);
+                    }
+                    Err(RecvError::Closed) => break,
+                }
+            }
+        })
+    }
+
+    /// Spawns a task publishing each membership announcement (as given by
+    /// [`Follower::subscribe_membership`](crate::follower::Follower::subscribe_membership))
+    /// as a [`Change::Membership`], and a lag as [`Change::Lagged`]. The
+    /// task ends when the follower is dropped.
+    pub fn forward_membership(
+        &self,
+        mut announcements: broadcast::Receiver<(String, String)>,
+    ) -> JoinHandle<()> {
+        let bus = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match announcements.recv().await {
+                    Ok((room_id, user_uri)) => {
+                        bus.publish(Change::Membership { room_id, user_uri })
+                    }
+                    Err(RecvError::Lagged(missed)) => {
+                        tracing::warn!(missed, "change bus lagged behind follower memberships");
                         bus.publish(Change::Lagged);
                     }
                     Err(RecvError::Closed) => break,

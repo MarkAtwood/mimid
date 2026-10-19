@@ -17,7 +17,8 @@
 //! mimid-1wgh.12.26). A Welcome makes members of the local users holding a
 //! claim on one of its KeyPackageRefs (decision mimid-1wgh.7.7). Users read
 //! the log through [`Follower::rooms`] and [`Follower::events`], and learn
-//! of new events through [`Follower::subscribe`].
+//! of new events through [`Follower::subscribe`] and of relayed joins and
+//! leavings through [`Follower::subscribe_membership`].
 //!
 //! Users' requests to rooms' hubs go through the follower's [`Relay`]
 //! ([`Follower::set_relay`]). A relayed update the hub accepts makes the
@@ -107,6 +108,8 @@ pub struct Follower {
     peers: Option<PeerClient>,
     /// Announces each new event as (room ID, seq).
     appended: broadcast::Sender<(String, u64)>,
+    /// Announces each relayed join and each leaving as (room ID, user URI).
+    membership: broadcast::Sender<(String, String)>,
     /// The local users' KeyPackages, if keyMaterial is served.
     key_packages: Option<Arc<KeyPackages>>,
     /// The relay to rooms' hubs, once [`Follower::set_relay`] gave it.
@@ -130,12 +133,14 @@ impl Follower {
     /// refused from every provider.
     pub fn new(domain: Domain, store: Store, clock: Arc<dyn Clock>) -> Self {
         let (appended, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
+        let (membership, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
         Self {
             domain,
             store,
             clock,
             peers: None,
             appended,
+            membership,
             key_packages: None,
             relay: OnceLock::new(),
         }
@@ -242,6 +247,7 @@ impl Follower {
                 .await?
             {
                 tracing::info!(room_id, user = user.as_str(), "user joined followed room");
+                self.announce_membership(room_id, user);
             }
         }
         Ok(response)
@@ -344,6 +350,7 @@ impl Follower {
             .await?
         {
             tracing::info!(room_id, user = user.as_str(), "user left followed room");
+            self.announce_membership(room_id, user);
         }
         Ok(())
     }
@@ -393,6 +400,23 @@ impl Follower {
     /// [`broadcast::error::RecvError::Lagged`] and should re-read.
     pub fn subscribe(&self) -> broadcast::Receiver<(String, u64)> {
         self.appended.subscribe()
+    }
+
+    /// Announces, as (room ID, user URI), every membership from now on that
+    /// [`Follower::relay_update`] adds and every one [`Follower::leave`]
+    /// ends (decision mimid-1wgh.12.34). A join by Welcome stores an event,
+    /// so [`Follower::subscribe`] announces it. A receiver more than
+    /// [`SUBSCRIBE_CAPACITY`] announcements behind gets
+    /// [`broadcast::error::RecvError::Lagged`].
+    pub fn subscribe_membership(&self) -> broadcast::Receiver<(String, String)> {
+        self.membership.subscribe()
+    }
+
+    fn announce_membership(&self, room_id: &str, user: &LocalUser) {
+        // An error only means nobody is subscribed.
+        let _ = self
+            .membership
+            .send((room_id.to_owned(), user.as_str().to_owned()));
     }
 
     /// Handles protocol-06 §5.2 `POST /keyMaterial/{targetUser}` for a user

@@ -342,6 +342,34 @@ impl Hub {
         })
     }
 
+    /// The current `room_name` (protocol-06 §7.6) of each room among
+    /// `room_ids` that this hub hosts, read from the `room_metadata`
+    /// component of its GroupContext, keyed by room ID. A room that is not
+    /// hosted here, has no `room_metadata`, or whose `room_metadata` does
+    /// not decode is left out: its name is unknown (decision
+    /// mimid-1wgh.12.25).
+    pub async fn room_names<'a>(
+        &self,
+        room_ids: impl IntoIterator<Item = &'a str>,
+    ) -> BTreeMap<String, String> {
+        let rooms = self.rooms.lock().await;
+        room_ids
+            .into_iter()
+            .filter_map(|room_id| {
+                let data = rooms
+                    .get(room_id)?
+                    .observer
+                    .component(mimi_protocol::component_id::ROOM_METADATA)?;
+                let metadata = components::decode::<mimi_protocol::RoomMetaData>(
+                    mimi_protocol::component_id::ROOM_METADATA,
+                    data,
+                )
+                .ok()?;
+                Some((room_id.to_owned(), metadata.room_name.as_str().to_owned()))
+            })
+            .collect()
+    }
+
     /// protocol-06 §5.3 `POST /update/{roomId}`: validates the Commit or
     /// proposals in the TLS-encoded `UpdateRequest` `request`, checks them
     /// against room policy, logs them and enqueues their fanout. `from` is

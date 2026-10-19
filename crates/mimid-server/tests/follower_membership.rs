@@ -380,3 +380,43 @@ async fn relay_must_be_set_once() {
     assert!(p.follower.set_relay(Relay::new(hub, peers())).is_err());
     p.close().await;
 }
+
+/// Decision mimid-1wgh.12.34: a relayed join and a leaving reach the
+/// change bus as membership changes; a refused update, a second leaving
+/// and leaving a room one is not in publish nothing.
+#[tokio::test]
+async fn joins_and_leavings_reach_the_change_bus() {
+    use mimid_server::jmap::bus::{Change, ChangeBus};
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    let membership = Change::Membership {
+        room_id: ROOM.to_owned(),
+        user_uri: BOB_URI.to_owned(),
+    };
+    let refusing = MockHub::start(200, UPDATE_NOT_ALLOWED.to_vec()).await;
+    let p = Provider::start(&refusing.base, true).await;
+    let bus = ChangeBus::new();
+    let mut changes = bus.subscribe();
+    let forwarding = bus.forward_membership(p.follower.subscribe_membership());
+    p.relay_update().await.unwrap();
+    p.follower.leave(&user(BOB_URI), ROOM).await.unwrap();
+    p.close().await;
+    // The follower is gone, so the forwarding task has seen everything.
+    forwarding.await.unwrap();
+    assert_eq!(changes.try_recv(), Err(TryRecvError::Empty));
+
+    let mock = MockHub::start(200, UPDATE_SUCCESS.to_vec()).await;
+    let p = Provider::start(&mock.base, true).await;
+    let bus = ChangeBus::new();
+    let mut changes = bus.subscribe();
+    let forwarding = bus.forward_membership(p.follower.subscribe_membership());
+    p.relay_update().await.unwrap();
+    p.follower.leave(&user(BOB_URI), ROOM).await.unwrap();
+    p.follower.leave(&user(BOB_URI), ROOM).await.unwrap();
+    p.follower.leave(&user(DAVE), ROOM).await.unwrap();
+    p.close().await;
+    forwarding.await.unwrap();
+    assert_eq!(changes.recv().await.unwrap(), membership);
+    assert_eq!(changes.recv().await.unwrap(), membership);
+    assert_eq!(changes.try_recv(), Err(TryRecvError::Empty));
+}

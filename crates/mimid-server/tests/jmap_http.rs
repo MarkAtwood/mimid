@@ -335,8 +335,8 @@ async fn echo_round_trips_with_the_session_state() {
 async fn unimplemented_methods_answer_unknown_method() {
     let f = fixture().await;
     let request = json!({
-        "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat"],
-        "methodCalls": [["Chat/get", {"accountId": f.alice_id}, "c1"]]
+        "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat:mimi"],
+        "methodCalls": [["KeyPackage/get", {"accountId": f.alice_id}, "c1"]]
     });
     let (status, _, body) = post_api(
         &f.app,
