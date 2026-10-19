@@ -16,8 +16,8 @@ axum.workspace = true
 base64 = "=0.22.1"
 # JMAP request parsing and method dispatch (RFC 8620), and the JMAP Chat
 # capability types; exact rev pin (decision mimid-1wgh.12.21).
-jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b8b6f251186fca76cdbb0fc954ee248238b937d9" }
-jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b8b6f251186fca76cdbb0fc954ee248238b937d9" }
+jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", branch = "main" }
+jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", branch = "main" }
 # Retry-After HTTP-date parsing (RFC 9110 §10.2.3); already in the lockfile.
 httpdate = "1.0.3"
 # Reads the salt and URIs of reported messages (protocol-06 §5.9).
