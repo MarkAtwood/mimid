@@ -499,6 +499,65 @@ fn flipped_signature_byte_is_rejected() {
         .expect("the intact Commit is accepted");
 }
 
+/// mls-extensions-10 §4.9: in a group using Safe AAD the whole
+/// `authenticated_data` is the SafeAAD struct (decision mimid-1wgh.4.17).
+/// mls-rs, which treats `authenticated_data` as opaque, signs a
+/// PublicMessage proposal whose `authenticated_data` is a valid empty
+/// SafeAAD followed by one byte.
+#[test]
+fn safe_aad_with_trailing_bytes_is_rejected_and_state_is_unchanged() {
+    let alice = identity(b"alice");
+    // GroupContext safe_aad (0x0002) with an empty ComponentsList turns on
+    // SafeAAD framing.
+    let mut member = Member::create(&alice, b"room-observer-aad", &[], &[(SAFE_AAD, vec![0x00])])
+        .expect("create");
+    let (_, mut bob) = add_mls_rs_member(&alice, &mut member, b"bob");
+    let group_info = bob
+        .group_info_message(true)
+        .expect("mls-rs GroupInfo")
+        .to_bytes()
+        .expect("encode");
+    let store = Store::open_in_memory().expect("store");
+    let ObserverStart { mut observer, .. } =
+        Observer::from_group_info(&store, &group_info, None).expect("from_group_info");
+    let before = snapshot(&observer);
+
+    let trailing = bob
+        .propose_update(vec![
+            0x00, // SafeAADItem aad_items<V>: empty
+            0xff, // trailing byte, outside the SafeAAD struct
+        ])
+        .expect("mls-rs proposes")
+        .to_bytes()
+        .expect("encode");
+    let trailing_aad = |e: &ObserverError| matches!(e, ObserverError::TrailingAad);
+    let result = observer.process(&store, &trailing, no_components);
+    assert_rejected_unchanged(result, trailing_aad, &observer, &before);
+    let result = observer.process_proposal(&store, &trailing);
+    assert!(
+        matches!(result, Err(ObserverError::TrailingAad)),
+        "{result:?}"
+    );
+    assert_eq!(snapshot(&observer), before, "state changed");
+
+    // Control: the same proposal from the same sender and epoch, without
+    // the trailing byte, is accepted.
+    let exact = bob
+        .propose_update(EMPTY_SAFE_AAD.to_vec())
+        .expect("mls-rs proposes")
+        .to_bytes()
+        .expect("encode");
+    let observed = observer
+        .process(&store, &exact, no_components)
+        .expect("Observer accepts an exact SafeAAD");
+    assert_eq!(
+        observed,
+        Observed::Proposal {
+            sender: Sender::Member(1)
+        }
+    );
+}
+
 /// Documents the `membership_tag` limitation: an Observer has no
 /// membership_key, so a corrupted tag goes unnoticed, while mls-rs, a
 /// member, rejects it.
