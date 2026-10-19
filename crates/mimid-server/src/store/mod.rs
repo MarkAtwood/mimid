@@ -11,6 +11,7 @@
 //!   [`Store`]).
 
 mod follower_log;
+mod jmap;
 mod key_packages;
 mod keys;
 mod log;
@@ -29,6 +30,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use crate::config::Domain;
 
 pub use follower_log::{AppendedFanout, FanoutKind, FollowerEvent, NewFanout};
+pub use jmap::{BearerToken, JmapStoreError, MalformedToken, TOKEN_LEN, TokenOwner};
 pub use key_packages::{
     ClaimCandidate, KeyPackageClaim, KeyPackageInsert, NewKeyPackage, StoredKeyPackage,
 };
@@ -227,7 +229,7 @@ mod tests {
                 .fetch_all(&store.pool)
                 .await
                 .unwrap();
-        assert_eq!(applied, [1, 2, 3, 4]);
+        assert_eq!(applied, [1, 2, 3, 4, 5]);
 
         let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, domain FROM provider")
             .fetch_all(&store.pool)

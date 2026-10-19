@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+# Unpadded base64url JMAP bearer tokens (mimid-1wgh.11.1); already in the lockfile.
+base64 = "=0.22.1"
 # Retry-After HTTP-date parsing (RFC 9110 §10.2.3); already in the lockfile.
 httpdate = "1.0.3"
 # Reads the salt and URIs of reported messages (protocol-06 §5.9).
@@ -30,10 +32,10 @@ tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# ULID account, Chat and Message ids (base JMAP Chat; decision mimid-1wgh.12.31).
+ulid = "=3.0.0"
 
 [dev-dependencies]
-# Encodes secrets for the log canary; already in the lockfile.
-base64 = "=0.22.1"
 # Independent oracle, at the pin mimi-mls uses (decisions mimid-1wgh.4.13, .6.16).
 mls-rs = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
 mls-rs-crypto-rustcrypto = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }

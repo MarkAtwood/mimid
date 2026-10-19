@@ -73,5 +73,6 @@ pub mod directory;
 pub mod follower;
 pub mod http;
 pub mod hub;
+pub mod jmap;
 pub mod peer;
 pub mod store;
