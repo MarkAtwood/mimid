@@ -2,3 +2,4 @@
 {"id":"01a155ad-5b5b-702c-83a3-b1c38b272ae4","issue_id":"mimid-1wgh.44.5","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-19T19:39:46.907013006Z"}
 {"id":"01a155ad-5b60-7b50-9cdf-45c1cbffe69b","issue_id":"mimid-1wgh.44.5","event_type":"label_added","actor":"agent","comment":"Added label: spec:mimi-identity-05","created_at":"2026-10-19T19:39:46.912742597Z"}
 {"id":"01a155ad-5b64-7285-ae06-dd22d5d398a1","issue_id":"mimid-1wgh.44.5","event_type":"label_added","actor":"agent","comment":"Added label: spec-assay","created_at":"2026-10-19T19:39:46.916167119Z"}
+{"id":"01a15f40-dbe4-72dd-aca0-eb36983bc737","issue_id":"mimid-1wgh.44.5","event_type":"closed","actor":"agent","old_value":"","new_value":"2026-10-21: opened https://github.com/rohanmahy/mimi-identity/pull/1 (fork MarkAtwood/mimi-identity, branch typos) fixing six typos; TBC placeholders left out.","created_at":"2026-10-21T16:17:28.548188779Z"}
