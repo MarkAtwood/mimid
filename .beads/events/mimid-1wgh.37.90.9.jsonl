@@ -1,3 +1,4 @@
 {"id":"01a15f58-596a-7821-baac-225f87f6414d","issue_id":"mimid-1wgh.37.90.9","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-21T16:43:08.010533265Z"}
 {"id":"01a15f58-596e-77d8-83ee-7ee2b232b95d","issue_id":"mimid-1wgh.37.90.9","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-21T16:43:08.014514617Z"}
 {"id":"01a15f58-5972-760a-a0b0-4d7943d8f68e","issue_id":"mimid-1wgh.37.90.9","event_type":"label_added","actor":"agent","comment":"Added label: spec:mls-targeted-messages-01","created_at":"2026-10-21T16:43:08.018396261Z"}
+{"id":"01a15fc9-0a16-79a1-a7e0-4f42b8b8a050","issue_id":"mimid-1wgh.37.90.9","event_type":"closed","actor":"agent","old_value":"","new_value":"2026-10-21: fixed in low-severity PR https://github.com/mlswg/mls-targeted-messages/pull/16.","created_at":"2026-10-21T18:46:13.270632037Z"}

@@ -1,3 +1,4 @@
 {"id":"01a15f58-60cd-7d7c-9ff1-8d6525064ded","issue_id":"mimid-1wgh.37.90.30","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-21T16:43:09.901884334Z"}
 {"id":"01a15f58-60d1-7e6b-a8d0-082137f5b94b","issue_id":"mimid-1wgh.37.90.30","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-21T16:43:09.905945654Z"}
 {"id":"01a15f58-60d5-7e72-80ae-c8194cf11718","issue_id":"mimid-1wgh.37.90.30","event_type":"label_added","actor":"agent","comment":"Added label: spec:mls-virtual-clients-01","created_at":"2026-10-21T16:43:09.909947143Z"}
+{"id":"01a15fc9-0d2a-766b-9c52-7a0d060cdbe0","issue_id":"mimid-1wgh.37.90.30","event_type":"closed","actor":"agent","old_value":"","new_value":"2026-10-21: fixed in low-severity PR https://github.com/mlswg/mls-virtual-clients/pull/53.","created_at":"2026-10-21T18:46:14.058421406Z"}

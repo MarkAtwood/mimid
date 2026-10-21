@@ -1,3 +1,4 @@
 {"id":"01a15f58-629a-7ada-ba41-c456dd69340f","issue_id":"mimid-1wgh.37.90.35","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-21T16:43:10.362711825Z"}
 {"id":"01a15f58-629e-7b6e-a3a3-f8043e33a75e","issue_id":"mimid-1wgh.37.90.35","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-21T16:43:10.366749763Z"}
 {"id":"01a15f58-62a2-7ad3-b466-9109660eae5e","issue_id":"mimid-1wgh.37.90.35","event_type":"label_added","actor":"agent","comment":"Added label: spec:mls-partial-02","created_at":"2026-10-21T16:43:10.370710306Z"}
+{"id":"01a15fc9-0e40-7cbc-ab32-b86723b309e9","issue_id":"mimid-1wgh.37.90.35","event_type":"closed","actor":"agent","old_value":"","new_value":"2026-10-21: fixed in low-severity PR https://github.com/mlswg/mls-partial/pull/20.","created_at":"2026-10-21T18:46:14.336835312Z"}

@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.37.90.20",
   "title": "wg: virtual-clients-01 L517 No function maps signature_key_secret to a signature key pair, and the...",
   "description": "draft-ietf-mls-virtual-clients (virtual-clients-01), Generating Virtual Client Secrets. Editors' copy mlswg/mls-virtual-clients at 65e960d, L517.\n\nText: \"An application MAY use `signature_key_secret` with the target ciphersuite's\nsignature algorithm to derive a fresh signing key per operation,\"\n\nProblem: No function maps signature_key_secret to a signature key pair, and the right construction differs by scheme (Ed25519, ECDSA, ML-DSA). Emulator clients cannot derive the same key unless the application specifies the mapping, and the text does not say that it must. L1366-1367 and L1397-1399 depend on the same derivation.\n\nSuggested fix: Define a per-scheme DeriveSignatureKeyPair, or state that the application MUST specify the mapping when it uses this option.\n\nSeverity: low. Verifier: narrow (Confirmed: RFC 9420 defines no secret-to-signature-key derivation. L516 makes the signing-key source application-defined, though, so the impact is limited to the MAY option: unless the application also defines the mapping, the option is not interoperable. Severity is lowered.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-21T16:43:08.9901105Z",
   "created_by": "agent",
-  "updated_at": "2026-10-21T16:43:08.9901105Z",
+  "updated_at": "2026-10-21T18:46:13.685492278Z",
+  "closed_at": "2026-10-21T18:46:13.685492278Z",
+  "close_reason": "2026-10-21: fixed in low-severity PR https://github.com/mlswg/mls-virtual-clients/pull/53.",
   "labels": [
     "wg",
     "spec:mls-virtual-clients-01"

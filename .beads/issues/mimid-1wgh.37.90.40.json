@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.37.90.40",
   "title": "wg: partial-02 L317 No structural validity rules are given",
   "description": "draft-ietf-mls-partial (partial-02), Membership Proofs and Partial Trees. Editors' copy mlswg/mls-partial at 7fef7c1, L317.\n\nText: \"struct {\n  uint32 leaf_index;\n  uint32 n_leaves;\n  optional\u003cNode\u003e direct_path_nodes\u003cV\u003e;\n  CopathHash copath_hashes\u003cV\u003e;\n} MembershipProof;\"\n\nProblem: No structural validity rules are given: leaf_index \u003c n_leaves, n_leaves a power of two, vector lengths of log2(n_leaves)+1 and log2(n_leaves), element 0 a LeafNode and the rest ParentNodes, and hash_value of length Nh. Implementations may reject or accept malformed proofs differently.\n\nSuggested fix: Add MUST-reject rules for each structural constraint before the tree hash recomputation.\n\nSeverity: low. Verifier: narrow (The missing structural validity rules are real. RFC 9420 trees are always full (Section 7, \"the tree is always full\"), but the draft gives no checks. The \"blank leaf accepted as a member\" point is dropped: a blank sender leaf has no key, so verification fails, and the joiner case is covered by finding 30. Forging a proof against the true root needs a hash collision, so this is an interop and strict-parsing issue, low severity.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-21T16:43:10.81924054Z",
   "created_by": "agent",
-  "updated_at": "2026-10-21T16:43:10.81924054Z",
+  "updated_at": "2026-10-21T18:46:14.419208735Z",
+  "closed_at": "2026-10-21T18:46:14.419208735Z",
+  "close_reason": "2026-10-21: fixed in low-severity PR https://github.com/mlswg/mls-partial/pull/20.",
   "labels": [
     "wg",
     "spec:mls-partial-02"

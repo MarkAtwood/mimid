@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.37.90.5",
   "title": "wg: pq-ciphersuites-06 L151 I-D.irtf-cfrg-hybrid-kems is an IRTF-stream document cited normatively...",
   "description": "draft-ietf-mls-pq-ciphersuites (pq-ciphersuites-06), 4. Security Considerations. Editors' copy mlswg/mls-pq-ciphersuites at fb18956, L151.\n\nText: \"please see the documents that define those KEMs {{!I-D.ietf-hpke-pq}} and {{!I-D.irtf-cfrg-hybrid-kems}}.\"\n\nProblem: I-D.irtf-cfrg-hybrid-kems is an IRTF-stream document cited normatively ('!') from a Standards Track draft, and only as a pointer to security considerations. That needs a downref call at Last Call for no normative need. The published -06 has the same references.\n\nSuggested fix: Make I-D.irtf-cfrg-hybrid-kems an informative reference. If I-D.irtf-cfrg-concrete-hybrid-kems stays normative, note the downref for IETF Last Call.\n\nSeverity: low. Verifier: narrow (Line 102 (hpke-pq maps KEMs to HPKE IDs) and line 93 (concrete-hybrid-kems defines them) are layered, not competing, so the drift claim is speculative and is dropped. The normative citation at line 151 is used only for security considerations and creates an unneeded downref to an IRTF document.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-21T16:43:07.666022622Z",
   "created_by": "agent",
-  "updated_at": "2026-10-21T16:43:07.666022622Z",
+  "updated_at": "2026-10-21T18:46:13.167318934Z",
+  "closed_at": "2026-10-21T18:46:13.167318934Z",
+  "close_reason": "2026-10-21: fixed in low-severity PR https://github.com/mlswg/mls-pq-ciphersuites/pull/29.",
   "labels": [
     "wg",
     "spec:mls-pq-ciphersuites-06"
