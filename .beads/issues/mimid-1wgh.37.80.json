@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.37.80",
   "title": "Test mls-implementations PR #206 passive-client-welcome.json and confirm on #181",
   "description": "mlswg/mls-implementations#181: mulmarta (2026-10-19) says PR #206 regenerates passive-client-welcome.json (the expired KeyPackage leaves we reported) and asks 'Can folks confirm that it passes?'. Run mimi-mls's passive-client vector tests (Observer/Member, and the leaf-lifetime handling from .4.43/.4.69) against #206's file, fully offline after one fetch; report pass/fail. Posting the confirmation needs Mark's OK.",
+  "notes": "2026-10-21: tested #206 (c110f53, sha256 a1618d1b...): mimid observer_passive passes 8/8 suite-1 but checks no tree lifetimes. Raw byte scan: joiner KP eternal in all 56 cases; 14/15 tree leaves expire 2025-03-14 in all 28 ratchet_tree cases (mls-rs get_test_groups 1-year default, mls-rs#385). Commented on #181 (issuecomment-6320429365). Waiting on regenerated files.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-19T19:16:16.411703576Z",
   "created_by": "agent",
-  "updated_at": "2026-10-19T19:16:16.411703576Z",
+  "updated_at": "2026-10-21T16:01:05.021471164Z",
   "labels": [
     "wg"
   ],

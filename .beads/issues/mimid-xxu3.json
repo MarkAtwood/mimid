@@ -1,0 +1,15 @@
+{
+  "id": "mimid-xxu3",
+  "title": "build: Cargo.lock stale after crate-jmap unpin",
+  "description": "13c7857 (build: track crate-jmap main, drop rev pin) changed Cargo.toml but not Cargo.lock, which still pins jmap-chat-types 0.2.0 at crate-jmap rev b8b6f25. Verified 2026-10-21 on main 4eb5520: 'cargo metadata --locked --offline' exits 101 ('cannot update the lock file ... --locked was passed'). A plain build re-resolves crate-jmap main (0.2.0 -\u003e 0.3.0, adds jmap-did-types), so --locked builds/CI likely fail. Fix: cargo update -p for the crate-jmap crates, run the full build-and-test gate, commit Cargo.lock.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:01:39.101388721Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:01:39.101388721Z",
+  "labels": [
+    "localfix"
+  ]
+}
