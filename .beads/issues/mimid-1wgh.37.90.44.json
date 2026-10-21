@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.37.90.44",
   "title": "wg: combiner-02 L173 A FULL Commit is two independent Commits, which the DS orders per...",
   "description": "draft-ietf-mls-combiner (combiner-02), 3. Commit Flow / Wire formats. Editors' copy mlswg/mls-combiner at 380f0e1, L173.\n\nText: \"Section 12 of {{RFC9420}}. For a FULL Commit, a Commit is first applied to the PQ\"\n\nProblem: A FULL Commit is two independent Commits, which the DS orders per group, and PARTIAL Commits compete only in the T group. The PQ half can therefore be accepted while the T half loses, or the reverse. The draft does not say whether the pair must be accepted atomically, what members do when only one half is applied, or how the groups resynchronize.\n\nSuggested fix: Require the DS to accept or reject an APQMessagePair as a unit. Specify recovery when only the PQ half is applied, for example that the next T Commit MUST be a FULL Commit using a fresh PQ Commit.\n\nSeverity: high. Verifier: keep (Confirmed. The draft says nothing about DS ordering across the two groups, partial acceptance, or recovery. PARTIAL Commits exist only in T, so the T half of a FULL Commit can lose the race while the PQ half wins. No issue covers this.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "notes": "2026-10-21: narrowed in review: APQMessagePair exists but is optional for FULL Commits and not atomic at the DS.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-21T16:43:11.177339283Z",
   "created_by": "agent",
-  "updated_at": "2026-10-21T16:43:11.177339283Z",
+  "updated_at": "2026-10-21T17:03:25.830281508Z",
+  "external_ref": "gh-mlswg/mls-combiner#28",
   "labels": [
     "wg",
     "spec:mls-combiner-02"
