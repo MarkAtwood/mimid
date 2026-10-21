@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.3",
+  "title": "wg: pq-ciphersuites-06 L147 For TBD1-TBD8, post-quantum confidentiality holds only against a...",
+  "description": "draft-ietf-mls-pq-ciphersuites (pq-ciphersuites-06), 4. Security Considerations. Editors' copy mlswg/mls-pq-ciphersuites at fb18956, L147.\n\nText: \"As such, they are designed to provide confidentiality against quantum and classical attacks, but provide authenticity against classical attacks only.\"\n\nProblem: For TBD1-TBD8, post-quantum confidentiality holds only against a passive (harvest-now-decrypt-later) adversary. An active adversary able to forge Ed25519 or ECDSA signatures can inject KeyPackages, LeafNode updates or Commits and so read later epochs. The text presents confidentiality and authenticity as independent. The published -06 text is identical.\n\nSuggested fix: Qualify the claim as 'confidentiality against a passive quantum adversary (harvest now, decrypt later)'. Add that an adversary able to forge the traditional signatures can inject group operations and so also compromise the confidentiality of later epochs.\n\nSeverity: medium. Verifier: narrow (The core point holds. An adversary who can forge the classical signatures can inject KeyPackages or Commits and break the confidentiality of later epochs, so 'confidentiality against quantum attacks' holds only against passive attackers. The demand for migration-timing text is an addition beyond that defect and is dropped.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:07.489911675Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:07.489911675Z",
+  "labels": [
+    "wg",
+    "spec:mls-pq-ciphersuites-06"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.3",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:07.519949554Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

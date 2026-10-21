@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.19",
+  "title": "wg: virtual-clients-01 L508 The exact key-pair derivation is given only in prose",
+  "description": "draft-ietf-mls-virtual-clients (virtual-clients-01), Generating Virtual Client Secrets. Editors' copy mlswg/mls-virtual-clients at 65e960d, L508.\n\nText: \"The\n`init_key_secret` and `encryption_key_secret` are used with the target\nciphersuite's KEM to derive the corresponding HPKE key pairs.\"\n\nProblem: The exact key-pair derivation is given only in prose. All emulator clients must produce bit-identical key pairs, and RFC 9420 §7.4 inserts an extra DeriveSecret(…, \"node\") step for path nodes, so a formula avoids divergence.\n\nSuggested fix: State `KEM.DeriveKeyPair(init_key_secret)` and `KEM.DeriveKeyPair(encryption_key_secret)` explicitly, using the target ciphersuite's KEM.\n\nSeverity: low. Verifier: narrow (Reading (b) is a stretch, because the input is already a DeriveSecret output, and KEM.DeriveKeyPair(init_key_secret) is the natural reading. An explicit formula still costs one line and removes doubt. The note about -01 deriving differently is a revision difference, not a defect, and is dropped.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:08.904300979Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:08.904300979Z",
+  "labels": [
+    "wg",
+    "spec:mls-virtual-clients-01"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.19",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:08.9345672Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

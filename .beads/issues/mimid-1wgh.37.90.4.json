@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.4",
+  "title": "wg: pq-ciphersuites-06 L118 TBD5 and TBD8 (P-384, AES-256, SHA-384) carry the MLS_192 prefix, but...",
+  "description": "draft-ietf-mls-pq-ciphersuites (pq-ciphersuites-06), 3. IANA Considerations / MLS Cipher Suites. Editors' copy mlswg/mls-pq-ciphersuites at fb18956, L118.\n\nText: \"| TBD5  | MLS_192_MLKEM1024P384_AES256GCM_SHA384_P384     |  Y  | RFCXXXX |\"\n\nProblem: TBD5 and TBD8 (P-384, AES-256, SHA-384) carry the MLS_192 prefix, but RFC 9420 registers the same classical primitives as MLS_256_DHKEMP384_AES256GCM_SHA384_P384 (0x0007). The draft does not explain the difference in convention, so policies keyed on the name prefix treat equivalent suites differently.\n\nSuggested fix: Add a sentence saying what the security-level prefix means in this document (e.g. the level of the KEM) and that it differs from the RFC 9420 labelling of 0x0007.\n\nSeverity: low. Verifier: narrow (PR #14 ('we had consensus for SHA384 at 256-bit security level') shows that SHA-384 for TBD11 is a WG decision, and RFC 9420 0x0007 also uses MLS_256 with SHA384. The SHA-512 suggestion is dropped. What remains is that P-384 suites carry MLS_192 here but MLS_256 in RFC 9420.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:07.580241014Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:07.580241014Z",
+  "labels": [
+    "wg",
+    "spec:mls-pq-ciphersuites-06"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.4",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:07.608258821Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

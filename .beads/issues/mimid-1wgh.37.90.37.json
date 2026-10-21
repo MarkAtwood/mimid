@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.37",
+  "title": "wg: partial-02 L401 The replaced RFC 9420 step includes LeafNode validation (Section 7.3)...",
+  "description": "draft-ietf-mls-partial (partial-02), Joining via Annotated Welcome. Editors' copy mlswg/mls-partial at 7fef7c1, L401.\n\nText: \"The \"Verify the integrity of the ratchet tree\" step is replaced with a\n     check that the `tree_hash` in the GroupInfo matches the root tree hash\n     produced by the membership proofs.\"\n\nProblem: The replaced RFC 9420 step includes LeafNode validation (Section 7.3) and credential validation. The draft never requires a partial client to validate the LeafNode or credential in any membership proof it uses. Partial Member Identity Authentication (line 635) nevertheless assumes the proved credential is valid.\n\nSuggested fix: Require that each LeafNode taken from a membership proof and used for signature verification or identity be validated per RFC 9420 Section 7.3, including credential validation with the AS, before use.\n\nSeverity: medium. Verifier: narrow (The replaced step does include leaf validation and parent-hash checks, and nothing requires AS credential validation of leaves received in proofs. Line 621 claims invariant preservation at full members, so the \"unsupported claim\" part is a misreading and is dropped.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:10.541068448Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:10.541068448Z",
+  "labels": [
+    "wg",
+    "spec:mls-partial-02"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.37",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:10.573822621Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

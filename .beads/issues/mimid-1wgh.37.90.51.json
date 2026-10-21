@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.51",
+  "title": "wg: combiner-02 L167 Most suites in draft-ietf-mls-pq-ciphersuites-06 are hybrid (TBD1-5...",
+  "description": "draft-ietf-mls-combiner (combiner-02), Combiner Protocol Execution / Cipher Suites. Editors' copy mlswg/mls-combiner at 380f0e1, L167.\n\nText: \"in {{commit-flow}}. In either case, PQ group MUST be instantiated with an approved PQ ciphersuite as detailed in {{I-D.ietf-mls-pq-ciphersuites}}.\"\n\nProblem: Most suites in draft-ietf-mls-pq-ciphersuites-06 are hybrid (TBD1-5 and TBD9), but lines 624-626 and 639-640 forbid hybrid KEMs in the PQ session. No registry column classifies suites as traditional, pure PQ or hybrid, so the 'invalid or duplicate' check at lines 632-633 cannot be tested.\n\nSuggested fix: List the permitted pq_cipher_suite values: the pure ML-KEM suites TBD6-8, TBD10 and TBD11 for mode 0, and only TBD10 and TBD11 for mode 1. Constrain t_cipher_suite to the RFC 9420 suites, and define 'duplicate'.\n\nSeverity: medium. Verifier: keep (Confirmed against pq-ciphersuites-06 lines 232-252. TBD1-5 and TBD9 are hybrid (MLKEM768X25519 or MLKEM+ECDH), and lines 624-626 and 639-640 forbid hybrid KEMs, so 'approved PQ ciphersuite as detailed in' is broader than what is allowed.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:11.827632048Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:11.827632048Z",
+  "labels": [
+    "wg",
+    "spec:mls-combiner-02"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.51",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:11.861324749Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

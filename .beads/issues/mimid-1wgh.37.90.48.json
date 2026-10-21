@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.48",
+  "title": "wg: combiner-02 L477 'can' does not make other combinations invalid",
+  "description": "draft-ietf-mls-combiner (combiner-02), Updating APQInfo. Editors' copy mlswg/mls-combiner at 380f0e1, L477.\n\nText: \"A Commit can include either a single AppDataUpdate with a `full_update` or\"\n\nProblem: 'can' does not make other combinations invalid: a lone new_t_epoch, full_update plus new_t_epoch, duplicates, or an epoch update in a PARTIAL Commit. Under extensions-10 the application logic decides validity, so implementations can disagree, and the GroupContext then forks.\n\nSuggested fix: State that, for 0x0006, the update list in one Commit MUST be exactly [full_update] or exactly one new_t_epoch and one new_pq_epoch, and that such updates MUST NOT appear in PARTIAL Commits. Any other list is invalid.\n\nSeverity: medium. Verifier: keep (Confirmed. Line 477 uses 'can', and extensions-10 Section 4.7 hands the validity of an update list to the application logic, so this draft must define which combinations are valid. Whether t_epoch changes on a PARTIAL Commit is also unstated.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:11.546276065Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:11.546276065Z",
+  "labels": [
+    "wg",
+    "spec:mls-combiner-02"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.48",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:11.578729445Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.39",
+  "title": "wg: partial-02 L514 direct_path_nodes includes the leaf (line 307), but UpdatePath.nodes...",
+  "description": "draft-ietf-mls-partial (partial-02), Annotated Commit. Editors' copy mlswg/mls-partial at 7fef7c1, L514.\n\nText: \"Determine the index `update_path_index` of the lowest common ancestor\n      among the non-blank nodes in the committer's direct path, as provided in\n      the `sender_membership_proof_after` field.\"\n\nProblem: direct_path_nodes includes the leaf (line 307), but UpdatePath.nodes covers only parent nodes. Counting non-blank entries of direct_path_nodes therefore gives an index one too high unless the leaf is excluded, and the text does not say which. The Tree slice definition (line 109) and the field name have the same ambiguity.\n\nSuggested fix: State that update_path_index counts only parent nodes, excluding direct_path_nodes[0] (the leaf), and equals the index into the committer's filtered direct path. Consider renaming the field to `path_nodes`.\n\nSeverity: medium. Verifier: keep (Confirmed. Line 307 includes the leaf in direct_path_nodes, while UpdatePath.nodes covers only parent nodes, and the field name suggests RFC 9420's leaf-excluding direct path. The post-commit non-blank pattern does equal the filtered direct path, so the method works once the leaf is excluded. Finding 2 is merged here.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:10.723235744Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:10.723235744Z",
+  "labels": [
+    "wg",
+    "spec:mls-partial-02"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.39",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:10.756411087Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

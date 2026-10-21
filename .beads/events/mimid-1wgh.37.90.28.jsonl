@@ -1,0 +1,3 @@
+{"id":"01a15f58-6018-72ce-ad6f-70f076cc7737","issue_id":"mimid-1wgh.37.90.28","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-21T16:43:09.720184293Z"}
+{"id":"01a15f58-601c-7237-8d5d-dc3c8cb1166b","issue_id":"mimid-1wgh.37.90.28","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-21T16:43:09.724145759Z"}
+{"id":"01a15f58-6020-7342-9b68-a06b518a25ca","issue_id":"mimid-1wgh.37.90.28","event_type":"label_added","actor":"agent","comment":"Added label: spec:mls-virtual-clients-01","created_at":"2026-10-21T16:43:09.72821412Z"}

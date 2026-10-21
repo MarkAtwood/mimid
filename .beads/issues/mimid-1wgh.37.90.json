@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.90",
+  "title": "Copyedit and audit MLS WG drafts",
+  "description": "Requested by Mark 2026-10-21. Drafts: pq-ciphersuites-06, targeted-messages-01, virtual-clients-01, partial-02, combiner-02 (local copies in ~/PROJECT/IETF/specs; editors' copies in ~/GIT/mls-\u003cname\u003e at fb18956, ae3ab52, 65e960d, 7fef7c1, 380f0e1). Per draft: independent copyedit agent + audit agent, then an adversarial verify agent checks every finding against the editors' copy and existing upstream issues/PRs. Surviving findings become wg beads under this epic, each citing section + editors'-copy line + suggested fix. Nothing is posted upstream without Mark's per-item OK. Out of scope: federation-03 (dead), RFC 9750 (errata only).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:30:34.652238368Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:30:34.652238368Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:30:34.686736607Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

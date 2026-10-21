@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.13",
+  "title": "wg: virtual-clients-01 editorial fixes (14 items)",
+  "description": "Editorial findings in draft-ietf-mls-virtual-clients (virtual-clients-01). Editors' copy mlswg/mls-virtual-clients at 65e960d.\n\n1. L36 (Normative References): The normative NIST reference has no date or series number, so published -01 renders it as 'n.d.'. Its key 'NIST' does not identify the publication. Fix: Add 'date: 2016-03' and 'seriesinfo: NIST Special Publication: 800-38G' (DOI 10.6028/NIST.SP.800-38G), and use a key such as NIST.SP.800-38G.\n2. L138 (4.1.2 Fewer blanks): The preposition is missing: 'lead to blanks the higher-level groups'. Published -01 has different wording here, so this error was introduced after -01. Fix: 'blanks in the higher-level groups, resulting in fewer overall blanks and'\n3. L247 (5.2 Generating Virtual Client Secrets): This item is introduced as one of 'the following differences' (L245), but it states a similarity. Published -01 has the same text. Fix: Move the similarity into the lead-in sentence and keep only the real differences in the list.\n4. L287 (5.2 Generating Virtual Client Secrets): The identifier `operation_secret_tree` appears here with no introduction. L243 names the tree only as the 'Virtual Client Operation Secret Tree'. Published -01 has the same text. Fix: At L243, write 'keys a Virtual Client Operation Secret Tree (`operation_secret_tree`)', or use the prose name here.\n5. L883 (5.4 Sending PrivateMessages): The comma is misplaced: 'instead of sampling it randomly' attaches to 'as described below'. Published -01 has the same text. Fix: 'prevent this by computing the `reuse_guard` as described below, instead of sampling it randomly.'\n6. L889 (5.4.1 Small-Space PRP): An adjective is used where an adverb is needed. Published -01 has the same text. Fix: 'works similarly to a block cipher'\n7. L1057 (Adding an emulator client): 'emulator' is missing 'client', and 'RatchetTree' is not an RFC 9420 type name; RFC 9420 says 'ratchet tree'. Published -01 has the same text. Fix: 'The joining emulator client obtains the ratchet tree and the GroupContext from an'\n8. L1094 (Trade-offs): A comma is missing before the participial phrase at L1094, and the same at L1096 ('by policy leaving'). Published -01 has both. Fix: 'breaks the commit chain, resulting in weaker forward secrecy' and 'by policy, leaving Variant A as the only option.'\n9. L1105 (5.2 Generating Virtual Client Secrets / 6.1.2 State transfer protocol): VirtualClientOperationType, SecretTreeState and SecretTreeRatchetState are defined only inside an optional ('MAY') state-transfer block. The enum values are mandatory key-derivation inputs (L273-279, L343), and SecretTreeState is cited as the normative representation at L249-250 and L263-266. Published -01 has the same layout. Fix: Move VirtualClientOperationType (and the SecretTree* structs, if they stay normative) into 'Generating Virtual Client Secrets', near their first use at L253. Keep only the transfer-specific structs under 'Applications MAY use...'.\n10. L1352 (Joining externally): 'emulator' is missing 'client'. Published -01 has the same text. Fix: 'a new emulator client can join the emulation group externally.'\n11. L1359 (Joining externally / Removing emulator clients): 'emulation client(s)' is used at L1359, L1363 and L1391, but the defined term is 'emulator client'. Published -01 has the same wording. Fix: Replace 'emulation client(s)' with 'emulator client(s)' at L1359, L1363 and L1391.\n12. L1373 (Joining externally): In a protocol step, 'offline devices' means the other (offline) emulator clients and should use the defined term. Published -01 has the same text. Fix: 'Welcome messages that were not processed by the offline emulator clients are discarded'\n13. L1400 (Removing emulator clients): The compound modifier needs a hyphen, and L1488 spells it 'long-lived'. Published -01 has the same text. Fix: 'long-lived credentials'\n14. L1584 (IANA Considerations): '(temporary)' is not a status the registry defines, and the document does not explain that 0x667A is a placeholder for experimentation (the intent of PR #28), not a requested value. Published -01 had 'Value: 0x0006 (suggested)'. Fix: Use 'Value: TBD', with a note to IANA or the RFC Editor that 0x667A is used for interop testing until assignment.\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21), verified per item. Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:08.372414236Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:08.372414236Z",
+  "labels": [
+    "wg",
+    "spec:mls-virtual-clients-01"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.13",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:08.404164619Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

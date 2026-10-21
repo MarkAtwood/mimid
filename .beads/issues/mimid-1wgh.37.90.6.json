@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.6",
+  "title": "wg: targeted-messages-01 editorial fixes (7 items)",
+  "description": "Editorial findings in draft-ietf-mls-targeted-messages (targeted-messages-01). Editors' copy mlswg/mls-targeted-messages at ae3ab52.\n\n1. L125 (4 Cryptographic Algorithms; 6.3 Sender Data Encryption): KEM, KDF and AEAD are used at line 125 without expansion and are expanded only later, at lines 299-303. Fix: Expand them at first use in Section 4 and drop the later expansions in Section 6.3.\n2. L218 (6.2 Application Data Encryption; 8.3 Message Field Binding; Change Log): The same HPKE input is called \"HPKE context\"/`hpke_context` (lines 218, 241) and HPKE `info` (lines 421, 679). In RFC 9180, the parameter of SealPSK/OpenPSK is `info`, and \"context\" names the encryption context, so the current wording invites confusion. Fix: Use `info` throughout, e.g. \"The HPKE `info` is a serialized `TargetedMessageContext` struct\", and rename `hpke_context` to `hpke_info` in the text and pseudocode.\n3. L297 (6.3 Sender Data Encryption; 8.5 Sender Identity Confidentiality): RFC 9420 Section 6.3.2 has no struct named `MLSSenderData`; the struct is `SenderData`. The same wrong name appears again at line 471. Published -01 has the same text. Fix: Replace `MLSSenderData` with `SenderData` at lines 297 and 471.\n4. L375 (7.1 Messages from Past Epochs): Comma splice: two independent clauses are joined by a comma. Published -01 has the same text. Fix: \"Support for past epochs is OPTIONAL; accepting only the current epoch is the most conservative behavior.\"\n5. L377 (7.1 Messages from Past Epochs; 8.1 Authentication; 8.4 Forward Secrecy): \"Forward Secrecy\"/\"Post-Compromise Security\" are capitalized in running text at lines 377 and 401 but lowercase at lines 454, 457 and 459. Fix: Use lowercase in running text and keep capitals only in section titles.\n6. L539 (Appendix A Test Vectors): \"MTI\" is never expanded. Published -01 has the same text. Fix: \"All vectors use the mandatory-to-implement (MTI) MLS cipher suite\".\n7. L712 (Acknowledgments): The Acknowledgments section is empty and renders as an empty section. Published -01 is also empty. Fix: Add acknowledgments or remove the section.\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21), verified per item. Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:07.75106854Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:07.75106854Z",
+  "labels": [
+    "wg",
+    "spec:mls-targeted-messages-01"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.6",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:07.779969127Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

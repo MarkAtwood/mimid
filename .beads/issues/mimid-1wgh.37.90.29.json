@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.29",
+  "title": "wg: virtual-clients-01 L826 The draft defines no action when KeyPackageInfo.cipher_suite and the...",
+  "description": "draft-ietf-mls-virtual-clients (virtual-clients-01), Creating and uploading KeyPackages. Editors' copy mlswg/mls-virtual-clients at 65e960d, L826.\n\nText: \"If a recipient obtains the KeyPackage, it MUST verify\nthat the two values match.\"\n\nProblem: The draft defines no action when KeyPackageInfo.cipher_suite and the KeyPackage's ciphersuite differ. Implementations will diverge on whether to process Welcomes to that KeyPackage.\n\nSuggested fix: Specify the action on mismatch, for example: discard the material for that KeyPackageRef and do not process Welcomes addressed to it.\n\nSeverity: low. Verifier: keep (Confirmed at L826-827: a MUST-verify with no action defined on mismatch.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:09.808151287Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:09.808151287Z",
+  "labels": [
+    "wg",
+    "spec:mls-virtual-clients-01"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.29",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:09.835355417Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

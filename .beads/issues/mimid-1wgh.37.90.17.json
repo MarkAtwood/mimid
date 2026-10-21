@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.90.17",
+  "title": "wg: virtual-clients-01 L724 Under extensions-10 §4.9, SafeAAD framing applies only if the...",
+  "description": "draft-ietf-mls-virtual-clients (virtual-clients-01), Virtual client actions. Editors' copy mlswg/mls-virtual-clients at 65e960d, L724.\n\nText: \"The SafeAAD component data of the\n`virtual_clients` component is a VirtualClientAction struct.\"\n\nProblem: Under extensions-10 §4.9, SafeAAD framing applies only if the emulation group's GroupContext app_data_dictionary contains a safe_aad component. The draft never requires the emulation group to carry safe_aad listing virtual_clients when actions are used.\n\nSuggested fix: State that an emulation group that uses virtual client actions MUST include safe_aad, listing virtual_clients, in its GroupContext app_data_dictionary.\n\nSeverity: low. Verifier: narrow (extensions-10 §4.9 frames authenticated_data as SafeAAD only when safe_aad is present in the GroupContext's app_data_dictionary. The draft never requires that for the emulation group. The LeafNode-capabilities part is dropped, because RFC 9420 leaf validation already requires listed extensions. The 'raw VCA in AAD' reading is weak, because L724 explicitly says SafeAAD component data.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T16:43:08.730157587Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T16:43:08.730157587Z",
+  "labels": [
+    "wg",
+    "spec:mls-virtual-clients-01"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.17",
+      "depends_on_id": "mimid-1wgh.37.90",
+      "type": "parent-child",
+      "created_at": "2026-10-21T16:43:08.759153364Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
