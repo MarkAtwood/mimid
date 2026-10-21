@@ -1,3 +1,4 @@
 {"id":"01a15f58-56b4-7985-9453-c4f5a6862cfd","issue_id":"mimid-1wgh.37.90.1","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-21T16:43:07.316625359Z"}
 {"id":"01a15f58-56b9-77fc-b3a2-cf746cb89010","issue_id":"mimid-1wgh.37.90.1","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-21T16:43:07.3215241Z"}
 {"id":"01a15f58-56be-7497-a3a5-34d2e129ae48","issue_id":"mimid-1wgh.37.90.1","event_type":"label_added","actor":"agent","comment":"Added label: spec:mls-pq-ciphersuites-06","created_at":"2026-10-21T16:43:07.326301607Z"}
+{"id":"01a15f70-5999-72c3-b628-d6b89a601056","issue_id":"mimid-1wgh.37.90.1","event_type":"closed","actor":"agent","old_value":"","new_value":"2026-10-21: all 12 items sent as https://github.com/mlswg/mls-pq-ciphersuites/pull/24 (MarkAtwood:editorial, 371ab5e). Non-NIST labels deliberately left alone.","created_at":"2026-10-21T17:09:20.921182778Z"}
