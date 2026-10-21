@@ -139,6 +139,11 @@ mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat cl
 - **Push only with Mark's explicit OK.** If a push is rejected, stop and report it. Never `pull --rebase`, reset or force-push.
 - **When running unattended,** turn an open question into a bead labelled `human` instead of blocking on it.
 
+## Email and mailing lists
+
+- **`fm`** is the Fastmail CLI for Mark's mail. Read with `fm search`, `fm email read` and `fm email thread`. Send with `fm draft new` or `fm draft reply`, then `fm draft send`. Mark's Fastmail is subscribed to the mimi and mls lists. Each send needs Mark's OK, like any other upstream post.
+- **The IETF list archives** are on `imap.ietf.org:993` (TLS, read-only). Log in as `anonymous` with `mark@reviewcommit.com` as the password. We don't hide who is reading. Each list is a folder under `Shared Folders/`, for example `Shared Folders/mimi` and `Shared Folders/mls`.
+
 ## Build and test
 
 Run everything before proposing a commit:
