@@ -1,0 +1,2 @@
+{"id":"01a155b5-7100-7a27-bdd1-f147d354f845","issue_id":"mimid-1wgh.12.39","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-19T19:48:36.736666212Z"}
+{"id":"01a1560b-504e-708e-b5cd-e2cc0e910a22","issue_id":"mimid-1wgh.12.39","event_type":"closed","actor":"agent","old_value":"","new_value":"Moot: crate-jmap dependency unpinned to branch main (Mark 2026-10-19), see mimid-1wgh.12.21.","created_at":"2026-10-19T21:22:24.462037102Z"}

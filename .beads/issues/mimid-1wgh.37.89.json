@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.89",
+  "title": "wg: protocol-06 §5.4.1.3 frank with mismatched cipher suite",
+  "description": "Filed 2026-10-21 as https://github.com/ietf-wg-mimi/mimi-protocol/issues/170. Receiver verification of frank has no branch for franking_signature_ciphersuite != group cipher suite. Readings offered: treat as no frank (matches PR #169), always discard, or accept with unverified frank. Watch for editor reply.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-21T15:32:36.817725205Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-21T15:32:36.817725205Z",
+  "external_ref": "gh-ietf-wg-mimi/mimi-protocol#170",
+  "labels": [
+    "wg",
+    "spec:mimi-protocol-06"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.89",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-10-21T15:32:36.85004194Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

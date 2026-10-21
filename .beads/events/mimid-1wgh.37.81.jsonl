@@ -2,3 +2,4 @@
 {"id":"01a1559b-1d04-76e4-ab94-a01d42c2a676","issue_id":"mimid-1wgh.37.81","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-10-19T19:19:51.300452214Z"}
 {"id":"01a1559b-1d09-7233-992c-f252cdfbd196","issue_id":"mimid-1wgh.37.81","event_type":"label_added","actor":"agent","comment":"Added label: human","created_at":"2026-10-19T19:19:51.305144911Z"}
 {"id":"01a1559b-1d0d-7b5e-8f11-43d6ee2e7efc","issue_id":"mimid-1wgh.37.81","event_type":"label_added","actor":"agent","comment":"Added label: spec:mimi-protocol-06","created_at":"2026-10-19T19:19:51.309745548Z"}
+{"id":"01a15f0f-edb0-7d1a-b1c9-f7d72ddc572e","issue_id":"mimid-1wgh.37.81","event_type":"closed","actor":"agent","old_value":"","new_value":"2026-10-21: replied on mimi-protocol#166 (issuecomment-6319642934): answered -09/-06 question, accepted wontfix, committed to listing 0x0020 as required in franking-required rooms.","created_at":"2026-10-21T15:24:01.840859872Z"}
