@@ -8,7 +8,8 @@
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-21T16:43:09.174655812Z",
   "created_by": "agent",
-  "updated_at": "2026-10-21T16:43:09.174655812Z",
+  "updated_at": "2026-10-21T17:38:00.706654894Z",
+  "external_ref": "gh-mlswg/mls-virtual-clients#41",
   "labels": [
     "wg",
     "spec:mls-virtual-clients-01"

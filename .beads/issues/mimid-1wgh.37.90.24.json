@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.37.90.24",
   "title": "wg: virtual-clients-01 L187 The draft assumes emulator clients decrypt PrivateMessages from their...",
   "description": "draft-ietf-mls-virtual-clients (virtual-clients-01), Delivery Service. Editors' copy mlswg/mls-virtual-clients at 65e960d, L187.\n\nText: \"Similarly, any PrivateMessage sent by a virtual\nclient to a group can be decrypted by all emulator clients except the one that\nsent it.\"\n\nProblem: The draft assumes emulator clients decrypt PrivateMessages from their own leaf index, which ordinary RFC 9420 implementations reject. It also does not say that this advances the shared ratchet, so later sends start past generation g. Without that, generation collisions (L959-975) become the normal case.\n\nSuggested fix: State that emulator clients MUST accept and decrypt virtual-client PrivateMessages from their own leaf index, and that doing so advances the shared ratchet, so later sends use a generation of at least g+1.\n\nSeverity: medium. Verifier: narrow (RFC 9420 gives each leaf a single ratchet per content type, so if an emulator client decrypts its own leaf's message at generation g, the shared ratchet advances. The real gap is narrower than claimed: the draft never says emulator clients must accept PrivateMessages from their own leaf index (implementations usually reject them) or that doing so advances their sending state.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
+  "notes": "2026-10-21: narrowed in review: collisions already handled at L956-975; only the accept-own-leaf + ratchet-advance clarification remains. Lowered to P4.",
   "status": "open",
-  "priority": 3,
+  "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-21T16:43:09.353416754Z",
   "created_by": "agent",
-  "updated_at": "2026-10-21T16:43:09.353416754Z",
+  "updated_at": "2026-10-21T17:39:28.047185811Z",
+  "external_ref": "gh-mlswg/mls-virtual-clients#43",
   "labels": [
     "wg",
     "spec:mls-virtual-clients-01"

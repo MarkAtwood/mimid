@@ -8,7 +8,8 @@
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-21T16:43:11.546276065Z",
   "created_by": "agent",
-  "updated_at": "2026-10-21T16:43:11.546276065Z",
+  "updated_at": "2026-10-21T17:53:24.268829101Z",
+  "external_ref": "gh-mlswg/mls-combiner#30",
   "labels": [
     "wg",
     "spec:mls-combiner-02"

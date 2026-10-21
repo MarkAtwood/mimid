@@ -8,7 +8,8 @@
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-21T16:43:07.837045577Z",
   "created_by": "agent",
-  "updated_at": "2026-10-21T16:43:07.837045577Z",
+  "updated_at": "2026-10-21T17:22:56.948309269Z",
+  "external_ref": "gh-mlswg/mls-targeted-messages#11",
   "labels": [
     "wg",
     "spec:mls-targeted-messages-01"

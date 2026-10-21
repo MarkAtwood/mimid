@@ -3,12 +3,13 @@
   "title": "wg: combiner-02 L163 The draft does not say how APQInfo and the required_wire_formats...",
   "description": "draft-ietf-mls-combiner (combiner-02), Combiner Protocol Execution / Wire formats. Editors' copy mlswg/mls-combiner at 380f0e1, L163.\n\nText: \"as previously mentioned. Alternatively, a combined session can also be created after\"\n\nProblem: The draft does not say how APQInfo and the required_wire_formats extension (line 590) are established in each group's initial GroupContext, either for the default start or for upgrading a running T group. In the upgrade path, the T group needs a GroupContextExtensions proposal for required_wire_formats, which the draft never mentions.\n\nSuggested fix: For both start paths, specify how each group's initial APQInfo and required_wire_formats are set. For the upgrade path, require the first FULL Commit's T Commit to add required_wire_formats with a GroupContextExtensions proposal.\n\nSeverity: medium. Verifier: narrow (A receiver can tell the first FULL Commit by the absence of APQInfo in the T group, so that part is weak. The real gap is that neither start path (lines 161-167) says how APQInfo and required_wire_formats get into each group's initial GroupContext. In the upgrade path, the T group must also add required_wire_formats through some unspecified proposal.)\n\nFrom MLS audit workflow wf_581e61f8-b25 (2026-10-21). Not yet reviewed by Mark; nothing posted upstream.",
   "status": "open",
-  "priority": 3,
+  "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-21T16:43:11.636468165Z",
   "created_by": "agent",
-  "updated_at": "2026-10-21T16:43:11.636468165Z",
+  "updated_at": "2026-10-21T17:55:13.121565363Z",
+  "external_ref": "gh-mlswg/mls-combiner#31",
   "labels": [
     "wg",
     "spec:mls-combiner-02"
