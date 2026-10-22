@@ -23,7 +23,7 @@ const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
 /// mls-extensions-10 §7.1.1: app_data_dictionary extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
-/// The pre-standard last_resort extension type that OpenMLS 0.9.1 uses;
+/// The pre-standard last_resort extension type that OpenMLS 0.9.2 uses;
 /// mls-extensions-10 replaced it with component 0x0004.
 const STALE_LAST_RESORT: ExtensionType = ExtensionType::new(0x000a);
 

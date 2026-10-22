@@ -8,7 +8,7 @@ license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 # Exact pins: OpenMLS's extensions-draft API changes between releases.
-openmls = { version = "=0.9.1", features = ["extensions-draft"] }
+openmls = { version = "=0.9.2", features = ["extensions-draft"] }
 openmls_rust_crypto = { version = "=0.6.0", features = ["extensions-draft"] }
 openmls_sqlite_storage = { version = "=0.3.0", features = ["extensions-draft"] }
 
@@ -31,17 +31,17 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
 toml = "1.1.8"
 
-# Our OpenMLS branch (mimid-0.9.1): v0.9.1 plus the GREASE KeyPackage
+# Our OpenMLS branch (mimid-0.9.2): v0.9.2 plus the GREASE KeyPackage
 # extension fix (decision mimid-1wgh.4.11) and a PublicGroup leaf-lifetime
 # opt-out, LeafNodeLifetimePolicy::Skip (decision mimid-1wgh.4.38), and
 # MlsGroup::set_leaf_node_lifetime_policy so members can use it too
 # (decision mimid-1wgh.4.56). Every openmls-family crate comes from the same
 # commit so they share one openmls_traits; all but openmls are unchanged.
 [patch.crates-io]
-openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "a36719847c81a7722cadf21462995077a6325632" }
-openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "a36719847c81a7722cadf21462995077a6325632" }
-openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "a36719847c81a7722cadf21462995077a6325632" }
-openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "a36719847c81a7722cadf21462995077a6325632" }
-openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "a36719847c81a7722cadf21462995077a6325632" }
-openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "a36719847c81a7722cadf21462995077a6325632" }
-openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "a36719847c81a7722cadf21462995077a6325632" }
+openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
+openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
+openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
+openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
+openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
+openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
+openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }

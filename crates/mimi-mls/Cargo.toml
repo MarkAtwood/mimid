@@ -9,7 +9,7 @@ description = "MLS layer for the mimid MIMI reference implementation"
 openmls.workspace = true
 openmls_rust_crypto.workspace = true
 openmls_sqlite_storage.workspace = true
-# Exact pin: must be the version openmls 0.9.1 itself depends on.
+# Exact pin: must be the version openmls 0.9.2 itself depends on.
 openmls_basic_credential = "=0.6.0"
 serde.workspace = true
 serde_json.workspace = true
