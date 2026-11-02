@@ -1,8 +1,8 @@
 //! Client for peer providers: directory fetch and cache, and outbound
 //! `/notify`, `/keyMaterial`, `/update`, `/submitMessage`, `/groupInfo`,
-//! `/requestConsent`, `/updateConsent` and `/identifierQuery` requests over
-//! reqwest (plans of mimid-1wgh.6 and mimid-1wgh.7; mimid-1wgh.7.32,
-//! mimid-1wgh.7.33).
+//! `/requestConsent`, `/updateConsent`, `/identifierQuery` and `/reportAbuse`
+//! requests over reqwest (plans of mimid-1wgh.6 and mimid-1wgh.7;
+//! mimid-1wgh.7.32, mimid-1wgh.7.33, mimid-1wgh.7.34).
 //!
 //! A peer's base URL comes from the configured peer map, which replaces DNS
 //! discovery (decision mimid-1wgh.17). Its directory (protocol-06 §5.1) is
@@ -66,6 +66,8 @@ enum Endpoint {
     UpdateConsent,
     /// §5.8 `POST /identifierQuery/{domain}`.
     IdentifierQuery,
+    /// §5.9 `POST /reportAbuse/{roomId}`.
+    ReportAbuse,
 }
 
 impl Endpoint {
@@ -80,6 +82,7 @@ impl Endpoint {
             Self::RequestConsent => "requestConsent",
             Self::UpdateConsent => "updateConsent",
             Self::IdentifierQuery => "identifierQuery",
+            Self::ReportAbuse => "reportAbuse",
         }
     }
 
@@ -87,7 +90,11 @@ impl Endpoint {
     fn variable(self) -> &'static str {
         match self {
             Self::KeyMaterial => "targetUser",
-            Self::Update | Self::SubmitMessage | Self::Notify | Self::GroupInfo => "roomId",
+            Self::Update
+            | Self::SubmitMessage
+            | Self::Notify
+            | Self::GroupInfo
+            | Self::ReportAbuse => "roomId",
             Self::RequestConsent => "targetDomain",
             Self::UpdateConsent => "requesterDomain",
             Self::IdentifierQuery => "domain",
@@ -106,6 +113,7 @@ impl Endpoint {
             Self::RequestConsent => directory.request_consent.as_ref(),
             Self::UpdateConsent => directory.update_consent.as_ref(),
             Self::IdentifierQuery => directory.identifier_query.as_ref(),
+            Self::ReportAbuse => directory.report_abuse.as_ref(),
         }
     }
 }
@@ -242,6 +250,26 @@ impl PeerClient {
         body: Vec<u8>,
     ) -> Result<Vec<u8>, PeerError> {
         self.post_read(domain, Endpoint::IdentifierQuery, domain.as_str(), body)
+            .await
+    }
+
+    /// protocol-06 §5.9 `POST /reportAbuse/{roomId}`: sends `body`, an
+    /// AbuseReport about the room `room_id`, to `domain`, the room's hub,
+    /// and returns the response body as received (empty from a mimid hub,
+    /// decision mimid-1wgh.6.65). Only a `200` response counts, and its body
+    /// may be at most [`MAX_BODY_LEN`] bytes. Nothing in mimid calls it yet:
+    /// reporting has no user surface in v1 (decision mimid-1wgh.21).
+    ///
+    /// # Errors
+    ///
+    /// As for [`PeerClient::update`].
+    pub async fn report_abuse(
+        &self,
+        domain: &Domain,
+        room_id: &str,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, PeerError> {
+        self.post_read(domain, Endpoint::ReportAbuse, room_id, body)
             .await
     }
 
