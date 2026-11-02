@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.91.6",
+  "title": "watch: mls-targeted-messages #13 #14 re-review, PR #21, issues #18-#20",
+  "description": "Raphael's re-review after suggestions applied 2026-11-02 (#13, #14); PR #21 appendix vectors (fixes #19); issues #18 Safe AAD, #20 undecodable plaintext. Parent bead mimid-1wgh.37.90.12 closes when #21 merges.",
+  "status": "deferred",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T19:17:31.270076233Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T19:17:31.270076233Z",
+  "defer_until": "2026-11-09T00:00:00-08:00",
+  "labels": [
+    "upstream-watch",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.91.6",
+      "depends_on_id": "mimid-1wgh.37.91",
+      "type": "parent-child",
+      "created_at": "2026-11-02T19:17:31.322020811Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

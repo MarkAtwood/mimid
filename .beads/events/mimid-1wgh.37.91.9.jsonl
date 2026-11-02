@@ -1,0 +1,4 @@
+{"id":"01a19db2-036b-77af-9b85-f1a39a8a2f2a","issue_id":"mimid-1wgh.37.91.9","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-11-02T19:17:31.627504326Z"}
+{"id":"01a19db2-0372-7737-b777-01fbdaabc90a","issue_id":"mimid-1wgh.37.91.9","event_type":"label_added","actor":"agent","comment":"Added label: upstream-watch","created_at":"2026-11-02T19:17:31.634473385Z"}
+{"id":"01a19db2-037b-7b0a-838f-88acbf16bf65","issue_id":"mimid-1wgh.37.91.9","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-11-02T19:17:31.643724059Z"}
+{"id":"01a19db2-a4a1-7937-b29b-edf1ffe6e7bd","issue_id":"mimid-1wgh.37.91.9","event_type":"closed","actor":"agent","old_value":"","new_value":"Moved at Mark's direction: JMAP list reviews -\u003e crate-jmap JMAP-3a7m; jmapio Calendars/EmailPush -\u003e crate-jmap JMAP-y1n5; jmap-ai thread -\u003e jmap-chat-spec jmap-chat-spec-fojy.","created_at":"2026-11-02T19:18:12.897605385Z"}

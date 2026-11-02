@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.91.2",
+  "title": "watch: mimi-content #91, PR #90",
+  "description": "content-10 filings 2026-11-02: #91 URI comparison rule (pairs with mimi-protocol #159), PR #90 editorial.",
+  "status": "deferred",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T19:17:30.791353156Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T19:17:30.791353156Z",
+  "defer_until": "2026-11-09T00:00:00-08:00",
+  "labels": [
+    "upstream-watch",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.91.2",
+      "depends_on_id": "mimid-1wgh.37.91",
+      "type": "parent-child",
+      "created_at": "2026-11-02T19:17:30.838095663Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

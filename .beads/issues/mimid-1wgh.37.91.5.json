@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.91.5",
+  "title": "watch: mls-combiner #43 and combiner/partial PR nudge",
+  "description": "combiner #43 (apq_exporter \u003c HashLen for SHA-512 T suites). Nudge sent to mls@ietf.org 2026-11-02 for combiner PRs #34-#42 and partial PRs #14-#20; partial #14 approved, needs merge. Combiner last merge 2026-08-21, partial 2026-05-07.",
+  "status": "deferred",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T19:17:31.15302137Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T19:17:31.15302137Z",
+  "defer_until": "2026-11-09T00:00:00-08:00",
+  "labels": [
+    "upstream-watch",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.91.5",
+      "depends_on_id": "mimid-1wgh.37.91",
+      "type": "parent-child",
+      "created_at": "2026-11-02T19:17:31.199103045Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

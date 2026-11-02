@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.91.4",
+  "title": "watch: mimi-protocol PRs #181 #182, #149 thread",
+  "description": "#181 UTF8String/uint8 types, #182 roomId optional (editor agreed in #149). .63 (KeyMaterialRequest signature suite) waits on Rohan's reply to Mark's 2026-11-02 #149 comment, tracked in mimid-1wgh.37.63.",
+  "status": "deferred",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T19:17:31.027932784Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T19:17:31.027932784Z",
+  "defer_until": "2026-11-09T00:00:00-08:00",
+  "labels": [
+    "upstream-watch",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.91.4",
+      "depends_on_id": "mimid-1wgh.37.91",
+      "type": "parent-child",
+      "created_at": "2026-11-02T19:17:31.077867048Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

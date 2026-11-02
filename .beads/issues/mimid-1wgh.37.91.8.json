@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.91.8",
+  "title": "watch: openmls #2310 #2311 CI approval, #2313 #2314 KATs",
+  "description": "#2310/#2311 wait on first-time-contributor CI approval (asked raphaelrobert). #2313 KAT format+verifier, #2314 negative KATs (depends on #2313), opened 2026-11-02. Also #2292.",
+  "status": "deferred",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T19:17:31.503630546Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T19:17:31.503630546Z",
+  "defer_until": "2026-11-09T00:00:00-08:00",
+  "labels": [
+    "upstream-watch",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.91.8",
+      "depends_on_id": "mimid-1wgh.37.91",
+      "type": "parent-child",
+      "created_at": "2026-11-02T19:17:31.549988395Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
