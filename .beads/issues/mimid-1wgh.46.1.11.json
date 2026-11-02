@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.46.1.11",
+  "title": "haven: KeyMaterialResponse decoder accepts one client only, refuses partialSuccess with a success client",
+  "description": "Found by A2 (mimid-1wgh.46.1.2). protocol-06 §5.2 L1163-1168: partialSuccess = key material returned for some clients, and each client is enumerated (clients\u003cV\u003e vector); L1283-1284: partialSuccess means key material for at least one client. Haven mimi-core 2c14e62 KeyMaterialResponse::decode (src/protocol_wire.rs ~1196-1294) reads only clients[0] (trailing-bytes error after it) and accepts only (Success,Success), (PartialSuccess,KeyMaterialExhausted) and denials; everything else is 'unsupported (userStatus, clientStatus) combination'. mimid's spec-valid response (partialSuccess; bob-phone success + bob-laptop keyMaterialExhausted) fails with '(PartialSuccess, Success)'. Same root as mimid-1wgh.46.1.7 (Haven's KeyMaterialResponse models a single client). Vector: /home/mark/Cache/mimid-haven-xcheck/vectors/key_material_response_partial_success.bin. Report to havenmessenger/interop only with Mark's per-action OK.",
+  "notes": "2026-11-02: reported to Haven with Mark's OK in the combined cross-check comment: https://github.com/havenmessenger/interop/issues/1#issuecomment-6588377664 (offered fix-or-DIVERGENCES per their CONTRIBUTING.md). Leave open until Haven fixes or documents it.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T20:31:38.737167038Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T21:02:46.461553313Z",
+  "labels": [
+    "upstream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.1.11",
+      "depends_on_id": "mimid-1wgh.46.1",
+      "type": "parent-child",
+      "created_at": "2026-11-02T20:31:38.76410819Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

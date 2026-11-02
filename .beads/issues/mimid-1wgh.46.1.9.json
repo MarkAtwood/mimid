@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.46.1.9",
   "title": "wg: protocol-06 §5.2 no userStatus for 'every client's key material exhausted'",
   "description": "protocol-06 §5.2 L1163-1172, L1279-1300: success = material for every client; partialSuccess = for at least one; noCompatibleMaterial = none could supply material compatible with requiredCapabilities. A user whose clients all report keyMaterialExhausted fits none of these exactly. mimid reads noCompatibleMaterial as 'no client succeeded, list may be populated' (decision mimid-1wgh.5.63); Haven sends partialSuccess (see haven bead under mimid-1wgh.46.1). Suggested fix: say which userStatus applies when no client succeeds for a reason other than capabilities, or add one.",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-02T20:15:41.760120026Z",
   "created_by": "agent",
-  "updated_at": "2026-11-02T20:15:41.760120026Z",
+  "updated_at": "2026-11-02T21:07:35.85756015Z",
+  "closed_at": "2026-11-02T21:07:35.85756015Z",
+  "close_reason": "Filed upstream with Mark's OK: https://github.com/ietf-wg-mimi/mimi-protocol/issues/184",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

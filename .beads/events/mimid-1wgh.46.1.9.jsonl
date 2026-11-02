@@ -1,3 +1,4 @@
 {"id":"01a19de7-44c2-715f-bf71-387d08c199fe","issue_id":"mimid-1wgh.46.1.9","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-11-02T20:15:41.762090662Z"}
 {"id":"01a19de7-44c4-73d9-90f6-e674a864fb0f","issue_id":"mimid-1wgh.46.1.9","event_type":"label_added","actor":"agent","comment":"Added label: wg","created_at":"2026-11-02T20:15:41.764252614Z"}
 {"id":"01a19de7-44c6-741d-ad2c-2191b9da8201","issue_id":"mimid-1wgh.46.1.9","event_type":"label_added","actor":"agent","comment":"Added label: spec:mimi-protocol-06","created_at":"2026-11-02T20:15:41.766270025Z"}
+{"id":"01a19e16-c935-7eef-bcb4-b6fa92b1263a","issue_id":"mimid-1wgh.46.1.9","event_type":"closed","actor":"agent","old_value":"","new_value":"Filed upstream with Mark's OK: https://github.com/ietf-wg-mimi/mimi-protocol/issues/184","created_at":"2026-11-02T21:07:35.861979587Z"}

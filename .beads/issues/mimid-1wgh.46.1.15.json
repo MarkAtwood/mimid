@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.1.15",
+  "title": "haven: participant-list changes use private proposal 0xF7A0, and AppDataUpdate Commits fail to parse",
+  "description": "Found live by B4 (mimid-1wgh.46.1.6), havenmessenger/interop d875bed. protocol-06 §9 L3063-3064: ParticipantListUpdate is the contents of an AppDataUpdate proposal (mls-extensions-10 §4.7, proposal type 0x0008) with component participant_list 0x0022 (§10.3 L3333-3337). Haven carries it as a private custom proposal MIMI_PARTICIPANT_LIST_PROPOSAL_TYPE 0xF7A0 (src/participant_list.rs:60; room policy 0xF7A1, src/room_policy.rs:16), and its openmls dependency is plain openmls 0.8.1 without the extensions-draft-08 feature, which parses an unknown proposal body as opaque\u003cV\u003e. mimid's conformant Commit (bytes 01 | 00 08 | 00 22 | 01 | 20 ..., ext-10 §4.7 L628-635 inline layout) fails Haven's full-message check (commit_wire.rs:110-126) with UnknownValue(34): 0x00 read as a zero length, 0x22 as the next ProposalOrRefType. This is the interop risk predicted in wg mimid-1wgh.37.3 (protocol-06 'AppSync ... applicationId' wording, L1359-1361); mimid reads it per decision mimid-1wgh.4.16. Report on havenmessenger/interop only with Mark's per-action OK.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T21:12:27.227544753Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T21:12:27.227544753Z",
+  "labels": [
+    "upstream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.1.15",
+      "depends_on_id": "mimid-1wgh.46.1",
+      "type": "parent-child",
+      "created_at": "2026-11-02T21:12:27.245824327Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

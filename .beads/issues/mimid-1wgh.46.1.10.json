@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.46.1.10",
+  "title": "haven: directory URLs hard-wired to https://{provider_domain}",
+  "description": "mimi-hubd 2c14e62 directory() builds endpoint URLs as https://{provider_domain}{path}, coupling endpoint location to the user-URI authority. protocol-06 §5.1 L1015-1018: the directory conveys the URLs 'as opposed to hard coding the endpoints'; its example uses mimi.example.com. Not a MUST violation; a design defect that prevents reverse proxy / non-443 / separate API host deployments. Harness workaround: user+net namespace with socat on haven.localhost:443 (mimid-1wgh.46.1.5). Issue text drafted at /tmp/claude-1000/-home-mark-PROJECT-mimid/68c47ff1-5bf1-4cc7-8578-600b5b59e0f3/scratchpad/haven-issue-baseurl.md; posting needs Mark's OK.",
+  "status": "closed",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T20:30:22.759511272Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T20:31:46.850100407Z",
+  "closed_at": "2026-11-02T20:31:46.850100407Z",
+  "close_reason": "Reported upstream with Mark's OK: https://github.com/havenmessenger/interop/issues/3. Follow via watch bead mimid-1wgh.37.91.10.",
+  "labels": [
+    "upstream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.1.10",
+      "depends_on_id": "mimid-1wgh.46.1",
+      "type": "parent-child",
+      "created_at": "2026-11-02T20:30:22.789881961Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.7.32",
+  "title": "server: protocol-06 §5.7 consent endpoints (inbound + outbound)",
+  "description": "Decision mimid-1wgh.7.9 (2026-10-18) deferred §5.7 requestConsent/updateConsent 'to a later bead'; no such bead existed. Decision mimid-1wgh.21 says consent endpoints 'are still implemented on the server for interop' but they are not routed (http.rs:32-33). Wire types exist (crates/mimi-protocol/src/consent.rs, decisions .5.16, .5.68, .5.69). Scope: inbound routes per §5.7 with v1 implicit-allow semantics behind the existing consent::allows hook (no enforcement, decision .21), outbound PeerClient methods, directory entries (see mimid-1wgh.6.78). JMAP surface for users to grant/revoke stays with mimid-1wgh.12 (.7.9 rationale). Haven mimi-hubd serves both endpoints on its TLS-PL lane, so the live interop harness (mimid-1wgh.46.1.6) can test it. Plan for Mark's approval before code.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T21:08:34.151615232Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T21:08:34.151615232Z",
+  "labels": [
+    "interop-gap"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.32",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-11-02T21:08:34.213851413Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

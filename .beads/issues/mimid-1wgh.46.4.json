@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.46.4",
+  "title": "decide where the interop harnesses live",
+  "description": "Interop artifacts today: A1 Haven-encoded fixtures + generator are committed (crates/mimi-protocol/tests/fixtures/haven). Not in the repo: the A2 reverse cross-check (mimid dump test + Haven-side harness) and the B3/B4 live harness (unshare + socat + driver), all under /home/mark/Cache/mimid-haven-xcheck. Readings: (a) keep them outside the repo (tests stay offline, no third-party build in mimid); (b) commit them under a tools/interop directory excluded from the workspace and CI, so others (IETF 127 hackathon, Haven) can rerun them. Mark decides.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T21:08:34.853813233Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T21:08:34.853813233Z",
+  "labels": [
+    "interop-gap",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.4",
+      "depends_on_id": "mimid-1wgh.46",
+      "type": "parent-child",
+      "created_at": "2026-11-02T21:08:34.925729588Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
