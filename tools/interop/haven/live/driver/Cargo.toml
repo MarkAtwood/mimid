@@ -1,0 +1,25 @@
+[package]
+name = "mimid-haven-live"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone: not part of any workspace (bead mimid-1wgh.46.1.6).
+[workspace]
+
+[dependencies]
+mimid-server = { path = "../../../../../crates/mimid-server" }
+mimi-protocol = { path = "../../../../../crates/mimi-protocol" }
+mimi-mls = { path = "../../../../../crates/mimi-mls" }
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread"] }
+
+# Copied from the mimid workspace root so the openmls fork resolves the same.
+# Keep in step with the root Cargo.toml [patch] section when its pins move.
+[patch.crates-io]
+openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }

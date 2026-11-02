@@ -1,0 +1,17 @@
+[package]
+name = "mimid-haven-xcheck"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not part of any workspace.
+[workspace]
+
+[dependencies]
+# Haven at the commit the committed results refer to; bump `rev` to test a
+# newer Haven.
+mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "2c14e6206cb114eed4795c1cab45dadbe7d37b0b", features = ["test-helpers"] }
+openmls = "0.8.1"
+openmls_rust_crypto = "=0.5.1"
+openmls_traits = "=0.5.0"
+tls_codec = "0.4.2"

@@ -1,0 +1,80 @@
+Interop harnesses: mimid against Haven's mimi-core and mimi-hubd
+(github.com/havenmessenger/interop). Findings are tracked in beads under
+mimid-1wgh.46.1, not here. None of this runs in CI: it builds third-party
+code and, for the live run, starts servers.
+
+The opposite direction (Haven-encoded messages decoded by mimid) is an
+ordinary offline test: crates/mimi-protocol/tests/haven_fixtures.rs.
+
+Layout
+  harness/      standalone crate (own [workspace]): Haven's mimi-core, pinned
+                to a Haven commit in Cargo.toml, decodes mimid-encoded
+                protocol-06 messages, compares fields, re-encodes, and checks
+                byte identity. Extra modes: make-kp, make-kp-default (Haven
+                mints KeyPackages), decode-commit (Haven decodes a Commit).
+  mimid-dump/   zz_dump_for_haven.rs, a mimi-protocol test that writes the
+                mimid-encoded messages. It is a template: copy it into
+                crates/mimi-protocol/tests/ to run it, then delete it.
+  live/         the live run of mimid's PeerClient against mimi-hubd:
+    run.sh        builds mimi-hubd from $HAVEN, makes a throwaway CA, and
+                  enters an unprivileged user+network namespace (unshare)
+    up.sh         (inside) starts mimi-hubd as haven.localhost on
+                  127.0.0.1:8443 with mTLS, and socat on haven.localhost:443,
+                  which presents a haven.localhost certificate and forwards
+                  with the client certificate; sets SSL_CERT_FILE; runs the
+                  given command
+    selftest.sh   the proxy path works without a client certificate, and the
+                  hub refuses direct access
+    b4.sh         (inside) seeds Haven over its JSON lane, runs the driver,
+                  checks the stored message bytes and the update, and copies
+                  mimid's update Commit to out/update_commit.bin
+    driver/       standalone crate: mimid crates by relative path, plus a copy
+                  of the root Cargo.toml [patch] section (keep the two in step)
+
+Why a namespace and port 443: mimi-hubd builds its directory URLs as
+https://{provider_domain}, with no port (havenmessenger/interop#3). The
+namespace lets socat own haven.localhost:443 without root.
+
+Requirements: cargo, openssl, socat, unshare with unprivileged user
+namespaces, curl.
+
+Variables
+  MIMID   this repository's root
+  HAVEN   a checkout of github.com/havenmessenger/interop (live run only)
+  CACHE   ${XDG_CACHE_HOME:-$HOME/.cache}; use private CARGO_TARGET_DIRs
+          under it, not a shared target directory
+
+Offline cross-check: mimid encodes, Haven decodes
+  export CARGO_TARGET_DIR=$CACHE/mimid-haven-xcheck-target
+  export MIMID_HAVEN_VECTORS=$CACHE/mimid-haven-vectors
+  H=$MIMID/tools/interop/haven
+  # 1. Haven mints a KeyPackage (diagnostic input)
+  (cd $H/harness && cargo run -q -- make-kp $MIMID_HAVEN_VECTORS)
+  # 2. mimid encodes the messages
+  cp $H/mimid-dump/zz_dump_for_haven.rs $MIMID/crates/mimi-protocol/tests/
+  (cd $MIMID && cargo test -p mimi-protocol --all-features --test zz_dump_for_haven)
+  rm $MIMID/crates/mimi-protocol/tests/zz_dump_for_haven.rs
+  # 3. Haven decodes them
+  (cd $H/harness && cargo run -q -- $MIMID_HAVEN_VECTORS $MIMID/crates/mimi-mls/tests/fixtures/mlswg)
+
+Live run
+  export CARGO_TARGET_DIR=$CACHE/mimid-haven-live-target
+  (cd $H/live/driver && cargo build)
+  # A Haven-minted KeyPackage with openmls's default lifetime and no GREASE
+  # (see mimid-1wgh.46.1.13); the test helper's unbounded lifetime is refused
+  # by mimid (RFC 9420 section 7.2).
+  (cd $H/harness && CARGO_TARGET_DIR=$CACHE/mimid-haven-xcheck-target \
+     cargo run -q -- make-kp-default $MIMID_HAVEN_VECTORS)
+  cd $H/live
+  HAVEN=... ./run.sh ./selftest.sh
+  HAVEN=... DRIVER=$CARGO_TARGET_DIR/debug/mimid-haven-live \
+     KP=$MIMID_HAVEN_VECTORS/haven_default_key_package.bin ./run.sh ./b4.sh
+  # Haven's own decoder on mimid's update Commit:
+  (cd $H/harness && CARGO_TARGET_DIR=$CACHE/mimid-haven-xcheck-target \
+     cargo run -q -- decode-commit $H/live/out/update_commit.bin)
+
+The driver covers directory, keyMaterial, submitMessage, update and notify.
+PeerClient also has requestConsent, updateConsent, identifierQuery and
+reportAbuse, which the driver does not exercise yet.
+
+Generated files (vectors, out/, target/) are ignored by git.

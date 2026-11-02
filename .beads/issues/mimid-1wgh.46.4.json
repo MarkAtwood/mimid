@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.46.4",
   "title": "decide where the interop harnesses live",
   "description": "Interop artifacts today: A1 Haven-encoded fixtures + generator are committed (crates/mimi-protocol/tests/fixtures/haven). Not in the repo: the A2 reverse cross-check (mimid dump test + Haven-side harness) and the B3/B4 live harness (unshare + socat + driver), all under /home/mark/Cache/mimid-haven-xcheck. Readings: (a) keep them outside the repo (tests stay offline, no third-party build in mimid); (b) commit them under a tools/interop directory excluded from the workspace and CI, so others (IETF 127 hackathon, Haven) can rerun them. Mark decides.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-02T21:08:34.853813233Z",
   "created_by": "agent",
-  "updated_at": "2026-11-02T21:08:34.853813233Z",
+  "updated_at": "2026-11-02T23:15:57.184389411Z",
+  "closed_at": "2026-11-02T23:15:57.184389411Z",
+  "close_reason": "Mark 2026-11-02: reading (b). Harnesses committed under tools/interop/haven (harness/, live/, mimid-dump/ template, README), outside the cargo workspace (members = crates/*) and CI. Machine paths removed: Haven pinned by git rev 2c14e62, mimid crates by relative path, HAVEN/CACHE/MIMID_HAVEN_VECTORS variables. Generated vectors, out/ and run logs excluded (.gitignore); findings stay in beads. Both crates cargo check clean.",
   "labels": [
     "interop-gap",
     "human"
