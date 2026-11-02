@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.46",
+  "title": "Interop testing against other MIMI implementations",
+  "description": "Survey 2026-11-02 of public MIMI implementations: Haven (havenmessenger/interop, Rust, Apache-2.0; protocol-06 JSON + TLS-PL wire lanes, content-09, room-policy; runnable mTLS hub mimi-hubd; DIVERGENCES.md; issues open, 'feedback welcome'); Phoenix R\u0026D (phnx-im/mimi-content, active, used in production by the Air app; mimi-room-policy July 2026; mimi-protocol structs only, stale; no license file on any); nexun-foundation/mimi-rs (Apache-2.0, room-policy at -02, stalled since 2026-02). No public MIMI code found from Wire, Cisco or Matrix. Goal: test mimid against independent implementations and send what breaks upstream (their trackers or the WG).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T18:51:22.876069634Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T18:51:22.876069634Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-02T18:51:24.921425371Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
