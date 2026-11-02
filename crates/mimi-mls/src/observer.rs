@@ -932,7 +932,7 @@ impl Observer {
             Extensions::<OpenMlsGroupInfo>::tls_deserialize_exact(partial.group_info_extensions())
                 .map_err(|e| ObserverError::InvalidPartialGroupInfo(e.into()))?;
         // Only the current-epoch half of ratchet_tree_presence is used; the
-        // previous-epoch half is not checked. ratchet-tree-options-01 §4;
+        // previous-epoch half is not checked. ratchet-tree-options-02 §4;
         // decision mimid-1wgh.4.47.
         if matches!(
             partial.ratchet_tree_presence(),

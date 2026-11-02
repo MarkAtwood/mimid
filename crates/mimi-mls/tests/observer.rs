@@ -1067,7 +1067,7 @@ fn full_ratchet_tree_option_carries_mls_rs_tree() {
     let (_alice, _member, mut bob, store, mut observer) = setup();
     bob_commits(&mut bob, &store, &mut observer);
     let tree = bob.export_tree().to_bytes().expect("mls-rs tree");
-    // ratchet-tree-options-01 §3: representation full(1), then the tree.
+    // ratchet-tree-options-02 §3: representation full(1), then the tree.
     let mut encoded = vec![0x01];
     encoded.extend_from_slice(&tree);
     let option = RatchetTreeOption::tls_deserialize_exact(&encoded).expect("decode");

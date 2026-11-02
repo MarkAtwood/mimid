@@ -66,7 +66,7 @@ pub enum GroupInfoOption {
         group_info: GroupInfo,
     },
     /// `partial(2)`: the hub rebuilds the GroupInfo as described in
-    /// ratchet-tree-options-01 §4.
+    /// ratchet-tree-options-02 §4.
     Partial {
         /// `PartialGroupInfo partialGroupInfo`.
         partial_group_info: PartialGroupInfo,

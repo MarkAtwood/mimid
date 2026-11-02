@@ -1,5 +1,5 @@
 //! `mimi_mls::wire` against bytes hand-encoded from the TLS presentation
-//! language in mls-extensions-10 §4.6, ratchet-tree-options-01 §3-4 and
+//! language in mls-extensions-10 §4.6, ratchet-tree-options-02 §3-4 and
 //! RFC 9420, with byte-by-byte comments. Each valid case is decoded,
 //! compared, re-encoded and required to be byte-identical; each invalid one
 //! must be rejected without panicking (tests run in debug, bug
@@ -134,7 +134,7 @@ fn app_data_dictionary_rejects_oversized_length() {
     ));
 }
 
-// ---- ratchet-tree-options-01 §3 RatchetTreeOption ----
+// ---- ratchet-tree-options-02 §3 RatchetTreeOption ----
 
 #[test]
 fn https_url_ratchet_tree_option() {
@@ -207,7 +207,7 @@ fn full_ratchet_tree_option_rejects_malformed_tree() {
     assert!(RatchetTreeOption::full(&bad_optional[1..]).is_err());
 }
 
-// ---- ratchet-tree-options-01 §4 PartialGroupInfo ----
+// ---- ratchet-tree-options-02 §4 PartialGroupInfo ----
 
 #[test]
 fn partial_group_info_without_extensions() {

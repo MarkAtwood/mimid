@@ -373,7 +373,7 @@ fn full_ratchet_tree_option_wraps_a_ratchet_tree_vector() {
     for (entry, _) in ENTRIES {
         let tree = message_fixture(entry, "ratchet_tree");
 
-        // ratchet-tree-options-01 §3: representation full(1), then the
+        // ratchet-tree-options-02 §3: representation full(1), then the
         // ratchet tree vector.
         let encoded = [&[0x01][..], &tree].concat();
         let option =

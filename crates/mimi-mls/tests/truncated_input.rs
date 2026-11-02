@@ -7,7 +7,7 @@
 //! run in debug builds, where that panic would fail them.
 //!
 //! Every input is hand-encoded from the RFC 9420 / mls-extensions-10 /
-//! ratchet-tree-options-01 TLS presentation-language text. Each one ends
+//! ratchet-tree-options-02 TLS presentation-language text. Each one ends
 //! with an `opaque<V>` (or vector) whose length prefix claims 5 bytes while
 //! only 2 follow.
 
@@ -143,13 +143,13 @@ fn wire_types_refuse_truncated_input() {
             0xaa, 0xbb, // only 2 present
         ],
     );
-    // ratchet-tree-options-01 §3: full(1) then the ratchet tree.
+    // ratchet-tree-options-02 §3: full(1) then the ratchet tree.
     let mut full = vec![0x01];
     full.extend_from_slice(&RATCHET_TREE);
     assert_refused::<RatchetTreeOption>("RatchetTreeOption full", &full);
     // ratchet-tree-options-02 §3: httpsUrl(2) then url<V>.
     assert_refused::<RatchetTreeOption>("RatchetTreeOption httpsUrl", &[0x02, 0x05, 0xaa, 0xbb]);
-    // ratchet-tree-options-01 §4.
+    // ratchet-tree-options-02 §4.
     assert_refused::<PartialGroupInfo>(
         "PartialGroupInfo",
         &[

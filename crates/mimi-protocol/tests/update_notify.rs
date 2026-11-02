@@ -66,10 +66,10 @@ const PRIVATE_APPLICATION: &[u8] = &[
     0x05, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, // ciphertext<V>: 5 bytes
 ];
 
-/// RatchetTreeOption `distributionService(4)` (ratchet-tree-options-01 §3).
+/// RatchetTreeOption `distributionService(4)` (ratchet-tree-options-02 §3).
 const TREE_DISTRIBUTION_SERVICE: &[u8] = &[0x04];
 
-/// PartialGroupInfo (ratchet-tree-options-01 §4).
+/// PartialGroupInfo (ratchet-tree-options-02 §4).
 const PARTIAL_GROUP_INFO: &[u8] = &[
     0x00, // ratchet_tree_presence: no_ratchet_tree
     0x00, // group_info_extensions<V>: empty

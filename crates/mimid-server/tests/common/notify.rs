@@ -63,7 +63,7 @@ pub fn commit_fanout(timestamp: [u8; 8], commit: &[u8]) -> Vec<u8> {
 
 /// A FanoutMessage `case welcome`: the timestamp, the `MLSMessage`, then
 /// a `RatchetTreeOption` of 0x03, `outOfBand(3)`, which has no payload
-/// (ratchet-tree-options-01 §3).
+/// (ratchet-tree-options-02 §3).
 pub fn welcome_fanout(timestamp: [u8; 8], welcome: &[u8]) -> Vec<u8> {
     [&timestamp[..], welcome, &[0x03]].concat()
 }

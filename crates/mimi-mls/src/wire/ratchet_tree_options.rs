@@ -1,4 +1,4 @@
-//! draft-ietf-mls-ratchet-tree-options-01 structures.
+//! draft-ietf-mls-ratchet-tree-options-02 structures.
 
 use std::io::Read;
 
@@ -9,7 +9,7 @@ use tls_codec::{Deserialize, Serialize, VLBytes};
 
 use super::{Recorder, decode_canonical, impl_encoding_from_bytes};
 
-/// ratchet-tree-options-01 §3: `RatchetTreeRepresentation`.
+/// ratchet-tree-options-02 §3: `RatchetTreeRepresentation`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RatchetTreeRepresentation {
     /// `full(1)`: the whole ratchet tree is included.
@@ -52,7 +52,7 @@ impl TryFrom<u8> for RatchetTreeRepresentation {
     }
 }
 
-/// ratchet-tree-options-01 §3: `RatchetTreeOption`.
+/// ratchet-tree-options-02 §3: `RatchetTreeOption`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RatchetTreeOption {
     bytes: Vec<u8>,
@@ -80,7 +80,7 @@ impl RatchetTreeOption {
     }
 
     /// Builds an `httpsUrl` option. The URL is opaque here; checking its
-    /// scheme and domain (ratchet-tree-options-01 §3.1) is the caller's job.
+    /// scheme and domain (ratchet-tree-options-02 §3.1) is the caller's job.
     ///
     /// # Errors
     ///
@@ -136,11 +136,9 @@ impl Deserialize for RatchetTreeOption {
         let representation =
             RatchetTreeRepresentation::try_from(u8::tls_deserialize(&mut recorder)?)?;
         let payload = match representation {
-            // ratchet-tree-options-01 §3 writes `Node ratchet_tree<V>` but describes the
-            // field as the complete ratchet_tree extension, whose RFC 9420
-            // §12.4.3.3 type is `optional<Node> ratchet_tree<V>`; blank
-            // nodes need the optional. This reads it as the RFC 9420 type
-            // (decision mimid-1wgh.4.29).
+            // ratchet-tree-options-02 §3: `optional<Node> ratchet_tree<V>`, the
+            // RFC 9420 §12.4.3.3 ratchet_tree type (-01 wrote `Node`;
+            // decision mimid-1wgh.4.29).
             RatchetTreeRepresentation::Full => {
                 decode_canonical::<RatchetTreeIn, _>(&mut recorder)?.1
             }
@@ -158,7 +156,7 @@ impl Deserialize for RatchetTreeOption {
     }
 }
 
-/// ratchet-tree-options-01 §4: `RatchetTreePresence`.
+/// ratchet-tree-options-02 §4: `RatchetTreePresence`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RatchetTreePresence {
     /// `no_ratchet_tree(0)`: no ratchet_tree extension in the current or
@@ -198,7 +196,7 @@ impl TryFrom<u8> for RatchetTreePresence {
     }
 }
 
-/// ratchet-tree-options-01 §4: `PartialGroupInfo`, the parts of a
+/// ratchet-tree-options-02 §4: `PartialGroupInfo`, the parts of a
 /// GroupInfo that a hub cannot rebuild from unencrypted handshakes.
 ///
 /// `group_info_extensions` is decoded as RFC 9420 GroupInfo extensions:
@@ -264,7 +262,7 @@ impl Deserialize for PartialGroupInfo {
             RatchetTreePresence::try_from(u8::tls_deserialize(&mut recorder)?)?;
         let (extensions, group_info_extensions) =
             decode_canonical::<Extensions<OpenMlsGroupInfo>, _>(&mut recorder)?;
-        // ratchet-tree-options-01 §4 defines the list as the GroupInfo extensions "omitting
+        // ratchet-tree-options-02 §4 defines the list as the GroupInfo extensions "omitting
         // any ratchet_tree extension"; this reads that as forbidding one
         // (decision mimid-1wgh.4.30).
         if extensions

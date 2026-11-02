@@ -5,7 +5,7 @@
 //! without a length prefix, so it needs types that implement
 //! [`tls_codec`]'s traits but do not expose OpenMLS (decision
 //! mimid-1wgh.4.24). Each type here is named after the RFC 9420,
-//! mls-extensions-10 or ratchet-tree-options-01 structure it carries.
+//! mls-extensions-10 or ratchet-tree-options-02 structure it carries.
 //!
 //! # Decoding
 //!
@@ -43,7 +43,7 @@
 //!   [`ExternalSender`]'s fields, a basic [`Credential`]'s `identity`,
 //!   [`GroupInfo::has_ratchet_tree_extension`], [`Welcome::new_member_refs`],
 //!   what [`KeyPackage::verify`] returns and the fields of the
-//!   ratchet-tree-options-01 types, the types expose only their encoding.
+//!   ratchet-tree-options-02 types, the types expose only their encoding.
 //! - [`Credential::identity`] and [`VerifiedKeyPackageInfo::identity`]
 //!   expose only the `basic` credential type. The content of any other type
 //!   is available only inside its encoding.
