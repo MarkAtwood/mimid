@@ -17,8 +17,8 @@ pub const DIRECTORY_PATH: &str = "/.well-known/mimi-protocol-directory";
 ///
 /// Field names mirror the spec's JSON keys. Only endpoints this server routes
 /// are listed, since an absent key means the endpoint is not offered
-/// (decision mimid-1wgh.5.75). Not yet listed: `identifierQuery`
-/// (mimid-1wgh.7.33) and `proxyDownload` (mimid-1wgh.8).
+/// (decision mimid-1wgh.5.75). Not yet listed: `proxyDownload`
+/// (mimid-1wgh.8).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Directory {
@@ -29,6 +29,7 @@ pub struct Directory {
     pub group_info: String,
     pub request_consent: String,
     pub update_consent: String,
+    pub identifier_query: String,
     pub report_abuse: String,
 }
 
@@ -50,6 +51,7 @@ impl Directory {
             group_info: url("groupInfo/{roomId}"),
             request_consent: url("requestConsent/{targetDomain}"),
             update_consent: url("updateConsent/{requesterDomain}"),
+            identifier_query: url("identifierQuery/{domain}"),
             report_abuse: url("reportAbuse/{roomId}"),
         }
     }
@@ -75,7 +77,7 @@ mod tests {
     use super::*;
 
     /// The protocol-06 §5.1 example, copied by hand from the draft text and
-    /// limited to the eight endpoints this server routes (decision
+    /// limited to the nine endpoints this server routes (decision
     /// mimid-1wgh.5.75), with the `update{roomId}` typo read as
     /// `update/{roomId}` per decision mimid-1wgh.5.17. The consent
     /// placeholders are the §5.7 `{targetDomain}` and `{requesterDomain}`,
@@ -94,6 +96,8 @@ mod tests {
          "https://mimi.example.com/v1/requestConsent/{targetDomain}",
       "updateConsent":
          "https://mimi.example.com/v1/updateConsent/{requesterDomain}",
+      "identifierQuery":
+         "https://mimi.example.com/v1/identifierQuery/{domain}",
       "reportAbuse":
          "https://mimi.example.com/v1/reportAbuse/{roomId}"
     }

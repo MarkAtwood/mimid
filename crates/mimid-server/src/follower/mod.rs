@@ -74,6 +74,7 @@
 //!   a Commit or message arriving before an earlier epoch's Commit.
 
 pub mod consent;
+pub mod identifier;
 pub mod key_packages;
 pub mod notify;
 pub mod relay;
@@ -504,4 +505,8 @@ pub enum FollowerError {
     /// mimid-1wgh.7.36).
     #[error("unknown local user")]
     UnknownUser,
+    /// The identifierQuery path names another provider (decision
+    /// mimid-1wgh.7.40).
+    #[error("path domain is not this provider")]
+    PathNotThisProvider,
 }

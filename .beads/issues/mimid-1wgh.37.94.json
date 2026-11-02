@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.94",
+  "title": "wg: protocol-06 §5.1 which host serves a provider's directory",
+  "description": "draft-ietf-mimi-protocol-06 §5.1 L1019-1023 (unchanged in the editor's copy as of 2026-11-02): the directory URL is discovered via the mimi-protocol-directory well-known URI, but no host is specified; providers are identified only by the MIMI URI authority (§3 L318-319). Not covered by any mimi-protocol issue (searched discovery, well-known, DNS, SRV, SVCB) or list thread (2023-24 discovery threads are about user/identifier discovery, not host lookup). Interop evidence: Haven assumes https://{provider_domain} (havenmessenger/interop#3); mimid uses a configured peer map (decision mimid-1wgh.17) and does not follow redirects (peer.rs redirect::Policy::none). Suggested fix: state https://\u003cprovider-domain\u003e/.well-known/... with absolute directory URLs allowed elsewhere, say whether redirects are followed, optionally SVCB; say which name the TLS certificate carries. Draft issue text: session scratchpad wg-host-discovery.md. Posting needs Mark's OK.",
+  "notes": "2026-11-02 Mark: raise on mimi@ietf.org rather than GitHub; propose BOTH options together (SVCB/HTTPS record naming the host, falling back to https://\u003cprovider-domain\u003e/.well-known/...). Unsent Fastmail draft StliZpg-Hk-s from mark@reviewcommit.com, text in session scratchpad mimi-list-discovery.txt. Sending needs Mark's OK (fm draft send StliZpg-Hk-s --unsafe --yes).\n2026-11-02: list mail sent (Mark's OK). Draft PR ietf-wg-mimi/mimi-protocol#185 (branch MarkAtwood:locate-directory, 69738d8): SVCB _mimi delegation + provider-domain default, TLS validated for the provider domain per RFC 9460 §2.3, _mimi RFC 8552 registration; TODO redirects and SVCB ports; open: mimi URI scheme registration home.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T22:31:08.634573363Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T22:37:35.556284781Z",
+  "labels": [
+    "wg",
+    "spec:mimi-protocol-06"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.94",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-02T22:31:08.671118208Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

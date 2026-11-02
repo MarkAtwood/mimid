@@ -1,7 +1,8 @@
 //! Client for peer providers: directory fetch and cache, and outbound
 //! `/notify`, `/keyMaterial`, `/update`, `/submitMessage`, `/groupInfo`,
-//! `/requestConsent` and `/updateConsent` requests over reqwest (plans of
-//! mimid-1wgh.6 and mimid-1wgh.7; mimid-1wgh.7.32).
+//! `/requestConsent`, `/updateConsent` and `/identifierQuery` requests over
+//! reqwest (plans of mimid-1wgh.6 and mimid-1wgh.7; mimid-1wgh.7.32,
+//! mimid-1wgh.7.33).
 //!
 //! A peer's base URL comes from the configured peer map, which replaces DNS
 //! discovery (decision mimid-1wgh.17). Its directory (protocol-06 §5.1) is
@@ -63,6 +64,8 @@ enum Endpoint {
     /// §5.7 `POST /updateConsent/{requesterDomain}` (decision
     /// mimid-1wgh.5.16).
     UpdateConsent,
+    /// §5.8 `POST /identifierQuery/{domain}`.
+    IdentifierQuery,
 }
 
 impl Endpoint {
@@ -76,6 +79,7 @@ impl Endpoint {
             Self::GroupInfo => "groupInfo",
             Self::RequestConsent => "requestConsent",
             Self::UpdateConsent => "updateConsent",
+            Self::IdentifierQuery => "identifierQuery",
         }
     }
 
@@ -86,6 +90,7 @@ impl Endpoint {
             Self::Update | Self::SubmitMessage | Self::Notify | Self::GroupInfo => "roomId",
             Self::RequestConsent => "targetDomain",
             Self::UpdateConsent => "requesterDomain",
+            Self::IdentifierQuery => "domain",
         }
     }
 
@@ -100,6 +105,7 @@ impl Endpoint {
             Self::GroupInfo => directory.group_info.as_ref(),
             Self::RequestConsent => directory.request_consent.as_ref(),
             Self::UpdateConsent => directory.update_consent.as_ref(),
+            Self::IdentifierQuery => directory.identifier_query.as_ref(),
         }
     }
 }
@@ -218,6 +224,25 @@ impl PeerClient {
         )
         .await
         .map(drop)
+    }
+
+    /// protocol-06 §5.8 `POST /identifierQuery/{domain}`: sends `body`, an
+    /// IdentifierRequest, to `domain`, the target user's provider, with
+    /// `domain` as the template's value, and returns the response body (an
+    /// IdentifierResponse) as received. Only a `200` response counts, and
+    /// its body may be at most [`MAX_BODY_LEN`] bytes (decision
+    /// mimid-1wgh.6.67).
+    ///
+    /// # Errors
+    ///
+    /// As for [`PeerClient::update`], with `domain` in place of the room ID.
+    pub async fn identifier_query(
+        &self,
+        domain: &Domain,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, PeerError> {
+        self.post_read(domain, Endpoint::IdentifierQuery, domain.as_str(), body)
+            .await
     }
 
     /// protocol-06 §5.2 `POST /keyMaterial/{targetUser}`: sends `body`, a

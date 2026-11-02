@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.7.42",
+  "title": "localfix: consent endpoints 202 Accepted and 422 for wrong operation (protocol-07)",
+  "description": "ietf-wg-mimi/mimi-protocol#173 (Mark, merged 2026-11-01) changes §5.7 in the editor's copy: requestConsent and updateConsent answer 202 Accepted (not 201), and a consentOperation not allowed on the endpoint gets 422 Unprocessable Content (mimid: 400, decision mimid-1wgh.7.37, which marked the status INVENTED because -06 named none). The editor's copy is 'Ready to submit draft-ietf-mimi-protocol-07' (merge of #183). Per the target-the-latest-published-draft policy (cf. .5.74), apply when -07 is published: inbound 202 on accept, 422 for WrongOperation (other .7.37 violations stay 400 unless -07 says otherwise); PeerClient::request_consent/update_consent expect 202; update tests (consent_endpoints.rs, peer_consent.rs) to the -07 text; supersede the wrong-operation part of .7.37; refresh AGENTS.md spec table to protocol -07 (separate check of everything else -07 changed).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T22:37:35.478646144Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T22:37:35.478646144Z",
+  "labels": [
+    "localfix"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.42",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-11-02T22:37:35.502275725Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

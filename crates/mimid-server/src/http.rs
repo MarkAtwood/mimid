@@ -26,15 +26,18 @@
 //! {targetDomain}`, `/v1/updateConsent/{requesterDomain}`) go to the
 //! follower: an accepted entry is `201` with no body, an unknown local user
 //! `404` (decision mimid-1wgh.7.36), and an entry §5.7 does not allow `400`
-//! (decision mimid-1wgh.7.37).
+//! (decision mimid-1wgh.7.37). `/v1/identifierQuery/{domain}` also goes to
+//! the follower: every decodable query is `200` with an IdentifierResponse
+//! body, and an undecodable one or a path naming another provider is `400`
+//! (decision mimid-1wgh.7.40).
 //!
 //! # Limitations
 //!
 //! - The `Host` header is not checked (protocol-06 §4.1).
 //! - keyMaterial for users of this provider answers `501` if the follower
 //!   was not given its KeyPackages ([`Follower::with_key_packages`]).
-//! - The identifierQuery and proxyDownload endpoints are not implemented,
-//!   so the directory does not list them (decision mimid-1wgh.5.75).
+//! - The proxyDownload endpoint is not implemented, so the directory does
+//!   not list it (decision mimid-1wgh.5.75).
 
 use std::sync::Arc;
 
@@ -96,6 +99,7 @@ pub fn router(directory: Directory, hub: Arc<Hub>, follower: Arc<Follower>) -> R
         .route("/v1/notify/{roomId}", post(notify))
         .route("/v1/requestConsent/{targetDomain}", post(request_consent))
         .route("/v1/updateConsent/{requesterDomain}", post(update_consent))
+        .route("/v1/identifierQuery/{domain}", post(identifier_query))
         .layer(DefaultBodyLimit::max(MAX_BODY_LEN))
         .with_state(Roles { hub, follower });
     directory::router(directory).merge(protocol)
@@ -251,6 +255,26 @@ async fn update_consent(
     }
 }
 
+/// protocol-06 §5.8 identifierQuery: `200` with an IdentifierResponse body
+/// for every decodable request, `400` otherwise (decision mimid-1wgh.7.40).
+/// The `From` header must be well-formed but any provider may query.
+async fn identifier_query(
+    State(follower): State<Arc<Follower>>,
+    Path(domain): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    match source_domain(&headers) {
+        Some(_) => respond_follower(
+            follower
+                .identifier_query(&domain, &body)
+                .await
+                .map(protocol_body),
+        ),
+        None => bad_from(),
+    }
+}
+
 /// Parses the source provider's domain from the request's single `From`
 /// header, which protocol-06 §4.1 fixes as `mimi@<domain>`. It is used only
 /// for consistency checks, never to authorize (decision mimid-1wgh.6.9).
@@ -294,6 +318,10 @@ fn respond_follower(result: Result<Response, FollowerError>) -> Response {
         }
         // Decision mimid-1wgh.7.36.
         Err(FollowerError::UnknownUser) => (StatusCode::NOT_FOUND, "unknown user").into_response(),
+        // Decision mimid-1wgh.7.40.
+        Err(FollowerError::PathNotThisProvider) => {
+            (StatusCode::BAD_REQUEST, "path domain is not this provider").into_response()
+        }
         Err(FollowerError::BodyTooLarge) => {
             (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response()
         }
