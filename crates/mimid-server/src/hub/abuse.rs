@@ -6,7 +6,7 @@
 //!
 //! 1. Look up the room, then decode the [`AbuseReport`].
 //! 2. For each [`AbusiveMessage`], in order: decode `message_content` as a
-//!    MIMI content message (mimi-content-09 §4.1), take its `salt` and its
+//!    MIMI content message (mimi-content-10 §4.1), take its `salt` and its
 //!    `senderUri` and `roomUri` extensions (§4.3), recompute the
 //!    `franking_tag` over `message_content` and the
 //!    [`ServerFrankingContext`] with `accepted_timestamp`, regenerate

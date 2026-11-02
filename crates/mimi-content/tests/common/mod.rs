@@ -12,7 +12,7 @@ use mimi_content::{
     PartSemantics,
 };
 
-const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/wg-09");
+const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/wg-10");
 
 pub const ROOM: &str = "mimi://example.com/r/engineering_team";
 pub const ALICE: &str = "mimi://example.com/u/alice-smith";
@@ -166,8 +166,7 @@ fn reply() -> MimiContent {
 }
 
 fn reaction() -> MimiContent {
-    // Content is U+2764 (e2 9d a4) as in the fixture bytes; the EDN comment
-    // says U+2665 (decision mimid-1wgh.2.18).
+    // Content is U+2764 (e2 9d a4), as the fixture bytes and the -10 EDN say.
     let mut content = message(
         "d37bc0e6a8b4f04e9e6382375f587bf6",
         CATHY,

@@ -22,7 +22,7 @@ use crate::extension::{ExtensionKey, encode_head};
 pub const MAX_NESTING_DEPTH: usize = 4;
 
 /// Most `NestedPart`s allowed in one body, counting every part that has a
-/// part index, including the root and each `MultiPart` (content-09 §9.1;
+/// part index, including the root and each `MultiPart` (content-10 §9.1;
 /// decisions mimid-1wgh.2.19, mimid-1wgh.2.21).
 pub const MAX_PARTS: usize = 1024;
 
@@ -134,7 +134,7 @@ fn validate_part(part: &NestedPart, depth: usize, count: &mut usize) -> Result<(
     if depth > MAX_NESTING_DEPTH {
         return Err(EncodeError::NestingTooDeep);
     }
-    // content-09 §9.1; decisions mimid-1wgh.2.19, mimid-1wgh.2.21
+    // content-10 §9.1; decisions mimid-1wgh.2.19, mimid-1wgh.2.21
     *count += 1;
     if *count > MAX_PARTS {
         return Err(EncodeError::TooManyParts);

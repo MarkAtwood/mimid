@@ -128,7 +128,7 @@ fn hmac_sha256<const N: usize>(key: &[u8; N]) -> HmacSha256 {
 /// `franking_tag = HMAC_SHA256(salt, application_data)` (protocol-06
 /// §5.4.1.1).
 ///
-/// `salt` is the MIMI content salt (mimi-content-09 `salt: bstr .size 16`).
+/// `salt` is the MIMI content salt (mimi-content-10 `salt: bstr .size 16`).
 /// `application_data` is the whole MLS application_data, including the
 /// ApplicationFraming when content advertisement is used (decision
 /// mimid-1wgh.5.29).
@@ -309,7 +309,7 @@ impl Frank {
 /// | `franking_tag` | the [`FrankAad`] in the PrivateMessage's Safe AAD |
 /// | `group_cipher_suite` | the MLS group |
 /// | `franking_agent` | the GroupContext [`FRANKING_AGENT`](crate::component_id::FRANKING_AGENT) component |
-/// | `salt`, `application_data`, `content_sender_uri`, `content_room_uri` | the decrypted MIMI content (mimi-content-09 `salt`, extensions 1 and 2) |
+/// | `salt`, `application_data`, `content_sender_uri`, `content_room_uri` | the decrypted MIMI content (mimi-content-10 `salt`, extensions 1 and 2) |
 /// | `authenticated_sender_uri` | the credential in the sender's MLS LeafNode |
 /// | `notify_room_uri` | the `/notify/{roomId}` path (decision mimid-1wgh.5.15) |
 ///

@@ -18,6 +18,6 @@
     "",                                  # language
     1,                                   # cardinality = single
     "text/plain;charset=utf-8",          # contentType
-    '❤'                                  # content = U+2665 (heart)
+    '❤'                                  # content = U+2764 (heart)
   ]
 ]

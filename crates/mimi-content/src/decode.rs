@@ -2,9 +2,10 @@
 //! mimid-1wgh.2.9).
 //!
 //! The decoder accepts only the deterministic encoding of RFC 8949
-//! §4.2.1, which content-09 §6.1 requires of senders. It rejects
-//! indefinite lengths, heads that are not in shortest form, map keys out
-//! of bytewise order or repeated, trailing bytes, and anything the CDDL of
+//! §4.2.1, which content-10 §6.1 requires of senders. It rejects
+//! indefinite lengths and repeated map keys, as §6.1 requires of receivers,
+//! and also heads that are not in shortest form, map keys out of bytewise
+//! order (decision mimid-1wgh.2.9), trailing bytes, and anything the CDDL of
 //! Appendix A.1 does not allow. Unknown extension values are checked
 //! against the rules of §6 and kept as their exact bytes. Limits are the
 //! encoder's, and each is
@@ -449,7 +450,7 @@ fn read_content(r: &mut Reader<'_>) -> DecodeResult<MimiContent> {
     })
 }
 
-/// content-09 §9.1; decision mimid-1wgh.2.19. The limit is checked on the
+/// content-10 §9.1; decision mimid-1wgh.2.19. The limit is checked on the
 /// declared length, before the octets are read.
 fn read_topic_id(r: &mut Reader<'_>) -> DecodeResult<Vec<u8>> {
     let len = r.head(MAJOR_BYTES, "topicId")?;
@@ -616,7 +617,7 @@ fn validate_item(r: &mut Reader<'_>, depth: usize) -> DecodeResult<()> {
         }
         MAJOR_TAG if matches!(arg, TAG_POSITIVE_BIGNUM | TAG_NEGATIVE_BIGNUM) => {
             // RFC 8949 §3.4.3 preferred serialization, required by §4.2.1
-            // and content-09 §6.1: no leading zeros, and a value that fits
+            // and content-10 §6.1: no leading zeros, and a value that fits
             // major type 0 or 1 is written that way.
             let content_offset = r.pos;
             let content = r.bytes("bignum")?;

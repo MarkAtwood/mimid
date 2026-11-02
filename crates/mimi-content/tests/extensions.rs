@@ -1,4 +1,4 @@
-//! T6: unknown extensions (content-09 §4.3, §6) decode, keep their exact
+//! T6: unknown extensions (content-10 §4.3, §6) decode, keep their exact
 //! bytes and re-encode byte for byte; malformed ones are rejected.
 //!
 //! Inputs are hand-written hex built from the CDDL of Appendix A.1 and the

@@ -240,7 +240,7 @@ fn list_becomes(
     }
 }
 
-/// A MIMI content message (mimi-content-09 §4.1) from `sender` with `salt`
+/// A MIMI content message (mimi-content-10 §4.1) from `sender` with `salt`
 /// and a text body.
 fn content(salt: [u8; 16], sender: &[u8], body: &str) -> Vec<u8> {
     MimiContent {

@@ -9,7 +9,7 @@ mimid targets the latest revision of each draft. Where the drafts are ambiguous,
 | Draft | Target | Notes |
 |---|---|---|
 | draft-ietf-mimi-protocol | -06 | |
-| draft-ietf-mimi-content | -10 | `mimi-content` still implements -09; the move to -10 is in progress |
+| draft-ietf-mimi-content | -10 | |
 | draft-ietf-mimi-room-policy | -04 | |
 | draft-ietf-mimi-arch | -03 | |
 | draft-ietf-mls-extensions | -10 | |

@@ -52,7 +52,7 @@ Dependencies point down this table, never up.
 | Crate | Owns | Must not |
 |---|---|---|
 | `mimi-mls` | All OpenMLS usage, the `wire` newtypes, label helpers | Do I/O |
-| `mimi-content` | mimi-content-09 CBOR and MessageId | Depend on openmls or tokio; contain encryption (attachments are `.14`) |
+| `mimi-content` | mimi-content-10 CBOR and MessageId | Depend on openmls or tokio; contain encryption (attachments are `.14`) |
 | `mimi-room-policy` | room-policy-04 codecs and policy evaluation | Depend on `mimi-mls` |
 | `mimi-protocol` | protocol-06 wire types and franking | Use openmls directly (MLS types come only through `mimi_mls::wire`); do I/O |
 | `mimid-server` | Hub and follower roles, the provider's JMAP Chat endpoint, admin CLI | Parse or decrypt application ciphertext; put SQL outside its store module |
@@ -71,7 +71,7 @@ mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat cl
 - Rust type and field names mirror the spec's names, so a reviewer can line the two up.
 - Implement every MUST. Implement every SHOULD, unless a comment cites the section and says why not.
 - Do not add fields, methods or errors the spec doesn't define, except where a decision bead labels them `INVENTED, NOT FROM SPEC`.
-- Every ambiguity becomes a decision bead citing the draft, the section, the competing readings, the chosen reading and why. The code carries a short pointer to it, e.g. `// mimi-content-09 §3.3; decision mimid-1wgh.<id>`. Never resolve one silently.
+- Every ambiguity becomes a decision bead citing the draft, the section, the competing readings, the chosen reading and why. The code carries a short pointer to it, e.g. `// mimi-content-10 §3.3; decision mimid-1wgh.<id>`. Never resolve one silently.
 - If the spec looks wrong, implement it as written and file a bead labelled `wg`, so it can go back to the working group.
 
 ## Wire formats and tests

@@ -1,6 +1,6 @@
 //! MIMI message content format for mimid.
 //!
-//! Implements draft-ietf-mimi-content-09: the CBOR `mimiContent` structure
+//! Implements draft-ietf-mimi-content-10: the CBOR `mimiContent` structure
 //! (media type `application/mimi-content`) and its MessageId derivation.
 //! The crate is synchronous and pure. It does no I/O and no encryption.
 //!
@@ -22,6 +22,13 @@
 //!   sender and room URIs and the salt of the hashed message, and does not
 //!   compare them with the `senderUri` and `roomUri` extensions
 //!   (decision mimid-1wgh.2.10).
+//! - §3.3 requires a receiver to reject a message whose `senderUri` or
+//!   `roomUri` extension is present but differs from the URI of the
+//!   enclosing protocol. The codec does not know those URIs, so it does not
+//!   check this; each receive path must, comparing byte-exact (decision
+//!   mimid-1wgh.5.58). mimid's paths that do: franking verification
+//!   (mimi-protocol `frank`) and hub abuse reports, which go through it
+//!   (bead mimid-1wgh.2.25).
 //! - The encoder and decoder enforce the structural rules and limits of
 //!   §4.4, §6.3 and §9.1 (MultiPart part count, nesting depth, total parts,
 //!   topicId length). The other §9.1 checks (message IDs, timestamps,

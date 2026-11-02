@@ -1,20 +1,22 @@
-# PROVENANCE: mimi-content-09 CDDL oracle (T7, bead mimid-1wgh.2.6)
+# PROVENANCE: mimi-content-10 CDDL oracle (T7, bead mimid-1wgh.2.6)
 #
 # cddl_check.py validates CBOR against the WG CDDL with the Ruby cddl tool,
 # outside cargo test. cddl_check.out is its unmodified stdout.
 #
 # Regenerate: CDDL=/path/to/cddl python3 -I cddl_check.py > cddl_check.out
-# Generated:  2026-10-18 with cddl tool version 0.12.14 (Ruby gem "cddl",
+# Generated:  2026-10-18 against the -09 schemas; regenerated 2026-11-02
+#             against the -10 schemas with identical output (bead
+#             mimid-1wgh.2.26). cddl tool version 0.12.14 (Ruby gem "cddl",
 #             https://rubygems.org/gems/cddl), ruby 3.2.3, Python 3.12.3,
 #             standard library only.
 #
-# Schemas (vendored, see ../fixtures/wg-09/PROVENANCE; tag
-# draft-ietf-mimi-content-09, commit a89298c876ab805bdb2e882bc046fa341432783b).
-# Their content equals Appendix A.1/A.2 of -09, the version decisions
+# Schemas (vendored, see ../fixtures/wg-10/PROVENANCE; tag
+# draft-ietf-mimi-content-10, commit 20bd76ef801efcca6814dd9ee401ff49e1258156).
+# Their content equals Appendix A.1/A.2 of -10, the version decisions
 # mimid-1wgh.2.15 (extension value `any`, no size limit) and mimid-1wgh.2.16
 # (url is tstr) follow:
 #   895a0d4b4f920a1d65afc1aadbbe5832d386a03765e3a4a69535056c73170ec1  mimi-content.cddl
-#   0b5e2beaa2f2fdb9118a97f4b42082111d49ade9f53b4aaf8685ed495d2cc161  implied.cddl
+#   17878de060327095227efd1422e62faf3d50f95d94b88f9e0ee4cf324966bb9b  implied.cddl
 #
 # t6-message.cbor holds the bytes of t6_message_hex() in ../extensions.rs,
 # extracted mechanically from that file's hex literals and cross-checked

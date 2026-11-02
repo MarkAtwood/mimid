@@ -1,4 +1,4 @@
-//! T3 and T4: `MessageId::compute` (content-09 §3.3) against the WG
+//! T3 and T4: `MessageId::compute` (content-10 §3.3) against the WG
 //! examples.
 //!
 //! T3 oracle: the message IDs the WG published for each example, in the
@@ -149,28 +149,23 @@ fn computed_ids_match_published_ids() {
     }
 }
 
-/// The Original message's ID under the -07 algorithm. Draft §5.2/§5.3 hex
-/// dumps carry it (decision mimid-1wgh.2.17), and so does the WG's
-/// `implied-original.cbor`, which was not regenerated for -09.
-const ORIGINAL_ID_DRAFT_07: &str =
-    "01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79";
-
 /// T3: the MessageDerivedValues example (draft §5.1) pairs the Original
 /// message's ID with its senderUserUrl and roomUrl. Computing from the
 /// URIs in `implied-original.cbor` and from `original.cbor` gives the ID
 /// that §5.1 and `implied-original.edn` publish.
 ///
-/// The messageId inside `implied-original.cbor` is the stale -07 value.
-/// The test asserts that too, so a regenerated upstream file is noticed.
-/// content-09 §5.1; decision mimid-1wgh.2.23; wg mimid-1wgh.37.20.
+/// The messageId inside `implied-original.cbor` is that published ID too:
+/// the WG regenerated the file for -10 (changelog C.12, "fix one old
+/// message ID"), replacing the stale -07 value decision mimid-1wgh.2.23
+/// worked around. content-10 §5.1.
 #[test]
 fn implied_original_message_id_matches() {
     let published = id("017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4");
     let bytes = fixture("implied-original");
     let mut d = minicbor::Decoder::new(&bytes);
     assert_eq!(d.array().expect("array"), Some(7));
-    let stale_message_id = id(&hex_of(d.bytes().expect("messageId")));
-    assert_eq!(stale_message_id, id(ORIGINAL_ID_DRAFT_07));
+    let message_id = id(&hex_of(d.bytes().expect("messageId")));
+    assert_eq!(message_id, published);
     d.u64().expect("hubAcceptedTimestamp");
     d.bytes().expect("mlsGroupId");
     d.u32().expect("senderLeafIndex");

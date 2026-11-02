@@ -6,7 +6,7 @@ use crate::decode::{self, DecodeError, MAJOR_NEGATIVE, MAJOR_TEXT, MAJOR_UNSIGNE
 
 /// Largest magnitude an integer map key may have: 2^53 − 1, the largest
 /// integer a double holds exactly. It bounds unsigned keys from above and
-/// negative keys from below, extension keys included (content-09 §6.2;
+/// negative keys from below, extension keys included (content-10 §6.2;
 /// decision mimid-1wgh.2.22).
 pub const MAX_INTEGER_KEY: u64 = 9_007_199_254_740_991;
 
@@ -41,7 +41,7 @@ impl ExtensionKey {
     /// [`MAX_EXTENSION_KEY_LEN`] octets.
     pub(crate) fn is_valid(&self) -> bool {
         match self {
-            // content-09 §6.2; decision mimid-1wgh.2.22
+            // content-10 §6.2; decision mimid-1wgh.2.22
             Self::Uint(value) => *value <= MAX_INTEGER_KEY,
             // -1 - n >= -MAX_INTEGER_KEY
             Self::Nint(n) => *n < MAX_INTEGER_KEY,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""CDDL oracle for mimi-content-09 (T7), run outside cargo test.
+"""CDDL oracle for mimi-content-10 (T7), run outside cargo test.
 
-Validates CBOR against the WG CDDL vendored in ../fixtures/wg-09/ with the
+Validates CBOR against the WG CDDL vendored in ../fixtures/wg-10/ with the
 Ruby `cddl` tool (an implementation independent of this crate):
 
 - the 14 WG mimiContent examples against mimi-content.cddl;
@@ -29,7 +29,7 @@ import sys
 import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
-WG = HERE.parent / "fixtures" / "wg-09"
+WG = HERE.parent / "fixtures" / "wg-10"
 CONTENT_CDDL = WG / "mimi-content.cddl"
 IMPLIED_CDDL = WG / "implied.cddl"
 

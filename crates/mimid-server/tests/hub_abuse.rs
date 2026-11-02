@@ -46,7 +46,7 @@ fn from(domain: &str) -> Domain {
     Domain::try_from(domain.to_owned()).unwrap()
 }
 
-/// A MIMI content message (mimi-content-09 §4.1) from alice in [`ROOM_ID`]
+/// A MIMI content message (mimi-content-10 §4.1) from alice in [`ROOM_ID`]
 /// with `salt` and a text body.
 fn content(salt: [u8; 16], text: &str) -> Vec<u8> {
     content_with(salt, text, Some(ALICE), Some(ROOM_ID.as_bytes()))
@@ -320,6 +320,81 @@ async fn forged_or_tampered_franks_are_refused() {
     flipped.server_frank[31] ^= 0x80;
     let (status, _) = f.post(ROOM_ID_ENCODED, encode(vec![with(flipped)])).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// MIMI content hand-encoded from mimi-content-10 §4 and Appendix A.1, not
+/// by mimid's encoder: a render part with text "hello" and the senderUri
+/// and roomUri extensions set to `sender` and `room`.
+fn hand_encoded_content(salt: [u8; 16], sender: &str, room: &str) -> Vec<u8> {
+    // RFC 8949 text string head in shortest form (content-10 §6.1).
+    let text = |s: &str| -> Vec<u8> {
+        let len = u8::try_from(s.len()).unwrap();
+        let head = if len < 24 {
+            vec![0x60 + len]
+        } else {
+            vec![0x78, len]
+        };
+        [head, s.as_bytes().to_vec()].concat()
+    };
+    [
+        vec![0x87],       // array(7): mimiContent
+        vec![0x50],       // bytes(16): salt
+        salt.to_vec(),    //
+        vec![0xf6],       // replaces: null
+        vec![0x40],       // topicId: bytes(0)
+        vec![0xf6],       // expires: null
+        vec![0xf6],       // inReplyTo: null
+        vec![0xa2],       // map(2): mimiExtensions
+        vec![0x01],       // 1: senderUri (§8.2.1)
+        text(sender),     //
+        vec![0x02],       // 2: roomUri (§8.2.1)
+        text(room),       //
+        vec![0x85],       // array(5): NestedPart
+        vec![0x01],       // disposition: render
+        vec![0x60],       // language: text(0)
+        vec![0x01],       // single
+        vec![0x78, 0x18], // contentType: text(24)
+        b"text/plain;charset=utf-8".to_vec(),
+        vec![0x45], // content: bytes(5)
+        b"hello".to_vec(),
+    ]
+    .concat()
+}
+
+#[tokio::test]
+async fn content_uri_extensions_must_match_the_enclosing_protocol() {
+    // content-10 §3.3: a present senderUri or roomUri extension that differs
+    // from the enclosing protocol's URI makes the message invalid. The
+    // content here is franked as sent, so only that rule can refuse it
+    // (bead mimid-1wgh.2.25; byte-exact, decision mimid-1wgh.5.58).
+    let mut f = fixture().await;
+    let alice = std::str::from_utf8(ALICE).unwrap();
+    let salt = [5; 16];
+    let matching = f
+        .send(&hand_encoded_content(salt, alice, ROOM_ID), salt)
+        .await;
+    assert_eq!(f.report(vec![matching]).await.unwrap(), b"");
+
+    let cases = [
+        (
+            "senderUri is not the sender",
+            [6; 16],
+            "mimi://b.example/u/bob",
+            ROOM_ID,
+        ),
+        (
+            "roomUri is not the room",
+            [7; 16],
+            alice,
+            "mimi://a.example/r/two",
+        ),
+    ];
+    for (name, salt, sender, room) in cases {
+        let message = f
+            .send(&hand_encoded_content(salt, sender, room), salt)
+            .await;
+        assert_refused(f.report(vec![message]).await, 0, name);
+    }
 }
 
 #[tokio::test]

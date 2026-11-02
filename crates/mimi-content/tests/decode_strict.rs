@@ -1,6 +1,6 @@
 //! T5: the strict decoder rejects hostile and non-deterministic input.
 //!
-//! Inputs are hand-written hex built from the CDDL of content-09 §4 and
+//! Inputs are hand-written hex built from the CDDL of content-10 §4 and
 //! the head encoding of RFC 8949 §3, with a comment on every item. The
 //! oracle for each test is the spec rule it cites. Offsets in expected
 //! errors count octets from the start of the input.

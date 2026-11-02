@@ -1,4 +1,4 @@
-//! The mimi-content-09 data model (§4, Appendix A.1).
+//! The mimi-content-10 data model (§4, Appendix A.1).
 //!
 //! Each type mirrors one CDDL rule. Field names follow the CDDL member
 //! names, converted to snake case.
