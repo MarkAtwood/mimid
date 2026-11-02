@@ -3,13 +3,14 @@
   "title": "haven: update lane takes a bare Commit and answers with no UpdateRoomResponse",
   "description": "Found live by B4 (mimid-1wgh.46.1.6), havenmessenger/interop d875bed. protocol-06 §5.3 L1438-1443: the /update body is UpdateRequest { HandshakeBundle bundle; } (proposalOrCommit + optional\u003cWelcome\u003e + GroupInfoOption + RatchetTreeOption); L1490-1500: the response is an UpdateRoomResponse (responseCode + accepted_timestamp/currentEpoch/invalidProposals). mimi-hubd update_wire (mimi-hubd/src/http.rs, Provider::apply_update_commit -\u003e mimi_core::commit_wire::decode_single_custom_proposal_commit) takes the body as a bare PublicMessage Commit and returns only an HTTP status (200 empty / 400). mimid PeerClient::update with a protocol-06 UpdateRequest gets 400; a 200 would still not decode as UpdateRoomResponse. Haven DIVERGENCES DIV-10 documents the single-custom-proposal scope but not the request/response framing. Report on havenmessenger/interop only with Mark's per-action OK.",
   "notes": "2026-11-02: reported to Haven with Mark's OK: https://github.com/havenmessenger/interop/issues/1#issuecomment-6588758190 (fix-or-DIVERGENCES per their CONTRIBUTING.md). .15 framed with protocol-06 §5.3 L1358-1361 AppSync wording as support for Haven's reading; fixed in editor's copy by mimi-protocol#164 (merged 2026-11-01).",
-  "status": "open",
+  "status": "deferred",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-02T21:12:27.153786434Z",
   "created_by": "agent",
-  "updated_at": "2026-11-02T21:21:14.386253557Z",
+  "updated_at": "2026-11-02T23:19:19.32236557Z",
+  "defer_until": "2026-11-16T00:00:00-08:00",
   "labels": [
     "upstream"
   ],

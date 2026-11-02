@@ -3,14 +3,16 @@
   "title": "build: Cargo.lock stale after crate-jmap unpin",
   "description": "004a65d (build: track crate-jmap main, drop rev pin) changed Cargo.toml but not Cargo.lock, which still pins jmap-chat-types 0.2.0 at crate-jmap rev b8b6f25. Verified 2026-10-21 on main 305a077: 'cargo metadata --locked --offline' exits 101 ('cannot update the lock file ... --locked was passed'). A plain build re-resolves crate-jmap main (0.2.0 -\u003e 0.3.0, adds jmap-did-types), so --locked builds/CI likely fail. Fix: cargo update -p for the crate-jmap crates, run the full build-and-test gate, commit Cargo.lock.",
   "notes": "2026-10-21 investigation: 'cargo update -p jmap-chat-types -p jmap-server -p jmap-types' moves all three to crate-jmap main 860a4c2a (0.3.0, adds jmap-did-types; no other lockfile changes) and fixes --locked. But mimid-server then fails to compile: jmap-server 0.3.0 HandlerFuture resolves to HandlerOutput {primary, extra_invocations} instead of (Value, Vec\u003cInvocation\u003e). Sites: jmap/api.rs:121 (Echo), jmap/projection.rs:1126 and :1357. Fix: HandlerOutput::new(v) / .with_extra(e). Also watch crate-jmap 0cd682c9 'let backends own unreadCount' (chat-server). Mark: defer to later mimid jmap work; lockfile left as committed.",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-21T16:01:39.101388721Z",
   "created_by": "agent",
-  "updated_at": "2026-10-21T16:06:36.197299389Z",
+  "updated_at": "2026-11-02T23:19:40.343451415Z",
   "started_at": "2026-10-21T16:02:13.401305568Z",
+  "closed_at": "2026-11-02T23:19:40.343451415Z",
+  "close_reason": "Fixed by the openmls 0.9.2 security bump (mimid-qcja, ec7634e): crate-jmap deps pinned to rev b8b6f251 in crates/mimid-server/Cargo.toml, Cargo.lock matches, and 'cargo check --workspace --all-features --all-targets --locked --offline' passes on b1c6d85 (verified 2026-11-02). Moving to crate-jmap 0.4 and adding --locked to CI remain in mimid-yl87.",
   "labels": [
     "localfix"
   ]

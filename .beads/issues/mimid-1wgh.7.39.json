@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.7.39",
   "title": "decision: a mimid user's identifierQuery 'handle' is its mimi:// user URI",
   "description": "protocol-06 §5.8: 'handle means that the entire handle URI matches exactly (for example: im:alice.smith@a.example)'; the draft defers identifier formats to I-D.mahy-mimi-identity (TODO at the end of §5.8). Readings: (a) handle is a separate im: (or other) handle URI, which mimid users do not have, so no handle query could ever match; (b) a user's handle is its MIMI user URI (mimi://\u003cprovider\u003e/u/\u003cid\u003e), the only stable identifier mimid has. Chosen: (b). Applies to inbound matching only.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-02T22:00:45.353005625Z",
   "created_by": "agent",
-  "updated_at": "2026-11-02T22:00:45.353005625Z",
+  "updated_at": "2026-11-02T23:19:13.16280063Z",
+  "closed_at": "2026-11-02T23:19:13.16280063Z",
+  "close_reason": "Approved by Mark 2026-11-02; implemented in .7.32/.7.33.",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.7.39",
