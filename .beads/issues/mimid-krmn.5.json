@@ -1,0 +1,30 @@
+{
+  "id": "mimid-krmn.5",
+  "title": "krmn K5: GroupContext dictionary entries must be listed in app_components (rules 6, 7)",
+  "description": "mls-extensions #110 rule 6 (+7 content_media_types). Validator: every app_data_dictionary entry other than 0x0001/0x0002 listed in GroupContext app_components; at create, each Commit's resulting GroupContext, join (Welcome/GroupInfo), hub room creation (hub/room.rs check_group) and hub components (hub/components.rs apply_commit_op). Leaf list grows to every component mimid implements (decision filed with this bead): 0x0004, 0x0020-0x0023, 0x0024-0x0029, plus GREASE. Fixture cascade: hub_acceptance.rs:119-121/192-200, follower_e2e.rs:128-130/200-208, tests/common/mod.rs:190-201, observer_app_data_update.rs:482, mls-rs MLS_RS_APP_COMPONENTS. Regression tests first. See krmn design.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T23:33:02.532518923Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T23:33:02.532518923Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-krmn.5",
+      "depends_on_id": "mimid-krmn",
+      "type": "parent-child",
+      "created_at": "2026-11-02T23:33:02.554114164Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-krmn.5",
+      "depends_on_id": "mimid-krmn.4",
+      "type": "blocks",
+      "created_at": "2026-11-02T23:33:02.923914143Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

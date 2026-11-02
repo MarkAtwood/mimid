@@ -1,0 +1,24 @@
+{
+  "id": "mimid-krmn.8",
+  "title": "decision: mimid leaves advertise every component mimid implements",
+  "description": "mls-extensions #110 rules 3 and 6 force every member's leaf to list each component the GroupContext holds state for (hub rooms: 0x0021, 0x0022, 0x0025, 0x0027). Mark 2026-11-02: a fixed list, not a per-identity setting: 0x0004 last_resort_key_package, 0x0020 frank_aad, 0x0021 franking_agent, 0x0022 participant_list, 0x0023 room_metadata, 0x0024-0x0029 room-policy components, plus one GREASE value; never 0x0001/0x0002 (K1). Implemented in K5.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T23:33:03.32795821Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T23:33:03.427273476Z",
+  "closed_at": "2026-11-02T23:33:03.427273476Z",
+  "close_reason": "Approved by Mark 2026-11-02",
+  "dependencies": [
+    {
+      "issue_id": "mimid-krmn.8",
+      "depends_on_id": "mimid-krmn",
+      "type": "parent-child",
+      "created_at": "2026-11-02T23:33:03.345296727Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -905,6 +905,78 @@ fn adding_a_leaf_without_a_required_app_component_is_refused() {
     assert_eq!(group.epoch(), 1);
 }
 
+#[test]
+fn app_components_and_safe_aad_ids_in_lists_are_ignored() {
+    // mls-extensions editor's copy (PR #110): support for app_components
+    // (0x0001) and safe_aad (0x0002) is implied, so they are not listed,
+    // and an entry for either in a list is ignored. Decision mimid-krmn.6.
+    // GroupContext requirements naming them, hand-encoded (§5
+    // ComponentsList):
+    let required_app = vec![
+        0x06, // ComponentID component_ids<V>: 6 bytes
+        0x00, 0x01, // ComponentID app_components (ignored)
+        0x00, 0x02, // ComponentID safe_aad (ignored)
+        0x00, 0x20, // ComponentID frank_aad
+    ];
+    let required_safe_aad = vec![
+        0x04, // ComponentID component_ids<V>: 4 bytes
+        0x00, 0x02, // ComponentID safe_aad (ignored)
+        0x00, 0x20, // ComponentID frank_aad
+    ];
+    let alice = identity(b"alice");
+    let mut group = Member::create(
+        &alice,
+        b"room-implied",
+        &[],
+        &[
+            (APP_COMPONENTS, required_app),
+            (SAFE_AAD, required_safe_aad),
+        ],
+    )
+    .expect("our leaf need not list 0x0001 or 0x0002");
+
+    // An mls-rs leaf listing only frank_aad in both lists, hand-encoded
+    // §4.6 AppDataDictionary.
+    let omits = [
+        0x0c, // ComponentData component_data<V>: 12 bytes
+        0x00, 0x01, // component_id = app_components
+        0x03, // opaque data<V>: 3 bytes
+        0x02, //   ComponentsList.component_ids<V>: 2 bytes
+        0x00, 0x20, //   ComponentID frank_aad
+        0x00, 0x02, // component_id = safe_aad
+        0x03, // opaque data<V>: 3 bytes
+        0x02, //   ComponentsList.component_ids<V>: 2 bytes
+        0x00, 0x20, //   ComponentID frank_aad
+    ];
+    let bob = bare_key_package(&mls_rs_key_package_with(&mls_rs_client(b"bob"), &omits));
+    group
+        .commit(&alice, &[&bob], &[], &[], no_components)
+        .expect("a leaf omitting 0x0001 and 0x0002 is accepted");
+    group.merge_pending_commit(&alice).expect("merge");
+
+    // A leaf that still lists them is accepted too: the entries are
+    // ignored, not refused.
+    let lists = [
+        0x10, // ComponentData component_data<V>: 16 bytes
+        0x00, 0x01, // component_id = app_components
+        0x07, // opaque data<V>: 7 bytes
+        0x06, //   ComponentsList.component_ids<V>: 6 bytes
+        0x00, 0x01, //   ComponentID app_components
+        0x00, 0x02, //   ComponentID safe_aad
+        0x00, 0x20, //   ComponentID frank_aad
+        0x00, 0x02, // component_id = safe_aad
+        0x03, // opaque data<V>: 3 bytes
+        0x02, //   ComponentsList.component_ids<V>: 2 bytes
+        0x00, 0x20, //   ComponentID frank_aad
+    ];
+    let carol = bare_key_package(&mls_rs_key_package_with(&mls_rs_client(b"carol"), &lists));
+    group
+        .commit(&alice, &[&carol], &[], &[], no_components)
+        .expect("a leaf listing 0x0001 and 0x0002 is accepted");
+    group.merge_pending_commit(&alice).expect("merge");
+    assert_eq!(group.epoch(), 2);
+}
+
 /// alice (mimi-mls) and bob (mls-rs) in a fresh group whose GroupContext
 /// `safe_aad` list requires 0x0020, at epoch 1.
 fn alice_and_bob_requiring_0020() -> (

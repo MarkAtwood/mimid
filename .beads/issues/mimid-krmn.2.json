@@ -1,0 +1,30 @@
+{
+  "id": "mimid-krmn.2",
+  "title": "krmn K2: join_welcome checks this identity's own leaf (rule 4)",
+  "description": "mls-extensions #110 rule 4: a client MUST NOT join a group whose GroupContext requires a component it does not support. join_welcome excludes its own leaf today (member.rs:96-97, 303-304); check it before into_group (member.rs:664-667) and refuse. Regression test first (mls-rs creator whose GroupContext requires a component our leaf lacks). See krmn design.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T23:33:02.282689522Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T23:33:02.282689522Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-krmn.2",
+      "depends_on_id": "mimid-krmn",
+      "type": "parent-child",
+      "created_at": "2026-11-02T23:33:02.314693857Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-krmn.2",
+      "depends_on_id": "mimid-krmn.1",
+      "type": "blocks",
+      "created_at": "2026-11-02T23:33:02.631728718Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

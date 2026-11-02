@@ -1,0 +1,24 @@
+{
+  "id": "mimid-krmn.6",
+  "title": "decision: follow mls-extensions editor's copy #110 for component negotiation",
+  "description": "Published draft-ietf-mls-extensions-10 §4.6 says a client 'MUST understand and advertise the app_components component'; editor's copy after PR #110 (merge 500622f7, 2026-11-01) says 0x0001/0x0002 are implied, not listed, and ignored on receipt, and adds negotiation rules 2-7. Mark 2026-11-02: implement #110 now (deviation from published -10, as hcfn followed #109). Supersedes decisions mimid-1wgh.4.25 and mimid-1wgh.4.63 (K1).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T23:33:02.99779986Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T23:33:03.099480988Z",
+  "closed_at": "2026-11-02T23:33:03.099480988Z",
+  "close_reason": "Approved by Mark 2026-11-02",
+  "dependencies": [
+    {
+      "issue_id": "mimid-krmn.6",
+      "depends_on_id": "mimid-krmn",
+      "type": "parent-child",
+      "created_at": "2026-11-02T23:33:03.01846332Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

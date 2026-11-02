@@ -210,10 +210,13 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
         .get(APP_DATA_DICTIONARY)
         .expect("LeafNode app_data_dictionary")
         .extension_data;
-    assert_eq!(data.len(), 26, "leaf dictionary: {data:02x?}");
-    let listed_grease = u16::from_be_bytes([data[13], data[14]]);
-    let safe_aad_grease = u16::from_be_bytes([data[21], data[22]]);
-    let component_grease = u16::from_be_bytes([data[23], data[24]]);
+    // app_components (0x0001) and safe_aad (0x0002) are not listed: their
+    // support is implied (mls-extensions editor's copy, PR #110; decision
+    // mimid-krmn.6).
+    assert_eq!(data.len(), 22, "leaf dictionary: {data:02x?}");
+    let listed_grease = u16::from_be_bytes([data[9], data[10]]);
+    let safe_aad_grease = u16::from_be_bytes([data[17], data[18]]);
+    let component_grease = u16::from_be_bytes([data[19], data[20]]);
     for grease in [listed_grease, safe_aad_grease, component_grease] {
         assert!(is_component_grease(grease), "{grease:#06x}");
     }
@@ -221,12 +224,10 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
     let [sg_hi, sg_lo] = safe_aad_grease.to_be_bytes();
     let [cg_hi, cg_lo] = component_grease.to_be_bytes();
     let expected = [
-        0x19, // component_data<V>: 25 bytes follow
+        0x15, // component_data<V>: 21 bytes follow
         0x00, 0x01, // ComponentData.component_id = app_components
-        0x0b, // ComponentData.data<V>: 11 bytes (a ComponentsList)
-        0x0a, //   ComponentsList.component_ids<V>: 10 bytes
-        0x00, 0x01, //   ComponentID = app_components
-        0x00, 0x02, //   ComponentID = safe_aad
+        0x07, // ComponentData.data<V>: 7 bytes (a ComponentsList)
+        0x06, //   ComponentsList.component_ids<V>: 6 bytes
         0x00, 0x04, //   ComponentID = last_resort_key_package
         0x00, 0x20, //   ComponentID = frank_aad (protocol-06 §10.1)
         lg_hi, lg_lo, //   ComponentID = GREASE

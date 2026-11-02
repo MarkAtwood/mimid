@@ -1,0 +1,27 @@
+{
+  "id": "mimid-krmn.1",
+  "title": "krmn K1: stop listing 0x0001/0x0002; ignore them on receipt",
+  "description": "mls-extensions #110 rule 1. identity.rs:286-287 drop APP_COMPONENTS and SAFE_AAD from the leaf app_components list (+docs identity.rs:155-160, 281-284, lib.rs:39-41); receivers ignore 0x0001/0x0002 in GroupContext and leaf ComponentsLists (member.rs required_lists 1597-1600 / first_unsupported 1657). Regression test first with an independent peer (mls-rs leaf or hand-encoded list naming 0x0001 in the GroupContext requirement is accepted). Update key_package_mls_rs.rs:200-241 expected bytes per the new rule. See krmn design.",
+  "notes": "2026-11-02 K1 implemented in worktree agent-a973abdaf2d1161af (uncommitted): identity.rs leaf app_components list drops 0x0001/0x0002 (now 0x0004, 0x0020, GREASE); member.rs first_unsupported ignores 0x0001/0x0002 in GroupContext requirements (covers create, commit, process, external join, Observer, nonconforming report); docs identity.rs/lib.rs cite editor's copy PR #110, decision mimid-krmn.6. New test member_mls_rs.rs app_components_and_safe_aad_ids_in_lists_are_ignored (hand-encoded requirements naming 0x0001/0x0002, mls-rs leaves omitting/listing them) failed before (MissingSafeAadComponent(2) at create). Changed key_package_mls_rs.rs check_leaf_app_data_dictionary expected bytes per the decision (22 bytes, lengths recomputed). Six gates pass (93 suites).",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T23:33:02.180936665Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T23:46:16.712385208Z",
+  "started_at": "2026-11-02T23:33:27.336828592Z",
+  "closed_at": "2026-11-02T23:46:16.712385208Z",
+  "close_reason": "Leaves no longer list 0x0001/0x0002 (identity.rs); first_unsupported ignores them in requirement lists (covers create, commit, process, external join, Observer). New test member_mls_rs.rs app_components_and_safe_aad_ids_in_lists_are_ignored failed first (MissingSafeAadComponent(2)); key_package_mls_rs.rs expected bytes re-encoded by hand per decision krmn.6. Six gates pass on main with content-10 and rto-02 changes (combined).",
+  "dependencies": [
+    {
+      "issue_id": "mimid-krmn.1",
+      "depends_on_id": "mimid-krmn",
+      "type": "parent-child",
+      "created_at": "2026-11-02T23:33:02.207407598Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

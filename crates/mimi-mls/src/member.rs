@@ -283,7 +283,7 @@ pub struct CommitBundle {
     /// The signed GroupInfo for the new epoch (RFC 9420 §12.4.3), with
     /// signer this member's leaf. Its extensions are exactly
     /// `[external_pub]`: no ratchet_tree, which protocol-06 §5.3 sends
-    /// separately. A PartialGroupInfo (ratchet-tree-options-01 §4) is this
+    /// separately. A PartialGroupInfo (ratchet-tree-options-02 §4) is this
     /// GroupInfo's extensions and signature.
     pub group_info: Vec<u8>,
 }
@@ -1636,10 +1636,13 @@ fn check_leaf(
     Ok(())
 }
 
-/// The first non-GREASE id in `required` that the `component_id` list of a
-/// leaf's `app_data_dictionary` (in `extensions`) does not name. A leaf's
-/// list is untrusted input: an absent or malformed one counts as empty, and
-/// GREASE ids in `required` are skipped (decision mimid-1wgh.4.49).
+/// The first id in `required` that the `component_id` list of a leaf's
+/// `app_data_dictionary` (in `extensions`) does not name. A leaf's list is
+/// untrusted input: an absent or malformed one counts as empty. GREASE ids
+/// in `required` are skipped (decision mimid-1wgh.4.49), and so are
+/// app_components and safe_aad, whose support is implied and whose entries
+/// in a list are ignored (mls-extensions editor's copy, PR #110; decision
+/// mimid-krmn.6).
 fn first_unsupported(
     extensions: &Extensions<LeafNode>,
     component_id: ComponentId,
@@ -1651,10 +1654,11 @@ fn first_unsupported(
         .and_then(|data| ComponentsList::tls_deserialize_exact(data).ok())
         .map(|list| list.into_ids().into_iter().collect())
         .unwrap_or_default();
-    required
-        .iter()
-        .copied()
-        .find(|id| !COMPONENT_GREASE.contains(id) && !supported.contains(id))
+    required.iter().copied().find(|id| {
+        !COMPONENT_GREASE.contains(id)
+            && ![APP_COMPONENTS, SAFE_AAD].contains(id)
+            && !supported.contains(id)
+    })
 }
 
 /// Applies mls-extensions-10 §4.7 to `proposals` (sorted by component id,

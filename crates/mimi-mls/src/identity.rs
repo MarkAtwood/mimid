@@ -155,9 +155,10 @@ impl Identity {
     /// values. Its `app_data_dictionary` carries an `app_components` entry,
     /// which §4.6 requires of any client that advertises
     /// `app_data_dictionary`. That list names the components this crate
-    /// implements: `app_components` itself, which §4.6 says to advertise,
-    /// `safe_aad` (see [`crate::member`]),
-    /// `last_resort_key_package` and protocol-06's `frank_aad` (0x0020). It
+    /// implements, `last_resort_key_package` and protocol-06's `frank_aad`
+    /// (0x0020), but not `app_components` or `safe_aad`, whose support is
+    /// implied (mls-extensions editor's copy, PR #110; decision
+    /// mimid-krmn.6). It
     /// also carries a `safe_aad` entry (§5) listing the supported Safe AAD
     /// components: `frank_aad` (decisions mimid-1wgh.4.45,
     /// mimid-1wgh.4.52). Every list also holds a GREASE component id from
@@ -278,13 +279,11 @@ where
     R: OpenMlsRand,
     R::Error: Send + Sync + 'static,
 {
-    // mls-extensions-10 §4.6 requires the app_components entry and says to
-    // "advertise the app_components component", so the list names
-    // app_components itself along with the other implemented components
-    // (decision mimid-1wgh.4.25).
+    // The app_components entry lists the implemented components. Support for
+    // app_components (0x0001) and safe_aad (0x0002) is implied, so they are
+    // not listed: mls-extensions editor's copy (PR #110); decision
+    // mimid-krmn.6.
     let app_components = ComponentsList::new(vec![
-        APP_COMPONENTS,
-        SAFE_AAD,
         LAST_RESORT_KEY_PACKAGE,
         FRANK_AAD,
         random_component_grease(rand)?,
