@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.46.1.1",
+  "title": "interop A1: Haven-encoded protocol-06 fixtures decoded by mimid",
+  "description": "Generator crate under crates/mimi-protocol/tests/fixtures/haven/gen/ (not a workspace member) pinned to havenmessenger/interop 2c14e62 writes TLS-PL bytes for each request/response Haven encodes. mimi-protocol test: decode, compare to expected value, re-encode byte-identical. PROVENANCE with repo, commit, SHA-256, license (Apache-2.0). Each mismatch -\u003e bead (mimid bug / Haven divergence / decision+wg). See mimid-1wgh.46.1 design.",
+  "notes": "2026-11-02 (worktree agent-a110b5d636f52900b, uncommitted): 19 Haven-encoded fixtures + gen crate (Haven 2c14e62, deterministic, PROVENANCE with SHA-256) under crates/mimi-protocol/tests/fixtures/haven; test haven_fixtures.rs (13 tests pass). 17 fixtures decode, match generator inputs, re-encode byte-identically. 2 Haven divergences, tests assert mimid refuses them: key_material_response_exhausted (partialSuccess with no success client, §5.2 L1283-1284) -\u003e mimid-1wgh.46.1.7; handshake_bundle_commit (GroupInfoOption GroupInfo length-prefixed, §5.3 L1428-1436; rest matches once the 2-byte prefix is removed) -\u003e mimid-1wgh.46.1.8. Spec gap: no userStatus for all-clients-exhausted -\u003e mimid-1wgh.46.1.9 (wg). No mimid bugs found. Not covered: UpdateRoomResponse invalidProposal (Haven encodes ProposalRef list as VLBytes entries; not generated), GroupInfoOption partial, consent cancel/revoke.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T20:10:37.303977909Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T20:22:56.478987032Z",
+  "started_at": "2026-11-02T20:10:38.128167464Z",
+  "closed_at": "2026-11-02T20:22:56.478987032Z",
+  "close_reason": "17/19 Haven 2c14e62 fixtures decode, match generator inputs, re-encode byte-identical. 2 Haven divergences (.46.1.7, .46.1.8, tests assert mimid refuses them, citations verified by orchestrator: protocol-06 L1283-1284, L1428-1436), 1 wg gap (.46.1.9). No mimid bugs. Not covered: UpdateRoomResponse invalidProposal, GroupInfoOption partial, consent cancel/revoke.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.1.1",
+      "depends_on_id": "mimid-1wgh.46.1",
+      "type": "parent-child",
+      "created_at": "2026-11-02T20:10:37.322373574Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

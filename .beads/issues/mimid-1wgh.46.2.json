@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.46.2",
   "title": "Interop: cross-check mimi-content vectors with phnx-im/mimi-content (Air)",
   "description": "Run mimid's content fixtures (moving to -10, see mimid-1wgh.2.26) through phnx-im/mimi-content and vice versa, both decode and encode. That crate is used in production by Phoenix's Air app, so a mismatch is a real-app interop bug. Note phnx mimi-content is still at -08/-09 (Konrad's PR #20 to -09 open); differences from -10 changes are expected, not bugs. Repo has no license file: Mark decides whether/how to contribute a -10 update.",
+  "notes": "2026-11-02 Mark: phnx-im repos have no license file; Mark's licensing call: treat their code output as usable for fixtures.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-02T18:51:25.245129998Z",
   "created_by": "agent",
-  "updated_at": "2026-11-02T18:51:25.245129998Z",
+  "updated_at": "2026-11-02T20:10:37.240393606Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.46.2",

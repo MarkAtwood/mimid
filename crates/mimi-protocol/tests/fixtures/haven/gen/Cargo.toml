@@ -1,0 +1,12 @@
+[package]
+name = "haven-fixture-gen"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Not a member of the mimid workspace.
+[workspace]
+
+[dependencies]
+mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "2c14e6206cb114eed4795c1cab45dadbe7d37b0b" }
+openmls = "0.8.1"

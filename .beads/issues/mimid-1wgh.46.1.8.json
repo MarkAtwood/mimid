@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.1.8",
+  "title": "haven: GroupInfoOption payload carries a length prefix protocol-06 does not define",
+  "description": "havenmessenger/interop 2c14e62 src/protocol_wire.rs HandshakeBundle::encode writes GroupInfoOption.payload as VLBytes (opaque\u003cV\u003e); its own doc calls this 'a known, disclosed departure from the literal wire shape'. protocol-06 §5.3 L1428-1436: struct { GroupInfoRepresentation representation; select (representation) { case full: GroupInfo groupInfo; case partial: PartialGroupInfo partialGroupInfo; } } GroupInfoOption; no length. mimid decodes GroupInfo directly and fails with EndOfStream on Haven's update bundle. Confirmed: fixture handshake_bundle_commit.bin has 0x41a4 (420) at offset 846 before the 420-byte GroupInfo; with those 2 bytes removed mimid decodes and re-encodes it byte-identically (test haven_fixtures.rs). Report on havenmessenger/interop only with Mark's per-action OK.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T20:15:41.670632659Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T20:15:41.670632659Z",
+  "labels": [
+    "upstream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.1.8",
+      "depends_on_id": "mimid-1wgh.46.1",
+      "type": "parent-child",
+      "created_at": "2026-11-02T20:15:41.698528174Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

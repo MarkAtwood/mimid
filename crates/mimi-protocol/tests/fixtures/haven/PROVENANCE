@@ -1,0 +1,41 @@
+# PROVENANCE: protocol-06 wire fixtures encoded by Haven (bead mimid-1wgh.46.1.1)
+#
+# Source: https://github.com/havenmessenger/interop (crate mimi-core),
+# commit 2c14e6206cb114eed4795c1cab45dadbe7d37b0b. License: Apache-2.0
+# (LICENSE file in that repo).
+#
+# gen/ is a standalone crate (its own [workspace], not a mimid workspace
+# member) that calls Haven's encoders with the fixed inputs in
+# gen/src/main.rs. gen/Cargo.lock pins every dependency. MLS objects inside
+# the fixtures are a hand-encoded RFC 9420 PrivateMessage (in main.rs) and
+# the mlswg vectors in crates/mimi-mls/tests/fixtures/mlswg (entry 000,
+# ciphersuite 0x0001; see that directory's PROVENANCE).
+#
+# Command, from this directory's gen/ subdirectory (any private target dir):
+#   CARGO_TARGET_DIR=/home/mark/Cache/mimid-target-46.1.1 \
+#     cargo run -- ../../../../../mimi-mls/tests/fixtures/mlswg ..
+#
+# The output is deterministic. Known Haven divergences in these fixtures:
+#   key_material_response_exhausted.bin  mimid-1wgh.46.1.7
+#   handshake_bundle_commit.bin          mimid-1wgh.46.1.8
+#
+# SHA-256
+fee863dcc3bd37ed4c0aedef32c217100445ce00705aaeba443a4468851f06b1  abuse_report.bin
+d349a398cb1557025bf0cb031e9211f7cf039420bb12cf4eaefe44c953ecf36b  consent_grant.bin
+e8d83de887e4b06b957f068503c2f73fd8f5a26630bd69df19f3ebc2a76d5112  consent_request.bin
+83a94760727de37617ae01d03c1d9c048409c1a6e8b7839d971874a6a1a887ec  fanout_message.bin
+9f91848bf5a66eb7c18b23e36287d0ce8e1e66dea3520decac3be07ee791da63  handshake_bundle_commit.bin
+1ec3309fec4ffb3dc8de8648d514ba606d72c9aa2531ebd48b729296dd31077d  handshake_bundle_proposal.bin
+03476fbc9f2fc902e0404c74f7ae679da65015882864d552ed27d2926697975d  identifier_request.bin
+8455dcd8967878d6816babd70b1106cb6ee5856e42fec9210334efeabf35585d  identifier_response_success.bin
+51a8f5e6640ac56a93e4081fee1cc28b43cc1665d15e8602df7bafb2ed4921ee  key_material_request.bin
+eb543b50e4f64ca3ee5f44d5273cfee708e1fbc1182987d7fe03bbee9dccf58c  key_material_response_exhausted.bin
+54ce24b7c4147cf42b210aba10ab4707503264e48be346113634239727e0232f  key_material_response_no_consent.bin
+5faab1f1925e9050cb5cf8462c815133957654d72fb50d7e172630e09878e794  key_material_response_success.bin
+f4d2e25af284bfd05be6ebb6fd02abe3bcd202b52c92b22f640124920cf7d416  submit_message_request.bin
+8212cc72a0abf34142c50044a7172e411cb6e6904ac9e32835755d3e1ad98ea9  submit_message_response_accepted.bin
+e50ed2b73f8ae1a0098b39520bf8988351d937d61d2657a11d49cf83c65b6e4f  submit_message_response_epoch_too_old.bin
+9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2  submit_message_response_not_allowed.bin
+bacc610d428170ce1fc6fe9c6727f7c44f2ddcfa6f55bb3ad9eb9d9b410e2244  update_room_response_not_allowed.bin
+ed1da46b3a7888a9b0ded126ddf7464cb8a745b34fdadfa5d7af04d6f4c90e1a  update_room_response_success.bin
+cda288a0a469b0f4d1fd74b50c575ab8792989c2838ee1a697560cf543e36de1  update_room_response_wrong_epoch.bin

@@ -1,0 +1,55 @@
+{
+  "id": "mimid-1wgh.46.1.6",
+  "title": "interop B4: live one-way run mimid -\u003e mimi-hubd",
+  "description": "Start mimi-hubd with throwaway certs, drive mimid PeerClient against its TLS-PL lane (keyMaterial, submitMessage, consent, identifierQuery, reportAbuse, update with one custom proposal). Manual runbook or ignored test; not in CI. Record mismatches as beads.",
+  "notes": "Haven builds root-level directory URLs as https://{provider_domain}{path} with no port (mimi-hubd/src/lib.rs directory()). Locally the harness must make provider_domain resolve to the proxy/hub (e.g. provider_domain=localhost:\u003cport\u003e if Haven accepts a port there, or a hosts entry); mimid uses directory URLs as given (decision .6.48).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T20:10:37.683893886Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T20:12:07.644710381Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.1.6",
+      "depends_on_id": "mimid-1wgh.46.1",
+      "type": "parent-child",
+      "created_at": "2026-11-02T20:10:37.703481283Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.46.1.6",
+      "depends_on_id": "mimid-1wgh.46.1.3",
+      "type": "blocks",
+      "created_at": "2026-11-02T20:10:37.784228666Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.46.1.6",
+      "depends_on_id": "mimid-1wgh.46.1.5",
+      "type": "blocks",
+      "created_at": "2026-11-02T20:10:37.87986334Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.46.1.6",
+      "depends_on_id": "mimid-1wgh.46.1.1",
+      "type": "blocks",
+      "created_at": "2026-11-02T20:10:37.974205089Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.46.1.6",
+      "depends_on_id": "mimid-1wgh.46.1.2",
+      "type": "blocks",
+      "created_at": "2026-11-02T20:10:38.065774003Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

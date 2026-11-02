@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.1.7",
+  "title": "haven: KeyMaterialResponse 'Exhausted' sends partialSuccess with no successful client",
+  "description": "havenmessenger/interop 2c14e62 src/protocol_wire.rs KeyMaterialResponse::Exhausted encodes userStatus=partialSuccess(1) with one client whose clientStatus=keyMaterialExhausted(1) and no success client. protocol-06 §5.2 L1164-1166 and L1283-1284: partialSuccess 'indicates that key material was provided for at least one client of the target user'. mimid rejects it (decision mimid-1wgh.5.63, check_clients: partialSuccess needs \u003e=1 success): DecodingError 'clients list does not match userStatus PartialSuccess'. Fixture crates/mimi-protocol/tests/fixtures/haven/key_material_response_exhausted.bin; test haven_fixtures.rs. Related spec gap: no userStatus fits 'every client exhausted' (see companion wg bead). Report on havenmessenger/interop only with Mark's per-action OK.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T20:15:34.530755847Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T20:15:34.530755847Z",
+  "labels": [
+    "upstream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.1.7",
+      "depends_on_id": "mimid-1wgh.46.1",
+      "type": "parent-child",
+      "created_at": "2026-11-02T20:15:34.555993905Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
