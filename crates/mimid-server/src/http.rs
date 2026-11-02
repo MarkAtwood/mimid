@@ -29,8 +29,9 @@
 //! - The `Host` header is not checked (protocol-06 §4.1).
 //! - keyMaterial for users of this provider answers `501` if the follower
 //!   was not given its KeyPackages ([`Follower::with_key_packages`]).
-//! - The consent, identifierQuery and proxyDownload endpoints listed in the
-//!   directory are not routed, so they answer `404`.
+//! - The consent, identifierQuery and proxyDownload endpoints are not
+//!   implemented, so the directory does not list them (decision
+//!   mimid-1wgh.5.75).
 
 use std::sync::Arc;
 
