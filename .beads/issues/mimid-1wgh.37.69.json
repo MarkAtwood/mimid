@@ -3,13 +3,15 @@
   "title": "wg: protocol-06 §3.3 hub check on keyMaterial undefined",
   "description": "Suggestion. §3.3 has the hub relay keyMaterial for hosted rooms but never states what the hub must check about the requester. mimid requires a participant with canAddParticipant (decision mimid-1wgh.6.20).",
   "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED, relocate: normative gap is §5.2 (no MUST to verify requesterCredential/authorize); §3.3 walkthrough puts check at follower. canAddParticipant is mimid's choice, offer as option. New issue citing #110.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/151",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T17:11:10.945374597Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:02.794641474Z",
+  "updated_at": "2026-11-02T18:30:19.475362273Z",
+  "closed_at": "2026-11-02T18:30:19.475362273Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-protocol/issues/151 (open)",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

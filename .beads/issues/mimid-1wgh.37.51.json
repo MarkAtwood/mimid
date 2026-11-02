@@ -3,13 +3,15 @@
   "title": "wg: room-policy-04 A.3 moderator inherits nonexistent ordinary_user",
   "description": "A.3 moderator inherits from 'an ordinary_user' (~L3051) but A.3 defines no such role. Editorial.",
   "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED editorial: A.3 moderator 'ordinary_user' (dup of 37.50 second error); merge.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/pull/39",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:50:45.459196851Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:00.825690339Z",
+  "updated_at": "2026-11-02T18:30:18.231871121Z",
+  "closed_at": "2026-11-02T18:30:18.231871121Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-room-policy/pull/39 (open)",
   "labels": [
     "wg",
     "spec:mimi-room-policy-04"

@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.21",
   "title": "wg: content-09 §6.1 receiver handling of non-deterministic CBOR",
   "description": "Suggestion. §6.1 (L1870) makes deterministic encoding a sender MUST but says nothing about receivers, which matters because MessageId hashes the bytes as received. mimid rejects non-deterministic input (decision mimid-1wgh.2.9). Fix: specify reject or accept.",
-  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): PARTLY: rationale backwards (hash over received bytes = same ID); real point is interop + missing §9.1 entry. New issue.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/draft-ietf-mimi-content/issues/83",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): PARTLY: rationale backwards (hash over received bytes = same ID); real point is interop + missing §9.1 entry. New issue.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/draft-ietf-mimi-content/issues/83\n2026-11-02 reconcile: Filed as content#83 (closed) / PR#87 (merged). -10 §6.1: receivers MUST reject indefinite length and duplicate map keys. Remaining: PR#87's 'SHOULD accept unsorted maps and non-shortest encodings' became non-normative 'receivers are not expected to strictly enforce', so a strict receiver may still reject and members can diverge. Unfiled; arguably the editors' deliberate choice.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:09.749112573Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:30:57.638230405Z",
+  "updated_at": "2026-11-02T18:31:16.64640868Z",
   "labels": [
     "wg",
     "spec:mimi-content-09"

@@ -3,13 +3,15 @@
   "title": "wg: protocol-06 §5.3 FanoutMessage selects content type on wire_format",
   "description": "Erratum. L1935-1949 selects on message.wire_format with arms application, welcome, proposal, commit; except welcome these are content types, and a proposal or commit can be PublicMessage or SemiPrivateMessage. mimid maps welcome-\u003emls_welcome, application-\u003ePrivateMessage, proposal/commit-\u003econtent_type of a PublicMessage (decision mimid-1wgh.5.24). Fix: select on wire_format then content_type.",
   "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED (§5.5). Proposed fix fails: PrivateMessage content_type is encrypted. Ask for explicit discriminator. New issue.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/156",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:08.425108176Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:02.900613367Z",
+  "updated_at": "2026-11-02T18:30:15.456605984Z",
+  "closed_at": "2026-11-02T18:30:15.456605984Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-protocol/issues/156 (open)",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

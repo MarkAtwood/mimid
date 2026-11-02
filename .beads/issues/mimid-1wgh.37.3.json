@@ -3,13 +3,15 @@
   "title": "wg: protocol-06 §4.2/§5.3 AppSync names a superseded mechanism",
   "description": "Erratum. §4.2 (L889-903) and §5.3 (L1359-1361) describe changes as \"AppSync\" proposals (draft-barnes-mls-appsync-01), while §4.3.2, §5.4, §7.5, §7.6 use mls-extensions-10 AppDataUpdate. L1360-1361 also says \"applicationId of mimiParticipantList or mimiRoomPolicy\"; no such field or registered name exists (components are participant_list 0x0022 and room-policy-04 §10.1). An implementer could pick appsync-01's proposal type and not interoperate. mimid: every AppSync read as AppDataUpdate 0x0008 (decision mimid-1wgh.4.16). Fix: use AppDataUpdate throughout and name the registered components.",
   "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED, wider: AppSync also §2, §3 flows, §5.3; room policy is several components. Editorial PR.\n\nEditorial part in PR https://github.com/ietf-wg-mimi/mimi-protocol/pull/164",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:08.053540368Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:30:58.569503008Z",
+  "updated_at": "2026-11-02T18:30:15.218320883Z",
+  "closed_at": "2026-11-02T18:30:15.218320883Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-protocol/pull/164 (merged)",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

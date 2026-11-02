@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.2.27",
+  "title": "Revisit strict CBOR decoding (decision 1wgh.2.9) against content-10 §6.1",
+  "description": "-10 §6.1: receivers MUST reject indefinite-length items and duplicate map keys, but are 'not expected to strictly enforce' encoding size or map order since many CBOR libraries don't expose them. mimid also rejects non-shortest heads (decode.rs:296) and unsorted keys (decode.rs:553) per decision 2.9. Allowed by -10, but a sender whose library doesn't sort keys interoperates with everyone except mimid. Decide: keep strict, accept-and-log, or relax for extensions only.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T18:29:59.040806895Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T18:29:59.040806895Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2.27",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "parent-child",
+      "created_at": "2026-11-02T18:29:59.061395522Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

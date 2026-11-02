@@ -3,13 +3,15 @@
   "title": "wg: protocol-06 §3 example paths inconsistent with §5",
   "description": "Erratum. §3 flows use POST /update/a.example/r/clubhouse (L584), /submit/... (L640; endpoint is submitMessage), /groupInfo/a.example/clubhouse (L818, drops /r/), with no scheme or percent-encoding, while §5.2 (L1068) says \"with any necessary percent-encoding\". mimid percent-encodes the whole URI (decision mimid-1wgh.5.18). Fix: show encoded full URIs and real endpoint names.",
   "notes": "Editor's copy also has: L516 'POST /update/a.example/r/clubhousee' (extra e) and L582 'POST /update/a.example/clubhouse' (drops /r/).\n\nVerified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED editorial paths; L584 is fine, bad ones L818, L824-831; also §3 POST /keyMaterial lacks {targetUser}.\n\nEditorial part in PR https://github.com/ietf-wg-mimi/mimi-protocol/pull/164",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:08.891187765Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:30:56.642837704Z",
+  "updated_at": "2026-11-02T18:30:15.761823691Z",
+  "closed_at": "2026-11-02T18:30:15.761823691Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-protocol/pull/164 (merged; paths, /r/, submitMessage) + https://github.com/ietf-wg-mimi/mimi-protocol/issues/158 (open; encoding)",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

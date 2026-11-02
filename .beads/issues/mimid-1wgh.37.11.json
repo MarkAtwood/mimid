@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.11",
   "title": "wg: protocol-06 §5.2 roomId conditional but not optional",
   "description": "Suggestion. KeyMaterialRequest (L1133) has a bare \"IdentifierUri roomId;\" but §5.2 (L1068-1072) requires the room only when adding to a room; the consent struct (L2266) uses optional\u003cRoomId\u003e for the same idea. mimid treats zero-length as absent (decision mimid-1wgh.5.27). Fix: optional\u003cIdentifierUri\u003e.",
-  "notes": "Related open issue ietf-wg-mimi/mimi-protocol#149 asks only for extensibility.\n\nVerified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED technical: roomId should be optional (wire change). New issue cross-ref mimi-protocol#149.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/149#issuecomment-6253615991",
+  "notes": "Related open issue ietf-wg-mimi/mimi-protocol#149 asks only for extensibility.\n\nVerified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED technical: roomId should be optional (wire change). New issue cross-ref mimi-protocol#149.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/149#issuecomment-6253615991\nClose reason link fix (2026-11-02): https://github.com/ietf-wg-mimi/mimi-protocol/issues/149#issuecomment-6253615991\n2026-11-02: reopened at Mark's direction. Only upstream record is Mark's comment in an issue someone else opened; not counted as filed. Candidate for a standalone issue or PR.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:08.799208486Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:30:56.532531748Z",
+  "updated_at": "2026-11-02T18:32:33.994798719Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

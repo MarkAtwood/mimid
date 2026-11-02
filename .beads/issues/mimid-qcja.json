@@ -1,0 +1,15 @@
+{
+  "id": "mimid-qcja",
+  "title": "Rebase openmls fork onto v0.9.2 (2 security advisories)",
+  "description": "openmls 0.9.2 (crates.io, 2026-10-22) fixes GHSA-94v4-rg25-x625 (medium: removed leaves reappear when an external commit truncates and regrows the ratchet tree) and GHSA-p276-g3f3-wwgh (low: rejected private messages advance the sender ratchet and block later messages). Both affect \u003e=0.9.0,\u003c0.9.2. mimid's [patch.crates-io] points at github.com/MarkAtwood/openmls rev a36719847c81, which is v0.9.1 + 5 commits (GitHub compare v0.9.1...a3671984: ahead 5, behind 0) and does NOT contain the v0.9.2 fixes. Action (needs Mark's go for the fork push): rebase the 5 fork commits onto openmls tag v0.9.2, push to the fork, update the rev in Cargo.toml [patch.crates-io] for all openmls-family crates, bump openmls = \"=0.9.2\", run mimid CI. Companion crates (openmls_traits/rust_crypto/memory_storage/basic_credential) stay 0.6.0 and MSRV stays 1.91.0 in 0.9.2. Note: the GREASE fix (upstream #2162) is on openmls main only, not in 0.9.2, so the fork's GREASE commit is still needed. crate-jmap bumped to =0.9.2 on 2026-10-22.",
+  "notes": "Commit amended to drop the attribution line; final local hash 0ed4317 (unpushed, awaiting Mark's go).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-10-22T21:29:29.974773962Z",
+  "created_by": "agent",
+  "updated_at": "2026-10-22T22:37:19.521492739Z",
+  "closed_at": "2026-10-22T22:37:15.927770865Z",
+  "close_reason": "6057140 (local, unpushed): fork branch mimid-0.9.2 c6291fe7 = v0.9.2 + 5 commits (openmls tests 436 extensions-draft / 374 default, clippy clean); mimid CI green (fmt, typos, clippy, cargo-hack powerset, nightly doc, 1088 tests); crate-jmap pinned rev b8b6f251."
+}

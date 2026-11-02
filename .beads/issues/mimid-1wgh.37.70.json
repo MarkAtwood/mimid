@@ -3,13 +3,15 @@
   "title": "wg: protocol-06 hub's own credential identity unspecified",
   "description": "Suggestion. The hub signs as external sender, franking agent and hub_sender (groupInfo responses), but the spec never states what its BasicCredential identity is. mimid uses mimi://\u003chub domain\u003e (decision mimid-1wgh.6.35). Fix: specify it.",
   "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): PARTLY. Not silent: §4.2 TODO + franking domain check; gap is credential type/identity for external sender, franking agent, hub_sender. New issue, merge with 37.67.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/150",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T18:03:03.076972561Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:03.008667272Z",
+  "updated_at": "2026-11-02T18:30:19.557480581Z",
+  "closed_at": "2026-11-02T18:30:19.557480581Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-protocol/issues/150 (open)",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

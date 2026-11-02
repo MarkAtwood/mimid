@@ -3,13 +3,15 @@
   "title": "wg: protocol-06 §5.6 GroupInfo HPKE suite unspecified",
   "description": "Suggestion. protocol-06 §5.6 says which cipher_suite signs the request/response but not which suite's HPKE (KEM/KDF/AEAD) encrypts encrypted_groupinfo_and_tree with groupInfoPublicKey. Implementations with different suites will fail to decrypt. mimid uses suite 1 (decision mimid-1wgh.5.55). Fix: state that the request's cipher_suite (or the room's MLS suite) determines the HPKE algorithms.",
   "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED: GroupInfo HPKE suite implicit (group's), joiner may not know it. Typos groupInfoPublcKey, version/protocol. New issue + editorial.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/155",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T03:20:44.713033601Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:01.64988128Z",
+  "updated_at": "2026-11-02T18:30:18.781810645Z",
+  "closed_at": "2026-11-02T18:30:18.781810645Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-protocol/issues/155 (open)",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

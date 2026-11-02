@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.2.26",
+  "title": "content-10: move mimi-content crate and fixtures from -09 to -10",
+  "description": "Update spec citations in crates/mimi-content/src (lib.rs:3 and content-09 refs in encode/decode/extension/content.rs) to -10. Re-copy fixtures from WG tag draft-ietf-mimi-content-10 into tests/fixtures/wg-10 with PROVENANCE; between tags only examples/implied-original.cbor/.pretty, reaction.edn and implied.cddl changed (mimi-content.cddl A.1 unchanged). Once the regenerated implied-original.cbor carries the correct id, review the stale-id workaround at tests/message_id.rs:154-170 and the U+2665 note at tests/common/mod.rs:168-171. Any test change must be justified by the new WG fixture, not made to pass. Retitle epic mimid-1wgh.2 accordingly.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T18:29:58.949212652Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T18:29:58.949212652Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.2.26",
+      "depends_on_id": "mimid-1wgh.2",
+      "type": "parent-child",
+      "created_at": "2026-11-02T18:29:58.967297919Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

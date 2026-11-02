@@ -3,13 +3,15 @@
   "title": "wg: protocol-06 §5.8 identifierQuery result semantics unspecified",
   "description": "Suggestion. (1) Relation of IdentifierResponse.uri\u003cV\u003e to foundProfiles[].stableUri is unspecified (parallel? subset? duplicates?). (2) Response codes are described but no MUST ties them to the results (mimid: mimid-1wgh.5.71). (3) searchValue is commented 'a UTF8 string' but typed opaque (like §5.9 note). (4) Empty query_elements has no defined meaning (mimid: mimid-1wgh.5.73).",
   "notes": "Reconciled 2026-10-18: NOT FILED anywhere as of 2026-10-18.\nFiled 2026-10-18 (Mark-authorized): https://github.com/ietf-wg-mimi/mimi-protocol/issues/165\n2026-10-19 #165 ready-for-PR; editor will drop uri\u003cV\u003e; followup mimid-1wgh.37.87, localfix mimid-1wgh.5.74.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T18:42:52.274693471Z",
   "created_by": "agent",
-  "updated_at": "2026-10-19T19:20:02.367186209Z",
+  "updated_at": "2026-11-02T18:30:19.632149147Z",
+  "closed_at": "2026-11-02T18:30:19.632149147Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-protocol/issues/165 (open) + https://github.com/ietf-wg-mimi/mimi-protocol/pull/172 (open)",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

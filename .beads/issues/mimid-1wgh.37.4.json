@@ -3,13 +3,15 @@
   "title": "wg: protocol-06 cites mls-extensions-09; refs and Safe AAD stale",
   "description": "Erratum. Reference at L3397-3400 is -09; under -10 §4.9 the whole authenticated_data is a SafeAAD struct, which changes frank_aad framing. §10 (L3296) cites \"Section 7.6 of [I-D.ietf-mls-extensions]\"; MLS Component Types is §7.5 in -09 and -10. mimid follows -10 (decision mimid-1wgh.4.17). Fix: cite -10, confirm frank_aad framing, change to §7.5.",
   "notes": "PARTLY: editor's-copy citation is unversioned (auto -10 on rebuild), but §7.6 should be §7.5 and Safe AAD frank_aad framing still needs confirming.\n\nVerified 2026-10-18 vs -06/-09/-04 (= main): PARTLY. SafeAAD encoding unchanged -09-\u003e-10; only trailing unsafe AAD now forbidden. §7.6-\u003e§7.5 editorial.\n\nEditorial part in PR https://github.com/ietf-wg-mimi/mimi-protocol/pull/164\nReconciled 2026-10-18: PARTIAL: PR mimi-protocol#164 fixes §7.6-\u003e§7.5 only; -10 citation and frank_aad SafeAAD framing NOT filed.\nFiled 2026-10-18 (Mark-authorized): remaining part as https://github.com/ietf-wg-mimi/mimi-protocol/issues/166\n2026-10-19 #166 wontfix by rohanmahy; followup mimid-1wgh.37.81 (reply), localfix mimid-1wgh.6.74.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:08.147477227Z",
   "created_by": "agent",
-  "updated_at": "2026-10-19T19:20:01.984497403Z",
+  "updated_at": "2026-11-02T18:30:15.30360035Z",
+  "closed_at": "2026-11-02T18:30:15.30360035Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-protocol/pull/164 (merged; §7.6-\u003e§7.5) + https://github.com/ietf-wg-mimi/mimi-protocol/issues/166 (closed; frank_aad vs -10 framing, editor copy cites mls-extensions unversioned)",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

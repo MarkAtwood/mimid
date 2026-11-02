@@ -3,13 +3,15 @@
   "title": "wg: room-policy-04 §6.6 prose field names mismatch",
   "description": "§6.6 prose says 'who_can_share list' and 'max_active_participants' (L991-992); fields are roles_that_can_share and maximum_active_participants_constraint. Editorial.",
   "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED editorial: who_can_share / max_active_participants names.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/pull/39",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:50:45.557262907Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:00.926804264Z",
+  "updated_at": "2026-11-02T18:30:18.301352806Z",
+  "closed_at": "2026-11-02T18:30:18.301352806Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-room-policy/pull/39 (open)",
   "labels": [
     "wg",
     "spec:mimi-room-policy-04"

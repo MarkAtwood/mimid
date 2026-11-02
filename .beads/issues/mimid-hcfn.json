@@ -1,0 +1,13 @@
+{
+  "id": "mimid-hcfn",
+  "title": "Accept AppDataUpdate before GCE in a Commit (ext #108)",
+  "description": "mlswg/mls-extensions PR #109 (merged 2026-11-01, closes #108) changed §4.7 'can be followed by zero or more AppDataUpdate proposals' to 'and zero or more AppDataUpdate proposals': list position of GroupContextExtensions vs AppDataUpdate is not an ordering rule; RFC 9420 §12.3 apply order covers it.\n\nmimid rejects [AppDataUpdate, GroupContextExtensions] (found by code reading, not a test): the pinned OpenMLS fork (MarkAtwood/openmls c6291fe) returns AppDataUpdateValidationError::IncorrectOrder from PublicGroup::validate_app_data_update_proposals_and_group_context (openmls/src/group/public_group/validation.rs:730), called from stage_commit (staged_commit.rs:191) on every received Commit and from commit_builder.rs:786. Upstream openmls main has the same check (validation.rs:843). A conformant peer sending that order forks the group.\n\nDo:\n- Write a failing test first: a Commit with proposals [AppDataUpdate, GroupContextExtensions] produced by mls-rs (independent of OpenMLS), received by a mimid Member and an Observer; expect accept and matching epoch_authenticator. Extend crates/mimi-mls/tests/member_app_data_update.rs.\n- Remove the ordering check in the fork (or rebase onto the upstream fix once the OpenMLS PR lands) and bump the pin.\n\nUpstream: OpenMLS issue + PR filed for the same check (see notes).",
+  "notes": "Upstream filed 2026-11-01: issue https://github.com/openmls/openmls/issues/2309, PR https://github.com/openmls/openmls/pull/2310 (branch MarkAtwood/openmls:app-data-update-any-order, based on upstream main 28369d5b4). PR removes the check and AppDataUpdateValidationError::IncorrectOrder. Fork pin c6291fe still has the check; cherry-pick the fix onto the mimid-0.9.2 branch or wait for merge.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-01T19:27:20.876340857Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-01T19:33:28.720830755Z"
+}

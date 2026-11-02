@@ -3,13 +3,15 @@
   "title": "wg: room-policy-04 A.2 intro copies A.1 text",
   "description": "A.2 introduction repeats A.1's 'suitable for friends and family rooms...' (L2567). Editorial.",
   "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED editorial: copied description sentence in A.2.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/pull/39",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:50:45.652395283Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:01.031148063Z",
+  "updated_at": "2026-11-02T18:30:18.378756527Z",
+  "closed_at": "2026-11-02T18:30:18.378756527Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-room-policy/pull/39 (open)",
   "labels": [
     "wg",
     "spec:mimi-room-policy-04"

@@ -1,0 +1,46 @@
+{
+  "id": "mimid-1wgh.37.90.12.3",
+  "title": "Cross-check vectors and write draft Test Vectors patch",
+  "description": "Run both directions of cross-validation; ship only vectors both implementations agree on. Produce JSON and a patch to the draft Test Vectors section (format adds valid flag and expected failure step). Local only; no push/PR without Mark's approval.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T16:29:20.798802217Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T16:48:57.437627297Z",
+  "started_at": "2026-11-02T16:46:33.240897032Z",
+  "closed_at": "2026-11-02T16:48:57.437627297Z",
+  "close_reason": "Draft patch (appendix Vectors 4-7 + valid/failure format) and full 114-vector targeted-messages.json in ~/PROJECT/targeted-vectors/; both verified by Python and OpenMLS (-02). Builds clean with kramdown-rfc/xml2rfc.",
+  "labels": [
+    "spec:mls-targeted-messages-01",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.90.12.3",
+      "depends_on_id": "mimid-1wgh.37.90.12",
+      "type": "parent-child",
+      "created_at": "2026-11-02T16:29:20.848635019Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.37.90.12.3",
+      "depends_on_id": "mimid-1wgh.37.90.12.1",
+      "type": "blocks",
+      "created_at": "2026-11-02T16:29:20.932681119Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.37.90.12.3",
+      "depends_on_id": "mimid-1wgh.37.90.12.2",
+      "type": "blocks",
+      "created_at": "2026-11-02T16:29:21.026592655Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

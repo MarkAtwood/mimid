@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.39",
   "title": "wg: ext-10 §5 no enforcement rule for required safe_aad list",
   "description": "Suggestion. draft-ietf-mls-extensions-10 §5 (L885-911): the safe_aad component in a LeafNode is 'the list of supported components that use Safe AAD'; in the GroupContext it is 'the list of required Safe AAD components (those that must be understood by the entire group)'. 'must' is lowercase, §4.6 (L585-588) requires only understanding safe_aad, not advertising it, and nothing at the level of RFC 9420 §11.1 (required_capabilities) says what a committer does when a joining or updating leaf's safe_aad list does not cover the GroupContext list, or omits it. The same gap applies to app_components. Implementations will diverge: some reject such Adds, others accept and the new member cannot parse authenticated_data. Found re-checking mimid decision mimid-1wgh.4.35 (bug mimid-1wgh.4.44). Fix: a normative rule mirroring §11.1 (MUST reject leaves that do not list every required component; absent list = empty), or state that the requirement is not enforced.",
-  "notes": "Editor's-copy check 2026-10-17: mlswg/mls-extensions#102 (open) covers enforcement; add our evidence there rather than a new issue.\n\nVerified 2026-10-18: PARTLY. app_components half = mlswg/mls-extensions#102 (dup). safe_aad half is new. Correction: 'absent list = empty' is wrong for GroupContext safe_aad (present-but-empty still triggers framing, -10 L900-903); only LeafNode side may default absent to empty. Route: comment on #102 adding safe_aad, absent/empty asymmetry, group-fork argument.\n\nSent 2026-10-18: comment https://github.com/mlswg/mls-extensions/issues/102#issuecomment-6253376957",
+  "notes": "Editor's-copy check 2026-10-17: mlswg/mls-extensions#102 (open) covers enforcement; add our evidence there rather than a new issue.\n\nVerified 2026-10-18: PARTLY. app_components half = mlswg/mls-extensions#102 (dup). safe_aad half is new. Correction: 'absent list = empty' is wrong for GroupContext safe_aad (present-but-empty still triggers framing, -10 L900-903); only LeafNode side may default absent to empty. Route: comment on #102 adding safe_aad, absent/empty asymmetry, group-fork argument.\n\nSent 2026-10-18: comment https://github.com/mlswg/mls-extensions/issues/102#issuecomment-6253376957\n2026-11-02: reopened at Mark's direction. Only upstream record is Mark's comment in an issue someone else opened; not counted as filed. Candidate for a standalone issue or PR.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:36:08.67080798Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:30:59.54796446Z",
+  "updated_at": "2026-11-02T18:32:34.510017845Z",
   "labels": [
     "wg",
     "spec:mls-extensions-10"

@@ -3,13 +3,15 @@
   "title": "wg: room-policy-04 §6.2 JoinLinksUpdate index semantics unspecified",
   "description": "Suggestion. removedIndices and added_links (L700-703) don't say whether indices refer to the pre- or post-update list, or whether removals or appends apply first. The result enters the GroupContext, so divergent members fork. mimid applies removals first with pre-update indices (decision mimid-1wgh.3.19). Fix: specify the order.",
   "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED: JoinLinksUpdate index semantics. New issue (pair with protocol 37.48).\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-room-policy/issues/30",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:24:10.509680454Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:30:58.465409664Z",
+  "updated_at": "2026-11-02T18:30:17.044214491Z",
+  "closed_at": "2026-11-02T18:30:17.044214491Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-room-policy/issues/30 (open)",
   "labels": [
     "wg",
     "spec:mimi-room-policy-04"

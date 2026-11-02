@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.62",
   "title": "wg: protocol-06 §5.9 AbuseReport optional/UTF-8 fields",
   "description": "Suggestion/erratum. §5.9 calls reportingUser optional but types it bare IdentifierUri (mimid treats empty as absent, mimid-1wgh.5.59); calls note UTF-8 but types it opaque\u003cV\u003e (mimid-1wgh.5.60). Editorial: FrankingIntegrityTBS writes 'opaque server_frank[32]' where Frank writes 'uint8 server_frank[32]' (same encoding). Fix: optional\u003cIdentifierUri\u003e, UTF8String, consistent types.",
-  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED editorial (reportingUser optional, note UTF8String, opaque vs uint8 server_frank). optional\u003c\u003e would be a wire change; say so.\n\nEditorial part in PR https://github.com/ietf-wg-mimi/mimi-protocol/pull/164\nReconciled 2026-10-18: PARTIAL: reportingUser optionality raised as a question in PR #164 body; note UTF-8 vs opaque and server_frank opaque/uint8 NOT filed.\nFiled 2026-10-18 (Mark-authorized): remaining part as https://github.com/ietf-wg-mimi/mimi-protocol/pull/164#issuecomment-6254579792",
+  "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED editorial (reportingUser optional, note UTF8String, opaque vs uint8 server_frank). optional\u003c\u003e would be a wire change; say so.\n\nEditorial part in PR https://github.com/ietf-wg-mimi/mimi-protocol/pull/164\nReconciled 2026-10-18: PARTIAL: reportingUser optionality raised as a question in PR #164 body; note UTF-8 vs opaque and server_frank opaque/uint8 NOT filed.\nFiled 2026-10-18 (Mark-authorized): remaining part as https://github.com/ietf-wg-mimi/mimi-protocol/pull/164#issuecomment-6254579792\n2026-11-02 reconcile: Partly covered. reportingUser optional-vs-bare asked as a question in mimi-protocol PR #164 (merged). Still unfiled: AbuseReport note described as UTF-8 but typed opaque\u003cV\u003e; FrankingIntegrityTBS 'opaque server_frank[32]' vs Frank 'uint8 server_frank[32]'.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T04:43:46.489111775Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:02.065359837Z",
+  "updated_at": "2026-11-02T18:30:29.161246691Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

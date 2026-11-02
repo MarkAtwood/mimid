@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.4.62",
   "title": "MLS upstream changed: re-check mimid against mls-extensions-10 and rto-01",
   "description": "Verification of the wg MLS findings (2026-10-18) turned up rules that affect mimid. Editor's copies: mlswg/mls-extensions d982f51 and mlswg/mls-ratchet-tree-options 5d39e06 match published -10 / -01.\n\nCheck:\n1. app_components MUST be understood AND advertised (-10 §4.6 L585-588; mlswg/mls-extensions#88, PR #93). Confirm mimid's LeafNode app_components lists 0x0001; possible bug vs decision mimid-1wgh.4.25. -10 §6.2.3 also implies the list carries every supported component.\n2. Safe AAD is now the entire authenticated_data (-10 §4.9; #95, PR #96, commit acbfd0d). mimid already rejects trailing bytes (mimid-1wgh.4.17): confirm. §5 still says 'starts with' (stale; editorial PR pending, mimid-1wgh.37.56).\n3. GroupContext safe_aad: absent and present-but-empty differ; empty still turns on SafeAAD framing (-10 L900-903). Check mimid does not treat absent == empty on the GroupContext side (mimid-1wgh.37.39).\n4. Watch open issues that may change these rules: mlswg/mls-extensions#102 (component enforcement), #103 (update semantics), #105 (unsupported components in own dictionary).\n5. ratchet-tree-options-01 §3 declares Node ratchet_tree\u003cV\u003e; RFC 9420 uses optional\u003cNode\u003e (blank nodes). A fix changes the wire encoding; re-check mimid's reading (mimid-1wgh.4.29) once reported (mimid-1wgh.4.36).\n6. rto-01 §4 does not fix where ratchet_tree goes in a rebuilt GroupInfo; OpenMLS prepends, mls-rs appends, mimid prepends (mimid-1wgh.4.46). Revisit when upstream decides (mimid-1wgh.37.37).\n7. OpenMLS skips §4.7 AppDataUpdate checks without a GCE proposal: openmls/openmls#2283 (mimid-1wgh.4.42).",
-  "notes": "agora tracks the same upstream changes in agora-ywsj (/home/mark/PROJECT/agora).\n\nAudited 2026-10-18: check1 BUG -\u003e mimid-1wgh.4.63; checks 2,3,5,7 conform; 4 watch; 6 risk + test gaps -\u003e mimid-1wgh.4.64.",
+  "notes": "agora tracks the same upstream changes in agora-ywsj (/home/mark/PROJECT/agora).\n\nAudited 2026-10-18: check1 BUG -\u003e mimid-1wgh.4.63; checks 2,3,5,7 conform; 4 watch; 6 risk + test gaps -\u003e mimid-1wgh.4.64.\n2026-11-02 rto-02 recheck: item 5 resolved (-02 adopts optional\u003cNode\u003e, mimid's existing reading). Item 6 resolved upstream with the opposite answer (ratchet_tree MUST be last) -\u003e mimid-1wgh.4.71.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T18:04:21.883728151Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:06.971366982Z",
+  "updated_at": "2026-11-02T18:31:19.397927643Z",
   "labels": [
     "upstream"
   ],

@@ -3,13 +3,15 @@
   "title": "wg: protocol-06 §7.6 RichDescription encodings unspecified",
   "description": "Suggestion. §7.6 RichDescription media_type and language_tag are opaque\u003cV\u003e with no stated syntax or encoding (RFC 6838 media type? BCP 47 tag? UTF-8?). mimid decodes opaque (decision mimid-1wgh.5.47). Fix: specify syntax and encoding (e.g. UTF8String with RFC 6838 / BCP 47).",
   "notes": "Verified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED: RichDescription media_type/language_tag opaque, no refs. Suggest MediaType struct (as room-policy uses) + BCP 47. New issue.\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/162\n2026-10-19 #162 labelled chore by rohanmahy (editor handles); no action.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:41:57.883732662Z",
   "created_by": "agent",
-  "updated_at": "2026-10-19T19:20:02.422737108Z",
+  "updated_at": "2026-11-02T18:30:17.989134048Z",
+  "closed_at": "2026-11-02T18:30:17.989134048Z",
+  "close_reason": "Filed upstream: https://github.com/ietf-wg-mimi/mimi-protocol/issues/162 (open)",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

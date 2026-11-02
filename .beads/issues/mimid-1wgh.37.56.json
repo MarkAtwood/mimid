@@ -3,13 +3,15 @@
   "title": "wg: ext-10 §4.9 vs §5 SafeAAD framing contradiction",
   "description": "Erratum. draft-ietf-mls-extensions-10 §4.9 says 'the entire authenticated_data field is framed as a SafeAAD struct'; §5 says it 'always starts with the SafeAAD struct'. 'Starts with' permits trailing non-safe bytes, 'entire' forbids them; -09 allowed them. mimid rejects trailing bytes (decision mimid-1wgh.4.17). Fix: make §5 say 'is framed entirely as'. Found drafting mimid-1wgh.37.40.",
   "notes": "Verified 2026-10-18: CONFIRMED, editorial. Commit acbfd0d (#95/PR #96) changed §4.9 to 'entire authenticated_data' but left §5 'starts with' (main d982f51 L679-682). Not an erratum; -09 did allow trailing bytes. Route: one-line editorial PR on §5, cite #95/#96. Not raised on GitHub or mls@ietf.org.\n\nSent 2026-10-18: editorial PR https://github.com/mlswg/mls-extensions/pull/106",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T01:50:45.863913571Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T20:31:01.339833555Z",
+  "updated_at": "2026-11-02T18:30:18.623706432Z",
+  "closed_at": "2026-11-02T18:30:18.623706432Z",
+  "close_reason": "Filed upstream: https://github.com/mlswg/mls-extensions/pull/106 (merged)",
   "labels": [
     "wg",
     "spec:mls-extensions-10"
