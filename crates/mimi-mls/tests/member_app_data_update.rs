@@ -14,7 +14,10 @@
 //! - a plain OpenMLS committer that applies proposals without any §4.7
 //!   checks, as in the mimid-1wgh.4.42 repro, so a refusal can only come
 //!   from mimi-mls;
-//! - mls-rs as an independent committer of GroupContextExtensions.
+//! - mls-rs as an independent committer of GroupContextExtensions;
+//! - GroupContext extension bytes hand-encoded for a Commit listing
+//!   AppDataUpdate before GroupContextExtensions, which mls-rs cannot
+//!   build (it lists GroupContextExtensions first).
 //!
 //! mls-rs at the pinned commit has no AppDataUpdate support. Its custom
 //! proposals encode their body as `opaque data<V>`, not inline as §4.7
@@ -24,6 +27,7 @@ use mimi_mls::member::{
     AppDataUpdate, ComponentOp, ExternalSender, Incoming, Member, MemberError, OutOfSync, Sender,
     WelcomeJoin,
 };
+use mimi_mls::observer::{Observed, Observer, ObserverStart};
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
 use mls_rs::extension::ExtensionType;
@@ -36,12 +40,15 @@ use mls_rs::{
 };
 use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 use openmls::component::ComponentData;
+use openmls::extensions::{AppDataDictionary, AppDataDictionaryExtension};
 use openmls::messages::proposals::{AppDataUpdateOperation, AppDataUpdateProposal, Proposal};
 use openmls::prelude::{
     BasicCredential, Capabilities, Ciphersuite, CredentialType, CredentialWithKey,
-    ExtensionType as OpenMlsExtensionType, KeyPackage, MlsGroup, MlsGroupJoinConfig,
-    MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider, PURE_PLAINTEXT_WIRE_FORMAT_POLICY,
-    ProposalType as OpenMlsProposalType, RatchetTreeIn, StagedWelcome,
+    Extension as OpenMlsExtension, ExtensionType as OpenMlsExtensionType,
+    Extensions as OpenMlsExtensions, KeyPackage, MlsGroup, MlsGroupJoinConfig, MlsMessageBodyIn,
+    MlsMessageIn, OpenMlsProvider, PURE_PLAINTEXT_WIRE_FORMAT_POLICY,
+    ProposalType as OpenMlsProposalType, RatchetTreeIn, RequiredCapabilitiesExtension,
+    StagedWelcome,
 };
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
@@ -708,6 +715,141 @@ fn tampered_app_data_update_fails_to_decode_and_changes_nothing() {
         .merge_pending_commit(&dave.provider)
         .expect("dave merges");
     assert_eq!(member.component(LOG), Some(b"+t".as_slice()));
+    assert_eq!(
+        member.epoch_authenticator(),
+        dave.group.epoch_authenticator().as_slice()
+    );
+}
+
+/// The GroupContext extensions after dave's `[AppDataUpdate,
+/// GroupContextExtensions]` Commit, hand-encoded (RFC 9420 §7.2, §12.1.7;
+/// mls-extensions-10 §4.6-4.7): the GroupContextExtensions list, with the
+/// dictionary's LOG entry then updated in place to "v0+a".
+const AFTER_UPDATE_THEN_GCE: [u8; 25] = [
+    0x18, // extensions<V>: 24 bytes
+    0x00, 0x06, // extension_type = app_data_dictionary
+    0x0d, // extension_data<V>: 13 bytes
+    0x0c, // component_data<V>: 12 bytes
+    0x80, 0x01, // component_id = LOG
+    0x04, b'v', b'0', b'+', b'a', // data<V>: "v0+a"
+    0x80, 0x02, // component_id = META
+    0x02, b'm', b'0', // data<V>: "m0"
+    0x00, 0x03, // extension_type = required_capabilities
+    0x05, // extension_data<V>: 5 bytes
+    0x02, 0x00, 0x06, // extension_types<V>: app_data_dictionary
+    0x00, // proposal_types<V>: empty
+    0x00, // credential_types<V>: empty
+];
+
+#[test]
+fn app_data_update_listed_before_gce_is_accepted() {
+    // mls-extensions PR #109 (issue #108): §4.7 does not order
+    // AppDataUpdate and GroupContextExtensions in a Commit's proposal list;
+    // RFC 9420 §12.3 applies the GroupContextExtensions proposal first
+    // wherever it appears. mls-rs always lists GroupContextExtensions
+    // first, so plain OpenMLS commits this order and the oracle is the
+    // hand-encoded GroupContext above.
+    let (alice, mut member, mut dave) = alice_and_naive_dave();
+    let store = Store::open_in_memory().expect("store");
+    let group_info = dave
+        .group
+        .export_group_info(dave.provider.crypto(), &dave.signer, true)
+        .expect("GroupInfo")
+        .tls_serialize_detached()
+        .expect("encode");
+    let ObserverStart { mut observer, .. } =
+        Observer::from_group_info(&store, &group_info, None).expect("Observer");
+
+    let gce = OpenMlsExtensions::from_vec(vec![
+        OpenMlsExtension::AppDataDictionary(AppDataDictionaryExtension::new({
+            let mut dictionary = AppDataDictionary::new();
+            dictionary.insert(LOG, b"v0".to_vec());
+            dictionary.insert(META, b"m0".to_vec());
+            dictionary
+        })),
+        OpenMlsExtension::RequiredCapabilities(RequiredCapabilitiesExtension::new(
+            &[OpenMlsExtensionType::AppDataDictionary],
+            &[],
+            &[],
+        )),
+    ])
+    .expect("extensions");
+    let mut stage = dave
+        .group
+        .commit_builder()
+        .add_proposal(Proposal::AppDataUpdate(Box::new(up(LOG, b"+a"))))
+        .propose_group_context_extensions(gce)
+        .expect("GroupContextExtensions")
+        .load_psks(dave.provider.storage())
+        .expect("load PSKs");
+    // `concat`'s semantics, which alice and the Observer apply.
+    let mut updater = stage.app_data_dictionary_updater();
+    updater.set(ComponentData::from_parts(LOG, b"v0+a".to_vec().into()));
+    let changes = updater.changes();
+    stage.with_app_data_dictionary_updates(changes);
+    let (commit, _, _) = stage
+        .build(
+            dave.provider.rand(),
+            dave.provider.crypto(),
+            &dave.signer,
+            |_| true,
+        )
+        .expect("OpenMLS builds [AppDataUpdate, GroupContextExtensions]")
+        .stage_commit(&dave.provider)
+        .expect("stage")
+        .into_messages();
+    let commit = commit.tls_serialize_detached().expect("encode");
+
+    // The Commit lists the AppDataUpdate first (§4.7 inline body:
+    // proposal_type 0x0008, component_id LOG, op update, update<V>
+    // "+a"), then the GroupContextExtensions (proposal_type 0x0007).
+    let update_at = position(&commit, &[0x00, 0x08, 0x80, 0x01, 0x01, 0x02, b'+', b'a'])
+        .expect("AppDataUpdate in the Commit");
+    let gce = [
+        0x00, 0x07, // proposal_type = group_context_extensions
+        0x16, // extensions<V>: 22 bytes
+        0x00, 0x06, // extension_type = app_data_dictionary
+        0x0b, // extension_data<V>: 11 bytes
+        0x0a, // component_data<V>: 10 bytes
+        0x80, 0x01, // component_id = LOG
+        0x02, b'v', b'0', // data<V>: "v0", unchanged
+        0x80, 0x02, // component_id = META
+        0x02, b'm', b'0', // data<V>: "m0"
+        0x00, 0x03, // extension_type = required_capabilities
+        0x05, // extension_data<V>: 5 bytes
+        0x02, 0x00, 0x06, // extension_types<V>: app_data_dictionary
+        0x00, // proposal_types<V>: empty
+        0x00, // credential_types<V>: empty
+    ];
+    let gce_at = position(&commit[update_at..], &gce).expect("GCE after it");
+    assert!(gce_at > 0);
+
+    commit_summary(
+        member
+            .process(&alice, &commit, concat)
+            .expect("Member accepts"),
+    );
+    let Observed::Commit(_) = observer
+        .process(&store, &commit, concat)
+        .expect("Observer accepts")
+    else {
+        panic!("not a Commit");
+    };
+    observer
+        .merge_pending_commit(&store)
+        .expect("Observer merges");
+    dave.group
+        .merge_pending_commit(&dave.provider)
+        .expect("dave merges");
+
+    let context = observer.group_context().expect("context");
+    assert_eq!(
+        context[context.len() - AFTER_UPDATE_THEN_GCE.len()..],
+        AFTER_UPDATE_THEN_GCE,
+        "GroupContext extensions"
+    );
+    assert_eq!(member.component(LOG), Some(b"v0+a".as_slice()));
+    assert_eq!(member.component(META), Some(b"m0".as_slice()));
     assert_eq!(
         member.epoch_authenticator(),
         dave.group.epoch_authenticator().as_slice()

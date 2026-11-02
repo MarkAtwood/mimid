@@ -38,10 +38,10 @@ toml = "1.1.8"
 # (decision mimid-1wgh.4.56). Every openmls-family crate comes from the same
 # commit so they share one openmls_traits; all but openmls are unchanged.
 [patch.crates-io]
-openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
-openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
-openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
-openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
-openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
-openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
-openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "c6291fe71c294a178d9acd1bb6a2af2f3d71b7d5" }
+openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }
+openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "1f3f1b4bfb2befe0523aea517cc5b01169011990" }

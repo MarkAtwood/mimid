@@ -1,0 +1,17 @@
+{
+  "id": "mimid-qejd",
+  "title": "upstream: OpenMLS moves app_data_dictionary to the end on AppDataUpdate",
+  "description": "mls-extensions-10 §4.7 (L707-713): add an app_data_dictionary extension to the end of the GroupContext extensions list only if none is present; otherwise set the entry's data field (in place). OpenMLS (fork 476620d5f, same on upstream main) applies updates in PublicGroupDiff (group/public_group/diff/apply_proposals.rs:293-297) via Extensions::add_or_replace, which removes and re-pushes (extensions/mod.rs:527-528), moving the dictionary to the end whenever it is not already last. Found 2026-11-02 by mimid-hcfn's test app_data_update_listed_before_gce_is_accepted: GCE [app_data_dictionary, required_capabilities] + AppDataUpdate(LOG) yields [required_capabilities, app_data_dictionary] (hand-encoded spec expectation is the reverse). A spec-following peer computes a different GroupContext, so the group forks. mimid-created groups put the dictionary last (member.rs Member::create), so they are unaffected unless a GCE or another implementation orders it otherwise. Also unverified: apply_proposals.rs:272-276 starts from the pre-Commit dictionary, not one set by a GroupContextExtensions proposal in the same Commit. Fix: replace the extension at its existing index. Upstream issue/PR need Mark's per-action OK.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T20:02:29.241681408Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T20:08:26.816919789Z",
+  "closed_at": "2026-11-02T20:08:26.816919789Z",
+  "close_reason": "Fixed in fork MarkAtwood/openmls mimid-0.9.2 1f3f1b4bf: dictionary replaced at its existing index (append only if absent), per mls-extensions-10 §4.7. Regression: member_app_data_update.rs app_data_update_listed_before_gce_is_accepted (hand-encoded GroupContext). Not yet filed upstream (needs Mark's OK). Unverified second issue (pre-GCE dictionary as base, apply_proposals.rs:272-276) remains open in this bead's description; refile if confirmed.",
+  "labels": [
+    "upstream"
+  ]
+}
