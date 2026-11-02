@@ -34,10 +34,10 @@
 //! - [`Observer::group_info`] works only after this Observer has merged a
 //!   Commit, since the GroupInfo signer is the committer. It cannot rebuild
 //!   the GroupInfo of the epoch the Observer started in.
-//! - [`Observer::group_info`] puts a rebuilt ratchet_tree extension first in
-//!   the extension list. ratchet-tree-options-01 §4 does not say where it
-//!   goes; a committer that put it elsewhere signed different bytes, and the
-//!   signature check fails (decision mimid-1wgh.4.46).
+//! - [`Observer::group_info`] puts a rebuilt ratchet_tree extension last in
+//!   the extension list, as ratchet-tree-options-02 §4 requires. A committer
+//!   that put it elsewhere signed different bytes, and the signature check
+//!   fails.
 //! - [`Observer::group_info`] does not check the previous-epoch half of
 //!   `ratchet_tree_presence` (whether the previous GroupInfo had a
 //!   ratchet_tree extension). It uses only the current-epoch half, which the
@@ -896,7 +896,7 @@ impl Observer {
     }
 
     /// Rebuilds the GroupInfo of the current epoch from a PartialGroupInfo
-    /// (ratchet-tree-options-01 §4) and returns it as a TLS-encoded
+    /// (ratchet-tree-options-02 §4) and returns it as a TLS-encoded
     /// `MLSMessage` (RFC 9420 §6, §12.4.3).
     ///
     /// Call it after [`Observer::merge_pending_commit`] has merged the
@@ -904,7 +904,7 @@ impl Observer {
     /// Observer's state in the new epoch (decision mimid-1wgh.4.20):
     ///
     /// - `group_context`: the current GroupContext;
-    /// - `extensions`: `partial`'s `group_info_extensions`, preceded by a
+    /// - `extensions`: `partial`'s `group_info_extensions`, followed by a
     ///   ratchet_tree extension carrying the current tree when
     ///   `ratchet_tree_presence` is `present` or `added`;
     /// - `confirmation_tag`: the merged Commit's;
@@ -938,13 +938,11 @@ impl Observer {
             partial.ratchet_tree_presence(),
             RatchetTreePresence::Present | RatchetTreePresence::Added
         ) {
-            // ratchet-tree-options-01 §4 does not say where the extension
-            // goes. It goes first, as OpenMLS puts it.
-            // ratchet-tree-options-01 §4; decision mimid-1wgh.4.46
-            let mut list = vec![Extension::RatchetTree(RatchetTreeExtension::new(
+            // The extension goes last. ratchet-tree-options-02 §4
+            let mut list: Vec<Extension> = extensions.iter().cloned().collect();
+            list.push(Extension::RatchetTree(RatchetTreeExtension::new(
                 self.group.export_ratchet_tree(),
-            ))];
-            list.extend(extensions.iter().cloned());
+            )));
             extensions = Extensions::from_vec(list)
                 .map_err(|e| ObserverError::InvalidPartialGroupInfo(e.into()))?;
         }

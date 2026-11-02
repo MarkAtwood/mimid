@@ -713,7 +713,7 @@ fn app_data_update_commit_from_member() {
     assert_same_public_state(&observer, &eve);
 }
 
-// ---- ratchet-tree-options-01 §4: GroupInfo rebuilt from a PartialGroupInfo ----
+// ---- ratchet-tree-options-02 §4: GroupInfo rebuilt from a PartialGroupInfo ----
 //
 // Oracle: the GroupInfo an mls-rs committer exports for the new epoch. The
 // rebuilt GroupInfo must equal it byte for byte, and mls-rs must accept it
@@ -802,8 +802,9 @@ fn group_info_rebuilt_from_partial_matches_mls_rs_committer() {
     bob_commits(&mut bob, &store, &mut observer);
 
     // (with_tree, allow_external_commit, presences): mls-rs's extension
-    // list is [], [ratchet_tree] and [external_pub]. The rebuilt
-    // ratchet_tree extension carries the Observer's own tree.
+    // list is [], [ratchet_tree], [external_pub] and [external_pub,
+    // ratchet_tree]. The rebuilt ratchet_tree extension carries the
+    // Observer's own tree and goes last (ratchet-tree-options-02 §4).
     let cases = [
         (
             false,
@@ -825,6 +826,11 @@ fn group_info_rebuilt_from_partial_matches_mls_rs_committer() {
                 RatchetTreePresence::NoRatchetTree,
                 RatchetTreePresence::Removed,
             ],
+        ),
+        (
+            true,
+            true,
+            [RatchetTreePresence::Present, RatchetTreePresence::Added],
         ),
     ];
     for (with_tree, allow_external_commit, presences) in cases {
