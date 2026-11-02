@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.7.41",
+  "title": "decision: consent entries accepted only from configured peers",
+  "description": "protocol-06 §5.7 says nothing about which providers may send consent entries. Received entries are stored (decision .7.35) and From is not authenticated (decision .17), so accepting any source would let anyone add unbounded rows naming a local user. Mark 2026-11-02: accept consent entries only from a configured peer, as /notify does (decision .7.4); this provider's own domain and unconfigured domains get FollowerError::NotAPeer -\u003e 403, checked before the body is decoded. A constraint, not a mechanism: the peer map already exists. Ceiling: a configured peer can still add many rows; a per-user cap is the upgrade path.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T22:17:28.695949691Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T22:17:28.695949691Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.41",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-11-02T22:17:28.716065079Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

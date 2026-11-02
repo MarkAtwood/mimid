@@ -1,6 +1,7 @@
 //! Client for peer providers: directory fetch and cache, and outbound
-//! `/notify`, `/keyMaterial`, `/update`, `/submitMessage` and `/groupInfo`
-//! requests over reqwest (plans of mimid-1wgh.6 and mimid-1wgh.7).
+//! `/notify`, `/keyMaterial`, `/update`, `/submitMessage`, `/groupInfo`,
+//! `/requestConsent` and `/updateConsent` requests over reqwest (plans of
+//! mimid-1wgh.6 and mimid-1wgh.7; mimid-1wgh.7.32).
 //!
 //! A peer's base URL comes from the configured peer map, which replaces DNS
 //! discovery (decision mimid-1wgh.17). Its directory (protocol-06 §5.1) is
@@ -56,6 +57,12 @@ enum Endpoint {
     Notify,
     /// §5.6 `POST /groupInfo/{roomId}`.
     GroupInfo,
+    /// §5.7 `POST /requestConsent/{targetDomain}` (decision
+    /// mimid-1wgh.5.16).
+    RequestConsent,
+    /// §5.7 `POST /updateConsent/{requesterDomain}` (decision
+    /// mimid-1wgh.5.16).
+    UpdateConsent,
 }
 
 impl Endpoint {
@@ -67,6 +74,8 @@ impl Endpoint {
             Self::SubmitMessage => "submitMessage",
             Self::Notify => "notify",
             Self::GroupInfo => "groupInfo",
+            Self::RequestConsent => "requestConsent",
+            Self::UpdateConsent => "updateConsent",
         }
     }
 
@@ -75,6 +84,8 @@ impl Endpoint {
         match self {
             Self::KeyMaterial => "targetUser",
             Self::Update | Self::SubmitMessage | Self::Notify | Self::GroupInfo => "roomId",
+            Self::RequestConsent => "targetDomain",
+            Self::UpdateConsent => "requesterDomain",
         }
     }
 
@@ -87,6 +98,8 @@ impl Endpoint {
             Self::SubmitMessage => directory.submit_message.as_ref(),
             Self::Notify => directory.notify.as_ref(),
             Self::GroupInfo => directory.group_info.as_ref(),
+            Self::RequestConsent => directory.request_consent.as_ref(),
+            Self::UpdateConsent => directory.update_consent.as_ref(),
         }
     }
 }
@@ -163,6 +176,48 @@ impl PeerClient {
         self.post(domain, Endpoint::Notify, room_id, body, StatusCode::CREATED)
             .await
             .map(drop)
+    }
+
+    /// protocol-06 §5.7 `POST /requestConsent/{targetDomain}`: sends `body`,
+    /// a ConsentEntry carrying `request` or `cancel`, to `domain`, the target
+    /// user's provider, with `domain` as the template's value. Only a `201`
+    /// response counts as accepted; its body is not read.
+    ///
+    /// # Errors
+    ///
+    /// As for [`PeerClient::notify`], with `requestConsent` in place of
+    /// `notify`.
+    pub async fn request_consent(&self, domain: &Domain, body: Vec<u8>) -> Result<(), PeerError> {
+        self.post(
+            domain,
+            Endpoint::RequestConsent,
+            domain.as_str(),
+            body,
+            StatusCode::CREATED,
+        )
+        .await
+        .map(drop)
+    }
+
+    /// protocol-06 §5.7 `POST /updateConsent/{requesterDomain}`: sends
+    /// `body`, a ConsentEntry carrying `grant` or `revoke`, to `domain`, the
+    /// requester's provider, with `domain` as the template's value. Only a
+    /// `201` response counts as accepted; its body is not read.
+    ///
+    /// # Errors
+    ///
+    /// As for [`PeerClient::notify`], with `updateConsent` in place of
+    /// `notify`.
+    pub async fn update_consent(&self, domain: &Domain, body: Vec<u8>) -> Result<(), PeerError> {
+        self.post(
+            domain,
+            Endpoint::UpdateConsent,
+            domain.as_str(),
+            body,
+            StatusCode::CREATED,
+        )
+        .await
+        .map(drop)
     }
 
     /// protocol-06 §5.2 `POST /keyMaterial/{targetUser}`: sends `body`, a
@@ -430,7 +485,8 @@ pub enum PeerError {
     #[error("response body too large")]
     ResponseTooLarge,
     /// The peer answered with a status other than the one the request
-    /// expects: `201` for `/notify`, `200` for every other endpoint.
+    /// expects: `201` for `/notify` and the consent endpoints, `200` for every
+    /// other endpoint.
     #[error("peer answered {status}")]
     Rejected {
         /// The response status code.

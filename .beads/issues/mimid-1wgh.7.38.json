@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.7.38",
+  "title": "decision: identifierQuery answers exact handle queries for local users only",
+  "description": "protocol-06 §5.8 L2337-2563. Mark 2026-11-02 chose option B over always-forbidden and an opt-in list. Rules: every query_element must be searchType handle, else responseCode unsupportedField; an empty query_elements list (decodable per decision .5.73) gets forbidden (an unspecified combination is not allowed, §5.8), not 'match everyone'; all handle elements (AND semantics) must equal, byte-exact (as decision .5.58), the mimi:// URI of one local user who is known (has at least one client, as .7.36), giving success with uri=[that URI] and no foundProfiles; otherwise notFound. Trade-off accepted: anyone who already knows a user URI can confirm it exists. Upgrade path: per-user search policy once a JMAP surface (.12) exists.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T22:00:45.24476024Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T22:00:45.24476024Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.38",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-11-02T22:00:45.283547941Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.7.37",
+  "title": "decision: consent operation/domain violations answer 400 (INVENTED status)",
+  "description": "protocol-06 §5.7 says the targetUri 'needs to be' in the receiving provider's domains and the requesterUri in the sending provider's (reversed for updateConsent), and gives each endpoint its operations (request/cancel; grant/revoke), but names no status for a violation. mimid answers 400: wrong operation for the endpoint, a URI outside the required domain, the path domain not this provider, or a missing/malformed From (From is a consistency check only, decision .6.9). INVENTED, NOT FROM SPEC: the status code.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T21:57:41.766045277Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T21:57:41.766045277Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.37",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-11-02T21:57:41.800627552Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

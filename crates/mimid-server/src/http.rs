@@ -22,16 +22,19 @@
 //! the target provider fails is `502` (decision mimid-1wgh.6.64). An
 //! accepted `/notify` is `201` with no body; one from a provider that is not
 //! a configured peer, or not the room's hub, is `403` (decision
-//! mimid-1wgh.7.4).
+//! mimid-1wgh.7.4). The consent endpoints (`/v1/requestConsent/
+//! {targetDomain}`, `/v1/updateConsent/{requesterDomain}`) go to the
+//! follower: an accepted entry is `201` with no body, an unknown local user
+//! `404` (decision mimid-1wgh.7.36), and an entry §5.7 does not allow `400`
+//! (decision mimid-1wgh.7.37).
 //!
 //! # Limitations
 //!
 //! - The `Host` header is not checked (protocol-06 §4.1).
 //! - keyMaterial for users of this provider answers `501` if the follower
 //!   was not given its KeyPackages ([`Follower::with_key_packages`]).
-//! - The consent, identifierQuery and proxyDownload endpoints are not
-//!   implemented, so the directory does not list them (decision
-//!   mimid-1wgh.5.75).
+//! - The identifierQuery and proxyDownload endpoints are not implemented,
+//!   so the directory does not list them (decision mimid-1wgh.5.75).
 
 use std::sync::Arc;
 
@@ -91,6 +94,8 @@ pub fn router(directory: Directory, hub: Arc<Hub>, follower: Arc<Follower>) -> R
         .route("/v1/reportAbuse/{roomId}", post(report_abuse))
         .route("/v1/keyMaterial/{targetUser}", post(key_material))
         .route("/v1/notify/{roomId}", post(notify))
+        .route("/v1/requestConsent/{targetDomain}", post(request_consent))
+        .route("/v1/updateConsent/{requesterDomain}", post(update_consent))
         .layer(DefaultBodyLimit::max(MAX_BODY_LEN))
         .with_state(Roles { hub, follower });
     directory::router(directory).merge(protocol)
@@ -194,6 +199,58 @@ async fn notify(
     }
 }
 
+/// protocol-06 §5.7 requestConsent: `201` with no body when accepted, `404`
+/// for an unknown target user (decision mimid-1wgh.7.36), and `400` for an
+/// undecodable entry or one §5.7 does not allow (decision mimid-1wgh.7.37).
+async fn request_consent(
+    State(follower): State<Arc<Follower>>,
+    Path(target_domain): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    match source_domain(&headers) {
+        Some(from) => consent_response(
+            follower
+                .request_consent(&target_domain, &from, &body)
+                .await
+                .map(|()| StatusCode::CREATED.into_response()),
+        ),
+        None => bad_from(),
+    }
+}
+
+/// The response to a consent request: a non-peer source is logged as a
+/// refused consent entry (decision mimid-1wgh.7.41), everything else as for
+/// any follower request.
+fn consent_response(result: Result<Response, FollowerError>) -> Response {
+    match result {
+        Err(error @ FollowerError::NotAPeer) => {
+            tracing::warn!(%error, "consent refused");
+            (StatusCode::FORBIDDEN, error.to_string()).into_response()
+        }
+        other => respond_follower(other),
+    }
+}
+
+/// protocol-06 §5.7 updateConsent: as [`request_consent`], with the
+/// requester as the local user.
+async fn update_consent(
+    State(follower): State<Arc<Follower>>,
+    Path(requester_domain): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    match source_domain(&headers) {
+        Some(from) => consent_response(
+            follower
+                .update_consent(&requester_domain, &from, &body)
+                .await
+                .map(|()| StatusCode::CREATED.into_response()),
+        ),
+        None => bad_from(),
+    }
+}
+
 /// Parses the source provider's domain from the request's single `From`
 /// header, which protocol-06 §4.1 fixes as `mimi@<domain>`. It is used only
 /// for consistency checks, never to authorize (decision mimid-1wgh.6.9).
@@ -231,10 +288,16 @@ fn respond_follower(result: Result<Response, FollowerError>) -> Response {
         Err(FollowerError::InvalidRoomId) => {
             (StatusCode::BAD_REQUEST, "invalid room ID").into_response()
         }
+        // Decision mimid-1wgh.7.37.
+        Err(FollowerError::ConsentRefused(violation)) => {
+            (StatusCode::BAD_REQUEST, violation.to_string()).into_response()
+        }
+        // Decision mimid-1wgh.7.36.
+        Err(FollowerError::UnknownUser) => (StatusCode::NOT_FOUND, "unknown user").into_response(),
         Err(FollowerError::BodyTooLarge) => {
             (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response()
         }
-        // Decision mimid-1wgh.7.4.
+        // Decisions mimid-1wgh.7.4, mimid-1wgh.7.41.
         Err(error @ (FollowerError::NotAPeer | FollowerError::NotRoomHub)) => {
             tracing::warn!(%error, "fanout refused");
             (StatusCode::FORBIDDEN, error.to_string()).into_response()

@@ -34,6 +34,9 @@
 //!
 //! # Limitations
 //!
+//! - Received consent entries are stored, not enforced
+//!   ([`Follower::request_consent`], [`Follower::update_consent`]); their
+//!   limitations are listed in `consent.rs`.
 //! - [`Follower::key_material`] serves only if
 //!   [`Follower::with_key_packages`] gave the follower its
 //!   [`KeyPackages`]; its limitations are listed in `key_packages.rs`.
@@ -104,7 +107,8 @@ pub struct Follower {
     domain: Domain,
     store: Store,
     clock: Arc<dyn Clock>,
-    /// The configured peers: the providers `/notify` is accepted from.
+    /// The configured peers: the providers `/notify` and consent entries are
+    /// accepted from.
     peers: Option<PeerClient>,
     /// Announces each new event as (room ID, seq).
     appended: broadcast::Sender<(String, u64)>,
@@ -465,8 +469,8 @@ pub enum FollowerError {
     /// The room ID is not a `mimi://<domain>/...` URI, so it names no hub.
     #[error("invalid room ID")]
     InvalidRoomId,
-    /// The `/notify` source is this provider or not a configured peer
-    /// (decision mimid-1wgh.7.4).
+    /// The `/notify` or consent source is this provider or not a configured
+    /// peer (decisions mimid-1wgh.7.4, mimid-1wgh.7.41).
     #[error("source provider is not a configured peer")]
     NotAPeer,
     /// The fanout source is not the room's hub (decisions mimid-1wgh.7.4,
@@ -493,4 +497,11 @@ pub enum FollowerError {
     /// Relaying a user's request failed.
     #[error("relay failed")]
     Relay(#[source] RelayError),
+    /// A consent entry breaks protocol-06 §5.7 (decision mimid-1wgh.7.37).
+    #[error("consent entry refused")]
+    ConsentRefused(#[source] consent::ConsentViolation),
+    /// The local user a consent entry names has no client here (decision
+    /// mimid-1wgh.7.36).
+    #[error("unknown local user")]
+    UnknownUser,
 }

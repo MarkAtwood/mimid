@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.7.35",
+  "title": "decision: v1 stores received consent entries, enforces nothing",
+  "description": "protocol-06 §5.7. Mark 2026-11-02: received requestConsent/cancel and updateConsent grant/revoke are validated and persisted (ConsentEntry bytes as received, plus scope, operation, From domain, time) for a later JMAP surface (mimid-1wgh.12) to show users; consent::allows stays always-true (decisions .7.9 implicit allow, .21 no enforcement). request upserts a pending request for its ConsentScope; cancel deletes it (no-op if none, §5.7); grant/revoke upsert the latest decision for its scope. Rejected: accept-and-drop (Mark chose storage).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-02T21:57:41.552675471Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-02T21:57:41.552675471Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.7.35",
+      "depends_on_id": "mimid-1wgh.7",
+      "type": "parent-child",
+      "created_at": "2026-11-02T21:57:41.587967942Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
