@@ -14,11 +14,10 @@ use super::{Recorder, decode_canonical, impl_encoding_from_bytes};
 pub enum RatchetTreeRepresentation {
     /// `full(1)`: the whole ratchet tree is included.
     Full,
-    /// `httpsUri(2)`: the ratchet tree can be fetched from an HTTPS URL.
+    /// `httpsUrl(2)`: the ratchet tree can be fetched from an HTTPS URL.
     ///
-    /// The draft names this arm `httpsUri` in the enum and `httpsUrl` in
-    /// the select; both are value 2 (decision mimid-1wgh.4.19).
-    HttpsUri,
+    /// Named `httpsUri` in -01; -02 renamed it, keeping value 2.
+    HttpsUrl,
     /// `outOfBand(3)`: the ratchet tree is conveyed by an unspecified
     /// application protocol.
     OutOfBand,
@@ -31,7 +30,7 @@ impl RatchetTreeRepresentation {
     fn value(self) -> u8 {
         match self {
             Self::Full => 1,
-            Self::HttpsUri => 2,
+            Self::HttpsUrl => 2,
             Self::OutOfBand => 3,
             Self::DistributionService => 4,
         }
@@ -45,7 +44,7 @@ impl TryFrom<u8> for RatchetTreeRepresentation {
     fn try_from(value: u8) -> Result<Self, tls_codec::Error> {
         match value {
             1 => Ok(Self::Full),
-            2 => Ok(Self::HttpsUri),
+            2 => Ok(Self::HttpsUrl),
             3 => Ok(Self::OutOfBand),
             4 => Ok(Self::DistributionService),
             other => Err(tls_codec::Error::UnknownValue(other.into())),
@@ -58,7 +57,7 @@ impl TryFrom<u8> for RatchetTreeRepresentation {
 pub struct RatchetTreeOption {
     bytes: Vec<u8>,
     representation: RatchetTreeRepresentation,
-    /// The encoded `ratchet_tree<V>` for `full`, the URL for `httpsUri`,
+    /// The encoded `ratchet_tree<V>` for `full`, the URL for `httpsUrl`,
     /// and empty otherwise.
     payload: Vec<u8>,
 }
@@ -80,14 +79,14 @@ impl RatchetTreeOption {
         Self::tls_deserialize_exact(bytes)
     }
 
-    /// Builds an `httpsUri` option. The URL is opaque here; checking its
+    /// Builds an `httpsUrl` option. The URL is opaque here; checking its
     /// scheme and domain (ratchet-tree-options-01 §3.1) is the caller's job.
     ///
     /// # Errors
     ///
     /// Returns a tls_codec error if `url` is too long to encode.
-    pub fn https_uri(url: &[u8]) -> Result<Self, tls_codec::Error> {
-        let mut bytes = vec![RatchetTreeRepresentation::HttpsUri.value()];
+    pub fn https_url(url: &[u8]) -> Result<Self, tls_codec::Error> {
+        let mut bytes = vec![RatchetTreeRepresentation::HttpsUrl.value()];
         bytes.extend(VLBytes::new(url.to_vec()).tls_serialize_detached()?);
         Self::tls_deserialize_exact(bytes)
     }
@@ -122,9 +121,9 @@ impl RatchetTreeOption {
         (self.representation == RatchetTreeRepresentation::Full).then_some(&self.payload)
     }
 
-    /// For `httpsUri`, returns `ratchet_tree_url` without its length prefix.
+    /// For `httpsUrl`, returns `ratchet_tree_url` without its length prefix.
     pub fn ratchet_tree_url(&self) -> Option<&[u8]> {
-        (self.representation == RatchetTreeRepresentation::HttpsUri).then_some(&self.payload)
+        (self.representation == RatchetTreeRepresentation::HttpsUrl).then_some(&self.payload)
     }
 }
 
@@ -145,7 +144,7 @@ impl Deserialize for RatchetTreeOption {
             RatchetTreeRepresentation::Full => {
                 decode_canonical::<RatchetTreeIn, _>(&mut recorder)?.1
             }
-            RatchetTreeRepresentation::HttpsUri => {
+            RatchetTreeRepresentation::HttpsUrl => {
                 VLBytes::tls_deserialize(&mut recorder)?.as_slice().to_vec()
             }
             RatchetTreeRepresentation::OutOfBand

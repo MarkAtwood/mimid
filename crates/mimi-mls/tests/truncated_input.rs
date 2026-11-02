@@ -147,8 +147,8 @@ fn wire_types_refuse_truncated_input() {
     let mut full = vec![0x01];
     full.extend_from_slice(&RATCHET_TREE);
     assert_refused::<RatchetTreeOption>("RatchetTreeOption full", &full);
-    // ratchet-tree-options-01 §3: httpsUri(2) then url<V>.
-    assert_refused::<RatchetTreeOption>("RatchetTreeOption httpsUri", &[0x02, 0x05, 0xaa, 0xbb]);
+    // ratchet-tree-options-02 §3: httpsUrl(2) then url<V>.
+    assert_refused::<RatchetTreeOption>("RatchetTreeOption httpsUrl", &[0x02, 0x05, 0xaa, 0xbb]);
     // ratchet-tree-options-01 §4.
     assert_refused::<PartialGroupInfo>(
         "PartialGroupInfo",

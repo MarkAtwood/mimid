@@ -137,24 +137,24 @@ fn app_data_dictionary_rejects_oversized_length() {
 // ---- ratchet-tree-options-01 §3 RatchetTreeOption ----
 
 #[test]
-fn https_uri_ratchet_tree_option() {
+fn https_url_ratchet_tree_option() {
     let url = b"https://example.com";
     let mut encoded = vec![
-        0x02, // representation = httpsUri(2) (decision mimid-1wgh.4.19)
+        0x02, // representation = httpsUrl(2) (decision mimid-1wgh.4.19)
         0x13, // ratchet_tree_url<V>: 19 bytes
     ];
     encoded.extend_from_slice(url);
 
     let option = RatchetTreeOption::tls_deserialize_exact(&encoded).expect("decode");
-    assert_eq!(option.representation(), RatchetTreeRepresentation::HttpsUri);
+    assert_eq!(option.representation(), RatchetTreeRepresentation::HttpsUrl);
     assert_eq!(option.ratchet_tree_url(), Some(&url[..]));
     assert_eq!(option.ratchet_tree(), None);
     assert_eq!(reencode(&option), encoded);
     assert_rejects_truncated_and_trailing::<RatchetTreeOption>(&encoded);
 
     assert_eq!(
-        RatchetTreeOption::https_uri(url)
-            .expect("https_uri")
+        RatchetTreeOption::https_url(url)
+            .expect("https_url")
             .as_bytes(),
         &encoded[..]
     );
