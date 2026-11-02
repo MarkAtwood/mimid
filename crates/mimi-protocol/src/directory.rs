@@ -25,8 +25,10 @@ const KEYS: [&str; 10] = [
 /// The directory document served at `/.well-known/mimi-protocol-directory`
 /// (protocol-06 §5.1): one URL template per endpoint.
 ///
-/// Fields mirror the draft's JSON keys. All ten are required, since §5.1
-/// says the document holds "URIs for each type of endpoint".
+/// Fields mirror the draft's JSON keys. Each is optional: §5.1 says the
+/// document holds "URIs for each type of endpoint" but not what a provider
+/// that does not offer an endpoint publishes, so an absent key means the
+/// provider does not offer that endpoint (decision mimid-1wgh.5.75).
 ///
 /// Each value is a [`UriTemplate`] whose `{name}` placeholders are literal
 /// text, expanded by the client (decision mimid-1wgh.5.38). Placeholder names
@@ -37,31 +39,31 @@ const KEYS: [&str; 10] = [
 /// mimid-1wgh.5.42). URLs need not be `https` (decision mimid-1wgh.34).
 ///
 /// Decoding with `serde_json` is strict: the document must be a JSON object,
-/// every key may appear only once, every known key needs a string value that
-/// is a valid template, and nothing may follow the object. Members with other
+/// every key may appear only once, every known key present needs a string
+/// value that is a valid template, and nothing may follow the object. Members with other
 /// keys are kept in [`Directory::unknown`] and serialized back unchanged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Directory {
     /// `keyMaterial` (§5.2).
-    pub key_material: UriTemplate,
+    pub key_material: Option<UriTemplate>,
     /// `update` (§5.3).
-    pub update: UriTemplate,
+    pub update: Option<UriTemplate>,
     /// `notify` (§5.5).
-    pub notify: UriTemplate,
+    pub notify: Option<UriTemplate>,
     /// `submitMessage` (§5.4).
-    pub submit_message: UriTemplate,
+    pub submit_message: Option<UriTemplate>,
     /// `groupInfo` (§5.6).
-    pub group_info: UriTemplate,
+    pub group_info: Option<UriTemplate>,
     /// `requestConsent` (§5.7).
-    pub request_consent: UriTemplate,
+    pub request_consent: Option<UriTemplate>,
     /// `updateConsent` (§5.7).
-    pub update_consent: UriTemplate,
+    pub update_consent: Option<UriTemplate>,
     /// `identifierQuery` (§5.8).
-    pub identifier_query: UriTemplate,
+    pub identifier_query: Option<UriTemplate>,
     /// `reportAbuse` (§5.9).
-    pub report_abuse: UriTemplate,
+    pub report_abuse: Option<UriTemplate>,
     /// `proxyDownload` (§5.10.2).
-    pub proxy_download: UriTemplate,
+    pub proxy_download: Option<UriTemplate>,
     /// Members whose keys §5.1 does not define, kept so they round-trip.
     /// Serializing fails if this holds one of the ten keys above.
     pub unknown: BTreeMap<String, serde_json::Value>,
@@ -69,18 +71,18 @@ pub struct Directory {
 
 impl Directory {
     /// The known members as `(key, template)` pairs, in [`KEYS`] order.
-    fn known(&self) -> [(&'static str, &UriTemplate); 10] {
+    fn known(&self) -> [(&'static str, Option<&UriTemplate>); 10] {
         [
-            (KEYS[0], &self.key_material),
-            (KEYS[1], &self.update),
-            (KEYS[2], &self.notify),
-            (KEYS[3], &self.submit_message),
-            (KEYS[4], &self.group_info),
-            (KEYS[5], &self.request_consent),
-            (KEYS[6], &self.update_consent),
-            (KEYS[7], &self.identifier_query),
-            (KEYS[8], &self.report_abuse),
-            (KEYS[9], &self.proxy_download),
+            (KEYS[0], self.key_material.as_ref()),
+            (KEYS[1], self.update.as_ref()),
+            (KEYS[2], self.notify.as_ref()),
+            (KEYS[3], self.submit_message.as_ref()),
+            (KEYS[4], self.group_info.as_ref()),
+            (KEYS[5], self.request_consent.as_ref()),
+            (KEYS[6], self.update_consent.as_ref()),
+            (KEYS[7], self.identifier_query.as_ref()),
+            (KEYS[8], self.report_abuse.as_ref()),
+            (KEYS[9], self.proxy_download.as_ref()),
         ]
     }
 }
@@ -92,9 +94,16 @@ impl serde::Serialize for Directory {
                 "unknown directory member uses the known key {key:?}"
             )));
         }
-        let mut map = serializer.serialize_map(Some(KEYS.len() + self.unknown.len()))?;
-        for (key, template) in self.known() {
-            map.serialize_entry(key, template)?;
+        let known = self.known();
+        let present = known
+            .iter()
+            .filter(|(_, template)| template.is_some())
+            .count();
+        let mut map = serializer.serialize_map(Some(present + self.unknown.len()))?;
+        for (key, template) in known {
+            if let Some(template) = template {
+                map.serialize_entry(key, template)?;
+            }
         }
         for (key, value) in &self.unknown {
             map.serialize_entry(key, value)?;
@@ -132,22 +141,29 @@ impl<'de> Visitor<'de> for DirectoryVisitor {
                 )));
             }
         }
-        let mut take = |i: usize| {
-            known[i]
-                .take()
-                .ok_or_else(|| de::Error::missing_field(KEYS[i]))
-        };
+        let [
+            key_material,
+            update,
+            notify,
+            submit_message,
+            group_info,
+            request_consent,
+            update_consent,
+            identifier_query,
+            report_abuse,
+            proxy_download,
+        ] = known;
         Ok(Directory {
-            key_material: take(0)?,
-            update: take(1)?,
-            notify: take(2)?,
-            submit_message: take(3)?,
-            group_info: take(4)?,
-            request_consent: take(5)?,
-            update_consent: take(6)?,
-            identifier_query: take(7)?,
-            report_abuse: take(8)?,
-            proxy_download: take(9)?,
+            key_material,
+            update,
+            notify,
+            submit_message,
+            group_info,
+            request_consent,
+            update_consent,
+            identifier_query,
+            report_abuse,
+            proxy_download,
             unknown,
         })
     }

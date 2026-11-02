@@ -43,16 +43,28 @@ fn template(s: &str) -> UriTemplate {
 
 fn spec_example_expected() -> Directory {
     Directory {
-        key_material: template("https://mimi.example.com/v1/keyMaterial/{targetUser}"),
-        update: template("https://mimi.example.com/v1/update{roomId}"),
-        notify: template("https://mimi.example.com/v1/notify/{roomId}"),
-        submit_message: template("https://mimi.example.com/v1/submitMessage/{roomId}"),
-        group_info: template("https://mimi.example.com/v1/groupInfo/{roomId}"),
-        request_consent: template("https://mimi.example.com/v1/requestConsent/{targetUser}"),
-        update_consent: template("https://mimi.example.com/v1/updateConsent/{requesterUser}"),
-        identifier_query: template("https://mimi.example.com/v1/identifierQuery/{domain}"),
-        report_abuse: template("https://mimi.example.com/v1/reportAbuse/{roomId}"),
-        proxy_download: template("https://mimi.example.com/v1/proxyDownload/{downloadUrl}"),
+        key_material: Some(template(
+            "https://mimi.example.com/v1/keyMaterial/{targetUser}",
+        )),
+        update: Some(template("https://mimi.example.com/v1/update{roomId}")),
+        notify: Some(template("https://mimi.example.com/v1/notify/{roomId}")),
+        submit_message: Some(template(
+            "https://mimi.example.com/v1/submitMessage/{roomId}",
+        )),
+        group_info: Some(template("https://mimi.example.com/v1/groupInfo/{roomId}")),
+        request_consent: Some(template(
+            "https://mimi.example.com/v1/requestConsent/{targetUser}",
+        )),
+        update_consent: Some(template(
+            "https://mimi.example.com/v1/updateConsent/{requesterUser}",
+        )),
+        identifier_query: Some(template(
+            "https://mimi.example.com/v1/identifierQuery/{domain}",
+        )),
+        report_abuse: Some(template("https://mimi.example.com/v1/reportAbuse/{roomId}")),
+        proxy_download: Some(template(
+            "https://mimi.example.com/v1/proxyDownload/{downloadUrl}",
+        )),
         unknown: BTreeMap::new(),
     }
 }
@@ -95,7 +107,9 @@ fn unknown_members_round_trip_unchanged() {
 }
 
 #[test]
-fn every_member_is_required() {
+fn each_member_may_be_absent() {
+    // An absent key means the provider does not offer that endpoint
+    // (decision mimid-1wgh.5.75).
     let keys: Vec<String> = spec_value()
         .as_object()
         .expect("object")
@@ -106,11 +120,25 @@ fn every_member_is_required() {
     for key in keys {
         let mut value = spec_value();
         value.as_object_mut().expect("object").remove(&key);
-        let err = decode_err(&value);
-        assert!(
-            err.contains(&format!("missing field `{key}`")),
-            "{key}: {err}"
-        );
+        let decoded: Directory =
+            serde_json::from_value(value.clone()).unwrap_or_else(|e| panic!("{key}: {e}"));
+        let reencoded = serde_json::to_value(&decoded).expect("re-encodes");
+        assert_eq!(reencoded, value, "{key}");
+        let mut expected = spec_example_expected();
+        match key.as_str() {
+            "keyMaterial" => expected.key_material = None,
+            "update" => expected.update = None,
+            "notify" => expected.notify = None,
+            "submitMessage" => expected.submit_message = None,
+            "groupInfo" => expected.group_info = None,
+            "requestConsent" => expected.request_consent = None,
+            "updateConsent" => expected.update_consent = None,
+            "identifierQuery" => expected.identifier_query = None,
+            "reportAbuse" => expected.report_abuse = None,
+            "proxyDownload" => expected.proxy_download = None,
+            other => panic!("unexpected key {other}"),
+        }
+        assert_eq!(decoded, expected, "{key}");
     }
 }
 
@@ -176,6 +204,8 @@ fn spec_example_expands_mimi_uris() {
     assert_eq!(
         directory
             .notify
+            .as_ref()
+            .expect("present")
             .expand("roomId", "mimi://a.example/r/clubhouse")
             .expect("expands"),
         "https://mimi.example.com/v1/notify/mimi%3A%2F%2Fa.example%2Fr%2Fclubhouse"
@@ -183,6 +213,8 @@ fn spec_example_expands_mimi_uris() {
     assert_eq!(
         directory
             .key_material
+            .as_ref()
+            .expect("present")
             .expand("targetUser", "mimi://b.example/u/cathy")
             .expect("expands"),
         "https://mimi.example.com/v1/keyMaterial/mimi%3A%2F%2Fb.example%2Fu%2Fcathy"
@@ -190,6 +222,8 @@ fn spec_example_expands_mimi_uris() {
     assert_eq!(
         directory
             .proxy_download
+            .as_ref()
+            .expect("present")
             .expand("downloadUrl", "https://c.example/f?id=1&x=%41")
             .expect("expands"),
         "https://mimi.example.com/v1/proxyDownload/\
@@ -405,4 +439,89 @@ fn expanded_url_length_limit() {
         t.expand("v", &"\u{1f600}".repeat(1 << 20)),
         Err(Error::UrlTooLong { .. })
     ));
+}
+
+/// The directory Haven's mimi-hubd serves (havenmessenger/interop 2c14e62,
+/// `mimi-hubd/src/lib.rs` `directory()`, with provider domain
+/// `example.com`): eight of the ten §5.1 endpoints, no `groupInfo` (its
+/// DIV-1) and no `proxyDownload` (DIV-3), plus non-standard members.
+const HAVEN_DIRECTORY: &str = r#"{
+  "provider": "example.com",
+  "mls_ciphersuites": [1],
+  "protocol_drafts": { "protocol": "06", "content": "09", "room-policy": "04" },
+  "endpoints": {
+    "keyMaterial": "/mimi/v1/keyMaterial",
+    "notify": "/mimi/v1/notify",
+    "welcome": "/mimi/v1/welcome",
+    "submitMessage": "/mimi/v1/submitMessage",
+    "message": "/mimi/v1/message",
+    "identifierQuery": "/mimi/v1/identifierQuery",
+    "updateConsent": "/mimi/v1/updateConsent",
+    "requestConsent": "/mimi/v1/requestConsent"
+  },
+  "wireEndpoints": {
+    "keyMaterial": "/mimi/pl/keyMaterial/{targetUser}",
+    "submitMessage": "/mimi/pl/submitMessage/{recipient}",
+    "notify": "/mimi/pl/notify",
+    "identifierQuery": "/mimi/pl/identifierQuery",
+    "requestConsent": "/mimi/pl/requestConsent/{targetDomain}",
+    "updateConsent": "/mimi/pl/updateConsent/{requesterDomain}",
+    "reportAbuse": "/mimi/pl/reportAbuse/{roomId}",
+    "update": "/mimi/pl/update/{roomId}"
+  },
+  "unsupported": {
+    "groupInfo_external_commit_join": "DIV-1: add-driven join only (ETK security)",
+    "assets_ohttp": "DIV-3: v1 is messaging-only",
+    "non_0x0001_ciphersuites": "DIV-2: rejected at ingest",
+    "update_wire_endpoint_mixed_commits": "DIV-10: a Commit combining a custom proposal with a standard MLS proposal (Add, Remove, ...) in the same proposal list is refused - only a Commit whose list holds exactly one custom proposal is applied",
+    "reportAbuse_with_abusive_messages": "DIV-9: a report attaching an AbusiveMessage is refused (its Frank cannot yet be verified) - metadata-only reports are accepted"
+  },
+  "keyMaterial": "https://example.com/mimi/pl/keyMaterial/{targetUser}",
+  "submitMessage": "https://example.com/mimi/pl/submitMessage/{recipient}",
+  "notify": "https://example.com/mimi/pl/notify",
+  "identifierQuery": "https://example.com/mimi/pl/identifierQuery",
+  "requestConsent": "https://example.com/mimi/pl/requestConsent/{targetDomain}",
+  "updateConsent": "https://example.com/mimi/pl/updateConsent/{requesterDomain}",
+  "reportAbuse": "https://example.com/mimi/pl/reportAbuse/{roomId}",
+  "update": "https://example.com/mimi/pl/update/{roomId}"
+}"#;
+
+#[test]
+fn directory_without_group_info_and_proxy_download_decodes() {
+    // protocol-06 §5.1 does not require every endpoint; an absent key means
+    // the provider does not offer it. Decision mimid-1wgh.5.75.
+    let original: Value = serde_json::from_str(HAVEN_DIRECTORY).expect("fixture is JSON");
+    let mut unknown = BTreeMap::new();
+    for key in [
+        "provider",
+        "mls_ciphersuites",
+        "protocol_drafts",
+        "endpoints",
+        "wireEndpoints",
+        "unsupported",
+    ] {
+        unknown.insert(key.to_owned(), original[key].clone());
+    }
+    let expected = Directory {
+        key_material: Some(template(
+            "https://example.com/mimi/pl/keyMaterial/{targetUser}",
+        )),
+        update: Some(template("https://example.com/mimi/pl/update/{roomId}")),
+        notify: Some(template("https://example.com/mimi/pl/notify")),
+        submit_message: Some(template(
+            "https://example.com/mimi/pl/submitMessage/{recipient}",
+        )),
+        group_info: None,
+        request_consent: Some(template(
+            "https://example.com/mimi/pl/requestConsent/{targetDomain}",
+        )),
+        update_consent: Some(template(
+            "https://example.com/mimi/pl/updateConsent/{requesterDomain}",
+        )),
+        identifier_query: Some(template("https://example.com/mimi/pl/identifierQuery")),
+        report_abuse: Some(template("https://example.com/mimi/pl/reportAbuse/{roomId}")),
+        proxy_download: None,
+        unknown,
+    };
+    check_fixture(HAVEN_DIRECTORY, &expected);
 }

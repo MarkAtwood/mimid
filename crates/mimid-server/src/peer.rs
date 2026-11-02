@@ -78,14 +78,15 @@ impl Endpoint {
         }
     }
 
-    /// The endpoint's URL template in `directory`.
-    fn template(self, directory: &Directory) -> &UriTemplate {
+    /// The endpoint's URL template in `directory`, or `None` if the peer
+    /// does not offer it (decision mimid-1wgh.5.75).
+    fn template(self, directory: &Directory) -> Option<&UriTemplate> {
         match self {
-            Self::KeyMaterial => &directory.key_material,
-            Self::Update => &directory.update,
-            Self::SubmitMessage => &directory.submit_message,
-            Self::Notify => &directory.notify,
-            Self::GroupInfo => &directory.group_info,
+            Self::KeyMaterial => directory.key_material.as_ref(),
+            Self::Update => directory.update.as_ref(),
+            Self::SubmitMessage => directory.submit_message.as_ref(),
+            Self::Notify => directory.notify.as_ref(),
+            Self::GroupInfo => directory.group_info.as_ref(),
         }
     }
 }
@@ -147,8 +148,9 @@ impl PeerClient {
     /// # Errors
     ///
     /// Returns [`PeerError::UnknownPeer`] if `domain` is not a configured
-    /// peer, any error from fetching its directory, [`PeerError::Url`] if
-    /// the `notify` template cannot be expanded with `room_id`,
+    /// peer, any error from fetching its directory,
+    /// [`PeerError::NotOffered`] if its directory has no `notify` endpoint,
+    /// [`PeerError::Url`] if the `notify` template cannot be expanded with `room_id`,
     /// [`PeerError::Http`] if the request fails, and [`PeerError::Rejected`]
     /// for any status other than `201`.
     pub async fn notify(
@@ -190,8 +192,9 @@ impl PeerClient {
     /// # Errors
     ///
     /// Returns [`PeerError::UnknownPeer`] if `domain` is not a configured
-    /// peer, any error from fetching its directory, [`PeerError::Url`] if
-    /// the template cannot be expanded with `room_id`, [`PeerError::Http`]
+    /// peer, any error from fetching its directory,
+    /// [`PeerError::NotOffered`] if its directory has no such endpoint,
+    /// [`PeerError::Url`] if the template cannot be expanded with `room_id`, [`PeerError::Http`]
     /// if the request fails, [`PeerError::Rejected`] for any status other
     /// than `200`, and [`PeerError::ResponseTooLarge`] for an oversized
     /// body.
@@ -251,6 +254,9 @@ impl PeerClient {
         let directory = self.directory(domain).await?;
         let url = endpoint
             .template(&directory)
+            .ok_or(PeerError::NotOffered {
+                endpoint: endpoint.name(),
+            })?
             .expand(endpoint.variable(), value)
             .map_err(|source| PeerError::Url {
                 endpoint: endpoint.name(),
@@ -403,6 +409,13 @@ pub enum PeerError {
     /// The directory document is not a valid protocol-06 §5.1 directory.
     #[error("invalid directory document")]
     InvalidDirectory(#[source] mimi_protocol::serde_json::Error),
+    /// The peer's directory has no URL for the endpoint, so the peer does
+    /// not offer it (decision mimid-1wgh.5.75). Nothing was sent.
+    #[error("the peer does not offer {endpoint}")]
+    NotOffered {
+        /// The endpoint's name in the directory.
+        endpoint: &'static str,
+    },
     /// An endpoint's template could not be expanded with the room ID or
     /// target user.
     #[error("cannot build the {endpoint} URL")]
