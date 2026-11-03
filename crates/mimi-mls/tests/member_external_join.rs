@@ -536,77 +536,115 @@ fn leaf_missing_a_required_component_is_rejected_without_writing_state() {
     }
 }
 
-/// Decision mimid-1wgh.4.57: join_external and Observer::from_group_info
-/// accept a group whose existing leaves miss a required component, and
-/// report their leaf indices. mls-rs, which does not enforce the rule,
-/// builds the groups: bob at leaf 0 lists [`SAFE_AAD_0020`]; dave at leaf
-/// 1 carries the dictionary of each case. A leaf list that is absent or
-/// malformed counts as empty (decision mimid-1wgh.4.49).
+/// mls-extensions editor's copy (PR #110) rule 3: a LeafNode in the tree
+/// that misses a required component makes the tree invalid, so join_external
+/// and Observer::from_group_info refuse the group and join_external stores
+/// nothing (decision mimid-krmn.7, superseding mimid-1wgh.4.57's report).
+/// mls-rs, which does not enforce the rule, builds the groups: bob at leaf
+/// 0 lists [`SAFE_AAD_0020`]; dave at leaf 1 carries the dictionary of each
+/// case. A leaf list that is absent or malformed counts as empty (decision
+/// mimid-1wgh.4.49).
 #[test]
-fn join_and_observe_report_existing_leaves_missing_a_required_component() {
-    type Case<'a> = (&'a str, Option<&'a [u8]>, Option<&'a [u8]>, Vec<u32>);
+fn join_and_observe_refuse_existing_leaves_missing_a_required_component() {
+    /// The refusal of each case: `None` when the group is valid, else the
+    /// list ("safe_aad" or "app_components") and component missing.
+    type Case<'a> = (
+        &'a str,
+        Option<&'a [u8]>,
+        Option<&'a [u8]>,
+        Option<(&'a str, u16)>,
+    );
     let cases: [Case<'_>; 6] = [
         (
             "dave lists 0x0020",
             Some(&SAFE_AAD_0020),
             Some(&SAFE_AAD_0020),
-            vec![],
+            None,
         ),
         (
             "dave lists only 0x0021",
             Some(&SAFE_AAD_0020),
             Some(&SAFE_AAD_0021),
-            vec![1],
+            Some(("safe_aad", 0x0020)),
         ),
         (
             "dave has no dictionary",
             Some(&SAFE_AAD_0020),
             None,
-            vec![1],
+            Some(("safe_aad", 0x0020)),
         ),
         (
             "dave's list is malformed",
             Some(&SAFE_AAD_0020),
             Some(&SAFE_AAD_MALFORMED),
-            vec![1],
+            Some(("safe_aad", 0x0020)),
         ),
         (
             "app_components requires 0x0020",
             Some(&APP_COMPONENTS_0020),
             Some(&SAFE_AAD_0020),
-            vec![0, 1],
+            Some(("app_components", 0x0020)),
         ),
-        ("nothing is required", None, Some(&SAFE_AAD_0021), vec![]),
+        ("nothing is required", None, Some(&SAFE_AAD_0021), None),
     ];
-    for (case, context_dictionary, dave_dictionary, expected) in cases {
+    for (case, context_dictionary, dave_dictionary, refusal) in cases {
         let (mut bob, _dave, _) = mls_rs_pair_with(SUITE_1, context_dictionary, dave_dictionary);
         let from_bob = group_info(&bob, true, true);
 
         let store = Store::open_in_memory().expect("store");
-        let ObserverStart {
-            observer,
-            nonconforming_leaves: observed,
-            ..
-        } = Observer::from_group_info(&store, &from_bob, None)
-            .unwrap_or_else(|e| panic!("{case}: from_group_info: {e:?}"));
-        assert_eq!(observed, expected, "{case}: Observer");
-        assert_eq!(observer.members().len(), 2, "{case}");
-
+        let observed = Observer::from_group_info(&store, &from_bob, None);
         let carol = Identity::generate(b"carol", Store::open_in_memory().expect("store"))
             .expect("generate identity");
-        let ExternalJoin {
-            member,
-            commit_bundle: bundle,
-            resync_removed,
-            nonconforming_leaves: joined,
-            ..
-        } = Member::join_external(&carol, &from_bob, None)
-            .unwrap_or_else(|e| panic!("{case}: join_external: {e:?}"));
-        assert_eq!(resync_removed, None, "{case}");
-        assert_eq!(member.own_leaf_index(), 2, "{case}");
-        assert_eq!(joined, expected, "{case}: join_external");
-        mls_rs_accepts_commit(&mut bob, &bundle.commit);
-        assert_same_epoch_secrets(&member, &carol, &bob);
+        let joined = Member::join_external(&carol, &from_bob, None);
+
+        match refusal {
+            None => {
+                let ObserverStart { observer, .. } =
+                    observed.unwrap_or_else(|e| panic!("{case}: from_group_info: {e:?}"));
+                assert_eq!(observer.members().len(), 2, "{case}");
+                let ExternalJoin {
+                    member,
+                    commit_bundle: bundle,
+                    resync_removed,
+                    ..
+                } = joined.unwrap_or_else(|e| panic!("{case}: join_external: {e:?}"));
+                assert_eq!(resync_removed, None, "{case}");
+                assert_eq!(member.own_leaf_index(), 2, "{case}");
+                mls_rs_accepts_commit(&mut bob, &bundle.commit);
+                assert_same_epoch_secrets(&member, &carol, &bob);
+            }
+            Some((list, missing)) => {
+                let observed = observed.map(|_| ());
+                let joined = joined.map(|_| ());
+                match list {
+                    "safe_aad" => {
+                        assert!(
+                            matches!(observed, Err(mimi_mls::observer::ObserverError::MissingSafeAadComponent(id)) if id == missing),
+                            "{case}: Observer: {observed:?}"
+                        );
+                        assert!(
+                            matches!(joined, Err(MemberError::MissingSafeAadComponent(id)) if id == missing),
+                            "{case}: join_external: {joined:?}"
+                        );
+                    }
+                    _ => {
+                        assert!(
+                            matches!(observed, Err(mimi_mls::observer::ObserverError::MissingAppComponent(id)) if id == missing),
+                            "{case}: Observer: {observed:?}"
+                        );
+                        assert!(
+                            matches!(joined, Err(MemberError::MissingAppComponent(id)) if id == missing),
+                            "{case}: join_external: {joined:?}"
+                        );
+                    }
+                }
+                let loaded = Member::load(&carol, bob.group_id());
+                assert!(
+                    matches!(loaded, Err(MemberError::GroupNotFound)),
+                    "{case}: nothing is stored: {loaded:?}"
+                );
+            }
+        }
     }
 }
 

@@ -35,21 +35,26 @@
 //! # Required components
 //!
 //! The GroupContext `safe_aad` and `app_components` lists name the
-//! components every member must support (mls-extensions-10 §5). A Commit
-//! this module builds or receives is refused if any member of the epoch it
-//! leads to lacks one of the resulting GroupContext's required components
-//! in its own list: a leaf the Commit adds or updates, or a member it keeps
-//! unchanged (mls-extensions editor's copy, PR #110, rule 5; decision
-//! mimid-krmn.6), as RFC 9420 §11.1 does for `required_capabilities`
-//! (INTERPRETATION, decision mimid-1wgh.4.45). The
-//! [`Observer`](crate::observer::Observer) applies the same check.
+//! components every member must support (mls-extensions-10 §5), enforced
+//! as the mls-extensions editor's copy (PR #110) says, the way RFC 9420
+//! §11.1 enforces `required_capabilities` (INTERPRETATION, decision
+//! mimid-1wgh.4.45; decisions mimid-krmn.6, mimid-krmn.7):
 //!
-//! [`Member::create`], [`Member::join_welcome`] and
-//! [`Member::join_external`] refuse a group whose lists this identity's own
-//! leaf does not meet (decision mimid-krmn.6). The two joins and
-//! [`Observer::from_group_info`](crate::observer::Observer::from_group_info)
-//! accept a group whose other existing leaves do not meet them, and return
-//! those leaves' indices (decision mimid-1wgh.4.57).
+//! - A Commit this module builds or receives is refused if any member of
+//!   the epoch it leads to lacks one of the resulting GroupContext's
+//!   required components in its own list: a leaf the Commit adds or
+//!   updates, or a member it keeps unchanged (rule 5).
+//! - The LeafNodes of Add (KeyPackage) and Update proposals and of a
+//!   Commit's UpdatePath must also meet the GroupContext before the Commit
+//!   (rule 3; decision mimid-krmn.9). A standalone Add or Update proposal is
+//!   checked when it arrives and refused unstored.
+//! - [`Member::create`], [`Member::join_welcome`],
+//!   [`Member::join_external`] and
+//!   [`Observer::from_group_info`](crate::observer::Observer::from_group_info)
+//!   refuse a group whose tree has a leaf, this identity's own included,
+//!   that does not meet the lists (rules 3 and 4), and store nothing.
+//!
+//! The [`Observer`](crate::observer::Observer) applies the same checks.
 //!
 //! # Out of sync
 //!
@@ -94,14 +99,10 @@
 //!   the size of each message it passes in. mls-extensions-10 §4.7 notes
 //!   that large data may hurt performance; hashing it instead (MAY) is not
 //!   offered (decision mimid-1wgh.4.67).
-//! - Every leaf of a Commit's resulting epoch is judged against the
-//!   post-Commit GroupContext, including the Add, Update and UpdatePath
-//!   leaves, which the mls-extensions editor's copy (PR #110, rule 3) checks
-//!   against the pre-Commit GroupContext (decision mimid-1wgh.4.49; moved in
-//!   krmn K4). Leaves already in a joined group's tree are reported, not
-//!   refused, and only at join time (decision mimid-1wgh.4.57); this
-//!   identity's own leaf is
-//!   checked when it joins, by every path. This crate's leaves list only
+//! - OpenMLS's StagedWelcome exposes no other
+//!   leaf than this identity's, so [`Member::join_welcome`] checks the rest
+//!   of the tree after OpenMLS has stored the group and deletes a refused
+//!   group again. This crate's leaves list only
 //!   `frank_aad` (0x0020) as a Safe AAD component (decision
 //!   mimid-1wgh.4.52), so it cannot create or join, by Welcome or
 //!   externally, a group whose `safe_aad` list requires any other.
@@ -136,6 +137,7 @@ use std::collections::BTreeSet;
 use openmls::component::{ComponentData, ComponentId, ComponentsList};
 use openmls::framing::SafeAadItem;
 use openmls::grease::random_grease_value;
+use openmls::group::QueuedProposal;
 use openmls::group::{
     AppDataDictionaryUpdater, LeafNodeLifetimePolicy, MIXED_PLAINTEXT_WIRE_FORMAT_POLICY, MlsGroup,
     MlsGroupJoinConfig, StagedCommit, StagedWelcome,
@@ -295,27 +297,14 @@ pub struct CommitBundle {
 }
 
 /// The result of [`Member::join_welcome`].
-///
-/// A group whose existing leaves miss a required component is joined, not
-/// refused, and those leaves are reported (decisions mimid-1wgh.4.57,
-/// mimid-1wgh.4.59).
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct WelcomeJoin {
     /// The new member.
     pub member: Member,
-    /// The leaf indices, ascending, of the other members whose leaves do
-    /// not list a component the GroupContext `safe_aad` or `app_components`
-    /// list requires (see the module's `# Required components`). This
-    /// identity's own leaf is checked before joining, not reported here.
-    pub nonconforming_leaves: Vec<u32>,
 }
 
 /// The result of [`Member::join_external`].
-///
-/// A group whose existing leaves miss a required component is joined, not
-/// refused, and those leaves are reported (decisions mimid-1wgh.4.57,
-/// mimid-1wgh.4.59).
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct ExternalJoin {
@@ -328,11 +317,6 @@ pub struct ExternalJoin {
     /// leaf the Commit removes; `None` for a plain join (decision
     /// mimid-1wgh.4.55).
     pub resync_removed: Option<u32>,
-    /// The leaf indices, ascending and in the new epoch, of the other
-    /// members whose leaves do not list a component the GroupContext
-    /// `safe_aad` or `app_components` list requires (see the module's
-    /// `# Required components`).
-    pub nonconforming_leaves: Vec<u32>,
 }
 
 /// Why a [`Member`] is out of sync (see the module's `# Out of sync`).
@@ -631,9 +615,8 @@ impl Member {
     /// This identity's own leaf must list every component the GroupContext
     /// requires, or the join is refused before anything about the group is
     /// stored (mls-extensions editor's copy, PR #110; decision
-    /// mimid-krmn.6). The returned [`WelcomeJoin`] also reports the other
-    /// existing leaves that miss a required component (decision
-    /// mimid-1wgh.4.57).
+    /// mimid-krmn.6). So must every other leaf in the tree, or the join is
+    /// refused and the group deleted again (decision mimid-krmn.7).
     ///
     /// # Errors
     ///
@@ -641,8 +624,10 @@ impl Member {
     /// [`MemberError::UnexpectedMessage`] if the message is not a Welcome,
     /// [`MemberError::Join`] if the Welcome cannot be processed,
     /// [`MemberError::MissingSafeAadComponent`] or
-    /// [`MemberError::MissingAppComponent`] if this identity's leaf does not
-    /// list a component the GroupContext requires, and
+    /// [`MemberError::MissingAppComponent`] if a leaf in the tree, this
+    /// identity's included, does not list a component the GroupContext
+    /// requires, [`MemberError::Merge`] if a refused group cannot be deleted
+    /// again, and
     /// [`MemberError::InvalidComponentsList`] if the GroupContext's
     /// `safe_aad` or `app_components` data is malformed (decisions
     /// mimid-1wgh.4.57, mimid-1wgh.4.59).
@@ -683,20 +668,23 @@ impl Member {
             .own_leaf_node()
             .ok_or_else(|| MemberError::Join("OpenMLS staged no own leaf".into()))?;
         check_leaf(own_leaf.extensions(), &required)?;
-        let group = staged
+        let mut group = staged
             .into_group(provider)
             .map_err(|e| MemberError::Join(e.into()))?;
-        // Decision mimid-1wgh.4.57.
-        let nonconforming_leaves = nonconforming_leaves(
-            group.public_group(),
-            &required,
-            Some(group.own_leaf_index()),
-        );
+        // Rule 3: a tree with a leaf that misses a required component is
+        // invalid (decision mimid-krmn.7). OpenMLS's StagedWelcome exposes
+        // only this identity's leaf, so the other leaves are checked after
+        // into_group, and a refused group is deleted again.
+        if let Err(error) = check_tree(group.public_group(), &required, None) {
+            group
+                .delete(provider.storage())
+                .map_err(|e| MemberError::Merge(e.into()))?;
+            return Err(error.into());
+        }
         // The Welcome was decrypted with this identity's KeyPackage, so the
         // new leaf belongs to it.
         Ok(WelcomeJoin {
             member: Self::from_group(group, identity),
-            nonconforming_leaves,
         })
     }
 
@@ -716,9 +704,9 @@ impl Member {
     /// private key replace that member in a single Commit:
     /// [`ExternalJoin::resync_removed`] names the old leaf.
     ///
-    /// Existing leaves that miss a required component are reported in
-    /// [`ExternalJoin::nonconforming_leaves`], not refused (decision
-    /// mimid-1wgh.4.57); this identity's own leaf must list them all.
+    /// Every existing leaf that stays in the group, and this identity's new
+    /// leaf, must list the components the GroupContext requires, or the
+    /// join is refused before anything is stored (decision mimid-krmn.7).
     ///
     /// [`ExternalJoin::commit_bundle`] holds the external Commit (as a
     /// PublicMessage, with an empty SafeAAD as its `authenticated_data` when
@@ -736,9 +724,9 @@ impl Member {
     /// [`MemberError::MissingExternalPub`] if the GroupInfo lacks
     /// `external_pub`, [`MemberError::InvalidComponentsList`],
     /// [`MemberError::MissingSafeAadComponent`] or
-    /// [`MemberError::MissingAppComponent`] if this identity's leaf fails
-    /// the required-components check (see the module's `# Required
-    /// components`), [`MemberError::Identity`] if the LeafNode material
+    /// [`MemberError::MissingAppComponent`] if this identity's new leaf or a
+    /// leaf that stays in the tree fails the required-components check (see
+    /// the module's `# Required components`), [`MemberError::Identity`] if the LeafNode material
     /// cannot be built, [`MemberError::Join`] or [`MemberError::Commit`] if
     /// OpenMLS cannot build the Commit, and [`MemberError::Merge`] if the new
     /// state cannot be stored. Nothing is stored unless the call succeeds,
@@ -798,9 +786,15 @@ impl Member {
                 e => MemberError::Join(e.into()),
             })?;
 
-        // Decision mimid-1wgh.4.55. Without a tree, build_group has failed.
+        // A malformed list fails closed (decisions mimid-1wgh.4.57,
+        // mimid-1wgh.4.59).
+        let required = required_lists(group_context.extensions())?;
+        // Decision mimid-1wgh.4.55, and rule 3 for the existing leaves
+        // (decision mimid-krmn.7). Without a tree, build_group has failed.
         let resync_removed = match resync_lookup {
-            Some((tree, group_info)) => resync_leaf(provider.crypto(), tree, group_info, identity)?,
+            Some((tree, group_info)) => {
+                inspect_tree(provider.crypto(), tree, group_info, identity, &required)?
+            }
             None => None,
         };
 
@@ -810,9 +804,6 @@ impl Member {
         // holds only ExternalInit and possibly a Remove, so the GroupContext
         // extensions it leads to are these (decision mimid-1wgh.4.49).
         let leaf_extensions = leaf_extensions(rand).map_err(MemberError::Identity)?;
-        // A malformed list fails closed (decisions mimid-1wgh.4.57,
-        // mimid-1wgh.4.59).
-        let required = required_lists(group_context.extensions())?;
         check_leaf(&leaf_extensions, &required)?;
         let leaf = LeafNodeParameters::builder()
             .with_capabilities(leaf_capabilities(rand, random_grease_value(rand)))
@@ -832,12 +823,6 @@ impl Member {
         let (commit, welcome, group_info) = bundle.into_messages();
         let group_info = group_info
             .ok_or_else(|| MemberError::Commit("OpenMLS exported no GroupInfo".into()))?;
-        // Decision mimid-1wgh.4.57. A resync's old leaf is gone by now.
-        let nonconforming_leaves = nonconforming_leaves(
-            group.public_group(),
-            &required,
-            Some(group.own_leaf_index()),
-        );
         let commit_bundle = CommitBundle {
             commit: encode(&commit)?,
             welcome: welcome.as_ref().map(encode).transpose()?,
@@ -847,7 +832,6 @@ impl Member {
             member: Self::from_group(group, identity),
             commit_bundle,
             resync_removed,
-            nonconforming_leaves,
         })
     }
 
@@ -1074,9 +1058,9 @@ impl Member {
     /// [`MemberError::AppDataRejected`] for invalid AppDataUpdate proposals,
     /// [`MemberError::MissingSafeAadComponent`],
     /// [`MemberError::MissingAppComponent`] or
-    /// [`MemberError::InvalidComponentsList`] if a Commit fails the
-    /// required-components check (see the module's `# Required
-    /// components`), [`MemberError::Merge`] if the new state cannot be
+    /// [`MemberError::InvalidComponentsList`] if a Commit or an Add or
+    /// Update proposal fails the required-components check (see the module's
+    /// `# Required components`), [`MemberError::Merge`] if the new state cannot be
     /// stored, and [`MemberError::OutOfSync`] if the member was already out
     /// of sync.
     pub fn process<E>(
@@ -1180,6 +1164,7 @@ impl Member {
             }
             ProcessedMessageContent::ProposalMessage(proposal)
             | ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
+                check_proposal_leaf(&proposal, self.group.public_group())?;
                 // A proposal that arrives again, such as this member's own
                 // proposal echoed by the hub, is stored once. OpenMLS keeps
                 // duplicates, and a Commit built over them would reference
@@ -1432,6 +1417,8 @@ impl Member {
 /// The leaf index of `identity`'s existing leaf in the group that
 /// `group_info` and `tree` describe: the leaf OpenMLS's external Commit
 /// builder removes for a resync, the first with the same signature key.
+/// Also checks every other leaf against `required` (rule 3; decision
+/// mimid-krmn.7), so a refused join stores nothing.
 ///
 /// ponytail: OpenMLS exposes neither the staged external Commit nor the
 /// leaf positions of a `RatchetTreeIn`, so the GroupInfo and tree, already
@@ -1439,11 +1426,12 @@ impl Member {
 /// PublicGroup (never the identity's Store). Ceiling: every external join
 /// verifies the tree twice. Upgrade: an OpenMLS accessor for the staged
 /// external Commit (an openmls fork change, which needs Mark's approval).
-fn resync_leaf(
+fn inspect_tree(
     crypto: &impl openmls::prelude::OpenMlsCrypto,
     tree: RatchetTreeIn,
     group_info: VerifiableGroupInfo,
     identity: &Identity,
+    required: &RequiredLists,
 ) -> Result<Option<u32>, MemberError> {
     let scratch = OpenMlsRustCrypto::default();
     // RFC 9420 §7.3; decision mimid-1wgh.4.56.
@@ -1457,10 +1445,14 @@ fn resync_leaf(
     )
     .map_err(|e| MemberError::Join(e.into()))?;
     let key = identity.signature_public_key();
-    Ok(group
+    let resync = group
         .members()
         .find(|member| member.signature_key == key)
-        .map(|member| member.index.u32()))
+        .map(|member| member.index);
+    // The resync's old leaf leaves the group in the Commit, so only the
+    // leaves that stay are judged.
+    check_tree(&group, required, resync)?;
+    Ok(resync.map(|index| index.u32()))
 }
 
 impl std::fmt::Debug for Member {
@@ -1583,15 +1575,35 @@ fn decode_components_list(
 /// mirrors RFC 9420 §11.1 `required_capabilities`. A leaf's list must name
 /// every id in the GroupContext's list except GREASE ids and the implied
 /// 0x0001/0x0002; an absent list is empty. The GroupContext lists are
-/// decoded strictly and fail closed. Post-Commit GroupContext: decision
-/// mimid-1wgh.4.49 (krmn K4 moves proposal and UpdatePath leaves to the
-/// pre-Commit GroupContext).
+/// decoded strictly and fail closed. Add, Update and UpdatePath leaves are
+/// also judged against the pre-Commit GroupContext (rule 3; decisions
+/// mimid-krmn.7, mimid-krmn.9); every member of the resulting epoch against
+/// the post-Commit one (rule 5; decision mimid-1wgh.4.49).
 pub(crate) fn check_staged_leaves(
     staged: &StagedCommit,
     current: &PublicGroup,
     committer: Option<LeafNodeIndex>,
 ) -> Result<(), SharedError> {
-    // The GroupContext after the Commit; decision mimid-1wgh.4.49.
+    // Rule 3: the LeafNodes of Add (KeyPackage) and Update proposals and of
+    // the UpdatePath against the GroupContext before the Commit
+    // (mls-extensions editor's copy, PR #110; decisions mimid-krmn.7,
+    // mimid-krmn.9).
+    let before = required_lists(current.group_context().extensions())?;
+    for add in staged.add_proposals() {
+        check_leaf(
+            add.add_proposal().key_package().leaf_node().extensions(),
+            &before,
+        )?;
+    }
+    for update in staged.update_proposals() {
+        check_leaf(update.update_proposal().leaf_node().extensions(), &before)?;
+    }
+    if let Some(leaf) = staged.update_path_leaf_node() {
+        check_leaf(leaf.extensions(), &before)?;
+    }
+
+    // Rule 5: every member of the resulting epoch against the GroupContext
+    // after the Commit (decision mimid-1wgh.4.49).
     let required = required_lists(staged.group_context().extensions())?;
     for add in staged.add_proposals() {
         check_leaf(
@@ -1675,26 +1687,41 @@ pub(crate) fn required_lists(
     })
 }
 
-/// The leaf indices, ascending, of the leaves in `group`'s tree, other than
-/// `own`, that fail [`check_leaf`] against `required`. A group is joined or
-/// observed with such leaves, and they are reported (decision
-/// mimid-1wgh.4.57).
-pub(crate) fn nonconforming_leaves(
+/// Checks every leaf of `group`'s tree against `required`, except the
+/// leaf at `skip` (mls-extensions editor's copy, PR #110, rule 3: a LeafNode
+/// in a group that misses a required component is invalid; decision
+/// mimid-krmn.7).
+pub(crate) fn check_tree(
     group: &PublicGroup,
     required: &RequiredLists,
-    own: Option<LeafNodeIndex>,
-) -> Vec<u32> {
-    group
-        .members()
-        .map(|member| member.index)
-        .filter(|index| Some(*index) != own)
-        .filter(|index| {
-            group
-                .leaf(*index)
-                .is_some_and(|leaf| check_leaf(leaf.extensions(), required).is_err())
-        })
-        .map(|index| index.u32())
-        .collect()
+    skip: Option<LeafNodeIndex>,
+) -> Result<(), SharedError> {
+    for member in group.members() {
+        if Some(member.index) == skip {
+            continue;
+        }
+        if let Some(leaf) = group.leaf(member.index) {
+            check_leaf(leaf.extensions(), required)?;
+        }
+    }
+    Ok(())
+}
+
+/// Checks the LeafNode of a standalone Add (its KeyPackage's) or Update
+/// proposal against the GroupContext of `current`, before the proposal is
+/// stored (mls-extensions editor's copy, PR #110, rule 3; decisions
+/// mimid-krmn.7, mimid-krmn.9). Other proposals carry no LeafNode.
+pub(crate) fn check_proposal_leaf(
+    proposal: &QueuedProposal,
+    current: &PublicGroup,
+) -> Result<(), SharedError> {
+    let leaf = match proposal.proposal() {
+        Proposal::Add(add) => add.key_package().leaf_node(),
+        Proposal::Update(update) => update.leaf_node(),
+        _ => return Ok(()),
+    };
+    let required = required_lists(current.group_context().extensions())?;
+    check_leaf(leaf.extensions(), &required)
 }
 
 /// Checks the extensions of one leaf against `required`.

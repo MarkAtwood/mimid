@@ -22,9 +22,10 @@
 //!   updated would otherwise lock the hub out of its group once the
 //!   lifetime ends. Signatures, the tree hash and all other leaf checks
 //!   still apply.
-//! - The required-components check (decision mimid-1wgh.4.45) refuses only
-//!   Commits. The leaves in the tree given to [`Observer::from_group_info`]
-//!   are reported, not refused (decision mimid-1wgh.4.57).
+//! - The required-components check is [`crate::member`]'s: Commits,
+//!   standalone Add and Update proposals, and the tree given to
+//!   [`Observer::from_group_info`] are refused if a leaf misses a required
+//!   component (decisions mimid-krmn.6, mimid-krmn.7).
 //! - PrivateMessages cannot be processed; the hub forwards them unread.
 //! - Proposals from external senders are accepted only for the types OpenMLS
 //!   supports there: Add, Remove, GroupContextExtensions and AppDataUpdate.
@@ -84,8 +85,8 @@ use tls_codec::{Deserialize, Serialize, VLBytes};
 use crate::identity::CIPHERSUITE;
 use crate::member::{
     AppDataUpdate, CommitSummary, ComponentOp, Sender, SharedError, basic_identity,
-    check_staged_leaves, convert_sender, member_leaf, nonconforming_leaves, required_lists,
-    resolve_app_data_updates, summarize,
+    check_proposal_leaf, check_staged_leaves, check_tree, convert_sender, member_leaf,
+    required_lists, resolve_app_data_updates, summarize,
 };
 use crate::store::Provider;
 use crate::wire::{
@@ -229,19 +230,11 @@ pub struct CommitDetail {
 }
 
 /// The result of [`Observer::from_group_info`].
-///
-/// A group whose leaves miss a required component is observed, not
-/// refused, and those leaves are reported (decisions mimid-1wgh.4.57,
-/// mimid-1wgh.4.59).
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct ObserverStart {
     /// The new Observer.
     pub observer: Observer,
-    /// The leaf indices, ascending, of the leaves that do not list a
-    /// component the GroupContext `safe_aad` or `app_components` list
-    /// requires (the check of [`crate::member`]'s `# Required components`).
-    pub nonconforming_leaves: Vec<u32>,
 }
 
 /// Errors returned by [`Observer`].
@@ -395,8 +388,9 @@ impl Observer {
     /// tree hash is checked, and every leaf in the tree is validated except
     /// for its `lifetime` (see the module's `# Limitations`).
     ///
-    /// The returned [`ObserverStart`] also reports the leaves that miss a
-    /// required component (decision mimid-1wgh.4.57).
+    /// A tree with a leaf that misses a required component is refused, and
+    /// nothing is stored (mls-extensions editor's copy, PR #110, rule 3;
+    /// decision mimid-krmn.7).
     ///
     /// # Errors
     ///
@@ -405,7 +399,10 @@ impl Observer {
     /// GroupInfo, [`ObserverError::MissingRatchetTree`] if there is no tree,
     /// [`ObserverError::InvalidComponentsList`] if the GroupContext's
     /// `safe_aad` or `app_components` data is malformed (decisions
-    /// mimid-1wgh.4.57, mimid-1wgh.4.59), and
+    /// mimid-1wgh.4.57, mimid-1wgh.4.59),
+    /// [`ObserverError::MissingSafeAadComponent`] or
+    /// [`ObserverError::MissingAppComponent`] if a leaf in the tree misses a
+    /// required component, and
     /// [`ObserverError::InvalidGroupInfo`] if validation fails or the state
     /// cannot be stored.
     pub fn from_group_info(
@@ -444,15 +441,21 @@ impl Observer {
             LeafNodeLifetimePolicy::Skip,
         )
         .map_err(|e| ObserverError::InvalidGroupInfo(e.into()))?;
-        // Decision mimid-1wgh.4.57. An Observer has no leaf of its own.
-        let nonconforming_leaves = nonconforming_leaves(&group, &required, None);
+        // Rule 3: a tree with a leaf that misses a required component is
+        // invalid (mls-extensions editor's copy, PR #110; decision
+        // mimid-krmn.7). from_external has stored the group already, so a
+        // refused one is deleted again.
+        if let Err(error) = check_tree(&group, &required, None) {
+            PublicGroup::delete(provider.storage(), group.group_id())
+                .map_err(|e| ObserverError::InvalidGroupInfo(e.into()))?;
+            return Err(error.into());
+        }
         Ok(ObserverStart {
             observer: Self {
                 group,
                 pending_commit: None,
                 committer: None,
             },
-            nonconforming_leaves,
         })
     }
 
@@ -481,10 +484,11 @@ impl Observer {
     /// [`ObserverError::AppDataRejected`] for invalid AppDataUpdate
     /// proposals, [`ObserverError::MissingSafeAadComponent`],
     /// [`ObserverError::MissingAppComponent`] or
-    /// [`ObserverError::InvalidComponentsList`] if a Commit fails the
-    /// required-components check of [`crate::member`] (decision
-    /// mimid-1wgh.4.45), and [`ObserverError::Merge`] if a proposal cannot
-    /// be stored.
+    /// [`ObserverError::InvalidComponentsList`] if a Commit or an Add or
+    /// Update proposal fails the required-components check of
+    /// [`crate::member`] (decisions mimid-1wgh.4.45, mimid-krmn.7,
+    /// mimid-krmn.9), and
+    /// [`ObserverError::Merge`] if a proposal cannot be stored.
     pub fn process<E>(
         &mut self,
         store: &Store,
@@ -515,6 +519,7 @@ impl Observer {
         match processed.into_content() {
             ProcessedMessageContent::ProposalMessage(proposal)
             | ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
+                check_proposal_leaf(&proposal, &self.group)?;
                 self.group
                     .add_proposal(provider.storage(), *proposal)
                     .map_err(|e| ObserverError::Merge(e.into()))?;
@@ -557,6 +562,11 @@ impl Observer {
     /// [`ObserverError::Process`] if MLS validation fails or a required
     /// SafeAAD is malformed,
     /// [`ObserverError::TrailingAad`] if bytes follow the SafeAAD struct,
+    /// [`ObserverError::MissingSafeAadComponent`],
+    /// [`ObserverError::MissingAppComponent`] or
+    /// [`ObserverError::InvalidComponentsList`] if an Add or Update
+    /// proposal's leaf fails the required-components check (decisions
+    /// mimid-krmn.7, mimid-krmn.9),
     /// [`ObserverError::Encode`] if a reference cannot be computed, and
     /// [`ObserverError::Merge`] if the proposal cannot be stored.
     pub fn process_proposal(
@@ -568,6 +578,7 @@ impl Observer {
         match processed.into_content() {
             ProcessedMessageContent::ProposalMessage(proposal)
             | ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
+                check_proposal_leaf(&proposal, &self.group)?;
                 let detail = self.proposal_detail(&proposal)?;
                 self.group
                     .add_proposal(store.provider().storage(), *proposal)

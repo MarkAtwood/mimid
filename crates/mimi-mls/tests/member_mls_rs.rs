@@ -1153,20 +1153,21 @@ fn create_with_a_requirement_our_leaf_does_not_meet_is_refused() {
     }
 }
 
-/// Decision mimid-1wgh.4.57: join_welcome accepts a group whose existing
-/// leaves miss a required component, and reports their leaf indices. The
-/// mls-rs creator, which does not enforce the rule, requires Safe AAD
-/// component 0x0020 and adds dave (whose leaf varies) at leaf 1 and the
-/// mimi-mls bob at leaf 2 in one Commit.
+/// mls-extensions editor's copy (PR #110) rule 3: a LeafNode in the tree
+/// that misses a required component makes the tree invalid, so join_welcome
+/// refuses the group and stores nothing (decision mimid-krmn.7, superseding
+/// mimid-1wgh.4.57's report). The mls-rs creator, which does not enforce the
+/// rule, requires Safe AAD component 0x0020 and adds dave (whose leaf
+/// varies) at leaf 1 and the mimi-mls bob at leaf 2 in one Commit.
 #[test]
-fn join_welcome_reports_existing_leaves_missing_a_required_component() {
-    type Case<'a> = (&'a str, Option<&'a [u8]>, Vec<u32>);
+fn join_welcome_refuses_existing_leaves_missing_a_required_component() {
+    type Case<'a> = (&'a str, Option<&'a [u8]>, bool);
     let cases: [Case<'_>; 3] = [
-        ("dave lists 0x0020", Some(&LEAF_SAFE_AAD_0020), vec![]),
-        ("dave lists only 0x0021", Some(&LEAF_SAFE_AAD_0021), vec![1]),
-        ("dave has no dictionary", None, vec![1]),
+        ("dave lists 0x0020", Some(&LEAF_SAFE_AAD_0020), true),
+        ("dave lists only 0x0021", Some(&LEAF_SAFE_AAD_0021), false),
+        ("dave has no dictionary", None, false),
     ];
-    for (case, dave_dictionary, expected) in cases {
+    for (case, dave_dictionary, joins) in cases {
         // The GroupContext dictionary has the same encoding as the leaf
         // one: a safe_aad ComponentsList naming 0x0020.
         let mut alice = mls_rs_client(b"alice")
@@ -1197,15 +1198,23 @@ fn join_welcome_reports_existing_leaves_missing_a_required_component() {
         alice.apply_pending_commit().expect("apply");
 
         let welcome = output.welcome_messages[0].to_bytes().expect("encode");
-        let WelcomeJoin {
-            member: group,
-            nonconforming_leaves: nonconforming,
-            ..
-        } = Member::join_welcome(&bob, &welcome, None)
-            .unwrap_or_else(|e| panic!("{case}: join_welcome: {e:?}"));
-        assert_eq!(group.own_leaf_index(), 2, "{case}");
-        assert_eq!(nonconforming, expected, "{case}");
-        assert_same_epoch_secrets(&group, &bob, &alice);
+        let result = Member::join_welcome(&bob, &welcome, None);
+        if joins {
+            let WelcomeJoin { member: group, .. } =
+                result.unwrap_or_else(|e| panic!("{case}: join_welcome: {e:?}"));
+            assert_eq!(group.own_leaf_index(), 2, "{case}");
+            assert_same_epoch_secrets(&group, &bob, &alice);
+        } else {
+            assert!(
+                matches!(result, Err(MemberError::MissingSafeAadComponent(0x0020))),
+                "{case}: {result:?}"
+            );
+            let loaded = Member::load(&bob, alice.group_id());
+            assert!(
+                matches!(loaded, Err(MemberError::GroupNotFound)),
+                "{case}: nothing is stored: {loaded:?}"
+            );
+        }
     }
 }
 
@@ -1369,17 +1378,24 @@ fn alice_and_bob_with(
 ) -> (
     Identity,
     Member,
-    mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+    mls_rs::Group<impl mls_rs::client_builder::MlsConfig + use<>>,
+    Vec<u8>,
+) {
+    alice_and_bob_in(&[(SAFE_AAD, REQUIRE_0020.to_vec())], bob_leaf)
+}
+
+/// As [`alice_and_bob_with`], with the GroupContext components `components`.
+fn alice_and_bob_in(
+    components: &[(u16, Vec<u8>)],
+    bob_leaf: &[u8],
+) -> (
+    Identity,
+    Member,
+    mls_rs::Group<impl mls_rs::client_builder::MlsConfig + use<>>,
     Vec<u8>,
 ) {
     let alice = identity(b"alice");
-    let mut group = Member::create(
-        &alice,
-        b"room-k3",
-        &[],
-        &[(SAFE_AAD, REQUIRE_0020.to_vec())],
-    )
-    .expect("create");
+    let mut group = Member::create(&alice, b"room-k3", &[], components).expect("create");
     let bob_client = mls_rs_client_with_app_data_update(b"bob");
     let bob_key_package = bare_key_package(&mls_rs_key_package_with(&bob_client, bob_leaf));
     let bundle = group
@@ -1400,6 +1416,15 @@ fn bob_gce(
     bob: &mut mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
     dictionary: &[u8],
 ) -> Vec<u8> {
+    bob_gce_with_leaf(bob, dictionary, &LEAF_0004_8001_SAFE_AAD_0020)
+}
+
+/// As [`bob_gce`], with the UpdatePath leaf dictionary `leaf`.
+fn bob_gce_with_leaf(
+    bob: &mut mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+    dictionary: &[u8],
+    leaf: &[u8],
+) -> Vec<u8> {
     let mut extensions = ExtensionList::new();
     extensions.set(Extension::new(APP_DATA_DICTIONARY, dictionary.to_vec()));
     extensions.set(Extension::new(
@@ -1411,7 +1436,7 @@ fn bob_gce(
         .authenticated_data(EMPTY_SAFE_AAD.to_vec())
         .set_group_context_ext(extensions)
         .expect("mls-rs GroupContextExtensions")
-        .set_leaf_node_extensions(leaf_dictionary(&LEAF_0004_8001_SAFE_AAD_0020))
+        .set_leaf_node_extensions(leaf_dictionary(leaf))
         .build()
         .expect("mls-rs commits")
         .commit_message
@@ -1490,4 +1515,215 @@ fn member_refuses_to_build_a_commit_an_unchanged_member_cannot_meet() {
         "{result:?}"
     );
     assert_eq!(group.epoch(), 1);
+}
+
+// mls-extensions editor's copy (PR #110) rule 3: a LeafNode in a proposal or
+// an UpdatePath is checked against the GroupContext before the Commit
+// (decision mimid-krmn.7), besides rule 5's check after it.
+
+/// mls-extensions-10 §4.6 AppDataDictionary for a GroupContext, hand-encoded:
+/// no `app_components` requirement; `safe_aad` keeps [0x0020, 0x3a3a].
+const GC_NO_APP_REQUIREMENT: [u8; 9] = [
+    0x08, // component_data<V>: 8 bytes
+    0x00, 0x02, // component_id = safe_aad
+    0x05, // data<V>: 5 bytes
+    0x04, 0x00, 0x20, 0x3a, 0x3a, // ComponentsList [0x0020, 0x3a3a]
+];
+
+/// mls-extensions-10 §4.6 AppDataDictionary for bob's new LeafNode: his
+/// `app_components` list names only 0x8001 (not 0x0004), his `safe_aad` list
+/// 0x0020.
+const LEAF_8001_SAFE_AAD_0020: [u8; 13] = [
+    0x0c, // component_data<V>: 12 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, // data<V>: 3 bytes
+    0x02, 0x80, 0x01, // ComponentsList [0x8001]
+    0x00, 0x02, // component_id = safe_aad
+    0x03, // data<V>: 3 bytes
+    0x02, 0x00, 0x20, // ComponentsList [0x0020]
+];
+
+/// The group requires app component 0x0004 before bob's Commit. The Commit
+/// drops that requirement and gives bob a leaf without 0x0004: valid against
+/// the GroupContext after the Commit, invalid against the one before it. A
+/// mimid Member and an Observer refuse it; with a leaf that keeps 0x0004
+/// they accept it.
+#[test]
+fn update_path_leaf_is_checked_against_the_pre_commit_group_context() {
+    let components = [
+        (SAFE_AAD, REQUIRE_0020.to_vec()),
+        (APP_COMPONENTS, LIST_0004.to_vec()),
+    ];
+    for (leaf, accepted) in [
+        (&LEAF_8001_SAFE_AAD_0020[..], false),
+        (&LEAF_0004_8001_SAFE_AAD_0020[..], true),
+    ] {
+        let (alice, mut group, mut bob, group_info) =
+            alice_and_bob_in(&components, &LEAF_0004_8001_SAFE_AAD_0020);
+        let tree = group.ratchet_tree().expect("tree");
+        let store = Store::open_in_memory().expect("store");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
+        let commit = bob_gce_with_leaf(&mut bob, &GC_NO_APP_REQUIREMENT, leaf);
+
+        let received = group.process(&alice, &commit, no_components);
+        let observed = observer.process(&store, &commit, no_components);
+        if accepted {
+            received.expect("the leaf keeps 0x0004");
+            observed.expect("the leaf keeps 0x0004");
+            assert_eq!(group.epoch(), 2);
+        } else {
+            assert!(
+                matches!(received, Err(MemberError::MissingAppComponent(0x0004))),
+                "{received:?}"
+            );
+            assert!(
+                matches!(observed, Err(ObserverError::MissingAppComponent(0x0004))),
+                "{observed:?}"
+            );
+            assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
+        }
+    }
+}
+
+// Decision mimid-krmn.9 (reading B, Mark 2026-11-02): an Add's KeyPackage
+// LeafNode is also checked against the GroupContext before the Commit, and a
+// standalone Add proposal when it arrives (mls-extensions editor's copy, PR
+// #110, rule 3: "A LeafNode in a proposal ... is therefore checked against
+// the GroupContext before the Commit").
+
+/// carol's KeyPackage (mls-rs) whose leaf dictionary is `leaf`.
+fn carol_key_package(leaf: &[u8]) -> MlsMessage {
+    mls_rs_key_package_with(&mls_rs_client(b"carol"), leaf)
+}
+
+/// bob's Commit that drops the `app_components` requirement (0x0004) and
+/// adds carol with leaf dictionary `carol_leaf`. Left unapplied.
+fn bob_drops_requirement_and_adds_carol(
+    bob: &mut mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+    carol_leaf: &[u8],
+) -> Vec<u8> {
+    let mut extensions = ExtensionList::new();
+    extensions.set(Extension::new(
+        APP_DATA_DICTIONARY,
+        GC_NO_APP_REQUIREMENT.to_vec(),
+    ));
+    extensions.set(Extension::new(
+        REQUIRED_CAPABILITIES,
+        REQUIRE_DICTIONARY_ONLY.to_vec(),
+    ));
+    let commit = bob
+        .commit_builder()
+        .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+        .set_group_context_ext(extensions)
+        .expect("mls-rs GroupContextExtensions")
+        .add_member(carol_key_package(carol_leaf))
+        .expect("mls-rs adds carol")
+        .build()
+        .expect("mls-rs commits")
+        .commit_message
+        .to_bytes()
+        .expect("encode");
+    bob.clear_pending_commit();
+    commit
+}
+
+/// The group requires app component 0x0004 before bob's Commit. The Commit
+/// drops that requirement and adds carol, whose KeyPackage leaf lacks
+/// 0x0004: valid after the Commit, invalid before it. A mimid Member and an
+/// Observer refuse it; with a leaf that lists 0x0004 they accept it.
+#[test]
+fn added_key_package_leaf_is_checked_against_the_pre_commit_group_context() {
+    let components = [
+        (SAFE_AAD, REQUIRE_0020.to_vec()),
+        (APP_COMPONENTS, LIST_0004.to_vec()),
+    ];
+    for (carol_leaf, accepted) in [
+        (&LEAF_8001_SAFE_AAD_0020[..], false),
+        (&LEAF_0004_8001_SAFE_AAD_0020[..], true),
+    ] {
+        let (alice, mut group, mut bob, group_info) =
+            alice_and_bob_in(&components, &LEAF_0004_8001_SAFE_AAD_0020);
+        let tree = group.ratchet_tree().expect("tree");
+        let store = Store::open_in_memory().expect("store");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
+        let commit = bob_drops_requirement_and_adds_carol(&mut bob, carol_leaf);
+
+        let received = group.process(&alice, &commit, no_components);
+        let observed = observer.process(&store, &commit, no_components);
+        if accepted {
+            received.expect("carol lists 0x0004");
+            observed.expect("carol lists 0x0004");
+            assert_eq!(group.epoch(), 2);
+        } else {
+            assert!(
+                matches!(received, Err(MemberError::MissingAppComponent(0x0004))),
+                "{received:?}"
+            );
+            assert!(
+                matches!(observed, Err(ObserverError::MissingAppComponent(0x0004))),
+                "{observed:?}"
+            );
+            assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
+        }
+    }
+}
+
+/// bob (mls-rs) proposes, on its own, to add carol, whose KeyPackage leaf
+/// lacks app component 0x0004 that the group requires. A mimid Member and
+/// an Observer refuse it on receipt and store nothing; a KeyPackage that
+/// lists 0x0004 is stored.
+#[test]
+fn standalone_add_proposal_whose_leaf_lacks_a_required_component_is_refused() {
+    let components = [
+        (SAFE_AAD, REQUIRE_0020.to_vec()),
+        (APP_COMPONENTS, LIST_0004.to_vec()),
+    ];
+    for (carol_leaf, accepted) in [
+        (&LEAF_8001_SAFE_AAD_0020[..], false),
+        (&LEAF_0004_8001_SAFE_AAD_0020[..], true),
+    ] {
+        let (alice, mut group, mut bob, group_info) =
+            alice_and_bob_in(&components, &LEAF_0004_8001_SAFE_AAD_0020);
+        let tree = group.ratchet_tree().expect("tree");
+        let store = Store::open_in_memory().expect("store");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
+        let proposal = bob
+            .propose_add(carol_key_package(carol_leaf), EMPTY_SAFE_AAD.to_vec())
+            .expect("mls-rs proposes an Add")
+            .to_bytes()
+            .expect("encode");
+
+        let received = group.process(&alice, &proposal, no_components);
+        let processed = observer.process_proposal(&store, &proposal);
+        if accepted {
+            let received = received.expect("carol lists 0x0004");
+            assert!(
+                matches!(received, Incoming::Proposal { .. }),
+                "{received:?}"
+            );
+            processed.expect("carol lists 0x0004");
+        } else {
+            assert!(
+                matches!(received, Err(MemberError::MissingAppComponent(0x0004))),
+                "{received:?}"
+            );
+            // Nothing is stored: a stored proposal would block sending
+            // until a Commit covers it (OpenMLS).
+            group
+                .send(&alice, b"still usable", &[])
+                .expect("no proposal is pending");
+            assert!(
+                matches!(processed, Err(ObserverError::MissingAppComponent(0x0004))),
+                "{processed:?}"
+            );
+            let observed = observer.process(&store, &proposal, no_components);
+            assert!(
+                matches!(observed, Err(ObserverError::MissingAppComponent(0x0004))),
+                "{observed:?}"
+            );
+        }
+    }
 }

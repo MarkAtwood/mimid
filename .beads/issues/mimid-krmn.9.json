@@ -1,0 +1,27 @@
+{
+  "id": "mimid-krmn.9",
+  "title": "decision: Add KeyPackage leaves are not checked against the pre-Commit GroupContext",
+  "description": "mls-extensions editor's copy after PR #110 (merge 500622f7) rule 3: 'A LeafNode in a group is invalid if the app_components or safe_aad component in the GroupContext lists a component that the corresponding component in the LeafNode does not list. This check is part of LeafNode validation (Section 7.3 of RFC9420), so it applies wherever a LeafNode is validated, against the GroupContext of the epoch in which the validation takes place. A LeafNode in a proposal or in the UpdatePath of a Commit is therefore checked against the GroupContext before the Commit.' Readings: (A) only LeafNodes 'in a group' (Update proposals, UpdatePath, the tree) are checked pre-Commit; an Add's KeyPackage LeafNode is not yet in the group and is covered by rule 5 (every member of the resulting epoch vs the post-Commit GroupContext); (B) 'a LeafNode in a proposal' includes Add, and RFC 9420 §12.2 validates an Add's KeyPackage (incl. §7.3 leaf validation) when the proposal is processed, so it is also checked pre-Commit, and a standalone Add is refused on receipt. Difference: a Commit that adds a member lacking X while dropping the requirement for X: (A) accepts, (B) refuses. Chosen (krmn K4, pending Mark): (A), per 'a LeafNode in a group' and the krmn design note that rule 5 covers Add leaves. Companion wg bead filed.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-03T01:27:53.228536613Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-03T01:43:28.357101762Z",
+  "closed_at": "2026-11-03T01:43:28.357101762Z",
+  "close_reason": "Reading B, approved by Mark 2026-11-02: an Add proposal's KeyPackage LeafNode is checked against the pre-Commit GroupContext (in a Commit and as a standalone proposal on receipt), per mls-extensions #110 'A LeafNode in a proposal or in the UpdatePath of a Commit is therefore checked against the GroupContext before the Commit' (no KeyPackage exclusion; mirrors RFC 9420 required_capabilities at Add time). Implemented in krmn K4.",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-krmn.9",
+      "depends_on_id": "mimid-krmn",
+      "type": "parent-child",
+      "created_at": "2026-11-03T01:27:53.271439522Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
