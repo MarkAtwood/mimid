@@ -132,6 +132,9 @@ async fn room_with_expired_leaf_loads_after_restart() {
     context_extensions.set(Extension::new(
         APP_DATA_DICTIONARY,
         app_data_dictionary(&[
+            // The hub requires frank_aad as a Safe AAD component (bead
+            // mimid-1wgh.6.74).
+            (SAFE_AAD, &FRANK_AAD_ONLY),
             (
                 component_id::FRANKING_AGENT,
                 &franking_agent(&key, HUB_IDENTITY),
@@ -143,13 +146,19 @@ async fn room_with_expired_leaf_loads_after_restart() {
             (BASE_ROOM_POLICY, &base_room_policy()),
         ]),
     ));
+    // Each leaf lists frank_aad in its safe_aad list, as the group requires.
+    let mut leaf = ExtensionList::new();
+    leaf.set(Extension::new(
+        APP_DATA_DICTIONARY,
+        app_data_dictionary(&[(SAFE_AAD, &FRANK_AAD_ONLY)]),
+    ));
     let mut alice = mls_rs_client(ALICE, 84 * ONE_DAY)
-        .create_group(context_extensions, Default::default(), None)
+        .create_group(context_extensions, leaf.clone(), None)
         .unwrap();
     let carol_key_package = mls_rs_client(CAROL, ONE_DAY)
         .generate_key_package_message(
             Default::default(),
-            Default::default(),
+            leaf,
             Some(MlsTime::from(EXPIRED_NOT_BEFORE)),
         )
         .unwrap();
@@ -294,6 +303,31 @@ async fn create_room_rejects_missing_or_wrong_franking_agent() {
     )
     .await;
     assert!(matches!(err, HubError::WrongFrankingAgent), "{err:?}");
+}
+
+#[tokio::test]
+async fn create_room_requires_frank_aad_in_safe_aad() {
+    // The hub refuses every message without a frank_aad item, so a room must
+    // require frank_aad (0x0020) as a Safe AAD component: rohanmahy on
+    // mimi-protocol#166; protocol-06 §5.4.1; bead mimid-1wgh.6.74.
+    for (case, safe_aad) in [
+        ("no safe_aad component", None),
+        // ComponentsList with an empty component_ids<V>.
+        ("empty list", Some(vec![0x00])),
+    ] {
+        let err = rejected(
+            |hub| GroupSpec {
+                safe_aad: safe_aad.clone(),
+                ..GroupSpec::valid_for(hub)
+            },
+            ALICE,
+        )
+        .await;
+        assert!(
+            matches!(err, HubError::FrankAadNotRequired),
+            "{case}: {err:?}"
+        );
+    }
 }
 
 #[tokio::test]

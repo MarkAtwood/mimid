@@ -132,6 +132,9 @@ async fn create_room(hub: &Hub) {
         ],
     };
     let components = [
+        // The hub requires frank_aad as a Safe AAD component (bead
+        // mimid-1wgh.6.74).
+        (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
         (FRANKING_AGENT, franking_agent(&key, HUB_IDENTITY)),
         (
             PARTICIPANT_LIST,

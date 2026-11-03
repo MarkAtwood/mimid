@@ -106,7 +106,14 @@ async fn listed_user_joins_with_mls_rs() {
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
     let mut room = mls_rs_room(&hub, ROOM_ID, b"group-gi-mls-rs").await;
-    let output = room.alice.commit_builder().build().unwrap();
+    // The room has a safe_aad component (bead mimid-1wgh.6.74), so
+    // authenticated_data is a SafeAAD (mls-extensions-10 §4.9).
+    let output = room
+        .alice
+        .commit_builder()
+        .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+        .build()
+        .unwrap();
     room.alice.apply_pending_commit().unwrap();
     let request = commit_request(
         &output.commit_message.to_bytes().unwrap(),
@@ -143,6 +150,8 @@ async fn listed_user_joins_with_mls_rs() {
         .external_commit_builder()
         .unwrap()
         .with_tree_data(tree)
+        .with_leaf_node_extensions(mls_rs_leaf_extensions())
+        .with_authenticated_data(EMPTY_SAFE_AAD.to_vec())
         .build(group_info)
         .unwrap();
     let request = commit_request(
@@ -171,10 +180,15 @@ async fn pending_proposals_are_included() {
     let dir = tempfile::tempdir().unwrap();
     let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     let mut room = mls_rs_room(&hub, ROOM_ID, b"group-gi-pending").await;
-    let bobs = room.bob.propose_update(vec![]).unwrap().to_bytes().unwrap();
+    let bobs = room
+        .bob
+        .propose_update(EMPTY_SAFE_AAD.to_vec())
+        .unwrap()
+        .to_bytes()
+        .unwrap();
     let alices = room
         .alice
-        .propose_update(vec![])
+        .propose_update(EMPTY_SAFE_AAD.to_vec())
         .unwrap()
         .to_bytes()
         .unwrap();

@@ -18,7 +18,10 @@ use mls_rs::mls_rs_codec::MlsDecode;
 use mls_rs::{CipherSuiteProvider, CryptoProvider};
 use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 
-use crate::common::{ALICE, BOB, HUB_IDENTITY, base_room_policy, franking_agent, no_components};
+use crate::common::{
+    ALICE, BOB, FRANK_AAD_ONLY, HUB_IDENTITY, SAFE_AAD, base_room_policy, franking_agent,
+    no_components,
+};
 use crate::update::{ROLE_MEMBER, members_list};
 
 /// RFC 9420 §6: the MLSMessage header of a GroupInfo (mls10, 0x0004).
@@ -279,6 +282,9 @@ pub async fn joinable_room(hub: &Hub, room_id: &str, group_id: &[u8], join: Join
     }
     let key = *hub.signature_public_key();
     let mut components = vec![
+        // The hub requires frank_aad as a Safe AAD component (bead
+        // mimid-1wgh.6.74).
+        (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
         (FRANKING_AGENT, franking_agent(&key, HUB_IDENTITY)),
         (
             PARTICIPANT_LIST,

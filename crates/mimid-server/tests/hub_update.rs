@@ -419,7 +419,12 @@ async fn commit_missing_pending_proposal_is_not_allowed() {
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
     let mut room = mls_rs_room(&hub, ROOM_ID, b"group-pending").await;
-    let proposal = room.bob.propose_update(vec![]).unwrap().to_bytes().unwrap();
+    let proposal = room
+        .bob
+        .propose_update(EMPTY_SAFE_AAD.to_vec())
+        .unwrap()
+        .to_bytes()
+        .unwrap();
     let accepted = hub
         .update(ROOM_ID, &b(), &proposal_request(&proposal, &[]))
         .await
@@ -464,10 +469,15 @@ async fn proposals_are_stored_and_fanned_out_verbatim() {
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
     let mut room = mls_rs_room(&hub, ROOM_ID, b"group-proposals").await;
-    let bobs = room.bob.propose_update(vec![]).unwrap().to_bytes().unwrap();
+    let bobs = room
+        .bob
+        .propose_update(EMPTY_SAFE_AAD.to_vec())
+        .unwrap()
+        .to_bytes()
+        .unwrap();
     let alices = room
         .alice
-        .propose_update(vec![])
+        .propose_update(EMPTY_SAFE_AAD.to_vec())
         .unwrap()
         .to_bytes()
         .unwrap();
@@ -515,7 +525,12 @@ async fn external_commit_refused_while_proposals_pending() {
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
     let mut room = mls_rs_room(&hub, ROOM_ID, b"group-external").await;
-    let proposal = room.bob.propose_update(vec![]).unwrap().to_bytes().unwrap();
+    let proposal = room
+        .bob
+        .propose_update(EMPTY_SAFE_AAD.to_vec())
+        .unwrap()
+        .to_bytes()
+        .unwrap();
     let accepted = hub
         .update(ROOM_ID, &b(), &proposal_request(&proposal, &[]))
         .await
@@ -528,6 +543,8 @@ async fn external_commit_refused_while_proposals_pending() {
             .external_commit_builder()
             .unwrap()
             .with_tree_data(alice.export_tree().into_owned())
+            .with_leaf_node_extensions(mls_rs_leaf_extensions())
+            .with_authenticated_data(EMPTY_SAFE_AAD.to_vec())
             .build(group_info)
             .unwrap();
         let group_info = joined
@@ -695,7 +712,12 @@ async fn restart_replays_pending_proposals() {
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
     let mut room = mls_rs_room(&hub, ROOM_ID, b"group-replay").await;
-    let proposal = room.bob.propose_update(vec![]).unwrap().to_bytes().unwrap();
+    let proposal = room
+        .bob
+        .propose_update(EMPTY_SAFE_AAD.to_vec())
+        .unwrap()
+        .to_bytes()
+        .unwrap();
     let accepted = hub
         .update(ROOM_ID, &b(), &proposal_request(&proposal, &[]))
         .await
@@ -735,7 +757,12 @@ async fn trace_logs_never_contain_hub_secrets() {
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
     let mut room = mls_rs_room(&hub, ROOM_ID, b"group-canary").await;
-    let proposal = room.bob.propose_update(vec![]).unwrap().to_bytes().unwrap();
+    let proposal = room
+        .bob
+        .propose_update(EMPTY_SAFE_AAD.to_vec())
+        .unwrap()
+        .to_bytes()
+        .unwrap();
     let request = proposal_request(&proposal, &[]);
     hub.update(ROOM_ID, &a(), &request).await.unwrap();
     hub.update(ROOM_ID, &b(), &request).await.unwrap();
@@ -760,5 +787,78 @@ async fn trace_logs_never_contain_hub_secrets() {
     assert!(text.contains("update refused"), "capture works: {text}");
     assert_secret_absent(&text, &secret.signature_private_key, "signing key");
     assert_secret_absent(&text, &secret.hub_key, "hub_key");
+    close_hub(store, hub).await;
+}
+
+/// An `apply` for a Commit changing `safe_aad`: the new list is the update
+/// itself (an empty ComponentsList here), and a remove removes it.
+fn safe_aad_apply(
+    component_id: u16,
+    _current: Option<&[u8]>,
+    op: ComponentOp<'_>,
+) -> Result<Option<Vec<u8>>, ErrorSource> {
+    match (component_id, op) {
+        (SAFE_AAD, ComponentOp::Update(updates)) => Ok(updates.last().map(|u| u.to_vec())),
+        (SAFE_AAD, ComponentOp::Remove) => Ok(None),
+        _ => Err("unexpected AppDataUpdate".into()),
+    }
+}
+
+/// A Commit that drops frank_aad from the room's required Safe AAD
+/// components, by an AppDataUpdate of `safe_aad` to an empty list or by
+/// removing it, is refused and changes nothing (bead mimid-1wgh.6.74). The
+/// hub's AppDataUpdate logic knows only the components it tracks, so any
+/// change to `safe_aad` is refused (hub/components.rs apply_commit_op).
+#[tokio::test]
+async fn commit_dropping_frank_aad_from_safe_aad_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mimid.sqlite");
+    let (store, hub) = open_hub(&path).await;
+    let mut room = member_room(&hub, ROOM_ID, b"group-safe-aad").await;
+    let db = connect(&path).await;
+    for (case, update) in [
+        (
+            "update to an empty list",
+            AppDataUpdate::Update {
+                component_id: SAFE_AAD,
+                // ComponentsList with an empty component_ids<V>.
+                update: vec![0x00],
+            },
+        ),
+        (
+            "remove",
+            AppDataUpdate::Remove {
+                component_id: SAFE_AAD,
+            },
+        ),
+    ] {
+        let bundle = room
+            .alice_group
+            .commit(&room.alice, &[], &[], &[update], safe_aad_apply)
+            .unwrap();
+        let tree = room.alice_group.ratchet_tree().unwrap();
+        let request = commit_request(&bundle.commit, None, &bundle.group_info, &tree);
+        let before = counts(&db).await;
+        let before_state = hub.public_state(ROOM_ID).await.unwrap();
+        let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
+        // The hub's AppDataUpdate logic does not know safe_aad, so the
+        // Commit fails MLS processing (hub/components.rs apply_commit_op).
+        assert_eq!(
+            response(&refused),
+            (
+                UpdateResult::NotAllowed,
+                "the commit is not valid".to_owned()
+            ),
+            "{case}"
+        );
+        assert_eq!(counts(&db).await, before, "{case}");
+        assert_eq!(
+            hub.public_state(ROOM_ID).await.unwrap(),
+            before_state,
+            "{case}"
+        );
+        room.alice_group.clear_pending_commit(&room.alice).unwrap();
+    }
+    db.close().await;
     close_hub(store, hub).await;
 }

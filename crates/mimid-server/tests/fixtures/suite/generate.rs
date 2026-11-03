@@ -18,8 +18,8 @@ use mls_rs::{CipherSuite, CipherSuiteProvider, Client, CryptoProvider, Extension
 use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 
 use crate::common::{
-    ALICE, BOB, HUB_IDENTITY, app_data_dictionary, base_room_policy, franking_agent,
-    participant_list,
+    ALICE, BOB, FRANK_AAD_ONLY, HUB_IDENTITY, SAFE_AAD, app_data_dictionary, base_room_policy,
+    franking_agent, participant_list,
 };
 
 /// RFC 8032 §7.1 TEST 1 Ed25519 secret key, used as the hub's signing key.
@@ -55,6 +55,17 @@ fn client(name: &[u8], suite: CipherSuite) -> Client<impl mls_rs::client_builder
         .build()
 }
 
+/// Leaf extensions listing frank_aad in the leaf's `safe_aad` list, which
+/// the group requires (bead mimid-1wgh.6.74).
+fn leaf_extensions() -> ExtensionList {
+    let mut extensions = ExtensionList::new();
+    extensions.set(Extension::new(
+        APP_DATA_DICTIONARY,
+        app_data_dictionary(&[(SAFE_AAD, &FRANK_AAD_ONLY)]),
+    ));
+    extensions
+}
+
 /// alice creates a group on `suite` that meets every hub rule for the hub
 /// key [`HUB_PUBLIC_KEY`] and adds bob. Returns the epoch-1 GroupInfo
 /// MLSMessage (no ratchet_tree extension) and ratchet tree.
@@ -69,6 +80,9 @@ fn group(suite: CipherSuite, group_id: &[u8]) -> (Vec<u8>, Vec<u8>) {
     context_extensions.set(Extension::new(
         APP_DATA_DICTIONARY,
         app_data_dictionary(&[
+            // The hub requires frank_aad as a Safe AAD component (bead
+            // mimid-1wgh.6.74).
+            (SAFE_AAD, &FRANK_AAD_ONLY),
             (
                 component_id::FRANKING_AGENT,
                 &franking_agent(&HUB_PUBLIC_KEY, HUB_IDENTITY),
@@ -84,12 +98,12 @@ fn group(suite: CipherSuite, group_id: &[u8]) -> (Vec<u8>, Vec<u8>) {
         .create_group_with_id(
             group_id.to_vec(),
             context_extensions,
-            Default::default(),
+            leaf_extensions(),
             None,
         )
         .unwrap();
     let bob_key_package = client(BOB, suite)
-        .generate_key_package_message(Default::default(), Default::default(), None)
+        .generate_key_package_message(Default::default(), leaf_extensions(), None)
         .unwrap();
     alice
         .commit_builder()

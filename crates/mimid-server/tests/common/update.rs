@@ -31,7 +31,8 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::SqliteConnectOptions;
 
 use crate::common::{
-    ALICE, BOB, HUB_IDENTITY, app_data_dictionary, base_room_policy, franking_agent, no_components,
+    ALICE, BOB, FRANK_AAD_ONLY, HUB_IDENTITY, SAFE_AAD, app_data_dictionary, base_room_policy,
+    franking_agent, no_components,
 };
 
 /// A listed user of another provider, not a member when the room is
@@ -47,6 +48,8 @@ const GROUP_INFO_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
 const WELCOME_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x03];
 
 const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
+/// mls-extensions-10 §4.9: a SafeAAD with no items, `aad_items<V>` empty.
+pub const EMPTY_SAFE_AAD: [u8; 1] = [0x00];
 /// mls-extensions-10 §4.6: the `app_data_dictionary` extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
@@ -99,11 +102,13 @@ pub fn members_list(users: &[&[u8]]) -> ParticipantListData {
     }
 }
 
-/// The room's components, in ascending component order: the hub's
-/// `franking_agent`, `participants`, the roles and the base policy.
+/// The room's components, in ascending component order: `safe_aad`
+/// requiring frank_aad (bead mimid-1wgh.6.74), the hub's `franking_agent`,
+/// `participants`, the roles and the base policy.
 fn components(hub: &Hub, participants: &ParticipantListData) -> Vec<(u16, Vec<u8>)> {
     let key = *hub.signature_public_key();
     vec![
+        (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
         (FRANKING_AGENT, franking_agent(&key, HUB_IDENTITY)),
         (
             PARTICIPANT_LIST,
@@ -133,6 +138,18 @@ pub fn mls_rs_client(name: &[u8]) -> Client<impl MlsConfig + use<>> {
             SUITE_1,
         )
         .build()
+}
+
+/// Leaf extensions for an mls-rs member of a hosted room: an
+/// `app_data_dictionary` whose `safe_aad` list names frank_aad, which the
+/// room requires (bead mimid-1wgh.6.74), hand-encoded.
+pub fn mls_rs_leaf_extensions() -> ExtensionList {
+    let mut extensions = ExtensionList::new();
+    extensions.set(Extension::new(
+        APP_DATA_DICTIONARY,
+        app_data_dictionary(&[(SAFE_AAD, &FRANK_AAD_ONLY)]),
+    ));
+    extensions
 }
 
 /// A hosted room whose members are mls-rs clients.
@@ -171,10 +188,15 @@ pub async fn mls_rs_room(
     let bob_client = mls_rs_client(BOB);
     let carol = mls_rs_client(CAROL);
     let mut alice = alice_client
-        .create_group_with_id(group_id.to_vec(), extensions, Default::default(), None)
+        .create_group_with_id(
+            group_id.to_vec(),
+            extensions,
+            mls_rs_leaf_extensions(),
+            None,
+        )
         .unwrap();
     let key_package = bob_client
-        .generate_key_package_message(Default::default(), Default::default(), None)
+        .generate_key_package_message(Default::default(), mls_rs_leaf_extensions(), None)
         .unwrap();
     let output = alice
         .commit_builder()
@@ -209,7 +231,13 @@ pub struct Prepared<C: MlsConfig> {
 /// `group` commits every proposal it holds. The GroupInfo is read from a
 /// copy that applies the Commit; `group` keeps the Commit pending.
 pub fn prepare_commit<C: MlsConfig>(group: &mut Group<C>) -> Prepared<C> {
-    let output = group.commit_builder().build().unwrap();
+    // The room has a safe_aad component, so authenticated_data is a SafeAAD
+    // (mls-extensions-10 §4.9): here one with no items, aad_items<V> empty.
+    let output = group
+        .commit_builder()
+        .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+        .build()
+        .unwrap();
     let mut applied = group.clone();
     applied.apply_pending_commit().unwrap();
     let group_info = applied

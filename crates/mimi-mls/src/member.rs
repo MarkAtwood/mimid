@@ -1582,6 +1582,20 @@ pub(crate) struct RequiredLists {
     app_components: Vec<ComponentId>,
 }
 
+impl RequiredLists {
+    /// The required Safe AAD component ids, without GREASE ids and without
+    /// app_components and safe_aad, whose support is implied, so that it
+    /// names exactly what [`first_unsupported`] checks (decision
+    /// mimid-krmn.6).
+    pub(crate) fn required_safe_aad(&self) -> Vec<ComponentId> {
+        self.safe_aad
+            .iter()
+            .copied()
+            .filter(|id| !COMPONENT_GREASE.contains(id) && ![APP_COMPONENTS, SAFE_AAD].contains(id))
+            .collect()
+    }
+}
+
 /// Decodes the [`RequiredLists`] of the GroupContext `extensions`; a
 /// malformed list fails closed (decision mimid-1wgh.4.49).
 pub(crate) fn required_lists(

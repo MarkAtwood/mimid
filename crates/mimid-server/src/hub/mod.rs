@@ -266,6 +266,7 @@ impl Hub {
     /// [`HubError::WrongExternalSenders`],
     /// [`HubError::MissingFrankingAgent`],
     /// [`HubError::WrongFrankingAgent`],
+    /// [`HubError::FrankAadNotRequired`],
     /// [`HubError::MissingBaseRoomPolicy`],
     /// [`HubError::InvalidBaseRoomPolicy`],
     /// [`HubError::MissingParticipantList`],
@@ -634,6 +635,12 @@ pub enum HubError {
     /// mimid-1wgh.6.18, mimid-1wgh.6.35).
     #[error("franking_agent is not the hub")]
     WrongFrankingAgent,
+    /// The GroupContext does not require `frank_aad` (0x0020) as a Safe AAD
+    /// component, although the hub refuses every message without a
+    /// frank_aad item (rohanmahy on mimi-protocol#166; protocol-06 §5.4.1;
+    /// bead mimid-1wgh.6.74).
+    #[error("the group does not require frank_aad as a Safe AAD component")]
+    FrankAadNotRequired,
     /// The group has no `base_room_policy` component (decision
     /// mimid-1wgh.6.57).
     #[error("no base_room_policy component")]

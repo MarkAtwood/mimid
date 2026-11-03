@@ -30,6 +30,14 @@ pub const BOB: &[u8] = b"mimi://b.example/u/bob";
 /// mimid-1wgh.6.35).
 pub const HUB_IDENTITY: &[u8] = b"mimi://a.example";
 
+/// mls-extensions-10 §4.6 component id `safe_aad` (0x0002): the
+/// GroupContext list of required Safe AAD components.
+pub const SAFE_AAD: u16 = 0x0002;
+/// mls-extensions-10 §5 `ComponentsList` naming only `frank_aad` (0x0020),
+/// hand-encoded: `component_ids<V>` of 2 bytes, then 0x0020. A room the
+/// hub hosts must require frank_aad (bead mimid-1wgh.6.74).
+pub const FRANK_AAD_ONLY: [u8; 3] = [0x02, 0x00, 0x20];
+
 /// A clock stuck at one instant.
 pub struct FixedClock(pub u64);
 
@@ -151,6 +159,9 @@ pub struct GroupSpec {
     pub participant_list: Option<Vec<u8>>,
     /// The encoded `base_room_policy` component, if any.
     pub base_room_policy: Option<Vec<u8>>,
+    /// The encoded `safe_aad` component (a `ComponentsList` of the required
+    /// Safe AAD components), if any.
+    pub safe_aad: Option<Vec<u8>>,
 }
 
 impl GroupSpec {
@@ -163,6 +174,7 @@ impl GroupSpec {
             franking_agent: Some(franking_agent(&key, HUB_IDENTITY)),
             participant_list: Some(participant_list(&[ALICE, BOB])),
             base_room_policy: Some(base_room_policy()),
+            safe_aad: Some(FRANK_AAD_ONLY.to_vec()),
         }
     }
 }
@@ -189,6 +201,9 @@ pub fn build_group(spec: &GroupSpec, group_id: &[u8]) -> BuiltGroup {
         })
         .collect();
     let mut components = Vec::new();
+    if let Some(data) = &spec.safe_aad {
+        components.push((SAFE_AAD, data.clone()));
+    }
     if let Some(data) = &spec.franking_agent {
         components.push((component_id::FRANKING_AGENT, data.clone()));
     }

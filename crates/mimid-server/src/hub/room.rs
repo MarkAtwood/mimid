@@ -80,6 +80,9 @@ pub(super) fn hub_sender(
 ///   mimid-1wgh.4.21);
 /// - the `franking_agent` component names the hub (decisions
 ///   mimid-1wgh.6.3, mimid-1wgh.6.18);
+/// - the GroupContext requires `frank_aad` as a Safe AAD component, since
+///   the hub refuses every message without a frank_aad item (rohanmahy on
+///   mimi-protocol#166; protocol-06 §5.4.1; bead mimid-1wgh.6.74);
 /// - a `base_room_policy` component is present and decodes
 ///   (room-policy-04 §5; decision mimid-1wgh.6.57);
 /// - the participant list (protocol-06 §7.5) lists `creator` and the
@@ -115,6 +118,16 @@ pub(super) fn check_group(
         || franking_agent.credential.as_bytes() != credential
     {
         return Err(HubError::WrongFrankingAgent);
+    }
+
+    // rohanmahy on mimi-protocol#166; protocol-06 §5.4.1; bead
+    // mimid-1wgh.6.74.
+    if !observer
+        .required_safe_aad()
+        .map_err(HubError::Mls)?
+        .contains(&component_id::FRANK_AAD)
+    {
+        return Err(HubError::FrankAadNotRequired);
     }
 
     // Decision mimid-1wgh.6.57.

@@ -8,8 +8,10 @@
 # "suite3-fixture"). Both GroupContexts carry the same hub rules:
 # external_senders is exactly the RFC 8032 §7.1 TEST 1 Ed25519 public key
 # with credential mimi://a.example, and an app_data_dictionary holds
+# safe_aad requiring frank_aad (0x0020; bead mimid-1wgh.6.74),
 # franking_agent (same key and credential), participant_list (alice, bob)
-# and base_room_policy. The component data comes from the shared test
+# and base_room_policy. alice's and bob's leaves list frank_aad in their
+# own safe_aad lists. The component data comes from the shared test
 # encoders in tests/common/mod.rs. The two groups differ only in
 # ciphersuite, so the suite 1 control shows the suite 3 group breaks no
 # other hub rule.
@@ -31,14 +33,15 @@
 # Regenerate (from the workspace root):
 #   cargo test -p mimid-server --test hub_foundation -- --ignored \
 #     generate_suite_fixtures
-# Generated:  2026-10-18 with rustc 1.99.1, mls-rs and
+# Generated:  2026-10-18; regenerated 2026-11-02 (safe_aad, bead
+#             mimid-1wgh.6.74) with rustc 1.99.1, mls-rs and
 #             mls-rs-crypto-rustcrypto at git rev
 #             d9af9507223e4c915db9599f6038da1de5d68d4b
 #             (https://github.com/awslabs/mls-rs).
 #
 # Files:
-ddb6f3b6f8015bb5748bdee10cacb082941cbe434dbe79ca538a921d96a92889  generate.rs
-f4a43c87d4c9c7a3723e9cc61d95a403cc27d06c8733f27a891b6d7ababd9ea6  group_info_suite1.bin
-78681c2246aae7bc70571449954f8fa669d92a3cccc7d5b21795f89b74dff4bb  ratchet_tree_suite1.bin
-b0b0fcf4730c13adab0ce68bac52ae8cdac8a592d6a6811f2a59d8becfe2d19e  group_info_suite3.bin
-94d8e7761bf75b9c6e13407c9ea9679513640f9014fc9f2d13ee52b4493f6dd5  ratchet_tree_suite3.bin
+5e6b918dedeb98dcf3836f2fbff2031694f7ebe1a3b7955ae8a8e2923fb5912e  generate.rs
+b2fccd7b139ea7e7b01d05ab017f577180e3c8deb92c0808fe78d8c974596193  group_info_suite1.bin
+f3763496c3f347f84638b1e9a9e4a04e5e4ba98235a92c4718e30cbee2245b3f  ratchet_tree_suite1.bin
+207e0c603b8b3d9208f4889024a3dda47b0dd52125da9402685070614d555c5b  group_info_suite3.bin
+6c0e58d10a4244008c274ff34cc29443eecfee0738f50e51dee18ea00bcc94e3  ratchet_tree_suite3.bin

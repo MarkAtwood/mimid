@@ -841,6 +841,21 @@ impl Observer {
             .collect()
     }
 
+    /// The component ids the current GroupContext requires as Safe AAD
+    /// components (mls-extensions-10 §5 `safe_aad` list), without GREASE
+    /// ids and without app_components and safe_aad, whose support is
+    /// implied (decision mimid-krmn.6). Empty when the GroupContext has no
+    /// `safe_aad` list.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::InvalidComponentsList`] if the
+    /// GroupContext's `safe_aad` or `app_components` list is not a canonical
+    /// ComponentsList.
+    pub fn required_safe_aad(&self) -> Result<Vec<ComponentId>, ObserverError> {
+        Ok(required_lists(self.group.group_context().extensions())?.required_safe_aad())
+    }
+
     /// The data of a component in the GroupContext `app_data_dictionary`
     /// (mls-extensions-10 §4.6).
     pub fn component(&self, component_id: ComponentId) -> Option<&[u8]> {
