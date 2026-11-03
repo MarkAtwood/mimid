@@ -1,0 +1,26 @@
+# PROVENANCE: mimi-content messages encoded by Phoenix R&D's mimi-content
+#
+# Source repository: https://github.com/phnx-im/mimi-content
+# Revisions:         main 31487f9c32bdbdd47b7b946f9756f51663b2b600 (the crate
+#                    Phoenix's Air app uses; pre-draft-09)
+#                    PR #20 head 63789380177d3a5cab076c6b8d4159015fa39621
+#                    ("update to draft-ietf-mimi-content-09")
+#                    Both revisions encode every message below to identical
+#                    bytes; the files were written from main.
+# License:           AGPL-3.0-or-later (REUSE: LICENSES/AGPL-3.0-or-later.txt
+#                    and REUSE.toml in that repository)
+# Generated:         2026-11-02
+# Generator:         tools/interop/phoenix (in this repository):
+#                      cargo run --manifest-path tools/interop/phoenix/Cargo.toml \
+#                        -- write crates/mimi-content/tests/fixtures/phoenix
+#                    (writes the .cbor files only; VALUES and this file are
+#                    maintained by hand)
+# Inputs:            VALUES
+#
+# SHA-256
+16b1b337683c679426807d895a3e256894a38113f31f7ed7beda4285de4f0662  markdown.cbor
+5ce087f146cd4a17c0de06d1f9a3c12a7e86fdb5567de44c0ef7f624b08562c2  receipt.cbor
+3b6eda095ffdf675f6b5aa1c42a65485347aaca54f6cf7f7c168b8ec14d601ee  extensions.cbor
+a63c20f5ccbaa864594e834087d8ba0643364618d64ef95d585c9efe4e329af6  multipart.cbor
+0e58daa09d6302f44724164401e1989ab4ca69cc61ed2dfe4c930d4d19b6e5c2  external.cbor
+57f71651d1603436bb5eb65115ac55cdac5936d2b00d6e0d19abb4789fa78ade  float.cbor

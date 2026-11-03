@@ -1,0 +1,17 @@
+[package]
+name = "mimid-phoenix-xcheck"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone: not part of the mimid workspace (decision mimid-1wgh.46.4).
+[workspace]
+
+# phnx-im/mimi-content at two revisions, under two names. Bump a `rev` to
+# test a newer Phoenix. The crate is AGPL-3.0-or-later (REUSE: LICENSES/ and
+# REUSE.toml in that repository).
+[dependencies]
+# main: the crate Phoenix's Air app uses (pre-09).
+phx_main = { package = "mimi_content", git = "https://github.com/phnx-im/mimi-content", rev = "31487f9c32bdbdd47b7b946f9756f51663b2b600" }
+# PR #20 head: "update to draft-ietf-mimi-content-09".
+phx_pr20 = { package = "mimi_content", git = "https://github.com/phnx-im/mimi-content", rev = "63789380177d3a5cab076c6b8d4159015fa39621" }

@@ -1,0 +1,26 @@
+Inputs the generator (tools/interop/phoenix, mode `write`) gives Phoenix's
+API for each fixture. "ID(xx)" is a message ID: 0x01, then 31 bytes of xx.
+
+markdown    MimiContent::simple_markdown_message("Hello, *world*", salt 0x11 * 16)
+            -> disposition render, language "", contentType "text/markdown"
+receipt     MimiContent::simple_receipt([ID(aa)], salt 0x22 * 16, Read)
+            -> disposition unspecified, language "",
+               contentType "application/mimi-message-status",
+               content = [[ID(aa), 2]]
+extensions  salt 0x33 * 16, replaces ID(bb), topicId "topic-1",
+            expires relative 3600, inReplyTo ID(cc),
+            extensions { 1: "mimi://example.com/u/alice-smith",
+                         2: "mimi://example.com/r/engineering_team",
+                         "x-phx": { "aa": 1, "b": -2 } },
+            body single part: render, "en", "text/plain;charset=utf-8", "hi"
+multipart   salt 0x44 * 16, body multipart render, "", chooseOne of
+            [single render "en" "text/plain;charset=utf-8" "hi",
+             single render "en" "text/html;charset=utf-8" "<b>hi</b>"]
+external    salt 0x55 * 16, body external part: attachment, "",
+            contentType "image/png", url "https://example.com/f/1",
+            expires 0, size 1024, encAlg 1 (AES-128-GCM), key 0x55 * 16,
+            nonce 0x66 * 12, aad empty, hashAlg 1 (SHA-256),
+            contentHash 0x77 * 32, description "a picture",
+            filename "pic.png"
+float       salt 0x66 * 16, extensions { "x-float": 1.5 },
+            body single part as in `extensions`

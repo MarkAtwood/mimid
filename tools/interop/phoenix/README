@@ -1,0 +1,31 @@
+Interop harness: mimid's mimi-content against Phoenix R&D's mimi-content
+(github.com/phnx-im/mimi-content, AGPL-3.0-or-later via REUSE), the crate
+Phoenix's Air app uses. Findings are tracked in beads under mimid-1wgh.46,
+not here. None of this runs in CI: it builds third-party code.
+
+The crate depends on Phoenix twice, under two names, pinned by git rev in
+Cargo.toml: phx_main (main, pre-draft-09) and phx_pr20 (PR #20, the
+draft-09 update). Bump a `rev` there to test newer Phoenix code.
+
+Modes
+  wg <dir>      Phoenix decodes every WG -10 example in <dir>, re-encodes it,
+                compares bytes, and computes the message ID with the sender
+                and room URIs mimid's tests use, at both revisions. Prints a
+                table per revision.
+  write <dir>   Phoenix (main) encodes messages built from fixed inputs into
+                <dir> and reports whether PR #20 encodes them identically.
+                The committed output is crates/mimi-content/tests/fixtures/
+                phoenix (inputs in VALUES there); mimid decodes it in
+                crates/mimi-content/tests/phoenix_fixtures.rs, an ordinary
+                offline test.
+
+Rerun (MIMID is this repository's root; use a private CARGO_TARGET_DIR, not
+a shared target directory)
+  export CARGO_TARGET_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/mimid-phoenix-target
+  cd $MIMID
+  cargo run --manifest-path tools/interop/phoenix/Cargo.toml -- \
+    wg crates/mimi-content/tests/fixtures/wg-10
+  cargo run --manifest-path tools/interop/phoenix/Cargo.toml -- \
+    write crates/mimi-content/tests/fixtures/phoenix
+  # after `write`, update the SHA-256s in that directory's PROVENANCE and
+  # run: cargo test -p mimi-content --test phoenix_fixtures
