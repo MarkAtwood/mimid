@@ -36,9 +36,12 @@
 //!
 //! The GroupContext `safe_aad` and `app_components` lists name the
 //! components every member must support (mls-extensions-10 §5). A Commit
-//! this module builds or receives is refused if a leaf it adds or updates
-//! lacks one of them in its own list, as RFC 9420 §11.1 does for
-//! `required_capabilities` (INTERPRETATION, decision mimid-1wgh.4.45). The
+//! this module builds or receives is refused if any member of the epoch it
+//! leads to lacks one of the resulting GroupContext's required components
+//! in its own list: a leaf the Commit adds or updates, or a member it keeps
+//! unchanged (mls-extensions editor's copy, PR #110, rule 5; decision
+//! mimid-krmn.6), as RFC 9420 §11.1 does for `required_capabilities`
+//! (INTERPRETATION, decision mimid-1wgh.4.45). The
 //! [`Observer`](crate::observer::Observer) applies the same check.
 //!
 //! [`Member::create`], [`Member::join_welcome`] and
@@ -91,10 +94,13 @@
 //!   the size of each message it passes in. mls-extensions-10 §4.7 notes
 //!   that large data may hurt performance; hashing it instead (MAY) is not
 //!   offered (decision mimid-1wgh.4.67).
-//! - A Commit is refused only for the leaves it adds or updates, judged
-//!   against the post-Commit GroupContext (decision mimid-1wgh.4.49). Leaves
-//!   already in a joined group's tree are reported, not refused, and only
-//!   at join time (decision mimid-1wgh.4.57); this identity's own leaf is
+//! - Every leaf of a Commit's resulting epoch is judged against the
+//!   post-Commit GroupContext, including the Add, Update and UpdatePath
+//!   leaves, which the mls-extensions editor's copy (PR #110, rule 3) checks
+//!   against the pre-Commit GroupContext (decision mimid-1wgh.4.49; moved in
+//!   krmn K4). Leaves already in a joined group's tree are reported, not
+//!   refused, and only at join time (decision mimid-1wgh.4.57); this
+//!   identity's own leaf is
 //!   checked when it joins, by every path. This crate's leaves list only
 //!   `frank_aad` (0x0020) as a Safe AAD component (decision
 //!   mimid-1wgh.4.52), so it cannot create or join, by Welcome or
@@ -943,7 +949,12 @@ impl Member {
         // The staged Commit shows every new or updated leaf, including those
         // of stored proposals, and the GroupContext it leads to.
         let checked = match self.group.pending_commit() {
-            Some(staged) => check_staged_leaves(staged).map_err(MemberError::from),
+            Some(staged) => check_staged_leaves(
+                staged,
+                self.group.public_group(),
+                Some(self.group.own_leaf_index()),
+            )
+            .map_err(MemberError::from),
             None => Err(MemberError::Commit("OpenMLS left no Commit pending".into())),
         }
         .and_then(|()| {
@@ -1186,7 +1197,7 @@ impl Member {
                 Ok(Incoming::Proposal { sender })
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {
-                check_staged_leaves(&staged)?;
+                check_staged_leaves(&staged, self.group.public_group(), member_leaf(&sender))?;
                 let summary = summarize(sender, &staged, staged.self_removed());
                 self.group
                     .merge_staged_commit(provider, *staged)
@@ -1560,18 +1571,26 @@ fn decode_components_list(
         })
 }
 
-/// Checks every leaf that `staged` adds or updates (Add, Update and the
-/// UpdatePath leaf) against the `safe_aad` and `app_components` lists of
-/// the GroupContext the Commit leads to (mls-extensions-10 §5).
+/// Checks the leaves of the epoch `staged` leads to against the `safe_aad`
+/// and `app_components` lists of its GroupContext (mls-extensions-10 §5):
+/// every leaf it adds or updates (Add, Update and the UpdatePath leaf) and,
+/// per the mls-extensions editor's copy (PR #110) rule 5, every member of
+/// `current` (the pre-Commit group) that the Commit keeps unchanged
+/// (decision mimid-krmn.6). `committer` is the committer's leaf in
+/// `current`, if it has one; its UpdatePath leaf replaces it.
 ///
-/// INTERPRETATION, decision mimid-1wgh.4.45 (wg mimid-1wgh.37.39): §5 gives
-/// no enforcement rule, so the rule mirrors RFC 9420 §11.1
-/// `required_capabilities`. A leaf's list must name every non-GREASE id in
-/// the GroupContext's list; an absent list is empty. GREASE ids are ignored
-/// (§5.1). The GroupContext lists are decoded strictly and fail closed.
-/// Post-Commit GroupContext, GREASE ignored, and fail-closed decoding:
-/// decision mimid-1wgh.4.49.
-pub(crate) fn check_staged_leaves(staged: &StagedCommit) -> Result<(), SharedError> {
+/// INTERPRETATION, decision mimid-1wgh.4.45 (wg mimid-1wgh.37.39): the rule
+/// mirrors RFC 9420 §11.1 `required_capabilities`. A leaf's list must name
+/// every id in the GroupContext's list except GREASE ids and the implied
+/// 0x0001/0x0002; an absent list is empty. The GroupContext lists are
+/// decoded strictly and fail closed. Post-Commit GroupContext: decision
+/// mimid-1wgh.4.49 (krmn K4 moves proposal and UpdatePath leaves to the
+/// pre-Commit GroupContext).
+pub(crate) fn check_staged_leaves(
+    staged: &StagedCommit,
+    current: &PublicGroup,
+    committer: Option<LeafNodeIndex>,
+) -> Result<(), SharedError> {
     // The GroupContext after the Commit; decision mimid-1wgh.4.49.
     let required = required_lists(staged.group_context().extensions())?;
     for add in staged.add_proposals() {
@@ -1585,6 +1604,33 @@ pub(crate) fn check_staged_leaves(staged: &StagedCommit) -> Result<(), SharedErr
     }
     if let Some(leaf) = staged.update_path_leaf_node() {
         check_leaf(leaf.extensions(), &required)?;
+    }
+
+    // Rule 5: the members the Commit neither removes nor gives a new leaf.
+    let mut replaced = BTreeSet::new();
+    for queued in staged.queued_proposals() {
+        match queued.proposal() {
+            Proposal::Remove(remove) => {
+                replaced.insert(remove.removed());
+            }
+            Proposal::Update(_) | Proposal::SelfRemove => {
+                if let openmls::prelude::Sender::Member(index) = queued.sender() {
+                    replaced.insert(*index);
+                }
+            }
+            _ => {}
+        }
+    }
+    if staged.update_path_leaf_node().is_some() {
+        replaced.extend(committer);
+    }
+    for member in current.members() {
+        if replaced.contains(&member.index) {
+            continue;
+        }
+        if let Some(leaf) = current.leaf(member.index) {
+            check_leaf(leaf.extensions(), &required)?;
+        }
     }
     Ok(())
 }
@@ -1745,6 +1791,14 @@ pub(crate) fn resolve_app_data_updates<E: Into<ErrorSource>>(
         }
     }
     Ok(())
+}
+
+/// The leaf of a member sender, or `None` for any other sender.
+pub(crate) fn member_leaf(sender: &Sender) -> Option<LeafNodeIndex> {
+    match sender {
+        Sender::Member(index) => Some(LeafNodeIndex::new(*index)),
+        _ => None,
+    }
 }
 
 pub(crate) fn convert_sender(sender: &openmls::prelude::Sender) -> Result<Sender, SharedError> {

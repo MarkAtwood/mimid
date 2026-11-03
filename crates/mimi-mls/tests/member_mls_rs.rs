@@ -5,8 +5,9 @@
 //! with hand-encoded expectations.
 
 use mimi_mls::member::{
-    ComponentOp, ExternalSender, Incoming, Member, MemberError, Sender, WelcomeJoin,
+    AppDataUpdate, ComponentOp, ExternalSender, Incoming, Member, MemberError, Sender, WelcomeJoin,
 };
+use mimi_mls::observer::{Observer, ObserverError, ObserverStart};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
 use mls_rs::extension::ExtensionType;
 use mls_rs::group::{CommitEffect, ExportedTree, ReceivedMessage};
@@ -1273,4 +1274,220 @@ fn join_welcome_refuses_a_group_requiring_a_component_our_leaf_lacks() {
             "{case}"
         );
     }
+}
+
+// ---- krmn K3: every member of the resulting epoch is checked ----
+//
+// mls-extensions editor's copy (PR #110) rule 5: a Commit is invalid if the
+// GroupContext of the resulting epoch requires a component that a member of
+// the resulting epoch does not list, not only a member the Commit adds or
+// updates (decision mimid-krmn.6).
+
+/// RFC 9420 §17.3: required_capabilities extension type.
+const REQUIRED_CAPABILITIES: ExtensionType = ExtensionType::new(0x0003);
+
+/// RFC 9420 §7.2 RequiredCapabilities requiring the app_data_dictionary
+/// extension only, so that a GroupContextExtensions proposal may change the
+/// dictionary (mls-extensions-10 §4.7).
+const REQUIRE_DICTIONARY_ONLY: [u8; 5] = [
+    0x02, 0x00, 0x06, // extension_types<V>: app_data_dictionary (0x0006)
+    0x00, // proposal_types<V>: empty
+    0x00, // credential_types<V>: empty
+];
+
+/// mls-extensions-10 §4.6 AppDataDictionary for a GroupContext, hand-encoded:
+/// `app_components` requires 0x8001 (which mimid's leaves never list) and
+/// `safe_aad` keeps [0x0020, 0x3a3a].
+const GC_REQUIRE_8001: [u8; 15] = [
+    0x0e, // component_data<V>: 14 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, // data<V>: 3 bytes
+    0x02, 0x80, 0x01, // ComponentsList [0x8001]
+    0x00, 0x02, // component_id = safe_aad
+    0x05, // data<V>: 5 bytes
+    0x04, 0x00, 0x20, 0x3a, 0x3a, // ComponentsList [0x0020, 0x3a3a]
+];
+
+/// As [`GC_REQUIRE_8001`], but `app_components` requires 0x0004
+/// (last_resort_key_package), which mimid's leaves list.
+const GC_REQUIRE_0004: [u8; 15] = [
+    0x0e, // component_data<V>: 14 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, // data<V>: 3 bytes
+    0x02, 0x00, 0x04, // ComponentsList [0x0004]
+    0x00, 0x02, // component_id = safe_aad
+    0x05, // data<V>: 5 bytes
+    0x04, 0x00, 0x20, 0x3a, 0x3a, // ComponentsList [0x0020, 0x3a3a]
+];
+
+/// mls-extensions-10 §4.6 AppDataDictionary for bob's LeafNode: his
+/// `app_components` list names 0x0004 and 0x8001, his `safe_aad` list 0x0020.
+const LEAF_0004_8001_SAFE_AAD_0020: [u8; 15] = [
+    0x0e, // component_data<V>: 14 bytes
+    0x00, 0x01, // component_id = app_components
+    0x05, // data<V>: 5 bytes
+    0x04, 0x00, 0x04, 0x80, 0x01, // ComponentsList [0x0004, 0x8001]
+    0x00, 0x02, // component_id = safe_aad
+    0x03, // data<V>: 3 bytes
+    0x02, 0x00, 0x20, // ComponentsList [0x0020]
+];
+
+/// ComponentsList [0x0004]: the `app_components` data alice sets by
+/// AppDataUpdate.
+const LIST_0004: [u8; 3] = [0x02, 0x00, 0x04];
+
+/// As [`mls_rs_client`], also advertising the AppDataUpdate proposal type
+/// (mls-extensions-10 §7.2, 0x0008), so alice may commit AppDataUpdates.
+fn mls_rs_client_with_app_data_update(
+    name: &[u8],
+) -> Client<impl mls_rs::client_builder::MlsConfig> {
+    let crypto = RustCryptoProvider::default();
+    let suite = crypto
+        .cipher_suite_provider(SUITE_1)
+        .expect("mls-rs supports suite 1");
+    let (secret, public) = suite
+        .signature_key_generate()
+        .expect("mls-rs signature key");
+    let signing_identity = SigningIdentity::new(
+        BasicCredential::new(name.to_vec()).into_credential(),
+        public,
+    );
+    Client::builder()
+        .identity_provider(BasicIdentityProvider)
+        .crypto_provider(crypto)
+        .extension_type(APP_DATA_DICTIONARY)
+        .custom_proposal_type(mls_rs::group::proposal::ProposalType::new(APP_DATA_UPDATE))
+        .signing_identity(signing_identity, secret, SUITE_1)
+        .build()
+}
+
+/// alice (mimi-mls) and bob (mls-rs, leaf dictionary `bob_leaf`) in a group
+/// whose GroupContext `safe_aad` list requires 0x0020, at epoch 1. Also
+/// returns alice's GroupInfo for epoch 1.
+fn alice_and_bob_with(
+    bob_leaf: &[u8],
+) -> (
+    Identity,
+    Member,
+    mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+    Vec<u8>,
+) {
+    let alice = identity(b"alice");
+    let mut group = Member::create(
+        &alice,
+        b"room-k3",
+        &[],
+        &[(SAFE_AAD, REQUIRE_0020.to_vec())],
+    )
+    .expect("create");
+    let bob_client = mls_rs_client_with_app_data_update(b"bob");
+    let bob_key_package = bare_key_package(&mls_rs_key_package_with(&bob_client, bob_leaf));
+    let bundle = group
+        .commit(&alice, &[&bob_key_package], &[], &[], no_components)
+        .expect("commit");
+    group.merge_pending_commit(&alice).expect("merge");
+    let welcome = MlsMessage::from_bytes(&bundle.welcome.expect("Welcome")).expect("decode");
+    let tree = ExportedTree::from_bytes(&group.ratchet_tree().expect("tree")).expect("tree");
+    let (bob, _) = bob_client
+        .join_group(Some(tree), &welcome, None)
+        .expect("mls-rs joins");
+    (alice, group, bob, bundle.group_info)
+}
+
+/// bob's GroupContextExtensions Commit setting the dictionary `dictionary`,
+/// with an UpdatePath whose leaf keeps his dictionary. Left unapplied.
+fn bob_gce(
+    bob: &mut mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
+    dictionary: &[u8],
+) -> Vec<u8> {
+    let mut extensions = ExtensionList::new();
+    extensions.set(Extension::new(APP_DATA_DICTIONARY, dictionary.to_vec()));
+    extensions.set(Extension::new(
+        REQUIRED_CAPABILITIES,
+        REQUIRE_DICTIONARY_ONLY.to_vec(),
+    ));
+    let commit = bob
+        .commit_builder()
+        .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+        .set_group_context_ext(extensions)
+        .expect("mls-rs GroupContextExtensions")
+        .set_leaf_node_extensions(leaf_dictionary(&LEAF_0004_8001_SAFE_AAD_0020))
+        .build()
+        .expect("mls-rs commits")
+        .commit_message
+        .to_bytes()
+        .expect("encode");
+    bob.clear_pending_commit();
+    commit
+}
+
+#[test]
+fn received_commit_requiring_a_component_an_unchanged_member_lacks_is_rejected() {
+    // bob lists 0x8001 in the UpdatePath leaf; alice, unchanged, does not.
+    let (alice, mut group, mut bob, _) = alice_and_bob_with(&LEAF_0004_8001_SAFE_AAD_0020);
+    let commit = bob_gce(&mut bob, &GC_REQUIRE_8001);
+    let result = group.process(&alice, &commit, no_components);
+    assert!(
+        matches!(result, Err(MemberError::MissingAppComponent(0x8001))),
+        "{result:?}"
+    );
+    assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
+
+    // Control: a requirement every member lists is accepted.
+    let (alice, mut group, mut bob, _) = alice_and_bob_with(&LEAF_0004_8001_SAFE_AAD_0020);
+    let commit = bob_gce(&mut bob, &GC_REQUIRE_0004);
+    group
+        .process(&alice, &commit, no_components)
+        .expect("every member lists 0x0004");
+    assert_eq!(group.epoch(), 2);
+}
+
+#[test]
+fn observer_rejects_a_commit_requiring_a_component_an_unchanged_member_lacks() {
+    for (dictionary, accepted) in [(GC_REQUIRE_8001, false), (GC_REQUIRE_0004, true)] {
+        let (_alice, group, mut bob, group_info) =
+            alice_and_bob_with(&LEAF_0004_8001_SAFE_AAD_0020);
+        let store = Store::open_in_memory().expect("store");
+        let tree = group.ratchet_tree().expect("tree");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
+        let commit = bob_gce(&mut bob, &dictionary);
+        let result = observer.process(&store, &commit, no_components);
+        if accepted {
+            result.expect("every member lists 0x0004");
+        } else {
+            assert!(
+                matches!(result, Err(ObserverError::MissingAppComponent(0x8001))),
+                "{result:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn member_refuses_to_build_a_commit_an_unchanged_member_cannot_meet() {
+    // bob's leaf has no app_components list; alice's lists 0x0004. Requiring
+    // 0x0004 by AppDataUpdate leaves bob, unchanged, without it.
+    let (alice, mut group, _bob, _) = alice_and_bob_with(&LEAF_SAFE_AAD_0020);
+    let replace = |_: u16, _: Option<&[u8]>, op: ComponentOp<'_>| -> Result<_, ErrorSource> {
+        Ok(match op {
+            ComponentOp::Update(updates) => updates.last().map(|update| update.to_vec()),
+            ComponentOp::Remove => None,
+        })
+    };
+    let result = group.commit(
+        &alice,
+        &[],
+        &[],
+        &[AppDataUpdate::Update {
+            component_id: APP_COMPONENTS,
+            update: LIST_0004.to_vec(),
+        }],
+        replace,
+    );
+    assert!(
+        matches!(result, Err(MemberError::MissingAppComponent(0x0004))),
+        "{result:?}"
+    );
+    assert_eq!(group.epoch(), 1);
 }

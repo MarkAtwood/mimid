@@ -84,7 +84,7 @@ use tls_codec::{Deserialize, Serialize, VLBytes};
 use crate::identity::CIPHERSUITE;
 use crate::member::{
     AppDataUpdate, CommitSummary, ComponentOp, Sender, SharedError, basic_identity,
-    check_staged_leaves, convert_sender, nonconforming_leaves, required_lists,
+    check_staged_leaves, convert_sender, member_leaf, nonconforming_leaves, required_lists,
     resolve_app_data_updates, summarize,
 };
 use crate::store::Provider;
@@ -521,7 +521,7 @@ impl Observer {
                 Ok(Observed::Proposal { sender })
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {
-                check_staged_leaves(&staged)?;
+                check_staged_leaves(&staged, &self.group, member_leaf(&sender))?;
                 let committer = match sender {
                     Sender::Member(index) => LeafNodeIndex::new(index),
                     // RFC 9420 §12.4.3.2: the joiner takes the leftmost
