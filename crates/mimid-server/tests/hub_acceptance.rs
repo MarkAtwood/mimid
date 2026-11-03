@@ -75,7 +75,7 @@ use mimi_protocol::{
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{Capability, Role, RoleData, SingleSourceRoleChangeTargets};
 use mimid_server::config::{BaseUrl, Domain};
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::http::router;
 use mimid_server::hub::fanout::{Fanout, FanoutHandle};
 use mimid_server::hub::{Hub, PublicState};
@@ -524,19 +524,15 @@ impl Provider {
             self.store.clone(),
             Arc::new(FixedClock(0)),
         );
-        let response = router(
-            Directory::new(&base),
-            Arc::clone(&self.hub),
-            Arc::new(follower),
-        )
-        .oneshot(
-            Request::post(format!("/v1/{endpoint}/{ROOM_ID_ENCODED}"))
-                .header(header::FROM, format!("mimi@{from}"))
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+        let response = router(directory(&base), Arc::clone(&self.hub), Arc::new(follower))
+            .oneshot(
+                Request::post(format!("/v1/{endpoint}/{ROOM_ID_ENCODED}"))
+                    .header(header::FROM, format!("mimi@{from}"))
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         self.worker.wake();

@@ -20,7 +20,7 @@ use axum::http::{Request, StatusCode, header};
 use common::FixedClock;
 use mimi_protocol::Directory as ParsedDirectory;
 use mimid_server::config::BaseUrl;
-use mimid_server::directory::{DIRECTORY_PATH, Directory};
+use mimid_server::directory::{DIRECTORY_PATH, directory};
 use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use tower::ServiceExt;
@@ -33,7 +33,7 @@ async fn every_advertised_endpoint_is_routed() {
     let (store, hub) = common::open_hub(&dir.path().join("mimid.sqlite")).await;
     let follower = Follower::new(common::domain(), store, Arc::new(FixedClock(0)));
     let app = router(
-        Directory::new(&BaseUrl::try_from(BASE.to_owned()).unwrap()),
+        directory(&BaseUrl::try_from(BASE.to_owned()).unwrap()),
         Arc::new(hub),
         Arc::new(follower),
     )

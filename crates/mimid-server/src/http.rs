@@ -1,7 +1,7 @@
 //! HTTP framing for the protocol-06 endpoints: routes, body size cap, path
 //! decoding and status mapping (decision mimid-1wgh.6.8).
 //!
-//! Routes follow the directory's layout ([`Directory::new`]): `/v1/<endpoint>/
+//! Routes follow the directory's layout ([`directory::directory`]): `/v1/<endpoint>/
 //! {roomId}` and `/v1/keyMaterial/{targetUser}`. The placeholder is the
 //! whole URI, percent-encoded (decision mimid-1wgh.5.18), so it is one path
 //! segment; it reaches the hub or follower percent-decoded.

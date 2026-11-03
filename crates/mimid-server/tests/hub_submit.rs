@@ -23,7 +23,7 @@ use mimi_protocol::{
     SubmitMessageResponse, SubmitResult, verify_server_frank,
 };
 use mimid_server::config::{BaseUrl, Domain};
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use mimid_server::hub::{Hub, HubError};
@@ -384,7 +384,7 @@ async fn post(
     body: Vec<u8>,
 ) -> (StatusCode, Vec<u8>) {
     let base = BaseUrl::try_from("https://mimi.a.example".to_owned()).unwrap();
-    let app = router(Directory::new(&base), Arc::clone(hub), Arc::clone(follower));
+    let app = router(directory(&base), Arc::clone(hub), Arc::clone(follower));
     let mut request = Request::post(format!("/v1/submitMessage/{room}"));
     if let Some(from) = from {
         request = request.header(header::FROM, from);

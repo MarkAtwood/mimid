@@ -20,7 +20,7 @@ use common::*;
 use mimi_protocol::component_id;
 use mimi_room_policy::component_id::BASE_ROOM_POLICY;
 use mimid_server::config::BaseUrl;
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::http::{MAX_BODY_LEN, router};
 use mimid_server::hub::{Hub, HubError};
@@ -581,7 +581,7 @@ async fn trace_logs_never_contain_hub_secrets() {
 fn app(hub: Arc<Hub>, store: &Store) -> Router {
     let base = BaseUrl::try_from("https://mimi.a.example".to_owned()).unwrap();
     let follower = Follower::new(domain(), store.clone(), Arc::new(FixedClock(0)));
-    router(Directory::new(&base), hub, Arc::new(follower))
+    router(directory(&base), hub, Arc::new(follower))
 }
 
 async fn send(

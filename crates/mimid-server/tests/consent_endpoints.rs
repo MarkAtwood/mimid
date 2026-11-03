@@ -29,7 +29,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use common::FixedClock;
 use mimid_server::config::{BaseUrl, Domain};
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use mimid_server::hub::Hub;
@@ -108,7 +108,7 @@ async fn provider(domain: &str, local_users: &[&str], peers: &[&str]) -> Provide
     let follower = Follower::new(domain.clone(), store.clone(), clock)
         .with_peers(PeerClient::new(&domain, peers).unwrap());
     let base = BaseUrl::try_from(format!("https://mimi.{domain}")).unwrap();
-    let app = router(Directory::new(&base), Arc::new(hub), Arc::new(follower));
+    let app = router(directory(&base), Arc::new(hub), Arc::new(follower));
     Provider {
         _dir: dir,
         store,

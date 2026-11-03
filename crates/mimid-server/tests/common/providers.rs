@@ -17,7 +17,7 @@ use axum::response::{IntoResponse, Response};
 use mimi_mls::tls_codec::Deserialize;
 use mimi_protocol::FanoutMessage;
 use mimid_server::config::{BaseUrl, Domain};
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::follower::key_packages::KeyPackages;
 use mimid_server::follower::relay::{LocalUser, Relay};
@@ -168,7 +168,7 @@ impl Provider {
             .set_relay(Relay::new(Arc::clone(&hub), peer_client()))
             .unwrap();
         self.front.0.lock().unwrap().router = Some(router(
-            Directory::new(&self.base),
+            directory(&self.base),
             Arc::clone(&hub),
             Arc::clone(&follower),
         ));

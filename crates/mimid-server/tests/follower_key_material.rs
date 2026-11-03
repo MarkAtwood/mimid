@@ -35,7 +35,7 @@ use mimi_protocol::{
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{Capability, Role, RoleData};
 use mimid_server::config::{BaseUrl, Domain};
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::follower::key_packages::{KeyPackages, UploadError};
 use mimid_server::follower::relay::LocalUser;
 use mimid_server::follower::{Follower, FollowerError};
@@ -796,7 +796,7 @@ async fn remote_requester_gets_our_users_key_package_for_a_room_we_host_over_htt
     // policy check runs and the hub serves the KeyPackage in-process.
     let base = BaseUrl::try_from("https://mimi.a.example".to_owned()).unwrap();
     let follower = Follower::new(common::domain(), store, Arc::new(FixedClock(now_ms())));
-    let response = router(Directory::new(&base), Arc::new(hub), Arc::new(follower))
+    let response = router(directory(&base), Arc::new(hub), Arc::new(follower))
         .oneshot(
             Request::post(format!("/v1/keyMaterial/{ZOE_ENCODED}"))
                 .header(header::FROM, "mimi@b.example")

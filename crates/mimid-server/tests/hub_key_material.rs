@@ -35,7 +35,7 @@ use mimi_protocol::{
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{Capability, Role, RoleData};
 use mimid_server::config::{BaseUrl, Domain};
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use mimid_server::hub::{Hub, HubError};
@@ -374,7 +374,7 @@ impl Fixture {
     async fn post(&self, target_encoded: &str, from: &str, body: Vec<u8>) -> (StatusCode, Bytes) {
         let base = BaseUrl::try_from("https://a.example".to_owned()).unwrap();
         let response = router(
-            Directory::new(&base),
+            directory(&base),
             Arc::clone(&self.hub),
             Arc::clone(&self.follower),
         )

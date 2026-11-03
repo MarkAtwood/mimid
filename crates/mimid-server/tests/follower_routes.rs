@@ -22,7 +22,7 @@ use mimi_protocol::{
     IdentifierUri, KeyMaterialRequestTbs, KeyMaterialResponse, KeyMaterialUserCode, Protocol,
 };
 use mimid_server::config::BaseUrl;
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use tower::ServiceExt;
@@ -77,7 +77,7 @@ async fn post(path: &str, from: Option<&str>, body: Vec<u8>) -> (StatusCode, Byt
         request = request.header(header::FROM, from);
     }
     let follower = Follower::new(domain(), store.clone(), Arc::new(FixedClock(0)));
-    let response = router(Directory::new(&base), Arc::new(hub), Arc::new(follower))
+    let response = router(directory(&base), Arc::new(hub), Arc::new(follower))
         .oneshot(request.body(Body::from(body)).unwrap())
         .await
         .unwrap();

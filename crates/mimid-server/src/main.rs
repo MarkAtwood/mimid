@@ -41,7 +41,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use mimid_server::config::Config;
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::follower::key_packages::KeyPackages;
 use mimid_server::follower::relay::Relay;
@@ -118,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
         jmap_options,
     )
     .context("building the JMAP router")?;
-    let app = router(Directory::new(&config.base_url), hub, follower).merge(jmap);
+    let app = router(directory(&config.base_url), hub, follower).merge(jmap);
 
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await

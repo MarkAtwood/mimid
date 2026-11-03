@@ -4,56 +4,48 @@
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
-use serde::Serialize;
+use mimi_protocol::UriTemplate;
 
 use crate::config::BaseUrl;
+
+pub use mimi_protocol::Directory;
 
 /// The well-known path the directory is served at (protocol-06 §5.1). No
 /// IANA registration exists for it (decision mimid-1wgh.5.33).
 pub const DIRECTORY_PATH: &str = "/.well-known/mimi-protocol-directory";
 
-/// The directory document of protocol-06 §5.1. Each field is a URL template
-/// whose `{...}` placeholder the client fills in.
+/// The directory document (protocol-06 §5.1) of a server reachable at
+/// `base`, as mimi-protocol's [`Directory`].
 ///
-/// Field names mirror the spec's JSON keys. Only endpoints this server routes
-/// are listed, since an absent key means the endpoint is not offered
-/// (decision mimid-1wgh.5.75). Not yet listed: `proxyDownload`
-/// (mimid-1wgh.8).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Directory {
-    pub key_material: String,
-    pub update: String,
-    pub notify: String,
-    pub submit_message: String,
-    pub group_info: String,
-    pub request_consent: String,
-    pub update_consent: String,
-    pub identifier_query: String,
-    pub report_abuse: String,
-}
-
-impl Directory {
-    /// Builds the directory for a server reachable at `base`, using the path
-    /// layout of the §5.1 example, including its `/v1` prefix (decision
-    /// mimid-1wgh.5.37). Placeholders are served as literal `{name}` text
-    /// (decision mimid-1wgh.5.38). The example's `update{roomId}` lacks a
-    /// slash; it is read as `update/{roomId}` (decision mimid-1wgh.5.17).
-    /// The consent placeholders name domains, as in §5.7, not users as in the
-    /// §5.1 example (decision mimid-1wgh.5.16).
-    pub fn new(base: &BaseUrl) -> Self {
-        let url = |path: &str| format!("{base}/v1/{path}");
-        Self {
-            key_material: url("keyMaterial/{targetUser}"),
-            update: url("update/{roomId}"),
-            notify: url("notify/{roomId}"),
-            submit_message: url("submitMessage/{roomId}"),
-            group_info: url("groupInfo/{roomId}"),
-            request_consent: url("requestConsent/{targetDomain}"),
-            update_consent: url("updateConsent/{requesterDomain}"),
-            identifier_query: url("identifierQuery/{domain}"),
-            report_abuse: url("reportAbuse/{roomId}"),
-        }
+/// Only endpoints this server routes are listed, since an absent key means
+/// the endpoint is not offered (decision mimid-1wgh.5.75); `proxyDownload`
+/// is not yet listed (mimid-1wgh.8). The paths follow the §5.1 example,
+/// including its `/v1` prefix (decision mimid-1wgh.5.37). Placeholders are
+/// served as literal `{name}` text (decision mimid-1wgh.5.38). The example's
+/// `update{roomId}` lacks a slash; it is read as `update/{roomId}` (decision
+/// mimid-1wgh.5.17). The consent placeholders name domains, as in §5.7, not
+/// users as in the §5.1 example (decision mimid-1wgh.5.16).
+pub fn directory(base: &BaseUrl) -> Directory {
+    let url = |path: &str| {
+        // A BaseUrl is a scheme and host with no path, query or braces, so
+        // every template here is a valid level-1 template.
+        Some(
+            UriTemplate::new(&format!("{base}/v1/{path}"))
+                .expect("directory templates are valid for any BaseUrl"),
+        )
+    };
+    Directory {
+        key_material: url("keyMaterial/{targetUser}"),
+        update: url("update/{roomId}"),
+        notify: url("notify/{roomId}"),
+        submit_message: url("submitMessage/{roomId}"),
+        group_info: url("groupInfo/{roomId}"),
+        request_consent: url("requestConsent/{targetDomain}"),
+        update_consent: url("updateConsent/{requesterDomain}"),
+        identifier_query: url("identifierQuery/{domain}"),
+        report_abuse: url("reportAbuse/{roomId}"),
+        proxy_download: None,
+        unknown: Default::default(),
     }
 }
 
@@ -105,7 +97,7 @@ mod tests {
 
     async fn get(uri: &str) -> axum::response::Response {
         let base = BaseUrl::try_from("https://mimi.example.com".to_owned()).unwrap();
-        router(Directory::new(&base))
+        router(directory(&base))
             .oneshot(Request::get(uri).body(Body::empty()).unwrap())
             .await
             .unwrap()

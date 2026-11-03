@@ -10,7 +10,7 @@ use std::sync::Arc;
 use axum::body::{Body, Bytes, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use mimid_server::config::{BaseUrl, Domain};
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::follower::relay::LocalUser;
 use mimid_server::http::router;
@@ -137,7 +137,7 @@ impl Provider {
     ) -> (StatusCode, Bytes) {
         let base = BaseUrl::try_from("https://mimi.b.example".to_owned()).unwrap();
         let response = router(
-            Directory::new(&base),
+            directory(&base),
             Arc::clone(&self.hub),
             Arc::clone(&self.follower),
         )

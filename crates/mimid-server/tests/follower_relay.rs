@@ -43,7 +43,7 @@ use mimi_protocol::{
     SubmitMessageResponse, SubmitResult, UpdateResult, UpdateRoomResponse,
 };
 use mimid_server::config::{BaseUrl, Domain};
-use mimid_server::directory::Directory;
+use mimid_server::directory::directory;
 use mimid_server::follower::relay::{LocalUser, Relay, RelayError};
 use mimid_server::http::{MAX_BODY_LEN, router};
 use mimid_server::hub::Hub;
@@ -520,11 +520,7 @@ async fn remote_update_reaches_a_real_hub_over_http() {
         store_a,
         Arc::new(FixedClock(1_700_000_000_000)),
     );
-    let app = router(
-        Directory::new(&base),
-        Arc::clone(&hub_a),
-        Arc::new(follower_a),
-    );
+    let app = router(directory(&base), Arc::clone(&hub_a), Arc::new(follower_a));
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
     // Provider B relays bob's UpdatePath Commit to A.
