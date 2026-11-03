@@ -41,11 +41,12 @@
 //! `required_capabilities` (INTERPRETATION, decision mimid-1wgh.4.45). The
 //! [`Observer`](crate::observer::Observer) applies the same check.
 //!
-//! [`Member::create`] refuses a group whose lists the creator's own leaf
-//! does not meet. [`Member::join_welcome`], [`Member::join_external`] and
+//! [`Member::create`], [`Member::join_welcome`] and
+//! [`Member::join_external`] refuse a group whose lists this identity's own
+//! leaf does not meet (decision mimid-krmn.6). The two joins and
 //! [`Observer::from_group_info`](crate::observer::Observer::from_group_info)
-//! accept a group whose existing leaves do not meet them, and return those
-//! leaves' indices (decision mimid-1wgh.4.57).
+//! accept a group whose other existing leaves do not meet them, and return
+//! those leaves' indices (decision mimid-1wgh.4.57).
 //!
 //! # Out of sync
 //!
@@ -93,12 +94,11 @@
 //! - A Commit is refused only for the leaves it adds or updates, judged
 //!   against the post-Commit GroupContext (decision mimid-1wgh.4.49). Leaves
 //!   already in a joined group's tree are reported, not refused, and only
-//!   at join time (decision mimid-1wgh.4.57). [`Member::join_welcome`] does
-//!   not check this identity's own leaf. This crate's leaves list only
+//!   at join time (decision mimid-1wgh.4.57); this identity's own leaf is
+//!   checked when it joins, by every path. This crate's leaves list only
 //!   `frank_aad` (0x0020) as a Safe AAD component (decision
-//!   mimid-1wgh.4.52), so it cannot create or externally join a group
-//!   whose `safe_aad` list requires any other, and after joining one by
-//!   Welcome it refuses its own Commits that carry an UpdatePath.
+//!   mimid-1wgh.4.52), so it cannot create or join, by Welcome or
+//!   externally, a group whose `safe_aad` list requires any other.
 //! - A member does not check the `lifetime` of leaves it receives: in the
 //!   tree of a group it joins, and in the Add, Update and UpdatePath leaves
 //!   of Proposals and Commits it processes (RFC 9420 §7.3, decision
@@ -301,7 +301,7 @@ pub struct WelcomeJoin {
     /// The leaf indices, ascending, of the other members whose leaves do
     /// not list a component the GroupContext `safe_aad` or `app_components`
     /// list requires (see the module's `# Required components`). This
-    /// identity's own leaf is not checked.
+    /// identity's own leaf is checked before joining, not reported here.
     pub nonconforming_leaves: Vec<u32>,
 }
 
@@ -622,14 +622,21 @@ impl Member {
     /// `ratchet_tree` is a TLS-encoded ratchet tree (RFC 9420 §12.4.3.3),
     /// needed when the Welcome's GroupInfo has no `ratchet_tree` extension.
     ///
-    /// The returned [`WelcomeJoin`] also reports the existing leaves that
-    /// miss a required component (decision mimid-1wgh.4.57).
+    /// This identity's own leaf must list every component the GroupContext
+    /// requires, or the join is refused before anything about the group is
+    /// stored (mls-extensions editor's copy, PR #110; decision
+    /// mimid-krmn.6). The returned [`WelcomeJoin`] also reports the other
+    /// existing leaves that miss a required component (decision
+    /// mimid-1wgh.4.57).
     ///
     /// # Errors
     ///
     /// Returns [`MemberError::Decode`] for malformed input,
     /// [`MemberError::UnexpectedMessage`] if the message is not a Welcome,
-    /// [`MemberError::Join`] if the Welcome cannot be processed, and
+    /// [`MemberError::Join`] if the Welcome cannot be processed,
+    /// [`MemberError::MissingSafeAadComponent`] or
+    /// [`MemberError::MissingAppComponent`] if this identity's leaf does not
+    /// list a component the GroupContext requires, and
     /// [`MemberError::InvalidComponentsList`] if the GroupContext's
     /// `safe_aad` or `app_components` data is malformed (decisions
     /// mimid-1wgh.4.57, mimid-1wgh.4.59).
@@ -662,6 +669,14 @@ impl Member {
         // Decoded before into_group stores the group; fails closed
         // (decisions mimid-1wgh.4.57, mimid-1wgh.4.59).
         let required = required_lists(staged.group_context().extensions())?;
+        // mls-extensions editor's copy (PR #110) rule 4: never join a group
+        // whose GroupContext requires a component this identity's leaf does
+        // not list; checked before into_group stores the group (decision
+        // mimid-krmn.6).
+        let own_leaf = staged
+            .own_leaf_node()
+            .ok_or_else(|| MemberError::Join("OpenMLS staged no own leaf".into()))?;
+        check_leaf(own_leaf.extensions(), &required)?;
         let group = staged
             .into_group(provider)
             .map_err(|e| MemberError::Join(e.into()))?;

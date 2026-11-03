@@ -25,6 +25,14 @@
       "created_at": "2026-11-02T23:33:02.728936577Z",
       "created_by": "agent",
       "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-krmn.3",
+      "depends_on_id": "mimid-1wgh.5.40",
+      "type": "blocks",
+      "created_at": "2026-11-03T00:26:49.529113346Z",
+      "created_by": "agent",
+      "metadata": "{}"
     }
   ]
 }

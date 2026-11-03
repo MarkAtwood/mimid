@@ -1207,3 +1207,70 @@ fn join_welcome_reports_existing_leaves_missing_a_required_component() {
         assert_same_epoch_secrets(&group, &bob, &alice);
     }
 }
+
+/// As [`LEAF_SAFE_AAD_0020`], but an `app_components` list naming the
+/// private-use component 0x8001, which mimid's leaf does not list.
+const APP_COMPONENTS_8001: [u8; 7] = [
+    0x06, // ComponentData component_data<V>: 6 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, // opaque data<V>: 3 bytes
+    0x02, //   ComponentsList.component_ids<V>: 2 bytes
+    0x80, 0x01, //   ComponentID 0x8001
+];
+
+#[test]
+fn join_welcome_refuses_a_group_requiring_a_component_our_leaf_lacks() {
+    // mls-extensions editor's copy (PR #110) rule 4: a client MUST NOT
+    // join a group whose GroupContext requires a component it does not
+    // support. mimid's leaf lists safe_aad [0x0020] and app_components
+    // [0x0004, 0x0020] (plus GREASE). Decision mimid-krmn.6.
+    let cases: [(&str, &[u8], MemberError); 2] = [
+        (
+            "safe_aad requires 0x0021",
+            &LEAF_SAFE_AAD_0021,
+            MemberError::MissingSafeAadComponent(0x0021),
+        ),
+        (
+            "app_components requires 0x8001",
+            &APP_COMPONENTS_8001,
+            MemberError::MissingAppComponent(0x8001),
+        ),
+    ];
+    for (case, dictionary, expected) in cases {
+        let mut alice = mls_rs_client(b"alice")
+            .create_group(
+                leaf_dictionary(dictionary),
+                leaf_dictionary(dictionary),
+                None,
+            )
+            .expect("mls-rs group");
+        let bob = identity(b"bob");
+        let bob_key_package = bob
+            .key_package(KeyPackageKind::OneTime)
+            .expect("KeyPackage");
+        let output = alice
+            .commit_builder()
+            .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+            .add_member(key_package_message(&bob_key_package))
+            .expect("mls-rs adds bob")
+            .build()
+            .expect("mls-rs commits");
+        alice.apply_pending_commit().expect("apply");
+
+        let welcome = output.welcome_messages[0].to_bytes().expect("encode");
+        let result = Member::join_welcome(&bob, &welcome, None);
+        assert_eq!(
+            format!("{:?}", result.as_ref().err()),
+            format!("{:?}", Some(&expected)),
+            "{case}"
+        );
+        // Nothing was stored for the group.
+        assert!(
+            matches!(
+                Member::load(&bob, alice.group_id()),
+                Err(MemberError::GroupNotFound)
+            ),
+            "{case}"
+        );
+    }
+}

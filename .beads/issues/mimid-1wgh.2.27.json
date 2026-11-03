@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.2.27",
   "title": "Revisit strict CBOR decoding (decision 1wgh.2.9) against content-10 §6.1",
   "description": "-10 §6.1: receivers MUST reject indefinite-length items and duplicate map keys, but are 'not expected to strictly enforce' encoding size or map order since many CBOR libraries don't expose them. mimid also rejects non-shortest heads (decode.rs:296) and unsorted keys (decode.rs:553) per decision 2.9. Allowed by -10, but a sender whose library doesn't sort keys interoperates with everyone except mimid. Decide: keep strict, accept-and-log, or relax for extensions only.",
+  "notes": "2026-11-02 evidence (mimid-1wgh.46.2): Phoenix's mimi-content (main 31487f9 and PR #20 6378938, the crate Air uses) encodes every float as f64, not shortest form; mimid refuses such content with NotShortestForm (crates/mimi-content/tests/phoenix_fixtures.rs, fixture phoenix/float.cbor). That is a Phoenix sender bug against -08/-09/-10 §6.1 (bead mimid-1wgh.46.5), but -10 §6.1 says receivers are not expected to strictly enforce encoding size, so strict decoding makes mimid refuse content from a production implementation that a lenient receiver accepts. Phoenix orders map keys and extension names per RFC 8949 §4.2.1 (no unsorted-key evidence found).",
   "status": "open",
   "priority": 3,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-02T18:29:59.040806895Z",
   "created_by": "agent",
-  "updated_at": "2026-11-02T18:29:59.040806895Z",
+  "updated_at": "2026-11-03T00:29:38.594034349Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.2.27",
