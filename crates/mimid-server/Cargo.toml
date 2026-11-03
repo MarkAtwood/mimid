@@ -44,5 +44,11 @@ ulid = "=3.0.0"
 # Independent oracle, at the pin mimi-mls uses (decisions mimid-1wgh.4.13, .6.16).
 mls-rs = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
 mls-rs-crypto-rustcrypto = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
+# A plain OpenMLS proposer for AppDataUpdate tests: mls-rs cannot send an
+# AppDataUpdate, and mimi-mls's Member refuses to build some invalid ones
+# (bead mimid-1wgh.6.73). Same versions as mimi-mls.
+openmls.workspace = true
+openmls_basic_credential = "=0.6.0"
+openmls_rust_crypto.workspace = true
 tempfile = "=3.23.0"
 tower = { version = "=0.5.2", features = ["util"] }

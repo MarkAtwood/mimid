@@ -50,7 +50,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mimi_mls::observer::{Observer, ObserverError, ObserverStart};
+use mimi_mls::observer::{Observer, ObserverError, ObserverStart, ProposalKind as MlsProposal};
 use mimi_mls::wire::ProposalRef;
 use tokio::sync::Mutex;
 
@@ -96,6 +96,44 @@ struct Room {
     /// order: every one must be included in the next Commit (decision
     /// mimid-1wgh.6.5).
     pending: Vec<ProposalRef>,
+    /// The AppDataUpdate operations among `pending` (bead mimid-1wgh.6.73).
+    app_data: PendingAppData,
+}
+
+/// The AppDataUpdate operations among an epoch's pending proposals, per
+/// component: whether one removes it and whether one updates it
+/// (mls-extensions-10 §4.7; bead mimid-1wgh.6.73).
+#[derive(Debug, Clone, Default)]
+struct PendingAppData(BTreeMap<u16, AppDataOps>);
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AppDataOps {
+    remove: bool,
+    update: bool,
+}
+
+impl PendingAppData {
+    /// Whether adding an AppDataUpdate of `component_id` (a remove when
+    /// `remove`) would make the list invalid under mls-extensions-10 §4.7:
+    /// two removes, or a remove and an update, for one component.
+    fn conflicts(&self, component_id: u16, remove: bool) -> bool {
+        let ops = self.0.get(&component_id).copied().unwrap_or_default();
+        if remove {
+            ops.remove || ops.update
+        } else {
+            ops.remove
+        }
+    }
+
+    /// Records an AppDataUpdate of `component_id`, a remove when `remove`.
+    fn record(&mut self, component_id: u16, remove: bool) {
+        let ops = self.0.entry(component_id).or_default();
+        if remove {
+            ops.remove = true;
+        } else {
+            ops.update = true;
+        }
+    }
 }
 
 /// The public state of a hosted room, as the hub tracks it.
@@ -322,6 +360,7 @@ impl Hub {
                 mls_store,
                 observer,
                 pending: Vec::new(),
+                app_data: PendingAppData::default(),
             },
         );
         Ok(())
@@ -538,10 +577,20 @@ fn rebuild(snapshot: &RoomSnapshot, pending: &[Vec<u8>]) -> Result<Room, HubErro
         });
     }
     let mut references = Vec::with_capacity(pending.len());
+    let mut app_data = PendingAppData::default();
     for proposal in pending {
         let detail = observer
             .process_proposal(&mls_store, proposal)
             .map_err(rebuild_error)?;
+        // Bead mimid-1wgh.6.73: the replayed proposals were checked when
+        // they were accepted, so they are recorded as they are.
+        if let MlsProposal::AppDataUpdate {
+            component_id,
+            update,
+        } = &detail.proposal
+        {
+            app_data.record(*component_id, update.is_none());
+        }
         // A proposal sent on its own always has a ProposalRef.
         let reference = detail.reference.ok_or_else(|| HubError::SnapshotMismatch {
             room_id: snapshot.room_id.clone(),
@@ -552,6 +601,7 @@ fn rebuild(snapshot: &RoomSnapshot, pending: &[Vec<u8>]) -> Result<Room, HubErro
         mls_store,
         observer,
         pending: references,
+        app_data,
     })
 }
 

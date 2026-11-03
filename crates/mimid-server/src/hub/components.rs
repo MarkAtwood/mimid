@@ -257,6 +257,15 @@ pub fn is_hub_tracked(component_id: ComponentID) -> bool {
     )
 }
 
+/// Whether the hub's AppDataUpdate logic, [`apply_commit_op`], knows
+/// `component_id`: the hub-tracked components, `room_metadata` and
+/// `franking_agent`. An AppDataUpdate of any other component makes a Commit
+/// invalid, so the hub also refuses it as a standalone proposal (bead
+/// mimid-1wgh.6.73).
+pub fn is_known_component(component_id: ComponentID) -> bool {
+    is_hub_tracked(component_id) || component_id == ROOM_METADATA || component_id == FRANKING_AGENT
+}
+
 /// The mls-extensions-10 §4.7 application logic for a hub-tracked
 /// component: the new data after a commit's `updates` to it, in commit
 /// order.
@@ -319,10 +328,7 @@ pub fn apply_commit_op(
     current: Option<&[u8]>,
     op: ComponentOp<'_>,
 ) -> Result<Option<Vec<u8>>, ComponentError> {
-    let known = is_hub_tracked(component_id)
-        || component_id == ROOM_METADATA
-        || component_id == FRANKING_AGENT;
-    if !known {
+    if !is_known_component(component_id) {
         return Err(ComponentError::UnknownComponent(component_id));
     }
     let ComponentOp::Update(updates) = op else {

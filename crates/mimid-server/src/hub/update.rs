@@ -50,7 +50,15 @@
 //! 5. The `From` domain must be the domain of `proposalOrCommit`'s sender.
 //! 6. Room policy must allow each proposal, with its sender as the actor
 //!    ([`policy::authorize_proposal`]).
-//! 7. In one transaction the request is logged, every proposal is stored
+//! 7. An AppDataUpdate must keep the epoch's pending proposals valid under
+//!    mls-extensions-10 §4.7, since they all go into the next Commit
+//!    (protocol-06 §3.5) and a committer refuses to commit an invalid one
+//!    (decision mimid-1wgh.4.65): its component must be one the hub's
+//!    AppDataUpdate logic knows ([`components::is_known_component`]), a
+//!    remove needs data present, and no component may get two removes, or
+//!    a remove and an update, across the pending proposals and the request
+//!    (bead mimid-1wgh.6.73).
+//! 8. In one transaction the request is logged, every proposal is stored
 //!    as pending with its `hub_accepted_time`, and one FanoutMessage
 //!    carrying them all, as received, is enqueued for the member domains
 //!    and the origin (protocol-06 §5.5).
@@ -100,7 +108,7 @@ use super::policy::{
 };
 use super::room::GROUP_INFO_MESSAGE_HEADER;
 use super::state::{identity_domain, member_domains, room_state};
-use super::{Hub, HubError, Room, restore_room};
+use super::{Hub, HubError, PendingAppData, Room, restore_room};
 use crate::config::Domain;
 use crate::store::{EpochSnapshot, EventKind, NewEvent, OutboxEntry};
 
@@ -217,6 +225,7 @@ pub(super) async fn update(
     match accepted.write {
         Write::Commit { new_epoch, .. } => {
             room.pending.clear();
+            room.app_data = PendingAppData::default();
             tracing::info!(
                 room_id,
                 seq,
@@ -225,9 +234,14 @@ pub(super) async fn update(
                 "commit accepted"
             );
         }
-        Write::Proposals { references, .. } => {
+        Write::Proposals {
+            references,
+            app_data,
+            ..
+        } => {
             let count = references.len();
             room.pending.extend(references);
+            room.app_data = app_data;
             tracing::info!(
                 room_id,
                 seq,
@@ -288,6 +302,8 @@ enum Write {
     Proposals {
         proposals: Vec<MLSMessage>,
         references: Vec<ProposalRef>,
+        /// The epoch's pending AppDataUpdate operations with these added.
+        app_data: PendingAppData,
     },
 }
 
@@ -550,6 +566,7 @@ fn stage_proposals(
         }
     };
     let mut references = Vec::with_capacity(1 + more_proposals.len());
+    let mut app_data = room.app_data.clone();
     for (index, message) in iter::once(proposal).chain(more_proposals).enumerate() {
         // Every proposal before this one is stored in the Observer.
         let stored = index > 0;
@@ -575,6 +592,37 @@ fn stage_proposals(
         if let Err(denied) = policy::authorize_proposal(&state, &kind, &sender) {
             tracing::debug!(room_id, index, %denied, "proposal refused by room policy");
             return refuse(room_id, "a proposal is refused by room policy", true);
+        }
+        // mls-extensions-10 §4.7; decision mimid-1wgh.4.65; bead
+        // mimid-1wgh.6.73.
+        if let MlsProposal::AppDataUpdate {
+            component_id,
+            update,
+        } = &detail.proposal
+        {
+            let remove = update.is_none();
+            if !components::is_known_component(*component_id) {
+                return refuse(
+                    room_id,
+                    "an AppDataUpdate names a component the hub does not know",
+                    true,
+                );
+            }
+            if remove && room.observer.component(*component_id).is_none() {
+                return refuse(
+                    room_id,
+                    "an AppDataUpdate removes data the room does not have",
+                    true,
+                );
+            }
+            if app_data.conflicts(*component_id, remove) {
+                return refuse(
+                    room_id,
+                    "an AppDataUpdate conflicts with a pending proposal",
+                    true,
+                );
+            }
+            app_data.record(*component_id, remove);
         }
         let Some(reference) = detail.reference else {
             return refuse(room_id, "a proposal has no ProposalRef", true);
@@ -610,6 +658,7 @@ fn stage_proposals(
                 .cloned()
                 .collect(),
             references,
+            app_data,
         },
     }))
 }
