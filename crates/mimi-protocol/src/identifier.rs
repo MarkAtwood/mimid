@@ -1,4 +1,4 @@
-//! The identifierQuery endpoint (protocol-06 §5.8):
+//! The identifierQuery endpoint (protocol-07 §5.8):
 //! `POST /identifierQuery/{domain}`.
 //!
 //! The request body is an [`IdentifierRequest`]: a list of
@@ -17,7 +17,7 @@ use tls_codec::{Deserialize, Serialize, Size, TlsDeserialize, TlsSerialize, TlsS
 
 use crate::{Error, IdentifierUri, Utf8String};
 
-/// `SearchIdentifierType` (protocol-06 §5.8).
+/// `SearchIdentifierType` (protocol-07 §5.8).
 ///
 /// Decoding rejects `reserved(0)` and the undefined values 9 to 255 with
 /// [`tls_codec::Error::UnknownValue`], because the `select (searchType)`
@@ -48,10 +48,10 @@ pub enum SearchIdentifierType {
 }
 
 /// The `searchType` of a [`QueryElement`] and its `select (searchType)`
-/// arm (protocol-06 §5.8).
+/// arm (protocol-07 §5.8).
 ///
-/// The draft writes `select(type)`; it is read as `select(searchType)`, the
-/// only field before it (decision mimid-1wgh.5.31). Only `oidcStdClaim` and
+/// protocol-07 writes `select(searchType)`, which is how protocol-06's
+/// `select(type)` was read (decision mimid-1wgh.5.31). Only `oidcStdClaim` and
 /// `vcardField` have an arm; the other types carry nothing more.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum QuerySearch {
@@ -129,7 +129,7 @@ impl Serialize for QuerySearch {
 
 impl Deserialize for QuerySearch {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
-        // protocol-06 §5.8; decision mimid-1wgh.5.31
+        // protocol-07 §5.8; decision mimid-1wgh.5.31
         Ok(match SearchIdentifierType::tls_deserialize(bytes)? {
             SearchIdentifierType::Handle => Self::Handle,
             SearchIdentifierType::Nick => Self::Nick,
@@ -147,7 +147,7 @@ impl Deserialize for QuerySearch {
     }
 }
 
-/// `QueryElement` (protocol-06 §5.8): one condition of an
+/// `QueryElement` (protocol-07 §5.8): one condition of an
 /// [`IdentifierRequest`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, TlsSerialize, TlsDeserialize, TlsSize)]
 pub struct QueryElement {
@@ -160,7 +160,7 @@ pub struct QueryElement {
     pub search_value: Vec<u8>,
 }
 
-/// `IdentifierRequest` (protocol-06 §5.8), the body of
+/// `IdentifierRequest` (protocol-07 §5.8), the body of
 /// `POST /identifierQuery/{domain}`.
 ///
 /// Every element must match for a profile to match (AND semantics). An
@@ -176,7 +176,7 @@ pub struct IdentifierRequest {
     pub id_request_extensions: AppDataDictionary,
 }
 
-/// `IdentifierQueryCode` (protocol-06 §5.8).
+/// `IdentifierQueryCode` (protocol-07 §5.8).
 ///
 /// Decoding rejects the undefined values 5 to 255 with
 /// [`tls_codec::Error::UnknownValue`] (decision mimid-1wgh.5.36).
@@ -198,7 +198,7 @@ pub enum IdentifierQueryCode {
     UnsupportedField = 4,
 }
 
-/// `FieldSource` (protocol-06 §5.8): the namespace of a
+/// `FieldSource` (protocol-07 §5.8): the namespace of a
 /// [`ProfileField::field_name`].
 ///
 /// Decoding rejects `reserved(0)` and every undefined value with
@@ -213,19 +213,19 @@ pub enum FieldSource {
     VcardField = 8,
 }
 
-/// `ProfileField` (protocol-06 §5.8): one field of a found profile.
+/// `ProfileField` (protocol-07 §5.8): one field of a found profile.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, TlsSerialize, TlsDeserialize, TlsSize)]
 pub struct ProfileField {
     /// `FieldSource fieldSource`.
     pub field_source: FieldSource,
-    /// `string fieldName`, read as [`Utf8String`] (decision
+    /// `UTF8String fieldName` (a [`Utf8String`], decision
     /// mimid-1wgh.5.20).
     pub field_name: Utf8String,
     /// `opaque fieldValue<V>`: kept as opaque bytes, as written.
     pub field_value: Vec<u8>,
 }
 
-/// `UserProfile` (protocol-06 §5.8): one profile found by a query.
+/// `UserProfile` (protocol-07 §5.8): one profile found by a query.
 ///
 /// Decoding and encoding reject an empty `stable_uri`: it is a required
 /// URI, and empty is not one (decision mimid-1wgh.5.72).
@@ -238,7 +238,7 @@ pub struct UserProfile {
 }
 
 fn check_uri(uri: &IdentifierUri) -> Result<(), String> {
-    // protocol-06 §5.8; decision mimid-1wgh.5.72
+    // protocol-07 §5.8; decision mimid-1wgh.5.72
     if uri.is_empty() {
         Err(Error::EmptyIdentifierQueryUri.to_string())
     } else {
@@ -264,7 +264,7 @@ impl Deserialize for UserProfile {
     }
 }
 
-/// `IdentifierResponse` (protocol-06 §5.8), the response body of
+/// `IdentifierResponse` (protocol-07 §5.8), the response body of
 /// `POST /identifierQuery/{domain}`.
 ///
 /// Decoding and encoding enforce the meaning §5.8 gives each
@@ -290,7 +290,7 @@ impl IdentifierResponse {
     fn check(&self) -> Result<(), String> {
         self.uri.iter().try_for_each(check_uri)?;
         let has_results = !self.uri.is_empty() || !self.found_profiles.is_empty();
-        // protocol-06 §5.8; decision mimid-1wgh.5.71
+        // protocol-07 §5.8; decision mimid-1wgh.5.71
         if has_results == (self.response_code == IdentifierQueryCode::Success) {
             Ok(())
         } else {

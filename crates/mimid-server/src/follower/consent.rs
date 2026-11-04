@@ -1,4 +1,4 @@
-//! Consent (protocol-06 §5.7): the hook consulted before serving key
+//! Consent (protocol-07 §5.7): the hook consulted before serving key
 //! material (§5.2 `noConsent`), and the receiving side of the
 //! requestConsent and updateConsent endpoints.
 //!
@@ -41,7 +41,7 @@ pub fn allows(_request: &KeyMaterialRequestTbs) -> bool {
     true
 }
 
-/// Why a received consent entry breaks protocol-06 §5.7 (decision
+/// Why a received consent entry breaks protocol-07 §5.7 (decision
 /// mimid-1wgh.7.37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -71,7 +71,7 @@ enum Endpoint {
 }
 
 impl Follower {
-    /// protocol-06 §5.7 `POST /requestConsent/{targetDomain}`: checks and
+    /// protocol-07 §5.7 `POST /requestConsent/{targetDomain}`: checks and
     /// stores a `request`, or deletes the matching request for a `cancel`
     /// (a `cancel` with no match is accepted too). `target_domain` is the
     /// path's domain and `from` the sending provider.
@@ -95,7 +95,7 @@ impl Follower {
             .await
     }
 
-    /// protocol-06 §5.7 `POST /updateConsent/{requesterDomain}`: checks and
+    /// protocol-07 §5.7 `POST /updateConsent/{requesterDomain}`: checks and
     /// stores a `grant` or `revoke`, replacing any earlier one for the same
     /// scope. `requester_domain` is the path's domain and `from` the sending
     /// provider.
@@ -129,7 +129,7 @@ impl Follower {
         let entry =
             ConsentEntry::tls_deserialize_exact(body).map_err(FollowerError::InvalidRequest)?;
         let refuse = |violation| Err(FollowerError::ConsentRefused(violation));
-        // protocol-06 §5.7; decision mimid-1wgh.7.37
+        // protocol-07 §5.7; decision mimid-1wgh.7.37
         let allowed = match endpoint {
             Endpoint::RequestConsent => matches!(
                 entry.consent_operation,

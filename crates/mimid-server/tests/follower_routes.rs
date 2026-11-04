@@ -4,7 +4,7 @@
 //! hosted here, reaches the hub (decision mimid-1wgh.7.27).
 //!
 //! The provider hosts no rooms, so the two paths answer a decodable
-//! keyMaterial request differently: the hub with `404` (protocol-06 §5.2
+//! keyMaterial request differently: the hub with `404` (protocol-07 §5.2
 //! step order in `hub/key_material.rs`), the follower stub with `501`.
 
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]

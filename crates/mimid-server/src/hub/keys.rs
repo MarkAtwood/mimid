@@ -1,6 +1,6 @@
 //! The hub's signing key: one Ed25519 key pair that serves as the room's
 //! external sender (`hub_sender`) and as its franking agent (decision
-//! mimid-1wgh.6.18), and the franking HMAC key `hub_key` (protocol-06
+//! mimid-1wgh.6.18), and the franking HMAC key `hub_key` (protocol-07
 //! §5.4.1.2).
 //!
 //! All are generated on first start and stored in the `hub_secret` row.
@@ -56,12 +56,12 @@ impl HubSigningKey {
         &self.public
     }
 
-    /// The franking HMAC key `hub_key` (protocol-06 §5.4.1.2).
+    /// The franking HMAC key `hub_key` (protocol-07 §5.4.1.2).
     pub(crate) fn hub_key(&self) -> &HubKey {
         &self.hub_key
     }
 
-    /// Signs `tbs` with the hub's key as franking agent (protocol-06
+    /// Signs `tbs` with the hub's key as franking agent (protocol-07
     /// §5.4.1.2; decision mimid-1wgh.6.18).
     ///
     /// # Errors
@@ -72,7 +72,7 @@ impl HubSigningKey {
     }
 
     /// Signs a groupInfo response with the hub's key as `hub_sender`
-    /// (protocol-06 §5.6; decision mimid-1wgh.6.18).
+    /// (protocol-07 §5.6; decision mimid-1wgh.6.18).
     ///
     /// # Errors
     ///

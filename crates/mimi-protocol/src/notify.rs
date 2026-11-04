@@ -1,4 +1,4 @@
-//! The notify endpoint (protocol-06 §5.5): `POST /notify/{roomId}`.
+//! The notify endpoint (protocol-07 §5.5): `POST /notify/{roomId}`.
 
 use std::io::{Read, Write};
 
@@ -13,7 +13,7 @@ fn decoding_error(message: &str) -> tls_codec::Error {
 }
 
 /// The `select (message.wire_format)` arms of a [`FanoutMessage`]
-/// (protocol-06 §5.5), each holding the `MLSMessage message` it selects on.
+/// (protocol-07 §5.5), each holding the `MLSMessage message` it selects on.
 ///
 /// The spec's arms name content types, not wire formats. They are mapped
 /// as decision mimid-1wgh.5.24 records: `application` is a PrivateMessage
@@ -30,8 +30,7 @@ pub enum FanoutEvent {
     Application {
         /// A PrivateMessage carrying an application message.
         message: MLSMessage,
-        /// `optional Frank frank`, read as `optional<Frank>` (decision
-        /// mimid-1wgh.5.21).
+        /// `optional<Frank> frank` (decision mimid-1wgh.5.21).
         frank: Option<Frank>,
     },
     /// `case welcome`.
@@ -185,7 +184,7 @@ impl Deserialize for FanoutEvent {
     }
 }
 
-/// `FanoutMessage` (protocol-06 §5.5).
+/// `FanoutMessage` (protocol-07 §5.5).
 ///
 /// The `select (protocol)` has no protocol field on the wire; the protocol
 /// comes from the room, and only `mls10` is defined (decision
@@ -211,7 +210,7 @@ pub struct FanoutMessage {
 
 impl FanoutMessage {
     /// Decodes a `/notify` request body: zero or more concatenated
-    /// FanoutMessages, read until the input runs out (protocol-06 §5.5). An
+    /// FanoutMessages, read until the input runs out (protocol-07 §5.5). An
     /// empty body decodes to no messages (decision mimid-1wgh.5.49).
     ///
     /// # Errors
@@ -221,7 +220,7 @@ impl FanoutMessage {
     pub fn decode_all(body: &[u8]) -> Result<Vec<Self>, tls_codec::Error> {
         let mut rest = body;
         let mut messages = Vec::new();
-        // protocol-06 §5.5; decision mimid-1wgh.5.49 (empty body accepted)
+        // protocol-07 §5.5; decision mimid-1wgh.5.49 (empty body accepted)
         while !rest.is_empty() {
             messages.push(Self::tls_deserialize(&mut rest)?);
         }
@@ -229,7 +228,7 @@ impl FanoutMessage {
     }
 }
 
-/// A `POST /notify/{roomId}` request (protocol-06 §5.5): the room from the
+/// A `POST /notify/{roomId}` request (protocol-07 §5.5): the room from the
 /// path and the FanoutMessages from the body.
 ///
 /// The FanoutMessage body has no room URI, so the receiver takes it from
@@ -253,7 +252,7 @@ impl NotifyRequest {
     /// zero-length room ID means "absent" (decisions mimid-1wgh.5.27 and
     /// mimid-1wgh.5.50), or any error from [`FanoutMessage::decode_all`].
     pub fn decode(room_id: IdentifierUri, body: &[u8]) -> Result<Self, tls_codec::Error> {
-        // protocol-06 §5.5; decision mimid-1wgh.5.50
+        // protocol-07 §5.5; decision mimid-1wgh.5.50
         if room_id.is_empty() {
             return Err(decoding_error("/notify roomId is empty"));
         }

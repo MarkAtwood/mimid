@@ -16,7 +16,7 @@ pub struct OutboxRow {
     /// The destination provider domain.
     pub domain: Domain,
     /// The `/notify` request body: concatenated FanoutMessages
-    /// (protocol-06 §5.5), as enqueued.
+    /// (protocol-07 §5.5), as enqueued.
     pub body: Vec<u8>,
     /// Delivery attempts made so far.
     pub attempts: u64,

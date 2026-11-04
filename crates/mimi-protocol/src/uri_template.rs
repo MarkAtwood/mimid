@@ -1,4 +1,4 @@
-//! RFC 6570 level 1 URI templates, used by the protocol-06 §5.1 directory
+//! RFC 6570 level 1 URI templates, used by the protocol-07 §5.1 directory
 //! (decisions mimid-1wgh.5.18 and mimid-1wgh.5.38).
 
 use std::fmt;
@@ -9,8 +9,8 @@ use crate::Error;
 
 /// The longest template or expanded URL accepted, in bytes.
 ///
-/// INVENTED, NOT FROM SPEC: protocol-06 sets no limit; this is an approved
-/// exception (protocol-06 §5.1; decision mimid-1wgh.5.43). RFC 9110 §4.1
+/// INVENTED, NOT FROM SPEC: protocol-07 sets no limit; this is an approved
+/// exception (protocol-07 §5.1; decision mimid-1wgh.5.43). RFC 9110 §4.1
 /// recommends that senders and recipients support URIs of at least 8000
 /// octets; a longer URL cannot be relied on to work. Applied to directory
 /// templates when they are parsed and to URLs when they are expanded.
@@ -20,7 +20,7 @@ pub const MAX_URL_LEN: usize = 8000;
 /// expansions `{name}`, with no operators, modifiers or variable lists.
 ///
 /// A directory value such as `https://mimi.example.com/v1/notify/{roomId}`
-/// (protocol-06 §5.1) is one of these.
+/// (protocol-07 §5.1) is one of these.
 ///
 /// The text is kept exactly as received, so it serializes back unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

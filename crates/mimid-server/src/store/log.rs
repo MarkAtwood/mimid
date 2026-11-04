@@ -13,11 +13,11 @@ use super::{Store, StoreError, from_sql_int, to_sql_int};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EventKind {
-    /// A Commit (protocol-06 §5.3).
+    /// A Commit (protocol-07 §5.3).
     Commit,
-    /// A proposal (protocol-06 §5.3).
+    /// A proposal (protocol-07 §5.3).
     Proposal,
-    /// An application message (protocol-06 §5.4).
+    /// An application message (protocol-07 §5.4).
     Application,
 }
 
@@ -184,7 +184,7 @@ impl Store {
     }
 
     /// The pending proposals of `epoch` in `room_id`, in hub order, each
-    /// with its `hub_accepted_time` (protocol-06 §5.6 `PendingProposal`).
+    /// with its `hub_accepted_time` (protocol-07 §5.6 `PendingProposal`).
     ///
     /// # Errors
     ///

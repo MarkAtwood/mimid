@@ -4,7 +4,7 @@
 //! Inserting and claiming run in `BEGIN IMMEDIATE` transactions, which take
 //! SQLite's write lock before their first read. A KeyPackage's checks and
 //! its removal therefore happen under one lock, so concurrent claims never
-//! hand out one single-use KeyPackage twice (protocol-06 §5.2).
+//! hand out one single-use KeyPackage twice (protocol-07 §5.2).
 
 use super::{Store, StoreError, from_sql_int, to_sql_int};
 

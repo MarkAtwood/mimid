@@ -1,4 +1,4 @@
-//! Outbound protocol-06 §5.9 reportAbuse from [`PeerClient`].
+//! Outbound protocol-07 §5.9 reportAbuse from [`PeerClient`].
 //!
 //! Oracle: a local HTTP server with a hand-written directory, which records
 //! each request's method, path, `From` header and body and answers a fixed

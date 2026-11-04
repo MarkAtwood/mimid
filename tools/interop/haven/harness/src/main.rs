@@ -1,4 +1,4 @@
-//! mimid -> Haven protocol-06 cross-check (bead mimid-1wgh.46.1.2).
+//! mimid -> Haven protocol-07 cross-check (bead mimid-1wgh.46.1.2).
 //!
 //! Usage: cargo run -- <vectors dir> <mlswg fixture dir>
 //!
@@ -296,7 +296,7 @@ fn main() {
             |v| v.encode().map_err(e),
         ),
     ));
-    // protocol-06 §5.3: GroupInfo carried bare; Haven expects opaque<V>
+    // protocol-07 §5.3: GroupInfo carried bare; Haven expects opaque<V>
     // (known divergence mimid-1wgh.46.1.8).
     results.push((
         "handshake_bundle_commit",
@@ -348,11 +348,11 @@ fn main() {
         ));
     }
 
-    // protocol-06 §5.5 L1934-1949: message, then the wire_format tail.
+    // protocol-07 §5.5 L2046-2061: message, then the wire_format tail.
     for (name, tail) in [
         (
             "fanout_message_application",
-            [PRIVATE_APPLICATION, &[0x00]].concat(), // optional Frank: absent
+            [PRIVATE_APPLICATION, &[0x00]].concat(), // optional<Frank>: absent
         ),
         ("fanout_message_commit", [&commit[..], &[0x00]].concat()), // externalProposals<V>: empty
         ("fanout_message_proposal", [&proposal[..], &[0x00]].concat()), // moreProposals<V>: empty

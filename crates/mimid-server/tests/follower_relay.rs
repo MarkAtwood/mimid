@@ -5,7 +5,7 @@
 //!
 //! - a mock hub (axum, in-process) that records the request bytes and the
 //!   `From`, `Host` and `Content-Type` headers, and answers with responses
-//!   hand-encoded from the protocol-06 structs, which the relay must
+//!   hand-encoded from the protocol-07 structs, which the relay must
 //!   return byte for byte;
 //! - a real hub A, in-process for its own domain's users and over loopback
 //!   HTTP for another provider's: a retry of an accepted request gets the
@@ -127,7 +127,7 @@ fn bob_requests() -> (Vec<u8>, Vec<u8>) {
     (update, message)
 }
 
-/// A KeyMaterialRequest (protocol-06 §5.2) from `requesting_user` with a
+/// A KeyMaterialRequest (protocol-07 §5.2) from `requesting_user` with a
 /// BasicCredential for `credential`, for [`CATHY`] in `room_id`, signed
 /// with a fresh Ed25519 key.
 fn key_material_request(
@@ -163,20 +163,20 @@ fn mock_room() -> IdentifierUri {
     IdentifierUri::new(MOCK_ROOM).unwrap()
 }
 
-/// `UpdateRoomResponse` notAllowed (protocol-06 §5.3), hand-encoded:
+/// `UpdateRoomResponse` notAllowed (protocol-07 §5.3), hand-encoded:
 /// responseCode 2, then an empty errorDescription.
 const UPDATE_NOT_ALLOWED: [u8; 2] = [0x02, 0x00];
-/// `SubmitMessageResponse` epochTooOld (protocol-06 §5.4), hand-encoded:
+/// `SubmitMessageResponse` epochTooOld (protocol-07 §5.4), hand-encoded:
 /// protocol mls10 (1), statusCode 2, currentEpoch 42 as a uint64.
 const SUBMIT_EPOCH_TOO_OLD: [u8; 10] = [0x01, 0x02, 0, 0, 0, 0, 0, 0, 0, 0x2a];
 
-/// `GroupInfoResponse` notAuthorized (protocol-06 §5.6) for [`MOCK_ROOM`],
+/// `GroupInfoResponse` notAuthorized (protocol-07 §5.6) for [`MOCK_ROOM`],
 /// hand-encoded: version mls10, room_id<V>, status 2.
 fn group_info_not_authorized() -> Vec<u8> {
     [&[0x01][..], &opaque(MOCK_ROOM.as_bytes()), &[0x02]].concat()
 }
 
-/// `KeyMaterialResponse` noConsent (protocol-06 §5.2) for [`CATHY`],
+/// `KeyMaterialResponse` noConsent (protocol-07 §5.2) for [`CATHY`],
 /// hand-encoded: protocol mls10 (1), userStatus noConsent (5), userUri,
 /// empty clients.
 fn key_material_no_consent() -> Vec<u8> {
@@ -222,6 +222,41 @@ fn local_user_must_be_of_this_provider() {
         assert!(
             matches!(
                 LocalUser::authenticated(&b, uri),
+                Err(RelayError::NotLocalUser)
+            ),
+            "{uri}"
+        );
+    }
+}
+
+/// protocol-07 §2.1; decision mimid-1wgh.6.76: a local user's URI is
+/// `mimi://<provider>/u/<id>`, so the provider's own URI (the hub's
+/// identity, decision mimid-1wgh.6.35) and room, client and group URIs are
+/// refused.
+#[test]
+fn local_user_uri_must_be_a_user_uri() {
+    let a = domain_of("a.example");
+    assert_eq!(
+        LocalUser::authenticated(&a, "mimi://a.example/u/alice")
+            .unwrap()
+            .as_str(),
+        "mimi://a.example/u/alice"
+    );
+    for uri in [
+        "mimi://a.example",
+        "mimi://a.example/",
+        "mimi://a.example/r/x",
+        "mimi://a.example/d/x",
+        "mimi://a.example/g/x",
+        "mimi://a.example/u",
+        "mimi://a.example/u/",
+        "mimi://a.example/u/alice/extra",
+        "mimi://a.example/u/alice?x",
+        "mimi://a.example/u/alice#x",
+    ] {
+        assert!(
+            matches!(
+                LocalUser::authenticated(&a, uri),
                 Err(RelayError::NotLocalUser)
             ),
             "{uri}"
@@ -294,9 +329,13 @@ async fn remote_requests_and_responses_cross_verbatim() {
         let received = &received[0];
         assert_eq!(received.raw_path, path, "{endpoint:?}: path");
         assert_eq!(received.body, request, "{endpoint:?}: body as given");
-        assert_eq!(received.from, ["mimi@b.example"], "protocol-06 §4.1 From");
-        assert_eq!(received.host, ["c.example"], "protocol-06 §4.1 Host");
-        assert_eq!(received.content_type, ["application/octet-stream"]);
+        assert_eq!(received.from, ["mimi@b.example"], "protocol-07 §4.1 From");
+        assert_eq!(received.host, ["c.example"], "protocol-07 §4.1 Host");
+        assert_eq!(
+            received.content_type,
+            ["application/mimi-protocol"],
+            "protocol-07 §10.6"
+        );
     }
 }
 

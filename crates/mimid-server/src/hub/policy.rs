@@ -5,7 +5,7 @@
 //! of a room and of what a client asks for, never MLS objects: the update
 //! pipeline first lets MLS validity alone decide whether a Commit is
 //! valid, then summarizes it as a [`Commit`] and asks [`authorize_commit`]
-//! (protocol-06 §5.3; decision mimid-1wgh.6.5). A user is the identity of
+//! (protocol-07 §5.3; decision mimid-1wgh.6.5). A user is the identity of
 //! an MLS BasicCredential, which is the user URI shared by all of that
 //! user's clients (decision mimid-1wgh.6.1).
 //!
@@ -36,7 +36,7 @@
 //!   refused: it would let a client become another user.
 //! - A client of a user that is removed or banned may not commit, and may
 //!   propose only Remove or SelfRemove proposals for its own user's
-//!   clients (protocol-06 §5.3).
+//!   clients (protocol-07 §5.3).
 //! - Every client of a user removed or banned in the commit is removed in
 //!   it (room-policy-04 §8.1.2, §8.1.3), and no client of a banned user
 //!   remains.
@@ -85,7 +85,7 @@ pub struct RoomState {
     pub preauth: PreAuthData,
     /// The `base_room_policy` component (room-policy-04 §5).
     pub base: BaseRoomPolicy,
-    /// The `participant_list` component (protocol-06 §7.5).
+    /// The `participant_list` component (protocol-07 §7.5).
     pub participants: ParticipantListData,
     /// The MLS group's members: leaf index to credential identity, the
     /// user URI (decision mimid-1wgh.6.1).
@@ -279,7 +279,7 @@ pub enum Denied {
     #[error("component {0:#06x} is set by the hub")]
     HubComponent(ComponentID),
     /// The user is removed or banned: it may not commit, send messages or
-    /// propose anything but removing its own clients (protocol-06 §5.3).
+    /// propose anything but removing its own clients (protocol-07 §5.3).
     #[error("the user is removed or banned")]
     RemovedOrBanned,
     /// A `roles_list` or `preauth_list` update shares the commit with a
@@ -347,7 +347,7 @@ impl RoomState {
     }
 
     /// Whether a user with `role_index` is removed or banned in the sense
-    /// of protocol-06 §5.3. A member whose user is not listed has been
+    /// of protocol-07 §5.3. A member whose user is not listed has been
     /// removed; a new member that is not listed is simply new.
     fn is_removed_or_banned(&self, role_index: u32, is_member: bool) -> bool {
         self.is_banned(role_index) || (is_member && role_index == NO_ROLE_INDEX)
@@ -485,7 +485,7 @@ fn refuse_kind(kind: &ProposalKind) -> Result<(), Denied> {
         ProposalKind::Update {
             identity_changed: true,
         } => Err(Denied::IdentityChange),
-        // protocol-06 §5.4.1, mls-extensions-10 §4.7; decision mimid-1wgh.6.42
+        // protocol-07 §5.4.1, mls-extensions-10 §4.7; decision mimid-1wgh.6.42
         ProposalKind::AppDataUpdate { component_id, .. } if *component_id == FRANKING_AGENT => {
             Err(Denied::HubComponent(FRANKING_AGENT))
         }
@@ -540,7 +540,7 @@ pub fn authorize_proposal(
     let (actor, is_member) = state.sender(sender)?;
     let role = state.role_of(&actor);
     if state.is_removed_or_banned(role, is_member) {
-        // protocol-06 §5.3: "MUST prevent it from sending any proposals
+        // protocol-07 §5.3: "MUST prevent it from sending any proposals
         // except for Remove and SelfRemove ... for its users"; decision
         // mimid-1wgh.6.39
         return match kind {
@@ -707,12 +707,13 @@ impl Occupancy for After<'_> {
 }
 
 /// Authorizes a staged Commit that MLS has already found valid
-/// (protocol-06 §5.3; decision mimid-1wgh.6.5).
+/// (protocol-07 §5.3; decision mimid-1wgh.6.5).
 ///
 /// See the module documentation for the rules. The proposals are taken in
 /// `commit.proposals` order, which must be the order MLS applies them;
-/// participant list updates are applied in that order (mls-extensions-10
-/// §4.7; decision mimid-1wgh.5.70).
+/// participant list updates are applied in that order, all indexing the
+/// list at the start of the epoch (mls-extensions-10 §4.7; protocol-07
+/// §7.5; decision mimid-1wgh.6.75).
 ///
 /// # Errors
 ///
@@ -730,7 +731,7 @@ pub fn authorize_commit(state: &RoomState, commit: &Commit) -> Result<PolicyOutc
         Committer::External { user } => (user.clone(), None, true),
     };
     let committer_role = state.role_of(&committer);
-    // protocol-06 §5.3: "MUST prevent any of those clients from sending
+    // protocol-07 §5.3: "MUST prevent any of those clients from sending
     // Commit messages"; decision mimid-1wgh.6.38
     if state.is_removed_or_banned(committer_role, !external) {
         return Err(Denied::RemovedOrBanned);
@@ -882,7 +883,7 @@ pub fn authorize_commit(state: &RoomState, commit: &Commit) -> Result<PolicyOutc
             continue;
         }
         if removal.target == removal.proposer {
-            // protocol-06 §5.3 lets a removed or banned user's clients
+            // protocol-07 §5.3 lets a removed or banned user's clients
             // propose their own removal; it was accepted when it arrived
             // (decision mimid-1wgh.6.39).
             if removal.by_reference && removal.proposer_removed_or_banned {
@@ -975,7 +976,7 @@ pub fn authorize_commit(state: &RoomState, commit: &Commit) -> Result<PolicyOutc
 
 /// Authorizes `sending_user` to submit an application message: a listed,
 /// not banned participant whose role holds `canSendMessage`
-/// (room-policy-04 §8.3; protocol-06 §5.3).
+/// (room-policy-04 §8.3; protocol-07 §5.3).
 ///
 /// # Errors
 ///
@@ -997,7 +998,7 @@ pub fn authorize_send(state: &RoomState, sending_user: &[u8]) -> Result<(), Deni
 
 /// Authorizes `requester` to fetch key material through the hub for a
 /// user to add to the room: a listed, not banned participant whose role
-/// holds `canAddParticipant` (protocol-06 §3.3 leaves the check undefined;
+/// holds `canAddParticipant` (protocol-07 §3.3 leaves the check undefined;
 /// decision mimid-1wgh.6.20).
 ///
 /// # Errors

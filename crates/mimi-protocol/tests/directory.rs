@@ -1,7 +1,7 @@
-//! Tests for the protocol-06 §5.1 directory and RFC 6570 level 1 expansion.
+//! Tests for the protocol-07 §5.1 directory and RFC 6570 level 1 expansion.
 //!
 //! The directory oracle is the §5.1 example JSON copied from
-//! draft-ietf-mimi-protocol-06.txt. Expansion oracles are the RFC 6570
+//! draft-ietf-mimi-protocol-07.txt. Expansion oracles are the RFC 6570
 //! §1.2/§3.2.2 examples and cases worked by hand from RFC 6570 §3.2.1 (every
 //! byte outside `ALPHA / DIGIT / "-" / "." / "_" / "~"` becomes `%XX`).
 
@@ -10,24 +10,21 @@ use std::collections::BTreeMap;
 use mimi_protocol::serde_json::{self, Value, json};
 use mimi_protocol::{Directory, Error, MAX_URL_LEN, UriTemplate};
 
-/// draft-ietf-mimi-protocol-06 §5.1 (lines 1025-1043 of the .txt), verbatim
-/// except for the colon missing after `"proxyDownload"`, restored per
-/// decision mimid-1wgh.5.17. The `update{roomId}` typo is kept: it is a
-/// valid template, so it parses as written.
+/// draft-ietf-mimi-protocol-07 §5.1 (lines 1143-1162 of the .txt), verbatim.
 const SPEC_EXAMPLE: &str = r#"
    {
      "keyMaterial":
         "https://mimi.example.com/v1/keyMaterial/{targetUser}",
-     "update": "https://mimi.example.com/v1/update{roomId}",
+     "update": "https://mimi.example.com/v1/update/{roomId}",
      "notify": "https://mimi.example.com/v1/notify/{roomId}",
      "submitMessage":
         "https://mimi.example.com/v1/submitMessage/{roomId}",
      "groupInfo":
         "https://mimi.example.com/v1/groupInfo/{roomId}",
      "requestConsent":
-        "https://mimi.example.com/v1/requestConsent/{targetUser}",
+        "https://mimi.example.com/v1/requestConsent/{targetDomain}",
      "updateConsent":
-        "https://mimi.example.com/v1/updateConsent/{requesterUser}",
+        "https://mimi.example.com/v1/updateConsent/{requesterDomain}",
      "identifierQuery":
         "https://mimi.example.com/v1/identifierQuery/{domain}",
      "reportAbuse":
@@ -46,17 +43,17 @@ fn spec_example_expected() -> Directory {
         key_material: Some(template(
             "https://mimi.example.com/v1/keyMaterial/{targetUser}",
         )),
-        update: Some(template("https://mimi.example.com/v1/update{roomId}")),
+        update: Some(template("https://mimi.example.com/v1/update/{roomId}")),
         notify: Some(template("https://mimi.example.com/v1/notify/{roomId}")),
         submit_message: Some(template(
             "https://mimi.example.com/v1/submitMessage/{roomId}",
         )),
         group_info: Some(template("https://mimi.example.com/v1/groupInfo/{roomId}")),
         request_consent: Some(template(
-            "https://mimi.example.com/v1/requestConsent/{targetUser}",
+            "https://mimi.example.com/v1/requestConsent/{targetDomain}",
         )),
         update_consent: Some(template(
-            "https://mimi.example.com/v1/updateConsent/{requesterUser}",
+            "https://mimi.example.com/v1/updateConsent/{requesterDomain}",
         )),
         identifier_query: Some(template(
             "https://mimi.example.com/v1/identifierQuery/{domain}",
@@ -198,7 +195,7 @@ fn serializing_an_unknown_member_with_a_known_key_fails() {
 
 #[test]
 fn spec_example_expands_mimi_uris() {
-    // The room URI of protocol-06 §3, fully percent-encoded (decision
+    // The room URI of protocol-07 §3, fully percent-encoded (decision
     // mimid-1wgh.5.18): ':' %3A, '/' %2F.
     let directory = spec_example_expected();
     assert_eq!(
@@ -488,7 +485,7 @@ const HAVEN_DIRECTORY: &str = r#"{
 
 #[test]
 fn directory_without_group_info_and_proxy_download_decodes() {
-    // protocol-06 §5.1 does not require every endpoint; an absent key means
+    // protocol-07 §5.1 does not require every endpoint; an absent key means
     // the provider does not offer it. Decision mimid-1wgh.5.75.
     let original: Value = serde_json::from_str(HAVEN_DIRECTORY).expect("fixture is JSON");
     let mut unknown = BTreeMap::new();

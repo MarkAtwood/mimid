@@ -12,7 +12,7 @@ pub struct StoredHubSecret {
     pub signature_private_key: [u8; 32],
     /// The Ed25519 public key.
     pub signature_public_key: [u8; 32],
-    /// The franking HMAC key (protocol-06 §5.4.1.2).
+    /// The franking HMAC key (protocol-07 §5.4.1.2).
     pub hub_key: [u8; 32],
 }
 

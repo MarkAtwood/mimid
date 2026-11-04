@@ -1,5 +1,5 @@
 //! FrankingAgentData, the franking_integrity_signature and the receiver
-//! checks (protocol-06 §5.4.1, §5.4.1.2, §5.4.1.3).
+//! checks (protocol-07 §5.4.1, §5.4.1.2, §5.4.1.3).
 //!
 //! Struct fixtures are hand-encoded from the TLS presentation-language text,
 //! byte by byte. Signatures, server_franks and TBS bytes are copied from
@@ -137,7 +137,7 @@ fn agent() -> FrankingAgentData {
 
 #[test]
 fn franking_agent_component_id_is_0x0021() {
-    // §10.2 franking_signature_key; decision mimid-1wgh.4.18.
+    // §10.2 franking_agent; decision mimid-1wgh.4.18.
     assert_eq!(component_id::FRANKING_AGENT, 0x0021);
 }
 

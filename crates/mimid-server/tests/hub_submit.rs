@@ -1,4 +1,4 @@
-//! protocol-06 §5.4 submitMessage at the hub (bead mimid-1wgh.6.29).
+//! protocol-07 §5.4 submitMessage at the hub (bead mimid-1wgh.6.29).
 //!
 //! The messages come from a mimi-mls Member. Franks are checked with
 //! mimi-protocol's `verify_server_frank` and `Frank::verify_integrity`,
@@ -289,7 +289,7 @@ async fn message_without_frank_aad_is_not_allowed() {
         .submit(&submit_request(&message, ALICE), "a.example")
         .await;
     assert_eq!(result, SubmitResult::NotAllowed);
-    // A frank_aad item of the wrong length (protocol-06 §5.4.1: 32 bytes).
+    // A frank_aad item of the wrong length (protocol-07 §5.4.1: 32 bytes).
     let message = f
         .alice
         .member

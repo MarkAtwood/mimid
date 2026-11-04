@@ -5,10 +5,10 @@
 //! mimid-1wgh.7.32, mimid-1wgh.7.33, mimid-1wgh.7.34).
 //!
 //! A peer's base URL comes from the configured peer map, which replaces DNS
-//! discovery (decision mimid-1wgh.17). Its directory (protocol-06 §5.1) is
+//! discovery (decision mimid-1wgh.17). Its directory (protocol-07 §5.1) is
 //! fetched from `<base>/.well-known/mimi-protocol-directory` on first use
 //! and cached. Every request carries `From: mimi@<own domain>` and
-//! `Host: <peer domain>` (protocol-06 §4.1).
+//! `Host: <peer domain>` (protocol-07 §4.1).
 //!
 //! # Limitations
 //!
@@ -35,7 +35,7 @@ use crate::directory::DIRECTORY_PATH;
 use crate::http::{MAX_BODY_LEN, PROTOCOL_CONTENT_TYPE};
 
 /// The longest directory document accepted, in bytes. INVENTED, NOT FROM
-/// SPEC: protocol-06 §5.1 sets no limit, and a ten-entry document of
+/// SPEC: protocol-07 §5.1 sets no limit, and a ten-entry document of
 /// [`mimi_protocol::MAX_URL_LEN`]-byte templates fits.
 pub const MAX_DIRECTORY_LEN: usize = 128 * 1024;
 
@@ -45,7 +45,7 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long connecting to a peer may take. INVENTED, NOT FROM SPEC.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A protocol-06 §5.1 directory endpoint that [`PeerClient`] posts to.
+/// A protocol-07 §5.1 directory endpoint that [`PeerClient`] posts to.
 #[derive(Debug, Clone, Copy)]
 enum Endpoint {
     /// §5.2 `POST /keyMaterial/{targetUser}`.
@@ -168,7 +168,7 @@ impl PeerClient {
         self.peers.contains_key(domain)
     }
 
-    /// protocol-06 §5.5 `POST /notify/{roomId}`: sends `body`, the
+    /// protocol-07 §5.5 `POST /notify/{roomId}`: sends `body`, the
     /// concatenated FanoutMessages, for the room `room_id` to `domain`.
     /// Only a `201` response counts as accepted; its body is not read.
     ///
@@ -186,13 +186,13 @@ impl PeerClient {
         room_id: &str,
         body: Vec<u8>,
     ) -> Result<(), PeerError> {
-        // protocol-06 §5.5; decision mimid-1wgh.5.15
+        // protocol-07 §5.5; decision mimid-1wgh.5.15
         self.post(domain, Endpoint::Notify, room_id, body, StatusCode::CREATED)
             .await
             .map(drop)
     }
 
-    /// protocol-06 §5.7 `POST /requestConsent/{targetDomain}`: sends `body`,
+    /// protocol-07 §5.7 `POST /requestConsent/{targetDomain}`: sends `body`,
     /// a ConsentEntry carrying `request` or `cancel`, to `domain`, the target
     /// user's provider, with `domain` as the template's value. Only a `201`
     /// response counts as accepted; its body is not read.
@@ -213,7 +213,7 @@ impl PeerClient {
         .map(drop)
     }
 
-    /// protocol-06 §5.7 `POST /updateConsent/{requesterDomain}`: sends
+    /// protocol-07 §5.7 `POST /updateConsent/{requesterDomain}`: sends
     /// `body`, a ConsentEntry carrying `grant` or `revoke`, to `domain`, the
     /// requester's provider, with `domain` as the template's value. Only a
     /// `201` response counts as accepted; its body is not read.
@@ -234,7 +234,7 @@ impl PeerClient {
         .map(drop)
     }
 
-    /// protocol-06 §5.8 `POST /identifierQuery/{domain}`: sends `body`, an
+    /// protocol-07 §5.8 `POST /identifierQuery/{domain}`: sends `body`, an
     /// IdentifierRequest, to `domain`, the target user's provider, with
     /// `domain` as the template's value, and returns the response body (an
     /// IdentifierResponse) as received. Only a `200` response counts, and
@@ -253,7 +253,7 @@ impl PeerClient {
             .await
     }
 
-    /// protocol-06 §5.9 `POST /reportAbuse/{roomId}`: sends `body`, an
+    /// protocol-07 §5.9 `POST /reportAbuse/{roomId}`: sends `body`, an
     /// AbuseReport about the room `room_id`, to `domain`, the room's hub,
     /// and returns the response body as received (empty from a mimid hub,
     /// decision mimid-1wgh.6.65). Only a `200` response counts, and its body
@@ -273,7 +273,7 @@ impl PeerClient {
             .await
     }
 
-    /// protocol-06 §5.2 `POST /keyMaterial/{targetUser}`: sends `body`, a
+    /// protocol-07 §5.2 `POST /keyMaterial/{targetUser}`: sends `body`, a
     /// KeyMaterialRequest for `target_user`, to `domain` and returns the
     /// response body as received. Only a `200` response counts, and its
     /// body may be at most [`MAX_BODY_LEN`] bytes (decision mimid-1wgh.6.67).
@@ -292,7 +292,7 @@ impl PeerClient {
             .await
     }
 
-    /// protocol-06 §5.3 `POST /update/{roomId}`: sends `body`, an
+    /// protocol-07 §5.3 `POST /update/{roomId}`: sends `body`, an
     /// UpdateRequest for the room `room_id`, to `domain`, the room's hub,
     /// and returns the response body as received. Only a `200` response
     /// counts, and its body may be at most [`MAX_BODY_LEN`] bytes.
@@ -316,7 +316,7 @@ impl PeerClient {
             .await
     }
 
-    /// protocol-06 §5.4 `POST /submitMessage/{roomId}`: as
+    /// protocol-07 §5.4 `POST /submitMessage/{roomId}`: as
     /// [`PeerClient::update`], for a SubmitMessageRequest.
     ///
     /// # Errors
@@ -332,7 +332,7 @@ impl PeerClient {
             .await
     }
 
-    /// protocol-06 §5.6 `POST /groupInfo/{roomId}`: as
+    /// protocol-07 §5.6 `POST /groupInfo/{roomId}`: as
     /// [`PeerClient::update`], for a GroupInfoRequest.
     ///
     /// # Errors
@@ -435,7 +435,7 @@ impl PeerClient {
         Ok(directory)
     }
 
-    /// The protocol-06 §4.1 headers for a request to `domain`. `Host`
+    /// The protocol-07 §4.1 headers for a request to `domain`. `Host`
     /// carries no port, which §4.1 says is ignored.
     fn headers(&self, domain: &Domain) -> Result<HeaderMap, PeerError> {
         let mut headers = HeaderMap::new();
@@ -514,7 +514,7 @@ pub enum PeerError {
     /// The directory document exceeds [`MAX_DIRECTORY_LEN`].
     #[error("directory document too large")]
     DirectoryTooLarge,
-    /// The directory document is not a valid protocol-06 §5.1 directory.
+    /// The directory document is not a valid protocol-07 §5.1 directory.
     #[error("invalid directory document")]
     InvalidDirectory(#[source] mimi_protocol::serde_json::Error),
     /// The peer's directory has no URL for the endpoint, so the peer does

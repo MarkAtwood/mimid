@@ -2,7 +2,7 @@
 //! provider's users (plan of mimid-1wgh.7).
 //!
 //! The follower receives `/notify` fanout for followed rooms, serves its
-//! users' KeyPackages through keyMaterial (protocol-06 §5.2), and relays its
+//! users' KeyPackages through keyMaterial (protocol-07 §5.2), and relays its
 //! users' requests to each room's hub, which is the room URI's authority
 //! (decision mimid-1wgh.7.5). It validates decoding and envelope
 //! consistency only; it runs no MLS Observer (decision mimid-1wgh.7.2).
@@ -24,7 +24,7 @@
 //! ([`Follower::set_relay`]). A relayed update the hub accepts makes the
 //! user a member of the room, and [`Follower::leave`] ends a membership
 //! (decision mimid-1wgh.7.7). The hub need not echo a user's own message
-//! (protocol-06 §5.5), so when it accepts a relayed SubmitMessage or update
+//! (protocol-07 §5.5), so when it accepts a relayed SubmitMessage or update
 //! the follower stores the FanoutMessage the hub would have sent: the
 //! response's `accepted_timestamp`, the request's message, and the
 //! response's `frank` or the request's `moreProposals` (decision
@@ -424,7 +424,7 @@ impl Follower {
             .send((room_id.to_owned(), user.as_str().to_owned()));
     }
 
-    /// Handles protocol-06 §5.2 `POST /keyMaterial/{targetUser}` for a user
+    /// Handles protocol-07 §5.2 `POST /keyMaterial/{targetUser}` for a user
     /// of this provider: `request` is the body and `from` the domain of the
     /// request's `From` header. Returns the TLS-encoded
     /// `KeyMaterialResponse` ([`KeyPackages::serve_key_material`]).
@@ -498,7 +498,7 @@ pub enum FollowerError {
     /// Relaying a user's request failed.
     #[error("relay failed")]
     Relay(#[source] RelayError),
-    /// A consent entry breaks protocol-06 §5.7 (decision mimid-1wgh.7.37).
+    /// A consent entry breaks protocol-07 §5.7 (decision mimid-1wgh.7.37).
     #[error("consent entry refused")]
     ConsentRefused(#[source] consent::ConsentViolation),
     /// The local user a consent entry names has no client here (decision

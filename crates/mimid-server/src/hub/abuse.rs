@@ -1,4 +1,4 @@
-//! protocol-06 §5.9 `POST /reportAbuse/{roomId}`: validate the franks of
+//! protocol-07 §5.9 `POST /reportAbuse/{roomId}`: validate the franks of
 //! the reported messages and log the outcome. No action is taken on a
 //! report (decision mimid-1wgh.21).
 //!
@@ -90,7 +90,7 @@ pub(super) async fn report_abuse(
     Ok(Vec::new())
 }
 
-/// Validates one reported message's frank (protocol-06 §5.9), or says why
+/// Validates one reported message's frank (protocol-07 §5.9), or says why
 /// it does not verify.
 fn verify(
     hub: &Hub,

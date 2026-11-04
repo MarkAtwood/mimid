@@ -5,7 +5,7 @@
 //! the agent would: they reach the server only through each provider's
 //! in-process follower API (relay, KeyPackage upload, events).
 //!
-//! The scenario follows protocol-06 §3:
+//! The scenario follows protocol-07 §3:
 //!
 //! 1. alice@a creates the room (§3.1).
 //! 2. alice fetches bob@b's KeyPackage (a's hub asks b) and adds him; the
@@ -235,7 +235,7 @@ fn add_participant(user: &[u8]) -> AppDataUpdate {
 type Applied = Result<Option<Vec<u8>>, ErrorSource>;
 
 /// An `apply` function whose participant list update gives `users`,
-/// written out by hand: protocol-06 §7.5 appends added participants.
+/// written out by hand: protocol-07 §7.5 appends added participants.
 fn list_becomes(
     users: &'static [&'static [u8]],
 ) -> impl FnMut(u16, Option<&[u8]>, ComponentOp<'_>) -> Applied {
@@ -384,7 +384,7 @@ async fn submit(provider: &Provider, user: &[u8], message: &[u8]) {
 }
 
 /// `identity` encrypts `data` with a `frank_aad` item over it
-/// (protocol-06 §5.4.1.1).
+/// (protocol-07 §5.4.1.1).
 fn franked(identity: &Identity, member: &mut Member, data: &[u8], salt: &[u8; 16]) -> Vec<u8> {
     let tag = franking_tag(salt, data);
     member

@@ -9,7 +9,7 @@ ordinary offline test: crates/mimi-protocol/tests/haven_fixtures.rs.
 Layout
   harness/      standalone crate (own [workspace]): Haven's mimi-core, pinned
                 to a Haven commit in Cargo.toml, decodes mimid-encoded
-                protocol-06 messages, compares fields, re-encodes, and checks
+                protocol-07 messages, compares fields, re-encodes, and checks
                 byte identity. Extra modes: make-kp, make-kp-default (Haven
                 mints KeyPackages), decode-commit (Haven decodes a Commit).
   mimid-dump/   zz_dump_for_haven.rs, a mimi-protocol test that writes the

@@ -1,12 +1,13 @@
 //! Tests for the hub-tracked component apply logic (`hub::components`).
 //!
-//! Oracle: the expected lists are worked by hand from decision
-//! mimid-1wgh.5.70 (indices refer to the list before the update; role
-//! changes, then removals without shifting, then appended additions; any
-//! bad index or resulting duplicate rejects the whole update) and
-//! protocol-06 §7.5 (a commit operates on each user at most once). The
+//! Oracle: the expected lists are worked by hand from protocol-07 §7.5 and
+//! decision mimid-1wgh.6.75 (every update's indices refer to the list at
+//! the start of the epoch; role changes in place, removals without
+//! shifting, additions appended; any bad index or resulting duplicate
+//! rejects the whole update; a commit operates on each user at most
+//! once). The
 //! byte fixtures are hand-encoded from the TLS presentation language of
-//! protocol-06 §7.5 and room-policy-04 §3-§5, with MLS variable-length
+//! protocol-07 §7.5 and room-policy-04 §3-§5, with MLS variable-length
 //! vector lengths (RFC 9420 §2.1.2), commented byte by byte.
 
 use mimi_protocol::component_id::{PARTICIPANT_LIST, ROOM_METADATA};
@@ -173,23 +174,92 @@ fn rejected_update_leaves_list_and_users_untouched() {
 }
 
 #[test]
-fn later_update_uses_list_after_earlier_update() {
+fn later_update_indices_refer_to_epoch_start() {
     let mut commit = ParticipantListCommit::new(before());
     assert_eq!(
         commit.apply(&update(&[], &[0], &[])),
         Ok(vec![change("alice", 2, 0)])
     );
-    // Index 0 is now bob.
+    // protocol-07 §7.5: index 0 is still alice, already operated on.
     assert_eq!(
         commit.apply(&update(&[(0, 3)], &[], &[])),
-        Ok(vec![change("bob", 2, 3)])
+        Err(ComponentError::UserChangedTwice)
     );
-    assert_eq!(commit.into_list(), list(&[("bob", 3), ("carol", 3)]));
+    assert_eq!(commit.into_list(), list(&[("bob", 2), ("carol", 3)]));
+}
+
+#[test]
+fn updates_in_one_commit_share_epoch_start_indices() {
+    // protocol-07 §7.5: "All indices ... refer to the participants vector
+    // at the end of the epoch in which the proposal is sent ... This holds
+    // even when a commit contains more than one ParticipantListUpdate.
+    // Removing one entry does not shift the indices of the other removals."
+    // Every row starts from before(): alice 0, bob 1, carol 2.
+    type Expected = Result<(ParticipantListData, Vec<ParticipantChange>), ComponentError>;
+    let rows: Vec<(&str, [ParticipantListUpdate; 2], Expected)> = vec![
+        (
+            "a role change after a removal names the epoch-start user",
+            [update(&[], &[0], &[]), update(&[(1, 3)], &[], &[])],
+            Ok((list(&[("bob", 3), ("carol", 3)]), vec![change("bob", 2, 3)])),
+        ),
+        (
+            "a removal after a removal does not shift",
+            [update(&[], &[0], &[]), update(&[], &[1], &[])],
+            Ok((list(&[("carol", 3)]), vec![change("bob", 2, 0)])),
+        ),
+        (
+            "the last epoch-start index stays in range after a removal",
+            [update(&[], &[0], &[]), update(&[], &[2], &[])],
+            Ok((list(&[("bob", 2)]), vec![change("carol", 3, 0)])),
+        ),
+        (
+            "an earlier update's addition has no index",
+            [
+                update(&[], &[], &[("dave", 2)]),
+                update(&[(3, 3)], &[], &[]),
+            ],
+            Err(ComponentError::IndexOutOfRange { index: 3, len: 3 }),
+        ),
+        (
+            "the same index removed by two updates is the same user",
+            [update(&[], &[0], &[]), update(&[], &[0], &[])],
+            Err(ComponentError::UserChangedTwice),
+        ),
+        (
+            "re-adding a user an earlier update removed",
+            [update(&[], &[0], &[]), update(&[], &[], &[("alice", 3)])],
+            Err(ComponentError::UserChangedTwice),
+        ),
+        (
+            "adding a user an earlier update added",
+            [
+                update(&[], &[], &[("dave", 2)]),
+                update(&[], &[], &[("dave", 3)]),
+            ],
+            Err(ComponentError::UserChangedTwice),
+        ),
+    ];
+    for (why, [first, second], expected) in rows {
+        let mut commit = ParticipantListCommit::new(before());
+        assert!(commit.apply(&first).is_ok(), "{why}: first update");
+        let after_first = commit.list().clone();
+        let result = commit.apply(&second);
+        match expected {
+            Ok((expected_list, expected_changes)) => {
+                assert_eq!(result, Ok(expected_changes), "{why}");
+                assert_eq!(commit.list(), &expected_list, "{why}");
+            }
+            Err(expected) => {
+                assert_eq!(result, Err(expected), "{why}");
+                assert_eq!(commit.list(), &after_first, "{why}: nothing applied");
+            }
+        }
+    }
 }
 
 #[test]
 fn commit_operates_on_each_user_once() {
-    // protocol-06 §7.5: "not valid if it contain any combination of
+    // protocol-07 §7.5: "not valid if it contain any combination of
     // Participant list updates that operate on ... the same user ... more
     // than once"
     let mut commit = ParticipantListCommit::new(before());
@@ -248,6 +318,19 @@ const UPDATE_REMOVE_0: &[u8] = &[
     0x04, // removedIndices<V>: 4 bytes
     0x00, 0x00, 0x00, 0x00, // index 0
     0x00, // addedParticipants<V>: empty
+];
+
+/// ParticipantListUpdate: remove index 1 only.
+const UPDATE_REMOVE_1: &[u8] = &[
+    0x00, // changedRoleParticipants<V>: empty
+    0x04, // removedIndices<V>: 4 bytes
+    0x00, 0x00, 0x00, 0x01, // index 1
+    0x00, // addedParticipants<V>: empty
+];
+
+/// ParticipantListData with no participants.
+const LIST_EMPTY: &[u8] = &[
+    0x00, // participants<V>: empty
 ];
 
 /// ParticipantListData [("b", 2)].
@@ -319,6 +402,16 @@ fn participant_list_bytes_round_trip() {
     assert_eq!(
         apply_updates(PARTICIPANT_LIST, Some(LIST_A3_B2), &[UPDATE_REMOVE_0]),
         Ok(LIST_B2.to_vec())
+    );
+    // protocol-07 §7.5: both indices refer to the epoch-start list, so
+    // the second update removes "b", not an index past the end.
+    assert_eq!(
+        apply_updates(
+            PARTICIPANT_LIST,
+            Some(LIST_A3_B2),
+            &[UPDATE_REMOVE_0, UPDATE_REMOVE_1]
+        ),
+        Ok(LIST_EMPTY.to_vec())
     );
     // An absent list is empty; index 0 is then out of range.
     assert_eq!(

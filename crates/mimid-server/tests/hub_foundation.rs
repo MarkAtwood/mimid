@@ -328,7 +328,7 @@ async fn create_room_rejects_wrong_external_senders() {
         .await;
         assert!(matches!(err, HubError::WrongExternalSenders), "{err:?}");
     }
-    // The hub's key plus a follower's (protocol-06 §7.4 MAY; decision
+    // The hub's key plus a follower's (protocol-07 §7.4 MAY; decision
     // mimid-1wgh.4.21 allows only the hub in v1).
     let err = rejected(
         |hub| GroupSpec {
@@ -391,7 +391,7 @@ async fn create_room_rejects_missing_or_wrong_franking_agent() {
 async fn create_room_requires_frank_aad_in_safe_aad() {
     // The hub refuses every message without a frank_aad item, so a room must
     // require frank_aad (0x0020) as a Safe AAD component: rohanmahy on
-    // mimi-protocol#166; protocol-06 §5.4.1; bead mimid-1wgh.6.74.
+    // mimi-protocol#166; protocol-07 §5.4.1; bead mimid-1wgh.6.74.
     for (case, safe_aad) in [
         ("no safe_aad component", None),
         // ComponentsList with an empty component_ids<V>.

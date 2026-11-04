@@ -1,7 +1,7 @@
 //! Fixture and hostile-input tests for the submitMessage endpoint bodies
-//! (protocol-06 §5.4).
+//! (protocol-07 §5.4).
 //!
-//! The protocol-06 framing is hand-encoded from the TLS
+//! The protocol-07 framing is hand-encoded from the TLS
 //! presentation-language text, byte by byte, with RFC 9420 §2.1.2
 //! variable-length prefixes written out. The application PrivateMessage is
 //! hand-encoded from RFC 9420 §6.3 (the same bytes as

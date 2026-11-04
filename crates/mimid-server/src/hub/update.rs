@@ -1,4 +1,4 @@
-//! protocol-06 §5.3 `POST /update/{roomId}`: accept a Commit or proposals,
+//! protocol-07 §5.3 `POST /update/{roomId}`: accept a Commit or proposals,
 //! log them in hub order and enqueue their fanout.
 //!
 //! The steps, under the hub's writer lock (decision mimid-1wgh.6.7):
@@ -52,7 +52,7 @@
 //!    ([`policy::authorize_proposal`]).
 //! 7. An AppDataUpdate must keep the epoch's pending proposals valid under
 //!    mls-extensions-10 §4.7, since they all go into the next Commit
-//!    (protocol-06 §3.5) and a committer refuses to commit an invalid one
+//!    (protocol-07 §3.5) and a committer refuses to commit an invalid one
 //!    (decision mimid-1wgh.4.65): its component must be one the hub's
 //!    AppDataUpdate logic knows ([`components::is_known_component`]), a
 //!    remove needs data present, and no component may get two removes, or
@@ -61,7 +61,7 @@
 //! 8. In one transaction the request is logged, every proposal is stored
 //!    as pending with its `hub_accepted_time`, and one FanoutMessage
 //!    carrying them all, as received, is enqueued for the member domains
-//!    and the origin (protocol-06 §5.5).
+//!    and the origin (protocol-07 §5.5).
 //!
 //! A refusal after a proposal was stored rebuilds the room from its stored
 //! state. Every refusal is `notAllowed` with an `errorDescription`
@@ -631,7 +631,7 @@ fn stage_proposals(
     }
 
     let accepted_at = hub.clock.now_ms();
-    // protocol-06 §5.5: the proposals are forwarded as received.
+    // protocol-07 §5.5: the proposals are forwarded as received.
     let body = FanoutMessage {
         timestamp: accepted_at,
         event: FanoutEvent::Proposal {

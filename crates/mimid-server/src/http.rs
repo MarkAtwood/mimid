@@ -1,4 +1,4 @@
-//! HTTP framing for the protocol-06 endpoints: routes, body size cap, path
+//! HTTP framing for the protocol-07 endpoints: routes, body size cap, path
 //! decoding and status mapping (decision mimid-1wgh.6.8).
 //!
 //! Routes follow the directory's layout ([`directory::directory`]): `/v1/<endpoint>/
@@ -14,9 +14,9 @@
 //! proxies it (plan of mimid-1wgh.7).
 //!
 //! Status mapping (decision mimid-1wgh.6.8): a protocol result is `200` with
-//! an `application/octet-stream` body; an undecodable request, including a
-//! missing or malformed `From` header, is `400`; a room not hosted here is
-//! `404`; a body over [`MAX_BODY_LEN`] is `413`. An endpoint not
+//! an `application/mimi-protocol` body (protocol-07 §10.6); an undecodable
+//! request, including a missing or malformed `From` header, is `400`; a
+//! room not hosted here is `404`; a body over [`MAX_BODY_LEN`] is `413`. An endpoint not
 //! implemented yet answers `501`. An abuse report whose franks do not
 //! verify is `422` (decision mimid-1wgh.6.65), and a keyMaterial request
 //! the target provider fails is `502` (decision mimid-1wgh.6.64). An
@@ -33,7 +33,7 @@
 //!
 //! # Limitations
 //!
-//! - The `Host` header is not checked (protocol-06 §4.1).
+//! - The `Host` header is not checked (protocol-07 §4.1).
 //! - keyMaterial for users of this provider answers `501` if the follower
 //!   was not given its KeyPackages ([`Follower::with_key_packages`]).
 //! - The proxyDownload endpoint is not implemented, so the directory does
@@ -60,11 +60,11 @@ use crate::hub::{Hub, HubError, identity_domain};
 /// (decision mimid-1wgh.6.8).
 pub const MAX_BODY_LEN: usize = 4 * 1024 * 1024;
 
-/// The media type of protocol-06 bodies. No media type is registered for
-/// them (decision mimid-1wgh.5.33).
-pub const PROTOCOL_CONTENT_TYPE: &str = "application/octet-stream";
+/// The media type of request and response bodies (protocol-07 §4 and
+/// §10.6). The directory document is `application/json` instead.
+pub const PROTOCOL_CONTENT_TYPE: &str = "application/mimi-protocol";
 
-/// protocol-06 §4.1: the local-part of the source provider's `From`
+/// protocol-07 §4.1: the local-part of the source provider's `From`
 /// address.
 const FROM_PREFIX: &str = "mimi@";
 
@@ -203,7 +203,7 @@ async fn notify(
     }
 }
 
-/// protocol-06 §5.7 requestConsent: `201` with no body when accepted, `404`
+/// protocol-07 §5.7 requestConsent: `201` with no body when accepted, `404`
 /// for an unknown target user (decision mimid-1wgh.7.36), and `400` for an
 /// undecodable entry or one §5.7 does not allow (decision mimid-1wgh.7.37).
 async fn request_consent(
@@ -236,7 +236,7 @@ fn consent_response(result: Result<Response, FollowerError>) -> Response {
     }
 }
 
-/// protocol-06 §5.7 updateConsent: as [`request_consent`], with the
+/// protocol-07 §5.7 updateConsent: as [`request_consent`], with the
 /// requester as the local user.
 async fn update_consent(
     State(follower): State<Arc<Follower>>,
@@ -255,7 +255,7 @@ async fn update_consent(
     }
 }
 
-/// protocol-06 §5.8 identifierQuery: `200` with an IdentifierResponse body
+/// protocol-07 §5.8 identifierQuery: `200` with an IdentifierResponse body
 /// for every decodable request, `400` otherwise (decision mimid-1wgh.7.40).
 /// The `From` header must be well-formed but any provider may query.
 async fn identifier_query(
@@ -276,7 +276,7 @@ async fn identifier_query(
 }
 
 /// Parses the source provider's domain from the request's single `From`
-/// header, which protocol-06 §4.1 fixes as `mimi@<domain>`. It is used only
+/// header, which protocol-07 §4.1 fixes as `mimi@<domain>`. It is used only
 /// for consistency checks, never to authorize (decision mimid-1wgh.6.9).
 /// Returns `None` if the header is missing, repeated or malformed.
 fn source_domain(headers: &HeaderMap) -> Option<Domain> {
@@ -292,7 +292,7 @@ fn bad_from() -> Response {
     (StatusCode::BAD_REQUEST, "missing or malformed From header").into_response()
 }
 
-/// A protocol result: `200` with an `application/octet-stream` body.
+/// A protocol result: `200` with an `application/mimi-protocol` body.
 fn protocol_body(body: Vec<u8>) -> Response {
     (
         StatusCode::OK,
@@ -393,12 +393,13 @@ mod tests {
     }
 
     #[test]
-    fn protocol_result_is_200_octet_stream() {
+    fn protocol_result_is_200_mimi_protocol() {
         let response = respond(Ok(vec![1, 2, 3]));
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(header::CONTENT_TYPE).unwrap(),
-            "application/octet-stream"
+            "application/mimi-protocol",
+            "protocol-07 §10.6"
         );
     }
 

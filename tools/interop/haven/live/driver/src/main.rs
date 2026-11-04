@@ -159,7 +159,7 @@ async fn main() {
     }
 
     // 4. update: a mimid Commit with one AppDataUpdate (participant_list,
-    // 0x0022) adding carol, in a protocol-06 UpdateRequest.
+    // 0x0022) adding carol, in a protocol-07 UpdateRequest.
     let alice = Identity::generate(ALICE.as_bytes(), Store::open_in_memory().unwrap()).unwrap();
     let list = |users: &[&str]| {
         ParticipantListData {

@@ -8,7 +8,7 @@ mimid targets the latest revision of each draft. Where the drafts are ambiguous,
 
 | Draft | Target | Notes |
 |---|---|---|
-| draft-ietf-mimi-protocol | -06 | |
+| draft-ietf-mimi-protocol | -07 | catching up from -06 |
 | draft-ietf-mimi-content | -10 | |
 | draft-ietf-mimi-room-policy | -04 | |
 | draft-ietf-mimi-arch | -03 | |
@@ -19,7 +19,7 @@ mimid targets the latest revision of each draft. Where the drafts are ambiguous,
 
 These are deliberate in the current version:
 
-- **No authentication between providers.** protocol-06 requires mutually authenticated TLS between providers; mimid doesn't implement it and doesn't claim conformance to it.
+- **No authentication between providers.** protocol-07 requires mutually authenticated TLS between providers; mimid doesn't implement it and doesn't claim conformance to it.
 - **BasicCredential only.** Combined with the point above, mimid offers no protection against a malicious or impersonated provider.
 - **Peers come from configuration**, not DNS discovery.
 
@@ -32,7 +32,7 @@ Each crate documents its own limitations in the `# Limitations` section of its r
 | `mimi-mls` | All OpenMLS usage, MLS wire newtypes, label helpers |
 | `mimi-content` | mimi-content CBOR message format and MessageId |
 | `mimi-room-policy` | room-policy codecs and policy evaluation |
-| `mimi-protocol` | protocol-06 wire types and franking |
+| `mimi-protocol` | protocol wire types and franking |
 | `mimid-server` | The `mimid` provider server: hub and follower roles, and a JMAP Chat endpoint (partial) |
 
 The four `mimi-*` crates are synchronous and do no I/O. Planned but not yet written: an admin CLI, and a client-side agent that bridges standard JMAP Chat clients to MIMI. mimid ships no UI of its own.

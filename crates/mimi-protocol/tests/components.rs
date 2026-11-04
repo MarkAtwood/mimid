@@ -2,7 +2,7 @@
 //! room_metadata components.
 //!
 //! Every fixture is hand-encoded from the TLS presentation-language text in
-//! draft-ietf-mimi-protocol-06 §5.4.1, §7.5 and §7.6, with RFC 9420 §2.1.2
+//! draft-ietf-mimi-protocol-07 §5.4.1, §7.5 and §7.6, with RFC 9420 §2.1.2
 //! variable-length prefixes written out byte by byte. None is produced by
 //! this crate's encoder. Component IDs come from §10.
 

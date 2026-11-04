@@ -1,4 +1,4 @@
-//! protocol-06 §5.6 `POST /groupInfo/{roomId}`: give a client what it needs
+//! protocol-07 §5.6 `POST /groupInfo/{roomId}`: give a client what it needs
 //! to join a room's group by external Commit.
 //!
 //! The steps, under the hub's writer lock (decision mimid-1wgh.6.7), which
@@ -70,7 +70,7 @@ pub(super) async fn group_info(
     request: &[u8],
 ) -> Result<Vec<u8>, HubError> {
     let rooms = hub.rooms.lock().await;
-    // protocol-06 §5.6; decision mimid-1wgh.6.60: 404, not a noSuchRoom body.
+    // protocol-07 §5.6; decision mimid-1wgh.6.60: 404, not a noSuchRoom body.
     if !rooms.contains_key(room_id) {
         return Err(HubError::NoSuchRoom);
     }
@@ -102,7 +102,7 @@ pub(super) async fn group_info(
     let pending_count = pending.len();
     let tbe = payload(&snapshot, pending)?;
     let tbs = decoded.tbs();
-    // protocol-06 §5.6; decisions mimid-1wgh.5.30 (room_id context),
+    // protocol-07 §5.6; decisions mimid-1wgh.5.30 (room_id context),
     // mimid-1wgh.5.55 (suite-1 HPKE).
     let encrypted = match encrypt_group_info(&tbs.group_info_public_key, room_id.as_bytes(), &tbe) {
         Ok(encrypted) => encrypted,
@@ -111,7 +111,7 @@ pub(super) async fn group_info(
     };
     let (key, credential) = hub_sender(hub.signing_key.public(), &hub.domain)?;
     let response_tbs = GroupInfoResponseTbs {
-        version: Protocol::Mls10,
+        protocol: Protocol::Mls10,
         room_id: room_id.as_bytes().to_vec(),
         cipher_suite: tbs.cipher_suite,
         hub_sender: ExternalSender::tls_deserialize_exact([key, credential].concat())
@@ -198,11 +198,11 @@ fn payload(
 }
 
 /// Logs why a request is refused and answers `notAuthorized`
-/// (protocol-06 §5.6; decision mimid-1wgh.6.59).
+/// (protocol-07 §5.6; decision mimid-1wgh.6.59).
 fn refuse(room_id: &str, reason: &str) -> Result<Vec<u8>, HubError> {
     tracing::debug!(room_id, reason, "groupInfo refused");
     GroupInfoResponse::NotAuthorized {
-        version: Protocol::Mls10,
+        protocol: Protocol::Mls10,
         room_id: room_id.as_bytes().to_vec(),
     }
     .tls_serialize_detached()

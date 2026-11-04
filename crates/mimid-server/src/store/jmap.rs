@@ -17,7 +17,7 @@ use sqlx::SqliteConnection;
 
 use super::{Store, StoreError, from_sql_int, to_sql_int};
 use crate::config::Domain;
-use crate::hub::identity_domain;
+use crate::hub::user_uri_domain;
 
 /// The length of a bearer token, in bytes, before base64url encoding.
 pub const TOKEN_LEN: usize = 32;
@@ -122,12 +122,13 @@ impl Store {
     /// its id, a ULID made at `now_ms`.
     ///
     /// `user_uri` must name a user of `provider` by the rule
-    /// `LocalUser::authenticated` applies (protocol-06 §3).
+    /// `LocalUser::authenticated` applies: `mimi://<provider>/u/<id>`
+    /// (protocol-07 §2.1; decision mimid-1wgh.6.76).
     ///
     /// # Errors
     ///
-    /// Returns [`JmapStoreError::NotLocalUser`] for a URI outside
-    /// `provider`, [`JmapStoreError::AccountExists`] if the user has an
+    /// Returns [`JmapStoreError::NotLocalUser`] for a URI that is not a
+    /// user URI of `provider`, [`JmapStoreError::AccountExists`] if the user has an
     /// account, [`JmapStoreError::Random`] if the CSPRNG fails, and
     /// [`JmapStoreError::Store`] if `now_ms` is past the ULID range or a
     /// query fails.
@@ -137,7 +138,7 @@ impl Store {
         user_uri: &str,
         now_ms: u64,
     ) -> Result<String, JmapStoreError> {
-        if identity_domain(user_uri.as_bytes()).as_ref() != Some(provider) {
+        if user_uri_domain(user_uri).as_ref() != Some(provider) {
             return Err(JmapStoreError::NotLocalUser);
         }
         let random = mimi_mls::label::random_array::<10>().map_err(|_| JmapStoreError::Random)?;
@@ -788,6 +789,46 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 0);
+        store.close().await;
+    }
+
+    /// protocol-07 §2.1; decision mimid-1wgh.6.76.
+    #[tokio::test]
+    async fn create_account_refuses_non_user_uris() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir).await;
+        let provider = domain("a.example");
+        for uri in [
+            "mimi://a.example",
+            "mimi://a.example/",
+            "mimi://a.example/r/x",
+            "mimi://a.example/d/x",
+            "mimi://a.example/g/x",
+            "mimi://a.example/u",
+            "mimi://a.example/u/",
+            "mimi://a.example/u/alice/extra",
+            "mimi://a.example/u/alice?x",
+            "mimi://a.example/u/alice#x",
+        ] {
+            assert!(
+                matches!(
+                    store.create_account(&provider, uri, 1).await,
+                    Err(JmapStoreError::NotLocalUser)
+                ),
+                "{uri}"
+            );
+        }
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM jmap_account")
+            .fetch_one(&store.reader)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(
+            store
+                .create_account(&provider, "mimi://a.example/u/alice", 1)
+                .await
+                .is_ok()
+        );
         store.close().await;
     }
 

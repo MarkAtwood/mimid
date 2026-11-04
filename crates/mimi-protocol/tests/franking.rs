@@ -1,4 +1,4 @@
-//! franking_tag and server_frank (protocol-06 §5.4.1.1, §5.4.1.2).
+//! franking_tag and server_frank (protocol-07 §5.4.1.1, §5.4.1.2).
 //!
 //! Every expected value is copied from `fixtures/franking/franking_gen.out`,
 //! the committed output of `fixtures/franking/franking_gen.py`: an

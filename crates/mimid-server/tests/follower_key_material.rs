@@ -1,4 +1,4 @@
-//! KeyPackage upload and the target-provider side of protocol-06 §5.2
+//! KeyPackage upload and the target-provider side of protocol-07 §5.2
 //! keyMaterial (bead mimid-1wgh.7.22), and the hub serving users of its own
 //! provider in-process (decision mimid-1wgh.7.11).
 //!
@@ -65,7 +65,7 @@ fn hub_domain() -> Domain {
     domain("a.example")
 }
 
-/// The hand-encoded `noConsent` response for `user` (protocol-06 §5.2):
+/// The hand-encoded `noConsent` response for `user` (protocol-07 §5.2):
 /// protocol mls10 (1), userStatus noConsent (5), userUri, empty clients.
 fn no_consent(user: &str) -> Vec<u8> {
     [&[0x01, 0x05][..], &opaque(user.as_bytes()), &[0x00]].concat()

@@ -1,4 +1,4 @@
-//! The groupInfo endpoint (protocol-06 §5.6): `POST /groupInfo/{roomId}`.
+//! The groupInfo endpoint (protocol-07 §5.6): `POST /groupInfo/{roomId}`.
 //!
 //! The requester signs a [`GroupInfoRequestTbs`] with
 //! [`GroupInfoRequestTbs::sign`]; the hub checks it with
@@ -26,11 +26,11 @@ use tls_codec::{
 use crate::update::check_proposals;
 use crate::{Error, Protocol};
 
-/// SignWithLabel label for [`GroupInfoRequestTbs`] (protocol-06 §5.6).
+/// SignWithLabel label for [`GroupInfoRequestTbs`] (protocol-07 §5.6).
 const REQUEST_TBS_LABEL: &str = "GroupInfoRequestTBS";
-/// SignWithLabel label for [`GroupInfoResponseTbs`] (protocol-06 §5.6).
+/// SignWithLabel label for [`GroupInfoResponseTbs`] (protocol-07 §5.6).
 const RESPONSE_TBS_LABEL: &str = "GroupInfoResponseTBS";
-/// EncryptWithLabel label for [`GroupInfoRatchetTreeTbe`] (protocol-06
+/// EncryptWithLabel label for [`GroupInfoRatchetTreeTbe`] (protocol-07
 /// §5.6).
 const ENCRYPTION_LABEL: &str = "GroupInfo and ratchet_tree encryption";
 
@@ -86,7 +86,7 @@ struct HpkeCiphertextFields {
     ciphertext: VLBytes,
 }
 
-/// `GroupInfoRequestTBS` (protocol-06 §5.6), the part of a
+/// `GroupInfoRequestTBS` (protocol-07 §5.6), the part of a
 /// [`GroupInfoRequest`] the requester signs.
 ///
 /// `joiningCode` is optional here and in the request (decision
@@ -137,7 +137,7 @@ impl GroupInfoRequestTbs {
     }
 }
 
-/// `GroupInfoRequest` (protocol-06 §5.6), the body of
+/// `GroupInfoRequest` (protocol-07 §5.6), the body of
 /// `POST /groupInfo/{roomId}`.
 ///
 /// Built only by decoding or by [`GroupInfoRequestTbs::sign`], so the kept
@@ -212,7 +212,7 @@ impl Deserialize for GroupInfoRequest {
     }
 }
 
-/// `GroupInfoCode` (protocol-06 §5.6).
+/// `GroupInfoCode` (protocol-07 §5.6).
 ///
 /// Decoding rejects `reserved(0)` and the undefined values 4 to 255 with
 /// [`tls_codec::Error::UnknownValue`].
@@ -228,7 +228,7 @@ pub enum GroupInfoCode {
     NoSuchRoom = 3,
 }
 
-/// `PendingProposal` (protocol-06 §5.6): a proposal the hub accepted
+/// `PendingProposal` (protocol-07 §5.6): a proposal the hub accepted
 /// during the current epoch.
 ///
 /// `proposal` must be a PublicMessage carrying a proposal, as for
@@ -244,7 +244,7 @@ pub struct PendingProposal {
 
 impl Serialize for PendingProposal {
     fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
-        // protocol-06 §5.6; decision mimid-1wgh.5.54
+        // protocol-07 §5.6; decision mimid-1wgh.5.54
         check_proposals(std::slice::from_ref(&self.proposal))
             .map_err(|e| tls_codec::Error::EncodingError(e.to_string()))?;
         Ok(self.proposal.tls_serialize(writer)? + self.hub_accepted_time.tls_serialize(writer)?)
@@ -254,7 +254,7 @@ impl Serialize for PendingProposal {
 impl Deserialize for PendingProposal {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
         let proposal = MLSMessage::tls_deserialize(bytes)?;
-        // protocol-06 §5.6; decision mimid-1wgh.5.54
+        // protocol-07 §5.6; decision mimid-1wgh.5.54
         check_proposals(std::slice::from_ref(&proposal))?;
         Ok(Self {
             proposal,
@@ -263,7 +263,7 @@ impl Deserialize for PendingProposal {
     }
 }
 
-/// `GroupInfoRatchetTreeTBE` (protocol-06 §5.6), the plaintext of
+/// `GroupInfoRatchetTreeTBE` (protocol-07 §5.6), the plaintext of
 /// `encrypted_groupinfo_and_tree`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, TlsSerialize, TlsDeserialize, TlsSize)]
 pub struct GroupInfoRatchetTreeTbe {
@@ -277,7 +277,7 @@ pub struct GroupInfoRatchetTreeTbe {
 
 /// Encrypts the hub's answer to the requester:
 /// `EncryptWithLabel(groupInfoPublicKey, "GroupInfo and ratchet_tree
-/// encryption", room_id, group_info_ratchet_tree_tbe)` (protocol-06 §5.6).
+/// encryption", room_id, group_info_ratchet_tree_tbe)` (protocol-07 §5.6).
 ///
 /// `room_id` is the raw bytes of the room URI, with no length prefix
 /// (decision mimid-1wgh.5.30). HPKE uses suite 1's algorithms (decision
@@ -295,7 +295,7 @@ pub fn encrypt_group_info(
 ) -> Result<HPKECiphertext, Error> {
     let public_key = key_bytes(group_info_public_key.as_bytes())?;
     let plaintext = tbe.tls_serialize_detached().map_err(Error::Encoding)?;
-    // protocol-06 §5.6; decision mimid-1wgh.5.55 (suite-1 HPKE)
+    // protocol-07 §5.6; decision mimid-1wgh.5.55 (suite-1 HPKE)
     let sealed =
         label::encrypt_with_label(public_key.as_slice(), ENCRYPTION_LABEL, room_id, &plaintext)
             .map_err(Error::Label)?;
@@ -308,7 +308,7 @@ pub fn encrypt_group_info(
     HPKECiphertext::tls_deserialize_exact(encoded).map_err(Error::Decoding)
 }
 
-/// Decrypts and decodes `encrypted_groupinfo_and_tree` (protocol-06 §5.6).
+/// Decrypts and decodes `encrypted_groupinfo_and_tree` (protocol-07 §5.6).
 ///
 /// `group_info_private_key` is the raw private key for the request's
 /// `groupInfoPublicKey` (32-byte X25519: suite-1 HPKE, decision
@@ -329,7 +329,7 @@ pub fn decrypt_group_info(
 ) -> Result<GroupInfoRatchetTreeTbe, Error> {
     let fields = HpkeCiphertextFields::tls_deserialize_exact(encrypted_groupinfo_and_tree)
         .map_err(Error::Decoding)?;
-    // protocol-06 §5.6; decision mimid-1wgh.5.55 (suite-1 HPKE)
+    // protocol-07 §5.6; decision mimid-1wgh.5.55 (suite-1 HPKE)
     let plaintext = label::decrypt_with_label(
         group_info_private_key,
         ENCRYPTION_LABEL,
@@ -341,17 +341,17 @@ pub fn decrypt_group_info(
     GroupInfoRatchetTreeTbe::tls_deserialize_exact(plaintext).map_err(Error::Decoding)
 }
 
-/// `GroupInfoResponseTBS` (protocol-06 §5.6), the part of a successful
+/// `GroupInfoResponseTBS` (protocol-07 §5.6), the part of a successful
 /// [`GroupInfoResponse`] the hub signs.
 ///
 /// A TBS exists only on success (decision mimid-1wgh.5.26), so `status`
-/// is not a field: it is always encoded as `success(1)`. `version` is the
-/// `Protocol` the `select (protocol)` refers to (decision
-/// mimid-1wgh.5.23).
+/// is not a field: it is always encoded as `success(1)`. `protocol` is the
+/// field the `select (protocol)` refers to; protocol-06 named it `version`
+/// (decision mimid-1wgh.5.23).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GroupInfoResponseTbs {
-    /// `Protocol version`.
-    pub version: Protocol,
+    /// `Protocol protocol`.
+    pub protocol: Protocol,
     /// `opaque room_id<V>`.
     pub room_id: Vec<u8>,
     /// `CipherSuite cipher_suite`: the suite the response is signed with.
@@ -365,7 +365,7 @@ pub struct GroupInfoResponseTbs {
 
 impl Size for GroupInfoResponseTbs {
     fn tls_serialized_len(&self) -> usize {
-        self.version.tls_serialized_len()
+        self.protocol.tls_serialized_len()
             + self.room_id.tls_serialized_len()
             + GroupInfoCode::Success.tls_serialized_len()
             + self.cipher_suite.tls_serialized_len()
@@ -376,7 +376,7 @@ impl Size for GroupInfoResponseTbs {
 
 impl Serialize for GroupInfoResponseTbs {
     fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
-        Ok(self.version.tls_serialize(writer)?
+        Ok(self.protocol.tls_serialize(writer)?
             + self.room_id.tls_serialize(writer)?
             + GroupInfoCode::Success.tls_serialize(writer)?
             + self.cipher_suite.tls_serialize(writer)?
@@ -463,10 +463,10 @@ impl GroupInfoSuccess {
     }
 }
 
-/// `GroupInfoResponse` (protocol-06 §5.6), the response body of
+/// `GroupInfoResponse` (protocol-07 §5.6), the response body of
 /// `POST /groupInfo/{roomId}`, one arm per [`GroupInfoCode`].
 ///
-/// On the wire `version`, `room_id` and `status` come first; only
+/// On the wire `protocol`, `room_id` and `status` come first; only
 /// `success` has further fields.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GroupInfoResponse {
@@ -474,15 +474,15 @@ pub enum GroupInfoResponse {
     Success(GroupInfoSuccess),
     /// `notAuthorized(2)`: the `default: struct{}` arm.
     NotAuthorized {
-        /// `Protocol version`.
-        version: Protocol,
+        /// `Protocol protocol`.
+        protocol: Protocol,
         /// `opaque room_id<V>`.
         room_id: Vec<u8>,
     },
     /// `noSuchRoom(3)`: the `default: struct{}` arm.
     NoSuchRoom {
-        /// `Protocol version`.
-        version: Protocol,
+        /// `Protocol protocol`.
+        protocol: Protocol,
         /// `opaque room_id<V>`.
         room_id: Vec<u8>,
     },
@@ -505,8 +505,8 @@ impl Size for GroupInfoResponse {
             Self::Success(success) => {
                 success.tbs_bytes.len() + VLByteSlice(&success.signature).tls_serialized_len()
             }
-            Self::NotAuthorized { version, room_id } | Self::NoSuchRoom { version, room_id } => {
-                version.tls_serialized_len() + room_id.tls_serialized_len() + 1
+            Self::NotAuthorized { protocol, room_id } | Self::NoSuchRoom { protocol, room_id } => {
+                protocol.tls_serialized_len() + room_id.tls_serialized_len() + 1
             }
         }
     }
@@ -520,8 +520,8 @@ impl Serialize for GroupInfoResponse {
                 Ok(success.tbs_bytes.len()
                     + VLByteSlice(&success.signature).tls_serialize(writer)?)
             }
-            Self::NotAuthorized { version, room_id } | Self::NoSuchRoom { version, room_id } => {
-                Ok(version.tls_serialize(writer)?
+            Self::NotAuthorized { protocol, room_id } | Self::NoSuchRoom { protocol, room_id } => {
+                Ok(protocol.tls_serialize(writer)?
                     + room_id.tls_serialize(writer)?
                     + self.status().tls_serialize(writer)?)
             }
@@ -532,14 +532,14 @@ impl Serialize for GroupInfoResponse {
 impl Deserialize for GroupInfoResponse {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
         let mut recorder = Recorder::new(bytes);
-        let version = Protocol::tls_deserialize(&mut recorder)?;
+        let protocol = Protocol::tls_deserialize(&mut recorder)?;
         let room_id = Vec::<u8>::tls_deserialize(&mut recorder)?;
         match GroupInfoCode::tls_deserialize(&mut recorder)? {
-            GroupInfoCode::NotAuthorized => Ok(Self::NotAuthorized { version, room_id }),
-            GroupInfoCode::NoSuchRoom => Ok(Self::NoSuchRoom { version, room_id }),
+            GroupInfoCode::NotAuthorized => Ok(Self::NotAuthorized { protocol, room_id }),
+            GroupInfoCode::NoSuchRoom => Ok(Self::NoSuchRoom { protocol, room_id }),
             GroupInfoCode::Success => {
                 let tbs = GroupInfoResponseTbs {
-                    version,
+                    protocol,
                     room_id,
                     cipher_suite: CipherSuite::tls_deserialize(&mut recorder)?,
                     hub_sender: ExternalSender::tls_deserialize(&mut recorder)?,

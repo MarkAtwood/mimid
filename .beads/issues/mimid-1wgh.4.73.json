@@ -2,13 +2,16 @@
   "id": "mimid-1wgh.4.73",
   "title": "mimi-mls: a refused Welcome join still consumes a one-time KeyPackage",
   "description": "Found during krmn K2 (mimid-krmn.2). OpenMLS deletes the one-time KeyPackage while building the StagedWelcome (openmls fork group/mls_group/creation.rs ~706-713), before any mimid check (required components, decision mimid-krmn.6 rule 4; other join refusals) runs. A refused join therefore burns a KeyPackage the client then has to replace. Pre-existing for every refused Welcome join. Options to evaluate: re-store the KeyPackage on refusal (if OpenMLS exposes it), check what can be checked before staging, or document as a Limitation and let the agent upload a replacement. Not urgent: affects only refused joins.",
+  "notes": "2026-11-04: Mark chose option 1 (fork change: defer the KeyPackage delete from keys_for_welcome to StagedWelcome::into_group). In progress; fork commit + push and rev bump await Mark's OK.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
+  "assignee": "agent",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-03T00:33:28.362390731Z",
   "created_by": "agent",
-  "updated_at": "2026-11-03T00:33:28.362390731Z",
+  "updated_at": "2026-11-04T16:12:32.920968863Z",
+  "started_at": "2026-11-04T14:43:51.718058083Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.4.73",

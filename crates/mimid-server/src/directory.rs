@@ -1,4 +1,4 @@
-//! The MIMI directory document (draft-ietf-mimi-protocol-06 §5.1) and the
+//! The MIMI directory document (draft-ietf-mimi-protocol-07 §5.1) and the
 //! HTTP router that serves it.
 
 use axum::extract::State;
@@ -10,21 +10,18 @@ use crate::config::BaseUrl;
 
 pub use mimi_protocol::Directory;
 
-/// The well-known path the directory is served at (protocol-06 §5.1). No
+/// The well-known path the directory is served at (protocol-07 §5.1). No
 /// IANA registration exists for it (decision mimid-1wgh.5.33).
 pub const DIRECTORY_PATH: &str = "/.well-known/mimi-protocol-directory";
 
-/// The directory document (protocol-06 §5.1) of a server reachable at
+/// The directory document (protocol-07 §5.1) of a server reachable at
 /// `base`, as mimi-protocol's [`Directory`].
 ///
 /// Only endpoints this server routes are listed, since an absent key means
 /// the endpoint is not offered (decision mimid-1wgh.5.75); `proxyDownload`
 /// is not yet listed (mimid-1wgh.8). The paths follow the §5.1 example,
 /// including its `/v1` prefix (decision mimid-1wgh.5.37). Placeholders are
-/// served as literal `{name}` text (decision mimid-1wgh.5.38). The example's
-/// `update{roomId}` lacks a slash; it is read as `update/{roomId}` (decision
-/// mimid-1wgh.5.17). The consent placeholders name domains, as in §5.7, not
-/// users as in the §5.1 example (decision mimid-1wgh.5.16).
+/// served as literal `{name}` text (decision mimid-1wgh.5.38).
 pub fn directory(base: &BaseUrl) -> Directory {
     let url = |path: &str| {
         // A BaseUrl is a scheme and host with no path, query or braces, so
@@ -68,12 +65,9 @@ mod tests {
 
     use super::*;
 
-    /// The protocol-06 §5.1 example, copied by hand from the draft text and
+    /// The protocol-07 §5.1 example, copied by hand from the draft text and
     /// limited to the nine endpoints this server routes (decision
-    /// mimid-1wgh.5.75), with the `update{roomId}` typo read as
-    /// `update/{roomId}` per decision mimid-1wgh.5.17. The consent
-    /// placeholders are the §5.7 `{targetDomain}` and `{requesterDomain}`,
-    /// not §5.1's user placeholders (decision mimid-1wgh.5.16).
+    /// mimid-1wgh.5.75).
     const SPEC_EXAMPLE: &str = r#"
     {
       "keyMaterial":

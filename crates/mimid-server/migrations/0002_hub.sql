@@ -3,7 +3,7 @@
 
 -- The hub's secrets: one Ed25519 key pair, used both as the external sender
 -- and as the franking agent (decision mimid-1wgh.6.18), and the franking
--- HMAC key `hub_key` (protocol-06 §5.4.1.2; decision mimid-1wgh.5.53).
+-- HMAC key `hub_key` (protocol-07 §5.4.1.2; decision mimid-1wgh.5.53).
 -- Generated on first start. Stored unencrypted: the database file must be
 -- readable by its owner only (mode 0600), which the store enforces.
 CREATE TABLE hub_secret (
@@ -56,7 +56,7 @@ CREATE TABLE pending_proposal (
     epoch INTEGER NOT NULL CHECK (epoch >= 0),
     -- The proposal MLSMessage exactly as received.
     proposal BLOB NOT NULL,
-    -- protocol-06 §5.6 hub_accepted_time, milliseconds since the UNIX epoch.
+    -- protocol-07 §5.6 hub_accepted_time, milliseconds since the UNIX epoch.
     hub_accepted_time INTEGER NOT NULL
 ) STRICT;
 

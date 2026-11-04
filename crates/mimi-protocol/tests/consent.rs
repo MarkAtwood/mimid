@@ -1,5 +1,5 @@
 //! Fixture and hostile-input tests for the requestConsent and updateConsent
-//! bodies (protocol-06 §5.7).
+//! bodies (protocol-07 §5.7).
 //!
 //! Framing is hand-encoded from the TLS presentation-language text, byte by
 //! byte, with RFC 9420 §2.1.2 variable-length prefixes written out. The

@@ -1,7 +1,7 @@
-//! Fixture and hostile-input tests for the protocol-06 primitives.
+//! Fixture and hostile-input tests for the protocol-07 primitives.
 //!
 //! Every fixture is hand-encoded from the TLS presentation-language text in
-//! draft-ietf-mimi-protocol-06 §5, §5.2 and §7.6, with RFC 9420 §2.1.2
+//! draft-ietf-mimi-protocol-07 §5, §5.2 and §7.6, with RFC 9420 §2.1.2
 //! variable-length prefixes. None is produced by this crate's encoder.
 //!
 //! URI accept/reject verdicts come from `oracle/rfc3986_check.out`, the

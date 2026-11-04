@@ -1,5 +1,5 @@
 //! Helpers shared by the hub integration tests: a fixed clock, hub start-up,
-//! groups built by mimi-mls Members, encoders for the protocol-06
+//! groups built by mimi-mls Members, encoders for the protocol-07
 //! components, and a TRACE-level log capture for secret canaries.
 
 use std::io::Write;
@@ -100,7 +100,7 @@ pub fn no_components(
     Err(format!("unexpected AppDataUpdate for {component_id:#06x}").into())
 }
 
-/// `FrankingAgentData` (protocol-06 §5.4.1) for `key`, with a
+/// `FrankingAgentData` (protocol-07 §5.4.1) for `key`, with a
 /// BasicCredential for `identity`.
 pub fn franking_agent(key: &[u8; 32], identity: &[u8]) -> Vec<u8> {
     // RFC 9420 §5.1.1: opaque SignaturePublicKey<V>.
@@ -118,7 +118,7 @@ pub fn franking_agent(key: &[u8; 32], identity: &[u8]) -> Vec<u8> {
     .unwrap()
 }
 
-/// `ParticipantListData` (protocol-06 §7.5) listing `users`, all with role 0.
+/// `ParticipantListData` (protocol-07 §7.5) listing `users`, all with role 0.
 pub fn participant_list(users: &[&[u8]]) -> Vec<u8> {
     ParticipantListData {
         participants: users

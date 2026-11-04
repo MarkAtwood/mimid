@@ -7,7 +7,7 @@
 //! Oracles: the mls-rs Commit fixture of `tests/fixtures/notify` (see its
 //! PROVENANCE) framed by hand (`common/notify.rs`), the statuses of
 //! decisions mimid-1wgh.6.8 and mimid-1wgh.7.4, a `noConsent` response
-//! hand-encoded from the protocol-06 §5.2 text, and the database read
+//! hand-encoded from the protocol-07 §5.2 text, and the database read
 //! directly after the process exits.
 
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
@@ -50,7 +50,7 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// The hand-encoded `noConsent` response for `user` (protocol-06 §5.2):
+/// The hand-encoded `noConsent` response for `user` (protocol-07 §5.2):
 /// protocol mls10 (1), userStatus noConsent (5), userUri, empty clients.
 fn no_consent(user: &str) -> Vec<u8> {
     [&[0x01, 0x05][..], &opaque(user.as_bytes()), &[0x00]].concat()

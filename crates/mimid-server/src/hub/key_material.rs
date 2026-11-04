@@ -1,5 +1,5 @@
-//! protocol-06 §5.2 `POST /keyMaterial/{targetUser}`, proxied by the hub
-//! for a hosted room and a target user at another provider (protocol-06
+//! protocol-07 §5.2 `POST /keyMaterial/{targetUser}`, proxied by the hub
+//! for a hosted room and a target user at another provider (protocol-07
 //! §3.3; decision mimid-1wgh.6.20).
 //!
 //! The steps:
@@ -176,7 +176,7 @@ fn refuse(target_user: &str, reason: &str) -> Result<Vec<u8>, HubError> {
 }
 
 /// The encoded `noConsent` response for `target_user`, with no clients
-/// (protocol-06 §5.2: "MUST NOT populate the clients list").
+/// (protocol-07 §5.2: "MUST NOT populate the clients list").
 fn no_consent(target_user: &str) -> Result<Vec<u8>, HubError> {
     // An unparsable path value is answered with an empty userUri.
     let user_uri = IdentifierUri::new(target_user).unwrap_or_default();

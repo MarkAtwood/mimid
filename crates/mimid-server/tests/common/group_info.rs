@@ -1,5 +1,5 @@
 //! Helpers for the groupInfo tests: requesters with their own signature and
-//! HPKE keys, protocol-06 §5.6 requests, and an independent check of the
+//! HPKE keys, protocol-07 §5.6 requests, and an independent check of the
 //! hub's response with mls-rs's suite-1 crypto, plus rooms whose policy
 //! allows open join or preauthorization.
 
@@ -82,7 +82,7 @@ impl Requester {
         }
     }
 
-    /// A TLS-encoded `GroupInfoRequest` (protocol-06 §5.6), signed with
+    /// A TLS-encoded `GroupInfoRequest` (protocol-07 §5.6), signed with
     /// this requester's key.
     pub fn request(&self, joining_code: Option<&[u8]>) -> Vec<u8> {
         self.tbs(joining_code)
@@ -133,7 +133,7 @@ pub fn open(
     let signature = &signature[2..];
 
     let mut rest = tbs;
-    assert_eq!(rest[0], 0x01, "version: mls10");
+    assert_eq!(rest[0], 0x01, "protocol: mls10");
     rest = &rest[1..];
     let room = VLBytes::tls_deserialize(&mut rest).unwrap();
     assert_eq!(room.as_slice(), room_id.as_bytes());

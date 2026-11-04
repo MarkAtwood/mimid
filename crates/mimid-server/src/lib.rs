@@ -12,7 +12,7 @@
 //! - The JMAP Chat endpoint is a subset of draft-atwood-jmap-chat-00 and
 //!   -mimi-00; [`jmap`] lists what is missing (decision mimid-1wgh.12.22).
 //! - There is no authentication between providers (decision mimid-1wgh.17).
-//!   protocol-06 requires mutually authenticated TLS; mimid does not
+//!   protocol-07 requires mutually authenticated TLS; mimid does not
 //!   implement it and does not claim conformance to it. Combined with
 //!   BasicCredential, mimid offers no protection against a malicious or
 //!   impersonated provider.

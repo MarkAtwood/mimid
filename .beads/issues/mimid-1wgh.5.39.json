@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.5.39",
   "title": "wg: protocol-06 endpoint /v1 prefix and placeholder expansion unspecified",
   "description": "draft-ietf-mimi-protocol-06: (1) §5.1 example paths carry /v1 but §5.2ff endpoint text has no prefix; (2) directory placeholders like {targetUser} have no defined expansion/encoding rule (RFC 6570?). Report to the MIMI WG. Our readings: decisions mimid-1wgh.5.37 and mimid-1wgh.5.38.",
-  "notes": "Related open issue ietf-wg-mimi/mimi-protocol#52 ('Figure out versioning') does not cover this.\n\nVerified 2026-10-18 vs -06/-09/-04 (= main): CONFIRMED technical: /v1 prefix and placeholder expansion undefined. New issue (#I).\n\nFiled 2026-10-18: https://github.com/ietf-wg-mimi/mimi-protocol/issues/158\n2026-10-19 #158 labelled question; rohanmahy suggests per-entry path conventions; followup mimid-1wgh.37.82.",
+  "notes": "2026-11-04: -07 still shows /v1 with no rule. Its flow examples now consistently write {roomId} as the scheme-stripped a.example/r/clubhouse, which is non-normative and differs from mimid's whole-URI percent-encoding (decision .5.18). Add to the WG question.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T18:48:10.563826189Z",
   "created_by": "agent",
-  "updated_at": "2026-10-19T19:20:02.037678339Z",
+  "updated_at": "2026-11-04T14:57:06.116130278Z",
   "labels": [
     "wg",
     "spec:mimi-protocol-06"

@@ -32,7 +32,7 @@ A Rust reference implementation of IETF MIMI over MLS (RFC 9420), plus enough pr
 
 | Draft | Version |
 |---|---|
-| draft-ietf-mimi-protocol | -06 |
+| draft-ietf-mimi-protocol | -07 |
 | draft-ietf-mimi-content | -10 |
 | draft-ietf-mimi-room-policy | -04 |
 | draft-ietf-mimi-arch | -03 |
@@ -43,7 +43,7 @@ A Rust reference implementation of IETF MIMI over MLS (RFC 9420), plus enough pr
 
 Every design decision is a closed `decision` bead under epic `mimid-1wgh`. Persistent rules are in `bd memories`. Read the relevant ones before starting work on a bead.
 
-Known weaknesses that are deliberate: BasicCredential only, and no authentication between providers. Never describe mimid as protecting against a malicious or impersonated provider. Never claim conformance to protocol-06's mutually authenticated TLS.
+Known weaknesses that are deliberate: BasicCredential only, and no authentication between providers. Never describe mimid as protecting against a malicious or impersonated provider. Never claim conformance to protocol-07's mutually authenticated TLS.
 
 ## Crate map
 
@@ -54,7 +54,7 @@ Dependencies point down this table, never up.
 | `mimi-mls` | All OpenMLS usage, the `wire` newtypes, label helpers | Do I/O |
 | `mimi-content` | mimi-content-10 CBOR and MessageId | Depend on openmls or tokio; contain encryption (attachments are `.14`) |
 | `mimi-room-policy` | room-policy-04 codecs and policy evaluation | Depend on `mimi-mls` |
-| `mimi-protocol` | protocol-06 wire types and franking | Use openmls directly (MLS types come only through `mimi_mls::wire`); do I/O |
+| `mimi-protocol` | protocol wire types and franking | Use openmls directly (MLS types come only through `mimi_mls::wire`); do I/O |
 | `mimid-server` | Hub and follower roles, the provider's JMAP Chat endpoint, admin CLI | Parse or decrypt application ciphertext; put SQL outside its store module |
 | `mimid-agent` | MLS keys and plaintext. It is the only component that sees either. It is the JMAP Chat ↔ MIMI bridge: users run a standard JMAP Chat client against its local endpoint | Serve plaintext anywhere except its local endpoint |
 

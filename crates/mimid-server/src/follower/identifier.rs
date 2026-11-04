@@ -1,4 +1,4 @@
-//! The receiving side of the identifierQuery endpoint (protocol-06 §5.8,
+//! The receiving side of the identifierQuery endpoint (protocol-07 §5.8,
 //! `POST /identifierQuery/{domain}`).
 //!
 //! Only exact `handle` queries are answered (decision mimid-1wgh.7.38),
@@ -34,7 +34,7 @@ use super::{Follower, FollowerError};
 use crate::hub::identity_domain;
 
 impl Follower {
-    /// protocol-06 §5.8 `POST /identifierQuery/{domain}`: answers `body`,
+    /// protocol-07 §5.8 `POST /identifierQuery/{domain}`: answers `body`,
     /// an IdentifierRequest, with an encoded IdentifierResponse.
     /// `path_domain` is the path's domain.
     ///

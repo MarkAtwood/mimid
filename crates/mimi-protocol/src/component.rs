@@ -1,4 +1,4 @@
-//! The participant_list (protocol-06 §7.5) and room_metadata (§7.6) MLS
+//! The participant_list (protocol-07 §7.5) and room_metadata (§7.6) MLS
 //! application components.
 //!
 //! These are the `data` of a `ComponentData` entry in the GroupContext
@@ -11,10 +11,10 @@ use tls_codec::{TlsDeserialize, TlsSerialize, TlsSize};
 use crate::{IdentifierUri, Utf8String};
 
 /// `struct { opaque user<V>; uint32 role_index; } UserRolePair;`
-/// (protocol-06 §7.5).
+/// (protocol-07 §7.5).
 ///
 /// `user` is opaque on the wire, as the spec defines it. It is not checked
-/// to be a URI (protocol-06 §7.5; decision mimid-1wgh.5.46).
+/// to be a URI (protocol-07 §7.5; decision mimid-1wgh.5.46).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, TlsSerialize, TlsDeserialize, TlsSize)]
 pub struct UserRolePair {
     /// The user's identifier, the same for all of that user's clients.
@@ -24,7 +24,7 @@ pub struct UserRolePair {
 }
 
 /// `struct { UserRolePair participants<V>; } ParticipantListData;`
-/// (protocol-06 §7.5), the `data` of the
+/// (protocol-07 §7.5), the `data` of the
 /// [`PARTICIPANT_LIST`](crate::component_id::PARTICIPANT_LIST) component.
 ///
 /// Decoding does not reject a user that appears more than once.
@@ -35,7 +35,7 @@ pub struct ParticipantListData {
 }
 
 /// `struct { uint32 user_index; uint32 role_index; } UserindexRolePair;`
-/// (protocol-06 §7.5).
+/// (protocol-07 §7.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TlsSerialize, TlsDeserialize, TlsSize)]
 pub struct UserindexRolePair {
     /// Index into the current [`ParticipantListData::participants`].
@@ -44,7 +44,7 @@ pub struct UserindexRolePair {
     pub role_index: u32,
 }
 
-/// `ParticipantListUpdate` (protocol-06 §7.5), the `update` of an
+/// `ParticipantListUpdate` (protocol-07 §7.5), the `update` of an
 /// `AppDataUpdate` proposal for the participant list.
 ///
 /// The spec omits the `;` after `changedRoleParticipants<V>`; it is read as
@@ -63,17 +63,17 @@ pub struct ParticipantListUpdate {
     pub added_participants: Vec<UserRolePair>,
 }
 
-/// `struct { opaque uri<V>; } Uri;` (protocol-06 §7.6).
+/// `struct { opaque uri<V>; } Uri;` (protocol-07 §7.6).
 ///
 /// Its wire form is that of [`IdentifierUri`] (§5.2), so the type is
 /// shared: the value is empty, meaning absent, or an RFC 3986 `URI`
-/// (protocol-06 §7.6; decision mimid-1wgh.5.44).
+/// (protocol-07 §7.6; decision mimid-1wgh.5.44).
 pub type Uri = IdentifierUri;
 
-/// `RichDescription` (protocol-06 §7.6).
+/// `RichDescription` (protocol-07 §7.6).
 ///
 /// All three fields are opaque on the wire, as the spec defines them. None
-/// is checked to be UTF-8, a media type or a language tag (protocol-06
+/// is checked to be UTF-8, a media type or a language tag (protocol-07
 /// §7.6; decision mimid-1wgh.5.47).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, TlsSerialize, TlsDeserialize, TlsSize)]
 pub struct RichDescription {
@@ -86,12 +86,12 @@ pub struct RichDescription {
     pub description_content: Vec<u8>,
 }
 
-/// `RoomMetaData` (protocol-06 §7.6), the `data` of the
+/// `RoomMetaData` (protocol-07 §7.6), the `data` of the
 /// [`ROOM_METADATA`](crate::component_id::ROOM_METADATA) component.
 ///
 /// `room_avatar` is described as "an https URI resolving to an avatar
 /// image", but decoding does not require the `https` scheme: check it
-/// before fetching (protocol-06 §7.6; decision mimid-1wgh.5.45).
+/// before fetching (protocol-07 §7.6; decision mimid-1wgh.5.45).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, TlsSerialize, TlsDeserialize, TlsSize)]
 pub struct RoomMetaData {
     /// The room's URI.
@@ -108,7 +108,7 @@ pub struct RoomMetaData {
     pub room_mood: Utf8String,
 }
 
-/// `RoomMetaData RoomMetaUpdate;` (protocol-06 §7.6), the `update` of an
+/// `RoomMetaData RoomMetaUpdate;` (protocol-07 §7.6), the `update` of an
 /// `AppDataUpdate` proposal for room metadata. A valid, authorized update
 /// replaces the component's data entirely.
 pub type RoomMetaUpdate = RoomMetaData;

@@ -89,9 +89,13 @@ async fn enqueue(
 fn assert_request(received: &Received, host: &str, expected: &(NotifyRequest, Vec<u8>)) {
     assert_eq!(received.raw_path, format!("/v1/notify/{ROOM_ID_ENCODED}"));
     assert_eq!(received.room_id, ROOM_ID);
-    assert_eq!(received.from, ["mimi@a.example"], "protocol-06 §4.1 From");
-    assert_eq!(received.host, [host], "protocol-06 §4.1 Host");
-    assert_eq!(received.content_type, ["application/octet-stream"]);
+    assert_eq!(received.from, ["mimi@a.example"], "protocol-07 §4.1 From");
+    assert_eq!(received.host, [host], "protocol-07 §4.1 Host");
+    assert_eq!(
+        received.content_type,
+        ["application/mimi-protocol"],
+        "protocol-07 §10.6"
+    );
     assert_eq!(received.body, expected.1, "body byte-identical");
     let decoded = NotifyRequest::decode(
         IdentifierUri::new(&received.room_id).unwrap(),

@@ -13,13 +13,13 @@
 //! 3. checks that every identity it claims is the user's, before anything
 //!    is sent:
 //!    - submitMessage: `sendingUri`. The hub cannot check it, since it
-//!      cannot authenticate a PrivateMessage's sender (protocol-06 §5.4);
+//!      cannot authenticate a PrivateMessage's sender (protocol-07 §5.4);
 //!    - keyMaterial: `requestingUser` and the BasicCredential identity of
 //!      `requesterCredential` (decision mimid-1wgh.6.1);
 //!    - groupInfo: the BasicCredential identity of `requestingCredential`;
 //!    - update: nothing. The Commit or proposals are MLS-signed by a
 //!      member, and the hub authenticates that signature against the
-//!      group's ratchet tree (protocol-06 §5.3; decision mimid-1wgh.6.9);
+//!      group's ratchet tree (protocol-07 §5.3; decision mimid-1wgh.6.9);
 //! 4. sends the request bytes as received to the room's hub, which is the
 //!    room URI's authority (decision mimid-1wgh.7.5): in-process to this
 //!    provider's own [`Hub`], with this provider's domain as `From`, or
@@ -55,7 +55,7 @@ use std::sync::Arc;
 
 use crate::config::Domain;
 use crate::http::MAX_BODY_LEN;
-use crate::hub::{Hub, HubError, identity_domain};
+use crate::hub::{Hub, HubError, identity_domain, user_uri_domain};
 use crate::peer::{PeerClient, PeerError};
 
 /// A user of this provider whose identity the JMAP layer has
@@ -75,10 +75,11 @@ impl LocalUser {
     ///
     /// # Errors
     ///
-    /// Returns [`RelayError::NotLocalUser`] unless `uri` is a
-    /// `mimi://<provider>/...` URI (protocol-06 §3).
+    /// Returns [`RelayError::NotLocalUser`] unless `uri` is a user URI
+    /// `mimi://<provider>/u/<id>` (protocol-07 §2.1; decision
+    /// mimid-1wgh.6.76).
     pub fn authenticated(provider: &Domain, uri: &str) -> Result<Self, RelayError> {
-        if identity_domain(uri.as_bytes()).as_ref() == Some(provider) {
+        if user_uri_domain(uri).as_ref() == Some(provider) {
             Ok(Self {
                 uri: uri.to_owned(),
             })
@@ -116,7 +117,7 @@ impl Relay {
         Self { hub, peers }
     }
 
-    /// protocol-06 §5.3: relays `request`, a TLS-encoded `UpdateRequest`,
+    /// protocol-07 §5.3: relays `request`, a TLS-encoded `UpdateRequest`,
     /// to the hub of `room_id` and returns its `UpdateRoomResponse` as
     /// received. No identity is checked (see the module documentation).
     ///
@@ -153,7 +154,7 @@ impl Relay {
         Ok(response)
     }
 
-    /// protocol-06 §5.4: relays `request`, a TLS-encoded
+    /// protocol-07 §5.4: relays `request`, a TLS-encoded
     /// `SubmitMessageRequest` whose `sendingUri` must be `user`, to the hub
     /// of `room_id` and returns its `SubmitMessageResponse` as received.
     ///
@@ -189,7 +190,7 @@ impl Relay {
         Ok(response)
     }
 
-    /// protocol-06 §5.6: relays `request`, a TLS-encoded `GroupInfoRequest`
+    /// protocol-07 §5.6: relays `request`, a TLS-encoded `GroupInfoRequest`
     /// whose `requestingCredential` must be a BasicCredential for `user`,
     /// to the hub of `room_id` and returns its `GroupInfoResponse` as
     /// received.
@@ -226,12 +227,12 @@ impl Relay {
         Ok(response)
     }
 
-    /// protocol-06 §5.2: relays `request`, a TLS-encoded
+    /// protocol-07 §5.2: relays `request`, a TLS-encoded
     /// `KeyMaterialRequest` whose `requestingUser` and
     /// `requesterCredential` must both be `user`, to the hub of its
     /// `roomId`, for its `targetUser`, and returns the
     /// `KeyMaterialResponse` as received. The hub proxies the request to
-    /// the target user's provider (protocol-06 §3.3).
+    /// the target user's provider (protocol-07 §3.3).
     ///
     /// # Errors
     ///
@@ -330,7 +331,7 @@ pub enum RelayError {
     /// mimid-1wgh.7.13).
     #[error("{field} is not the authenticated user")]
     WrongIdentity {
-        /// The field, by its protocol-06 name.
+        /// The field, by its protocol-07 name.
         field: &'static str,
     },
     /// The room ID is absent or names no provider domain, so it has no hub

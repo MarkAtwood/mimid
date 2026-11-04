@@ -1,4 +1,4 @@
-//! Inbound protocol-06 §5.5 `/notify`: FanoutMessages from a room's hub,
+//! Inbound protocol-07 §5.5 `/notify`: FanoutMessages from a room's hub,
 //! deduplicated per room by inner message and by `senderMsgId` (decisions
 //! mimid-1wgh.7.30, mimid-1wgh.12.24) and appended to the follower log in
 //! arrival order (decision mimid-1wgh.7.17). The local users' own accepted
@@ -19,7 +19,7 @@ use super::{Follower, FollowerError};
 use crate::config::Domain;
 use crate::http::MAX_BODY_LEN;
 use crate::hub::fanout::LocalDelivery;
-use crate::hub::identity_domain;
+use crate::hub::room_uri_domain;
 use crate::store::{FanoutKind, NewFanout};
 
 /// RFC 9420 §6: the MLSMessage header of a Welcome, `version` mls10
@@ -128,17 +128,18 @@ fn welcome_of(message: &MLSMessage) -> Result<Welcome, tls_codec::Error> {
     Welcome::tls_deserialize_exact(body)
 }
 
-/// The domain of the hub of the room `room_id`: its URI authority
-/// (decision mimid-1wgh.7.5).
+/// The domain of the hub of the room `room_id`: the authority of its room
+/// URI `mimi://<domain>/r/<name>` (decision mimid-1wgh.7.5).
 pub(super) fn room_hub(room_id: &str) -> Result<Domain, FollowerError> {
     // An empty roomId names no room (decision mimid-1wgh.5.50), and gives
     // no domain here.
     IdentifierUri::new(room_id).map_err(|_| FollowerError::InvalidRoomId)?;
-    identity_domain(room_id.as_bytes()).ok_or(FollowerError::InvalidRoomId)
+    // protocol-07 §2.1; decision mimid-1wgh.6.76
+    room_uri_domain(room_id).ok_or(FollowerError::InvalidRoomId)
 }
 
 impl Follower {
-    /// Handles protocol-06 §5.5 `POST /notify/{roomId}`: `body` is the
+    /// Handles protocol-07 §5.5 `POST /notify/{roomId}`: `body` is the
     /// request body and `from` the domain of its `From` header.
     ///
     /// `from` must be a configured peer (decision mimid-1wgh.7.4); this
@@ -218,7 +219,7 @@ impl Follower {
 
     /// Stores `fanout`, the FanoutMessage of a local user's request that
     /// the hub of `room_id` accepted, as if that hub had sent it, since the
-    /// hub need not echo it (protocol-06 §5.5; decision mimid-1wgh.7.30).
+    /// hub need not echo it (protocol-07 §5.5; decision mimid-1wgh.7.30).
     /// The usual deduplication absorbs a later echo, and an earlier one
     /// absorbs this copy.
     ///
@@ -247,5 +248,35 @@ impl LocalDelivery for Arc<Follower> {
 
     async fn deliver(&self, room_id: &str, body: &[u8]) -> Result<(), FollowerError> {
         self.store_fanout(room_id, &self.domain, body).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// protocol-07 §2.1; decision mimid-1wgh.6.76: only a room URI
+    /// `mimi://<domain>/r/<name>` names a room and its hub.
+    #[test]
+    fn room_hub_requires_a_room_uri() {
+        let hub = room_hub("mimi://a.example/r/clubhouse").unwrap();
+        assert_eq!(hub.as_str(), "a.example");
+        for room_id in [
+            "mimi://a.example",
+            "mimi://a.example/",
+            "mimi://a.example/u/alice",
+            "mimi://a.example/d/x",
+            "mimi://a.example/r",
+            "mimi://a.example/r/",
+            "mimi://a.example/r/a/b",
+            "mimi://a.example/r/x?y",
+            "mimi://a.example/r/x#y",
+        ] {
+            let result = room_hub(room_id);
+            assert!(
+                matches!(result, Err(FollowerError::InvalidRoomId)),
+                "{room_id}: {result:?}"
+            );
+        }
     }
 }

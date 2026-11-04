@@ -1,4 +1,4 @@
-//! The submitMessage endpoint (protocol-06 §5.4):
+//! The submitMessage endpoint (protocol-07 §5.4):
 //! `POST /submitMessage/{roomId}`.
 
 use std::io::{Read, Write};
@@ -12,7 +12,7 @@ fn decoding_error(message: &str) -> tls_codec::Error {
     tls_codec::Error::DecodingError(message.to_owned())
 }
 
-/// `SubmitMessageRequest` (protocol-06 §5.4), the body of
+/// `SubmitMessageRequest` (protocol-07 §5.4), the body of
 /// `POST /submitMessage/{roomId}`.
 ///
 /// Unlike the update and notify bodies, this struct declares its `Protocol
@@ -31,14 +31,13 @@ pub struct SubmitMessageRequest {
     /// `MLSMessage appMessage` (`case mls10`): a PrivateMessage carrying an
     /// application message.
     pub app_message: MLSMessage,
-    /// `IdentifierURI sendingUri`, read as [`IdentifierUri`] (decision
-    /// mimid-1wgh.5.19).
+    /// `IdentifierUri sendingUri` (decision mimid-1wgh.5.19).
     pub sending_uri: IdentifierUri,
 }
 
 impl SubmitMessageRequest {
     fn check(&self) -> Result<(), tls_codec::Error> {
-        // protocol-06 §5.4: "a WireFormat of PrivateMessage, and a
+        // protocol-07 §5.4: "a WireFormat of PrivateMessage, and a
         // content_type of application"
         if self.app_message.wire_format() != WireFormat::MlsPrivateMessage {
             return Err(decoding_error("appMessage is not a PrivateMessage"));
@@ -48,7 +47,7 @@ impl SubmitMessageRequest {
                 "appMessage does not carry an application message",
             ));
         }
-        // protocol-06 §5.4; decision mimid-1wgh.5.65
+        // protocol-07 §5.4; decision mimid-1wgh.5.65
         if self.sending_uri.is_empty() {
             return Err(decoding_error("sendingUri is empty"));
         }
@@ -76,7 +75,7 @@ impl Serialize for SubmitMessageRequest {
 
 impl Deserialize for SubmitMessageRequest {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
-        // protocol-06 §5.4; decision mimid-1wgh.5.66
+        // protocol-07 §5.4; decision mimid-1wgh.5.66
         let request = Self {
             protocol: Protocol::tls_deserialize(bytes)?,
             app_message: MLSMessage::tls_deserialize(bytes)?,
@@ -87,7 +86,7 @@ impl Deserialize for SubmitMessageRequest {
     }
 }
 
-/// `SubmitResponseCode` (protocol-06 §5.4).
+/// `SubmitResponseCode` (protocol-07 §5.4).
 ///
 /// Decoding rejects the undefined values 3 to 255 with
 /// [`tls_codec::Error::UnknownValue`].
@@ -103,7 +102,7 @@ pub enum SubmitResponseCode {
 }
 
 /// The `select (statusCode)` arms of a [`SubmitMessageResponse`]
-/// (protocol-06 §5.4), one per [`SubmitResponseCode`].
+/// (protocol-07 §5.4), one per [`SubmitResponseCode`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SubmitResult {
     /// The spec's `case success`, read as `accepted` (decision
@@ -112,8 +111,7 @@ pub enum SubmitResult {
         /// `uint64 accepted_timestamp`: hub acceptance time in milliseconds
         /// since the UNIX epoch.
         accepted_timestamp: u64,
-        /// `optional Frank frank`, read as `optional<Frank>` (decision
-        /// mimid-1wgh.5.21). Present when the hub franked the message.
+        /// `optional<Frank> frank` (decision mimid-1wgh.5.21). Present when the hub franked the message.
         frank: Option<Frank>,
     },
     /// `notAllowed`, which has no arm and carries nothing (decision
@@ -137,7 +135,7 @@ impl SubmitResult {
     }
 }
 
-/// `SubmitMessageResponse` (protocol-06 §5.4), the response body of
+/// `SubmitMessageResponse` (protocol-07 §5.4), the response body of
 /// `POST /submitMessage/{roomId}`.
 ///
 /// On the wire `protocol` comes first (decision mimid-1wgh.5.66), then `statusCode`, then the arm;
@@ -183,14 +181,14 @@ impl Serialize for SubmitMessageResponse {
 
 impl Deserialize for SubmitMessageResponse {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
-        // protocol-06 §5.4; decision mimid-1wgh.5.66
+        // protocol-07 §5.4; decision mimid-1wgh.5.66
         let protocol = Protocol::tls_deserialize(bytes)?;
         let result = match SubmitResponseCode::tls_deserialize(bytes)? {
             SubmitResponseCode::Accepted => SubmitResult::Accepted {
                 accepted_timestamp: u64::tls_deserialize(bytes)?,
                 frank: Option::<Frank>::tls_deserialize(bytes)?,
             },
-            // protocol-06 §5.4; decision mimid-1wgh.5.67
+            // protocol-07 §5.4; decision mimid-1wgh.5.67
             SubmitResponseCode::NotAllowed => SubmitResult::NotAllowed,
             SubmitResponseCode::EpochTooOld => SubmitResult::EpochTooOld {
                 current_epoch: u64::tls_deserialize(bytes)?,

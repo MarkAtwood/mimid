@@ -1,7 +1,7 @@
-//! Fixture and hostile-input tests for the update (protocol-06 §5.3) and
+//! Fixture and hostile-input tests for the update (protocol-07 §5.3) and
 //! notify (§5.5) endpoint bodies.
 //!
-//! The protocol-06 framing around each MLS structure is hand-encoded from
+//! The protocol-07 framing around each MLS structure is hand-encoded from
 //! the TLS presentation-language text, byte by byte, with RFC 9420 §2.1.2
 //! variable-length prefixes written out. The embedded MLS structures are
 //! the mlswg interoperability vectors vendored in
@@ -76,7 +76,7 @@ const PARTIAL_GROUP_INFO: &[u8] = &[
     0x03, 0x51, 0x52, 0x53, // signature<V>: 3 bytes
 ];
 
-/// Frank (protocol-06 §5.4), 39 bytes.
+/// Frank (protocol-07 §5.4), 39 bytes.
 const FRANK: &[u8] = &[
     // server_frank[32]
     0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,

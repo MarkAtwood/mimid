@@ -1,4 +1,4 @@
-//! Every endpoint the served directory advertises is routed (protocol-06
+//! Every endpoint the served directory advertises is routed (protocol-07
 //! §5.1; decision mimid-1wgh.5.75: an absent key means the endpoint is not
 //! offered, so the directory must not list one that answers `404`).
 //!
@@ -46,7 +46,7 @@ async fn every_advertised_endpoint_is_routed() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
-    // The served document is a valid protocol-06 §5.1 directory.
+    // The served document is a valid protocol-07 §5.1 directory.
     serde_json::from_slice::<ParsedDirectory>(&body).unwrap();
     let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
 

@@ -19,7 +19,7 @@ use super::jmap::random_ulid;
 use super::{Store, StoreError, from_sql_int, to_sql_int};
 use crate::config::Domain;
 
-/// The arm of a stored FanoutMessage (protocol-06 §5.5), as the
+/// The arm of a stored FanoutMessage (protocol-07 §5.5), as the
 /// `follower_event.kind` column stores it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

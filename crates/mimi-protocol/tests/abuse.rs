@@ -1,4 +1,4 @@
-//! Fixture and hostile-input tests for the reportAbuse body (protocol-06
+//! Fixture and hostile-input tests for the reportAbuse body (protocol-07
 //! §5.9).
 //!
 //! Framing is hand-encoded from the TLS presentation-language text, byte by

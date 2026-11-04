@@ -1,4 +1,4 @@
-//! protocol-06 §5.2 keyMaterial proxied by the hub (bead mimid-1wgh.6.31;
+//! protocol-07 §5.2 keyMaterial proxied by the hub (bead mimid-1wgh.6.31;
 //! decision mimid-1wgh.6.20).
 //!
 //! The oracle is a mock target provider served by axum in-process. Its
@@ -80,7 +80,7 @@ fn opaque(bytes: &[u8]) -> Vec<u8> {
     [varint(bytes.len()), bytes.to_vec()].concat()
 }
 
-/// The hand-encoded `noConsent` response for `user` (protocol-06 §5.2):
+/// The hand-encoded `noConsent` response for `user` (protocol-07 §5.2):
 /// protocol mls10 (1), userStatus noConsent (5), userUri, empty clients.
 fn no_consent(user: &str) -> Vec<u8> {
     [&[0x01, 0x05][..], &opaque(user.as_bytes()), &[0x00]].concat()
@@ -224,7 +224,7 @@ fn mls_rs_key_package() -> Vec<u8> {
 }
 
 /// A `success` KeyMaterialResponse for cathy with one client, hand-assembled
-/// from the protocol-06 §5.2 structs.
+/// from the protocol-07 §5.2 structs.
 fn success_response(key_package: &[u8]) -> Vec<u8> {
     let client = [
         &[0x00][..],                                  // clientStatus success
@@ -435,7 +435,11 @@ async fn response_is_relayed_verbatim() {
     assert_eq!(received[0].body, body, "request forwarded as received");
     assert_eq!(received[0].from, ["mimi@a.example"]);
     assert_eq!(received[0].host, [TARGET_DOMAIN]);
-    assert_eq!(received[0].content_type, ["application/octet-stream"]);
+    assert_eq!(
+        received[0].content_type,
+        ["application/mimi-protocol"],
+        "protocol-07 §10.6"
+    );
 
     let (status, relayed) = f.post(CATHY_ENCODED, "b.example", body).await;
     assert_eq!(status, StatusCode::OK);

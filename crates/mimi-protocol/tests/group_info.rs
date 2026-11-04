@@ -1,5 +1,5 @@
 //! Fixture, crypto-oracle and hostile-input tests for the groupInfo
-//! endpoint (protocol-06 §5.6).
+//! endpoint (protocol-07 §5.6).
 //!
 //! Struct framing is hand-encoded from the TLS presentation-language text,
 //! byte by byte. The embedded GroupInfo and proposal are the mlswg vectors
@@ -214,7 +214,7 @@ fn oracle_ciphertext_wire() -> Vec<u8> {
 /// `GroupInfoResponseTBS` around the oracle ciphertext.
 fn response_tbs_wire() -> Vec<u8> {
     cat(&[
-        &[0x01], // version: mls10
+        &[0x01], // protocol: mls10
         &[0x1c], // room_id<V>: 28 bytes
         ROOM_ID,
         &[0x01],       // status: success
@@ -226,7 +226,7 @@ fn response_tbs_wire() -> Vec<u8> {
 
 fn response_tbs() -> GroupInfoResponseTbs {
     GroupInfoResponseTbs {
-        version: Protocol::Mls10,
+        protocol: Protocol::Mls10,
         room_id: ROOM_ID.to_vec(),
         cipher_suite: CipherSuite::from(0x0001),
         hub_sender: decode::<ExternalSender>(&hub_sender()),
@@ -244,7 +244,7 @@ fn response_wire() -> Vec<u8> {
 }
 
 fn failure_wire(status: u8) -> Vec<u8> {
-    cat(&[&[0x01, 0x1c], ROOM_ID, &[status]]) // version, room_id<V>, status
+    cat(&[&[0x01, 0x1c], ROOM_ID, &[status]]) // protocol, room_id<V>, status
 }
 
 fn is_verify_failure(result: Result<(), Error>) -> bool {
@@ -503,14 +503,14 @@ fn response_failure_fixtures() {
     check_fixture(
         &failure_wire(0x02),
         &GroupInfoResponse::NotAuthorized {
-            version: Protocol::Mls10,
+            protocol: Protocol::Mls10,
             room_id: ROOM_ID.to_vec(),
         },
     );
     check_fixture(
         &failure_wire(0x03),
         &GroupInfoResponse::NoSuchRoom {
-            version: Protocol::Mls10,
+            protocol: Protocol::Mls10,
             room_id: ROOM_ID.to_vec(),
         },
     );
@@ -531,7 +531,7 @@ fn response_bad_status_and_version() {
         ));
     }
     let mut wire = response_wire();
-    wire[0] = 0x00; // version: reserved
+    wire[0] = 0x00; // protocol: reserved
     assert!(matches!(
         decode_err::<GroupInfoResponse>(&wire),
         tls_codec::Error::UnknownValue(_)

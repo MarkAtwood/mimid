@@ -99,7 +99,7 @@ impl SessionTemplate {
         Self {
             base_url: base_url.to_string(),
             chat: chat_capability(),
-            // draft-atwood-jmap-chat-mimi-00 L157; protocol-06 §3 room IDs
+            // draft-atwood-jmap-chat-mimi-00 L157; protocol-07 §2.1 room IDs
             // are mimi://<hub domain>/r/<name> (decision mimid-1wgh.6.36).
             room_id_prefix: format!("mimi://{domain}/r/"),
             // draft-atwood-jmap-chat-mimi-00 L101, L160.

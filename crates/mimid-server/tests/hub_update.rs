@@ -1,4 +1,4 @@
-//! protocol-06 §5.3 update endpoint tests (mimid-1wgh.6.27). MLS validity
+//! protocol-07 §5.3 update endpoint tests (mimid-1wgh.6.27). MLS validity
 //! is judged against mls-rs clients; room policy flows that need
 //! AppDataUpdates use mimi-mls Members.
 

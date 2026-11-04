@@ -1,4 +1,4 @@
-//! Temporary (bead mimid-1wgh.46.1.2): writes mimid-encoded protocol-06
+//! Temporary (bead mimid-1wgh.46.1.2): writes mimid-encoded protocol-07
 //! bodies for Haven's decoders. Not committed.
 
 use std::fs;

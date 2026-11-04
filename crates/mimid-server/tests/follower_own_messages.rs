@@ -2,16 +2,16 @@
 //! (bead mimid-1wgh.7.31; decisions mimid-1wgh.7.30, mimid-1wgh.12.24,
 //! mimid-1wgh.12.26).
 //!
-//! protocol-06 §5.5: "The hub is not expected to forward the client's own
+//! protocol-07 §5.5: "The hub is not expected to forward the client's own
 //! message to the client or its provider." The hubs here are mock hubs
 //! that never send fanout, so whatever reaches the log was stored by the
 //! follower on the hub's success.
 //!
 //! Oracles:
 //!
-//! - hub responses hand-encoded from the protocol-06 §5.3 and §5.4 text,
+//! - hub responses hand-encoded from the protocol-07 §5.3 and §5.4 text,
 //!   checked against mimi-protocol's decoders;
-//! - the expected FanoutMessages hand-assembled from the protocol-06 §5.5
+//! - the expected FanoutMessages hand-assembled from the protocol-07 §5.5
 //!   text around the MLS messages sent (mimi-mls Member and mls-rs
 //!   output), compared with the bytes read straight from the database;
 //! - `senderMsgId` built here from the draft-atwood-jmap-chat-mimi-00
@@ -64,7 +64,7 @@ const ACCEPTED: [u8; 8] = [0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x05];
 /// differs from the stored copy.
 const OTHER_TIME: [u8; 8] = [0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x09];
 
-/// `Frank` (protocol-06 §5.4.1.2), hand-encoded: `server_frank` 32 bytes
+/// `Frank` (protocol-07 §5.4.1.2), hand-encoded: `server_frank` 32 bytes
 /// of 0xaa, `franking_signature_ciphersuite` 0x0001, then
 /// `franking_integrity_signature<V>` of four 0xbb bytes (one-byte length
 /// 0x04, RFC 9420 §2.1.2).
@@ -77,7 +77,7 @@ fn frank() -> Vec<u8> {
     .concat()
 }
 
-/// `SubmitMessageResponse` success (protocol-06 §5.4), hand-encoded:
+/// `SubmitMessageResponse` success (protocol-07 §5.4), hand-encoded:
 /// protocol mls10 (1), statusCode accepted (0), `accepted_timestamp`, then
 /// `optional<Frank>` present (0x01) and [`frank`].
 fn submit_accepted() -> Vec<u8> {
@@ -87,7 +87,7 @@ fn submit_accepted() -> Vec<u8> {
 /// `SubmitMessageResponse` notAllowed: protocol mls10, statusCode 1.
 const SUBMIT_NOT_ALLOWED: [u8; 2] = [0x01, 0x01];
 
-/// `UpdateRoomResponse` success (protocol-06 §5.3), hand-encoded:
+/// `UpdateRoomResponse` success (protocol-07 §5.3), hand-encoded:
 /// responseCode success (0), an empty errorDescription (0x00), then
 /// `accepted_timestamp`.
 fn update_success() -> Vec<u8> {
@@ -257,7 +257,7 @@ async fn accepted_message_is_stored_without_an_echo() {
 
     assert_eq!(own.submit(&request).await.unwrap(), submit_accepted());
 
-    // protocol-06 §5.5 `case application`: timestamp, message, then
+    // protocol-07 §5.5 `case application`: timestamp, message, then
     // `optional<Frank>` present with the response's frank.
     let expected = [&ACCEPTED[..], &sent.app_message, &[0x01], &frank()].concat();
     assert_eq!(
@@ -285,7 +285,7 @@ async fn accepted_commit_is_stored_without_an_echo() {
         update_success()
     );
 
-    // protocol-06 §5.5 `case commit`: timestamp, message, then an empty
+    // protocol-07 §5.5 `case commit`: timestamp, message, then an empty
     // `externalProposals<V>` (0x00).
     let expected = [&ACCEPTED[..], &sent.commit, &[0x00]].concat();
     assert_eq!(

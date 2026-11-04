@@ -1,6 +1,6 @@
 //! The hub refuses a standalone AppDataUpdate proposal that would make the
 //! epoch's cached proposals invalid under mls-extensions-10 §4.7 (bead
-//! mimid-1wgh.6.73): protocol-06 §3.5 forces cached proposals into the next
+//! mimid-1wgh.6.73): protocol-07 §3.5 forces cached proposals into the next
 //! Commit, and a committer refuses to commit while holding an invalid one
 //! (decision mimid-1wgh.4.65), so such a proposal would block the epoch.
 //!
@@ -46,7 +46,7 @@ const DAVE: &[u8] = b"mimi://a.example/u/dave";
 /// A private-use component (mls-extensions-10 §7.5) no hub logic knows.
 const UNKNOWN_COMPONENT: u16 = 0x8001;
 
-/// protocol-06 §7.6 `RoomMetaData` with every field empty, hand-encoded:
+/// protocol-07 §7.6 `RoomMetaData` with every field empty, hand-encoded:
 /// room_uri<V>, room_name<V>, room_descriptions<V>, room_avatar<V>,
 /// room_subject<V>, room_mood<V>, each a zero length.
 const EMPTY_ROOM_METADATA: [u8; 6] = [0x00; 6];
@@ -228,7 +228,7 @@ async fn update_of_an_unknown_component_is_refused() {
 
 #[tokio::test]
 async fn remove_of_absent_data_is_refused() {
-    // room_metadata is a component the hub knows (protocol-06 §7.6), and
+    // room_metadata is a component the hub knows (protocol-07 §7.6), and
     // room policy lets any member remove it; this room has none.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mimid.sqlite");

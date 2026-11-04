@@ -126,7 +126,7 @@ pub struct Follower {
     state: FollowerState,
 }
 
-/// The protocol-06 §5.1 directory, written by hand, with `BASE` for the
+/// The protocol-07 §5.1 directory, written by hand, with `BASE` for the
 /// follower's base URL.
 const DIRECTORY: &str = r#"{
   "keyMaterial": "BASE/v1/keyMaterial/{targetUser}",

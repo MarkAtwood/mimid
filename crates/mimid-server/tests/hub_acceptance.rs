@@ -229,7 +229,7 @@ fn add_participant(user: &[u8]) -> AppDataUpdate {
 type Applied = Result<Option<Vec<u8>>, ErrorSource>;
 
 /// An `apply` function whose participant list update gives `users`,
-/// written out by hand: protocol-06 §7.5 appends added participants.
+/// written out by hand: protocol-07 §7.5 appends added participants.
 fn list_becomes(
     users: &'static [&'static [u8]],
 ) -> impl FnMut(u16, Option<&[u8]>, ComponentOp<'_>) -> Applied {
@@ -397,7 +397,7 @@ impl Streams {
                 .into_iter()
                 .map(|received| {
                     assert_eq!(received.raw_path, format!("/v1/notify/{ROOM_ID_ENCODED}"));
-                    assert_eq!(received.from, ["mimi@a.example"], "protocol-06 §4.1 From");
+                    assert_eq!(received.from, ["mimi@a.example"], "protocol-07 §4.1 From");
                     assert_eq!(received.host, [host]);
                     received.body
                 })
@@ -586,7 +586,7 @@ impl Provider {
         (accepted_timestamp, frank)
     }
 
-    /// Checks `frank` as a receiver would (protocol-06 §5.4.1.2), with the
+    /// Checks `frank` as a receiver would (protocol-07 §5.4.1.2), with the
     /// hub's public key and the `hub_key` read back from the store.
     async fn verify_frank(
         &self,
@@ -1383,7 +1383,7 @@ async fn room_lifecycle_across_restart() {
         .unwrap();
         let (status, body) = provider.post("reportAbuse", from, report).await;
         assert_eq!(status, StatusCode::OK);
-        assert!(body.is_empty(), "protocol-06 §5.9: no response body");
+        assert!(body.is_empty(), "protocol-07 §5.9: no response body");
     }
 
     // Every provider received exactly its predicted stream.

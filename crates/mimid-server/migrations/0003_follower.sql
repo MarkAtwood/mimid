@@ -24,9 +24,9 @@ CREATE TABLE follower_event (
     -- Arrival time, milliseconds since the UNIX epoch.
     received_at INTEGER NOT NULL,
     -- The FanoutMessage `timestamp`: hub acceptance time, milliseconds since
-    -- the UNIX epoch (protocol-06 §5.5).
+    -- the UNIX epoch (protocol-07 §5.5).
     hub_timestamp INTEGER NOT NULL CHECK (hub_timestamp >= 0),
-    -- The FanoutMessage arm (protocol-06 §5.5).
+    -- The FanoutMessage arm (protocol-07 §5.5).
     kind TEXT NOT NULL CHECK (kind IN ('application', 'welcome', 'proposal', 'commit')),
     -- One FanoutMessage exactly as received.
     bytes BLOB NOT NULL,
@@ -73,7 +73,7 @@ CREATE TABLE client (
 CREATE INDEX client_by_user ON client (user_uri);
 
 -- KeyPackages uploaded by local clients, served through keyMaterial
--- (protocol-06 §5.2).
+-- (protocol-07 §5.2).
 CREATE TABLE key_package (
     -- The KeyPackageRef (RFC 9420 §5.2).
     ref BLOB PRIMARY KEY,

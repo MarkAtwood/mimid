@@ -1,4 +1,4 @@
-//! The protocol-06 §5.8 identifierQuery endpoint, received:
+//! The protocol-07 §5.8 identifierQuery endpoint, received:
 //! `POST /v1/identifierQuery/{domain}`.
 //!
 //! Policy (decisions mimid-1wgh.7.38, mimid-1wgh.7.39): only exact `handle`

@@ -4,7 +4,7 @@
 //! Oracles:
 //!
 //! - hubs at a.example answering with `UpdateRoomResponse`s hand-encoded
-//!   from the protocol-06 §5.3 text, checked against mimi-protocol's
+//!   from the protocol-07 §5.3 text, checked against mimi-protocol's
 //!   decoder;
 //! - the mls-rs fanout fixtures of `tests/fixtures/notify` (see its
 //!   PROVENANCE), framed into FanoutMessages by hand (`common/notify.rs`);
@@ -46,7 +46,7 @@ use relay::MockHub;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
-/// `UpdateRoomResponse` success (protocol-06 §5.3), hand-encoded:
+/// `UpdateRoomResponse` success (protocol-07 §5.3), hand-encoded:
 /// responseCode success (0), an empty errorDescription (0x00), then
 /// `uint64 accepted_timestamp` 1_700_000_000_005 ms, 0x0000018bcfe56805.
 const UPDATE_SUCCESS: [u8; 10] = [0x00, 0x00, 0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x05];
@@ -285,7 +285,7 @@ struct RacingHub {
 }
 
 async fn racing_directory(State(hub): State<RacingHub>) -> impl IntoResponse {
-    // The protocol-06 §5.1 directory, written by hand.
+    // The protocol-07 §5.1 directory, written by hand.
     let base = hub.base.as_str();
     let endpoints = [
         ("keyMaterial", "keyMaterial/{targetUser}"),

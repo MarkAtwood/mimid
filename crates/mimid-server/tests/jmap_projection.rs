@@ -1149,7 +1149,7 @@ async fn sets_refuse_everything() {
     f.close().await;
 }
 
-/// `room_metadata` (protocol-06 §7.6) with `room_uri` [`common::ROOM_ID`]
+/// `room_metadata` (protocol-07 §7.6) with `room_uri` [`common::ROOM_ID`]
 /// and `room_name` "Clubhouse", encoded by hand from the TLS presentation
 /// language: each field is a variable-length vector with a one-octet
 /// length (RFC 9420 §2.1.2).

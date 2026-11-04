@@ -1,4 +1,4 @@
-//! The update endpoint (protocol-06 §5.3): `POST /update/{roomId}`.
+//! The update endpoint (protocol-07 §5.3): `POST /update/{roomId}`.
 
 use std::io::{Read, Write};
 
@@ -17,7 +17,7 @@ fn decoding_error(message: &str) -> tls_codec::Error {
 /// Returns the content type of a handshake message, which must be a
 /// PublicMessage carrying a proposal or a commit.
 ///
-/// protocol-06 §5.3 also allows a SemiPrivateMessage, which
+/// protocol-07 §5.3 also allows a SemiPrivateMessage, which
 /// [`MLSMessage`] cannot decode, so it never reaches this check (decision
 /// mimid-1wgh.4.12).
 pub(crate) fn handshake_content_type(
@@ -35,10 +35,10 @@ pub(crate) fn handshake_content_type(
 }
 
 /// Checks that every message in a `moreProposals` or `externalProposals`
-/// list is a PublicMessage carrying a proposal (protocol-06 §5.3, §5.5).
+/// list is a PublicMessage carrying a proposal (protocol-07 §5.3, §5.5).
 /// An empty list passes.
 pub(crate) fn check_proposals(proposals: &[MLSMessage]) -> Result<(), tls_codec::Error> {
-    // protocol-06 §5.3, §5.5; decision mimid-1wgh.5.51 (entries), decision
+    // protocol-07 §5.3, §5.5; decision mimid-1wgh.5.51 (entries), decision
     // mimid-1wgh.5.49 (empty list accepted)
     for proposal in proposals {
         if handshake_content_type(proposal)? != ContentType::Proposal {
@@ -53,7 +53,7 @@ fn require(valid: Result<(), tls_codec::Error>) -> Result<(), tls_codec::Error> 
     valid.map_err(|e| tls_codec::Error::EncodingError(e.to_string()))
 }
 
-/// `GroupInfoOption` (protocol-06 §5.3), one arm per
+/// `GroupInfoOption` (protocol-07 §5.3), one arm per
 /// `GroupInfoRepresentation` value.
 ///
 /// Decoding rejects `reserved(0)` and the undefined values 3 to 255 with
@@ -109,13 +109,13 @@ impl Deserialize for GroupInfoOption {
             Self::PARTIAL => Ok(Self::Partial {
                 partial_group_info: PartialGroupInfo::tls_deserialize(bytes)?,
             }),
-            // protocol-06 §5.3; decision mimid-1wgh.5.52
+            // protocol-07 §5.3; decision mimid-1wgh.5.52
             other => Err(tls_codec::Error::UnknownValue(other.into())),
         }
     }
 }
 
-/// `HandshakeBundle` (protocol-06 §5.3), one arm per
+/// `HandshakeBundle` (protocol-07 §5.3), one arm per
 /// `proposalOrCommit.content.content_type`.
 ///
 /// `proposalOrCommit` and every entry of `more_proposals` must be a
@@ -241,7 +241,7 @@ impl Deserialize for HandshakeBundle {
     }
 }
 
-/// `UpdateRequest` (protocol-06 §5.3), the body of `POST /update/{roomId}`.
+/// `UpdateRequest` (protocol-07 §5.3), the body of `POST /update/{roomId}`.
 ///
 /// The `select (room.protocol)` has no protocol field on the wire; the
 /// protocol comes from the room, and only `mls10` is defined, so the body
@@ -252,7 +252,7 @@ pub struct UpdateRequest {
     pub bundle: HandshakeBundle,
 }
 
-/// `UpdateResponseCode` (protocol-06 §5.3).
+/// `UpdateResponseCode` (protocol-07 §5.3).
 ///
 /// Decoding rejects the undefined values 4 to 255 with
 /// [`tls_codec::Error::UnknownValue`].
@@ -270,7 +270,7 @@ pub enum UpdateResponseCode {
 }
 
 /// The `select (responseCode)` arms of an [`UpdateRoomResponse`]
-/// (protocol-06 §5.3), one per [`UpdateResponseCode`].
+/// (protocol-07 §5.3), one per [`UpdateResponseCode`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UpdateResult {
     /// `case success`.
@@ -307,7 +307,7 @@ impl UpdateResult {
     }
 }
 
-/// `UpdateRoomResponse` (protocol-06 §5.3), the response body of
+/// `UpdateRoomResponse` (protocol-07 §5.3), the response body of
 /// `POST /update/{roomId}`.
 ///
 /// On the wire `responseCode` comes first, then `errorDescription`, then
@@ -316,7 +316,7 @@ impl UpdateResult {
 /// mimid-1wgh.5.31).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UpdateRoomResponse {
-    /// `string errorDescription` (a [`Utf8String`], decision
+    /// `UTF8String errorDescription` (a [`Utf8String`], decision
     /// mimid-1wgh.5.20).
     pub error_description: Utf8String,
     /// `responseCode` and its arm.

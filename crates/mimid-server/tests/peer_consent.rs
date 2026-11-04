@@ -1,4 +1,4 @@
-//! Outbound protocol-06 §5.7 consent requests from [`PeerClient`].
+//! Outbound protocol-07 §5.7 consent requests from [`PeerClient`].
 //!
 //! Oracle: a local HTTP server with a hand-written directory, which records
 //! each request's method, path, `From` header and body. The bodies are the
@@ -121,7 +121,7 @@ async fn consent_requests_go_to_the_peer_domain_paths_byte_for_byte() {
 
 #[tokio::test]
 async fn any_status_but_201_is_rejected() {
-    // protocol-06 §5.7: the answer is usually 201; 404 or a 500-class code
+    // protocol-07 §5.7: the answer is usually 201; 404 or a 500-class code
     // means not accepted.
     for status in [
         StatusCode::OK,

@@ -1,4 +1,4 @@
-//! The protocol-06 §5.7 consent endpoints, received:
+//! The protocol-07 §5.7 consent endpoints, received:
 //! `POST /v1/requestConsent/{targetDomain}` and
 //! `POST /v1/updateConsent/{requesterDomain}` (decision mimid-1wgh.5.16).
 //!
@@ -46,7 +46,7 @@ const REQUEST: &[u8] =
 /// KeyPackage, one extension.
 const GRANT: &[u8] = include_bytes!("../../mimi-protocol/tests/fixtures/haven/consent_grant.bin");
 
-/// protocol-06 §5.7 `ConsentOperation` values.
+/// protocol-07 §5.7 `ConsentOperation` values.
 const CANCEL: u8 = 0;
 const REVOKE: u8 = 3;
 

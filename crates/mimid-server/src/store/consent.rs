@@ -1,11 +1,11 @@
-//! Consent entries received on the protocol-06 §5.7 endpoints: the
+//! Consent entries received on the protocol-07 §5.7 endpoints: the
 //! `consent_request` and `consent_update` tables (migration 0007). They are
 //! stored for a later JMAP surface to show users, not enforced (decision
 //! mimid-1wgh.7.35).
 
 use super::{Store, StoreError, from_sql_int, to_sql_int};
 
-/// A `ConsentScope` (protocol-06 §5.7), the key of both tables.
+/// A `ConsentScope` (protocol-07 §5.7), the key of both tables.
 #[derive(Debug, Clone, Copy)]
 pub struct ConsentKey<'a> {
     /// `requesterUri`.
@@ -23,7 +23,7 @@ impl ConsentKey<'_> {
     }
 }
 
-/// The decision an updateConsent conveys (protocol-06 §5.7).
+/// The decision an updateConsent conveys (protocol-07 §5.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConsentDecision {
@@ -85,7 +85,7 @@ impl Store {
         Ok(())
     }
 
-    /// Deletes the pending request for `key`, as a `cancel` does (protocol-06
+    /// Deletes the pending request for `key`, as a `cancel` does (protocol-07
     /// §5.7). Returns whether one existed.
     ///
     /// # Errors

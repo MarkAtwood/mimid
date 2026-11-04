@@ -127,7 +127,7 @@ fn standard(roles: RoleData) -> RoomState {
 }
 
 /// The standard room where banned dave still has clients (leaves 4, 7) and
-/// rex, no longer listed, still has one (leaf 5): the protocol-06 §5.3
+/// rex, no longer listed, still has one (leaf 5): the protocol-07 §5.3
 /// situation. It breaks the role 0 and banned constraints, which commits
 /// that remove these clients repair.
 fn with_outcasts(roles: RoleData) -> RoomState {
@@ -616,7 +616,7 @@ fn external_joins() {
             OK,
         ),
         (
-            "protocol-06 §5.3 / §4 note: a banned user cannot rejoin",
+            "protocol-07 §5.3 / §4 note: a banned user cannot rejoin",
             standard(a1_open_join()),
             external(DAVE, vec![]),
             Err(Denied::RemovedOrBanned),
@@ -707,7 +707,7 @@ fn policy_update_returns_new_data() {
 #[test]
 fn participant_update_returns_new_list() {
     // The expected list, encoded by the mimi-protocol codec: eve appended
-    // with role 2 (protocol-06 §7.5).
+    // with role 2 (protocol-07 §7.5).
     let expected = encode(&list(&[
         (ALICE, 3),
         (BOB, 2),
@@ -723,6 +723,32 @@ fn participant_update_returns_new_list() {
         &commit(
             L_ALICE,
             vec![inline(plu(&[], &[], &[(EVE, 2)])), inline(add(EVE))],
+        ),
+    );
+    let new_data = outcome.map(|outcome| outcome.new_data);
+    assert_eq!(new_data, Ok(BTreeMap::from([(PARTICIPANT_LIST, expected)])));
+}
+
+#[test]
+fn participant_updates_share_epoch_start_indices() {
+    // protocol-07 §7.5: both updates' indices refer to the epoch-start
+    // list, so index 3 is frank even after carol (index 2) is removed.
+    let expected = encode(&list(&[
+        (ALICE, 3),
+        (BOB, 2),
+        (ENF, 5),
+        (DAVE, 1),
+        (SAM, 4),
+    ]));
+    let outcome = authorize_commit(
+        &standard(a1()),
+        &commit(
+            L_ALICE,
+            vec![
+                inline(plu(&[], &[I_CAROL], &[])),
+                inline(remove(L_CAROL)),
+                inline(plu(&[], &[I_FRANK], &[])),
+            ],
         ),
     );
     let new_data = outcome.map(|outcome| outcome.new_data);
@@ -1565,7 +1591,7 @@ fn refused_standalone_proposals() {
             Err(Denied::HubComponent(FRANKING_AGENT)),
         ),
         (
-            "decision .5.70: out-of-range index",
+            "protocol-07 §7.5: out-of-range index",
             standard(a1()),
             member(L_ALICE),
             plu(&[], &[7], &[]),
@@ -1601,7 +1627,7 @@ fn send_message() {
             Err(Denied::NotParticipant),
         ),
         (
-            "protocol-06 §5.3 banned dave",
+            "protocol-07 §5.3 banned dave",
             standard(a1()),
             DAVE,
             Err(Denied::RemovedOrBanned),

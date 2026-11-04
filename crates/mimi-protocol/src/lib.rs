@@ -1,10 +1,10 @@
-//! Wire types for draft-ietf-mimi-protocol-06.
+//! Wire types for draft-ietf-mimi-protocol-07.
 //!
 //! The directory document (§5.1) is JSON: [`Directory`] implements
 //! [`serde::Serialize`] and [`serde::Deserialize`] for use with
 //! [`serde_json`], and its [`UriTemplate`] values expand into endpoint URLs.
 //!
-//! Message bodies use the TLS presentation language (protocol-06 §5), with
+//! Message bodies use the TLS presentation language (protocol-07 §5), with
 //! `<V>` vectors carrying the minimal variable-length integer prefix of
 //! RFC 9420 §2.1.2. Types implement [`tls_codec::Serialize`] and
 //! [`tls_codec::Deserialize`]; decode a complete body with
@@ -19,7 +19,7 @@
 //!
 //! - There is no authentication between providers. This crate does not
 //!   protect against a malicious or impersonated provider, and mimid does not
-//!   conform to protocol-06's mutually authenticated TLS transport.
+//!   conform to protocol-07's mutually authenticated TLS transport.
 //! - Implemented so far: the primitives ([`Protocol`], [`IdentifierUri`],
 //!   [`Utf8String`]), the directory ([`Directory`], [`UriTemplate`]), the
 //!   keyMaterial endpoint ([`KeyMaterialRequest`], with
@@ -46,7 +46,7 @@
 //! - Franking takes the salt, sender URI and room URI as inputs: the caller
 //!   extracts them from the MIMI content. [`ServerFrankingContext`] URIs
 //!   are [`IdentifierUri`]s, so a non-ASCII URI must arrive percent-encoded.
-//!   [`HubKey`] redacts `Debug` but is not zeroized on drop (protocol-06
+//!   [`HubKey`] redacts `Debug` but is not zeroized on drop (protocol-07
 //!   §5.4.1.2; decision mimid-1wgh.5.53). The franking_integrity_signature
 //!   supports ciphersuite 1 only, like groupInfo signing.
 //! - [`ReceivedFrank::verify`] does not check that the franking_agent
@@ -73,7 +73,7 @@
 //!   only, the one [`mimi_mls::label`] implements; other suites decode but
 //!   [`GroupInfoRequest::verify`], [`GroupInfoSuccess::verify`] and the
 //!   `sign` methods return [`Error::UnsupportedCipherSuite`]. HPKE for
-//!   `encrypted_groupinfo_and_tree` always uses suite 1, since protocol-06
+//!   `encrypted_groupinfo_and_tree` always uses suite 1, since protocol-07
 //!   §5.6 ties `cipher_suite` only to signing (decision mimid-1wgh.5.55;
 //!   wg mimid-1wgh.37.59). Each `verify` checks the
 //!   signature against the key carried in the same message: binding the
@@ -85,7 +85,7 @@
 //!   proposals, as for `moreProposals` (decision mimid-1wgh.5.54).
 //! - keyMaterial signing and verification use suite 1's signature scheme
 //!   (Ed25519) and require suite 1 in `acceptableCiphersuites`, because
-//!   protocol-06 §5.2 names no suite for the signature (decision
+//!   protocol-07 §5.2 names no suite for the signature (decision
 //!   mimid-1wgh.5.61). An empty `acceptableCiphersuites` is rejected
 //!   (decision mimid-1wgh.5.62). [`KeyMaterialRequest::verify`]
 //!   checks the signature against the key in the same request only:
@@ -214,15 +214,14 @@ pub use utf8_string::Utf8String;
 use tls_codec::{TlsDeserialize, TlsSerialize, TlsSize};
 
 /// MLS application component IDs (`uint16 ComponentID`, mls-extensions-10
-/// §4.1) registered by protocol-06 §10.
+/// §4.1) registered by protocol-07 §10.
 pub mod component_id {
     /// `frank_aad` (§10.1), a Safe AAD component carrying
     /// [`FrankAad`](crate::FrankAad).
     pub const FRANK_AAD: u16 = 0x0020;
-    /// `franking_signature_key` (§10.2), the GroupContext component §5.4.1
-    /// calls `franking_agent`, carrying
-    /// [`FrankingAgentData`](crate::FrankingAgentData) (decision
-    /// mimid-1wgh.4.18).
+    /// `franking_agent` (§10.2), the GroupContext component of §5.4.1,
+    /// carrying [`FrankingAgentData`](crate::FrankingAgentData). protocol-06
+    /// §10.2 named it `franking_signature_key` (decision mimid-1wgh.4.18).
     pub const FRANKING_AGENT: u16 = 0x0021;
     /// `participant_list` (§10.3), a GroupContext component carrying
     /// [`ParticipantListData`](crate::ParticipantListData).
@@ -232,7 +231,7 @@ pub mod component_id {
     pub const ROOM_METADATA: u16 = 0x0023;
 }
 
-/// End-to-end protocol selector (protocol-06 §5).
+/// End-to-end protocol selector (protocol-07 §5).
 ///
 /// Only `mls10` is defined. Decoding `reserved(0)` or any undefined value
 /// fails with [`tls_codec::Error::UnknownValue`], because the `select
@@ -245,17 +244,17 @@ pub enum Protocol {
     Mls10 = 1,
 }
 
-/// Errors from constructing or checking protocol-06 values.
+/// Errors from constructing or checking protocol-07 values.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// A [`Utf8String`] contained U+0000 (protocol-06 §7.6).
+    /// A [`Utf8String`] contained U+0000 (protocol-07 §7.6).
     #[error("UTF8String contains a null character at byte {index}")]
     NullInUtf8String {
         /// Byte offset of the first null.
         index: usize,
     },
-    /// A [`Utf8String`] was not valid UTF-8 (protocol-06 §7.6).
+    /// A [`Utf8String`] was not valid UTF-8 (protocol-07 §7.6).
     #[error("UTF8String is not valid UTF-8")]
     InvalidUtf8(#[source] std::string::FromUtf8Error),
     /// An [`IdentifierUri`] was neither empty nor an RFC 3986 `URI`
@@ -307,38 +306,38 @@ pub enum Error {
     #[error("franked room URI does not match the room")]
     FrankRoomMismatch,
     /// A [`KeyMaterialRequestTbs`]'s `acceptableCiphersuites` list was
-    /// empty; protocol-06 §5.2 requires a non-empty list.
+    /// empty; protocol-07 §5.2 requires a non-empty list.
     #[error("acceptableCiphersuites is empty")]
     EmptyCipherSuites,
     /// A [`KeyMaterialResponse`]'s `clients` list contradicts its
-    /// `userStatus` (protocol-06 §5.2).
+    /// `userStatus` (protocol-07 §5.2).
     #[error("clients list does not match userStatus {user_status:?}")]
     KeyMaterialClientsMismatch {
         /// The response's `userStatus`.
         user_status: KeyMaterialUserCode,
     },
     /// A [`ConsentEntry`] or [`ConsentScope`] had an empty `requesterUri`
-    /// or `targetUri` (protocol-06 §5.7).
+    /// or `targetUri` (protocol-07 §5.7).
     #[error("consent requesterUri or targetUri is empty")]
     EmptyConsentUri,
     /// A [`ConsentEntry`] or [`ConsentScope`] had a `roomId` that is present
-    /// but empty, a non-canonical way to say "any room" (protocol-06 §5.7).
+    /// but empty, a non-canonical way to say "any room" (protocol-07 §5.7).
     #[error("consent roomId is present but empty")]
     EmptyConsentRoomId,
     /// A [`ConsentEntry`] other than `grant` carried KeyPackages, which only
-    /// the `grant` arm has (protocol-06 §5.7).
+    /// the `grant` arm has (protocol-07 §5.7).
     #[error("{consent_operation:?} consent entry carries KeyPackages")]
     ClientKeyPackagesWithoutGrant {
         /// The entry's `consentOperation`.
         consent_operation: ConsentOperation,
     },
     /// An [`IdentifierResponse`] `uri` entry or a [`UserProfile`]
-    /// `stableUri` was empty (protocol-06 §5.8).
+    /// `stableUri` was empty (protocol-07 §5.8).
     #[error("identifierQuery uri or stableUri is empty")]
     EmptyIdentifierQueryUri,
     /// An [`IdentifierResponse`]'s results contradict its `responseCode`:
     /// `success` needs at least one result and other codes none
-    /// (protocol-06 §5.8).
+    /// (protocol-07 §5.8).
     #[error("identifierQuery results do not match responseCode {response_code:?}")]
     IdentifierResultsMismatch {
         /// The response's `responseCode`.

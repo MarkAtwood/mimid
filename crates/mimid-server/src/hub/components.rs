@@ -1,5 +1,5 @@
 //! Application logic for the MLS application components the hub tracks:
-//! `participant_list` (protocol-06 §7.5) and the room-policy-04
+//! `participant_list` (protocol-07 §7.5) and the room-policy-04
 //! `roles_list` (§3), `preauth_list` (§4) and `base_room_policy` (§5).
 //!
 //! mls-extensions-10 §4.7 hands the application, per component ID, the
@@ -7,12 +7,14 @@
 //! the application returns the new data or calls the update invalid.
 //! [`apply_updates`] is that logic for the hub-tracked components:
 //!
-//! - a `ParticipantListUpdate` is applied per decision mimid-1wgh.5.70: all
-//!   indices refer to the list before that update; role changes first,
-//!   then removals, then the appended additions. An out-of-range or
-//!   duplicate index, or a resulting duplicate user, rejects the whole
-//!   update. Across the commit, no user may be operated on more than once
-//!   (protocol-06 §7.5);
+//! - every `ParticipantListUpdate` of a commit is resolved against the
+//!   list at the start of the epoch (protocol-07 §7.5; decision
+//!   mimid-1wgh.6.75): all indices in every update refer to that list, and
+//!   removals never shift other indices. Role changes are made in place,
+//!   removed entries dropped, and additions appended in commit order. An
+//!   out-of-range or repeated index, an addition of an already listed
+//!   user, or a resulting duplicate user rejects the whole update. Across
+//!   the commit, no user may be operated on more than once;
 //! - a `RoleUpdate`, `PreAuthUpdate` or `BaseRoomUpdate` replaces the data
 //!   entirely (room-policy-04 §3, §4, §5; decision mimid-1wgh.3.20), so the
 //!   new data is the last update's bytes once every update has decoded.
@@ -43,7 +45,7 @@ use mimi_mls::member::ComponentOp;
 use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_protocol::tls_codec::{self, Deserialize, Serialize};
 use mimi_protocol::{
-    FrankingAgentUpdate, ParticipantListData, ParticipantListUpdate, RoomMetaUpdate,
+    FrankingAgentUpdate, ParticipantListData, ParticipantListUpdate, RoomMetaUpdate, UserRolePair,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ComponentID, PREAUTH_LIST, ROLES_LIST};
 use mimi_room_policy::{BaseRoomPolicy, PreAuthData, RoleData};
@@ -67,23 +69,25 @@ pub enum ComponentError {
     #[error("participant list does not encode")]
     Encode(#[source] tls_codec::Error),
     /// A `user_index` or `removedIndices` entry is not an index into the
-    /// list before the update (decision mimid-1wgh.5.70).
+    /// list at the start of the epoch (protocol-07 §7.5; decision
+    /// mimid-1wgh.6.75).
     #[error("participant list index {index} is out of range for {len} entries")]
     IndexOutOfRange {
         /// The index.
         index: u32,
-        /// The length of the list before the update.
+        /// The length of the list at the start of the epoch.
         len: usize,
     },
-    /// An index appears more than once among `changedRoleParticipants`
-    /// and `removedIndices` (decision mimid-1wgh.5.70).
+    /// An index appears more than once in `changedRoleParticipants` or in
+    /// `removedIndices`, or in both (protocol-07 §7.5).
     #[error("participant list index {0} appears more than once")]
     DuplicateIndex(u32),
-    /// The update would leave a user in the list more than once (decision
-    /// mimid-1wgh.5.70).
+    /// An `addedParticipants` user is already in the list at the start of
+    /// the epoch (protocol-07 §7.5), or the list would hold a user more
+    /// than once.
     #[error("the update leaves a user in the participant list more than once")]
     DuplicateUser,
-    /// The commit operates on a user more than once (protocol-06 §7.5).
+    /// The commit operates on a user more than once (protocol-07 §7.5).
     #[error("the commit operates on a participant list user more than once")]
     UserChangedTwice,
     /// [`apply_updates`] was given no updates; mls-extensions-10 §4.7
@@ -99,36 +103,50 @@ pub enum ComponentError {
     UnknownComponent(ComponentID),
 }
 
-/// One user's participant-list change, from the role before the update to
-/// the role after it. A `from_role_index` of 0 is an addition and a
-/// `target_role_index` of 0 a removal (room-policy-04 §3).
+/// One user's participant-list change, from the role at the start of the
+/// epoch to the role after the commit. A `from_role_index` of 0 is an
+/// addition and a `target_role_index` of 0 a removal (room-policy-04 §3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParticipantChange {
     /// The user.
     pub user: Vec<u8>,
-    /// The user's role before the update, 0 if it was not listed.
+    /// The user's role at the start of the epoch, 0 if it was not listed.
     pub from_role_index: u32,
-    /// The user's role after the update, 0 if it is removed.
+    /// The user's role after the commit, 0 if it is removed.
     pub target_role_index: u32,
 }
 
-/// The participant list as a commit's updates are applied to it in order.
+/// A commit's participant list updates, each resolved against the list at
+/// the start of the epoch (protocol-07 §7.5; decision mimid-1wgh.6.75).
 ///
 /// It remembers every user a previous update operated on, so a later
-/// update in the same commit that operates on one again is rejected
-/// (protocol-06 §7.5).
+/// update in the same commit that operates on one again is rejected. As
+/// each user is operated on at most once, the updates' order changes only
+/// the order of the appended additions.
 #[derive(Debug, Clone)]
 pub struct ParticipantListCommit {
-    list: ParticipantListData,
+    start: ParticipantListData,
+    roles: Vec<u32>,
+    removed: Vec<bool>,
+    added: Vec<UserRolePair>,
     touched: HashSet<Vec<u8>>,
+    list: ParticipantListData,
 }
 
 impl ParticipantListCommit {
-    /// Starts a commit on the list as it stands before the commit.
-    pub fn new(list: ParticipantListData) -> Self {
+    /// Starts a commit on the list at the start of the epoch.
+    pub fn new(start: ParticipantListData) -> Self {
         Self {
-            list,
+            roles: start
+                .participants
+                .iter()
+                .map(|entry| entry.role_index)
+                .collect(),
+            removed: vec![false; start.participants.len()],
+            added: Vec::new(),
             touched: HashSet::new(),
+            list: start.clone(),
+            start,
         }
     }
 
@@ -137,8 +155,9 @@ impl ParticipantListCommit {
         &self.list
     }
 
-    /// Applies one update (decision mimid-1wgh.5.70) and returns its
-    /// changes in the order role changes, removals, additions.
+    /// Applies one update, its indices referring to the list at the start
+    /// of the epoch, and returns its changes in the order role changes,
+    /// removals, additions.
     ///
     /// # Errors
     ///
@@ -148,19 +167,13 @@ impl ParticipantListCommit {
         &mut self,
         update: &ParticipantListUpdate,
     ) -> Result<Vec<ParticipantChange>, ComponentError> {
-        let before = &self.list.participants;
-        let len = before.len();
-        let mut seen_indices = HashSet::new();
-        let mut index = |index: u32| -> Result<usize, ComponentError> {
-            let position = usize::try_from(index)
+        let start = &self.start.participants;
+        let len = start.len();
+        let position = |index: u32| {
+            usize::try_from(index)
                 .ok()
                 .filter(|&position| position < len)
-                .ok_or(ComponentError::IndexOutOfRange { index, len })?;
-            if seen_indices.insert(index) {
-                Ok(position)
-            } else {
-                Err(ComponentError::DuplicateIndex(index))
-            }
+                .ok_or(ComponentError::IndexOutOfRange { index, len })
         };
         let mut touched = self.touched.clone();
         let mut touch = |user: &[u8]| {
@@ -170,56 +183,74 @@ impl ParticipantListCommit {
                 Err(ComponentError::UserChangedTwice)
             }
         };
-        let mut after = before.clone();
+        let mut roles = self.roles.clone();
+        let mut removed = self.removed.clone();
+        let mut added = self.added.clone();
         let mut changes = Vec::new();
+        let mut seen_indices = HashSet::new();
         for pair in &update.changed_role_participants {
-            let position = index(pair.user_index)?;
-            let entry = &mut after[position];
+            let position = position(pair.user_index)?;
+            if !seen_indices.insert(position) {
+                return Err(ComponentError::DuplicateIndex(pair.user_index));
+            }
+            let entry = &start[position];
             touch(&entry.user)?;
             changes.push(ParticipantChange {
                 user: entry.user.clone(),
                 from_role_index: entry.role_index,
                 target_role_index: pair.role_index,
             });
-            entry.role_index = pair.role_index;
+            roles[position] = pair.role_index;
         }
-        let mut removed = vec![false; len];
         for &removed_index in &update.removed_indices {
-            let position = index(removed_index)?;
-            // An index is never both changed and removed (DuplicateIndex),
-            // so `before` holds the user's role before the update.
-            let entry = &before[position];
+            let position = position(removed_index)?;
+            if !seen_indices.insert(position) {
+                return Err(ComponentError::DuplicateIndex(removed_index));
+            }
+            let entry = &start[position];
             touch(&entry.user)?;
-            removed[position] = true;
             changes.push(ParticipantChange {
                 user: entry.user.clone(),
                 from_role_index: entry.role_index,
                 target_role_index: 0,
             });
+            removed[position] = true;
         }
-        let mut after: Vec<_> = after
-            .into_iter()
-            .zip(removed)
-            .filter_map(|(entry, removed)| (!removed).then_some(entry))
-            .collect();
-        for added in &update.added_participants {
-            touch(&added.user)?;
+        for addition in &update.added_participants {
+            touch(&addition.user)?;
+            if start.iter().any(|entry| entry.user == addition.user) {
+                return Err(ComponentError::DuplicateUser);
+            }
             changes.push(ParticipantChange {
-                user: added.user.clone(),
+                user: addition.user.clone(),
                 from_role_index: 0,
-                target_role_index: added.role_index,
+                target_role_index: addition.role_index,
             });
-            after.push(added.clone());
+            added.push(addition.clone());
         }
+        let participants: Vec<_> = start
+            .iter()
+            .zip(&roles)
+            .zip(&removed)
+            .filter(|&(_, &removed)| !removed)
+            .map(|((entry, &role_index), _)| UserRolePair {
+                user: entry.user.clone(),
+                role_index,
+            })
+            .chain(added.iter().cloned())
+            .collect();
         let mut users = HashSet::new();
-        if !after
+        if !participants
             .iter()
             .all(|entry| users.insert(entry.user.as_slice()))
         {
             return Err(ComponentError::DuplicateUser);
         }
-        self.list.participants = after;
+        self.roles = roles;
+        self.removed = removed;
+        self.added = added;
         self.touched = touched;
+        self.list.participants = participants;
         Ok(changes)
     }
 
@@ -268,7 +299,8 @@ pub fn is_known_component(component_id: ComponentID) -> bool {
 
 /// The mls-extensions-10 §4.7 application logic for a hub-tracked
 /// component: the new data after a commit's `updates` to it, in commit
-/// order.
+/// order. Participant list updates all index the list in `current`
+/// (protocol-07 §7.5; decision mimid-1wgh.6.75).
 ///
 /// `current` is the component's data before the commit, or `None` if the
 /// GroupContext has no entry for it; an absent participant list is empty.
@@ -310,7 +342,7 @@ pub fn apply_updates(
 /// [`mimi_mls::observer::Observer::process`] (decision mimid-1wgh.6.53):
 ///
 /// - the four hub-tracked components go through [`apply_updates`];
-/// - `room_metadata` (protocol-06 §7.6) and `franking_agent` (§5.4.1)
+/// - `room_metadata` (protocol-07 §7.6) and `franking_agent` (§5.4.1)
 ///   updates are decoded strictly, and the last one replaces the data. Room
 ///   policy still refuses any `franking_agent` change (decision
 ///   mimid-1wgh.6.42);

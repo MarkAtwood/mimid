@@ -1,4 +1,4 @@
-//! protocol-06 §5.6 groupInfo endpoint tests (mimid-1wgh.6.30). Responses
+//! protocol-07 §5.6 groupInfo endpoint tests (mimid-1wgh.6.30). Responses
 //! are checked with mls-rs's suite-1 crypto, and the GroupInfo and tree
 //! they carry must let a mimi-mls Member and an mls-rs client build an
 //! external Commit that the hub's `/update` accepts.

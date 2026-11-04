@@ -1,6 +1,6 @@
 //! Helpers for the update tests: rooms with a membership policy, built
 //! either by mls-rs clients (the MLS validity oracle) or by mimi-mls
-//! Members (which can send AppDataUpdates), protocol-06 §5.3 requests and
+//! Members (which can send AppDataUpdates), protocol-07 §5.3 requests and
 //! responses, and row counts.
 
 use std::path::Path;
@@ -262,7 +262,7 @@ pub fn prepare_commit<C: MlsConfig>(group: &mut Group<C>) -> Prepared<C> {
     }
 }
 
-/// A TLS-encoded `UpdateRequest` (protocol-06 §5.3) for a Commit: the
+/// A TLS-encoded `UpdateRequest` (protocol-07 §5.3) for a Commit: the
 /// `MLSMessage`s `commit`, `welcome` and `group_info` as Member and mls-rs
 /// produce them, the GroupInfo sent `full`, and `tree` as the
 /// `RatchetTreeOption`.
@@ -290,7 +290,7 @@ pub fn commit_request(
     .unwrap()
 }
 
-/// A TLS-encoded `UpdateRequest` (protocol-06 §5.3) for the proposal
+/// A TLS-encoded `UpdateRequest` (protocol-07 §5.3) for the proposal
 /// `MLSMessage`s `proposal` and `more`.
 pub fn proposal_request(proposal: &[u8], more: &[&[u8]]) -> Vec<u8> {
     UpdateRequest {

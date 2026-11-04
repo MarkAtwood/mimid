@@ -1,4 +1,4 @@
-//! The reportAbuse endpoint (protocol-06 §5.9): `POST /reportAbuse/{roomId}`.
+//! The reportAbuse endpoint (protocol-07 §5.9): `POST /reportAbuse/{roomId}`.
 //!
 //! The request body is an [`AbuseReport`]; there is no response body. To
 //! validate an [`AbusiveMessage`], the hub recomputes the `franking_tag`
@@ -14,10 +14,10 @@ use tls_codec::{TlsDeserialize, TlsSerialize, TlsSize};
 
 use crate::{Frank, IdentifierUri};
 
-/// `enum { reserved(0), (255) } AbuseType;` (protocol-06 §5.9).
+/// `enum { reserved(0), (255) } AbuseType;` (protocol-07 §5.9).
 ///
 /// The draft defines no reason codes yet, so every `uint8` value decodes
-/// and round-trips, `reserved(0)` included (protocol-06 §5.9; decision
+/// and round-trips, `reserved(0)` included (protocol-07 §5.9; decision
 /// mimid-1wgh.5.32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TlsSerialize, TlsDeserialize, TlsSize)]
 pub struct AbuseType(pub u8);
@@ -27,7 +27,7 @@ impl AbuseType {
     pub const RESERVED: Self = Self(0);
 }
 
-/// `AbusiveMessage` (protocol-06 §5.9): one allegedly abusive message and
+/// `AbusiveMessage` (protocol-07 §5.9): one allegedly abusive message and
 /// its frank.
 ///
 /// Decoding checks the wire form only; neither the frank nor the content is
@@ -43,17 +43,17 @@ pub struct AbusiveMessage {
     pub accepted_timestamp: u64,
 }
 
-/// `AbuseReport` (protocol-06 §5.9), the body of
+/// `AbuseReport` (protocol-07 §5.9), the body of
 /// `POST /reportAbuse/{roomId}`.
 ///
 /// `note` is described as a UTF-8 string that can be empty, but its wire
 /// type is `opaque note<V>`, so it is kept as bytes and not checked to be
-/// UTF-8, as for other opaque fields (protocol-06 §5.9; decision
+/// UTF-8, as for other opaque fields (protocol-07 §5.9; decision
 /// mimid-1wgh.5.60). Decoding checks the wire form only.
 #[derive(Debug, Clone, PartialEq, Eq, TlsSerialize, TlsDeserialize, TlsSize)]
 pub struct AbuseReport {
     /// `reportingUser`: the reporting user, which is optional; an empty
-    /// value means absent (protocol-06 §5.9; decision mimid-1wgh.5.59).
+    /// value means absent (protocol-07 §5.9; decision mimid-1wgh.5.59).
     pub reporting_user: IdentifierUri,
     /// `allegedAbuserUri`: the alleged sender of the abusive messages.
     pub alleged_abuser_uri: IdentifierUri,

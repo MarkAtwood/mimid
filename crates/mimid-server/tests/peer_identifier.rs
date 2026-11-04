@@ -1,4 +1,4 @@
-//! Outbound protocol-06 §5.8 identifierQuery from [`PeerClient`].
+//! Outbound protocol-07 §5.8 identifierQuery from [`PeerClient`].
 //!
 //! Oracle: a local HTTP server with a hand-written directory, which records
 //! each request's method, path, `From` header and body and answers a fixed

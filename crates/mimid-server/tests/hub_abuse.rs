@@ -1,4 +1,4 @@
-//! protocol-06 §5.9 reportAbuse at the hub (bead mimid-1wgh.6.31; decision
+//! protocol-07 §5.9 reportAbuse at the hub (bead mimid-1wgh.6.31; decision
 //! mimid-1wgh.21).
 //!
 //! Genuine franks come from the hub's own submitMessage path (bead

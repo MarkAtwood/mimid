@@ -142,7 +142,7 @@ pub struct Sender {
 
 impl Sender {
     /// alice encrypts `data` with a `frank_aad` item holding the
-    /// `franking_tag` over `data` with `salt` (protocol-06 §5.4.1.1).
+    /// `franking_tag` over `data` with `salt` (protocol-07 §5.4.1.1).
     pub fn franked(&mut self, data: &[u8], salt: &[u8; 16]) -> (Vec<u8>, [u8; 32]) {
         let tag = franking_tag(salt, data);
         let message = self
@@ -198,7 +198,7 @@ pub async fn create_room(hub: &Hub, room_id: &str, group_id: &[u8]) -> Sender {
     }
 }
 
-/// A TLS-encoded `SubmitMessageRequest` (protocol-06 §5.4), hand-assembled
+/// A TLS-encoded `SubmitMessageRequest` (protocol-07 §5.4), hand-assembled
 /// from its fields: `protocol` mls10 (1), `appMessage`, then `sendingUri`
 /// as `opaque<V>` with a one-byte length.
 pub fn submit_request(app_message: &[u8], sending_uri: &[u8]) -> Vec<u8> {

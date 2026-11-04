@@ -52,13 +52,13 @@ pub struct ProviderAssetUploadDomains {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TlsSize, TlsSerialize, TlsDeserialize)]
 #[repr(u8)]
 pub enum DownloadPrivacyType {
-    /// `direct(0)`: direct download (protocol-06 §5.10.1).
+    /// `direct(0)`: direct download (protocol-07 §5.10.1).
     Direct = 0,
-    /// `hubProxy(1)`: download through a proxy on the hub (protocol-06
+    /// `hubProxy(1)`: download through a proxy on the hub (protocol-07
     /// §5.10.2).
     HubProxy = 1,
     /// `ohttp(2)`: download through Oblivious HTTP via the hub
-    /// (protocol-06 §5.10.3).
+    /// (protocol-07 §5.10.3).
     Ohttp = 2,
 }
 

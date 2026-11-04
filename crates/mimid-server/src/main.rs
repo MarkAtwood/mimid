@@ -2,7 +2,7 @@
 //!
 //! One binary plays both MIMI roles at once: hub for the rooms this provider
 //! hosts and follower for rooms hosted elsewhere (decision mimid-1wgh.15).
-//! It serves the directory document of draft-ietf-mimi-protocol-06 §5.1 at
+//! It serves the directory document of draft-ietf-mimi-protocol-07 §5.1 at
 //! `/.well-known/mimi-protocol-directory`, routes the hub and follower
 //! endpoints, and runs the fanout worker, which delivers to the configured
 //! peers and, for this provider's own domain, to the follower in-process.
@@ -13,7 +13,7 @@
 //! # Limitations
 //!
 //! - There is no authentication between providers (decision mimid-1wgh.17).
-//!   protocol-06 requires mutually authenticated TLS; mimid does not
+//!   protocol-07 requires mutually authenticated TLS; mimid does not
 //!   implement it and does not claim conformance to it. Combined with
 //!   BasicCredential, mimid offers no protection against a malicious or
 //!   impersonated provider.

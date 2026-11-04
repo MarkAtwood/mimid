@@ -1,4 +1,4 @@
-//! protocol-06 wire bodies encoded by an independent implementation:
+//! protocol-07 wire bodies encoded by an independent implementation:
 //! Haven's `mimi-core` (havenmessenger/interop), through the generator in
 //! `tests/fixtures/haven/gen` (see `tests/fixtures/haven/PROVENANCE`).
 //!
@@ -10,7 +10,7 @@
 //! of the keyMaterial request are hand-encoded. None of the expected values
 //! come from this crate's encoder.
 //!
-//! Where Haven departs from protocol-06, the test asserts that mimid
+//! Where Haven departs from protocol-07, the test asserts that mimid
 //! refuses Haven's bytes and names the bead that tracks the divergence.
 
 use mimi_mls::wire::{
@@ -230,7 +230,7 @@ fn key_material_responses() {
 #[test]
 fn key_material_partial_success_without_success_is_refused() {
     // Haven divergence, mimid-1wgh.46.1.7: partialSuccess with only a
-    // keyMaterialExhausted client. protocol-06 §5.2: partialSuccess means
+    // keyMaterialExhausted client. protocol-07 §5.2: partialSuccess means
     // key material for at least one client (decision mimid-1wgh.5.63).
     assert!(
         KeyMaterialResponse::tls_deserialize_exact(haven!("key_material_response_exhausted"))
@@ -252,13 +252,13 @@ fn handshake_bundle_proposal() {
 #[test]
 fn handshake_bundle_commit_with_length_prefixed_group_info_is_refused() {
     // Haven divergence, mimid-1wgh.46.1.8: Haven writes GroupInfoOption's
-    // GroupInfo as opaque<V>; protocol-06 §5.3 carries it bare.
+    // GroupInfo as opaque<V>; protocol-07 §5.3 carries it bare.
     let wire = haven!("handshake_bundle_commit");
     assert!(HandshakeBundle::tls_deserialize_exact(wire).is_err());
 
     // Without Haven's 2-byte prefix (420 = 0x41a4, after the 428-byte
     // Commit, the Welcome presence byte, the 416-byte Welcome and the
-    // representation byte), the rest matches protocol-06.
+    // representation byte), the rest matches protocol-07.
     let at = 428 + 1 + 416 + 1;
     assert_eq!(wire[at..at + 2], [0x41, 0xa4]);
     let unwrapped = [&wire[..at], &wire[at + 2..]].concat();

@@ -18,7 +18,7 @@
 //!   §fanout-messages.
 //! - **ChatContact**: one per hub of the account's rooms, whose `identity`
 //!   and `login` are the hub's provider URI `mimi://<domain>`
-//!   (protocol-06 §3; mimi-00 §fanout-messages).
+//!   (protocol-07 §2.1; mimi-00 §fanout-messages).
 //!
 //! State strings (plan of mimid-1wgh.12 §3 "State strings"; s is the
 //! highest visible seq, m the highest membership id, both decimal):
@@ -658,7 +658,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// The provider URI of the hub `domain` (protocol-06 §3).
+/// The provider URI of the hub `domain` (protocol-07 §2.1).
 fn provider_uri(domain: &str) -> String {
     format!("mimi://{domain}")
 }

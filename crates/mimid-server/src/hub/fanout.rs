@@ -1,4 +1,4 @@
-//! Fanout delivery (protocol-06 §5.5): sends the outbox's `/notify` bodies
+//! Fanout delivery (protocol-07 §5.5): sends the outbox's `/notify` bodies
 //! to each destination provider, in order.
 //!
 //! Each (room, domain) pair is a FIFO queue. Only its head row is ever
@@ -64,7 +64,7 @@ pub trait LocalDelivery: Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Accepts `body`, the concatenated FanoutMessages of a `/notify`
-    /// request (protocol-06 §5.5), for the room `room_id`. Returning `Ok`
+    /// request (protocol-07 §5.5), for the room `room_id`. Returning `Ok`
     /// has the meaning of a `201` response. The same body may be delivered
     /// more than once.
     fn deliver(

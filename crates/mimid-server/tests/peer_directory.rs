@@ -1,4 +1,4 @@
-//! A peer directory without some protocol-06 §5.1 endpoints (decision
+//! A peer directory without some protocol-07 §5.1 endpoints (decision
 //! mimid-1wgh.5.75): calling an endpoint the peer does not offer fails
 //! with [`PeerError::NotOffered`] and sends nothing.
 //!

@@ -1,4 +1,4 @@
-//! protocol-06 §5.4 `POST /submitMessage/{roomId}`: accept, frank and
+//! protocol-07 §5.4 `POST /submitMessage/{roomId}`: accept, frank and
 //! enqueue an application message for fanout.
 //!
 //! The steps, under the hub's writer lock (decision mimid-1wgh.6.7):
@@ -30,7 +30,7 @@
 //!   check is a consistency check, not security (decision mimid-1wgh.6.9);
 //!   only receivers bind `sendingUri` to the MLS sender, through the frank
 //!   (decision mimid-1wgh.6.3).
-//! - protocol-06 §5.3 says the hub must withhold application messages from
+//! - protocol-07 §5.3 says the hub must withhold application messages from
 //!   the clients of a user being removed while the removal is pending. The
 //!   hub cannot tell which client sent a PrivateMessage, so it does not.
 //! - A room whose GroupContext lacks `base_room_policy`, or has a malformed
@@ -181,7 +181,7 @@ fn check(
         return refuse(room_id, "group_id is not the room's group");
     }
     let current_epoch = observer.epoch();
-    // protocol-06 §5.4: an older epoch is epochTooOld, a newer one notAllowed.
+    // protocol-07 §5.4: an older epoch is epochTooOld, a newer one notAllowed.
     match message.epoch().map(|epoch| epoch.cmp(&current_epoch)) {
         Some(Ordering::Equal) => {}
         Some(Ordering::Less) => {
@@ -267,7 +267,7 @@ fn refuse(room_id: &str, reason: &str) -> Result<Checked, HubError> {
 }
 
 /// The `franking_tag` of the request's `frank_aad` Safe AAD item
-/// (protocol-06 §5.4.1, §10.1).
+/// (protocol-07 §5.4.1, §10.1).
 ///
 /// The whole `authenticated_data` is a SafeAAD struct (mls-extensions-10
 /// §4.9; decision mimid-1wgh.4.17), decoded strictly: items in strictly
@@ -321,7 +321,7 @@ fn safe_aad_items(aad: &[u8]) -> Result<Vec<(ComponentID, VLBytes)>, tls_codec::
 }
 
 /// Computes the frank for a message accepted at `accepted_at`
-/// (protocol-06 §5.4.1.2).
+/// (protocol-07 §5.4.1.2).
 fn frank(
     hub: &Hub,
     room: &Room,

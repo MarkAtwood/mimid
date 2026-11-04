@@ -22,7 +22,7 @@
 //!   (decision mimid-1wgh.21). Its limitations are listed in `abuse.rs`.
 //! - [`Hub::submit_message`] has the limitations listed in `submit.rs`: the
 //!   hub cannot authenticate a PrivateMessage's sender, does not withhold
-//!   messages from clients whose removal is pending (protocol-06 §5.3), and
+//!   messages from clients whose removal is pending (protocol-07 §5.3), and
 //!   refuses messages in rooms without a usable `base_room_policy`.
 //! - [`Hub::update`] has the limitations listed in `update.rs`.
 //! - If a room cannot be rebuilt after a failed request, it is dropped from
@@ -60,7 +60,7 @@ use crate::store::{RoomSnapshot, Store, StoreError};
 use fanout::FanoutHandle;
 pub use key_material::{LocalKeyMaterial, LocalKeyMaterialError, LocalKeyMaterialFuture};
 use keys::HubSigningKey;
-pub(crate) use state::identity_domain;
+pub(crate) use state::{identity_domain, room_uri_domain, user_uri_domain};
 
 /// RFC 9420 §17.1: `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`, the only
 /// ciphersuite supported (decision mimid-1wgh.23).
@@ -382,7 +382,7 @@ impl Hub {
         })
     }
 
-    /// The current `room_name` (protocol-06 §7.6) of each room among
+    /// The current `room_name` (protocol-07 §7.6) of each room among
     /// `room_ids` that this hub hosts, read from the `room_metadata`
     /// component of its GroupContext, keyed by room ID. A room that is not
     /// hosted here, has no `room_metadata`, or whose `room_metadata` does
@@ -410,7 +410,7 @@ impl Hub {
             .collect()
     }
 
-    /// protocol-06 §5.3 `POST /update/{roomId}`: validates the Commit or
+    /// protocol-07 §5.3 `POST /update/{roomId}`: validates the Commit or
     /// proposals in the TLS-encoded `UpdateRequest` `request`, checks them
     /// against room policy, logs them and enqueues their fanout. `from` is
     /// the domain of the request's `From` header.
@@ -439,7 +439,7 @@ impl Hub {
         update::update(self, room_id, from, request).await
     }
 
-    /// protocol-06 §5.4 `POST /submitMessage/{roomId}`: checks, franks and
+    /// protocol-07 §5.4 `POST /submitMessage/{roomId}`: checks, franks and
     /// logs the application message in the TLS-encoded
     /// `SubmitMessageRequest` `request`, and enqueues it for fanout.
     /// `from` is the domain of the request's `From` header.
@@ -469,7 +469,7 @@ impl Hub {
         submit::submit_message(self, room_id, from, request).await
     }
 
-    /// protocol-06 §5.6 `POST /groupInfo/{roomId}`: checks the TLS-encoded
+    /// protocol-07 §5.6 `POST /groupInfo/{roomId}`: checks the TLS-encoded
     /// `GroupInfoRequest` `request` and, if room policy allows the
     /// requester an external join, answers with the room's GroupInfo,
     /// ratchet tree and pending proposals, encrypted to the requester.
@@ -498,7 +498,7 @@ impl Hub {
         group_info::group_info(self, room_id, from, request).await
     }
 
-    /// protocol-06 §5.9 `POST /reportAbuse/{roomId}`: validates the frank
+    /// protocol-07 §5.9 `POST /reportAbuse/{roomId}`: validates the frank
     /// of every message in the TLS-encoded `AbuseReport` `request` and logs
     /// the outcome. No action is taken (decision mimid-1wgh.21). `from` is
     /// the domain of the request's `From` header; it is not used.
@@ -523,9 +523,9 @@ impl Hub {
         abuse::report_abuse(self, room_id, from, request).await
     }
 
-    /// protocol-06 §5.2 `POST /keyMaterial/{targetUser}`, proxied for a
+    /// protocol-07 §5.2 `POST /keyMaterial/{targetUser}`, proxied for a
     /// hosted room to the provider of `target_user`, the percent-decoded
-    /// path value (protocol-06 §3.3; decision mimid-1wgh.6.20), or served
+    /// path value (protocol-07 §3.3; decision mimid-1wgh.6.20), or served
     /// in-process if `target_user` is a user of this provider (decision
     /// mimid-1wgh.7.11). `from` is the domain of the request's `From`
     /// header.
@@ -672,7 +672,7 @@ pub enum HubError {
         cipher_suite: u16,
     },
     /// `external_senders` is missing, malformed, or not exactly the hub's
-    /// key and credential (protocol-06 §7.4; decisions mimid-1wgh.4.21,
+    /// key and credential (protocol-07 §7.4; decisions mimid-1wgh.4.21,
     /// mimid-1wgh.6.35).
     #[error("external_senders is not exactly the hub")]
     WrongExternalSenders,
@@ -687,7 +687,7 @@ pub enum HubError {
     WrongFrankingAgent,
     /// The GroupContext does not require `frank_aad` (0x0020) as a Safe AAD
     /// component, although the hub refuses every message without a
-    /// frank_aad item (rohanmahy on mimi-protocol#166; protocol-06 §5.4.1;
+    /// frank_aad item (rohanmahy on mimi-protocol#166; protocol-07 §5.4.1;
     /// bead mimid-1wgh.6.74).
     #[error("the group does not require frank_aad as a Safe AAD component")]
     FrankAadNotRequired,
@@ -742,10 +742,10 @@ pub enum HubError {
     /// An in-memory MLS store could not be created.
     #[error("cannot create an MLS store")]
     MlsStore(#[source] mimi_mls::Error),
-    /// A frank could not be computed or signed (protocol-06 §5.4.1.2).
+    /// A frank could not be computed or signed (protocol-07 §5.4.1.2).
     #[error("cannot frank the message")]
     Franking(#[source] mimi_protocol::Error),
-    /// A groupInfo response could not be signed (protocol-06 §5.6).
+    /// A groupInfo response could not be signed (protocol-07 §5.6).
     #[error("cannot sign the GroupInfo response")]
     GroupInfoResponse(#[source] mimi_protocol::Error),
     /// A room's GroupContext could not be read.
@@ -769,7 +769,7 @@ pub enum HubError {
     /// A peer provider's response does not decode.
     #[error("undecodable peer response")]
     InvalidPeerResponse(#[source] mimi_mls::tls_codec::Error),
-    /// A reported message's frank does not verify (protocol-06 §5.9).
+    /// A reported message's frank does not verify (protocol-07 §5.9).
     #[error("the frank of reported message {index} does not verify")]
     UnverifiedAbusiveMessage {
         /// The message's position in the report.

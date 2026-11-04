@@ -1,4 +1,4 @@
-//! Franking (protocol-06 §5.4, §5.4.1): wire types, HMACs and the
+//! Franking (protocol-07 §5.4, §5.4.1): wire types, HMACs and the
 //! franking_integrity_signature.
 //!
 //! The hub computes [`server_frank`] and signs a [`FrankingIntegrityTbs`]
@@ -14,23 +14,23 @@ use tls_codec::{Serialize, TlsDeserialize, TlsSerialize, TlsSize};
 use crate::group_info::{check_cipher_suite, key_bytes};
 use crate::{Error, IdentifierUri};
 
-/// SignWithLabel label for [`FrankingIntegrityTbs`] (protocol-06
+/// SignWithLabel label for [`FrankingIntegrityTbs`] (protocol-07
 /// §5.4.1.2, §5.4.1.3).
 const INTEGRITY_TBS_LABEL: &str = "FrankingIntegrityTBS";
 
 /// `struct { SignaturePublicKey franking_signature_key; Credential
-/// credential; } FrankingAgentData;` (protocol-06 §5.4.1).
+/// credential; } FrankingAgentData;` (protocol-07 §5.4.1).
 ///
 /// The `data` of the GroupContext component
 /// [`FRANKING_AGENT`](crate::component_id::FRANKING_AGENT) (0x0021), which
-/// §10.2 registers as `franking_signature_key` and §5.4.1 calls
-/// `franking_agent` (decision mimid-1wgh.4.18). It mirrors RFC 9420
+/// §10.2 registers as `franking_agent` (protocol-06 §10.2 named it
+/// `franking_signature_key`; decision mimid-1wgh.4.18). It mirrors RFC 9420
 /// §12.1.8.1 `ExternalSender`. Also the `update` of an `AppDataUpdate`
 /// proposal, as [`FrankingAgentUpdate`].
 ///
 /// The key uses the signature algorithm of the group's ciphersuite.
 /// Decoding checks the wire form only; nothing here checks that
-/// `credential` names the hub's domain (protocol-06 §5.4.1.3; decision
+/// `credential` names the hub's domain (protocol-07 §5.4.1.3; decision
 /// mimid-1wgh.5.56).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, TlsSerialize, TlsDeserialize, TlsSize)]
 pub struct FrankingAgentData {
@@ -41,11 +41,11 @@ pub struct FrankingAgentData {
     pub credential: Credential,
 }
 
-/// `FrankingAgentData FrankingAgentUpdate;` (protocol-06 §5.4.1), the
+/// `FrankingAgentData FrankingAgentUpdate;` (protocol-07 §5.4.1), the
 /// `update` of an `AppDataUpdate` proposal for the franking agent.
 pub type FrankingAgentUpdate = FrankingAgentData;
 
-/// `struct { uint8 franking_tag[32]; } FrankAAD;` (protocol-06 §5.4.1).
+/// `struct { uint8 franking_tag[32]; } FrankAAD;` (protocol-07 §5.4.1).
 ///
 /// The `aad_item_data` of a `SafeAADItem` with component ID
 /// [`FRANK_AAD`](crate::component_id::FRANK_AAD) (mls-extensions-10 §4.9;
@@ -58,7 +58,7 @@ pub struct FrankAad {
     pub franking_tag: [u8; 32],
 }
 
-/// `Frank` (protocol-06 §5.4): the hub's frank on an application message,
+/// `Frank` (protocol-07 §5.4): the hub's frank on an application message,
 /// carried in a [`SubmitMessageResponse`](crate::SubmitMessageResponse) and a [`FanoutMessage`](crate::FanoutMessage).
 ///
 /// Decoding checks the wire form only. Neither `server_frank` nor the
@@ -75,7 +75,7 @@ pub struct Frank {
 }
 
 /// `struct { IdentifierUri sender_uri; IdentifierUri room_uri; uint64
-/// accepted_timestamp; } ServerFrankingContext;` (protocol-06 §5.4.1.2).
+/// accepted_timestamp; } ServerFrankingContext;` (protocol-07 §5.4.1.2).
 ///
 /// The hub's context for a frank. Its TLS encoding follows the
 /// `franking_tag` in the input to [`server_frank`].
@@ -89,12 +89,12 @@ pub struct ServerFrankingContext {
     pub accepted_timestamp: u64,
 }
 
-/// `hub_key` (protocol-06 §5.4.1.2): the hub's secret HMAC key for
+/// `hub_key` (protocol-07 §5.4.1.2): the hub's secret HMAC key for
 /// [`server_frank`].
 ///
 /// The draft gives no length. The key never goes on the wire, so mimid fixes
 /// it at 32 bytes, the HMAC-SHA256 output size (RFC 2104 §3). `Debug` prints
-/// no key bytes. protocol-06 §5.4.1.2; decision mimid-1wgh.5.53.
+/// no key bytes. protocol-07 §5.4.1.2; decision mimid-1wgh.5.53.
 pub struct HubKey([u8; 32]);
 
 impl HubKey {
@@ -125,7 +125,7 @@ fn hmac_sha256<const N: usize>(key: &[u8; N]) -> HmacSha256 {
     HmacSha256::new(&block)
 }
 
-/// `franking_tag = HMAC_SHA256(salt, application_data)` (protocol-06
+/// `franking_tag = HMAC_SHA256(salt, application_data)` (protocol-07
 /// §5.4.1.1).
 ///
 /// `salt` is the MIMI content salt (mimi-content-10 `salt: bstr .size 16`).
@@ -171,7 +171,7 @@ fn server_frank_mac(
 }
 
 /// `server_frank = HMAC_SHA256(hub_key, (franking_tag || context))`
-/// (protocol-06 §5.4.1.2).
+/// (protocol-07 §5.4.1.2).
 ///
 /// `||` is the raw 32-byte `franking_tag` followed by the TLS encoding of
 /// `context` (decision mimid-1wgh.5.28).
@@ -209,7 +209,7 @@ pub fn verify_server_frank(
         .map_err(|_| Error::ServerFrankMismatch)
 }
 
-/// `FrankingIntegrityTBS` (protocol-06 §5.4.1.2): what the hub signs to
+/// `FrankingIntegrityTBS` (protocol-07 §5.4.1.2): what the hub signs to
 /// produce `franking_integrity_signature`.
 ///
 /// The TBS never goes on the wire. The hub builds it after computing
@@ -232,7 +232,7 @@ pub struct FrankingIntegrityTbs {
 impl FrankingIntegrityTbs {
     /// Signs this TBS and returns the [`Frank`] the hub sends:
     /// `SignWithLabel(franking_private_key, "FrankingIntegrityTBS",
-    /// FrankingIntegrityTBS)` (protocol-06 §5.4.1.2).
+    /// FrankingIntegrityTBS)` (protocol-07 §5.4.1.2).
     ///
     /// `franking_private_key` is the raw private key matching the group's
     /// [`FrankingAgentData::franking_signature_key`] (a 32-byte Ed25519
@@ -260,7 +260,7 @@ impl FrankingIntegrityTbs {
 impl Frank {
     /// Checks `franking_integrity_signature`: `VerifyWithLabel(
     /// franking_signature_key, "FrankingIntegrityTBS", FrankingIntegrityTBS,
-    /// franking_integrity_signature)` (protocol-06 §5.4.1.3), where the TBS
+    /// franking_integrity_signature)` (protocol-07 §5.4.1.3), where the TBS
     /// holds this frank's `server_frank` and ciphersuite, as received, and
     /// `context`.
     ///
@@ -298,7 +298,7 @@ impl Frank {
     }
 }
 
-/// What a receiver holds for frank verification (protocol-06 §5.4.1.3)
+/// What a receiver holds for frank verification (protocol-07 §5.4.1.3)
 /// after decrypting an otherwise valid application message from the hub.
 ///
 /// The caller extracts every field:
@@ -316,7 +316,7 @@ impl Frank {
 /// Before calling [`ReceivedFrank::verify`], the caller must check that
 /// `franking_agent.credential` names the hub's domain (§5.4.1.3).
 /// [`mimi_mls::wire`] exposes a credential only as encoded bytes, so this
-/// crate cannot (protocol-06 §5.4.1.3; decision mimid-1wgh.5.56).
+/// crate cannot (protocol-07 §5.4.1.3; decision mimid-1wgh.5.56).
 #[derive(Debug, Clone, Copy)]
 pub struct ReceivedFrank<'a> {
     /// The hub's frank.
@@ -345,7 +345,7 @@ pub struct ReceivedFrank<'a> {
 }
 
 impl ReceivedFrank<'_> {
-    /// Runs the receiver checks of protocol-06 §5.4.1.3, in its order, and
+    /// Runs the receiver checks of protocol-07 §5.4.1.3, in its order, and
     /// returns the [`ServerFrankingContext`] the receiver stores with the
     /// message alongside the frank.
     ///
@@ -377,14 +377,14 @@ impl ReceivedFrank<'_> {
     /// [`Error::FrankSenderMismatch`]; [`Error::FrankRoomMismatch`].
     pub fn verify(&self) -> Result<ServerFrankingContext, Error> {
         let frank_suite = self.frank.franking_signature_ciphersuite;
-        // protocol-06 §5.4.1.3; decision mimid-1wgh.5.57
+        // protocol-07 §5.4.1.3; decision mimid-1wgh.5.57
         if frank_suite != self.group_cipher_suite {
             return Err(Error::FrankCipherSuiteMismatch {
                 frank: frank_suite.into(),
                 group: self.group_cipher_suite.into(),
             });
         }
-        // protocol-06 §5.4.1.3; decision mimid-1wgh.5.58 (content URIs)
+        // protocol-07 §5.4.1.3; decision mimid-1wgh.5.58 (content URIs)
         let context = ServerFrankingContext {
             sender_uri: self.content_sender_uri.clone(),
             room_uri: self.content_room_uri.clone(),
@@ -393,7 +393,7 @@ impl ReceivedFrank<'_> {
         self.frank
             .verify_integrity(&self.franking_agent.franking_signature_key, &context)?;
         verify_franking_tag(self.salt, self.application_data, self.franking_tag)?;
-        // Byte-exact URI comparison: protocol-06 §5.4.1.3; decision
+        // Byte-exact URI comparison: protocol-07 §5.4.1.3; decision
         // mimid-1wgh.5.58
         if self.content_sender_uri != self.authenticated_sender_uri {
             return Err(Error::FrankSenderMismatch);

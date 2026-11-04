@@ -1,4 +1,4 @@
-//! The directory document (protocol-06 §5.1).
+//! The directory document (protocol-07 §5.1).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -8,7 +8,7 @@ use serde::ser::{self, SerializeMap};
 
 use crate::UriTemplate;
 
-/// The JSON keys of protocol-06 §5.1, in the order of the draft's example.
+/// The JSON keys of protocol-07 §5.1, in the order of the draft's example.
 const KEYS: [&str; 10] = [
     "keyMaterial",
     "update",
@@ -23,7 +23,7 @@ const KEYS: [&str; 10] = [
 ];
 
 /// The directory document served at `/.well-known/mimi-protocol-directory`
-/// (protocol-06 §5.1): one URL template per endpoint.
+/// (protocol-07 §5.1): one URL template per endpoint.
 ///
 /// Fields mirror the draft's JSON keys. Each is optional: §5.1 says the
 /// document holds "URIs for each type of endpoint" but not what a provider
@@ -32,11 +32,8 @@ const KEYS: [&str; 10] = [
 ///
 /// Each value is a [`UriTemplate`] whose `{name}` placeholders are literal
 /// text, expanded by the client (decision mimid-1wgh.5.38). Placeholder names
-/// are not checked: §5.1 writes `{targetUser}`/`{requesterUser}` for the
-/// consent endpoints where §5.7 writes `{targetDomain}`/`{requesterDomain}`
-/// (decision mimid-1wgh.5.16), and a mismatch is caught when
-/// [`UriTemplate::expand`] meets an undefined variable (decision
-/// mimid-1wgh.5.42). URLs need not be `https` (decision mimid-1wgh.34).
+/// are not checked: a mismatch is caught when [`UriTemplate::expand`] meets
+/// an undefined variable (decision mimid-1wgh.5.42). URLs need not be `https` (decision mimid-1wgh.34).
 ///
 /// Decoding with `serde_json` is strict: the document must be a JSON object,
 /// every key may appear only once, every known key present needs a string

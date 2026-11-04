@@ -1,4 +1,4 @@
--- Consent entries received on the protocol-06 §5.7 endpoints (bead
+-- Consent entries received on the protocol-07 §5.7 endpoints (bead
 -- mimid-1wgh.7.32). They are stored for a later JMAP surface to show users,
 -- not enforced (decision mimid-1wgh.7.35).
 --

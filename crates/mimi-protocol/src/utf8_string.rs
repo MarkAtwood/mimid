@@ -1,4 +1,4 @@
-//! `UTF8String` (protocol-06 §7.6), also used where the draft writes
+//! `UTF8String` (protocol-07 §7.6), also used where the draft writes
 //! `string` (decision mimid-1wgh.5.20).
 
 use std::fmt;
@@ -8,7 +8,7 @@ use tls_codec::{Deserialize, Serialize, Size, VLByteSlice, VLBytes};
 
 use crate::Error;
 
-/// "A sequence of valid UTF8 without nulls" (protocol-06 §7.6).
+/// "A sequence of valid UTF8 without nulls" (protocol-07 §7.6).
 ///
 /// Wire form: `struct { opaque string<V>; } UTF8String;`. Only the null
 /// character is excluded. Bidi controls and zero-width characters are valid

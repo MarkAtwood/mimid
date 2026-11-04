@@ -12,10 +12,10 @@ use super::components::{ComponentError, decode};
 use super::policy::RoomState;
 use crate::config::Domain;
 
-/// The URI scheme of MIMI identifiers (protocol-06 §3).
+/// The URI scheme of MIMI identifiers (protocol-07 §2.1).
 const MIMI_SCHEME_PREFIX: &str = "mimi://";
 
-/// The domain of a `mimi://<domain>/...` user URI (protocol-06 §3), or
+/// The domain of a `mimi://<domain>/...` user URI (protocol-07 §2.1), or
 /// `None` for any other URI.
 pub(super) fn user_domain(uri: &str) -> Option<&str> {
     uri.strip_prefix(MIMI_SCHEME_PREFIX)?
@@ -31,6 +31,37 @@ pub(crate) fn identity_domain(identity: &[u8]) -> Option<Domain> {
         .ok()
         .and_then(user_domain)
         .and_then(|domain| Domain::try_from(domain.to_owned()).ok())
+}
+
+/// The provider domain of a user URI `mimi://<domain>/u/<id>` (protocol-07
+/// §2.1), or `None` for any other URI, including the provider URI
+/// `mimi://<domain>` that is the hub's identity (decision mimid-1wgh.6.35).
+pub(crate) fn user_uri_domain(uri: &str) -> Option<Domain> {
+    typed_uri_domain(uri, "u")
+}
+
+/// The provider domain of a room URI `mimi://<domain>/r/<name>`
+/// (protocol-07 §2.1), or `None` for any other URI.
+pub(crate) fn room_uri_domain(uri: &str) -> Option<Domain> {
+    typed_uri_domain(uri, "r")
+}
+
+/// The provider domain of a MIMI URI `mimi://<domain>/<kind>/<id>`, whose
+/// first path segment `kind` is the identifier type (protocol-07 §2.1), or
+/// `None` for any other URI.
+fn typed_uri_domain(uri: &str, kind: &str) -> Option<Domain> {
+    // protocol-07 §2.1; decision mimid-1wgh.6.76: `<id>` is one non-empty
+    // path segment, with no query or fragment.
+    let (_, id) = uri
+        .strip_prefix(MIMI_SCHEME_PREFIX)?
+        .split_once('/')?
+        .1
+        .split_once('/')
+        .filter(|(segment, _)| *segment == kind)?;
+    if id.is_empty() || id.contains(['/', '?', '#']) {
+        return None;
+    }
+    identity_domain(uri.as_bytes())
 }
 
 /// Why a room's policy state cannot be read.

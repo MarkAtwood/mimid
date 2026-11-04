@@ -1,4 +1,4 @@
-//! The consent endpoints (protocol-06 §5.7):
+//! The consent endpoints (protocol-07 §5.7):
 //! `POST /requestConsent/{targetDomain}` and
 //! `POST /updateConsent/{requesterDomain}` (decision mimid-1wgh.5.16).
 //!
@@ -16,7 +16,7 @@ use tls_codec::{Deserialize, Serialize, Size, TlsDeserialize, TlsSerialize, TlsS
 
 use crate::{Error, IdentifierUri};
 
-/// `ConsentOperation` (protocol-06 §5.7).
+/// `ConsentOperation` (protocol-07 §5.7).
 ///
 /// Decoding rejects the undefined values 4 to 255 with
 /// [`tls_codec::Error::UnknownValue`], because the `select
@@ -49,10 +49,10 @@ fn check_scope(
     target_uri: &IdentifierUri,
     room_id: Option<&IdentifierUri>,
 ) -> Result<(), String> {
-    // protocol-06 §5.7; decision mimid-1wgh.5.68
+    // protocol-07 §5.7; decision mimid-1wgh.5.68
     if requester_uri.is_empty() || target_uri.is_empty() {
         Err(Error::EmptyConsentUri.to_string())
-    // protocol-06 §5.7; decision mimid-1wgh.5.69
+    // protocol-07 §5.7; decision mimid-1wgh.5.69
     } else if room_id.is_some_and(IdentifierUri::is_empty) {
         Err(Error::EmptyConsentRoomId.to_string())
     } else {
@@ -60,7 +60,7 @@ fn check_scope(
     }
 }
 
-/// `ConsentScope` (protocol-06 §5.7): who asks whom, for one room or for
+/// `ConsentScope` (protocol-07 §5.7): who asks whom, for one room or for
 /// any room.
 ///
 /// §5.7 requires a `cancel` to use the same scope as an earlier `request`;
@@ -77,8 +77,8 @@ pub struct ConsentScope {
     pub requester_uri: IdentifierUri,
     /// `IdentifierUri targetUri`.
     pub target_uri: IdentifierUri,
-    /// `optional<RoomId> roomId`: absent means any room. `RoomId` is read as
-    /// [`IdentifierUri`] (decisions mimid-1wgh.5.19, mimid-1wgh.5.21).
+    /// `optional<IdentifierUri> roomId`: absent means any room (decisions
+    /// mimid-1wgh.5.19, mimid-1wgh.5.21).
     pub room_id: Option<IdentifierUri>,
 }
 
@@ -109,7 +109,7 @@ impl Deserialize for ConsentScope {
     }
 }
 
-/// `ConsentEntry` (protocol-06 §5.7), the body of requestConsent and
+/// `ConsentEntry` (protocol-07 §5.7), the body of requestConsent and
 /// updateConsent.
 ///
 /// `client_key_packages` is the `grant` arm of the `select
@@ -129,7 +129,7 @@ pub struct ConsentEntry {
     pub requester_uri: IdentifierUri,
     /// `IdentifierUri targetUri`: the user whose consent is at stake.
     pub target_uri: IdentifierUri,
-    /// `optional<RoomId> roomId`: absent means any room (decisions
+    /// `optional<IdentifierUri> roomId`: absent means any room (decisions
     /// mimid-1wgh.5.19, mimid-1wgh.5.21).
     pub room_id: Option<IdentifierUri>,
     /// `KeyPackage clientKeyPackages<V>`: present on the wire for `grant`

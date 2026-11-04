@@ -1,4 +1,4 @@
-//! The keyMaterial endpoint (protocol-06 §5.2):
+//! The keyMaterial endpoint (protocol-07 §5.2):
 //! `POST /keyMaterial/{targetUser}`.
 //!
 //! The requester signs a [`KeyMaterialRequestTbs`] with
@@ -21,7 +21,7 @@ use tls_codec::{Deserialize, Serialize, Size, TlsDeserialize, TlsSerialize, TlsS
 use crate::group_info::{Recorder, key_bytes};
 use crate::{Error, IdentifierUri, Protocol};
 
-/// SignWithLabel label for [`KeyMaterialRequestTbs`] (protocol-06 §5.2).
+/// SignWithLabel label for [`KeyMaterialRequestTbs`] (protocol-07 §5.2).
 const REQUEST_TBS_LABEL: &str = "KeyMaterialRequestTBS";
 
 /// RFC 9420 suite 1, the only suite whose signature scheme
@@ -31,11 +31,11 @@ const SIGNING_CIPHER_SUITE: u16 = 0x0001;
 /// Checks that suite 1, whose signature scheme signs the request, is among
 /// `acceptable_ciphersuites`.
 ///
-/// protocol-06 §5.2 names no suite for `key_material_request_signature`;
+/// protocol-07 §5.2 names no suite for `key_material_request_signature`;
 /// mimid signs and verifies with suite 1's scheme (Ed25519) and requires
 /// suite 1 to be acceptable to the requester (decision mimid-1wgh.5.61).
 fn check_signing_suite(acceptable_ciphersuites: &[CipherSuite]) -> Result<(), Error> {
-    // protocol-06 §5.2; decision mimid-1wgh.5.61
+    // protocol-07 §5.2; decision mimid-1wgh.5.61
     let first = acceptable_ciphersuites
         .first()
         .ok_or(Error::EmptyCipherSuites)?;
@@ -51,7 +51,7 @@ fn check_signing_suite(acceptable_ciphersuites: &[CipherSuite]) -> Result<(), Er
     }
 }
 
-/// `KeyMaterialRequestTBS` (protocol-06 §5.2), the part of a
+/// `KeyMaterialRequestTBS` (protocol-07 §5.2), the part of a
 /// [`KeyMaterialRequest`] the requester signs.
 ///
 /// `protocol` is the only `Protocol` value, `mls10`, so its `select` is
@@ -79,9 +79,9 @@ pub struct KeyMaterialRequestTbs {
     pub requester_credential: Credential,
 }
 
-/// Rejects an empty `acceptableCiphersuites` list (protocol-06 §5.2).
+/// Rejects an empty `acceptableCiphersuites` list (protocol-07 §5.2).
 fn check_acceptable(acceptable_ciphersuites: &[CipherSuite]) -> Result<(), String> {
-    // protocol-06 §5.2; decision mimid-1wgh.5.62
+    // protocol-07 §5.2; decision mimid-1wgh.5.62
     if acceptable_ciphersuites.is_empty() {
         Err(Error::EmptyCipherSuites.to_string())
     } else {
@@ -152,7 +152,7 @@ impl KeyMaterialRequestTbs {
     }
 }
 
-/// `KeyMaterialRequest` (protocol-06 §5.2), the body of
+/// `KeyMaterialRequest` (protocol-07 §5.2), the body of
 /// `POST /keyMaterial/{targetUser}`.
 ///
 /// Built only by decoding or by [`KeyMaterialRequestTbs::sign`], so the
@@ -229,7 +229,7 @@ impl Deserialize for KeyMaterialRequest {
     }
 }
 
-/// `KeyMaterialUserCode` (protocol-06 §5.2).
+/// `KeyMaterialUserCode` (protocol-07 §5.2).
 ///
 /// Decoding rejects the undefined values 8 to 255 with
 /// [`tls_codec::Error::UnknownValue`] (decision mimid-1wgh.5.36).
@@ -256,7 +256,7 @@ pub enum KeyMaterialUserCode {
     UserDeleted = 7,
 }
 
-/// `KeyMaterialClientCode` (protocol-06 §5.2).
+/// `KeyMaterialClientCode` (protocol-07 §5.2).
 ///
 /// Decoding rejects the undefined values 3 to 255 with
 /// [`tls_codec::Error::UnknownValue`], because the `select (clientStatus)`
@@ -273,7 +273,7 @@ pub enum KeyMaterialClientCode {
     NothingCompatible = 2,
 }
 
-/// `ClientKeyMaterial` (protocol-06 §5.2), one arm per
+/// `ClientKeyMaterial` (protocol-07 §5.2), one arm per
 /// [`KeyMaterialClientCode`].
 ///
 /// On the wire `clientStatus` and `clientUri` come first. The `select
@@ -364,7 +364,7 @@ impl Deserialize for ClientKeyMaterial {
                 client_uri,
                 key_package: KeyPackage::tls_deserialize(bytes)?,
             },
-            // protocol-06 §5.2; decision mimid-1wgh.5.64
+            // protocol-07 §5.2; decision mimid-1wgh.5.64
             KeyMaterialClientCode::KeyMaterialExhausted => {
                 Self::KeyMaterialExhausted { client_uri }
             }
@@ -376,7 +376,7 @@ impl Deserialize for ClientKeyMaterial {
     }
 }
 
-/// `KeyMaterialResponse` (protocol-06 §5.2), the response body of
+/// `KeyMaterialResponse` (protocol-07 §5.2), the response body of
 /// `POST /keyMaterial/{targetUser}`.
 ///
 /// Decoding and encoding check `clients` against `user_status`, as §5.2
@@ -401,12 +401,12 @@ pub struct KeyMaterialResponse {
     pub clients: Vec<ClientKeyMaterial>,
 }
 
-/// Checks `clients` against `user_status` (protocol-06 §5.2).
+/// Checks `clients` against `user_status` (protocol-07 §5.2).
 fn check_clients(
     user_status: KeyMaterialUserCode,
     clients: &[ClientKeyMaterial],
 ) -> Result<(), String> {
-    // protocol-06 §5.2; decision mimid-1wgh.5.63
+    // protocol-07 §5.2; decision mimid-1wgh.5.63
     let successes = clients
         .iter()
         .filter(|c| c.client_status() == KeyMaterialClientCode::Success)

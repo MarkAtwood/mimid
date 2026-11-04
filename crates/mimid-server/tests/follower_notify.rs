@@ -5,7 +5,7 @@
 //!
 //! Oracle: mls-rs Commits, Welcomes, application messages and
 //! KeyPackageRefs (`tests/fixtures/notify`, see PROVENANCE), framed into
-//! FanoutMessages by hand from the protocol-06 §5.5 text
+//! FanoutMessages by hand from the protocol-07 §5.5 text
 //! (`common/notify.rs`). Stored bytes must equal those hand-built frames,
 //! and hashes are SHA-256 of them computed here with `sha2`.
 

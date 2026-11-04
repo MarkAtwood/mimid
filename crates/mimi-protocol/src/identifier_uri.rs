@@ -1,4 +1,4 @@
-//! `IdentifierUri` (protocol-06 §5.2), validated per decision mimid-1wgh.36.
+//! `IdentifierUri` (protocol-07 §5.2), validated per decision mimid-1wgh.36.
 
 use std::io::{Read, Write};
 
@@ -7,10 +7,11 @@ use tls_codec::{Deserialize, Serialize, Size, VLByteSlice, VLBytes};
 
 use crate::Error;
 
-/// A URI identifying a provider, user, client or room (protocol-06 §5.2).
+/// A URI identifying a provider, user, client or room (protocol-07 §5.2).
 ///
-/// Wire form: `struct { opaque uri<V>; } IdentifierUri;`. Also used where
-/// the draft writes `IdentifierURI` or `RoomId` (decision mimid-1wgh.5.19).
+/// Wire form: `struct { opaque uri<V>; } IdentifierUri;`. protocol-07 uses
+/// it everywhere protocol-06 wrote `IdentifierURI` or `RoomId` (decision
+/// mimid-1wgh.5.19).
 ///
 /// The value is either empty or matches the RFC 3986 §3 `URI` production:
 /// a scheme is required, a fragment is allowed, and relative references are

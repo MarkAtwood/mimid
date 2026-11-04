@@ -1,5 +1,5 @@
 //! Fixture and hostile-input tests for the identifierQuery bodies
-//! (protocol-06 §5.8).
+//! (protocol-07 §5.8).
 //!
 //! Every fixture is hand-encoded from the TLS presentation-language text,
 //! byte by byte, with RFC 9420 §2.1.2 variable-length prefixes written out.

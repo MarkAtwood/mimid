@@ -18,7 +18,7 @@
 #   bob_ref.bin        bob's KeyPackageRef, 32 raw bytes
 #   application_2.bin  MLSMessage PrivateMessage application, epoch 2
 #
-# The tests (tests/follower_notify.rs) frame these into protocol-06 §5.5
+# The tests (tests/follower_notify.rs) frame these into protocol-07 §5.5
 # FanoutMessages by hand, with byte-by-byte comments, in
 # tests/common/notify.rs, and embed them with include_bytes! (offline).
 #

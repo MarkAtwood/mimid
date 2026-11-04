@@ -1,5 +1,5 @@
 //! Local users' KeyPackages: upload validation and the target-provider side
-//! of protocol-06 §5.2 keyMaterial (plan of mimid-1wgh.7).
+//! of protocol-07 §5.2 keyMaterial (plan of mimid-1wgh.7).
 //!
 //! An upload ([`KeyPackages::upload_key_package`]) must decode as exactly
 //! one KeyPackage that passes [`KeyPackage::verify`] at the current time
@@ -280,7 +280,7 @@ impl KeyPackages {
             .await
     }
 
-    /// Handles protocol-06 §5.2 `POST /keyMaterial/{targetUser}` for a user
+    /// Handles protocol-07 §5.2 `POST /keyMaterial/{targetUser}` for a user
     /// of this provider: `request` is the body and `from` the domain of the
     /// request's `From` header. Returns the TLS-encoded
     /// [`KeyMaterialResponse`]. The steps are listed in the module

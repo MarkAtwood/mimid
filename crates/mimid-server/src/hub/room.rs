@@ -9,19 +9,20 @@ use mimi_room_policy::component_id::BASE_ROOM_POLICY;
 
 use super::HubError;
 use super::components::decode;
+use super::state::room_uri_domain;
 use crate::config::Domain;
 
 /// RFC 9420 §5.3: `CredentialType` basic (0x0001).
 const BASIC_CREDENTIAL_TYPE: [u8; 2] = [0x00, 0x01];
 
-/// The URI scheme of MIMI identifiers (protocol-06 §3).
+/// The URI scheme of MIMI identifiers (protocol-07 §2.1).
 const MIMI_SCHEME_PREFIX: &str = "mimi://";
 
-/// Checks that `room_id` is a non-empty URI naming a room under `domain`.
+/// Checks that `room_id` is a room URI `mimi://<domain>/r/<name>` under
+/// `domain`.
 ///
 /// The hub hosts only rooms under its own domain (decision
-/// mimid-1wgh.6.36); protocol-06 §3 writes room IDs as
-/// `mimi://<hub domain>/r/<name>`.
+/// mimid-1wgh.6.36).
 pub(super) fn check_room_id(room_id: &str, domain: &Domain) -> Result<(), HubError> {
     let uri = IdentifierUri::new(room_id).map_err(|_| HubError::InvalidRoomId)?;
     if uri.is_empty() {
@@ -33,7 +34,10 @@ pub(super) fn check_room_id(room_id: &str, domain: &Domain) -> Result<(), HubErr
     if authority != Some(domain.as_str()) {
         return Err(HubError::ForeignRoom);
     }
-    Ok(())
+    // protocol-07 §2.1; decision mimid-1wgh.6.76
+    room_uri_domain(room_id)
+        .map(|_| ())
+        .ok_or(HubError::InvalidRoomId)
 }
 
 /// RFC 9420 §6: the MLSMessage header of a GroupInfo, `version` mls10
@@ -41,7 +45,7 @@ pub(super) fn check_room_id(room_id: &str, domain: &Domain) -> Result<(), HubErr
 pub(super) const GROUP_INFO_MESSAGE_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
 
 /// Refuses a GroupInfo `MLSMessage` that carries a ratchet_tree extension
-/// (protocol-06 §5.6; decision mimid-1wgh.6.11). The message has already
+/// (protocol-07 §5.6; decision mimid-1wgh.6.11). The message has already
 /// been verified as a GroupInfo by [`Observer::from_group_info`].
 pub(super) fn check_no_embedded_tree(group_info: &[u8]) -> Result<(), HubError> {
     let body = group_info
@@ -76,16 +80,16 @@ pub(super) fn hub_sender(
 /// Checks a new room's group, already verified by
 /// [`Observer::from_group_info`], against the hub's rules:
 ///
-/// - `external_senders` is exactly the hub (protocol-06 §7.4; decision
+/// - `external_senders` is exactly the hub (protocol-07 §7.4; decision
 ///   mimid-1wgh.4.21);
 /// - the `franking_agent` component names the hub (decisions
 ///   mimid-1wgh.6.3, mimid-1wgh.6.18);
 /// - the GroupContext requires `frank_aad` as a Safe AAD component, since
 ///   the hub refuses every message without a frank_aad item (rohanmahy on
-///   mimi-protocol#166; protocol-06 §5.4.1; bead mimid-1wgh.6.74);
+///   mimi-protocol#166; protocol-07 §5.4.1; bead mimid-1wgh.6.74);
 /// - a `base_room_policy` component is present and decodes
 ///   (room-policy-04 §5; decision mimid-1wgh.6.57);
-/// - the participant list (protocol-06 §7.5) lists `creator` and the
+/// - the participant list (protocol-07 §7.5) lists `creator` and the
 ///   credential identity of every member, which is the member's user URI
 ///   (decision mimid-1wgh.6.1).
 ///
@@ -120,7 +124,7 @@ pub(super) fn check_group(
         return Err(HubError::WrongFrankingAgent);
     }
 
-    // rohanmahy on mimi-protocol#166; protocol-06 §5.4.1; bead
+    // rohanmahy on mimi-protocol#166; protocol-07 §5.4.1; bead
     // mimid-1wgh.6.74.
     if !observer
         .required_safe_aad()
@@ -181,6 +185,30 @@ mod tests {
             } else {
                 assert!(matches!(err, HubError::InvalidRoomId), "{room_id}: {err:?}");
             }
+        }
+    }
+
+    /// protocol-07 §2.1; decision mimid-1wgh.6.76: a room ID is a room URI
+    /// `mimi://<domain>/r/<name>`, not the provider URI (the hub's own
+    /// identity) or a URI of another identifier type.
+    #[test]
+    fn room_id_must_be_a_room_uri() {
+        for room_id in [
+            "mimi://a.example",
+            "mimi://a.example/",
+            "mimi://a.example/u/alice",
+            "mimi://a.example/d/x",
+            "mimi://a.example/r",
+            "mimi://a.example/r/",
+            "mimi://a.example/r/a/b",
+            "mimi://a.example/r/x?y",
+            "mimi://a.example/r/x#y",
+        ] {
+            let result = check_room_id(room_id, &domain());
+            assert!(
+                matches!(result, Err(HubError::InvalidRoomId)),
+                "{room_id}: {result:?}"
+            );
         }
     }
 }

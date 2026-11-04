@@ -46,7 +46,7 @@ pub const WELCOME_BOB: &[u8] = include_bytes!("../fixtures/notify/welcome_bob.bi
 pub const BOB_REF: &[u8] = include_bytes!("../fixtures/notify/bob_ref.bin");
 pub const APPLICATION_2: &[u8] = include_bytes!("../fixtures/notify/application_2.bin");
 
-/// `uint64 timestamp` values (protocol-06 §5.5), big-endian (RFC 8446
+/// `uint64 timestamp` values (protocol-07 §5.5), big-endian (RFC 8446
 /// §3.3): 1_700_000_000_001 to 1_700_000_000_004 ms, 0x0000018bcfe56801
 /// to 0x0000018bcfe56804.
 pub const T1: [u8; 8] = [0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x01];
@@ -54,7 +54,7 @@ pub const T2: [u8; 8] = [0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x02];
 pub const T3: [u8; 8] = [0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x03];
 pub const T4: [u8; 8] = [0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x04];
 
-/// A FanoutMessage `case commit` (protocol-06 §5.5): the timestamp, the
+/// A FanoutMessage `case commit` (protocol-07 §5.5): the timestamp, the
 /// `MLSMessage` as mls-rs wrote it, then `externalProposals<V>` empty:
 /// 0x00, a one-byte variable-length vector length of 0 (RFC 9420 §2.1.2).
 pub fn commit_fanout(timestamp: [u8; 8], commit: &[u8]) -> Vec<u8> {

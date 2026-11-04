@@ -20,7 +20,7 @@ jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b8b
 jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b8b6f251186fca76cdbb0fc954ee248238b937d9" }
 # Retry-After HTTP-date parsing (RFC 9110 §10.2.3); already in the lockfile.
 httpdate = "1.0.3"
-# Reads the salt and URIs of reported messages (protocol-06 §5.9).
+# Reads the salt and URIs of reported messages (protocol-07 §5.9).
 mimi-content = { path = "../mimi-content" }
 mimi-mls = { path = "../mimi-mls" }
 mimi-protocol = { path = "../mimi-protocol" }

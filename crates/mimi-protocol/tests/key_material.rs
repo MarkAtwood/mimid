@@ -1,5 +1,5 @@
 //! Fixture, signature-oracle and hostile-input tests for the keyMaterial
-//! endpoint (protocol-06 §5.2).
+//! endpoint (protocol-07 §5.2).
 //!
 //! Struct framing is hand-encoded from the TLS presentation-language text,
 //! byte by byte. The embedded KeyPackage is the mlswg vector vendored in
