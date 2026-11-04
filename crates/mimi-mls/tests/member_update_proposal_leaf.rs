@@ -160,8 +160,17 @@ fn alice_and_dave() -> (Identity, Member, Dave, Vec<u8>, Vec<u8>) {
 /// dave proposes an Update whose leaf `app_components` list is
 /// `app_components`; returns the TLS-encoded MLSMessage.
 fn dave_update(dave: &mut Dave, app_components: &[u8]) -> Vec<u8> {
+    dave_update_with(dave, dave_leaf_extensions(app_components))
+}
+
+/// dave proposes an Update whose leaf extensions are `extensions`; returns
+/// the TLS-encoded MLSMessage.
+fn dave_update_with(
+    dave: &mut Dave,
+    extensions: OpenMlsExtensions<openmls::prelude::LeafNode>,
+) -> Vec<u8> {
     let leaf = LeafNodeParameters::builder()
-        .with_extensions(dave_leaf_extensions(app_components))
+        .with_extensions(extensions)
         .build();
     let (message, _) = dave
         .group
@@ -199,6 +208,64 @@ fn update_proposal_whose_leaf_lacks_a_required_component_is_refused() {
         matches!(observed, Err(ObserverError::MissingAppComponent(0x0004))),
         "{observed:?}"
     );
+}
+
+/// mls-extensions-11 §5: a LeafNode is invalid if its app_data_dictionary
+/// holds an entry for a component (other than app_components and safe_aad)
+/// that its own app_components list does not name. dave's Update leaf keeps
+/// the required lists but holds state for 0x8001, which it lists only in
+/// the second case.
+#[test]
+fn update_proposal_whose_leaf_holds_an_unlisted_entry_is_refused() {
+    // ComponentsList [0x0004, 0x8001], hand-encoded.
+    const LIST_0004_8001: [u8; 5] = [
+        0x04, // ComponentID component_ids<V>: 4 bytes
+        0x00, 0x04, // ComponentID 0x0004
+        0x80, 0x01, // ComponentID 0x8001
+    ];
+    for (app_components, valid) in [(&LIST_0004[..], false), (&LIST_0004_8001[..], true)] {
+        let (alice, mut member, mut dave, group_info, tree) = alice_and_dave();
+        let store = Store::open_in_memory().expect("store");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
+        let mut dictionary = AppDataDictionary::new();
+        dictionary.insert(APP_COMPONENTS, app_components.to_vec());
+        dictionary.insert(SAFE_AAD, LIST_0020.to_vec());
+        dictionary.insert(0x8001, b"x".to_vec());
+        let extensions = OpenMlsExtensions::single(OpenMlsExtension::AppDataDictionary(
+            AppDataDictionaryExtension::new(dictionary),
+        ))
+        .expect("leaf extensions");
+        let update = dave_update_with(&mut dave, extensions);
+
+        let received = member.process(&alice, &update, no_components);
+        let processed = observer.process_proposal(&store, &update);
+        if valid {
+            let received = received.expect("0x8001 is listed");
+            assert!(
+                matches!(received, Incoming::Proposal { .. }),
+                "{received:?}"
+            );
+            processed.expect("0x8001 is listed");
+        } else {
+            assert!(
+                matches!(received, Err(MemberError::LeafComponentNotListed(0x8001))),
+                "{received:?}"
+            );
+            // Nothing is stored: a stored proposal would block sending
+            // until a Commit covers it (OpenMLS).
+            member
+                .send(&alice, b"still usable", &[])
+                .expect("no proposal is pending");
+            assert!(
+                matches!(
+                    processed,
+                    Err(ObserverError::LeafComponentNotListed(0x8001))
+                ),
+                "{processed:?}"
+            );
+        }
+    }
 }
 
 #[test]

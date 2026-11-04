@@ -306,6 +306,12 @@ pub enum ObserverError {
     /// decision mimid-krmn.6). The group state is unchanged.
     #[error("the GroupContext holds state for component {0:#06x} but does not list it")]
     ComponentNotListed(ComponentId),
+    /// A LeafNode's `app_data_dictionary` holds an entry for a component
+    /// (other than app_components and safe_aad) that the same leaf's
+    /// `app_components` list does not name, so the LeafNode is invalid
+    /// (mls-extensions-11 §5). The group state is unchanged.
+    #[error("a leaf holds an entry for component {0:#06x} but does not list it")]
+    LeafComponentNotListed(ComponentId),
     /// A Commit is pending; merge or clear it before processing more
     /// messages.
     #[error("a Commit is pending")]
@@ -363,6 +369,9 @@ impl From<SharedError> for ObserverError {
                 Self::MissingAppComponent(component_id)
             }
             SharedError::ComponentNotListed(component_id) => Self::ComponentNotListed(component_id),
+            SharedError::LeafComponentNotListed(component_id) => {
+                Self::LeafComponentNotListed(component_id)
+            }
         }
     }
 }

@@ -58,6 +58,13 @@
 //!   `safe_aad`, that its `app_components` list does not name, with
 //!   [`MemberError::ComponentNotListed`] (rule 6). A Commit may list a
 //!   component and set its state at once.
+//! - Every LeafNode checked above, in proposals, UpdatePaths and trees and
+//!   this identity's own, is also refused with
+//!   [`MemberError::LeafComponentNotListed`] if its `app_data_dictionary`
+//!   holds an entry, other than app_components and safe_aad, that its own
+//!   `app_components` list does not name (mls-extensions-11 §5).
+//!   [`KeyPackage::verify`](crate::wire::KeyPackage::verify) applies the
+//!   same check to a KeyPackage's LeafNode.
 //!
 //! The [`Observer`](crate::observer::Observer) applies the same checks.
 //!
@@ -455,6 +462,12 @@ pub enum MemberError {
     /// decision mimid-krmn.6). The group state is unchanged.
     #[error("the GroupContext holds state for component {0:#06x} but does not list it")]
     ComponentNotListed(ComponentId),
+    /// A LeafNode's `app_data_dictionary` holds an entry for a component
+    /// (other than app_components and safe_aad) that the same leaf's
+    /// `app_components` list does not name, so the LeafNode is invalid
+    /// (mls-extensions-11 §5). The group state is unchanged.
+    #[error("a leaf holds an entry for component {0:#06x} but does not list it")]
+    LeafComponentNotListed(ComponentId),
     /// The application message could not be created.
     #[error("cannot create the application message")]
     Send(#[source] ErrorSource),
@@ -1554,6 +1567,7 @@ pub(crate) enum SharedError {
     MissingSafeAadComponent(ComponentId),
     MissingAppComponent(ComponentId),
     ComponentNotListed(ComponentId),
+    LeafComponentNotListed(ComponentId),
 }
 
 impl From<SharedError> for MemberError {
@@ -1585,6 +1599,9 @@ impl From<SharedError> for MemberError {
                 Self::MissingAppComponent(component_id)
             }
             SharedError::ComponentNotListed(component_id) => Self::ComponentNotListed(component_id),
+            SharedError::LeafComponentNotListed(component_id) => {
+                Self::LeafComponentNotListed(component_id)
+            }
         }
     }
 }
@@ -1779,11 +1796,17 @@ pub(crate) fn check_proposal_leaf(
     check_leaf(leaf.extensions(), &required)
 }
 
-/// Checks the extensions of one leaf against `required`.
+/// Checks the extensions of one leaf: its own dictionary entries
+/// (mls-extensions-11 §5, [`first_unlisted_entry`]), then `required`.
+/// Every LeafNode a [`Member`] or [`Observer`](crate::observer::Observer)
+/// validates passes through here.
 fn check_leaf(
     extensions: &Extensions<LeafNode>,
     required: &RequiredLists,
 ) -> Result<(), SharedError> {
+    if let Some(id) = first_unlisted_entry(extensions) {
+        return Err(SharedError::LeafComponentNotListed(id));
+    }
     if let Some(id) = first_unsupported(extensions, SAFE_AAD, &required.safe_aad) {
         return Err(SharedError::MissingSafeAadComponent(id));
     }
@@ -1805,17 +1828,43 @@ fn first_unsupported(
     component_id: ComponentId,
     required: &[ComponentId],
 ) -> Option<ComponentId> {
-    let supported: BTreeSet<ComponentId> = extensions
-        .app_data_dictionary()
-        .and_then(|extension| extension.dictionary().get(&component_id))
-        .and_then(|data| ComponentsList::tls_deserialize_exact(data).ok())
-        .map(|list| list.into_ids().into_iter().collect())
-        .unwrap_or_default();
+    let supported = leaf_list(extensions, component_id);
     required.iter().copied().find(|id| {
         !COMPONENT_GREASE.contains(id)
             && ![APP_COMPONENTS, SAFE_AAD].contains(id)
             && !supported.contains(id)
     })
+}
+
+/// The ids in the `component_id` list of a leaf's `app_data_dictionary` (in
+/// `extensions`). A leaf's list is untrusted input: an absent or malformed
+/// one counts as empty.
+fn leaf_list(
+    extensions: &Extensions<LeafNode>,
+    component_id: ComponentId,
+) -> BTreeSet<ComponentId> {
+    extensions
+        .app_data_dictionary()
+        .and_then(|extension| extension.dictionary().get(&component_id))
+        .and_then(|data| ComponentsList::tls_deserialize_exact(data).ok())
+        .map(|list| list.into_ids().into_iter().collect())
+        .unwrap_or_default()
+}
+
+/// The first component, other than app_components and safe_aad, that a
+/// leaf's `app_data_dictionary` (in `extensions`) holds an entry for but
+/// the same leaf's `app_components` list does not name. Such a LeafNode is
+/// invalid wherever it is validated, including in a KeyPackage
+/// (mls-extensions-11 §5). An absent or malformed list counts as empty
+/// (§5: "absent ... is equivalent to one with an empty list"). GREASE
+/// entries are not exempt: §5.2 says a GREASE entry is listed too.
+pub(crate) fn first_unlisted_entry(extensions: &Extensions<LeafNode>) -> Option<ComponentId> {
+    let dictionary = extensions.app_data_dictionary()?.dictionary();
+    let listed = leaf_list(extensions, APP_COMPONENTS);
+    dictionary
+        .entries()
+        .map(ComponentData::id)
+        .find(|id| ![APP_COMPONENTS, SAFE_AAD].contains(id) && !listed.contains(id))
 }
 
 /// Applies mls-extensions-10 §4.7 to `proposals` (sorted by component id,

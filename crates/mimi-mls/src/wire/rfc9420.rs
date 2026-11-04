@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::time::SystemTime;
 
 use openmls::ciphersuite::hash_ref::make_key_package_ref;
+use openmls::component::ComponentId;
 use openmls::credentials::CredentialType;
 use openmls::extensions::RequiredCapabilitiesExtension;
 use openmls::framing::{MlsMessageBodyIn, MlsMessageIn};
@@ -215,6 +216,12 @@ pub enum KeyPackageError {
     /// [`MAX_KEY_PACKAGE_LIFETIME_SECONDS`] (RFC 9420 §7.2).
     #[error("the KeyPackage lifetime is longer than allowed")]
     LifetimeTooLong,
+    /// The LeafNode's `app_data_dictionary` holds an entry for a component
+    /// (other than app_components and safe_aad) that the same leaf's
+    /// `app_components` list does not name, so the LeafNode is invalid
+    /// (mls-extensions-11 §5).
+    #[error("the LeafNode holds an entry for component {0:#06x} but does not list it")]
+    LeafComponentNotListed(ComponentId),
     /// The KeyPackage fails another RFC 9420 §7.3 or §10.1 check.
     #[error("the KeyPackage is invalid")]
     Invalid(#[source] ErrorSource),
@@ -230,9 +237,11 @@ impl KeyPackage {
     /// LeafNode's `signature_key`; `init_key` differs from the LeafNode's
     /// `encryption_key`; every non-default extension in the KeyPackage and
     /// its LeafNode, and the LeafNode's credential type, are listed in the
-    /// LeafNode's `capabilities`; `now` falls within the LeafNode's
-    /// `lifetime`; and that lifetime spans at most
-    /// [`MAX_KEY_PACKAGE_LIFETIME_SECONDS`].
+    /// LeafNode's `capabilities`; every entry in the LeafNode's
+    /// `app_data_dictionary`, other than app_components and safe_aad, is
+    /// named in its `app_components` list (mls-extensions-11 §5); `now`
+    /// falls within the LeafNode's `lifetime`; and that lifetime spans at
+    /// most [`MAX_KEY_PACKAGE_LIFETIME_SECONDS`].
     ///
     /// The credential itself is not validated (RFC 9420 §5.3.1): a basic
     /// credential's identity is returned for the caller to check.
@@ -244,7 +253,9 @@ impl KeyPackage {
     /// not verify, [`KeyPackageError::OutsideLifetime`] if `now` or the
     /// system clock is outside the lifetime,
     /// [`KeyPackageError::LifetimeTooLong`] if the lifetime is too long,
-    /// and [`KeyPackageError::Invalid`] for any other failed check.
+    /// [`KeyPackageError::LeafComponentNotListed`] if the LeafNode holds an
+    /// entry its `app_components` list does not name, and
+    /// [`KeyPackageError::Invalid`] for any other failed check.
     pub fn verify(&self, now: SystemTime) -> Result<VerifiedKeyPackageInfo, KeyPackageError> {
         // RFC 9420 §10: a KeyPackage starts with `ProtocolVersion version`
         // and `CipherSuite cipher_suite`. The suite is checked first, so no
@@ -275,6 +286,11 @@ impl KeyPackage {
         let leaf_node = key_package.leaf_node();
         let capabilities = leaf_node.capabilities();
         check_leaf_node_capabilities(leaf_node, capabilities)?;
+        // mls-extensions-11 §5: part of LeafNode validation, so it applies
+        // to the LeafNode in a KeyPackage.
+        if let Some(id) = crate::member::first_unlisted_entry(leaf_node.extensions()) {
+            return Err(KeyPackageError::LeafComponentNotListed(id));
+        }
 
         let lifetime = key_package.life_time();
         lifetime

@@ -654,3 +654,95 @@ fn leaf_extension_missing_from_capabilities_is_refused() {
         "{result:?}"
     );
 }
+
+/// Verifies an mls-rs KeyPackage whose LeafNode carries an
+/// app_data_dictionary encoded as `dictionary`.
+fn verify_with_leaf_dictionary(
+    dictionary: Vec<u8>,
+) -> Result<mimi_mls::wire::VerifiedKeyPackageInfo, KeyPackageError> {
+    let (client, _) = mls_rs_client(IDENTITY, SUITE_1, 30 * DAY, &[APP_DATA_DICTIONARY], &[]);
+    let mut leaf_extensions = ExtensionList::new();
+    leaf_extensions.set(Extension::new(
+        ExtensionType::new(APP_DATA_DICTIONARY),
+        dictionary,
+    ));
+    let message = mls_rs_key_package(
+        &client,
+        now_seconds() - 60,
+        ExtensionList::new(),
+        leaf_extensions,
+    );
+    decode_key_package(&bare_key_package(&message)).verify(SystemTime::now())
+}
+
+/// mls-extensions-11 §5: a LeafNode is invalid if its app_data_dictionary
+/// holds an entry for a component (other than app_components and safe_aad)
+/// that its own app_components list does not name, and this applies to the
+/// LeafNode in a KeyPackage. mls-rs does not enforce it.
+#[test]
+fn leaf_dictionary_entry_missing_from_app_components_is_refused() {
+    // mls-extensions-11 §4.6 AppDataDictionary, hand-encoded:
+    // app_components [0x0004] and an entry for 0x8001, which it does not
+    // name.
+    let unlisted = verify_with_leaf_dictionary(vec![
+        0x09, // component_data<V>: 9 bytes
+        0x00, 0x01, // component_id = app_components
+        0x03, // data<V>: 3 bytes
+        0x02, 0x00, 0x04, // ComponentsList [0x0004]
+        0x80, 0x01, // component_id = 0x8001
+        0x00, // data<V>: empty
+    ]);
+    assert!(
+        matches!(
+            unlisted,
+            Err(KeyPackageError::LeafComponentNotListed(0x8001))
+        ),
+        "{unlisted:?}"
+    );
+
+    // No app_components entry: an absent list is empty (§5).
+    let absent = verify_with_leaf_dictionary(vec![
+        0x03, // component_data<V>: 3 bytes
+        0x80, 0x01, // component_id = 0x8001
+        0x00, // data<V>: empty
+    ]);
+    assert!(
+        matches!(absent, Err(KeyPackageError::LeafComponentNotListed(0x8001))),
+        "{absent:?}"
+    );
+
+    // A GREASE entry must be listed too (§5.2); 0x0a0a is a §7.5 GREASE id.
+    let grease = verify_with_leaf_dictionary(vec![
+        0x09, // component_data<V>: 9 bytes
+        0x00, 0x01, // component_id = app_components
+        0x03, // data<V>: 3 bytes
+        0x02, 0x00, 0x04, // ComponentsList [0x0004]
+        0x0a, 0x0a, // component_id = GREASE 0x0a0a
+        0x00, // data<V>: empty
+    ]);
+    assert!(
+        matches!(grease, Err(KeyPackageError::LeafComponentNotListed(0x0a0a))),
+        "{grease:?}"
+    );
+}
+
+/// mls-extensions-11 §5: a leaf whose dictionary entries are all listed is
+/// valid; app_components and safe_aad entries need no listing.
+#[test]
+fn leaf_dictionary_entries_listed_in_app_components_are_accepted() {
+    // mls-extensions-11 §4.6 AppDataDictionary, hand-encoded.
+    verify_with_leaf_dictionary(vec![
+        0x15, // component_data<V>: 21 bytes
+        0x00, 0x01, // component_id = app_components
+        0x05, // data<V>: 5 bytes
+        0x04, 0x0a, 0x0a, 0x80, 0x01, // ComponentsList [0x0a0a, 0x8001]
+        0x00, 0x02, // component_id = safe_aad
+        0x03, // data<V>: 3 bytes
+        0x02, 0x00, 0x20, // ComponentsList [0x0020]
+        0x0a, 0x0a, // component_id = GREASE 0x0a0a
+        0x00, // data<V>: empty
+        0x80, 0x01, // component_id = 0x8001
+        0x01, b'x', // data<V>: "x"
+    ])
+    .expect("every entry is listed");
+}

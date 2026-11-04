@@ -2065,3 +2065,294 @@ fn joins_refuse_state_for_an_unlisted_component() {
         }
     }
 }
+
+// ---- mls-extensions-11 §5: a LeafNode lists its own dictionary entries ----
+//
+// "A LeafNode is invalid if its app_data_dictionary extension contains an
+// entry for a component other than app_components and safe_aad that is not
+// listed in its app_components component." This is part of LeafNode
+// validation, so it applies wherever a LeafNode is validated. mls-rs does
+// not enforce it, so mls-rs builds the offending leaves.
+
+/// mls-extensions-11 §4.6 AppDataDictionary for a LeafNode, hand-encoded:
+/// `app_components` names 0x0004 only, `safe_aad` names 0x0020, and
+/// component 0x8001 holds "x" although the leaf does not list it.
+const LEAF_STATE_8001_UNLISTED: [u8; 17] = [
+    0x10, // component_data<V>: 16 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, // data<V>: 3 bytes
+    0x02, 0x00, 0x04, // ComponentsList [0x0004]
+    0x00, 0x02, // component_id = safe_aad
+    0x03, // data<V>: 3 bytes
+    0x02, 0x00, 0x20, // ComponentsList [0x0020]
+    0x80, 0x01, // component_id = 0x8001
+    0x01, b'x', // data<V>: "x"
+];
+
+/// As [`LEAF_STATE_8001_UNLISTED`], with `app_components` naming 0x8001 too.
+const LEAF_STATE_8001_LISTED: [u8; 19] = [
+    0x12, // component_data<V>: 18 bytes
+    0x00, 0x01, // component_id = app_components
+    0x05, // data<V>: 5 bytes
+    0x04, 0x00, 0x04, 0x80, 0x01, // ComponentsList [0x0004, 0x8001]
+    0x00, 0x02, // component_id = safe_aad
+    0x03, // data<V>: 3 bytes
+    0x02, 0x00, 0x20, // ComponentsList [0x0020]
+    0x80, 0x01, // component_id = 0x8001
+    0x01, b'x', // data<V>: "x"
+];
+
+/// The leaf dictionaries under test, and whether each is valid.
+const OWN_LISTING_CASES: [(&[u8], bool); 2] = [
+    (&LEAF_STATE_8001_UNLISTED, false),
+    (&LEAF_STATE_8001_LISTED, true),
+];
+
+/// Member::commit adding an mls-rs KeyPackage whose leaf holds an unlisted
+/// entry is refused and leaves nothing pending.
+#[test]
+fn own_listing_member_commit_adding_a_key_package() {
+    for (leaf, valid) in OWN_LISTING_CASES {
+        let alice = identity(b"alice");
+        let mut group = Member::create(
+            &alice,
+            b"room-own",
+            &[],
+            &[(SAFE_AAD, REQUIRE_0020.to_vec())],
+        )
+        .expect("create");
+        let carol = bare_key_package(&carol_key_package(leaf));
+        let result = group.commit(&alice, &[&carol], &[], &[], no_components);
+        if valid {
+            result.expect("every entry is listed");
+        } else {
+            assert!(
+                matches!(
+                    result,
+                    Err(MemberError::LeafComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{result:?}"
+            );
+            assert_alone_in_epoch_0(&mut group, &alice);
+        }
+    }
+}
+
+/// bob (mls-rs) commits an Add of carol. A mimid Member and an Observer
+/// refuse the Commit when carol's leaf holds an unlisted entry.
+#[test]
+fn own_listing_received_commit_adding_a_key_package() {
+    for (leaf, valid) in OWN_LISTING_CASES {
+        let (alice, mut group, mut bob, group_info) = alice_and_bob_with(&LEAF_SAFE_AAD_0020);
+        let tree = group.ratchet_tree().expect("tree");
+        let store = Store::open_in_memory().expect("store");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
+        let commit = bob
+            .commit_builder()
+            .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+            .add_member(carol_key_package(leaf))
+            .expect("mls-rs adds carol")
+            .build()
+            .expect("mls-rs commits")
+            .commit_message
+            .to_bytes()
+            .expect("encode");
+        bob.clear_pending_commit();
+
+        let received = group.process(&alice, &commit, no_components);
+        let observed = observer.process(&store, &commit, no_components);
+        if valid {
+            received.expect("every entry is listed");
+            observed.expect("every entry is listed");
+            assert_eq!(group.epoch(), 2);
+        } else {
+            assert!(
+                matches!(
+                    received,
+                    Err(MemberError::LeafComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{received:?}"
+            );
+            assert!(
+                matches!(
+                    observed,
+                    Err(ObserverError::LeafComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{observed:?}"
+            );
+            assert_eq!(group.epoch(), 1, "a refused Commit changes nothing");
+        }
+    }
+}
+
+/// bob (mls-rs) proposes, on its own, to add carol. A mimid Member and an
+/// Observer refuse the proposal unstored when carol's leaf holds an
+/// unlisted entry.
+#[test]
+fn own_listing_standalone_add_proposal() {
+    for (leaf, valid) in OWN_LISTING_CASES {
+        let (alice, mut group, mut bob, group_info) = alice_and_bob_with(&LEAF_SAFE_AAD_0020);
+        let tree = group.ratchet_tree().expect("tree");
+        let store = Store::open_in_memory().expect("store");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
+        let proposal = bob
+            .propose_add(carol_key_package(leaf), EMPTY_SAFE_AAD.to_vec())
+            .expect("mls-rs proposes an Add")
+            .to_bytes()
+            .expect("encode");
+
+        let received = group.process(&alice, &proposal, no_components);
+        let processed = observer.process_proposal(&store, &proposal);
+        if valid {
+            let received = received.expect("every entry is listed");
+            assert!(
+                matches!(received, Incoming::Proposal { .. }),
+                "{received:?}"
+            );
+            processed.expect("every entry is listed");
+        } else {
+            assert!(
+                matches!(
+                    received,
+                    Err(MemberError::LeafComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{received:?}"
+            );
+            // Nothing is stored: a stored proposal would block sending
+            // until a Commit covers it (OpenMLS).
+            group
+                .send(&alice, b"still usable", &[])
+                .expect("no proposal is pending");
+            assert!(
+                matches!(
+                    processed,
+                    Err(ObserverError::LeafComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{processed:?}"
+            );
+        }
+    }
+}
+
+/// bob (mls-rs) commits with an UpdatePath whose leaf holds an unlisted
+/// entry. A mimid Member and an Observer refuse the Commit.
+#[test]
+fn own_listing_update_path_leaf() {
+    for (leaf, valid) in OWN_LISTING_CASES {
+        let (alice, mut group, mut bob, group_info) = alice_and_bob_with(&LEAF_SAFE_AAD_0020);
+        let tree = group.ratchet_tree().expect("tree");
+        let store = Store::open_in_memory().expect("store");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
+        let commit = bob
+            .commit_builder()
+            .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+            .set_leaf_node_extensions(leaf_dictionary(leaf))
+            .build()
+            .expect("mls-rs commits")
+            .commit_message
+            .to_bytes()
+            .expect("encode");
+        bob.clear_pending_commit();
+
+        let received = group.process(&alice, &commit, no_components);
+        let observed = observer.process(&store, &commit, no_components);
+        if valid {
+            received.expect("every entry is listed");
+            observed.expect("every entry is listed");
+            assert_eq!(group.epoch(), 2);
+        } else {
+            assert!(
+                matches!(
+                    received,
+                    Err(MemberError::LeafComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{received:?}"
+            );
+            assert!(
+                matches!(
+                    observed,
+                    Err(ObserverError::LeafComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{observed:?}"
+            );
+            assert_eq!(group.epoch(), 1, "a refused Commit changes nothing");
+        }
+    }
+}
+
+/// alice (mls-rs), whose own leaf holds an unlisted entry, creates a group
+/// and adds bob. join_welcome, join_external and Observer::from_group_info
+/// refuse the tree and store nothing; with a leaf that lists the entry they
+/// join.
+#[test]
+fn own_listing_joins_check_every_leaf_in_the_tree() {
+    for (leaf, valid) in OWN_LISTING_CASES {
+        let mut alice = mls_rs_client(b"alice")
+            .create_group(
+                leaf_dictionary(&LEAF_SAFE_AAD_0020),
+                leaf_dictionary(leaf),
+                None,
+            )
+            .expect("mls-rs group");
+        let bob = identity(b"bob");
+        let bob_key_package = bob
+            .key_package(KeyPackageKind::OneTime)
+            .expect("KeyPackage");
+        let output = alice
+            .commit_builder()
+            .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+            .add_member(key_package_message(&bob_key_package))
+            .expect("mls-rs adds bob")
+            .build()
+            .expect("mls-rs commits");
+        alice.apply_pending_commit().expect("apply");
+        let welcome = output.welcome_messages[0].to_bytes().expect("encode");
+        let group_info = alice
+            .group_info_message_allowing_ext_commit(false)
+            .expect("GroupInfo")
+            .to_bytes()
+            .expect("encode");
+        let tree = alice.export_tree().to_bytes().expect("tree");
+        let carol = identity(b"carol");
+        let store = Store::open_in_memory().expect("store");
+
+        let welcomed = Member::join_welcome(&bob, &welcome, Some(&tree));
+        let external = Member::join_external(&carol, &group_info, Some(&tree));
+        let observed = Observer::from_group_info(&store, &group_info, Some(&tree));
+        if valid {
+            welcomed.expect("join_welcome");
+            external.expect("join_external");
+            observed.expect("from_group_info");
+        } else {
+            for (who, result) in [
+                ("join_welcome", welcomed.err()),
+                ("join_external", external.err()),
+            ] {
+                assert!(
+                    matches!(
+                        result,
+                        Some(MemberError::LeafComponentNotListed(PRIVATE_COMPONENT))
+                    ),
+                    "{who}: {result:?}"
+                );
+            }
+            assert!(
+                matches!(
+                    observed.err(),
+                    Some(ObserverError::LeafComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "from_group_info"
+            );
+            for joiner in [&bob, &carol] {
+                let loaded = Member::load(joiner, alice.group_id());
+                assert!(
+                    matches!(loaded, Err(MemberError::GroupNotFound)),
+                    "nothing is stored: {loaded:?}"
+                );
+            }
+        }
+    }
+}

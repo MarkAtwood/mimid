@@ -1,0 +1,2 @@
+{"id":"01a1a7c1-7c62-768a-9145-7f9cc1fc2610","issue_id":"mimid-1wgh.4.76.10","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-11-04T18:10:37.794429511Z"}
+{"id":"01a1a7c1-7ced-779c-8a74-dbafa102e825","issue_id":"mimid-1wgh.4.76.10","event_type":"closed","actor":"agent","old_value":"","new_value":"Chosen by orchestrator per worker's reading; fails closed; flag to Mark","created_at":"2026-11-04T18:10:37.933499487Z"}
