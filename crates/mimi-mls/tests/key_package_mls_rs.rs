@@ -202,7 +202,7 @@ fn check_common(kind: KeyPackageKind) -> (KeyPackage, mls_rs::group::Member) {
 /// an app_components entry listing mimid's built-in components,
 /// last_resort_key_package, frank_aad and the MIMI components 0x0021 to
 /// 0x0029, and a GREASE id (decision mimid-krmn.12); a safe_aad entry
-/// listing the supported Safe AAD components, frank_aad (protocol-06
+/// listing the supported Safe AAD components, frank_aad (protocol-07
 /// §5.4.1, decision mimid-1wgh.4.52), and a GREASE id (decision
 /// mimid-1wgh.4.45); and one GREASE component with empty data. Every GREASE
 /// id is from the §7.5 set.
@@ -230,8 +230,8 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
         0x19, // ComponentData.data<V>: 25 bytes (a ComponentsList)
         0x18, //   ComponentsList.component_ids<V>: 24 bytes
         0x00, 0x04, //   ComponentID = last_resort_key_package
-        0x00, 0x20, //   ComponentID = frank_aad (protocol-06 §10.1)
-        0x00, 0x21, //   ComponentID = franking_agent (protocol-06 §10)
+        0x00, 0x20, //   ComponentID = frank_aad (protocol-07 §10.1)
+        0x00, 0x21, //   ComponentID = franking_agent (protocol-07 §10)
         0x00, 0x22, //   ComponentID = participant_list
         0x00, 0x23, //   ComponentID = room_metadata
         0x00, 0x24, //   ComponentID = mls_operational_policy (room-policy-04 §10.1)

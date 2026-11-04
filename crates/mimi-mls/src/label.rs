@@ -119,7 +119,7 @@ impl std::fmt::Debug for SignatureKeyPair {
 
 /// Returns `N` bytes from OpenMLS's cryptographically secure random number
 /// generator, for example the 32 bytes of the hub's `hub_key`
-/// (protocol-06 §5.4.1.2).
+/// (protocol-07 §5.4.1.2).
 ///
 /// # Errors
 ///

@@ -17,6 +17,7 @@ use mls_rs::{
     CipherSuite, CipherSuiteProvider, Client, CryptoProvider, Extension, ExtensionList, MlsMessage,
 };
 use mls_rs_crypto_rustcrypto::RustCryptoProvider;
+use openmls_sqlite_storage::Connection;
 
 /// RFC 9420 §17.1: ciphersuite 0x0001.
 const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
@@ -815,7 +816,7 @@ fn adding_a_leaf_without_a_required_safe_aad_component_is_refused() {
 #[test]
 fn mimi_key_package_joins_a_group_requiring_frank_aad() {
     // Decision mimid-1wgh.4.52: every mimi-mls leaf lists frank_aad 0x0020
-    // (protocol-06 §5.4.1) in its safe_aad list, so a group whose
+    // (protocol-07 §5.4.1) in its safe_aad list, so a group whose
     // GroupContext requires it can add a mimi-mls KeyPackage. mls-rs
     // validates carol's KeyPackage inside the Commit and must reach the
     // same epoch secrets.
@@ -1216,6 +1217,78 @@ fn join_welcome_refuses_existing_leaves_missing_a_required_component() {
             );
         }
     }
+}
+
+/// Decision mimid-krmn.10: join_welcome refuses a tree with a leaf that
+/// misses a required component before OpenMLS writes any group state, so a
+/// crash cannot leave a refused group in the Store. An SQLite trigger,
+/// installed beside bob's file-backed Store, logs every row written to
+/// OpenMLS's group-data table. The mls-rs creator requires Safe AAD
+/// component 0x0020; dave, at leaf 1, lists only 0x0021 in the first group
+/// and 0x0020 in the second, which bob joins to show the log sees writes.
+#[test]
+fn join_welcome_refusal_writes_no_group_state() {
+    let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "member-mls-rs-refusal-{}.sqlite",
+        std::process::id()
+    ));
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        match std::fs::remove_file(format!("{}{suffix}", path.display())) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => panic!("cannot remove a stale test database: {e}"),
+        }
+    }
+    let bob = Identity::generate(b"bob", Store::open(&path).expect("open store"))
+        .expect("generate identity");
+    let log = Connection::open(&path).expect("open database");
+    log.execute_batch(
+        "CREATE TABLE group_writes (n INTEGER);
+         CREATE TRIGGER log_group_writes AFTER INSERT ON openmls_group_data
+         BEGIN INSERT INTO group_writes VALUES (1); END;",
+    )
+    .expect("install trigger");
+    let group_writes = || -> i64 {
+        log.query_row("SELECT COUNT(*) FROM group_writes", [], |row| row.get(0))
+            .expect("count group writes")
+    };
+
+    let welcome_with_dave = |dave_dictionary: &[u8]| {
+        let mut alice = mls_rs_client(b"alice")
+            .create_group(
+                leaf_dictionary(&LEAF_SAFE_AAD_0020),
+                leaf_dictionary(&LEAF_SAFE_AAD_0020),
+                None,
+            )
+            .expect("mls-rs group");
+        let dave_key_package = mls_rs_key_package_with(&mls_rs_client(b"dave"), dave_dictionary);
+        let bob_key_package = bob
+            .key_package(KeyPackageKind::OneTime)
+            .expect("KeyPackage");
+        let output = alice
+            .commit_builder()
+            .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+            .add_member(dave_key_package)
+            .expect("mls-rs adds dave")
+            .add_member(key_package_message(&bob_key_package))
+            .expect("mls-rs adds bob")
+            .build()
+            .expect("mls-rs commits");
+        alice.apply_pending_commit().expect("apply");
+        output.welcome_messages[0].to_bytes().expect("encode")
+    };
+
+    let refused = welcome_with_dave(&LEAF_SAFE_AAD_0021);
+    let result = Member::join_welcome(&bob, &refused, None);
+    assert!(
+        matches!(result, Err(MemberError::MissingSafeAadComponent(0x0020))),
+        "{result:?}"
+    );
+    assert_eq!(group_writes(), 0, "a refused join writes no group state");
+
+    let accepted = welcome_with_dave(&LEAF_SAFE_AAD_0020);
+    Member::join_welcome(&bob, &accepted, None).expect("join_welcome");
+    assert!(group_writes() > 0, "the trigger logs a join's group state");
 }
 
 /// As [`LEAF_SAFE_AAD_0020`], but an `app_components` list naming the

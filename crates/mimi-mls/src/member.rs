@@ -104,10 +104,10 @@
 //!   the size of each message it passes in. mls-extensions-10 §4.7 notes
 //!   that large data may hurt performance; hashing it instead (MAY) is not
 //!   offered (decision mimid-1wgh.4.67).
-//! - OpenMLS's StagedWelcome exposes no other
-//!   leaf than this identity's, so [`Member::join_welcome`] checks the rest
-//!   of the tree after OpenMLS has stored the group and deletes a refused
-//!   group again. This crate's leaves list only
+//! - OpenMLS's StagedWelcome exposes no other leaf than this identity's,
+//!   so [`Member::join_welcome`] verifies the leaf signatures of the tree a
+//!   second time to check its leaves before anything is stored (decision
+//!   mimid-krmn.10). This crate's leaves list only
 //!   `frank_aad` (0x0020) as a Safe AAD component (decision
 //!   mimid-1wgh.4.52), so it cannot create or join, by Welcome or
 //!   externally, a group whose `safe_aad` list requires any other.
@@ -295,7 +295,7 @@ pub struct CommitBundle {
     pub welcome: Option<Vec<u8>>,
     /// The signed GroupInfo for the new epoch (RFC 9420 §12.4.3), with
     /// signer this member's leaf. Its extensions are exactly
-    /// `[external_pub]`: no ratchet_tree, which protocol-06 §5.3 sends
+    /// `[external_pub]`: no ratchet_tree, which protocol-07 §5.3 sends
     /// separately. A PartialGroupInfo (ratchet-tree-options-02 §4) is this
     /// GroupInfo's extensions and signature.
     pub group_info: Vec<u8>,
@@ -630,7 +630,8 @@ impl Member {
     /// requires, or the join is refused before anything about the group is
     /// stored (mls-extensions editor's copy, PR #110; decision
     /// mimid-krmn.6). So must every other leaf in the tree, or the join is
-    /// refused and the group deleted again (decision mimid-krmn.7).
+    /// refused, again before anything is stored (decisions mimid-krmn.7,
+    /// mimid-krmn.10).
     ///
     /// # Errors
     ///
@@ -642,8 +643,7 @@ impl Member {
     /// identity's included, does not list a component the GroupContext
     /// requires, [`MemberError::ComponentNotListed`] if the GroupContext
     /// holds state for a component its `app_components` list does not name,
-    /// [`MemberError::Merge`] if a refused group cannot be deleted again, and
-    /// [`MemberError::InvalidComponentsList`] if the GroupContext's
+    /// and [`MemberError::InvalidComponentsList`] if the GroupContext's
     /// `safe_aad` or `app_components` data is malformed (decisions
     /// mimid-1wgh.4.57, mimid-1wgh.4.59).
     pub fn join_welcome(
@@ -668,6 +668,15 @@ impl Member {
             .map_err(|e| MemberError::Join(e.into()))?
             // RFC 9420 §7.3; decision mimid-1wgh.4.56.
             .skip_lifetime_validation();
+        // The tree build stages, chosen as OpenMLS chooses it: the
+        // GroupInfo's ratchet_tree extension, else the one given.
+        let tree = builder
+            .processed_welcome()
+            .unverified_group_info()
+            .extensions()
+            .ratchet_tree()
+            .map(|extension| extension.ratchet_tree().clone())
+            .or_else(|| ratchet_tree.clone());
         if let Some(ratchet_tree) = ratchet_tree {
             builder = builder.with_ratchet_tree(ratchet_tree);
         }
@@ -675,27 +684,32 @@ impl Member {
         // Decoded before into_group stores the group; fails closed
         // (decisions mimid-1wgh.4.57, mimid-1wgh.4.59).
         let required = required_lists(staged.group_context().extensions())?;
-        // mls-extensions editor's copy (PR #110) rule 4: never join a group
-        // whose GroupContext requires a component this identity's leaf does
-        // not list; checked before into_group stores the group (decision
-        // mimid-krmn.6).
-        let own_leaf = staged
-            .own_leaf_node()
-            .ok_or_else(|| MemberError::Join("OpenMLS staged no own leaf".into()))?;
-        check_leaf(own_leaf.extensions(), &required)?;
-        let mut group = staged
+        // mls-extensions editor's copy (PR #110) rules 3 and 4: never join a
+        // group whose tree has a leaf, this identity's included, that misses
+        // a required component (decisions mimid-krmn.6, mimid-krmn.7).
+        // Checked before into_group, so a refused group is never stored
+        // (decision mimid-krmn.10).
+        //
+        // ponytail: StagedWelcome exposes no leaf but this identity's, so
+        // the tree build has just verified against the signed GroupInfo is
+        // verified again here to reach its leaves. Ceiling: every Welcome
+        // join checks the leaf signatures twice. Upgrade: an OpenMLS
+        // StagedWelcome tree accessor (an openmls fork change, which needs
+        // Mark's approval).
+        let tree = tree
+            .ok_or_else(|| MemberError::Join("OpenMLS staged no ratchet tree".into()))?
+            .into_verified(
+                staged.group_context().ciphersuite(),
+                provider.crypto(),
+                staged.group_context().group_id(),
+            )
+            .map_err(|e| MemberError::Join(e.into()))?;
+        for leaf in tree.leaves() {
+            check_leaf(leaf.extensions(), &required)?;
+        }
+        let group = staged
             .into_group(provider)
             .map_err(|e| MemberError::Join(e.into()))?;
-        // Rule 3: a tree with a leaf that misses a required component is
-        // invalid (decision mimid-krmn.7). OpenMLS's StagedWelcome exposes
-        // only this identity's leaf, so the other leaves are checked after
-        // into_group, and a refused group is deleted again.
-        if let Err(error) = check_tree(group.public_group(), &required, None) {
-            group
-                .delete(provider.storage())
-                .map_err(|e| MemberError::Merge(e.into()))?;
-            return Err(error.into());
-        }
         // The Welcome was decrypted with this identity's KeyPackage, so the
         // new leaf belongs to it.
         Ok(WelcomeJoin {
@@ -866,7 +880,7 @@ impl Member {
     /// mimid-1wgh.4.34).
     ///
     /// The returned [`CommitBundle`] always carries the new epoch's signed
-    /// GroupInfo, for the hub (protocol-06 §5.3).
+    /// GroupInfo, for the hub (protocol-07 §5.3).
     ///
     /// The Commit is pending until [`Member::process`] sees it come back
     /// from the hub, or [`Member::merge_pending_commit`] is called. If the
@@ -924,7 +938,7 @@ impl Member {
             .load_psks(provider.storage())
             .map_err(|e| MemberError::Commit(e.into()))?
             // Without a ratchet_tree extension: the group's config leaves
-            // use_ratchet_tree_extension off (protocol-06 §5.3).
+            // use_ratchet_tree_extension off (protocol-07 §5.3).
             .create_group_info(true);
 
         // An invalid stored AppDataUpdate fails the whole Commit instead of
@@ -983,7 +997,7 @@ impl Member {
 
     /// Builds a standalone AppDataUpdate proposal (mls-extensions-10 §4.7),
     /// as a TLS-encoded `MLSMessage` carrying a PublicMessage, for example
-    /// the AppSync proposal a leaving client sends the hub (protocol-06
+    /// the AppDataUpdate proposal a leaving client sends the hub (protocol-07
     /// §3.5, decision mimid-1wgh.4.16).
     ///
     /// The proposal is also stored, as a received one would be: this

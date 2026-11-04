@@ -27,6 +27,7 @@ use mls_rs::{
     MlsMessage,
 };
 use mls_rs_crypto_rustcrypto::RustCryptoProvider;
+use openmls_sqlite_storage::Connection;
 
 /// RFC 9420 §17.1: ciphersuite 0x0001.
 const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
@@ -38,7 +39,7 @@ const SUITE_3: CipherSuite = CipherSuite::CURVE25519_CHACHA;
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
 /// mls-extensions-10 §4.6 AppDataDictionary, hand-encoded: a `safe_aad`
-/// (§5) list naming component 0x0020 (protocol-06 §5.4.1 `frank_aad`). In
+/// (§5) list naming component 0x0020 (protocol-07 §5.4.1 `frank_aad`). In
 /// a GroupContext it requires 0x0020; in a LeafNode it supports it.
 const SAFE_AAD_0020: [u8; 7] = [
     0x06, // ComponentData component_data<V>: 6 bytes
@@ -367,7 +368,7 @@ fn joins_mls_rs_group_and_all_agree() {
             other => panic!("{case}: not an application message: {other:?}"),
         }
 
-        // The exported GroupInfo is [external_pub] only (protocol-06 §5.3),
+        // The exported GroupInfo is [external_pub] only (protocol-07 §5.3),
         // and mls-rs verifies it, signed by carol's new leaf, by joining
         // from it.
         let exported = MlsMessage::from_bytes(&bundle.group_info).expect("decode");
@@ -646,6 +647,49 @@ fn join_and_observe_refuse_existing_leaves_missing_a_required_component() {
             }
         }
     }
+}
+
+/// Decision mimid-krmn.11: a refused Observer::from_group_info leaves no
+/// group state in its Store. The rows of OpenMLS's group-data table are
+/// counted directly in the SQLite file; the valid group, observed through a
+/// fresh Store, shows that the count sees an Observer's state. dave's leaf
+/// lists only 0x0021 where the GroupContext requires 0x0020 (rule 3,
+/// decision mimid-krmn.7).
+#[test]
+fn refused_observer_stores_nothing() {
+    let group_rows = |name: &str, dave_dictionary: &[u8]| -> (bool, i64) {
+        let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "member-external-join-observer-{name}-{}.sqlite",
+            std::process::id()
+        ));
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let file = PathBuf::from(format!("{}{suffix}", path.display()));
+            if file.exists() {
+                std::fs::remove_file(&file).expect("remove a stale test database");
+            }
+        }
+        let (bob, _dave, _) =
+            mls_rs_pair_with(SUITE_1, Some(&SAFE_AAD_0020), Some(dave_dictionary));
+        let store = Store::open(&path).expect("open store");
+        let observed = Observer::from_group_info(&store, &group_info(&bob, true, false), None);
+        let refused = matches!(
+            observed,
+            Err(mimi_mls::observer::ObserverError::MissingSafeAadComponent(
+                0x0020
+            ))
+        );
+        assert!(refused || observed.is_ok(), "{name}: {observed:?}");
+        let rows = Connection::open(&path)
+            .expect("open database")
+            .query_row("SELECT COUNT(*) FROM openmls_group_data", [], |row| {
+                row.get(0)
+            })
+            .expect("count group rows");
+        (refused, rows)
+    };
+    assert_eq!(group_rows("refused", &SAFE_AAD_0021), (true, 0));
+    let (refused, rows) = group_rows("accepted", &SAFE_AAD_0020);
+    assert!(!refused && rows > 0, "the count sees an Observer's state");
 }
 
 /// Decision mimid-1wgh.4.55: a join by an identity whose signature key is

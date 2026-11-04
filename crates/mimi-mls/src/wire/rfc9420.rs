@@ -401,7 +401,7 @@ impl VerifiedKeyPackageInfo {
         self.not_after
     }
 
-    /// Returns whether this KeyPackage suits a protocol-06 §5.2
+    /// Returns whether this KeyPackage suits a protocol-07 §5.2
     /// `KeyMaterialRequest`: its `cipher_suite` is in `acceptable_suites`
     /// and its LeafNode's `capabilities` meet `required_capabilities` as
     /// RFC 9420 §11.1 defines.

@@ -1233,7 +1233,7 @@ fn commit_with_a_leaf_missing_a_required_component_is_rejected() {
 }
 
 /// Decision mimid-1wgh.4.52: every mimi-mls leaf lists frank_aad 0x0020
-/// (protocol-06 §5.4.1) in its safe_aad list, so in a group whose
+/// (protocol-07 §5.4.1) in its safe_aad list, so in a group whose
 /// GroupContext requires it, UpdatePath Commits from mimi-mls members are
 /// accepted by a mimi-mls Member, the Observer and mls-rs. That holds both
 /// for the group creator's leaf and for a leaf from a mimi-mls KeyPackage.
@@ -1415,7 +1415,7 @@ fn member_group_info_matches_mls_rs_member_except_signer() {
     let group_info =
         alice_commits(&alice, &mut member, &mut bob, &store, &mut observer, &[]).group_info;
 
-    // protocol-06 §5.3: the GroupInfo omits the ratchet_tree. external_pub
+    // protocol-07 §5.3: the GroupInfo omits the ratchet_tree. external_pub
     // lets a new client join by external Commit (RFC 9420 §12.4.3.2).
     let message = MlsMessage::from_bytes(&group_info).expect("mls-rs decodes");
     let extensions = message.as_group_info().expect("GroupInfo").extensions();

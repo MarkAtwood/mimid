@@ -45,7 +45,7 @@
 //!   signature covers (decision mimid-1wgh.4.47).
 //! - [`Observer::group_info`] and [`Observer::verify_group_info`] require
 //!   the GroupInfo's `signer` to be the committer of the merged Commit,
-//!   since protocol-06 §5.3 has the committer send it with the Commit.
+//!   since protocol-07 §5.3 has the committer send it with the Commit.
 //! - [`ProposalKind::AppDataUpdate`] reports the `update` bytes of a
 //!   proposal as it carries them, without decoding or checking them against
 //!   the component's semantics. [`Observer::process_proposal`] stores such a
@@ -1002,7 +1002,7 @@ impl Observer {
     }
 
     /// Verifies a full GroupInfo (RFC 9420 §12.4.3), as a Commit carries it
-    /// in protocol-06's `GroupInfoOption` `full`, against the current epoch.
+    /// in protocol-07's `GroupInfoOption` `full`, against the current epoch.
     ///
     /// Call it after [`Observer::merge_pending_commit`] has merged the
     /// Commit the GroupInfo came with. The GroupInfo's bytes, as received,

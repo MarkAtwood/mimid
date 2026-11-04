@@ -36,7 +36,7 @@ pub(crate) const COMPONENT_GREASE: [ComponentId; 8] = [
 /// mls-extensions-10 §7.5 component registry: `last_resort_key_package`.
 const LAST_RESORT_KEY_PACKAGE: ComponentId = 0x0004;
 
-/// protocol-06 §5.4.1 and §10.1: `frank_aad`, the Safe AAD component that
+/// protocol-07 §5.4.1 and §10.1: `frank_aad`, the Safe AAD component that
 /// carries a message's franking tag. It is a MIMI component, not an MLS
 /// one. This crate knows it by decision mimid-1wgh.4.52: every mimid client
 /// implements franking through `mimi-protocol`, so every leaf lists it.
@@ -44,7 +44,7 @@ const FRANK_AAD: ComponentId = 0x0020;
 
 /// The MIMI components mimid implements besides `frank_aad`, so every leaf
 /// lists them (mls-extensions editor's copy, PR #110, rules 3 and 6;
-/// decision mimid-krmn.12): protocol-06 §10 `franking_agent` (0x0021),
+/// decision mimid-krmn.12): protocol-07 §10 `franking_agent` (0x0021),
 /// `participant_list` (0x0022) and `room_metadata` (0x0023), and
 /// room-policy-04 §10.1 `mls_operational_policy` (0x0024), `roles_list`
 /// (0x0025), `preauth_list` (0x0026), `base_room_policy` (0x0027),
@@ -270,7 +270,7 @@ impl Identity {
     /// values. Its `app_data_dictionary` carries an `app_components` entry,
     /// which §4.6 requires of any client that advertises
     /// `app_data_dictionary`. That list names the components mimid
-    /// implements, `last_resort_key_package` (0x0004), protocol-06's
+    /// implements, `last_resort_key_package` (0x0004), protocol-07's
     /// `frank_aad` (0x0020), the MIMI components 0x0021 to 0x0029 and the
     /// identity's extra components (decision mimid-krmn.12), but not `app_components` or `safe_aad`,
     /// whose support is implied (mls-extensions editor's copy, PR #110;
