@@ -631,7 +631,9 @@ impl Member {
     /// stored (mls-extensions editor's copy, PR #110; decision
     /// mimid-krmn.6). So must every other leaf in the tree, or the join is
     /// refused, again before anything is stored (decisions mimid-krmn.7,
-    /// mimid-krmn.10).
+    /// mimid-krmn.10). A one-time KeyPackage is consumed only by an
+    /// accepted join, so a refused Welcome leaves it usable (bead
+    /// mimid-1wgh.4.73).
     ///
     /// # Errors
     ///

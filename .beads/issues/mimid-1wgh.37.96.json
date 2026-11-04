@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.37.96",
+  "title": "wg: protocol-07 §5.7 consent response paragraphs are spliced (201 and 202 both present)",
+  "description": "draft-ietf-mimi-protocol-07 §5.7 (txt L2355-2370 requestConsent, L2439-2449 updateConsent): the -06 paragraph's opening (\"usually a 201 Accepted ... Likewise in response to a cancel which has no request matching the\") runs straight into the #173 replacement (\"The response to a requestConsent request is usually a 202 Accepted ... gets a 422 Unprocessable Content response\"); same for updateConsent (\"A provider that does not The response to an updateConsent ...\"). Looks like a bad merge of mimi-protocol#173 into the -07 source. Fix in the editor's copy: delete the stale 201 fragment in both places. mimid implements the complete 202/422 text (decision on mimid-1wgh.7.42). Posting upstream needs Mark's OK.",
+  "notes": "2026-11-04: fix PR https://github.com/ietf-wg-mimi/mimi-protocol/pull/187 (branch MarkAtwood:consent-splice), Mark's OK.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-04T16:22:02.657393707Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-04T16:27:11.849644661Z",
+  "external_ref": "gh-ietf-wg-mimi/mimi-protocol#186",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.96",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-04T16:22:02.693382931Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

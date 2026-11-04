@@ -1291,6 +1291,50 @@ fn join_welcome_refusal_writes_no_group_state() {
     assert!(group_writes() > 0, "the trigger logs a join's group state");
 }
 
+/// Bead mimid-1wgh.4.73: a refused Welcome does not consume the one-time
+/// KeyPackage it was encrypted to. Two mls-rs groups add bob with the same
+/// KeyPackage. join_welcome refuses the first, whose leaf 1 lacks the
+/// required Safe AAD component 0x0020, and then accepts the second with
+/// that KeyPackage.
+#[test]
+fn join_welcome_refusal_keeps_the_key_package() {
+    let bob = identity(b"bob");
+    let bob_key_package = bob
+        .key_package(KeyPackageKind::OneTime)
+        .expect("KeyPackage");
+    let welcome_with_dave = |dave_dictionary: &[u8]| {
+        let mut alice = mls_rs_client(b"alice")
+            .create_group(
+                leaf_dictionary(&LEAF_SAFE_AAD_0020),
+                leaf_dictionary(&LEAF_SAFE_AAD_0020),
+                None,
+            )
+            .expect("mls-rs group");
+        let dave_key_package = mls_rs_key_package_with(&mls_rs_client(b"dave"), dave_dictionary);
+        let output = alice
+            .commit_builder()
+            .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+            .add_member(dave_key_package)
+            .expect("mls-rs adds dave")
+            .add_member(key_package_message(&bob_key_package))
+            .expect("mls-rs adds bob")
+            .build()
+            .expect("mls-rs commits");
+        alice.apply_pending_commit().expect("apply");
+        output.welcome_messages[0].to_bytes().expect("encode")
+    };
+
+    let refused = welcome_with_dave(&LEAF_SAFE_AAD_0021);
+    let result = Member::join_welcome(&bob, &refused, None);
+    assert!(
+        matches!(result, Err(MemberError::MissingSafeAadComponent(0x0020))),
+        "{result:?}"
+    );
+
+    let accepted = welcome_with_dave(&LEAF_SAFE_AAD_0020);
+    Member::join_welcome(&bob, &accepted, None).expect("join with the same KeyPackage");
+}
+
 /// As [`LEAF_SAFE_AAD_0020`], but an `app_components` list naming the
 /// private-use component 0x8001, which mimid's leaf does not list.
 const APP_COMPONENTS_8001: [u8; 7] = [

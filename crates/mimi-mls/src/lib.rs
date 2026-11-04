@@ -36,12 +36,12 @@
 //!   example mode 0600) is the caller's job.
 //! - KeyPackages use OpenMLS's default lifetime: valid from one hour in the
 //!   past until 84 days in the future.
-//! - A Welcome that decrypts with a one-time KeyPackage consumes it even if
-//!   [`member::Member::join_welcome`] then refuses the join, for OpenMLS's
-//!   reasons or this crate's: OpenMLS deletes the KeyPackage as soon as it
-//!   decrypts the Welcome, before anything can be checked (bead
-//!   mimid-1wgh.4.73). The client must publish a replacement. Last-resort
-//!   KeyPackages are never deleted.
+//! - A one-time KeyPackage is consumed only when
+//!   [`member::Member::join_welcome`] accepts the join. A refused Welcome
+//!   leaves it usable. This relies on the openmls fork, whose
+//!   `StagedWelcome::into_group` deletes the KeyPackage once the group is
+//!   stored; upstream OpenMLS deletes it as soon as it decrypts the Welcome
+//!   (bead mimid-1wgh.4.73). Last-resort KeyPackages are never deleted.
 //! - The `app_components` list in each LeafNode names mimid's built-in
 //!   components, `last_resort_key_package` (0x0004), protocol-07's
 //!   `frank_aad` (0x0020) and the MIMI components 0x0021 to 0x0029, plus
