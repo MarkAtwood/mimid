@@ -41,7 +41,7 @@ use mimid_server::follower::relay::LocalUser;
 use mimid_server::follower::{Follower, FollowerError};
 use mimid_server::http::router;
 use mimid_server::hub::Hub;
-use mimid_server::store::Store;
+use mimid_server::store::{KeyPackageInsert, NewKeyPackage, Store};
 use tower::ServiceExt;
 
 /// The target user, at this provider (b.example).
@@ -816,4 +816,115 @@ async fn remote_requester_gets_our_users_key_package_for_a_room_we_host_over_htt
         claims_in(&path).await,
         [(reference(&kp), adder.to_owned(), ROOM_ID.to_owned())]
     );
+}
+
+/// Stores `key_package` for `user` without the upload checks, as a row
+/// written before decision mimid-1wgh.6.76 could be: uploads now refuse a
+/// URI that is not `mimi://<domain>/u/<id>`.
+async fn store_unchecked(store: &Store, user: &str, key_package: &[u8]) {
+    let inserted = store
+        .insert_key_package(&NewKeyPackage {
+            client_id: &format!("{user}/client"),
+            user_uri: user,
+            reference: &reference(key_package),
+            bytes: key_package,
+            last_resort: false,
+            not_after: now_seconds() + 30 * DAY,
+        })
+        .await
+        .unwrap();
+    assert_eq!(inserted, KeyPackageInsert::Inserted);
+}
+
+#[tokio::test]
+async fn local_uris_that_are_not_user_uris_get_no_consent() {
+    // protocol-07 §2.1; decision mimid-1wgh.6.76: only mimi://<domain>/u/<id>
+    // names a user, so the provider URI and a room URI are no target user.
+    // §5.2 noConsent is the catch-all refusal (decision mimid-1wgh.7.9).
+    let p = Provider::open().await;
+    for uri in ["mimi://b.example", "mimi://b.example/r/bob"] {
+        let kp = key_package(&client(uri, 30 * DAY, &[]), false);
+        store_unchecked(&p.store, uri, &kp).await;
+        let body = request(&Ask {
+            target_user: uri,
+            ..ask()
+        });
+        let response = p
+            .key_packages
+            .serve_key_material(&hub_domain(), uri, &body)
+            .await
+            .unwrap();
+        assert_eq!(response, no_consent(uri), "{uri}");
+    }
+    assert!(p.claims().await.is_empty());
+}
+
+#[tokio::test]
+async fn local_uris_that_are_not_user_uris_get_no_consent_on_either_route() {
+    // http.rs routes a keyMaterial request by the target's domain (decision
+    // mimid-1wgh.7.27): a room we host goes to the hub, which serves in
+    // process, any other room to the follower. Both reach
+    // KeyPackages::serve_key_material, which refuses a non-user URI
+    // (decision mimid-1wgh.6.76).
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mimid.sqlite");
+    let (store, hub) = common::open_hub(&path).await;
+    let own = Arc::new(KeyPackages::new(
+        store.clone(),
+        common::domain(),
+        Arc::new(FixedClock(now_ms())),
+    ));
+    let hub = hub.with_local_key_material(Arc::clone(&own) as _);
+    create_room(&hub).await;
+    let follower = Follower::new(
+        common::domain(),
+        store.clone(),
+        Arc::new(FixedClock(now_ms())),
+    )
+    .with_key_packages(Arc::clone(&own));
+    let base = BaseUrl::try_from("https://mimi.a.example".to_owned()).unwrap();
+    let app = router(directory(&base), Arc::new(hub), Arc::new(follower));
+    let adder = std::str::from_utf8(ADDER).unwrap();
+    // Each URI with its percent-encoding (RFC 3986 §2.1; decision
+    // mimid-1wgh.5.18), done by hand.
+    let targets = [
+        ("mimi://a.example", "mimi%3A%2F%2Fa.example"),
+        (
+            "mimi://a.example/r/hall",
+            "mimi%3A%2F%2Fa.example%2Fr%2Fhall",
+        ),
+    ];
+    // (roomId, From): a room we host goes to the hub; a room hosted by
+    // c.example, asked by its hub, goes to the follower.
+    let routes = [
+        (ROOM_ID, "mimi@b.example"),
+        ("mimi://c.example/r/elsewhere", "mimi@c.example"),
+    ];
+    for (target, encoded) in targets {
+        let kp = key_package(&client(target, 30 * DAY, &[]), false);
+        store_unchecked(&store, target, &kp).await;
+        for (room_id, from) in routes {
+            let body = request(&Ask {
+                requesting_user: adder,
+                credential_identity: adder,
+                target_user: target,
+                room_id,
+                required_capabilities: NO_REQUIREMENTS,
+            });
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(format!("/v1/keyMaterial/{encoded}"))
+                        .header(header::FROM, from)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{target} {room_id}");
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            assert_eq!(bytes, no_consent(target), "{target} {room_id}");
+        }
+    }
+    assert!(claims_in(&path).await.is_empty());
 }

@@ -89,7 +89,9 @@ fn client(peer: &Domain, base: String) -> PeerClient {
 
 #[tokio::test]
 async fn consent_requests_go_to_the_peer_domain_paths_byte_for_byte() {
-    let (base, seen) = start(StatusCode::CREATED, CONSENT_KEYS).await;
+    // protocol-07 §5.7: an accepted entry is answered 202 (decision
+    // mimid-1wgh.7.42).
+    let (base, seen) = start(StatusCode::ACCEPTED, CONSENT_KEYS).await;
     let peer = Domain::try_from("b.example".to_owned()).unwrap();
     let client = client(&peer, base);
 
@@ -120,11 +122,12 @@ async fn consent_requests_go_to_the_peer_domain_paths_byte_for_byte() {
 }
 
 #[tokio::test]
-async fn any_status_but_201_is_rejected() {
-    // protocol-07 §5.7: the answer is usually 201; 404 or a 500-class code
-    // means not accepted.
+async fn any_status_but_202_is_rejected() {
+    // protocol-07 §5.7: the answer is usually 202; 404 or a 500-class code
+    // means not accepted, and so does -06's 201 (decision mimid-1wgh.7.42).
     for status in [
         StatusCode::OK,
+        StatusCode::CREATED,
         StatusCode::NOT_FOUND,
         StatusCode::SERVICE_UNAVAILABLE,
     ] {

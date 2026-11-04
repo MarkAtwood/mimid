@@ -24,10 +24,11 @@
 //! a configured peer, or not the room's hub, is `403` (decision
 //! mimid-1wgh.7.4). The consent endpoints (`/v1/requestConsent/
 //! {targetDomain}`, `/v1/updateConsent/{requesterDomain}`) go to the
-//! follower: an accepted entry is `201` with no body, an unknown local user
-//! `404` (decision mimid-1wgh.7.36), and an entry §5.7 does not allow `400`
-//! (decision mimid-1wgh.7.37). `/v1/identifierQuery/{domain}` also goes to
-//! the follower: every decodable query is `200` with an IdentifierResponse
+//! follower: an accepted entry is `202` with no body, an operation the
+//! endpoint does not take `422` (protocol-07 §5.7; decision
+//! mimid-1wgh.7.42), an unknown local user `404` (decision mimid-1wgh.7.36),
+//! and any other entry §5.7 does not allow `400` (decision mimid-1wgh.7.37).
+//! `/v1/identifierQuery/{domain}` also goes to the follower: every decodable query is `200` with an IdentifierResponse
 //! body, and an undecodable one or a path naming another provider is `400`
 //! (decision mimid-1wgh.7.40).
 //!
@@ -53,6 +54,7 @@ use mimi_protocol::KeyMaterialRequest;
 
 use crate::config::Domain;
 use crate::directory::{self, Directory};
+use crate::follower::consent::ConsentViolation;
 use crate::follower::{Follower, FollowerError};
 use crate::hub::{Hub, HubError, identity_domain};
 
@@ -157,6 +159,11 @@ async fn report_abuse(
 /// is under this provider's domain and to the follower otherwise (decision
 /// mimid-1wgh.7.27). Any other request, including one whose `targetUser`
 /// names no domain, goes to the hub.
+///
+/// Routing goes by the `targetUser` domain alone: a URI of this provider
+/// that is not a user URI (decision mimid-1wgh.6.76) is routed as local, and
+/// [`KeyPackages::serve_key_material`](crate::follower::key_packages::KeyPackages::serve_key_material),
+/// which both routes reach, refuses it with `noConsent`.
 async fn key_material(
     State(Roles { hub, follower }): State<Roles>,
     Path(target_user): Path<String>,
@@ -203,9 +210,11 @@ async fn notify(
     }
 }
 
-/// protocol-07 §5.7 requestConsent: `201` with no body when accepted, `404`
-/// for an unknown target user (decision mimid-1wgh.7.36), and `400` for an
-/// undecodable entry or one §5.7 does not allow (decision mimid-1wgh.7.37).
+/// protocol-07 §5.7 requestConsent: `202` with no body when accepted, `422`
+/// for an operation other than `request` or `cancel` (decision
+/// mimid-1wgh.7.42), `404` for an unknown target user (decision
+/// mimid-1wgh.7.36), and `400` for an undecodable entry or another violation
+/// of §5.7 (decision mimid-1wgh.7.37).
 async fn request_consent(
     State(follower): State<Arc<Follower>>,
     Path(target_domain): Path<String>,
@@ -217,7 +226,8 @@ async fn request_consent(
             follower
                 .request_consent(&target_domain, &from, &body)
                 .await
-                .map(|()| StatusCode::CREATED.into_response()),
+                // protocol-07 §5.7; decision mimid-1wgh.7.42
+                .map(|()| StatusCode::ACCEPTED.into_response()),
         ),
         None => bad_from(),
     }
@@ -237,7 +247,7 @@ fn consent_response(result: Result<Response, FollowerError>) -> Response {
 }
 
 /// protocol-07 §5.7 updateConsent: as [`request_consent`], with the
-/// requester as the local user.
+/// requester as the local user and `grant` or `revoke` as the operations.
 async fn update_consent(
     State(follower): State<Arc<Follower>>,
     Path(requester_domain): Path<String>,
@@ -249,7 +259,8 @@ async fn update_consent(
             follower
                 .update_consent(&requester_domain, &from, &body)
                 .await
-                .map(|()| StatusCode::CREATED.into_response()),
+                // protocol-07 §5.7; decision mimid-1wgh.7.42
+                .map(|()| StatusCode::ACCEPTED.into_response()),
         ),
         None => bad_from(),
     }
@@ -311,6 +322,10 @@ fn respond_follower(result: Result<Response, FollowerError>) -> Response {
         }
         Err(FollowerError::InvalidRoomId) => {
             (StatusCode::BAD_REQUEST, "invalid room ID").into_response()
+        }
+        // protocol-07 §5.7; decision mimid-1wgh.7.42
+        Err(FollowerError::ConsentRefused(violation @ ConsentViolation::WrongOperation(_))) => {
+            (StatusCode::UNPROCESSABLE_ENTITY, violation.to_string()).into_response()
         }
         // Decision mimid-1wgh.7.37.
         Err(FollowerError::ConsentRefused(violation)) => {

@@ -5,10 +5,12 @@
 //! A received entry is checked and stored, never enforced (decision
 //! mimid-1wgh.7.35): a requestConsent `request` is kept until a `cancel`
 //! with the same scope deletes it, and the latest updateConsent `grant` or
-//! `revoke` per scope is kept. An entry naming a local user who has no
-//! client is refused as unknown (decision mimid-1wgh.7.36); an operation or
-//! domain that §5.7 does not allow is refused as invalid (decision
-//! mimid-1wgh.7.37).
+//! `revoke` per scope is kept. An entry whose local URI is not a user URI
+//! (protocol-07 §2.1; decision mimid-1wgh.6.76) or names a user who has no
+//! client is refused as unknown (decision mimid-1wgh.7.36); an operation the
+//! endpoint does not take is refused as unprocessable (protocol-07 §5.7;
+//! decision mimid-1wgh.7.42), and a domain §5.7 does not allow as invalid
+//! (decision mimid-1wgh.7.37).
 //!
 //! # Limitations
 //!
@@ -30,7 +32,7 @@ use mimi_protocol::{ConsentEntry, ConsentOperation, KeyMaterialRequestTbs};
 
 use super::{Follower, FollowerError};
 use crate::config::Domain;
-use crate::hub::identity_domain;
+use crate::hub::{identity_domain, user_uri_domain};
 use crate::store::{ConsentDecision, ConsentKey, ReceivedConsent};
 
 /// Whether the target user consents to `request`'s requester fetching key
@@ -41,13 +43,14 @@ pub fn allows(_request: &KeyMaterialRequestTbs) -> bool {
     true
 }
 
-/// Why a received consent entry breaks protocol-07 §5.7 (decision
-/// mimid-1wgh.7.37).
+/// Why a received consent entry breaks protocol-07 §5.7 (decisions
+/// mimid-1wgh.7.37, mimid-1wgh.7.42).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConsentViolation {
     /// The operation belongs to the other endpoint: requestConsent carries
-    /// `request` or `cancel`, updateConsent `grant` or `revoke`.
+    /// `request` or `cancel`, updateConsent `grant` or `revoke`. Answered
+    /// `422` (protocol-07 §5.7; decision mimid-1wgh.7.42).
     #[error("operation {0:?} is not allowed on this endpoint")]
     WrongOperation(ConsentOperation),
     /// The path's domain is not this provider's.
@@ -129,7 +132,7 @@ impl Follower {
         let entry =
             ConsentEntry::tls_deserialize_exact(body).map_err(FollowerError::InvalidRequest)?;
         let refuse = |violation| Err(FollowerError::ConsentRefused(violation));
-        // protocol-07 §5.7; decision mimid-1wgh.7.37
+        // protocol-07 §5.7; decision mimid-1wgh.7.42
         let allowed = match endpoint {
             Endpoint::RequestConsent => matches!(
                 entry.consent_operation,
@@ -160,8 +163,11 @@ impl Follower {
             return refuse(ConsentViolation::RemoteUriNotFromSender);
         }
         // Decision mimid-1wgh.7.36: known means having a client, as for
-        // keyMaterial (decision mimid-1wgh.7.9).
-        if self.store.clients_of_user(local.as_str()).await?.is_empty() {
+        // keyMaterial (decision mimid-1wgh.7.9), under a user URI
+        // (protocol-07 §2.1; decision mimid-1wgh.6.76).
+        if user_uri_domain(local.as_str()).is_none()
+            || self.store.clients_of_user(local.as_str()).await?.is_empty()
+        {
             return Err(FollowerError::UnknownUser);
         }
 

@@ -194,20 +194,22 @@ impl PeerClient {
 
     /// protocol-07 §5.7 `POST /requestConsent/{targetDomain}`: sends `body`,
     /// a ConsentEntry carrying `request` or `cancel`, to `domain`, the target
-    /// user's provider, with `domain` as the template's value. Only a `201`
-    /// response counts as accepted; its body is not read.
+    /// user's provider, with `domain` as the template's value. Only a `202`
+    /// response counts as accepted (protocol-07 §5.7; decision
+    /// mimid-1wgh.7.42); its body is not read.
     ///
     /// # Errors
     ///
     /// As for [`PeerClient::notify`], with `requestConsent` in place of
-    /// `notify`.
+    /// `notify` and `202` in place of `201`.
     pub async fn request_consent(&self, domain: &Domain, body: Vec<u8>) -> Result<(), PeerError> {
         self.post(
             domain,
             Endpoint::RequestConsent,
             domain.as_str(),
             body,
-            StatusCode::CREATED,
+            // protocol-07 §5.7; decision mimid-1wgh.7.42
+            StatusCode::ACCEPTED,
         )
         .await
         .map(drop)
@@ -216,19 +218,21 @@ impl PeerClient {
     /// protocol-07 §5.7 `POST /updateConsent/{requesterDomain}`: sends
     /// `body`, a ConsentEntry carrying `grant` or `revoke`, to `domain`, the
     /// requester's provider, with `domain` as the template's value. Only a
-    /// `201` response counts as accepted; its body is not read.
+    /// `202` response counts as accepted (protocol-07 §5.7; decision
+    /// mimid-1wgh.7.42); its body is not read.
     ///
     /// # Errors
     ///
     /// As for [`PeerClient::notify`], with `updateConsent` in place of
-    /// `notify`.
+    /// `notify` and `202` in place of `201`.
     pub async fn update_consent(&self, domain: &Domain, body: Vec<u8>) -> Result<(), PeerError> {
         self.post(
             domain,
             Endpoint::UpdateConsent,
             domain.as_str(),
             body,
-            StatusCode::CREATED,
+            // protocol-07 §5.7; decision mimid-1wgh.7.42
+            StatusCode::ACCEPTED,
         )
         .await
         .map(drop)
@@ -538,8 +542,8 @@ pub enum PeerError {
     #[error("response body too large")]
     ResponseTooLarge,
     /// The peer answered with a status other than the one the request
-    /// expects: `201` for `/notify` and the consent endpoints, `200` for every
-    /// other endpoint.
+    /// expects: `201` for `/notify`, `202` for the consent endpoints, `200` for
+    /// every other endpoint.
     #[error("peer answered {status}")]
     Rejected {
         /// The response status code.

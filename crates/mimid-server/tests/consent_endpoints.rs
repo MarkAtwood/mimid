@@ -12,9 +12,11 @@
 //!
 //! A requestConsent goes to the target's provider (b.example) from the
 //! requester's (a.example); an updateConsent goes the other way (§5.7).
-//! Entries are stored, not enforced (decision mimid-1wgh.7.35); an unknown
-//! local user is `404` (decision mimid-1wgh.7.36); an operation or domain
-//! violation is `400` (decision mimid-1wgh.7.37).
+//! An accepted entry is `202` (§5.7; decision mimid-1wgh.7.42). Entries are
+//! stored, not enforced (decision mimid-1wgh.7.35); an unknown local user is
+//! `404` (decision mimid-1wgh.7.36); an operation the endpoint does not take
+//! is `422` (§5.7; decision mimid-1wgh.7.42), and a domain violation `400`
+//! (decision mimid-1wgh.7.37).
 
 #![forbid(unsafe_code)]
 
@@ -151,7 +153,7 @@ async fn request_is_accepted_and_cancel_is_accepted_with_or_without_a_match() {
     let b = provider("b.example", &[BOB], &["a.example"]).await;
     assert_eq!(
         post(&b.app, REQUEST_CONSENT, FROM_A, REQUEST).await,
-        StatusCode::CREATED
+        StatusCode::ACCEPTED
     );
     // Decision mimid-1wgh.7.35: stored as received.
     let stored = b
@@ -172,13 +174,13 @@ async fn request_is_accepted_and_cancel_is_accepted_with_or_without_a_match() {
     let cancel = with_operation(REQUEST, CANCEL);
     assert_eq!(
         post(&b.app, REQUEST_CONSENT, FROM_A, &cancel).await,
-        StatusCode::CREATED
+        StatusCode::ACCEPTED
     );
     assert_eq!(b.store.consent_request(&ROOM1_SCOPE).await.unwrap(), None);
-    // §5.7: a cancel with no matching request is still 201.
+    // §5.7: a cancel with no matching request is still 202.
     assert_eq!(
         post(&b.app, REQUEST_CONSENT, FROM_A, &cancel).await,
-        StatusCode::CREATED
+        StatusCode::ACCEPTED
     );
 }
 
@@ -187,7 +189,7 @@ async fn grant_and_revoke_are_accepted() {
     let a = provider("a.example", &[ALICE], &["b.example"]).await;
     assert_eq!(
         post(&a.app, UPDATE_CONSENT, FROM_B, GRANT).await,
-        StatusCode::CREATED
+        StatusCode::ACCEPTED
     );
     let (decision, stored) = a
         .store
@@ -202,7 +204,7 @@ async fn grant_and_revoke_are_accepted() {
     let revoke = with_operation(REQUEST, REVOKE);
     assert_eq!(
         post(&a.app, UPDATE_CONSENT, FROM_B, &revoke).await,
-        StatusCode::CREATED
+        StatusCode::ACCEPTED
     );
     let (decision, stored) = a.store.consent_update(&ROOM1_SCOPE).await.unwrap().unwrap();
     assert_eq!(decision, ConsentDecision::Revoke);
@@ -228,7 +230,7 @@ async fn grant_and_revoke_are_accepted() {
     .concat();
     assert_eq!(
         post(&a.app, UPDATE_CONSENT, FROM_B, &regrant).await,
-        StatusCode::CREATED
+        StatusCode::ACCEPTED
     );
     let (decision, stored) = a.store.consent_update(&ROOM1_SCOPE).await.unwrap().unwrap();
     assert_eq!(decision, ConsentDecision::Grant);
@@ -237,27 +239,28 @@ async fn grant_and_revoke_are_accepted() {
 
 #[tokio::test]
 async fn operation_for_the_other_endpoint_is_refused() {
-    // Decision mimid-1wgh.7.37: requestConsent carries request or cancel,
-    // updateConsent grant or revoke (§5.7).
+    // protocol-07 §5.7: requestConsent carries request or cancel,
+    // updateConsent grant or revoke; any other operation gets 422
+    // Unprocessable Content (decision mimid-1wgh.7.42).
     let b = provider("b.example", &[BOB], &["a.example"]).await;
     let revoke = with_operation(REQUEST, REVOKE);
     assert_eq!(
         post(&b.app, REQUEST_CONSENT, FROM_A, &revoke).await,
-        StatusCode::BAD_REQUEST
+        StatusCode::UNPROCESSABLE_ENTITY
     );
     assert_eq!(
         post(&b.app, REQUEST_CONSENT, FROM_A, GRANT).await,
-        StatusCode::BAD_REQUEST
+        StatusCode::UNPROCESSABLE_ENTITY
     );
     let a = provider("a.example", &[ALICE], &["b.example"]).await;
     assert_eq!(
         post(&a.app, UPDATE_CONSENT, FROM_B, REQUEST).await,
-        StatusCode::BAD_REQUEST
+        StatusCode::UNPROCESSABLE_ENTITY
     );
     let cancel = with_operation(REQUEST, CANCEL);
     assert_eq!(
         post(&a.app, UPDATE_CONSENT, FROM_B, &cancel).await,
-        StatusCode::BAD_REQUEST
+        StatusCode::UNPROCESSABLE_ENTITY
     );
     assert_eq!(b.store.consent_request(&ROOM1_SCOPE).await.unwrap(), None);
     assert_eq!(a.store.consent_update(&ROOM1_SCOPE).await.unwrap(), None);
@@ -326,6 +329,60 @@ async fn unknown_local_user_is_not_found() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(a.store.consent_update(&ANY_ROOM_SCOPE).await.unwrap(), None);
+}
+
+/// `entry` with the IdentifierUri `from` replaced by `to`, both under 64
+/// bytes so each has a one-byte varint length (RFC 9420 §2.1.2). `from`
+/// must occur exactly once.
+fn with_uri(entry: &[u8], from: &str, to: &str) -> Vec<u8> {
+    let from = [&[u8::try_from(from.len()).unwrap()][..], from.as_bytes()].concat();
+    let to = [&[u8::try_from(to.len()).unwrap()][..], to.as_bytes()].concat();
+    let at = entry
+        .windows(from.len())
+        .position(|window| window == from)
+        .unwrap();
+    assert!(
+        !entry[at + 1..]
+            .windows(from.len())
+            .any(|window| window == from)
+    );
+    [&entry[..at], &to, &entry[at + from.len()..]].concat()
+}
+
+#[tokio::test]
+async fn local_uri_that_is_not_a_user_uri_is_not_found() {
+    // protocol-07 §2.1; decision mimid-1wgh.6.76: only mimi://<domain>/u/<id>
+    // names a user. A client row under another URI type (one written before
+    // that decision) does not make it a known user; §5.7 404 (decision
+    // mimid-1wgh.7.36).
+    for target in ["mimi://b.example", "mimi://b.example/r/bob"] {
+        let b = provider("b.example", &[target], &["a.example"]).await;
+        let request = with_uri(REQUEST, BOB, target);
+        assert_eq!(
+            post(&b.app, REQUEST_CONSENT, FROM_A, &request).await,
+            StatusCode::NOT_FOUND,
+            "{target}"
+        );
+        let scope = ConsentKey {
+            target_uri: target,
+            ..ROOM1_SCOPE
+        };
+        assert_eq!(b.store.consent_request(&scope).await.unwrap(), None);
+    }
+    for requester in ["mimi://a.example", "mimi://a.example/r/alice"] {
+        let a = provider("a.example", &[requester], &["b.example"]).await;
+        let grant = with_uri(GRANT, ALICE, requester);
+        assert_eq!(
+            post(&a.app, UPDATE_CONSENT, FROM_B, &grant).await,
+            StatusCode::NOT_FOUND,
+            "{requester}"
+        );
+        let scope = ConsentKey {
+            requester_uri: requester,
+            ..ANY_ROOM_SCOPE
+        };
+        assert_eq!(a.store.consent_update(&scope).await.unwrap(), None);
+    }
 }
 
 #[tokio::test]

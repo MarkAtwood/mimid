@@ -14,8 +14,9 @@
 //! Serving ([`KeyPackages::serve_key_material`]) takes these steps:
 //!
 //! 1. Decode the [`KeyMaterialRequest`].
-//! 2. `targetUser` must equal the path value and be a user of this
-//!    provider.
+//! 2. `targetUser` must equal the path value and be a user URI
+//!    (`mimi://<domain>/u/<id>`, protocol-07 §2.1; decision
+//!    mimid-1wgh.6.76) of this provider.
 //! 3. The signature must verify, and `requestingUser` must equal the
 //!    BasicCredential identity of `requesterCredential`.
 //! 4. `roomId` must be present, and the `From` domain must be its
@@ -82,7 +83,9 @@ use super::consent;
 use super::relay::LocalUser;
 use crate::config::Domain;
 use crate::http::MAX_BODY_LEN;
-use crate::hub::{Clock, LocalKeyMaterial, LocalKeyMaterialFuture, identity_domain};
+use crate::hub::{
+    Clock, LocalKeyMaterial, LocalKeyMaterialFuture, identity_domain, user_uri_domain,
+};
 use crate::store::{
     ClaimCandidate, KeyPackageClaim, KeyPackageInsert, NewKeyPackage, Store, StoreError,
     StoredKeyPackage,
@@ -304,7 +307,8 @@ impl KeyPackages {
         if tbs.target_user.as_str() != target_user {
             return refuse(target_user, "targetUser is not the request path's");
         }
-        if identity_domain(target_user.as_bytes()).as_ref() != Some(&self.domain) {
+        // protocol-07 §2.1; decision mimid-1wgh.6.76
+        if user_uri_domain(target_user).as_ref() != Some(&self.domain) {
             return refuse(target_user, "targetUser is not a user of this provider");
         }
         if decoded.verify().is_err() {

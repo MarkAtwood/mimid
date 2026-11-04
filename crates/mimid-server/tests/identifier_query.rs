@@ -197,6 +197,42 @@ async fn handle_without_a_known_local_user_is_not_found() {
     );
 }
 
+/// IdentifierRequest: one `handle` element for the provider URI
+/// `mimi://b.example`.
+const HANDLE_PROVIDER: &[u8] = &[
+    0x12, // query_elements<V>: 18 bytes
+    0x01, // searchType = handle(1); no select arm
+    0x10, // searchValue<V>: 16 bytes
+    b'm', b'i', b'm', b'i', b':', b'/', b'/', b'b', b'.', b'e', b'x', b'a', b'm', b'p', b'l', b'e',
+    // "mimi://b.example"
+    0x00, // id_request_extensions: empty
+];
+
+/// IdentifierRequest: one `handle` element for the room URI
+/// `mimi://b.example/r/bob`.
+const HANDLE_ROOM: &[u8] = &[
+    0x18, // query_elements<V>: 24 bytes
+    0x01, // searchType = handle(1); no select arm
+    0x16, // searchValue<V>: 22 bytes
+    b'm', b'i', b'm', b'i', b':', b'/', b'/', b'b', b'.', b'e', b'x', b'a', b'm', b'p', b'l', b'e',
+    b'/', b'r', b'/', b'b', b'o', b'b', // "mimi://b.example/r/bob"
+    0x00, // id_request_extensions: empty
+];
+
+#[tokio::test]
+async fn handle_that_is_not_a_user_uri_is_not_found() {
+    // protocol-07 §2.1; decision mimid-1wgh.6.76: only mimi://<domain>/u/<id>
+    // names a user. A client row under another URI type (one written before
+    // that decision) does not make it a user; §5.8 notFound.
+    let b = provider("b.example", &["mimi://b.example", "mimi://b.example/r/bob"]).await;
+    for body in [HANDLE_PROVIDER, HANDLE_ROOM] {
+        assert_eq!(
+            post(&b.app, PATH, FROM_A, body).await,
+            (StatusCode::OK, no_results(NOT_FOUND))
+        );
+    }
+}
+
 #[tokio::test]
 async fn other_search_types_are_unsupported_and_empty_is_forbidden() {
     let b = provider("b.example", &[BOB]).await;

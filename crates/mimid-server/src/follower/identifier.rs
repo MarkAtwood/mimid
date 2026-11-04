@@ -9,8 +9,10 @@
 //! - any element whose `searchType` is not `handle` makes the whole query
 //!   `unsupportedField`;
 //! - otherwise every `searchValue` must be the same bytes (AND semantics)
-//!   and the URI of a local user who has a client (as for consent,
-//!   decision mimid-1wgh.7.36): `success` with that URI, else `notFound`.
+//!   and the user URI (`mimi://<domain>/u/<id>`, protocol-07 §2.1;
+//!   decision mimid-1wgh.6.76) of a local user who has a client (as for
+//!   consent, decision mimid-1wgh.7.36): `success` with that URI, else
+//!   `notFound`.
 //!
 //! Every decodable request is answered with an IdentifierResponse; the
 //! outcome is its `responseCode`, not the HTTP status (decision
@@ -31,7 +33,7 @@ use mimi_protocol::{
 };
 
 use super::{Follower, FollowerError};
-use crate::hub::identity_domain;
+use crate::hub::user_uri_domain;
 
 impl Follower {
     /// protocol-07 §5.8 `POST /identifierQuery/{domain}`: answers `body`,
@@ -97,7 +99,8 @@ impl Follower {
             return Ok((IdentifierQueryCode::NotFound, None));
         }
         let found = match std::str::from_utf8(value) {
-            Ok(text) if identity_domain(value).as_ref() == Some(&self.domain) => {
+            // protocol-07 §2.1; decision mimid-1wgh.6.76
+            Ok(text) if user_uri_domain(text).as_ref() == Some(&self.domain) => {
                 // Decision mimid-1wgh.7.36's notion of a known user.
                 if self.store.clients_of_user(text).await?.is_empty() {
                     None
