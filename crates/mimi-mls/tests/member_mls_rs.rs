@@ -1233,7 +1233,8 @@ fn join_welcome_refuses_a_group_requiring_a_component_our_leaf_lacks() {
     // mls-extensions editor's copy (PR #110) rule 4: a client MUST NOT
     // join a group whose GroupContext requires a component it does not
     // support. mimid's leaf lists safe_aad [0x0020] and app_components
-    // [0x0004, 0x0020] (plus GREASE). Decision mimid-krmn.6.
+    // [0x0004, 0x0020..0x0029] (plus GREASE); this identity declares no
+    // extras. Decisions mimid-krmn.6, mimid-krmn.12.
     let cases: [(&str, &[u8], MemberError); 2] = [
         (
             "safe_aad requires 0x0021",
@@ -1305,7 +1306,8 @@ const REQUIRE_DICTIONARY_ONLY: [u8; 5] = [
 ];
 
 /// mls-extensions-10 §4.6 AppDataDictionary for a GroupContext, hand-encoded:
-/// `app_components` requires 0x8001 (which mimid's leaves never list) and
+/// `app_components` requires 0x8001 (which mimid's leaves list only when
+/// declared; these identities do not) and
 /// `safe_aad` keeps [0x0020, 0x3a3a].
 const GC_REQUIRE_8001: [u8; 15] = [
     0x0e, // component_data<V>: 14 bytes
@@ -1394,7 +1396,20 @@ fn alice_and_bob_in(
     mls_rs::Group<impl mls_rs::client_builder::MlsConfig + use<>>,
     Vec<u8>,
 ) {
-    let alice = identity(b"alice");
+    alice_and_bob_as(identity(b"alice"), components, bob_leaf)
+}
+
+/// As [`alice_and_bob_in`], with alice's identity `alice`.
+fn alice_and_bob_as(
+    alice: Identity,
+    components: &[(u16, Vec<u8>)],
+    bob_leaf: &[u8],
+) -> (
+    Identity,
+    Member,
+    mls_rs::Group<impl mls_rs::client_builder::MlsConfig + use<>>,
+    Vec<u8>,
+) {
     let mut group = Member::create(&alice, b"room-k3", &[], components).expect("create");
     let bob_client = mls_rs_client_with_app_data_update(b"bob");
     let bob_key_package = bare_key_package(&mls_rs_key_package_with(&bob_client, bob_leaf));
@@ -1724,6 +1739,212 @@ fn standalone_add_proposal_whose_leaf_lacks_a_required_component_is_refused() {
                 matches!(observed, Err(ObserverError::MissingAppComponent(0x0004))),
                 "{observed:?}"
             );
+        }
+    }
+}
+
+// ---- krmn K5: every component with state is listed ----
+//
+// mls-extensions editor's copy (PR #110) rule 6: a GroupContext is invalid
+// if its app_data_dictionary holds an entry for a component (other than
+// app_components and safe_aad) that its app_components list does not name
+// (decision mimid-krmn.6). mls-rs does not enforce it.
+
+/// mls-extensions-10 §5 ComponentsList [0x8001], hand-encoded.
+const LIST_8001: [u8; 3] = [
+    0x02, // component_ids<V>: 2 bytes
+    0x80, 0x01, // ComponentID 0x8001
+];
+
+/// mls-extensions-10 §4.6 AppDataDictionary for a GroupContext, hand-encoded:
+/// `safe_aad` requires [0x0020, 0x3a3a] and component 0x8001 holds "x", but
+/// no `app_components` list names 0x8001.
+const GC_STATE_8001_UNLISTED: [u8; 13] = [
+    0x0c, // component_data<V>: 12 bytes
+    0x00, 0x02, // component_id = safe_aad
+    0x05, // data<V>: 5 bytes
+    0x04, 0x00, 0x20, 0x3a, 0x3a, // ComponentsList [0x0020, 0x3a3a]
+    0x80, 0x01, // component_id = 0x8001
+    0x01, b'x', // data<V>: "x"
+];
+
+/// As [`GC_STATE_8001_UNLISTED`], with an `app_components` list naming
+/// 0x8001.
+const GC_STATE_8001_LISTED: [u8; 19] = [
+    0x12, // component_data<V>: 18 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, // data<V>: 3 bytes
+    0x02, 0x80, 0x01, // ComponentsList [0x8001]
+    0x00, 0x02, // component_id = safe_aad
+    0x05, // data<V>: 5 bytes
+    0x04, 0x00, 0x20, 0x3a, 0x3a, // ComponentsList [0x0020, 0x3a3a]
+    0x80, 0x01, // component_id = 0x8001
+    0x01, b'x', // data<V>: "x"
+];
+
+/// An identity that declares the private-use component 0x8001 (decision
+/// mimid-krmn.12).
+fn identity_with_8001(name: &[u8]) -> Identity {
+    Identity::generate_with_components(
+        name,
+        Store::open_in_memory().expect("in-memory store"),
+        &[PRIVATE_COMPONENT],
+    )
+    .expect("generate identity")
+}
+
+/// Member::create refuses state for 0x8001 unless app_components lists it,
+/// and stores nothing. An identity that declares 0x8001 creates the group
+/// that lists and requires it.
+#[test]
+fn create_with_state_for_an_unlisted_component_is_refused() {
+    let alice = identity_with_8001(b"alice");
+    let state = (PRIVATE_COMPONENT, b"x".to_vec());
+    let refused = Member::create(&alice, b"room-k5", &[], std::slice::from_ref(&state));
+    assert!(
+        matches!(
+            refused,
+            Err(MemberError::ComponentNotListed(PRIVATE_COMPONENT))
+        ),
+        "{refused:?}"
+    );
+    let loaded = Member::load(&alice, b"room-k5");
+    assert!(
+        matches!(loaded, Err(MemberError::GroupNotFound)),
+        "nothing is stored: {loaded:?}"
+    );
+
+    let group = Member::create(
+        &alice,
+        b"room-k5",
+        &[],
+        &[(APP_COMPONENTS, LIST_8001.to_vec()), state],
+    )
+    .expect("0x8001 is listed");
+    assert_eq!(group.component(PRIVATE_COMPONENT), Some(b"x".as_slice()));
+}
+
+/// bob (mls-rs) commits a GroupContextExtensions proposal whose dictionary
+/// holds state for 0x8001. A mimid Member and an Observer refuse it unless
+/// the same dictionary's app_components lists 0x8001.
+#[test]
+fn received_commit_with_state_for_an_unlisted_component_is_refused() {
+    for (dictionary, accepted) in [
+        (&GC_STATE_8001_UNLISTED[..], false),
+        (&GC_STATE_8001_LISTED[..], true),
+    ] {
+        let (alice, mut group, mut bob, group_info) = alice_and_bob_as(
+            identity_with_8001(b"alice"),
+            &[(SAFE_AAD, REQUIRE_0020.to_vec())],
+            &LEAF_0004_8001_SAFE_AAD_0020,
+        );
+        let tree = group.ratchet_tree().expect("tree");
+        let store = Store::open_in_memory().expect("store");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
+        let commit = bob_gce(&mut bob, dictionary);
+
+        let received = group.process(&alice, &commit, no_components);
+        let observed = observer.process(&store, &commit, no_components);
+        if accepted {
+            received.expect("0x8001 is listed");
+            observed.expect("0x8001 is listed");
+            assert_eq!(group.epoch(), 2);
+            assert_eq!(group.component(PRIVATE_COMPONENT), Some(b"x".as_slice()));
+        } else {
+            assert!(
+                matches!(
+                    received,
+                    Err(MemberError::ComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{received:?}"
+            );
+            assert!(
+                matches!(
+                    observed,
+                    Err(ObserverError::ComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{observed:?}"
+            );
+            assert_eq!(group.epoch(), 1, "a refused Commit changes nothing");
+        }
+    }
+}
+
+/// alice (mls-rs) creates a group whose GroupContext holds state for 0x8001
+/// and adds bob. join_welcome, join_external and Observer::from_group_info
+/// refuse it, storing nothing, unless app_components lists 0x8001; then
+/// identities that declare 0x8001 join.
+#[test]
+fn joins_refuse_state_for_an_unlisted_component() {
+    for (dictionary, refused) in [
+        (&GC_STATE_8001_UNLISTED[..], true),
+        (&GC_STATE_8001_LISTED[..], false),
+    ] {
+        let mut alice = mls_rs_client(b"alice")
+            .create_group(
+                leaf_dictionary(dictionary),
+                leaf_dictionary(&LEAF_0004_8001_SAFE_AAD_0020),
+                None,
+            )
+            .expect("mls-rs group");
+        let bob = identity_with_8001(b"bob");
+        let bob_key_package = bob
+            .key_package(KeyPackageKind::OneTime)
+            .expect("KeyPackage");
+        let output = alice
+            .commit_builder()
+            .authenticated_data(EMPTY_SAFE_AAD.to_vec())
+            .add_member(key_package_message(&bob_key_package))
+            .expect("mls-rs adds bob")
+            .build()
+            .expect("mls-rs commits");
+        alice.apply_pending_commit().expect("apply");
+        let welcome = output.welcome_messages[0].to_bytes().expect("encode");
+        let group_info = alice
+            .group_info_message_allowing_ext_commit(false)
+            .expect("GroupInfo")
+            .to_bytes()
+            .expect("encode");
+        let tree = alice.export_tree().to_bytes().expect("tree");
+        let carol = identity_with_8001(b"carol");
+        let store = Store::open_in_memory().expect("store");
+
+        let welcomed = Member::join_welcome(&bob, &welcome, Some(&tree));
+        let external = Member::join_external(&carol, &group_info, Some(&tree));
+        let observed = Observer::from_group_info(&store, &group_info, Some(&tree));
+        if refused {
+            for (who, result) in [
+                ("join_welcome", welcomed.err()),
+                ("join_external", external.err()),
+            ] {
+                assert!(
+                    matches!(
+                        result,
+                        Some(MemberError::ComponentNotListed(PRIVATE_COMPONENT))
+                    ),
+                    "{who}: {result:?}"
+                );
+            }
+            assert!(
+                matches!(
+                    observed.err(),
+                    Some(ObserverError::ComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "from_group_info"
+            );
+            for joiner in [&bob, &carol] {
+                let loaded = Member::load(joiner, alice.group_id());
+                assert!(
+                    matches!(loaded, Err(MemberError::GroupNotFound)),
+                    "nothing is stored: {loaded:?}"
+                );
+            }
+        } else {
+            let WelcomeJoin { member, .. } = welcomed.expect("bob declares 0x8001");
+            assert_eq!(member.component(PRIVATE_COMPONENT), Some(b"x".as_slice()));
+            external.expect("carol declares 0x8001");
+            observed.expect("Observer");
         }
     }
 }

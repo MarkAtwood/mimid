@@ -33,6 +33,18 @@ use openmls_rust_crypto::OpenMlsRustCrypto;
 const LOG: u16 = 0x8001;
 const META: u16 = 0x8002;
 
+/// mls-extensions-10 §7.5: the app_components component.
+const APP_COMPONENTS: u16 = 0x0001;
+
+/// mls-extensions-10 §5 ComponentsList [LOG, META], hand-encoded: the
+/// GroupContext requirement for the state it holds (mls-extensions editor's
+/// copy, PR #110, rule 6), and dave's leaf list.
+const LIST_LOG_META: [u8; 5] = [
+    0x04, // ComponentID component_ids<V>: 4 bytes
+    0x80, 0x01, // LOG
+    0x80, 0x02, // META
+];
+
 const DAVE: &[u8] = b"mimi://d.example/u/dave";
 
 /// Accepts every update: the new data is the concatenation of the current
@@ -128,13 +140,22 @@ struct OpenMlsClient {
 /// `META` data `b"m0"`, and adds dave (plain OpenMLS, leaf 1). The Observer
 /// starts from the GroupInfo of that Commit, in epoch 1.
 fn setup() -> (Identity, Member, OpenMlsClient, Store, Observer) {
-    let alice = Identity::generate(b"alice", Store::open_in_memory().expect("store"))
-        .expect("generate identity");
+    // alice declares the test components (decision mimid-krmn.12).
+    let alice = Identity::generate_with_components(
+        b"alice",
+        Store::open_in_memory().expect("store"),
+        &[LOG, META],
+    )
+    .expect("generate identity");
     let mut member = Member::create(
         &alice,
         b"room-app-data",
         &[],
-        &[(LOG, b"v0".to_vec()), (META, b"m0".to_vec())],
+        &[
+            (APP_COMPONENTS, LIST_LOG_META.to_vec()),
+            (LOG, b"v0".to_vec()),
+            (META, b"m0".to_vec()),
+        ],
     )
     .expect("create");
 
@@ -151,8 +172,17 @@ fn setup() -> (Identity, Member, OpenMlsClient, Store, Observer) {
         .extensions(vec![ExtensionType::AppDataDictionary])
         .proposals(vec![ProposalType::AppDataUpdate])
         .build();
+    // dave's leaf lists the components the group requires (PR #110 rule 3).
+    let mut leaf_dictionary = openmls::prelude::AppDataDictionary::new();
+    leaf_dictionary.insert(APP_COMPONENTS, LIST_LOG_META.to_vec());
+    let leaf_extensions =
+        openmls::prelude::Extensions::single(openmls::prelude::Extension::AppDataDictionary(
+            openmls::prelude::AppDataDictionaryExtension::new(leaf_dictionary),
+        ))
+        .expect("leaf extensions");
     let key_package = KeyPackage::builder()
         .leaf_node_capabilities(capabilities)
+        .leaf_node_extensions(leaf_extensions)
         .build(suite, &provider, &signer, credential_with_key)
         .expect("OpenMLS KeyPackage")
         .key_package()

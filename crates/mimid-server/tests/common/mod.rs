@@ -38,6 +38,27 @@ pub const SAFE_AAD: u16 = 0x0002;
 /// hub hosts must require frank_aad (bead mimid-1wgh.6.74).
 pub const FRANK_AAD_ONLY: [u8; 3] = [0x02, 0x00, 0x20];
 
+/// mls-extensions-10 §4.6 component id `app_components` (0x0001).
+pub const APP_COMPONENTS: u16 = 0x0001;
+/// mls-extensions-10 §5 `ComponentsList` naming the MIMI components
+/// 0x0021 to 0x0029, hand-encoded: the GroupContext `app_components` list
+/// of a test room, so that its state for franking_agent, participant_list,
+/// roles_list, base_room_policy and the like is listed (mls-extensions
+/// editor's copy, PR #110, rule 6). Every mimid leaf lists these (decision
+/// mimid-krmn.12).
+pub const ROOM_APP_COMPONENTS: [u8; 19] = [
+    0x12, // ComponentID component_ids<V>: 18 bytes
+    0x00, 0x21, // franking_agent
+    0x00, 0x22, // participant_list
+    0x00, 0x23, // room_metadata
+    0x00, 0x24, // mls_operational_policy
+    0x00, 0x25, // roles_list
+    0x00, 0x26, // preauth_list
+    0x00, 0x27, // base_room_policy
+    0x00, 0x28, // status_notification_policy
+    0x00, 0x29, // join_link_policy
+];
+
 /// A clock stuck at one instant.
 pub struct FixedClock(pub u64);
 
@@ -200,7 +221,9 @@ pub fn build_group(spec: &GroupSpec, group_id: &[u8]) -> BuiltGroup {
             identity: spec.sender_identity.clone(),
         })
         .collect();
-    let mut components = Vec::new();
+    // The room lists its components (mls-extensions editor's copy, PR #110,
+    // rule 6).
+    let mut components = vec![(APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec())];
     if let Some(data) = &spec.safe_aad {
         components.push((SAFE_AAD, data.clone()));
     }

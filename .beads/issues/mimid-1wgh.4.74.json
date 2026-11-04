@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.4.74",
+  "title": "upstream: OpenMLS applies AppDataUpdate to the pre-Commit dictionary, ignoring a GCE in the same Commit",
+  "description": "Confirmed by krmn K5 (mimid-krmn.5) test listing_a_component_and_setting_its_state_in_one_commit_is_accepted: in OpenMLS (fork 1f3f1b4bf; same code on upstream main) PublicGroupDiff applies AppDataUpdate proposals starting from the current GroupContext's app_data_dictionary (group/public_group/diff/apply_proposals.rs ~272-276), not from the dictionary a GroupContextExtensions proposal sets in the same Commit. mls-extensions-10 §4.7 / RFC 9420 §12.3: the GCE is applied first, then AppDataUpdates. Where a GCE changes the dictionary in the same Commit (allowed only when AppDataUpdate is not required), the result differs from a spec-following peer. This was the unverified second issue noted on mimid-qejd. Fix: in apply_proposals, start from the updated extensions' dictionary when a GCE is present. Upstream issue/PR needs Mark's per-action OK; fork fix is a separate decision.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-03T02:48:14.876176637Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-03T02:48:14.876176637Z",
+  "labels": [
+    "upstream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.74",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-11-03T02:48:14.901168624Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -104,6 +104,7 @@ async fn room(hub: &Hub, group_id: &[u8], with_metadata: bool) -> Room {
         identity: HUB_IDENTITY.to_vec(),
     }];
     let mut components = vec![
+        (APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec()),
         (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
         (FRANKING_AGENT, franking_agent(&key, HUB_IDENTITY)),
         (
@@ -133,9 +134,11 @@ async fn room(hub: &Hub, group_id: &[u8], with_metadata: bool) -> Room {
         .extensions(vec![OpenMlsExtensionType::AppDataDictionary])
         .proposals(vec![OpenMlsProposalType::AppDataUpdate])
         .build();
-    // dave's leaf lists frank_aad in its safe_aad list, as the room
-    // requires (bead mimid-1wgh.6.74).
+    // dave's leaf lists frank_aad in its safe_aad list (bead
+    // mimid-1wgh.6.74) and the room's components in its app_components
+    // list (decision mimid-krmn.12), as the room requires.
     let mut dictionary = AppDataDictionary::new();
+    dictionary.insert(APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec());
     dictionary.insert(SAFE_AAD, FRANK_AAD_ONLY.to_vec());
     let leaf_extensions = OpenMlsExtensions::single(OpenMlsExtension::AppDataDictionary(
         AppDataDictionaryExtension::new(dictionary),

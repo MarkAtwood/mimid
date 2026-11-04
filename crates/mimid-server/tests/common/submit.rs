@@ -20,7 +20,10 @@ use mimid_server::store::Store;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqliteConnectOptions;
 
-use crate::common::{ALICE, BOB, HUB_IDENTITY, domain, franking_agent, no_components};
+use crate::common::{
+    ALICE, APP_COMPONENTS, BOB, HUB_IDENTITY, ROOM_APP_COMPONENTS, domain, franking_agent,
+    no_components,
+};
 
 /// A user listed with the banned role (room-policy-04 §8.1.3).
 pub const EVE: &[u8] = b"mimi://b.example/u/eve";
@@ -163,6 +166,7 @@ pub async fn create_room(hub: &Hub, room_id: &str, group_id: &[u8]) -> Sender {
         identity: HUB_IDENTITY.to_vec(),
     }];
     let components = [
+        (APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec()),
         (SAFE_AAD, SAFE_AAD_FRANK_AAD.to_vec()),
         (FRANKING_AGENT, franking_agent(&key, HUB_IDENTITY)),
         (PARTICIPANT_LIST, participants()),

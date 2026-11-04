@@ -27,7 +27,7 @@ use mimi_mls::member::{
     AppDataUpdate, ComponentOp, ExternalSender, Incoming, Member, MemberError, OutOfSync, Sender,
     WelcomeJoin,
 };
-use mimi_mls::observer::{Observed, Observer, ObserverStart};
+use mimi_mls::observer::{Observed, Observer, ObserverError, ObserverStart};
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
 use mls_rs::extension::ExtensionType;
@@ -76,6 +76,70 @@ const BOUNDARY_BASE: u16 = 0x8010;
 const UNKNOWN_LOW: u16 = 0x0100;
 const UNKNOWN_HIGH: u16 = 0xfff0;
 
+/// mls-extensions-10 §7.5: the app_components component.
+const APP_COMPONENTS: u16 = 0x0001;
+
+/// The test components every identity here declares (decision
+/// mimid-krmn.12), the unknown ones included: they are listed but have no
+/// handler.
+const TEST_COMPONENTS: [u16; 10] = [
+    LOG,
+    META,
+    ABSENT,
+    BOUNDARY_BASE,
+    BOUNDARY_BASE + 1,
+    BOUNDARY_BASE + 2,
+    BOUNDARY_BASE + 3,
+    BOUNDARY_BASE + 4,
+    UNKNOWN_LOW,
+    UNKNOWN_HIGH,
+];
+
+/// mls-extensions-10 §5 ComponentsList of [`TEST_COMPONENTS`], hand-encoded:
+/// the GroupContext `app_components` list for groups holding test state
+/// (mls-extensions editor's copy, PR #110, rule 6), and peers' leaf lists.
+const LIST_TEST_COMPONENTS: [u8; 21] = [
+    0x14, // ComponentID component_ids<V>: 20 bytes
+    0x80, 0x01, // LOG
+    0x80, 0x02, // META
+    0x80, 0x03, // ABSENT
+    0x80, 0x10, // BOUNDARY_BASE
+    0x80, 0x11, // BOUNDARY_BASE + 1
+    0x80, 0x12, // BOUNDARY_BASE + 2
+    0x80, 0x13, // BOUNDARY_BASE + 3
+    0x80, 0x14, // BOUNDARY_BASE + 4
+    0x01, 0x00, // UNKNOWN_LOW
+    0xff, 0xf0, // UNKNOWN_HIGH
+];
+
+/// mls-extensions-10 §4.6 AppDataDictionary for an mls-rs LeafNode,
+/// hand-encoded: its `app_components` list is [`LIST_TEST_COMPONENTS`].
+const LEAF_TEST_COMPONENTS: [u8; 25] = [
+    0x18, // ComponentData component_data<V>: 24 bytes
+    0x00, 0x01, // component_id = app_components
+    0x15, // opaque data<V>: 21 bytes
+    0x14, //   ComponentsList.component_ids<V>: 20 bytes
+    0x80, 0x01, 0x80, 0x02, 0x80, 0x03, //   LOG, META, ABSENT
+    0x80, 0x10, 0x80, 0x11, 0x80, 0x12, 0x80, 0x13, 0x80, 0x14, //   boundary components
+    0x01, 0x00, 0xff, 0xf0, //   UNKNOWN_LOW, UNKNOWN_HIGH
+];
+
+/// mls-extensions-10 §5 ComponentsList [UNKNOWN_LOW, LOG, UNKNOWN_HIGH],
+/// hand-encoded: the GroupContext list for the round-trip group.
+const LIST_UNKNOWN_AND_LOG: [u8; 7] = [
+    0x06, // ComponentID component_ids<V>: 6 bytes
+    0x01, 0x00, // UNKNOWN_LOW
+    0x80, 0x01, // LOG
+    0xff, 0xf0, // UNKNOWN_HIGH
+];
+
+/// mls-extensions-10 §5 ComponentsList [LOG], hand-encoded: a GroupContext
+/// `app_components` list for groups whose only state is `LOG`.
+const LIST_LOG: [u8; 3] = [
+    0x02, // ComponentID component_ids<V>: 2 bytes
+    0x80, 0x01, // LOG
+];
+
 /// RFC 9420 §7.2 RequiredCapabilities requiring the app_data_dictionary
 /// extension and the AppDataUpdate proposal.
 const REQUIRE_APP_DATA_UPDATE: &[u8] = &[
@@ -93,23 +157,31 @@ const REQUIRE_DICTIONARY_ONLY: &[u8] = &[
     0x00, // credential_types<V>: empty
 ];
 
-/// §4.6 AppDataDictionary { LOG: "v0" }.
-const DICTIONARY_V0: [u8; 6] = [
-    0x05, // component_data<V>: 5 bytes
+/// §4.6 AppDataDictionary { app_components: [LOG], LOG: "v0" }. The
+/// app_components entry lists `LOG` (mls-extensions editor's copy, PR #110,
+/// rule 6).
+const DICTIONARY_V0: [u8; 12] = [
+    0x0b, // component_data<V>: 11 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, 0x02, 0x80, 0x01, // data<V>: ComponentsList [LOG]
     0x80, 0x01, // component_id = LOG
     0x02, b'v', b'0', // data<V>: "v0"
 ];
 
-/// §4.6 AppDataDictionary { LOG: "v1" }.
-const DICTIONARY_V1: [u8; 6] = [
-    0x05, // component_data<V>: 5 bytes
+/// §4.6 AppDataDictionary { app_components: [LOG], LOG: "v1" }.
+const DICTIONARY_V1: [u8; 12] = [
+    0x0b, // component_data<V>: 11 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, 0x02, 0x80, 0x01, // data<V>: ComponentsList [LOG]
     0x80, 0x01, // component_id = LOG
     0x02, b'v', b'1', // data<V>: "v1"
 ];
 
-/// §4.6 AppDataDictionary { LOG: "v2" }.
-const DICTIONARY_V2: [u8; 6] = [
-    0x05, // component_data<V>: 5 bytes
+/// §4.6 AppDataDictionary { app_components: [LOG], LOG: "v2" }.
+const DICTIONARY_V2: [u8; 12] = [
+    0x0b, // component_data<V>: 11 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, 0x02, 0x80, 0x01, // data<V>: ComponentsList [LOG]
     0x80, 0x01, // component_id = LOG
     0x02, b'v', b'2', // data<V>: "v2"
 ];
@@ -125,8 +197,21 @@ const LENGTH_BOUNDARIES: [(usize, &[u8]); 5] = [
 ];
 
 fn identity(name: &[u8]) -> Identity {
-    Identity::generate(name, Store::open_in_memory().expect("in-memory store"))
-        .expect("generate identity")
+    // Declares the test components (decision mimid-krmn.12).
+    Identity::generate_with_components(
+        name,
+        Store::open_in_memory().expect("in-memory store"),
+        &TEST_COMPONENTS,
+    )
+    .expect("generate identity")
+}
+
+/// `components` plus the GroupContext `app_components` list that names
+/// every test component (mls-extensions editor's copy, PR #110, rule 6).
+fn listed(components: &[(u16, Vec<u8>)]) -> Vec<(u16, Vec<u8>)> {
+    let mut all = components.to_vec();
+    all.push((APP_COMPONENTS, LIST_TEST_COMPONENTS.to_vec()));
+    all
 }
 
 /// §4.7 AppDataUpdate with `op = update (1)`. `prefix` is the hand-written
@@ -162,7 +247,9 @@ fn position(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn known(component_id: u16) -> bool {
-    component_id == LOG
+    // app_components is set like any other component (its data is the list).
+    component_id == APP_COMPONENTS
+        || component_id == LOG
         || component_id == META
         || (BOUNDARY_BASE..BOUNDARY_BASE + 5).contains(&component_id)
 }
@@ -214,7 +301,8 @@ fn commit_summary(incoming: Incoming) -> mimi_mls::member::CommitSummary {
 fn two_mimi_members(components: &[(u16, Vec<u8>)]) -> (Identity, Member, Identity, Member) {
     let alice = identity(b"alice");
     let carol = identity(b"carol");
-    let mut alice_group = Member::create(&alice, b"room-propose", &[], components).expect("create");
+    let mut alice_group =
+        Member::create(&alice, b"room-propose", &[], &listed(components)).expect("create");
     let carol_key_package = carol
         .key_package(KeyPackageKind::OneTime)
         .expect("KeyPackage");
@@ -530,12 +618,19 @@ impl NaiveClient {
 /// alice (mimi-mls, leaf 0) creates a group with `LOG = "v0"` and
 /// `META = "m0"` and adds dave (naive plain OpenMLS, leaf 1). Epoch 1.
 fn alice_and_naive_dave() -> (Identity, Member, NaiveClient) {
+    let (alice, member, dave, _) = alice_naive_dave_and_group_info();
+    (alice, member, dave)
+}
+
+/// As [`alice_and_naive_dave`], also returning alice's GroupInfo for
+/// epoch 1.
+fn alice_naive_dave_and_group_info() -> (Identity, Member, NaiveClient, Vec<u8>) {
     let alice = identity(b"alice");
     let mut member = Member::create(
         &alice,
         b"room-naive",
         &[],
-        &[(LOG, b"v0".to_vec()), (META, b"m0".to_vec())],
+        &listed(&[(LOG, b"v0".to_vec()), (META, b"m0".to_vec())]),
     )
     .expect("create");
 
@@ -552,8 +647,17 @@ fn alice_and_naive_dave() -> (Identity, Member, NaiveClient) {
         .extensions(vec![OpenMlsExtensionType::AppDataDictionary])
         .proposals(vec![OpenMlsProposalType::AppDataUpdate])
         .build();
+    // dave's leaf lists the test components (PR #110 rule 3).
+    let mut leaf_dictionary = openmls::prelude::AppDataDictionary::new();
+    leaf_dictionary.insert(APP_COMPONENTS, LIST_TEST_COMPONENTS.to_vec());
+    let leaf_extensions =
+        openmls::prelude::Extensions::single(openmls::prelude::Extension::AppDataDictionary(
+            openmls::prelude::AppDataDictionaryExtension::new(leaf_dictionary),
+        ))
+        .expect("leaf extensions");
     let key_package = KeyPackage::builder()
         .leaf_node_capabilities(capabilities)
+        .leaf_node_extensions(leaf_extensions)
         .build(suite, &provider, &signer, credential_with_key)
         .expect("OpenMLS KeyPackage")
         .key_package()
@@ -588,6 +692,7 @@ fn alice_and_naive_dave() -> (Identity, Member, NaiveClient) {
             provider,
             signer,
         },
+        bundle.group_info,
     )
 }
 
@@ -724,13 +829,18 @@ fn tampered_app_data_update_fails_to_decode_and_changes_nothing() {
 /// The GroupContext extensions after dave's `[AppDataUpdate,
 /// GroupContextExtensions]` Commit, hand-encoded (RFC 9420 §7.2, §12.1.7;
 /// mls-extensions-10 §4.6-4.7): the GroupContextExtensions list, with the
-/// dictionary's LOG entry then updated in place to "v0+a".
-const AFTER_UPDATE_THEN_GCE: [u8; 25] = [
-    0x18, // extensions<V>: 24 bytes
+/// dictionary's LOG entry then updated in place to "v0+a". The dictionary
+/// keeps its app_components list (mls-extensions editor's copy, PR #110,
+/// rule 6).
+const AFTER_UPDATE_THEN_GCE: [u8; 49] = [
+    0x30, // extensions<V>: 48 bytes
     0x00, 0x06, // extension_type = app_data_dictionary
-    0x0d, // extension_data<V>: 13 bytes
-    0x0c, // component_data<V>: 12 bytes
-    0x80, 0x01, // component_id = LOG
+    0x25, // extension_data<V>: 37 bytes
+    0x24, // component_data<V>: 36 bytes
+    0x00, 0x01, // component_id = app_components
+    0x15, // data<V>: 21 bytes, LIST_TEST_COMPONENTS:
+    0x14, 0x80, 0x01, 0x80, 0x02, 0x80, 0x03, 0x80, 0x10, 0x80, 0x11, 0x80, 0x12, 0x80, 0x13, 0x80,
+    0x14, 0x01, 0x00, 0xff, 0xf0, 0x80, 0x01, // component_id = LOG
     0x04, b'v', b'0', b'+', b'a', // data<V>: "v0+a"
     0x80, 0x02, // component_id = META
     0x02, b'm', b'0', // data<V>: "m0"
@@ -763,6 +873,9 @@ fn app_data_update_listed_before_gce_is_accepted() {
     let gce = OpenMlsExtensions::from_vec(vec![
         OpenMlsExtension::AppDataDictionary(AppDataDictionaryExtension::new({
             let mut dictionary = AppDataDictionary::new();
+            // The GroupContext keeps listing its components (PR #110
+            // rule 6).
+            dictionary.insert(APP_COMPONENTS, LIST_TEST_COMPONENTS.to_vec());
             dictionary.insert(LOG, b"v0".to_vec());
             dictionary.insert(META, b"m0".to_vec());
             dictionary
@@ -807,11 +920,14 @@ fn app_data_update_listed_before_gce_is_accepted() {
         .expect("AppDataUpdate in the Commit");
     let gce = [
         0x00, 0x07, // proposal_type = group_context_extensions
-        0x16, // extensions<V>: 22 bytes
+        0x2e, // extensions<V>: 46 bytes
         0x00, 0x06, // extension_type = app_data_dictionary
-        0x0b, // extension_data<V>: 11 bytes
-        0x0a, // component_data<V>: 10 bytes
-        0x80, 0x01, // component_id = LOG
+        0x23, // extension_data<V>: 35 bytes
+        0x22, // component_data<V>: 34 bytes
+        0x00, 0x01, // component_id = app_components
+        0x15, // data<V>: 21 bytes, LIST_TEST_COMPONENTS:
+        0x14, 0x80, 0x01, 0x80, 0x02, 0x80, 0x03, 0x80, 0x10, 0x80, 0x11, 0x80, 0x12, 0x80, 0x13,
+        0x80, 0x14, 0x01, 0x00, 0xff, 0xf0, 0x80, 0x01, // component_id = LOG
         0x02, b'v', b'0', // data<V>: "v0", unchanged
         0x80, 0x02, // component_id = META
         0x02, b'm', b'0', // data<V>: "m0"
@@ -883,8 +999,14 @@ fn add_mls_rs(
     name: &'static [u8],
 ) -> mls_rs::Group<impl mls_rs::client_builder::MlsConfig + use<>> {
     let client = mls_rs_client(name);
+    // The leaf lists the test components (PR #110 rule 3).
+    let mut leaf = ExtensionList::new();
+    leaf.set(Extension::new(
+        APP_DATA_DICTIONARY,
+        LEAF_TEST_COMPONENTS.to_vec(),
+    ));
     let key_package = client
-        .generate_key_package_message(Default::default(), Default::default(), None)
+        .generate_key_package_message(Default::default(), leaf, None)
         .expect("KeyPackage")
         .to_bytes()
         .expect("encode");
@@ -964,7 +1086,7 @@ fn gce_may_not_touch_the_dictionary_when_app_data_update_is_required() {
     for (case, with_dictionary, new_dictionary) in cases {
         let alice = identity(b"alice");
         let components = if with_dictionary {
-            vec![(LOG, b"v0".to_vec())]
+            vec![(APP_COMPONENTS, LIST_LOG.to_vec()), (LOG, b"v0".to_vec())]
         } else {
             vec![]
         };
@@ -990,8 +1112,13 @@ fn gce_may_not_touch_the_dictionary_when_app_data_update_is_required() {
 #[test]
 fn gce_dictionary_rule_follows_required_capabilities() {
     let alice = identity(b"alice");
-    let mut member =
-        Member::create(&alice, b"room-gce", &[], &[(LOG, b"v0".to_vec())]).expect("create");
+    let mut member = Member::create(
+        &alice,
+        b"room-gce",
+        &[],
+        &[(APP_COMPONENTS, LIST_LOG.to_vec()), (LOG, b"v0".to_vec())],
+    )
+    .expect("create");
     let mut bob = add_mls_rs(&alice, &mut member, b"bob");
     assert_eq!(
         bob.context()
@@ -1056,6 +1183,9 @@ fn unknown_components_round_trip_unchanged() {
         b"room-unknown",
         &[],
         &[
+            // The unknown components are listed (PR #110 rule 6) but have
+            // no handler.
+            (APP_COMPONENTS, LIST_UNKNOWN_AND_LOG.to_vec()),
             (UNKNOWN_LOW, vec![0x00, 0xff]),
             (LOG, b"v0".to_vec()),
             (UNKNOWN_HIGH, Vec::new()),
@@ -1104,7 +1234,11 @@ fn unknown_components_round_trip_unchanged() {
 
     let eve = add_mls_rs(&alice, &mut alice_group, b"eve");
     let expected_dictionary = [
-        0x0f, // component_data<V>: 15 bytes
+        0x19, // component_data<V>: 25 bytes
+        0x00, 0x01, // component_id = app_components
+        0x07, // data<V>: 7 bytes
+        0x06, 0x01, 0x00, 0x80, 0x01, 0xff,
+        0xf0, //   ComponentsList [UNKNOWN_LOW, LOG, UNKNOWN_HIGH]
         0x01, 0x00, // component_id = UNKNOWN_LOW
         0x02, 0x00, 0xff, // data<V>
         0x80, 0x01, // component_id = LOG
@@ -1152,10 +1286,18 @@ fn first_update_appends_the_dictionary_to_the_extensions() {
             &alice,
             &[],
             &[],
-            &[AppDataUpdate::Update {
-                component_id: LOG,
-                update: b"a".to_vec(),
-            }],
+            // app_components is set in the same Commit, so the resulting
+            // GroupContext lists `LOG` (PR #110 rule 6).
+            &[
+                AppDataUpdate::Update {
+                    component_id: APP_COMPONENTS,
+                    update: LIST_LOG.to_vec(),
+                },
+                AppDataUpdate::Update {
+                    component_id: LOG,
+                    update: b"a".to_vec(),
+                },
+            ],
             concat,
         )
         .expect("commit");
@@ -1176,7 +1318,9 @@ fn first_update_appends_the_dictionary_to_the_extensions() {
             .expect("dictionary")
             .extension_data,
         [
-            0x04, // component_data<V>: 4 bytes
+            0x0a, // component_data<V>: 10 bytes
+            0x00, 0x01, // component_id = app_components
+            0x03, 0x02, 0x80, 0x01, // data<V>: ComponentsList [LOG]
             0x80, 0x01, // component_id = LOG
             0x01, b'a', // data<V>: "a"
         ]
@@ -1185,4 +1329,127 @@ fn first_update_appends_the_dictionary_to_the_extensions() {
         member.epoch_authenticator(),
         eve.epoch_authenticator().expect("mls-rs").as_bytes()
     );
+}
+
+// ---- krmn K5: every component with state is listed ----
+//
+// mls-extensions editor's copy (PR #110) rule 6: a GroupContext is invalid
+// if its app_data_dictionary holds an entry for a component (other than
+// app_components and safe_aad) that its app_components list does not name
+// (decision mimid-krmn.6). The naive OpenMLS committer does not enforce it.
+
+/// mls-extensions-10 §5 ComponentsList [LOG, META], hand-encoded.
+const LIST_LOG_META: [u8; 5] = [
+    0x04, // component_ids<V>: 4 bytes
+    0x80, 0x01, // LOG
+    0x80, 0x02, // META
+];
+
+/// mls-extensions-10 §5 ComponentsList [LOG, META, ABSENT], hand-encoded.
+const LIST_LOG_META_ABSENT: [u8; 7] = [
+    0x06, // component_ids<V>: 6 bytes
+    0x80, 0x01, // LOG
+    0x80, 0x02, // META
+    0x80, 0x03, // ABSENT
+];
+
+/// dave's Commit narrowing `app_components` to [LOG] while META still holds
+/// "m0" leaves state for an unlisted component. A mimid Member and an
+/// Observer refuse it; narrowing to [LOG, META] is accepted.
+#[test]
+fn commit_leaving_state_for_an_unlisted_component_is_refused() {
+    for (list, accepted) in [(&LIST_LOG[..], false), (&LIST_LOG_META[..], true)] {
+        let (alice, mut member, mut dave, group_info) = alice_naive_dave_and_group_info();
+        let tree = member.ratchet_tree().expect("tree");
+        let store = Store::open_in_memory().expect("store");
+        let ObserverStart { mut observer, .. } =
+            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
+        let commit = dave.commit(&[up(APP_COMPONENTS, list)]);
+
+        let received = member.process(&alice, &commit, replace);
+        let observed = observer.process(&store, &commit, replace);
+        if accepted {
+            commit_summary(received.expect("META is listed"));
+            observed.expect("META is listed");
+            assert_eq!(member.epoch(), 2);
+        } else {
+            assert!(
+                matches!(received, Err(MemberError::ComponentNotListed(META))),
+                "{received:?}"
+            );
+            assert!(
+                matches!(observed, Err(ObserverError::ComponentNotListed(META))),
+                "{observed:?}"
+            );
+            assert_eq!(member.epoch(), 1, "a refused Commit changes nothing");
+            assert_eq!(member.component(META), Some(b"m0".as_slice()));
+        }
+    }
+}
+
+/// From a group listing [LOG, META], dave sets state for ABSENT. Alone, the
+/// AppDataUpdate leaves ABSENT unlisted and is refused. With an
+/// AppDataUpdate that adds ABSENT to `app_components` in the same Commit,
+/// before or after it, the Commit is accepted, and alice and dave agree.
+#[test]
+fn listing_a_component_and_setting_its_state_in_one_commit_is_accepted() {
+    let list = || up(APP_COMPONENTS, &LIST_LOG_META_ABSENT);
+    let state = || up(ABSENT, b"n");
+    let list_body = inline(&update_body(APP_COMPONENTS, &[0x07], &LIST_LOG_META_ABSENT));
+    let state_body = inline(&update_body(ABSENT, &[0x01], b"n"));
+    let cases: [(&str, Vec<AppDataUpdateProposal>, bool); 3] = [
+        ("state alone", vec![state()], false),
+        ("list, then state", vec![list(), state()], true),
+        ("state, then list", vec![state(), list()], true),
+    ];
+    for (case, inline_proposals, accepted) in cases {
+        let (alice, mut member, mut dave) = alice_and_naive_dave();
+        let narrow = dave.commit(&[up(APP_COMPONENTS, &LIST_LOG_META)]);
+        commit_summary(
+            member
+                .process(&alice, &narrow, replace)
+                .unwrap_or_else(|e| panic!("{case}: narrow: {e:?}")),
+        );
+        dave.group
+            .merge_pending_commit(&dave.provider)
+            .expect("dave merges");
+
+        let commit = dave.commit(&inline_proposals);
+        // The Commit carries the proposals in the order given.
+        let at = |body: &[u8]| position(&commit, body);
+        match inline_proposals.len() {
+            1 => assert_eq!(at(&list_body), None, "{case}"),
+            _ => assert_eq!(
+                at(&list_body) < at(&state_body),
+                case == "list, then state",
+                "{case}"
+            ),
+        }
+        assert!(at(&state_body).is_some(), "{case}");
+
+        let result = member.process(&alice, &commit, replace);
+        if accepted {
+            commit_summary(result.unwrap_or_else(|e| panic!("{case}: {e:?}")));
+            dave.group
+                .merge_pending_commit(&dave.provider)
+                .expect("dave merges");
+            assert_eq!(member.component(ABSENT), Some(b"n".as_slice()), "{case}");
+            assert_eq!(
+                member.epoch_authenticator(),
+                dave.group.epoch_authenticator().as_slice(),
+                "{case}"
+            );
+        } else {
+            assert!(
+                matches!(result, Err(MemberError::ComponentNotListed(ABSENT))),
+                "{case}: {result:?}"
+            );
+            assert_eq!(
+                member.epoch(),
+                2,
+                "{case}: a refused Commit changes nothing"
+            );
+            assert_eq!(member.component(ABSENT), None, "{case}");
+        }
+    }
 }

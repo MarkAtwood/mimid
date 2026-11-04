@@ -199,12 +199,13 @@ fn check_common(kind: KeyPackageKind) -> (KeyPackage, mls_rs::group::Member) {
 }
 
 /// mls-extensions-10 §4.6 and §5: the LeafNode's app_data_dictionary holds
-/// an app_components entry listing app_components itself (§4.6: "MUST
-/// understand and advertise the app_components component"), safe_aad,
-/// last_resort_key_package, frank_aad and a GREASE id; a safe_aad entry listing the supported Safe
-/// AAD components, frank_aad (protocol-06 §5.4.1, decision
-/// mimid-1wgh.4.52), and a GREASE id (decision mimid-1wgh.4.45); and one
-/// GREASE component with empty data. Every GREASE id is from the §7.5 set.
+/// an app_components entry listing mimid's built-in components,
+/// last_resort_key_package, frank_aad and the MIMI components 0x0021 to
+/// 0x0029, and a GREASE id (decision mimid-krmn.12); a safe_aad entry
+/// listing the supported Safe AAD components, frank_aad (protocol-06
+/// §5.4.1, decision mimid-1wgh.4.52), and a GREASE id (decision
+/// mimid-1wgh.4.45); and one GREASE component with empty data. Every GREASE
+/// id is from the §7.5 set.
 fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
     let data = leaf_extensions
         .get(APP_DATA_DICTIONARY)
@@ -213,10 +214,10 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
     // app_components (0x0001) and safe_aad (0x0002) are not listed: their
     // support is implied (mls-extensions editor's copy, PR #110; decision
     // mimid-krmn.6).
-    assert_eq!(data.len(), 22, "leaf dictionary: {data:02x?}");
-    let listed_grease = u16::from_be_bytes([data[9], data[10]]);
-    let safe_aad_grease = u16::from_be_bytes([data[17], data[18]]);
-    let component_grease = u16::from_be_bytes([data[19], data[20]]);
+    assert_eq!(data.len(), 40, "leaf dictionary: {data:02x?}");
+    let listed_grease = u16::from_be_bytes([data[27], data[28]]);
+    let safe_aad_grease = u16::from_be_bytes([data[35], data[36]]);
+    let component_grease = u16::from_be_bytes([data[37], data[38]]);
     for grease in [listed_grease, safe_aad_grease, component_grease] {
         assert!(is_component_grease(grease), "{grease:#06x}");
     }
@@ -224,12 +225,21 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
     let [sg_hi, sg_lo] = safe_aad_grease.to_be_bytes();
     let [cg_hi, cg_lo] = component_grease.to_be_bytes();
     let expected = [
-        0x15, // component_data<V>: 21 bytes follow
+        0x27, // component_data<V>: 39 bytes follow
         0x00, 0x01, // ComponentData.component_id = app_components
-        0x07, // ComponentData.data<V>: 7 bytes (a ComponentsList)
-        0x06, //   ComponentsList.component_ids<V>: 6 bytes
+        0x19, // ComponentData.data<V>: 25 bytes (a ComponentsList)
+        0x18, //   ComponentsList.component_ids<V>: 24 bytes
         0x00, 0x04, //   ComponentID = last_resort_key_package
         0x00, 0x20, //   ComponentID = frank_aad (protocol-06 §10.1)
+        0x00, 0x21, //   ComponentID = franking_agent (protocol-06 §10)
+        0x00, 0x22, //   ComponentID = participant_list
+        0x00, 0x23, //   ComponentID = room_metadata
+        0x00, 0x24, //   ComponentID = mls_operational_policy (room-policy-04 §10.1)
+        0x00, 0x25, //   ComponentID = roles_list
+        0x00, 0x26, //   ComponentID = preauth_list
+        0x00, 0x27, //   ComponentID = base_room_policy
+        0x00, 0x28, //   ComponentID = status_notification_policy
+        0x00, 0x29, //   ComponentID = join_link_policy
         lg_hi, lg_lo, //   ComponentID = GREASE
         0x00, 0x02, // ComponentData.component_id = safe_aad
         0x05, // ComponentData.data<V>: 5 bytes (a ComponentsList)
@@ -287,4 +297,62 @@ fn mls_rs_rejects_a_key_package_with_a_corrupted_signature() {
         .add_member(message)
         .and_then(|builder| builder.build());
     assert!(result.is_err(), "mls-rs must reject a bad signature");
+}
+
+/// Decision mimid-krmn.12: a leaf lists mimid's built-in components, then
+/// the extra components its identity declares, then a GREASE id. mls-rs
+/// accepts the KeyPackage and reports the LeafNode dictionary below.
+#[test]
+fn declared_extra_components_are_listed_in_the_leaf() {
+    let store = Store::open_in_memory().expect("in-memory store");
+    let identity = Identity::generate_with_components(IDENTITY, store, &[0x0100, 0x8001])
+        .expect("generate identity");
+    let key_package = identity
+        .key_package(KeyPackageKind::OneTime)
+        .expect("key package");
+    let (message, _parsed) = decode(&key_package);
+    let member = add_to_mls_rs_group(message);
+    let data = member
+        .extensions
+        .get(APP_DATA_DICTIONARY)
+        .expect("LeafNode app_data_dictionary")
+        .extension_data;
+    assert_eq!(data.len(), 44, "leaf dictionary: {data:02x?}");
+    let listed_grease = u16::from_be_bytes([data[31], data[32]]);
+    let safe_aad_grease = u16::from_be_bytes([data[39], data[40]]);
+    let component_grease = u16::from_be_bytes([data[41], data[42]]);
+    for grease in [listed_grease, safe_aad_grease, component_grease] {
+        assert!(is_component_grease(grease), "{grease:#06x}");
+    }
+    let [lg_hi, lg_lo] = listed_grease.to_be_bytes();
+    let [sg_hi, sg_lo] = safe_aad_grease.to_be_bytes();
+    let [cg_hi, cg_lo] = component_grease.to_be_bytes();
+    let expected = [
+        0x2b, // component_data<V>: 43 bytes follow
+        0x00, 0x01, // ComponentData.component_id = app_components
+        0x1d, // ComponentData.data<V>: 29 bytes (a ComponentsList)
+        0x1c, //   ComponentsList.component_ids<V>: 28 bytes
+        0x00, 0x04, //   ComponentID = last_resort_key_package
+        0x00, 0x20, //   ComponentID = frank_aad
+        0x00, 0x21, //   ComponentID = franking_agent
+        0x00, 0x22, //   ComponentID = participant_list
+        0x00, 0x23, //   ComponentID = room_metadata
+        0x00, 0x24, //   ComponentID = mls_operational_policy
+        0x00, 0x25, //   ComponentID = roles_list
+        0x00, 0x26, //   ComponentID = preauth_list
+        0x00, 0x27, //   ComponentID = base_room_policy
+        0x00, 0x28, //   ComponentID = status_notification_policy
+        0x00, 0x29, //   ComponentID = join_link_policy
+        0x01, 0x00, //   ComponentID = declared extra 0x0100
+        0x80, 0x01, //   ComponentID = declared extra 0x8001
+        lg_hi, lg_lo, //   ComponentID = GREASE
+        0x00, 0x02, // ComponentData.component_id = safe_aad
+        0x05, // ComponentData.data<V>: 5 bytes (a ComponentsList)
+        0x04, //   ComponentsList.component_ids<V>: 4 bytes
+        0x00, 0x20, //   ComponentID = frank_aad
+        sg_hi, sg_lo, //   ComponentID = GREASE
+        cg_hi, cg_lo, // ComponentData.component_id = GREASE
+        0x00,  // ComponentData.data<V>: empty
+    ];
+    assert_eq!(data, expected);
 }

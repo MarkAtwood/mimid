@@ -36,15 +36,22 @@
 //!   example mode 0600) is the caller's job.
 //! - KeyPackages use OpenMLS's default lifetime: valid from one hour in the
 //!   past until 84 days in the future.
-//! - The `app_components` and `safe_aad` lists in each LeafNode name only
-//!   the components this crate implements (never `app_components` or
-//!   `safe_aad` themselves, whose support is implied: mls-extensions
-//!   editor's copy, PR #110; decision mimid-krmn.6), plus protocol-06's `frank_aad`
-//!   (0x0020), which every mimid client implements through `mimi-protocol`
-//!   (decision mimid-1wgh.4.52; see [`Identity::key_package`]). A group
-//!   whose GroupContext requires any other component cannot add these
-//!   clients, and a client that does not implement franking must not use
-//!   these leaves.
+//! - The `app_components` list in each LeafNode names mimid's built-in
+//!   components, `last_resort_key_package` (0x0004), protocol-06's
+//!   `frank_aad` (0x0020) and the MIMI components 0x0021 to 0x0029, plus
+//!   any extra components the application declared with
+//!   [`Identity::generate_with_components`] (decisions mimid-1wgh.4.52,
+//!   mimid-krmn.12), never `app_components` or
+//!   `safe_aad` themselves, whose support is implied (mls-extensions
+//!   editor's copy, PR #110; decision mimid-krmn.6). The `safe_aad` list
+//!   names `frank_aad` (see [`Identity::key_package`]). A group whose
+//!   GroupContext requires any other component cannot add these clients,
+//!   and a client that does not implement every listed component must not
+//!   use these leaves.
+//! - A GroupContext whose `app_data_dictionary` holds state for a component
+//!   (other than app_components and safe_aad) that its `app_components`
+//!   list does not name is refused at creation, after every Commit and on
+//!   joining (rule 6 of the editor's copy).
 //! - Required `safe_aad` and `app_components` lists are enforced as
 //!   RFC 9420 §11.1 enforces `required_capabilities`; mls-extensions-10 §5
 //!   gives no rule (INTERPRETATION, decision mimid-1wgh.4.45). Leaves are
@@ -125,4 +132,9 @@ pub enum Error {
     /// A structure could not be TLS-encoded.
     #[error("cannot encode an MLS structure")]
     Encode(#[source] ErrorSource),
+    /// An extra component passed to [`Identity::generate_with_components`]
+    /// is app_components or safe_aad (implied), a GREASE value, one of
+    /// mimid's built-in components, or a duplicate (decision mimid-krmn.12).
+    #[error("{0:#06x} cannot be declared as an extra component")]
+    InvalidExtraComponent(u16),
 }

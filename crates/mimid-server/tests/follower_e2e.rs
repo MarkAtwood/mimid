@@ -78,8 +78,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use common::{
-    ALICE, BOB, HUB_IDENTITY, ROOM_ID, assert_secret_absent, base_room_policy, capture_logs,
-    franking_agent, no_components,
+    ALICE, BOB, HUB_IDENTITY, ROOM_APP_COMPONENTS, ROOM_ID, assert_secret_absent, base_room_policy,
+    capture_logs, franking_agent, no_components,
 };
 use group_info::{GROUP_INFO_HEADER, Requester};
 use key_packages::{APP_DATA_DICTIONARY, Ask, DAY, NO_REQUIREMENTS, now_seconds};
@@ -125,9 +125,13 @@ const SAFE_AAD: u16 = 0x0002;
 /// mls-extensions-10 §5 `ComponentsList` naming `frank_aad` (0x0020),
 /// hand-encoded: `component_ids<V>` of 2 bytes.
 const FRANK_AAD_ONLY: [u8; 3] = [0x02, 0x00, 0x20];
-/// `ComponentsList` naming `app_components`, `safe_aad` and `frank_aad`:
-/// `component_ids<V>` of 6 bytes.
-const MLS_RS_APP_COMPONENTS: [u8; 7] = [0x06, 0x00, 0x01, 0x00, 0x02, 0x00, 0x20];
+/// `ComponentsList` naming `app_components`, `safe_aad`, `frank_aad` and
+/// the room's components 0x0021..0x0029 (mls-extensions PR #110 rules 3
+/// and 5; decision mimid-krmn.12): `component_ids<V>` of 24 bytes.
+const MLS_RS_APP_COMPONENTS: [u8; 25] = [
+    0x18, 0x00, 0x01, 0x00, 0x02, 0x00, 0x20, 0x00, 0x21, 0x00, 0x22, 0x00, 0x23, 0x00, 0x24, 0x00,
+    0x25, 0x00, 0x26, 0x00, 0x27, 0x00, 0x28, 0x00, 0x29,
+];
 /// mls-extensions-10 §4.9: a SafeAAD with no items, `aad_items<V>` empty.
 const EMPTY_SAFE_AAD: [u8; 1] = [0x00];
 /// RFC 9420 §6 MLSMessage header: mls10 (0x0001), mls_key_package (0x0005).
@@ -194,11 +198,12 @@ fn roles_list() -> Vec<u8> {
     .unwrap()
 }
 
-/// The room's GroupContext components, ascending: Safe AAD requiring
-/// `frank_aad`, the hub as `franking_agent`, alice listed, the roles and a
-/// base policy.
+/// The room's GroupContext components, ascending: the room's `app_components`
+/// list, Safe AAD requiring `frank_aad`, the hub as `franking_agent`, alice
+/// listed, the roles and a base policy.
 fn components(hub_key: &[u8; 32]) -> Vec<(u16, Vec<u8>)> {
     let mut components = vec![
+        (APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec()),
         (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
         (FRANKING_AGENT, franking_agent(hub_key, HUB_IDENTITY)),
         (PARTICIPANT_LIST, participants(&[ALICE])),

@@ -8,10 +8,12 @@
 # "suite3-fixture"). Both GroupContexts carry the same hub rules:
 # external_senders is exactly the RFC 8032 §7.1 TEST 1 Ed25519 public key
 # with credential mimi://a.example, and an app_data_dictionary holds
-# safe_aad requiring frank_aad (0x0020; bead mimid-1wgh.6.74),
+# app_components listing 0x0021..0x0029 (mls-extensions PR #110 rule 6;
+# decision mimid-krmn.12), safe_aad requiring frank_aad (0x0020; bead mimid-1wgh.6.74),
 # franking_agent (same key and credential), participant_list (alice, bob)
-# and base_room_policy. alice's and bob's leaves list frank_aad in their
-# own safe_aad lists. The component data comes from the shared test
+# and base_room_policy. alice's and bob's leaves list 0x0021..0x0029 in
+# their own app_components lists and frank_aad in their own safe_aad
+# lists. The component data comes from the shared test
 # encoders in tests/common/mod.rs. The two groups differ only in
 # ciphersuite, so the suite 1 control shows the suite 3 group breaks no
 # other hub rule.
@@ -34,14 +36,15 @@
 #   cargo test -p mimid-server --test hub_foundation -- --ignored \
 #     generate_suite_fixtures
 # Generated:  2026-10-18; regenerated 2026-11-02 (safe_aad, bead
-#             mimid-1wgh.6.74) with rustc 1.99.1, mls-rs and
+#             mimid-1wgh.6.74); regenerated again 2026-11-02
+#             (app_components, decision mimid-krmn.12) with rustc 1.99.1, mls-rs and
 #             mls-rs-crypto-rustcrypto at git rev
 #             d9af9507223e4c915db9599f6038da1de5d68d4b
 #             (https://github.com/awslabs/mls-rs).
 #
 # Files:
-5e6b918dedeb98dcf3836f2fbff2031694f7ebe1a3b7955ae8a8e2923fb5912e  generate.rs
-b2fccd7b139ea7e7b01d05ab017f577180e3c8deb92c0808fe78d8c974596193  group_info_suite1.bin
-f3763496c3f347f84638b1e9a9e4a04e5e4ba98235a92c4718e30cbee2245b3f  ratchet_tree_suite1.bin
-207e0c603b8b3d9208f4889024a3dda47b0dd52125da9402685070614d555c5b  group_info_suite3.bin
-6c0e58d10a4244008c274ff34cc29443eecfee0738f50e51dee18ea00bcc94e3  ratchet_tree_suite3.bin
+4c212565af9f7c38539c0d8c64c352527451d3a2e8f9ef606daf04d6aa815f09  generate.rs
+b7708a5e102b9f6cdb4018cbd2087c3f162486f124c304b593eee514cd9f8484  group_info_suite1.bin
+a2430473a87c434be4dbf0d58b30dbd498ce4dce0d9ceeae42761c7deddf4730  ratchet_tree_suite1.bin
+0b8a81dc1a455f25927b4c42a7cd8a28220b8223b64c469ea2615fd6011bce4d  group_info_suite3.bin
+6bb86141576528c2691b550d7f154e9747c04908162114002f4c4dda67767e29  ratchet_tree_suite3.bin

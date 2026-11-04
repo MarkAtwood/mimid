@@ -40,6 +40,39 @@ const BOUNDARY_BASE: u16 = 0x8010;
 /// mls-extensions-10 §7.5: the safe_aad component.
 const SAFE_AAD: u16 = 0x0002;
 
+/// mls-extensions-10 §7.5: the app_components component.
+const APP_COMPONENTS: u16 = 0x0001;
+
+/// The private test components every identity in this file declares
+/// (decision mimid-krmn.12): LOG, META, ABSENT and the five boundary
+/// components.
+const TEST_COMPONENTS: [u16; 8] = [
+    LOG,
+    META,
+    ABSENT,
+    BOUNDARY_BASE,
+    BOUNDARY_BASE + 1,
+    BOUNDARY_BASE + 2,
+    BOUNDARY_BASE + 3,
+    BOUNDARY_BASE + 4,
+];
+
+/// mls-extensions-10 §5 ComponentsList of [`TEST_COMPONENTS`], hand-encoded:
+/// the GroupContext `app_components` list every room carries, so its state
+/// for these components is listed (mls-extensions editor's copy, PR #110,
+/// rule 6).
+const REQUIRE_TEST_COMPONENTS: [u8; 17] = [
+    0x10, // ComponentID component_ids<V>: 16 bytes
+    0x80, 0x01, // LOG
+    0x80, 0x02, // META
+    0x80, 0x03, // ABSENT
+    0x80, 0x10, // BOUNDARY_BASE
+    0x80, 0x11, // BOUNDARY_BASE + 1
+    0x80, 0x12, // BOUNDARY_BASE + 2
+    0x80, 0x13, // BOUNDARY_BASE + 3
+    0x80, 0x14, // BOUNDARY_BASE + 4
+];
+
 const GROUP_ID: &[u8] = b"room-hub";
 
 /// RFC 9420 §6.1: the SignWithLabel label of a FramedContent signature.
@@ -56,8 +89,12 @@ const LENGTH_BOUNDARIES: [(usize, &[u8]); 5] = [
 ];
 
 fn identity(name: &[u8]) -> Identity {
-    Identity::generate(name, Store::open_in_memory().expect("in-memory store"))
-        .expect("generate identity")
+    Identity::generate_with_components(
+        name,
+        Store::open_in_memory().expect("in-memory store"),
+        &TEST_COMPONENTS,
+    )
+    .expect("generate identity")
 }
 
 /// Test component semantics: the data of a known component is its current
@@ -129,7 +166,11 @@ fn room_with(
 ) -> Room {
     let alice = identity(b"alice");
     let carol = identity(b"carol");
-    let mut alice_group = Member::create(&alice, GROUP_ID, senders, components).expect("create");
+    // Every room lists the test components it may hold state for (PR #110
+    // rule 6).
+    let mut components = components.to_vec();
+    components.push((APP_COMPONENTS, REQUIRE_TEST_COMPONENTS.to_vec()));
+    let mut alice_group = Member::create(&alice, GROUP_ID, senders, &components).expect("create");
     let carol_key_package = carol
         .key_package(KeyPackageKind::OneTime)
         .expect("KeyPackage");

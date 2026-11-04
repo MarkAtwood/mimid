@@ -366,3 +366,71 @@ fn hostile_group_state_and_foreign_files_are_errors_not_panics() {
     let result = Store::open(&foreign);
     assert!(matches!(result, Err(Error::StoreOpen(_))), "{result:?}");
 }
+
+/// mls-extensions-10 §5 ComponentsList [0x8001], hand-encoded: a GroupContext
+/// `app_components` list requiring the private-use component 0x8001.
+const REQUIRE_8001: [u8; 3] = [
+    0x02, // component_ids<V>: 2 bytes
+    0x80, 0x01, // ComponentID 0x8001
+];
+
+/// Decision mimid-krmn.12: the extra components an identity declares
+/// survive a restart. A reloaded identity that declared 0x8001 still lists
+/// it, so it can create a group requiring 0x8001; one that declared nothing
+/// cannot (mls-extensions editor's copy, PR #110, rule 4).
+#[test]
+fn reloaded_identity_keeps_its_extra_components() {
+    let require = [(0x0001, REQUIRE_8001.to_vec())];
+
+    let path = db_path("extra-components");
+    let alice = Identity::generate_with_components(
+        b"alice",
+        Store::open(&path).expect("open store"),
+        &[0x8001, 0x0100],
+    )
+    .expect("generate identity");
+    let public_key = alice.signature_public_key().to_vec();
+    drop(alice);
+    let alice = reload(b"alice", &public_key, &path);
+    assert_eq!(alice.extra_components(), [0x8001, 0x0100]);
+    Member::create(&alice, b"room-extra", &[], &require).expect("alice lists 0x8001");
+
+    let path = db_path("no-extra-components");
+    let bob = generate(b"bob", &path);
+    let public_key = bob.signature_public_key().to_vec();
+    drop(bob);
+    let bob = reload(b"bob", &public_key, &path);
+    assert_eq!(bob.extra_components(), [] as [u16; 0]);
+    let refused = Member::create(&bob, b"room-extra", &[], &require);
+    assert!(
+        matches!(refused, Err(MemberError::MissingAppComponent(0x8001))),
+        "{refused:?}"
+    );
+}
+
+/// Decision mimid-krmn.12: app_components and safe_aad (implied), GREASE
+/// ids (mls-extensions-10 §7.5), mimid's built-in components and duplicates
+/// cannot be declared as extras.
+#[test]
+fn invalid_extra_components_are_refused() {
+    let cases: [(&str, &[u16], u16); 6] = [
+        ("app_components", &[0x0001], 0x0001),
+        ("safe_aad", &[0x0002], 0x0002),
+        ("GREASE", &[0x8001, 0x3a3a], 0x3a3a),
+        ("built-in last_resort_key_package", &[0x0004], 0x0004),
+        ("built-in participant_list", &[0x0022], 0x0022),
+        ("duplicate", &[0x8001, 0x8002, 0x8001], 0x8001),
+    ];
+    for (case, extras, rejected) in cases {
+        let result = Identity::generate_with_components(
+            b"alice",
+            Store::open_in_memory().expect("in-memory store"),
+            extras,
+        );
+        assert!(
+            matches!(result, Err(Error::InvalidExtraComponent(id)) if id == rejected),
+            "{case}: {:?}",
+            result.err()
+        );
+    }
+}

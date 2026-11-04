@@ -300,6 +300,12 @@ pub enum ObserverError {
     /// (decision mimid-1wgh.4.45). The group state is unchanged.
     #[error("a leaf does not support required component {0:#06x}")]
     MissingAppComponent(ComponentId),
+    /// The GroupContext `app_data_dictionary` holds state for a component
+    /// (other than app_components and safe_aad) that its `app_components`
+    /// list does not name (mls-extensions editor's copy, PR #110, rule 6;
+    /// decision mimid-krmn.6). The group state is unchanged.
+    #[error("the GroupContext holds state for component {0:#06x} but does not list it")]
+    ComponentNotListed(ComponentId),
     /// A Commit is pending; merge or clear it before processing more
     /// messages.
     #[error("a Commit is pending")]
@@ -356,6 +362,7 @@ impl From<SharedError> for ObserverError {
             SharedError::MissingAppComponent(component_id) => {
                 Self::MissingAppComponent(component_id)
             }
+            SharedError::ComponentNotListed(component_id) => Self::ComponentNotListed(component_id),
         }
     }
 }
@@ -402,7 +409,9 @@ impl Observer {
     /// mimid-1wgh.4.57, mimid-1wgh.4.59),
     /// [`ObserverError::MissingSafeAadComponent`] or
     /// [`ObserverError::MissingAppComponent`] if a leaf in the tree misses a
-    /// required component, and
+    /// required component, [`ObserverError::ComponentNotListed`] if the
+    /// GroupContext holds state for a component its `app_components` list
+    /// does not name, and
     /// [`ObserverError::InvalidGroupInfo`] if validation fails or the state
     /// cannot be stored.
     pub fn from_group_info(
@@ -483,7 +492,8 @@ impl Observer {
     /// [`ObserverError::InvalidAppDataUpdate`] or
     /// [`ObserverError::AppDataRejected`] for invalid AppDataUpdate
     /// proposals, [`ObserverError::MissingSafeAadComponent`],
-    /// [`ObserverError::MissingAppComponent`] or
+    /// [`ObserverError::MissingAppComponent`],
+    /// [`ObserverError::ComponentNotListed`] or
     /// [`ObserverError::InvalidComponentsList`] if a Commit or an Add or
     /// Update proposal fails the required-components check of
     /// [`crate::member`] (decisions mimid-1wgh.4.45, mimid-krmn.7,

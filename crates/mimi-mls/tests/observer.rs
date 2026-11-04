@@ -37,6 +37,28 @@ const LOG: u16 = 0x8001;
 /// mls-extensions-10 §7.5: the safe_aad component.
 const SAFE_AAD: u16 = 0x0002;
 
+/// mls-extensions-10 §7.5: the app_components component.
+const APP_COMPONENTS: u16 = 0x0001;
+
+/// mls-extensions-10 §5 ComponentsList [LOG], hand-encoded: the
+/// GroupContext `app_components` list that the `LOG` state requires
+/// (mls-extensions editor's copy, PR #110, rule 6; decision mimid-krmn.12).
+const REQUIRE_LOG: [u8; 3] = [
+    0x02, // ComponentID component_ids<V>: 2 bytes
+    0x80, 0x01, // ComponentID LOG (0x8001)
+];
+
+/// mls-extensions-10 §4.6 AppDataDictionary for an mls-rs LeafNode,
+/// hand-encoded: its `app_components` list names `LOG`, as the GroupContext
+/// requires (PR #110 rules 3 and 5).
+const LEAF_APP_COMPONENTS_LOG: [u8; 7] = [
+    0x06, // ComponentData component_data<V>: 6 bytes
+    0x00, 0x01, // component_id = app_components
+    0x03, // opaque data<V>: 3 bytes
+    0x02, //   ComponentsList.component_ids<V>: 2 bytes
+    0x80, 0x01, //   ComponentID LOG (0x8001)
+];
+
 /// mls-extensions-10 §5 ComponentsList [0x0020], hand-encoded: a
 /// GroupContext `safe_aad` list requiring component 0x0020.
 const REQUIRE_0020: [u8; 3] = [
@@ -69,8 +91,13 @@ const LEAF_SAFE_AAD_EMPTY: [u8; 5] = [
 ];
 
 fn identity(name: &[u8]) -> Identity {
-    Identity::generate(name, Store::open_in_memory().expect("in-memory store"))
-        .expect("generate identity")
+    // Declares the test component `LOG` (decision mimid-krmn.12).
+    Identity::generate_with_components(
+        name,
+        Store::open_in_memory().expect("in-memory store"),
+        &[LOG],
+    )
+    .expect("generate identity")
 }
 
 /// An `apply` function for Commits that carry no AppDataUpdate.
@@ -129,11 +156,23 @@ fn mls_rs_client(name: &[u8]) -> Client<impl mls_rs::client_builder::MlsConfig> 
         .build()
 }
 
+/// An mls-rs LeafNode extension list whose `app_components` names `LOG`,
+/// which the test group requires (decision mimid-krmn.12).
+fn log_leaf_extensions() -> ExtensionList {
+    let mut leaf = ExtensionList::new();
+    leaf.set(Extension::new(
+        APP_DATA_DICTIONARY,
+        LEAF_APP_COMPONENTS_LOG.to_vec(),
+    ));
+    leaf
+}
+
 /// RFC 9420 §6: strips the 4-byte MLSMessage header (version, wire_format)
 /// from an MLSMessage carrying a KeyPackage.
 fn mls_rs_key_package(client: &Client<impl mls_rs::client_builder::MlsConfig>) -> Vec<u8> {
+    // The leaf lists `LOG`, which the test group requires.
     let bytes = client
-        .generate_key_package_message(Default::default(), Default::default(), None)
+        .generate_key_package_message(Default::default(), log_leaf_extensions(), None)
         .expect("mls-rs KeyPackage")
         .to_bytes()
         .expect("encode");
@@ -211,8 +250,16 @@ fn setup() -> (
     Observer,
 ) {
     let alice = identity(b"alice");
-    let mut member =
-        Member::create(&alice, b"room-observer", &[], &[(LOG, b"v0".to_vec())]).expect("create");
+    let mut member = Member::create(
+        &alice,
+        b"room-observer",
+        &[],
+        &[
+            (APP_COMPONENTS, REQUIRE_LOG.to_vec()),
+            (LOG, b"v0".to_vec()),
+        ],
+    )
+    .expect("create");
     let (_, bob) = add_mls_rs_member(&alice, &mut member, b"bob");
     let group_info = bob
         .group_info_message(true)
@@ -874,6 +921,7 @@ fn rebuilt_group_info_is_accepted_by_mls_rs_and_openmls() {
     let (_carol_group, commit) = carol
         .external_commit_builder()
         .expect("builder")
+        .with_leaf_node_extensions(log_leaf_extensions())
         .with_tree_data(ExportedTree::from_bytes(&tree).expect("tree").into_owned())
         .build(MlsMessage::from_bytes(&rebuilt).expect("decode"))
         .expect("mls-rs joins from the rebuilt GroupInfo");
@@ -896,6 +944,7 @@ fn group_info_after_external_commit_uses_joiner_leaf() {
     let (carol_group, commit) = carol
         .external_commit_builder()
         .expect("builder")
+        .with_leaf_node_extensions(log_leaf_extensions())
         .build(MlsMessage::from_bytes(&from_bob).expect("decode"))
         .expect("mls-rs joins");
     observer
@@ -1398,6 +1447,7 @@ fn mls_rs_joins_by_external_commit_from_member_group_info() {
     let (carol_group, commit) = carol
         .external_commit_builder()
         .expect("builder")
+        .with_leaf_node_extensions(log_leaf_extensions())
         .with_tree_data(tree)
         .build(MlsMessage::from_bytes(&group_info).expect("decode"))
         .expect("mls-rs joins from alice's GroupInfo");

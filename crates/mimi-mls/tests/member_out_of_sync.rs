@@ -32,6 +32,17 @@ const SAFE_AAD: u16 = 0x0002;
 /// mls-extensions-10 §7.5: a private-use component id, for tests only.
 const PRIVATE_COMPONENT: u16 = 0x8001;
 
+/// mls-extensions-10 §7.5: the app_components component.
+const APP_COMPONENTS: u16 = 0x0001;
+
+/// mls-extensions-10 §5 ComponentsList [PRIVATE_COMPONENT], hand-encoded:
+/// the GroupContext list for its state (mls-extensions editor's copy, PR
+/// #110, rule 6).
+const LIST_PRIVATE_COMPONENT: [u8; 3] = [
+    0x02, // ComponentID component_ids<V>: 2 bytes
+    0x80, 0x01, // PRIVATE_COMPONENT
+];
+
 /// mls-extensions-10 §5 ComponentsList [0x0020], hand-encoded: a
 /// GroupContext `safe_aad` list requiring component 0x0020.
 const REQUIRE_0020: [u8; 3] = [
@@ -67,8 +78,13 @@ const LEAF_SAFE_AAD_0021: [u8; 7] = [
 const GROUP_ID: &[u8] = b"room-out-of-sync";
 
 fn identity(name: &[u8]) -> Identity {
-    Identity::generate(name, Store::open_in_memory().expect("in-memory store"))
-        .expect("generate identity")
+    // Declares the test component (decision mimid-krmn.12).
+    Identity::generate_with_components(
+        name,
+        Store::open_in_memory().expect("in-memory store"),
+        &[PRIVATE_COMPONENT],
+    )
+    .expect("generate identity")
 }
 
 /// An `apply` function for groups whose Commits carry no AppDataUpdate.
@@ -267,7 +283,13 @@ fn refused_commit_marks_out_of_sync_and_keeps_state() {
 fn refused_app_data_update_marks_out_of_sync() {
     let alice = identity(b"alice");
     let carol = identity(b"carol");
-    let mut alice_group = Member::create(&alice, GROUP_ID, &[], &[]).expect("create");
+    let mut alice_group = Member::create(
+        &alice,
+        GROUP_ID,
+        &[],
+        &[(APP_COMPONENTS, LIST_PRIVATE_COMPONENT.to_vec())],
+    )
+    .expect("create");
     let carol_key_package = carol
         .key_package(KeyPackageKind::OneTime)
         .expect("KeyPackage");

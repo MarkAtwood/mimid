@@ -18,8 +18,8 @@ use mls_rs::{CipherSuite, CipherSuiteProvider, Client, CryptoProvider, Extension
 use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 
 use crate::common::{
-    ALICE, BOB, FRANK_AAD_ONLY, HUB_IDENTITY, SAFE_AAD, app_data_dictionary, base_room_policy,
-    franking_agent, participant_list,
+    ALICE, APP_COMPONENTS, BOB, FRANK_AAD_ONLY, HUB_IDENTITY, ROOM_APP_COMPONENTS, SAFE_AAD,
+    app_data_dictionary, base_room_policy, franking_agent, participant_list,
 };
 
 /// RFC 8032 §7.1 TEST 1 Ed25519 secret key, used as the hub's signing key.
@@ -55,13 +55,17 @@ fn client(name: &[u8], suite: CipherSuite) -> Client<impl mls_rs::client_builder
         .build()
 }
 
-/// Leaf extensions listing frank_aad in the leaf's `safe_aad` list, which
-/// the group requires (bead mimid-1wgh.6.74).
+/// Leaf extensions listing the room's components in the leaf's
+/// `app_components` list (decision mimid-krmn.12) and frank_aad in its
+/// `safe_aad` list (bead mimid-1wgh.6.74), as the group requires.
 fn leaf_extensions() -> ExtensionList {
     let mut extensions = ExtensionList::new();
     extensions.set(Extension::new(
         APP_DATA_DICTIONARY,
-        app_data_dictionary(&[(SAFE_AAD, &FRANK_AAD_ONLY)]),
+        app_data_dictionary(&[
+            (APP_COMPONENTS, &ROOM_APP_COMPONENTS),
+            (SAFE_AAD, &FRANK_AAD_ONLY),
+        ]),
     ));
     extensions
 }
@@ -80,6 +84,9 @@ fn group(suite: CipherSuite, group_id: &[u8]) -> (Vec<u8>, Vec<u8>) {
     context_extensions.set(Extension::new(
         APP_DATA_DICTIONARY,
         app_data_dictionary(&[
+            // Every component with state is listed (mls-extensions PR
+            // #110 rule 6; decision mimid-krmn.12).
+            (APP_COMPONENTS, &ROOM_APP_COMPONENTS),
             // The hub requires frank_aad as a Safe AAD component (bead
             // mimid-1wgh.6.74).
             (SAFE_AAD, &FRANK_AAD_ONLY),

@@ -31,8 +31,8 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::SqliteConnectOptions;
 
 use crate::common::{
-    ALICE, BOB, FRANK_AAD_ONLY, HUB_IDENTITY, SAFE_AAD, app_data_dictionary, base_room_policy,
-    franking_agent, no_components,
+    ALICE, APP_COMPONENTS, BOB, FRANK_AAD_ONLY, HUB_IDENTITY, ROOM_APP_COMPONENTS, SAFE_AAD,
+    app_data_dictionary, base_room_policy, franking_agent, no_components,
 };
 
 /// A listed user of another provider, not a member when the room is
@@ -108,6 +108,9 @@ pub fn members_list(users: &[&[u8]]) -> ParticipantListData {
 fn components(hub: &Hub, participants: &ParticipantListData) -> Vec<(u16, Vec<u8>)> {
     let key = *hub.signature_public_key();
     vec![
+        // PR #110 rule 6; first, since app_data_dictionary keeps entries in
+        // the order given and component ids must ascend.
+        (APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec()),
         (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
         (FRANKING_AGENT, franking_agent(&key, HUB_IDENTITY)),
         (
@@ -141,13 +144,18 @@ pub fn mls_rs_client(name: &[u8]) -> Client<impl MlsConfig + use<>> {
 }
 
 /// Leaf extensions for an mls-rs member of a hosted room: an
-/// `app_data_dictionary` whose `safe_aad` list names frank_aad, which the
-/// room requires (bead mimid-1wgh.6.74), hand-encoded.
+/// `app_data_dictionary` whose `app_components` list names the room's
+/// components (mls-extensions editor's copy, PR #110, rules 3 and 5) and
+/// whose `safe_aad` list names frank_aad, which the room requires (bead
+/// mimid-1wgh.6.74), hand-encoded.
 pub fn mls_rs_leaf_extensions() -> ExtensionList {
     let mut extensions = ExtensionList::new();
     extensions.set(Extension::new(
         APP_DATA_DICTIONARY,
-        app_data_dictionary(&[(SAFE_AAD, &FRANK_AAD_ONLY)]),
+        app_data_dictionary(&[
+            (APP_COMPONENTS, &ROOM_APP_COMPONENTS),
+            (SAFE_AAD, &FRANK_AAD_ONLY),
+        ]),
     ));
     extensions
 }

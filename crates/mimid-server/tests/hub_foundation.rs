@@ -17,6 +17,7 @@ use axum::Router;
 use axum::body::{Body, Bytes, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use common::*;
+use mimi_mls::observer::ObserverError;
 use mimi_protocol::component_id;
 use mimi_room_policy::component_id::BASE_ROOM_POLICY;
 use mimid_server::config::BaseUrl;
@@ -132,6 +133,7 @@ async fn room_with_expired_leaf_loads_after_restart() {
     context_extensions.set(Extension::new(
         APP_DATA_DICTIONARY,
         app_data_dictionary(&[
+            (APP_COMPONENTS, &ROOM_APP_COMPONENTS),
             // The hub requires frank_aad as a Safe AAD component (bead
             // mimid-1wgh.6.74).
             (SAFE_AAD, &FRANK_AAD_ONLY),
@@ -146,11 +148,16 @@ async fn room_with_expired_leaf_loads_after_restart() {
             (BASE_ROOM_POLICY, &base_room_policy()),
         ]),
     ));
-    // Each leaf lists frank_aad in its safe_aad list, as the group requires.
+    // Each leaf lists the room's components in its app_components list
+    // (decision mimid-krmn.12) and frank_aad in its safe_aad list, as the
+    // group requires.
     let mut leaf = ExtensionList::new();
     leaf.set(Extension::new(
         APP_DATA_DICTIONARY,
-        app_data_dictionary(&[(SAFE_AAD, &FRANK_AAD_ONLY)]),
+        app_data_dictionary(&[
+            (APP_COMPONENTS, &ROOM_APP_COMPONENTS),
+            (SAFE_AAD, &FRANK_AAD_ONLY),
+        ]),
     ));
     let mut alice = mls_rs_client(ALICE, 84 * ONE_DAY)
         .create_group(context_extensions, leaf.clone(), None)
@@ -199,6 +206,81 @@ async fn room_with_expired_leaf_loads_after_restart() {
     assert_eq!(after.group_context, expected_context);
     assert_eq!(after.ratchet_tree, tree);
     close_hub(store, hub).await;
+}
+
+/// mls-extensions-10 §5 ComponentsList naming the room's components except
+/// base_room_policy (0x0027), hand-encoded: `component_ids<V>` of 16 bytes.
+const ROOM_APP_COMPONENTS_WITHOUT_0027: [u8; 17] = [
+    0x10, // component_ids<V>: 16 bytes
+    0x00, 0x21, 0x00, 0x22, 0x00, 0x23, 0x00, 0x24, 0x00, 0x25, 0x00, 0x26, // 0x0021..0x0026
+    0x00, 0x28, 0x00, 0x29, // 0x0028, 0x0029
+];
+
+/// mls-extensions editor's copy (PR #110) rule 6: a GroupContext whose
+/// app_data_dictionary holds state for a component its app_components list
+/// does not name is invalid (decision mimid-krmn.6). mls-rs, which does not
+/// enforce the rule, builds a room holding base_room_policy state; the hub
+/// refuses it and stores nothing unless app_components lists 0x0027.
+#[tokio::test]
+async fn create_room_refuses_state_for_an_unlisted_component() {
+    for (app_components, refused) in [
+        (&ROOM_APP_COMPONENTS_WITHOUT_0027[..], true),
+        (&ROOM_APP_COMPONENTS[..], false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+        let key = *hub.signature_public_key();
+        let mut context_extensions = ExtensionList::new();
+        context_extensions
+            .set_from(ExternalSendersExt::new(vec![SigningIdentity::new(
+                BasicCredential::new(HUB_IDENTITY.to_vec()).into_credential(),
+                SignaturePublicKey::from(key.to_vec()),
+            )]))
+            .unwrap();
+        context_extensions.set(Extension::new(
+            APP_DATA_DICTIONARY,
+            app_data_dictionary(&[
+                (APP_COMPONENTS, app_components),
+                (SAFE_AAD, &FRANK_AAD_ONLY),
+                (
+                    component_id::FRANKING_AGENT,
+                    &franking_agent(&key, HUB_IDENTITY),
+                ),
+                (component_id::PARTICIPANT_LIST, &participant_list(&[ALICE])),
+                (BASE_ROOM_POLICY, &base_room_policy()),
+            ]),
+        ));
+        let mut leaf = ExtensionList::new();
+        leaf.set(Extension::new(
+            APP_DATA_DICTIONARY,
+            app_data_dictionary(&[
+                (APP_COMPONENTS, &ROOM_APP_COMPONENTS),
+                (SAFE_AAD, &FRANK_AAD_ONLY),
+            ]),
+        ));
+        let alice = mls_rs_client(ALICE, 84 * ONE_DAY)
+            .create_group(context_extensions, leaf, None)
+            .unwrap();
+        let group_info = alice.group_info_message(false).unwrap().to_bytes().unwrap();
+        let tree = alice.export_tree().to_bytes().unwrap();
+
+        let result = hub.create_room(ROOM_ID, ALICE, &group_info, &tree).await;
+        if refused {
+            assert!(
+                matches!(
+                    result,
+                    Err(HubError::InvalidGroupInfo(
+                        ObserverError::ComponentNotListed(0x0027)
+                    ))
+                ),
+                "{result:?}"
+            );
+            assert!(store.rooms().await.unwrap().is_empty(), "nothing stored");
+        } else {
+            result.expect("app_components lists 0x0027");
+        }
+        close_hub(store, hub).await;
+    }
 }
 
 /// Builds a group per `spec`, offers it to a fresh hub with `creator`, and

@@ -9,6 +9,7 @@ use openmls::prelude::{
 };
 use openmls::storage::StorageProvider;
 use openmls_basic_credential::{SignatureKeyPair, StorageId};
+use openmls_traits::storage::{CURRENT_VERSION, Entity, Key, StorageProvider as _, traits};
 use tls_codec::Serialize;
 
 use crate::store::Provider;
@@ -41,6 +42,28 @@ const LAST_RESORT_KEY_PACKAGE: ComponentId = 0x0004;
 /// implements franking through `mimi-protocol`, so every leaf lists it.
 const FRANK_AAD: ComponentId = 0x0020;
 
+/// The MIMI components mimid implements besides `frank_aad`, so every leaf
+/// lists them (mls-extensions editor's copy, PR #110, rules 3 and 6;
+/// decision mimid-krmn.12): protocol-06 §10 `franking_agent` (0x0021),
+/// `participant_list` (0x0022) and `room_metadata` (0x0023), and
+/// room-policy-04 §10.1 `mls_operational_policy` (0x0024), `roles_list`
+/// (0x0025), `preauth_list` (0x0026), `base_room_policy` (0x0027),
+/// `status_notification_policy` (0x0028) and `join_link_policy` (0x0029).
+/// The values are copied here because this crate sits below
+/// `mimi-protocol` and `mimi-room-policy` (see `mimi_protocol::component_id`
+/// and `mimi_room_policy::component_id`).
+const MIMI_COMPONENTS: [ComponentId; 9] = [
+    0x0021, 0x0022, 0x0023, 0x0024, 0x0025, 0x0026, 0x0027, 0x0028, 0x0029,
+];
+
+/// mimid's built-in components, listed in every leaf: 0x0004, 0x0020 and
+/// [`MIMI_COMPONENTS`] (decision mimid-krmn.12, superseding mimid-krmn.8).
+fn built_in_components() -> Vec<ComponentId> {
+    let mut built_in = vec![LAST_RESORT_KEY_PACKAGE, FRANK_AAD];
+    built_in.extend(MIMI_COMPONENTS);
+    built_in
+}
+
 /// Whether a KeyPackage may be used more than once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyPackageKind {
@@ -58,7 +81,35 @@ pub struct Identity {
     signer: SignatureKeyPair,
     credential_with_key: CredentialWithKey,
     identity: Vec<u8>,
+    /// Components the application implements beyond mimid's built-ins,
+    /// listed in every leaf this identity creates (decision mimid-krmn.12).
+    extra_components: Vec<ComponentId>,
 }
+
+/// The storage key for an identity's extra components: the signature
+/// public key, under a field name no OpenMLS key type serializes to.
+///
+/// ponytail: the extras live in OpenMLS's signature-key storage under this
+/// distinct key, because the OpenMLS SQLite provider owns the database's
+/// only connection. Ceiling: it relies on that storage keeping any
+/// serialized key. Upgrade path: a mimi-mls table once [`Store`] can reach
+/// its connection.
+#[derive(serde::Serialize)]
+struct ExtraComponentsKey<'a> {
+    mimid_extra_components_of: &'a [u8],
+}
+
+impl Key<CURRENT_VERSION> for ExtraComponentsKey<'_> {}
+impl traits::SignaturePublicKey<CURRENT_VERSION> for ExtraComponentsKey<'_> {}
+
+/// An identity's stored extra components (decision mimid-krmn.12).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredExtraComponents {
+    extra_components: Vec<ComponentId>,
+}
+
+impl Entity<CURRENT_VERSION> for StoredExtraComponents {}
+impl traits::SignatureKeyPair<CURRENT_VERSION> for StoredExtraComponents {}
 
 impl Identity {
     /// Generates a fresh Ed25519 signature key for the BasicCredential
@@ -70,12 +121,55 @@ impl Identity {
     /// Returns [`Error::KeyGeneration`] if the signature key cannot be
     /// generated, and [`Error::StoreWrite`] if it cannot be stored.
     pub fn generate(identity: &[u8], store: Store) -> Result<Self, Error> {
+        Self::generate_with_components(identity, store, &[])
+    }
+
+    /// As [`Identity::generate`], for an application that implements
+    /// `extra_components` beyond mimid's built-ins: every leaf this identity
+    /// creates lists them too, and [`Identity::load`] restores them
+    /// (decision mimid-krmn.12).
+    ///
+    /// # Errors
+    ///
+    /// As [`Identity::generate`], and [`Error::InvalidExtraComponent`] if an
+    /// extra is app_components or safe_aad (implied, mls-extensions editor's
+    /// copy PR #110), a GREASE value, a built-in, or a duplicate.
+    pub fn generate_with_components(
+        identity: &[u8],
+        store: Store,
+        extra_components: &[ComponentId],
+    ) -> Result<Self, Error> {
+        let mut seen = Vec::with_capacity(extra_components.len());
+        for &id in extra_components {
+            if [APP_COMPONENTS, SAFE_AAD].contains(&id)
+                || COMPONENT_GREASE.contains(&id)
+                || built_in_components().contains(&id)
+                || seen.contains(&id)
+            {
+                return Err(Error::InvalidExtraComponent(id));
+            }
+            seen.push(id);
+        }
         let signer = SignatureKeyPair::new(CIPHERSUITE.signature_algorithm())
             .map_err(|e| Error::KeyGeneration(e.into()))?;
         signer
             .store(store.provider().storage())
             .map_err(|e| Error::StoreWrite(e.into()))?;
-        Ok(Self::new(identity, signer, store))
+        if !seen.is_empty() {
+            store
+                .provider()
+                .storage()
+                .write_signature_key_pair(
+                    &ExtraComponentsKey {
+                        mimid_extra_components_of: signer.public(),
+                    },
+                    &StoredExtraComponents {
+                        extra_components: seen.clone(),
+                    },
+                )
+                .map_err(|e| Error::StoreWrite(e.into()))?;
+        }
+        Ok(Self::new(identity, signer, store, seen))
     }
 
     /// Reloads an identity that [`Identity::generate`] stored in `store`,
@@ -107,10 +201,24 @@ impl Identity {
         if signer.signature_scheme() != scheme || signer.public() != signature_public_key {
             return Err(Error::InvalidStoredKey);
         }
-        Ok(Self::new(identity, signer, store))
+        let extra_components = store
+            .provider()
+            .storage()
+            .signature_key_pair::<_, StoredExtraComponents>(&ExtraComponentsKey {
+                mimid_extra_components_of: signature_public_key,
+            })
+            .map_err(|e| Error::StoreRead(e.into()))?
+            .map(|stored| stored.extra_components)
+            .unwrap_or_default();
+        Ok(Self::new(identity, signer, store, extra_components))
     }
 
-    fn new(identity: &[u8], signer: SignatureKeyPair, store: Store) -> Self {
+    fn new(
+        identity: &[u8],
+        signer: SignatureKeyPair,
+        store: Store,
+        extra_components: Vec<ComponentId>,
+    ) -> Self {
         let credential_with_key = CredentialWithKey {
             credential: BasicCredential::new(identity.to_vec()).into(),
             signature_key: signer.to_public_vec().into(),
@@ -120,7 +228,14 @@ impl Identity {
             signer,
             credential_with_key,
             identity: identity.to_vec(),
+            extra_components,
         }
+    }
+
+    /// The components this identity declares beyond mimid's built-ins
+    /// (decision mimid-krmn.12).
+    pub fn extra_components(&self) -> &[ComponentId] {
+        &self.extra_components
     }
 
     /// The BasicCredential identity bytes.
@@ -154,11 +269,12 @@ impl Identity {
     /// `AppDataUpdate` proposal (mls-extensions-10 §4.7), plus GREASE
     /// values. Its `app_data_dictionary` carries an `app_components` entry,
     /// which §4.6 requires of any client that advertises
-    /// `app_data_dictionary`. That list names the components this crate
-    /// implements, `last_resort_key_package` and protocol-06's `frank_aad`
-    /// (0x0020), but not `app_components` or `safe_aad`, whose support is
-    /// implied (mls-extensions editor's copy, PR #110; decision
-    /// mimid-krmn.6). It
+    /// `app_data_dictionary`. That list names the components mimid
+    /// implements, `last_resort_key_package` (0x0004), protocol-06's
+    /// `frank_aad` (0x0020), the MIMI components 0x0021 to 0x0029 and the
+    /// identity's extra components (decision mimid-krmn.12), but not `app_components` or `safe_aad`,
+    /// whose support is implied (mls-extensions editor's copy, PR #110;
+    /// decision mimid-krmn.6). It
     /// also carries a `safe_aad` entry (§5) listing the supported Safe AAD
     /// components: `frank_aad` (decisions mimid-1wgh.4.45,
     /// mimid-1wgh.4.52). Every list also holds a GREASE component id from
@@ -182,7 +298,7 @@ impl Identity {
         // put into the KeyPackage (RFC 9420 §13.5) is listed there too.
         let grease_extension = random_grease_value(rand);
         let capabilities = leaf_capabilities(rand, grease_extension);
-        let leaf_extensions = leaf_extensions(rand)?;
+        let leaf_extensions = leaf_extensions(rand, &self.extra_components)?;
 
         let mut key_package_extensions = Vec::with_capacity(2);
         if kind == KeyPackageKind::LastResort {
@@ -274,22 +390,24 @@ where
 /// Returns [`Error::Encode`] if a components list cannot be serialized,
 /// and [`Error::KeyPackage`] if the random source fails or the extension
 /// list is invalid.
-pub(crate) fn leaf_extensions<R>(rand: &R) -> Result<Extensions<LeafNode>, Error>
+pub(crate) fn leaf_extensions<R>(
+    rand: &R,
+    extra_components: &[ComponentId],
+) -> Result<Extensions<LeafNode>, Error>
 where
     R: OpenMlsRand,
     R::Error: Send + Sync + 'static,
 {
-    // The app_components entry lists the implemented components. Support for
-    // app_components (0x0001) and safe_aad (0x0002) is implied, so they are
-    // not listed: mls-extensions editor's copy (PR #110); decision
-    // mimid-krmn.6.
-    let app_components = ComponentsList::new(vec![
-        LAST_RESORT_KEY_PACKAGE,
-        FRANK_AAD,
-        random_component_grease(rand)?,
-    ])
-    .tls_serialize_detached()
-    .map_err(|e| Error::Encode(e.into()))?;
+    // The app_components entry lists the built-in and extra components
+    // (decision mimid-krmn.12). Support for app_components (0x0001) and safe_aad
+    // (0x0002) is implied, so they are not listed: mls-extensions editor's
+    // copy (PR #110); decision mimid-krmn.6.
+    let mut implemented = built_in_components();
+    implemented.extend_from_slice(extra_components);
+    implemented.push(random_component_grease(rand)?);
+    let app_components = ComponentsList::new(implemented)
+        .tls_serialize_detached()
+        .map_err(|e| Error::Encode(e.into()))?;
     // mls-extensions-10 §5: the supported Safe AAD components, plus GREASE
     // (decisions mimid-1wgh.4.45, mimid-1wgh.4.52).
     let safe_aad = ComponentsList::new(vec![FRANK_AAD, random_component_grease(rand)?])

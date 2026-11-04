@@ -20,8 +20,8 @@ use std::sync::Arc;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use common::{
-    ALICE, BOB, FRANK_AAD_ONLY, FixedClock, HUB_IDENTITY, ROOM_ID, SAFE_AAD, franking_agent,
-    no_components,
+    ALICE, APP_COMPONENTS, BOB, FRANK_AAD_ONLY, FixedClock, HUB_IDENTITY, ROOM_APP_COMPONENTS,
+    ROOM_ID, SAFE_AAD, franking_agent, no_components,
 };
 use key_packages::*;
 use mimi_mls::KeyPackageKind;
@@ -681,6 +681,7 @@ async fn create_room(hub: &Hub) {
             .collect(),
     };
     let components = [
+        (APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec()),
         // The hub requires frank_aad as a Safe AAD component (bead
         // mimid-1wgh.6.74).
         (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),

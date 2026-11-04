@@ -31,9 +31,39 @@ const LOG: u16 = 0x8001;
 const META: u16 = 0x8002;
 const ABSENT: u16 = 0x8003;
 
+/// mls-extensions-10 §7.5: the app_components component.
+const APP_COMPONENTS: u16 = 0x0001;
+
+/// mls-extensions-10 §5 ComponentsList [LOG, META, ABSENT], hand-encoded:
+/// the GroupContext `app_components` list for the state the tests set
+/// (mls-extensions editor's copy, PR #110, rule 6).
+const LIST_TEST_COMPONENTS: [u8; 7] = [
+    0x06, // ComponentID component_ids<V>: 6 bytes
+    0x80, 0x01, // LOG
+    0x80, 0x02, // META
+    0x80, 0x03, // ABSENT
+];
+
+/// mls-extensions-10 §4.6 AppDataDictionary for an mls-rs LeafNode,
+/// hand-encoded: its `app_components` list is [`LIST_TEST_COMPONENTS`].
+const LEAF_TEST_COMPONENTS: [u8; 11] = [
+    0x0a, // ComponentData component_data<V>: 10 bytes
+    0x00, 0x01, // component_id = app_components
+    0x07, // opaque data<V>: 7 bytes
+    0x06, //   ComponentsList.component_ids<V>: 6 bytes
+    0x80, 0x01, //   LOG
+    0x80, 0x02, //   META
+    0x80, 0x03, //   ABSENT
+];
+
 fn identity(name: &[u8]) -> Identity {
-    Identity::generate(name, Store::open_in_memory().expect("in-memory store"))
-        .expect("generate identity")
+    // Declares the test components (decision mimid-krmn.12).
+    Identity::generate_with_components(
+        name,
+        Store::open_in_memory().expect("in-memory store"),
+        &[LOG, META, ABSENT],
+    )
+    .expect("generate identity")
 }
 
 fn mls_rs_client(name: &[u8]) -> Client<impl mls_rs::client_builder::MlsConfig> {
@@ -153,7 +183,13 @@ fn commit_summary(incoming: Incoming) -> mimi_mls::member::CommitSummary {
 fn two_mimi_members() -> (Identity, Member, Identity, Member) {
     let alice = identity(b"alice");
     let carol = identity(b"carol");
-    let mut alice_group = Member::create(&alice, b"room-app-data", &[], &[]).expect("create");
+    let mut alice_group = Member::create(
+        &alice,
+        b"room-app-data",
+        &[],
+        &[(APP_COMPONENTS, LIST_TEST_COMPONENTS.to_vec())],
+    )
+    .expect("create");
     let carol_key_package = carol
         .key_package(KeyPackageKind::OneTime)
         .expect("KeyPackage");
@@ -314,8 +350,13 @@ fn app_data_updates_apply_in_commit_order_and_reach_new_joiners() {
 
     // An mls-rs client joins and decodes the resulting GroupContext.
     let eve_client = mls_rs_client(b"eve");
+    let mut eve_leaf = mls_rs::ExtensionList::new();
+    eve_leaf.set(mls_rs::Extension::new(
+        APP_DATA_DICTIONARY,
+        LEAF_TEST_COMPONENTS.to_vec(),
+    ));
     let eve_key_package = eve_client
-        .generate_key_package_message(Default::default(), Default::default(), None)
+        .generate_key_package_message(Default::default(), eve_leaf, None)
         .expect("KeyPackage")
         .to_bytes()
         .expect("encode");
@@ -337,9 +378,17 @@ fn app_data_updates_apply_in_commit_order_and_reach_new_joiners() {
     let (eve, _) = eve_client
         .join_group(Some(tree), &welcome, None)
         .expect("eve joins");
-    // mls-extensions-10 §4.6 AppDataDictionary, hand-encoded.
+    // mls-extensions-10 §4.6 AppDataDictionary, hand-encoded. The
+    // app_components entry lists the test components (mls-extensions
+    // editor's copy, PR #110, rule 6).
     let expected_dictionary = [
-        0x08, // ComponentData component_data<V>: 8 bytes
+        0x12, // ComponentData component_data<V>: 18 bytes
+        0x00, 0x01, // component_id = app_components
+        0x07, // opaque data<V>: 7 bytes
+        0x06, //   ComponentsList.component_ids<V>: 6 bytes
+        0x80, 0x01, //   LOG
+        0x80, 0x02, //   META
+        0x80, 0x03, //   ABSENT
         0x80, 0x01, // component_id = LOG
         0x05, // opaque data<V>: 5 bytes
         b'o', b'n', b'e', b'a', b'b',

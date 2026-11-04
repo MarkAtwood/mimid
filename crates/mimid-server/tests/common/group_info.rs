@@ -19,8 +19,8 @@ use mls_rs::{CipherSuiteProvider, CryptoProvider};
 use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 
 use crate::common::{
-    ALICE, BOB, FRANK_AAD_ONLY, HUB_IDENTITY, SAFE_AAD, base_room_policy, franking_agent,
-    no_components,
+    ALICE, APP_COMPONENTS, BOB, FRANK_AAD_ONLY, HUB_IDENTITY, ROOM_APP_COMPONENTS, SAFE_AAD,
+    base_room_policy, franking_agent, no_components,
 };
 use crate::update::{ROLE_MEMBER, members_list};
 
@@ -282,6 +282,7 @@ pub async fn joinable_room(hub: &Hub, room_id: &str, group_id: &[u8], join: Join
     }
     let key = *hub.signature_public_key();
     let mut components = vec![
+        (APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec()),
         // The hub requires frank_aad as a Safe AAD component (bead
         // mimid-1wgh.6.74).
         (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),

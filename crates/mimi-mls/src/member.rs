@@ -53,6 +53,11 @@
 //!   [`Observer::from_group_info`](crate::observer::Observer::from_group_info)
 //!   refuse a group whose tree has a leaf, this identity's own included,
 //!   that does not meet the lists (rules 3 and 4), and store nothing.
+//! - Every one of these refuses a GroupContext whose `app_data_dictionary`
+//!   holds state for a component, other than `app_components` and
+//!   `safe_aad`, that its `app_components` list does not name, with
+//!   [`MemberError::ComponentNotListed`] (rule 6). A Commit may list a
+//!   component and set its state at once.
 //!
 //! The [`Observer`](crate::observer::Observer) applies the same checks.
 //!
@@ -444,6 +449,12 @@ pub enum MemberError {
     /// (decision mimid-1wgh.4.45). The group state is unchanged.
     #[error("a leaf does not support required component {0:#06x}")]
     MissingAppComponent(ComponentId),
+    /// The GroupContext `app_data_dictionary` holds state for a component
+    /// (other than app_components and safe_aad) that its `app_components`
+    /// list does not name (mls-extensions editor's copy, PR #110, rule 6;
+    /// decision mimid-krmn.6). The group state is unchanged.
+    #[error("the GroupContext holds state for component {0:#06x} but does not list it")]
+    ComponentNotListed(ComponentId),
     /// The application message could not be created.
     #[error("cannot create the application message")]
     Send(#[source] ErrorSource),
@@ -511,6 +522,8 @@ impl Member {
     /// [`MemberError::MissingSafeAadComponent`] or
     /// [`MemberError::MissingAppComponent`] if this identity's leaf does not
     /// list a non-GREASE component one of them requires,
+    /// [`MemberError::ComponentNotListed`] if a component with state is not
+    /// in the `app_components` list,
     /// [`MemberError::Identity`] if the LeafNode material cannot be built,
     /// and [`MemberError::Create`] if OpenMLS rejects the group.
     pub fn create(
@@ -554,7 +567,8 @@ impl Member {
         // mls-extensions-10 §5: the lists are decoded strictly (decision
         // mimid-1wgh.4.45), and our own leaf must meet them before anything
         // is stored (decision mimid-1wgh.4.57).
-        let leaf_extensions = leaf_extensions(rand).map_err(MemberError::Identity)?;
+        let leaf_extensions =
+            leaf_extensions(rand, identity.extra_components()).map_err(MemberError::Identity)?;
         check_leaf(&leaf_extensions, &required_lists(&extensions)?)?;
 
         let group = MlsGroup::builder()
@@ -626,8 +640,9 @@ impl Member {
     /// [`MemberError::MissingSafeAadComponent`] or
     /// [`MemberError::MissingAppComponent`] if a leaf in the tree, this
     /// identity's included, does not list a component the GroupContext
-    /// requires, [`MemberError::Merge`] if a refused group cannot be deleted
-    /// again, and
+    /// requires, [`MemberError::ComponentNotListed`] if the GroupContext
+    /// holds state for a component its `app_components` list does not name,
+    /// [`MemberError::Merge`] if a refused group cannot be deleted again, and
     /// [`MemberError::InvalidComponentsList`] if the GroupContext's
     /// `safe_aad` or `app_components` data is malformed (decisions
     /// mimid-1wgh.4.57, mimid-1wgh.4.59).
@@ -726,7 +741,10 @@ impl Member {
     /// [`MemberError::MissingSafeAadComponent`] or
     /// [`MemberError::MissingAppComponent`] if this identity's new leaf or a
     /// leaf that stays in the tree fails the required-components check (see
-    /// the module's `# Required components`), [`MemberError::Identity`] if the LeafNode material
+    /// the module's `# Required components`),
+    /// [`MemberError::ComponentNotListed`] if the GroupContext holds state
+    /// for a component its `app_components` list does not name,
+    /// [`MemberError::Identity`] if the LeafNode material
     /// cannot be built, [`MemberError::Join`] or [`MemberError::Commit`] if
     /// OpenMLS cannot build the Commit, and [`MemberError::Merge`] if the new
     /// state cannot be stored. Nothing is stored unless the call succeeds,
@@ -803,7 +821,8 @@ impl Member {
         // checked here. The Commit
         // holds only ExternalInit and possibly a Remove, so the GroupContext
         // extensions it leads to are these (decision mimid-1wgh.4.49).
-        let leaf_extensions = leaf_extensions(rand).map_err(MemberError::Identity)?;
+        let leaf_extensions =
+            leaf_extensions(rand, identity.extra_components()).map_err(MemberError::Identity)?;
         check_leaf(&leaf_extensions, &required)?;
         let leaf = LeafNodeParameters::builder()
             .with_capabilities(leaf_capabilities(rand, random_grease_value(rand)))
@@ -861,6 +880,8 @@ impl Member {
     /// invalid, [`MemberError::MissingSafeAadComponent`] or
     /// [`MemberError::MissingAppComponent`] if a new or updated leaf lacks a
     /// required component (see the module's `# Required components`),
+    /// [`MemberError::ComponentNotListed`] if the new GroupContext holds
+    /// state for a component its `app_components` list does not name,
     /// [`MemberError::InvalidComponentsList`] if the new GroupContext's
     /// `safe_aad` or `app_components` data is malformed, and
     /// [`MemberError::Commit`] if OpenMLS cannot build the Commit, and
@@ -1057,7 +1078,8 @@ impl Member {
     /// follow the SafeAAD struct, [`MemberError::InvalidAppDataUpdate`] or
     /// [`MemberError::AppDataRejected`] for invalid AppDataUpdate proposals,
     /// [`MemberError::MissingSafeAadComponent`],
-    /// [`MemberError::MissingAppComponent`] or
+    /// [`MemberError::MissingAppComponent`],
+    /// [`MemberError::ComponentNotListed`] or
     /// [`MemberError::InvalidComponentsList`] if a Commit or an Add or
     /// Update proposal fails the required-components check (see the module's
     /// `# Required components`), [`MemberError::Merge`] if the new state cannot be
@@ -1515,6 +1537,7 @@ pub(crate) enum SharedError {
     },
     MissingSafeAadComponent(ComponentId),
     MissingAppComponent(ComponentId),
+    ComponentNotListed(ComponentId),
 }
 
 impl From<SharedError> for MemberError {
@@ -1545,6 +1568,7 @@ impl From<SharedError> for MemberError {
             SharedError::MissingAppComponent(component_id) => {
                 Self::MissingAppComponent(component_id)
             }
+            SharedError::ComponentNotListed(component_id) => Self::ComponentNotListed(component_id),
         }
     }
 }
@@ -1671,6 +1695,13 @@ impl RequiredLists {
 
 /// Decodes the [`RequiredLists`] of the GroupContext `extensions`; a
 /// malformed list fails closed (decision mimid-1wgh.4.49).
+///
+/// It also refuses a GroupContext whose `app_data_dictionary` holds state
+/// for a component, other than app_components and safe_aad, that its
+/// `app_components` list does not name (mls-extensions editor's copy, PR
+/// #110, rule 6; decision mimid-krmn.6). Every caller judges a GroupContext
+/// through here: group creation, the epoch a Commit leads to, and the
+/// GroupContext a joiner receives.
 pub(crate) fn required_lists(
     extensions: &Extensions<GroupContext>,
 ) -> Result<RequiredLists, SharedError> {
@@ -1681,10 +1712,18 @@ pub(crate) fn required_lists(
         Some(data) => decode_components_list(component_id, data),
         None => Ok(Vec::new()),
     };
-    Ok(RequiredLists {
+    let lists = RequiredLists {
         safe_aad: required(SAFE_AAD)?,
         app_components: required(APP_COMPONENTS)?,
-    })
+    };
+    let unlisted = dictionary
+        .into_iter()
+        .flat_map(|dictionary| dictionary.entries().map(ComponentData::id))
+        .find(|id| ![APP_COMPONENTS, SAFE_AAD].contains(id) && !lists.app_components.contains(id));
+    match unlisted {
+        Some(component_id) => Err(SharedError::ComponentNotListed(component_id)),
+        None => Ok(lists),
+    }
 }
 
 /// Checks every leaf of `group`'s tree against `required`, except the

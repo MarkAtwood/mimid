@@ -132,6 +132,7 @@ async fn create_room(hub: &Hub) {
         ],
     };
     let components = [
+        (APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec()),
         // The hub requires frank_aad as a Safe AAD component (bead
         // mimid-1wgh.6.74).
         (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
