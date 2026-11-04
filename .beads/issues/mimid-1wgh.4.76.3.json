@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.76.3",
+  "title": "Decision: mimi-mls has its own strict MediaTypeList decoder",
+  "description": "Chosen by Mark 2026-11-04. mls-extensions-11 §5.1 needs a MediaTypeList decoder in mimi-mls for content_media_types updates; the crate map forbids mimi-mls depending on mimi-room-policy, so mimi-mls gets its own small strict decoder (crate map unchanged).",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-04T17:49:13.457556355Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-04T17:49:15.282022372Z",
+  "closed_at": "2026-11-04T17:49:15.282022372Z",
+  "close_reason": "Chosen by Mark 2026-11-04",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.76.3",
+      "depends_on_id": "mimid-1wgh.4.76",
+      "type": "parent-child",
+      "created_at": "2026-11-04T17:49:13.503018829Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

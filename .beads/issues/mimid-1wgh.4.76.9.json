@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.4.76.9",
+  "title": "F: document provisional codepoints",
+  "description": "Per .4.78: mark mls-extensions '(suggested)' extension types 0x0006-0x0008 and proposal types 0x0008-0x000a, and protocol-07 0x0020-0x0023 (registry not yet created), as provisional where mimid defines or relies on them.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-04T17:49:14.600535602Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-04T17:49:14.600535602Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.76.9",
+      "depends_on_id": "mimid-1wgh.4.76",
+      "type": "parent-child",
+      "created_at": "2026-11-04T17:49:14.654447751Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.4.76.9",
+      "depends_on_id": "mimid-1wgh.4.76.8",
+      "type": "blocks",
+      "created_at": "2026-11-04T17:49:20.247191652Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.77",
+  "title": "ratchet-tree-options-02: full -01 to -02 audit (mls_partial_group_info wire format 0x0010)",
+  "description": "mimid moved to rto-02 by citations (f477a3b) and one fix (a0cbee0) only; no full diff audit. -02 §6.1 registers MLS wire format mls_partial_group_info (0x0010 suggested, from Mark's issue #2); mimid has no reference to it. Audit -01 to -02 (112 changed lines) against mimi-mls wire/ratchet_tree_options.rs, observer/member, mimi-protocol GroupInfoOption; decide whether mimid emits/accepts the new wire format.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-04T17:22:45.702180999Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-04T17:24:47.827605089Z",
+  "closed_at": "2026-11-04T17:24:47.827605089Z",
+  "close_reason": "Audit: mimid conforms to every normative -01 to -02 change; no code or fixture change. httpsUrl rename (wire unchanged); optional\u003cNode\u003e already decoded (decision .4.29); PartialGroupInfo-with-ratchet_tree rejected (decision .4.30, now stated by -02); signature covers only included extensions (observer.rs); ratchet_tree last (a0cbee0). mls_partial_group_info 0x0010 is registered but never used in the -02 body; MIMI-07 §5.3 carries PartialGroupInfo bare in GroupInfoOption (verified), so mimid neither emits nor accepts 0x0010. Open WG questions already tracked in .37.91.1 (#7, #9, #10, PR #8).",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.77",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-11-04T17:22:45.73488236Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

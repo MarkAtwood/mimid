@@ -402,22 +402,27 @@ where
     // (decision mimid-krmn.12). Support for app_components (0x0001) and safe_aad
     // (0x0002) is implied, so they are not listed: mls-extensions editor's
     // copy (PR #110); decision mimid-krmn.6.
+    //
+    // mls-extensions-11 §5.2: one GREASE id per leaf. A GREASE dictionary
+    // entry must be listed in app_components (§5), and a Safe AAD component
+    // is listed in both app_components and safe_aad.
+    let grease = random_component_grease(rand)?;
     let mut implemented = built_in_components();
     implemented.extend_from_slice(extra_components);
-    implemented.push(random_component_grease(rand)?);
+    implemented.push(grease);
     let app_components = ComponentsList::new(implemented)
         .tls_serialize_detached()
         .map_err(|e| Error::Encode(e.into()))?;
     // mls-extensions-10 §5: the supported Safe AAD components, plus GREASE
     // (decisions mimid-1wgh.4.45, mimid-1wgh.4.52).
-    let safe_aad = ComponentsList::new(vec![FRANK_AAD, random_component_grease(rand)?])
+    let safe_aad = ComponentsList::new(vec![FRANK_AAD, grease])
         .tls_serialize_detached()
         .map_err(|e| Error::Encode(e.into()))?;
     let mut leaf_dictionary = AppDataDictionary::new();
     leaf_dictionary.insert(APP_COMPONENTS, app_components);
     leaf_dictionary.insert(SAFE_AAD, safe_aad);
-    // mls-extensions-10 §5.1: GREASE components in the dictionary.
-    leaf_dictionary.insert(random_component_grease(rand)?, Vec::new());
+    // mls-extensions-11 §5.2: the GREASE component in the dictionary.
+    leaf_dictionary.insert(grease, Vec::new());
     Extensions::single(Extension::AppDataDictionary(
         AppDataDictionaryExtension::new(leaf_dictionary),
     ))

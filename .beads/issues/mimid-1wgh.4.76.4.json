@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.4.76.4",
+  "title": "A: one GREASE id across app_components, safe_aad and dictionary (-11 §5.2)",
+  "description": "identity.rs leaf_extensions draws three independent random GREASE component ids (app_components ~:405, safe_aad ~:411, dictionary ~:420). mls-extensions-11 §5 (L966-973) and §5.2 (L1072-1075): a dictionary entry must be listed in the leaf's app_components, so a GREASE dictionary entry must be too; ~7/8 of mimid leaves are invalid to an -11 peer. Use one GREASE id. Regression test first.",
+  "status": "closed",
+  "priority": 0,
+  "issue_type": "bug",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-04T17:49:13.629274453Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-04T17:57:42.699732554Z",
+  "started_at": "2026-11-04T17:49:20.336561991Z",
+  "closed_at": "2026-11-04T17:57:42.699732554Z",
+  "close_reason": "identity.rs leaf_extensions uses one GREASE id for app_components, safe_aad and the dictionary entry (mls-extensions-11 §5, §5.2). Test leaf_dictionary_entries_are_listed_in_app_components (64 identities, mls-rs decode, independent strict parser) failed first (dictionary entry 0x2a2a not in app_components); two existing tests tightened to require equal ids. No fixture changes. Gates pass in worktree; applied to main.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.76.4",
+      "depends_on_id": "mimid-1wgh.4.76",
+      "type": "parent-child",
+      "created_at": "2026-11-04T17:49:13.678137404Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

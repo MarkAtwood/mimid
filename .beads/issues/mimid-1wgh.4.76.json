@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.4.76",
+  "title": "mls-extensions-11 published: audit -10 to -11 diff and retarget",
+  "description": "draft-ietf-mls-extensions-11 published 2026-11-02 (seen in mls list mail). Per lang-and-spec-target, -11 is now the target. Fetch it into ~/PROJECT/IETF/specs, diff against -10, audit mimi-mls (components, AppDataUpdate/§4.7, Safe AAD, last_resort, app_components rules from #110 / krmn decisions) and the OpenMLS fork (extensions-draft feature tracks which revision?), then retarget citations and the AGENTS.md/README tables. Same shape as mimid-1wgh.5.76.",
+  "notes": "2026-11-04 list read: -11 likely includes mls-extensions PR #112 (Kohbrok): app_data_dictionary kept out of GroupContextExtensions proposals, closing #104 (conditional GCE protection, undefined fallback interaction). Directly affects mimid's AppDataUpdate/GCE handling (krmn, .4.74, fork commits 476620d5f/1f3f1b4bf). Also check Rohan's codepoint-coordination gist (mls list, Nov 1) against mimid's component IDs.",
+  "status": "in_progress",
+  "priority": 1,
+  "issue_type": "task",
+  "assignee": "agent",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-04T16:56:40.145372165Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-04T17:22:45.625595562Z",
+  "started_at": "2026-11-04T17:22:45.625595562Z",
+  "lease_expires_at": "2026-11-04T17:27:45.625595562Z",
+  "heartbeat_at": "2026-11-04T17:22:45.625595562Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.76",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-11-04T16:56:40.193849488Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}

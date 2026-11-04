@@ -204,8 +204,10 @@ fn check_common(kind: KeyPackageKind) -> (KeyPackage, mls_rs::group::Member) {
 /// 0x0029, and a GREASE id (decision mimid-krmn.12); a safe_aad entry
 /// listing the supported Safe AAD components, frank_aad (protocol-07
 /// §5.4.1, decision mimid-1wgh.4.52), and a GREASE id (decision
-/// mimid-1wgh.4.45); and one GREASE component with empty data. Every GREASE
-/// id is from the §7.5 set.
+/// mimid-1wgh.4.45); and one GREASE component with empty data. The three
+/// GREASE ids are one id from the §7.5 set: mls-extensions-11 §5.2 requires
+/// a GREASE dictionary entry to be listed in app_components, and §5 a Safe
+/// AAD component to be listed in both lists.
 fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
     let data = leaf_extensions
         .get(APP_DATA_DICTIONARY)
@@ -218,12 +220,11 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
     let listed_grease = u16::from_be_bytes([data[27], data[28]]);
     let safe_aad_grease = u16::from_be_bytes([data[35], data[36]]);
     let component_grease = u16::from_be_bytes([data[37], data[38]]);
-    for grease in [listed_grease, safe_aad_grease, component_grease] {
-        assert!(is_component_grease(grease), "{grease:#06x}");
-    }
-    let [lg_hi, lg_lo] = listed_grease.to_be_bytes();
-    let [sg_hi, sg_lo] = safe_aad_grease.to_be_bytes();
-    let [cg_hi, cg_lo] = component_grease.to_be_bytes();
+    assert!(is_component_grease(listed_grease), "{listed_grease:#06x}");
+    // mls-extensions-11 §5.2: one GREASE id across all three places.
+    assert_eq!(safe_aad_grease, listed_grease, "safe_aad GREASE");
+    assert_eq!(component_grease, listed_grease, "dictionary GREASE");
+    let [g_hi, g_lo] = listed_grease.to_be_bytes();
     let expected = [
         0x27, // component_data<V>: 39 bytes follow
         0x00, 0x01, // ComponentData.component_id = app_components
@@ -240,16 +241,104 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
         0x00, 0x27, //   ComponentID = base_room_policy
         0x00, 0x28, //   ComponentID = status_notification_policy
         0x00, 0x29, //   ComponentID = join_link_policy
-        lg_hi, lg_lo, //   ComponentID = GREASE
+        g_hi, g_lo, //   ComponentID = GREASE
         0x00, 0x02, // ComponentData.component_id = safe_aad
         0x05, // ComponentData.data<V>: 5 bytes (a ComponentsList)
         0x04, //   ComponentsList.component_ids<V>: 4 bytes
         0x00, 0x20, //   ComponentID = frank_aad
-        sg_hi, sg_lo, //   ComponentID = GREASE
-        cg_hi, cg_lo, // ComponentData.component_id = GREASE
-        0x00,  // ComponentData.data<V>: empty
+        g_hi, g_lo, //   ComponentID = GREASE
+        g_hi, g_lo, // ComponentData.component_id = GREASE
+        0x00, // ComponentData.data<V>: empty
     ];
     assert_eq!(data, expected);
+}
+
+/// RFC 9420 §2.1.2: reads a variable-size vector from the front of `input`,
+/// rejecting non-minimal length encodings, and returns its body and the rest.
+fn read_vector(input: &[u8]) -> (&[u8], &[u8]) {
+    let first = *input.first().expect("vector length");
+    let (len, header) = match first >> 6 {
+        0 => (usize::from(first & 0x3f), 1),
+        1 => {
+            let len = usize::from(u16::from_be_bytes([first & 0x3f, input[1]]));
+            assert!(len >= 64, "non-minimal 2-byte length");
+            (len, 2)
+        }
+        2 => {
+            let len = u32::from_be_bytes([first & 0x3f, input[1], input[2], input[3]]);
+            assert!(len >= 16384, "non-minimal 4-byte length");
+            (usize::try_from(len).expect("len fits"), 4)
+        }
+        _ => panic!("invalid varint prefix"),
+    };
+    let rest = &input[header..];
+    assert!(rest.len() >= len, "vector overruns its container");
+    rest.split_at(len)
+}
+
+/// mls-extensions-11 §4.6: a ComponentsList's component ids.
+fn components_list(data: &[u8]) -> Vec<u16> {
+    let (ids, rest) = read_vector(data);
+    assert!(rest.is_empty(), "trailing bytes after ComponentsList");
+    let (pairs, odd) = ids.as_chunks::<2>();
+    assert!(odd.is_empty(), "odd ComponentsList length");
+    pairs.iter().map(|id| u16::from_be_bytes(*id)).collect()
+}
+
+/// mls-extensions-11 §4.6: an AppDataDictionary's (component_id, data) entries.
+fn dictionary_entries(data: &[u8]) -> Vec<(u16, &[u8])> {
+    let (mut body, rest) = read_vector(data);
+    assert!(rest.is_empty(), "trailing bytes after AppDataDictionary");
+    let mut entries = Vec::new();
+    while !body.is_empty() {
+        let id = u16::from_be_bytes([body[0], body[1]]);
+        let (entry, rest) = read_vector(&body[2..]);
+        entries.push((id, entry));
+        body = rest;
+    }
+    entries
+}
+
+/// mls-extensions-11 §5 and §5.2: every app_data_dictionary entry of a
+/// LeafNode other than app_components and safe_aad is listed in its
+/// app_components, GREASE included, and a Safe AAD component is listed in
+/// both app_components and safe_aad. Each identity draws fresh GREASE, so
+/// 64 of them catch independent draws (each pair agrees with chance 1/8).
+#[test]
+fn leaf_dictionary_entries_are_listed_in_app_components() {
+    for _ in 0..64 {
+        let (message, _parsed) = decode(&generate(KeyPackageKind::OneTime));
+        let member = add_to_mls_rs_group(message);
+        let data = member
+            .extensions
+            .get(APP_DATA_DICTIONARY)
+            .expect("LeafNode app_data_dictionary")
+            .extension_data;
+        let entries = dictionary_entries(&data);
+        let app_components = entries
+            .iter()
+            .find(|(id, _)| *id == 0x0001)
+            .map(|(_, list)| components_list(list))
+            .expect("app_components entry");
+        for (id, list) in &entries {
+            match id {
+                0x0001 => {}
+                0x0002 => {
+                    for safe_aad in components_list(list) {
+                        assert!(
+                            app_components.contains(&safe_aad),
+                            "safe_aad lists {safe_aad:#06x}, app_components does not: \
+                             {app_components:04x?}"
+                        );
+                    }
+                }
+                other => assert!(
+                    app_components.contains(other),
+                    "dictionary entry {other:#06x} not in app_components {app_components:04x?}"
+                ),
+            }
+        }
+    }
 }
 
 #[test]
@@ -321,12 +410,11 @@ fn declared_extra_components_are_listed_in_the_leaf() {
     let listed_grease = u16::from_be_bytes([data[31], data[32]]);
     let safe_aad_grease = u16::from_be_bytes([data[39], data[40]]);
     let component_grease = u16::from_be_bytes([data[41], data[42]]);
-    for grease in [listed_grease, safe_aad_grease, component_grease] {
-        assert!(is_component_grease(grease), "{grease:#06x}");
-    }
-    let [lg_hi, lg_lo] = listed_grease.to_be_bytes();
-    let [sg_hi, sg_lo] = safe_aad_grease.to_be_bytes();
-    let [cg_hi, cg_lo] = component_grease.to_be_bytes();
+    assert!(is_component_grease(listed_grease), "{listed_grease:#06x}");
+    // mls-extensions-11 §5.2: one GREASE id across all three places.
+    assert_eq!(safe_aad_grease, listed_grease, "safe_aad GREASE");
+    assert_eq!(component_grease, listed_grease, "dictionary GREASE");
+    let [g_hi, g_lo] = listed_grease.to_be_bytes();
     let expected = [
         0x2b, // component_data<V>: 43 bytes follow
         0x00, 0x01, // ComponentData.component_id = app_components
@@ -345,14 +433,14 @@ fn declared_extra_components_are_listed_in_the_leaf() {
         0x00, 0x29, //   ComponentID = join_link_policy
         0x01, 0x00, //   ComponentID = declared extra 0x0100
         0x80, 0x01, //   ComponentID = declared extra 0x8001
-        lg_hi, lg_lo, //   ComponentID = GREASE
+        g_hi, g_lo, //   ComponentID = GREASE
         0x00, 0x02, // ComponentData.component_id = safe_aad
         0x05, // ComponentData.data<V>: 5 bytes (a ComponentsList)
         0x04, //   ComponentsList.component_ids<V>: 4 bytes
         0x00, 0x20, //   ComponentID = frank_aad
-        sg_hi, sg_lo, //   ComponentID = GREASE
-        cg_hi, cg_lo, // ComponentData.component_id = GREASE
-        0x00,  // ComponentData.data<V>: empty
+        g_hi, g_lo, //   ComponentID = GREASE
+        g_hi, g_lo, // ComponentData.component_id = GREASE
+        0x00, // ComponentData.data<V>: empty
     ];
     assert_eq!(data, expected);
 }

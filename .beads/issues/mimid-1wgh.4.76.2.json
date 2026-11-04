@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.4.76.2",
+  "title": "Decision: hub accepts -11 §5.1 updates to app_components, safe_aad, content_media_types; checks frank_aad before merge",
+  "description": "Chosen by Mark 2026-11-04 (alternative 'keep refusing as room policy' rejected). mls-extensions-11 §5.1 makes AppDataUpdate the way to change app_components (0x0001), safe_aad (0x0002) and content_media_types (0x0003). The hub accepts such updates instead of refusing them as UnknownComponent, and before merging checks the resulting GroupContext still satisfies decision mimid-1wgh.6.74's requirement (frank_aad 0x0020 required in safe_aad, etc.), refusing the Commit otherwise. Revises .6.74's invariant 'no Commit can change safe_aad' to 'no Commit can leave the room without the required Safe AAD'.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-04T17:49:13.27954479Z",
+  "created_by": "agent",
+  "updated_at": "2026-11-04T17:49:15.079817705Z",
+  "closed_at": "2026-11-04T17:49:15.079817705Z",
+  "close_reason": "Chosen by Mark 2026-11-04",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.76.2",
+      "depends_on_id": "mimid-1wgh.4.76",
+      "type": "parent-child",
+      "created_at": "2026-11-04T17:49:13.327384368Z",
+      "created_by": "agent",
+      "metadata": "{}"
+    }
+  ]
+}
