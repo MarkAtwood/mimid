@@ -8,5 +8,6 @@ publish = false
 [workspace]
 
 [dependencies]
-mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "2c14e6206cb114eed4795c1cab45dadbe7d37b0b" }
-openmls = "0.8.1"
+mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "07ce96f1f56f8143d584114665fb98c21ea0691a" }
+# The OpenMLS revision Haven pins at that commit.
+openmls = { git = "https://github.com/openmls/openmls", rev = "28369d5b48608bef4ddf8371d91503b0f3852bb3" }

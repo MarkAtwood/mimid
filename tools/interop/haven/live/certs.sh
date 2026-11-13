@@ -11,4 +11,8 @@ leaf() { # name CN SAN
 }
 leaf hub localhost "DNS:localhost,IP:127.0.0.1"
 leaf proxy haven.localhost "DNS:haven.localhost"
-leaf client mimid-harness-proxy "DNS:mimid-harness-proxy"
+# The client certificate names mimid's provider domain (b.example in the
+# driver): mimi-hubd 07ce96f refuses a From header the certificate does not
+# carry (protocol-07 §4.1, Haven DIV-16) and takes /notify only from the
+# room's hub (§5.5). Bead mimid-1wgh.46.6.
+leaf client mimid-harness-proxy "DNS:b.example"
