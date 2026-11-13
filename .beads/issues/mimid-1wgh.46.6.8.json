@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.6.8",
+  "title": "haven: /notify dedup keys on the body hash alone, not on the sending hub",
+  "description": "Found on the public B4 run (2026-11-13) against our Haven (haven.reviewcommit.com, 07ce96f), which keeps state between runs. Run 2 sent the same FanoutMessage bytes as run 1 to a different mimid room (notify1t20261113203944 vs notify1t20261113203926); the hub's notify_seen count stayed 1 after both runs (CHECK 5), so run 2's first /notify was dropped as a duplicate (201 either way, as §5.5 requires). protocol-07 §5.5 L2113-2119: a duplicate is 'a request from the same hub server with the same request body'; the NOTE L2121-2124 says followers 'track which request bodies they have received from which hub servers'. mimi-hubd store.rs notify_seen (L308-318) hashes only the body, so the same body from two different hubs is also treated as a duplicate and the second is never processed. Impact: minimal in practice (real FanoutMessages carry distinct MLS messages; the driver reuses a fixed test PrivateMessage); invisible on the wire. For Haven: key the hash on (source hub, body) (fix) or say so in DIVERGENCES.md. Low priority; mention only if convenient. mimid side: none (driver could vary the body per run, not needed).",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-13T20:41:22.584754368Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-13T20:41:22.584754368Z",
+  "labels": [
+    "upstream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.6.8",
+      "depends_on_id": "mimid-1wgh.46.6",
+      "type": "parent-child",
+      "created_at": "2026-11-13T20:41:22.61156222Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
