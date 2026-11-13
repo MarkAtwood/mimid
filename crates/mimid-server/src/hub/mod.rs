@@ -201,7 +201,11 @@ impl Hub {
             let room = rebuild(&snapshot, &pending)?;
             rooms.insert(snapshot.room_id, room);
         }
-        tracing::info!(rooms = rooms.len(), "hub rooms rebuilt");
+        tracing::info!(
+            name: "hub_rooms_rebuilt",
+            rooms = rooms.len(),
+            "hub rooms rebuilt"
+        );
         Ok(Self {
             domain,
             store,
@@ -353,7 +357,12 @@ impl Hub {
             created_at: self.clock.now_ms(),
         };
         self.store.insert_room(&snapshot).await?;
-        tracing::info!(room_id, epoch = snapshot.epoch, "room created");
+        tracing::info!(
+            name: "room_created",
+            room_id,
+            epoch = snapshot.epoch,
+            "room created"
+        );
         rooms.insert(
             snapshot.room_id,
             Room {

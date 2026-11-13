@@ -301,7 +301,9 @@ fn check_identity(user: &LocalUser, field: &'static str, claimed: &[u8]) -> Resu
     if claimed == user.as_str().as_bytes() {
         Ok(())
     } else {
-        tracing::warn!(
+        // A correct refusal of the user's input: DEBUG (it was WARN before
+        // bead mimid-bfzm).
+        tracing::debug!(
             user = user.as_str(),
             field,
             "relay refused: request claims another identity"

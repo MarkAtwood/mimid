@@ -108,7 +108,13 @@ pub(super) fn member_domains(observer: &Observer) -> BTreeSet<String> {
             Some(domain) => {
                 domains.insert(domain.as_str().to_owned());
             }
-            None => tracing::warn!(leaf_index, "member identity names no domain; not delivered"),
+            None => {
+                tracing::warn!(
+                    name: "member_domain_missing",
+                    leaf_index,
+                    "member identity names no domain; not delivered"
+                )
+            }
         }
     }
     domains

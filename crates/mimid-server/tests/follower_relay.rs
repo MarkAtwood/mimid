@@ -47,7 +47,7 @@ use mimid_server::directory::directory;
 use mimid_server::follower::relay::{LocalUser, Relay, RelayError};
 use mimid_server::http::{MAX_BODY_LEN, router};
 use mimid_server::hub::Hub;
-use mimid_server::peer::{PeerClient, PeerError};
+use mimid_server::peer::{ErrorResponse, PeerClient, PeerError};
 use relay::MockHub;
 use tempfile::TempDir;
 
@@ -484,6 +484,44 @@ async fn bad_hub_responses_are_typed_errors() {
             RelayError::Peer(PeerError::Rejected { status: 503, .. })
         ),
         "{error:?}"
+    );
+}
+
+/// A hub's refusal with a `4xx` keeps its evidence in the error: the
+/// whole body as the preview, its length, and the body decoded as the
+/// endpoint's response, with `errorDescription` for an update (bead
+/// mimid-bfzm).
+#[tokio::test]
+async fn hub_4xx_keeps_its_decoded_response() {
+    // UpdateRoomResponse notAllowed (protocol-07 §5.3), hand-encoded:
+    // responseCode 2, then errorDescription of 20 bytes.
+    let reply = [&[0x02, 0x14][..], b"policy refuses this!"].concat();
+    let mock = MockHub::start(400, reply.clone()).await;
+    let (_dir, relay) = relay_to(&mock).await;
+    let (update, _) = bob_requests();
+    let error = relay
+        .relay_update(&bob(), MOCK_ROOM, &update)
+        .await
+        .unwrap_err();
+    let RelayError::Peer(PeerError::Rejected {
+        status: 400,
+        response,
+        ..
+    }) = &error
+    else {
+        panic!("a 400 rejection: {error:?}");
+    };
+    assert_eq!(response.len, Some(reply.len()));
+    assert_eq!(response.preview, reply);
+    let decoded = response.decoded.as_ref().expect("an UpdateRoomResponse");
+    assert!(matches!(decoded, ErrorResponse::Update(_)), "{decoded:?}");
+    assert_eq!(decoded.response_code(), "notAllowed");
+    assert_eq!(decoded.error_description(), Some("policy refuses this!"));
+    assert_eq!(error.to_string(), "peer hub request failed");
+    assert_eq!(
+        std::error::Error::source(&error).unwrap().to_string(),
+        "peer answered 400",
+        "Display shows no body"
     );
 }
 

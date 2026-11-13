@@ -1304,6 +1304,25 @@ async fn three_providers_end_to_end() {
     ] {
         assert!(text.contains(line), "the capture holds {line:?}");
     }
+    // The request and peer-call spans and a rejected body's preview are
+    // in the capture, so the secret checks below cover them too; a
+    // preview is logged at DEBUG only (bead mimid-bfzm).
+    for needle in [
+        "http_request{",
+        r#"route="/v1/notify/{roomId}""#,
+        "protocol_request{",
+        "peer_call{",
+        "peer call completed",
+        "response_preview=",
+    ] {
+        assert!(text.contains(needle), "the capture holds {needle:?}");
+    }
+    for line in text
+        .lines()
+        .filter(|line| line.contains("response_preview"))
+    {
+        assert!(line.contains(" DEBUG "), "preview above DEBUG: {line}");
+    }
     for (provider, secret) in [
         ("a", a.stack().store.hub_secret().await.unwrap().unwrap()),
         ("b", b_secret),

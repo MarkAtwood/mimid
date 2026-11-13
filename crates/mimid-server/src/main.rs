@@ -8,7 +8,15 @@
 //! peers and, for this provider's own domain, to the follower in-process.
 //!
 //! Usage: `mimid <config.toml>`. See `mimid_server::config` for the file
-//! format. Log filtering follows `RUST_LOG` and defaults to `info`.
+//! format.
+//!
+//! Environment:
+//!
+//! - `RUST_LOG` filters the log and defaults to `info`.
+//! - `MIMID_LOG_FORMAT` selects the log format on standard output: `text`
+//!   (the default, also when unset or empty) or `json`, one JSON object per
+//!   line with each INFO, WARN and ERROR event's stable name. Any other
+//!   value stops `mimid` at startup. See [`mimid_server::logging`].
 //!
 //! # Limitations
 //!
@@ -49,15 +57,19 @@ use mimid_server::http::router;
 use mimid_server::hub::fanout::Fanout;
 use mimid_server::hub::{Clock, Hub, SystemClock};
 use mimid_server::jmap::{self, JmapOptions};
+use mimid_server::logging::{LogFormat, json_subscriber};
 use mimid_server::peer::PeerClient;
 use mimid_server::store::Store;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .init();
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    match LogFormat::from_env()? {
+        LogFormat::Json => json_subscriber(filter, std::io::stdout).init(),
+        _ => tracing_subscriber::fmt().with_env_filter(filter).init(),
+    }
 
     let mut args = std::env::args_os().skip(1);
     let (Some(config_path), None) = (args.next().map(PathBuf::from), args.next()) else {
@@ -124,6 +136,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding {}", config.listen))?;
     tracing::info!(
+        name: "server_listening",
         domain = %config.domain,
         listen = %config.listen,
         base_url = %config.base_url,
@@ -137,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
         .context("serving HTTP")?;
 
     store.close().await;
-    tracing::info!("mimid stopped");
+    tracing::info!(name: "server_stopped", "mimid stopped");
     Ok(())
 }
 
@@ -146,9 +159,16 @@ async fn main() -> anyhow::Result<()> {
 /// running rather than exiting at once.
 async fn shutdown_signal() {
     match tokio::signal::ctrl_c().await {
-        Ok(()) => tracing::info!("ctrl-c received, shutting down"),
+        Ok(()) => tracing::info!(
+            name: "shutdown_requested",
+            "ctrl-c received, shutting down"
+        ),
         Err(error) => {
-            tracing::error!(%error, "cannot listen for ctrl-c; graceful shutdown disabled");
+            tracing::error!(
+                name: "shutdown_signal_unavailable",
+                error = &error as &dyn std::error::Error,
+                "cannot listen for ctrl-c; graceful shutdown disabled"
+            );
             std::future::pending::<()>().await;
         }
     }

@@ -89,7 +89,11 @@ impl ChangeBus {
                 match announcements.recv().await {
                     Ok((room_id, seq)) => bus.publish(Change::RoomEvent { room_id, seq }),
                     Err(RecvError::Lagged(missed)) => {
-                        tracing::warn!(missed, "change bus lagged behind the follower");
+                        tracing::warn!(
+                            name: "change_bus_lagged",
+                            missed,
+                            "change bus lagged behind the follower"
+                        );
                         bus.publish(Change::Lagged);
                     }
                     Err(RecvError::Closed) => break,
@@ -114,7 +118,11 @@ impl ChangeBus {
                         bus.publish(Change::Membership { room_id, user_uri })
                     }
                     Err(RecvError::Lagged(missed)) => {
-                        tracing::warn!(missed, "change bus lagged behind follower memberships");
+                        tracing::warn!(
+                            name: "change_bus_membership_lagged",
+                            missed,
+                            "change bus lagged behind follower memberships"
+                        );
                         bus.publish(Change::Lagged);
                     }
                     Err(RecvError::Closed) => break,

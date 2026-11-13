@@ -21,12 +21,31 @@
 //!   internal network. Peers are configured by the operator (decision
 //!   mimid-1wgh.17), so only list peers you trust with this.
 //! - Redirects are not followed; a redirect counts as a failed request.
+//! - A rejection's body ([`RejectedResponse`]) is decoded only for the five
+//!   endpoints whose protocol-07 response carries a result code.
+//!
+//! # Logging
+//!
+//! Each public request method runs in a `peer_call` span at DEBUG with the
+//! fields `peer` and `endpoint`, and `room_id` or `target_user` where the
+//! endpoint's path takes one.
+//! Each request that gets a response emits one DEBUG event, `peer call
+//! completed`, with `status`, `elapsed_ms`, `request_len` and, when known,
+//! `response_len`; for a rejection it adds `response_preview`, the start of
+//! the body with bytes outside printable ASCII escaped. The client never
+//! logs above DEBUG: it returns every failure, and the caller logs it.
 
 use std::collections::BTreeMap;
+use std::error::Error as StdError;
 use std::sync::{Mutex, PoisonError};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
-use mimi_protocol::{Directory, UriTemplate};
+use mimi_mls::tls_codec::Deserialize;
+use mimi_protocol::{
+    Directory, GroupInfoCode, GroupInfoResponse, IdentifierQueryCode, IdentifierResponse,
+    KeyMaterialResponse, KeyMaterialUserCode, SubmitMessageResponse, SubmitResponseCode,
+    UpdateResponseCode, UpdateRoomResponse, UriTemplate,
+};
 use reqwest::header::{CONTENT_TYPE, FROM, HOST, HeaderMap, HeaderValue, RETRY_AFTER};
 use reqwest::{StatusCode, redirect};
 
@@ -44,6 +63,16 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long connecting to a peer may take. INVENTED, NOT FROM SPEC.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The most bytes of a rejected response's body kept in
+/// [`RejectedResponse::preview`]. INVENTED, NOT FROM SPEC (bead
+/// mimid-bfzm).
+pub const MAX_PREVIEW_LEN: usize = 4 * 1024;
+
+/// The most bytes of a decoded `errorDescription` that
+/// [`RejectionFields`] passes to a log event. INVENTED, NOT FROM SPEC
+/// (bead mimid-bfzm).
+const MAX_LOGGED_DESCRIPTION_LEN: usize = 256;
 
 /// A protocol-07 §5.1 directory endpoint that [`PeerClient`] posts to.
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +127,30 @@ impl Endpoint {
             Self::RequestConsent => "targetDomain",
             Self::UpdateConsent => "requesterDomain",
             Self::IdentifierQuery => "domain",
+        }
+    }
+
+    /// `body` decoded as the endpoint's protocol-07 response, or `None` if
+    /// the endpoint's response carries no result code or `body` does not
+    /// decode as one.
+    fn decode_response(self, body: &[u8]) -> Option<ErrorResponse> {
+        match self {
+            Self::Update => UpdateRoomResponse::tls_deserialize_exact(body)
+                .ok()
+                .map(ErrorResponse::Update),
+            Self::SubmitMessage => SubmitMessageResponse::tls_deserialize_exact(body)
+                .ok()
+                .map(ErrorResponse::SubmitMessage),
+            Self::KeyMaterial => KeyMaterialResponse::tls_deserialize_exact(body)
+                .ok()
+                .map(|response| ErrorResponse::KeyMaterial(Box::new(response))),
+            Self::GroupInfo => GroupInfoResponse::tls_deserialize_exact(body)
+                .ok()
+                .map(|response| ErrorResponse::GroupInfo(Box::new(response))),
+            Self::IdentifierQuery => IdentifierResponse::tls_deserialize_exact(body)
+                .ok()
+                .map(|response| ErrorResponse::IdentifierQuery(Box::new(response))),
+            Self::Notify | Self::RequestConsent | Self::UpdateConsent | Self::ReportAbuse => None,
         }
     }
 
@@ -180,6 +233,16 @@ impl PeerClient {
     /// [`PeerError::Url`] if the `notify` template cannot be expanded with `room_id`,
     /// [`PeerError::Http`] if the request fails, and [`PeerError::Rejected`]
     /// for any status other than `201`.
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(
+            peer = %domain,
+            endpoint = "notify",
+            room_id = room_id,
+        )
+    )]
     pub async fn notify(
         &self,
         domain: &Domain,
@@ -187,9 +250,16 @@ impl PeerClient {
         body: Vec<u8>,
     ) -> Result<(), PeerError> {
         // protocol-07 §5.5; decision mimid-1wgh.5.15
-        self.post(domain, Endpoint::Notify, room_id, body, StatusCode::CREATED)
-            .await
-            .map(drop)
+        self.post(
+            domain,
+            Endpoint::Notify,
+            room_id,
+            body,
+            StatusCode::CREATED,
+            false,
+        )
+        .await
+        .map(drop)
     }
 
     /// protocol-07 §5.7 `POST /requestConsent/{targetDomain}`: sends `body`,
@@ -202,6 +272,15 @@ impl PeerClient {
     ///
     /// As for [`PeerClient::notify`], with `requestConsent` in place of
     /// `notify` and `202` in place of `201`.
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(
+            peer = %domain,
+            endpoint = "requestConsent",
+        )
+    )]
     pub async fn request_consent(&self, domain: &Domain, body: Vec<u8>) -> Result<(), PeerError> {
         self.post(
             domain,
@@ -210,6 +289,7 @@ impl PeerClient {
             body,
             // protocol-07 §5.7; decision mimid-1wgh.7.42
             StatusCode::ACCEPTED,
+            false,
         )
         .await
         .map(drop)
@@ -225,6 +305,15 @@ impl PeerClient {
     ///
     /// As for [`PeerClient::notify`], with `updateConsent` in place of
     /// `notify` and `202` in place of `201`.
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(
+            peer = %domain,
+            endpoint = "updateConsent",
+        )
+    )]
     pub async fn update_consent(&self, domain: &Domain, body: Vec<u8>) -> Result<(), PeerError> {
         self.post(
             domain,
@@ -233,6 +322,7 @@ impl PeerClient {
             body,
             // protocol-07 §5.7; decision mimid-1wgh.7.42
             StatusCode::ACCEPTED,
+            false,
         )
         .await
         .map(drop)
@@ -248,6 +338,15 @@ impl PeerClient {
     /// # Errors
     ///
     /// As for [`PeerClient::update`], with `domain` in place of the room ID.
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(
+            peer = %domain,
+            endpoint = "identifierQuery",
+        )
+    )]
     pub async fn identifier_query(
         &self,
         domain: &Domain,
@@ -267,6 +366,16 @@ impl PeerClient {
     /// # Errors
     ///
     /// As for [`PeerClient::update`].
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(
+            peer = %domain,
+            endpoint = "reportAbuse",
+            room_id = room_id,
+        )
+    )]
     pub async fn report_abuse(
         &self,
         domain: &Domain,
@@ -286,6 +395,16 @@ impl PeerClient {
     ///
     /// As for [`PeerClient::update`], with `target_user` in place of the
     /// room ID.
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(
+            peer = %domain,
+            endpoint = "keyMaterial",
+            target_user = target_user,
+        )
+    )]
     pub async fn key_material(
         &self,
         domain: &Domain,
@@ -310,6 +429,16 @@ impl PeerClient {
     /// if the request fails, [`PeerError::Rejected`] for any status other
     /// than `200`, and [`PeerError::ResponseTooLarge`] for an oversized
     /// body.
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(
+            peer = %domain,
+            endpoint = "update",
+            room_id = room_id,
+        )
+    )]
     pub async fn update(
         &self,
         domain: &Domain,
@@ -326,6 +455,16 @@ impl PeerClient {
     /// # Errors
     ///
     /// As for [`PeerClient::update`].
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(
+            peer = %domain,
+            endpoint = "submitMessage",
+            room_id = room_id,
+        )
+    )]
     pub async fn submit_message(
         &self,
         domain: &Domain,
@@ -342,6 +481,16 @@ impl PeerClient {
     /// # Errors
     ///
     /// As for [`PeerClient::update`].
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(
+            peer = %domain,
+            endpoint = "groupInfo",
+            room_id = room_id,
+        )
+    )]
     pub async fn group_info(
         &self,
         domain: &Domain,
@@ -353,8 +502,10 @@ impl PeerClient {
     }
 
     /// Posts `body` to `endpoint` of `domain`, with the endpoint's template
-    /// expanded with `value` (decision mimid-1wgh.5.18), and returns the
-    /// response if its status is `expect`.
+    /// expanded with `value` (decision mimid-1wgh.5.18). If the response's
+    /// status is `expect`, returns its body when `read_body` is set (at
+    /// most [`MAX_BODY_LEN`] bytes: the request body cap bounds responses
+    /// too, decision mimid-1wgh.6.67), or nothing without reading it.
     async fn post(
         &self,
         domain: &Domain,
@@ -362,7 +513,8 @@ impl PeerClient {
         value: &str,
         body: Vec<u8>,
         expect: StatusCode,
-    ) -> Result<reqwest::Response, PeerError> {
+        read_body: bool,
+    ) -> Result<Vec<u8>, PeerError> {
         let directory = self.directory(domain).await?;
         let url = endpoint
             .template(&directory)
@@ -374,6 +526,8 @@ impl PeerClient {
                 endpoint: endpoint.name(),
                 source,
             })?;
+        let request_len = body.len();
+        let started = Instant::now();
         let response = self
             .http
             .post(url)
@@ -383,19 +537,42 @@ impl PeerClient {
             .send()
             .await
             .map_err(PeerError::Http)?;
-        if response.status() == expect {
-            Ok(response)
-        } else {
-            Err(PeerError::Rejected {
-                status: response.status().as_u16(),
-                retry_after: retry_after(response.headers()),
-            })
+        let status = response.status();
+        if status != expect {
+            let retry_after = retry_after(response.headers());
+            let rejected = RejectedResponse::new(endpoint, read_rejected(response).await);
+            completed(
+                status,
+                started,
+                request_len,
+                rejected.len,
+                Some(&rejected.preview),
+            );
+            return Err(PeerError::Rejected {
+                status: status.as_u16(),
+                retry_after,
+                response: Box::new(rejected),
+            });
         }
+        if !read_body {
+            let response_len = response
+                .content_length()
+                .and_then(|len| usize::try_from(len).ok());
+            completed(status, started, request_len, response_len, None);
+            return Ok(Vec::new());
+        }
+        let read = read_capped(response, MAX_BODY_LEN).await?;
+        completed(
+            status,
+            started,
+            request_len,
+            read.as_ref().map(Vec::len),
+            None,
+        );
+        read.ok_or(PeerError::ResponseTooLarge)
     }
 
-    /// [`PeerClient::post`] expecting `200`, returning a body of at most
-    /// [`MAX_BODY_LEN`] bytes: the request body cap bounds responses too
-    /// (decision mimid-1wgh.6.67).
+    /// [`PeerClient::post`] expecting `200` and returning the body.
     async fn post_read(
         &self,
         domain: &Domain,
@@ -403,12 +580,8 @@ impl PeerClient {
         value: &str,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, PeerError> {
-        let response = self
-            .post(domain, endpoint, value, body, StatusCode::OK)
-            .await?;
-        read_capped(response, MAX_BODY_LEN)
-            .await?
-            .ok_or(PeerError::ResponseTooLarge)
+        self.post(domain, endpoint, value, body, StatusCode::OK, true)
+            .await
     }
 
     /// The directory of `domain`, from the cache or fetched.
@@ -453,6 +626,42 @@ impl PeerClient {
         self.directories
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Emits the DEBUG event of a request to a peer that got a response with
+/// `status`; `preview` is the start of a rejected response's body.
+fn completed(
+    status: StatusCode,
+    started: Instant,
+    request_len: usize,
+    response_len: Option<usize>,
+    preview: Option<&[u8]>,
+) {
+    let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    tracing::debug!(
+        status = status.as_u16(),
+        elapsed_ms,
+        request_len,
+        response_len,
+        response_preview = preview.map(|bytes| tracing::field::display(bytes.escape_ascii())),
+        "peer call completed"
+    );
+}
+
+/// Reads the whole body of a rejected response, or returns `None` if it
+/// exceeds [`MAX_BODY_LEN`] bytes or cannot be read. The rejection is the
+/// error to report, so a failure to read its body is only logged.
+async fn read_rejected(response: reqwest::Response) -> Option<Vec<u8>> {
+    match read_capped(response, MAX_BODY_LEN).await {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::debug!(
+                error = &error as &dyn StdError,
+                "rejected response body unreadable"
+            );
+            None
+        }
     }
 }
 
@@ -543,19 +752,291 @@ pub enum PeerError {
     ResponseTooLarge,
     /// The peer answered with a status other than the one the request
     /// expects: `201` for `/notify`, `202` for the consent endpoints, `200` for
-    /// every other endpoint.
+    /// every other endpoint. The message shows the status only; the body is
+    /// in `response`.
     #[error("peer answered {status}")]
     Rejected {
         /// The response status code.
         status: u16,
         /// The response's `Retry-After` guidance, if any.
         retry_after: Option<RetryAfter>,
+        /// What the response's body held.
+        response: Box<RejectedResponse>,
     },
+}
+
+/// The body of a response that [`PeerError::Rejected`] reports, kept for
+/// diagnosis (bead mimid-bfzm). Its `Debug` output shows the preview with
+/// bytes outside printable ASCII escaped.
+#[derive(Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RejectedResponse {
+    /// The body's length in bytes, or `None` if it was not read whole: it
+    /// exceeded [`MAX_BODY_LEN`], or reading it failed.
+    pub len: Option<usize>,
+    /// The first at most [`MAX_PREVIEW_LEN`] bytes of the body, as
+    /// received; empty if the body was not read whole.
+    pub preview: Vec<u8>,
+    /// The whole body decoded as the endpoint's protocol-07 response, if
+    /// the endpoint has one with a result code and the body decodes as it.
+    /// Decoding is strict and best-effort: a body that does not decode
+    /// leaves this `None`.
+    pub decoded: Option<ErrorResponse>,
+}
+
+impl RejectedResponse {
+    /// The record of `body`, the whole body of a response from `endpoint`,
+    /// or of an unread body when `body` is `None`.
+    fn new(endpoint: Endpoint, body: Option<Vec<u8>>) -> Self {
+        let Some(mut body) = body else {
+            return Self {
+                len: None,
+                preview: Vec::new(),
+                decoded: None,
+            };
+        };
+        let decoded = endpoint.decode_response(&body);
+        let len = body.len();
+        body.truncate(MAX_PREVIEW_LEN);
+        Self {
+            len: Some(len),
+            preview: body,
+            decoded,
+        }
+    }
+}
+
+/// A [`PeerError::Rejected`] for `/update` with `status` and `body`, for
+/// this crate's unit tests.
+#[cfg(test)]
+pub(crate) fn rejected_update(status: u16, body: Vec<u8>) -> PeerError {
+    PeerError::Rejected {
+        status,
+        retry_after: None,
+        response: Box::new(RejectedResponse::new(Endpoint::Update, Some(body))),
+    }
+}
+
+impl std::fmt::Debug for RejectedResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RejectedResponse")
+            .field("len", &self.len)
+            .field(
+                "preview",
+                &format_args!("\"{}\"", self.preview.escape_ascii()),
+            )
+            .field("decoded", &self.decoded)
+            .finish()
+    }
+}
+
+/// A rejected response's body decoded as the endpoint's protocol-07
+/// response: the evidence of why a peer refused a request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorResponse {
+    /// An `UpdateRoomResponse` (protocol-07 §5.3), from `/update`.
+    Update(UpdateRoomResponse),
+    /// A `SubmitMessageResponse` (protocol-07 §5.4), from `/submitMessage`.
+    SubmitMessage(SubmitMessageResponse),
+    /// A `KeyMaterialResponse` (protocol-07 §5.2), from `/keyMaterial`.
+    KeyMaterial(Box<KeyMaterialResponse>),
+    /// A `GroupInfoResponse` (protocol-07 §5.6), from `/groupInfo`.
+    GroupInfo(Box<GroupInfoResponse>),
+    /// An `IdentifierResponse` (protocol-07 §5.8), from `/identifierQuery`.
+    IdentifierQuery(Box<IdentifierResponse>),
+}
+
+impl ErrorResponse {
+    /// The response's result code by its protocol-07 name, e.g.
+    /// `notAllowed`: `responseCode` for update and identifierQuery,
+    /// `statusCode` for submitMessage, `userStatus` for keyMaterial and
+    /// `status` for groupInfo.
+    pub fn response_code(&self) -> &'static str {
+        match self {
+            Self::Update(response) => match response.result.response_code() {
+                UpdateResponseCode::Success => "success",
+                UpdateResponseCode::WrongEpoch => "wrongEpoch",
+                UpdateResponseCode::NotAllowed => "notAllowed",
+                UpdateResponseCode::InvalidProposal => "invalidProposal",
+            },
+            Self::SubmitMessage(response) => match response.result.status_code() {
+                SubmitResponseCode::Accepted => "accepted",
+                SubmitResponseCode::NotAllowed => "notAllowed",
+                SubmitResponseCode::EpochTooOld => "epochTooOld",
+            },
+            Self::KeyMaterial(response) => match response.user_status {
+                KeyMaterialUserCode::Success => "success",
+                KeyMaterialUserCode::PartialSuccess => "partialSuccess",
+                KeyMaterialUserCode::IncompatibleProtocol => "incompatibleProtocol",
+                KeyMaterialUserCode::NoCompatibleMaterial => "noCompatibleMaterial",
+                KeyMaterialUserCode::UserUnknown => "userUnknown",
+                KeyMaterialUserCode::NoConsent => "noConsent",
+                KeyMaterialUserCode::NoConsentForThisRoom => "noConsentForThisRoom",
+                KeyMaterialUserCode::UserDeleted => "userDeleted",
+            },
+            Self::GroupInfo(response) => match response.status() {
+                GroupInfoCode::Success => "success",
+                GroupInfoCode::NotAuthorized => "notAuthorized",
+                GroupInfoCode::NoSuchRoom => "noSuchRoom",
+            },
+            Self::IdentifierQuery(response) => match response.response_code {
+                IdentifierQueryCode::Success => "success",
+                IdentifierQueryCode::NotFound => "notFound",
+                IdentifierQueryCode::Ambiguous => "ambiguous",
+                IdentifierQueryCode::Forbidden => "forbidden",
+                IdentifierQueryCode::UnsupportedField => "unsupportedField",
+            },
+        }
+    }
+
+    /// The response's `errorDescription`, which only an
+    /// `UpdateRoomResponse` carries.
+    pub fn error_description(&self) -> Option<&str> {
+        match self {
+            Self::Update(response) => Some(response.error_description.as_str()),
+            Self::SubmitMessage(_)
+            | Self::KeyMaterial(_)
+            | Self::GroupInfo(_)
+            | Self::IdentifierQuery(_) => None,
+        }
+    }
+}
+
+/// The structured fields a disposition event records for the first
+/// [`PeerError::Rejected`] in an error's source chain (bead mimid-bfzm).
+/// Every field is `None` when the chain holds no rejection.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct RejectionFields<'a> {
+    /// The response status code.
+    pub status: Option<u16>,
+    /// The response body's length in bytes, if read whole.
+    pub response_len: Option<usize>,
+    /// [`ErrorResponse::response_code`] of the decoded body.
+    pub response_code: Option<&'static str>,
+    /// [`ErrorResponse::error_description`] of the decoded body, cut to at
+    /// most [`MAX_LOGGED_DESCRIPTION_LEN`] bytes at a character boundary.
+    pub error_description: Option<&'a str>,
+}
+
+impl<'a> RejectionFields<'a> {
+    /// The fields of the first [`PeerError::Rejected`] in the source chain
+    /// that starts at `error`.
+    pub(crate) fn of(error: &'a (dyn StdError + 'static)) -> Self {
+        let mut next = Some(error);
+        while let Some(current) = next {
+            if let Some(PeerError::Rejected {
+                status, response, ..
+            }) = current.downcast_ref::<PeerError>()
+            {
+                let decoded = response.decoded.as_ref();
+                return Self {
+                    status: Some(*status),
+                    response_len: response.len,
+                    response_code: decoded.map(ErrorResponse::response_code),
+                    error_description: decoded
+                        .and_then(ErrorResponse::error_description)
+                        .map(|text| truncate(text, MAX_LOGGED_DESCRIPTION_LEN)),
+                };
+            }
+            next = current.source();
+        }
+        Self::default()
+    }
+}
+
+/// The longest prefix of `text` of at most `max` bytes that ends at a
+/// character boundary.
+fn truncate(text: &str, max: usize) -> &str {
+    let mut end = text.len().min(max);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `UpdateRoomResponse` notAllowed (protocol-07 §5.3), hand-encoded:
+    /// responseCode 2, then errorDescription `opaque<V>` with a one-byte
+    /// length (RFC 9420 §2.1.2).
+    fn update_not_allowed(description: &str) -> Vec<u8> {
+        let len = u8::try_from(description.len()).unwrap();
+        assert!(len < 64, "one-byte varint length");
+        [&[0x02, len][..], description.as_bytes()].concat()
+    }
+
+    /// A rejected `/update` body that decodes is kept whole as the preview
+    /// and decoded, with its result code by its protocol-07 name.
+    #[test]
+    fn rejected_update_body_is_kept_and_decoded() {
+        let body = update_not_allowed("epoch closed");
+        let rejected = RejectedResponse::new(Endpoint::Update, Some(body.clone()));
+        assert_eq!(rejected.len, Some(body.len()));
+        assert_eq!(rejected.preview, body);
+        let decoded = rejected.decoded.expect("an UpdateRoomResponse");
+        assert_eq!(decoded.response_code(), "notAllowed");
+        assert_eq!(decoded.error_description(), Some("epoch closed"));
+    }
+
+    /// Decoding is strict: a trailing byte leaves the body undecoded, and
+    /// an endpoint without a result code never decodes, even bytes that
+    /// are another endpoint's valid response.
+    #[test]
+    fn undecodable_or_codeless_bodies_stay_bytes() {
+        let mut trailing = update_not_allowed("x");
+        trailing.push(0x00);
+        let rejected = RejectedResponse::new(Endpoint::Update, Some(trailing.clone()));
+        assert_eq!(rejected.decoded, None);
+        assert_eq!(rejected.preview, trailing);
+        let rejected = RejectedResponse::new(Endpoint::Notify, Some(update_not_allowed("x")));
+        assert_eq!(rejected.decoded, None);
+    }
+
+    /// The preview holds at most [`MAX_PREVIEW_LEN`] bytes, while `len`
+    /// counts the whole body; an unread body has no length or preview.
+    #[test]
+    fn preview_is_bounded_and_len_is_whole() {
+        let body: Vec<u8> = (0..=u8::MAX).cycle().take(MAX_PREVIEW_LEN + 1).collect();
+        let rejected = RejectedResponse::new(Endpoint::Update, Some(body.clone()));
+        assert_eq!(rejected.len, Some(MAX_PREVIEW_LEN + 1));
+        assert_eq!(rejected.preview, body[..MAX_PREVIEW_LEN]);
+        let unread = RejectedResponse::new(Endpoint::Update, None);
+        assert_eq!((unread.len, unread.preview.len()), (None, 0));
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("outer")]
+    struct Outer(#[source] PeerError);
+
+    /// [`RejectionFields::of`] finds a rejection below the top of the
+    /// chain, cuts a long description at a character boundary within
+    /// the bound, and is empty for a chain without a rejection.
+    #[test]
+    fn rejection_fields_walk_the_chain() {
+        let description = "é".repeat(20);
+        let error = Outer(rejected_update(400, update_not_allowed(&description)));
+        let fields = RejectionFields::of(&error);
+        assert_eq!(fields.status, Some(400));
+        assert_eq!(fields.response_code, Some("notAllowed"));
+        assert_eq!(fields.error_description, Some(description.as_str()));
+
+        let long = "é".repeat(200);
+        let mut body = vec![0x02];
+        body.extend_from_slice(&(0x4000_u16 | 400).to_be_bytes()); // 2-byte varint
+        body.extend_from_slice(long.as_bytes());
+        let error = rejected_update(400, body);
+        let cut = RejectionFields::of(&error).error_description.unwrap();
+        assert_eq!(cut, "é".repeat(MAX_LOGGED_DESCRIPTION_LEN / 2));
+
+        let fields = RejectionFields::of(&Outer(PeerError::Header));
+        assert_eq!(
+            (fields.status, fields.response_len, fields.response_code),
+            (None, None, None)
+        );
+    }
 
     fn headers(values: &[&str]) -> HeaderMap {
         let mut headers = HeaderMap::new();

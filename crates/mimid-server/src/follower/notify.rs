@@ -201,7 +201,12 @@ impl Follower {
                 .group_id()
                 .is_some_and(|group_id| Some(group_id) != appended.group_id.as_deref())
         }) {
-            tracing::warn!(room_id, %from, "fanout names an MLS group other than the room's");
+            tracing::warn!(
+                name: "fanout_group_mismatch",
+                room_id,
+                %from,
+                "fanout names an MLS group other than the room's"
+            );
         }
         tracing::debug!(
             room_id,

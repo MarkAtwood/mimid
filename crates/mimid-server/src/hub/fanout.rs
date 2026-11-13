@@ -28,6 +28,7 @@
 //!   visibility.
 
 use std::collections::BTreeSet;
+use std::error::Error;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
@@ -37,7 +38,7 @@ use tokio::task::JoinHandle;
 
 use super::Clock;
 use crate::config::Domain;
-use crate::peer::{PeerClient, PeerError, RetryAfter};
+use crate::peer::{PeerClient, PeerError, RejectionFields, RetryAfter};
 use crate::store::{OutboxRow, Store, StoreError};
 
 /// The delay after a first failed attempt, in milliseconds; each further
@@ -156,7 +157,12 @@ impl<L: LocalDelivery> Fanout<L> {
                     Ok(Some(next)) => Some(next.saturating_sub(self.clock.now_ms())),
                     Ok(None) => None,
                     Err(error) => {
-                        tracing::error!(%error, "fanout pass failed");
+                        tracing::error!(
+                            name: "fanout_pass_failed",
+                            error = &error as &dyn Error,
+                            retry_in_ms = STORE_RETRY_MS,
+                            "fanout pass failed"
+                        );
                         Some(STORE_RETRY_MS)
                     }
                 };
@@ -183,6 +189,7 @@ impl<L: LocalDelivery> Fanout<L> {
             .insert((row.room_id.clone(), row.domain.clone()))
         {
             tracing::warn!(
+                name: "fanout_queue_parked",
                 room_id = %row.room_id,
                 domain = %row.domain,
                 "fanout destination is not a configured peer; its queue is parked"
@@ -201,21 +208,24 @@ impl<L: LocalDelivery> Fanout<L> {
             attempts,
             ..
         } = row;
-        let result = if domain == self.own_domain {
-            self.local
-                .deliver(&room_id, &body)
-                .await
-                .map_err(|error| (error.to_string(), None))
-        } else {
-            match self.peers.notify(&domain, &room_id, body).await {
-                Ok(()) => Ok(()),
-                Err(PeerError::Rejected {
-                    status,
-                    retry_after,
-                }) => Err((format!("peer answered {status}"), retry_after)),
-                Err(error) => Err((error_chain(&error), None)),
-            }
-        };
+        let result: Result<(), (Box<dyn Error + Send + Sync>, Option<RetryAfter>)> =
+            if domain == self.own_domain {
+                self.local
+                    .deliver(&room_id, &body)
+                    .await
+                    .map_err(|error| (Box::new(error) as _, None))
+            } else {
+                self.peers
+                    .notify(&domain, &room_id, body)
+                    .await
+                    .map_err(|error| {
+                        let retry_after = match &error {
+                            PeerError::Rejected { retry_after, .. } => *retry_after,
+                            _ => None,
+                        };
+                        (Box::new(error) as _, retry_after)
+                    })
+            };
         match result {
             Ok(()) => {
                 self.store.mark_delivered(id).await?;
@@ -231,13 +241,20 @@ impl<L: LocalDelivery> Fanout<L> {
                 self.store
                     .record_attempt(id, now.saturating_add(delay))
                     .await?;
+                let error: &(dyn Error + 'static) = &*error;
+                let rejection = RejectionFields::of(error);
+                // The attempt failed but the row stays queued, so the
+                // delivery itself has not failed yet: warn, not error.
                 tracing::warn!(
+                    name: "fanout_delivery_failed",
                     %room_id,
                     %domain,
                     id,
                     attempts,
                     retry_in_ms = delay,
-                    %error,
+                    error,
+                    status = rejection.status,
+                    response_len = rejection.response_len,
                     "fanout delivery failed; will retry"
                 );
             }
@@ -267,7 +284,11 @@ impl FanoutHandle {
         if let Err(error) = self.task.await
             && error.is_panic()
         {
-            tracing::error!("fanout worker panicked");
+            tracing::error!(
+                name: "fanout_worker_panicked",
+                error = &error as &dyn Error,
+                "fanout worker panicked"
+            );
         }
     }
 }
@@ -293,18 +314,6 @@ fn retry_after_ms(guidance: RetryAfter, now_ms: u64) -> u64 {
             .map_or(0, millis)
             .saturating_sub(now_ms),
     }
-}
-
-/// `error` and its sources, joined by ": ".
-fn error_chain(error: &dyn std::error::Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 /// An error from the fanout worker.

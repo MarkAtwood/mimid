@@ -176,3 +176,96 @@ async fn binary_serves_with_two_peers_and_stops_on_sigint() {
     assert_eq!(stored, [(ROOM.to_owned(), commit_fanout(T1, COMMIT_CAROL))]);
     db.close().await;
 }
+
+/// With `MIMID_LOG_FORMAT=json` the binary writes one JSON object per line
+/// to standard output, and its startup and shutdown events carry their
+/// stable names (bead mimid-bfzm).
+#[tokio::test]
+async fn json_log_format_writes_named_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = format!("http://127.0.0.1:{}", free_port());
+    let config = format!(
+        "domain = \"b.example\"\n\
+         listen = \"{listen}\"\n\
+         base_url = \"{base}\"\n\
+         database = \"{database}\"\n",
+        listen = base.trim_start_matches("http://"),
+        database = dir.path().join("mimid.sqlite").display(),
+    );
+    let config_path = dir.path().join("mimid.toml");
+    std::fs::write(&config_path, config).unwrap();
+    let mut server = Server(
+        Command::new(env!("CARGO_BIN_EXE_mimid"))
+            .arg(&config_path)
+            .env("RUST_LOG", "info")
+            .env("MIMID_LOG_FORMAT", "json")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let http = reqwest::Client::new();
+    let directory = format!("{base}/.well-known/mimi-protocol-directory");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while http.get(&directory).send().await.is_err() {
+        assert!(server.0.try_wait().unwrap().is_none(), "server exited");
+        assert!(Instant::now() < deadline, "server did not start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let pid = server.0.id().to_string();
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    // Standard output closes when the process exits.
+    let mut stdout = server.0.stdout.take().unwrap();
+    let text = tokio::task::spawn_blocking(move || {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut stdout, &mut text).unwrap();
+        text
+    })
+    .await
+    .unwrap();
+    assert!(server.0.wait().unwrap().success());
+
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap_or_else(|_| panic!("not JSON: {line}")))
+        .collect();
+    let events: Vec<&str> = lines
+        .iter()
+        .filter_map(|line| line["event"].as_str())
+        .collect();
+    assert_eq!(
+        events,
+        [
+            "hub_rooms_rebuilt",
+            "server_listening",
+            "shutdown_requested",
+            "server_stopped"
+        ],
+        "{text}"
+    );
+    let listening = &lines[1];
+    assert_eq!(listening["level"], "INFO");
+    assert_eq!(listening["message"], "mimid listening");
+    assert_eq!(listening["fields"]["domain"], "b.example");
+}
+
+/// A `MIMID_LOG_FORMAT` that names no format stops the binary at startup
+/// with a message naming the variable.
+#[test]
+fn unknown_log_format_stops_startup() {
+    let output = Command::new(env!("CARGO_BIN_EXE_mimid"))
+        .arg("unused.toml")
+        .env("MIMID_LOG_FORMAT", "yaml")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("MIMID_LOG_FORMAT"), "{stderr}");
+    assert!(output.stdout.is_empty());
+}

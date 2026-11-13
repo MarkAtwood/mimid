@@ -237,6 +237,7 @@ impl KeyPackages {
         match outcome {
             KeyPackageInsert::Inserted => {
                 tracing::info!(
+                    name: "key_package_uploaded",
                     client_uri = entry.client_uri,
                     last_resort = entry.last_resort,
                     "KeyPackage uploaded"
@@ -358,16 +359,23 @@ impl KeyPackages {
             let key_package = match KeyPackage::tls_deserialize_exact(kp.bytes.as_slice()) {
                 Ok(key_package) => key_package,
                 Err(error) => {
-                    tracing::warn!(client_uri = kp.client_id, %error,
-                        "stored KeyPackage does not decode; not served");
+                    tracing::warn!(
+                        name: "stored_key_package_undecodable",
+                        client_uri = kp.client_id,
+                        error = &error as &dyn std::error::Error,
+                        "stored KeyPackage does not decode; not served"
+                    );
                     continue;
                 }
             };
             let info = match key_package.verify(now) {
                 Ok(info) => info,
                 Err(error) => {
-                    tracing::debug!(client_uri = kp.client_id, %error,
-                        "stored KeyPackage does not verify now; not served");
+                    tracing::debug!(
+                        client_uri = kp.client_id,
+                        error = &error as &dyn std::error::Error,
+                        "stored KeyPackage does not verify now; not served"
+                    );
                     continue;
                 }
             };
@@ -430,6 +438,7 @@ impl KeyPackages {
             KeyMaterialUserCode::NoCompatibleMaterial
         };
         tracing::info!(
+            name: "key_material_served",
             room_id = tbs.room_id.as_str(),
             user_status = ?user_status,
             clients = response_clients.len(),
