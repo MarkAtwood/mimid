@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.46.8",
   "title": "Interop: refresh the MIMI implementation survey",
   "description": "Last survey 2026-11-02 (Haven, Phoenix, nexun-foundation/mimi-rs; nothing public from Wire, Cisco, Matrix). Re-check GitHub/codeberg, the mimi list archive (imap.ietf.org Shared Folders/mimi), the IETF 127 hackathon wiki/table, and datatracker implementation pages for new or updated MIMI implementations; note which drafts/revisions each covers and whether a cross-check is worth it (nexun mimi-rs: room-policy -02, stalled since 2026-02 — confirm still stale). Record results in the .46 epic description; bead any new cross-check.",
+  "notes": "Results 2026-11-13: survey written to mimid-1wgh.46 notes. New: Arkret coland MIMI facade (protocol-06/content-08/room-policy-03) -\u003e mimid-1wgh.46.11; openconv content-09 codec -\u003e mimid-1wgh.46.12; Proton Meet consumes nexun mimi-rs (no new bead; raises the value of a nexun check). Phoenix mimi-content now content-10 and AGPL-3.0-or-later (baseline wrong on license); consider re-running the closed .46.2 content cross-check against content-10. 127: no MIMI hackathon project on the wiki; side-meeting replies from Mark, Jason Bolduc (Haven), Marvin W., Konrad Kohbrok. Not checked: Codeberg (search API 429), sidemeetings.ietf.org (login required).",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-04T16:33:01.779951685Z",
   "created_by": "agent",
-  "updated_at": "2026-11-04T16:33:01.779951685Z",
+  "updated_at": "2026-11-13T20:36:34.387951058Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.46.8",
