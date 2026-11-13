@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.46.11.8",
+  "title": "draft -07: directory has no protocol-revision indicator; -06/-07 mismatch only found by failure",
+  "description": "Side: draft (protocol-07).\n\nThe §5.1 directory carries only endpoint URIs. It has no field for the protocol revision or the supported operations, and §5 still has the TODO \"Determine what needs to be included in the protocol. MIMI version, e2e protocol version, etc.\" coland invents mimi.protocol_draft=\"draft-ietf-mimi-protocol-06\" and rejects requests that declare another draft (binding.rs unsupported_mimi_draft). mimid has no equivalent. Between -06 and -07 the directory example changed: \"update{roomId}\" became \"update/{roomId}\", requestConsent {targetUser} became {targetDomain}, updateConsent {requesterUser} became {requesterDomain}, and the missing ':' after proxyDownload was fixed. Peers have no in-band way to tell which revision a provider implements, so a mismatch (as here: -06 vs -07) is only found by failure. Candidate list feedback: add a version or draft indicator to the directory, or define one.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-13T21:16:49.593900367Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-13T21:16:49.593900367Z",
+  "labels": [
+    "interop",
+    "coland",
+    "draft-side"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.11.8",
+      "depends_on_id": "mimid-1wgh.46.11",
+      "type": "parent-child",
+      "created_at": "2026-11-13T21:16:49.647414098Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
