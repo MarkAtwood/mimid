@@ -28,6 +28,7 @@ Layout
                   given command
     selftest.sh   the proxy path works without a client certificate, and the
                   hub refuses direct access
+    public.sh     runs b4.sh on the mimid host against a public hub (below)
     b4.sh         (inside) seeds Haven over its JSON lane (a Haven-minted
                   and a mimid-minted KeyPackage, consent, the room's first
                   participant) and its store (an enrolled handle: no route
@@ -85,6 +86,25 @@ Live run
      cargo run -q -- decode-commit $H/live/out/update_commit.bin)
   (cd $H/harness && CARGO_TARGET_DIR=$CACHE/mimid-haven-xcheck-target \
      cargo run -q -- decode-proposal $H/live/out/leave_proposal.bin)
+
+Live run against a public hub (bead mimid-1wgh.46.6)
+  The driver and b4.sh take their names from the environment (defaults are
+  the namespace run's): HAVEN_DOMAIN, OWN_DOMAIN, RUN_TAG (appended to every
+  user and room name, so reruns against a hub that keeps state start fresh),
+  HAVEN_BASE_URL (driver), HAVEN_LANE, CURL_OPTS, HUB_DB_CMD (b4.sh).
+  public.sh runs B4 from this dev box on the mimid hackathon host, whose
+  outbound proxy adds mimid's client certificate for haven.reviewcommit.com,
+  and reaches the hub's store directly from the mimid host over SSH, with a
+  key (/home/admin/interop/hubdb_ed25519) that the hub host's
+  authorized_keys limits to the mimid host's address and one forced command,
+  sqlite3 on the hub's database with the SQL on stdin, against a pinned host
+  key (/home/admin/interop/known_hosts_hub). No SSH agent is forwarded. The
+  hub host's security group allows port 22 from the mimid host only.
+  public.sh changes no configuration on either host. Logs (b4 output, the
+  hub's journal, the proxy's wire capture) go to live/out/public-<tag>/.
+  (cd $H/live/driver && CARGO_TARGET_DIR=/data/cargo/interop07-public-target cargo build --release)
+  cd $H/live && DRIVER=/data/cargo/interop07-public-target/release/mimid-haven-live \
+     KP=$MIMID_HAVEN_VECTORS/haven_default_key_package.bin ./public.sh
 
 The driver covers every PeerClient call Haven's directory offers: directory,
 keyMaterial, submitMessage, update (one change; Add beside the change; two

@@ -1,7 +1,8 @@
 //! Live run: mimid's outbound PeerClient against Haven's mimi-hubd
 //! (beads mimid-1wgh.46.1.6 and mimid-1wgh.46.6). Runs inside the B3
 //! harness namespace, where haven.localhost:443 is the mTLS-supplying proxy
-//! and SSL_CERT_FILE trusts the throwaway CA. Setup (KeyPackages, consent,
+//! and SSL_CERT_FILE trusts the throwaway CA, or on a host whose outbound
+//! proxy supplies the client certificate to a public hub (see `Names`). Setup (KeyPackages, consent,
 //! the room's first participant, an enrolled handle) is done by b4.sh over
 //! Haven's JSON lane and store before this runs.
 //!
@@ -33,24 +34,68 @@ use mimi_protocol::{
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::peer::{PeerClient, PeerError};
 
-const HAVEN: &str = "haven.localhost";
-/// mimid's provider domain here. The harness client certificate carries it
-/// as a dNSName SAN, so Haven's From check (DIV-16, protocol-07 §4.1) and
-/// its /notify source check (§5.5) can pass.
-const OWN: &str = "b.example";
-const ALICE: &str = "mimi://b.example/u/alice";
-const CAROL: &str = "mimi://b.example/u/carol";
-const DAVE: &str = "mimi://b.example/u/dave";
-const ERIN: &str = "mimi://b.example/u/erin";
-const FRANK: &str = "mimi://b.example/u/frank";
-const BOB: &str = "mimi://haven.localhost/u/bob";
-/// A Haven user whose only KeyPackage was minted by mimid (b4.sh).
-const GRACE: &str = "mimi://haven.localhost/u/grace";
-/// A room hosted by Haven.
-const ROOM: &str = "mimi://haven.localhost/r/live1";
-/// A room hosted by mimid, for /notify (protocol-07 §5.5: only the hub of
-/// the room may send it).
-const OWN_ROOM: &str = "mimi://b.example/r/notify1";
+/// The names one run uses. The defaults are the namespace run's
+/// (run.sh); a run against a public hub sets them from the environment:
+///   HAVEN_DOMAIN    Haven's provider domain (default haven.localhost)
+///   OWN_DOMAIN      mimid's provider domain (default b.example). The mTLS
+///                   client certificate must name it as a dNSName SAN, so
+///                   Haven's From check (DIV-16, protocol-07 §4.1) and its
+///                   /notify source check (§5.5) can pass.
+///   HAVEN_BASE_URL  where the directory is fetched (default https://HAVEN_DOMAIN)
+///   RUN_TAG         appended to every user and room name (default empty),
+///                   so a rerun against a hub that keeps its state starts
+///                   from fresh users and rooms. b4.sh builds the same names.
+struct Names {
+    haven: &'static str,
+    own: &'static str,
+    base_url: String,
+    alice: &'static str,
+    carol: &'static str,
+    dave: &'static str,
+    erin: &'static str,
+    frank: &'static str,
+    bob: &'static str,
+    /// A Haven user whose only KeyPackage was minted by mimid (b4.sh).
+    grace: &'static str,
+    /// The MLS group ID of mimid's copy of the room: its name.
+    room_name: &'static str,
+    /// A room hosted by Haven.
+    room: &'static str,
+    /// A room hosted by mimid, for /notify (protocol-07 §5.5: only the hub
+    /// of the room may send it).
+    own_room: &'static str,
+}
+
+fn env_or(name: &str, default: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| default.to_owned())
+}
+
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+static N: std::sync::LazyLock<Names> = std::sync::LazyLock::new(|| {
+    let haven = leak(env_or("HAVEN_DOMAIN", "haven.localhost"));
+    let own = leak(env_or("OWN_DOMAIN", "b.example"));
+    let tag = env_or("RUN_TAG", "");
+    let user = |domain: &str, name: &str| leak(format!("mimi://{domain}/u/{name}{tag}"));
+    let room_name = leak(format!("live1{tag}"));
+    Names {
+        haven,
+        own,
+        base_url: env_or("HAVEN_BASE_URL", &format!("https://{haven}")),
+        alice: user(own, "alice"),
+        carol: user(own, "carol"),
+        dave: user(own, "dave"),
+        erin: user(own, "erin"),
+        frank: user(own, "frank"),
+        bob: user(haven, "bob"),
+        grace: user(haven, "grace"),
+        room_name,
+        room: leak(format!("mimi://{haven}/r/{room_name}")),
+        own_room: leak(format!("mimi://{own}/r/notify1{tag}")),
+    }
+});
 const SEED: [u8; 32] = [0x11; 32];
 /// Ed25519 public key for seed 0x11 * 32 (mimi-protocol tests/key_material.rs oracle).
 const PUB: [u8; 32] = [
@@ -183,14 +228,14 @@ fn proposal_request(proposal: &[u8]) -> Vec<u8> {
     .expect("UpdateRequest")
 }
 
-/// Sends `body` to Haven's update endpoint for ROOM and prints the answer.
+/// Sends `body` to Haven's update endpoint for N.room and prints the answer.
 async fn update(
     client: &PeerClient,
     haven: &Domain,
     step: &str,
     body: Vec<u8>,
 ) -> Option<UpdateResult> {
-    match client.update(haven, ROOM, body).await {
+    match client.update(haven, N.room, body).await {
         Ok(body) => match UpdateRoomResponse::tls_deserialize_exact(&body[..]) {
             Ok(r) => {
                 let refs: Vec<String> = match &r.result {
@@ -265,7 +310,7 @@ async fn key_material(
         protocol: Protocol::Mls10,
         requesting_user: uri(requester),
         target_user: uri(target),
-        room_id: uri(ROOM),
+        room_id: uri(N.room),
         acceptable_ciphersuites: vec![CipherSuite::tls_deserialize_exact([0x00, 0x01]).unwrap()],
         required_capabilities: RequiredCapabilities::tls_deserialize_exact([0x00, 0x00, 0x00])
             .unwrap(),
@@ -319,7 +364,7 @@ fn consent(op: ConsentOperation, requester: &str, target: &str, kps: Vec<KeyPack
         requester_uri: uri(requester),
         target_uri: uri(target),
         room_id: matches!(op, ConsentOperation::Request | ConsentOperation::Cancel)
-            .then(|| uri(ROOM)),
+            .then(|| uri(N.room)),
         client_key_packages: kps,
         consent_extensions: dictionary(),
     }
@@ -346,19 +391,19 @@ async fn main() {
         return;
     }
 
-    let haven = Domain::try_from(HAVEN.to_owned()).expect("domain");
+    let haven = Domain::try_from(N.haven.to_owned()).expect("domain");
     let client = PeerClient::new(
-        &Domain::try_from(OWN.to_owned()).expect("domain"),
+        &Domain::try_from(N.own.to_owned()).expect("domain"),
         BTreeMap::from([(
             haven.clone(),
-            BaseUrl::try_from(format!("https://{HAVEN}")).expect("base"),
+            BaseUrl::try_from(N.base_url.clone()).expect("base"),
         )]),
     )
     .expect("PeerClient");
 
     // 1. Directory fetch (TLS trust + partial directory): groupInfo is
     // absent from Haven's directory, so a working fetch ends in NotOffered.
-    match client.group_info(&haven, ROOM, vec![]).await {
+    match client.group_info(&haven, N.room, vec![]).await {
         Err(PeerError::NotOffered { endpoint }) => {
             println!("STEP 1: ok - directory fetched over TLS and parsed; {endpoint} not offered")
         }
@@ -373,14 +418,14 @@ async fn main() {
 
     // 2. keyMaterial (§5.2), with signed mimid requests.
     // 2a: bob's one Haven-minted KeyPackage; alice has bob's consent.
-    key_material(&client, &haven, "2a keyMaterial bob (Haven KeyPackage)", ALICE, BOB).await;
+    key_material(&client, &haven, "2a keyMaterial bob (Haven KeyPackage)", N.alice, N.bob).await;
     // 2b: bob again: his only KeyPackage is gone (the DIV-13 answer).
-    key_material(&client, &haven, "2b keyMaterial bob again (exhausted)", ALICE, BOB).await;
+    key_material(&client, &haven, "2b keyMaterial bob again (exhausted)", N.alice, N.bob).await;
     // 2c: grace's one KeyPackage was minted by mimid, with GREASE (Haven's
     // gate refused these at 2c14e62, mimid-1wgh.46.1.13).
-    key_material(&client, &haven, "2c keyMaterial grace (mimid KeyPackage)", ALICE, GRACE).await;
+    key_material(&client, &haven, "2c keyMaterial grace (mimid KeyPackage)", N.alice, N.grace).await;
     // 2d: carol has no consent from bob.
-    key_material(&client, &haven, "2d keyMaterial bob for carol (no consent)", CAROL, BOB).await;
+    key_material(&client, &haven, "2d keyMaterial bob for carol (no consent)", N.carol, N.bob).await;
 
     // 3. submitMessage (§5.4) from a participant, then from a non-participant.
     let submit = |sender: &str| {
@@ -394,10 +439,10 @@ async fn main() {
     };
     std::fs::write(work("submitted_app_message.bin"), PRIVATE_APPLICATION).unwrap();
     for (step, sender) in [
-        ("3a submitMessage from alice", ALICE),
-        ("3b submitMessage from erin (not a participant)", ERIN),
+        ("3a submitMessage from alice", N.alice),
+        ("3b submitMessage from erin (not a participant)", N.erin),
     ] {
-        match client.submit_message(&haven, ROOM, submit(sender)).await {
+        match client.submit_message(&haven, N.room, submit(sender)).await {
             Ok(body) => match SubmitMessageResponse::tls_deserialize_exact(&body[..]) {
                 Ok(r) => println!("STEP {step}: 200, {:?} {:?}", r.protocol, r.result),
                 Err(e) => println!(
@@ -411,16 +456,16 @@ async fn main() {
 
     // 4. update (§5.3). Haven's room starts with alice (b4.sh); mimid's
     // group starts with the same list.
-    let alice = identity(ALICE);
-    let carol = identity(CAROL);
+    let alice = identity(N.alice);
+    let carol = identity(N.carol);
     let mut group = Member::create(
         &alice,
-        b"live1",
+        N.room_name.as_bytes(),
         &[],
         &[
             // mls-extensions-10 §5: a ComponentsList naming participant_list.
             (APP_COMPONENTS, vec![0x02, 0x00, 0x22]),
-            (PARTICIPANT_LIST, list(&[ALICE])),
+            (PARTICIPANT_LIST, list(&[N.alice])),
         ],
     )
     .expect("create");
@@ -428,7 +473,7 @@ async fn main() {
     // 4a: one AppDataUpdate (0x0022) adding dave, no Add: a participant
     // listed before any client is added.
     let bundle = group
-        .commit(&alice, &[], &[], &[change(vec![], &[DAVE])], to(list(&[ALICE, DAVE])))
+        .commit(&alice, &[], &[], &[change(vec![], &[N.dave])], to(list(&[N.alice, N.dave])))
         .expect("commit 4a");
     commit_at_haven(
         &client,
@@ -449,8 +494,8 @@ async fn main() {
             &alice,
             &[&carol_kp],
             &[],
-            &[change(vec![], &[CAROL])],
-            to(list(&[ALICE, DAVE, CAROL])),
+            &[change(vec![], &[N.carol])],
+            to(list(&[N.alice, N.dave, N.carol])),
         )
         .expect("commit 4b");
     let mut carol_group = None;
@@ -472,9 +517,9 @@ async fn main() {
         }
     }
     let listed: Vec<&str> = if carol_group.is_some() {
-        vec![ALICE, DAVE, CAROL]
+        vec![N.alice, N.dave, N.carol]
     } else {
-        vec![ALICE, DAVE]
+        vec![N.alice, N.dave]
     };
 
     // 4c: two changes in one Commit: two AppDataUpdates for 0x0022 (erin,
@@ -485,8 +530,8 @@ async fn main() {
             &alice,
             &[],
             &[],
-            &[change(vec![], &[ERIN]), change(vec![], &[FRANK])],
-            to(list(&[listed.as_slice(), &[ERIN, FRANK]].concat())),
+            &[change(vec![], &[N.erin]), change(vec![], &[N.frank])],
+            to(list(&[listed.as_slice(), &[N.erin, N.frank]].concat())),
         )
         .expect("commit 4c");
     if commit_at_haven(
@@ -530,8 +575,8 @@ async fn main() {
                 &alice,
                 &[],
                 &[],
-                &[change(vec![], &[ERIN])],
-                to(list(&[ALICE, DAVE, CAROL, ERIN])),
+                &[change(vec![], &[N.erin])],
+                to(list(&[N.alice, N.dave, N.carol, N.erin])),
             )
             .expect("commit 4e");
         if commit_at_haven(
@@ -550,12 +595,12 @@ async fn main() {
 
         // 4f: alice stores carol's proposal and commits it by reference,
         // with the Remove of carol's leaf by value.
-        match group.process(&alice, &proposal, to(list(&[ALICE, DAVE]))) {
+        match group.process(&alice, &proposal, to(list(&[N.alice, N.dave]))) {
             Ok(incoming) => println!("  alice stored carol's proposal: {incoming:?}"),
             Err(e) => println!("  alice cannot process carol's proposal: {e:?}"),
         }
         let bundle = group
-            .commit(&alice, &[], &[carol_leaf], &[], to(list(&[ALICE, DAVE])))
+            .commit(&alice, &[], &[carol_leaf], &[], to(list(&[N.alice, N.dave])))
             .expect("commit 4f");
         commit_at_haven(
             &client,
@@ -595,19 +640,19 @@ async fn finish(client: &PeerClient, haven: &Domain, alice: &Identity) {
     // 5a: a room mimid hosts: Haven should accept it.
     show(
         "5a notify for mimid's room",
-        client.notify(haven, OWN_ROOM, fanout.clone()).await,
+        client.notify(haven, N.own_room, fanout.clone()).await,
         "201",
     );
     // 5b: the same body again: §5.5 answers a duplicate 201 too.
     show(
         "5b notify duplicate",
-        client.notify(haven, OWN_ROOM, fanout.clone()).await,
+        client.notify(haven, N.own_room, fanout.clone()).await,
         "201",
     );
     // 5c: a room Haven hosts: mimid is not its hub, so §5.5 rejects it.
     show(
         "5c notify for Haven's room (mimid is not its hub; rejection expected)",
-        client.notify(haven, ROOM, fanout).await,
+        client.notify(haven, N.room, fanout).await,
         "201",
     );
 
@@ -616,21 +661,21 @@ async fn finish(client: &PeerClient, haven: &Domain, alice: &Identity) {
     show(
         "6a requestConsent request",
         client
-            .request_consent(haven, consent(ConsentOperation::Request, ALICE, BOB, vec![]))
+            .request_consent(haven, consent(ConsentOperation::Request, N.alice, N.bob, vec![]))
             .await,
         "202",
     );
     show(
         "6b requestConsent cancel",
         client
-            .request_consent(haven, consent(ConsentOperation::Cancel, ALICE, BOB, vec![]))
+            .request_consent(haven, consent(ConsentOperation::Cancel, N.alice, N.bob, vec![]))
             .await,
         "202",
     );
     show(
         "6c requestConsent carrying grant (422 expected)",
         client
-            .request_consent(haven, consent(ConsentOperation::Grant, ALICE, BOB, vec![]))
+            .request_consent(haven, consent(ConsentOperation::Grant, N.alice, N.bob, vec![]))
             .await,
         "202",
     );
@@ -642,30 +687,32 @@ async fn finish(client: &PeerClient, haven: &Domain, alice: &Identity) {
     show(
         "6d updateConsent grant (with a mimid KeyPackage)",
         client
-            .update_consent(haven, consent(ConsentOperation::Grant, BOB, ALICE, vec![alice_kp]))
+            .update_consent(haven, consent(ConsentOperation::Grant, N.bob, N.alice, vec![alice_kp]))
             .await,
         "202",
     );
     show(
         "6e updateConsent revoke",
         client
-            .update_consent(haven, consent(ConsentOperation::Revoke, BOB, ALICE, vec![]))
+            .update_consent(haven, consent(ConsentOperation::Revoke, N.bob, N.alice, vec![]))
             .await,
         "202",
     );
     show(
         "6f updateConsent carrying request (422 expected)",
         client
-            .update_consent(haven, consent(ConsentOperation::Request, BOB, ALICE, vec![]))
+            .update_consent(haven, consent(ConsentOperation::Request, N.bob, N.alice, vec![]))
             .await,
         "202",
     );
 
     // 7. identifierQuery (§5.8): one Handle element, for an enrolled handle
     // and for an unknown one.
+    // b4.sh enrols bob plus RUN_TAG.
+    let tag = env_or("RUN_TAG", "");
     for (step, handle) in [
-        ("7a identifierQuery handle bob (enrolled)", "bob"),
-        ("7b identifierQuery handle nobody", "nobody"),
+        ("7a identifierQuery handle bob (enrolled)", format!("bob{tag}")),
+        ("7b identifierQuery handle nobody", format!("nobody{tag}")),
     ] {
         let request = IdentifierRequest {
             query_elements: vec![QueryElement {
@@ -690,8 +737,8 @@ async fn finish(client: &PeerClient, haven: &Domain, alice: &Identity) {
 
     // 8. reportAbuse (§5.9), metadata only (no AbusiveMessage, DIV-8).
     let report = AbuseReport {
-        reporting_user: uri(ALICE),
-        alleged_abuser_uri: uri(DAVE),
+        reporting_user: uri(N.alice),
+        alleged_abuser_uri: uri(N.dave),
         reason_code: AbuseType(1),
         note: b"live interop test".to_vec(),
         messages: vec![],
@@ -699,7 +746,7 @@ async fn finish(client: &PeerClient, haven: &Domain, alice: &Identity) {
     }
     .tls_serialize_detached()
     .expect("AbuseReport");
-    match client.report_abuse(haven, ROOM, report).await {
+    match client.report_abuse(haven, N.room, report).await {
         Ok(body) => println!("STEP 8 reportAbuse: 200 (body {} bytes)", body.len()),
         Err(e) => println!("STEP 8 reportAbuse: FAIL - {e:?} (mimid accepts only 200)"),
     }
