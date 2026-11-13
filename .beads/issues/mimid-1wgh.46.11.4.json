@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.46.11.4",
+  "title": "coland interop: keyMaterial accepts native Arkret Station claims only; user seeding needs coauth",
+  "description": "Side: coland.\n\nkeyMaterial on coland is native-only. verify_mimi_key_material_source_signature sets native_claim=true, which requires Provider-ID == Source-Service-ID (a core id, not mimi://), plus Idempotency-Key, Source-Trust-Domain and Destination-Trust-Domain. The body must carry an Arkret device-authorized requester_authorization and must require the capability \"mimi.content.v1\" with last_resort_allowed != true. A non-Arkret MIMI provider therefore cannot claim KeyPackages from coland, even if it signs requests.\nSeeding a target user with KeyPackages needs an Arkret account and device. Creating one needs a coauth Account Authority (COLAND_ACCOUNT_AUTHORITY_URL plus session-grant introspection), or a conformance-harness build in development mode. This deployment has neither, so no user was seeded.\nCode: crates/http/src/routing/interop/mimi/handlers.rs mimi_key_material; crates/http/src/routing/mls.rs mimi_claim_keypackage / peer_claim_keypackage_with_room.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-13T21:16:48.02110116Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-13T21:16:48.02110116Z",
+  "labels": [
+    "interop",
+    "coland",
+    "coland-side"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.11.4",
+      "depends_on_id": "mimid-1wgh.46.11",
+      "type": "parent-child",
+      "created_at": "2026-11-13T21:16:48.082803412Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
