@@ -14,7 +14,7 @@
 //! refuses Haven's bytes and names the bead that tracks the divergence.
 
 use mimi_mls::wire::{
-    AppDataDictionary, CipherSuite, Credential, GroupInfo, KeyPackage, MLSMessage,
+    AppDataDictionary, CipherSuite, Credential, GroupInfo, KeyPackage, MLSMessage, ProposalRef,
     RatchetTreeOption, RequiredCapabilities, SignaturePublicKey, Welcome,
 };
 use mimi_protocol::tls_codec::{Deserialize, Serialize};
@@ -47,6 +47,8 @@ macro_rules! mlswg {
 const ALICE: &str = "mimi://a.example/u/alice";
 const BOB: &str = "mimi://b.example/u/bob";
 const ROOM: &str = "mimi://a.example/r/room1";
+const BOB_PHONE: &str = "mimi://b.example/d/bob-phone";
+const BOB_LAPTOP: &str = "mimi://b.example/d/bob-laptop";
 
 /// The generator's timestamps and epoch.
 const TIMESTAMP: u64 = 1_700_000_000_000;
@@ -165,6 +167,26 @@ fn consent_entries() {
             consent_extensions: dictionary(&[(0x8001, b"ext")]),
         },
     );
+    for (wire, consent_operation, room_id) in [
+        (
+            haven!("consent_cancel"),
+            ConsentOperation::Cancel,
+            Some(uri(ROOM)),
+        ),
+        (haven!("consent_revoke"), ConsentOperation::Revoke, None),
+    ] {
+        check(
+            wire,
+            &ConsentEntry {
+                consent_operation,
+                requester_uri: uri(ALICE),
+                target_uri: uri(BOB),
+                room_id,
+                client_key_packages: vec![],
+                consent_extensions: dictionary(&[]),
+            },
+        );
+    }
 }
 
 #[test]
@@ -217,6 +239,37 @@ fn key_material_responses() {
         },
     );
     check(
+        haven!("key_material_response_partial_success"),
+        &KeyMaterialResponse {
+            protocol: Protocol::Mls10,
+            user_status: KeyMaterialUserCode::PartialSuccess,
+            user_uri: uri(BOB),
+            clients: vec![
+                ClientKeyMaterial::Success {
+                    client_uri: uri(BOB_PHONE),
+                    key_package: bare::<KeyPackage>(mlswg!("mls_key_package")),
+                },
+                ClientKeyMaterial::KeyMaterialExhausted {
+                    client_uri: uri(BOB_LAPTOP),
+                },
+            ],
+        },
+    );
+    // The all-clients-exhausted reading of mimi-protocol issue 184 that
+    // Haven's DIV-13 says it reads (Haven's hub still sends the
+    // partialSuccess form below).
+    check(
+        haven!("key_material_response_no_compatible_exhausted"),
+        &KeyMaterialResponse {
+            protocol: Protocol::Mls10,
+            user_status: KeyMaterialUserCode::NoCompatibleMaterial,
+            user_uri: uri(BOB),
+            clients: vec![ClientKeyMaterial::KeyMaterialExhausted {
+                client_uri: uri(BOB_PHONE),
+            }],
+        },
+    );
+    check(
         haven!("key_material_response_no_consent"),
         &KeyMaterialResponse {
             protocol: Protocol::Mls10,
@@ -250,20 +303,11 @@ fn handshake_bundle_proposal() {
 }
 
 #[test]
-fn handshake_bundle_commit_with_length_prefixed_group_info_is_refused() {
-    // Haven divergence, mimid-1wgh.46.1.8: Haven writes GroupInfoOption's
-    // GroupInfo as opaque<V>; protocol-07 §5.3 carries it bare.
-    let wire = haven!("handshake_bundle_commit");
-    assert!(HandshakeBundle::tls_deserialize_exact(wire).is_err());
-
-    // Without Haven's 2-byte prefix (420 = 0x41a4, after the 428-byte
-    // Commit, the Welcome presence byte, the 416-byte Welcome and the
-    // representation byte), the rest matches protocol-07.
-    let at = 428 + 1 + 416 + 1;
-    assert_eq!(wire[at..at + 2], [0x41, 0xa4]);
-    let unwrapped = [&wire[..at], &wire[at + 2..]].concat();
+fn handshake_bundle_commit() {
+    // Haven 2c14e62 wrote the GroupInfo as opaque<V> (mimid-1wgh.46.1.8);
+    // 07ce96f writes it bare, as protocol-07 §5.3 has it.
     check(
-        &unwrapped,
+        haven!("handshake_bundle_commit"),
         &HandshakeBundle::Commit {
             proposal_or_commit: mls(mlswg!("public_message_commit")),
             welcome: Some(bare::<Welcome>(mlswg!("mls_welcome"))),
@@ -297,6 +341,19 @@ fn update_room_responses() {
             haven!("update_room_response_not_allowed"),
             "no",
             UpdateResult::NotAllowed,
+        ),
+        (
+            haven!("update_room_response_invalid_proposal"),
+            "bad",
+            UpdateResult::InvalidProposal {
+                // RFC 9420 §5.2 ProposalRef: opaque<V>, 32 bytes each.
+                invalid_proposals: vec![
+                    ProposalRef::tls_deserialize_exact([&[0x20][..], &[0xa5; 32]].concat())
+                        .expect("ref"),
+                    ProposalRef::tls_deserialize_exact([&[0x20][..], &[0x5a; 32]].concat())
+                        .expect("ref"),
+                ],
+            },
         ),
     ];
     for (wire, description, result) in cases {

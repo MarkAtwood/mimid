@@ -1,4 +1,4 @@
-//! Writes protocol-06 wire fixtures with Haven's encoders
+//! Writes protocol-07 wire fixtures with Haven's encoders
 //! (havenmessenger/interop `mimi-core`, pinned in Cargo.toml).
 //!
 //! Usage: cargo run -- <mlswg fixture dir> <output dir>
@@ -16,11 +16,11 @@ use std::{env, fs, path::Path};
 
 use mimi_core::consent::{ConsentEntry, ConsentOperation};
 use mimi_core::protocol_wire::{
-    encode_consent_entry, AbuseReport, FanoutMessage, GroupInfoOption, GroupInfoRepresentation,
-    HandshakeBundle, IdentifierQueryCode, IdentifierRequest, IdentifierResponse, IdentifierUri,
-    KeyMaterialRequest, KeyMaterialResponse, KeyMaterialUserCode, QueryElement,
-    SearchIdentifierType, SubmitMessageRequest, SubmitMessageResponse, UpdateRoomResponse,
-    PROTOCOL_MLS10,
+    encode_consent_entry, AbuseReport, ClientKeyMaterial, FanoutMessage, GroupInfoOption,
+    GroupInfoRepresentation, HandshakeBundle, IdentifierQueryCode, IdentifierRequest,
+    IdentifierResponse, IdentifierUri, KeyMaterialClientCode, KeyMaterialRequest,
+    KeyMaterialResponse, KeyMaterialUserCode, QueryElement, SearchIdentifierType,
+    SubmitMessageRequest, SubmitMessageResponse, UpdateRoomResponse, PROTOCOL_MLS10,
 };
 use openmls::ciphersuite::signature::SignaturePublicKey;
 use openmls::credentials::BasicCredential;
@@ -29,6 +29,8 @@ use openmls::prelude::{Ciphersuite, RequiredCapabilitiesExtension};
 const ALICE: &str = "mimi://a.example/u/alice";
 const BOB: &str = "mimi://b.example/u/bob";
 const ROOM: &str = "mimi://a.example/r/room1";
+const BOB_PHONE: &str = "mimi://b.example/d/bob-phone";
+const BOB_LAPTOP: &str = "mimi://b.example/d/bob-laptop";
 
 /// RFC 9420 §6 MLSMessage carrying a §6.3 PrivateMessage with an
 /// application message, hand-encoded (the same 30 bytes as
@@ -117,6 +119,25 @@ fn main() {
         .unwrap(),
     );
 
+    // Added for Haven 07ce96f (bead mimid-1wgh.46.6).
+    for (name, operation, room) in [
+        ("consent_cancel", ConsentOperation::Cancel, Some(ROOM)),
+        ("consent_revoke", ConsentOperation::Revoke, None),
+    ] {
+        write(
+            name,
+            encode_consent_entry(&ConsentEntry {
+                operation,
+                requester_uri: ALICE.into(),
+                target_uri: BOB.into(),
+                room_uri: room.map(Into::into),
+                client_key_packages: vec![],
+                consent_extensions: vec![],
+            })
+            .unwrap(),
+        );
+    }
+
     // keyMaterial (§5.2). Signature key and signature are fixed filler:
     // the fixture tests framing, not the signature.
     write(
@@ -151,6 +172,49 @@ fn main() {
         KeyMaterialResponse::Exhausted { user_uri: uri(BOB) }
             .encode()
             .unwrap(),
+    );
+    // Added for Haven 07ce96f (bead mimid-1wgh.46.6): the general
+    // KeyMaterialResponse::Clients form. partialSuccess with one success
+    // client and one exhausted client, and noCompatibleMaterial with every
+    // client exhausted (the reading DIV-13 says Haven's decoder takes, per
+    // mimi-protocol issue 184).
+    write(
+        "key_material_response_partial_success",
+        KeyMaterialResponse::Clients {
+            user_uri: uri(BOB),
+            user_status: KeyMaterialUserCode::PartialSuccess,
+            clients: vec![
+                ClientKeyMaterial {
+                    status: KeyMaterialClientCode::Success,
+                    client_uri: uri(BOB_PHONE),
+                    key_package: Some(key_package.clone()),
+                    capabilities: None,
+                },
+                ClientKeyMaterial {
+                    status: KeyMaterialClientCode::KeyMaterialExhausted,
+                    client_uri: uri(BOB_LAPTOP),
+                    key_package: None,
+                    capabilities: None,
+                },
+            ],
+        }
+        .encode()
+        .unwrap(),
+    );
+    write(
+        "key_material_response_no_compatible_exhausted",
+        KeyMaterialResponse::Clients {
+            user_uri: uri(BOB),
+            user_status: KeyMaterialUserCode::NoCompatibleMaterial,
+            clients: vec![ClientKeyMaterial {
+                status: KeyMaterialClientCode::KeyMaterialExhausted,
+                client_uri: uri(BOB_PHONE),
+                key_package: None,
+                capabilities: None,
+            }],
+        }
+        .encode()
+        .unwrap(),
     );
     write(
         "key_material_response_no_consent",
@@ -209,6 +273,17 @@ fn main() {
         "update_room_response_not_allowed",
         UpdateRoomResponse::NotAllowed {
             error_description: "no".into(),
+        }
+        .encode()
+        .unwrap(),
+    );
+
+    // Added for Haven 07ce96f (bead mimid-1wgh.46.6).
+    write(
+        "update_room_response_invalid_proposal",
+        UpdateRoomResponse::InvalidProposal {
+            error_description: "bad".into(),
+            invalid_proposals: vec![vec![0xa5; 32], vec![0x5a; 32]],
         }
         .encode()
         .unwrap(),
