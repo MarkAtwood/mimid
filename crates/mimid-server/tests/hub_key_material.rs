@@ -9,6 +9,9 @@
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
 mod common;
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
+#[path = "common/logging.rs"]
+mod logging;
+#[allow(dead_code, reason = "each test binary uses part of the helpers")]
 #[path = "common/update.rs"]
 mod update;
 
@@ -22,6 +25,7 @@ use axum::http::{HeaderMap, Request, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use common::*;
+use logging::{JsonCapture, span_fields};
 use mimi_mls::label::SignatureKeyPair;
 use mimi_mls::member::{ExternalSender, Member};
 use mimi_mls::tls_codec::{Deserialize, Serialize};
@@ -622,4 +626,68 @@ async fn hub_without_peer_client_cannot_forward() {
         matches!(result, Err(HubError::Peer(PeerError::UnknownPeer(_)))),
         "{result:?}"
     );
+}
+
+/// A target provider's `4xx` gives exactly one INFO-or-above event: the
+/// disposition, an ERROR named `peer_provider_failed`, with the status, the
+/// body's length and decoded `userStatus`, the error's source chain and the
+/// request's span fields. The body itself appears only at DEBUG, escaped,
+/// in the client's `peer call completed` event (bead mimid-bfzm).
+#[tokio::test]
+async fn target_provider_4xx_is_one_error_event_with_its_evidence() {
+    let body = no_consent(CATHY);
+    let f = fixture(vec![Reply {
+        status: StatusCode::BAD_REQUEST,
+        body: body.clone(),
+    }])
+    .await;
+    let capture = JsonCapture::start();
+    let (status, _) = f
+        .post(CATHY_ENCODED, "b.example", request(&Ask::default()))
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+
+    let events = capture.above_debug();
+    assert_eq!(events.len(), 1, "one disposition event: {events:#?}");
+    let event = &events[0];
+    assert_eq!(event["level"], "ERROR");
+    assert_eq!(event["event"], "peer_provider_failed");
+    let fields = &event["fields"];
+    assert_eq!(fields["status"], 400);
+    assert_eq!(fields["response_len"], body.len());
+    assert_eq!(fields["response_code"], "noConsent");
+    assert_eq!(fields["error"], "peer provider request failed");
+    assert_eq!(
+        fields["error.sources"],
+        serde_json::json!(["peer answered 400"])
+    );
+    let request = span_fields(event, "protocol_request");
+    assert_eq!(request["endpoint"], "keyMaterial");
+    assert_eq!(request["peer"], "b.example");
+    assert_eq!(request["target_user"], CATHY);
+    let http = span_fields(event, "http_request");
+    assert_eq!(http["method"], "POST");
+    assert_eq!(http["route"], "/v1/keyMaterial/{targetUser}");
+
+    let lines = capture.lines();
+    let completed: Vec<_> = lines
+        .iter()
+        .filter(|line| line["message"] == "peer call completed")
+        .collect();
+    assert_eq!(completed.len(), 1, "{lines:#?}");
+    assert_eq!(completed[0]["level"], "DEBUG");
+    assert_eq!(completed[0]["fields"]["status"], 400);
+    assert_eq!(
+        completed[0]["fields"]["response_preview"],
+        body.escape_ascii().to_string()
+    );
+    let call = span_fields(completed[0], "peer_call");
+    assert_eq!(call["peer"], TARGET_DOMAIN);
+    assert_eq!(call["endpoint"], "keyMaterial");
+    let done: Vec<_> = lines
+        .iter()
+        .filter(|line| line["message"] == "request completed")
+        .collect();
+    assert_eq!(done.len(), 1, "{lines:#?}");
+    assert_eq!(done[0]["fields"]["status"], 502);
 }

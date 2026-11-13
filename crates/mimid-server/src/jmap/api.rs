@@ -292,7 +292,11 @@ pub(super) async fn post_api(
     let session_state = match state.0.session.state(&account) {
         Ok(session_state) => session_state,
         Err(error) => {
-            tracing::error!(%error, "jmap session does not serialize");
+            tracing::error!(
+                name: "jmap_api_session_unserializable",
+                error = &error as &dyn std::error::Error,
+                "jmap session does not serialize"
+            );
             return problem(JmapError::server_fail("internal error"));
         }
     };

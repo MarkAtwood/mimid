@@ -251,7 +251,12 @@ impl Follower {
                 .add_follower_member(room_id, &hub, user.as_str(), since_seq, self.clock.now_ms())
                 .await?
             {
-                tracing::info!(room_id, user = user.as_str(), "user joined followed room");
+                tracing::info!(
+                    name: "followed_room_joined",
+                    room_id,
+                    user = user.as_str(),
+                    "user joined followed room"
+                );
                 self.announce_membership(room_id, user);
             }
         }
@@ -354,7 +359,12 @@ impl Follower {
             .leave_follower_room(room_id, user.as_str(), self.clock.now_ms())
             .await?
         {
-            tracing::info!(room_id, user = user.as_str(), "user left followed room");
+            tracing::info!(
+                name: "followed_room_left",
+                room_id,
+                user = user.as_str(),
+                "user left followed room"
+            );
             self.announce_membership(room_id, user);
         }
         Ok(())

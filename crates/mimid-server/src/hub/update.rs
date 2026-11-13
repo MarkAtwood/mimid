@@ -227,6 +227,7 @@ pub(super) async fn update(
             room.pending.clear();
             room.app_data = PendingAppData::default();
             tracing::info!(
+                name: "commit_accepted",
                 room_id,
                 seq,
                 epoch = new_epoch,
@@ -243,6 +244,7 @@ pub(super) async fn update(
             room.pending.extend(references);
             room.app_data = app_data;
             tracing::info!(
+                name: "proposals_accepted",
                 room_id,
                 seq,
                 epoch = accepted.epoch,
@@ -264,7 +266,12 @@ async fn restore_after_error(
     room_id: &str,
 ) {
     if let Err(error) = restore_room(hub, rooms, room_id).await {
-        tracing::error!(room_id, %error, "room could not be rebuilt; it is unavailable until restart");
+        tracing::error!(
+            name: "room_rebuild_failed",
+            room_id,
+            error = &error as &dyn std::error::Error,
+            "room could not be rebuilt; it is unavailable until restart"
+        );
     }
 }
 
@@ -379,7 +386,12 @@ fn stage_commit(
     let state = match room_state(&room.observer) {
         Ok(state) => state,
         Err(error) => {
-            tracing::warn!(room_id, %error, "room policy state unusable; commit refused");
+            tracing::warn!(
+                name: "commit_policy_unusable",
+                room_id,
+                error = &error as &dyn std::error::Error,
+                "room policy state unusable; commit refused"
+            );
             return refuse(room_id, "the room has no usable policy", false);
         }
     };
@@ -394,7 +406,11 @@ fn stage_commit(
         Ok(Observed::Commit(_)) => {}
         Ok(_) => return refuse(room_id, "not a commit", true),
         Err(error) => {
-            tracing::debug!(room_id, %error, "commit failed MLS validation");
+            tracing::debug!(
+                room_id,
+                error = &error as &dyn std::error::Error,
+                "commit failed MLS validation"
+            );
             return refuse(room_id, "the commit is not valid", false);
         }
     }
@@ -426,7 +442,11 @@ fn stage_commit(
         Err(reason) => return refused(room, reason),
     };
     if let Err(denied) = policy::authorize_commit(&state, &summary) {
-        tracing::debug!(room_id, %denied, "commit refused by room policy");
+        tracing::debug!(
+            room_id,
+            denied = &denied as &dyn std::error::Error,
+            "commit refused by room policy"
+        );
         return refused(room, "the commit is refused by room policy");
     }
     // Decision mimid-1wgh.6.5.
@@ -479,7 +499,11 @@ fn stage_commit(
     let group_info = match group_info {
         Ok(group_info) => group_info,
         Err(error) => {
-            tracing::debug!(room_id, %error, "GroupInfo does not match the merged commit");
+            tracing::debug!(
+                room_id,
+                error = &error as &dyn std::error::Error,
+                "GroupInfo does not match the merged commit"
+            );
             return refuse(room_id, "the GroupInfo is not valid", true);
         }
     };
@@ -561,7 +585,12 @@ fn stage_proposals(
     let state = match room_state(&room.observer) {
         Ok(state) => state,
         Err(error) => {
-            tracing::warn!(room_id, %error, "room policy state unusable; proposal refused");
+            tracing::warn!(
+                name: "proposal_policy_unusable",
+                room_id,
+                error = &error as &dyn std::error::Error,
+                "room policy state unusable; proposal refused"
+            );
             return refuse(room_id, "the room has no usable policy", false);
         }
     };
@@ -576,7 +605,12 @@ fn stage_proposals(
         {
             Ok(detail) => detail,
             Err(error) => {
-                tracing::debug!(room_id, index, %error, "proposal failed MLS validation");
+                tracing::debug!(
+                    room_id,
+                    index,
+                    error = &error as &dyn std::error::Error,
+                    "proposal failed MLS validation"
+                );
                 return refuse(room_id, "a proposal is not valid", stored);
             }
         };
@@ -590,7 +624,12 @@ fn stage_proposals(
             return refuse(room_id, "From domain is not the proposer's domain", true);
         }
         if let Err(denied) = policy::authorize_proposal(&state, &kind, &sender) {
-            tracing::debug!(room_id, index, %denied, "proposal refused by room policy");
+            tracing::debug!(
+                room_id,
+                index,
+                denied = &denied as &dyn std::error::Error,
+                "proposal refused by room policy"
+            );
             return refuse(room_id, "a proposal is refused by room policy", true);
         }
         // mls-extensions-10 §4.7; decision mimid-1wgh.4.65; bead

@@ -67,6 +67,7 @@ pub(super) async fn report_abuse(
     for (index, message) in report.messages.iter().enumerate() {
         if let Err(reason) = verify(hub, &franking_agent, message) {
             tracing::info!(
+                name: "abuse_report_refused",
                 room_id,
                 reporting_user,
                 alleged_abuser,
@@ -79,6 +80,7 @@ pub(super) async fn report_abuse(
         }
     }
     tracing::info!(
+        name: "abuse_report_accepted",
         room_id,
         reporting_user,
         alleged_abuser,

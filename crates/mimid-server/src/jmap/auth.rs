@@ -63,7 +63,11 @@ impl Authenticator {
                 return Err(AuthRejection::Unauthorized);
             }
             Err(error) => {
-                tracing::error!(%error, "jmap authentication failed: store error");
+                tracing::error!(
+                    name: "jmap_auth_store_failed",
+                    error = &error as &dyn std::error::Error,
+                    "jmap authentication failed: store error"
+                );
                 return Err(AuthRejection::Internal);
             }
         };
@@ -71,12 +75,14 @@ impl Authenticator {
         // open for another domain, so a failure here is a corrupt row.
         let user = LocalUser::authenticated(&self.provider, &owner.user_uri).map_err(|_| {
             tracing::error!(
+                name: "jmap_auth_user_not_local",
                 account_id = %owner.account_id,
                 "jmap authentication failed: stored user is not local"
             );
             AuthRejection::Internal
         })?;
-        tracing::trace!(account_id = %owner.account_id, "jmap request authenticated");
+        // At least as severe as a refusal, which is DEBUG (bead mimid-bfzm).
+        tracing::debug!(account_id = %owner.account_id, "jmap request authenticated");
         Ok(Account {
             account_id: owner.account_id,
             user,

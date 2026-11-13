@@ -305,7 +305,11 @@ pub(super) async fn get_session(State(state): State<JmapState>, account: Account
     let session = match state.0.session.session(&account) {
         Ok(session) => session,
         Err(error) => {
-            tracing::error!(%error, "jmap session does not serialize");
+            tracing::error!(
+                name: "jmap_session_unserializable",
+                error = &error as &dyn std::error::Error,
+                "jmap session does not serialize"
+            );
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };

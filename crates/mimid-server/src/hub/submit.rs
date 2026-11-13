@@ -137,6 +137,7 @@ pub(super) async fn submit_message(
         )
         .await?;
     tracing::info!(
+        name: "message_accepted",
         room_id,
         seq,
         epoch = accepted.epoch,
@@ -206,12 +207,21 @@ fn check(
     let state = match room_state(observer) {
         Ok(state) => state,
         Err(error) => {
-            tracing::warn!(room_id, %error, "room policy state unusable; message refused");
+            tracing::warn!(
+                name: "submit_policy_unusable",
+                room_id,
+                error = &error as &dyn std::error::Error,
+                "room policy state unusable; message refused"
+            );
             return respond(SubmitResult::NotAllowed).map(Checked::Refused);
         }
     };
     if let Err(denied) = policy::authorize_send(&state, sending_uri.as_bytes()) {
-        tracing::debug!(room_id, %denied, "submitMessage refused by room policy");
+        tracing::debug!(
+            room_id,
+            denied = &denied as &dyn std::error::Error,
+            "submitMessage refused by room policy"
+        );
         return respond(SubmitResult::NotAllowed).map(Checked::Refused);
     }
 

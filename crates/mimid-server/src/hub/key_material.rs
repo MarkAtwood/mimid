@@ -119,14 +119,21 @@ pub(super) async fn key_material(
         let state = match room_state(&room.observer) {
             Ok(state) => state,
             Err(error) => {
-                tracing::warn!(room_id = tbs.room_id.as_str(), %error,
-                    "room policy state unusable; keyMaterial refused");
+                tracing::warn!(
+                    name: "key_material_policy_unusable",
+                    room_id = tbs.room_id.as_str(),
+                    error = &error as &dyn std::error::Error,
+                    "room policy state unusable; keyMaterial refused"
+                );
                 return refuse(target_user, "room policy state unusable");
             }
         };
         if let Err(denied) = policy::authorize_key_material(&state, identity) {
-            tracing::debug!(room_id = tbs.room_id.as_str(), %denied,
-                "keyMaterial refused by room policy");
+            tracing::debug!(
+                room_id = tbs.room_id.as_str(),
+                denied = &denied as &dyn std::error::Error,
+                "keyMaterial refused by room policy"
+            );
             return no_consent(target_user);
         }
     }
@@ -145,7 +152,11 @@ pub(super) async fn key_material(
             .key_material(target_user, &hub.domain, request)
             .await
             .map_err(HubError::LocalKeyMaterial)?;
-        tracing::info!(room_id = tbs.room_id.as_str(), "keyMaterial served locally");
+        tracing::info!(
+            name: "key_material_served_locally",
+            room_id = tbs.room_id.as_str(),
+            "keyMaterial served locally"
+        );
         return Ok(response);
     }
     let peers = hub
@@ -159,6 +170,7 @@ pub(super) async fn key_material(
     let relayed = KeyMaterialResponse::tls_deserialize_exact(response.as_slice())
         .map_err(HubError::InvalidPeerResponse)?;
     tracing::info!(
+        name: "key_material_relayed",
         room_id = tbs.room_id.as_str(),
         target_domain = %target_domain,
         user_status = ?relayed.user_status,

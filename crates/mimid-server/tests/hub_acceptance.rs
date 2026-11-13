@@ -1409,6 +1409,25 @@ async fn room_lifecycle_across_restart() {
     ] {
         assert!(text.contains(line), "the capture holds {line:?}");
     }
+    // The request and peer-call spans and a rejected body's preview are
+    // in the capture, so the secret checks below cover them too; a
+    // preview is logged at DEBUG only (bead mimid-bfzm).
+    for needle in [
+        "http_request{",
+        r#"route="/v1/update/{roomId}""#,
+        "protocol_request{",
+        "peer_call{",
+        "peer call completed",
+        "response_preview=",
+    ] {
+        assert!(text.contains(needle), "the capture holds {needle:?}");
+    }
+    for line in text
+        .lines()
+        .filter(|line| line.contains("response_preview"))
+    {
+        assert!(line.contains(" DEBUG "), "preview above DEBUG: {line}");
+    }
     assert_secret_absent(
         &text,
         &stored_secret.signature_private_key,

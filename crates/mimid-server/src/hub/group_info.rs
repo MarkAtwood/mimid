@@ -123,6 +123,7 @@ pub(super) async fn group_info(
         .tls_serialize_detached()
         .map_err(HubError::Encode)?;
     tracing::info!(
+        name: "group_info_served",
         room_id,
         epoch,
         pending_proposals = pending_count,
@@ -157,11 +158,20 @@ fn check(
     // missing one here is defence in depth (decisions mimid-1wgh.6.51,
     // mimid-1wgh.6.57).
     let state = room_state(&room.observer).map_err(|error| {
-        tracing::warn!(room_id, %error, "room policy state unusable; GroupInfo refused");
+        tracing::warn!(
+            name: "group_info_policy_unusable",
+            room_id,
+            error = &error as &dyn std::error::Error,
+            "room policy state unusable; GroupInfo refused"
+        );
         "room policy state unusable"
     })?;
     policy::authorize_group_info(&state, requester, tbs.joining_code.as_deref()).map_err(|denied| {
-        tracing::debug!(room_id, %denied, "groupInfo refused by room policy");
+        tracing::debug!(
+            room_id,
+            denied = &denied as &dyn std::error::Error,
+            "groupInfo refused by room policy"
+        );
         "refused by room policy"
     })
 }
