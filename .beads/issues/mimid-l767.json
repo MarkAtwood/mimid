@@ -3,17 +3,17 @@
   "title": "Relicense mimid from AGPL-3.0-only to Apache-2.0",
   "description": "Decision (Mark, 2026-11-13): mimid moves to Apache-2.0, matching Haven (havenmessenger/interop) and Arkret coland, so other MIMI implementers and deployments, including a possible native-MIMI Agora, can reuse mimid's crates. Context: the MIMI chair's 2026-01-13 message gating WG time on implementation evidence, and the DMA/MIMI research report (IETF workspace reports/DMA messaging interop and MIMI.md).\n\nCurrent state: AGPL-3.0-only since the first commit (beeab90, 2026-10-17), in LICENSE, README.md (License section) and the workspace Cargo.toml (license = \"AGPL-3.0-only\"); GitHub reports AGPL-3.0. Sole copyright holder: all 228 commits are by Mark Atwood \u003cmark@reviewcommit.com\u003e, with no Co-authored-by trailers and no outside PRs, so no other permission is needed.\n\nDo:\n1. Replace LICENSE with the Apache-2.0 text, and add a NOTICE file if wanted.\n2. Set license = \"Apache-2.0\" in the workspace Cargo.toml and every crate that sets its own (including the standalone crates under tools/interop: harness, live/driver, seed, and crates/mimi-protocol/tests/fixtures/haven/gen).\n3. Update the README.md License section, and any license mentions in AGENTS.md or docs.\n4. Check that no dependency's license forbids Apache-2.0 distribution (cargo deny / deny.toml allowlist). Note that the Phoenix (phnx-im) and libsignal (AGPL-3.0) code must never be vendored in; see mimid-1wgh.46.13 and mimid-9ayb.\n5. Run the full gates, then one commit: chore: relicense under Apache-2.0. The push needs Mark's OK.\n\nRelicensing applies to the code from this commit on. Copies already published under AGPL remain available under AGPL to those who have them.",
   "notes": "2026-11-13: committed 5877313 on main with Mark's OK (LICENSE, NOTICE, workspace Cargo.toml, README). fmt, typos and cargo check --workspace --all-features --all-targets pass. Dependency licenses OK (hpke-rs MPL-2.0 file-level; r-efi under MIT/Apache). Not pushed: needs Mark's OK. Note: tools/interop/phoenix links Phoenix's crates by git dependency; it is a test harness only and must not be distributed as a binary.",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "issue_type": "chore",
   "assignee": "Mark Atwood",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-13T21:13:54.259657061Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-13T21:17:10.172647263Z",
+  "updated_at": "2026-11-13T21:25:16.825245891Z",
   "started_at": "2026-11-13T21:17:10.102096755Z",
-  "lease_expires_at": "2026-11-13T21:22:10.102096755Z",
-  "heartbeat_at": "2026-11-13T21:17:10.102096755Z",
+  "closed_at": "2026-11-13T21:25:16.825245891Z",
+  "close_reason": "Relicensed to Apache-2.0 in 5877313, pushed to origin/main 2026-11-13 with Mark's OK.",
   "labels": [
     "license"
   ]
