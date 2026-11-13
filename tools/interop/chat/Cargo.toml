@@ -1,0 +1,46 @@
+[package]
+name = "mimid-chat"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone: not part of any workspace (bead mimid-1wgh.46.14). A throwaway
+# interop tool for the IETF 127 table, not the real client (mimid-agent,
+# bead mimid-1wgh.13).
+[workspace]
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+# The keyMaterial request's own signature key (protocol-07 §5.2); already in
+# the lockfile through mimi-protocol.
+ed25519-dalek = "2.2.0"
+getrandom = "0.3.4"
+# Already in the lockfile.
+hex = "0.4.3"
+mimi-content = { path = "../../../crates/mimi-content" }
+mimi-mls = { path = "../../../crates/mimi-mls" }
+mimi-protocol = { path = "../../../crates/mimi-protocol" }
+mimid-server = { path = "../../../crates/mimid-server" }
+# Line editing with incoming lines printed above the prompt.
+rustyline = { version = "19.0.0", default-features = false, features = ["with-file-history"] }
+# Same version and features as mimid-server, so SSL_CERT_FILE is honoured the
+# same way for the JSON lane as for PeerClient.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"
+
+# Copied from the mimid workspace root so the openmls fork resolves the same.
+# Keep in step with the root Cargo.toml [patch] section when its pins move.
+[patch.crates-io]
+openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "21c9dcce8d979dd0d8be8a7aeb56e64ef943bb2f" }
+openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "21c9dcce8d979dd0d8be8a7aeb56e64ef943bb2f" }
+openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "21c9dcce8d979dd0d8be8a7aeb56e64ef943bb2f" }
+openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "21c9dcce8d979dd0d8be8a7aeb56e64ef943bb2f" }
+openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "21c9dcce8d979dd0d8be8a7aeb56e64ef943bb2f" }
+openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "21c9dcce8d979dd0d8be8a7aeb56e64ef943bb2f" }
+openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "21c9dcce8d979dd0d8be8a7aeb56e64ef943bb2f" }

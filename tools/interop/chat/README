@@ -1,0 +1,193 @@
+mimid-chat: an interactive command-line chat client over MIMI protocol-07,
+for the IETF 127 hackathon table (bead mimid-1wgh.46.14). A throwaway
+interop tool, not mimid's client design: that is mimid-agent (bead
+mimid-1wgh.13). One process is one user, mimi://<own-domain>/u/<name>,
+talking to one hub, Haven's mimi-hubd at haven.reviewcommit.com by default.
+None of this runs in CI.
+
+Layout
+  Cargo.toml     standalone crate (own [workspace]): mimid crates by relative
+                 path, plus a copy of the root Cargo.toml [patch] section
+                 (keep the two in step when the openmls pins move)
+  src/main.rs    arguments (clap), the command loop, the line editor
+                 (rustyline), /sleep and /expect
+  src/chat.rs    rooms as MLS groups, the commands, incoming items; its
+                 module comment says how messages travel
+  src/hub.rs     the hub: protocol-07 wire lane through mimid's PeerClient,
+                 and mimi-hubd's JSON lane (/mimi/v1/*)
+  src/state.rs   the state directory
+  chat.sh        runs mimid-chat interactively on the mimid host over ssh -t
+  acceptance.sh  the two-user acceptance test on the mimid host
+
+Build and copy to the mimid host
+  export CARGO_TARGET_DIR=/data/cargo/mimid-chat-target
+  (cd $MIMID/tools/interop/chat && cargo build --release)
+  scp -i ~/.ssh/mimid-hackathon.pem -o BatchMode=yes \
+     $CARGO_TARGET_DIR/release/mimid-chat admin@172.31.40.235:/home/admin/interop/chat/
+  The mimid host's outbound proxy (haven.reviewcommit.com is 127.0.0.3 in its
+  /etc/hosts) adds mimid's mTLS client certificate, which names
+  mimid.reviewcommit.com; /home/admin/interop/trust.pem trusts the hub. So
+  mimid-chat runs there, not on this dev box.
+
+Running it (one terminal per user)
+  From this dev box:
+    ssh -t -i ~/.ssh/mimid-hackathon.pem admin@172.31.40.235 \
+      SSL_CERT_FILE=/home/admin/interop/trust.pem \
+      /home/admin/interop/chat/mimid-chat --user alice \
+      --state-dir /home/admin/interop/chat/state-alice
+  or the same through the wrapper:
+    ./chat.sh alice
+    ./chat.sh carol --poll-ms 1000
+    RUST_LOG=mimid_chat=debug ./chat.sh alice     # logs go to stderr
+
+  Options (mimid-chat --help; defaults in brackets):
+    --user NAME          a-z 0-9 . _ -, up to 64
+    --state-dir DIR      created 0700; files 0600
+    --hub DOMAIN         [haven.reviewcommit.com]
+    --hub-url URL        where the directory is fetched [https://HUB]
+    --lane-url URL       mimi-hubd's JSON lane [https://HUB:8443]
+    --own-domain DOMAIN  [mimid.reviewcommit.com]; the proxy's client
+                         certificate must name it
+    --poll-ms MS         100 to 600000 [2000]
+    --script FILE        read commands from FILE, echoing each as "> line";
+                         lines starting with # are skipped
+  A bad value is refused with a usage message and exit status 2.
+
+  On a terminal (ssh -t, as above) input is read with rustyline:
+    - the prompt names the current room, e.g. "[table]> ", or "> " for none;
+    - incoming lines print above the prompt, and a half-typed line is
+      redrawn intact below them;
+    - history (up/down arrows) is kept in DIR/history, mode 0600. It holds
+      the messages you typed in plaintext, like the rest of DIR;
+    - Ctrl-C clears the line, Ctrl-D on an empty line (or /quit) exits.
+  When stdin or stdout is not a terminal, lines are read plainly, one per
+  line, and output goes to stdout as is. --script never uses rustyline.
+
+  A typical session, alice and carol in two terminals:
+    carol> /allow alice          lets alice fetch carol's KeyPackages
+    alice> /create table         mimi://haven.reviewcommit.com/r/table
+    alice> /invite carol
+    carol>                       * invite #1 arrived: /join 1 to accept
+    carol> /join
+    alice> hello                 any line not starting with / is a message
+    carol>                       [table] alice@mimid.reviewcommit.com: hello
+    alice> /leave
+
+Commands
+  /create <name>     room mimi://<hub>/r/<name>, you its first participant:
+                     addParticipant on the JSON lane (as b4.sh does), then an
+                     MLS group whose ID is the room URI, with app_components
+                     naming participant_list and a list of just you
+  /invite <user>     a mimi:// URI, or a bare name on your domain. keyMaterial
+                     (§5.2) for the user; a Commit with the Add and one
+                     ParticipantListUpdate (mimi-hubd takes exactly one
+                     change per Commit, DIV-10), sent with update (§5.3);
+                     then the Welcome and the Commit are delivered (below)
+  /allow <user>      updateConsent grant (§5.7) with you as target: the hub
+                     serves your KeyPackages only to users you allowed
+  /join [n]          accept pending invite n (default the oldest). Messages
+                     that arrived for the room before the join are replayed
+  /rooms, /room X    list rooms; switch the current room (name or URI)
+  /who               the participant list (§7.5) and the MLS leaves
+  /leave [room]      §3.5: an AppDataUpdate proposal removing you, sent with
+                     update; the hub holds it, and the remaining member with
+                     the lowest leaf commits it with the Remove of your leaf
+  /publish [n]       publish n more KeyPackages (start-up and each join keep
+                     about 5 published)
+  /poll              pull now
+  /sleep S           (scripts) pause the command stream; polling continues
+  /expect TEXT [S]   (scripts) wait up to S seconds (60) for an output line
+                     containing TEXT; on time-out, report it and exit 1 at end
+  /quit              also end of input
+  Text is sent as mimi-content-10 (text/plain, senderUri and roomUri set),
+  encrypted with MLS, with submitMessage (§5.4). Received text has control,
+  bidi and zero-width characters escaped, and a senderUri or roomUri that
+  does not match the MLS sender or the room is refused (mimi-content-10
+  §3.3).
+
+How things reach a user when the hub never dials out
+  mimi-hubd sends no /notify, fans a submitted message out only to the
+  participants on its own domain (DIV-5), and neither stores nor relays
+  Commits. It does keep a deliver-once FIFO queue per routing key on its
+  JSON lane: POST /mimi/v1/submitMessage?recipient=K deposits opaque bytes,
+  GET /mimi/v1/message?user=K pulls the next one. So:
+  - every client polls GET /mimi/v1/message?user=<own URI>;
+  - whoever sends anything deposits a copy for each other participant. For a
+    user on another domain (every mimid user) the copy is the protocol-07
+    §5.5 FanoutMessage the hub would have sent that user's provider in a
+    /notify (application, proposal, commit or welcome). For a user on the
+    hub's domain it is the bare MLSMessage, and application messages are
+    left to the hub's own fan-out;
+  - a Welcome goes twice: through the hub's Welcome relay (POST
+    /mimi/v1/welcome/ingest?recipient=, which runs the hub's suite gate;
+    pulled with GET /mimi/v1/welcome?user=), and as a FanoutMessage welcome
+    in the invitee's message queue. Only the second carries the ratchet tree
+    (RatchetTreeOption full): mimid's GroupInfo leaves the ratchet_tree
+    extension out (§5.3) and the hub keeps no tree. The client keeps
+    whichever copy comes first and fills in the tree from the other;
+  - submitMessage also queues each message under the room URI, which nobody
+    reads and which holds at most 256 items before the hub refuses
+    submitMessage, so every member drains the room's queue and discards it;
+  - the Commit removing a leaver is also deposited for the leaver, whose
+    client then marks the room left.
+  The consent and KeyPackage parts are the hub's own: KeyPackages are
+  published on the JSON lane (POST /mimi/v1/keyMaterial/ingest?user=) and
+  served by the wire keyMaterial route only to requesters the target
+  allowed.
+
+What a Haven user (Jason's client) needs to join a mimid-created room
+  - KeyPackages published at the hub, and an updateConsent grant to the mimid
+    inviter (the hub's own consent gate);
+  - the Welcome: it is relayed to them (GET /mimi/v1/welcome?user=), but
+    without the ratchet tree. Their client must either read the FanoutMessage
+    welcome (mimid-chat deposits it only for users on other domains today;
+    sending it to hub users too is a small change in invite() and
+    distribute()), or the hub
+    must keep the UpdateRequest's ratchetTreeOption and hand it out;
+  - Commits and proposals: mimid-chat deposits the bare MLSMessages in their
+    queue; their client must process them from it;
+  - their messages reaching mimid users: the hub's submitMessage fans out to
+    its own domain only, so either their client deposits a copy (bare
+    MLSMessage or FanoutMessage; mimid-chat reads both) in each mimid
+    participant's queue, or mimi-hubd's submit_message_wire also enqueues for
+    plan.foreign (the participants fanout_targets already computes);
+  - nothing about the room itself: Haven already holds the participant list
+    mimid's Commits change, so their submitMessage is authorized.
+  A mimid user joining a Haven-created room works the other way round only if
+  the Haven client sends the Welcome and the tree by one of the routes above.
+
+Acceptance test
+  BIN=$CARGO_TARGET_DIR/release/mimid-chat ./acceptance.sh [A C ROOM]
+  copies the binary to the host and drives two processes with --script, in
+  two phases with both restarted in between. Phase 1: A creates the room, C
+  allows A, A invites C, C joins, each sends a message and sees the other's.
+  Phase 2: both reload from their state directories and exchange a message
+  each, C's bad commands are refused, A leaves and C commits the leave. The
+  default names carry a timestamp tag, so reruns start fresh. Outputs stay in
+  /home/admin/interop/chat/acc/ on the host.
+
+Limitations
+  - Every proposal from a member is taken as that member's leave: it is the
+    only proposal mimid-chat sends. A leave and an /invite in the same epoch
+    make a Commit with two changes, which the hub refuses.
+  - The queues are deliver-once: an item pulled by a process that dies before
+    processing it is lost, and two processes for one user steal each other's
+    items. Run one process per user.
+  - No ordering or retry: if two members commit in the same epoch, the hub
+    takes both (it never answers wrongEpoch), each refuses the other's
+    Commit, and messages between them stop decrypting. Nothing repairs the
+    group; recreate the room.
+  - KeyPackages at the hub are counted, not queried. If an inviter cannot get
+    one, the invitee runs /publish. Wiping a state directory leaves its old
+    KeyPackages at the hub, served first: the next Welcomes for that user
+    fail to open until those are used up. Use a new user name instead.
+  - The keyMaterial request is signed with a fresh key per request, not the
+    MLS signature key (Identity does not expose it); the hub does not check
+    it.
+  - Room names are first come, first served at the hub: /create of a name
+    someone else used adds you to their room's participant list at the hub.
+  - BasicCredential only, and nothing authenticates the hub or peers beyond
+    the proxy's mTLS. The state directory holds private keys in the clear,
+    protected only by its modes.
+
+Generated files (target/, state directories) are not in the repository.
