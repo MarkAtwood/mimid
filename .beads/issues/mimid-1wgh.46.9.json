@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.46.9",
+  "title": "Tear down mimid-hackathon EC2 after IETF 127 (2026-11-16)",
+  "description": "wolfSSL AWS account 921772462201, us-east-2: instance i-0836d83660f6e12c2 (t3.small, 3.16.37.182, private 172.31.40.235), security group sg-08913526a3a7a9c15, key pair mimid-hackathon (key-04a4f2943523829ba; private key ~/.ssh/mimid-hackathon.pem). All tagged Project=mimid-ietf127. Also remove the mimid.reviewcommit.com A record at Epik. Terminate: aws ec2 terminate-instances --instance-ids i-0836d83660f6e12c2, then delete the SG and key pair.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-13T18:33:32.063014402Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-13T18:33:32.063014402Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.9",
+      "depends_on_id": "mimid-1wgh.46",
+      "type": "parent-child",
+      "created_at": "2026-11-13T18:33:32.086460986Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
