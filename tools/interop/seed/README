@@ -1,0 +1,73 @@
+mimid-seed: give local users of a mimid provider a client and KeyPackages,
+so that a peer's protocol-07 §5.2 keyMaterial request for them succeeds
+(bead mimid-1wgh.46.10). mimid's JMAP surface cannot upload KeyPackages
+yet, so until it can, no local user exists without this (decision
+mimid-1wgh.7.9). Not run in CI.
+
+Layout
+  Cargo.toml    standalone crate (own [workspace]): mimid crates by relative
+                path, plus a copy of the root Cargo.toml [patch] section
+                (keep the two in step)
+  src/main.rs   mimid-seed, the seeder
+  src/bin/mimid-seed-probe.rs
+                sends one keyMaterial request per user, as a peer would, and
+                checks the KeyPackages that come back. Each successful probe
+                consumes a one-time KeyPackage.
+
+What it stores, per user mimi://<domain>/u/<name>
+  - one client Identity (BasicCredential = the user URI, Ed25519 key),
+    minted once and reloaded on later runs; its client URI is
+    mimi://<domain>/d/<base32 SHA-256 of the key> (decision mimid-1wgh.7.8)
+  - the user's JMAP account, if missing (no bearer token is issued)
+  - N one-time KeyPackages (default 20) and one last-resort KeyPackage,
+    each through KeyPackages::upload_key_package, the validated upload path
+  - in --state-dir (default <database>.seed-state), mode 0700/0600:
+      <name>/identity.json  user URI, client URI, signature public key
+      <name>/mls.sqlite     mimi-mls Store: the signature private key and
+                            every KeyPackage's private keys, in the clear
+    A later tool reloads the client with mimi_mls::Identity::load(user URI,
+    public key, Store::open(mls.sqlite)) and can join from a Welcome.
+    Keep this directory: without it the seeded users cannot join groups.
+
+Rerunning tops each client up to N unexpired one-time KeyPackages, and
+replaces the last-resort one if it ends before --valid-through. A user with
+clients in the database but no state in --state-dir is refused, rather than
+given a second identity.
+
+KeyPackages have OpenMLS's default lifetime: one hour in the past to 84
+days ahead. The tool stops if one would end before the end of
+--valid-through (default 2026-11-17, UTC).
+
+Running next to mimid
+  Safe with mimid stopped or running: the database is WAL with a 5 s busy
+  timeout, uploads take the write lock with BEGIN IMMEDIATE, and keyMaterial
+  reads the KeyPackage tables on every request. The tool refuses to run
+  unless the database exists, is owned by the user running it (so no -wal
+  or -shm file ends up unreadable to mimid), and has exactly the migrations
+  of the mimid revision the tool was built from, so it never migrates a
+  database under another mimid. Build it from the deployed revision.
+
+Variables
+  MIMID   this repository's root
+  CACHE   ${XDG_CACHE_HOME:-$HOME/.cache}; use a private CARGO_TARGET_DIR
+          under it, not a shared target directory
+
+Build
+  export CARGO_TARGET_DIR=$CACHE/mimid-seed-target
+  (cd $MIMID/tools/interop/seed && cargo build --release)
+
+Seed (as the user that runs mimid)
+  $CARGO_TARGET_DIR/release/mimid-seed --config /etc/mimid/config.toml \
+     --users alice,carol,dave [--count 20] [--state-dir DIR] \
+     [--valid-through 2026-11-17]
+
+Probe (consumes one KeyPackage per user)
+  $CARGO_TARGET_DIR/release/mimid-seed-probe --target-domain <domain> \
+     --target-url <mimid base URL> --from <any other domain> --users alice
+  The requester is mimi://<from>/u/seed-probe and the room
+  mimi://<from>/r/seed-probe, so the From domain is the room's authority.
+
+Local test
+  A mimid with domain mimid.test, base_url http://127.0.0.1:<port>, a temp
+  database and [peers] "peer.test" = "http://127.0.0.1:9": start it once,
+  seed, then probe with --target-domain mimid.test --from peer.test.

@@ -4,6 +4,9 @@ mimid-1wgh.46.1 (protocol-06, Haven 2c14e62) and mimid-1wgh.46.6
 (protocol-07, Haven 07ce96f), not here. None of this runs in CI: it builds third-party
 code and, for the live run, starts servers.
 
+To give a live mimid's local users KeyPackages for peers to fetch, see
+../seed/README.
+
 The opposite direction (Haven-encoded messages decoded by mimid) is an
 ordinary offline test: crates/mimi-protocol/tests/haven_fixtures.rs.
 
