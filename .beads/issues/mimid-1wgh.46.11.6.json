@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.46.11.6",
+  "title": "coland interop: provider_id derived from did:webvh path (mimi://host/webvh/service), not the domain",
+  "description": "Side: coland (minor).\n\ncoland derives its MIMI provider_id from its service DID. With did:webvh:\u003cscid\u003e:coland.reviewcommit.com:webvh:service, the directory advertises provider_id \"mimi://coland.reviewcommit.com/webvh/service\", which carries the DID path. MIMI (protocol-07, kohbrok-identifiers) names a provider by its domain (mimi://coland.reviewcommit.com), and room/user URIs hang off that authority. A peer that compares the provider id with the TLS/DNS domain will see a mismatch.\nCode: payload.rs service_did_mimi_provider_id (the did:webvh branch keeps authority_and_path).\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-13T21:16:48.853794687Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-13T21:16:48.853794687Z",
+  "labels": [
+    "interop",
+    "coland",
+    "coland-side"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.11.6",
+      "depends_on_id": "mimid-1wgh.46.11",
+      "type": "parent-child",
+      "created_at": "2026-11-13T21:16:48.898966396Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
