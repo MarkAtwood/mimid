@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.46.11.5",
+  "title": "coland interop: identifierQuery always returns matched:false (opaque fail-closed)",
+  "description": "Side: coland (by design; informational).\n\nidentifiers/query always answers matched:false with no mimi_uri, mapping_policy \"opaque_fail_closed\", no PSI. It also takes hashed identifier_commitment values rather than the -07 identifierQuery request. So discovery against coland can never succeed. Verified live: a did:key-signed query for sha256(\"mimi://mimid.reviewcommit.com/u/alice\") returned {\"matches\":[{\"identifier_commitment\":\"sha256:f811...\",\"matched\":false}],\"has_more\":false}.\nCode: handlers.rs mimi_identifiers_query; arkret-spec mimi-interop.md §10.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-13T21:16:48.482168271Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-13T21:16:48.482168271Z",
+  "labels": [
+    "interop",
+    "coland",
+    "coland-side"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.11.5",
+      "depends_on_id": "mimid-1wgh.46.11",
+      "type": "parent-child",
+      "created_at": "2026-11-13T21:16:48.542668676Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
