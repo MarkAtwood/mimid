@@ -1,4 +1,5 @@
-//! mimid -> Haven protocol-07 cross-check (bead mimid-1wgh.46.1.2).
+//! mimid -> Haven protocol-07 cross-check (beads mimid-1wgh.46.1.2 and
+//! mimid-1wgh.46.6; Haven at the commit pinned in Cargo.toml).
 //!
 //! Usage: cargo run -- <vectors dir> <mlswg fixture dir>
 //!
@@ -11,8 +12,9 @@ use std::{env, fs, path::Path};
 
 use mimi_core::consent::{ConsentEntry, ConsentOperation};
 use mimi_core::protocol_wire::{
-    decode_consent_entry, encode_consent_entry, AbuseReport, FanoutMessage, HandshakeBundle,
-    IdentifierQueryCode, IdentifierRequest, IdentifierResponse, IdentifierUri,
+    decode_consent_entry, encode_consent_entry, AbuseReport, ClientKeyMaterial, FanoutMessage,
+    GroupInfoOption, GroupInfoRepresentation, HandshakeBundle, IdentifierQueryCode,
+    IdentifierRequest, IdentifierResponse, IdentifierUri, KeyMaterialClientCode,
     KeyMaterialRequest, KeyMaterialResponse, KeyMaterialUserCode, QueryElement,
     SearchIdentifierType, SubmitMessageRequest, SubmitMessageResponse, UpdateRoomResponse,
     PROTOCOL_MLS10,
@@ -21,6 +23,8 @@ use openmls::prelude::{Ciphersuite, RequiredCapabilitiesExtension};
 
 const ALICE: &str = "mimi://a.example/u/alice";
 const BOB: &str = "mimi://b.example/u/bob";
+const BOB_PHONE: &str = "mimi://b.example/d/bob-phone";
+const BOB_LAPTOP: &str = "mimi://b.example/d/bob-laptop";
 const ROOM: &str = "mimi://a.example/r/room1";
 const TIMESTAMP: u64 = 1_700_000_000_000;
 const EPOCH: u64 = 42;
@@ -42,6 +46,30 @@ struct Outcome {
     decode: Result<(), String>,
     fields: Option<Result<(), String>>,
     reencode: Option<Result<(), String>>,
+}
+
+/// partialSuccess with two clients (bob-phone success, bob-laptop
+/// keyMaterialExhausted), as the dump writes it. Haven 07ce96f reads it as
+/// `KeyMaterialResponse::Clients`.
+fn partial_success(key_package: &[u8]) -> KeyMaterialResponse {
+    KeyMaterialResponse::Clients {
+        user_uri: uri(BOB),
+        user_status: KeyMaterialUserCode::PartialSuccess,
+        clients: vec![
+            ClientKeyMaterial {
+                status: KeyMaterialClientCode::Success,
+                client_uri: uri(BOB_PHONE),
+                key_package: Some(key_package.to_vec()),
+                capabilities: None,
+            },
+            ClientKeyMaterial {
+                status: KeyMaterialClientCode::KeyMaterialExhausted,
+                client_uri: uri(BOB_LAPTOP),
+                key_package: None,
+                capabilities: None,
+            },
+        ],
+    }
 }
 
 fn same<T: PartialEq + std::fmt::Debug>(got: &T, want: &T) -> Result<(), String> {
@@ -93,8 +121,8 @@ fn e<E: std::fmt::Debug>(x: E) -> String {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args[1] == "make-kp-default" {
-        // B4 (bead mimid-1wgh.46.1.6): a KeyPackage from openmls 0.8.1's
-        // default builder (default 84-day lifetime, no KeyPackage
+        // B4 (bead mimid-1wgh.46.1.6): a KeyPackage from the openmls
+        // revision Haven pins, default builder (default 84-day lifetime, no KeyPackage
         // extensions), unlike test_helpers::key_package's unbounded lifetime.
         fs::write(Path::new(&args[2]).join("haven_default_key_package.bin"), default_kp(BOB.as_bytes()))
             .unwrap();
@@ -102,18 +130,32 @@ fn main() {
         return;
     }
     if args[1] == "decode-commit" {
-        // B4: run Haven's update-lane decoder on a Commit file.
+        // B4: run Haven's update-lane decoders on a Commit file.
+        // decode_commit_proposals is the one mimi-hubd's update route uses
+        // at 07ce96f; the single-proposal decoder is kept for comparison.
         let bytes = fs::read(&args[2]).unwrap();
+        match mimi_core::commit_wire::decode_commit_proposals(&bytes) {
+            Ok(d) => println!("decode_commit_proposals: Ok({d:?})"),
+            Err(e) => println!("decode_commit_proposals: Err({e})"),
+        }
         match mimi_core::commit_wire::decode_single_custom_proposal_commit(&bytes) {
             Ok(d) => println!("decode_single_custom_proposal_commit: Ok({d:?})"),
             Err(e) => println!("decode_single_custom_proposal_commit: Err({e})"),
         }
         return;
     }
+    if args[1] == "decode-proposal" {
+        // B4: Haven's reader for a member-sent proposal (the -07 §3.5 leave).
+        let bytes = fs::read(&args[2]).unwrap();
+        match mimi_core::commit_wire::decode_proposal_message(&bytes) {
+            Ok(d) => println!("decode_proposal_message: Ok({d:?})"),
+            Err(e) => println!("decode_proposal_message: Err({e})"),
+        }
+        return;
+    }
     if args[1] == "make-kp" {
-        // Phase 1: a KeyPackage from Haven's own openmls 0.8 stack (no
-        // KeyPackage extensions, so openmls 0.8.1's GREASE bug cannot bite),
-        // for mimid's dump to wrap in its messages.
+        // Phase 1: a KeyPackage from Haven's own openmls stack (no
+        // KeyPackage extensions), for mimid's dump to wrap in its messages.
         let kp = mimi_core::test_helpers::key_package(BOB.as_bytes(), 1);
         fs::write(Path::new(&args[2]).join("haven_key_package.bin"), kp).unwrap();
         println!("wrote haven_key_package.bin");
@@ -128,6 +170,7 @@ fn main() {
     let commit = mls("public_message_commit");
     let proposal = mls("public_message_proposal");
     let welcome_msg = mls("mls_welcome");
+    let group_info_msg = mls("mls_group_info");
 
     let mut results: Vec<(&str, Outcome)> = Vec::new();
 
@@ -260,10 +303,10 @@ fn main() {
                 code: KeyMaterialUserCode::NoConsent,
             }),
         ),
-        // partialSuccess with two clients (bob-phone success, bob-laptop
-        // keyMaterialExhausted). Haven's KeyMaterialResponse has no
-        // variant for it; any decode result is reported as is.
-        ("key_material_response_partial_success", None),
+        (
+            "key_material_response_partial_success",
+            Some(partial_success(&key_package)),
+        ),
     ] {
         results.push((
             name,
@@ -272,7 +315,7 @@ fn main() {
                 |b| KeyMaterialResponse::decode(b).map_err(e),
                 |v| match &want {
                     Some(w) => same(v, w),
-                    None => Err(format!("no Haven value can represent it; decoded as {v:?}")),
+                    None => Err(format!("unexpected decode: {v:?}")),
                 },
                 |v| v.encode().map_err(e),
             ),
@@ -296,14 +339,28 @@ fn main() {
             |v| v.encode().map_err(e),
         ),
     ));
-    // protocol-07 §5.3: GroupInfo carried bare; Haven expects opaque<V>
-    // (known divergence mimid-1wgh.46.1.8).
+    // protocol-07 §5.3: bare Welcome and bare GroupInfo. Haven 2c14e62
+    // wanted an MLSMessage-wrapped Welcome and an opaque<V> GroupInfo
+    // (mimid-1wgh.46.1.12, .46.1.8); 07ce96f reads them bare.
     results.push((
         "handshake_bundle_commit",
         run(
             &read("handshake_bundle_commit"),
             |b| HandshakeBundle::decode(b).map_err(e),
-            |v| Err(format!("decoded unexpectedly: {v:?}")),
+            |v| {
+                same(
+                    v,
+                    &HandshakeBundle::Commit {
+                        proposal_or_commit: commit.clone(),
+                        welcome: Some(welcome_msg[4..].to_vec()),
+                        group_info_option: GroupInfoOption {
+                            representation: GroupInfoRepresentation::Full,
+                            payload: group_info_msg[4..].to_vec(),
+                        },
+                        ratchet_tree_option: vec![0x03],
+                    },
+                )
+            },
             |v| v.encode().map_err(e),
         ),
     ));
@@ -443,9 +500,9 @@ fn main() {
     ));
 
     // Diagnostic, not a pass/fail vector: rewrite mimid's spec-shaped
-    // commit bundle into Haven's expected shape (Welcome wrapped in an
-    // MLSMessage header, GroupInfo with a 2-byte length) to see whether
-    // those are the only differences. Offsets from the mlswg inputs:
+    // commit bundle into Haven 2c14e62's shape (Welcome wrapped in an
+    // MLSMessage header, GroupInfo with a 2-byte length). Haven 2c14e62
+    // took only that shape; 07ce96f should refuse it. Offsets from the mlswg inputs:
     // 428-byte Commit, presence byte, 416-byte Welcome, representation byte,
     // 420-byte GroupInfo, 1-byte RatchetTreeOption.
     {
@@ -464,10 +521,10 @@ fn main() {
         haven_shape.extend(&wire[gi_at + g..]);
         match HandshakeBundle::decode(&haven_shape) {
             Ok(v) => println!(
-                "DIAG handshake_bundle_commit rewritten to Haven's shape: decode ok, re-encode identical to rewrite: {}",
+                "DIAG handshake_bundle_commit in the 2c14e62 shape: decode ok (unexpected), re-encode identical to rewrite: {}",
                 v.encode().map(|b| b == haven_shape).unwrap_or(false)
             ),
-            Err(err) => println!("DIAG handshake_bundle_commit rewritten: decode FAIL {err:?}"),
+            Err(err) => println!("DIAG handshake_bundle_commit in the 2c14e62 shape: refused as expected: {err:?}"),
         }
     }
 
@@ -509,7 +566,7 @@ fn main() {
         let partial = run(
             &read("key_material_response_partial_success_haven_kp"),
             |b| KeyMaterialResponse::decode(b).map_err(e),
-            |v| Err(format!("no Haven value can represent it; decoded as {v:?}")),
+            |v| same(v, &partial_success(&hkp)),
             |v| v.encode().map_err(e),
         );
         for (name, o) in [
@@ -556,7 +613,8 @@ fn main() {
     println!("{clean}/{} clean", results.len());
 }
 
-/// openmls 0.8.1 KeyPackage with the builder's default lifetime (B4).
+/// KeyPackage from the openmls revision Haven pins, with the builder's
+/// default lifetime (B4).
 fn default_kp(identity: &[u8]) -> Vec<u8> {
     use openmls::prelude::{BasicCredential, CredentialWithKey, Extensions, KeyPackage};
     use openmls::prelude::tls_codec::Serialize as _;
