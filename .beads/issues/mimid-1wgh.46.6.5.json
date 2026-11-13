@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.6.5",
+  "title": "mimid: mimi-mls cannot build Remove proposals, so a self-leave cannot follow protocol-07 §3.5 step 1",
+  "description": "Found while driving the -07 §3.5 leave against Haven 07ce96f (B4 step 4d). protocol-07 §3.5 L716-720: 'The leaving client constructs MLS Remove proposals for all of the user's devices (including the leaving client), and an AppDataUpdate proposal for the participant_list component'; L733-737 the hub caches them and the next committer must include them. crates/mimi-mls/src/member.rs has Member::propose_app_data_update (L1030) but no way to build a Remove proposal, so mimid's leaving client can send only the AppDataUpdate; the committer then has to add the Remove by value. Haven happens to accept that (it holds a leave that is the change alone, and its §7.5 check is met by the committer's Remove), so the live leave worked end to end: leave held (success), a Commit leaving it out got invalidProposal naming the held ProposalRef (verified independently: SHA-256 RefHash 'MLS 1.0 Proposal Reference' over the AuthenticatedContent = 4fcd99f6...3a5b50), and the Commit including it by reference with Remove(carol) by value got success; Haven's list ended [alice, dave]. A hub that enforces step 1 literally would refuse mimid's leave. Wrong reading: mimid (missing capability). Fix: add a propose_remove (own leaf and the user's other leaves) to mimi-mls Member and use it in the agent's leave; check how it interacts with decision mimid-1wgh.6.39 (removed users may propose own Remove/SelfRemove).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-13T20:08:11.522238742Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-13T20:08:11.522238742Z",
+  "labels": [
+    "mimid"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.6.5",
+      "depends_on_id": "mimid-1wgh.46.6",
+      "type": "parent-child",
+      "created_at": "2026-11-13T20:08:11.562145028Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
