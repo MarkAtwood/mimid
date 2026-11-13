@@ -1,0 +1,17 @@
+{
+  "id": "mimid-e05c",
+  "title": "User discovery across providers: find which provider (and URI) a person is on",
+  "description": "Gap (2026-11-13): MIMI has per-provider search (protocol-07 §5.8 identifierQuery: handle, nick, email, phone, partialName, wholeProfile, OIDC claim and vCard field, with user-controlled searchability), but no way to find WHICH provider a person is on. You must already know the target domain. The WG's discovery work stalled: Google's discovery-requirements draft (Hogben and Olumofin) was adopted and then expired in Dec 2025, and no discovery mechanism has been adopted. Without discovery, MIMI depends on out-of-band URIs and join links, probably the biggest gap between MIMI and something people would actually use.\n\nCases:\n1. Domain-bearing identifiers (handle URIs like im:alice@a.example, email addresses, mimi:// URIs): the domain is already in the identifier. Discovery is DNS plus the §5.1 directory, then identifierQuery. Mostly works today; make mimid's client path (mimid-agent) do it end to end and handle 'not found' and 'not searchable' cleanly.\n2. Phone numbers and other identifiers with no domain: these need a discovery service. Options to evaluate:\n   a. Opt-in per-user registration with a discovery service that maps an identifier to a provider domain, with ownership verification (SMS or email challenge).\n   b. Privacy-preserving lookup (hashed or OPRF-blinded identifiers; private set intersection or PIR, as in Signal's contact discovery) so the service doesn't learn the social graph.\n   c. Provider-to-provider fan-out queries (ask N known providers): simple, but leaks the query and doesn't scale.\n   d. Reuse existing identity: OIDC claims, DIDs, did:webvh (see mls-didwebvh-credential), e164 or ENUM-style DNS (DNS-based phone mapping; mostly dead, but note it).\n3. Verification: the spec leaves 'is this the right Xavier?' out of scope. Consider verified-identifier claims in credentials, key transparency (keytrans WG), or safety-number-style checks.\n\nmimid work:\n- Implement identifierQuery fully on the mimid side (mimid-server follower/identifier.rs): enforce per-user search policy; rate-limit partialName and wholeProfile to resist user enumeration; conservative defaults (exact handle only).\n- Prototype case 2a and/or 2b as an experimental, clearly non-standard service, and report results to the mimi list as implementation evidence (memory reference-not-only). Don't present it as 'the' MIMI answer.\n- Cross-check: Haven answers identifierQuery with an empty 200 or 404 (DIV-4, mimid-1wgh.46.6.3); coland always returns 'not matched'.\n\nRelated WG material to read first: draft-ietf-mimi-discovery-reqs history (expired), the mimi list threads on discovery (2023-2024), the keytrans WG drafts, and the identifiers individual draft (draft-kohbrok-mimi-identifiers, in IETF specs/).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-13T23:23:16.224660881Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-13T23:23:16.224660881Z",
+  "labels": [
+    "discovery",
+    "design",
+    "wg"
+  ]
+}
