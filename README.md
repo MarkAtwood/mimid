@@ -58,4 +58,4 @@ Wire-format fixtures come from sources outside mimid: draft examples, working gr
 
 ## License
 
-AGPL-3.0-only. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Versions before the commit that made this change were published under AGPL-3.0-only.
