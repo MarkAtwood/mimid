@@ -80,7 +80,8 @@ Commands
   /create <name>     room mimi://<hub>/r/<name>, you its first participant:
                      addParticipant on the JSON lane (as b4.sh does), then an
                      MLS group whose ID is the room URI, with app_components
-                     naming participant_list and a list of just you
+                     naming participant_list, roles_list and
+                     base_room_policy, and a list of just you
   /adopt <name>      as /create, without addParticipant: for a room the hub
                      already lists you in, such as one its operator seeded
                      (Haven's r/table at the IETF 127 table)
@@ -89,6 +90,21 @@ Commands
                      ParticipantListUpdate (mimi-hubd takes exactly one
                      change per Commit, DIV-10), sent with update (§5.3);
                      then the Welcome and the Commit are delivered (below)
+  /invite <user> --policy k=v ... | --roles
+                     the same Commit also carries a base_room_policy or a
+                     roles_list AppDataUpdate (room-policy-04 §5, §3), to
+                     test whether a hub takes a policy change beside a
+                     participant change: §5 allows it, §3 does not, and
+                     mimi-hubd refuses both (DIV-10, one change per Commit)
+  /roles             a Commit with one roles_list update: role 1 "banned"
+                     and role 2 "member", the role mimid-chat gives every
+                     participant. mimi-hubd refuses a base_room_policy for a
+                     room with no roles, and requires role 1 to be "banned"
+  /policy k=v ...    a Commit with one base_room_policy update, starting
+                     from the room's current policy: fixed_membership,
+                     multi_device, pseudonyms_allowed, persistent_room,
+                     discoverable (true|false), max_clients, max_users (a
+                     number or none)
   /allow <user>      updateConsent grant (§5.7) with you as target: the hub
                      serves your KeyPackages only to users you allowed
   /join [n]          accept pending invite n (default the oldest). Messages

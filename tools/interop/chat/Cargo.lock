@@ -2018,6 +2018,7 @@ dependencies = [
  "mimi-content",
  "mimi-mls",
  "mimi-protocol",
+ "mimi-room-policy",
  "mimid-server",
  "reqwest",
  "rustyline",

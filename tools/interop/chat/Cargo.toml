@@ -21,6 +21,7 @@ hex = "0.4.3"
 mimi-content = { path = "../../../crates/mimi-content" }
 mimi-mls = { path = "../../../crates/mimi-mls" }
 mimi-protocol = { path = "../../../crates/mimi-protocol" }
+mimi-room-policy = { path = "../../../crates/mimi-room-policy" }
 mimid-server = { path = "../../../crates/mimid-server" }
 # Line editing with incoming lines printed above the prompt.
 rustyline = { version = "19.0.0", default-features = false, features = ["with-file-history"] }

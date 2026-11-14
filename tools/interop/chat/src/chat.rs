@@ -47,6 +47,8 @@ use mimi_protocol::{
     KeyMaterialUserCode, ParticipantListData, ParticipantListUpdate, Protocol,
     SubmitMessageRequest, UpdateRequest, UserRolePair,
 };
+use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
+use mimi_room_policy::{BaseRoomPolicy, Bool, Role, RoleData};
 use mimid_server::hub::components::apply_commit_op;
 
 use crate::hub::{Hub, encode};
@@ -72,9 +74,11 @@ const MAX_CONSUMED_WELCOMES: usize = 16;
 const MAX_HELD: usize = 256;
 /// Items pulled from one queue per poll.
 const MAX_PULLS_PER_POLL: usize = 64;
-/// The role every participant gets (room-policy-04 has no default; the
-/// driver and b4.sh use 1).
-const ROLE: u32 = 1;
+/// The role every participant mimid-chat adds gets: 2, "member" in
+/// [`default_roles`]. Not 1, which room-policy-04 §8.1.3 gives the "banned"
+/// role, and which mimi-hubd requires to be named "banned". Rooms made
+/// before this change hold participants with role 1.
+const ROLE: u32 = 2;
 /// The longest line of text sent as one message.
 const MAX_TEXT_LEN: usize = 16 * 1024;
 const TEXT_PLAIN: &str = "text/plain;charset=utf-8";
@@ -266,6 +270,8 @@ impl Client {
                 "create" => self.create(arg, true).await,
                 "adopt" => self.create(arg, false).await,
                 "invite" => self.invite(arg).await,
+                "policy" => self.policy(arg).await,
+                "roles" => self.roles(arg).await,
                 "allow" => self.allow(arg).await,
                 "join" => self.join(arg).await,
                 "rooms" => {
@@ -298,6 +304,10 @@ impl Client {
             "/create <name>         create mimi://<hub>/r/<name> with you as its first participant",
             "/adopt <name>          as /create, for a room the hub already lists you in (no addParticipant)",
             "/invite <user>         add a user (a mimi:// URI, or a bare name on your domain)",
+            "  ... --policy k=v ... the same Commit also changes base_room_policy",
+            "  ... --roles          the same Commit also replaces roles_list (both hubs should refuse)",
+            "/roles                 set roles_list: 1 \"banned\", 2 \"member\" (needed before /policy on mimi-hubd)",
+            "/policy k=v ...        change base_room_policy: fixed_membership, multi_device,\n                       pseudonyms_allowed, persistent_room, discoverable (true|false),\n                       max_clients, max_users (a number or none)",
             "/allow <user>          let <user> fetch your KeyPackages (updateConsent grant)",
             "/join [n]              accept pending invite n (default: the oldest)",
             "/rooms                 list rooms; /room <name|uri> switches the current room",
@@ -337,8 +347,15 @@ impl Client {
             room.as_bytes(),
             &[],
             &[
-                // mls-extensions-10 §5: a ComponentsList naming participant_list.
-                (APP_COMPONENTS, vec![0x02, 0x00, 0x22]),
+                // mls-extensions-10 §5: a ComponentsList naming
+                // participant_list (0x0022), roles_list (0x0025) and
+                // base_room_policy (0x0027), so /policy and --roles can set
+                // them: a component with state must be listed. Every member's
+                // leaf must list them too; mimid's leaves do.
+                (
+                    APP_COMPONENTS,
+                    vec![0x06, 0x00, 0x22, 0x00, 0x25, 0x00, 0x27],
+                ),
                 (PARTICIPANT_LIST, participant_list(&[self.me.as_str()])?),
             ],
         )
@@ -357,6 +374,81 @@ impl Client {
         Ok(())
     }
 
+    /// `/policy k=v ...`: a Commit with one base_room_policy AppDataUpdate
+    /// (room-policy-04 §5), sent with update and distributed to the room.
+    async fn policy(&mut self, arg: &str) -> anyhow::Result<()> {
+        let settings: Vec<&str> = arg.split_whitespace().collect();
+        ensure!(!settings.is_empty(), "usage: /policy k=v ... (see /help)");
+        let room = self.current()?;
+        let update = base_policy_update(self.member(&room)?, &settings)?;
+        self.commit_one_update(&room, update, "base_room_policy")
+            .await?;
+        self.say(format!(
+            "[{}] * base_room_policy changed: {}",
+            short_room(&room),
+            settings.join(" ")
+        ));
+        Ok(())
+    }
+
+    /// `/roles`: a Commit with one roles_list AppDataUpdate (room-policy-04
+    /// §3) setting [`default_roles`]. mimi-hubd refuses a base_room_policy
+    /// for a room with no roles, so this goes first.
+    async fn roles(&mut self, arg: &str) -> anyhow::Result<()> {
+        ensure!(arg.is_empty(), "usage: /roles");
+        let room = self.current()?;
+        let update = AppDataUpdate::Update {
+            component_id: ROLES_LIST,
+            update: encode(&default_roles())?,
+        };
+        self.commit_one_update(&room, update, "roles_list").await?;
+        self.say(format!(
+            "[{}] * roles_list set: 1 banned, 2 member",
+            short_room(&room)
+        ));
+        Ok(())
+    }
+
+    /// A Commit with `update` and nothing else, sent with update (§5.3),
+    /// merged, and distributed to the room's other participants.
+    async fn commit_one_update(
+        &mut self,
+        room: &str,
+        update: AppDataUpdate,
+        what: &str,
+    ) -> anyhow::Result<()> {
+        let before = participants(self.member(room)?)?;
+        let member = self
+            .members
+            .get_mut(room)
+            .ok_or_else(|| anyhow!("no MLS group for {room}"))?;
+        let bundle = member
+            .commit(&self.identity, &[], &[], &[update], apply_commit_op)
+            .map_err(|e| anyhow!("building the Commit: {}", causes(&e)))?;
+        let request = commit_request(&bundle)?;
+        if let Err(e) = self.hub.update_ok(room, request).await {
+            if let Err(clear) = member.clear_pending_commit(&self.identity) {
+                self.error(format!("clearing the refused Commit: {}", causes(&clear)));
+            }
+            return Err(e.context(format!("update ({what})")));
+        }
+        member
+            .merge_pending_commit(&self.identity)
+            .map_err(|e| anyhow!("merging the Commit: {}", causes(&e)))?;
+        let commit = MLSMessage::tls_deserialize_exact(&bundle.commit[..])
+            .map_err(|e| anyhow!("own Commit: {e:?}"))?;
+        let others: Vec<String> = before.into_iter().filter(|u| *u != self.me).collect();
+        self.distribute(
+            &others,
+            FanoutEvent::Commit {
+                message: commit,
+                external_proposals: vec![],
+            },
+        )
+        .await;
+        Ok(())
+    }
+
     fn current(&self) -> anyhow::Result<String> {
         let room = self
             .state
@@ -371,7 +463,21 @@ impl Client {
     }
 
     async fn invite(&mut self, arg: &str) -> anyhow::Result<()> {
-        let target = self.user_uri(arg)?;
+        let mut words = arg.split_whitespace();
+        let user = words.next().unwrap_or("");
+        let mut policy: Option<Vec<&str>> = None;
+        let mut roles = false;
+        for word in words {
+            match word {
+                "--policy" => policy = Some(Vec::new()),
+                "--roles" => roles = true,
+                setting => match policy.as_mut() {
+                    Some(settings) => settings.push(setting),
+                    None => bail!("usage: /invite <user> [--policy k=v ...] [--roles]"),
+                },
+            }
+        }
+        let target = self.user_uri(user)?;
         ensure!(target != self.me, "you cannot invite yourself");
         let room = self.current()?;
         let before = participants(self.member(&room)?)?;
@@ -413,19 +519,23 @@ impl Client {
         let adds: Vec<&[u8]> = key_packages.iter().map(Vec::as_slice).collect();
 
         // Commit: Add beside one ParticipantListUpdate (protocol-07 §3.2;
-        // mimi-hubd DIV-10 takes exactly one change per Commit).
+        // mimi-hubd DIV-10 takes exactly one change per Commit). --policy
+        // and --roles add a policy change to the same Commit, to test that
+        // rule: room-policy-04 §5 allows base_room_policy beside a
+        // participant change, §3 forbids roles_list there.
+        let mut updates = vec![list_change(vec![], &[target.as_str()])?];
+        if let Some(settings) = &policy {
+            updates.push(base_policy_update(self.member(&room)?, settings)?);
+        }
+        if roles {
+            updates.push(roles_update(self.member(&room)?)?);
+        }
         let member = self
             .members
             .get_mut(&room)
             .ok_or_else(|| anyhow!("no MLS group for {room}"))?;
         let bundle = member
-            .commit(
-                &self.identity,
-                &adds,
-                &[],
-                &[list_change(vec![], &[target.as_str()])?],
-                apply_commit_op,
-            )
+            .commit(&self.identity, &adds, &[], &updates, apply_commit_op)
             .map_err(|e| anyhow!("building the Commit: {}", causes(&e)))?;
         let request = commit_request(&bundle)?;
         if let Err(e) = self.hub.update_ok(&room, request).await {
@@ -1337,6 +1447,100 @@ fn list_change(removed_indices: Vec<u32>, added: &[&str]) -> anyhow::Result<AppD
             added_participants: pairs(added),
         })?,
     })
+}
+
+/// A base_room_policy AppDataUpdate (room-policy-04 §5): the room's current
+/// policy, or an all-false one with no limits if it has none, with
+/// `settings` (`k=v`) applied. The update replaces the whole policy
+/// (decision mimid-1wgh.3.20), so unnamed fields keep their values.
+fn base_policy_update(member: &Member, settings: &[&str]) -> anyhow::Result<AppDataUpdate> {
+    let mut policy = match member.component(BASE_ROOM_POLICY) {
+        Some(data) => BaseRoomPolicy::tls_deserialize_exact(data)
+            .map_err(|e| anyhow!("the room's base_room_policy does not decode: {e:?}"))?,
+        None => BaseRoomPolicy {
+            fixed_membership: Bool::False,
+            parent_dependant: Bool::False,
+            parent_room: vec![],
+            multi_device: Bool::False,
+            max_clients: None,
+            max_users: None,
+            pseudonyms_allowed: Bool::False,
+            persistent_room: Bool::False,
+            discoverable: Bool::False,
+            policy_component_ids: vec![],
+        },
+    };
+    for setting in settings {
+        let (key, value) = setting
+            .split_once('=')
+            .ok_or_else(|| anyhow!("{setting:?} is not k=v"))?;
+        let flag = || -> anyhow::Result<Bool> {
+            match value {
+                "true" => Ok(Bool::True),
+                "false" => Ok(Bool::False),
+                _ => bail!("{key} takes true or false"),
+            }
+        };
+        let limit = || -> anyhow::Result<Option<u32>> {
+            if value == "none" {
+                Ok(None)
+            } else {
+                Ok(Some(value.parse().with_context(|| {
+                    format!("{key} takes a number or none")
+                })?))
+            }
+        };
+        match key {
+            "fixed_membership" => policy.fixed_membership = flag()?,
+            "multi_device" => policy.multi_device = flag()?,
+            "pseudonyms_allowed" => policy.pseudonyms_allowed = flag()?,
+            "persistent_room" => policy.persistent_room = flag()?,
+            "discoverable" => policy.discoverable = flag()?,
+            "max_clients" => policy.max_clients = limit()?,
+            "max_users" => policy.max_users = limit()?,
+            other => bail!("unknown base_room_policy field {other}"),
+        }
+    }
+    Ok(AppDataUpdate::Update {
+        component_id: BASE_ROOM_POLICY,
+        update: encode(&policy)?,
+    })
+}
+
+/// A roles_list AppDataUpdate (room-policy-04 §3) that rewrites the room's
+/// current roles unchanged, or an empty list if it has none: only its
+/// presence in a Commit matters for the negative test.
+fn roles_update(member: &Member) -> anyhow::Result<AppDataUpdate> {
+    let roles = match member.component(ROLES_LIST) {
+        Some(data) => RoleData::tls_deserialize_exact(data)
+            .map_err(|e| anyhow!("the room's roles_list does not decode: {e:?}"))?,
+        None => default_roles(),
+    };
+    Ok(AppDataUpdate::Update {
+        component_id: ROLES_LIST,
+        update: encode(&roles)?,
+    })
+}
+
+/// The role list `/roles` sets: role 1, "banned" (room-policy-04 §8.1.3,
+/// with no capabilities), and [`ROLE`], "member", the role every participant
+/// mimid-chat adds gets, with no capabilities and no constraints. mimi-hubd
+/// does not check roles yet; a hub that does would need capabilities here.
+fn default_roles() -> RoleData {
+    let role = |role_index: u32, name: &str| Role {
+        role_index,
+        role_name: name.to_owned(),
+        role_description: String::new(),
+        role_capabilities: vec![],
+        minimum_participants_constraint: 0,
+        maximum_participants_constraint: None,
+        minimum_active_participants_constraint: 0,
+        maximum_active_participants_constraint: None,
+        authorized_role_changes: vec![],
+    };
+    RoleData {
+        roles: vec![role(1, "banned"), role(ROLE, "member")],
+    }
 }
 
 /// The participant list (protocol-07 §7.5) of `member`'s group.
