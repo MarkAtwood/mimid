@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.52.1",
+  "title": "Store docs: consent URIs are stored in RFC 3986 normal form, not 'as received'",
+  "description": "Since 8761132 the follower stores consent requester_uri, target_uri and room_id in RFC 3986 §6.2.2 normal form (lookup_uri), but the consent_request/consent_update migration comments and any store docs say 'as received'. The entry BLOB is still exactly as received. Migrations can't be edited (sqlx checksums), so fix the Rust docs in store/consent.rs and add a note in a new migration comment or the store module docs. Differs only when a peer sends a non-normal URI.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "chore",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-14T21:59:58.499672964Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-14T21:59:58.499672964Z",
+  "labels": [
+    "design",
+    "interop",
+    "strictness"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.52.1",
+      "depends_on_id": "mimid-1wgh.52",
+      "type": "parent-child",
+      "created_at": "2026-11-14T21:59:58.531195517Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
