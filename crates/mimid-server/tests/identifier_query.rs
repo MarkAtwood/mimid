@@ -282,3 +282,136 @@ async fn malformed_requests_are_bad_requests() {
         StatusCode::BAD_REQUEST
     );
 }
+
+// ---- Unicode stress (bead mimid-1wgh.54, third slice) ----
+//
+// §5.8 says a `handle` "matches exactly" and does not say whether that is
+// byte equality or URI equivalence (RFC 3986 §6.2.2). mimid compares bytes:
+// these tests pin that down, so a change to it is a decision, not an
+// accident. The Big List of Naughty Strings is the one vendored for
+// mimi-content (PROVENANCE there).
+
+const BLNS: &str = include_str!("../../mimi-content/tests/fixtures/blns/blns.base64.txt");
+
+fn naughty() -> Vec<Vec<u8>> {
+    BLNS.lines()
+        .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+        .map(|line| base64(line.trim()))
+        .collect()
+}
+
+/// Standard base64 with padding (RFC 4648 §4), enough for the fixture.
+fn base64(text: &str) -> Vec<u8> {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let (mut bits, mut count, mut out) = (0u32, 0, Vec::new());
+    for c in text.bytes().take_while(|&c| c != b'=') {
+        let value = ALPHABET.iter().position(|&a| a == c).expect("base64");
+        bits = (bits << 6) | u32::try_from(value).unwrap();
+        count += 6;
+        if count >= 8 {
+            count -= 8;
+            out.push(u8::try_from((bits >> count) & 0xff).unwrap());
+        }
+    }
+    out
+}
+
+/// RFC 9420 §2.1.2 variable-length vector of `bytes`.
+fn vl(bytes: &[u8]) -> Vec<u8> {
+    let len = bytes.len();
+    let mut out = if len < 0x40 {
+        vec![u8::try_from(len).unwrap()]
+    } else {
+        (u16::try_from(len).unwrap() | 0x4000)
+            .to_be_bytes()
+            .to_vec()
+    };
+    out.extend_from_slice(bytes);
+    out
+}
+
+/// IdentifierRequest: one element of `search_type` (with no select arm)
+/// for `value`, and no extensions.
+fn query(search_type: u8, value: &[u8]) -> Vec<u8> {
+    let mut element = vec![search_type];
+    element.extend(vl(value));
+    let mut request = vl(&element);
+    request.push(0x00); // id_request_extensions: empty
+    request
+}
+
+/// IdentifierResponse `success` with the one URI `uri`.
+fn success(uri: &str) -> Vec<u8> {
+    let mut out = vec![0x00]; // responseCode = success(0)
+    out.extend(vl(&vl(uri.as_bytes())));
+    out.extend([0x00, 0x00]); // foundProfiles, id_response_extensions
+    out
+}
+
+/// handle(1).
+const HANDLE: u8 = 1;
+
+/// `é`, a user id outside ASCII, percent-encoded from NFC (U+00E9).
+const EMILE_NFC: &str = "mimi://b.example/u/%C3%A9mile";
+
+/// A user id with an `i`, for the Turkish case mappings.
+const IRIS: &str = "mimi://b.example/u/iris";
+
+#[tokio::test]
+async fn no_naughty_string_is_a_handle_or_breaks_the_query() {
+    let b = provider("b.example", &[BOB, EMILE_NFC]).await;
+    for entry in naughty() {
+        assert_eq!(
+            post(&b.app, PATH, FROM_A, &query(HANDLE, &entry)).await,
+            (StatusCode::OK, no_results(NOT_FOUND)),
+            "{entry:02x?}"
+        );
+        // The same text inside a user URI of this provider.
+        let mut uri = b"mimi://b.example/u/".to_vec();
+        uri.extend(&entry);
+        assert_eq!(
+            post(&b.app, PATH, FROM_A, &query(HANDLE, &uri)).await,
+            (StatusCode::OK, no_results(NOT_FOUND)),
+            "{entry:02x?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_handle_matches_only_the_same_bytes() {
+    let b = provider("b.example", &[BOB, EMILE_NFC, IRIS]).await;
+    assert_eq!(
+        post(&b.app, PATH, FROM_A, &query(HANDLE, IRIS.as_bytes())).await,
+        (StatusCode::OK, success(IRIS))
+    );
+    assert_eq!(
+        post(&b.app, PATH, FROM_A, &query(HANDLE, EMILE_NFC.as_bytes())).await,
+        (StatusCode::OK, success(EMILE_NFC))
+    );
+    for other in [
+        // The same URI under RFC 3986 §6.2.2.1: hex digits in lowercase.
+        "mimi://b.example/u/%c3%a9mile",
+        // The same URI under §6.2.2.1: scheme and host in uppercase.
+        "MIMI://b.example/u/%C3%A9mile",
+        "mimi://B.EXAMPLE/u/%C3%A9mile",
+        // The same text in NFD: e and U+0301 COMBINING ACUTE ACCENT.
+        "mimi://b.example/u/e%CC%81mile",
+        // Not percent-encoded, so not a URI.
+        "mimi://b.example/u/\u{e9}mile",
+        // Case in the path is significant (RFC 3986 §6.2.2.1).
+        "mimi://b.example/u/%C3%89MILE",
+        "mimi://b.example/u/BOB",
+        // iris with a Turkish dotted capital I (U+0130), a dotless small i
+        // (U+0131), and a plain capital I: what a Turkish-locale case
+        // mapping of "iris" or "IRIS" gives.
+        "mimi://b.example/u/%C4%B0ris",
+        "mimi://b.example/u/%C4%B1ris",
+        "mimi://b.example/u/Iris",
+    ] {
+        assert_eq!(
+            post(&b.app, PATH, FROM_A, &query(HANDLE, other.as_bytes())).await,
+            (StatusCode::OK, no_results(NOT_FOUND)),
+            "{other}"
+        );
+    }
+}
