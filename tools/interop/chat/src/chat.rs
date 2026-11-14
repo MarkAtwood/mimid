@@ -404,7 +404,7 @@ impl Client {
                 apply_commit_op,
             )
             .map_err(|e| anyhow!("building the Commit: {}", causes(&e)))?;
-        let request = commit_request(member, &bundle)?;
+        let request = commit_request(&bundle)?;
         if let Err(e) = self.hub.update_ok(&room, request).await {
             if let Err(clear) = member.clear_pending_commit(&self.identity) {
                 self.error(format!("clearing the refused Commit: {}", causes(&clear)));
@@ -1098,7 +1098,7 @@ impl Client {
         let bundle = member
             .commit(&self.identity, &[], &[leaver], &[], apply_commit_op)
             .map_err(|e| anyhow!("building the Commit: {}", causes(&e)))?;
-        let request = commit_request(member, &bundle)?;
+        let request = commit_request(&bundle)?;
         if let Err(e) = self.hub.update_ok(room, request).await {
             if let Err(clear) = member.clear_pending_commit(&self.identity) {
                 self.error(format!("clearing the refused Commit: {}", causes(&clear)));
@@ -1294,8 +1294,13 @@ fn participants(member: &Member) -> anyhow::Result<Vec<String>> {
         .collect())
 }
 
-/// protocol-07 §5.3 UpdateRequest around a CommitBundle.
-fn commit_request(member: &Member, bundle: &CommitBundle) -> anyhow::Result<Vec<u8>> {
+/// protocol-07 §5.3 UpdateRequest around a CommitBundle. The bundle's
+/// RatchetTreeOption is `distributionService` (ratchet-tree-options-02): a
+/// mimid hub rebuilds the tree from the Commits it accepts and attaches its
+/// own to Welcomes (decision mimid-1wgh.6.12), and mimi-hubd reads no tree,
+/// so a `full` tree here was uploaded on every Commit and never used. A
+/// joiner still gets the full tree in the Welcome this client delivers.
+fn commit_request(bundle: &CommitBundle) -> anyhow::Result<Vec<u8>> {
     let welcome = bundle
         .welcome
         .as_ref()
@@ -1310,9 +1315,6 @@ fn commit_request(member: &Member, bundle: &CommitBundle) -> anyhow::Result<Vec<
         .group_info
         .strip_prefix(&GROUP_INFO_HEADER)
         .ok_or_else(|| anyhow!("the GroupInfo is not an mls_group_info MLSMessage"))?;
-    let tree = member
-        .ratchet_tree()
-        .map_err(|e| anyhow!("ratchet tree: {}", causes(&e)))?;
     encode(&UpdateRequest {
         bundle: HandshakeBundle::Commit {
             proposal_or_commit: MLSMessage::tls_deserialize_exact(&bundle.commit[..])
@@ -1322,8 +1324,7 @@ fn commit_request(member: &Member, bundle: &CommitBundle) -> anyhow::Result<Vec<
                 group_info: GroupInfo::tls_deserialize_exact(group_info)
                     .map_err(|e| anyhow!("own GroupInfo: {e:?}"))?,
             },
-            ratchet_tree_option: RatchetTreeOption::full(&tree)
-                .map_err(|e| anyhow!("ratchet tree option: {e:?}"))?,
+            ratchet_tree_option: RatchetTreeOption::distribution_service(),
         },
     })
 }
