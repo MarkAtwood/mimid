@@ -240,7 +240,8 @@ impl Client {
                     self.help();
                     Ok(())
                 }
-                "create" => self.create(arg).await,
+                "create" => self.create(arg, true).await,
+                "adopt" => self.create(arg, false).await,
                 "invite" => self.invite(arg).await,
                 "allow" => self.allow(arg).await,
                 "join" => self.join(arg).await,
@@ -272,6 +273,7 @@ impl Client {
     fn help(&mut self) {
         for line in [
             "/create <name>         create mimi://<hub>/r/<name> with you as its first participant",
+            "/adopt <name>          as /create, for a room the hub already lists you in (no addParticipant)",
             "/invite <user>         add a user (a mimi:// URI, or a bare name on your domain)",
             "/allow <user>          let <user> fetch your KeyPackages (updateConsent grant)",
             "/join [n]              accept pending invite n (default: the oldest)",
@@ -287,20 +289,26 @@ impl Client {
         }
     }
 
-    async fn create(&mut self, name: &str) -> anyhow::Result<()> {
+    /// `/create`, or with `register` false `/adopt`: the same MLS group, but
+    /// no addParticipant, for a room whose hub already lists you as its
+    /// first participant (a seeded room such as Haven's r/table).
+    async fn create(&mut self, name: &str, register: bool) -> anyhow::Result<()> {
+        let command = if register { "/create" } else { "/adopt" };
         ensure!(
             valid_name(name),
-            "usage: /create <name> (a-z 0-9 . _ -, up to 64)"
+            "usage: {command} <name> (a-z 0-9 . _ -, up to 64)"
         );
         let room = format!("mimi://{}/r/{name}", self.hub.domain);
         ensure!(
             !self.state.rooms.contains_key(&room),
             "you already have a room {room}"
         );
-        self.hub
-            .add_participant(&room, &self.me)
-            .await
-            .context("registering you as the room's first participant at the hub")?;
+        if register {
+            self.hub
+                .add_participant(&room, &self.me)
+                .await
+                .context("registering you as the room's first participant at the hub")?;
+        }
         let member = Member::create(
             &self.identity,
             room.as_bytes(),

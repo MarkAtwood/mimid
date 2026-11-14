@@ -78,6 +78,9 @@ Commands
                      addParticipant on the JSON lane (as b4.sh does), then an
                      MLS group whose ID is the room URI, with app_components
                      naming participant_list and a list of just you
+  /adopt <name>      as /create, without addParticipant: for a room the hub
+                     already lists you in, such as one its operator seeded
+                     (Haven's r/table at the IETF 127 table)
   /invite <user>     a mimi:// URI, or a bare name on your domain. keyMaterial
                      (§5.2) for the user; a Commit with the Add and one
                      ParticipantListUpdate (mimi-hubd takes exactly one
