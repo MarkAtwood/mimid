@@ -415,3 +415,33 @@ async fn entries_from_a_non_peer_or_this_provider_are_forbidden() {
     );
     assert_eq!(b.store.consent_request(&ROOM1_SCOPE).await.unwrap(), None);
 }
+
+#[tokio::test]
+async fn an_entry_with_an_over_long_uri_is_refused_and_not_stored() {
+    // Bead mimid-1wgh.52.2: the entry is stored, so its URIs are bounded
+    // (default 2048 octets). alice's URI swapped for one of 2119 octets,
+    // which takes a two-byte varint length (RFC 9420 §2.1.2).
+    let b = provider("b.example", &[BOB], &["a.example"]).await;
+    let long = format!("mimi://a.example/u/{}", "x".repeat(2100));
+    let from = [&[u8::try_from(ALICE.len()).unwrap()][..], ALICE.as_bytes()].concat();
+    let to = [
+        &(u16::try_from(long.len()).unwrap() | 0x4000).to_be_bytes()[..],
+        long.as_bytes(),
+    ]
+    .concat();
+    let at = REQUEST
+        .windows(from.len())
+        .position(|window| window == from)
+        .unwrap();
+    let entry = [&REQUEST[..at], &to, &REQUEST[at + from.len()..]].concat();
+    assert_eq!(
+        post(&b.app, REQUEST_CONSENT, FROM_A, &entry).await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(b.store.consent_request(&ROOM1_SCOPE).await.unwrap(), None);
+    // The same entry with alice's own URI is stored.
+    assert_eq!(
+        post(&b.app, REQUEST_CONSENT, FROM_A, REQUEST).await,
+        StatusCode::ACCEPTED
+    );
+}

@@ -102,7 +102,8 @@ async fn main() -> anyhow::Result<()> {
     let follower = Arc::new(
         Follower::new(config.domain.clone(), store.clone(), Arc::clone(&clock))
             .with_peers(peers()?)
-            .with_key_packages(Arc::clone(&key_packages)),
+            .with_key_packages(Arc::clone(&key_packages))
+            .with_limits(config.field_limits()),
     );
     // The hub's own domain is delivered to the follower in-process
     // (decision mimid-1wgh.6.17).
@@ -124,7 +125,8 @@ async fn main() -> anyhow::Result<()> {
             .with_requirements(HubRequirements::new(
                 config.require_franking,
                 config.require_room_policy,
-            )),
+            ))
+            .with_limits(config.field_limits()),
     );
     if follower
         .set_relay(Relay::new(Arc::clone(&hub), peers()?))

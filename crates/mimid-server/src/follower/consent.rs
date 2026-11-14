@@ -64,6 +64,9 @@ pub enum ConsentViolation {
     /// the `From` domain.
     #[error("the remote user's URI is not in the sending provider's domain")]
     RemoteUriNotFromSender,
+    /// A URI is longer than this provider accepts (bead mimid-1wgh.52.2).
+    #[error("a URI is over the size limit")]
+    UriTooLong,
 }
 
 /// The endpoint an entry arrived on.
@@ -155,6 +158,23 @@ impl Follower {
         // Both users are looked up and stored by their RFC 3986 §6.2.2
         // normal form, so a cancel written differently from its request
         // still matches it (decision mimid-1wgh.52).
+        // Bead mimid-1wgh.52.2: the entry is stored, so its URIs are bounded.
+        for uri in [
+            Some(&entry.requester_uri),
+            Some(&entry.target_uri),
+            entry.room_id.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if self
+                .limits
+                .uri("consent URI", uri.as_str().as_bytes())
+                .is_err()
+            {
+                return refuse(ConsentViolation::UriTooLong);
+            }
+        }
         let requester = lookup_uri(entry.requester_uri.as_str(), "requesterUri");
         let target = lookup_uri(entry.target_uri.as_str(), "targetUri");
         let (local, remote) = match endpoint {

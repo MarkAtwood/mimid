@@ -79,6 +79,20 @@ pub(super) async fn report_abuse(
         }
     };
     let report = AbuseReport::tls_deserialize_exact(request).map_err(HubError::InvalidRequest)?;
+    // Bead mimid-1wgh.52.2.
+    hub.limits
+        .description("note", &report.note)
+        .and_then(|()| {
+            hub.limits
+                .uri("reportingUser", report.reporting_user.as_str().as_bytes())
+        })
+        .and_then(|()| {
+            hub.limits.uri(
+                "allegedAbuserUri",
+                report.alleged_abuser_uri.as_str().as_bytes(),
+            )
+        })
+        .map_err(HubError::FieldTooLong)?;
     let reporting_user = report.reporting_user.as_str();
     let alleged_abuser = report.alleged_abuser_uri.as_str();
     for (index, message) in report.messages.iter().enumerate() {

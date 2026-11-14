@@ -440,6 +440,22 @@ fn stage_commit(
         Ok(summary) => summary,
         Err(reason) => return refused(room, reason),
     };
+    // Bead mimid-1wgh.52.2: size limits on what the Commit writes.
+    for proposal in &summary.proposals {
+        if let ProposalKind::AppDataUpdate {
+            component_id,
+            op: AppDataOp::Update(bytes),
+        } = &proposal.kind
+            && let Err(too_long) = hub.limits.component(*component_id, bytes, false)
+        {
+            tracing::debug!(
+                room_id,
+                error = &too_long as &dyn std::error::Error,
+                "commit refused: a field is over the size limit"
+            );
+            return refused(room, "a field is over this hub's size limit");
+        }
+    }
     if let Err(denied) = policy::authorize_commit(&state, &summary) {
         tracing::debug!(
             room_id,

@@ -70,10 +70,44 @@ pub struct Config {
     /// Defaults to [`crate::peer_clock::DEFAULT_TOLERANCE_SECS`].
     #[serde(default = "default_peer_clock_tolerance_secs")]
     pub peer_clock_tolerance_secs: u64,
+    /// The longest name (role name, room name, subject, mood) accepted, in
+    /// octets ([`crate::limits`]).
+    #[serde(default = "default_max_name_octets")]
+    pub max_name_octets: usize,
+    /// The longest description or note accepted, in octets.
+    #[serde(default = "default_max_description_octets")]
+    pub max_description_octets: usize,
+    /// The longest URI accepted, in octets.
+    #[serde(default = "default_max_uri_octets")]
+    pub max_uri_octets: usize,
+}
+
+impl Config {
+    /// The size limits the configuration sets ([`crate::limits`]).
+    #[must_use]
+    pub fn field_limits(&self) -> crate::limits::FieldLimits {
+        crate::limits::FieldLimits {
+            name: self.max_name_octets,
+            description: self.max_description_octets,
+            uri: self.max_uri_octets,
+        }
+    }
 }
 
 fn default_max_key_packages() -> u64 {
     DEFAULT_MAX_KEY_PACKAGES
+}
+
+fn default_max_name_octets() -> usize {
+    crate::limits::DEFAULT_MAX_NAME_OCTETS
+}
+
+fn default_max_description_octets() -> usize {
+    crate::limits::DEFAULT_MAX_DESCRIPTION_OCTETS
+}
+
+fn default_max_uri_octets() -> usize {
+    crate::limits::DEFAULT_MAX_URI_OCTETS
 }
 
 fn default_peer_clock_tolerance_secs() -> u64 {
@@ -263,6 +297,9 @@ mod tests {
             require_franking: false,
             require_room_policy: false,
             peer_clock_tolerance_secs: 5,
+            max_name_octets: 1024,
+            max_description_octets: 4096,
+            max_uri_octets: 2048,
         };
         assert_eq!(config, expected);
     }

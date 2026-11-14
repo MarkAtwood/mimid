@@ -48,6 +48,7 @@ mod state;
 mod submit;
 mod update;
 
+use crate::limits::FieldLimits;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -169,6 +170,7 @@ pub struct Hub {
     /// What a new room's group must carry beyond the MLS and protocol
     /// rules (decision mimid-1wgh.52).
     requirements: HubRequirements,
+    limits: FieldLimits,
 }
 
 /// What a deployment requires of the rooms it hosts beyond the drafts
@@ -250,7 +252,17 @@ impl Hub {
             peers: None,
             local_key_material: None,
             requirements: HubRequirements::default(),
+            limits: FieldLimits::default(),
         })
+    }
+
+    /// Sets the size limits on fields the hub receives (bead
+    /// mimid-1wgh.52.2). Without this, the defaults of
+    /// [`FieldLimits::default`] apply.
+    #[must_use]
+    pub fn with_limits(mut self, limits: FieldLimits) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// Sets what new rooms must carry beyond the drafts (decision
@@ -396,6 +408,7 @@ impl Hub {
             &self.domain,
             creator,
             self.requirements,
+            &self.limits,
         )?;
 
         let snapshot = RoomSnapshot {
@@ -828,6 +841,9 @@ pub enum HubError {
     /// A peer provider's response does not decode.
     #[error("undecodable peer response")]
     InvalidPeerResponse(#[source] mimi_mls::tls_codec::Error),
+    /// A field is longer than this hub accepts (bead mimid-1wgh.52.2).
+    #[error("a field is over the size limit")]
+    FieldTooLong(#[source] crate::limits::TooLong),
     /// A reported message's frank does not verify (protocol-07 §5.9).
     #[error("the frank of reported message {index} does not verify")]
     UnverifiedAbusiveMessage {

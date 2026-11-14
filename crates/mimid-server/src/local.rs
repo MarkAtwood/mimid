@@ -120,9 +120,8 @@ async fn create_room(State(hub): State<Arc<Hub>>, body: Json<CreateRoom>) -> Res
                 | HubError::MissingParticipantList
                 | HubError::InvalidParticipantList(_)
                 | HubError::CreatorNotListed
-                | HubError::MemberNotListed { .. } => {
-                    (StatusCode::UNPROCESSABLE_ENTITY, "group-refused")
-                }
+                | HubError::MemberNotListed { .. }
+                | HubError::FieldTooLong(_) => (StatusCode::UNPROCESSABLE_ENTITY, "group-refused"),
                 _ => {
                     tracing::error!(
                         name: "local_room_creation_failed",

@@ -121,6 +121,8 @@ pub struct Follower {
     /// Set after construction: the relay holds this provider's hub, whose
     /// fanout worker holds the follower.
     relay: OnceLock<Relay>,
+    /// Size limits on fields received (bead mimid-1wgh.52.2).
+    limits: crate::limits::FieldLimits,
 }
 
 impl std::fmt::Debug for Follower {
@@ -148,7 +150,16 @@ impl Follower {
             membership,
             key_packages: None,
             relay: OnceLock::new(),
+            limits: crate::limits::FieldLimits::default(),
         }
+    }
+
+    /// Sets the size limits on fields the follower receives (bead
+    /// mimid-1wgh.52.2). Without this, the defaults apply.
+    #[must_use]
+    pub fn with_limits(mut self, limits: crate::limits::FieldLimits) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// Gives the follower the configured peers (decision mimid-1wgh.7.4).

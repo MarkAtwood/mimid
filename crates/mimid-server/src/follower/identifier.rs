@@ -92,6 +92,10 @@ impl Follower {
             return Ok((IdentifierQueryCode::UnsupportedField, None));
         }
         let value = &first.search_value;
+        // Bead mimid-1wgh.52.2: no user here has a URI this long.
+        if self.limits.uri("searchValue", value).is_err() {
+            return Ok((IdentifierQueryCode::NotFound, None));
+        }
         if request
             .query_elements
             .iter()

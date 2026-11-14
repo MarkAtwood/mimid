@@ -529,6 +529,8 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
         HubError::NoSuchRoom => (StatusCode::NOT_FOUND, "no-such-room"),
         HubError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, "undecodable-request"),
         HubError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not-implemented"),
+        // Bead mimid-1wgh.52.2.
+        HubError::FieldTooLong(_) => (StatusCode::UNPROCESSABLE_ENTITY, "field-too-long"),
         // Decision mimid-1wgh.6.65.
         HubError::UnverifiedAbusiveMessage { .. } => (
             StatusCode::UNPROCESSABLE_ENTITY,

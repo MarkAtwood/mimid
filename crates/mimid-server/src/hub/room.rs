@@ -5,7 +5,7 @@ use mimi_mls::tls_codec::{Deserialize, Serialize, VLBytes};
 use mimi_mls::wire::GroupInfo;
 use mimi_protocol::{FrankingAgentData, IdentifierUri, ParticipantListData, component_id};
 use mimi_room_policy::BaseRoomPolicy;
-use mimi_room_policy::component_id::BASE_ROOM_POLICY;
+use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 
 use super::components::decode;
 use super::state::room_uri_domain;
@@ -115,7 +115,21 @@ pub(super) fn check_group(
     domain: &Domain,
     creator: &[u8],
     requirements: HubRequirements,
+    limits: &crate::limits::FieldLimits,
 ) -> Result<(), HubError> {
+    // Bead mimid-1wgh.52.2: every limited component, whole.
+    for id in [
+        component_id::PARTICIPANT_LIST,
+        component_id::ROOM_METADATA,
+        ROLES_LIST,
+        BASE_ROOM_POLICY,
+    ] {
+        if let Some(bytes) = observer.component(id) {
+            limits
+                .component(id, bytes, true)
+                .map_err(HubError::FieldTooLong)?;
+        }
+    }
     let (key, credential) = hub_sender(hub_public_key, domain)?;
     let hub_sender = [key.as_slice(), credential.as_slice()].concat();
 
