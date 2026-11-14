@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_protocol::{SubmitMessageResponse, SubmitResult, UpdateResult, UpdateRoomResponse};
 use mimid_server::config::{BaseUrl, Domain};
@@ -26,14 +28,30 @@ const LANE_TIMEOUT: Duration = Duration::from_secs(20);
 pub struct Hub {
     pub domain: Domain,
     peer: PeerClient,
-    lane: Url,
+    /// mimi-hubd's JSON lane, or none for a hub without one (a mimid hub):
+    /// lane writes are then skipped and pulls find nothing.
+    lane: Option<Url>,
+    /// mimid's local control listener ([`mimid_server::local`]), for /host.
+    local: Option<Url>,
     http: reqwest::Client,
+}
+
+/// The hub's external-sender identity, from mimid's local control listener.
+pub struct HubSender {
+    pub signature_key: [u8; 32],
+    pub identity: String,
 }
 
 impl Hub {
     /// `base_url` is where the directory is fetched (`PeerClient`);
     /// `lane_url` is the base of the JSON lane.
-    pub fn new(own: &str, hub: &str, base_url: &str, lane_url: &str) -> anyhow::Result<Self> {
+    pub fn new(
+        own: &str,
+        hub: &str,
+        base_url: &str,
+        lane_url: Option<&str>,
+        local_url: Option<&str>,
+    ) -> anyhow::Result<Self> {
         let domain = Domain::try_from(hub.to_owned()).map_err(|e| anyhow!("--hub {hub:?}: {e}"))?;
         let own =
             Domain::try_from(own.to_owned()).map_err(|e| anyhow!("--own-domain {own:?}: {e}"))?;
@@ -41,7 +59,12 @@ impl Hub {
             .map_err(|e| anyhow!("--hub-url {base_url:?}: {e}"))?;
         let peer = PeerClient::new(&own, BTreeMap::from([(domain.clone(), base)]))
             .context("building the protocol client")?;
-        let lane = Url::parse(lane_url).with_context(|| format!("--lane-url {lane_url:?}"))?;
+        let lane = lane_url
+            .map(|url| Url::parse(url).with_context(|| format!("--lane-url {url:?}")))
+            .transpose()?;
+        let local = local_url
+            .map(|url| Url::parse(url).with_context(|| format!("--local-url {url:?}")))
+            .transpose()?;
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(LANE_TIMEOUT)
@@ -49,6 +72,7 @@ impl Hub {
             .context("building the JSON-lane client")?;
         Ok(Self {
             domain,
+            local,
             peer,
             lane,
             http,
@@ -116,7 +140,11 @@ impl Hub {
     // ---- mimi-hubd JSON lane ----
 
     fn lane_url(&self, path: &str, query: &[(&str, &str)]) -> anyhow::Result<Url> {
-        let mut url = self.lane.join(path).context("building a JSON-lane URL")?;
+        let lane = self
+            .lane
+            .as_ref()
+            .ok_or_else(|| anyhow!("no JSON lane (--no-lane)"))?;
+        let mut url = lane.join(path).context("building a JSON-lane URL")?;
         {
             let mut pairs = url.query_pairs_mut();
             for (key, value) in query {
@@ -132,6 +160,9 @@ impl Hub {
         query: &[(&str, &str)],
         body: Vec<u8>,
     ) -> anyhow::Result<()> {
+        if self.lane.is_none() {
+            return Ok(());
+        }
         let url = self.lane_url(path, query)?;
         let response = self
             .http
@@ -196,6 +227,9 @@ impl Hub {
     }
 
     async fn lane_pull(&self, path: &str, user: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        if self.lane.is_none() {
+            return Ok(None);
+        }
         let url = self.lane_url(path, &[("user", user)])?;
         let response = self
             .http
@@ -234,6 +268,78 @@ impl Hub {
     /// (deliver-once).
     pub async fn pull_welcome(&self, user: &str) -> anyhow::Result<Option<Vec<u8>>> {
         self.lane_pull("/mimi/v1/welcome", user).await
+    }
+}
+
+impl Hub {
+    // ---- mimid's local control listener ----
+
+    fn local_url(&self, path: &str) -> anyhow::Result<Url> {
+        self.local
+            .as_ref()
+            .ok_or_else(|| anyhow!("no local control listener (--local-url)"))?
+            .join(path)
+            .context("building a local URL")
+    }
+
+    /// `GET /local/v1/hub-sender`.
+    pub async fn hub_sender(&self) -> anyhow::Result<HubSender> {
+        let response = self
+            .http
+            .get(self.local_url("/local/v1/hub-sender")?)
+            .send()
+            .await
+            .context("GET /local/v1/hub-sender")?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if status != StatusCode::OK {
+            bail!("GET /local/v1/hub-sender: {status} {text}");
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(&text).context("the hub-sender answer is not JSON")?;
+        let key = value["signatureKey"]
+            .as_str()
+            .and_then(|key| URL_SAFE_NO_PAD.decode(key).ok())
+            .and_then(|key| <[u8; 32]>::try_from(key).ok())
+            .ok_or_else(|| anyhow!("the hub-sender answer has no 32-byte signatureKey"))?;
+        let identity = value["identity"]
+            .as_str()
+            .ok_or_else(|| anyhow!("the hub-sender answer has no identity"))?
+            .to_owned();
+        Ok(HubSender {
+            signature_key: key,
+            identity,
+        })
+    }
+
+    /// `POST /local/v1/rooms`: has the hub host the group.
+    pub async fn create_room(
+        &self,
+        room: &str,
+        creator: &str,
+        group_info: &[u8],
+        ratchet_tree: &[u8],
+    ) -> anyhow::Result<()> {
+        let body = serde_json::json!({
+            "roomId": room,
+            "creator": creator,
+            "groupInfo": URL_SAFE_NO_PAD.encode(group_info),
+            "ratchetTree": URL_SAFE_NO_PAD.encode(ratchet_tree),
+        });
+        let response = self
+            .http
+            .post(self.local_url("/local/v1/rooms")?)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .context("POST /local/v1/rooms")?;
+        let status = response.status();
+        if status == StatusCode::CREATED {
+            return Ok(());
+        }
+        let text = response.text().await.unwrap_or_default();
+        bail!("POST /local/v1/rooms: {status} {text}")
     }
 }
 

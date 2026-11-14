@@ -104,6 +104,14 @@ struct Args {
     /// or after a join.
     #[arg(long)]
     no_publish: bool,
+    /// The hub has no mimi-hubd JSON lane (a mimid hub): skip lane writes
+    /// and pulls. Implies --no-publish.
+    #[arg(long)]
+    no_lane: bool,
+    /// mimid's local control listener, for /host (e.g.
+    /// http://127.0.0.1:9099 on the mimid host).
+    #[arg(long, value_name = "URL")]
+    local_url: Option<String>,
 }
 
 fn parse_user(user: &str) -> Result<String, String> {
@@ -154,10 +162,16 @@ async fn run() -> anyhow::Result<i32> {
         .lane_url
         .clone()
         .unwrap_or_else(|| format!("https://{}:8443", args.hub));
-    let hub = Hub::new(&args.own_domain, &args.hub, &base, &lane)?;
+    let hub = Hub::new(
+        &args.own_domain,
+        &args.hub,
+        &base,
+        (!args.no_lane).then_some(lane.as_str()),
+        args.local_url.as_deref(),
+    )?;
     let dir = StateDir::open(&args.state_dir)?;
     let mut client = Client::open(dir, me, hub)?;
-    client.auto_publish = !args.no_publish;
+    client.auto_publish = !(args.no_publish || args.no_lane);
     client.top_up_key_packages().await;
     client.greet();
 

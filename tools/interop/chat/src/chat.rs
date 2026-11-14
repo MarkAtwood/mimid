@@ -33,22 +33,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow, bail, ensure};
 use mimi_content::{Disposition, Extensions, MimiContent, NestedPart, Part};
-use mimi_mls::member::{AppDataUpdate, CommitBundle, Incoming, Member, OutOfSync, Sender};
+use mimi_mls::member::{
+    AppDataUpdate, CommitBundle, ExternalSender, Incoming, Member, OutOfSync, Sender,
+};
 use mimi_mls::tls_codec::{Deserialize, VLBytes};
 use mimi_mls::wire::{
     CipherSuite, Credential, GroupInfo, MLSMessage, RatchetTreeOption, RequiredCapabilities,
     SignaturePublicKey, Welcome,
 };
 use mimi_mls::{Identity, KeyPackageKind};
-use mimi_protocol::component_id::PARTICIPANT_LIST;
+use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST};
 use mimi_protocol::{
-    ClientKeyMaterial, ConsentEntry, ConsentOperation, FanoutEvent, FanoutMessage, GroupInfoOption,
-    HandshakeBundle, IdentifierUri, KeyMaterialRequestTbs, KeyMaterialResponse,
-    KeyMaterialUserCode, ParticipantListData, ParticipantListUpdate, Protocol,
+    ClientKeyMaterial, ConsentEntry, ConsentOperation, FanoutEvent, FanoutMessage,
+    FrankingAgentData, GroupInfoOption, HandshakeBundle, IdentifierUri, KeyMaterialRequestTbs,
+    KeyMaterialResponse, KeyMaterialUserCode, ParticipantListData, ParticipantListUpdate, Protocol,
     SubmitMessageRequest, UpdateRequest, UserRolePair,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
-use mimi_room_policy::{BaseRoomPolicy, Bool, Capability, Role, RoleData};
+use mimi_room_policy::{
+    BaseRoomPolicy, Bool, Capability, Role, RoleData, SingleSourceRoleChangeTargets,
+};
 use mimid_server::hub::components::apply_commit_op;
 
 use crate::hub::{Hub, encode};
@@ -56,6 +60,9 @@ use crate::state::{Invite, Room, RoomStatus, State, StateDir};
 
 /// mls-extensions-10 §5 `app_components`.
 const APP_COMPONENTS: u16 = 0x0001;
+/// mls-extensions-10 §5 `safe_aad` component: the Safe AAD components a
+/// room requires.
+const SAFE_AAD: u16 = 0x0002;
 /// RFC 9420 §11.1 RequiredCapabilities for keyMaterial (§5.2): extension
 /// `app_data_dictionary` (0x0006) and proposal `AppDataUpdate` (0x0008)
 /// from mls-extensions-10, which every room this client builds needs,
@@ -269,6 +276,7 @@ impl Client {
                 }
                 "create" => self.create(arg, true).await,
                 "adopt" => self.create(arg, false).await,
+                "host" => self.host(arg).await,
                 "invite" => self.invite(arg).await,
                 "policy" => self.policy(arg).await,
                 "roles" => self.roles(arg).await,
@@ -303,6 +311,7 @@ impl Client {
         for line in [
             "/create <name>         create mimi://<hub>/r/<name> with you as its first participant",
             "/adopt <name>          as /create, for a room the hub already lists you in (no addParticipant)",
+            "/host <name>           have a mimid hub host mimi://<hub>/r/<name> (needs --local-url)",
             "/invite <user>         add a user (a mimi:// URI, or a bare name on your domain)",
             "  ... --policy k=v ... the same Commit also changes base_room_policy",
             "  ... --roles          the same Commit also replaces roles_list (both hubs should refuse)",
@@ -371,6 +380,89 @@ impl Client {
         self.state.current_room = Some(room.clone());
         self.save();
         self.say(format!("* created {room}; it is now the current room"));
+        Ok(())
+    }
+
+    /// `/host <name>`: a room hosted by a mimid hub, created through its
+    /// local control listener (mimid's `local` module; the narrow
+    /// Room/create of bead mimid-1wgh.12.4). The group names the hub as its
+    /// external sender and franking agent, requires frank_aad, and carries
+    /// the participant list, [`default_roles`] and [`default_base_policy`],
+    /// as `Hub::create_room` requires. A first empty Commit gives the
+    /// GroupInfo the hub is handed; nothing is sent for it.
+    async fn host(&mut self, name: &str) -> anyhow::Result<()> {
+        ensure!(
+            valid_name(name),
+            "usage: /host <name> (a-z 0-9 . _ -, up to 64)"
+        );
+        let room = format!("mimi://{}/r/{name}", self.hub.domain);
+        ensure!(
+            !self.state.rooms.contains_key(&room),
+            "you already have a room {room}"
+        );
+        let sender = self.hub.hub_sender().await?;
+        let mut franking_key = vec![0x20];
+        franking_key.extend_from_slice(&sender.signature_key);
+        let franking_credential = [
+            vec![0x00, 0x01], // CredentialType basic
+            encode(&VLBytes::new(sender.identity.as_bytes().to_vec()))?,
+        ]
+        .concat();
+        let franking_agent = encode(&FrankingAgentData {
+            franking_signature_key: SignaturePublicKey::tls_deserialize_exact(&franking_key[..])
+                .map_err(|e| anyhow!("hub key: {e:?}"))?,
+            credential: Credential::tls_deserialize_exact(&franking_credential[..])
+                .map_err(|e| anyhow!("hub credential: {e:?}"))?,
+        })?;
+        let senders = [ExternalSender {
+            signature_key: sender.signature_key.to_vec(),
+            identity: sender.identity.into_bytes(),
+        }];
+        // Ascending component ids (app_data_dictionary order).
+        let components = [
+            // mls-extensions-10 §5 app_components: franking_agent,
+            // participant_list, roles_list, base_room_policy. Every member's
+            // leaf must list these, and frank_aad (0x0020) below.
+            (
+                APP_COMPONENTS,
+                vec![0x08, 0x00, 0x21, 0x00, 0x22, 0x00, 0x25, 0x00, 0x27],
+            ),
+            // safe_aad: frank_aad required (mimid hub, bead mimid-1wgh.6.74).
+            (SAFE_AAD, vec![0x02, 0x00, 0x20]),
+            (FRANKING_AGENT, franking_agent),
+            (PARTICIPANT_LIST, participant_list(&[self.me.as_str()])?),
+            (ROLES_LIST, encode(&default_roles())?),
+            (BASE_ROOM_POLICY, encode(&default_base_policy())?),
+        ];
+        let mut member = Member::create(&self.identity, room.as_bytes(), &senders, &components)
+            .map_err(|e| anyhow!("creating the MLS group: {}", causes(&e)))?;
+        let bundle = member
+            .commit(&self.identity, &[], &[], &[], apply_commit_op)
+            .map_err(|e| anyhow!("the first (empty) Commit: {}", causes(&e)))?;
+        member
+            .merge_pending_commit(&self.identity)
+            .map_err(|e| anyhow!("merging the first Commit: {}", causes(&e)))?;
+        let tree = member
+            .ratchet_tree()
+            .map_err(|e| anyhow!("ratchet tree: {}", causes(&e)))?;
+        self.hub
+            .create_room(&room, &self.me, &bundle.group_info, &tree)
+            .await
+            .context("having the hub host the room")?;
+        self.members.insert(room.clone(), member);
+        self.state.rooms.insert(
+            room.clone(),
+            Room {
+                status: RoomStatus::Active,
+                out_of_sync: None,
+            },
+        );
+        self.state.current_room = Some(room.clone());
+        self.save();
+        self.say(format!(
+            "* {room} is hosted by {}; it is now the current room",
+            self.hub.domain
+        ));
         Ok(())
     }
 
@@ -1537,7 +1629,10 @@ fn roles_update(member: &Member) -> anyhow::Result<AppDataUpdate> {
 /// and no constraints. mimi-hubd enforces canSendMessage once a room has a
 /// policy, so a member without it cannot send.
 fn default_roles() -> RoleData {
-    let role = |role_index: u32, name: &str, role_capabilities: Vec<Capability>| Role {
+    let role = |role_index: u32,
+                name: &str,
+                role_capabilities: Vec<Capability>,
+                authorized_role_changes: Vec<SingleSourceRoleChangeTargets>| Role {
         role_index,
         role_name: name.to_owned(),
         role_description: String::new(),
@@ -1546,11 +1641,11 @@ fn default_roles() -> RoleData {
         maximum_participants_constraint: None,
         minimum_active_participants_constraint: 0,
         maximum_active_participants_constraint: None,
-        authorized_role_changes: vec![],
+        authorized_role_changes,
     };
     RoleData {
         roles: vec![
-            role(1, "banned", vec![]),
+            role(1, "banned", vec![], vec![]),
             role(
                 ROLE,
                 "member",
@@ -1562,8 +1657,38 @@ fn default_roles() -> RoleData {
                     Capability::CAN_REPLY_TO_MESSAGE,
                     Capability::CAN_REACT_TO_MESSAGE,
                 ],
+                // room-policy-04 §8.1: adding a participant moves them from
+                // role 0 to a member role, and leaving moves the leaver back
+                // to 0; the actor's role must authorize each change.
+                vec![
+                    SingleSourceRoleChangeTargets {
+                        from_role_index: 0,
+                        target_role_indexes: vec![ROLE],
+                    },
+                    SingleSourceRoleChangeTargets {
+                        from_role_index: ROLE,
+                        target_role_indexes: vec![0],
+                    },
+                ],
             ),
         ],
+    }
+}
+
+/// The base_room_policy `/host` sets: open membership, several devices,
+/// no limits, persistent (room-policy-04 §5).
+fn default_base_policy() -> BaseRoomPolicy {
+    BaseRoomPolicy {
+        fixed_membership: Bool::False,
+        parent_dependant: Bool::False,
+        parent_room: vec![],
+        multi_device: Bool::True,
+        max_clients: None,
+        max_users: None,
+        pseudonyms_allowed: Bool::False,
+        persistent_room: Bool::True,
+        discoverable: Bool::False,
+        policy_component_ids: vec![],
     }
 }
 

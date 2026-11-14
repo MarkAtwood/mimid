@@ -11,6 +11,8 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.104"
+# Already in the lockfile through mimid-server.
+base64 = "=0.22.1"
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 # The keyMaterial request's own signature key (protocol-07 §5.2); already in
 # the lockfile through mimi-protocol.
