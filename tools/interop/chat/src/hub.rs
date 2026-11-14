@@ -129,6 +129,15 @@ impl Hub {
         }
     }
 
+    /// §5.9 reportAbuse about `room`; the response body is not read.
+    pub async fn report_abuse(&self, room: &str, body: Vec<u8>) -> anyhow::Result<()> {
+        self.peer
+            .report_abuse(&self.domain, room, body)
+            .await
+            .map(drop)
+            .map_err(chain)
+    }
+
     /// §5.7 requestConsent (request or cancel), to the hub as the target's
     /// provider.
     pub async fn request_consent(&self, body: Vec<u8>) -> anyhow::Result<()> {

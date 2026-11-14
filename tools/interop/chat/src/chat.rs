@@ -44,10 +44,11 @@ use mimi_mls::wire::{
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST};
 use mimi_protocol::{
-    ClientKeyMaterial, ConsentEntry, ConsentOperation, FanoutEvent, FanoutMessage,
-    FrankingAgentData, GroupInfoOption, HandshakeBundle, IdentifierUri, KeyMaterialRequestTbs,
-    KeyMaterialResponse, KeyMaterialUserCode, ParticipantListData, ParticipantListUpdate, Protocol,
-    SubmitMessageRequest, UpdateRequest, UserRolePair, franking_tag,
+    AbuseReport, AbuseType, AbusiveMessage, ClientKeyMaterial, ConsentEntry, ConsentOperation,
+    FanoutEvent, FanoutMessage, Frank, FrankingAgentData, GroupInfoOption, HandshakeBundle,
+    IdentifierUri, KeyMaterialRequestTbs, KeyMaterialResponse, KeyMaterialUserCode,
+    ParticipantListData, ParticipantListUpdate, Protocol, SubmitMessageRequest, UpdateRequest,
+    UserRolePair, franking_tag,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{
@@ -283,6 +284,7 @@ impl Client {
                 "allow" => self.allow(arg).await,
                 "request" => self.request_consent(arg, ConsentOperation::Request).await,
                 "cancel" => self.request_consent(arg, ConsentOperation::Cancel).await,
+                "report" => self.report(arg).await,
                 "join" => self.join(arg).await,
                 "rooms" => {
                     self.rooms();
@@ -322,6 +324,7 @@ impl Client {
             "/allow <user>          let <user> fetch your KeyPackages (updateConsent grant)",
             "/request <user>        ask <user> for consent to fetch their KeyPackages (requestConsent)",
             "/cancel <user>         withdraw that request (requestConsent cancel)",
+            "/report [--message] <user> [note]\n                       report <user> in the current room (reportAbuse);\n                       --message attaches one AbusiveMessage",
             "/join [n]              accept pending invite n (default: the oldest)",
             "/rooms                 list rooms; /room <name|uri> switches the current room",
             "/who                   participants of the current room",
@@ -747,6 +750,83 @@ impl Client {
             ConsentOperation::Cancel => format!("* consent request to {target} withdrawn"),
             _ => format!("* asked {target} for consent"),
         });
+        Ok(())
+    }
+
+    /// protocol-07 §5.9 reportAbuse: reports `<user>` in the current room
+    /// to its hub, with an optional note and reason code 0, the only one
+    /// the draft defines.
+    ///
+    /// `--message` attaches one AbusiveMessage, to test whether a hub takes
+    /// a report with messages. mimid-chat keeps no received messages or
+    /// franks, so the attached message is a new text message naming
+    /// `<user>` as its sender, with an all-zero frank and the current time:
+    /// a hub that verifies franks will find it does not verify.
+    async fn report(&mut self, arg: &str) -> anyhow::Result<()> {
+        let (with_message, rest) = match arg.strip_prefix("--message") {
+            Some(rest) => (true, rest.trim_start()),
+            None => (false, arg),
+        };
+        let (user, note) = rest.split_once(' ').unwrap_or((rest, ""));
+        ensure!(!user.is_empty(), "usage: /report [--message] <user> [note]");
+        let abuser = self.user_uri(user)?;
+        let room = self.current()?;
+        let messages = if with_message {
+            let content = MimiContent {
+                salt: random()?,
+                replaces: None,
+                topic_id: vec![],
+                expires: None,
+                in_reply_to: None,
+                mimi_extensions: Extensions {
+                    sender_uri: Some(abuser.clone()),
+                    room_uri: Some(room.clone()),
+                    other: BTreeMap::new(),
+                },
+                nested_part: NestedPart {
+                    disposition: Disposition::RENDER,
+                    language: String::new(),
+                    part: Part::Single {
+                        content_type: TEXT_PLAIN.to_owned(),
+                        content: b"reported message".to_vec(),
+                    },
+                },
+            }
+            .encode()
+            .map_err(|e| anyhow!("encoding mimi-content: {e}"))?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .context("clock before 1970")?;
+            vec![AbusiveMessage {
+                message_content: content,
+                frank: Frank {
+                    server_frank: [0; 32],
+                    franking_signature_ciphersuite: CipherSuite::tls_deserialize_exact([
+                        0x00, 0x01,
+                    ])
+                    .map_err(|e| anyhow!("{e:?}"))?,
+                    franking_integrity_signature: vec![],
+                },
+                accepted_timestamp: u64::try_from(now.as_millis()).context("time overflow")?,
+            }]
+        } else {
+            vec![]
+        };
+        let count = messages.len();
+        let report = AbuseReport {
+            reporting_user: identifier(&self.me)?,
+            alleged_abuser_uri: identifier(&abuser)?,
+            reason_code: AbuseType::RESERVED,
+            note: note.as_bytes().to_vec(),
+            messages,
+            abuse_extensions: mimi_mls::wire::AppDataDictionary::new(&[])
+                .map_err(|e| anyhow!("{e:?}"))?,
+        };
+        self.hub.report_abuse(&room, encode(&report)?).await?;
+        self.say(format!(
+            "[{}] * reported {abuser} with {count} message(s); the hub accepted it",
+            short_room(&room)
+        ));
         Ok(())
     }
 
