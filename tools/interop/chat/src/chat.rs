@@ -1630,7 +1630,8 @@ fn roles_update(member: &Member) -> anyhow::Result<AppDataUpdate> {
 /// with no capabilities), and [`ROLE`], "member", the role every participant
 /// mimid-chat adds gets, with what a chat member needs: send, receive,
 /// reply and react (§8.3), add participants (§8.1.1) and leave (§8.1.2),
-/// and no constraints. mimi-hubd enforces canSendMessage once a room has a
+/// change the role list (§8.6, so `/invite --roles` reaches a hub's §3
+/// rule instead of its capability check), and no constraints. mimi-hubd enforces canSendMessage once a room has a
 /// policy, so a member without it cannot send.
 fn default_roles() -> RoleData {
     let role = |role_index: u32,
@@ -1660,6 +1661,7 @@ fn default_roles() -> RoleData {
                     Capability::CAN_RECEIVE_MESSAGE,
                     Capability::CAN_REPLY_TO_MESSAGE,
                     Capability::CAN_REACT_TO_MESSAGE,
+                    Capability::CAN_CHANGE_ROLE_DEFINITIONS,
                 ],
                 // room-policy-04 §8.1: adding a participant moves them from
                 // role 0 to a member role, and leaving moves the leaver back
