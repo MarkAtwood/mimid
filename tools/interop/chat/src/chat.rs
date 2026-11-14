@@ -315,7 +315,7 @@ impl Client {
         for line in [
             "/create <name>         create mimi://<hub>/r/<name> with you as its first participant",
             "/adopt <name>          as /create, for a room the hub already lists you in (no addParticipant)",
-            "/host <name>           have a mimid hub host mimi://<hub>/r/<name> (needs --local-url)",
+            "/host <name> [--open]  have a mimid hub host mimi://<hub>/r/<name> (needs --local-url);\n                       --open: no franking and no room policy",
             "/invite <user>         add a user (a mimi:// URI, or a bare name on your domain)",
             "  ... --policy k=v ... the same Commit also changes base_room_policy",
             "  ... --roles          the same Commit also replaces roles_list (both hubs should refuse)",
@@ -397,10 +397,15 @@ impl Client {
     /// the participant list, [`default_roles`] and [`default_base_policy`],
     /// as `Hub::create_room` requires. A first empty Commit gives the
     /// GroupInfo the hub is handed; nothing is sent for it.
-    async fn host(&mut self, name: &str) -> anyhow::Result<()> {
+    async fn host(&mut self, arg: &str) -> anyhow::Result<()> {
+        let (name, open) = match arg.split_once(' ') {
+            Some((name, "--open")) => (name, true),
+            None => (arg, false),
+            Some(_) => bail!("usage: /host <name> [--open]"),
+        };
         ensure!(
             valid_name(name),
-            "usage: /host <name> (a-z 0-9 . _ -, up to 64)"
+            "usage: /host <name> [--open] (a-z 0-9 . _ -, up to 64)"
         );
         let room = format!("mimi://{}/r/{name}", self.hub.domain);
         ensure!(
@@ -426,21 +431,31 @@ impl Client {
             identity: sender.identity.into_bytes(),
         }];
         // Ascending component ids (app_data_dictionary order).
-        let components = [
-            // mls-extensions-10 §5 app_components: franking_agent,
-            // participant_list, roles_list, base_room_policy. Every member's
-            // leaf must list these, and frank_aad (0x0020) below.
-            (
-                APP_COMPONENTS,
-                vec![0x08, 0x00, 0x21, 0x00, 0x22, 0x00, 0x25, 0x00, 0x27],
-            ),
-            // safe_aad: frank_aad required (mimid hub, bead mimid-1wgh.6.74).
-            (SAFE_AAD, vec![0x02, 0x00, 0x20]),
-            (FRANKING_AGENT, franking_agent),
-            (PARTICIPANT_LIST, participant_list(&[self.me.as_str()])?),
-            (ROLES_LIST, encode(&default_roles())?),
-            (BASE_ROOM_POLICY, encode(&default_base_policy())?),
-        ];
+        let components: Vec<(u16, Vec<u8>)> = if open {
+            // An open room (decision mimid-1wgh.52, bead mimid-1wgh.53): no
+            // franking and no room policy, so only the participant list.
+            // A hub that requires either refuses to host it.
+            vec![
+                (APP_COMPONENTS, vec![0x02, 0x00, 0x22]),
+                (PARTICIPANT_LIST, participant_list(&[self.me.as_str()])?),
+            ]
+        } else {
+            vec![
+                // mls-extensions-10 §5 app_components: franking_agent,
+                // participant_list, roles_list, base_room_policy. Every member's
+                // leaf must list these, and frank_aad (0x0020) below.
+                (
+                    APP_COMPONENTS,
+                    vec![0x08, 0x00, 0x21, 0x00, 0x22, 0x00, 0x25, 0x00, 0x27],
+                ),
+                // safe_aad: frank_aad required (mimid hub, bead mimid-1wgh.6.74).
+                (SAFE_AAD, vec![0x02, 0x00, 0x20]),
+                (FRANKING_AGENT, franking_agent),
+                (PARTICIPANT_LIST, participant_list(&[self.me.as_str()])?),
+                (ROLES_LIST, encode(&default_roles())?),
+                (BASE_ROOM_POLICY, encode(&default_base_policy())?),
+            ]
+        };
         let mut member = Member::create(&self.identity, room.as_bytes(), &senders, &components)
             .map_err(|e| anyhow!("creating the MLS group: {}", causes(&e)))?;
         let bundle = member
@@ -467,8 +482,13 @@ impl Client {
         self.state.current_room = Some(room.clone());
         self.save();
         self.say(format!(
-            "* {room} is hosted by {}; it is now the current room",
-            self.hub.domain
+            "* {room} is hosted by {}{}; it is now the current room",
+            self.hub.domain,
+            if open {
+                ", open (no franking, no policy)"
+            } else {
+                ""
+            }
         ));
         Ok(())
     }
