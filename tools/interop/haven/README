@@ -21,6 +21,12 @@ Layout
   mimid-dump/   zz_dump_for_haven.rs, a mimi-protocol test that writes the
                 mimid-encoded messages. It is a template: copy it into
                 crates/mimi-protocol/tests/ to run it, then delete it.
+  unicode/      standalone crate (own [workspace]): the Unicode stress tests
+                (bead mimid-1wgh.54: Big List of Naughty Strings, hand-written
+                cases, all four normalization forms) through Haven's
+                mimi-core at the pinned commit, cross-checked byte for byte
+                against mimid's mimi-content and mimi-room-policy. Run
+                `cargo test -- --nocapture --test-threads=1` for the report.
   probe/        standalone crate: a short read-only check of Jason's public
                 hub (mimi.havenmessenger.com) and its table seed, run from
                 the mimid host (below)

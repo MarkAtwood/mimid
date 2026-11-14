@@ -1,0 +1,19 @@
+[package]
+name = "mimid-haven-unicode"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not part of any workspace. Unicode stress (bead mimid-1wgh.54)
+# run through Haven's mimi-core, cross-checked against mimid's encoders.
+[workspace]
+
+[dependencies]
+
+[dev-dependencies]
+# Haven at the commit the results refer to; bump `rev` to test a newer Haven.
+mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "34eae7ec4036ca60003dac92d15fdcb75a06ca21" }
+# mimid's MLS-free codecs, so only Haven's OpenMLS is in the build.
+mimi-content = { path = "../../../../crates/mimi-content" }
+mimi-room-policy = { path = "../../../../crates/mimi-room-policy" }
+unicode-normalization = "=0.1.26"
