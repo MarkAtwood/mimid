@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.50",
+  "title": "Peer-facing HTTP errors are plain English text (some Rust Display verbatim); use RFC 9457 problem+json with type URIs",
+  "description": "Sweep 2026-11-14. crates/mimid-server/src/http.rs returns text/plain English bodies to peer providers: 'undecodable request' (L277, L469, L531), 'missing or malformed From header' (L447), 'invalid room ID', 'unknown user', 'path domain is not this provider', 'request body too large', 'no such room', '{endpoint} is not implemented', 'a reported message's frank does not verify', 'peer provider failed', 'internal error'; and error.to_string() at L359/L495 (follower/mod.rs:485, :489) and violation.to_string() at L475/L479 (follower/consent.rs:54-65). Readers are likely peer operators, not end users. Suggest RFC 9457 problem+json with a type URI per condition so the text is advisory, and no Rust Display text on the wire.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-14T19:09:20.059784058Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-14T19:09:20.059784058Z",
+  "labels": [
+    "i18n",
+    "http"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.50",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-14T19:09:20.087988279Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
