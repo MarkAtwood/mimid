@@ -286,9 +286,11 @@ async fn malformed_requests_are_bad_requests() {
 // ---- Unicode stress (bead mimid-1wgh.54, third slice) ----
 //
 // §5.8 says a `handle` "matches exactly" and does not say whether that is
-// byte equality or URI equivalence (RFC 3986 §6.2.2). mimid compares bytes:
-// these tests pin that down, so a change to it is a decision, not an
-// accident. The Big List of Naughty Strings is the one vendored for
+// byte equality or URI equivalence. mimid matches URIs that are equivalent
+// under RFC 3986 §6.2.2.1 and §6.2.2.2 (scheme and host case, percent-
+// encoding) and nothing looser: no case folding of the user part and no
+// Unicode normalization (decision mimid-1wgh.52). These tests pin that
+// down, so a change to it is a decision, not an accident. The Big List of Naughty Strings is the one vendored for
 // mimi-content (PROVENANCE there).
 
 const BLNS: &str = include_str!("../../mimi-content/tests/fixtures/blns/blns.base64.txt");
@@ -378,7 +380,7 @@ async fn no_naughty_string_is_a_handle_or_breaks_the_query() {
 }
 
 #[tokio::test]
-async fn a_handle_matches_only_the_same_bytes() {
+async fn a_handle_matches_its_rfc3986_equivalents_and_nothing_looser() {
     let b = provider("b.example", &[BOB, EMILE_NFC, IRIS]).await;
     assert_eq!(
         post(&b.app, PATH, FROM_A, &query(HANDLE, IRIS.as_bytes())).await,
@@ -388,12 +390,22 @@ async fn a_handle_matches_only_the_same_bytes() {
         post(&b.app, PATH, FROM_A, &query(HANDLE, EMILE_NFC.as_bytes())).await,
         (StatusCode::OK, success(EMILE_NFC))
     );
-    for other in [
-        // The same URI under RFC 3986 §6.2.2.1: hex digits in lowercase.
+    // The same URI under RFC 3986 §6.2.2.1 (hex digits, scheme and host
+    // case) and §6.2.2.2 (a percent-encoded unreserved character): found,
+    // and answered in the normal form.
+    for same in [
         "mimi://b.example/u/%c3%a9mile",
-        // The same URI under §6.2.2.1: scheme and host in uppercase.
         "MIMI://b.example/u/%C3%A9mile",
         "mimi://B.EXAMPLE/u/%C3%A9mile",
+        "mimi://b.example/u/%C3%A9%6Dile",
+    ] {
+        assert_eq!(
+            post(&b.app, PATH, FROM_A, &query(HANDLE, same.as_bytes())).await,
+            (StatusCode::OK, success(EMILE_NFC)),
+            "{same}"
+        );
+    }
+    for other in [
         // The same text in NFD: e and U+0301 COMBINING ACUTE ACCENT.
         "mimi://b.example/u/e%CC%81mile",
         // Not percent-encoded, so not a URI.

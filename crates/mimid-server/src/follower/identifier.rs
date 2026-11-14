@@ -9,7 +9,8 @@
 //! - any element whose `searchType` is not `handle` makes the whole query
 //!   `unsupportedField`;
 //! - otherwise every `searchValue` must be the same bytes (AND semantics)
-//!   and the user URI (`mimi://<domain>/u/<id>`, protocol-07 §2.1;
+//!   and, after RFC 3986 §6.2.2 normalization (scheme and host case,
+//!   percent-encoding; decision mimid-1wgh.52), the user URI (`mimi://<domain>/u/<id>`, protocol-07 §2.1;
 //!   decision mimid-1wgh.6.76) of a local user who has a client (as for
 //!   consent, decision mimid-1wgh.7.36): `success` with that URI, else
 //!   `notFound`.
@@ -33,7 +34,7 @@ use mimi_protocol::{
 };
 
 use super::{Follower, FollowerError};
-use crate::hub::user_uri_domain;
+use crate::hub::{lookup_uri, user_uri_domain};
 
 impl Follower {
     /// protocol-07 §5.8 `POST /identifierQuery/{domain}`: answers `body`,
@@ -98,14 +99,17 @@ impl Follower {
         {
             return Ok((IdentifierQueryCode::NotFound, None));
         }
-        let found = match std::str::from_utf8(value) {
+        // RFC 3986 §6.2.2 equivalence is the clear meaning of "matches
+        // exactly" (decision mimid-1wgh.52); the answer is the URI in its
+        // normal form.
+        let found = match std::str::from_utf8(value).map(|text| lookup_uri(text, "searchValue")) {
             // protocol-07 §2.1; decision mimid-1wgh.6.76
-            Ok(text) if user_uri_domain(text).as_ref() == Some(&self.domain) => {
+            Ok(text) if user_uri_domain(&text).as_ref() == Some(&self.domain) => {
                 // Decision mimid-1wgh.7.36's notion of a known user.
-                if self.store.clients_of_user(text).await?.is_empty() {
+                if self.store.clients_of_user(&text).await?.is_empty() {
                     None
                 } else {
-                    IdentifierUri::new(text).ok()
+                    IdentifierUri::new(&text).ok()
                 }
             }
             _ => None,

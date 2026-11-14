@@ -138,7 +138,12 @@ pub(super) async fn key_material(
         }
     }
 
-    let Some(target_domain) = identity_domain(target_user.as_bytes()) else {
+    // Routed by the RFC 3986 §6.2.2 normal form, so an uppercase host still
+    // reaches its provider (decision mimid-1wgh.52); the path keeps the
+    // signed form, which the target's provider checks byte for byte.
+    let Some(target_domain) =
+        identity_domain(super::state::lookup_uri(target_user, "targetUser").as_bytes())
+    else {
         return refuse(target_user, "targetUser names no provider domain");
     };
     if target_domain == hub.domain {

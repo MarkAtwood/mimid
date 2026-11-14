@@ -84,7 +84,7 @@ use super::relay::LocalUser;
 use crate::config::Domain;
 use crate::http::MAX_BODY_LEN;
 use crate::hub::{
-    Clock, LocalKeyMaterial, LocalKeyMaterialFuture, identity_domain, user_uri_domain,
+    Clock, LocalKeyMaterial, LocalKeyMaterialFuture, identity_domain, lookup_uri, user_uri_domain,
 };
 use crate::store::{
     ClaimCandidate, KeyPackageClaim, KeyPackageInsert, NewKeyPackage, Store, StoreError,
@@ -308,8 +308,12 @@ impl KeyPackages {
         if tbs.target_user.as_str() != target_user {
             return refuse(target_user, "targetUser is not the request path's");
         }
+        // The signed targetUser and the path agree byte for byte above; the
+        // user is looked up by the RFC 3986 §6.2.2 normal form (decision
+        // mimid-1wgh.52).
+        let user = lookup_uri(target_user, "targetUser");
         // protocol-07 §2.1; decision mimid-1wgh.6.76
-        if user_uri_domain(target_user).as_ref() != Some(&self.domain) {
+        if user_uri_domain(&user).as_ref() != Some(&self.domain) {
             return refuse(target_user, "targetUser is not a user of this provider");
         }
         if decoded.verify().is_err() {
@@ -328,7 +332,7 @@ impl KeyPackages {
         if !consent::allows(tbs) {
             return refuse(target_user, "no consent");
         }
-        let clients = self.store.clients_of_user(target_user).await?;
+        let clients = self.store.clients_of_user(&user).await?;
         if clients.is_empty() {
             // Decision mimid-1wgh.7.9.
             return refuse(target_user, "unknown user");
@@ -337,7 +341,7 @@ impl KeyPackages {
         let now_ms = self.now_ms();
         let now = at(now_ms);
         let now_seconds = now_ms / 1_000;
-        let stored = self.store.key_packages_of_user(target_user).await?;
+        let stored = self.store.key_packages_of_user(&user).await?;
         let mut plans: Vec<ClientPlan<'_>> = clients
             .iter()
             .map(|client_id| ClientPlan {
@@ -399,7 +403,7 @@ impl KeyPackages {
             })
             .collect();
         let claim = KeyPackageClaim {
-            user_uri: target_user,
+            user_uri: &user,
             requester: tbs.requesting_user.as_str(),
             room_id: tbs.room_id.as_str(),
             claimed_at: now_ms,

@@ -32,7 +32,7 @@ use mimi_protocol::{ConsentEntry, ConsentOperation, KeyMaterialRequestTbs};
 
 use super::{Follower, FollowerError};
 use crate::config::Domain;
-use crate::hub::{identity_domain, user_uri_domain};
+use crate::hub::{identity_domain, lookup_uri, user_uri_domain};
 use crate::store::{ConsentDecision, ConsentKey, ReceivedConsent};
 
 /// Whether the target user consents to `request`'s requester fetching key
@@ -152,29 +152,36 @@ impl Follower {
         // §5.7: for requestConsent the targetUri is in the receiving
         // provider's domain and the requesterUri in the sending provider's;
         // updateConsent is the reverse.
+        // Both users are looked up and stored by their RFC 3986 §6.2.2
+        // normal form, so a cancel written differently from its request
+        // still matches it (decision mimid-1wgh.52).
+        let requester = lookup_uri(entry.requester_uri.as_str(), "requesterUri");
+        let target = lookup_uri(entry.target_uri.as_str(), "targetUri");
         let (local, remote) = match endpoint {
-            Endpoint::RequestConsent => (&entry.target_uri, &entry.requester_uri),
-            Endpoint::UpdateConsent => (&entry.requester_uri, &entry.target_uri),
+            Endpoint::RequestConsent => (&target, &requester),
+            Endpoint::UpdateConsent => (&requester, &target),
         };
-        if identity_domain(local.as_str().as_bytes()).as_ref() != Some(&self.domain) {
+        if identity_domain(local.as_bytes()).as_ref() != Some(&self.domain) {
             return refuse(ConsentViolation::LocalUriElsewhere);
         }
-        if identity_domain(remote.as_str().as_bytes()).as_ref() != Some(from) {
+        if identity_domain(remote.as_bytes()).as_ref() != Some(from) {
             return refuse(ConsentViolation::RemoteUriNotFromSender);
         }
         // Decision mimid-1wgh.7.36: known means having a client, as for
         // keyMaterial (decision mimid-1wgh.7.9), under a user URI
         // (protocol-07 §2.1; decision mimid-1wgh.6.76).
-        if user_uri_domain(local.as_str()).is_none()
-            || self.store.clients_of_user(local.as_str()).await?.is_empty()
-        {
+        if user_uri_domain(local).is_none() || self.store.clients_of_user(local).await?.is_empty() {
             return Err(FollowerError::UnknownUser);
         }
 
+        let room_id = entry
+            .room_id
+            .as_ref()
+            .map(|room| lookup_uri(room.as_str(), "roomId"));
         let key = ConsentKey {
-            requester_uri: entry.requester_uri.as_str(),
-            target_uri: entry.target_uri.as_str(),
-            room_id: entry.room_id.as_ref().map(|room| room.as_str()),
+            requester_uri: &requester,
+            target_uri: &target,
+            room_id: room_id.as_deref(),
         };
         let received = ReceivedConsent {
             entry: body.to_vec(),
