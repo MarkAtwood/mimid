@@ -590,10 +590,12 @@ impl Client {
         }
         match response.user_status {
             KeyMaterialUserCode::Success | KeyMaterialUserCode::PartialSuccess => {}
-            KeyMaterialUserCode::NoConsent | KeyMaterialUserCode::NoConsentForThisRoom => bail!(
-                "{target} has not consented to you: they must run /allow {} first",
-                self.me
-            ),
+            code @ (KeyMaterialUserCode::NoConsent | KeyMaterialUserCode::NoConsentForThisRoom) => {
+                bail!(
+                    "keyMaterial for {target}: {code:?}: they must consent to {} first",
+                    self.me
+                )
+            }
             KeyMaterialUserCode::NoCompatibleMaterial => bail!(
                 "{target} has no usable KeyPackage right now (all used up or none compatible); they can /publish more"
             ),
