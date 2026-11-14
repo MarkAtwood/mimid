@@ -115,9 +115,24 @@ async fn report_goes_to_the_room_path_and_returns_the_body() {
 }
 
 #[tokio::test]
-async fn any_status_but_200_is_rejected() {
+async fn created_is_accepted_too() {
+    // protocol-07 §5.9 names no success code; Haven's hub answers 201
+    // (bead mimid-1wgh.46.6.2).
+    let (base, _) = start(StatusCode::CREATED, REPORT_KEY).await;
+    let peer = Domain::try_from("b.example".to_owned()).unwrap();
+    let client = client(&peer, base);
+    let response = client
+        .report_abuse(&peer, ROOM, REQUEST.to_vec())
+        .await
+        .unwrap();
+    assert_eq!(response, RESPONSE);
+}
+
+#[tokio::test]
+async fn any_status_but_200_or_201_is_rejected() {
     for status in [
-        StatusCode::CREATED,
+        StatusCode::ACCEPTED,
+        StatusCode::NO_CONTENT,
         StatusCode::NOT_FOUND,
         StatusCode::UNPROCESSABLE_ENTITY,
         StatusCode::SERVICE_UNAVAILABLE,

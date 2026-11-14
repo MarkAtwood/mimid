@@ -255,7 +255,7 @@ impl PeerClient {
             Endpoint::Notify,
             room_id,
             body,
-            StatusCode::CREATED,
+            &[StatusCode::CREATED],
             false,
         )
         .await
@@ -288,7 +288,7 @@ impl PeerClient {
             domain.as_str(),
             body,
             // protocol-07 §5.7; decision mimid-1wgh.7.42
-            StatusCode::ACCEPTED,
+            &[StatusCode::ACCEPTED],
             false,
         )
         .await
@@ -321,7 +321,7 @@ impl PeerClient {
             domain.as_str(),
             body,
             // protocol-07 §5.7; decision mimid-1wgh.7.42
-            StatusCode::ACCEPTED,
+            &[StatusCode::ACCEPTED],
             false,
         )
         .await
@@ -359,8 +359,9 @@ impl PeerClient {
     /// protocol-07 §5.9 `POST /reportAbuse/{roomId}`: sends `body`, an
     /// AbuseReport about the room `room_id`, to `domain`, the room's hub,
     /// and returns the response body as received (empty from a mimid hub,
-    /// decision mimid-1wgh.6.65). Only a `200` response counts, and its body
-    /// may be at most [`MAX_BODY_LEN`] bytes. Nothing in mimid calls it yet:
+    /// decision mimid-1wgh.6.65). §5.9 names no success code, so `200` and
+    /// `201` both count (bead mimid-1wgh.46.6.2); the body may be at most
+    /// [`MAX_BODY_LEN`] bytes. Nothing in mimid calls it yet:
     /// reporting has no user surface in v1 (decision mimid-1wgh.21).
     ///
     /// # Errors
@@ -382,8 +383,18 @@ impl PeerClient {
         room_id: &str,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, PeerError> {
-        self.post_read(domain, Endpoint::ReportAbuse, room_id, body)
-            .await
+        // protocol-07 §5.9 names no success code: mimid's hub answers 200
+        // (decision mimid-1wgh.6.65), Haven's 201, so both count (bead
+        // mimid-1wgh.46.6.2).
+        self.post(
+            domain,
+            Endpoint::ReportAbuse,
+            room_id,
+            body,
+            &[StatusCode::OK, StatusCode::CREATED],
+            true,
+        )
+        .await
     }
 
     /// protocol-07 §5.2 `POST /keyMaterial/{targetUser}`: sends `body`, a
@@ -503,7 +514,7 @@ impl PeerClient {
 
     /// Posts `body` to `endpoint` of `domain`, with the endpoint's template
     /// expanded with `value` (decision mimid-1wgh.5.18). If the response's
-    /// status is `expect`, returns its body when `read_body` is set (at
+    /// status is one of `expect`, returns its body when `read_body` is set (at
     /// most [`MAX_BODY_LEN`] bytes: the request body cap bounds responses
     /// too, decision mimid-1wgh.6.67), or nothing without reading it.
     async fn post(
@@ -512,7 +523,7 @@ impl PeerClient {
         endpoint: Endpoint,
         value: &str,
         body: Vec<u8>,
-        expect: StatusCode,
+        expect: &[StatusCode],
         read_body: bool,
     ) -> Result<Vec<u8>, PeerError> {
         let directory = self.directory(domain).await?;
@@ -528,17 +539,18 @@ impl PeerClient {
             })?;
         let request_len = body.len();
         let started = Instant::now();
+        let headers = self.headers(domain, &url)?;
         let response = self
             .http
             .post(url)
-            .headers(self.headers(domain)?)
+            .headers(headers)
             .header(CONTENT_TYPE, PROTOCOL_CONTENT_TYPE)
             .body(body)
             .send()
             .await
             .map_err(PeerError::Http)?;
         let status = response.status();
-        if status != expect {
+        if !expect.contains(&status) {
             let retry_after = retry_after(response.headers());
             let rejected = RejectedResponse::new(endpoint, read_rejected(response).await);
             completed(
@@ -580,7 +592,7 @@ impl PeerClient {
         value: &str,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, PeerError> {
-        self.post(domain, endpoint, value, body, StatusCode::OK, true)
+        self.post(domain, endpoint, value, body, &[StatusCode::OK], true)
             .await
     }
 
@@ -593,10 +605,12 @@ impl PeerClient {
             .peers
             .get(domain)
             .ok_or_else(|| PeerError::UnknownPeer(domain.clone()))?;
+        let url = format!("{base}{DIRECTORY_PATH}");
+        let headers = self.headers(domain, &url)?;
         let response = self
             .http
-            .get(format!("{base}{DIRECTORY_PATH}"))
-            .headers(self.headers(domain)?)
+            .get(url)
+            .headers(headers)
             .send()
             .await
             .map_err(PeerError::Http)?;
@@ -612,12 +626,30 @@ impl PeerClient {
         Ok(directory)
     }
 
-    /// The protocol-07 §4.1 headers for a request to `domain`. `Host`
-    /// carries no port, which §4.1 says is ignored.
-    fn headers(&self, domain: &Domain) -> Result<HeaderMap, PeerError> {
+    /// The protocol-07 §4.1 headers for a request to `domain` at `url`.
+    ///
+    /// `Host` names the target provider, `domain`. When `url`'s host is that
+    /// domain, `Host` is `url`'s authority, port included, as RFC 9112 §3.2
+    /// requires ("identical to that authority component"); §4.1 only says a
+    /// receiver ignores the port. When the peer is configured at another
+    /// address (a proxy, or a test server), `Host` stays the bare domain
+    /// (bead mimid-1wgh.46.6.7, amending the earlier "no port" choice).
+    fn headers(&self, domain: &Domain, url: &str) -> Result<HeaderMap, PeerError> {
         let mut headers = HeaderMap::new();
         headers.insert(FROM, self.from.clone());
-        headers.insert(HOST, header_value(domain.as_str())?);
+        // An unparsable URL fails in the request itself; Host is then moot.
+        let port = reqwest::Url::parse(url).ok().and_then(|url| {
+            let same_host = url
+                .host_str()
+                .is_some_and(|host| host.eq_ignore_ascii_case(domain.as_str()));
+            // `port()` is None for the scheme's default port.
+            url.port().filter(|_| same_host)
+        });
+        let host = match port {
+            Some(port) => format!("{domain}:{port}"),
+            None => domain.as_str().to_owned(),
+        };
+        headers.insert(HOST, header_value(&host)?);
         Ok(headers)
     }
 
@@ -958,6 +990,30 @@ fn truncate(text: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_carries_the_port_only_for_the_peers_own_authority() {
+        // bead mimid-1wgh.46.6.7: RFC 9112 §3.2 when the URL names the peer;
+        // the bare domain for a peer configured at another address.
+        let own = Domain::try_from("a.example".to_owned()).unwrap();
+        let client = PeerClient::new(&own, BTreeMap::new()).unwrap();
+        let peer = Domain::try_from("b.example".to_owned()).unwrap();
+        let host = |url: &str| {
+            client.headers(&peer, url).unwrap()[HOST]
+                .to_str()
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(
+            host("https://b.example:8443/mimi/v1/update/r"),
+            "b.example:8443"
+        );
+        assert_eq!(host("https://B.Example:8443/x"), "b.example:8443");
+        assert_eq!(host("https://b.example/x"), "b.example");
+        assert_eq!(host("https://b.example:443/x"), "b.example");
+        assert_eq!(host("http://127.0.0.1:41234/x"), "b.example");
+        assert_eq!(host("not a url"), "b.example");
+    }
 
     /// `UpdateRoomResponse` notAllowed (protocol-07 §5.3), hand-encoded:
     /// responseCode 2, then errorDescription `opaque<V>` with a one-byte
