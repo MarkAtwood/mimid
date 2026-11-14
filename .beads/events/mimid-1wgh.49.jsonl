@@ -1,3 +1,4 @@
 {"id":"01a1db76-d2c5-71fd-98c1-7b444f27db83","issue_id":"mimid-1wgh.49","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-14T19:09:19.941131302Z"}
 {"id":"01a1db76-d2c8-7c04-8823-9410108b0723","issue_id":"mimid-1wgh.49","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: i18n","created_at":"2026-11-14T19:09:19.944787871Z"}
 {"id":"01a1db76-d2cc-7232-9cbb-cfa618acf105","issue_id":"mimid-1wgh.49","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: wire","created_at":"2026-11-14T19:09:19.94814426Z"}
+{"id":"01a1db8a-905b-7032-bd46-fdf156fab409","issue_id":"mimid-1wgh.49","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Empty errorDescription in all update answers; reasons stay in DEBUG logs (commit 9585fd6)","created_at":"2026-11-14T19:30:53.659013846Z"}
