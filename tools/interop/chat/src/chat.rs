@@ -281,6 +281,7 @@ impl Client {
                 "invite" => self.invite(arg).await,
                 "policy" => self.policy(arg).await,
                 "roles" => self.roles(arg).await,
+                "stale-commit" => self.stale_commit(arg).await,
                 "allow" => self.allow(arg).await,
                 "request" => self.request_consent(arg, ConsentOperation::Request).await,
                 "cancel" => self.request_consent(arg, ConsentOperation::Cancel).await,
@@ -321,6 +322,7 @@ impl Client {
             "  ... --roles          the same Commit also replaces roles_list (both hubs should refuse)",
             "/roles                 set roles_list: 1 \"banned\", 2 \"member\" (needed before /policy on mimi-hubd)",
             "/policy k=v ...        change base_room_policy: fixed_membership, multi_device,\n                       pseudonyms_allowed, persistent_room, discoverable (true|false),\n                       max_clients, max_users (a number or none)",
+            "/stale-commit          test: send a roles_list Commit one epoch late (expect wrongEpoch)",
             "/allow <user>          let <user> fetch your KeyPackages (updateConsent grant)",
             "/request <user>        ask <user> for consent to fetch their KeyPackages (requestConsent)",
             "/cancel <user>         withdraw that request (requestConsent cancel)",
@@ -524,6 +526,43 @@ impl Client {
         self.say(format!(
             "[{}] * roles_list set: 1 banned, 2 member (send, receive, reply, react, add, leave)",
             short_room(&room)
+        ));
+        Ok(())
+    }
+
+    /// Test of a hub's epoch check (protocol-07 §5.3): builds a roles_list
+    /// Commit at the current epoch and keeps it unsent, sends the same
+    /// change as a second Commit to move the room on one epoch, then sends
+    /// the first. A hub should answer `wrongEpoch` and change nothing.
+    /// Both carry a change, since a hub may refuse an empty Commit.
+    async fn stale_commit(&mut self, arg: &str) -> anyhow::Result<()> {
+        ensure!(arg.is_empty(), "usage: /stale-commit");
+        let room = self.current()?;
+        let update = || -> anyhow::Result<AppDataUpdate> {
+            Ok(AppDataUpdate::Update {
+                component_id: ROLES_LIST,
+                update: encode(&default_roles())?,
+            })
+        };
+        let member = self
+            .members
+            .get_mut(&room)
+            .ok_or_else(|| anyhow!("no MLS group for {room}"))?;
+        let stale = member
+            .commit(&self.identity, &[], &[], &[update()?], apply_commit_op)
+            .map_err(|e| anyhow!("building the first Commit: {}", causes(&e)))?;
+        let stale_request = commit_request(&stale)?;
+        member
+            .clear_pending_commit(&self.identity)
+            .map_err(|e| anyhow!("setting the first Commit aside: {}", causes(&e)))?;
+        self.commit_one_update(&room, update()?, "roles_list, to move the epoch on")
+            .await?;
+        let answer = self.hub.update(&room, stale_request).await?;
+        self.say(format!(
+            "[{}] * the Commit from the previous epoch got {:?} ({:?})",
+            short_room(&room),
+            answer.result,
+            answer.error_description.as_str()
         ));
         Ok(())
     }
