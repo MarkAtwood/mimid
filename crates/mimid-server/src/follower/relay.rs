@@ -269,8 +269,19 @@ impl Relay {
                 .await
                 .map_err(RelayError::Peer)?,
         };
-        KeyMaterialResponse::tls_deserialize_exact(&response)
+        // Read as the requester does (bead mimid-1wgh.46.1.7.1): a known
+        // peer divergence is relayed as sent, and noted.
+        let (_, divergence) = KeyMaterialResponse::decode_for_requester(&response)
             .map_err(RelayError::InvalidResponse)?;
+        if let Some(divergence) = divergence {
+            tracing::warn!(
+                name: "key_material_peer_divergence",
+                room_id,
+                target_user,
+                ?divergence,
+                "keyMaterial answer departs from protocol-07 §5.2; relayed as sent"
+            );
+        }
         relayed("keyMaterial", user, room_id);
         Ok(response)
     }

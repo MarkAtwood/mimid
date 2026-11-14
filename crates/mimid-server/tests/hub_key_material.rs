@@ -584,6 +584,22 @@ async fn undecodable_request_is_400() {
 }
 
 #[tokio::test]
+async fn every_client_exhausted_answer_is_relayed_as_sent() {
+    // bead mimid-1wgh.46.1.7.1: Haven's partialSuccess with no successful
+    // client (its DIV-13), encoded by Haven's mimi-core.
+    let exhausted = include_bytes!(
+        "../../mimi-protocol/tests/fixtures/haven/key_material_response_exhausted.bin"
+    )
+    .to_vec();
+    let f = fixture(vec![ok(exhausted.clone())]).await;
+    let relayed = f
+        .ask("b.example", &request(&Ask::default()))
+        .await
+        .expect("relayed");
+    assert_eq!(relayed, exhausted);
+}
+
+#[tokio::test]
 async fn target_provider_failures_are_502() {
     let undecodable = [success_response(&mls_rs_key_package()), vec![0x00]].concat();
     let f = fixture(vec![

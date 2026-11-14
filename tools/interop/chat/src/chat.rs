@@ -489,13 +489,21 @@ impl Client {
         // §5.2 keyMaterial for the target, through the hub.
         let request = key_material_request(&self.me, &target, &room)?;
         let body = self.hub.key_material(&target, request).await?;
-        let response = KeyMaterialResponse::tls_deserialize_exact(&body[..])
+        let (response, divergence) = KeyMaterialResponse::decode_for_requester(&body[..])
             .map_err(|e| anyhow!("the hub's KeyMaterialResponse does not decode: {e:?}"))?;
+        if let Some(divergence) = divergence {
+            self.say(format!(
+                "* note: the hub's keyMaterial answer departs from protocol-07 §5.2 ({divergence:?}); read as noCompatibleMaterial"
+            ));
+        }
         match response.user_status {
             KeyMaterialUserCode::Success | KeyMaterialUserCode::PartialSuccess => {}
             KeyMaterialUserCode::NoConsent | KeyMaterialUserCode::NoConsentForThisRoom => bail!(
                 "{target} has not consented to you: they must run /allow {} first",
                 self.me
+            ),
+            KeyMaterialUserCode::NoCompatibleMaterial => bail!(
+                "{target} has no usable KeyPackage right now (all used up or none compatible); they can /publish more"
             ),
             other => bail!("keyMaterial for {target}: {other:?}"),
         }

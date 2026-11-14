@@ -197,8 +197,8 @@ pub use identifier::{
 };
 pub use identifier_uri::IdentifierUri;
 pub use key_material::{
-    ClientKeyMaterial, KeyMaterialClientCode, KeyMaterialRequest, KeyMaterialRequestTbs,
-    KeyMaterialResponse, KeyMaterialUserCode,
+    ClientKeyMaterial, KeyMaterialClientCode, KeyMaterialDivergence, KeyMaterialRequest,
+    KeyMaterialRequestTbs, KeyMaterialResponse, KeyMaterialUserCode,
 };
 pub use notify::{FanoutEvent, FanoutMessage, NotifyRequest};
 pub use serde_json;

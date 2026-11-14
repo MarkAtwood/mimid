@@ -438,6 +438,72 @@ impl Serialize for KeyMaterialResponse {
     }
 }
 
+/// A departure from protocol-07 §5.2 that
+/// [`KeyMaterialResponse::decode_for_requester`] accepts and reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum KeyMaterialDivergence {
+    /// `partialSuccess` with no `success` client: every listed client is
+    /// `keyMaterialExhausted` or `nothingCompatible`. §5.2 defines
+    /// `partialSuccess` as key material for at least one client and has no
+    /// code for "every client exhausted" (Haven sends this, its DIV-13;
+    /// mimi-protocol issue 184). Read as `noCompatibleMaterial`.
+    PartialSuccessWithoutKeyMaterial,
+}
+
+impl KeyMaterialResponse {
+    /// Decodes `bytes` for the requesting side: as
+    /// [`Deserialize::tls_deserialize_exact`], except that a response with
+    /// a known [`KeyMaterialDivergence`] is accepted, rewritten to the §5.2
+    /// code with the same meaning to a requester, and the divergence is
+    /// returned beside it. The clients are kept as sent.
+    ///
+    /// The strict decoder stays the one for anything that checks a peer
+    /// for conformance; this is for code that needs the answer (decision
+    /// in bead mimid-1wgh.46.1.7.1).
+    ///
+    /// # Errors
+    ///
+    /// Returns the strict decoder's error for anything else it refuses,
+    /// including trailing bytes.
+    pub fn decode_for_requester(
+        bytes: &[u8],
+    ) -> Result<(Self, Option<KeyMaterialDivergence>), tls_codec::Error> {
+        let mut reader = bytes;
+        let mut response = Self {
+            protocol: Protocol::tls_deserialize(&mut reader)?,
+            user_status: KeyMaterialUserCode::tls_deserialize(&mut reader)?,
+            user_uri: IdentifierUri::tls_deserialize(&mut reader)?,
+            clients: Vec::<ClientKeyMaterial>::tls_deserialize(&mut reader)?,
+        };
+        if !reader.is_empty() {
+            return Err(tls_codec::Error::TrailingData);
+        }
+        let nothing_usable = !response.clients.is_empty()
+            && response.clients.iter().all(|c| {
+                matches!(
+                    c.client_status(),
+                    KeyMaterialClientCode::KeyMaterialExhausted
+                        | KeyMaterialClientCode::NothingCompatible
+                )
+            });
+        match check_clients(response.user_status, &response.clients) {
+            Ok(()) => Ok((response, None)),
+            Err(_)
+                if response.user_status == KeyMaterialUserCode::PartialSuccess
+                    && nothing_usable =>
+            {
+                response.user_status = KeyMaterialUserCode::NoCompatibleMaterial;
+                Ok((
+                    response,
+                    Some(KeyMaterialDivergence::PartialSuccessWithoutKeyMaterial),
+                ))
+            }
+            Err(reason) => Err(tls_codec::Error::DecodingError(reason)),
+        }
+    }
+}
+
 impl Deserialize for KeyMaterialResponse {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
         let response = Self {

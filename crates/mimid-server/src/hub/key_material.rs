@@ -167,8 +167,19 @@ pub(super) async fn key_material(
         .key_material(&target_domain, target_user, request.to_vec())
         .await
         .map_err(HubError::Peer)?;
-    let relayed = KeyMaterialResponse::tls_deserialize_exact(response.as_slice())
+    // Read as the requester does (bead mimid-1wgh.46.1.7.1): a known
+    // peer divergence is relayed as sent, and noted.
+    let (relayed, divergence) = KeyMaterialResponse::decode_for_requester(response.as_slice())
         .map_err(HubError::InvalidPeerResponse)?;
+    if let Some(divergence) = divergence {
+        tracing::warn!(
+            name: "key_material_peer_divergence",
+            room_id = tbs.room_id.as_str(),
+            target_domain = %target_domain,
+            ?divergence,
+            "keyMaterial answer departs from protocol-07 §5.2; relayed as sent"
+        );
+    }
     tracing::info!(
         name: "key_material_relayed",
         room_id = tbs.room_id.as_str(),

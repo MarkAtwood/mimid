@@ -21,9 +21,10 @@ use mimi_protocol::tls_codec::{Deserialize, Serialize};
 use mimi_protocol::{
     AbuseReport, AbuseType, ClientKeyMaterial, ConsentEntry, ConsentOperation, FanoutEvent,
     FanoutMessage, GroupInfoOption, HandshakeBundle, IdentifierQueryCode, IdentifierRequest,
-    IdentifierResponse, IdentifierUri, KeyMaterialRequest, KeyMaterialResponse,
-    KeyMaterialUserCode, Protocol, QueryElement, QuerySearch, SubmitMessageRequest,
-    SubmitMessageResponse, SubmitResult, UpdateResult, UpdateRoomResponse, Utf8String,
+    IdentifierResponse, IdentifierUri, KeyMaterialClientCode, KeyMaterialDivergence,
+    KeyMaterialRequest, KeyMaterialResponse, KeyMaterialUserCode, Protocol, QueryElement,
+    QuerySearch, SubmitMessageRequest, SubmitMessageResponse, SubmitResult, UpdateResult,
+    UpdateRoomResponse, Utf8String,
 };
 
 macro_rules! haven {
@@ -289,6 +290,72 @@ fn key_material_partial_success_without_success_is_refused() {
         KeyMaterialResponse::tls_deserialize_exact(haven!("key_material_response_exhausted"))
             .is_err()
     );
+}
+
+#[test]
+fn requester_reads_partial_success_without_success_as_no_compatible_material() {
+    // bead mimid-1wgh.46.1.7.1: the requesting side accepts Haven's
+    // every-client-exhausted answer, reports the divergence, and keeps the
+    // clients as sent.
+    let (response, divergence) =
+        KeyMaterialResponse::decode_for_requester(haven!("key_material_response_exhausted"))
+            .expect("accepted for a requester");
+    assert_eq!(
+        divergence,
+        Some(KeyMaterialDivergence::PartialSuccessWithoutKeyMaterial)
+    );
+    assert_eq!(
+        response.user_status,
+        KeyMaterialUserCode::NoCompatibleMaterial
+    );
+    assert!(!response.clients.is_empty());
+    assert!(
+        response
+            .clients
+            .iter()
+            .all(|c| c.client_status() == KeyMaterialClientCode::KeyMaterialExhausted)
+    );
+}
+
+#[test]
+fn requester_decode_matches_strict_decode_for_conforming_answers() {
+    for wire in [
+        haven!("key_material_response_success"),
+        haven!("key_material_response_partial_success"),
+        haven!("key_material_response_no_consent"),
+        haven!("key_material_response_no_compatible_exhausted"),
+    ] {
+        let strict = KeyMaterialResponse::tls_deserialize_exact(wire).expect("strict");
+        let (lenient, divergence) =
+            KeyMaterialResponse::decode_for_requester(wire).expect("requester");
+        assert_eq!(lenient, strict);
+        assert_eq!(divergence, None);
+    }
+}
+
+#[test]
+fn requester_decode_still_refuses_other_mismatches_and_trailing_bytes() {
+    let wire = haven!("key_material_response_exhausted");
+    let trailing = [wire, &[0x00][..]].concat();
+    assert!(matches!(
+        KeyMaterialResponse::decode_for_requester(&trailing),
+        Err(tls_codec::Error::TrailingData)
+    ));
+    // partialSuccess with no clients at all: nothing says the user has any
+    // client, so this is not the exhausted case.
+    let strict =
+        KeyMaterialResponse::tls_deserialize_exact(haven!("key_material_response_success"))
+            .expect("strict");
+    let empty = [
+        strict.protocol.tls_serialize_detached().unwrap(),
+        KeyMaterialUserCode::PartialSuccess
+            .tls_serialize_detached()
+            .unwrap(),
+        strict.user_uri.tls_serialize_detached().unwrap(),
+        vec![0x00],
+    ]
+    .concat();
+    assert!(KeyMaterialResponse::decode_for_requester(&empty).is_err());
 }
 
 #[test]
