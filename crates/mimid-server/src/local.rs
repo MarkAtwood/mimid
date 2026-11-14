@@ -22,7 +22,7 @@
 //!   that is malformed or under another domain is `400`; a room or group
 //!   that already exists is `409`; a group that breaks a hub rule is `422`;
 //!   any other failure is `500`. Errors are RFC 9457 problem bodies with
-//!   only `type` and `status` ([`crate::http::problem`]); the reason is
+//!   only `type` and `status`, as everywhere else in mimid; the reason is
 //!   logged.
 
 use std::sync::Arc;
