@@ -42,12 +42,12 @@ use mimi_mls::wire::{
     SignaturePublicKey, Welcome,
 };
 use mimi_mls::{Identity, KeyPackageKind};
-use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST};
+use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST};
 use mimi_protocol::{
     ClientKeyMaterial, ConsentEntry, ConsentOperation, FanoutEvent, FanoutMessage,
     FrankingAgentData, GroupInfoOption, HandshakeBundle, IdentifierUri, KeyMaterialRequestTbs,
     KeyMaterialResponse, KeyMaterialUserCode, ParticipantListData, ParticipantListUpdate, Protocol,
-    SubmitMessageRequest, UpdateRequest, UserRolePair,
+    SubmitMessageRequest, UpdateRequest, UserRolePair, franking_tag,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{
@@ -983,8 +983,9 @@ impl Client {
     async fn send_text(&mut self, text: &str) -> anyhow::Result<()> {
         ensure!(text.len() <= MAX_TEXT_LEN, "message too long");
         let room = self.current()?;
+        let salt: [u8; 16] = random()?;
         let content = MimiContent {
-            salt: random()?,
+            salt,
             replaces: None,
             topic_id: vec![],
             expires: None,
@@ -1009,8 +1010,9 @@ impl Client {
             .members
             .get_mut(&room)
             .ok_or_else(|| anyhow!("no MLS group for {room}"))?;
+        let safe_aad = frank_aad_items(member, &salt, &content);
         let ciphertext = member
-            .send(&self.identity, &content, &[])
+            .send(&self.identity, &content, &safe_aad)
             .map_err(|e| anyhow!("encrypting: {}", causes(&e)))?;
         let others: Vec<String> = participants(member)?
             .into_iter()
@@ -1691,6 +1693,25 @@ fn default_base_policy() -> BaseRoomPolicy {
         persistent_room: Bool::True,
         discoverable: Bool::False,
         policy_component_ids: vec![],
+    }
+}
+
+/// The Safe AAD items for a message in `member`'s room: a `frank_aad` item
+/// carrying the message's franking tag (protocol-07 §5.4.1, §10.1) when the
+/// room's `safe_aad` list requires frank_aad, as rooms hosted by mimid do,
+/// and none otherwise (Member::send refuses items in a room without Safe
+/// AAD).
+fn frank_aad_items(member: &Member, salt: &[u8; 16], content: &[u8]) -> Vec<(u16, Vec<u8>)> {
+    // ComponentsList: component_ids<V>, two bytes per id; one length byte
+    // is enough for any list mimid-chat meets.
+    let required = member.component(SAFE_AAD).is_some_and(|list| {
+        list.get(1..)
+            .is_some_and(|ids| ids.chunks(2).any(|id| id == FRANK_AAD.to_be_bytes()))
+    });
+    if required {
+        vec![(FRANK_AAD, franking_tag(salt, content).to_vec())]
+    } else {
+        vec![]
     }
 }
 
