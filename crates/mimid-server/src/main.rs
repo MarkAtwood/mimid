@@ -130,6 +130,32 @@ async fn main() -> anyhow::Result<()> {
         jmap_options,
     )
     .context("building the JMAP router")?;
+    // The local control listener, loopback only (bead mimid-1wgh.47).
+    let (stop_local, local_stopped) = tokio::sync::watch::channel(());
+    let local = match config.local_listen {
+        Some(addr) => {
+            if !addr.ip().is_loopback() {
+                bail!("local_listen {addr} is not a loopback address");
+            }
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("binding local_listen {addr}"))?;
+            tracing::info!(
+                name: "local_listening",
+                local_listen = %addr,
+                "local control listener on"
+            );
+            let mut stopped = local_stopped;
+            Some(tokio::spawn(
+                axum::serve(listener, mimid_server::local::router(Arc::clone(&hub)))
+                    .with_graceful_shutdown(async move {
+                        let _ = stopped.changed().await;
+                    })
+                    .into_future(),
+            ))
+        }
+        None => None,
+    };
     let app = router(directory(&config.base_url), hub, follower).merge(jmap);
 
     let listener = tokio::net::TcpListener::bind(config.listen)
@@ -148,6 +174,14 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("serving HTTP")?;
+    if let Some(local) = local {
+        // Nothing waits for a stop if the receiver is gone already.
+        let _ = stop_local.send(());
+        local
+            .await
+            .context("joining the local control listener")?
+            .context("serving the local control listener")?;
+    }
 
     store.close().await;
     tracing::info!(name: "server_stopped", "mimid stopped");

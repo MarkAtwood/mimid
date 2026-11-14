@@ -52,6 +52,11 @@ pub struct Config {
     /// [`DEFAULT_MAX_KEY_PACKAGES`].
     #[serde(default = "default_max_key_packages")]
     pub max_key_packages: u64,
+    /// The loopback address of the local control listener
+    /// ([`crate::local`]), or none to leave it off. The server refuses to
+    /// start if it is not a loopback address.
+    #[serde(default)]
+    pub local_listen: Option<SocketAddr>,
 }
 
 fn default_max_key_packages() -> u64 {
@@ -237,8 +242,20 @@ mod tests {
                 (domain("c.example"), base("https://mimi.c.example:8443")),
             ]),
             max_key_packages: 97,
+            local_listen: None,
         };
         assert_eq!(config, expected);
+    }
+
+    #[test]
+    fn local_listen_is_optional_and_parses() {
+        // A top-level key, so it goes before the [peers] table.
+        let text = VALID.replace("[peers]", "local_listen = \"127.0.0.1:9099\"\n[peers]");
+        let config = Config::parse(&text).unwrap();
+        assert_eq!(
+            config.local_listen,
+            Some(SocketAddr::from(([127, 0, 0, 1], 9099)))
+        );
     }
 
     /// Mark's choice of default (mimid-1wgh.11.2): 97.

@@ -572,7 +572,7 @@ pub const PROBLEM_TYPE_PREFIX: &str = "tag:reviewcommit.com,2026:mimid:problem:"
 /// Rust error message, would reach other providers' operators and users
 /// (bead mimid-1wgh.50). The reason is logged instead. `kind` is the
 /// lowercase-hyphenated tail of the type URI.
-fn problem(status: StatusCode, kind: &str) -> Response {
+pub(crate) fn problem(status: StatusCode, kind: &str) -> Response {
     let mut body = serde_json::Map::new();
     body.insert(
         "type".to_owned(),
