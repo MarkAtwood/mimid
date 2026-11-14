@@ -65,10 +65,19 @@ pub struct Config {
     /// room policy is a SHOULD (decision mimid-1wgh.52).
     #[serde(default)]
     pub require_room_policy: bool,
+    /// How far, in seconds, a configured peer's clock may be from this
+    /// server's before mimid logs a warning ([`crate::peer_clock`]).
+    /// Defaults to [`crate::peer_clock::DEFAULT_TOLERANCE_SECS`].
+    #[serde(default = "default_peer_clock_tolerance_secs")]
+    pub peer_clock_tolerance_secs: u64,
 }
 
 fn default_max_key_packages() -> u64 {
     DEFAULT_MAX_KEY_PACKAGES
+}
+
+fn default_peer_clock_tolerance_secs() -> u64 {
+    crate::peer_clock::DEFAULT_TOLERANCE_SECS
 }
 
 impl Config {
@@ -253,8 +262,15 @@ mod tests {
             local_listen: None,
             require_franking: false,
             require_room_policy: false,
+            peer_clock_tolerance_secs: 5,
         };
         assert_eq!(config, expected);
+    }
+
+    #[test]
+    fn peer_clock_tolerance_parses() {
+        let text = VALID.replace("[peers]", "peer_clock_tolerance_secs = 30\n[peers]");
+        assert_eq!(Config::parse(&text).unwrap().peer_clock_tolerance_secs, 30);
     }
 
     #[test]

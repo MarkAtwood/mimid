@@ -80,4 +80,5 @@ pub mod jmap;
 pub mod local;
 pub mod logging;
 pub mod peer;
+pub mod peer_clock;
 pub mod store;

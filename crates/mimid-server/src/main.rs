@@ -46,6 +46,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 use mimid_server::config::Config;
@@ -60,6 +61,7 @@ use mimid_server::hub::{Clock, Hub, SystemClock};
 use mimid_server::jmap::{self, JmapOptions};
 use mimid_server::logging::{LogFormat, json_subscriber};
 use mimid_server::peer::PeerClient;
+use mimid_server::peer_clock::{self, PeerClocks};
 use mimid_server::store::Store;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -82,8 +84,15 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("opening database {}", config.database.display()))?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    // One clock tracker for every peer client and the request middleware.
+    let clocks = PeerClocks::new(
+        config.peers.keys().cloned(),
+        Duration::from_secs(config.peer_clock_tolerance_secs),
+    );
     let peers = || {
-        PeerClient::new(&config.domain, config.peers.clone()).context("building the peer client")
+        PeerClient::new(&config.domain, config.peers.clone())
+            .map(|client| client.with_clocks(Arc::clone(&clocks)))
+            .context("building the peer client")
     };
     let key_packages = Arc::new(KeyPackages::new(
         store.clone(),
@@ -161,7 +170,12 @@ async fn main() -> anyhow::Result<()> {
         }
         None => None,
     };
-    let app = router(directory(&config.base_url), hub, follower).merge(jmap);
+    let app = router(directory(&config.base_url), hub, follower)
+        .merge(jmap)
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&clocks),
+            peer_clock::check_request,
+        ));
 
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await

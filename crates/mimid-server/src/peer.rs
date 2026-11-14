@@ -37,7 +37,7 @@
 
 use std::collections::BTreeMap;
 use std::error::Error as StdError;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use mimi_mls::tls_codec::Deserialize;
@@ -46,12 +46,13 @@ use mimi_protocol::{
     KeyMaterialResponse, KeyMaterialUserCode, SubmitMessageResponse, SubmitResponseCode,
     UpdateResponseCode, UpdateRoomResponse, UriTemplate,
 };
-use reqwest::header::{CONTENT_TYPE, FROM, HOST, HeaderMap, HeaderValue, RETRY_AFTER};
+use reqwest::header::{CONTENT_TYPE, DATE, FROM, HOST, HeaderMap, HeaderValue, RETRY_AFTER};
 use reqwest::{StatusCode, redirect};
 
 use crate::config::{BaseUrl, Domain};
 use crate::directory::DIRECTORY_PATH;
 use crate::http::{MAX_BODY_LEN, PROTOCOL_CONTENT_TYPE};
+use crate::peer_clock::PeerClocks;
 
 /// The longest directory document accepted, in bytes. INVENTED, NOT FROM
 /// SPEC: protocol-07 §5.1 sets no limit, and a ten-entry document of
@@ -191,6 +192,9 @@ pub struct PeerClient {
     /// ceiling is that a peer's moved endpoints are seen only after a
     /// restart. Upgrade path: refetch after a failed request or a TTL.
     directories: Mutex<BTreeMap<Domain, Directory>>,
+    /// Checks each response's `Date` against this server's clock
+    /// ([`crate::peer_clock`]); none in tools that do not care.
+    clocks: Option<Arc<PeerClocks>>,
 }
 
 impl PeerClient {
@@ -213,7 +217,16 @@ impl PeerClient {
             from: header_value(&format!("mimi@{own_domain}"))?,
             peers,
             directories: Mutex::new(BTreeMap::new()),
+            clocks: None,
         })
+    }
+
+    /// Checks the clock of each peer that answers a call against `clocks`
+    /// ([`crate::peer_clock`]).
+    #[must_use]
+    pub fn with_clocks(mut self, clocks: Arc<PeerClocks>) -> Self {
+        self.clocks = Some(clocks);
+        self
     }
 
     /// Whether `domain` is in the peer map.
@@ -562,6 +575,7 @@ impl PeerClient {
         let request_len = body.len();
         let started = Instant::now();
         let headers = self.headers(domain, &url)?;
+        let sent = SystemTime::now();
         let response = self
             .http
             .post(url)
@@ -571,6 +585,10 @@ impl PeerClient {
             .send()
             .await
             .map_err(PeerError::Http)?;
+        if let Some(clocks) = &self.clocks {
+            let date = response.headers().get(DATE).and_then(|v| v.to_str().ok());
+            clocks.observe(domain, date, sent, SystemTime::now());
+        }
         let status = response.status();
         if !expect.contains(&status) {
             let retry_after = retry_after(response.headers());
@@ -659,6 +677,12 @@ impl PeerClient {
     fn headers(&self, domain: &Domain, url: &str) -> Result<HeaderMap, PeerError> {
         let mut headers = HeaderMap::new();
         headers.insert(FROM, self.from.clone());
+        // RFC 9110 §6.6.1 lets a client send Date; a peer can check our
+        // clock with it as we check theirs.
+        headers.insert(
+            DATE,
+            header_value(&httpdate::fmt_http_date(SystemTime::now()))?,
+        );
         // An unparsable URL fails in the request itself; Host is then moot.
         let port = reqwest::Url::parse(url).ok().and_then(|url| {
             let same_host = url
