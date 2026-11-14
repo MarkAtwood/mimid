@@ -21,6 +21,9 @@ Layout
   mimid-dump/   zz_dump_for_haven.rs, a mimi-protocol test that writes the
                 mimid-encoded messages. It is a template: copy it into
                 crates/mimi-protocol/tests/ to run it, then delete it.
+  probe/        standalone crate: a short read-only check of Jason's public
+                hub (mimi.havenmessenger.com) and its table seed, run from
+                the mimid host (below)
   live/         the live run of mimid's PeerClient against mimi-hubd:
     run.sh        builds mimi-hubd from $HAVEN, makes a throwaway CA, and
                   enters an unprivileged user+network namespace (unshare)
@@ -108,6 +111,22 @@ Live run against a public hub (bead mimid-1wgh.46.6)
   (cd $H/live/driver && CARGO_TARGET_DIR=/data/cargo/interop07-public-target cargo build --release)
   cd $H/live && DRIVER=/data/cargo/interop07-public-target/release/mimid-haven-live \
      KP=$MIMID_HAVEN_VECTORS/haven_default_key_package.bin ./public.sh
+
+Probe of Haven's public hub (IETF 127 table)
+  probe/ checks mimi.havenmessenger.com as seeded for the table
+  (havenmessenger/interop#1): the directory; keyMaterial for erin as
+  mimid's alice, which uses up one of erin's KeyPackages; keyMaterial for
+  grace, who has none; identifierQuery for the handle erin and an unknown
+  one. It writes nothing else. It runs on the mimid host, whose outbound
+  proxy (mimi.havenmessenger.com is 127.0.0.2 in its /etc/hosts) adds
+  mimid's client certificate. Expected on Haven's hub as of 2026-11-14:
+  grace's answer is refused (mimid-1wgh.46.1.7), and identifierQuery
+  answers a bare 200 or 404 (mimid-1wgh.46.6.3).
+  (cd $H/probe && CARGO_TARGET_DIR=/data/cargo/mimid-haven-live-target cargo build --release)
+  scp -i ~/.ssh/mimid-hackathon.pem -o BatchMode=yes \
+     /data/cargo/mimid-haven-live-target/release/haven-probe admin@172.31.40.235:/home/admin/interop/
+  ssh -i ~/.ssh/mimid-hackathon.pem -o BatchMode=yes admin@172.31.40.235 \
+     SSL_CERT_FILE=/home/admin/interop/trust.pem /home/admin/interop/haven-probe
 
 The driver covers every PeerClient call Haven's directory offers: directory,
 keyMaterial, submitMessage, update (one change; Add beside the change; two
