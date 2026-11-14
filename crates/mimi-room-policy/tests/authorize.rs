@@ -507,36 +507,29 @@ fn ban_only_roles(role_1_name: &str) -> RoleData {
 #[test]
 fn ban_and_unban_need_the_banned_role() {
     // §8.1.3: "to use the canBan and canUnban capabilities, the role needs
-    // to exist exactly as described above"; decisions .3.26, .3.42.
-    check(
-        &ban_only_roles("banned"),
-        &[
-            (3, change(2, 1), OK, "§8.1.3 canBan"),
-            (3, add(1), OK, "§8.1.3 canBan from role 0"),
-            (4, change(1, 2), OK, "§8.1.3 canUnban"),
-            (
-                3,
-                change(2, 3),
-                missing(3, C::CAN_CHANGE_USER_ROLE),
-                "§8.1.3",
-            ),
-            (
-                4,
-                change(2, 1),
-                missing(4, C::CAN_CHANGE_USER_ROLE),
-                "§8.1.3",
-            ),
-            (4, change(1, 3), not_authorized(1, 3), "§8.1.3 (1,[2])"),
-            (3, add(2), missing(3, C::CAN_ADD_PARTICIPANT), "§8.1.1"),
-        ],
-    );
-    for name in ["outcast", "Banned"] {
+    // to exist"; decision .3.26. Role 1 is the banned role whatever its
+    // name (bead mimid-1wgh.48, superseding .3.42).
+    for name in ["banned", "outcast", "Banned", "Gesperrt"] {
         check(
             &ban_only_roles(name),
             &[
-                (3, change(2, 1), not_authorized(2, 1), "decision .3.42"),
-                (3, add(1), not_authorized(0, 1), "decision .3.42"),
-                (4, change(1, 2), not_authorized(1, 2), "decision .3.42"),
+                (3, change(2, 1), OK, "§8.1.3 canBan"),
+                (3, add(1), OK, "§8.1.3 canBan from role 0"),
+                (4, change(1, 2), OK, "§8.1.3 canUnban"),
+                (
+                    3,
+                    change(2, 3),
+                    missing(3, C::CAN_CHANGE_USER_ROLE),
+                    "§8.1.3",
+                ),
+                (
+                    4,
+                    change(2, 1),
+                    missing(4, C::CAN_CHANGE_USER_ROLE),
+                    "§8.1.3",
+                ),
+                (4, change(1, 3), not_authorized(1, 3), "§8.1.3 (1,[2])"),
+                (3, add(2), missing(3, C::CAN_ADD_PARTICIPANT), "§8.1.1"),
             ],
         );
     }

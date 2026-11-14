@@ -243,8 +243,8 @@ impl RoleData {
         }
     }
 
-    /// Whether role 1 exists and is the "banned" role, which `canBan` and
-    /// `canUnban` require (§8.1.3; decision mimid-1wgh.3.42).
+    /// Whether role 1 exists: it is the "banned" role, whatever its name,
+    /// which `canBan` and `canUnban` require (§8.1.3; bead mimid-1wgh.48).
     fn has_banned_role(&self) -> bool {
         self.role(BANNED_ROLE_INDEX)
             .is_some_and(Role::is_banned_role)
@@ -363,8 +363,8 @@ impl RoleData {
     /// - a change to or from role 1 is allowed if any of
     ///   `canChangeUserRole`, `canBan` or `canUnban` authorizes it, and
     ///   `canBan`/`canUnban` work only when role 1 is the "banned" role
-    ///   ([`Role::is_banned_role`]; decisions mimid-1wgh.3.26,
-    ///   mimid-1wgh.3.42);
+    ///   ([`Role::is_banned_role`]; decision mimid-1wgh.3.26, bead
+    ///   mimid-1wgh.48);
     /// - a preauthorized target role must be the first matching role, and
     ///   neither 0 nor 1 (decisions mimid-1wgh.3.49, mimid-1wgh.3.52,
     ///   mimid-1wgh.3.53);

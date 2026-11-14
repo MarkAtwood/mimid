@@ -196,7 +196,7 @@ pub use preauth::{Claim, ClaimId, CredentialType, PreAuthData, PreAuthRoleEntry,
 
 mod role;
 pub use role::{
-    BANNED_ROLE_INDEX, BANNED_ROLE_NAME, NO_ROLE_INDEX, PolicyError, Role, RoleData, RoleUpdate,
+    BANNED_ROLE_INDEX, NO_ROLE_INDEX, PolicyError, Role, RoleData, RoleUpdate,
     SingleSourceRoleChangeTargets,
 };
 

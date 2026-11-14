@@ -10,11 +10,8 @@ use crate::Capability;
 /// not (or no longer) in the participant list.
 pub const NO_ROLE_INDEX: u32 = 0;
 
-/// The `role_index` of the "banned" role (room-policy-04 §8.1.3).
+/// The `role_index` of the "banned" role (room-policy-04 §8.1.3, §6.6).
 pub const BANNED_ROLE_INDEX: u32 = 1;
-
-/// The `role_name` the "banned" role must have (room-policy-04 §8.1.3).
-pub const BANNED_ROLE_NAME: &str = "banned";
 
 /// The `SingleSourceRoleChangeTargets` struct of room-policy-04 §3: the
 /// roles a holder may move a participant to from one source role.
@@ -60,13 +57,16 @@ pub struct Role {
 }
 
 impl Role {
-    /// Whether this is the "banned" role of §8.1.3: `role_index` 1 and
-    /// `role_name` exactly `banned`.
+    /// Whether this is the "banned" role of §8.1.3: `role_index` 1,
+    /// whatever its `role_name`.
     ///
-    /// A role 1 with any other name is allowed; it is simply not the
-    /// banned role (decision mimid-1wgh.3.42).
+    /// §8.1.3 also asks for `role_name` "banned". mimid does not: a role name
+    /// is display text and may be localized, and tying meaning to an English
+    /// word puts that word in every user's interface (decision in bead
+    /// mimid-1wgh.48, superseding mimid-1wgh.3.42; raised with the WG on
+    /// mimi-room-policy #33). §6.6 already treats index 1 as banned.
     pub fn is_banned_role(&self) -> bool {
-        self.role_index == BANNED_ROLE_INDEX && self.role_name == BANNED_ROLE_NAME
+        self.role_index == BANNED_ROLE_INDEX
     }
 }
 

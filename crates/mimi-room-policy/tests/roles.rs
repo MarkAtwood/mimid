@@ -17,8 +17,8 @@ mod appendix_a;
 use appendix_a::{a1, a2, a3, a4, banned, role};
 use mimi_room_policy::tls_codec::{Deserialize, Error, Serialize};
 use mimi_room_policy::{
-    BANNED_ROLE_INDEX, BANNED_ROLE_NAME, Capability as C, NO_ROLE_INDEX, PolicyError, Role,
-    RoleData, RoleUpdate, SingleSourceRoleChangeTargets,
+    BANNED_ROLE_INDEX, Capability as C, NO_ROLE_INDEX, PolicyError, Role, RoleData, RoleUpdate,
+    SingleSourceRoleChangeTargets,
 };
 
 /// Decodes `fixture`, checks it equals `expected`, and re-encodes it
@@ -372,12 +372,9 @@ fn fixed_membership_allows_add_participant_on_role_0_and_banned() {
     roles.roles[1].role_capabilities = vec![C::CAN_ADD_PARTICIPANT];
     roles.roles.truncate(2);
     assert_eq!(roles.validate(true), Ok(()));
-    // Role 1 not named "banned" is not the banned role (§8.1.3).
+    // Role 1 is the banned role whatever its name (bead mimid-1wgh.48).
     roles.roles[1].role_name = "outcast".to_owned();
-    assert_eq!(
-        roles.validate(true),
-        Err(PolicyError::AddParticipantInFixedMembershipRoom(1))
-    );
+    assert_eq!(roles.validate(true), Ok(()));
 }
 
 #[test]
@@ -476,14 +473,16 @@ fn roles_that_can_share_follows_section_6_6() {
 }
 
 #[test]
-fn banned_role_needs_index_1_and_exact_name() {
+fn banned_role_is_index_1_whatever_its_name() {
+    // Bead mimid-1wgh.48: the name is display text and may be localized.
     assert_eq!(BANNED_ROLE_INDEX, 1);
-    assert_eq!(BANNED_ROLE_NAME, "banned");
     assert_eq!(NO_ROLE_INDEX, 0);
     assert!(banned().is_banned_role());
-    let mut capitalized = banned();
-    capitalized.role_name = "Banned".to_owned();
-    assert!(!capitalized.is_banned_role());
+    for name in ["Banned", "outcast", "", "Gesperrt", "مستبعد"] {
+        let mut renamed = banned();
+        renamed.role_name = name.to_owned();
+        assert!(renamed.is_banned_role(), "{name:?}");
+    }
     let mut moved = banned();
     moved.role_index = 2;
     assert!(!moved.is_banned_role());

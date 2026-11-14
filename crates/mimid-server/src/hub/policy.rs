@@ -346,8 +346,9 @@ impl RoomState {
             .ok_or(Denied::UnknownMember(leaf_index))
     }
 
-    /// Whether role 1 is the "banned" role and `role_index` is it
-    /// (room-policy-04 §8.1.3; decision mimid-1wgh.3.42).
+    /// Whether `role_index` is the "banned" role: role 1, if the room
+    /// defines it, whatever its name (room-policy-04 §8.1.3; bead
+    /// mimid-1wgh.48).
     fn is_banned(&self, role_index: u32) -> bool {
         is_banned_in(&self.roles, role_index)
     }
