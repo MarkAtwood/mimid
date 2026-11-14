@@ -129,6 +129,15 @@ impl Hub {
         }
     }
 
+    /// §5.7 requestConsent (request or cancel), to the hub as the target's
+    /// provider.
+    pub async fn request_consent(&self, body: Vec<u8>) -> anyhow::Result<()> {
+        self.peer
+            .request_consent(&self.domain, body)
+            .await
+            .map_err(chain)
+    }
+
     /// §5.7 updateConsent (grant or revoke).
     pub async fn update_consent(&self, body: Vec<u8>) -> anyhow::Result<()> {
         self.peer

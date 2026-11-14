@@ -281,6 +281,8 @@ impl Client {
                 "policy" => self.policy(arg).await,
                 "roles" => self.roles(arg).await,
                 "allow" => self.allow(arg).await,
+                "request" => self.request_consent(arg, ConsentOperation::Request).await,
+                "cancel" => self.request_consent(arg, ConsentOperation::Cancel).await,
                 "join" => self.join(arg).await,
                 "rooms" => {
                     self.rooms();
@@ -318,6 +320,8 @@ impl Client {
             "/roles                 set roles_list: 1 \"banned\", 2 \"member\" (needed before /policy on mimi-hubd)",
             "/policy k=v ...        change base_room_policy: fixed_membership, multi_device,\n                       pseudonyms_allowed, persistent_room, discoverable (true|false),\n                       max_clients, max_users (a number or none)",
             "/allow <user>          let <user> fetch your KeyPackages (updateConsent grant)",
+            "/request <user>        ask <user> for consent to fetch their KeyPackages (requestConsent)",
+            "/cancel <user>         withdraw that request (requestConsent cancel)",
             "/join [n]              accept pending invite n (default: the oldest)",
             "/rooms                 list rooms; /room <name|uri> switches the current room",
             "/who                   participants of the current room",
@@ -711,6 +715,38 @@ impl Client {
         };
         self.hub.update_consent(encode(&entry)?).await?;
         self.say(format!("* {requester} may now fetch your KeyPackages"));
+        Ok(())
+    }
+
+    /// protocol-07 §5.7 requestConsent: asks `arg` for consent to fetch
+    /// their KeyPackages for any room (`request`), or withdraws that request
+    /// (`cancel`). The target must be on the hub's domain, the only provider
+    /// mimid-chat talks to.
+    async fn request_consent(
+        &mut self,
+        arg: &str,
+        operation: ConsentOperation,
+    ) -> anyhow::Result<()> {
+        let target = self.user_uri(arg)?;
+        ensure!(
+            self.on_hub_domain(&target),
+            "{target} is not on the hub's domain, {}",
+            self.hub.domain.as_str()
+        );
+        let entry = ConsentEntry {
+            consent_operation: operation,
+            requester_uri: identifier(&self.me)?,
+            target_uri: identifier(&target)?,
+            room_id: None,
+            client_key_packages: vec![],
+            consent_extensions: mimi_mls::wire::AppDataDictionary::new(&[])
+                .map_err(|e| anyhow!("{e:?}"))?,
+        };
+        self.hub.request_consent(encode(&entry)?).await?;
+        self.say(match operation {
+            ConsentOperation::Cancel => format!("* consent request to {target} withdrawn"),
+            _ => format!("* asked {target} for consent"),
+        });
         Ok(())
     }
 
