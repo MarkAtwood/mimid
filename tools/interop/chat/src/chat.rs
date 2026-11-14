@@ -54,6 +54,13 @@ use crate::state::{Invite, Room, RoomStatus, State, StateDir};
 
 /// mls-extensions-10 §5 `app_components`.
 const APP_COMPONENTS: u16 = 0x0001;
+/// RFC 9420 §11.1 RequiredCapabilities for keyMaterial (§5.2): extension
+/// `app_data_dictionary` (0x0006) and proposal `AppDataUpdate` (0x0008)
+/// from mls-extensions-10, which every room this client builds needs,
+/// because its GroupContext carries `participant_list`. A hub should then
+/// answer `nothingCompatible` for KeyPackages without them, instead of
+/// handing out one the Add will refuse. No credential types are required.
+const REQUIRED_CAPABILITIES: [u8; 7] = [0x02, 0x00, 0x06, 0x02, 0x00, 0x08, 0x00];
 /// RFC 9420 §6 MLSMessage headers: mls10, then wire_format.
 const GROUP_INFO_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
 const WELCOME_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x03];
@@ -1352,7 +1359,7 @@ fn key_material_request(requester: &str, target: &str, room: &str) -> anyhow::Re
         acceptable_ciphersuites: vec![
             CipherSuite::tls_deserialize_exact([0x00, 0x01]).map_err(|e| anyhow!("{e:?}"))?,
         ],
-        required_capabilities: RequiredCapabilities::tls_deserialize_exact([0x00, 0x00, 0x00])
+        required_capabilities: RequiredCapabilities::tls_deserialize_exact(REQUIRED_CAPABILITIES)
             .map_err(|e| anyhow!("{e:?}"))?,
         requester_signature_key: SignaturePublicKey::tls_deserialize_exact(&key)
             .map_err(|e| anyhow!("{e:?}"))?,
