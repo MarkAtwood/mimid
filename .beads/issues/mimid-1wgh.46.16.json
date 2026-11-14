@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.46.16",
+  "title": "Check in with Jason (Haven) when the provider-authentication proposals are posted",
+  "description": "On 2026-11-14 (IETF 127 table, Zulip #mimi msg after 238105) we told Jason Bolduc we are drafting proposals for how MIMI providers authenticate each other (mTLS trust anchors, HTTP signatures and others) and that we'd like Haven's feedback after this IETF. Context: Haven asked whether mimid trusts its client CA ('Haven MIMI Root CA', CN=haven-mimi, no SAN) and how a client certificate is tied to a provider domain; mimid today takes the From header and accepts configured peers, unauthenticated.\n\nWhen the proposals are posted (IETF notes/2026-11-13-mimi-protocol-issue-mtls-trust-draft.md and the epic mimid-75nk), post in #mimi asking Jason for feedback, and in particular how Haven would bind its CN-only certificate to mimi.havenmessenger.com. Haven is commercial: no new issues or PRs on havenmessenger repos; #mimi or interop#1 only. Posts need Mark's OK.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-14T21:47:58.282973015Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-14T21:47:58.282973015Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.16",
+      "depends_on_id": "mimid-1wgh.46",
+      "type": "parent-child",
+      "created_at": "2026-11-14T21:47:58.305294282Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
