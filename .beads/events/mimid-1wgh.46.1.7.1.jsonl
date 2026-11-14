@@ -3,3 +3,4 @@
 {"id":"01a1db05-276a-7cb9-8e62-329bbbbd05af","issue_id":"mimid-1wgh.46.1.7.1","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: interop","created_at":"2026-11-14T17:05:10.506834232Z"}
 {"id":"01a1db05-276d-787a-a38d-192306bba66d","issue_id":"mimid-1wgh.46.1.7.1","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: keymaterial","created_at":"2026-11-14T17:05:10.509555725Z"}
 {"id":"01a1db05-2770-7329-8bcc-8839cb3dad40","issue_id":"mimid-1wgh.46.1.7.1","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: upstream","created_at":"2026-11-14T17:05:10.512207412Z"}
+{"id":"01a1db65-c7e0-7d3c-9c49-9cc37d433578","issue_id":"mimid-1wgh.46.1.7.1","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"decode_for_requester in mimi-protocol, used by hub and follower relays and mimid-chat (5b60499)","created_at":"2026-11-14T18:50:43.040868217Z"}
