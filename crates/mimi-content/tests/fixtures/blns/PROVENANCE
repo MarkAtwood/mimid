@@ -1,0 +1,13 @@
+# PROVENANCE: Big List of Naughty Strings (bead mimid-1wgh.54)
+#
+# Source: https://github.com/minimaxir/big-list-of-naughty-strings, file
+# blns.base64.txt at commit db33ec7b1d5d9616a88c76394b7d0897bd0b97eb.
+# License: MIT, copyright 2015-2020 Max Woolf (LICENSE in this directory).
+#
+# Copied as is: one base64-encoded entry per line; lines starting with # are
+# comments and blank lines separate sections. Some entries are deliberately
+# not valid UTF-8. Read by ../../unicode_stress.rs.
+#
+# SHA-256
+6ef80738d63bb21935887a7194999a6a59f2309521a6e7e99783f5b34b1cbdf4  blns.base64.txt
+5ea677fecc9e664ea10b7e327a94b43dbb939d24ab78282a9038e9ac30c05508  LICENSE
