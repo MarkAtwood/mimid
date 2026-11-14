@@ -95,6 +95,12 @@ pub struct Client {
     /// (at start-up and after a join). Off for a hub whose operator has
     /// asked visitors not to write through its JSON lane.
     pub auto_publish: bool,
+    /// Set while the proposals of one FanoutMessage are processed, so a
+    /// leave is committed once all of them are stored, not after the
+    /// first (protocol-07 §3.5 sends a Remove and an AppDataUpdate).
+    deferring_leave: bool,
+    /// The room and leaf of a proposal sender seen while deferring.
+    deferred_leaver: Option<(String, u32)>,
 }
 
 impl Client {
@@ -111,6 +117,8 @@ impl Client {
             last_poll_error: None,
             printer: None,
             auto_publish: true,
+            deferring_leave: false,
+            deferred_leaver: None,
         };
         client.say(format!(
             "* {} {} (hub {})",
@@ -681,15 +689,23 @@ impl Client {
             .members
             .get_mut(&room)
             .ok_or_else(|| anyhow!("no MLS group for {room}"))?;
-        let proposal = member
+        // protocol-07 §3.5 step 1: a Remove for this client (mimid-chat
+        // runs one client per user) and the participant_list update, sent
+        // together so the committer adds nothing of its own.
+        let remove = member
+            .propose_self_remove(&self.identity)
+            .map_err(|e| anyhow!("building the Remove proposal: {}", causes(&e)))?;
+        let update = member
             .propose_app_data_update(&self.identity, &list_change(vec![index], &[])?)
             .map_err(|e| anyhow!("building the leave proposal: {}", causes(&e)))?;
-        let message = MLSMessage::tls_deserialize_exact(&proposal[..])
+        let message = MLSMessage::tls_deserialize_exact(&remove[..])
+            .map_err(|e| anyhow!("own Remove proposal: {e:?}"))?;
+        let update = MLSMessage::tls_deserialize_exact(&update[..])
             .map_err(|e| anyhow!("own proposal: {e:?}"))?;
         let request = encode(&UpdateRequest {
             bundle: HandshakeBundle::Proposal {
                 proposal_or_commit: message.clone(),
-                more_proposals: vec![],
+                more_proposals: vec![update.clone()],
             },
         })?;
         self.hub
@@ -711,12 +727,12 @@ impl Client {
             &others,
             FanoutEvent::Proposal {
                 message,
-                more_proposals: vec![],
+                more_proposals: vec![update],
             },
         )
         .await;
         self.say(format!(
-            "[{}] * leave proposal sent; waiting for a member to commit it",
+            "[{}] * leave proposals sent; waiting for a member to commit it",
             short_room(&room)
         ));
         Ok(())
@@ -923,9 +939,22 @@ impl Client {
                 for fanout in messages {
                     match fanout.event {
                         FanoutEvent::Application { message, .. }
-                        | FanoutEvent::Proposal { message, .. }
                         | FanoutEvent::Commit { message, .. } => {
                             self.incoming_mls(&message).await;
+                        }
+                        FanoutEvent::Proposal {
+                            message,
+                            more_proposals,
+                        } => {
+                            self.deferring_leave = true;
+                            self.incoming_mls(&message).await;
+                            for proposal in &more_proposals {
+                                self.incoming_mls(proposal).await;
+                            }
+                            self.deferring_leave = false;
+                            if let Some((room, leaf)) = self.deferred_leaver.take() {
+                                self.maybe_commit_leave(&room, leaf).await;
+                            }
                         }
                         FanoutEvent::Welcome {
                             message,
@@ -1033,7 +1062,11 @@ impl Client {
                     self.leaf_name(&room, sender)
                 ));
                 if let Sender::Member(leaf) = sender {
-                    self.maybe_commit_leave(&room, leaf).await;
+                    if self.deferring_leave {
+                        self.deferred_leaver = Some((room.clone(), leaf));
+                    } else {
+                        self.maybe_commit_leave(&room, leaf).await;
+                    }
                 }
             }
             Ok(Incoming::Commit(summary)) => {
@@ -1083,10 +1116,12 @@ impl Client {
         }
     }
 
-    /// A member's proposal is taken as its §3.5 leave (the only proposal
-    /// mimid-chat sends). The remaining member with the lowest leaf index
-    /// commits it, with the Remove of the leaver's leaf; the proposal goes
-    /// in by reference from the proposal store.
+    /// A member's proposals are taken as its §3.5 leave (the only proposals
+    /// mimid-chat sends): its own Remove and the participant_list update.
+    /// The remaining member with the lowest leaf index commits them by
+    /// reference from the proposal store and adds nothing of its own, since
+    /// a hub may count a change of the committer's as a second change
+    /// (mimi-hubd does, DIV-10).
     async fn maybe_commit_leave(&mut self, room: &str, leaver: u32) {
         let Some(member) = self.members.get(room) else {
             return;
@@ -1120,7 +1155,7 @@ impl Client {
             .find(|(leaf, _)| *leaf == leaver)
             .map(|(_, id)| String::from_utf8_lossy(&id).into_owned());
         let bundle = member
-            .commit(&self.identity, &[], &[leaver], &[], apply_commit_op)
+            .commit(&self.identity, &[], &[], &[], apply_commit_op)
             .map_err(|e| anyhow!("building the Commit: {}", causes(&e)))?;
         let request = commit_request(&bundle)?;
         if let Err(e) = self.hub.update_ok(room, request).await {
