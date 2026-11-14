@@ -48,7 +48,7 @@ use mimi_protocol::{
     SubmitMessageRequest, UpdateRequest, UserRolePair,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
-use mimi_room_policy::{BaseRoomPolicy, Bool, Role, RoleData};
+use mimi_room_policy::{BaseRoomPolicy, Bool, Capability, Role, RoleData};
 use mimid_server::hub::components::apply_commit_op;
 
 use crate::hub::{Hub, encode};
@@ -403,7 +403,7 @@ impl Client {
         };
         self.commit_one_update(&room, update, "roles_list").await?;
         self.say(format!(
-            "[{}] * roles_list set: 1 banned, 2 member",
+            "[{}] * roles_list set: 1 banned, 2 member (send, receive, reply, react, add, leave)",
             short_room(&room)
         ));
         Ok(())
@@ -1532,14 +1532,16 @@ fn roles_update(member: &Member) -> anyhow::Result<AppDataUpdate> {
 
 /// The role list `/roles` sets: role 1, "banned" (room-policy-04 §8.1.3,
 /// with no capabilities), and [`ROLE`], "member", the role every participant
-/// mimid-chat adds gets, with no capabilities and no constraints. mimi-hubd
-/// does not check roles yet; a hub that does would need capabilities here.
+/// mimid-chat adds gets, with what a chat member needs: send, receive,
+/// reply and react (§8.3), add participants (§8.1.1) and leave (§8.1.2),
+/// and no constraints. mimi-hubd enforces canSendMessage once a room has a
+/// policy, so a member without it cannot send.
 fn default_roles() -> RoleData {
-    let role = |role_index: u32, name: &str| Role {
+    let role = |role_index: u32, name: &str, role_capabilities: Vec<Capability>| Role {
         role_index,
         role_name: name.to_owned(),
         role_description: String::new(),
-        role_capabilities: vec![],
+        role_capabilities,
         minimum_participants_constraint: 0,
         maximum_participants_constraint: None,
         minimum_active_participants_constraint: 0,
@@ -1547,7 +1549,21 @@ fn default_roles() -> RoleData {
         authorized_role_changes: vec![],
     };
     RoleData {
-        roles: vec![role(1, "banned"), role(ROLE, "member")],
+        roles: vec![
+            role(1, "banned", vec![]),
+            role(
+                ROLE,
+                "member",
+                vec![
+                    Capability::CAN_ADD_PARTICIPANT,
+                    Capability::CAN_REMOVE_SELF,
+                    Capability::CAN_SEND_MESSAGE,
+                    Capability::CAN_RECEIVE_MESSAGE,
+                    Capability::CAN_REPLY_TO_MESSAGE,
+                    Capability::CAN_REACT_TO_MESSAGE,
+                ],
+            ),
+        ],
     }
 }
 
