@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.46.6.9",
+  "title": "haven: replay Haven's protocol07-vectors.json in mimid as a permanent test",
+  "description": "Haven ships 34 protocol-07 wire vectors: tests/vectors/protocol07-vectors.json (generator examples/gen_protocol07_vectors.rs, last changed 07ce96f, unchanged at edd3ba1). These are separate from our own Haven fixtures in crates/mimi-protocol/tests/fixtures/haven.\n\nExploratory replay through mimid decoders on 2026-11-14 (temporary test, removed):\n- KeyMaterialResponse: km-01..08 decode and re-encode byte-identical. km-09 (exhausted) refused: DIV-13, mimid-1wgh.46.1.7. km-x2 and km-x3 refused by both. km-x1 (foreign suite on the second client): Haven refuses, mimid's codec decodes it, because mimid checks the suite later, not at decode. Confirm that the later check exists.\n- UpdateRoomResponse ur-01..04 and KeyPackage kp-x1 (GREASE): decode and re-encode identical.\n- UpdateRequest up-x2 (proposal bundle): identical.\n- Every Commit bundle (hb-01..03, up-01..05, up-x3..x7) is refused by mimid. The Commit MLSMessage and the Welcome parse; what fails is the fields after them:\n  (a) RatchetTreeOption: Haven writes opaque bytes (placeholder ccdd in hb-01, empty in hb-02 and up-*), not a RatchetTreeOption (Haven DIVERGENCES DIV-11).\n  (b) Partial GroupInfoOption: Haven writes 02 + a length prefix + an opaque payload (hb-03: 40 bytes of 0xab; up-*: an empty payload), not a raw PartialGroupInfo (Haven DIV-12).\n  So these vectors can't exercise mimid's participant-list and room-policy rules (up-03..05, up-x4..x7) until they are rebuilt with real fields.\n\nTo do: commit the vectors with a PROVENANCE file and add a replay test that asserts the outcomes above with bead references. Ask Haven whether a regenerated set with valid RatchetTreeOption and PartialGroupInfo is possible, or rebuild the semantic cases on our side. Report upstream only with Mark's per-action OK.",
+  "status": "deferred",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-14T16:52:16.218265988Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-14T16:52:16.218265988Z",
+  "defer_until": "2026-11-21T00:00:00Z",
+  "labels": [
+    "haven",
+    "interop"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.6.9",
+      "depends_on_id": "mimid-1wgh.46.6",
+      "type": "parent-child",
+      "created_at": "2026-11-14T16:52:16.246072956Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
