@@ -39,8 +39,8 @@ fn a() -> Domain {
 /// alice creates a room with only the hub as external sender and a
 /// participant list listing alice and bob with role 2: no Safe AAD, no
 /// franking_agent, no roles, no base_room_policy. She adds bob, and the
-/// hub hosts the room at epoch 1.
-async fn plain_room(hub: &Hub) -> (Identity, Member) {
+/// hub hosts the room at epoch 1. Returns alice and bob with their groups.
+async fn plain_room(hub: &Hub) -> (Identity, Member, Identity, Member) {
     let alice = Identity::generate(ALICE, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
     let bob = Identity::generate(BOB, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
     let senders = [ExternalSender {
@@ -63,22 +63,21 @@ async fn plain_room(hub: &Hub) -> (Identity, Member) {
         .commit(&alice, &[&key_package], &[], &[], no_components)
         .unwrap();
     group.merge_pending_commit(&alice).unwrap();
-    hub.create_room(
-        ROOM_ID,
-        ALICE,
-        &bundle.group_info,
-        &group.ratchet_tree().unwrap(),
-    )
-    .await
-    .expect("a room without franking or policy is hosted");
-    (alice, group)
+    let tree = group.ratchet_tree().unwrap();
+    hub.create_room(ROOM_ID, ALICE, &bundle.group_info, &tree)
+        .await
+        .expect("a room without franking or policy is hosted");
+    let bob_group = Member::join_welcome(&bob, bundle.welcome.as_deref().unwrap(), Some(&tree))
+        .unwrap()
+        .member;
+    (alice, group, bob, bob_group)
 }
 
 #[tokio::test]
 async fn a_message_is_accepted_unfranked() {
     let dir = tempfile::tempdir().unwrap();
     let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
-    let (alice, mut group) = plain_room(&hub).await;
+    let (alice, mut group, _, _) = plain_room(&hub).await;
     let message = group.send(&alice, b"no frank here", &[]).unwrap();
     let answer = hub
         .submit_message(ROOM_ID, &a(), &submit_request(&message, ALICE))
@@ -97,7 +96,7 @@ async fn an_abuse_report_is_accepted_with_its_messages_unverified() {
     let dir = tempfile::tempdir().unwrap();
     let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     let logs = capture_logs();
-    plain_room(&hub).await;
+    let _room = plain_room(&hub).await;
     // A frank that could never verify: there is nothing to verify it
     // against in a room without franking.
     let report = AbuseReport {
@@ -139,7 +138,7 @@ async fn an_abuse_report_is_accepted_with_its_messages_unverified() {
 async fn an_open_room_takes_an_add_from_a_participant() {
     let dir = tempfile::tempdir().unwrap();
     let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
-    let (alice, mut group) = plain_room(&hub).await;
+    let (alice, mut group, _, _) = plain_room(&hub).await;
     let carol = Identity::generate(CAROL, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
     let key_package = carol.key_package(KeyPackageKind::OneTime).unwrap();
     let list_update = AppDataUpdate::Update {
@@ -183,5 +182,68 @@ async fn an_open_room_takes_an_add_from_a_participant() {
         "{:?}",
         response(&answer)
     );
+    close_hub(store, hub).await;
+}
+
+#[tokio::test]
+async fn an_open_room_takes_a_leave_committed_by_reference() {
+    // protocol-07 §3.5 as mimid-chat now sends it: bob's own Remove and the
+    // participant-list update, one proposal bundle; alice commits both by
+    // reference with nothing of her own.
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let (alice, mut group, bob, mut bob_group) = plain_room(&hub).await;
+    let remove = bob_group.propose_self_remove(&bob).unwrap();
+    let list_update = bob_group
+        .propose_app_data_update(
+            &bob,
+            &AppDataUpdate::Update {
+                component_id: PARTICIPANT_LIST,
+                update: ParticipantListUpdate {
+                    changed_role_participants: vec![],
+                    removed_indices: vec![1],
+                    added_participants: vec![],
+                }
+                .tls_serialize_detached()
+                .unwrap(),
+            },
+        )
+        .unwrap();
+    let b = Domain::try_from("b.example".to_owned()).unwrap();
+    let answer = hub
+        .update(
+            ROOM_ID,
+            &b,
+            &update::proposal_request(&remove, &[&list_update]),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(response(&answer).0, UpdateResult::Success { .. }),
+        "proposals: {:?}",
+        response(&answer)
+    );
+    for message in [&remove, &list_update] {
+        group.process(&alice, message, apply_commit_op).unwrap();
+    }
+    let bundle = group
+        .commit(&alice, &[], &[], &[], apply_commit_op)
+        .unwrap();
+    let tree = group.ratchet_tree().unwrap();
+    let answer = hub
+        .update(
+            ROOM_ID,
+            &a(),
+            &commit_request(&bundle.commit, None, &bundle.group_info, &tree),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(response(&answer).0, UpdateResult::Success { .. }),
+        "commit: {:?}",
+        response(&answer)
+    );
+    group.merge_pending_commit(&alice).unwrap();
+    assert_eq!(group.members().len(), 1);
     close_hub(store, hub).await;
 }
