@@ -1,0 +1,28 @@
+{
+  "id": "mimid-1wgh.47",
+  "title": "Sideband control path: a JSON/CLI way to drive every mimid action (create room, add, remove/kick, leave, policy, send, publish, consent)",
+  "description": "Mark, 2026-11-14 at the IETF 127 table: mimid should have a sideband (JSON / tool) path for every action, not only the protocol and JMAP surfaces. Today was blocked twice for lack of one: (1) no way to create a mimid-hosted room from outside the process (Room/create is a stub, mimid-1wgh.12.4; Hub::create_room is in-process only), so the 'room on mimid, Haven user invited' test couldn't run; (2) every client action at the table went through mimid-chat against Haven's JSON lane, because mimid has no equivalent of its own.\n\nScope to design (plan goes in this bead's design field for Mark's approval before sub-beads):\n- Operator / hub actions on a running server: create a room (Hub::create_room), list rooms and users, remove or kick a user from a room (hub as external sender, a Remove proposal plus the participant_list update), ban, set room policy, publish KeyPackages for local users (what tools/interop/seed does offline), record and grant consent, issue dev bearer tokens.\n- Client actions for test users whose identities mimid holds (the seed state): create a group, Add, Remove, leave (protocol-07 §3.5), send, and fetch key material through a room's hub. These are what mimid-chat does against Haven's hub; they need a mimid-side equivalent.\n- Transport: a JSON API bound to localhost or a Unix socket, off by default and enabled per deployment, plus a CLI over it. It must be online: rooms live in the running hub's memory, so offline database edits like mimid-seed's don't take effect until a restart.\n- Every action is logged with who asked, and none is reachable from the public listener.\n\nOverlaps mimid-1wgh.32 (Admin CLI: users, tokens, list, ban, offline on SQLite). Decide whether .32 becomes the CLI half of this or is superseded. Related: mimid-1wgh.12.4 (Room/create) and mimid-1wgh.13 (mimid-agent).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-14T17:57:07.775985597Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-14T17:57:07.775985597Z",
+  "labels": [
+    "design",
+    "tooling",
+    "interop",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.47",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-14T17:57:07.808482768Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
