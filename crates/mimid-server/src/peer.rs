@@ -352,8 +352,30 @@ impl PeerClient {
         domain: &Domain,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, PeerError> {
-        self.post_read(domain, Endpoint::IdentifierQuery, domain.as_str(), body)
-            .await
+        let result = self
+            .post_read(domain, Endpoint::IdentifierQuery, domain.as_str(), body)
+            .await;
+        // §5.8 puts notFound in the body of the answer, not in the HTTP
+        // status. A 404 whose whole body is an IdentifierResponse with
+        // notFound means the same thing, so it is read as that answer and
+        // logged (decision mimid-1wgh.52 point 3; Haven's hub answers so).
+        if let Err(PeerError::Rejected {
+            status: 404,
+            response,
+            ..
+        }) = &result
+            && let Some(ErrorResponse::IdentifierQuery(answer)) = &response.decoded
+            && answer.response_code == IdentifierQueryCode::NotFound
+            && response.len == Some(response.preview.len())
+        {
+            tracing::warn!(
+                name: "identifier_query_not_found_as_404",
+                peer = %domain,
+                "peer answered notFound with HTTP 404; read as a notFound answer"
+            );
+            return Ok(response.preview.clone());
+        }
+        result
     }
 
     /// protocol-07 §5.9 `POST /reportAbuse/{roomId}`: sends `body`, an

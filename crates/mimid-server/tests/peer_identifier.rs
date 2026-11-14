@@ -31,7 +31,13 @@ type Seen = (Method, String, Vec<String>, Vec<u8>);
 struct Peer {
     seen: Arc<Mutex<Vec<Seen>>>,
     status: StatusCode,
+    body: &'static [u8],
 }
+
+/// An IdentifierResponse with notFound and nothing else, as Haven's hub
+/// sends it with a 404 (IETF 127 table): responseCode 1, no URIs, no
+/// profiles, no extensions.
+const NOT_FOUND: &[u8] = &[0x01, 0x00, 0x00, 0x00];
 
 async fn record(
     State(peer): State<Peer>,
@@ -49,13 +55,22 @@ async fn record(
         .lock()
         .unwrap()
         .push((method, uri.path().to_owned(), from, body.to_vec()));
-    (peer.status, RESPONSE)
+    (peer.status, peer.body)
 }
 
 /// Starts a peer whose directory lists `keys`, answering `status` and
 /// [`RESPONSE`] to every other request. Returns its base URL and request
 /// log.
 async fn start(status: StatusCode, keys: &[(&str, &str)]) -> (String, Arc<Mutex<Vec<Seen>>>) {
+    start_with(status, RESPONSE, keys).await
+}
+
+/// As [`start`], answering `body` instead of [`RESPONSE`].
+async fn start_with(
+    status: StatusCode,
+    body: &'static [u8],
+    keys: &[(&str, &str)],
+) -> (String, Arc<Mutex<Vec<Seen>>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let fields: Vec<String> = keys
@@ -73,6 +88,7 @@ async fn start(status: StatusCode, keys: &[(&str, &str)]) -> (String, Arc<Mutex<
         .with_state(Peer {
             seen: Arc::clone(&seen),
             status,
+            body,
         });
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (base, seen)
@@ -111,7 +127,28 @@ async fn query_goes_to_the_peer_domain_path_and_returns_the_body() {
 }
 
 #[tokio::test]
+async fn a_404_carrying_not_found_is_read_as_that_answer() {
+    // decision mimid-1wgh.52 point 3: the meaning is clear, so it is read.
+    let (base, _) = start_with(StatusCode::NOT_FOUND, NOT_FOUND, IDENTIFIER_KEY).await;
+    let peer = Domain::try_from("b.example".to_owned()).unwrap();
+    let client = client(&peer, base);
+    let body = client
+        .identifier_query(&peer, REQUEST.to_vec())
+        .await
+        .expect("read as notFound");
+    assert_eq!(body, NOT_FOUND);
+    // A bare 404 still fails.
+    let (base, _) = start_with(StatusCode::NOT_FOUND, &[], IDENTIFIER_KEY).await;
+    let client = self::client(&peer, base);
+    assert!(matches!(
+        client.identifier_query(&peer, REQUEST.to_vec()).await,
+        Err(PeerError::Rejected { status: 404, .. })
+    ));
+}
+
+#[tokio::test]
 async fn any_status_but_200_is_rejected() {
+    // A 404 carrying a success answer is not read as one.
     for status in [
         StatusCode::CREATED,
         StatusCode::NOT_FOUND,
