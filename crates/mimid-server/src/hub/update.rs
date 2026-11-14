@@ -64,8 +64,9 @@
 //!    and the origin (protocol-07 §5.5).
 //!
 //! A refusal after a proposal was stored rebuilds the room from its stored
-//! state. Every refusal is `notAllowed` with an `errorDescription`
-//! (decision mimid-1wgh.6.55).
+//! state. Every refusal is `notAllowed` (decision mimid-1wgh.6.55), with an
+//! empty `errorDescription`: the reason is logged at DEBUG, not sent (bead
+//! mimid-1wgh.49).
 //!
 //! # Limitations
 //!
@@ -314,11 +315,13 @@ enum Write {
     },
 }
 
-/// Encodes a response.
-fn respond(result: UpdateResult, error_description: &str) -> Result<Vec<u8>, HubError> {
+/// Encodes a response. errorDescription is always empty: the result code
+/// carries the meaning, and fixed English text here would end up in other
+/// providers' user interfaces (bead mimid-1wgh.49, amending decision
+/// mimid-1wgh.6.55). The reason for a refusal is logged instead.
+fn respond(result: UpdateResult) -> Result<Vec<u8>, HubError> {
     UpdateRoomResponse {
-        // The descriptions are fixed strings without NUL.
-        error_description: Utf8String::new(error_description).unwrap_or_default(),
+        error_description: Utf8String::default(),
         result,
     }
     .tls_serialize_detached()
@@ -327,15 +330,15 @@ fn respond(result: UpdateResult, error_description: &str) -> Result<Vec<u8>, Hub
 
 /// Encodes `success`.
 fn success(accepted_timestamp: u64) -> Result<Vec<u8>, HubError> {
-    respond(UpdateResult::Success { accepted_timestamp }, "")
+    respond(UpdateResult::Success { accepted_timestamp })
 }
 
-/// Logs why a request is refused and answers `notAllowed` with `reason`
-/// (decision mimid-1wgh.6.55).
+/// Logs why a request is refused and answers `notAllowed` (decision
+/// mimid-1wgh.6.55); `reason` stays in the log (bead mimid-1wgh.49).
 fn refuse(room_id: &str, reason: &'static str, restore: bool) -> Result<Outcome, HubError> {
     tracing::debug!(room_id, reason, "update refused");
     Ok(Outcome::Respond {
-        response: respond(UpdateResult::NotAllowed, reason)?,
+        response: respond(UpdateResult::NotAllowed)?,
         restore,
     })
 }
@@ -353,11 +356,7 @@ fn check_epoch(
     if message.epoch() != Some(current_epoch) {
         tracing::debug!(room_id, current_epoch, "update for another epoch");
         return Some(
-            respond(
-                UpdateResult::WrongEpoch { current_epoch },
-                "the room is in another epoch",
-            )
-            .map(|response| Outcome::Respond {
+            respond(UpdateResult::WrongEpoch { current_epoch }).map(|response| Outcome::Respond {
                 response,
                 restore: false,
             }),

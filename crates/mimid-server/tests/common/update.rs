@@ -315,11 +315,16 @@ pub fn response(bytes: &[u8]) -> (UpdateResult, String) {
     )
 }
 
-/// Asserts that `bytes` is `notAllowed` with `description`.
-pub fn assert_not_allowed(bytes: &[u8], description: &str) {
-    assert_eq!(
-        response(bytes),
-        (UpdateResult::NotAllowed, description.to_owned())
+/// Asserts that `bytes` is `notAllowed` with an empty errorDescription
+/// (bead mimid-1wgh.49), and that the hub logged `reason` for a refusal.
+/// `logs` must have been started before the request.
+pub fn assert_not_allowed(logs: &crate::common::CapturedLogs, bytes: &[u8], reason: &str) {
+    assert_eq!(response(bytes), (UpdateResult::NotAllowed, String::new()));
+    let text = logs.contents();
+    assert!(
+        text.lines()
+            .any(|line| line.contains("update refused") && line.contains(reason)),
+        "no 'update refused' event with reason {reason:?}"
     );
 }
 

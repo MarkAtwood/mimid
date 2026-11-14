@@ -147,6 +147,7 @@ async fn commit_retry_gets_same_response_and_writes_nothing() {
 /// write, and the epoch stays open for it (decision mimid-1wgh.6.9).
 #[tokio::test]
 async fn envelope_mismatch_is_refused_before_any_write() {
+    let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
@@ -156,7 +157,7 @@ async fn envelope_mismatch_is_refused_before_any_write() {
     let before = counts(&db).await;
 
     let refused = hub.update(ROOM_ID, &a(), &commit.request).await.unwrap();
-    assert_not_allowed(&refused, "From domain is not the committer's domain");
+    assert_not_allowed(logs, &refused, "From domain is not the committer's domain");
     assert_eq!(counts(&db).await, before, "row counts unchanged");
     assert_eq!(hub.public_state(ROOM_ID).await.unwrap().epoch, 1);
 
@@ -170,6 +171,7 @@ async fn envelope_mismatch_is_refused_before_any_write() {
 /// written and the epoch is unchanged.
 #[tokio::test]
 async fn tampered_commit_signature_writes_nothing() {
+    let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
@@ -199,7 +201,7 @@ async fn tampered_commit_signature_writes_nothing() {
     let before = counts(&db).await;
     let before_state = hub.public_state(ROOM_ID).await.unwrap();
     let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
-    assert_not_allowed(&refused, "the commit is not valid");
+    assert_not_allowed(logs, &refused, "the commit is not valid");
     assert_eq!(counts(&db).await, before);
     assert_eq!(hub.public_state(ROOM_ID).await.unwrap(), before_state);
     db.close().await;
@@ -245,6 +247,7 @@ fn add_carol_update() -> AppDataUpdate {
 /// mimid-1wgh.6.5).
 #[tokio::test]
 async fn policy_denied_commit_leaves_epoch_open() {
+    let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
@@ -265,7 +268,7 @@ async fn policy_denied_commit_leaves_epoch_open() {
     let db = connect(&path).await;
     let before = counts(&db).await;
     let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
-    assert_not_allowed(&refused, "the commit is refused by room policy");
+    assert_not_allowed(logs, &refused, "the commit is refused by room policy");
     assert_eq!(counts(&db).await, before, "no outbox row, no log row");
     assert_eq!(hub.public_state(ROOM_ID).await.unwrap().epoch, 1);
 
@@ -415,6 +418,7 @@ async fn welcome_goes_to_added_users_domains_with_full_tree() {
 /// pending proposal is dropped (decision mimid-1wgh.6.5).
 #[tokio::test]
 async fn commit_missing_pending_proposal_is_not_allowed() {
+    let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
@@ -437,6 +441,7 @@ async fn commit_missing_pending_proposal_is_not_allowed() {
     let before = counts(&db).await;
     let refused = hub.update(ROOM_ID, &a(), &omitting.request).await.unwrap();
     assert_not_allowed(
+        logs,
         &refused,
         "the commit does not include every pending proposal",
     );
@@ -465,6 +470,7 @@ async fn commit_missing_pending_proposal_is_not_allowed() {
 /// out in one FanoutMessage, `moreProposals` exactly as received.
 #[tokio::test]
 async fn proposals_are_stored_and_fanned_out_verbatim() {
+    let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
@@ -485,7 +491,7 @@ async fn proposals_are_stored_and_fanned_out_verbatim() {
 
     let db = connect(&path).await;
     let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
-    assert_not_allowed(&refused, "From domain is not the proposer's domain");
+    assert_not_allowed(logs, &refused, "From domain is not the proposer's domain");
     assert_eq!(counts(&db).await, (0, 0, 0));
 
     let accepted = hub.update(ROOM_ID, &b(), &request).await.unwrap();
@@ -521,6 +527,7 @@ async fn proposals_are_stored_and_fanned_out_verbatim() {
 /// Commit for the new epoch is accepted.
 #[tokio::test]
 async fn external_commit_refused_while_proposals_pending() {
+    let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
@@ -563,6 +570,7 @@ async fn external_commit_refused_while_proposals_pending() {
         .await
         .unwrap();
     assert_not_allowed(
+        logs,
         &refused,
         "external commits are refused while proposals are pending",
     );
@@ -589,6 +597,7 @@ async fn external_commit_refused_while_proposals_pending() {
 /// accepted (decision mimid-1wgh.6.11).
 #[tokio::test]
 async fn group_info_with_ratchet_tree_is_refused() {
+    let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
@@ -604,7 +613,7 @@ async fn group_info_with_ratchet_tree_is_refused() {
     let request = commit_request(&prepared.commit, None, &with_tree, &tree);
     let db = connect(&path).await;
     let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
-    assert_not_allowed(&refused, "the GroupInfo embeds a ratchet_tree");
+    assert_not_allowed(logs, &refused, "the GroupInfo embeds a ratchet_tree");
     assert_eq!(counts(&db).await, (0, 0, 0));
 
     let accepted = hub.update(ROOM_ID, &a(), &prepared.request).await.unwrap();
@@ -708,6 +717,7 @@ async fn failure_after_merge_restores_stored_state() {
 /// one including it by reference is accepted.
 #[tokio::test]
 async fn restart_replays_pending_proposals() {
+    let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
@@ -730,6 +740,7 @@ async fn restart_replays_pending_proposals() {
     let omitting = prepare_commit(&mut without);
     let refused = hub.update(ROOM_ID, &a(), &omitting.request).await.unwrap();
     assert_not_allowed(
+        logs,
         &refused,
         "the commit does not include every pending proposal",
     );
@@ -811,6 +822,7 @@ fn safe_aad_apply(
 /// change to `safe_aad` is refused (hub/components.rs apply_commit_op).
 #[tokio::test]
 async fn commit_dropping_frank_aad_from_safe_aad_is_refused() {
+    let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mimid.sqlite");
     let (store, hub) = open_hub(&path).await;
@@ -843,14 +855,7 @@ async fn commit_dropping_frank_aad_from_safe_aad_is_refused() {
         let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
         // The hub's AppDataUpdate logic does not know safe_aad, so the
         // Commit fails MLS processing (hub/components.rs apply_commit_op).
-        assert_eq!(
-            response(&refused),
-            (
-                UpdateResult::NotAllowed,
-                "the commit is not valid".to_owned()
-            ),
-            "{case}"
-        );
+        assert_not_allowed(logs, &refused, "the commit is not valid");
         assert_eq!(counts(&db).await, before, "{case}");
         assert_eq!(
             hub.public_state(ROOM_ID).await.unwrap(),

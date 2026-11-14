@@ -198,10 +198,11 @@ fn update(component_id: u16, data: &[u8]) -> AppDataUpdateProposal {
 /// Sends `request` from a.example; asserts it is refused with `reason` and
 /// that nothing was written.
 async fn assert_refused(hub: &Hub, path: &Path, request: &[u8], reason: &str) {
+    let logs = capture_logs();
     let db = connect(path).await;
     let before = counts(&db).await;
     let refused = hub.update(ROOM_ID, &a(), request).await.unwrap();
-    assert_not_allowed(&refused, reason);
+    assert_not_allowed(logs, &refused, reason);
     assert_eq!(counts(&db).await, before, "nothing stored");
     db.close().await;
 }
