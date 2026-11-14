@@ -1056,6 +1056,32 @@ impl Member {
         encode(&message)
     }
 
+    /// Builds a Remove proposal for this member's own leaf (RFC 9420
+    /// §12.1.3), as a TLS-encoded `MLSMessage` carrying a PublicMessage: the
+    /// Remove a leaving client sends the hub beside its participant_list
+    /// AppDataUpdate (protocol-07 §3.5, step 1), so that the next committer
+    /// includes both by reference and adds no change of its own.
+    ///
+    /// The proposal is also stored, as [`Member::propose_app_data_update`]
+    /// stores its proposal. This member cannot commit it: another member's
+    /// Commit removes it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::WrongIdentity`] if `identity` does not own
+    /// this member, [`MemberError::Propose`] if OpenMLS cannot build or
+    /// store the proposal, and [`MemberError::OutOfSync`] if the member is
+    /// out of sync. The group state is unchanged on error.
+    pub fn propose_self_remove(&mut self, identity: &Identity) -> Result<Vec<u8>, MemberError> {
+        self.check_identity(identity)?;
+        self.check_in_sync()?;
+        let message = self
+            .group
+            .leave_group(identity.provider(), identity.signer())
+            .map_err(|e| MemberError::Propose(e.into()))?;
+        encode(&message)
+    }
+
     /// Merges this member's pending Commit, after the hub accepted it.
     ///
     /// # Errors

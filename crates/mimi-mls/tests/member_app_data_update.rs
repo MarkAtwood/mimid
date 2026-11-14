@@ -322,6 +322,75 @@ fn two_mimi_members(components: &[(u16, Vec<u8>)]) -> (Identity, Member, Identit
     (alice, alice_group, carol, carol_group)
 }
 
+// ---- Member::propose_self_remove (protocol-07 §3.5 leave) ----
+
+/// RFC 9420 §12.1.3 Remove proposal for leaf 1: `proposal_type` remove (3),
+/// then `uint32 removed`.
+const REMOVE_LEAF_1: [u8; 6] = [0x00, 0x03, 0x00, 0x00, 0x00, 0x01];
+
+#[test]
+fn leave_proposals_are_committed_by_reference_with_no_change_of_the_committer() {
+    let (alice, mut alice_group, carol, mut carol_group) = two_mimi_members(&[]);
+    let remove = carol_group
+        .propose_self_remove(&carol)
+        .expect("carol proposes her own Remove");
+    assert!(
+        position(&remove, &REMOVE_LEAF_1).is_some(),
+        "hand-encoded Remove of leaf 1 not found in the proposal"
+    );
+    let update = carol_group
+        .propose_app_data_update(
+            &carol,
+            &AppDataUpdate::Update {
+                component_id: LOG,
+                update: b"carol left".to_vec(),
+            },
+        )
+        .expect("carol proposes the list change");
+    for message in [&remove, &update] {
+        let incoming = alice_group
+            .process(&alice, message, concat)
+            .expect("alice stores the proposal");
+        assert_eq!(
+            incoming,
+            Incoming::Proposal {
+                sender: Sender::Member(1)
+            }
+        );
+    }
+
+    // alice adds nothing of her own: no Adds, no Removes, no updates.
+    let bundle = alice_group
+        .commit(&alice, &[], &[], &[], concat)
+        .expect("alice commits by reference");
+    assert!(
+        position(&bundle.commit, &REMOVE_LEAF_1).is_none(),
+        "the Remove must be in the Commit by reference, not inline"
+    );
+    alice_group.merge_pending_commit(&alice).expect("merge");
+    assert_eq!(alice_group.component(LOG), Some(b"carol left".as_slice()));
+    assert_eq!(alice_group.members().len(), 1);
+
+    let summary = commit_summary(
+        carol_group
+            .process(&carol, &bundle.commit, concat)
+            .expect("carol processes her removal"),
+    );
+    assert_eq!(summary.removed, vec![1]);
+    assert!(summary.self_removed);
+    assert_eq!(summary.components, vec![LOG]);
+}
+
+#[test]
+fn self_remove_with_another_identity_is_refused() {
+    let (alice, _alice_group, _carol, mut carol_group) = two_mimi_members(&[]);
+    let result = carol_group.propose_self_remove(&alice);
+    assert!(
+        matches!(result, Err(MemberError::WrongIdentity)),
+        "{result:?}"
+    );
+}
+
 // ---- Member::propose_app_data_update ----
 
 #[test]
