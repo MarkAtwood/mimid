@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.46.15",
+  "title": "Audit fleet: find Haven mimi-hubd/mimi-core defects, turn verified ones into vectors, replay against mimid (run as a Workflow)",
+  "description": "Mark, 2026-11-14 (IETF 127 table): run an agent fleet over havenmessenger/interop to find mistakes, unimplemented parts, glitches and edge conditions; turn them into vectors; run them against mimid too. Run it after the table, against a pinned Haven commit, since Haven is changing DIV-10 and other things during the hackathon. Mark starts it by asking for a workflow.\n\nPlan (Workflow script, ~8 auditors plus one verifier per candidate):\n1. Auditors, one per area, all against a pinned commit of havenmessenger/interop:\n   - wire codecs: TLS-PL lengths, RFC 9420 varints, unknown enum values, trailing bytes, select and optional fields\n   - each protocol-07 endpoint against the draft text and Haven's DIVERGENCES.md\n   - hub state machine: consent, held leaves, epochs, replays, enforced bounds\n   - room policy against room-policy-04\n   - mimi-content-10\n   - OpenMLS configuration: capabilities, GREASE, required components\n   - trust boundary: mTLS, From checks, the JSON lane (it currently accepts KeyPackage publishes for other providers' users)\n2. Every candidate must carry three things or be dropped: the exact draft section it breaks, quoted; a reproducing vector or request sequence; and that vector run against our own mimi-hubd built from the pinned commit (haven.reviewcommit.com or the run.sh namespace in tools/interop/haven/live).\n3. A separate verifier per surviving candidate tries to disprove it from the code and draft only, not the auditor's argument.\n4. Survivors become vectors in the same JSON shape as Haven's protocol07-vectors.json (new fixture directory with PROVENANCE), replayed through mimid's decoders and, where it applies, its hub, so the same edge cases test mimid. mimid failures become mimid beads.\n5. Reporting: to Jason in Zulip #mimi or as comments on havenmessenger/interop#1, one finding at a time with Mark's OK. No new issues or PRs on havenmessenger repos.\n\nBar: the RustCrypto batch of April 2026 was rejected as LLM slop. Nothing goes upstream without a reproduction on a running hub and a quoted spec line.",
+  "status": "deferred",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-14T18:54:52.262389735Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-14T18:54:52.262389735Z",
+  "defer_until": "2026-11-16T00:00:00Z",
+  "labels": [
+    "haven",
+    "interop",
+    "audit",
+    "workflow",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.15",
+      "depends_on_id": "mimid-1wgh.46",
+      "type": "parent-child",
+      "created_at": "2026-11-14T18:54:52.301818341Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
