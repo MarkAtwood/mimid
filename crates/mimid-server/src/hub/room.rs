@@ -7,9 +7,9 @@ use mimi_protocol::{FrankingAgentData, IdentifierUri, ParticipantListData, compo
 use mimi_room_policy::BaseRoomPolicy;
 use mimi_room_policy::component_id::BASE_ROOM_POLICY;
 
-use super::HubError;
 use super::components::decode;
 use super::state::room_uri_domain;
+use super::{HubError, HubRequirements};
 use crate::config::Domain;
 
 /// RFC 9420 §5.3: `CredentialType` basic (0x0001).
@@ -77,18 +77,31 @@ pub(super) fn hub_sender(
     Ok((key, credential))
 }
 
+/// Whether the room is franked: its GroupContext requires `frank_aad` as a
+/// Safe AAD component (protocol-07 §5.4.1). The hub franks messages only in
+/// a franked room (decision mimid-1wgh.52).
+pub(super) fn is_franked(observer: &Observer) -> Result<bool, HubError> {
+    Ok(observer
+        .required_safe_aad()
+        .map_err(HubError::Mls)?
+        .contains(&component_id::FRANK_AAD))
+}
+
 /// Checks a new room's group, already verified by
 /// [`Observer::from_group_info`], against the hub's rules:
 ///
 /// - `external_senders` is exactly the hub (protocol-07 §7.4; decision
 ///   mimid-1wgh.4.21);
-/// - the `franking_agent` component names the hub (decisions
-///   mimid-1wgh.6.3, mimid-1wgh.6.18);
-/// - the GroupContext requires `frank_aad` as a Safe AAD component, since
-///   the hub refuses every message without a frank_aad item (rohanmahy on
-///   mimi-protocol#166; protocol-07 §5.4.1; bead mimid-1wgh.6.74);
-/// - a `base_room_policy` component is present and decodes
-///   (room-policy-04 §5; decision mimid-1wgh.6.57);
+/// - a room that requires `frank_aad` as a Safe AAD component is a franked
+///   room: the hub franks its messages, so its `franking_agent` component
+///   must name the hub (decisions mimid-1wgh.6.3, mimid-1wgh.6.18). A
+///   `franking_agent` present in any room must name the hub;
+/// - a `base_room_policy` component, if present, decodes (room-policy-04
+///   §5);
+/// - with [`HubRequirements::franking`], the room must be franked
+///   (decision mimid-1wgh.6.74), and with [`HubRequirements::room_policy`]
+///   it must carry a `base_room_policy` (decision mimid-1wgh.6.57). Without
+///   them neither is required (decision mimid-1wgh.52);
 /// - the participant list (protocol-07 §7.5) lists `creator` and the
 ///   credential identity of every member, which is the member's user URI
 ///   (decision mimid-1wgh.6.1).
@@ -101,6 +114,7 @@ pub(super) fn check_group(
     hub_public_key: &[u8; 32],
     domain: &Domain,
     creator: &[u8],
+    requirements: HubRequirements,
 ) -> Result<(), HubError> {
     let (key, credential) = hub_sender(hub_public_key, domain)?;
     let hub_sender = [key.as_slice(), credential.as_slice()].concat();
@@ -113,32 +127,39 @@ pub(super) fn check_group(
         _ => return Err(HubError::WrongExternalSenders),
     }
 
-    let franking_agent = observer
-        .component(component_id::FRANKING_AGENT)
-        .ok_or(HubError::MissingFrankingAgent)?;
-    let franking_agent = FrankingAgentData::tls_deserialize_exact(franking_agent)
-        .map_err(|_| HubError::WrongFrankingAgent)?;
-    if franking_agent.franking_signature_key.as_bytes() != key
-        || franking_agent.credential.as_bytes() != credential
-    {
-        return Err(HubError::WrongFrankingAgent);
+    // A franking_agent, where present, names the hub (decisions
+    // mimid-1wgh.6.3, mimid-1wgh.6.18).
+    if let Some(franking_agent) = observer.component(component_id::FRANKING_AGENT) {
+        let franking_agent = FrankingAgentData::tls_deserialize_exact(franking_agent)
+            .map_err(|_| HubError::WrongFrankingAgent)?;
+        if franking_agent.franking_signature_key.as_bytes() != key
+            || franking_agent.credential.as_bytes() != credential
+        {
+            return Err(HubError::WrongFrankingAgent);
+        }
     }
-
-    // rohanmahy on mimi-protocol#166; protocol-07 §5.4.1; bead
-    // mimid-1wgh.6.74.
-    if !observer
-        .required_safe_aad()
-        .map_err(HubError::Mls)?
-        .contains(&component_id::FRANK_AAD)
-    {
+    // A franked room (one requiring frank_aad; protocol-07 §5.4.1) needs
+    // the franking_agent to verify the hub's franks. Franking is a SHOULD
+    // unless the deployment requires it (decisions mimid-1wgh.52,
+    // mimid-1wgh.6.74).
+    if is_franked(observer)? {
+        if observer.component(component_id::FRANKING_AGENT).is_none() {
+            return Err(HubError::MissingFrankingAgent);
+        }
+    } else if requirements.franking {
         return Err(HubError::FrankAadNotRequired);
     }
 
-    // Decision mimid-1wgh.6.57.
-    let base = observer
-        .component(BASE_ROOM_POLICY)
-        .ok_or(HubError::MissingBaseRoomPolicy)?;
-    decode::<BaseRoomPolicy>(BASE_ROOM_POLICY, base).map_err(HubError::InvalidBaseRoomPolicy)?;
+    // A base_room_policy, where present, decodes; it is required only if
+    // the deployment says so (decisions mimid-1wgh.52, mimid-1wgh.6.57).
+    match observer.component(BASE_ROOM_POLICY) {
+        Some(base) => {
+            decode::<BaseRoomPolicy>(BASE_ROOM_POLICY, base)
+                .map_err(HubError::InvalidBaseRoomPolicy)?;
+        }
+        None if requirements.room_policy => return Err(HubError::MissingBaseRoomPolicy),
+        None => {}
+    }
 
     let participants = observer
         .component(component_id::PARTICIPANT_LIST)

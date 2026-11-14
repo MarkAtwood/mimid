@@ -26,7 +26,8 @@ use mimi_room_policy::{
 use mimid_server::hub::components::ComponentError;
 use mimid_server::hub::policy::{
     AppDataOp, Commit, Committer, Denied, Origin, Proposal, ProposalKind as K, ProposalSender,
-    RoomState, authorize_commit, authorize_group_info, authorize_proposal, authorize_send,
+    RoomState, authorize_commit, authorize_group_info, authorize_key_material, authorize_proposal,
+    authorize_send,
 };
 
 const ALICE: &[u8] = b"mimi://a.example/u/alice";
@@ -96,7 +97,20 @@ fn room(roles: RoleData, entries: &[(&[u8], u32)], members: &[(u32, &[u8])]) -> 
             .iter()
             .map(|&(leaf, user)| (leaf, user.to_vec()))
             .collect::<BTreeMap<_, _>>(),
+        open: false,
     }
+}
+
+/// An open room (decision mimid-1wgh.52): no base_room_policy, no roles;
+/// alice and bob listed with role 2, mallory listed with role 0.
+fn open_room() -> RoomState {
+    let mut state = room(
+        RoleData::default(),
+        &[(b"alice", 2), (b"bob", 2), (b"mallory", 0)],
+        &[(0, b"alice"), (1, b"bob")],
+    );
+    state.open = true;
+    state
 }
 
 /// The standard room for A.1 and A.2, whose roles 2-5 are ordinary_user,
@@ -1758,4 +1772,36 @@ fn malformed_component_updates() {
             "{proposal_result:?}"
         );
     }
+}
+
+// ---- open rooms (decision mimid-1wgh.52, bead mimid-1wgh.53) ----
+
+#[test]
+fn open_room_lets_a_listed_participant_send_and_fetch_key_material() {
+    let state = open_room();
+    assert_eq!(authorize_send(&state, b"alice"), Ok(()));
+    assert_eq!(authorize_key_material(&state, b"bob"), Ok(()));
+    assert_eq!(authorize_group_info(&state, b"alice", None), Ok(()));
+}
+
+#[test]
+fn open_room_still_refuses_strangers_and_role_zero() {
+    let state = open_room();
+    assert_eq!(authorize_send(&state, b"zoe"), Err(Denied::NotParticipant));
+    assert_eq!(
+        authorize_send(&state, b"mallory"),
+        Err(Denied::NotParticipant)
+    );
+    assert!(authorize_key_material(&state, b"zoe").is_err());
+    // Role 0 holds nothing in an open room: no open join for strangers.
+    assert!(authorize_group_info(&state, b"zoe", None).is_err());
+}
+
+#[test]
+fn the_same_room_with_a_policy_and_no_roles_refuses_sending() {
+    // Without the open flag, empty roles grant nothing: the difference is
+    // the missing base_room_policy, not the missing roles.
+    let mut state = open_room();
+    state.open = false;
+    assert!(authorize_send(&state, b"alice").is_err());
 }

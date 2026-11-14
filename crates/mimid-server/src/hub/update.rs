@@ -78,10 +78,10 @@
 //! - Only `proposalOrCommit`'s sender is checked against `From`; each
 //!   `moreProposals` entry is authorized for its own sender (decision
 //!   mimid-1wgh.6.56).
-//! - A room whose GroupContext lacks a usable `base_room_policy` refuses
-//!   every Commit and proposal. [`Hub::create_room`] already refuses such a
-//!   group, so this is defence in depth (decisions mimid-1wgh.6.51,
-//!   mimid-1wgh.6.57).
+//! - A room with a malformed policy component refuses every Commit and
+//!   proposal; [`Hub::create_room`] already refuses such a group, so this
+//!   is defence in depth (decision mimid-1wgh.6.51). A room without a
+//!   `base_room_policy` is an open room (decision mimid-1wgh.52).
 //! - The hub never staples proposals to an external Commit (decision
 //!   mimid-1wgh.6.4), so `externalProposals` in its fanout is always
 //!   empty.
@@ -379,9 +379,9 @@ fn stage_commit(
         return refused;
     }
     let epoch = room.observer.epoch();
-    // create_room refuses a room without a valid base_room_policy, so a
-    // missing one here is defence in depth (decisions
-    // mimid-1wgh.6.51, mimid-1wgh.6.57).
+    // A malformed policy component is refused at creation, so this is
+    // defence in depth (decision mimid-1wgh.6.51); a missing one makes an
+    // open room (decision mimid-1wgh.52).
     let state = match room_state(&room.observer) {
         Ok(state) => state,
         Err(error) => {
@@ -578,9 +578,9 @@ fn stage_proposals(
         return refused;
     }
     let epoch = room.observer.epoch();
-    // create_room refuses a room without a valid base_room_policy, so a
-    // missing one here is defence in depth (decisions
-    // mimid-1wgh.6.51, mimid-1wgh.6.57).
+    // A malformed policy component is refused at creation, so this is
+    // defence in depth (decision mimid-1wgh.6.51); a missing one makes an
+    // open room (decision mimid-1wgh.52).
     let state = match room_state(&room.observer) {
         Ok(state) => state,
         Err(error) => {

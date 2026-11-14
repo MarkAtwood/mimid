@@ -57,6 +57,14 @@ pub struct Config {
     /// start if it is not a loopback address.
     #[serde(default)]
     pub local_listen: Option<SocketAddr>,
+    /// Refuse to host a room that does not require `frank_aad`. Off by
+    /// default: franking is a SHOULD (decision mimid-1wgh.52).
+    #[serde(default)]
+    pub require_franking: bool,
+    /// Refuse to host a room without a `base_room_policy`. Off by default:
+    /// room policy is a SHOULD (decision mimid-1wgh.52).
+    #[serde(default)]
+    pub require_room_policy: bool,
 }
 
 fn default_max_key_packages() -> u64 {
@@ -243,6 +251,8 @@ mod tests {
             ]),
             max_key_packages: 97,
             local_listen: None,
+            require_franking: false,
+            require_room_policy: false,
         };
         assert_eq!(config, expected);
     }
@@ -256,6 +266,18 @@ mod tests {
             config.local_listen,
             Some(SocketAddr::from(([127, 0, 0, 1], 9099)))
         );
+    }
+
+    #[test]
+    fn requirements_default_off_and_parse() {
+        let config = Config::parse(VALID).unwrap();
+        assert!(!config.require_franking && !config.require_room_policy);
+        let text = VALID.replace(
+            "[peers]",
+            "require_franking = true\nrequire_room_policy = true\n[peers]",
+        );
+        let config = Config::parse(&text).unwrap();
+        assert!(config.require_franking && config.require_room_policy);
     }
 
     /// Mark's choice of default (mimid-1wgh.11.2): 97.

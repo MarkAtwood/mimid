@@ -14,9 +14,11 @@
 //! 4. The `From` domain must be the `sendingUri` domain (decision
 //!    mimid-1wgh.6.9).
 //! 5. Room policy must let `sendingUri` send ([`policy::authorize_send`]).
-//! 6. The message must carry a `frank_aad` Safe AAD item (decision
-//!    mimid-1wgh.6.3). The hub computes `server_frank` and signs the
-//!    `FrankingIntegrityTBS` (§5.4.1.2).
+//! 6. In a franked room, one whose Safe AAD requires `frank_aad`, the
+//!    message must carry a `frank_aad` Safe AAD item (decision
+//!    mimid-1wgh.6.3); the hub computes `server_frank` and signs the
+//!    `FrankingIntegrityTBS` (§5.4.1.2). In a room without franking the
+//!    message is accepted unfranked (decision mimid-1wgh.52).
 //! 7. In one transaction the message is logged and a FanoutMessage is
 //!    enqueued for every destination domain (decision mimid-1wgh.6.17).
 //!
@@ -33,11 +35,10 @@
 //! - protocol-07 §5.3 says the hub must withhold application messages from
 //!   the clients of a user being removed while the removal is pending. The
 //!   hub cannot tell which client sent a PrivateMessage, so it does not.
-//! - A room whose GroupContext lacks `base_room_policy`, or has a malformed
-//!   policy component, refuses every message (decision mimid-1wgh.6.51).
-//!   [`Hub::create_room`] already refuses a group without a valid
-//!   `base_room_policy`, so this is defence in depth (decision
-//!   mimid-1wgh.6.57).
+//! - A room with a malformed policy component refuses every message
+//!   (decision mimid-1wgh.6.51); [`Hub::create_room`] already refuses such
+//!   a group, so this is defence in depth. A room without a
+//!   `base_room_policy` is an open room (decision mimid-1wgh.52).
 //! - A retried request's response is rebuilt from the logged acceptance
 //!   time rather than stored. It is byte-identical because `server_frank`
 //!   is an HMAC and Ed25519 signatures are deterministic (RFC 8032 §5.1.6;
@@ -61,6 +62,7 @@ use mimi_room_policy::component_id::ComponentID;
 use sha2::{Digest, Sha256};
 
 use super::policy;
+use super::room;
 use super::state::{member_domains, room_state, user_domain};
 use super::{Hub, HubError, Room};
 use crate::config::Domain;
@@ -91,21 +93,29 @@ pub(super) async fn submit_message(
         .await?
     {
         let room = rooms.get(room_id).ok_or(HubError::NoSuchRoom)?;
-        // Only messages with a frank_aad item are ever accepted.
-        let franking_tag = frank_aad(&decoded)
-            .map_err(|_| HubError::Store(StoreError::Corrupt("logged message has no frank_aad")))?;
-        let frank = frank(
-            hub,
-            room,
-            room_id,
-            &decoded.sending_uri,
-            &franking_tag,
-            accepted_at,
-        )?;
+        // In a franked room only messages with a frank_aad item are ever
+        // accepted; in a room without franking none were franked (decision
+        // mimid-1wgh.52). Whether the room is franked is read now: a room
+        // that changed its Safe AAD since would answer a retry differently.
+        let frank = if room::is_franked(&room.observer)? {
+            let franking_tag = frank_aad(&decoded).map_err(|_| {
+                HubError::Store(StoreError::Corrupt("logged message has no frank_aad"))
+            })?;
+            Some(frank(
+                hub,
+                room,
+                room_id,
+                &decoded.sending_uri,
+                &franking_tag,
+                accepted_at,
+            )?)
+        } else {
+            None
+        };
         tracing::debug!(room_id, "submitMessage retry answered from the log");
         return respond(SubmitResult::Accepted {
             accepted_timestamp: accepted_at,
-            frank: Some(frank),
+            frank,
         });
     }
 
@@ -201,9 +211,9 @@ fn check(
         return refuse(room_id, "From domain is not the sendingUri domain");
     }
 
-    // create_room refuses a room without a valid base_room_policy, so a
-    // missing one here is defence in depth (decisions
-    // mimid-1wgh.6.51, mimid-1wgh.6.57).
+    // A malformed policy component is refused at creation, so this is
+    // defence in depth (decision mimid-1wgh.6.51); a missing one makes an
+    // open room (decision mimid-1wgh.52).
     let state = match room_state(observer) {
         Ok(state) => state,
         Err(error) => {
@@ -225,25 +235,33 @@ fn check(
         return respond(SubmitResult::NotAllowed).map(Checked::Refused);
     }
 
-    // Decision mimid-1wgh.6.3: franking is mandatory.
-    let franking_tag = match frank_aad(request) {
-        Ok(tag) => tag,
-        Err(reason) => return refuse(room_id, reason),
-    };
+    // The hub franks every message in a franked room, one whose Safe AAD
+    // requires frank_aad (decision mimid-1wgh.6.3); there a message
+    // without a valid frank_aad item is refused. In a room without
+    // franking, messages are accepted unfranked: franking is a SHOULD
+    // (decision mimid-1wgh.52).
     let accepted_at = hub.clock.now_ms();
-    let frank = frank(
-        hub,
-        room,
-        room_id,
-        &request.sending_uri,
-        &franking_tag,
-        accepted_at,
-    )?;
+    let frank = if room::is_franked(observer)? {
+        let franking_tag = match frank_aad(request) {
+            Ok(tag) => tag,
+            Err(reason) => return refuse(room_id, reason),
+        };
+        Some(frank(
+            hub,
+            room,
+            room_id,
+            &request.sending_uri,
+            &franking_tag,
+            accepted_at,
+        )?)
+    } else {
+        None
+    };
     let fanout_body = FanoutMessage {
         timestamp: accepted_at,
         event: FanoutEvent::Application {
             message: message.clone(),
-            frank: Some(frank.clone()),
+            frank: frank.clone(),
         },
     }
     .tls_serialize_detached()
@@ -255,7 +273,7 @@ fn check(
         destinations: destinations(observer, from),
         response: respond(SubmitResult::Accepted {
             accepted_timestamp: accepted_at,
-            frank: Some(frank),
+            frank,
         })?,
     }))
 }

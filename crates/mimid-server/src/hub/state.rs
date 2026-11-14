@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use mimi_mls::observer::Observer;
 use mimi_mls::tls_codec::Deserialize;
 use mimi_protocol::component_id::PARTICIPANT_LIST;
+use mimi_room_policy::BaseRoomPolicy;
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ComponentID, PREAUTH_LIST, ROLES_LIST};
 
 use super::components::{ComponentError, decode};
@@ -67,15 +68,15 @@ fn typed_uri_domain(uri: &str, kind: &str) -> Option<Domain> {
 /// Why a room's policy state cannot be read.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum StateError {
-    #[error("component {0:#06x} is absent")]
-    Missing(ComponentID),
     #[error(transparent)]
     Component(#[from] ComponentError),
 }
 
 /// The room's policy state from its GroupContext components. An absent
-/// participant list, role list or preauthorization list is empty; an
-/// absent `base_room_policy` is an error (decision mimid-1wgh.6.51).
+/// participant list, role list or preauthorization list is empty. An
+/// absent `base_room_policy` makes an open room ([`RoomState::open`]) with
+/// [`open_base_policy`] (decision mimid-1wgh.52, superseding
+/// mimid-1wgh.6.51); a malformed one is an error.
 pub(super) fn room_state(observer: &Observer) -> Result<RoomState, StateError> {
     fn component_or_default<T: Deserialize + Default>(
         observer: &Observer,
@@ -85,16 +86,36 @@ pub(super) fn room_state(observer: &Observer) -> Result<RoomState, StateError> {
             .component(component_id)
             .map_or_else(|| Ok(T::default()), |bytes| decode(component_id, bytes))
     }
-    let base = observer
-        .component(BASE_ROOM_POLICY)
-        .ok_or(StateError::Missing(BASE_ROOM_POLICY))?;
+    let (base, open) = match observer.component(BASE_ROOM_POLICY) {
+        Some(base) => (decode(BASE_ROOM_POLICY, base)?, false),
+        None => (open_base_policy(), true),
+    };
     Ok(RoomState {
         roles: component_or_default(observer, ROLES_LIST)?,
         preauth: component_or_default(observer, PREAUTH_LIST)?,
-        base: decode(BASE_ROOM_POLICY, base)?,
+        base,
         participants: component_or_default(observer, PARTICIPANT_LIST)?,
         members: observer.members().into_iter().collect(),
+        open,
     })
+}
+
+/// The base policy an open room is judged by (decision mimid-1wgh.52):
+/// membership not fixed, several devices, no limits, persistent, not
+/// discoverable (room-policy-04 §5).
+pub(super) fn open_base_policy() -> BaseRoomPolicy {
+    BaseRoomPolicy {
+        fixed_membership: false.into(),
+        parent_dependant: false.into(),
+        parent_room: vec![],
+        multi_device: true.into(),
+        max_clients: None,
+        max_users: None,
+        pseudonyms_allowed: false.into(),
+        persistent_room: true.into(),
+        discoverable: false.into(),
+        policy_component_ids: vec![],
+    }
 }
 
 /// The provider domains of the group's members: the domains of their

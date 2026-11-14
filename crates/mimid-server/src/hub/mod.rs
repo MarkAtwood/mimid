@@ -23,7 +23,9 @@
 //! - [`Hub::submit_message`] has the limitations listed in `submit.rs`: the
 //!   hub cannot authenticate a PrivateMessage's sender, does not withhold
 //!   messages from clients whose removal is pending (protocol-07 §5.3), and
-//!   refuses messages in rooms without a usable `base_room_policy`.
+//!   refuses messages in rooms with a malformed policy component. Rooms
+//!   without franking or without a `base_room_policy` are hosted
+//!   (decision mimid-1wgh.52; [`HubRequirements`]).
 //! - [`Hub::update`] has the limitations listed in `update.rs`.
 //! - If a room cannot be rebuilt after a failed request, it is dropped from
 //!   memory, and requests for it get [`HubError::NoSuchRoom`] until the hub
@@ -164,6 +166,38 @@ pub struct Hub {
     peers: Option<PeerClient>,
     /// The server of keyMaterial for users of this provider, if any.
     local_key_material: Option<Arc<dyn LocalKeyMaterial>>,
+    /// What a new room's group must carry beyond the MLS and protocol
+    /// rules (decision mimid-1wgh.52).
+    requirements: HubRequirements,
+}
+
+/// What a deployment requires of the rooms it hosts beyond the drafts
+/// (decision mimid-1wgh.52; bead mimid-1wgh.53). Both default to false:
+/// franking and room policy are SHOULD. A room without them is hosted;
+/// the features that need them are unavailable in it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HubRequirements {
+    /// Refuse a room whose Safe AAD does not require `frank_aad`
+    /// ([`HubError::FrankAadNotRequired`]) or that has no `franking_agent`
+    /// ([`HubError::MissingFrankingAgent`]): the rule of decision
+    /// mimid-1wgh.6.74.
+    pub franking: bool,
+    /// Refuse a room without a `base_room_policy`
+    /// ([`HubError::MissingBaseRoomPolicy`]): the rule of decision
+    /// mimid-1wgh.6.57.
+    pub room_policy: bool,
+}
+
+impl HubRequirements {
+    /// Both requirements as given.
+    #[must_use]
+    pub fn new(franking: bool, room_policy: bool) -> Self {
+        Self {
+            franking,
+            room_policy,
+        }
+    }
 }
 
 impl std::fmt::Debug for Hub {
@@ -215,7 +249,17 @@ impl Hub {
             fanout: None,
             peers: None,
             local_key_material: None,
+            requirements: HubRequirements::default(),
         })
+    }
+
+    /// Sets what new rooms must carry beyond the drafts (decision
+    /// mimid-1wgh.52). Without this, neither franking nor a room policy is
+    /// required.
+    #[must_use]
+    pub fn with_requirements(mut self, requirements: HubRequirements) -> Self {
+        self.requirements = requirements;
+        self
     }
 
     /// Gives the hub the running fanout worker, which it wakes after every
@@ -346,7 +390,13 @@ impl Hub {
             return Err(HubError::GroupExists);
         }
         room::check_no_embedded_tree(group_info)?;
-        room::check_group(&observer, self.signing_key.public(), &self.domain, creator)?;
+        room::check_group(
+            &observer,
+            self.signing_key.public(),
+            &self.domain,
+            creator,
+            self.requirements,
+        )?;
 
         let snapshot = RoomSnapshot {
             room_id: room_id.to_owned(),

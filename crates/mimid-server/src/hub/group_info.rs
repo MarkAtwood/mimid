@@ -154,9 +154,9 @@ fn check(
     if requester_domain != Some(from.as_str()) {
         return Err("From domain is not the requesting credential's domain");
     }
-    // create_room refuses a room without a valid base_room_policy, so a
-    // missing one here is defence in depth (decisions mimid-1wgh.6.51,
-    // mimid-1wgh.6.57).
+    // A malformed policy component is refused at creation, so this is
+    // defence in depth (decision mimid-1wgh.6.51); a missing one makes an
+    // open room (decision mimid-1wgh.52).
     let state = room_state(&room.observer).map_err(|error| {
         tracing::warn!(
             name: "group_info_policy_unusable",

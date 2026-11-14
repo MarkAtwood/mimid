@@ -17,6 +17,12 @@
 //!    no body; otherwise it is refused with
 //!    [`HubError::UnverifiedAbusiveMessage`] (decision mimid-1wgh.6.65).
 //!
+//! In a room without franking (one whose Safe AAD does not require
+//! `frank_aad`) there is nothing to verify: the report is accepted and
+//! logged with `verified = false`, so a moderator knows its messages are
+//! the reporter's word, not proof (decision mimid-1wgh.52, bead
+//! mimid-1wgh.53).
+//!
 //! The log records the room, the outcome, the reason code, the number of
 //! messages and the two user URIs; never `message_content`, `note`, the
 //! franks or any key.
@@ -41,7 +47,7 @@ use mimi_protocol::{
     franking_tag, verify_server_frank,
 };
 
-use super::{Hub, HubError};
+use super::{Hub, HubError, room};
 use crate::config::Domain;
 
 /// Runs [`Hub::report_abuse`].
@@ -51,21 +57,35 @@ pub(super) async fn report_abuse(
     _from: &Domain,
     request: &[u8],
 ) -> Result<Vec<u8>, HubError> {
+    // A franked room's franking_agent; none for a room without franking,
+    // where reports are accepted with their messages unverified (decision
+    // mimid-1wgh.52, bead mimid-1wgh.53).
     let franking_agent = {
         let rooms = hub.rooms.lock().await;
         let room = rooms.get(room_id).ok_or(HubError::NoSuchRoom)?;
-        // create_room checked that this names the hub's key.
-        let data = room
-            .observer
-            .component(FRANKING_AGENT)
-            .ok_or(HubError::MissingFrankingAgent)?;
-        FrankingAgentData::tls_deserialize_exact(data).map_err(|_| HubError::WrongFrankingAgent)?
+        if room::is_franked(&room.observer)? {
+            // create_room checked that this is present and names the hub's
+            // key.
+            let data = room
+                .observer
+                .component(FRANKING_AGENT)
+                .ok_or(HubError::MissingFrankingAgent)?;
+            Some(
+                FrankingAgentData::tls_deserialize_exact(data)
+                    .map_err(|_| HubError::WrongFrankingAgent)?,
+            )
+        } else {
+            None
+        }
     };
     let report = AbuseReport::tls_deserialize_exact(request).map_err(HubError::InvalidRequest)?;
     let reporting_user = report.reporting_user.as_str();
     let alleged_abuser = report.alleged_abuser_uri.as_str();
     for (index, message) in report.messages.iter().enumerate() {
-        if let Err(reason) = verify(hub, &franking_agent, message) {
+        let Some(franking_agent) = &franking_agent else {
+            break;
+        };
+        if let Err(reason) = verify(hub, franking_agent, message) {
             tracing::info!(
                 name: "abuse_report_refused",
                 room_id,
@@ -86,6 +106,7 @@ pub(super) async fn report_abuse(
         alleged_abuser,
         reason_code = report.reason_code.0,
         messages = report.messages.len(),
+        verified = franking_agent.is_some(),
         "abuse report accepted; no action taken (decision mimid-1wgh.21)"
     );
     // §5.9: no response body (decision mimid-1wgh.6.65).

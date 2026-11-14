@@ -24,7 +24,7 @@ use mimid_server::config::BaseUrl;
 use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::http::{MAX_BODY_LEN, router};
-use mimid_server::hub::{Hub, HubError};
+use mimid_server::hub::{Hub, HubError, HubRequirements};
 use mimid_server::store::{Store, StoreError, StoredHubSecret};
 use mls_rs::client_builder::MlsConfig;
 use mls_rs::crypto::SignaturePublicKey;
@@ -286,8 +286,19 @@ async fn create_room_refuses_state_for_an_unlisted_component() {
 /// Builds a group per `spec`, offers it to a fresh hub with `creator`, and
 /// returns the error. Checks that nothing was stored.
 async fn rejected(spec: impl FnOnce(&Hub) -> GroupSpec, creator: &[u8]) -> HubError {
+    rejected_requiring(HubRequirements::default(), spec, creator).await
+}
+
+/// As [`rejected`], for a hub with `requirements` (decision
+/// mimid-1wgh.52).
+async fn rejected_requiring(
+    requirements: HubRequirements,
+    spec: impl FnOnce(&Hub) -> GroupSpec,
+    creator: &[u8],
+) -> HubError {
     let dir = tempfile::tempdir().unwrap();
     let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let hub = hub.with_requirements(requirements);
     let group = build_group(&spec(&hub), b"group-rejected");
     let err = hub
         .create_room(ROOM_ID, creator, &group.group_info, &group.ratchet_tree)
@@ -388,28 +399,43 @@ async fn create_room_rejects_missing_or_wrong_franking_agent() {
 }
 
 #[tokio::test]
-async fn create_room_requires_frank_aad_in_safe_aad() {
-    // The hub refuses every message without a frank_aad item, so a room must
-    // require frank_aad (0x0020) as a Safe AAD component: rohanmahy on
-    // mimi-protocol#166; protocol-07 §5.4.1; bead mimid-1wgh.6.74.
+async fn create_room_requires_frank_aad_only_where_the_deployment_does() {
+    // Franking is a SHOULD (decision mimid-1wgh.52): by default a room that
+    // does not require frank_aad (0x0020) as a Safe AAD component is
+    // hosted; a deployment with require_franking refuses it, the rule of
+    // bead mimid-1wgh.6.74 (rohanmahy on mimi-protocol#166; protocol-07
+    // §5.4.1).
     for (case, safe_aad) in [
         ("no safe_aad component", None),
         // ComponentsList with an empty component_ids<V>.
         ("empty list", Some(vec![0x00])),
     ] {
-        let err = rejected(
-            |hub| GroupSpec {
-                safe_aad: safe_aad.clone(),
-                ..GroupSpec::valid_for(hub)
-            },
-            ALICE,
-        )
-        .await;
+        let spec = |hub: &Hub| GroupSpec {
+            safe_aad: safe_aad.clone(),
+            ..GroupSpec::valid_for(hub)
+        };
+        hosted(spec).await;
+        let err = rejected_requiring(HubRequirements::new(true, false), spec, ALICE).await;
         assert!(
             matches!(err, HubError::FrankAadNotRequired),
             "{case}: {err:?}"
         );
     }
+}
+
+/// Builds a group per `spec` and checks that a fresh hub with no
+/// requirements hosts it.
+async fn hosted(spec: impl FnOnce(&Hub) -> GroupSpec) {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let group = build_group(&spec(&hub), b"group-hosted");
+    hub.create_room(ROOM_ID, ALICE, &group.group_info, &group.ratchet_tree)
+        .await
+        .expect("hosted");
+    hub.public_state(ROOM_ID)
+        .await
+        .expect("the hub hosts the room");
+    close_hub(store, hub).await;
 }
 
 #[tokio::test]
@@ -464,15 +490,16 @@ async fn create_room_rejects_missing_or_malformed_participant_list() {
 
 /// Decision mimid-1wgh.6.57: a hosted room needs a valid base_room_policy.
 #[tokio::test]
-async fn create_room_rejects_missing_or_malformed_base_room_policy() {
-    let err = rejected(
-        |hub| GroupSpec {
-            base_room_policy: None,
-            ..GroupSpec::valid_for(hub)
-        },
-        ALICE,
-    )
-    .await;
+async fn create_room_rejects_malformed_and_by_setting_missing_base_room_policy() {
+    // Room policy is a SHOULD (decision mimid-1wgh.52): a room without
+    // base_room_policy is hosted as an open room unless the deployment
+    // requires one (decision mimid-1wgh.6.57). A malformed one is refused.
+    let missing = |hub: &Hub| GroupSpec {
+        base_room_policy: None,
+        ..GroupSpec::valid_for(hub)
+    };
+    hosted(missing).await;
+    let err = rejected_requiring(HubRequirements::new(false, true), missing, ALICE).await;
     assert!(matches!(err, HubError::MissingBaseRoomPolicy), "{err:?}");
 
     let mut trailing = base_room_policy();

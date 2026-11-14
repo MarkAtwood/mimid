@@ -54,6 +54,7 @@ use mimid_server::follower::Follower;
 use mimid_server::follower::key_packages::KeyPackages;
 use mimid_server::follower::relay::Relay;
 use mimid_server::http::router;
+use mimid_server::hub::HubRequirements;
 use mimid_server::hub::fanout::Fanout;
 use mimid_server::hub::{Clock, Hub, SystemClock};
 use mimid_server::jmap::{self, JmapOptions};
@@ -110,7 +111,11 @@ async fn main() -> anyhow::Result<()> {
             .context("starting the hub")?
             .with_fanout(fanout)
             .with_peers(peers()?)
-            .with_local_key_material(key_packages),
+            .with_local_key_material(key_packages)
+            .with_requirements(HubRequirements::new(
+                config.require_franking,
+                config.require_room_policy,
+            )),
     );
     if follower
         .set_relay(Relay::new(Arc::clone(&hub), peers()?))

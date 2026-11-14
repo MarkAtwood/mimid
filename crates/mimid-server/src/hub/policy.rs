@@ -90,6 +90,12 @@ pub struct RoomState {
     /// The MLS group's members: leaf index to credential identity, the
     /// user URI (decision mimid-1wgh.6.1).
     pub members: BTreeMap<u32, Vec<u8>>,
+    /// The room has no `base_room_policy`: an open room (decision
+    /// mimid-1wgh.52). Every capability and membership action is granted
+    /// to an actor with a non-zero role, that is a listed participant; role
+    /// 0 (not a participant) gets nothing, so strangers still cannot join.
+    /// The participant-list rules and MLS validity apply as in any room.
+    pub open: bool,
 }
 
 /// The sender of a proposal that is not inline in the Commit (RFC 9420
@@ -361,6 +367,9 @@ impl RoomState {
 
     /// Authorizes `action` for an actor with `actor_role`.
     fn authorize(&self, actor_role: u32, action: MembershipAction) -> Result<(), Denied> {
+        if self.open && actor_role != NO_ROLE_INDEX {
+            return Ok(());
+        }
         self.roles
             .authorize(actor_role, action)
             .map_err(|reason| Denied::Membership { action, reason })
@@ -368,6 +377,9 @@ impl RoomState {
 
     /// Checks that `actor_role` holds `capability`.
     fn capability(&self, actor_role: u32, capability: Capability) -> Result<(), Denied> {
+        if self.open && actor_role != NO_ROLE_INDEX {
+            return Ok(());
+        }
         self.roles
             .authorize_capability(actor_role, capability)
             .map_err(Denied::Capability)
@@ -990,10 +1002,7 @@ pub fn authorize_send(state: &RoomState, sending_user: &[u8]) -> Result<(), Deni
     if state.is_banned(role) {
         return Err(Denied::RemovedOrBanned);
     }
-    state
-        .roles
-        .authorize_send_message(role)
-        .map_err(Denied::Capability)
+    state.capability(role, Capability::CAN_SEND_MESSAGE)
 }
 
 /// Authorizes `requester` to fetch key material through the hub for a
