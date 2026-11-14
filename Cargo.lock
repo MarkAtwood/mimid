@@ -2013,6 +2013,7 @@ dependencies = [
  "minicbor",
  "sha2 0.11.1",
  "thiserror",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -2044,6 +2045,7 @@ dependencies = [
  "sha2 0.11.1",
  "thiserror",
  "tls_codec",
+ "unicode-normalization",
 ]
 
 [[package]]

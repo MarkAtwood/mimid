@@ -242,3 +242,43 @@ fn a_topic_id_over_the_cap_is_refused_whatever_its_text() {
     assert_eq!(over.len(), 4097);
     assert!(carrying(&over).encode().is_err());
 }
+
+// ---- Normalization (bead mimid-1wgh.54, fourth slice) ----
+
+use unicode_normalization::UnicodeNormalization;
+
+#[test]
+fn every_normalization_form_survives_as_its_own_bytes() {
+    let texts: Vec<String> = naughty()
+        .into_iter()
+        .filter_map(|entry| String::from_utf8(entry).ok())
+        .chain(extra())
+        .collect();
+    for (index, text) in texts.iter().enumerate() {
+        let forms: [(&str, String); 4] = [
+            ("NFC", text.nfc().collect()),
+            ("NFD", text.nfd().collect()),
+            ("NFKC", text.nfkc().collect()),
+            ("NFKD", text.nfkd().collect()),
+        ];
+        for (form, normalized) in &forms {
+            // A decomposed form can be longer than mimid's 4096-octet topicId
+            // cap; the cap counts octets, so that is the one expected refusal.
+            if normalized.len() > 4096 {
+                assert!(
+                    carrying(normalized).encode().is_err(),
+                    "{form} of [{index}]"
+                );
+                continue;
+            }
+            round_trip(&format!("{form} of [{index}]"), &carrying(normalized));
+            if normalized != text {
+                assert_ne!(
+                    carrying(normalized).encode().unwrap(),
+                    carrying(text).encode().unwrap(),
+                    "{form} of [{index}] must not be normalized back"
+                );
+            }
+        }
+    }
+}

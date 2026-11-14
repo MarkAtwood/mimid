@@ -130,3 +130,56 @@ fn identifier_uri_takes_ascii_uris_only_and_never_panics() {
     assert!(IdentifierUri::new("mimi://example.jp/u/%E3%83%A6%E3%83%BC%E3%82%B6%E3%83%BC").is_ok());
     assert!(IdentifierUri::new("mimi://xn--r8jz45g.jp/u/alice").is_ok());
 }
+
+// ---- Normalization (bead mimid-1wgh.54, fourth slice) ----
+
+use unicode_normalization::UnicodeNormalization;
+
+/// The four normalization forms of `text` (UAX #15).
+fn forms(text: &str) -> [(&'static str, String); 4] {
+    [
+        ("NFC", text.nfc().collect()),
+        ("NFD", text.nfd().collect()),
+        ("NFKC", text.nfkc().collect()),
+        ("NFKD", text.nfkd().collect()),
+    ]
+}
+
+#[test]
+fn utf8_string_takes_every_form_and_keeps_it_unnormalized() {
+    for text in valid() {
+        for (form, normalized) in forms(&text) {
+            let value = Utf8String::new(normalized.clone()).expect("no NUL in the list");
+            let wire = value.tls_serialize_detached().unwrap();
+            let back = Utf8String::tls_deserialize_exact(&wire[..]).unwrap();
+            assert_eq!(back.as_str(), normalized, "{form} of {text:?}");
+        }
+    }
+}
+
+#[test]
+fn identifier_uri_acceptance_does_not_change_under_nfc_or_nfd() {
+    for text in valid() {
+        let accepted = IdentifierUri::new(&text).is_ok();
+        for (form, normalized) in &forms(&text)[..2] {
+            assert_eq!(
+                IdentifierUri::new(normalized).is_ok(),
+                accepted,
+                "{form} of {text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn compatibility_forms_can_turn_a_non_uri_into_a_uri() {
+    // Fullwidth "mimi://a.example/u/alice": not a URI, and refused. Its
+    // NFKC form is the ASCII URI. mimid never compatibility-normalizes, so
+    // the fullwidth text stays refused; a provider that applied NFKC before
+    // comparing would let it stand in for the ASCII user.
+    let fullwidth = "\u{FF4D}\u{FF49}\u{FF4D}\u{FF49}\u{FF1A}\u{FF0F}\u{FF0F}a.example/u/alice";
+    assert!(IdentifierUri::new(fullwidth).is_err());
+    let nfkc: String = fullwidth.nfkc().collect();
+    assert_eq!(nfkc, "mimi://a.example/u/alice");
+    assert!(IdentifierUri::new(&nfkc).is_ok());
+}

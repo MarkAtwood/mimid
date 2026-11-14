@@ -21,6 +21,9 @@ sha2 = "=0.11.1"
 hmac = "=0.13.0"
 serde_json = "=1.0.154"
 iri-string = { version = "=0.7.14", default-features = false, features = ["alloc"] }
+# Tests only: Unicode normalization forms for the Unicode stress tests (bead
+# mimid-1wgh.54); the version already in the lockfile.
+unicode-normalization = "=0.1.26"
 
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
