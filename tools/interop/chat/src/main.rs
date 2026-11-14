@@ -100,6 +100,10 @@ struct Args {
     /// Read commands from FILE instead of stdin, echoing each.
     #[arg(long, value_name = "FILE")]
     script: Option<PathBuf>,
+    /// Publish KeyPackages only on an explicit /publish, never at start-up
+    /// or after a join.
+    #[arg(long)]
+    no_publish: bool,
 }
 
 fn parse_user(user: &str) -> Result<String, String> {
@@ -153,6 +157,7 @@ async fn run() -> anyhow::Result<i32> {
     let hub = Hub::new(&args.own_domain, &args.hub, &base, &lane)?;
     let dir = StateDir::open(&args.state_dir)?;
     let mut client = Client::open(dir, me, hub)?;
+    client.auto_publish = !args.no_publish;
     client.top_up_key_packages().await;
     client.greet();
 

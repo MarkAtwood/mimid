@@ -91,6 +91,10 @@ pub struct Client {
     last_poll_error: Option<String>,
     /// The line editor's printer, when reading from a terminal.
     printer: Option<Box<dyn rustyline::ExternalPrinter + Send>>,
+    /// Whether KeyPackages are published at the hub without a /publish
+    /// (at start-up and after a join). Off for a hub whose operator has
+    /// asked visitors not to write through its JSON lane.
+    pub auto_publish: bool,
 }
 
 impl Client {
@@ -106,6 +110,7 @@ impl Client {
             printed: Vec::new(),
             last_poll_error: None,
             printer: None,
+            auto_publish: true,
         };
         client.say(format!(
             "* {} {} (hub {})",
@@ -183,6 +188,9 @@ impl Client {
     /// Publishes KeyPackages until about [`KEY_PACKAGE_TARGET`] are
     /// outstanding at the hub.
     pub async fn top_up_key_packages(&mut self) {
+        if !self.auto_publish {
+            return;
+        }
         let mut published = 0;
         while self.state.key_packages_outstanding < KEY_PACKAGE_TARGET {
             match self.publish_one_key_package().await {
@@ -441,7 +449,16 @@ impl Client {
         let welcome = bundle
             .welcome
             .ok_or_else(|| anyhow!("the Commit produced no Welcome"))?;
-        if let Err(e) = self.hub.relay_welcome(&target, welcome.clone()).await {
+        // mimi-hubd queues a Welcome for its own users under the bare user
+        // name (Jason, IETF 127 table): the URI queues nothing.
+        let recipient = if self.on_hub_domain(&target) {
+            target
+                .rsplit_once("/u/")
+                .map_or(target.as_str(), |(_, name)| name)
+        } else {
+            target.as_str()
+        };
+        if let Err(e) = self.hub.relay_welcome(recipient, welcome.clone()).await {
             self.error(format!("Welcome relay to {target}: {e:#}"));
         }
         let event = FanoutEvent::Welcome {

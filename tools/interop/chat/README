@@ -49,7 +49,10 @@ Running it (one terminal per user)
     --own-domain DOMAIN  [mimid.reviewcommit.com]; the proxy's client
                          certificate must name it
     --poll-ms MS         100 to 600000 [2000]
-    --script FILE        read commands from FILE, echoing each as "> line";
+    --no-publish         publish KeyPackages only on /publish, not at start-up
+                       or after a join (for a hub that asks visitors not to
+                       write through its JSON lane)
+  --script FILE        read commands from FILE, echoing each as "> line";
                          lines starting with # are skipped
   A bad value is refused with a usage message and exit status 2.
 
