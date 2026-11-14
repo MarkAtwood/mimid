@@ -94,7 +94,7 @@ async fn notify_reaches_the_follower() {
     let path = format!("/v1/notify/{DEN_ENCODED}");
     let (status, body) = post(&path, Some("mimi@b.example"), Vec::new()).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body, "source provider is not a configured peer");
+    assert_eq!(problem_kind(&body), "not-a-peer");
 }
 
 #[tokio::test]
@@ -110,7 +110,7 @@ async fn key_material_for_a_local_user_in_a_room_hosted_elsewhere_reaches_the_fo
     let request = key_material_request("mimi://a.example/u/alice", DEN);
     let (status, body) = post(&path, Some("mimi@b.example"), request).await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(body, "keyMaterial for local users is not implemented");
+    assert_eq!(problem_kind(&body), "not-implemented");
 }
 
 #[tokio::test]
@@ -119,7 +119,7 @@ async fn key_material_for_a_local_user_in_a_room_hosted_here_reaches_the_hub() {
     let request = key_material_request("mimi://a.example/u/alice", ROOM_ID);
     let (status, body) = post(&path, Some("mimi@b.example"), request).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body, "no such room");
+    assert_eq!(problem_kind(&body), "no-such-room");
 }
 
 #[tokio::test]
@@ -129,7 +129,7 @@ async fn undecodable_key_material_for_a_local_user_is_400() {
     request.push(0x00);
     let (status, body) = post(&path, Some("mimi@b.example"), request).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body, "undecodable request");
+    assert_eq!(problem_kind(&body), "undecodable-request");
 }
 
 #[tokio::test]
@@ -142,7 +142,7 @@ async fn key_material_for_a_remote_user_reaches_the_hub() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body, "no such room");
+    assert_eq!(problem_kind(&body), "no-such-room");
 }
 
 /// A `targetUser` naming no domain is the hub's to refuse: it answers

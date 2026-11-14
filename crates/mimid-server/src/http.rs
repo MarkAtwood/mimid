@@ -32,6 +32,12 @@
 //! body, and an undecodable one or a path naming another provider is `400`
 //! (decision mimid-1wgh.7.40).
 //!
+//! Every error status carries an RFC 9457 `application/problem+json` body
+//! with only `type` (a `tag:` URI under [`PROBLEM_TYPE_PREFIX`], one per
+//! kind of refusal) and `status`: no `title` or `detail`, so no English text
+//! or Rust error message reaches a peer (bead mimid-1wgh.50). The reason is
+//! in the log.
+//!
 //! # Logging
 //!
 //! Every request runs in an `http_request` span at DEBUG with `method` and
@@ -274,7 +280,7 @@ async fn key_material(
         Ok(request) => request,
         Err(error) => {
             refused(&error, StatusCode::BAD_REQUEST);
-            return (StatusCode::BAD_REQUEST, "undecodable request").into_response();
+            return problem(StatusCode::BAD_REQUEST, "undecodable-request");
         }
     };
     let room_domain = identity_domain(request.tbs().room_id.as_str().as_bytes());
@@ -356,7 +362,7 @@ fn consent_response(result: Result<Response, FollowerError>) -> Response {
         // A correct refusal of the source's input: DEBUG, not WARN.
         Err(error @ FollowerError::NotAPeer) => {
             tracing::debug!(error = &error as &dyn Error, "consent refused");
-            (StatusCode::FORBIDDEN, error.to_string()).into_response()
+            problem(StatusCode::FORBIDDEN, "not-a-peer")
         }
         other => respond_follower(other),
     }
@@ -444,7 +450,7 @@ fn bad_from() -> Response {
         status = StatusCode::BAD_REQUEST.as_u16(),
         "request refused"
     );
-    (StatusCode::BAD_REQUEST, "missing or malformed From header").into_response()
+    problem(StatusCode::BAD_REQUEST, "missing-from")
 }
 
 /// A protocol result: `200` with an `application/mimi-protocol` body.
@@ -464,40 +470,33 @@ fn respond_follower(result: Result<Response, FollowerError>) -> Response {
         Ok(response) => return response,
         Err(error) => error,
     };
-    let (status, text): (StatusCode, String) = match &error {
+    let (status, kind): (StatusCode, &str) = match &error {
         FollowerError::InvalidRequest(_) | FollowerError::TimestampOutOfRange => {
-            (StatusCode::BAD_REQUEST, "undecodable request".into())
+            (StatusCode::BAD_REQUEST, "undecodable-request")
         }
-        FollowerError::InvalidRoomId => (StatusCode::BAD_REQUEST, "invalid room ID".into()),
+        FollowerError::InvalidRoomId => (StatusCode::BAD_REQUEST, "invalid-room-id"),
         // protocol-07 §5.7; decision mimid-1wgh.7.42
-        FollowerError::ConsentRefused(violation @ ConsentViolation::WrongOperation(_)) => {
-            (StatusCode::UNPROCESSABLE_ENTITY, violation.to_string())
+        FollowerError::ConsentRefused(ConsentViolation::WrongOperation(_)) => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "consent-wrong-operation")
         }
         // Decision mimid-1wgh.7.37.
-        FollowerError::ConsentRefused(violation) => {
-            (StatusCode::BAD_REQUEST, violation.to_string())
-        }
+        FollowerError::ConsentRefused(_) => (StatusCode::BAD_REQUEST, "consent-invalid"),
         // Decision mimid-1wgh.7.36.
-        FollowerError::UnknownUser => (StatusCode::NOT_FOUND, "unknown user".into()),
+        FollowerError::UnknownUser => (StatusCode::NOT_FOUND, "unknown-user"),
         // Decision mimid-1wgh.7.40.
-        FollowerError::PathNotThisProvider => (
-            StatusCode::BAD_REQUEST,
-            "path domain is not this provider".into(),
-        ),
-        FollowerError::BodyTooLarge => (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "request body too large".into(),
-        ),
+        FollowerError::PathNotThisProvider => (StatusCode::BAD_REQUEST, "path-not-this-provider"),
+        FollowerError::BodyTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "body-too-large"),
         // Decisions mimid-1wgh.7.4, mimid-1wgh.7.41. A correct refusal of
         // the source's input: DEBUG (it was WARN before bead mimid-bfzm).
-        FollowerError::NotAPeer | FollowerError::NotRoomHub => {
+        FollowerError::NotAPeer => {
             tracing::debug!(error = &error as &dyn Error, "fanout refused");
-            return (StatusCode::FORBIDDEN, error.to_string()).into_response();
+            return problem(StatusCode::FORBIDDEN, "not-a-peer");
         }
-        FollowerError::NotImplemented(endpoint) => (
-            StatusCode::NOT_IMPLEMENTED,
-            format!("{endpoint} is not implemented"),
-        ),
+        FollowerError::NotRoomHub => {
+            tracing::debug!(error = &error as &dyn Error, "fanout refused");
+            return problem(StatusCode::FORBIDDEN, "not-room-hub");
+        }
+        FollowerError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not-implemented"),
         FollowerError::Store(_)
         | FollowerError::Encode(_)
         | FollowerError::KeyMaterial(_)
@@ -512,11 +511,11 @@ fn respond_follower(result: Result<Response, FollowerError>) -> Response {
                 error_description = rejection.error_description,
                 "follower request failed"
             );
-            return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
+            return problem(StatusCode::INTERNAL_SERVER_ERROR, "internal-error");
         }
     };
     refused(&error, status);
-    (status, text).into_response()
+    problem(status, kind)
 }
 
 /// Maps a hub result to a response (decision mimid-1wgh.6.8), emitting the
@@ -526,17 +525,14 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
         Ok(body) => return protocol_body(body),
         Err(error) => error,
     };
-    let (status, text): (StatusCode, String) = match &error {
-        HubError::NoSuchRoom => (StatusCode::NOT_FOUND, "no such room".into()),
-        HubError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, "undecodable request".into()),
-        HubError::NotImplemented(endpoint) => (
-            StatusCode::NOT_IMPLEMENTED,
-            format!("{endpoint} is not implemented"),
-        ),
+    let (status, kind): (StatusCode, &str) = match &error {
+        HubError::NoSuchRoom => (StatusCode::NOT_FOUND, "no-such-room"),
+        HubError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, "undecodable-request"),
+        HubError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not-implemented"),
         // Decision mimid-1wgh.6.65.
         HubError::UnverifiedAbusiveMessage { .. } => (
             StatusCode::UNPROCESSABLE_ENTITY,
-            "a reported message's frank does not verify".into(),
+            "unverified-abusive-message",
         ),
         // Decision mimid-1wgh.6.64. The hub could not complete the request
         // it proxied, so this operation failed: ERROR (it was WARN before
@@ -552,7 +548,7 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
                 error_description = rejection.error_description,
                 "peer provider failed"
             );
-            return (StatusCode::BAD_GATEWAY, "peer provider failed").into_response();
+            return problem(StatusCode::BAD_GATEWAY, "peer-provider-failed");
         }
         _ => {
             tracing::error!(
@@ -560,11 +556,35 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
                 error = &error as &dyn Error,
                 "hub request failed"
             );
-            return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
+            return problem(StatusCode::INTERNAL_SERVER_ERROR, "internal-error");
         }
     };
     refused(&error, status);
-    (status, text).into_response()
+    problem(status, kind)
+}
+
+/// The prefix of the RFC 9457 problem `type` URIs mimid sends: RFC 4151
+/// `tag:` URIs, stable and not dereferenced (bead mimid-1wgh.50).
+pub const PROBLEM_TYPE_PREFIX: &str = "tag:reviewcommit.com,2026:mimid:problem:";
+
+/// An RFC 9457 `application/problem+json` error response carrying only
+/// `type` and `status`. No `title` or `detail`: fixed English text, or a
+/// Rust error message, would reach other providers' operators and users
+/// (bead mimid-1wgh.50). The reason is logged instead. `kind` is the
+/// lowercase-hyphenated tail of the type URI.
+fn problem(status: StatusCode, kind: &str) -> Response {
+    let mut body = serde_json::Map::new();
+    body.insert(
+        "type".to_owned(),
+        format!("{PROBLEM_TYPE_PREFIX}{kind}").into(),
+    );
+    body.insert("status".to_owned(), status.as_u16().into());
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/problem+json")],
+        serde_json::Value::Object(body).to_string(),
+    )
+        .into_response()
 }
 
 /// The DEBUG event of a request correctly refused with `status` because of

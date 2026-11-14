@@ -22,6 +22,7 @@ mod key_packages;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use common::problem_kind;
 use common_notify::{COMMIT_CAROL, ROOM, ROOM_ENCODED, T1, commit_fanout};
 use key_packages::{Ask, NO_REQUIREMENTS, opaque, request};
 use reqwest::StatusCode;
@@ -128,10 +129,10 @@ async fn binary_serves_with_two_peers_and_stops_on_sigint() {
     }
     let (status, body) = post(&http, &notify, "mimi@c.example", fanout.clone()).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body, b"source provider is not the room's hub");
+    assert_eq!(problem_kind(&body), "not-room-hub");
     let (status, body) = post(&http, &notify, "mimi@z.example", fanout).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body, b"source provider is not a configured peer");
+    assert_eq!(problem_kind(&body), "not-a-peer");
 
     // keyMaterial for a user of this provider is served by the follower's
     // KeyPackages: carol has none, so she is unknown (decision

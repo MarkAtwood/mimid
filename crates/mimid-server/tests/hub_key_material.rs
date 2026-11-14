@@ -566,7 +566,7 @@ async fn local_target_is_not_implemented() {
         )
         .await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(body, "keyMaterial for local users is not implemented");
+    assert_eq!(problem_kind(&body), "not-implemented");
     assert!(f.provider.received().is_empty());
 }
 

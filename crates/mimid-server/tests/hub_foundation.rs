@@ -728,7 +728,7 @@ async fn http_routes_stubs_and_status_mapping() {
     .await;
     // Implemented (mimid-1wgh.6.31); the body does not decode.
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body, "undecodable request");
+    assert_eq!(problem_kind(&body), "undecodable-request");
 
     // The unencoded URI spans several path segments and matches no route.
     let (status, _, _) = send(

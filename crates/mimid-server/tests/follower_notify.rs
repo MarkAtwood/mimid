@@ -18,7 +18,7 @@ mod common_notify;
 mod generate;
 
 use axum::http::StatusCode;
-use common::{assert_secret_absent, capture_logs};
+use common::{assert_secret_absent, capture_logs, problem_kind};
 use common_notify::*;
 use mimid_server::follower::FollowerError;
 use mimid_server::hub::fanout::LocalDelivery;
@@ -196,28 +196,24 @@ async fn wrong_source_is_refused_and_nothing_is_written() {
     let body = commit_fanout(T1, COMMIT_CAROL);
     let cases = [
         // c.example is a configured peer, but not the room's hub.
-        (
-            ROOM_ENCODED,
-            "c.example",
-            "source provider is not the room's hub",
-        ),
+        (ROOM_ENCODED, "c.example", "not-room-hub"),
         // d.example hosts the room but is not a configured peer.
         (
             "mimi%3A%2F%2Fd.example%2Fr%2Fone",
             "d.example",
-            "source provider is not a configured peer",
+            "not-a-peer",
         ),
         // This provider's own hub delivers in-process, never over HTTP.
         (
             "mimi%3A%2F%2Fb.example%2Fr%2Fone",
             FOLLOWER_DOMAIN,
-            "source provider is not a configured peer",
+            "not-a-peer",
         ),
     ];
     for (room, from, reason) in cases {
         let (status, response) = p.notify(room, from, body.clone()).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{from}");
-        assert_eq!(response, reason, "{from}");
+        assert_eq!(problem_kind(&response), reason, "{from}");
     }
     assert_eq!(p.counts().await, [0, 0, 0, 0]);
     p.close().await;
@@ -234,12 +230,12 @@ async fn undecodable_body_or_room_is_400_and_nothing_is_written() {
     for body in [truncated, trailing, bad_second] {
         let (status, response) = p.notify(ROOM_ENCODED, A, body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(response, "undecodable request");
+        assert_eq!(problem_kind(&response), "undecodable-request");
     }
     // A room ID that names no domain.
     let (status, response) = p.notify("not-a-room", A, good).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(response, "invalid room ID");
+    assert_eq!(problem_kind(&response), "invalid-room-id");
     assert_eq!(p.counts().await, [0, 0, 0, 0]);
     p.close().await;
 }

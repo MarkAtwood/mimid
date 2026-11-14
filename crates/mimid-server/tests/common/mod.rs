@@ -313,3 +313,22 @@ pub fn assert_secret_absent(text: &str, secret: &[u8], name: &str) {
         assert!(!text.contains(&form), "{name} appears as {form:?}");
     }
 }
+
+/// The kind of an RFC 9457 problem body mimid sent (bead mimid-1wgh.50):
+/// the tail of its `type` URI after [`mimid_server::http::PROBLEM_TYPE_PREFIX`].
+/// Panics unless the body is a problem object with only `type` and
+/// `status`, so no `title` or `detail` text goes on the wire.
+pub fn problem_kind(body: impl AsRef<[u8]>) -> String {
+    let value: serde_json::Value =
+        serde_json::from_slice(body.as_ref()).expect("problem body is JSON");
+    let object = value.as_object().expect("problem body is an object");
+    let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["status", "type"], "only type and status");
+    object["type"]
+        .as_str()
+        .expect("type is a string")
+        .strip_prefix(mimid_server::http::PROBLEM_TYPE_PREFIX)
+        .expect("mimid problem type")
+        .to_owned()
+}
