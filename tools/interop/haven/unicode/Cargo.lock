@@ -1215,6 +1215,7 @@ dependencies = [
  "mimi-content",
  "mimi-core",
  "mimi-room-policy",
+ "serde_json",
  "unicode-normalization",
 ]
 

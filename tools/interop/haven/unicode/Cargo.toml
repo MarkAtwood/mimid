@@ -17,3 +17,4 @@ mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "34eae7ec
 mimi-content = { path = "../../../../crates/mimi-content" }
 mimi-room-policy = { path = "../../../../crates/mimi-room-policy" }
 unicode-normalization = "=0.1.26"
+serde_json = "1"
