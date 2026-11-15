@@ -648,6 +648,27 @@ impl Observer {
         if self.pending_commit.is_some() {
             return Err(ObserverError::PendingCommit);
         }
+        let message = self.external_app_data_update(signature_key, sender_index, update)?;
+        self.process_proposal(store, &message)?;
+        Ok(message)
+    }
+
+    /// The external AppDataUpdate of [`Observer::propose_app_data_update`],
+    /// built and signed but not stored, for a caller that feeds it through
+    /// its own proposal handling.
+    ///
+    /// # Errors
+    ///
+    /// [`ObserverError::InvalidAppDataUpdate`] for a removal of absent
+    /// state, [`ObserverError::Propose`] for a sender index with no
+    /// `external_senders` entry or a key that cannot sign, and
+    /// [`ObserverError::Encode`].
+    pub fn external_app_data_update(
+        &self,
+        signature_key: &[u8],
+        sender_index: u32,
+        update: &AppDataUpdate,
+    ) -> Result<Vec<u8>, ObserverError> {
         let context = self.group.group_context();
         // mls-extensions-10 §4.9: with safe_aad present, the whole
         // authenticated_data is a SafeAAD struct, here with no items.
@@ -686,9 +707,81 @@ impl Observer {
             authenticated_data,
         )
         .map_err(|e| ObserverError::Propose(e.into()))?;
-        let message = encode(&message)?;
+        encode(&message)
+    }
+
+    /// Builds a Remove proposal (RFC 9420 §12.1.3) for the member at leaf
+    /// `removed`, from the external sender at `sender_index` (RFC 9420
+    /// §12.1.8.1), such as the hub removing a user for its operator
+    /// (decision mimid-1wgh.6.46 as amended 2026-11-15). Returns it as a
+    /// TLS-encoded `MLSMessage` carrying a PublicMessage for the current
+    /// epoch, and stores it as pending, as
+    /// [`Observer::propose_app_data_update`] does. Its `authenticated_data`
+    /// is an empty SafeAAD struct when the GroupContext requires Safe AAD.
+    ///
+    /// # Errors
+    ///
+    /// As [`Observer::propose_app_data_update`]: [`ObserverError::PendingCommit`]
+    /// while a Commit is pending, [`ObserverError::Propose`] for a sender
+    /// index with no `external_senders` entry or a key that cannot sign,
+    /// [`ObserverError::Encode`] and [`ObserverError::Merge`].
+    pub fn propose_remove(
+        &mut self,
+        store: &Store,
+        signature_key: &[u8],
+        sender_index: u32,
+        removed: u32,
+    ) -> Result<Vec<u8>, ObserverError> {
+        if self.pending_commit.is_some() {
+            return Err(ObserverError::PendingCommit);
+        }
+        let message = self.external_remove(signature_key, sender_index, removed)?;
         self.process_proposal(store, &message)?;
         Ok(message)
+    }
+
+    /// The external Remove of [`Observer::propose_remove`], built and
+    /// signed but not stored, for a caller that feeds it through its own
+    /// proposal handling.
+    ///
+    /// # Errors
+    ///
+    /// [`ObserverError::Propose`] for a sender index with no
+    /// `external_senders` entry or a key that cannot sign, and
+    /// [`ObserverError::Encode`].
+    pub fn external_remove(
+        &self,
+        signature_key: &[u8],
+        sender_index: u32,
+        removed: u32,
+    ) -> Result<Vec<u8>, ObserverError> {
+        let context = self.group.group_context();
+        let authenticated_data = if context.safe_aad_required() {
+            EMPTY_SAFE_AAD.to_vec()
+        } else {
+            Vec::new()
+        };
+        let senders = self.external_senders()?;
+        let sender = senders.get(sender_index as usize).ok_or_else(|| {
+            ObserverError::Propose(
+                format!("no external_senders entry at index {sender_index}").into(),
+            )
+        })?;
+        let signer = SignatureKeyPair::from_raw(
+            CIPHERSUITE.signature_algorithm(),
+            signature_key.to_vec(),
+            sender.signature_key().to_vec(),
+        );
+        let message = ExternalProposal::new_remove_with_aad::<Provider>(
+            LeafNodeIndex::new(removed),
+            self.group.group_id().clone(),
+            context.epoch(),
+            &signer,
+            SenderExtensionIndex::new(sender_index),
+            authenticated_data,
+        )
+        .map_err(|e| ObserverError::Propose(e.into()))?;
+        encode(&message)
     }
 
     /// Checks that `message` is a PublicMessage for this group and passes
