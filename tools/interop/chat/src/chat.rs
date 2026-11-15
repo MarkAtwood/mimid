@@ -904,11 +904,15 @@ impl Client {
             } else {
                 ""
             };
-            let decision = r["decision"].as_str().unwrap_or("no decision");
+            let decision = match r["decision"].as_str() {
+                Some("grant") => "allowed",
+                Some("revoke") => "refused",
+                _ => "no decision",
+            };
             self.say(if me_target {
-                format!("  {other} may fetch yours{room}: {decision}{pending}")
+                format!("  {other} fetching your KeyPackages{room}: {decision}{pending}")
             } else {
-                format!("  you may fetch {other}'s{room}: {decision}{pending}")
+                format!("  you fetching {other}'s KeyPackages{room}: {decision}{pending}")
             });
         }
         Ok(())
