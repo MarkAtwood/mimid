@@ -1,0 +1,27 @@
+{
+  "id": "mimid-75nk.3",
+  "title": "Mechanism 1: DNS-published keys + RFC 9421 request signing (inbound verify, outbound sign)",
+  "description": "Provisional format: \u003cselector\u003e._mimi.\u003cdomain\u003e TXT v=MIMI1; k=ed25519; p=\u003cbase64\u003e; keyid = selector; covered @method @target-uri content-digest created and From. hickory-resolver; DNSSEC not required, validation result logged. mimid signs all outbound peer requests. Needs mimid-75nk.2.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T08:33:15.594343525Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T08:33:15.594343525Z",
+  "labels": [
+    "design",
+    "interop",
+    "security"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-75nk.3",
+      "depends_on_id": "mimid-75nk",
+      "type": "parent-child",
+      "created_at": "2026-11-15T08:33:15.660564875Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
