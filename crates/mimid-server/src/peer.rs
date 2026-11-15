@@ -38,6 +38,7 @@
 
 use std::collections::BTreeMap;
 use std::error::Error as StdError;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -201,6 +202,14 @@ pub struct PeerClient {
     signer: Option<Arc<crate::provider_auth::RequestSigner>>,
 }
 
+/// The contents of a `[peer_tls]` file.
+fn read(path: &Path) -> Result<Vec<u8>, PeerError> {
+    std::fs::read(path).map_err(|source| PeerError::TlsFile {
+        path: path.to_owned(),
+        source,
+    })
+}
+
 impl PeerClient {
     /// A client that identifies itself as `own_domain` and reaches the
     /// peers in `peers`, the configuration's peer map.
@@ -210,12 +219,41 @@ impl PeerClient {
     /// Returns [`PeerError::Http`] if the HTTP client cannot be built, and
     /// [`PeerError::Header`] if `own_domain` is not a valid header value.
     pub fn new(own_domain: &Domain, peers: BTreeMap<Domain, BaseUrl>) -> Result<Self, PeerError> {
-        let http = reqwest::Client::builder()
+        Self::with_tls(own_domain, peers, &crate::tls::PeerTlsConfig::default())
+    }
+
+    /// [`PeerClient::new`], trusting `tls.roots` for peers' server
+    /// certificates besides the system's, and presenting `tls.identity`
+    /// as this provider's client certificate on every connection
+    /// (bead mimid-75nk.5).
+    ///
+    /// # Errors
+    ///
+    /// As [`PeerClient::new`], and [`PeerError::TlsFile`] if a file cannot
+    /// be read; [`PeerError::Http`] if one does not hold what it should.
+    pub fn with_tls(
+        own_domain: &Domain,
+        peers: BTreeMap<Domain, BaseUrl>,
+        tls: &crate::tls::PeerTlsConfig,
+    ) -> Result<Self, PeerError> {
+        let mut builder = reqwest::Client::builder()
             .redirect(redirect::Policy::none())
             .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-            .map_err(PeerError::Http)?;
+            .connect_timeout(CONNECT_TIMEOUT);
+        if !tls.roots.is_empty() {
+            let mut roots = Vec::new();
+            for path in &tls.roots {
+                roots.extend(
+                    reqwest::Certificate::from_pem_bundle(&read(path)?).map_err(PeerError::Http)?,
+                );
+            }
+            builder = builder.tls_certs_merge(roots);
+        }
+        if let Some(identity) = &tls.identity {
+            let pem = [read(&identity.cert)?, read(&identity.key)?].join(&b"\n"[..]);
+            builder = builder.identity(reqwest::Identity::from_pem(&pem).map_err(PeerError::Http)?);
+        }
+        let http = builder.build().map_err(PeerError::Http)?;
         Ok(Self {
             http,
             from: header_value(&format!("mimi@{own_domain}"))?,
@@ -829,6 +867,15 @@ pub enum PeerError {
     /// A domain is not a valid HTTP header value.
     #[error("invalid header value")]
     Header,
+    /// A `[peer_tls]` file cannot be read.
+    #[error("cannot read {}", path.display())]
+    TlsFile {
+        /// The file.
+        path: PathBuf,
+        /// The I/O error.
+        #[source]
+        source: std::io::Error,
+    },
     /// The request could not be signed (bead mimid-75nk.1).
     #[error("cannot sign the {endpoint} request")]
     Sign {

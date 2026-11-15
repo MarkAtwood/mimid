@@ -31,6 +31,13 @@
 //! [trusted_proxy]
 //! addresses = ["127.0.0.1", "::1"]
 //! header = "x-client-cert"   # base64 DER of the leaf certificate
+//!
+//! # Optional: TLS toward peers.
+//! [peer_tls]
+//! roots = ["/etc/mimid/peer-roots.pem"]  # CAs for peers' servers, plus the system's
+//! [peer_tls.identity]                    # this provider's client certificate
+//! cert = "/etc/mimid/client.pem"          # SAN dNSName: this provider's domain
+//! key = "/etc/mimid/client-key.pem"
 //! ```
 //!
 //! Parsing is strict: unknown keys, malformed domains and malformed base
@@ -119,6 +126,10 @@ pub struct Config {
     /// header (bead mimid-75nk.4).
     #[serde(default)]
     pub trusted_proxy: Option<crate::tls::TrustedProxyConfig>,
+    /// TLS toward peers: extra roots, and this provider's client
+    /// certificate (bead mimid-75nk.5).
+    #[serde(default)]
+    pub peer_tls: crate::tls::PeerTlsConfig,
 }
 
 impl Config {
@@ -346,8 +357,26 @@ mod tests {
             provider_auth: crate::provider_auth::ProviderAuthConfig::default(),
             tls: None,
             trusted_proxy: None,
+            peer_tls: crate::tls::PeerTlsConfig::default(),
         };
         assert_eq!(config, expected);
+    }
+
+    #[test]
+    fn peer_tls_parses() {
+        let config = Config::parse(&format!(
+            "{VALID}\n[peer_tls]\nroots = [\"/etc/r.pem\"]\n\
+             [peer_tls.identity]\ncert = \"/etc/c.pem\"\nkey = \"/etc/k.pem\"\n"
+        ))
+        .unwrap();
+        assert_eq!(config.peer_tls.roots, [PathBuf::from("/etc/r.pem")]);
+        let identity = config.peer_tls.identity.unwrap();
+        assert_eq!(identity.cert, PathBuf::from("/etc/c.pem"));
+        assert_eq!(identity.key, PathBuf::from("/etc/k.pem"));
+        assert_eq!(
+            Config::parse(VALID).unwrap().peer_tls,
+            crate::tls::PeerTlsConfig::default()
+        );
     }
 
     #[test]

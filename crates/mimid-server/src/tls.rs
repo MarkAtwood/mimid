@@ -75,6 +75,19 @@ fn default_header() -> String {
     "x-client-cert".to_owned()
 }
 
+/// `[peer_tls]`: TLS toward peers (bead mimid-75nk.5).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerTlsConfig {
+    /// PEM files of CAs trusted for peers' server certificates, in
+    /// addition to the system's.
+    #[serde(default)]
+    pub roots: Vec<PathBuf>,
+    /// This provider's client certificate, presented to every peer
+    /// (draft-atwood-mimi-provider-auth-00 §6, protocol-07 §4.1).
+    pub identity: Option<TlsConfig>,
+}
+
 /// How a client certificate reached mimid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

@@ -5,6 +5,10 @@
 //! certificate (SAN `a.example`) is a.example on every request it sends;
 //! without a certificate, or sending as another domain, it is refused.
 //!
+//! mimid's own [`PeerClient`] presents its client certificate from
+//! `[peer_tls]` (`with_tls`), and trusts the test CA for b.example's
+//! server certificate.
+//!
 //! Oracle: the `202` of an accepted requestConsent (protocol-07 §5.7) and
 //! the entry stored in b.example's database; the `403` of a refusal
 //! (draft-atwood-mimi-provider-auth-00 §11); the test certificates in
@@ -24,10 +28,10 @@ use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::http::router;
 use mimid_server::hub::{Clock, Hub, SystemClock};
-use mimid_server::peer::PeerClient;
+use mimid_server::peer::{PeerClient, PeerError};
 use mimid_server::provider_auth::{self, PkixCertificates, ProviderAuth, ProviderAuthConfig};
 use mimid_server::store::{ConsentKey, NewKeyPackage, Store};
-use mimid_server::tls::{self, TlsConfig};
+use mimid_server::tls::{self, PeerTlsConfig, TlsConfig};
 use tempfile::TempDir;
 
 /// A Haven-encoded requestConsent `request` from alice@a.example to
@@ -156,4 +160,49 @@ async fn without_a_certificate_or_as_another_domain_the_request_is_refused() {
     assert!(b.store.consent_request(&SCOPE).await.unwrap().is_none());
     // And the same client is still a.example afterwards.
     assert_eq!(send(&with, &b, "a.example").await, 202);
+}
+
+/// a.example's peer client toward `b`, trusting the test CA, presenting
+/// the test client certificate if `identity`.
+fn a_client(b: &Target, identity: bool) -> PeerClient {
+    let peers = BTreeMap::from([(
+        domain("b.example"),
+        BaseUrl::try_from(b.base.clone()).unwrap(),
+    )]);
+    let tls = PeerTlsConfig {
+        roots: vec![format!("{FIXTURES}/ca.pem").into()],
+        identity: identity.then(|| TlsConfig {
+            cert: format!("{FIXTURES}/client.pem").into(),
+            key: format!("{FIXTURES}/client.key").into(),
+        }),
+    };
+    PeerClient::with_tls(&domain("a.example"), peers, &tls).unwrap()
+}
+
+#[tokio::test]
+async fn mimids_peer_client_presents_its_client_certificate() {
+    let b = target().await;
+    let error = a_client(&b, false)
+        .request_consent(&domain("b.example"), REQUEST.to_vec())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, PeerError::Rejected { status: 403, .. }),
+        "{error:?}"
+    );
+    a_client(&b, true)
+        .request_consent(&domain("b.example"), REQUEST.to_vec())
+        .await
+        .unwrap();
+    assert!(b.store.consent_request(&SCOPE).await.unwrap().is_some());
+}
+
+#[test]
+fn an_unreadable_peer_tls_file_is_an_error() {
+    let tls = PeerTlsConfig {
+        roots: vec!["/nonexistent/roots.pem".into()],
+        identity: None,
+    };
+    let error = PeerClient::with_tls(&domain("a.example"), BTreeMap::new(), &tls).unwrap_err();
+    assert!(matches!(error, PeerError::TlsFile { .. }), "{error:?}");
 }

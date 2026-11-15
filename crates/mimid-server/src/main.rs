@@ -130,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_secs(config.peer_clock_tolerance_secs),
     );
     let peers = || {
-        PeerClient::new(&config.domain, config.peers.clone())
+        PeerClient::with_tls(&config.domain, config.peers.clone(), &config.peer_tls)
             .map(|client| {
                 client
                     .with_clocks(Arc::clone(&clocks))
@@ -259,6 +259,8 @@ async fn main() -> anyhow::Result<()> {
         require_dnssec = config.provider_auth.require_dnssec,
         global_anchors,
         peer_anchors,
+        client_certificate = config.peer_tls.identity.is_some(),
+        peer_roots = config.peer_tls.roots.len(),
         public_key = %base64::engine::general_purpose::STANDARD.encode(signer.public_key().to_bytes()),
         trusted_peers = config.provider_auth.peers.values().filter(|p| !p.keys.is_empty()).count(),
         observed_peers = config.provider_auth.peers.values().filter(|p| p.mode == Some(AuthMode::Observe)).count(),
