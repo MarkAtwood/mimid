@@ -281,19 +281,19 @@ fn vectors() -> Value {
             "jt-iq-01",
             ALICE,
             "handle query, the URI exactly",
-            "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
+            "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
         ),
         (
             "jt-iq-02",
             "MIMI://B.Example/u/alice",
             "handle query, scheme and host in other case",
-            "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
+            "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
         ),
         (
             "jt-iq-03",
             "mimi://b.example/u/%61lice",
             "handle query, an unreserved character percent-encoded",
-            "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
+            "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
         ),
     ] {
         v.push(with_outcome(
@@ -320,8 +320,44 @@ fn vectors() -> Value {
         ),
         "POST /identifierQuery/b.example, alice has a client",
         "notFound: the path is case-sensitive (RFC 3986 §6.2.2.1)",
-        "notFound",
-        "notFound",
+        "notFound, HTTP 200",
+        "notFound, HTTP 404",
+    ));
+
+    // ---- identifierQuery nick (protocol-07 §5.8) ----
+    v.push(with_outcome(
+        vector(
+            "jt-iq-05",
+            "IdentifierRequest",
+            "nick query, the bare user id",
+            &IdentifierRequest {
+                query_elements: vec![QueryElement {
+                    search: QuerySearch::Nick,
+                    search_value: b"alice".to_vec(),
+                }],
+                id_request_extensions: no_extensions(),
+            }
+            .tls_serialize_detached()
+            .unwrap(),
+            "ok",
+        ),
+        "POST /identifierQuery/b.example, alice has a client",
+        "protocol-07 §5.8: \"nick means that the nickname or handle matches exactly\"; a bare name is a nick, not a handle",
+        "success, answered as mimi://b.example/u/alice",
+        "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
+    ));
+    v.push(with_outcome(
+        vector(
+            "jt-iq-06",
+            "IdentifierRequest",
+            "handle query, the bare user id",
+            &handle_query("alice"),
+            "ok",
+        ),
+        "POST /identifierQuery/b.example, alice has a client",
+        "notFound: a handle is a URI (§5.8); a bare name is a nick",
+        "notFound, HTTP 200",
+        "notFound, HTTP 404; checked on the live hub at Haven ea645b1, 2026-11-15",
     ));
 
     // ---- IdentifierUri with a non-ASCII host ----
@@ -611,7 +647,7 @@ async fn consent_outcomes_are_mimids() {
 async fn identifier_query_outcomes_are_mimids() {
     let b = provider().await;
     let path = "/v1/identifierQuery/b.example";
-    for id in ["jt-iq-01", "jt-iq-02", "jt-iq-03"] {
+    for id in ["jt-iq-01", "jt-iq-02", "jt-iq-03", "jt-iq-05"] {
         let (status, body) = post(&b.app, path, &hex_of(id)).await;
         assert_eq!(status, StatusCode::OK, "{id}");
         let response = IdentifierResponse::tls_deserialize_exact(&body[..]).unwrap();
@@ -621,7 +657,10 @@ async fn identifier_query_outcomes_are_mimids() {
             "{id}"
         );
     }
-    let (_, body) = post(&b.app, path, &hex_of("jt-iq-04")).await;
-    let response = IdentifierResponse::tls_deserialize_exact(&body[..]).unwrap();
-    assert!(response.uri.is_empty(), "jt-iq-04");
+    for id in ["jt-iq-04", "jt-iq-06"] {
+        let (status, body) = post(&b.app, path, &hex_of(id)).await;
+        assert_eq!(status, StatusCode::OK, "{id}");
+        let response = IdentifierResponse::tls_deserialize_exact(&body[..]).unwrap();
+        assert!(response.uri.is_empty(), "{id}");
+    }
 }

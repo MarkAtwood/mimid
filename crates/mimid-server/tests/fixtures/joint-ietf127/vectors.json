@@ -71,7 +71,7 @@
       "id": "jt-iq-01",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
+        "haven": "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
         "mimid": "success, answered as mimi://b.example/u/alice",
         "operation": "POST /identifierQuery/b.example, alice has a client",
         "spec": "protocol-07 §5.8: \"the entire handle URI matches exactly (for example: im:alice.smith@a.example)\". Whether a handle is the mimi:// user URI is not said; if it is, proposed: compare by RFC 3986 §6.2.2"
@@ -84,7 +84,7 @@
       "id": "jt-iq-02",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
+        "haven": "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
         "mimid": "success, answered as mimi://b.example/u/alice",
         "operation": "POST /identifierQuery/b.example, alice has a client",
         "spec": "protocol-07 §5.8: \"the entire handle URI matches exactly (for example: im:alice.smith@a.example)\". Whether a handle is the mimi:// user URI is not said; if it is, proposed: compare by RFC 3986 §6.2.2"
@@ -97,7 +97,7 @@
       "id": "jt-iq-03",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
+        "haven": "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
         "mimid": "success, answered as mimi://b.example/u/alice",
         "operation": "POST /identifierQuery/b.example, alice has a client",
         "spec": "protocol-07 §5.8: \"the entire handle URI matches exactly (for example: im:alice.smith@a.example)\". Whether a handle is the mimi:// user URI is not said; if it is, proposed: compare by RFC 3986 §6.2.2"
@@ -110,10 +110,36 @@
       "id": "jt-iq-04",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "notFound",
-        "mimid": "notFound",
+        "haven": "notFound, HTTP 404",
+        "mimid": "notFound, HTTP 200",
         "operation": "POST /identifierQuery/b.example, alice has a client",
         "spec": "notFound: the path is case-sensitive (RFC 3986 §6.2.2.1)"
+      }
+    },
+    {
+      "decode": "ok",
+      "description": "nick query, the bare user id",
+      "hex": "070205616c69636500",
+      "id": "jt-iq-05",
+      "kind": "IdentifierRequest",
+      "outcome": {
+        "haven": "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
+        "mimid": "success, answered as mimi://b.example/u/alice",
+        "operation": "POST /identifierQuery/b.example, alice has a client",
+        "spec": "protocol-07 §5.8: \"nick means that the nickname or handle matches exactly\"; a bare name is a nick, not a handle"
+      }
+    },
+    {
+      "decode": "ok",
+      "description": "handle query, the bare user id",
+      "hex": "070105616c69636500",
+      "id": "jt-iq-06",
+      "kind": "IdentifierRequest",
+      "outcome": {
+        "haven": "notFound, HTTP 404; checked on the live hub at Haven ea645b1, 2026-11-15",
+        "mimid": "notFound, HTTP 200",
+        "operation": "POST /identifierQuery/b.example, alice has a client",
+        "spec": "notFound: a handle is a URI (§5.8); a bare name is a nick"
       }
     },
     {
