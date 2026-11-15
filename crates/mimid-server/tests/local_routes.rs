@@ -396,3 +396,47 @@ async fn held_consent_is_listed() {
         ]})
     );
 }
+
+/// Bead mimid-1wgh.47.6: `mimid admin` drives a real listener: it creates a
+/// user and issues a token, presents the configured token, and reports a
+/// refusal with its status and problem type.
+#[tokio::test]
+async fn the_admin_cli_drives_a_running_listener() {
+    use mimid_server::admin::{AdminError, run};
+    use mimid_server::local::LocalToken;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let token = LocalToken::try_from("k".repeat(mimid_server::local::MIN_LOCAL_TOKEN_LEN)).unwrap();
+    let app = router(Arc::new(hub), store, Some(token.clone()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let args = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    let alice = std::str::from_utf8(ALICE).unwrap();
+
+    let created = run(Some(addr), Some(&token), &args(&["add-user", alice]))
+        .await
+        .unwrap();
+    assert!(created.contains("accountId"), "{created}");
+    let issued = run(Some(addr), Some(&token), &args(&["token", alice]))
+        .await
+        .unwrap();
+    assert!(issued.contains("\"token\""), "{issued}");
+    let users = run(Some(addr), Some(&token), &args(&["users"]))
+        .await
+        .unwrap();
+    assert!(users.contains(alice), "{users}");
+
+    match run(Some(addr), None, &args(&["users"])).await {
+        Err(AdminError::Refused { status: 401, body }) => assert!(body.contains("unauthorized")),
+        other => panic!("{other:?}"),
+    }
+    match run(Some(addr), Some(&token), &args(&["add-user", alice])).await {
+        Err(AdminError::Refused { status: 409, .. }) => {}
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        run(None, None, &args(&["users"])).await,
+        Err(AdminError::NoListener)
+    ));
+}

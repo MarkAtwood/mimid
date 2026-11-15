@@ -118,6 +118,11 @@ impl TryFrom<String> for LocalToken {
 }
 
 impl LocalToken {
+    /// The token itself, for a client to present ([`crate::admin`]).
+    pub(crate) fn secret(&self) -> &str {
+        &self.0
+    }
+
     /// Whether `presented` is this token. The digests are compared, so the
     /// comparison's time says nothing about the token.
     fn matches(&self, presented: &str) -> bool {

@@ -8,7 +8,8 @@
 //! peers and, for this provider's own domain, to the follower in-process.
 //!
 //! Usage: `mimid <config.toml>`. See `mimid_server::config` for the file
-//! format.
+//! format. `mimid admin <config.toml> <command>` is a client of the running
+//! server's local control listener instead; see `mimid_server::admin`.
 //!
 //! Environment:
 //!
@@ -68,6 +69,21 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // `mimid admin <config.toml> <command> ...`: a client of the local
+    // control listener, not a server (bead mimid-1wgh.47.6).
+    let all: Vec<String> = std::env::args().skip(1).collect();
+    if all.first().map(String::as_str) == Some("admin") {
+        let Some(config_path) = all.get(1) else {
+            bail!("usage: mimid admin <config.toml> <command> [argument]");
+        };
+        let config = Config::load(std::path::Path::new(config_path))
+            .with_context(|| format!("loading {config_path}"))?;
+        let body =
+            mimid_server::admin::run(config.local_listen, config.local_token.as_ref(), &all[2..])
+                .await?;
+        println!("{body}");
+        return Ok(());
+    }
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
     match LogFormat::from_env()? {
         LogFormat::Json => json_subscriber(filter, std::io::stdout).init(),
