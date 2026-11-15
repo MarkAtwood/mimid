@@ -6,6 +6,7 @@
 //!
 //! - `GET /.well-known/jmap`: the Session ([`session`]; RFC 8620 §2.2);
 //! - `POST /jmap/api`: the API ([`api`]; RFC 8620 §3);
+//! - `GET /jmap/eventsource`: EventSource push (RFC 8620 §7.3);
 //! - `POST /jmap/upload/{accountId}/` and
 //!   `GET /jmap/download/{accountId}/{blobId}/{name}`: always `404`.
 //!
@@ -17,9 +18,7 @@
 //! # Limitations
 //!
 //! - No blobs: upload and download answer `404`.
-//! - No push yet: the Session's `eventSourceUrl` is advertised, since
-//!   RFC 8620 §2 requires it, but answers `404` until EventSource
-//!   (mimid-1wgh.11.6) lands. There is no PushSubscription (decision
+//! - Push is EventSource only: there is no PushSubscription (decision
 //!   mimid-1wgh.12.30).
 //! - Besides `Core/echo`, only the read projection ([`projection`]) and
 //!   the refusing `Chat/set` and `Message/set` are implemented; every
@@ -28,6 +27,7 @@
 pub mod api;
 pub mod auth;
 pub mod bus;
+mod eventsource;
 pub mod language;
 mod methods;
 pub mod projection;
@@ -76,6 +76,8 @@ struct Inner {
     session: SessionTemplate,
     dispatcher: Dispatcher<Account>,
     in_flight: InFlight,
+    projection: Arc<projection::Projection>,
+    bus: ChangeBus,
 }
 
 impl FromRef<JmapState> for Authenticator {
@@ -122,8 +124,8 @@ pub fn router(
             store,
             hub,
             follower,
-            bus,
-            projection,
+            bus: bus.clone(),
+            projection: Arc::clone(&projection),
         },
     );
     let state = JmapState(Arc::new(Inner {
@@ -131,10 +133,13 @@ pub fn router(
         session,
         dispatcher: methods.into_dispatcher(),
         in_flight: InFlight::default(),
+        projection,
+        bus,
     }));
     Ok(Router::new()
         .route("/.well-known/jmap", get(session::get_session))
         .route("/jmap/api", post(api::post_api))
+        .route("/jmap/eventsource", get(eventsource::get_eventsource))
         .route("/jmap/upload/{accountId}/", post(no_blobs))
         .route("/jmap/download/{accountId}/{blobId}/{name}", get(no_blobs))
         .layer(DefaultBodyLimit::max(api::MAX_SIZE_REQUEST))

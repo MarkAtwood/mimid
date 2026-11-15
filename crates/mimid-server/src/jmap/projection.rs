@@ -171,13 +171,25 @@ const CONTACT_PROPERTIES: &[&str] = &[
 
 /// The three projected data types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+pub(crate) enum Kind {
     Chat,
     Message,
     ChatContact,
 }
 
 impl Kind {
+    /// Every projected type, in the order StateChange lists them.
+    pub(crate) const ALL: [Self; 3] = [Self::Chat, Self::Message, Self::ChatContact];
+
+    /// The JMAP type name.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Chat => "Chat",
+            Self::Message => "Message",
+            Self::ChatContact => "ChatContact",
+        }
+    }
+
     fn of<O: JmapObject>() -> Result<Self, ProjectionError> {
         match O::TYPE_NAME {
             "Chat" => Ok(Self::Chat),
@@ -315,7 +327,11 @@ impl Projection {
     }
 
     /// The account's current state string for `kind`.
-    async fn state(&self, kind: Kind, account: &Account) -> Result<String, ProjectionError> {
+    pub(crate) async fn state(
+        &self,
+        kind: Kind,
+        account: &Account,
+    ) -> Result<String, ProjectionError> {
         let user = account.user().as_str();
         Ok(match kind {
             Kind::Chat => {

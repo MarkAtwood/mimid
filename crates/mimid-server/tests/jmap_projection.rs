@@ -79,6 +79,7 @@ struct Fixture {
     store: Store,
     hub: Arc<Hub>,
     app: Router,
+    follower: Arc<Follower>,
     alice_id: String,
     alice_token: BearerToken,
     bob_id: String,
@@ -94,12 +95,16 @@ async fn fixture() -> Fixture {
     let alice_token = store.issue_token(&alice_id, 2).await.unwrap();
     let bob_id = store.create_account(&domain(), BOB, 3).await.unwrap();
     let bob_token = store.issue_token(&bob_id, 4).await.unwrap();
-    let follower = Follower::new(domain(), store.clone(), Arc::new(FixedClock(5)));
+    let follower = Arc::new(Follower::new(
+        domain(),
+        store.clone(),
+        Arc::new(FixedClock(5)),
+    ));
     let app = jmap::router(
         &BaseUrl::try_from("https://mimi.a.example".to_owned()).unwrap(),
         store.clone(),
         Arc::clone(&hub),
-        Arc::new(follower),
+        Arc::clone(&follower),
         JmapOptions::default(),
     )
     .unwrap();
@@ -109,6 +114,7 @@ async fn fixture() -> Fixture {
         store,
         hub,
         app,
+        follower,
         alice_id,
         alice_token,
         bob_id,
@@ -1463,4 +1469,116 @@ async fn rename(f: &Fixture, room: &mut update::MemberRoom, metadata: &[u8]) {
         update::response(&response).0,
         UpdateResult::Success { .. }
     ));
+}
+
+/// GET /jmap/eventsource as `token` with `query`.
+async fn eventsource(
+    f: &Fixture,
+    token: Option<&BearerToken>,
+    query: &str,
+) -> axum::response::Response {
+    let mut request = Request::get(format!("/jmap/eventsource?{query}"));
+    if let Some(token) = token {
+        request = request.header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", token.expose_secret()),
+        );
+    }
+    f.app
+        .clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+/// mimid-1wgh.11.6, RFC 8620 §7.3: a change to alice's Chats reaches her
+/// open EventSource as a `state` event with a StateChange naming Chat and
+/// its new state, and `closeafter=state` then ends the stream. A bad
+/// query is refused, and so is a request without a token.
+#[tokio::test]
+async fn a_chat_change_is_pushed_as_a_state_event() {
+    let f = fixture().await;
+    // A hosted room with a name: leaving it clears the name the Chat shows,
+    // which moves the Chat state (decision mimid-1wgh.11.9).
+    let mut room = update::member_room(&f.hub, common::ROOM_ID, b"push-group").await;
+    let since = f.store.follower_next_seq().await.unwrap();
+    f.join(common::ROOM_ID, ALICE, since, JOINED).await;
+    rename(&f, &mut room, CLUBHOUSE_METADATA).await;
+    let account = f.alice_id.clone();
+    let before = f
+        .alice("Chat/get", json!({"accountId": account, "ids": []}))
+        .await;
+
+    let response = eventsource(
+        &f,
+        Some(&f.alice_token),
+        "types=Chat,Message&closeafter=state&ping=0",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "text/event-stream"
+    );
+    let body = tokio::spawn(to_bytes(response.into_body(), usize::MAX));
+    // Let the stream subscribe and read its first states.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let alice = mimid_server::follower::relay::LocalUser::authenticated(&domain(), ALICE).unwrap();
+    f.follower.leave(&alice, common::ROOM_ID).await.unwrap();
+    let body = tokio::time::timeout(std::time::Duration::from_secs(10), body)
+        .await
+        .expect("closeafter=state ends the stream")
+        .unwrap()
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    let data = text
+        .lines()
+        .skip_while(|line| *line != "event: state")
+        .nth(1)
+        .and_then(|line| line.strip_prefix("data: "))
+        .unwrap_or_else(|| panic!("no state event in {text:?}"));
+    let change: Value = serde_json::from_str(data).unwrap();
+    let after = f
+        .alice("Chat/get", json!({"accountId": account, "ids": []}))
+        .await;
+    assert_ne!(after["state"], before["state"]);
+    assert_eq!(
+        change,
+        json!({"@type": "StateChange", "changed": {account: {"Chat": after["state"]}}})
+    );
+
+    let bad = eventsource(
+        &f,
+        Some(&f.alice_token),
+        "types=Chat&closeafter=maybe&ping=0",
+    )
+    .await;
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+    let anonymous = eventsource(&f, None, "types=*&closeafter=no&ping=0").await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    f.close().await;
+}
+
+/// RFC 8620 §7.3: with nothing to report, a `ping` event comes every
+/// interval, carrying the interval used, which mimid raises to its
+/// minimum. Real time: this test waits ten seconds.
+#[tokio::test]
+async fn an_idle_stream_pings_at_the_clamped_interval() {
+    let f = fixture().await;
+    let response = eventsource(&f, Some(&f.alice_token), "types=*&closeafter=no&ping=1").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    use tokio_stream::StreamExt;
+    let first = tokio::time::timeout(std::time::Duration::from_secs(20), body.next())
+        .await
+        .expect("a ping within twenty seconds")
+        .unwrap()
+        .unwrap();
+    let text = String::from_utf8(first.to_vec()).unwrap();
+    assert!(
+        text.starts_with("event: ping\ndata: {\"interval\":10}"),
+        "{text:?}"
+    );
+    drop(body);
+    f.close().await;
 }
