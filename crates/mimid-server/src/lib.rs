@@ -19,7 +19,8 @@
 //!   conformance to it. With BasicCredential, a provider can still claim
 //!   any identity for its own users.
 //! - Peer providers are found through the configured peer map, not DNS.
-//! - The listener speaks plain HTTP; TLS must be terminated in front of it.
+//! - The listener speaks plain HTTP unless `[tls]` is configured, when it
+//!   serves HTTPS and asks for client certificates ([`tls`]).
 //! - keyMaterial for users of this provider is served from the KeyPackages
 //!   they upload, with implicit consent ([`follower::key_packages`];
 //!   decision mimid-1wgh.7.9). The hub proxies keyMaterial for users of
@@ -90,3 +91,4 @@ pub mod peer;
 pub mod peer_clock;
 pub mod provider_auth;
 pub mod store;
+pub mod tls;

@@ -20,6 +20,15 @@
 //! [provider_auth.peers."b.example"]
 //! mode = "observe"        # log a failure but accept the request
 //! keys = { "b1" = "<base64 Ed25519 public key>" }
+//!
+//! # Optional: serve HTTPS, asking peers for client certificates
+//! # (crate::tls), or take them from a proxy in front.
+//! [tls]
+//! cert = "/etc/mimid/tls/fullchain.pem"
+//! key = "/etc/mimid/tls/key.pem"
+//! [trusted_proxy]
+//! addresses = ["127.0.0.1", "::1"]
+//! header = "x-client-cert"   # base64 DER of the leaf certificate
 //! ```
 //!
 //! Parsing is strict: unknown keys, malformed domains and malformed base
@@ -99,6 +108,15 @@ pub struct Config {
     /// every provider is held to `enforce` with no trusted keys.
     #[serde(default)]
     pub provider_auth: crate::provider_auth::ProviderAuthConfig,
+    /// mimid serves HTTPS itself, asking for client certificates (bead
+    /// mimid-75nk.4). Without it, `listen` speaks plain HTTP behind a
+    /// proxy.
+    #[serde(default)]
+    pub tls: Option<crate::tls::TlsConfig>,
+    /// A proxy in front of mimid that forwards client certificates in a
+    /// header (bead mimid-75nk.4).
+    #[serde(default)]
+    pub trusted_proxy: Option<crate::tls::TrustedProxyConfig>,
 }
 
 impl Config {
@@ -324,6 +342,8 @@ mod tests {
             max_description_octets: 4096,
             max_uri_octets: 2048,
             provider_auth: crate::provider_auth::ProviderAuthConfig::default(),
+            tls: None,
+            trusted_proxy: None,
         };
         assert_eq!(config, expected);
     }

@@ -29,7 +29,8 @@
 //!   conformance to it. With BasicCredential, a provider can still claim
 //!   any identity for its own users.
 //! - Peer providers are found through the configured peer map, not DNS.
-//! - The listener speaks plain HTTP; TLS must be terminated in front of it.
+//! - The listener speaks plain HTTP unless `[tls]` is configured, when it
+//!   serves HTTPS and asks for client certificates ([`mimid_server::tls`]).
 //! - `/notify` is accepted only from configured peers (decision
 //!   mimid-1wgh.7.4), so fanout from any other provider is refused (`403`).
 //! - The JMAP endpoint ([`mimid_server::jmap`]) serves the Session, the
@@ -72,6 +73,7 @@ use mimid_server::provider_auth::{
     AuthMode, HickoryTxtResolver, ProviderAuth, RequestSigner, TxtResolver, check_validation,
 };
 use mimid_server::store::Store;
+use mimid_server::tls::ProxyPolicy;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -253,10 +255,18 @@ async fn main() -> anyhow::Result<()> {
         observed_peers = config.provider_auth.peers.values().filter(|p| p.mode == Some(AuthMode::Observe)).count(),
         "provider authentication configured"
     );
+    // A forwarded client certificate is taken from a trusted proxy only,
+    // before provider authentication reads it (bead mimid-75nk.4).
+    let proxy_policy =
+        ProxyPolicy::new(config.trusted_proxy.as_ref()).context("reading [trusted_proxy]")?;
     let app = router(directory(&config.base_url), hub, follower)
         .layer(axum::middleware::from_fn_with_state(
             provider_auth,
             mimid_server::provider_auth::check,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            proxy_policy,
+            mimid_server::tls::forwarded_certificate,
         ))
         .merge(jmap)
         .layer(axum::middleware::from_fn_with_state(
@@ -272,14 +282,28 @@ async fn main() -> anyhow::Result<()> {
         domain = %config.domain,
         listen = %config.listen,
         base_url = %config.base_url,
+        tls = config.tls.is_some(),
+        trusted_proxy = config.trusted_proxy.is_some(),
         peers = config.peers.len(),
         "mimid listening"
     );
 
-    axum::serve(listener, app)
+    match &config.tls {
+        // mimid terminates TLS and asks for client certificates (bead
+        // mimid-75nk.4).
+        Some(tls) => {
+            let server = mimid_server::tls::server_config(tls).context("reading [tls]")?;
+            mimid_server::tls::serve(listener, server, app, shutdown_signal()).await;
+        }
+        // Connection info lets a trusted proxy's address be recognised.
+        None => axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .context("serving HTTP")?;
+        .context("serving HTTP")?,
+    }
     if let Some(local) = local {
         // Nothing waits for a stop if the receiver is gone already.
         let _ = stop_local.send(());
