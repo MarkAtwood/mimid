@@ -1,9 +1,9 @@
 //! `Room/create` (draft-atwood-jmap-chat-mimi-00 §Room/create; bead
 //! mimid-1wgh.12.4).
 //!
-//! Arguments: `accountId`, `groupInfo` (an MLSMessage of wire format
-//! `mls_group_info`) and `ratchetTree`, both unpadded base64url. The client
-//! built the MLS group alone; this server becomes its hub.
+//! Arguments: `accountId`, `roomId`, `groupInfo` (an MLSMessage of wire
+//! format `mls_group_info`) and `ratchetTree`, both unpadded base64url. The
+//! client built the MLS group alone; this server becomes its hub.
 //!
 //! The draft's rules, each `invalidArguments` when broken:
 //!
@@ -15,8 +15,11 @@
 //!    (§KeyPackage/set);
 //! 3. `external_senders` is exactly the hub (the hub checks);
 //! 4. the participant list is exactly the account's user;
-//! 5. the room metadata's `room_uri` is `roomIdPrefix` followed by the
-//!    unpadded lowercase base32 of 16 octets, not hosted here yet;
+//! 5. `roomId` is `roomIdPrefix` followed by the unpadded lowercase base32
+//!    of 16 octets, not hosted here yet, and the room metadata, which is
+//!    optional, names it as its `room_uri` when present (bead
+//!    mimid-1wgh.12.45: a room with metadata requires every member to
+//!    support room_metadata under mls-extensions-11 §5);
 //! 6. the group ID is 16 octets, not used here yet (the hub checks it is
 //!    unused);
 //! 7. `franking_agent` names the hub and `base_room_policy` parses: the hub
@@ -146,6 +149,10 @@ async fn create(
     caller
         .check_account_id(&account_id)
         .map_err(|_| JmapError::account_not_found())?;
+    let requested_room_id = match args.get("roomId") {
+        Some(Value::String(id)) => id.clone(),
+        _ => return Err(invalid("roomId is required")),
+    };
     let group_info = base64(&args, "groupInfo")?;
     let ratchet_tree = base64(&args, "ratchetTree")?;
     let user = caller.user().as_str();
@@ -190,11 +197,14 @@ async fn create(
             return Err(invalid("the participant list is not exactly userUri"));
         }
         // Rule 5.
-        let metadata = observer
-            .component(ROOM_METADATA)
-            .and_then(|data| components::decode::<RoomMetaData>(ROOM_METADATA, data).ok())
-            .ok_or_else(|| invalid("the group has no room metadata"))?;
-        let room_id = metadata.room_uri.as_str().to_owned();
+        if let Some(data) = observer.component(ROOM_METADATA) {
+            let metadata = components::decode::<RoomMetaData>(ROOM_METADATA, data)
+                .map_err(|_| invalid("the room metadata does not decode"))?;
+            if metadata.room_uri.as_str() != requested_room_id {
+                return Err(invalid("the room metadata's room_uri is not roomId"));
+            }
+        }
+        let room_id = requested_room_id;
         let prefix = format!("mimi://{}/r/", hub.domain());
         if !room_id
             .strip_prefix(&prefix)

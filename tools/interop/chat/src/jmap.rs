@@ -190,12 +190,18 @@ impl Jmap {
         }
     }
 
-    /// Room/create; returns the room ID.
-    pub async fn create_room(&self, group_info: &[u8], tree: &[u8]) -> anyhow::Result<String> {
+    /// Room/create for the room `room_id`; returns the room ID.
+    pub async fn create_room(
+        &self,
+        room_id: &str,
+        group_info: &[u8],
+        tree: &[u8],
+    ) -> anyhow::Result<String> {
         let answer = self
             .call(
                 "Room/create",
                 json!({
+                    "roomId": room_id,
                     "groupInfo": URL_SAFE_NO_PAD.encode(group_info),
                     "ratchetTree": URL_SAFE_NO_PAD.encode(tree),
                 }),

@@ -139,6 +139,9 @@ fn room_metadata(room_id: &str) -> Vec<u8> {
 #[derive(Clone, Copy, Default)]
 struct Spec<'a> {
     room_id: Option<&'a str>,
+    /// The room metadata's room_uri, if not the room ID; `Some("")` leaves
+    /// the metadata out (and room_metadata out of app_components).
+    metadata_room_uri: Option<&'a str>,
     group_id: Option<&'a [u8]>,
     participants: Option<&'a [&'a [u8]]>,
 }
@@ -161,8 +164,16 @@ fn group_member(hub: &Hub, alice: &Identity, spec: Spec<'_>) -> (Vec<u8>, Vec<u8
         signature_key: key.to_vec(),
         identity: HUB_IDENTITY.to_vec(),
     }];
-    let components = [
-        (APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec()),
+    let without_metadata = spec.metadata_room_uri == Some("");
+    let mut components = vec![
+        (
+            APP_COMPONENTS,
+            if without_metadata {
+                app_components_without_room_metadata()
+            } else {
+                ROOM_APP_COMPONENTS.to_vec()
+            },
+        ),
         (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
         (FRANKING_AGENT, franking_agent(&key, HUB_IDENTITY)),
         // alice as a member (role 2) of an open room, one with no
@@ -173,8 +184,13 @@ fn group_member(hub: &Hub, alice: &Identity, spec: Spec<'_>) -> (Vec<u8>, Vec<u8
                 .tls_serialize_detached()
                 .unwrap(),
         ),
-        (ROOM_METADATA, room_metadata(&room_id)),
     ];
+    if !without_metadata {
+        components.push((
+            ROOM_METADATA,
+            room_metadata(spec.metadata_room_uri.unwrap_or(&room_id)),
+        ));
+    }
     let group_id = spec
         .group_id
         .map_or_else(|| rand16().to_vec(), <[u8]>::to_vec);
@@ -232,10 +248,11 @@ impl Fixture {
         (call[0].as_str().unwrap().to_owned(), call[1].clone())
     }
 
-    async fn create(&self, group_info: &[u8], tree: &[u8]) -> (String, Value) {
+    async fn create(&self, group_info: &[u8], tree: &[u8], room_id: &str) -> (String, Value) {
         self.call(
             "Room/create",
             json!({
+                "roomId": room_id,
                 "groupInfo": URL_SAFE_NO_PAD.encode(group_info),
                 "ratchetTree": URL_SAFE_NO_PAD.encode(tree),
             }),
@@ -249,7 +266,7 @@ async fn a_one_member_group_becomes_a_hosted_room_and_a_bound_chat() {
     let f = fixture().await;
     let alice = f.alice(true).await;
     let (group_info, tree, room_id) = group(&f.hub, &alice, Spec::default());
-    let (name, created) = f.create(&group_info, &tree).await;
+    let (name, created) = f.create(&group_info, &tree, &room_id).await;
     assert_eq!(name, "Room/create", "{created}");
     assert_eq!(created["roomId"], room_id);
     assert_eq!(created["accountId"], f.account);
@@ -263,11 +280,36 @@ async fn a_one_member_group_becomes_a_hosted_room_and_a_bound_chat() {
     assert_eq!(chat["name"], "Planning");
 
     // The same room again: in use.
-    let (name, again) = f.create(&group_info, &tree).await;
+    let (name, again) = f.create(&group_info, &tree, &room_id).await;
     assert_eq!(
         (name.as_str(), &again["type"]),
         ("error", &json!("invalidArguments"))
     );
+}
+
+/// A room without room metadata, whose app_components does not list
+/// room_metadata either, is created: metadata is optional (bead
+/// mimid-1wgh.12.45), and such a room can add members whose clients do not
+/// support room_metadata (mls-extensions-11 §5).
+#[tokio::test]
+async fn a_room_without_metadata_is_created() {
+    let f = fixture().await;
+    let alice = f.alice(true).await;
+    let (group_info, tree, room_id) = group(
+        &f.hub,
+        &alice,
+        Spec {
+            metadata_room_uri: Some(""),
+            ..Spec::default()
+        },
+    );
+    let (name, created) = f.create(&group_info, &tree, &room_id).await;
+    assert_eq!(name, "Room/create", "{created}");
+    assert_eq!(created["roomId"], room_id);
+    let (_, chats) = f
+        .call("Chat/get", json!({"ids": [created["chatId"]]}))
+        .await;
+    assert_eq!(chats["list"][0]["name"], "");
 }
 
 #[tokio::test]
@@ -308,6 +350,14 @@ async fn groups_that_break_a_rule_are_refused() {
             },
         ),
         (
+            "rule 5: room metadata naming another room",
+            &bound,
+            Spec {
+                metadata_room_uri: Some("mimi://a.example/r/aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                ..Spec::default()
+            },
+        ),
+        (
             "rule 6: an 8-octet group ID",
             &bound,
             Spec {
@@ -318,7 +368,7 @@ async fn groups_that_break_a_rule_are_refused() {
     ];
     for (why, alice, spec) in cases {
         let (group_info, tree, room_id) = group(&f.hub, alice, spec);
-        let (name, response) = f.create(&group_info, &tree).await;
+        let (name, response) = f.create(&group_info, &tree, &room_id).await;
         assert_eq!(
             (name.as_str(), &response["type"]),
             ("error", &json!("invalidArguments")),
@@ -337,7 +387,25 @@ async fn groups_that_break_a_rule_are_refused() {
         );
     }
     let (name, response) = f
-        .call("Room/create", json!({"groupInfo": "!!", "ratchetTree": ""}))
+        .call(
+            "Room/create",
+            json!({"roomId": "mimi://a.example/r/x", "groupInfo": "!!", "ratchetTree": ""}),
+        )
+        .await;
+    assert_eq!(
+        (name.as_str(), &response["type"]),
+        ("error", &json!("invalidArguments"))
+    );
+    // roomId is required.
+    let (group_info, tree, _) = group(&f.hub, &bound, Spec::default());
+    let (name, response) = f
+        .call(
+            "Room/create",
+            json!({
+                "groupInfo": URL_SAFE_NO_PAD.encode(&group_info),
+                "ratchetTree": URL_SAFE_NO_PAD.encode(&tree),
+            }),
+        )
         .await;
     assert_eq!(
         (name.as_str(), &response["type"]),
@@ -346,8 +414,21 @@ async fn groups_that_break_a_rule_are_refused() {
 }
 
 /// The phrase of the refusal each case must get.
+/// [`ROOM_APP_COMPONENTS`] without room_metadata (0x0023): a room that
+/// does not require it (mls-extensions-11 §5).
+fn app_components_without_room_metadata() -> Vec<u8> {
+    let ids: Vec<u8> = ROOM_APP_COMPONENTS[1..]
+        .chunks(2)
+        .filter(|id| *id != [0x00, 0x23])
+        .flatten()
+        .copied()
+        .collect();
+    [vec![u8::try_from(ids.len()).unwrap()], ids].concat()
+}
+
 fn expected_reason(why: &str) -> &'static str {
     match why {
+        "rule 5: room metadata naming another room" => "room_uri is not roomId",
         "rule 2: the leaf's key is not bound to the account" => "not bound to this account",
         "rule 4: two participants" => "not exactly userUri",
         "rule 5: a room ID that is not base32 of 16 octets" => "base32 of 16 octets",
@@ -391,7 +472,7 @@ async fn a_room_is_updated_sent_to_and_unbound() {
     let f = fixture().await;
     let alice = f.alice(true).await;
     let (group_info, tree, room_id, mut group) = group_member(&f.hub, &alice, Spec::default());
-    let (_, created) = f.create(&group_info, &tree).await;
+    let (_, created) = f.create(&group_info, &tree, &room_id).await;
     let chat_id = created["chatId"].clone();
     assert_eq!(message_ids(&f, &chat_id).await.len(), 0);
 
@@ -523,7 +604,7 @@ async fn a_second_client_fetches_the_group_info() {
     let f = fixture().await;
     let alice = f.alice(true).await;
     let (group_info, tree, room_id) = group(&f.hub, &alice, Spec::default());
-    f.create(&group_info, &tree).await;
+    f.create(&group_info, &tree, &room_id).await;
 
     let request = group_info::Requester::new(ALICE.as_bytes()).request(None);
     let (name, fetched) = f

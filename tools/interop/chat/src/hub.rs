@@ -360,7 +360,7 @@ impl Hub {
         ratchet_tree: &[u8],
     ) -> anyhow::Result<()> {
         if let Some(jmap) = &self.jmap {
-            let created = jmap.create_room(group_info, ratchet_tree).await?;
+            let created = jmap.create_room(room, group_info, ratchet_tree).await?;
             if created != room {
                 bail!("Room/create hosted {created}, not {room}");
             }

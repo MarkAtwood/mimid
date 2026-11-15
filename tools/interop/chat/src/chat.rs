@@ -329,7 +329,7 @@ impl Client {
         for line in [
             "/create <name>         create mimi://<hub>/r/<name> with you as its first participant",
             "/adopt <name>          as /create, for a room the hub already lists you in (no addParticipant)",
-            "/host <name> [--open]  have a mimid hub host mimi://<hub>/r/<name> (needs --local-url);\n                       --open: no franking and no room policy",
+            "/host <name> [--open] [--no-meta]  have a mimid hub host mimi://<hub>/r/<name> (needs --local-url);\n                       --open: no franking and no room policy;\n                       --no-meta: over JMAP, no room metadata, so members need not support room_metadata",
             "/invite <user>         add a user (a mimi:// URI, or a bare name on your domain)",
             "  ... --policy k=v ... the same Commit also changes base_room_policy",
             "  ... --roles          the same Commit also replaces roles_list (both hubs should refuse)",
@@ -415,14 +415,19 @@ impl Client {
     /// as `Hub::create_room` requires. A first empty Commit gives the
     /// GroupInfo the hub is handed; nothing is sent for it.
     async fn host(&mut self, arg: &str) -> anyhow::Result<()> {
-        let (name, open) = match arg.split_once(' ') {
-            Some((name, "--open")) => (name, true),
-            None => (arg, false),
-            Some(_) => bail!("usage: /host <name> [--open]"),
-        };
+        let mut words = arg.split(' ');
+        let name = words.next().unwrap_or_default();
+        let (mut open, mut no_meta) = (false, false);
+        for flag in words {
+            match flag {
+                "--open" => open = true,
+                "--no-meta" => no_meta = true,
+                _ => bail!("usage: /host <name> [--open] [--no-meta]"),
+            }
+        }
         ensure!(
             valid_name(name),
-            "usage: /host <name> [--open] (a-z 0-9 . _ -, up to 64)"
+            "usage: /host <name> [--open] [--no-meta] (a-z 0-9 . _ -, up to 64)"
         );
         // Over JMAP, Room/create wants roomIdPrefix and the base32 of 16
         // random octets, a 16-octet random group ID, and the name in the
@@ -488,8 +493,11 @@ impl Client {
                 (BASE_ROOM_POLICY, encode(&default_base_policy())?),
             ]
         };
-        if self.hub.jmap.is_some() {
+        if self.hub.jmap.is_some() && !no_meta {
             // room_metadata (protocol-07 §7.6), listed in app_components.
+            // Optional (draft-atwood-jmap-chat-mimi Room/create rule 5); a
+            // room with it requires every member to support room_metadata
+            // (mls-extensions-11 §5), so --no-meta leaves it out.
             let metadata = room_metadata(&room, name)?;
             let at = components
                 .iter()

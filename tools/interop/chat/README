@@ -36,8 +36,11 @@ JMAP mode, against your own mimid server (bead mimid-1wgh.12.41)
   and JSON lanes: KeyPackage/set to publish, Room/create for /host,
   KeyMaterial/fetch and Room/update for /invite and other changes, Room/send
   for messages. /host then makes a draft-conformant room ID (roomIdPrefix
-  and base32 of 16 random octets) and a random 16-octet group ID, and puts
-  the name in the room metadata. The account and token come from the
+  and base32 of 16 random octets) and a random 16-octet group ID, passes
+  the room ID to Room/create, and puts the name in the room metadata. With
+  --no-meta it leaves the metadata out, so users whose clients do not
+  support room_metadata (0x0023) can be invited: a room with metadata
+  requires every member to list it (mls-extensions-11 §5). The account and token come from the
   server's admin CLI:
     mimid admin mimid.toml add-user mimi://a.example/u/alice
     mimid admin mimid.toml token mimi://a.example/u/alice   # {"token": ...}
