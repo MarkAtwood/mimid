@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.46.9",
   "title": "mimid-hackathon EC2 after IETF 127: keep mimid running and peered with Haven; remove the hackathon-only pieces",
   "description": "wolfSSL AWS account 921772462201, us-east-2: instance i-0836d83660f6e12c2 (t3.small, 3.16.37.182, private 172.31.40.235), security group sg-08913526a3a7a9c15, key pair mimid-hackathon (key-04a4f2943523829ba; private key ~/.ssh/mimid-hackathon.pem). All tagged Project=mimid-ietf127. Also remove the mimid.reviewcommit.com A record at Epik. Terminate: aws ec2 terminate-instances --instance-ids i-0836d83660f6e12c2, then delete the SG and key pair.",
-  "notes": "2026-11-15 09:34Z: deployed e6a8d4c (403 + Accept-Signature). Rollback: /usr/local/bin/mimid.pre-403, /etc/mimid/config.toml.pre-403-20261115T093407Z, /var/lib/mimid/backup-pre-403-20261115T093407Z (no migration). Checks: unsigned enforce-mode request -\u003e 403 + Accept-Signature, no WWW-Authenticate; Haven unsigned -\u003e accepted in observe, logged; mimid-\u003eHaven keyMaterial relay -\u003e Success. Haven-\u003emimid not exercised: Haven's hub sends mimid only keyMaterial and reportAbuse (never /notify), and its keyMaterial for jmapbob was refused NoConsent on Haven's side before it called mimid.",
+  "notes": "2026-11-15 09:52Z: deployed 431f4b9 (DNS-published keys, mimid-75nk.3). Config: dns_servers = [1.1.1.1, 9.9.9.9] under [provider_auth]. Rollback: /usr/local/bin/mimid.pre-dns, /etc/mimid/config.toml.pre-dns-20261115T095252Z, /var/lib/mimid/backup-pre-dns-20261115T095252Z (no migration). Startup provider_auth_dnssec_ok. Live: a request signed with the host key authenticated via mimid1._mimi.mimid.reviewcommit.com, dnssec secure.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-13T18:33:32.063014402Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-15T09:36:39.820322022Z",
+  "updated_at": "2026-11-15T09:54:37.296749734Z",
   "due_at": "2026-11-16T00:00:00Z",
   "dependencies": [
     {
