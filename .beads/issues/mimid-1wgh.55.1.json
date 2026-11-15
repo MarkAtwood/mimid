@@ -22,14 +22,6 @@
       "created_at": "2026-11-15T19:32:37.347451757Z",
       "created_by": "Mark Atwood",
       "metadata": "{}"
-    },
-    {
-      "issue_id": "mimid-1wgh.55.1",
-      "depends_on_id": "mimid-1wgh.55.2",
-      "type": "blocks",
-      "created_at": "2026-11-15T19:32:37.49695137Z",
-      "created_by": "Mark Atwood",
-      "metadata": "{}"
     }
   ]
 }
