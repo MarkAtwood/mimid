@@ -3,12 +3,13 @@
 use std::io::{Read, Write};
 
 use mimi_mls::wire::{
-    ContentType, GroupInfo, MLSMessage, PartialGroupInfo, ProposalRef, RatchetTreeOption, Welcome,
-    WireFormat,
+    AppDataDictionary, ContentType, GroupInfo, MLSMessage, PartialGroupInfo, ProposalRef,
+    RatchetTreeOption, Welcome, WireFormat,
 };
 use tls_codec::{Deserialize, Serialize, Size, TlsDeserialize, TlsSerialize, TlsSize};
 
 use crate::Utf8String;
+use crate::wire_profile::{WireProfile, exact};
 
 fn decoding_error(message: &str) -> tls_codec::Error {
     tls_codec::Error::DecodingError(message.to_owned())
@@ -252,6 +253,41 @@ pub struct UpdateRequest {
     pub bundle: HandshakeBundle,
 }
 
+impl UpdateRequest {
+    /// Encodes this request under `profile`, with `extensions` (the #190
+    /// `update_extensions`, after the bundle).
+    ///
+    /// # Errors
+    ///
+    /// A tls_codec error if the bundle cannot be encoded, or if
+    /// `extensions` is not empty under [`WireProfile::Draft07`].
+    pub fn encode(
+        &self,
+        profile: WireProfile,
+        extensions: &AppDataDictionary,
+    ) -> Result<Vec<u8>, tls_codec::Error> {
+        let mut out = self.tls_serialize_detached()?;
+        profile.write_extensions(extensions, &mut out)?;
+        Ok(out)
+    }
+
+    /// Decodes all of `bytes` under `profile`: the request and its
+    /// extensions (empty under [`WireProfile::Draft07`]).
+    ///
+    /// # Errors
+    ///
+    /// A tls_codec error for anything malformed, or trailing bytes.
+    pub fn decode(
+        profile: WireProfile,
+        bytes: &[u8],
+    ) -> Result<(Self, AppDataDictionary), tls_codec::Error> {
+        exact(bytes, |reader| {
+            let request = Self::tls_deserialize(reader)?;
+            Ok((request, profile.read_extensions(reader)?))
+        })
+    }
+}
+
 /// `UpdateResponseCode` (protocol-07 §5.3).
 ///
 /// Decoding rejects the undefined values 4 to 255 with
@@ -338,8 +374,50 @@ impl Size for UpdateRoomResponse {
 
 impl Serialize for UpdateRoomResponse {
     fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
+        self.write(writer, WireProfile::Draft07, &AppDataDictionary::default())
+    }
+}
+
+impl UpdateRoomResponse {
+    /// Encodes this response under `profile`, with `extensions` (the #190
+    /// `update_response_extensions`, after `errorDescription`).
+    ///
+    /// # Errors
+    ///
+    /// A tls_codec error if a field cannot be encoded, or if `extensions`
+    /// is not empty under [`WireProfile::Draft07`].
+    pub fn encode(
+        &self,
+        profile: WireProfile,
+        extensions: &AppDataDictionary,
+    ) -> Result<Vec<u8>, tls_codec::Error> {
+        let mut out = Vec::new();
+        self.write(&mut out, profile, extensions)?;
+        Ok(out)
+    }
+
+    /// Decodes all of `bytes` under `profile`: the response and its
+    /// extensions (empty under [`WireProfile::Draft07`]).
+    ///
+    /// # Errors
+    ///
+    /// A tls_codec error for anything malformed, or trailing bytes.
+    pub fn decode(
+        profile: WireProfile,
+        bytes: &[u8],
+    ) -> Result<(Self, AppDataDictionary), tls_codec::Error> {
+        exact(bytes, |reader| Self::read(reader, profile))
+    }
+
+    fn write<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: WireProfile,
+        extensions: &AppDataDictionary,
+    ) -> Result<usize, tls_codec::Error> {
         let head = self.result.response_code().tls_serialize(writer)?
-            + self.error_description.tls_serialize(writer)?;
+            + self.error_description.tls_serialize(writer)?
+            + profile.write_extensions(extensions, writer)?;
         let arm = match &self.result {
             UpdateResult::Success { accepted_timestamp } => {
                 accepted_timestamp.tls_serialize(writer)?
@@ -356,8 +434,18 @@ impl Serialize for UpdateRoomResponse {
 
 impl Deserialize for UpdateRoomResponse {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
+        Self::read(bytes, WireProfile::Draft07).map(|(response, _)| response)
+    }
+}
+
+impl UpdateRoomResponse {
+    fn read<R: Read>(
+        bytes: &mut R,
+        profile: WireProfile,
+    ) -> Result<(Self, AppDataDictionary), tls_codec::Error> {
         let response_code = UpdateResponseCode::tls_deserialize(bytes)?;
         let error_description = Utf8String::tls_deserialize(bytes)?;
+        let extensions = profile.read_extensions(bytes)?;
         let result = match response_code {
             UpdateResponseCode::Success => UpdateResult::Success {
                 accepted_timestamp: u64::tls_deserialize(bytes)?,
@@ -370,9 +458,12 @@ impl Deserialize for UpdateRoomResponse {
                 invalid_proposals: Vec::<ProposalRef>::tls_deserialize(bytes)?,
             },
         };
-        Ok(Self {
-            error_description,
-            result,
-        })
+        Ok((
+            Self {
+                error_description,
+                result,
+            },
+            extensions,
+        ))
     }
 }

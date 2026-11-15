@@ -173,6 +173,7 @@ mod submit;
 mod update;
 mod uri_template;
 mod utf8_string;
+mod wire_profile;
 
 pub use abuse::{AbuseReport, AbuseType, AbusiveMessage};
 pub use component::{
@@ -210,6 +211,7 @@ pub use update::{
 };
 pub use uri_template::{MAX_URL_LEN, UriTemplate};
 pub use utf8_string::Utf8String;
+pub use wire_profile::WireProfile;
 
 use tls_codec::{TlsDeserialize, TlsSerialize, TlsSize};
 

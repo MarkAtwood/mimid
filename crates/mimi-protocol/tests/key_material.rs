@@ -16,12 +16,13 @@
 //! None of the expected bytes come from this crate's encoder.
 
 use mimi_mls::wire::{
-    Capabilities, CipherSuite, Credential, KeyPackage, RequiredCapabilities, SignaturePublicKey,
+    AppDataDictionary, Capabilities, CipherSuite, Credential, KeyPackage, RequiredCapabilities,
+    SignaturePublicKey,
 };
 use mimi_protocol::tls_codec::{self, Deserialize, Serialize, Size};
 use mimi_protocol::{
     ClientKeyMaterial, Error, IdentifierUri, KeyMaterialClientCode, KeyMaterialRequest,
-    KeyMaterialRequestTbs, KeyMaterialResponse, KeyMaterialUserCode, Protocol,
+    KeyMaterialRequestTbs, KeyMaterialResponse, KeyMaterialUserCode, Protocol, WireProfile,
 };
 
 const ORACLE: &str = include_str!("fixtures/key_material/key_material_gen.out");
@@ -773,4 +774,132 @@ fn errors_name_the_problem() {
         .tls_serialize_detached()
         .expect_err("populated");
     assert!(err.to_string().contains("UserUnknown"), "{err}");
+}
+
+// --- #190 extension points (WireProfile, bead mimid-1wgh.55.5) ---
+//
+// Oracle: the draft change on MarkAtwood/mimi-protocol branch
+// extension-points-190: `key_material_request_extensions` after roomId in
+// KeyMaterialRequest and its TBS, `client_key_material_extensions` after
+// clientUri in each ClientKeyMaterial, each an AppDataDictionary
+// (mls-extensions §4.6).
+
+/// One component, id 0x8001, data "r1", and its encoding by hand.
+fn ext() -> AppDataDictionary {
+    AppDataDictionary::new(&[(0x8001, b"r1")]).unwrap()
+}
+const EXT_WIRE: &[u8] = &[0x05, 0x80, 0x01, 0x02, b'r', b'1'];
+
+#[test]
+fn request_extensions_follow_the_room_and_are_signed() {
+    let tbs = expected_tbs(ROOM, &[1, 3]);
+    let plain = tbs.tls_serialize_detached().unwrap();
+    let head = cat(&[
+        &tbs.protocol.tls_serialize_detached().unwrap(),
+        &tbs.requesting_user.tls_serialize_detached().unwrap(),
+        &tbs.target_user.tls_serialize_detached().unwrap(),
+        &tbs.room_id.tls_serialize_detached().unwrap(),
+    ]);
+    let tbs_with = cat(&[&head, EXT_WIRE, &plain[head.len()..]]);
+
+    let request = tbs
+        .clone()
+        .sign_with(WireProfile::Extensions190, ext(), &requester_pair())
+        .unwrap();
+    let wire = request.tls_serialize_detached().unwrap();
+    assert!(wire.starts_with(&tbs_with));
+    let decoded = KeyMaterialRequest::decode(WireProfile::Extensions190, &wire).unwrap();
+    assert_eq!(decoded.tbs(), &tbs);
+    assert_eq!(decoded.extensions(), &ext());
+    decoded.verify().unwrap();
+
+    // The signature covers the extensions: change "r1" to "r2".
+    let mut tampered = wire.clone();
+    let at = head.len() + EXT_WIRE.len() - 1;
+    tampered[at] = b'2';
+    let tampered = KeyMaterialRequest::decode(WireProfile::Extensions190, &tampered).unwrap();
+    assert!(tampered.verify().is_err());
+
+    // protocol-07: no field, and non-empty extensions cannot be signed.
+    let plain_request = KeyMaterialRequest::decode(
+        WireProfile::Draft07,
+        &tbs.clone()
+            .sign(&requester_pair())
+            .unwrap()
+            .tls_serialize_detached()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(plain_request.extensions().is_empty());
+    plain_request.verify().unwrap();
+    assert!(
+        tbs.sign_with(WireProfile::Draft07, ext(), &requester_pair())
+            .is_err()
+    );
+}
+
+#[test]
+fn client_extensions_follow_each_client_uri() {
+    let none = AppDataDictionary::default();
+    let response = KeyMaterialResponse {
+        protocol: Protocol::Mls10,
+        user_status: KeyMaterialUserCode::NoCompatibleMaterial,
+        user_uri: uri(BOB),
+        clients: vec![
+            ClientKeyMaterial::KeyMaterialExhausted {
+                client_uri: uri(b"mimi://b.example/u/bob/1"),
+            },
+            ClientKeyMaterial::NothingCompatible {
+                client_uri: uri(b"mimi://b.example/u/bob/2"),
+                client_capabilities: None,
+            },
+        ],
+    };
+    let plain = response.tls_serialize_detached().unwrap();
+    assert_eq!(response.encode(WireProfile::Draft07, &[]).unwrap(), plain);
+
+    let exts = [ext(), none.clone()];
+    let with = response.encode(WireProfile::Extensions190, &exts).unwrap();
+    // Each client: status, URI, its dictionary, then its arm.
+    let client = |c: &ClientKeyMaterial, e: &[u8], arm: &[u8]| {
+        cat(&[
+            &c.client_status().tls_serialize_detached().unwrap(),
+            &c.client_uri().tls_serialize_detached().unwrap(),
+            e,
+            arm,
+        ])
+    };
+    let clients = cat(&[
+        &client(&response.clients[0], EXT_WIRE, &[]),
+        &client(&response.clients[1], &[0x00], &[0x00]),
+    ]);
+    let head = cat(&[
+        &response.protocol.tls_serialize_detached().unwrap(),
+        &response.user_status.tls_serialize_detached().unwrap(),
+        &response.user_uri.tls_serialize_detached().unwrap(),
+    ]);
+    let length = u8::try_from(clients.len()).unwrap();
+    assert!(length < 64, "one-byte varint");
+    assert_eq!(with, cat(&[&head, &[length], &clients]));
+
+    let (decoded, got) = KeyMaterialResponse::decode(WireProfile::Extensions190, &with).unwrap();
+    assert_eq!(decoded, response);
+    assert_eq!(got, exts);
+    let (_, divergence, got) =
+        KeyMaterialResponse::decode_for_requester_with(WireProfile::Extensions190, &with).unwrap();
+    assert_eq!((divergence, got), (None, exts.to_vec()));
+    assert_eq!(
+        KeyMaterialResponse::decode(WireProfile::Draft07, &plain)
+            .unwrap()
+            .1,
+        vec![none.clone(), none]
+    );
+
+    // One dictionary per client or none; protocol-07 cannot carry them.
+    assert!(
+        response
+            .encode(WireProfile::Extensions190, &[ext()])
+            .is_err()
+    );
+    assert!(response.encode(WireProfile::Draft07, &exts).is_err());
 }

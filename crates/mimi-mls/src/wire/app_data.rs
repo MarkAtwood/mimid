@@ -40,6 +40,11 @@ impl AppDataDictionary {
         Self::tls_deserialize_exact(component_data.tls_serialize_detached()?)
     }
 
+    /// Whether the dictionary has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries().next().is_none()
+    }
+
     /// Returns the `data` of the entry for `component_id`, if present.
     pub fn get(&self, component_id: u16) -> Option<&[u8]> {
         self.dictionary.get(&component_id)
@@ -50,6 +55,21 @@ impl AppDataDictionary {
         self.dictionary
             .entries()
             .map(|entry| (entry.id(), entry.data()))
+    }
+}
+
+impl std::hash::Hash for AppDataDictionary {
+    /// Hashes the encoding, which is canonical (decoding refuses any
+    /// other), so equal dictionaries hash equally.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.bytes.hash(state);
+    }
+}
+
+impl Default for AppDataDictionary {
+    /// The empty dictionary.
+    fn default() -> Self {
+        Self::new(&[]).expect("an empty dictionary encodes")
     }
 }
 

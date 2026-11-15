@@ -15,13 +15,14 @@
 //! None of the bytes come from this crate's encoder.
 
 use mimi_mls::wire::{
-    CipherSuite, GroupInfo, MLSMessage, PartialGroupInfo, ProposalRef, RatchetTreeOption,
-    RatchetTreePresence, Welcome,
+    AppDataDictionary, CipherSuite, GroupInfo, MLSMessage, PartialGroupInfo, ProposalRef,
+    RatchetTreeOption, RatchetTreePresence, Welcome,
 };
 use mimi_protocol::tls_codec::{self, Deserialize, Serialize, Size};
 use mimi_protocol::{
     FanoutEvent, FanoutMessage, Frank, GroupInfoOption, HandshakeBundle, IdentifierUri,
     NotifyRequest, UpdateRequest, UpdateResponseCode, UpdateResult, UpdateRoomResponse, Utf8String,
+    WireProfile,
 };
 
 macro_rules! mlswg {
@@ -627,4 +628,88 @@ fn notify_body_is_concatenated_fanout_messages() {
 fn notify_rejects_empty_room_id() {
     let body = fanout_proposal_wire();
     assert!(NotifyRequest::decode(IdentifierUri::default(), &body).is_err());
+}
+
+// --- #190 extension points (WireProfile, bead mimid-1wgh.55.5) ---
+//
+// Oracle: the draft change on MarkAtwood/mimi-protocol branch
+// extension-points-190: `update_extensions` after the bundle in
+// UpdateRequest, `update_response_extensions` after errorDescription in
+// UpdateRoomResponse, each an AppDataDictionary (mls-extensions §4.6:
+// ComponentData { uint16 component_id; opaque data<V> } in a <V> vector).
+
+/// One component, id 0x8001, data "r1".
+fn ext() -> AppDataDictionary {
+    AppDataDictionary::new(&[(0x8001, b"r1")]).unwrap()
+}
+
+/// [`ext`] encoded by hand: vector length 5, then 0x8001, length 2, "r1".
+const EXT_WIRE: &[u8] = &[0x05, 0x80, 0x01, 0x02, b'r', b'1'];
+
+#[test]
+fn update_request_extensions_follow_the_bundle() {
+    let none = AppDataDictionary::default();
+    let wire = proposal_wire();
+    let request = UpdateRequest::tls_deserialize_exact(&wire).unwrap();
+    // protocol-07: the trait's bytes, and no extensions.
+    assert_eq!(request.encode(WireProfile::Draft07, &none).unwrap(), wire);
+    assert_eq!(
+        UpdateRequest::decode(WireProfile::Draft07, &wire).unwrap(),
+        (request.clone(), none.clone())
+    );
+    // The #190 profile: the bundle, then the dictionary.
+    let with = cat(&[&wire, EXT_WIRE]);
+    assert_eq!(
+        request.encode(WireProfile::Extensions190, &ext()).unwrap(),
+        with
+    );
+    assert_eq!(
+        UpdateRequest::decode(WireProfile::Extensions190, &with).unwrap(),
+        (request.clone(), ext())
+    );
+    assert_eq!(
+        request.encode(WireProfile::Extensions190, &none).unwrap(),
+        cat(&[&wire, &[0x00]])
+    );
+    // protocol-07 has no field for them; and its decoder sees trailing bytes.
+    assert!(request.encode(WireProfile::Draft07, &ext()).is_err());
+    assert!(UpdateRequest::decode(WireProfile::Draft07, &with).is_err());
+}
+
+#[test]
+fn update_response_extensions_follow_the_error_description() {
+    let none = AppDataDictionary::default();
+    let response = UpdateRoomResponse {
+        error_description: utf8(""),
+        result: UpdateResult::WrongEpoch { current_epoch: 2 },
+    };
+    let wire = response.tls_serialize_detached().unwrap();
+    // wrongEpoch(1), an empty errorDescription, then uint64 currentEpoch.
+    assert_eq!(wire, cat(&[&[0x01, 0x00], &2u64.to_be_bytes()]));
+    assert_eq!(response.encode(WireProfile::Draft07, &none).unwrap(), wire);
+    let with = cat(&[&[0x01, 0x00], EXT_WIRE, &2u64.to_be_bytes()]);
+    assert_eq!(
+        response.encode(WireProfile::Extensions190, &ext()).unwrap(),
+        with
+    );
+    assert_eq!(
+        UpdateRoomResponse::decode(WireProfile::Extensions190, &with).unwrap(),
+        (response.clone(), ext())
+    );
+    assert_eq!(
+        UpdateRoomResponse::decode(WireProfile::Draft07, &wire).unwrap(),
+        (response.clone(), none)
+    );
+    assert!(response.encode(WireProfile::Draft07, &ext()).is_err());
+    // An unknown component is carried, for the receiver to ignore.
+    let unknown = AppDataDictionary::new(&[(0xfffe, b"?")]).unwrap();
+    let bytes = response
+        .encode(WireProfile::Extensions190, &unknown)
+        .unwrap();
+    assert_eq!(
+        UpdateRoomResponse::decode(WireProfile::Extensions190, &bytes)
+            .unwrap()
+            .1,
+        unknown
+    );
 }
