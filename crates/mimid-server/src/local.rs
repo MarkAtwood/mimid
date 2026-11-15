@@ -6,8 +6,11 @@
 //!
 //! The listener is off unless the configuration names `local_listen`, and
 //! the server refuses to start if that address is not a loopback address.
-//! Nothing here authenticates the caller: anyone who can reach the loopback
-//! interface of the host can use it.
+//! Without `local_token`, nothing authenticates the caller: anyone who can
+//! reach the loopback interface of the host can use it. With it, every call
+//! must carry `Authorization: Bearer <local_token>`, and any other is a
+//! `401` (decision 2 of bead mimid-1wgh.47, for hosts where others have
+//! shells).
 //!
 //! Routes:
 //!
@@ -29,23 +32,98 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
-use axum::http::StatusCode;
+use axum::extract::{Request, State};
+use axum::http::{StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use crate::http::problem;
 use crate::hub::{Hub, HubError};
 
-/// The local control router.
-pub fn router(hub: Arc<Hub>) -> Router {
-    Router::new()
+/// The fewest characters a `local_token` may have. INVENTED, NOT FROM
+/// SPEC: 32 characters of a random token are enough that guessing is not a
+/// concern.
+pub const MIN_LOCAL_TOKEN_LEN: usize = 32;
+
+/// The bearer token the local control listener requires, from the
+/// configuration's `local_token`. `Debug` does not print it.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub struct LocalToken(String);
+
+impl std::fmt::Debug for LocalToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LocalToken(..)")
+    }
+}
+
+/// Why a `local_token` was refused.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("local_token must be at least {MIN_LOCAL_TOKEN_LEN} visible ASCII characters")]
+pub struct InvalidLocalToken;
+
+impl TryFrom<String> for LocalToken {
+    type Error = InvalidLocalToken;
+
+    fn try_from(token: String) -> Result<Self, Self::Error> {
+        if token.len() >= MIN_LOCAL_TOKEN_LEN && token.bytes().all(|b| b.is_ascii_graphic()) {
+            Ok(Self(token))
+        } else {
+            Err(InvalidLocalToken)
+        }
+    }
+}
+
+impl LocalToken {
+    /// Whether `presented` is this token. The digests are compared, so the
+    /// comparison's time says nothing about the token.
+    fn matches(&self, presented: &str) -> bool {
+        Sha256::digest(presented.as_bytes()) == Sha256::digest(self.0.as_bytes())
+    }
+}
+
+/// The local control router. With `token`, every route requires it.
+pub fn router(hub: Arc<Hub>, token: Option<LocalToken>) -> Router {
+    let routes = Router::new()
         .route("/local/v1/hub-sender", get(hub_sender))
         .route("/local/v1/rooms", post(create_room))
-        .with_state(hub)
+        .with_state(hub);
+    match token {
+        Some(token) => routes.layer(middleware::from_fn_with_state(
+            Arc::new(token),
+            require_token,
+        )),
+        None => routes,
+    }
+}
+
+/// Refuses a call without `Authorization: Bearer <token>`.
+async fn require_token(
+    State(token): State<Arc<LocalToken>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let presented = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    if presented.is_some_and(|presented| token.matches(presented)) {
+        next.run(request).await
+    } else {
+        // A correct refusal: DEBUG only (the server works as designed).
+        tracing::debug!(
+            path = request.uri().path(),
+            presented = presented.is_some(),
+            "local control call refused: no valid local_token"
+        );
+        problem(StatusCode::UNAUTHORIZED, "unauthorized")
+    }
 }
 
 async fn hub_sender(State(hub): State<Arc<Hub>>) -> Response {

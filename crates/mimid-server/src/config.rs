@@ -57,6 +57,10 @@ pub struct Config {
     /// start if it is not a loopback address.
     #[serde(default)]
     pub local_listen: Option<SocketAddr>,
+    /// The bearer token the local control listener requires
+    /// ([`crate::local::LocalToken`]), or none for loopback-only access.
+    #[serde(default)]
+    pub local_token: Option<crate::local::LocalToken>,
     /// Refuse to host a room that does not require `frank_aad`. Off by
     /// default: franking is a SHOULD (decision mimid-1wgh.52).
     #[serde(default)]
@@ -294,6 +298,7 @@ mod tests {
             ]),
             max_key_packages: 97,
             local_listen: None,
+            local_token: None,
             require_franking: false,
             require_room_policy: false,
             peer_clock_tolerance_secs: 5,
@@ -319,6 +324,17 @@ mod tests {
             config.local_listen,
             Some(SocketAddr::from(([127, 0, 0, 1], 9099)))
         );
+    }
+
+    #[test]
+    fn local_token_is_optional_long_and_not_printed() {
+        let token = "t".repeat(crate::local::MIN_LOCAL_TOKEN_LEN);
+        let text = VALID.replace("[peers]", &format!("local_token = \"{token}\"\n[peers]"));
+        let config = Config::parse(&text).unwrap();
+        assert!(config.local_token.is_some());
+        assert!(!format!("{config:?}").contains(&token));
+        let short = VALID.replace("[peers]", "local_token = \"short\"\n[peers]");
+        assert!(Config::parse(&short).is_err());
     }
 
     #[test]

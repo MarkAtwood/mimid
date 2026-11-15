@@ -43,7 +43,7 @@ async fn fixture() -> (tempfile::TempDir, Arc<Hub>, Router) {
     let dir = tempfile::tempdir().unwrap();
     let (_store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     let hub = Arc::new(hub);
-    let app = router(Arc::clone(&hub));
+    let app = router(Arc::clone(&hub), None);
     (dir, hub, app)
 }
 
@@ -141,4 +141,39 @@ async fn a_room_under_another_domain_or_bad_base64_is_400() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(problem_kind(&body), "undecodable-request");
+}
+
+/// Decision 2 of bead mimid-1wgh.47: with `local_token` set, a call needs
+/// `Authorization: Bearer <token>`; without one, or with another, it is a
+/// 401 problem.
+#[tokio::test]
+async fn a_configured_local_token_is_required() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_store, hub) = common::open_hub(&dir.path().join("mimid.sqlite")).await;
+    let token = "x".repeat(mimid_server::local::MIN_LOCAL_TOKEN_LEN);
+    let app = router(
+        Arc::new(hub),
+        Some(mimid_server::local::LocalToken::try_from(token.clone()).unwrap()),
+    );
+    let call = |authorization: Option<String>| {
+        let app = app.clone();
+        async move {
+            let mut request = axum::http::Request::get("/local/v1/hub-sender");
+            if let Some(value) = authorization {
+                request = request.header(axum::http::header::AUTHORIZATION, value);
+            }
+            tower::ServiceExt::oneshot(app, request.body(axum::body::Body::empty()).unwrap())
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    use axum::http::StatusCode;
+    assert_eq!(call(None).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        call(Some(format!("Bearer {token}y"))).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(call(Some(token.clone())).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(call(Some(format!("Bearer {token}"))).await, StatusCode::OK);
 }

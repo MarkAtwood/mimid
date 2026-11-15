@@ -163,11 +163,14 @@ async fn main() -> anyhow::Result<()> {
             );
             let mut stopped = local_stopped;
             Some(tokio::spawn(
-                axum::serve(listener, mimid_server::local::router(Arc::clone(&hub)))
-                    .with_graceful_shutdown(async move {
-                        let _ = stopped.changed().await;
-                    })
-                    .into_future(),
+                axum::serve(
+                    listener,
+                    mimid_server::local::router(Arc::clone(&hub), config.local_token.clone()),
+                )
+                .with_graceful_shutdown(async move {
+                    let _ = stopped.changed().await;
+                })
+                .into_future(),
             ))
         }
         None => None,
