@@ -1,19 +1,25 @@
 //! The receiving side of the identifierQuery endpoint (protocol-07 §5.8,
 //! `POST /identifierQuery/{domain}`).
 //!
-//! Only exact `handle` queries are answered (decision mimid-1wgh.7.38),
-//! and a local user's handle is its mimi:// user URI (decision
-//! mimid-1wgh.7.39):
+//! Only exact `handle` and `nick` queries are answered (decisions
+//! mimid-1wgh.7.38, mimid-1wgh.7.39):
 //!
+//! - a local user's handle is its mimi:// user URI
+//!   (`mimi://<domain>/u/<id>`, protocol-07 §2.1; decision mimid-1wgh.6.76),
+//!   compared after RFC 3986 §6.2.2 normalization (scheme and host case,
+//!   percent-encoding; decision mimid-1wgh.52);
+//! - its nickname is `<id>` as text: a `nick` searchValue is
+//!   percent-encoded (RFC 3986 §2.1, every octet outside the unreserved
+//!   set) into `mimi://<domain>/u/<value>` and compared the same way. §5.8
+//!   says "nick means that the nickname or handle matches exactly"
+//!   without the URI, which is how Haven reads a bare name (IETF 127
+//!   table, 2026-11-15);
 //! - an empty `query_elements` list is `forbidden`;
-//! - any element whose `searchType` is not `handle` makes the whole query
+//! - any element of another `searchType` makes the whole query
 //!   `unsupportedField`;
-//! - otherwise every `searchValue` must be the same bytes (AND semantics)
-//!   and, after RFC 3986 §6.2.2 normalization (scheme and host case,
-//!   percent-encoding; decision mimid-1wgh.52), the user URI (`mimi://<domain>/u/<id>`, protocol-07 §2.1;
-//!   decision mimid-1wgh.6.76) of a local user who has a client (as for
-//!   consent, decision mimid-1wgh.7.36): `success` with that URI, else
-//!   `notFound`.
+//! - otherwise every element must name the same user (AND semantics), a
+//!   local user who has a client (as for consent, decision
+//!   mimid-1wgh.7.36): `success` with that user's URI, else `notFound`.
 //!
 //! Every decodable request is answered with an IdentifierResponse; the
 //! outcome is its `responseCode`, not the HTTP status (decision
@@ -81,34 +87,45 @@ impl Follower {
         &self,
         request: &IdentifierRequest,
     ) -> Result<(IdentifierQueryCode, Option<IdentifierUri>), FollowerError> {
-        let Some(first) = request.query_elements.first() else {
+        if request.query_elements.is_empty() {
             return Ok((IdentifierQueryCode::Forbidden, None));
-        };
+        }
         if request
             .query_elements
             .iter()
-            .any(|element| element.search != QuerySearch::Handle)
+            .any(|element| !matches!(element.search, QuerySearch::Handle | QuerySearch::Nick))
         {
             return Ok((IdentifierQueryCode::UnsupportedField, None));
         }
-        let value = &first.search_value;
-        // Bead mimid-1wgh.52.2: no user here has a URI this long.
-        if self.limits.uri("searchValue", value).is_err() {
-            return Ok((IdentifierQueryCode::NotFound, None));
+        // AND semantics: every element must name the same user URI.
+        let mut named: Option<String> = None;
+        for element in &request.query_elements {
+            let value = &element.search_value;
+            // Bead mimid-1wgh.52.2: no user here has a URI this long.
+            if self.limits.uri("searchValue", value).is_err() {
+                return Ok((IdentifierQueryCode::NotFound, None));
+            }
+            let Ok(text) = std::str::from_utf8(value) else {
+                return Ok((IdentifierQueryCode::NotFound, None));
+            };
+            let uri = match element.search {
+                QuerySearch::Nick => self.nick_uri(text),
+                _ => text.to_owned(),
+            };
+            // RFC 3986 §6.2.2 equivalence is the clear meaning of "matches
+            // exactly" (decision mimid-1wgh.52); the answer is the URI in
+            // its normal form.
+            let uri = lookup_uri(&uri, "searchValue").into_owned();
+            match &named {
+                Some(earlier) if *earlier != uri => {
+                    return Ok((IdentifierQueryCode::NotFound, None));
+                }
+                _ => named = Some(uri),
+            }
         }
-        if request
-            .query_elements
-            .iter()
-            .any(|element| element.search_value != *value)
-        {
-            return Ok((IdentifierQueryCode::NotFound, None));
-        }
-        // RFC 3986 §6.2.2 equivalence is the clear meaning of "matches
-        // exactly" (decision mimid-1wgh.52); the answer is the URI in its
-        // normal form.
-        let found = match std::str::from_utf8(value).map(|text| lookup_uri(text, "searchValue")) {
+        let found = match named {
             // protocol-07 §2.1; decision mimid-1wgh.6.76
-            Ok(text) if user_uri_domain(&text).as_ref() == Some(&self.domain) => {
+            Some(text) if user_uri_domain(&text).as_ref() == Some(&self.domain) => {
                 // Decision mimid-1wgh.7.36's notion of a known user.
                 if self.store.clients_of_user(&text).await?.is_empty() {
                     None
@@ -122,5 +139,21 @@ impl Follower {
             Some(uri) => (IdentifierQueryCode::Success, Some(uri)),
             None => (IdentifierQueryCode::NotFound, None),
         })
+    }
+
+    /// The user URI a `nick` names on this provider:
+    /// `mimi://<domain>/u/<nick>`, with every octet of `nick` outside the
+    /// RFC 3986 §2.3 unreserved set percent-encoded (§2.1), so a nick is
+    /// one path segment whatever it holds.
+    fn nick_uri(&self, nick: &str) -> String {
+        let mut uri = format!("mimi://{}/u/", self.domain);
+        for byte in nick.bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+                uri.push(char::from(byte));
+            } else {
+                uri.push_str(&format!("%{byte:02X}"));
+            }
+        }
+        uri
     }
 }

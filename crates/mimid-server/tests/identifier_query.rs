@@ -2,8 +2,9 @@
 //! `POST /v1/identifierQuery/{domain}`.
 //!
 //! Policy (decisions mimid-1wgh.7.38, mimid-1wgh.7.39): only exact `handle`
-//! queries are answered, and a local user's handle is its mimi:// URI. An
-//! empty query is `forbidden`, any other search type `unsupportedField`,
+//! and `nick` queries are answered; a local user's handle is its mimi://
+//! URI and its nick the id in that URI. An empty query is `forbidden`, any
+//! other search type `unsupportedField`,
 //! and every decodable request gets `200` with an IdentifierResponse
 //! (decision mimid-1wgh.7.40).
 //!
@@ -236,10 +237,6 @@ async fn handle_that_is_not_a_user_uri_is_not_found() {
 #[tokio::test]
 async fn other_search_types_are_unsupported_and_empty_is_forbidden() {
     let b = provider("b.example", &[BOB]).await;
-    assert_eq!(
-        post(&b.app, PATH, FROM_A, NICK_BOB).await,
-        (StatusCode::OK, no_results(UNSUPPORTED_FIELD))
-    );
     // Haven's request carries a vcardField element next to its handle.
     assert_eq!(
         post(&b.app, PATH, FROM_A, HAVEN_REQUEST).await,
@@ -426,4 +423,81 @@ async fn a_handle_matches_its_rfc3986_equivalents_and_nothing_looser() {
             "{other}"
         );
     }
+}
+
+/// nick(2).
+const NICK: u8 = 2;
+
+/// IdentifierRequest with one element per (search type, value), and no
+/// extensions.
+fn query_all(elements: &[(u8, &[u8])]) -> Vec<u8> {
+    let mut list = Vec::new();
+    for (search_type, value) in elements {
+        list.push(*search_type);
+        list.extend(vl(value));
+    }
+    let mut request = vl(&list);
+    request.push(0x00);
+    request
+}
+
+/// protocol-07 §5.8: "nick means that the nickname or handle matches
+/// exactly", without the URI. A local user's nick is the id in its user
+/// URI, compared as text: percent-encoded into the URI, so case and every
+/// character count, and a `/` cannot reach another path.
+#[tokio::test]
+async fn a_nick_is_the_id_in_the_user_uri() {
+    let b = provider("b.example", &[BOB, EMILE_NFC]).await;
+    assert_eq!(
+        post(&b.app, PATH, FROM_A, NICK_BOB).await,
+        (StatusCode::OK, SUCCESS_BOB.to_vec())
+    );
+    assert_eq!(
+        post(&b.app, PATH, FROM_A, &query(NICK, "émile".as_bytes())).await,
+        (StatusCode::OK, success(EMILE_NFC))
+    );
+    for nick in ["BOB", "bob ", "u/bob", "../u/bob", "%62ob", "e\u{301}mile"] {
+        assert_eq!(
+            post(&b.app, PATH, FROM_A, &query(NICK, nick.as_bytes())).await,
+            (StatusCode::OK, no_results(NOT_FOUND)),
+            "{nick:?}"
+        );
+    }
+}
+
+/// AND semantics across search types: a handle and a nick of the same user
+/// find it; of two users, nobody.
+#[tokio::test]
+async fn handle_and_nick_must_name_the_same_user() {
+    let b = provider("b.example", &[BOB, IRIS]).await;
+    assert_eq!(
+        post(
+            &b.app,
+            PATH,
+            FROM_A,
+            &query_all(&[(HANDLE, BOB.as_bytes()), (NICK, b"bob")])
+        )
+        .await,
+        (StatusCode::OK, SUCCESS_BOB.to_vec())
+    );
+    assert_eq!(
+        post(
+            &b.app,
+            PATH,
+            FROM_A,
+            &query_all(&[(HANDLE, BOB.as_bytes()), (NICK, b"iris")])
+        )
+        .await,
+        (StatusCode::OK, no_results(NOT_FOUND))
+    );
+    assert_eq!(
+        post(
+            &b.app,
+            PATH,
+            FROM_A,
+            &query_all(&[(NICK, b"bob"), (5, b"bo")])
+        )
+        .await,
+        (StatusCode::OK, no_results(UNSUPPORTED_FIELD))
+    );
 }
