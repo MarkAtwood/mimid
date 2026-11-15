@@ -1,1 +1,2 @@
 {"id":"01a1a7ad-e64e-7839-9a35-92b72b70a84d","issue_id":"mimid-1wgh.4.76.7","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-11-04T17:49:14.190540695Z"}
+{"id":"01a1e148-37de-7b51-a326-b2ac808940cf","issue_id":"mimid-1wgh.4.76.7","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Done in c2bed82 (see commit message); 1375 tests pass; not deployed.","created_at":"2026-11-15T22:16:08.926742516Z"}
