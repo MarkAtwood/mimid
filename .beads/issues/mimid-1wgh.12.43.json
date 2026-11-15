@@ -3,13 +3,15 @@
   "title": "JMAP Consent: Consent/get, /changes, /query, /set (draft-atwood-jmap-chat-mimi §Consent, jmap-chat-spec 51d463b)",
   "description": "Implement the Consent data type added to draft-atwood-jmap-chat-mimi-00 (jmap-chat-spec commit 51d463b). One record per ConsentScope with the account's user as requester or target; requested, decision. Consent/set sends requestConsent (request/cancel) or updateConsent (grant/revoke) via the peer client before answering (404 -\u003e invalidProperties; unreachable/other -\u003e SetError consentNotSent), or changes the other local account's record directly. Received requestConsent/updateConsent (store/consent.rs consent_request, consent_update) update the records; the hub's KeyMaterial consent check uses the target's grant/revoke (room scope before any-room). Consent type in StateChange and EventSource types. Then mimid-chat /allow, /request, /cancel use Consent/set in JMAP mode (replacing the refusal from mimid-1wgh.12.42).",
   "notes": "Implemented and pushed in 96ae7e6 (server + mimid-chat). Workspace 1309 tests pass. Not deployed to the hackathon host yet: migration 0008 makes the pre-consent binary unable to open the database, so rollback would need a DB backup; waiting for Mark's OK.",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "issue_type": "feature",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-15T07:43:16.821900835Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-15T08:03:58.357572719Z",
+  "updated_at": "2026-11-15T08:12:05.471942776Z",
+  "closed_at": "2026-11-15T08:12:05.471942776Z",
+  "close_reason": "Implemented (96ae7e6) and deployed to the mimid host 2026-11-15 08:10Z (rollback: /usr/local/bin/mimid.pre-consent plus DB backup /var/lib/mimid/backup-pre-consent-*). Live test jmapalice/jmapbob: request seen by target, revoke seen by requester, invite refused noConsent, grant, invite+join+messages OK; no ERROR/WARN in the log.",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.12.43",
