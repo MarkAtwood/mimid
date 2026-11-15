@@ -64,6 +64,7 @@ use fanout::FanoutHandle;
 pub use key_material::{LocalKeyMaterial, LocalKeyMaterialError, LocalKeyMaterialFuture};
 use keys::HubSigningKey;
 pub(crate) use state::{identity_domain, lookup_uri, room_uri_domain, user_uri_domain};
+pub use state::normalized_uri;
 
 /// RFC 9420 §17.1: `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`, the only
 /// ciphersuite supported (decision mimid-1wgh.23).

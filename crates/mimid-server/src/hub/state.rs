@@ -29,7 +29,7 @@ const MIMI_SCHEME_PREFIX: &str = "mimi://";
 /// Nothing else is changed: the path keeps its case, and there is no
 /// Unicode normalization or case folding. A URI with userinfo keeps its
 /// authority as is, and a `%` not followed by two hex digits is left alone.
-pub(crate) fn normalized_uri(uri: &str) -> std::borrow::Cow<'_, str> {
+pub fn normalized_uri(uri: &str) -> std::borrow::Cow<'_, str> {
     let Some((scheme, rest)) = uri.split_once(':') else {
         return uri.into();
     };

@@ -55,6 +55,7 @@ use mimi_room_policy::{
     BaseRoomPolicy, Bool, Capability, Role, RoleData, SingleSourceRoleChangeTargets,
 };
 use mimid_server::hub::components::apply_commit_op;
+use mimid_server::hub::normalized_uri;
 
 use crate::hub::{Hub, encode};
 use crate::state::{Invite, Room, RoomStatus, State, StateDir};
@@ -635,7 +636,7 @@ impl Client {
                 },
             }
         }
-        let target = self.user_uri(user)?;
+        let mut target = self.user_uri(user)?;
         ensure!(target != self.me, "you cannot invite yourself");
         let room = self.current()?;
         let before = participants(self.member(&room)?)?;
@@ -673,10 +674,22 @@ impl Client {
                 let info = key_package
                     .verify(SystemTime::now())
                     .map_err(|e| anyhow!("{target}'s KeyPackage does not verify: {e:?}"))?;
+                // The URI as typed may be another spelling of the one in
+                // the credential (RFC 3986 §6.2.2; decision mimid-1wgh.52):
+                // compare normal forms, then use the credential's bytes, so
+                // the participant list names the user as their provider does.
+                let identity = info
+                    .identity()
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                    .ok_or_else(|| anyhow!("{target}'s KeyPackage has no UTF-8 identity"))?;
                 ensure!(
-                    info.identity() == Some(target.as_bytes()),
-                    "the hub served a KeyPackage for another identity"
+                    normalized_uri(identity) == normalized_uri(&target),
+                    "the hub served a KeyPackage for another identity ({identity})"
                 );
+                if identity != target {
+                    self.say(format!("* note: {target} is {identity} at its provider"));
+                    target = identity.to_owned();
+                }
                 key_packages.push(encode(key_package)?);
             }
         }
