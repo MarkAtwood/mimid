@@ -1182,7 +1182,7 @@ dependencies = [
 [[package]]
 name = "mimi-core"
 version = "0.0.1"
-source = "git+https://github.com/havenmessenger/interop?rev=34eae7ec4036ca60003dac92d15fdcb75a06ca21#34eae7ec4036ca60003dac92d15fdcb75a06ca21"
+source = "git+https://github.com/havenmessenger/interop?rev=ff53b4c514d78efb1c1d4f29451fd7a80686f5c5#ff53b4c514d78efb1c1d4f29451fd7a80686f5c5"
 dependencies = [
  "aes 0.8.4",
  "anyhow",

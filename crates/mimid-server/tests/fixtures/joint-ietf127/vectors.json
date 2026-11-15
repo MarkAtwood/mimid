@@ -84,7 +84,7 @@
       "id": "jt-iq-02",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "notFound: compares exactly; refuses MIMI:// (normalization planned)",
+        "haven": "success: compares the RFC 3986 canonical form",
         "mimid": "success, answered as mimi://b.example/u/alice",
         "operation": "POST /identifierQuery/b.example, alice has a client",
         "spec": "the drafts say only \"matches exactly\"; proposed: success, by RFC 3986 §6.2.2"
@@ -97,7 +97,7 @@
       "id": "jt-iq-03",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "notFound: compares exactly (normalization planned)",
+        "haven": "success: compares the RFC 3986 canonical form",
         "mimid": "success, answered as mimi://b.example/u/alice",
         "operation": "POST /identifierQuery/b.example, alice has a client",
         "spec": "the drafts say only \"matches exactly\"; proposed: success, by RFC 3986 §6.2.2"
@@ -119,7 +119,7 @@
     {
       "decode": "error",
       "decode_haven": "ok",
-      "description": "success naming mimi://例え.jp/u/alice: a host outside RFC 3986, which is ASCII. mimid refuses it at decode; Haven accepts it today and plans to refuse",
+      "description": "success naming mimi://例え.jp/u/alice: a host outside RFC 3986, which is ASCII. mimid refuses it at decode; Haven's codec decodes it and its URI parser refuses it",
       "hex": "0019186d696d693a2f2fe4be8be381882e6a702f752f616c6963650000",
       "id": "jt-uri-01",
       "kind": "IdentifierResponse"

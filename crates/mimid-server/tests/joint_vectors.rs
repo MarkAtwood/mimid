@@ -287,13 +287,13 @@ fn vectors() -> Value {
             "jt-iq-02",
             "MIMI://B.Example/u/alice",
             "handle query, scheme and host in other case",
-            "notFound: compares exactly; refuses MIMI:// (normalization planned)",
+            "success: compares the RFC 3986 canonical form",
         ),
         (
             "jt-iq-03",
             "mimi://b.example/u/%61lice",
             "handle query, an unreserved character percent-encoded",
-            "notFound: compares exactly (normalization planned)",
+            "success: compares the RFC 3986 canonical form",
         ),
     ] {
         v.push(with_outcome(
@@ -334,7 +334,7 @@ fn vectors() -> Value {
     v.push(decode_haven(vector(
         "jt-uri-01",
         "IdentifierResponse",
-        "success naming mimi://\u{4F8B}\u{3048}.jp/u/alice: a host outside RFC 3986, which is ASCII. mimid refuses it at decode; Haven accepts it today and plans to refuse",
+        "success naming mimi://\u{4F8B}\u{3048}.jp/u/alice: a host outside RFC 3986, which is ASCII. mimid refuses it at decode; Haven's codec decodes it and its URI parser refuses it",
         &raw,
         "error",
     ),
