@@ -32,6 +32,23 @@
 //! - `GET /local/v1/rooms/{roomId}`: one room's summary, the room ID
 //!   percent-encoded as one path segment; `404` if it is not hosted here.
 //!
+//! - `GET /local/v1/users`: every JMAP account, as `{"users": [{"user",
+//!   "accountId", "createdAt"}, ...]}` ordered by user URI, `createdAt` in
+//!   milliseconds (bead mimid-1wgh.47.3).
+//! - `POST /local/v1/users`: `{"user": "mimi://<domain>/u/<id>"}` creates
+//!   that local user's JMAP account; `201` with `{"user", "accountId"}`,
+//!   `400` for a URI that is not a user of this provider, `409` if the user
+//!   has an account.
+//! - `POST /local/v1/users/{user}/tokens`: issues a new JMAP bearer token
+//!   for the user (URI percent-encoded as one path segment); `201` with
+//!   `{"token"}`, `404` if the user has no account. The token is shown
+//!   once, never stored in clear and never logged.
+//!
+//! Account creation and token issuance log at INFO with the user and
+//! account. The caller is not identified beyond reaching the loopback
+//! listener (and, if set, holding `local_token`), so no peer address is
+//! logged: it would always be a loopback address.
+//!
 //! A room summary is `{"roomId", "groupId", "epoch", "members",
 //! "participants", "roles"}`: `groupId` base64url without padding;
 //! `members` a list of `{"leaf", "identity"}`; `participants` a list of
@@ -45,7 +62,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{Path, Request, State};
+use axum::extract::{FromRef, Path, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -57,6 +74,7 @@ use sha2::{Digest, Sha256};
 
 use crate::http::problem;
 use crate::hub::{Hub, HubError, RoomSummary};
+use crate::store::{JmapStoreError, Store};
 
 /// The fewest characters a `local_token` may have. INVENTED, NOT FROM
 /// SPEC: 32 characters of a random token are enough that guessing is not a
@@ -100,13 +118,35 @@ impl LocalToken {
     }
 }
 
-/// The local control router. With `token`, every route requires it.
-pub fn router(hub: Arc<Hub>, token: Option<LocalToken>) -> Router {
+/// What the local routes share.
+#[derive(Clone)]
+struct LocalState {
+    hub: Arc<Hub>,
+    store: Store,
+}
+
+impl FromRef<LocalState> for Arc<Hub> {
+    fn from_ref(state: &LocalState) -> Self {
+        Arc::clone(&state.hub)
+    }
+}
+
+impl FromRef<LocalState> for Store {
+    fn from_ref(state: &LocalState) -> Self {
+        state.store.clone()
+    }
+}
+
+/// The local control router over `hub` and `store`. With `token`, every
+/// route requires it.
+pub fn router(hub: Arc<Hub>, store: Store, token: Option<LocalToken>) -> Router {
     let routes = Router::new()
         .route("/local/v1/hub-sender", get(hub_sender))
         .route("/local/v1/rooms", post(create_room).get(list_rooms))
         .route("/local/v1/rooms/{room_id}", get(get_room))
-        .with_state(hub);
+        .route("/local/v1/users", post(create_user).get(list_users))
+        .route("/local/v1/users/{user}/tokens", post(issue_token))
+        .with_state(LocalState { hub, store });
     match token {
         Some(token) => routes.layer(middleware::from_fn_with_state(
             Arc::new(token),
@@ -194,6 +234,101 @@ async fn get_room(State(hub): State<Arc<Hub>>, Path(room_id): Path<String>) -> R
             tracing::debug!(room_id, "local room read: not hosted here");
             problem(StatusCode::NOT_FOUND, "no-such-room")
         }
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// A failed store call: logged at ERROR here, where it is disposed of.
+fn store_failure(what: &'static str, error: &(dyn std::error::Error + 'static)) -> Response {
+    tracing::error!(name: "local_store_failed", what, error, "local control call failed");
+    problem(StatusCode::INTERNAL_SERVER_ERROR, "internal-error")
+}
+
+async fn list_users(State(store): State<Store>) -> Response {
+    match store.accounts().await {
+        Ok(accounts) => Json(serde_json::json!({
+            "users": accounts
+                .iter()
+                .map(|(account_id, user, created_at)| serde_json::json!({
+                    "user": user,
+                    "accountId": account_id,
+                    "createdAt": created_at,
+                }))
+                .collect::<Vec<_>>()
+        }))
+        .into_response(),
+        Err(error) => store_failure("list accounts", &error),
+    }
+}
+
+/// The body of `POST /local/v1/users`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateUser {
+    user: String,
+}
+
+async fn create_user(State(state): State<LocalState>, body: Json<CreateUser>) -> Response {
+    let Json(CreateUser { user }) = body;
+    match state
+        .store
+        .create_account(state.hub.domain(), &user, now_ms())
+        .await
+    {
+        Ok(account_id) => {
+            tracing::info!(
+                name: "local_account_created",
+                user,
+                account_id,
+                "JMAP account created through the local control listener"
+            );
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "user": user, "accountId": account_id })),
+            )
+                .into_response()
+        }
+        Err(JmapStoreError::NotLocalUser) => {
+            tracing::debug!(user, "local account creation refused: not a local user");
+            problem(StatusCode::BAD_REQUEST, "not-local-user")
+        }
+        Err(JmapStoreError::AccountExists) => {
+            tracing::debug!(user, "local account creation refused: account exists");
+            problem(StatusCode::CONFLICT, "account-exists")
+        }
+        Err(error) => store_failure("create account", &error),
+    }
+}
+
+async fn issue_token(State(store): State<Store>, Path(user): Path<String>) -> Response {
+    let account_id = match store.account_of_user(&user).await {
+        Ok(Some(account_id)) => account_id,
+        Ok(None) => {
+            tracing::debug!(user, "local token refused: no account");
+            return problem(StatusCode::NOT_FOUND, "no-such-user");
+        }
+        Err(error) => return store_failure("find account", &error),
+    };
+    match store.issue_token(&account_id, now_ms()).await {
+        Ok(token) => {
+            tracing::info!(
+                name: "local_token_issued",
+                user,
+                account_id,
+                "JMAP bearer token issued through the local control listener"
+            );
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "token": token.expose_secret() })),
+            )
+                .into_response()
+        }
+        Err(error) => store_failure("issue token", &error),
     }
 }
 

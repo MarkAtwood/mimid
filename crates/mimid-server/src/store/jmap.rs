@@ -193,6 +193,38 @@ impl Store {
         }
     }
 
+    /// Every JMAP account, as (account id, user URI, created at in ms),
+    /// ordered by user URI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails and
+    /// [`StoreError::OutOfRange`] for a stored time below zero.
+    pub async fn accounts(&self) -> Result<Vec<(String, String, u64)>, StoreError> {
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT account_id, user_uri, created_at FROM jmap_account ORDER BY user_uri",
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        rows.into_iter()
+            .map(|(id, user, created)| Ok((id, user, super::from_sql_int(created)?)))
+            .collect()
+    }
+
+    /// The JMAP account id of `user_uri`, if it has one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails.
+    pub async fn account_of_user(&self, user_uri: &str) -> Result<Option<String>, StoreError> {
+        Ok(
+            sqlx::query_scalar("SELECT account_id FROM jmap_account WHERE user_uri = ?")
+                .bind(user_uri)
+                .fetch_optional(&self.reader)
+                .await?,
+        )
+    }
+
     /// Revokes `token` at `now_ms`. Returns whether a valid token was
     /// revoked; `false` means it was unknown or already revoked.
     ///

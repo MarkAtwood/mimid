@@ -165,7 +165,11 @@ async fn main() -> anyhow::Result<()> {
             Some(tokio::spawn(
                 axum::serve(
                     listener,
-                    mimid_server::local::router(Arc::clone(&hub), config.local_token.clone()),
+                    mimid_server::local::router(
+                        Arc::clone(&hub),
+                        store.clone(),
+                        config.local_token.clone(),
+                    ),
                 )
                 .with_graceful_shutdown(async move {
                     let _ = stopped.changed().await;

@@ -41,9 +41,9 @@ fn create(room_id: &str, group_info: &[u8], tree: &[u8]) -> Request<Body> {
 
 async fn fixture() -> (tempfile::TempDir, Arc<Hub>, Router) {
     let dir = tempfile::tempdir().unwrap();
-    let (_store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     let hub = Arc::new(hub);
-    let app = router(Arc::clone(&hub), None);
+    let app = router(Arc::clone(&hub), store, None);
     (dir, hub, app)
 }
 
@@ -149,10 +149,11 @@ async fn a_room_under_another_domain_or_bad_base64_is_400() {
 #[tokio::test]
 async fn a_configured_local_token_is_required() {
     let dir = tempfile::tempdir().unwrap();
-    let (_store, hub) = common::open_hub(&dir.path().join("mimid.sqlite")).await;
+    let (store, hub) = common::open_hub(&dir.path().join("mimid.sqlite")).await;
     let token = "x".repeat(mimid_server::local::MIN_LOCAL_TOKEN_LEN);
     let app = router(
         Arc::new(hub),
+        store,
         Some(mimid_server::local::LocalToken::try_from(token.clone()).unwrap()),
     );
     let call = |authorization: Option<String>| {
@@ -240,4 +241,103 @@ async fn hosted_rooms_are_listed_and_read() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(problem_kind(&body), "no-such-room");
+}
+
+/// Bead mimid-1wgh.47.3: a local user's JMAP account is created, listed,
+/// and given a bearer token that the store then accepts; a foreign or
+/// repeated user and a token for a user without an account are refused.
+#[tokio::test]
+async fn accounts_and_tokens_are_issued_for_local_users() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let app = router(Arc::new(hub), store.clone(), None);
+    let alice = std::str::from_utf8(ALICE).unwrap();
+    let json = |method: &str, path: &str, body: Option<serde_json::Value>| {
+        let mut request = Request::builder().method(method).uri(path);
+        if body.is_some() {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+        }
+        request
+            .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+            .unwrap()
+    };
+    let (status, body) = call(
+        &app,
+        json(
+            "POST",
+            "/local/v1/users",
+            Some(serde_json::json!({"user": alice})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(created["user"], alice);
+    let account_id = created["accountId"].as_str().unwrap().to_owned();
+
+    let (status, body) = call(
+        &app,
+        json(
+            "POST",
+            "/local/v1/users",
+            Some(serde_json::json!({"user": alice})),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, problem_kind(&body)),
+        (StatusCode::CONFLICT, "account-exists".to_owned())
+    );
+    let (status, body) = call(
+        &app,
+        json(
+            "POST",
+            "/local/v1/users",
+            Some(serde_json::json!({"user": "mimi://b.example/u/bob"})),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, problem_kind(&body)),
+        (StatusCode::BAD_REQUEST, "not-local-user".to_owned())
+    );
+
+    let (status, body) = call(&app, json("GET", "/local/v1/users", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let list: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(list["users"][0]["user"], alice);
+    assert_eq!(list["users"][0]["accountId"], account_id);
+    assert_eq!(list["users"].as_array().unwrap().len(), 1);
+
+    let encoded = alice.replace(':', "%3A").replace('/', "%2F");
+    let (status, body) = call(
+        &app,
+        json("POST", &format!("/local/v1/users/{encoded}/tokens"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let token: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let token = mimid_server::store::BearerToken::parse(token["token"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        store
+            .account_for_token(&token)
+            .await
+            .unwrap()
+            .map(|owner| owner.account_id),
+        Some(account_id)
+    );
+
+    let (status, body) = call(
+        &app,
+        json(
+            "POST",
+            "/local/v1/users/mimi%3A%2F%2Fa.example%2Fu%2Fnobody/tokens",
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, problem_kind(&body)),
+        (StatusCode::NOT_FOUND, "no-such-user".to_owned())
+    );
 }
