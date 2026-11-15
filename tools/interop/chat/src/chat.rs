@@ -56,6 +56,7 @@ use mimi_room_policy::{
 };
 use mimid_server::hub::components::apply_commit_op;
 use mimid_server::hub::normalized_uri;
+use serde_json::json;
 
 use crate::hub::{Hub, encode};
 use crate::state::{Room, RoomStatus, State, StateDir};
@@ -293,6 +294,8 @@ impl Client {
                 "roles" => self.roles(arg).await,
                 "stale-commit" => self.stale_commit(arg).await,
                 "allow" => self.allow(arg).await,
+                "deny" => self.deny(arg).await,
+                "consents" => self.consents().await,
                 "request" => self.request_consent(arg, ConsentOperation::Request).await,
                 "cancel" => self.request_consent(arg, ConsentOperation::Cancel).await,
                 "report" => self.report(arg).await,
@@ -334,8 +337,10 @@ impl Client {
             "/policy k=v ...        change base_room_policy: fixed_membership, multi_device,\n                       pseudonyms_allowed, persistent_room, discoverable (true|false),\n                       max_clients, max_users (a number or none)",
             "/stale-commit          test: send a roles_list Commit one epoch late (expect wrongEpoch)",
             "/allow <user>          let <user> fetch your KeyPackages (updateConsent grant)",
+            "/deny <user>           refuse <user> consent to fetch your KeyPackages (revoke)",
             "/request <user>        ask <user> for consent to fetch their KeyPackages (requestConsent)",
             "/cancel <user>         withdraw that request (requestConsent cancel)",
+            "/consents              your consent requests and decisions (JMAP mode)",
             "/report [--message] <user> [note]\n                       report <user> in the current room (reportAbuse);\n                       --message attaches one AbusiveMessage",
             "/join [n]              accept pending invite #n (default: the oldest)",
             "/rooms                 list rooms; /room <name|uri> switches the current room",
@@ -818,21 +823,104 @@ impl Client {
         Ok(())
     }
 
-    /// draft-atwood-jmap-chat-mimi-00 has no consent call, and the JSON
-    /// lane's updateConsent is for peer providers: a client in JMAP mode
-    /// cannot grant or request consent (bead mimid-1wgh.12.42).
-    fn no_consent_over_jmap(&self) -> anyhow::Result<()> {
-        ensure!(
-            self.hub.jmap.is_none(),
-            "consent is not available in JMAP mode: the JMAP MIMI draft has no consent call \
-             (KeyMaterial for users on your own server does not need it)"
-        );
+    /// The id of the account's Consent record for requester `requester`,
+    /// target `target` and any room, over JMAP.
+    async fn consent_id(&self, requester: &str, target: &str) -> anyhow::Result<Option<String>> {
+        let Some(jmap) = &self.hub.jmap else {
+            return Ok(None);
+        };
+        Ok(jmap
+            .consents()
+            .await?
+            .into_iter()
+            .find(|r| {
+                r["requesterUri"] == requester && r["targetUri"] == target && r["roomId"].is_null()
+            })
+            .and_then(|r| r["id"].as_str().map(str::to_owned)))
+    }
+
+    /// In JMAP mode, records the account's decision about `requester`
+    /// (draft-atwood-jmap-chat-mimi-00 §Consent/set): the server sends the
+    /// grant or revoke to the requester's provider.
+    async fn decide_over_jmap(&mut self, requester: &str, decision: &str) -> anyhow::Result<()> {
+        let id = self.consent_id(requester, &self.me).await?;
+        let args = match id {
+            Some(id) => json!({"update": {id: {"decision": decision}}}),
+            None => json!({"create": {"c": {"requesterUri": requester, "targetUri": self.me,
+                                            "decision": decision}}}),
+        };
+        let jmap = self.hub.jmap.as_ref().context("JMAP mode")?;
+        jmap.consent_set(args).await?;
+        Ok(())
+    }
+
+    /// /deny: refuses `arg` consent to fetch your KeyPackages (JMAP mode:
+    /// Consent/set `revoke`; otherwise an updateConsent `revoke`).
+    async fn deny(&mut self, arg: &str) -> anyhow::Result<()> {
+        let requester = self.user_uri(arg)?;
+        if self.hub.jmap.is_some() {
+            self.decide_over_jmap(&requester, "revoke").await?;
+        } else {
+            let entry = ConsentEntry {
+                consent_operation: ConsentOperation::Revoke,
+                requester_uri: identifier(&requester)?,
+                target_uri: identifier(&self.me)?,
+                room_id: None,
+                client_key_packages: vec![],
+                consent_extensions: mimi_mls::wire::AppDataDictionary::new(&[])
+                    .map_err(|e| anyhow!("{e:?}"))?,
+            };
+            self.hub.update_consent(encode(&entry)?).await?;
+        }
+        self.say(format!("* {requester} may not fetch your KeyPackages"));
+        Ok(())
+    }
+
+    /// /consents: the account's Consent records (JMAP mode only).
+    async fn consents(&mut self) -> anyhow::Result<()> {
+        let jmap = self
+            .hub
+            .jmap
+            .as_ref()
+            .context("/consents needs JMAP mode (--jmap-url)")?;
+        let records = jmap.consents().await?;
+        if records.is_empty() {
+            self.say("* no consent records".to_owned());
+        }
+        for r in records {
+            let me_target = r["targetUri"] == self.me.as_str();
+            let other = if me_target {
+                &r["requesterUri"]
+            } else {
+                &r["targetUri"]
+            };
+            let other = other.as_str().unwrap_or("?");
+            let room = r["roomId"]
+                .as_str()
+                .map(|room| format!(" in {room}"))
+                .unwrap_or_default();
+            let pending = if r["requested"] == true {
+                ", request pending"
+            } else {
+                ""
+            };
+            let decision = r["decision"].as_str().unwrap_or("no decision");
+            self.say(if me_target {
+                format!("  {other} may fetch yours{room}: {decision}{pending}")
+            } else {
+                format!("  you may fetch {other}'s{room}: {decision}{pending}")
+            });
+        }
         Ok(())
     }
 
     async fn allow(&mut self, arg: &str) -> anyhow::Result<()> {
-        self.no_consent_over_jmap()?;
         let requester = self.user_uri(arg)?;
+        if self.hub.jmap.is_some() {
+            self.decide_over_jmap(&requester, "grant").await?;
+            self.say(format!("* {requester} may now fetch your KeyPackages"));
+            return Ok(());
+        }
         let entry = ConsentEntry {
             consent_operation: ConsentOperation::Grant,
             requester_uri: identifier(&requester)?,
@@ -856,8 +944,28 @@ impl Client {
         arg: &str,
         operation: ConsentOperation,
     ) -> anyhow::Result<()> {
-        self.no_consent_over_jmap()?;
         let target = self.user_uri(arg)?;
+        if self.hub.jmap.is_some() {
+            // draft-atwood-jmap-chat-mimi-00 §Consent/set: the server sends
+            // the request or cancel, to any provider.
+            let id = self.consent_id(&self.me, &target).await?;
+            let requested = !matches!(operation, ConsentOperation::Cancel);
+            let args = match (id, requested) {
+                (Some(id), _) => json!({"update": {id: {"requested": requested}}}),
+                (None, true) => {
+                    json!({"create": {"c": {"requesterUri": self.me, "targetUri": target}}})
+                }
+                (None, false) => bail!("no consent request to {target} to withdraw"),
+            };
+            let jmap = self.hub.jmap.as_ref().context("JMAP mode")?;
+            jmap.consent_set(args).await?;
+            self.say(if requested {
+                format!("* asked {target} for consent")
+            } else {
+                format!("* consent request to {target} withdrawn")
+            });
+            return Ok(());
+        }
         ensure!(
             self.on_hub_domain(&target),
             "{target} is not on the hub's domain, {}",

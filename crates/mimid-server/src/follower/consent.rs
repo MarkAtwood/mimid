@@ -1,24 +1,30 @@
-//! Consent (protocol-07 §5.7): the hook consulted before serving key
-//! material (§5.2 `noConsent`), and the receiving side of the
-//! requestConsent and updateConsent endpoints.
+//! Consent (protocol-07 §5.7): the check made before serving key material
+//! (§5.2 `noConsent`), the receiving side of the requestConsent and
+//! updateConsent endpoints, and the sending side used by `Consent/set`
+//! (draft-atwood-jmap-chat-mimi-00 §Consent; bead mimid-1wgh.12.43).
 //!
-//! A received entry is checked and stored, never enforced (decision
-//! mimid-1wgh.7.35): a requestConsent `request` is kept until a `cancel`
-//! with the same scope deletes it, and the latest updateConsent `grant` or
-//! `revoke` per scope is kept. An entry whose local URI is not a user URI
+//! A received entry is checked and stored: a requestConsent `request` is
+//! kept until a `cancel` with the same scope deletes it, and the latest
+//! updateConsent `grant` or `revoke` per scope is kept (migration 0007). It
+//! also updates the local user's Consent record (migration 0008), which is
+//! what the user sees over JMAP. An entry whose local URI is not a user URI
 //! (protocol-07 §2.1; decision mimid-1wgh.6.76) or names a user who has no
 //! client is refused as unknown (decision mimid-1wgh.7.36); an operation the
 //! endpoint does not take is refused as unprocessable (protocol-07 §5.7;
 //! decision mimid-1wgh.7.42), and a domain §5.7 does not allow as invalid
 //! (decision mimid-1wgh.7.37).
 //!
+//! The key material check ([`refusal`]) follows the JMAP draft: the target
+//! user's own `grant` or `revoke` for the requester decides, one for the
+//! request's room before one for any room. With no decision the request is
+//! allowed, as in v1 (decision mimid-1wgh.7.9); decisions received from
+//! other providers are never enforced here (decision mimid-1wgh.7.35),
+//! since they are about this provider's users fetching elsewhere.
+//!
 //! # Limitations
 //!
-//! - v1 allows every key material request for a known user (decision
-//!   mimid-1wgh.7.9): [`allows`] ignores stored consent entries, and users
-//!   have no way to see or answer them yet (mimid-1wgh.12).
 //! - The KeyPackages of a received `grant` are stored with the entry but
-//!   not verified or used.
+//!   not verified or used, and a sent `grant` carries none.
 //! - Entries are accepted only from configured peers (decision
 //!   mimid-1wgh.7.41), but the `From` header is not authenticated (decision
 //!   mimid-1wgh.17), so a party that can reach the endpoint can still store
@@ -27,20 +33,102 @@
 //! - An unknown local user is answered `404` (decision mimid-1wgh.7.36), so
 //!   a peer can learn which users exist.
 
-use mimi_mls::tls_codec::Deserialize;
-use mimi_protocol::{ConsentEntry, ConsentOperation, KeyMaterialRequestTbs};
+use mimi_mls::tls_codec::{Deserialize, Serialize};
+use mimi_mls::wire::AppDataDictionary;
+use mimi_protocol::{
+    ConsentEntry, ConsentOperation, IdentifierUri, KeyMaterialRequestTbs, KeyMaterialUserCode,
+};
 
 use super::{Follower, FollowerError};
 use crate::config::Domain;
 use crate::hub::{identity_domain, lookup_uri, user_uri_domain};
-use crate::store::{ConsentDecision, ConsentKey, ReceivedConsent};
+use crate::peer::PeerError;
+use crate::store::{ConsentDecision, ConsentKey, ConsentPatch, ReceivedConsent, Store, StoreError};
 
-/// Whether the target user consents to `request`'s requester fetching key
-/// material for `request`'s room. Always `true` in v1 (decision
-/// mimid-1wgh.7.9); stored consent entries are not consulted (decision
-/// mimid-1wgh.7.35).
-pub fn allows(_request: &KeyMaterialRequestTbs) -> bool {
-    true
+/// Why the target user refuses `request`, if they do: the target's own
+/// `revoke` for the requester, for the request's room
+/// (`noConsentForThisRoom`) or for any room (`noConsent`), when no `grant`
+/// for the room comes first. `None` allows the request.
+///
+/// # Errors
+///
+/// Returns [`StoreError`] if the store fails.
+pub async fn refusal(
+    store: &Store,
+    request: &KeyMaterialRequestTbs,
+) -> Result<Option<KeyMaterialUserCode>, StoreError> {
+    let target = lookup_uri(request.target_user.as_str(), "targetUser");
+    let requester = lookup_uri(request.requesting_user.as_str(), "requestingUser");
+    let room = lookup_uri(request.room_id.as_str(), "roomId");
+    Ok(
+        match store.consent_decision(&target, &requester, &room).await? {
+            Some((ConsentDecision::Revoke, true)) => {
+                Some(KeyMaterialUserCode::NoConsentForThisRoom)
+            }
+            Some((ConsentDecision::Revoke, false)) => Some(KeyMaterialUserCode::NoConsent),
+            _ => None,
+        },
+    )
+}
+
+/// Why a consent entry from `Consent/set` was not delivered (bead
+/// mimid-1wgh.12.43).
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ConsentSendError {
+    /// The other user is not known: a local user with no account and no
+    /// client, a URI that names no provider, or a provider that answered
+    /// `404`.
+    #[error("the other user is unknown")]
+    UnknownUser,
+    /// The other user's provider is not a configured peer, cannot be
+    /// reached, or answered with an error other than `404`.
+    #[error("the other user's provider did not take the entry")]
+    NotSent(#[source] Option<PeerError>),
+    /// A URI of the scope is not an RFC 3986 URI.
+    #[error("a URI of the scope is invalid")]
+    InvalidUri(#[source] mimi_protocol::Error),
+    /// The entry does not encode.
+    #[error("cannot encode the entry")]
+    Encode(#[source] mimi_mls::tls_codec::Error),
+    /// The database failed.
+    #[error("database error")]
+    Store(#[from] StoreError),
+}
+
+/// The change an entry makes to the receiving user's Consent record, and
+/// whether a record it leaves empty is dropped.
+fn received_patch(operation: ConsentOperation) -> (ConsentPatch, bool) {
+    match operation {
+        ConsentOperation::Request => (
+            ConsentPatch {
+                requested: Some(true),
+                decision: None,
+            },
+            false,
+        ),
+        ConsentOperation::Cancel => (
+            ConsentPatch {
+                requested: Some(false),
+                decision: None,
+            },
+            true,
+        ),
+        ConsentOperation::Grant => (
+            ConsentPatch {
+                requested: Some(false),
+                decision: Some(Some(ConsentDecision::Grant)),
+            },
+            false,
+        ),
+        ConsentOperation::Revoke => (
+            ConsentPatch {
+                requested: Some(false),
+                decision: Some(Some(ConsentDecision::Revoke)),
+            },
+            false,
+        ),
+    }
 }
 
 /// Why a received consent entry breaks protocol-07 §5.7 (decisions
@@ -226,11 +314,92 @@ impl Follower {
                     .await?;
             }
         }
+        self.record_received(local, entry.consent_operation, &key)
+            .await?;
         tracing::debug!(
             operation = ?entry.consent_operation,
             from = from.as_str(),
             "consent entry stored"
         );
         Ok(())
+    }
+
+    /// Updates `owner`'s Consent record for an entry with `operation` and
+    /// scope `key` that reached them, from a peer or from a local user.
+    async fn record_received(
+        &self,
+        owner: &str,
+        operation: ConsentOperation,
+        key: &ConsentKey<'_>,
+    ) -> Result<(), StoreError> {
+        let (patch, drop_if_empty) = received_patch(operation);
+        self.store
+            .upsert_consent_record(owner, key, patch, drop_if_empty, self.clock.now_ms())
+            .await?;
+        self.announce_consent(owner);
+        Ok(())
+    }
+
+    /// Delivers a consent entry for a local user's `Consent/set` (bead
+    /// mimid-1wgh.12.43): `request` and `cancel` go from the requester to
+    /// the target, `grant` and `revoke` from the target to the requester.
+    /// The URIs of `key` are in RFC 3986 normal form. When the other user
+    /// is local, their Consent record is updated as a received entry would
+    /// update it; otherwise the entry is sent to their provider, with no
+    /// KeyPackages in a `grant`.
+    ///
+    /// # Errors
+    ///
+    /// See [`ConsentSendError`].
+    pub async fn send_consent(
+        &self,
+        operation: ConsentOperation,
+        key: &ConsentKey<'_>,
+    ) -> Result<(), ConsentSendError> {
+        let to_target = matches!(
+            operation,
+            ConsentOperation::Request | ConsentOperation::Cancel
+        );
+        let other = if to_target {
+            key.target_uri
+        } else {
+            key.requester_uri
+        };
+        let Some(domain) = identity_domain(other.as_bytes()) else {
+            return Err(ConsentSendError::UnknownUser);
+        };
+        if domain == self.domain {
+            let known = user_uri_domain(other).is_some()
+                && (self.store.account_of_user(other).await?.is_some()
+                    || !self.store.clients_of_user(other).await?.is_empty());
+            if !known {
+                return Err(ConsentSendError::UnknownUser);
+            }
+            self.record_received(other, operation, key).await?;
+            return Ok(());
+        }
+        let uri = |text: &str| IdentifierUri::new(text).map_err(ConsentSendError::InvalidUri);
+        let entry = ConsentEntry {
+            consent_operation: operation,
+            requester_uri: uri(key.requester_uri)?,
+            target_uri: uri(key.target_uri)?,
+            room_id: key.room_id.map(uri).transpose()?,
+            client_key_packages: Vec::new(),
+            consent_extensions: AppDataDictionary::new(&[]).map_err(ConsentSendError::Encode)?,
+        };
+        let body = entry
+            .tls_serialize_detached()
+            .map_err(ConsentSendError::Encode)?;
+        let peers = self.peers.as_ref().ok_or(ConsentSendError::NotSent(None))?;
+        let sent = if to_target {
+            peers.request_consent(&domain, body).await
+        } else {
+            peers.update_consent(&domain, body).await
+        };
+        match sent {
+            Ok(()) => Ok(()),
+            Err(PeerError::Rejected { status: 404, .. }) => Err(ConsentSendError::UnknownUser),
+            Err(error) => Err(ConsentSendError::NotSent(Some(error))),
+        }
     }
 }

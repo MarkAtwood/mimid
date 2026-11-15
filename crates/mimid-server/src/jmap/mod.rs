@@ -81,6 +81,7 @@ struct Inner {
     projection: Arc<projection::Projection>,
     bus: ChangeBus,
     key_packages: Option<Arc<crate::follower::key_packages::KeyPackages>>,
+    store: Store,
 }
 
 impl FromRef<JmapState> for Authenticator {
@@ -118,6 +119,7 @@ pub fn router(
     let bus = ChangeBus::new();
     bus.forward(follower.subscribe());
     bus.forward_membership(follower.subscribe_membership());
+    bus.forward_consent(follower.subscribe_consent());
     let key_packages = follower.key_packages().cloned();
     if let Some(key_packages) = &key_packages {
         bus.forward_key_packages(key_packages.subscribe_changes());
@@ -128,7 +130,7 @@ pub fn router(
     methods::register_all(
         &mut methods,
         &Services {
-            store,
+            store: store.clone(),
             hub,
             follower,
             bus: bus.clone(),
@@ -144,6 +146,7 @@ pub fn router(
         projection,
         bus,
         key_packages,
+        store,
     }));
     Ok(Router::new()
         .route("/.well-known/jmap", get(session::get_session))

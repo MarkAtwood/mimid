@@ -117,6 +117,9 @@ pub struct Follower {
     membership: broadcast::Sender<(String, String)>,
     /// The local users' KeyPackages, if keyMaterial is served.
     key_packages: Option<Arc<KeyPackages>>,
+    /// Announces each local user whose Consent records changed (bead
+    /// mimid-1wgh.12.43).
+    consent: broadcast::Sender<String>,
     /// The relay to rooms' hubs, once [`Follower::set_relay`] gave it.
     /// Set after construction: the relay holds this provider's hub, whose
     /// fanout worker holds the follower.
@@ -141,6 +144,7 @@ impl Follower {
     pub fn new(domain: Domain, store: Store, clock: Arc<dyn Clock>) -> Self {
         let (appended, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
         let (membership, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
+        let (consent, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
         Self {
             domain,
             store,
@@ -149,6 +153,7 @@ impl Follower {
             appended,
             membership,
             key_packages: None,
+            consent,
             relay: OnceLock::new(),
             limits: crate::limits::FieldLimits::default(),
         }
@@ -442,6 +447,17 @@ impl Follower {
     /// [`broadcast::error::RecvError::Lagged`].
     pub fn subscribe_membership(&self) -> broadcast::Receiver<(String, String)> {
         self.membership.subscribe()
+    }
+
+    /// Subscribes to the local users whose Consent records changed (bead
+    /// mimid-1wgh.12.43), as user URIs.
+    pub fn subscribe_consent(&self) -> broadcast::Receiver<String> {
+        self.consent.subscribe()
+    }
+
+    fn announce_consent(&self, user_uri: &str) {
+        // An error only means nobody is subscribed.
+        let _ = self.consent.send(user_uri.to_owned());
     }
 
     fn announce_membership(&self, room_id: &str, user: &LocalUser) {

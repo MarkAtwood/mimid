@@ -8,8 +8,9 @@
 //! - `types`: `*`, or a comma-separated list of type names: `Chat`,
 //!   `Message`, `ChatContact`, and `KeyPackage` when the server keeps
 //!   KeyPackages (bead mimid-1wgh.12.40), whose state changes when one is
-//!   created, destroyed, replaced or handed out to a keyMaterial request.
-//!   Names of types mimid does not serve are ignored: their state never
+//!   created, destroyed, replaced or handed out to a keyMaterial request,
+//!   and `Consent` (bead mimid-1wgh.12.43), whose state changes when one of
+//!   the account's Consent records does. Names of types mimid does not serve are ignored: their state never
 //!   changes.
 //! - `closeafter`: `state` closes the stream after the first `state`
 //!   event; `no` (the default) keeps it open.
@@ -53,6 +54,7 @@ use super::bus::ChangeBus;
 use super::projection::{Kind, Projection};
 use crate::follower::key_packages::KeyPackages;
 use crate::http::problem;
+use crate::store::Store;
 
 /// The shortest ping interval honoured, in seconds. INVENTED, NOT FROM
 /// SPEC.
@@ -71,6 +73,8 @@ struct Params {
     kinds: Vec<Kind>,
     /// Whether `KeyPackage` is among the types (bead mimid-1wgh.12.40).
     key_packages: bool,
+    /// Whether `Consent` is among the types (bead mimid-1wgh.12.43).
+    consent: bool,
     close_after_state: bool,
     ping: Option<Duration>,
 }
@@ -78,8 +82,8 @@ struct Params {
 impl Params {
     /// Reads the query, or `None` if a parameter is malformed.
     fn parse(query: &BTreeMap<String, String>) -> Option<Self> {
-        let (kinds, key_packages) = match query.get("types").map(String::as_str) {
-            None | Some("*") => (Kind::ALL.to_vec(), true),
+        let (kinds, key_packages, consent) = match query.get("types").map(String::as_str) {
+            None | Some("*") => (Kind::ALL.to_vec(), true, true),
             Some(list) => {
                 let names: Vec<&str> = list.split(',').collect();
                 if names.iter().any(|name| name.is_empty()) {
@@ -91,6 +95,7 @@ impl Params {
                         .filter(|kind| names.contains(&kind.name()))
                         .collect(),
                     names.contains(&"KeyPackage"),
+                    names.contains(&"Consent"),
                 )
             }
         };
@@ -108,6 +113,7 @@ impl Params {
         Some(Self {
             kinds,
             key_packages,
+            consent,
             close_after_state,
             ping,
         })
@@ -128,6 +134,7 @@ pub(super) async fn get_eventsource(
     tokio::spawn(stream(
         Arc::clone(&state.0.projection),
         state.0.key_packages.clone(),
+        state.0.store.clone(),
         state.0.bus.clone(),
         account,
         params,
@@ -150,6 +157,7 @@ enum StateError {
 async fn states(
     projection: &Projection,
     key_packages: Option<&KeyPackages>,
+    store: &Store,
     account: &Account,
     params: &Params,
 ) -> Result<BTreeMap<&'static str, String>, StateError> {
@@ -165,6 +173,15 @@ async fn states(
             super::methods::key_package::key_package_state(key_packages, account).await?,
         );
     }
+    if params.consent {
+        states.insert(
+            "Consent",
+            store
+                .consent_state(account.user().as_str())
+                .await?
+                .to_string(),
+        );
+    }
     Ok(states)
 }
 
@@ -173,6 +190,7 @@ async fn states(
 async fn stream(
     projection: Arc<Projection>,
     key_packages: Option<Arc<KeyPackages>>,
+    store: Store,
     bus: ChangeBus,
     account: Account,
     params: Params,
@@ -180,7 +198,15 @@ async fn stream(
 ) {
     // Subscribe before reading the states, so no change falls between.
     let mut changes = bus.subscribe();
-    let mut last = match states(&projection, key_packages.as_deref(), &account, &params).await {
+    let mut last = match states(
+        &projection,
+        key_packages.as_deref(),
+        &store,
+        &account,
+        &params,
+    )
+    .await
+    {
         Ok(states) => states,
         Err(error) => {
             tracing::error!(
@@ -219,7 +245,7 @@ async fn stream(
                 // Coalesce what has already arrived; a lag only means the
                 // states must be recomputed, which they are.
                 while matches!(changes.try_recv(), Ok(_) | Err(TryRecvError::Lagged(_))) {}
-                let now = match states(&projection, key_packages.as_deref(), &account, &params).await {
+                let now = match states(&projection, key_packages.as_deref(), &store, &account, &params).await {
                     Ok(states) => states,
                     Err(error) => {
                         tracing::error!(
@@ -276,6 +302,7 @@ mod tests {
             Some(Params {
                 kinds: Kind::ALL.to_vec(),
                 key_packages: true,
+                consent: true,
                 close_after_state: false,
                 ping: None
             })
@@ -289,6 +316,7 @@ mod tests {
             Some(Params {
                 kinds: vec![Kind::Chat, Kind::Message],
                 key_packages: false,
+                consent: false,
                 close_after_state: true,
                 ping: Some(Duration::from_secs(300))
             })

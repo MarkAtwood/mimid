@@ -11,6 +11,7 @@
 //!   [`Store`]).
 
 mod consent;
+mod consent_record;
 mod follower_log;
 mod jmap;
 mod key_packages;
@@ -31,6 +32,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use crate::config::Domain;
 
 pub use consent::{ConsentDecision, ConsentKey, ConsentRow, ReceivedConsent};
+pub use consent_record::{ConsentChanges, ConsentPatch, ConsentRecord};
 pub use follower_log::{AppendedFanout, FanoutKind, FollowerEvent, NewFanout};
 pub use jmap::{
     BearerToken, ChatRow, HubRow, JmapStoreError, MalformedToken, MessageChanges, MessageRow,
@@ -238,7 +240,7 @@ mod tests {
                 .fetch_all(&store.pool)
                 .await
                 .unwrap();
-        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8]);
 
         let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, domain FROM provider")
             .fetch_all(&store.pool)

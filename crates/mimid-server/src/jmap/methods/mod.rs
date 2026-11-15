@@ -12,6 +12,7 @@ use crate::hub::Hub;
 use crate::store::Store;
 
 mod chat_set;
+mod consent;
 mod group_info;
 mod key_material;
 pub(crate) mod key_package;
@@ -41,6 +42,7 @@ pub(super) fn register_all(methods: &mut Methods, services: &Services) {
     message_set::register(methods, services);
     key_package::register(methods, services);
     key_material::register(methods, services);
+    consent::register(methods, services);
     room_create::register(methods, services);
     room_update::register(methods, services);
     room_send::register(methods, services);

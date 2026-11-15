@@ -170,6 +170,13 @@ async fn request_is_accepted_and_cancel_is_accepted_with_or_without_a_match() {
         b.store.consent_request(&ANY_ROOM_SCOPE).await.unwrap(),
         None
     );
+    // bob's Consent record shows the request (bead mimid-1wgh.12.43).
+    let records = b.store.consent_records(BOB).await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert!(records[0].as_target() && records[0].requested);
+    assert_eq!(records[0].requester_uri, ALICE);
+    assert_eq!(records[0].room_id.as_deref(), Some(ROOM1));
+    assert_eq!(records[0].decision, None);
 
     let cancel = with_operation(REQUEST, CANCEL);
     assert_eq!(
@@ -177,6 +184,8 @@ async fn request_is_accepted_and_cancel_is_accepted_with_or_without_a_match() {
         StatusCode::ACCEPTED
     );
     assert_eq!(b.store.consent_request(&ROOM1_SCOPE).await.unwrap(), None);
+    // The record held only the request, so the cancel removes it.
+    assert!(b.store.consent_records(BOB).await.unwrap().is_empty());
     // §5.7: a cancel with no matching request is still 202.
     assert_eq!(
         post(&b.app, REQUEST_CONSENT, FROM_A, &cancel).await,
@@ -200,6 +209,13 @@ async fn grant_and_revoke_are_accepted() {
     assert_eq!(decision, ConsentDecision::Grant);
     assert_eq!(stored.entry, GRANT);
     assert_eq!(stored.from_domain, "b.example");
+    // alice's Consent record shows bob's grant (bead mimid-1wgh.12.43).
+    let records = a.store.consent_records(ALICE).await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert!(!records[0].as_target() && !records[0].requested);
+    assert_eq!(records[0].target_uri, BOB);
+    assert_eq!(records[0].room_id, None);
+    assert_eq!(records[0].decision, Some(ConsentDecision::Grant));
 
     let revoke = with_operation(REQUEST, REVOKE);
     assert_eq!(

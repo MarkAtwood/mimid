@@ -147,6 +147,34 @@ impl Jmap {
         Ok(call[1].clone())
     }
 
+    /// The account's Consent records (draft-atwood-jmap-chat-mimi-00
+    /// §Consent).
+    pub async fn consents(&self) -> anyhow::Result<Vec<Value>> {
+        let answer = self.call("Consent/get", json!({"ids": null})).await?;
+        Ok(answer["list"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// Consent/set with `args`; a SetError is an error.
+    pub async fn consent_set(&self, args: Value) -> anyhow::Result<Value> {
+        let answer = self.call("Consent/set", args).await?;
+        for key in ["notCreated", "notUpdated", "notDestroyed"] {
+            if let Some(errors) = answer[key].as_object()
+                && let Some(error) = errors.values().next()
+            {
+                bail!(
+                    "Consent/set: {} {}{}",
+                    error["type"].as_str().unwrap_or("error"),
+                    error["properties"]
+                        .as_array()
+                        .map(|p| format!("{p:?} "))
+                        .unwrap_or_default(),
+                    error["description"].as_str().unwrap_or("")
+                );
+            }
+        }
+        Ok(answer)
+    }
+
     /// KeyPackage/set create.
     pub async fn publish_key_package(&self, key_package: &[u8]) -> anyhow::Result<()> {
         let answer = self

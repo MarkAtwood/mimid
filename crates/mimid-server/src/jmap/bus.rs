@@ -49,6 +49,12 @@ pub enum Change {
         /// The user's URI.
         user_uri: String,
     },
+    /// The local user `user_uri`'s Consent records changed (bead
+    /// mimid-1wgh.12.43).
+    Consent {
+        /// The user's URI.
+        user_uri: String,
+    },
     /// Changes were lost before reaching the bus; every state may have
     /// moved.
     Lagged,
@@ -160,6 +166,33 @@ impl ChangeBus {
                             name: "change_bus_key_packages_lagged",
                             missed,
                             "change bus lagged behind KeyPackage changes"
+                        );
+                        bus.publish(Change::Lagged);
+                    }
+                    Err(RecvError::Closed) => break,
+                }
+            }
+        })
+    }
+
+    /// Forwards the follower's Consent announcements (see
+    /// [`Follower::subscribe_consent`](crate::follower::Follower::subscribe_consent))
+    /// as [`Change::Consent`], and a lag as [`Change::Lagged`]. The task
+    /// ends when the follower is dropped.
+    pub fn forward_consent(
+        &self,
+        mut announcements: broadcast::Receiver<String>,
+    ) -> JoinHandle<()> {
+        let bus = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match announcements.recv().await {
+                    Ok(user_uri) => bus.publish(Change::Consent { user_uri }),
+                    Err(RecvError::Lagged(missed)) => {
+                        tracing::warn!(
+                            name: "change_bus_consent_lagged",
+                            missed,
+                            "change bus lagged behind Consent changes"
                         );
                         bus.publish(Change::Lagged);
                     }

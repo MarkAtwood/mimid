@@ -50,6 +50,11 @@ JMAP mode, against your own mimid server (bead mimid-1wgh.12.41)
   are skipped by a digest kept in the state. A message for a room not joined
   yet is held and replayed at /join. Tried locally: alice hosts and invites
   bob and carol, each joins from the Welcome, and messages go both ways.
+  Consent goes through Consent/set (bead mimid-1wgh.12.43): /allow and
+  /deny record your grant or refusal, /request and /cancel ask or stop
+  asking, and the server sends each to the other user's provider, any
+  provider, not just the hub's. /consents lists your records, including
+  requests others sent you.
 
 Running it (one terminal per user)
   From this dev box:

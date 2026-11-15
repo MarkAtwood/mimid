@@ -400,8 +400,9 @@ impl KeyPackages {
         if identity_domain(tbs.room_id.as_str().as_bytes()).as_ref() != Some(from) {
             return refuse(target_user, "From domain is not the roomId authority");
         }
-        if !consent::allows(tbs) {
-            return refuse(target_user, "no consent");
+        // draft-atwood-jmap-chat-mimi-00 §Consent (bead mimid-1wgh.12.43).
+        if let Some(code) = consent::refusal(&self.store, tbs).await? {
+            return refuse_with(target_user, code, "the target user refused consent");
         }
         let clients = self.store.clients_of_user(&user).await?;
         if clients.is_empty() {
@@ -556,11 +557,20 @@ fn at(ms: u64) -> SystemTime {
 
 /// Logs why a request is refused and answers `noConsent`.
 fn refuse(target_user: &str, reason: &str) -> Result<Vec<u8>, KeyMaterialError> {
-    tracing::debug!(reason, "keyMaterial refused");
+    refuse_with(target_user, KeyMaterialUserCode::NoConsent, reason)
+}
+
+/// Logs why a request is refused and answers `code`, with no clients.
+fn refuse_with(
+    target_user: &str,
+    code: KeyMaterialUserCode,
+    reason: &str,
+) -> Result<Vec<u8>, KeyMaterialError> {
+    tracing::debug!(reason, ?code, "keyMaterial refused");
     // An unparsable path value is answered with an empty userUri.
     KeyMaterialResponse {
         protocol: Protocol::Mls10,
-        user_status: KeyMaterialUserCode::NoConsent,
+        user_status: code,
         user_uri: IdentifierUri::new(target_user).unwrap_or_default(),
         clients: Vec::new(),
     }
