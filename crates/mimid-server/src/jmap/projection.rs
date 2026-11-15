@@ -60,10 +60,11 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jmap_chat_types::{Chat, ChatContact, Message};
 use jmap_server::{
-    BackendChangesError, BackendQueryError, CallContext, ChangesParams, ChangesResult, HandlerOutput, QueryChangesParams, QueryParams, GetObject, HandlerFuture, Id,
-    JmapBackend, JmapError, JmapHandler, JmapObject, QueryChangesResult, QueryObject, QueryResult,
-    SetError, SetErrorType, State, handle_changes, handle_query, handle_query_changes,
-    resolve_query_start, server_fail_from_backend,
+    BackendChangesError, BackendQueryError, CallContext, ChangesParams, ChangesResult, GetObject,
+    HandlerFuture, HandlerOutput, Id, JmapBackend, JmapError, JmapHandler, JmapObject,
+    QueryChangesParams, QueryChangesResult, QueryObject, QueryParams, QueryResult, SetError,
+    SetErrorType, State, handle_changes, handle_query, handle_query_changes, resolve_query_start,
+    server_fail_from_backend,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};

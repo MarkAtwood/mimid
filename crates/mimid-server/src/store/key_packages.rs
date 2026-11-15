@@ -40,6 +40,21 @@ pub enum KeyPackageInsert {
     SecondLastResort,
     /// The client ID belongs to another user.
     ClientOfAnotherUser,
+    /// Storing it would give the user more than the allowed number of
+    /// KeyPackages, counted after a last-resort replacement (decision
+    /// mimid-1wgh.12.27).
+    OverQuota,
+}
+
+/// How [`Store::insert_key_package_with`] treats a client's existing
+/// last-resort KeyPackage and the user's KeyPackage count.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InsertOptions {
+    /// Replace the client's last-resort KeyPackage instead of refusing a
+    /// second one (draft-atwood-jmap-chat-mimi-00 §KeyPackage/set).
+    pub replace_last_resort: bool,
+    /// The most KeyPackages the user may have stored, if limited.
+    pub max_key_packages: Option<u64>,
 }
 
 /// A stored KeyPackage.
@@ -96,6 +111,22 @@ impl Store {
         &self,
         key_package: &NewKeyPackage<'_>,
     ) -> Result<KeyPackageInsert, StoreError> {
+        self.insert_key_package_with(key_package, InsertOptions::default())
+            .await
+    }
+
+    /// As [`Store::insert_key_package`], with `options`: a last-resort
+    /// KeyPackage can replace the client's previous one, deleted in the same
+    /// transaction, and the user's KeyPackage count can be limited.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::insert_key_package`].
+    pub async fn insert_key_package_with(
+        &self,
+        key_package: &NewKeyPackage<'_>,
+        options: InsertOptions,
+    ) -> Result<KeyPackageInsert, StoreError> {
         let not_after = to_sql_int(key_package.not_after)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query(
@@ -135,7 +166,26 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
             if exists {
-                return Ok(KeyPackageInsert::SecondLastResort);
+                if !options.replace_last_resort {
+                    return Ok(KeyPackageInsert::SecondLastResort);
+                }
+                sqlx::query("DELETE FROM key_package WHERE client_id = ? AND last_resort = 1")
+                    .bind(key_package.client_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        if let Some(maximum) = options.max_key_packages {
+            let stored: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM key_package kp JOIN client c \
+                 ON c.client_id = kp.client_id WHERE c.user_uri = ?",
+            )
+            .bind(key_package.user_uri)
+            .fetch_one(&mut *tx)
+            .await?;
+            if from_sql_int(stored)? >= maximum {
+                // Dropping the transaction rolls back a replacement.
+                return Ok(KeyPackageInsert::OverQuota);
             }
         }
         sqlx::query(

@@ -29,6 +29,8 @@ pub(crate) struct Services {
     pub(crate) follower: Arc<Follower>,
     pub(crate) bus: ChangeBus,
     pub(crate) projection: Arc<Projection>,
+    /// `maxKeyPackages` (draft-atwood-jmap-chat-mimi-00 L166).
+    pub(crate) max_key_packages: u64,
 }
 
 /// Registers every method file's handlers.

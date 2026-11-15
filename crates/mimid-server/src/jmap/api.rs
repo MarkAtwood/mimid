@@ -38,8 +38,8 @@ use axum::extract::rejection::BytesRejection;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use jmap_server::{
-    CallContext, Dispatcher, HandlerOutput, HandlerFuture, JmapError, JmapHandler, check_known_capabilities, parse_request,
-    request_error,
+    CallContext, Dispatcher, HandlerFuture, HandlerOutput, JmapError, JmapHandler,
+    check_known_capabilities, parse_request, request_error,
 };
 use serde_json::Value;
 

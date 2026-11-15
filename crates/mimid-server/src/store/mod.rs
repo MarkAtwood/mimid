@@ -37,7 +37,8 @@ pub use jmap::{
     ProjectionCursor, TOKEN_LEN, TokenOwner,
 };
 pub use key_packages::{
-    ClaimCandidate, KeyPackageClaim, KeyPackageInsert, NewKeyPackage, StoredKeyPackage,
+    ClaimCandidate, InsertOptions, KeyPackageClaim, KeyPackageInsert, NewKeyPackage,
+    StoredKeyPackage,
 };
 pub use keys::StoredHubSecret;
 pub use log::{EpochSnapshot, EventKind, NewEvent, OutboxEntry};

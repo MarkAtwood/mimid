@@ -87,8 +87,8 @@ use crate::hub::{
     Clock, LocalKeyMaterial, LocalKeyMaterialFuture, identity_domain, lookup_uri, user_uri_domain,
 };
 use crate::store::{
-    ClaimCandidate, KeyPackageClaim, KeyPackageInsert, NewKeyPackage, Store, StoreError,
-    StoredKeyPackage,
+    ClaimCandidate, InsertOptions, KeyPackageClaim, KeyPackageInsert, NewKeyPackage, Store,
+    StoreError, StoredKeyPackage,
 };
 
 /// A stored KeyPackage, as its owner sees it.
@@ -205,6 +205,25 @@ impl KeyPackages {
         user: &LocalUser,
         bytes: &[u8],
     ) -> Result<KeyPackageEntry, UploadError> {
+        self.upload_key_package_with(user, bytes, InsertOptions::default())
+            .await
+    }
+
+    /// As [`KeyPackages::upload_key_package`], with the store's `options`:
+    /// a last-resort KeyPackage can replace the client's previous one, and
+    /// the user's KeyPackage count can be limited
+    /// (draft-atwood-jmap-chat-mimi-00 §KeyPackage/set).
+    ///
+    /// # Errors
+    ///
+    /// As [`KeyPackages::upload_key_package`], and
+    /// [`UploadError::OverQuota`] past `options.max_key_packages`.
+    pub async fn upload_key_package_with(
+        &self,
+        user: &LocalUser,
+        bytes: &[u8],
+        options: InsertOptions,
+    ) -> Result<KeyPackageEntry, UploadError> {
         if bytes.len() > MAX_BODY_LEN {
             return Err(UploadError::TooLarge);
         }
@@ -225,14 +244,17 @@ impl KeyPackages {
         };
         let outcome = self
             .store
-            .insert_key_package(&NewKeyPackage {
-                client_id: &entry.client_uri,
-                user_uri: user.as_str(),
-                reference: &entry.reference,
-                bytes,
-                last_resort: entry.last_resort,
-                not_after: entry.not_after,
-            })
+            .insert_key_package_with(
+                &NewKeyPackage {
+                    client_id: &entry.client_uri,
+                    user_uri: user.as_str(),
+                    reference: &entry.reference,
+                    bytes,
+                    last_resort: entry.last_resort,
+                    not_after: entry.not_after,
+                },
+                options,
+            )
             .await?;
         match outcome {
             KeyPackageInsert::Inserted => {
@@ -247,6 +269,7 @@ impl KeyPackages {
             KeyPackageInsert::Duplicate => Err(UploadError::Duplicate),
             KeyPackageInsert::SecondLastResort => Err(UploadError::SecondLastResort),
             KeyPackageInsert::ClientOfAnotherUser => Err(UploadError::ClientOfAnotherUser),
+            KeyPackageInsert::OverQuota => Err(UploadError::OverQuota),
         }
     }
 
@@ -265,6 +288,28 @@ impl KeyPackages {
             .await?
             .into_iter()
             .map(KeyPackageEntry::from)
+            .collect())
+    }
+
+    /// As [`KeyPackages::list_key_packages`], with each KeyPackage's bytes
+    /// as uploaded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the store fails.
+    pub async fn list_key_packages_with_bytes(
+        &self,
+        user: &LocalUser,
+    ) -> Result<Vec<(KeyPackageEntry, Vec<u8>)>, StoreError> {
+        Ok(self
+            .store
+            .key_packages_of_user(user.as_str())
+            .await?
+            .into_iter()
+            .map(|stored| {
+                let bytes = stored.bytes.clone();
+                (KeyPackageEntry::from(stored), bytes)
+            })
             .collect())
     }
 
@@ -521,6 +566,9 @@ pub enum UploadError {
     /// The KeyPackage's signature key names a client of another user.
     #[error("the client belongs to another user")]
     ClientOfAnotherUser,
+    /// The user would have more KeyPackages than allowed.
+    #[error("too many KeyPackages")]
+    OverQuota,
     /// The store failed.
     #[error("database error")]
     Store(#[from] StoreError),

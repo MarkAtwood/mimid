@@ -20,9 +20,10 @@
 //! - No blobs: upload and download answer `404`.
 //! - Push is EventSource only: there is no PushSubscription (decision
 //!   mimid-1wgh.12.30).
-//! - Besides `Core/echo`, only the read projection ([`projection`]) and
-//!   the refusing `Chat/set` and `Message/set` are implemented; every
-//!   other method answers `unknownMethod` until its bead lands.
+//! - Besides `Core/echo`, the read projection ([`projection`]), the
+//!   refusing `Chat/set` and `Message/set`, and `KeyPackage/get` and
+//!   `KeyPackage/set` are implemented; every other method answers
+//!   `unknownMethod` until its bead lands.
 
 pub mod api;
 pub mod auth;
@@ -126,6 +127,7 @@ pub fn router(
             follower,
             bus: bus.clone(),
             projection: Arc::clone(&projection),
+            max_key_packages: options.max_key_packages,
         },
     );
     let state = JmapState(Arc::new(Inner {

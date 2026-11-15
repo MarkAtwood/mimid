@@ -30,11 +30,11 @@
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
 //! - `/notify` is accepted only from configured peers (decision
 //!   mimid-1wgh.7.4), so fanout from any other provider is refused (`403`).
-//! - The JMAP endpoint ([`mimid_server::jmap`]) serves the Session and
-//!   `Core/echo` only, so local users can neither upload KeyPackages nor
-//!   send requests through the relay. keyMaterial for a local user
-//!   therefore answers `noConsent`, as for an unknown user (decision
-//!   mimid-1wgh.7.9).
+//! - The JMAP endpoint ([`mimid_server::jmap`]) serves the Session, the
+//!   Chat, Message and ChatContact projection, EventSource, and
+//!   `KeyPackage/get` and `KeyPackage/set`, so local users can publish
+//!   KeyPackages for keyMaterial. They cannot yet create, update or send
+//!   to rooms over JMAP (beads mimid-1wgh.12.4 to mimid-1wgh.12.8).
 //! - The hub, follower, relay and fanout worker each have their own
 //!   [`PeerClient`], so each fetches and caches peer directories
 //!   separately.

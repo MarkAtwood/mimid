@@ -177,6 +177,12 @@ impl Follower {
         self
     }
 
+    /// The local users' KeyPackages, if the follower was given them
+    /// ([`Follower::with_key_packages`]).
+    pub fn key_packages(&self) -> Option<&Arc<KeyPackages>> {
+        self.key_packages.as_ref()
+    }
+
     /// Gives the follower the relay its users' requests go through.
     ///
     /// # Errors
