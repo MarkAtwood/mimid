@@ -3,6 +3,12 @@
 //! Steps: directory, keyMaterial erin (consumes one of erin's 20 KeyPackages),
 //! keyMaterial grace (none seeded), identifierQuery erin and nobody.
 //! Based on ../live/driver. Usage is in ../README.
+//!
+//! `haven-probe sign-iq <seed file> <out dir>` instead writes one signed
+//! identifierQuery for erin's handle, signed with the 32-byte seed in
+//! `<seed file>` (mimid's provider key, selector mimid1), as `body.bin` and
+//! `headers.txt` (curl `-H @` lines) in `<out dir>`, for sending without a
+//! client certificate (Haven's DNS-key check, 3bd065c).
 
 use std::collections::BTreeMap;
 use std::time::SystemTime;
@@ -131,8 +137,64 @@ async fn identifier(client: &PeerClient, hub: &Domain, step: &str, handle: &str)
     }
 }
 
+/// Haven's identifierQuery URL from its directory, for this provider.
+const IQ_URL: &str = "https://mimi.havenmessenger.com:8443/mimi/pl/identifierQuery/mimi.havenmessenger.com";
+
+/// `sign-iq`: see the module documentation.
+fn sign_iq(seed_file: &str, out: &str) {
+    use mimid_server::httpsig::SigningKey;
+    use mimid_server::provider_auth::RequestSigner;
+
+    let seed = std::fs::read(seed_file).expect("seed file");
+    let seed: [u8; 32] = seed.try_into().expect("32-byte seed");
+    let signer = RequestSigner::new(SigningKey::from_seed(&seed), "mimid1".to_owned());
+    let body = IdentifierRequest {
+        query_elements: vec![QueryElement {
+            search: QuerySearch::Handle,
+            search_value: b"mimi://mimi.havenmessenger.com/u/erin".to_vec(),
+        }],
+        id_request_extensions: AppDataDictionary::new(&[]).expect("dictionary"),
+    }
+    .tls_serialize_detached()
+    .expect("IdentifierRequest");
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::FROM,
+        http::HeaderValue::from_static("mimi@mimid.reviewcommit.com"),
+    );
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_static("application/mimi-protocol"),
+    );
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    signer
+        .sign(
+            &http::Method::POST,
+            &IQ_URL.parse().expect("uri"),
+            &mut headers,
+            &body,
+            i64::try_from(now).expect("time"),
+        )
+        .expect("sign");
+    let lines: String = headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {}\n", value.to_str().expect("ascii")))
+        .collect();
+    std::fs::write(format!("{out}/body.bin"), body).expect("body");
+    std::fs::write(format!("{out}/headers.txt"), lines).expect("headers");
+    println!("signed at {now} for {IQ_URL}");
+}
+
 #[tokio::main]
 async fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("sign-iq") {
+        sign_iq(&args[2], &args[3]);
+        return;
+    }
     let hub = Domain::try_from(HUB.to_owned()).expect("domain");
     let client = PeerClient::new(
         &Domain::try_from(OWN.to_owned()).expect("domain"),
