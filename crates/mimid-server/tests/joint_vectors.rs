@@ -281,19 +281,19 @@ fn vectors() -> Value {
             "jt-iq-01",
             ALICE,
             "handle query, the URI exactly",
-            "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
+            "success, answered as the user URI; checked on the live hub at Haven bafc5e6, 2026-11-15",
         ),
         (
             "jt-iq-02",
             "MIMI://B.Example/u/alice",
             "handle query, scheme and host in other case",
-            "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
+            "success, answered as the user URI; checked on the live hub at Haven bafc5e6, 2026-11-15",
         ),
         (
             "jt-iq-03",
             "mimi://b.example/u/%61lice",
             "handle query, an unreserved character percent-encoded",
-            "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
+            "success, answered as the user URI; checked on the live hub at Haven bafc5e6, 2026-11-15",
         ),
     ] {
         v.push(with_outcome(
@@ -321,7 +321,7 @@ fn vectors() -> Value {
         "POST /identifierQuery/b.example, alice has a client",
         "notFound: the path is case-sensitive (RFC 3986 §6.2.2.1)",
         "notFound, HTTP 200",
-        "notFound, HTTP 200; checked on the live hub at Haven ea645b1, 2026-11-15",
+        "notFound, HTTP 200; checked on the live hub at Haven bafc5e6, 2026-11-15",
     ));
 
     // ---- identifierQuery nick (protocol-07 §5.8) ----
@@ -344,7 +344,7 @@ fn vectors() -> Value {
         "POST /identifierQuery/b.example, alice has a client",
         "protocol-07 §5.8: \"nick means that the nickname or handle matches exactly\"; a bare name is a nick, not a handle",
         "success, answered as mimi://b.example/u/alice",
-        "success, answered as the user URI; checked on the live hub at Haven ea645b1, 2026-11-15",
+        "success, answered as the user URI; checked on the live hub at Haven bafc5e6, 2026-11-15",
     ));
     v.push(with_outcome(
         vector(
@@ -357,7 +357,7 @@ fn vectors() -> Value {
         "POST /identifierQuery/b.example, alice has a client",
         "notFound: a handle is a URI (§5.8); a bare name is a nick",
         "notFound, HTTP 200",
-        "notFound, HTTP 200; checked on the live hub at Haven ea645b1, 2026-11-15",
+        "notFound, HTTP 200; checked on the live hub at Haven bafc5e6, 2026-11-15",
     ));
 
     // ---- IdentifierUri with a non-ASCII host ----
