@@ -70,7 +70,8 @@ use mimid_server::logging::{LogFormat, json_subscriber};
 use mimid_server::peer::PeerClient;
 use mimid_server::peer_clock::{self, PeerClocks};
 use mimid_server::provider_auth::{
-    AuthMode, HickoryTxtResolver, ProviderAuth, RequestSigner, TxtResolver, check_validation,
+    AuthMode, HickoryTxtResolver, PkixCertificates, ProviderAuth, RequestSigner, TxtResolver,
+    check_validation,
 };
 use mimid_server::store::Store;
 use mimid_server::tls::ProxyPolicy;
@@ -243,6 +244,12 @@ async fn main() -> anyhow::Result<()> {
             ),
         }
     }
+    let pkix = PkixCertificates::new(&config.provider_auth)
+        .context("reading [provider_auth] pkix_anchors")?;
+    let (global_anchors, peer_anchors) = pkix.as_ref().map_or((0, 0), PkixCertificates::counts);
+    if let Some(pkix) = pkix {
+        provider_auth = provider_auth.with_pkix(pkix);
+    }
     let provider_auth = Arc::new(provider_auth);
     tracing::info!(
         name: "provider_auth_configured",
@@ -250,6 +257,8 @@ async fn main() -> anyhow::Result<()> {
         selector = signer.selector(),
         dns_keys = config.provider_auth.dns_keys,
         require_dnssec = config.provider_auth.require_dnssec,
+        global_anchors,
+        peer_anchors,
         public_key = %base64::engine::general_purpose::STANDARD.encode(signer.public_key().to_bytes()),
         trusted_peers = config.provider_auth.peers.values().filter(|p| !p.keys.is_empty()).count(),
         observed_peers = config.provider_auth.peers.values().filter(|p| p.mode == Some(AuthMode::Observe)).count(),

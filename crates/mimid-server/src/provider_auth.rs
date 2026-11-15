@@ -22,8 +22,12 @@
 //!    keys published at `<selector>._mimi.<domain>`
 //!    (draft-atwood-mimi-provider-auth-00 §5; [`dns`]), looked up with a
 //!    DNSSEC-validating resolver. On unless `dns_keys = false`.
-//! 3. PKIX mutual TLS (mimid-75nk.5) and 4. DANE (mimid-75nk.6) are not
-//!    built yet.
+//! 3. [`Mechanism::Pkix`] (bead mimid-75nk.5): the client certificate of
+//!    the request's connection ([`crate::tls::ClientCertificate`]),
+//!    validated per RFC 5280 against configured anchors and matched to the
+//!    `From` domain as a DNS-ID (draft-atwood-mimi-provider-auth-00 §6;
+//!    [`pkix`]). On when `pkix_anchors` names any.
+//! 4. DANE (mimid-75nk.6) is not built yet.
 //!
 //! A signature counts only if it follows draft-atwood-mimi-provider-auth-00
 //! §5.2 and §5.3: it covers `@method`, `@target-uri` and `from`
@@ -49,8 +53,6 @@
 //!
 //! # Limitations
 //!
-//! - Only RFC 9421 with trust-listed keys so far; trust-listed CAs and
-//!   certificates need mutual TLS (mimid-75nk.4, mimid-75nk.5).
 //! - Nonces are not tracked, so a signed request can be replayed within
 //!   [`MAX_SIGNATURE_AGE_SECS`].
 //! - `@target-uri` is rebuilt from this server's configured `base_url`
@@ -75,6 +77,7 @@ use serde::Deserialize;
 use crate::config::{BaseUrl, Domain};
 use crate::httpsig::{self, SignatureParams, SigningKey, TimePolicy, VerifyingKey};
 use crate::hub::Clock;
+use crate::tls::ClientCertificate;
 
 /// The label of mimid's own request signatures. INVENTED, NOT FROM SPEC:
 /// no MIMI document names one yet. Received signatures may use any label.
@@ -184,6 +187,11 @@ pub struct ProviderAuthConfig {
     /// through (AWS's VPC resolver does not).
     #[serde(default)]
     pub dns_servers: Vec<std::net::IpAddr>,
+    /// PEM files of trust anchors for PKIX client certificates from any
+    /// provider (mechanism 3, mimid-75nk.5): a federation's CA, say. Not a
+    /// Web PKI root store (draft-atwood-mimi-provider-auth-00 §6).
+    #[serde(default)]
+    pub pkix_anchors: Vec<std::path::PathBuf>,
     /// Per-provider settings.
     #[serde(default)]
     pub peers: BTreeMap<Domain, PeerAuthConfig>,
@@ -201,6 +209,7 @@ impl Default for ProviderAuthConfig {
             dns_keys: true,
             require_dnssec: false,
             dns_servers: Vec::new(),
+            pkix_anchors: Vec::new(),
             peers: BTreeMap::new(),
         }
     }
@@ -220,6 +229,10 @@ pub struct PeerAuthConfig {
     /// Trusted request-signing keys, by selector (`keyid`).
     #[serde(default)]
     pub keys: BTreeMap<String, TrustedKey>,
+    /// PEM files of trust anchors for this provider's client certificates
+    /// only (mechanism 3, mimid-75nk.5).
+    #[serde(default)]
+    pub pkix_anchors: Vec<std::path::PathBuf>,
 }
 
 /// How a provider was authenticated.
@@ -231,6 +244,8 @@ pub enum Mechanism {
     /// An RFC 9421 signature with a key published in the provider's DNS
     /// (draft-atwood-mimi-provider-auth-00 §5).
     DnsKey,
+    /// A client certificate from a configured trust anchor (§6).
+    Pkix,
 }
 
 impl Mechanism {
@@ -239,6 +254,7 @@ impl Mechanism {
         match self {
             Self::TrustList => "trust_list",
             Self::DnsKey => "dns_key",
+            Self::Pkix => "pkix",
         }
     }
 }
@@ -250,7 +266,8 @@ pub struct AuthenticatedProvider {
     pub domain: Domain,
     /// How it proved it.
     pub mechanism: Mechanism,
-    /// The key it used: the `keyid`.
+    /// The key it used: the `keyid`, or for a certificate
+    /// `sha256:<hex>` of the leaf.
     pub key_id: String,
     /// For a key from DNS, the DNSSEC status of its record.
     pub dnssec: Option<DnssecStatus>,
@@ -305,6 +322,13 @@ pub enum Refusal {
     /// The signature is malformed, unsupported, expired or wrong.
     #[error("signature refused: {0}")]
     Signature(#[source] httpsig::Error),
+    /// The client certificate's path does not validate against the
+    /// anchors for the provider (RFC 5280).
+    #[error("certificate path refused: {0}")]
+    CertificatePath(String),
+    /// The client certificate is unusable for the provider: the reason.
+    #[error("certificate refused: {0}")]
+    Certificate(&'static str),
 }
 
 /// What an authenticator makes of a request.
@@ -333,6 +357,8 @@ pub struct InboundRequest<'a> {
     pub body: &'a [u8],
     /// Now, in seconds since the UNIX epoch.
     pub now: i64,
+    /// The client certificate the connection presented, if any.
+    pub certificate: Option<&'a ClientCertificate>,
 }
 
 /// A boxed future, for the mechanisms that wait on the network.
@@ -548,6 +574,14 @@ impl ProviderAuth {
         self
     }
 
+    /// Adds mechanism 3, PKIX client certificates (mimid-75nk.5), after
+    /// the signature mechanisms.
+    #[must_use]
+    pub fn with_pkix(mut self, pkix: PkixCertificates) -> Self {
+        self.authenticators.push(Box::new(pkix));
+        self
+    }
+
     /// `domain`'s mode.
     pub fn mode(&self, domain: &Domain) -> AuthMode {
         self.modes.get(domain).copied().unwrap_or(self.default_mode)
@@ -626,6 +660,7 @@ pub async fn check(
         return crate::http::problem(StatusCode::BAD_REQUEST, "bad-target");
     };
     let now = i64::try_from(auth.clock.now_ms() / 1_000).unwrap_or(i64::MAX);
+    let certificate = parts.extensions.get::<ClientCertificate>().cloned();
     let request = InboundRequest {
         from: &from,
         method: &parts.method,
@@ -633,6 +668,7 @@ pub async fn check(
         headers: &parts.headers,
         body: &body,
         now,
+        certificate: certificate.as_ref(),
     };
     match auth.authenticate(&request).await {
         Ok(provider) => {
@@ -762,6 +798,8 @@ impl RequestSigner {
 }
 
 pub mod dns;
+pub mod pkix;
+pub use pkix::{PkixCertificates, PkixConfigError};
 
 pub use dns::{
     DnsKeys, DnssecStatus, HickoryTxtResolver, KeyRecord, TxtAnswer, TxtLookupError, TxtResolver,

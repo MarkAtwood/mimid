@@ -32,6 +32,14 @@ hyper-util = { version = "=0.1.21", features = ["server-auto", "tokio"] }
 rustls = { version = "=0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["aws_lc_rs"] }
 tower = { version = "=0.5.2", features = ["util"] }
+# PKIX client certificates (bead mimid-75nk.5): RFC 5280 path validation
+# and RFC 9525 DNS-ID matching from crate-pkix, exact rev pin (decision of
+# mimid-75nk: git, pinned rev), with its RustCrypto RSA and ECDSA
+# verifiers; x509-cert and der at the versions crate-pkix uses.
+pkix-path = { git = "https://github.com/MarkAtwood/crate-pkix", rev = "8764cb20f5dda88d9fc4634453acf6c4d089ad02", default-features = false, features = ["std", "rsa", "p256", "p384"] }
+pkix-identity = { git = "https://github.com/MarkAtwood/crate-pkix", rev = "8764cb20f5dda88d9fc4634453acf6c4d089ad02", features = ["std"] }
+x509-cert = { version = "=0.2.5", default-features = false, features = ["std"] }
+der = { version = "=0.7.10", features = ["std"] }
 # Retry-After HTTP-date parsing (RFC 9110 §10.2.3); already in the lockfile.
 httpdate = "1.0.3"
 # Reads the salt and URIs of reported messages (protocol-07 §5.9).

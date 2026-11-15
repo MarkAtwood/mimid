@@ -1,0 +1,8 @@
+haven-root.pem, haven-client.pem: Haven's MIMI root CA and client
+certificate, as Jason Bolduc posted them in zulip.ietf.org #mimi, topic
+"remote MIMI interop table", messages 238225 and 238226, 2026-11-15; a copy
+of tools/interop/haven/certs (see its PROVENANCE for the checks made).
+RSA 4096, sha256WithRSAEncryption; client valid from 2026-11-15T16:28:43Z
+to 2029-02-17T16:28:43Z, SAN DNS:mimi.havenmessenger.com, EKU clientAuth.
+
+Everything else: made by make.sh in this directory with OpenSSL 3.0.

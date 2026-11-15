@@ -60,6 +60,7 @@ fn check_with(
         headers,
         body,
         now: NOW,
+        certificate: None,
     }))
 }
 
@@ -335,6 +336,7 @@ mod draft_example {
             headers: &headers,
             body: BODY,
             now: CREATED,
+            certificate: None,
         }))
         .unwrap();
         assert_eq!(provider.key_id, "s1");
@@ -396,6 +398,7 @@ mod draft_example {
             headers: &headers,
             body: BODY,
             now: CREATED,
+            certificate: None,
         }))
     }
 

@@ -17,9 +17,11 @@
 //! dns_keys = true         # look up <selector>._mimi.<domain> keys in DNS
 //! require_dnssec = false  # accept a key from an unsigned zone
 //! dns_servers = ["1.1.1.1", "9.9.9.9"]  # must pass DNSSEC; default: system
+//! pkix_anchors = []       # PEM CA files for any peer's client certificate
 //! [provider_auth.peers."b.example"]
 //! mode = "observe"        # log a failure but accept the request
 //! keys = { "b1" = "<base64 Ed25519 public key>" }
+//! pkix_anchors = ["/etc/mimid/peers/b-root.pem"]  # this peer's CA only
 //!
 //! # Optional: serve HTTPS, asking peers for client certificates
 //! # (crate::tls), or take them from a proxy in front.
@@ -355,7 +357,9 @@ mod tests {
         let text = format!(
             "{VALID}\n[provider_auth]\nmode = \"observe\"\nselector = \"s1\"\n\
              dns_keys = false\nrequire_dnssec = true\ndns_servers = [\"1.1.1.1\", \"2606:4700:4700::1111\"]\n\
-             [provider_auth.peers.\"b.example\"]\nmode = \"enforce\"\nkeys = {{ \"b1\" = \"{key}\" }}\n"
+             pkix_anchors = [\"/etc/fed.pem\"]\n\
+             [provider_auth.peers.\"b.example\"]\nmode = \"enforce\"\nkeys = {{ \"b1\" = \"{key}\" }}\n\
+             pkix_anchors = [\"/etc/b.pem\"]\n"
         );
         let config = Config::parse(&text).unwrap();
         let auth = &config.provider_auth;
@@ -366,6 +370,8 @@ mod tests {
         let b = &auth.peers[&domain("b.example")];
         assert_eq!(b.mode, Some(crate::provider_auth::AuthMode::Enforce));
         assert!(b.keys.contains_key("b1"));
+        assert_eq!(auth.pkix_anchors, [PathBuf::from("/etc/fed.pem")]);
+        assert_eq!(b.pkix_anchors, [PathBuf::from("/etc/b.pem")]);
 
         let own = format!("{VALID}\n[provider_auth.peers.\"a.example\"]\nmode = \"observe\"\n");
         assert!(matches!(
