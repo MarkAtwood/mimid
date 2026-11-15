@@ -26,8 +26,9 @@
 //!
 //! # Limitations
 //!
-//! - There is no `KeyPackage/changes`, so the state is not pushed through
-//!   EventSource; a client re-reads with `KeyPackage/get`.
+//! - There is no `KeyPackage/changes`: a client that sees a new KeyPackage
+//!   state through EventSource (bead mimid-1wgh.12.40) re-reads with
+//!   `KeyPackage/get`.
 //! - The creates of one call are checked and stored one at a time, not as
 //!   one transaction: an earlier create stays stored if a later one fails.
 
@@ -121,6 +122,23 @@ async fn stored(
         .list_key_packages_with_bytes(caller.user())
         .await
         .map_err(|e| server_fail(&e))
+}
+
+/// The account's KeyPackage state, as `KeyPackage/get` reports it, for
+/// EventSource (bead mimid-1wgh.12.40).
+///
+/// # Errors
+///
+/// Returns [`crate::store::StoreError`] if the store fails.
+pub(crate) async fn key_package_state(
+    key_packages: &KeyPackages,
+    caller: &Account,
+) -> Result<String, crate::store::StoreError> {
+    Ok(state_of(
+        &key_packages
+            .list_key_packages_with_bytes(caller.user())
+            .await?,
+    ))
 }
 
 /// The state: a digest of the stored KeyPackageRefs, in order.

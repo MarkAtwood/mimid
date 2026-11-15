@@ -24,7 +24,7 @@ use mimid_server::store::BearerToken;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use key_packages::{DAY, client, key_package, now_ms, reference};
+use key_packages::{Ask, DAY, NO_REQUIREMENTS, client, key_package, now_ms, reference, request};
 
 const ALICE: &str = "mimi://a.example/u/alice";
 const USING: [&str; 3] = [
@@ -36,6 +36,7 @@ const USING: [&str; 3] = [
 struct Fixture {
     _dir: tempfile::TempDir,
     app: Router,
+    key_packages: Arc<KeyPackages>,
     token: BearerToken,
     account: String,
 }
@@ -51,7 +52,7 @@ async fn fixture(max_key_packages: u64) -> Fixture {
         Arc::new(FixedClock(now_ms())),
     ));
     let follower = Follower::new(domain(), store.clone(), Arc::new(FixedClock(now_ms())))
-        .with_key_packages(key_packages);
+        .with_key_packages(Arc::clone(&key_packages));
     let mut options = JmapOptions::default();
     options.max_key_packages = max_key_packages;
     let app = jmap::router(
@@ -65,6 +66,7 @@ async fn fixture(max_key_packages: u64) -> Fixture {
     Fixture {
         _dir: dir,
         app,
+        key_packages,
         token,
         account,
     }
@@ -260,5 +262,99 @@ async fn updates_are_forbidden_and_destroy_removes() {
     assert_eq!(
         (name.as_str(), &error["type"]),
         ("error", &json!("stateMismatch"))
+    );
+}
+
+impl Fixture {
+    /// Opens alice's EventSource for `query`; returns a task that reads the
+    /// whole stream (closeafter=state ends it).
+    async fn event_source(&self, query: &str) -> tokio::task::JoinHandle<String> {
+        let response = self
+            .app
+            .clone()
+            .oneshot(
+                Request::get(format!("/jmap/eventsource?{query}"))
+                    .header(
+                        header::AUTHORIZATION,
+                        format!("Bearer {}", self.token.expose_secret()),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let task = tokio::spawn(async move {
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            String::from_utf8(body.to_vec()).unwrap()
+        });
+        // Let the stream subscribe and read its first states.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        task
+    }
+}
+
+/// The StateChange data of the first `state` event in `text`.
+fn state_change(text: &str) -> Value {
+    let data = text
+        .lines()
+        .skip_while(|line| *line != "event: state")
+        .nth(1)
+        .and_then(|line| line.strip_prefix("data: "))
+        .unwrap_or_else(|| panic!("no state event in {text:?}"));
+    serde_json::from_str(data).unwrap()
+}
+
+async fn finished(task: tokio::task::JoinHandle<String>) -> String {
+    tokio::time::timeout(std::time::Duration::from_secs(10), task)
+        .await
+        .expect("closeafter=state ends the stream")
+        .unwrap()
+}
+
+/// Bead mimid-1wgh.12.40: a KeyPackage create pushes the new KeyPackage
+/// state, and so does a keyMaterial request that hands one out, so the
+/// client can replenish.
+#[tokio::test]
+async fn key_package_changes_are_pushed() {
+    let f = fixture(10).await;
+    let device = client(ALICE, DAY, &[]);
+
+    let stream = f
+        .event_source("types=KeyPackage&closeafter=state&ping=0")
+        .await;
+    let created = f.create(&key_package(&device, false), json!({})).await;
+    assert_eq!(
+        state_change(&finished(stream).await),
+        json!({"@type": "StateChange", "changed": {f.account.clone(): {"KeyPackage": created["newState"]}}})
+    );
+
+    let stream = f
+        .event_source("types=KeyPackage&closeafter=state&ping=0")
+        .await;
+    let ask = Ask {
+        requesting_user: "mimi://c.example/u/carol",
+        credential_identity: "mimi://c.example/u/carol",
+        target_user: ALICE,
+        room_id: "mimi://c.example/r/den",
+        required_capabilities: NO_REQUIREMENTS,
+    };
+    f.key_packages
+        .serve_key_material(
+            &mimid_server::config::Domain::try_from("c.example".to_owned()).unwrap(),
+            ALICE,
+            &request(&ask),
+        )
+        .await
+        .unwrap();
+    let after = f.get().await;
+    assert_eq!(
+        after["list"],
+        json!([]),
+        "the one-time KeyPackage was handed out"
+    );
+    assert_eq!(
+        state_change(&finished(stream).await)["changed"][&f.account]["KeyPackage"],
+        after["state"]
     );
 }

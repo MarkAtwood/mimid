@@ -79,6 +79,7 @@ struct Inner {
     in_flight: InFlight,
     projection: Arc<projection::Projection>,
     bus: ChangeBus,
+    key_packages: Option<Arc<crate::follower::key_packages::KeyPackages>>,
 }
 
 impl FromRef<JmapState> for Authenticator {
@@ -116,6 +117,10 @@ pub fn router(
     let bus = ChangeBus::new();
     bus.forward(follower.subscribe());
     bus.forward_membership(follower.subscribe_membership());
+    let key_packages = follower.key_packages().cloned();
+    if let Some(key_packages) = &key_packages {
+        bus.forward_key_packages(key_packages.subscribe_changes());
+    }
     let authenticator = Authenticator::new(store.clone(), hub.domain().clone());
     let projection = Arc::new(projection::Projection::new(store.clone(), Arc::clone(&hub)));
     let mut methods = Methods::new();
@@ -137,6 +142,7 @@ pub fn router(
         in_flight: InFlight::default(),
         projection,
         bus,
+        key_packages,
     }));
     Ok(Router::new()
         .route("/.well-known/jmap", get(session::get_session))

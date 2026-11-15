@@ -14,7 +14,7 @@ use crate::store::Store;
 mod chat_set;
 mod group_info;
 mod key_material;
-mod key_package;
+pub(crate) mod key_package;
 mod message_set;
 mod room_create;
 mod room_send;

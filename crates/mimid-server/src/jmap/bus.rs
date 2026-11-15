@@ -5,7 +5,9 @@
 //! [`Follower::subscribe`](crate::follower::Follower::subscribe), and its
 //! relayed joins and leavings, forwarded from
 //! [`Follower::subscribe_membership`](crate::follower::Follower::subscribe_membership)
-//! (decision mimid-1wgh.12.34). KeyPackage writes join it in a later bead.
+//! (decision mimid-1wgh.12.34), and the KeyPackage changes of
+//! [`KeyPackages::subscribe_changes`](crate::follower::key_packages::KeyPackages::subscribe_changes)
+//! (bead mimid-1wgh.12.40).
 //!
 //! # Limitations
 //!
@@ -38,6 +40,12 @@ pub enum Change {
     Membership {
         /// The room's ID.
         room_id: String,
+        /// The user's URI.
+        user_uri: String,
+    },
+    /// The local user `user_uri`'s stored KeyPackages may have changed
+    /// (bead mimid-1wgh.12.40).
+    KeyPackages {
         /// The user's URI.
         user_uri: String,
     },
@@ -122,6 +130,36 @@ impl ChangeBus {
                             name: "change_bus_membership_lagged",
                             missed,
                             "change bus lagged behind follower memberships"
+                        );
+                        bus.publish(Change::Lagged);
+                    }
+                    Err(RecvError::Closed) => break,
+                }
+            }
+        })
+    }
+}
+
+impl ChangeBus {
+    /// Spawns a task publishing each KeyPackage change announcement (as
+    /// given by
+    /// [`KeyPackages::subscribe_changes`](crate::follower::key_packages::KeyPackages::subscribe_changes))
+    /// as a [`Change::KeyPackages`], and a lag as [`Change::Lagged`]. The
+    /// task ends when the KeyPackages are dropped.
+    pub fn forward_key_packages(
+        &self,
+        mut announcements: broadcast::Receiver<String>,
+    ) -> JoinHandle<()> {
+        let bus = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match announcements.recv().await {
+                    Ok(user_uri) => bus.publish(Change::KeyPackages { user_uri }),
+                    Err(RecvError::Lagged(missed)) => {
+                        tracing::warn!(
+                            name: "change_bus_key_packages_lagged",
+                            missed,
+                            "change bus lagged behind KeyPackage changes"
                         );
                         bus.publish(Change::Lagged);
                     }

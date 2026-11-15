@@ -5,8 +5,12 @@
 //!
 //! The query is the Session's `eventSourceUrl` template filled in:
 //!
-//! - `types`: `*`, or a comma-separated list of type names. Names of types
-//!   mimid does not serve are ignored: their state never changes.
+//! - `types`: `*`, or a comma-separated list of type names: `Chat`,
+//!   `Message`, `ChatContact`, and `KeyPackage` when the server keeps
+//!   KeyPackages (bead mimid-1wgh.12.40), whose state changes when one is
+//!   created, destroyed, replaced or handed out to a keyMaterial request.
+//!   Names of types mimid does not serve are ignored: their state never
+//!   changes.
 //! - `closeafter`: `state` closes the stream after the first `state`
 //!   event; `no` (the default) keeps it open.
 //! - `ping`: seconds between `ping` events when nothing else is sent; `0`
@@ -47,6 +51,7 @@ use super::JmapState;
 use super::auth::Account;
 use super::bus::ChangeBus;
 use super::projection::{Kind, Projection};
+use crate::follower::key_packages::KeyPackages;
 use crate::http::problem;
 
 /// The shortest ping interval honoured, in seconds. INVENTED, NOT FROM
@@ -64,6 +69,8 @@ const EVENT_BUFFER: usize = 16;
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Params {
     kinds: Vec<Kind>,
+    /// Whether `KeyPackage` is among the types (bead mimid-1wgh.12.40).
+    key_packages: bool,
     close_after_state: bool,
     ping: Option<Duration>,
 }
@@ -71,17 +78,20 @@ struct Params {
 impl Params {
     /// Reads the query, or `None` if a parameter is malformed.
     fn parse(query: &BTreeMap<String, String>) -> Option<Self> {
-        let kinds = match query.get("types").map(String::as_str) {
-            None | Some("*") => Kind::ALL.to_vec(),
+        let (kinds, key_packages) = match query.get("types").map(String::as_str) {
+            None | Some("*") => (Kind::ALL.to_vec(), true),
             Some(list) => {
                 let names: Vec<&str> = list.split(',').collect();
                 if names.iter().any(|name| name.is_empty()) {
                     return None;
                 }
-                Kind::ALL
-                    .into_iter()
-                    .filter(|kind| names.contains(&kind.name()))
-                    .collect()
+                (
+                    Kind::ALL
+                        .into_iter()
+                        .filter(|kind| names.contains(&kind.name()))
+                        .collect(),
+                    names.contains(&"KeyPackage"),
+                )
             }
         };
         let close_after_state = match query.get("closeafter").map(String::as_str) {
@@ -97,6 +107,7 @@ impl Params {
             (ping > 0).then(|| Duration::from_secs(ping.clamp(MIN_PING_SECS, MAX_PING_SECS)));
         Some(Self {
             kinds,
+            key_packages,
             close_after_state,
             ping,
         })
@@ -116,6 +127,7 @@ pub(super) async fn get_eventsource(
     let (sender, receiver) = mpsc::channel(EVENT_BUFFER);
     tokio::spawn(stream(
         Arc::clone(&state.0.projection),
+        state.0.key_packages.clone(),
         state.0.bus.clone(),
         account,
         params,
@@ -124,15 +136,34 @@ pub(super) async fn get_eventsource(
     Sse::new(ReceiverStream::new(receiver)).into_response()
 }
 
-/// The account's state strings for `kinds`.
+/// Why the account's states could not be read.
+#[derive(Debug, thiserror::Error)]
+enum StateError {
+    #[error(transparent)]
+    Projection(#[from] super::projection::ProjectionError),
+    #[error(transparent)]
+    Store(#[from] crate::store::StoreError),
+}
+
+/// The account's state strings for the requested types. `KeyPackage` is
+/// included only when requested and the server keeps KeyPackages.
 async fn states(
     projection: &Projection,
+    key_packages: Option<&KeyPackages>,
     account: &Account,
-    kinds: &[Kind],
-) -> Result<BTreeMap<&'static str, String>, super::projection::ProjectionError> {
+    params: &Params,
+) -> Result<BTreeMap<&'static str, String>, StateError> {
     let mut states = BTreeMap::new();
-    for kind in kinds {
+    for kind in &params.kinds {
         states.insert(kind.name(), projection.state(*kind, account).await?);
+    }
+    if params.key_packages
+        && let Some(key_packages) = key_packages
+    {
+        states.insert(
+            "KeyPackage",
+            super::methods::key_package::key_package_state(key_packages, account).await?,
+        );
     }
     Ok(states)
 }
@@ -141,6 +172,7 @@ async fn states(
 /// `closeafter=state`, the first `state` event is sent.
 async fn stream(
     projection: Arc<Projection>,
+    key_packages: Option<Arc<KeyPackages>>,
     bus: ChangeBus,
     account: Account,
     params: Params,
@@ -148,7 +180,7 @@ async fn stream(
 ) {
     // Subscribe before reading the states, so no change falls between.
     let mut changes = bus.subscribe();
-    let mut last = match states(&projection, &account, &params.kinds).await {
+    let mut last = match states(&projection, key_packages.as_deref(), &account, &params).await {
         Ok(states) => states,
         Err(error) => {
             tracing::error!(
@@ -187,7 +219,7 @@ async fn stream(
                 // Coalesce what has already arrived; a lag only means the
                 // states must be recomputed, which they are.
                 while matches!(changes.try_recv(), Ok(_) | Err(TryRecvError::Lagged(_))) {}
-                let now = match states(&projection, &account, &params.kinds).await {
+                let now = match states(&projection, key_packages.as_deref(), &account, &params).await {
                     Ok(states) => states,
                     Err(error) => {
                         tracing::error!(
@@ -243,6 +275,7 @@ mod tests {
             ])),
             Some(Params {
                 kinds: Kind::ALL.to_vec(),
+                key_packages: true,
                 close_after_state: false,
                 ping: None
             })
@@ -255,6 +288,7 @@ mod tests {
             ])),
             Some(Params {
                 kinds: vec![Kind::Chat, Kind::Message],
+                key_packages: false,
                 close_after_state: true,
                 ping: Some(Duration::from_secs(300))
             })

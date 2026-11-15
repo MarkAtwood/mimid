@@ -153,7 +153,13 @@ pub struct KeyPackages {
     store: Store,
     domain: Domain,
     clock: Arc<dyn Clock>,
+    /// Announces the user whose stored KeyPackages may have changed.
+    changes: tokio::sync::broadcast::Sender<String>,
 }
+
+/// How many KeyPackage change announcements a slow subscriber may fall
+/// behind. INVENTED, NOT FROM SPEC.
+pub const KEY_PACKAGE_CHANGES_CAPACITY: usize = 256;
 
 impl std::fmt::Debug for KeyPackages {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -180,7 +186,21 @@ impl KeyPackages {
             store,
             domain,
             clock,
+            changes: tokio::sync::broadcast::channel(KEY_PACKAGE_CHANGES_CAPACITY).0,
         }
+    }
+
+    /// Receives the URI of each user whose stored KeyPackages may have
+    /// changed: after an upload, a delete, or a keyMaterial hand-out
+    /// (bead mimid-1wgh.12.40). A receiver more than
+    /// [`KEY_PACKAGE_CHANGES_CAPACITY`] announcements behind gets `Lagged`.
+    pub fn subscribe_changes(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.changes.subscribe()
+    }
+
+    fn announce(&self, user_uri: &str) {
+        // An error only means nobody is subscribed.
+        let _ = self.changes.send(user_uri.to_owned());
     }
 
     fn now_ms(&self) -> u64 {
@@ -258,6 +278,7 @@ impl KeyPackages {
             .await?;
         match outcome {
             KeyPackageInsert::Inserted => {
+                self.announce(user.as_str());
                 tracing::info!(
                     name: "key_package_uploaded",
                     client_uri = entry.client_uri,
@@ -324,9 +345,14 @@ impl KeyPackages {
         user: &LocalUser,
         reference: &[u8],
     ) -> Result<bool, StoreError> {
-        self.store
+        let deleted = self
+            .store
             .delete_key_package(user.as_str(), reference)
-            .await
+            .await?;
+        if deleted {
+            self.announce(user.as_str());
+        }
+        Ok(deleted)
     }
 
     /// Handles protocol-07 §5.2 `POST /keyMaterial/{targetUser}` for a user
@@ -478,6 +504,9 @@ impl KeyPackages {
                 },
                 None => ClientKeyMaterial::KeyMaterialExhausted { client_uri },
             });
+        }
+        if served > 0 {
+            self.announce(&user);
         }
         let user_status = if served == response_clients.len() {
             KeyMaterialUserCode::Success
