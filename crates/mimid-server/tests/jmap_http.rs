@@ -221,10 +221,8 @@ fn expected_session(
                         "cipherSuites": [1],
                         "maxKeyPackages": max_key_packages
                     },
-                    // draft-atwood-jmap-updates-00 §3: no preference kept.
-                    "urn:ietf:params:jmap:i18n": {
-                        "preferredLanguages": null
-                    }
+                    // draft-atwood-jmap-updates-00 §3: an empty object.
+                    "urn:ietf:params:jmap:i18n": {}
                 }
             }
         },

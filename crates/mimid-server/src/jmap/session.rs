@@ -153,9 +153,7 @@ impl SessionTemplate {
                     cipher_suites: CIPHER_SUITES.to_vec(),
                     max_key_packages: self.max_key_packages,
                 },
-                i18n: I18nAccountCapability {
-                    preferred_languages: None,
-                },
+                i18n: Empty {},
             },
         };
         SessionBody {
@@ -299,16 +297,10 @@ struct AccountCapabilities {
     chat: ChatCapability,
     #[serde(rename = "urn:ietf:params:jmap:chat:mimi")]
     mimi: MimiCapability,
+    /// draft-atwood-jmap-updates-00 §3: an empty object, as in the
+    /// Session (the draft dropped `preferredLanguages`, 2026-11-15).
     #[serde(rename = "urn:ietf:params:jmap:i18n")]
-    i18n: I18nAccountCapability,
-}
-
-/// draft-atwood-jmap-updates-00 §3: the account's i18n capability.
-/// mimid records no language preference, so `preferredLanguages` is null.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct I18nAccountCapability {
-    preferred_languages: Option<Vec<String>>,
+    i18n: Empty,
 }
 
 /// draft-atwood-jmap-chat-mimi-00 §3.2 (L150-167). crate-jmap has no type
