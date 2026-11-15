@@ -204,6 +204,24 @@ async fn main() {
         )]),
     )
     .expect("PeerClient");
+    // MIMID_SEED_FILE: sign every request with mimid's provider key
+    // (selector mimid1), for a hub that checks DNS-key signatures.
+    let client = match std::env::var("MIMID_SEED_FILE") {
+        Ok(path) => {
+            let seed: [u8; 32] = std::fs::read(path)
+                .expect("seed file")
+                .try_into()
+                .expect("32-byte seed");
+            println!("signing with mimid1");
+            client.with_signer(std::sync::Arc::new(
+                mimid_server::provider_auth::RequestSigner::new(
+                    mimid_server::httpsig::SigningKey::from_seed(&seed),
+                    "mimid1".to_owned(),
+                ),
+            ))
+        }
+        Err(_) => client,
+    };
 
     match client.group_info(&hub, ROOM, vec![]).await {
         Err(PeerError::NotOffered { endpoint }) => {
@@ -230,6 +248,18 @@ async fn main() {
         "mimi://mimi.havenmessenger.com/u/grace",
     )
     .await;
-    identifier(&client, &hub, "4 identifierQuery handle erin", "erin").await;
-    identifier(&client, &hub, "5 identifierQuery handle nobody", "nobody").await;
+    identifier(
+        &client,
+        &hub,
+        "4 identifierQuery handle erin",
+        "mimi://mimi.havenmessenger.com/u/erin",
+    )
+    .await;
+    identifier(
+        &client,
+        &hub,
+        "5 identifierQuery handle nobody",
+        "mimi://mimi.havenmessenger.com/u/nobody",
+    )
+    .await;
 }
