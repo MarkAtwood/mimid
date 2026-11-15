@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.55",
+  "title": "MIMI extension points (mimi-protocol #190): structured refusal reasons, retry hints, request extensions, skippable GroupInfoOption",
+  "description": "From the IETF 127 table and mimi-protocol #190 (Rohan: which messages need extension points). Haven (runne, comment 6898532669) and Mark (comment 6900044959, 2026-11-15) agree on: a structured refusal reason in UpdateRoomResponse instead of English errorDescription (covers #206), a per-ClientKeyMaterial retry hint for an exhausted client (#184, PR #201 only covers the code), extension dictionaries in UpdateRequest and KeyMaterialRequest, and every addition skippable by a receiver that doesn't know it (#195, PR #203). Children: spec work (draft PRs, posting needs Mark's OK) and mimid implementation (INVENTED codepoints marked until the WG assigns them).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T19:32:37.162851398Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T19:32:37.162851398Z",
+  "labels": [
+    "wg",
+    "interop",
+    "spec"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.55",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-15T19:32:37.194706393Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
