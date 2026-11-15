@@ -92,6 +92,7 @@
 
 mod identity;
 pub mod label;
+mod media_type;
 pub mod member;
 pub mod observer;
 mod store;

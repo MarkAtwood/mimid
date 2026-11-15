@@ -17,6 +17,8 @@ use mls_rs::{
     CipherSuite, CipherSuiteProvider, Client, CryptoProvider, Extension, ExtensionList, MlsMessage,
 };
 use mls_rs_crypto_rustcrypto::RustCryptoProvider;
+use openmls::component::ComponentData;
+use openmls::messages::proposals::{AppDataUpdateOperation, AppDataUpdateProposal};
 use openmls_sqlite_storage::Connection;
 
 /// RFC 9420 §17.1: ciphersuite 0x0001.
@@ -1410,44 +1412,6 @@ fn join_welcome_refuses_a_group_requiring_a_component_our_leaf_lacks() {
 // the resulting epoch does not list, not only a member the Commit adds or
 // updates (decision mimid-krmn.6).
 
-/// RFC 9420 §17.3: required_capabilities extension type.
-const REQUIRED_CAPABILITIES: ExtensionType = ExtensionType::new(0x0003);
-
-/// RFC 9420 §7.2 RequiredCapabilities requiring the app_data_dictionary
-/// extension only, so that a GroupContextExtensions proposal may change the
-/// dictionary (mls-extensions-10 §4.7).
-const REQUIRE_DICTIONARY_ONLY: [u8; 5] = [
-    0x02, 0x00, 0x06, // extension_types<V>: app_data_dictionary (0x0006)
-    0x00, // proposal_types<V>: empty
-    0x00, // credential_types<V>: empty
-];
-
-/// mls-extensions-10 §4.6 AppDataDictionary for a GroupContext, hand-encoded:
-/// `app_components` requires 0x8001 (which mimid's leaves list only when
-/// declared; these identities do not) and
-/// `safe_aad` keeps [0x0020, 0x3a3a].
-const GC_REQUIRE_8001: [u8; 15] = [
-    0x0e, // component_data<V>: 14 bytes
-    0x00, 0x01, // component_id = app_components
-    0x03, // data<V>: 3 bytes
-    0x02, 0x80, 0x01, // ComponentsList [0x8001]
-    0x00, 0x02, // component_id = safe_aad
-    0x05, // data<V>: 5 bytes
-    0x04, 0x00, 0x20, 0x3a, 0x3a, // ComponentsList [0x0020, 0x3a3a]
-];
-
-/// As [`GC_REQUIRE_8001`], but `app_components` requires 0x0004
-/// (last_resort_key_package), which mimid's leaves list.
-const GC_REQUIRE_0004: [u8; 15] = [
-    0x0e, // component_data<V>: 14 bytes
-    0x00, 0x01, // component_id = app_components
-    0x03, // data<V>: 3 bytes
-    0x02, 0x00, 0x04, // ComponentsList [0x0004]
-    0x00, 0x02, // component_id = safe_aad
-    0x05, // data<V>: 5 bytes
-    0x04, 0x00, 0x20, 0x3a, 0x3a, // ComponentsList [0x0020, 0x3a3a]
-];
-
 /// mls-extensions-10 §4.6 AppDataDictionary for bob's LeafNode: his
 /// `app_components` list names 0x0004 and 0x8001, his `safe_aad` list 0x0020.
 const LEAF_0004_8001_SAFE_AAD_0020: [u8; 15] = [
@@ -1542,85 +1506,6 @@ fn alice_and_bob_as(
     (alice, group, bob, bundle.group_info)
 }
 
-/// bob's GroupContextExtensions Commit setting the dictionary `dictionary`,
-/// with an UpdatePath whose leaf keeps his dictionary. Left unapplied.
-fn bob_gce(
-    bob: &mut mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
-    dictionary: &[u8],
-) -> Vec<u8> {
-    bob_gce_with_leaf(bob, dictionary, &LEAF_0004_8001_SAFE_AAD_0020)
-}
-
-/// As [`bob_gce`], with the UpdatePath leaf dictionary `leaf`.
-fn bob_gce_with_leaf(
-    bob: &mut mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
-    dictionary: &[u8],
-    leaf: &[u8],
-) -> Vec<u8> {
-    let mut extensions = ExtensionList::new();
-    extensions.set(Extension::new(APP_DATA_DICTIONARY, dictionary.to_vec()));
-    extensions.set(Extension::new(
-        REQUIRED_CAPABILITIES,
-        REQUIRE_DICTIONARY_ONLY.to_vec(),
-    ));
-    let commit = bob
-        .commit_builder()
-        .authenticated_data(EMPTY_SAFE_AAD.to_vec())
-        .set_group_context_ext(extensions)
-        .expect("mls-rs GroupContextExtensions")
-        .set_leaf_node_extensions(leaf_dictionary(leaf))
-        .build()
-        .expect("mls-rs commits")
-        .commit_message
-        .to_bytes()
-        .expect("encode");
-    bob.clear_pending_commit();
-    commit
-}
-
-#[test]
-fn received_commit_requiring_a_component_an_unchanged_member_lacks_is_rejected() {
-    // bob lists 0x8001 in the UpdatePath leaf; alice, unchanged, does not.
-    let (alice, mut group, mut bob, _) = alice_and_bob_with(&LEAF_0004_8001_SAFE_AAD_0020);
-    let commit = bob_gce(&mut bob, &GC_REQUIRE_8001);
-    let result = group.process(&alice, &commit, no_components);
-    assert!(
-        matches!(result, Err(MemberError::MissingAppComponent(0x8001))),
-        "{result:?}"
-    );
-    assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
-
-    // Control: a requirement every member lists is accepted.
-    let (alice, mut group, mut bob, _) = alice_and_bob_with(&LEAF_0004_8001_SAFE_AAD_0020);
-    let commit = bob_gce(&mut bob, &GC_REQUIRE_0004);
-    group
-        .process(&alice, &commit, no_components)
-        .expect("every member lists 0x0004");
-    assert_eq!(group.epoch(), 2);
-}
-
-#[test]
-fn observer_rejects_a_commit_requiring_a_component_an_unchanged_member_lacks() {
-    for (dictionary, accepted) in [(GC_REQUIRE_8001, false), (GC_REQUIRE_0004, true)] {
-        let (_alice, group, mut bob, group_info) =
-            alice_and_bob_with(&LEAF_0004_8001_SAFE_AAD_0020);
-        let store = Store::open_in_memory().expect("store");
-        let tree = group.ratchet_tree().expect("tree");
-        let ObserverStart { mut observer, .. } =
-            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
-        let commit = bob_gce(&mut bob, &dictionary);
-        let result = observer.process(&store, &commit, no_components);
-        if accepted {
-            result.expect("every member lists 0x0004");
-        } else {
-            assert!(
-                matches!(result, Err(ObserverError::MissingAppComponent(0x8001))),
-                "{result:?}"
-            );
-        }
-    }
-}
-
 #[test]
 fn member_refuses_to_build_a_commit_an_unchanged_member_cannot_meet() {
     // bob's leaf has no app_components list; alice's lists 0x0004. Requiring
@@ -1653,15 +1538,6 @@ fn member_refuses_to_build_a_commit_an_unchanged_member_cannot_meet() {
 // an UpdatePath is checked against the GroupContext before the Commit
 // (decision mimid-krmn.7), besides rule 5's check after it.
 
-/// mls-extensions-10 §4.6 AppDataDictionary for a GroupContext, hand-encoded:
-/// no `app_components` requirement; `safe_aad` keeps [0x0020, 0x3a3a].
-const GC_NO_APP_REQUIREMENT: [u8; 9] = [
-    0x08, // component_data<V>: 8 bytes
-    0x00, 0x02, // component_id = safe_aad
-    0x05, // data<V>: 5 bytes
-    0x04, 0x00, 0x20, 0x3a, 0x3a, // ComponentsList [0x0020, 0x3a3a]
-];
-
 /// mls-extensions-10 §4.6 AppDataDictionary for bob's new LeafNode: his
 /// `app_components` list names only 0x8001 (not 0x0004), his `safe_aad` list
 /// 0x0020.
@@ -1675,49 +1551,6 @@ const LEAF_8001_SAFE_AAD_0020: [u8; 13] = [
     0x02, 0x00, 0x20, // ComponentsList [0x0020]
 ];
 
-/// The group requires app component 0x0004 before bob's Commit. The Commit
-/// drops that requirement and gives bob a leaf without 0x0004: valid against
-/// the GroupContext after the Commit, invalid against the one before it. A
-/// mimid Member and an Observer refuse it; with a leaf that keeps 0x0004
-/// they accept it.
-#[test]
-fn update_path_leaf_is_checked_against_the_pre_commit_group_context() {
-    let components = [
-        (SAFE_AAD, REQUIRE_0020.to_vec()),
-        (APP_COMPONENTS, LIST_0004.to_vec()),
-    ];
-    for (leaf, accepted) in [
-        (&LEAF_8001_SAFE_AAD_0020[..], false),
-        (&LEAF_0004_8001_SAFE_AAD_0020[..], true),
-    ] {
-        let (alice, mut group, mut bob, group_info) =
-            alice_and_bob_in(&components, &LEAF_0004_8001_SAFE_AAD_0020);
-        let tree = group.ratchet_tree().expect("tree");
-        let store = Store::open_in_memory().expect("store");
-        let ObserverStart { mut observer, .. } =
-            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
-        let commit = bob_gce_with_leaf(&mut bob, &GC_NO_APP_REQUIREMENT, leaf);
-
-        let received = group.process(&alice, &commit, no_components);
-        let observed = observer.process(&store, &commit, no_components);
-        if accepted {
-            received.expect("the leaf keeps 0x0004");
-            observed.expect("the leaf keeps 0x0004");
-            assert_eq!(group.epoch(), 2);
-        } else {
-            assert!(
-                matches!(received, Err(MemberError::MissingAppComponent(0x0004))),
-                "{received:?}"
-            );
-            assert!(
-                matches!(observed, Err(ObserverError::MissingAppComponent(0x0004))),
-                "{observed:?}"
-            );
-            assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
-        }
-    }
-}
-
 // Decision mimid-krmn.9 (reading B, Mark 2026-11-02): an Add's KeyPackage
 // LeafNode is also checked against the GroupContext before the Commit, and a
 // standalone Add proposal when it arrives (mls-extensions editor's copy, PR
@@ -1727,79 +1560,6 @@ fn update_path_leaf_is_checked_against_the_pre_commit_group_context() {
 /// carol's KeyPackage (mls-rs) whose leaf dictionary is `leaf`.
 fn carol_key_package(leaf: &[u8]) -> MlsMessage {
     mls_rs_key_package_with(&mls_rs_client(b"carol"), leaf)
-}
-
-/// bob's Commit that drops the `app_components` requirement (0x0004) and
-/// adds carol with leaf dictionary `carol_leaf`. Left unapplied.
-fn bob_drops_requirement_and_adds_carol(
-    bob: &mut mls_rs::Group<impl mls_rs::client_builder::MlsConfig>,
-    carol_leaf: &[u8],
-) -> Vec<u8> {
-    let mut extensions = ExtensionList::new();
-    extensions.set(Extension::new(
-        APP_DATA_DICTIONARY,
-        GC_NO_APP_REQUIREMENT.to_vec(),
-    ));
-    extensions.set(Extension::new(
-        REQUIRED_CAPABILITIES,
-        REQUIRE_DICTIONARY_ONLY.to_vec(),
-    ));
-    let commit = bob
-        .commit_builder()
-        .authenticated_data(EMPTY_SAFE_AAD.to_vec())
-        .set_group_context_ext(extensions)
-        .expect("mls-rs GroupContextExtensions")
-        .add_member(carol_key_package(carol_leaf))
-        .expect("mls-rs adds carol")
-        .build()
-        .expect("mls-rs commits")
-        .commit_message
-        .to_bytes()
-        .expect("encode");
-    bob.clear_pending_commit();
-    commit
-}
-
-/// The group requires app component 0x0004 before bob's Commit. The Commit
-/// drops that requirement and adds carol, whose KeyPackage leaf lacks
-/// 0x0004: valid after the Commit, invalid before it. A mimid Member and an
-/// Observer refuse it; with a leaf that lists 0x0004 they accept it.
-#[test]
-fn added_key_package_leaf_is_checked_against_the_pre_commit_group_context() {
-    let components = [
-        (SAFE_AAD, REQUIRE_0020.to_vec()),
-        (APP_COMPONENTS, LIST_0004.to_vec()),
-    ];
-    for (carol_leaf, accepted) in [
-        (&LEAF_8001_SAFE_AAD_0020[..], false),
-        (&LEAF_0004_8001_SAFE_AAD_0020[..], true),
-    ] {
-        let (alice, mut group, mut bob, group_info) =
-            alice_and_bob_in(&components, &LEAF_0004_8001_SAFE_AAD_0020);
-        let tree = group.ratchet_tree().expect("tree");
-        let store = Store::open_in_memory().expect("store");
-        let ObserverStart { mut observer, .. } =
-            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
-        let commit = bob_drops_requirement_and_adds_carol(&mut bob, carol_leaf);
-
-        let received = group.process(&alice, &commit, no_components);
-        let observed = observer.process(&store, &commit, no_components);
-        if accepted {
-            received.expect("carol lists 0x0004");
-            observed.expect("carol lists 0x0004");
-            assert_eq!(group.epoch(), 2);
-        } else {
-            assert!(
-                matches!(received, Err(MemberError::MissingAppComponent(0x0004))),
-                "{received:?}"
-            );
-            assert!(
-                matches!(observed, Err(ObserverError::MissingAppComponent(0x0004))),
-                "{observed:?}"
-            );
-            assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
-        }
-    }
 }
 
 /// bob (mls-rs) proposes, on its own, to add carol, whose KeyPackage leaf
@@ -1939,53 +1699,6 @@ fn create_with_state_for_an_unlisted_component_is_refused() {
     )
     .expect("0x8001 is listed");
     assert_eq!(group.component(PRIVATE_COMPONENT), Some(b"x".as_slice()));
-}
-
-/// bob (mls-rs) commits a GroupContextExtensions proposal whose dictionary
-/// holds state for 0x8001. A mimid Member and an Observer refuse it unless
-/// the same dictionary's app_components lists 0x8001.
-#[test]
-fn received_commit_with_state_for_an_unlisted_component_is_refused() {
-    for (dictionary, accepted) in [
-        (&GC_STATE_8001_UNLISTED[..], false),
-        (&GC_STATE_8001_LISTED[..], true),
-    ] {
-        let (alice, mut group, mut bob, group_info) = alice_and_bob_as(
-            identity_with_8001(b"alice"),
-            &[(SAFE_AAD, REQUIRE_0020.to_vec())],
-            &LEAF_0004_8001_SAFE_AAD_0020,
-        );
-        let tree = group.ratchet_tree().expect("tree");
-        let store = Store::open_in_memory().expect("store");
-        let ObserverStart { mut observer, .. } =
-            Observer::from_group_info(&store, &group_info, Some(&tree)).expect("Observer");
-        let commit = bob_gce(&mut bob, dictionary);
-
-        let received = group.process(&alice, &commit, no_components);
-        let observed = observer.process(&store, &commit, no_components);
-        if accepted {
-            received.expect("0x8001 is listed");
-            observed.expect("0x8001 is listed");
-            assert_eq!(group.epoch(), 2);
-            assert_eq!(group.component(PRIVATE_COMPONENT), Some(b"x".as_slice()));
-        } else {
-            assert!(
-                matches!(
-                    received,
-                    Err(MemberError::ComponentNotListed(PRIVATE_COMPONENT))
-                ),
-                "{received:?}"
-            );
-            assert!(
-                matches!(
-                    observed,
-                    Err(ObserverError::ComponentNotListed(PRIVATE_COMPONENT))
-                ),
-                "{observed:?}"
-            );
-            assert_eq!(group.epoch(), 1, "a refused Commit changes nothing");
-        }
-    }
 }
 
 /// alice (mls-rs) creates a group whose GroupContext holds state for 0x8001
@@ -2353,6 +2066,410 @@ fn own_listing_joins_check_every_leaf_in_the_tree() {
                     "nothing is stored: {loaded:?}"
                 );
             }
+        }
+    }
+}
+
+// ---- -11 §5 component checks on received Commits, bob on plain OpenMLS ----
+//
+// mls-extensions-11 §4.7 lets only an AppDataUpdate change the
+// GroupContext's app_components. mls-rs cannot send one (it length-prefixes
+// custom proposal data), and mimi-mls will not build these Commits, so bob
+// commits with OpenMLS directly, below mimi-mls (Mark, 2026-11-15; amends
+// decision mimid-1wgh.4.76.1). OpenMLS applies the AppDataUpdate itself, so
+// the confirmation tag is right and a Member reaches the check under test.
+
+/// bob on plain OpenMLS, which applies AppDataUpdates without mimi-mls's
+/// §5 component checks.
+struct OpenMlsBob {
+    group: openmls::prelude::MlsGroup,
+    provider: openmls_rust_crypto::OpenMlsRustCrypto,
+    signer: openmls_basic_credential::SignatureKeyPair,
+}
+
+/// A plain OpenMLS KeyPackage for `name` whose LeafNode dictionary is the
+/// hand-encoded `leaf`.
+fn openmls_key_package(
+    name: &[u8],
+    leaf: &[u8],
+    provider: &openmls_rust_crypto::OpenMlsRustCrypto,
+    signer: &openmls_basic_credential::SignatureKeyPair,
+) -> openmls::prelude::KeyPackage {
+    use openmls::prelude::{
+        BasicCredential, Capabilities, Ciphersuite, CredentialType, CredentialWithKey,
+        ExtensionType, KeyPackage, ProposalType,
+    };
+    let suite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+    let credential_with_key = CredentialWithKey {
+        credential: BasicCredential::new(name.to_vec()).into(),
+        signature_key: signer.to_public_vec().into(),
+    };
+    let capabilities = Capabilities::builder()
+        .ciphersuites(vec![suite])
+        .credentials(vec![CredentialType::Basic])
+        .extensions(vec![ExtensionType::AppDataDictionary])
+        .proposals(vec![ProposalType::AppDataUpdate])
+        .build();
+    KeyPackage::builder()
+        .leaf_node_capabilities(capabilities)
+        .leaf_node_extensions(openmls_leaf_extensions(leaf))
+        .build(suite, provider, signer, credential_with_key)
+        .expect("OpenMLS KeyPackage")
+        .key_package()
+        .clone()
+}
+
+/// The LeafNode extensions holding the hand-encoded dictionary `leaf`.
+fn openmls_leaf_extensions(
+    leaf: &[u8],
+) -> openmls::prelude::Extensions<openmls::prelude::LeafNode> {
+    use openmls::prelude::{AppDataDictionaryExtension, Extension, Extensions};
+    // The constants use one-byte lengths: component_data<V>, then per entry
+    // a uint16 component_id and data<V>.
+    let mut dictionary = openmls::prelude::AppDataDictionary::new();
+    let mut rest = &leaf[1..];
+    assert_eq!(usize::from(leaf[0]), rest.len(), "one-byte vector length");
+    while !rest.is_empty() {
+        let id = u16::from_be_bytes([rest[0], rest[1]]);
+        let len = usize::from(rest[2]);
+        dictionary.insert(id, rest[3..3 + len].to_vec());
+        rest = &rest[3 + len..];
+    }
+    Extensions::single(Extension::AppDataDictionary(
+        AppDataDictionaryExtension::new(dictionary),
+    ))
+    .expect("leaf extensions")
+}
+
+fn openmls_signer() -> openmls_basic_credential::SignatureKeyPair {
+    openmls_basic_credential::SignatureKeyPair::new(
+        openmls::prelude::Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519
+            .signature_algorithm(),
+    )
+    .expect("key")
+}
+
+/// alice (mimi-mls, identity `alice`, GroupContext `components`) and bob
+/// (plain OpenMLS, leaf dictionary `bob_leaf`) at epoch 1, with alice's
+/// GroupInfo for epoch 1.
+fn alice_and_openmls_bob(
+    alice: Identity,
+    components: &[(u16, Vec<u8>)],
+    bob_leaf: &[u8],
+) -> (Identity, Member, OpenMlsBob, Vec<u8>) {
+    use mimi_mls::tls_codec::{Deserialize, Serialize};
+    use openmls::prelude::{
+        MlsGroupJoinConfig, MlsMessageBodyIn, MlsMessageIn, PURE_PLAINTEXT_WIRE_FORMAT_POLICY,
+        RatchetTreeIn, StagedWelcome,
+    };
+    let mut group = Member::create(&alice, b"room-k3", &[], components).expect("create");
+    let provider = openmls_rust_crypto::OpenMlsRustCrypto::default();
+    let signer = openmls_signer();
+    let key_package = openmls_key_package(b"bob", bob_leaf, &provider, &signer)
+        .tls_serialize_detached()
+        .expect("encode");
+    let bundle = group
+        .commit(&alice, &[&key_package], &[], &[], no_components)
+        .expect("commit");
+    group.merge_pending_commit(&alice).expect("merge");
+    let tree = group.ratchet_tree().expect("tree");
+    let welcome = MlsMessageIn::tls_deserialize_exact(bundle.welcome.expect("Welcome"))
+        .expect("decode Welcome");
+    let MlsMessageBodyIn::Welcome(welcome) = welcome.extract() else {
+        panic!("not a Welcome");
+    };
+    let config = MlsGroupJoinConfig::builder()
+        .wire_format_policy(PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
+        .build();
+    let bob = StagedWelcome::build_from_welcome(&provider, &config, welcome)
+        .expect("Welcome")
+        .with_ratchet_tree(RatchetTreeIn::tls_deserialize_exact(&tree).expect("tree"))
+        .build()
+        .expect("stage")
+        .into_group(&provider)
+        .expect("bob joins");
+    (
+        alice,
+        group,
+        OpenMlsBob {
+            group: bob,
+            provider,
+            signer,
+        },
+        bundle.group_info,
+    )
+}
+
+/// An AppDataUpdate setting `component_id` to `data`.
+fn openmls_update(component_id: u16, data: &[u8]) -> AppDataUpdateProposal {
+    AppDataUpdateProposal::update(component_id, data.to_vec())
+}
+
+impl OpenMlsBob {
+    /// bob's Commit of `proposals`, applied as complete new values (the
+    /// §5.1 rule for the built-in components, and the test rule for
+    /// 0x8001), with an UpdatePath leaf dictionary `leaf` if given and
+    /// carol's KeyPackage `add` if given. Left unapplied.
+    fn commit(
+        &mut self,
+        proposals: &[AppDataUpdateProposal],
+        leaf: Option<&[u8]>,
+        add: Option<openmls::prelude::KeyPackage>,
+    ) -> Vec<u8> {
+        use mimi_mls::tls_codec::Serialize;
+        use openmls::prelude::{LeafNodeParameters, OpenMlsProvider, Proposal};
+        let mut builder = self.group.commit_builder().add_proposals(
+            proposals
+                .iter()
+                .cloned()
+                .map(|p| Proposal::AppDataUpdate(Box::new(p))),
+        );
+        if let Some(leaf) = leaf {
+            builder = builder.leaf_node_parameters(
+                LeafNodeParameters::builder()
+                    .with_extensions(openmls_leaf_extensions(leaf))
+                    .build(),
+            );
+        }
+        if let Some(key_package) = add {
+            builder = builder.propose_adds([key_package]);
+        }
+        let mut stage = builder
+            .load_psks(self.provider.storage())
+            .expect("load PSKs");
+        let staged: Vec<AppDataUpdateProposal> =
+            stage.app_data_update_proposals().cloned().collect();
+        let mut updater = stage.app_data_dictionary_updater();
+        for p in &staged {
+            match p.operation() {
+                AppDataUpdateOperation::Update(data) => {
+                    updater.set(ComponentData::from_parts(p.component_id(), data.clone()));
+                }
+                AppDataUpdateOperation::Remove => updater.remove(&p.component_id()),
+            }
+        }
+        let changes = updater.changes();
+        stage.with_app_data_dictionary_updates(changes);
+        let (commit, _, _) = stage
+            .build(
+                self.provider.rand(),
+                self.provider.crypto(),
+                &self.signer,
+                |_| true,
+            )
+            .expect("OpenMLS builds the Commit")
+            .stage_commit(&self.provider)
+            .expect("stage")
+            .into_messages();
+        self.group
+            .clear_pending_commit(self.provider.storage())
+            .expect("clear");
+        commit.tls_serialize_detached().expect("encode")
+    }
+}
+
+/// carol's plain OpenMLS KeyPackage with leaf dictionary `leaf`.
+fn openmls_carol(leaf: &[u8]) -> openmls::prelude::KeyPackage {
+    let provider = openmls_rust_crypto::OpenMlsRustCrypto::default();
+    openmls_key_package(b"carol", leaf, &provider, &openmls_signer())
+}
+
+/// An Observer of alice's group at epoch 1.
+fn observer_of(group: &Member, group_info: &[u8]) -> (Store, Observer) {
+    let store = Store::open_in_memory().expect("store");
+    let tree = group.ratchet_tree().expect("tree");
+    let ObserverStart { observer, .. } =
+        Observer::from_group_info(&store, group_info, Some(&tree)).expect("Observer");
+    (store, observer)
+}
+
+/// The callback for 0x8001: each update replaces the data.
+fn replace_8001(
+    component_id: u16,
+    _current: Option<&[u8]>,
+    op: ComponentOp<'_>,
+) -> Result<Option<Vec<u8>>, ErrorSource> {
+    match (component_id, op) {
+        (PRIVATE_COMPONENT, ComponentOp::Update(updates)) => Ok(updates.last().map(|u| u.to_vec())),
+        (PRIVATE_COMPONENT, ComponentOp::Remove) => Ok(None),
+        _ => Err(format!("unexpected AppDataUpdate for {component_id:#06x}").into()),
+    }
+}
+
+/// bob's AppDataUpdate makes app_components require 0x8001, which alice,
+/// unchanged, does not list (bob's UpdatePath leaf does): a Member and an
+/// Observer refuse it (§5: "A Commit is invalid if the GroupContext of the
+/// resulting epoch requires a component that a member of the resulting
+/// epoch does not list"). Requiring 0x0004, which every member lists, they
+/// accept.
+#[test]
+fn received_commit_requiring_a_component_an_unchanged_member_lacks_is_rejected() {
+    for (list, accepted) in [(&LIST_8001[..], false), (&LIST_0004[..], true)] {
+        let (alice, mut group, mut bob, group_info) = alice_and_openmls_bob(
+            identity(b"alice"),
+            &[(SAFE_AAD, REQUIRE_0020.to_vec())],
+            &LEAF_0004_8001_SAFE_AAD_0020,
+        );
+        let (store, mut observer) = observer_of(&group, &group_info);
+        let commit = bob.commit(
+            &[openmls_update(APP_COMPONENTS, list)],
+            Some(&LEAF_0004_8001_SAFE_AAD_0020),
+            None,
+        );
+        let received = group.process(&alice, &commit, no_components);
+        let observed = observer.process(&store, &commit, no_components);
+        if accepted {
+            received.expect("every member lists 0x0004");
+            observed.expect("every member lists 0x0004");
+            assert_eq!(group.epoch(), 2);
+        } else {
+            assert!(
+                matches!(received, Err(MemberError::MissingAppComponent(0x8001))),
+                "{received:?}"
+            );
+            assert!(
+                matches!(observed, Err(ObserverError::MissingAppComponent(0x8001))),
+                "{observed:?}"
+            );
+            assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
+        }
+    }
+}
+
+/// The group requires app component 0x0004 before bob's Commit. The Commit
+/// removes that requirement and gives bob a leaf without 0x0004: valid
+/// against the GroupContext after the Commit, invalid against the one
+/// before it (§5: a LeafNode in the UpdatePath "is checked against the
+/// GroupContext before the Commit"). A Member and an Observer refuse it;
+/// with a leaf that keeps 0x0004 they accept it.
+#[test]
+fn update_path_leaf_is_checked_against_the_pre_commit_group_context() {
+    let components = [
+        (SAFE_AAD, REQUIRE_0020.to_vec()),
+        (APP_COMPONENTS, LIST_0004.to_vec()),
+    ];
+    for (leaf, accepted) in [
+        (&LEAF_8001_SAFE_AAD_0020[..], false),
+        (&LEAF_0004_8001_SAFE_AAD_0020[..], true),
+    ] {
+        let (alice, mut group, mut bob, group_info) = alice_and_openmls_bob(
+            identity(b"alice"),
+            &components,
+            &LEAF_0004_8001_SAFE_AAD_0020,
+        );
+        let (store, mut observer) = observer_of(&group, &group_info);
+        let commit = bob.commit(
+            &[AppDataUpdateProposal::remove(APP_COMPONENTS)],
+            Some(leaf),
+            None,
+        );
+        let received = group.process(&alice, &commit, no_components);
+        let observed = observer.process(&store, &commit, no_components);
+        if accepted {
+            received.expect("the leaf keeps 0x0004");
+            observed.expect("the leaf keeps 0x0004");
+            assert_eq!(group.epoch(), 2);
+        } else {
+            assert!(
+                matches!(received, Err(MemberError::MissingAppComponent(0x0004))),
+                "{received:?}"
+            );
+            assert!(
+                matches!(observed, Err(ObserverError::MissingAppComponent(0x0004))),
+                "{observed:?}"
+            );
+            assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
+        }
+    }
+}
+
+/// The group requires app component 0x0004 before bob's Commit. The Commit
+/// removes that requirement and adds carol, whose KeyPackage leaf lacks
+/// 0x0004: valid after the Commit, invalid before it. A Member and an
+/// Observer refuse it; with a leaf that lists 0x0004 they accept it.
+#[test]
+fn added_key_package_leaf_is_checked_against_the_pre_commit_group_context() {
+    let components = [
+        (SAFE_AAD, REQUIRE_0020.to_vec()),
+        (APP_COMPONENTS, LIST_0004.to_vec()),
+    ];
+    for (carol_leaf, accepted) in [
+        (&LEAF_8001_SAFE_AAD_0020[..], false),
+        (&LEAF_0004_8001_SAFE_AAD_0020[..], true),
+    ] {
+        let (alice, mut group, mut bob, group_info) = alice_and_openmls_bob(
+            identity(b"alice"),
+            &components,
+            &LEAF_0004_8001_SAFE_AAD_0020,
+        );
+        let (store, mut observer) = observer_of(&group, &group_info);
+        let commit = bob.commit(
+            &[AppDataUpdateProposal::remove(APP_COMPONENTS)],
+            None,
+            Some(openmls_carol(carol_leaf)),
+        );
+        let received = group.process(&alice, &commit, no_components);
+        let observed = observer.process(&store, &commit, no_components);
+        if accepted {
+            received.expect("carol lists 0x0004");
+            observed.expect("carol lists 0x0004");
+            assert_eq!(group.epoch(), 2);
+        } else {
+            assert!(
+                matches!(received, Err(MemberError::MissingAppComponent(0x0004))),
+                "{received:?}"
+            );
+            assert!(
+                matches!(observed, Err(ObserverError::MissingAppComponent(0x0004))),
+                "{observed:?}"
+            );
+            assert_eq!(group.epoch(), 1, "a rejected Commit changes nothing");
+        }
+    }
+}
+
+/// bob's AppDataUpdate gives 0x8001 state that no app_components list names:
+/// a Member and an Observer refuse it (§5). With an app_components update
+/// naming 0x8001 in the same Commit they accept it (§5: "a single Commit
+/// can both require a component and set its state").
+#[test]
+fn received_commit_with_state_for_an_unlisted_component_is_refused() {
+    let unlisted = vec![openmls_update(PRIVATE_COMPONENT, b"x")];
+    let listed = vec![
+        openmls_update(APP_COMPONENTS, &LIST_8001),
+        openmls_update(PRIVATE_COMPONENT, b"x"),
+    ];
+    for (proposals, accepted) in [(unlisted, false), (listed, true)] {
+        let (alice, mut group, mut bob, group_info) = alice_and_openmls_bob(
+            identity_with_8001(b"alice"),
+            &[(SAFE_AAD, REQUIRE_0020.to_vec())],
+            &LEAF_0004_8001_SAFE_AAD_0020,
+        );
+        let (store, mut observer) = observer_of(&group, &group_info);
+        let commit = bob.commit(&proposals, Some(&LEAF_0004_8001_SAFE_AAD_0020), None);
+        let received = group.process(&alice, &commit, replace_8001);
+        let observed = observer.process(&store, &commit, replace_8001);
+        if accepted {
+            received.expect("0x8001 is listed");
+            observed.expect("0x8001 is listed");
+            assert_eq!(group.epoch(), 2);
+            assert_eq!(group.component(PRIVATE_COMPONENT), Some(b"x".as_slice()));
+        } else {
+            assert!(
+                matches!(
+                    received,
+                    Err(MemberError::ComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{received:?}"
+            );
+            assert!(
+                matches!(
+                    observed,
+                    Err(ObserverError::ComponentNotListed(PRIVATE_COMPONENT))
+                ),
+                "{observed:?}"
+            );
+            assert_eq!(group.epoch(), 1, "a refused Commit changes nothing");
         }
     }
 }

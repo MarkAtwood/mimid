@@ -107,7 +107,7 @@ use super::components;
 use super::policy::{
     self, AppDataOp, Commit, Committer, Origin, Proposal, ProposalKind, ProposalSender, RoomState,
 };
-use super::room::GROUP_INFO_MESSAGE_HEADER;
+use super::room::{self, GROUP_INFO_MESSAGE_HEADER};
 use super::state::{identity_domain, member_domains, room_state};
 use super::{Hub, HubError, PendingAppData, Room, restore_room};
 use crate::config::Domain;
@@ -463,6 +463,31 @@ fn stage_commit(
             "commit refused by room policy"
         );
         return refused(room, "the commit is refused by room policy");
+    }
+    // Decision mimid-1wgh.4.76.2 (revising mimid-1wgh.6.74): under
+    // mls-extensions-11 §5.1 an AppDataUpdate can change safe_aad, so a
+    // room that is franked, or must be, stays franked: the epoch the Commit
+    // leads to still requires frank_aad.
+    let franked_now = match room::is_franked(&room.observer) {
+        Ok(franked) => franked,
+        Err(error) => {
+            room.observer.clear_pending_commit();
+            return Err(error);
+        }
+    };
+    if franked_now || hub.requirements.franking {
+        let franked_after = match room.observer.pending_required_safe_aad() {
+            Ok(required) => {
+                required.is_some_and(|ids| ids.contains(&mimi_protocol::component_id::FRANK_AAD))
+            }
+            Err(error) => {
+                room.observer.clear_pending_commit();
+                return Err(HubError::Mls(error));
+            }
+        };
+        if !franked_after {
+            return refused(room, "the commit stops requiring frank_aad");
+        }
     }
     // Decision mimid-1wgh.6.5.
     let included: HashSet<&ProposalRef> = detail

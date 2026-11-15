@@ -25,6 +25,9 @@ pub(crate) const APP_COMPONENTS: ComponentId = 0x0001;
 /// mls-extensions-10 §7.5 component registry: `safe_aad`.
 pub(crate) const SAFE_AAD: ComponentId = 0x0002;
 
+/// mls-extensions-11 §10 component registry: `content_media_types`.
+pub(crate) const CONTENT_MEDIA_TYPES: ComponentId = 0x0003;
+
 /// mls-extensions-10 §7.5 component registry: the GREASE component ids.
 /// RFC 9420 §13.5 GREASE goes on to 0xeaea, but 0x8a8a and above are
 /// component ids for Private Use, so OpenMLS's `random_grease_value` is

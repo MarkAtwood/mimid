@@ -177,15 +177,6 @@ const DICTIONARY_V1: [u8; 12] = [
     0x02, b'v', b'1', // data<V>: "v1"
 ];
 
-/// §4.6 AppDataDictionary { app_components: [LOG], LOG: "v2" }.
-const DICTIONARY_V2: [u8; 12] = [
-    0x0b, // component_data<V>: 11 bytes
-    0x00, 0x01, // component_id = app_components
-    0x03, 0x02, 0x80, 0x01, // data<V>: ComponentsList [LOG]
-    0x80, 0x01, // component_id = LOG
-    0x02, b'v', b'2', // data<V>: "v2"
-];
-
 /// `update` lengths at each RFC 9420 §2.1.2 variable-length prefix
 /// boundary, with the prefix written by hand.
 const LENGTH_BOUNDARIES: [(usize, &[u8]); 5] = [
@@ -1142,44 +1133,54 @@ fn assert_refused_by_dictionary_rule(result: Result<Incoming, MemberError>, case
 }
 
 #[test]
-fn gce_may_not_touch_the_dictionary_when_app_data_update_is_required() {
-    // §4.7: with AppDataUpdate in required_capabilities, a
-    // GroupContextExtensions proposal MUST NOT add, remove or modify the
-    // app_data_dictionary extension. OpenMLS enforces this (on the
-    // required_capabilities before or after the Commit).
+fn gce_never_touches_the_dictionary() {
+    // mls-extensions-11 §4.7: a GroupContextExtensions proposal MUST NOT
+    // add, remove or modify the app_data_dictionary extension, "whether or
+    // not the AppDataUpdate proposal type is listed" in required_capabilities
+    // (-10 applied the rule only when it was; mls-extensions PR #112).
     let cases: [(&str, bool, Option<&[u8]>); 3] = [
         ("modify", true, Some(&DICTIONARY_V1)),
         ("remove", true, None),
         ("add", false, Some(&DICTIONARY_V1)),
     ];
-    for (case, with_dictionary, new_dictionary) in cases {
-        let alice = identity(b"alice");
-        let components = if with_dictionary {
-            vec![(APP_COMPONENTS, LIST_LOG.to_vec()), (LOG, b"v0".to_vec())]
-        } else {
-            vec![]
-        };
-        let mut member = Member::create(&alice, b"room-gce", &[], &components).expect("create");
-        let mut bob = add_mls_rs(&alice, &mut member, b"bob");
-        let epoch = member.epoch();
-        let result = gce_from_mls_rs(
-            &alice,
-            &mut member,
-            &mut bob,
-            context_extensions(new_dictionary, REQUIRE_APP_DATA_UPDATE),
-        );
-        assert_refused_by_dictionary_rule(result, case);
-        assert_eq!(member.epoch(), epoch, "{case}");
-        assert_eq!(
-            member.component(LOG),
-            with_dictionary.then_some(b"v0".as_slice()),
-            "{case}"
-        );
+    let requirements: [(&str, &[u8]); 2] = [
+        ("AppDataUpdate required", REQUIRE_APP_DATA_UPDATE),
+        ("AppDataUpdate not required", REQUIRE_DICTIONARY_ONLY),
+    ];
+    for (required, required_capabilities) in requirements {
+        for (case, with_dictionary, new_dictionary) in cases {
+            let case = format!("{case}, {required}");
+            let alice = identity(b"alice");
+            let components = if with_dictionary {
+                vec![(APP_COMPONENTS, LIST_LOG.to_vec()), (LOG, b"v0".to_vec())]
+            } else {
+                vec![]
+            };
+            let mut member = Member::create(&alice, b"room-gce", &[], &components).expect("create");
+            let mut bob = add_mls_rs(&alice, &mut member, b"bob");
+            let epoch = member.epoch();
+            let result = gce_from_mls_rs(
+                &alice,
+                &mut member,
+                &mut bob,
+                context_extensions(new_dictionary, required_capabilities),
+            );
+            assert_refused_by_dictionary_rule(result, &case);
+            assert_eq!(member.epoch(), epoch, "{case}");
+            assert_eq!(
+                member.component(LOG),
+                with_dictionary.then_some(b"v0".as_slice()),
+                "{case}"
+            );
+        }
     }
 }
 
 #[test]
-fn gce_dictionary_rule_follows_required_capabilities() {
+fn gce_may_change_other_extensions_leaving_the_dictionary() {
+    // §4.7: a GroupContextExtensions proposal carries the current
+    // dictionary unchanged, here while changing required_capabilities both
+    // ways; mls-rs and mimid reach the same epoch.
     let alice = identity(b"alice");
     let mut member = Member::create(
         &alice,
@@ -1197,50 +1198,22 @@ fn gce_dictionary_rule_follows_required_capabilities() {
             .extension_data,
         DICTIONARY_V0
     );
-
-    // Without AppDataUpdate required, §4.7 lets GroupContextExtensions
-    // change the dictionary.
-    commit_summary(
-        gce_from_mls_rs(
-            &alice,
-            &mut member,
-            &mut bob,
-            context_extensions(Some(&DICTIONARY_V1), REQUIRE_DICTIONARY_ONLY),
-        )
-        .expect("allowed"),
-    );
-    assert_eq!(member.component(LOG), Some(b"v1".as_slice()));
-    assert_eq!(
-        member.epoch_authenticator(),
-        bob.epoch_authenticator().expect("mls-rs").as_bytes()
-    );
-
-    // Requiring AppDataUpdate while leaving the dictionary as it is.
-    commit_summary(
-        gce_from_mls_rs(
-            &alice,
-            &mut member,
-            &mut bob,
-            context_extensions(Some(&DICTIONARY_V1), REQUIRE_APP_DATA_UPDATE),
-        )
-        .expect("allowed"),
-    );
-    assert_eq!(
-        member.epoch_authenticator(),
-        bob.epoch_authenticator().expect("mls-rs").as_bytes()
-    );
-
-    // Dropping the requirement does not lift the rule in the same Commit.
-    let epoch = member.epoch();
-    let result = gce_from_mls_rs(
-        &alice,
-        &mut member,
-        &mut bob,
-        context_extensions(Some(&DICTIONARY_V2), REQUIRE_DICTIONARY_ONLY),
-    );
-    assert_refused_by_dictionary_rule(result, "drop requirement and modify");
-    assert_eq!(member.epoch(), epoch);
-    assert_eq!(member.component(LOG), Some(b"v1".as_slice()));
+    for required_capabilities in [REQUIRE_APP_DATA_UPDATE, REQUIRE_DICTIONARY_ONLY] {
+        commit_summary(
+            gce_from_mls_rs(
+                &alice,
+                &mut member,
+                &mut bob,
+                context_extensions(Some(&DICTIONARY_V0), required_capabilities),
+            )
+            .expect("allowed"),
+        );
+        assert_eq!(member.component(LOG), Some(b"v0".as_slice()));
+        assert_eq!(
+            member.epoch_authenticator(),
+            bob.epoch_authenticator().expect("mls-rs").as_bytes()
+        );
+    }
 }
 
 #[test]
@@ -1520,5 +1493,142 @@ fn listing_a_component_and_setting_its_state_in_one_commit_is_accepted() {
             );
             assert_eq!(member.component(ABSENT), None, "{case}");
         }
+    }
+}
+
+// ---- mls-extensions-11 §5.1: the built-in components (bead mimid-1wgh.4.76.7) ----
+//
+// Oracle: §5.1 itself. mimi-mls is the application logic for
+// app_components, safe_aad and content_media_types: an update carries the
+// complete new value, which must decode; the last update in a Commit wins;
+// a remove deletes the entry. The `apply` callback is never asked.
+
+/// `concat`, but refusing to be asked about a built-in component.
+fn not_for_built_ins(
+    component_id: u16,
+    current: Option<&[u8]>,
+    op: ComponentOp<'_>,
+) -> Result<Option<Vec<u8>>, ErrorSource> {
+    if [0x0001, 0x0002, 0x0003].contains(&component_id) {
+        return Err(format!("asked about built-in {component_id:#06x}").into());
+    }
+    concat(component_id, current, op)
+}
+
+/// ComponentsList [frank_aad 0x0020], hand-encoded.
+const LIST_FRANK_AAD: [u8; 3] = [0x02, 0x00, 0x20];
+/// ComponentsList [], hand-encoded.
+const LIST_EMPTY: [u8; 1] = [0x00];
+
+/// alice commits `updates`; carol processes it. Both must agree.
+fn commit_both(
+    alice: &Identity,
+    alice_group: &mut Member,
+    carol: &Identity,
+    carol_group: &mut Member,
+    updates: &[AppDataUpdate],
+) {
+    let bundle = alice_group
+        .commit(alice, &[], &[], updates, not_for_built_ins)
+        .expect("alice commits");
+    alice_group.merge_pending_commit(alice).expect("merge");
+    commit_summary(
+        carol_group
+            .process(carol, &bundle.commit, not_for_built_ins)
+            .expect("carol processes"),
+    );
+    assert_eq!(
+        alice_group.epoch_authenticator(),
+        carol_group.epoch_authenticator()
+    );
+}
+
+#[test]
+fn built_in_components_take_the_last_complete_value() {
+    let (alice, mut alice_group, carol, mut carol_group) =
+        two_mimi_members(&[(LOG, b"v0".to_vec())]);
+    // The first value would leave LOG's state unlisted, so the Commit is
+    // valid only if the last value is the one applied.
+    commit_both(
+        &alice,
+        &mut alice_group,
+        &carol,
+        &mut carol_group,
+        &[
+            AppDataUpdate::Update {
+                component_id: APP_COMPONENTS,
+                update: LIST_EMPTY.to_vec(),
+            },
+            AppDataUpdate::Update {
+                component_id: APP_COMPONENTS,
+                update: LIST_LOG.to_vec(),
+            },
+        ],
+    );
+    for group in [&alice_group, &carol_group] {
+        assert_eq!(group.component(APP_COMPONENTS), Some(LIST_LOG.as_slice()));
+        assert_eq!(group.component(LOG), Some(b"v0".as_slice()));
+    }
+}
+
+#[test]
+fn safe_aad_is_set_and_removed_by_app_data_update() {
+    let (alice, mut alice_group, carol, mut carol_group) =
+        two_mimi_members(&[(LOG, b"v0".to_vec())]);
+    commit_both(
+        &alice,
+        &mut alice_group,
+        &carol,
+        &mut carol_group,
+        &[AppDataUpdate::Update {
+            component_id: 0x0002,
+            update: LIST_FRANK_AAD.to_vec(),
+        }],
+    );
+    for group in [&alice_group, &carol_group] {
+        assert_eq!(group.component(0x0002), Some(LIST_FRANK_AAD.as_slice()));
+    }
+    commit_both(
+        &alice,
+        &mut alice_group,
+        &carol,
+        &mut carol_group,
+        &[AppDataUpdate::Remove {
+            component_id: 0x0002,
+        }],
+    );
+    for group in [&alice_group, &carol_group] {
+        assert_eq!(group.component(0x0002), None);
+    }
+}
+
+#[test]
+fn a_built_in_update_that_does_not_decode_is_invalid() {
+    let (alice, mut alice_group, _, _) = two_mimi_members(&[(LOG, b"v0".to_vec())]);
+    let cases: [(u16, &[u8]); 3] = [
+        // A ComponentsList whose length says 3 bytes, with 2.
+        (APP_COMPONENTS, &[0x03, 0x80, 0x01]),
+        (0x0002, &[0x01]),
+        // A MediaTypeList with no media type (§6.2.2: at least one).
+        (0x0003, &[0x00]),
+    ];
+    for (component_id, update) in cases {
+        let error = alice_group
+            .commit(
+                &alice,
+                &[],
+                &[],
+                &[AppDataUpdate::Update {
+                    component_id,
+                    update: update.to_vec(),
+                }],
+                not_for_built_ins,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, MemberError::InvalidAppDataUpdate(id) if id == component_id),
+            "{component_id:#06x}: {error:?}"
+        );
+        assert_eq!(alice_group.epoch(), 1);
     }
 }

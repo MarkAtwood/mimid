@@ -815,11 +815,42 @@ fn safe_aad_apply(
     }
 }
 
+/// A Commit that changes `safe_aad` by AppDataUpdate (mls-extensions-11
+/// §5.1) and still requires frank_aad is accepted: the hub refuses only
+/// a Commit that would leave a franked room unfranked (decision
+/// mimid-1wgh.4.76.2).
+#[tokio::test]
+async fn commit_keeping_frank_aad_in_safe_aad_is_accepted() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mimid.sqlite");
+    let (store, hub) = open_hub(&path).await;
+    let mut room = member_room(&hub, ROOM_ID, b"group-safe-aad-keep").await;
+    // ComponentsList [frank_aad 0x0020, GREASE 0x2a2a]: frank_aad stays.
+    let update = AppDataUpdate::Update {
+        component_id: SAFE_AAD,
+        update: vec![0x04, 0x00, 0x20, 0x2a, 0x2a],
+    };
+    let bundle = room
+        .alice_group
+        .commit(&room.alice, &[], &[], &[update], safe_aad_apply)
+        .unwrap();
+    let tree = room.alice_group.ratchet_tree().unwrap();
+    let request = commit_request(&bundle.commit, None, &bundle.group_info, &tree);
+    let answer = hub.update(ROOM_ID, &a(), &request).await.unwrap();
+    assert!(
+        matches!(response(&answer).0, UpdateResult::Success { .. }),
+        "{:?}",
+        response(&answer)
+    );
+    close_hub(store, hub).await;
+}
+
 /// A Commit that drops frank_aad from the room's required Safe AAD
 /// components, by an AppDataUpdate of `safe_aad` to an empty list or by
-/// removing it, is refused and changes nothing (bead mimid-1wgh.6.74). The
-/// hub's AppDataUpdate logic knows only the components it tracks, so any
-/// change to `safe_aad` is refused (hub/components.rs apply_commit_op).
+/// removing it, is refused and changes nothing. mls-extensions-11 §5.1 makes
+/// AppDataUpdate the way to change `safe_aad`, so the Commit is valid MLS;
+/// the hub refuses it because the room is franked and would stop being so
+/// (decision mimid-1wgh.4.76.2, revising mimid-1wgh.6.74).
 #[tokio::test]
 async fn commit_dropping_frank_aad_from_safe_aad_is_refused() {
     let logs = capture_logs();
@@ -853,9 +884,7 @@ async fn commit_dropping_frank_aad_from_safe_aad_is_refused() {
         let before = counts(&db).await;
         let before_state = hub.public_state(ROOM_ID).await.unwrap();
         let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
-        // The hub's AppDataUpdate logic does not know safe_aad, so the
-        // Commit fails MLS processing (hub/components.rs apply_commit_op).
-        assert_not_allowed(logs, &refused, "the commit is not valid");
+        assert_not_allowed(logs, &refused, "the commit stops requiring frank_aad");
         assert_eq!(counts(&db).await, before, "{case}");
         assert_eq!(
             hub.public_state(ROOM_ID).await.unwrap(),

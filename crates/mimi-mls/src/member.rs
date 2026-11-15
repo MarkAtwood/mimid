@@ -167,7 +167,8 @@ use openmls_rust_crypto::OpenMlsRustCrypto;
 use tls_codec::{Deserialize, Serialize};
 
 use crate::identity::{
-    APP_COMPONENTS, CIPHERSUITE, COMPONENT_GREASE, SAFE_AAD, leaf_capabilities, leaf_extensions,
+    APP_COMPONENTS, CIPHERSUITE, COMPONENT_GREASE, CONTENT_MEDIA_TYPES, SAFE_AAD,
+    leaf_capabilities, leaf_extensions,
 };
 use crate::wire::check_safe_aad;
 use crate::{ErrorSource, Identity};
@@ -1893,13 +1894,19 @@ pub(crate) fn first_unlisted_entry(extensions: &Extensions<LeafNode>) -> Option<
         .find(|id| ![APP_COMPONENTS, SAFE_AAD].contains(id) && !listed.contains(id))
 }
 
-/// Applies mls-extensions-10 §4.7 to `proposals` (sorted by component id,
+/// Applies mls-extensions-11 §4.7 to `proposals` (sorted by component id,
 /// in Commit order within a component) and records the resulting
 /// dictionary changes in `updater`.
 ///
 /// OpenMLS checks only part of §4.7, so every rule is checked here: a
 /// component gets either a single remove, of data that exists, or one or
 /// more updates, which `apply` turns into new data.
+///
+/// For app_components, safe_aad and content_media_types, mimi-mls is the
+/// application logic (§5.1) and `apply` is not asked: each update carries
+/// the complete new value and must decode as a ComponentsList or a
+/// MediaTypeList, the last update in the Commit wins, and a remove deletes
+/// the entry (bead mimid-1wgh.4.76.7).
 pub(crate) fn resolve_app_data_updates<E: Into<ErrorSource>>(
     updater: &mut AppDataDictionaryUpdater<'_>,
     proposals: &[AppDataUpdateProposal],
@@ -1922,6 +1929,27 @@ pub(crate) fn resolve_app_data_updates<E: Into<ErrorSource>>(
             })
             .collect();
         let current = updater.old_value(component_id).map(<[u8]>::to_vec);
+
+        if [APP_COMPONENTS, SAFE_AAD, CONTENT_MEDIA_TYPES].contains(&component_id) {
+            let decodes = |update: &[u8]| match component_id {
+                CONTENT_MEDIA_TYPES => crate::media_type::check_media_type_list(update).is_ok(),
+                _ => ComponentsList::tls_deserialize_exact(update).is_ok(),
+            };
+            match updates.last() {
+                Some(last) if updates.len() == group.len() => {
+                    if !updates.iter().all(|update| decodes(update)) {
+                        return Err(SharedError::InvalidAppDataUpdate(component_id));
+                    }
+                    updater.set(ComponentData::from_parts(
+                        component_id,
+                        last.to_vec().into(),
+                    ));
+                }
+                None if group.len() == 1 && current.is_some() => updater.remove(&component_id),
+                _ => return Err(SharedError::InvalidAppDataUpdate(component_id)),
+            }
+            continue;
+        }
 
         if updates.len() == group.len() {
             match apply(

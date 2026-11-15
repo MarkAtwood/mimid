@@ -288,13 +288,22 @@ pub fn is_hub_tracked(component_id: ComponentID) -> bool {
     )
 }
 
-/// Whether the hub's AppDataUpdate logic, [`apply_commit_op`], knows
-/// `component_id`: the hub-tracked components, `room_metadata` and
-/// `franking_agent`. An AppDataUpdate of any other component makes a Commit
-/// invalid, so the hub also refuses it as a standalone proposal (bead
-/// mimid-1wgh.6.73).
+/// mls-extensions-11 §5.1: the components whose AppDataUpdates mimi-mls
+/// itself applies (app_components, safe_aad, content_media_types); the
+/// hub's [`apply_commit_op`] is never asked about them.
+pub const MLS_BUILT_IN: [ComponentID; 3] = [0x0001, 0x0002, 0x0003];
+
+/// Whether the hub accepts an AppDataUpdate of `component_id`: the
+/// hub-tracked components, `room_metadata` and `franking_agent`, which
+/// [`apply_commit_op`] applies, and the [`MLS_BUILT_IN`] components, which
+/// mimi-mls applies (decision mimid-1wgh.4.76.2). An AppDataUpdate of any
+/// other component makes a Commit invalid, so the hub also refuses it as a
+/// standalone proposal (bead mimid-1wgh.6.73).
 pub fn is_known_component(component_id: ComponentID) -> bool {
-    is_hub_tracked(component_id) || component_id == ROOM_METADATA || component_id == FRANKING_AGENT
+    is_hub_tracked(component_id)
+        || component_id == ROOM_METADATA
+        || component_id == FRANKING_AGENT
+        || MLS_BUILT_IN.contains(&component_id)
 }
 
 /// The mls-extensions-10 §4.7 application logic for a hub-tracked

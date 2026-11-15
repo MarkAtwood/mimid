@@ -989,6 +989,24 @@ impl Observer {
         Ok(required_lists(self.group.group_context().extensions())?.required_safe_aad())
     }
 
+    /// As [`Observer::required_safe_aad`], for the GroupContext of the epoch
+    /// the pending Commit leads to, or `None` if no Commit is pending. Under
+    /// mls-extensions-11 §5.1 an AppDataUpdate can change `safe_aad`, so a
+    /// hub that requires a Safe AAD component checks it here before merging
+    /// (decision mimid-1wgh.4.76.2).
+    ///
+    /// # Errors
+    ///
+    /// As [`Observer::required_safe_aad`].
+    pub fn pending_required_safe_aad(&self) -> Result<Option<Vec<ComponentId>>, ObserverError> {
+        match &self.pending_commit {
+            Some((staged, _, _)) => Ok(Some(
+                required_lists(staged.group_context().extensions())?.required_safe_aad(),
+            )),
+            None => Ok(None),
+        }
+    }
+
     /// The data of a component in the GroupContext `app_data_dictionary`
     /// (mls-extensions-10 §4.6).
     pub fn component(&self, component_id: ComponentId) -> Option<&[u8]> {

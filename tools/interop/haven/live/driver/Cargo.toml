@@ -17,10 +17,10 @@ unicode-normalization = "=0.1.26"
 # Copied from the mimid workspace root so the openmls fork resolves the same.
 # Keep in step with the root Cargo.toml [patch] section when its pins move.
 [patch.crates-io]
-openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "c4d6098c187ffdda331c40becb9ef4e5fdd75eae" }
-openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "c4d6098c187ffdda331c40becb9ef4e5fdd75eae" }
-openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "c4d6098c187ffdda331c40becb9ef4e5fdd75eae" }
-openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "c4d6098c187ffdda331c40becb9ef4e5fdd75eae" }
-openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "c4d6098c187ffdda331c40becb9ef4e5fdd75eae" }
-openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "c4d6098c187ffdda331c40becb9ef4e5fdd75eae" }
-openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "c4d6098c187ffdda331c40becb9ef4e5fdd75eae" }
+openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
+openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
+openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
+openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
+openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
+openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
+openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
