@@ -341,3 +341,58 @@ async fn accounts_and_tokens_are_issued_for_local_users() {
         (StatusCode::NOT_FOUND, "no-such-user".to_owned())
     );
 }
+
+/// Bead mimid-1wgh.47.4: held consent requests and updates are listed,
+/// requests first, `room` null for any room.
+#[tokio::test]
+async fn held_consent_is_listed() {
+    use mimid_server::store::{ConsentDecision, ConsentKey, ReceivedConsent};
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let app = router(Arc::new(hub), store.clone(), None);
+    let received = |at| ReceivedConsent {
+        entry: vec![1, 2, 3],
+        from_domain: "b.example".to_owned(),
+        received_at: at,
+    };
+    store
+        .put_consent_request(
+            &ConsentKey {
+                requester_uri: "mimi://b.example/u/bob",
+                target_uri: "mimi://a.example/u/alice",
+                room_id: None,
+            },
+            &received(10),
+        )
+        .await
+        .unwrap();
+    store
+        .put_consent_update(
+            &ConsentKey {
+                requester_uri: "mimi://b.example/u/bob",
+                target_uri: "mimi://a.example/u/alice",
+                room_id: Some("mimi://b.example/r/den"),
+            },
+            ConsentDecision::Grant,
+            &received(20),
+        )
+        .await
+        .unwrap();
+    let (status, body) = call(
+        &app,
+        Request::get("/local/v1/consent")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!({"consent": [
+            {"requester": "mimi://b.example/u/bob", "target": "mimi://a.example/u/alice",
+             "room": null, "decision": null, "from": "b.example", "receivedAt": 10},
+            {"requester": "mimi://b.example/u/bob", "target": "mimi://a.example/u/alice",
+             "room": "mimi://b.example/r/den", "decision": "grant", "from": "b.example", "receivedAt": 20},
+        ]})
+    );
+}

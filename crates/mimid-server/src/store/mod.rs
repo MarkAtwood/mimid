@@ -30,7 +30,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
 use crate::config::Domain;
 
-pub use consent::{ConsentDecision, ConsentKey, ReceivedConsent};
+pub use consent::{ConsentDecision, ConsentKey, ConsentRow, ReceivedConsent};
 pub use follower_log::{AppendedFanout, FanoutKind, FollowerEvent, NewFanout};
 pub use jmap::{
     BearerToken, ChatRow, HubRow, JmapStoreError, MalformedToken, MessageChanges, MessageRow,

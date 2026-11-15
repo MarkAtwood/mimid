@@ -211,3 +211,68 @@ impl Store {
         .transpose()
     }
 }
+
+/// One stored consent row, for an operator listing (bead mimid-1wgh.47.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsentRow {
+    /// `requesterUri`, in RFC 3986 normal form.
+    pub requester_uri: String,
+    /// `targetUri`, in RFC 3986 normal form.
+    pub target_uri: String,
+    /// `roomId`, or `None` for any room.
+    pub room_id: Option<String>,
+    /// For an updateConsent, its decision; `None` for a requestConsent.
+    pub decision: Option<ConsentDecision>,
+    /// The sending provider, from the `From` header.
+    pub from_domain: String,
+    /// Milliseconds since the UNIX epoch.
+    pub received_at: u64,
+}
+
+impl Store {
+    /// Every held requestConsent and every updateConsent, requests first,
+    /// each ordered by requester, target and room.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if a query fails, and
+    /// [`StoreError::Corrupt`] or [`StoreError::OutOfRange`] for a row that
+    /// breaks the schema's checks.
+    pub async fn consent_rows(&self) -> Result<Vec<ConsentRow>, StoreError> {
+        type Row = (String, String, String, Option<String>, String, i64);
+        let requests: Vec<Row> = sqlx::query_as(
+            "SELECT requester_uri, target_uri, room_id, NULL, from_domain, received_at \
+             FROM consent_request ORDER BY requester_uri, target_uri, room_id",
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        let updates: Vec<Row> = sqlx::query_as(
+            "SELECT requester_uri, target_uri, room_id, operation, from_domain, received_at \
+             FROM consent_update ORDER BY requester_uri, target_uri, room_id",
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        requests
+            .into_iter()
+            .chain(updates)
+            .map(
+                |(requester_uri, target_uri, room, operation, from_domain, received_at)| {
+                    let decision = match operation.as_deref() {
+                        None => None,
+                        Some("grant") => Some(ConsentDecision::Grant),
+                        Some("revoke") => Some(ConsentDecision::Revoke),
+                        Some(_) => return Err(StoreError::Corrupt("consent_update operation")),
+                    };
+                    Ok(ConsentRow {
+                        requester_uri,
+                        target_uri,
+                        room_id: (!room.is_empty()).then_some(room),
+                        decision,
+                        from_domain,
+                        received_at: from_sql_int(received_at)?,
+                    })
+                },
+            )
+            .collect()
+    }
+}

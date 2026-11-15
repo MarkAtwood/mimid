@@ -44,6 +44,13 @@
 //!   `{"token"}`, `404` if the user has no account. The token is shown
 //!   once, never stored in clear and never logged.
 //!
+//! - `GET /local/v1/consent`: the consent entries other providers sent
+//!   (protocol-07 §5.7), as `{"consent": [{"requester", "target", "room",
+//!   "decision", "from", "receivedAt"}, ...]}`: held requests first
+//!   (`decision` null), then updates (`"grant"` or `"revoke"`); `room` is
+//!   null for any room (bead mimid-1wgh.47.4). Read-only: consent is
+//!   written by the protocol endpoints.
+//!
 //! Account creation and token issuance log at INFO with the user and
 //! account. The caller is not identified beyond reaching the loopback
 //! listener (and, if set, holding `local_token`), so no peer address is
@@ -74,7 +81,7 @@ use sha2::{Digest, Sha256};
 
 use crate::http::problem;
 use crate::hub::{Hub, HubError, RoomSummary};
-use crate::store::{JmapStoreError, Store};
+use crate::store::{ConsentDecision, JmapStoreError, Store};
 
 /// The fewest characters a `local_token` may have. INVENTED, NOT FROM
 /// SPEC: 32 characters of a random token are enough that guessing is not a
@@ -146,6 +153,7 @@ pub fn router(hub: Arc<Hub>, store: Store, token: Option<LocalToken>) -> Router 
         .route("/local/v1/rooms/{room_id}", get(get_room))
         .route("/local/v1/users", post(create_user).get(list_users))
         .route("/local/v1/users/{user}/tokens", post(issue_token))
+        .route("/local/v1/consent", get(list_consent))
         .with_state(LocalState { hub, store });
     match token {
         Some(token) => routes.layer(middleware::from_fn_with_state(
@@ -263,6 +271,29 @@ async fn list_users(State(store): State<Store>) -> Response {
         }))
         .into_response(),
         Err(error) => store_failure("list accounts", &error),
+    }
+}
+
+async fn list_consent(State(store): State<Store>) -> Response {
+    match store.consent_rows().await {
+        Ok(rows) => Json(serde_json::json!({
+            "consent": rows
+                .iter()
+                .map(|row| serde_json::json!({
+                    "requester": row.requester_uri,
+                    "target": row.target_uri,
+                    "room": row.room_id,
+                    "decision": row.decision.map(|d| match d {
+                        ConsentDecision::Grant => "grant",
+                        ConsentDecision::Revoke => "revoke",
+                    }),
+                    "from": row.from_domain,
+                    "receivedAt": row.received_at,
+                }))
+                .collect::<Vec<_>>()
+        }))
+        .into_response(),
+        Err(error) => store_failure("list consent", &error),
     }
 }
 
