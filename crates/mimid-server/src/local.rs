@@ -27,12 +27,25 @@
 //!   any other failure is `500`. Errors are RFC 9457 problem bodies with
 //!   only `type` and `status`, as everywhere else in mimid; the reason is
 //!   logged.
+//! - `GET /local/v1/rooms`: every hosted room, as `{"rooms": [summary,
+//!   ...]}` ordered by room ID (bead mimid-1wgh.47.2).
+//! - `GET /local/v1/rooms/{roomId}`: one room's summary, the room ID
+//!   percent-encoded as one path segment; `404` if it is not hosted here.
+//!
+//! A room summary is `{"roomId", "groupId", "epoch", "members",
+//! "participants", "roles"}`: `groupId` base64url without padding;
+//! `members` a list of `{"leaf", "identity"}`; `participants` a list of
+//! `{"user", "role"}` from `participant_list`, and `roles` a list of
+//! `{"index", "name"}` from `roles_list`, each `null` when the room has no
+//! such component or it does not decode. Identities, users and role names
+//! are JSON strings when they are UTF-8, else `{"base64url": ...}`; they
+//! are opaque in the drafts.
 
 use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -43,7 +56,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::http::problem;
-use crate::hub::{Hub, HubError};
+use crate::hub::{Hub, HubError, RoomSummary};
 
 /// The fewest characters a `local_token` may have. INVENTED, NOT FROM
 /// SPEC: 32 characters of a random token are enough that guessing is not a
@@ -91,7 +104,8 @@ impl LocalToken {
 pub fn router(hub: Arc<Hub>, token: Option<LocalToken>) -> Router {
     let routes = Router::new()
         .route("/local/v1/hub-sender", get(hub_sender))
-        .route("/local/v1/rooms", post(create_room))
+        .route("/local/v1/rooms", post(create_room).get(list_rooms))
+        .route("/local/v1/rooms/{room_id}", get(get_room))
         .with_state(hub);
     match token {
         Some(token) => routes.layer(middleware::from_fn_with_state(
@@ -132,6 +146,55 @@ async fn hub_sender(State(hub): State<Arc<Hub>>) -> Response {
         "identity": format!("mimi://{}", hub.domain()),
     }))
     .into_response()
+}
+
+/// Opaque bytes as JSON: a string when UTF-8, else base64url.
+fn opaque(bytes: &[u8]) -> serde_json::Value {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.into(),
+        Err(_) => serde_json::json!({ "base64url": URL_SAFE_NO_PAD.encode(bytes) }),
+    }
+}
+
+fn summary_json(room: &RoomSummary) -> serde_json::Value {
+    serde_json::json!({
+        "roomId": room.room_id,
+        "groupId": URL_SAFE_NO_PAD.encode(&room.group_id),
+        "epoch": room.epoch,
+        "members": room
+            .members
+            .iter()
+            .map(|(leaf, identity)| serde_json::json!({ "leaf": leaf, "identity": opaque(identity) }))
+            .collect::<Vec<_>>(),
+        "participants": room.participants.as_ref().map(|list| {
+            list.iter()
+                .map(|(user, role)| serde_json::json!({ "user": opaque(user), "role": role }))
+                .collect::<Vec<_>>()
+        }),
+        "roles": room.roles.as_ref().map(|roles| {
+            roles
+                .iter()
+                .map(|(index, name)| serde_json::json!({ "index": index, "name": name }))
+                .collect::<Vec<_>>()
+        }),
+    })
+}
+
+async fn list_rooms(State(hub): State<Arc<Hub>>) -> Response {
+    let rooms = hub.room_summaries(None).await;
+    tracing::debug!(rooms = rooms.len(), "local room list read");
+    Json(serde_json::json!({ "rooms": rooms.iter().map(summary_json).collect::<Vec<_>>() }))
+        .into_response()
+}
+
+async fn get_room(State(hub): State<Arc<Hub>>, Path(room_id): Path<String>) -> Response {
+    match hub.room_summaries(Some(&room_id)).await.first() {
+        Some(room) => Json(summary_json(room)).into_response(),
+        None => {
+            tracing::debug!(room_id, "local room read: not hosted here");
+            problem(StatusCode::NOT_FOUND, "no-such-room")
+        }
+    }
 }
 
 /// The body of `POST /local/v1/rooms`.

@@ -152,6 +152,26 @@ pub struct PublicState {
     pub ratchet_tree: Vec<u8>,
 }
 
+/// What the operator sees of one hosted room (bead mimid-1wgh.47.2): read
+/// from the hub's view of the group, nothing decrypted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomSummary {
+    /// The room ID.
+    pub room_id: String,
+    /// The MLS group ID.
+    pub group_id: Vec<u8>,
+    /// The current epoch.
+    pub epoch: u64,
+    /// The members, as (leaf index, BasicCredential identity).
+    pub members: Vec<(u32, Vec<u8>)>,
+    /// The `participant_list` (protocol-07 §7.5), as (user, role index),
+    /// or `None` if the room has none or it does not decode.
+    pub participants: Option<Vec<(Vec<u8>, u32)>>,
+    /// The `roles_list` (room-policy-04 §3), as (role index, role name),
+    /// or `None` if the room has none or it does not decode.
+    pub roles: Option<Vec<(u32, String)>>,
+}
+
 /// A hosted room's display text, from its `RoomMetaData` (protocol-07
 /// §7.6).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -493,6 +513,57 @@ impl Hub {
             group_context: room.observer.group_context().map_err(HubError::Mls)?,
             ratchet_tree: room.observer.ratchet_tree().map_err(HubError::Mls)?,
         })
+    }
+
+    /// A summary of every hosted room, or only of `room_id` when given
+    /// (empty if it is not hosted here), ordered by room ID.
+    pub async fn room_summaries(&self, room_id: Option<&str>) -> Vec<RoomSummary> {
+        let rooms = self.rooms.lock().await;
+        rooms
+            .iter()
+            .filter(|(id, _)| room_id.is_none_or(|wanted| wanted == id.as_str()))
+            .map(|(id, room)| {
+                let observer = &room.observer;
+                let participants = observer
+                    .component(mimi_protocol::component_id::PARTICIPANT_LIST)
+                    .and_then(|data| {
+                        components::decode::<mimi_protocol::ParticipantListData>(
+                            mimi_protocol::component_id::PARTICIPANT_LIST,
+                            data,
+                        )
+                        .ok()
+                    })
+                    .map(|list| {
+                        list.participants
+                            .into_iter()
+                            .map(|pair| (pair.user, pair.role_index))
+                            .collect()
+                    });
+                let roles = observer
+                    .component(mimi_room_policy::component_id::ROLES_LIST)
+                    .and_then(|data| {
+                        components::decode::<mimi_room_policy::RoleData>(
+                            mimi_room_policy::component_id::ROLES_LIST,
+                            data,
+                        )
+                        .ok()
+                    })
+                    .map(|data| {
+                        data.roles
+                            .into_iter()
+                            .map(|role| (role.role_index, role.role_name))
+                            .collect()
+                    });
+                RoomSummary {
+                    room_id: id.clone(),
+                    group_id: observer.group_id().to_vec(),
+                    epoch: observer.epoch(),
+                    members: observer.members(),
+                    participants,
+                    roles,
+                }
+            })
+            .collect()
     }
 
     /// The current display text (protocol-07 §7.6 `RoomMetaData`) of each

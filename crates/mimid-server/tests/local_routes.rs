@@ -177,3 +177,67 @@ async fn a_configured_local_token_is_required() {
     assert_eq!(call(Some(token.clone())).await, StatusCode::UNAUTHORIZED);
     assert_eq!(call(Some(format!("Bearer {token}"))).await, StatusCode::OK);
 }
+
+/// Bead mimid-1wgh.47.2: the room list and one room's summary, read from
+/// the hub's view of the group; a room not hosted here is 404.
+#[tokio::test]
+async fn hosted_rooms_are_listed_and_read() {
+    let (_dir, hub, app) = fixture().await;
+    let get = |path: String| Request::get(path).body(Body::empty()).unwrap();
+    let (status, body) = call(&app, get("/local/v1/rooms".into())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!({"rooms": []})
+    );
+
+    let group = build_group(&GroupSpec::valid_for(&hub), b"group-one");
+    assert_eq!(
+        call(
+            &app,
+            create(ROOM_ID, &group.group_info, &group.ratchet_tree)
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    let (status, body) = call(&app, get("/local/v1/rooms".into())).await;
+    assert_eq!(status, StatusCode::OK);
+    let list: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let room = &list["rooms"][0];
+    assert_eq!(room["roomId"], ROOM_ID);
+    assert_eq!(room["groupId"], URL_SAFE_NO_PAD.encode(b"group-one"));
+    assert_eq!(room["epoch"], 1);
+    let alice = std::str::from_utf8(ALICE).unwrap();
+    assert!(
+        room["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|member| member["identity"] == alice),
+        "{room}"
+    );
+    assert!(
+        room["participants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["user"] == alice),
+        "{room}"
+    );
+
+    let encoded = ROOM_ID.replace(':', "%3A").replace('/', "%2F");
+    let (status, body) = call(&app, get(format!("/local/v1/rooms/{encoded}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        *room
+    );
+    let (status, body) = call(
+        &app,
+        get("/local/v1/rooms/mimi%3A%2F%2Fa.example%2Fr%2Fnone".into()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(problem_kind(&body), "no-such-room");
+}
