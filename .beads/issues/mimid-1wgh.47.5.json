@@ -1,0 +1,28 @@
+{
+  "id": "mimid-1wgh.47.5",
+  "title": "sideband: hub-initiated remove and ban of a user in a hosted room",
+  "description": "The hub, as external sender, sends a Remove proposal for the user's leaves plus the participant_list update (ban: role 1). Needs an external-proposal path in the hub; write a design note first. Point 3d.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T03:21:43.67308019Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T03:21:43.67308019Z",
+  "labels": [
+    "design",
+    "human",
+    "interop",
+    "tooling"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.47.5",
+      "depends_on_id": "mimid-1wgh.47",
+      "type": "parent-child",
+      "created_at": "2026-11-15T03:21:43.708602382Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
