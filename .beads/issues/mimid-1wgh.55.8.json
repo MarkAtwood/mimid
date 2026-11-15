@@ -1,0 +1,36 @@
+{
+  "id": "mimid-1wgh.55.8",
+  "title": "mimid: GroupInfoOption as opaque payload\u003cV\u003e (#203), reading Haven's DIV-12 Partial encoding",
+  "description": "Implement PR #203's encoding so a receiver can skip representations it doesn't implement; decide (with Mark) whether to also accept Haven's current length-prefixed Partial before the WG decides. Joint vector with Haven (their hb-03).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T19:32:38.370636577Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T19:32:38.370636577Z",
+  "labels": [
+    "protocol",
+    "interop",
+    "spec",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.55.8",
+      "depends_on_id": "mimid-1wgh.55",
+      "type": "parent-child",
+      "created_at": "2026-11-15T19:32:38.405451271Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.55.8",
+      "depends_on_id": "mimid-1wgh.55.4",
+      "type": "blocks",
+      "created_at": "2026-11-15T19:32:38.42632382Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
