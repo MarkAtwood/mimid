@@ -1,0 +1,17 @@
+[package]
+name = "mimid-haven-room-policy"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not part of any workspace. Room-policy cross-check (bead
+# mimid-1wgh.46.7): Haven's room_policy_wire against mimid's
+# mimi-room-policy, both ways.
+[workspace]
+
+[dependencies]
+
+[dev-dependencies]
+# Haven at the commit the results refer to; bump `rev` to test a newer Haven.
+mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "f16980fe40eb92b7a79b49a59048bc0294a15306" }
+mimi-room-policy = { path = "../../../../crates/mimi-room-policy" }

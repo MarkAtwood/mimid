@@ -30,6 +30,11 @@ Layout
                 tests/joint.rs decodes the joint IETF 127 vector set
                 (crates/mimid-server/tests/fixtures/joint-ietf127) with
                 Haven's decoders and checks the file's claims about them.
+  room-policy/  standalone crate (own [workspace]): room-policy-04 roles_list
+                and base_room_policy across Haven's room_policy_wire and
+                mimid's mimi-room-policy, both ways, plus a table of which
+                malformed or rule-breaking inputs each side refuses (bead
+                mimid-1wgh.46.7). `cargo test -- --nocapture` prints it.
   probe/        standalone crate: a short read-only check of Jason's public
                 hub (mimi.havenmessenger.com) and its table seed, run from
                 the mimid host (below)
