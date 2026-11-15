@@ -389,14 +389,15 @@ fn duplicate_role_index_is_rejected() {
 
 #[test]
 fn undefined_role_reference_is_rejected() {
-    // Without banned, group_admin's (0,[1,2,3]) names role 1.
-    let mut roles = a1();
-    roles.roles.remove(1);
+    // An undefined target_role_indexes entry.
+    let roles = RoleData {
+        roles: vec![role(2, "a", &[], 0, None, 0, None, &[(0, &[2, 7])])],
+    };
     assert_eq!(
         roles.validate(false),
         Err(PolicyError::UndefinedRoleIndex {
-            role_index: 3,
-            referenced: 1,
+            role_index: 2,
+            referenced: 7,
         })
     );
     // An undefined from_role_index is rejected too.
@@ -410,6 +411,16 @@ fn undefined_role_reference_is_rejected() {
             referenced: 9,
         })
     );
+}
+
+#[test]
+fn role_1_reference_needs_no_role_1_entry() {
+    // §8.1.3: the banned role "does not have to exist in a room".
+    // Without banned, group_admin's (0,[1,2,3]) names role 1 (decision
+    // mimid-1wgh.3.40, amended 2026-11-15).
+    let mut roles = a1();
+    roles.roles.remove(1);
+    assert_eq!(roles.validate(false), Ok(()));
 }
 
 #[test]

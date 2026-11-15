@@ -170,9 +170,12 @@ impl RoleData {
     ///
     /// The rules are:
     /// - every `role_index` is unique (§3);
-    /// - every non-zero `from_role_index` and `target_role_indexes` entry
-    ///   names a defined role; index 0 always has its §3 meaning, so it
-    ///   need not be defined;
+    /// - every `from_role_index` and `target_role_indexes` entry other
+    ///   than 0 and 1 names a defined role. Index 0 always has its §3
+    ///   meaning, and index 1 is the banned role, which "does not have to
+    ///   exist in a room" (§8.1.3), so neither need be defined: a ban still
+    ///   needs role 1 defined when it is authorized (decision
+    ///   mimid-1wgh.3.40, amended 2026-11-15 to match Haven);
     /// - only role 0 holds `canOpenJoin` (§8.1.1);
     /// - if `fixed_membership`, no role other than role 0 and the "banned"
     ///   role ([`Role::is_banned_role`]) holds `canAddParticipant` (§5).
@@ -201,7 +204,10 @@ impl RoleData {
                 // A dangling reference would give a participant a role with
                 // no capabilities or constraints; §3 index 0 is exempt.
                 // room-policy-04 §3; decision mimid-1wgh.3.40
-                if referenced != NO_ROLE_INDEX && !defined.contains(&referenced) {
+                if referenced != NO_ROLE_INDEX
+                    && referenced != BANNED_ROLE_INDEX
+                    && !defined.contains(&referenced)
+                {
                     return Err(PolicyError::UndefinedRoleIndex {
                         role_index: role.role_index,
                         referenced,

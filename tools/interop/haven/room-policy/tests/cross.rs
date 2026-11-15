@@ -501,7 +501,7 @@ fn refusals_compared() {
             "change targets role 1, not defined",
             roles(&[role_bytes(2, &[], 0, None, 0, None, &[(2, &[1])])]),
             false,
-            (false, true),
+            (true, true),
         ),
         (
             "change targets role 1, defined",

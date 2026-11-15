@@ -536,6 +536,23 @@ fn ban_and_unban_need_the_banned_role() {
 }
 
 #[test]
+fn a_list_naming_an_undefined_role_1_is_valid_but_cannot_ban() {
+    // Validation lets role 1 go undefined (decision mimid-1wgh.3.40,
+    // amended 2026-11-15); §8.1.3 still needs it for canBan and canUnban.
+    let mut roles = ban_only_roles("banned");
+    roles.roles.remove(0);
+    assert_eq!(roles.validate(false), Ok(()));
+    check(
+        &roles,
+        &[
+            (3, change(2, 1), Err(Denied::UndefinedRole(1)), "§8.1.3"),
+            (3, add(1), Err(Denied::UndefinedRole(1)), "§8.1.3"),
+            (4, change(1, 2), not_authorized(1, 2), "§8.1.3 canUnban"),
+        ],
+    );
+}
+
+#[test]
 fn change_user_role_to_role_1_does_not_need_the_banned_role() {
     // §8.1.3 canChangeUserRole allows any non-zero target in the entry;
     // decision .3.26: any of the three capabilities suffices.
