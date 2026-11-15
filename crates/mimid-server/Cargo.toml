@@ -49,6 +49,9 @@ tracing-subscriber = { workspace = true, features = ["json"] }
 # Per-request spans on the axum router (bead mimid-bfzm); already in the
 # lockfile through reqwest.
 tower-http = { version = "=0.6.11", features = ["trace"] }
+# Wipes the request-signing seed when dropped (bead mimid-75nk.1); already
+# in the lockfile.
+zeroize = "1.9.1"
 # ULID account, Chat and Message ids (base JMAP Chat; decision mimid-1wgh.12.31).
 ulid = "=3.0.0"
 

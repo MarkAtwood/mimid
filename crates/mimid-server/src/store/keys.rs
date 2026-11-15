@@ -87,3 +87,47 @@ impl Store {
         }))
     }
 }
+
+impl Store {
+    /// Returns this server's request-signing seed (bead mimid-75nk.1),
+    /// storing `generate()`'s result first if there is none.
+    ///
+    /// # Errors
+    ///
+    /// Returns `generate`'s error, [`StoreError::Sqlx`] if a query fails,
+    /// and [`StoreError::Corrupt`] if the stored seed is not 32 bytes.
+    pub async fn provider_signing_seed_or_insert<E>(
+        &self,
+        generate: impl FnOnce() -> Result<[u8; 32], E>,
+    ) -> Result<zeroize::Zeroizing<[u8; 32]>, E>
+    where
+        E: From<StoreError>,
+    {
+        let read = |store: Store| async move {
+            let row: Option<Vec<u8>> =
+                sqlx::query_scalar("SELECT seed FROM provider_signing_key WHERE id = 1")
+                    .fetch_optional(&store.reader)
+                    .await?;
+            row.map(|seed| {
+                let seed = zeroize::Zeroizing::new(seed);
+                <[u8; 32]>::try_from(seed.as_slice())
+                    .map(zeroize::Zeroizing::new)
+                    .map_err(|_| StoreError::Corrupt("provider_signing_key seed length"))
+            })
+            .transpose()
+        };
+        if let Some(seed) = read(self.clone()).await? {
+            return Ok(seed);
+        }
+        let fresh = zeroize::Zeroizing::new(generate()?);
+        // A concurrent first start may have won; its row is kept.
+        sqlx::query("INSERT OR IGNORE INTO provider_signing_key (id, seed) VALUES (1, ?)")
+            .bind(fresh.as_slice())
+            .execute(&self.pool)
+            .await
+            .map_err(StoreError::from)?;
+        Ok(read(self.clone()).await?.ok_or(StoreError::Corrupt(
+            "provider_signing_key row missing after insert",
+        ))?)
+    }
+}

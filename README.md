@@ -19,8 +19,8 @@ mimid targets the latest revision of each draft. Where the drafts are ambiguous,
 
 These are deliberate in the current version:
 
-- **No authentication between providers.** protocol-07 requires mutually authenticated TLS between providers; mimid doesn't implement it and doesn't claim conformance to it.
-- **BasicCredential only.** Combined with the point above, mimid offers no protection against a malicious or impersonated provider.
+- **Provider authentication is partial.** Providers prove who they are with RFC 9421 request signatures and keys configured per peer (`[provider_auth]` in the configuration; `mimid admin <config> provider-key` prints this server's key). A peer set to `observe` is let through unauthenticated. protocol-07 requires mutually authenticated TLS; mimid doesn't implement it yet and doesn't claim conformance to it.
+- **BasicCredential only.** A provider can claim any identity for its own users, so mimid offers no protection against a malicious provider.
 - **Peers come from configuration**, not DNS discovery.
 
 Each crate documents its own limitations in the `# Limitations` section of its rustdoc.

@@ -88,7 +88,12 @@ async fn binary_serves_with_two_peers_and_stops_on_sigint() {
          \n\
          [peers]\n\
          \"a.example\" = \"http://127.0.0.1:9\"\n\
-         \"c.example\" = \"http://127.0.0.1:9\"\n",
+         \"c.example\" = \"http://127.0.0.1:9\"\n\
+         \n\
+         # These requests are unsigned: this test is about the follower's\n\
+         # peer rules, not provider authentication (tests/provider_auth.rs).\n\
+         [provider_auth]\n\
+         mode = \"observe\"\n",
         listen = base.trim_start_matches("http://"),
         database = database.display(),
     );
@@ -244,13 +249,17 @@ async fn json_log_format_writes_named_events() {
         events,
         [
             "hub_rooms_rebuilt",
+            "provider_auth_configured",
             "server_listening",
             "shutdown_requested",
             "server_stopped"
         ],
         "{text}"
     );
-    let listening = &lines[1];
+    let listening = lines
+        .iter()
+        .find(|line| line["event"] == "server_listening")
+        .unwrap();
     assert_eq!(listening["level"], "INFO");
     assert_eq!(listening["message"], "mimid listening");
     assert_eq!(listening["fields"]["domain"], "b.example");

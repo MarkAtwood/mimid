@@ -21,11 +21,13 @@
 //!
 //! # Limitations
 //!
-//! - There is no authentication between providers (decision mimid-1wgh.17).
-//!   protocol-07 requires mutually authenticated TLS; mimid does not
-//!   implement it and does not claim conformance to it. Combined with
-//!   BasicCredential, mimid offers no protection against a malicious or
-//!   impersonated provider.
+//! - Providers authenticate with RFC 9421 request signatures and keys
+//!   configured per peer (mimid-75nk; decision mimid-1wgh.17 reversed),
+//!   but a peer in observe mode is let through unauthenticated, and the
+//!   mutually authenticated TLS protocol-07 §4.1 requires is not
+//!   implemented yet (mimid-75nk.4, .5, .6): mimid does not claim
+//!   conformance to it. With BasicCredential, a provider can still claim
+//!   any identity for its own users.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
 //! - `/notify` is accepted only from configured peers (decision
@@ -51,12 +53,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use base64::Engine;
 use mimid_server::config::Config;
 use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::follower::key_packages::KeyPackages;
 use mimid_server::follower::relay::Relay;
 use mimid_server::http::router;
+use mimid_server::httpsig::SigningKey;
 use mimid_server::hub::HubRequirements;
 use mimid_server::hub::fanout::Fanout;
 use mimid_server::hub::{Clock, Hub, SystemClock};
@@ -64,6 +68,7 @@ use mimid_server::jmap::{self, JmapOptions};
 use mimid_server::logging::{LogFormat, json_subscriber};
 use mimid_server::peer::PeerClient;
 use mimid_server::peer_clock::{self, PeerClocks};
+use mimid_server::provider_auth::{AuthMode, ProviderAuth, RequestSigner};
 use mimid_server::store::Store;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -101,6 +106,19 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("opening database {}", config.database.display()))?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    // This server's key for signing requests to peers (bead mimid-75nk.1),
+    // made on first start.
+    let seed = store
+        .provider_signing_seed_or_insert(|| {
+            mimi_mls::label::random_array::<32>()
+                .map_err(|e| anyhow::anyhow!("generating the request-signing key: {e}"))
+        })
+        .await?;
+    let signer = Arc::new(RequestSigner::new(
+        SigningKey::from_seed(&seed),
+        config.provider_auth.selector.clone(),
+    ));
+    drop(seed);
     // One clock tracker for every peer client and the request middleware.
     let clocks = PeerClocks::new(
         config.peers.keys().cloned(),
@@ -108,7 +126,11 @@ async fn main() -> anyhow::Result<()> {
     );
     let peers = || {
         PeerClient::new(&config.domain, config.peers.clone())
-            .map(|client| client.with_clocks(Arc::clone(&clocks)))
+            .map(|client| {
+                client
+                    .with_clocks(Arc::clone(&clocks))
+                    .with_signer(Arc::clone(&signer))
+            })
             .context("building the peer client")
     };
     let key_packages = Arc::new(KeyPackages::new(
@@ -182,10 +204,11 @@ async fn main() -> anyhow::Result<()> {
             Some(tokio::spawn(
                 axum::serve(
                     listener,
-                    mimid_server::local::router(
+                    mimid_server::local::router_with_signer(
                         Arc::clone(&hub),
                         store.clone(),
                         config.local_token.clone(),
+                        Some(Arc::clone(&signer)),
                     ),
                 )
                 .with_graceful_shutdown(async move {
@@ -196,7 +219,27 @@ async fn main() -> anyhow::Result<()> {
         }
         None => None,
     };
+    // Provider authentication on the protocol routes only (bead
+    // mimid-75nk.1); JMAP clients authenticate with bearer tokens.
+    let provider_auth = Arc::new(ProviderAuth::new(
+        &config.provider_auth,
+        &config.base_url,
+        Arc::clone(&clock),
+    ));
+    tracing::info!(
+        name: "provider_auth_configured",
+        mode = ?config.provider_auth.mode,
+        selector = signer.selector(),
+        public_key = %base64::engine::general_purpose::STANDARD.encode(signer.public_key().to_bytes()),
+        trusted_peers = config.provider_auth.peers.values().filter(|p| !p.keys.is_empty()).count(),
+        observed_peers = config.provider_auth.peers.values().filter(|p| p.mode == Some(AuthMode::Observe)).count(),
+        "provider authentication configured"
+    );
     let app = router(directory(&config.base_url), hub, follower)
+        .layer(axum::middleware::from_fn_with_state(
+            provider_auth,
+            mimid_server::provider_auth::check,
+        ))
         .merge(jmap)
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&clocks),

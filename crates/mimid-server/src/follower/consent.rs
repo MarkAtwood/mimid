@@ -26,9 +26,10 @@
 //! - The KeyPackages of a received `grant` are stored with the entry but
 //!   not verified or used, and a sent `grant` carries none.
 //! - Entries are accepted only from configured peers (decision
-//!   mimid-1wgh.7.41), but the `From` header is not authenticated (decision
-//!   mimid-1wgh.17), so a party that can reach the endpoint can still store
-//!   an entry by claiming to be a configured peer. Nothing caps how many
+//!   mimid-1wgh.7.41). The `From` header is authenticated in front of the
+//!   follower ([`crate::provider_auth`]); for a peer in observe mode it is
+//!   not, so a party that can reach the endpoint can still store an entry
+//!   by claiming to be that peer. Nothing caps how many
 //!   entries a peer stores per user.
 //! - An unknown local user is answered `404` (decision mimid-1wgh.7.36), so
 //!   a peer can learn which users exist.

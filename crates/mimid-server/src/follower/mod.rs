@@ -40,9 +40,11 @@
 //! - [`Follower::key_material`] serves only if
 //!   [`Follower::with_key_packages`] gave the follower its
 //!   [`KeyPackages`]; its limitations are listed in `key_packages.rs`.
-//! - The `From` header is not authenticated (decision mimid-1wgh.17), so
-//!   any party that can reach the endpoint can store fanout as a
-//!   configured peer for that peer's rooms. Nothing in a FanoutMessage is
+//! - The follower itself does not authenticate the `From` header: the
+//!   provider-authentication layer in front of it does
+//!   ([`crate::provider_auth`]; mimid-75nk). Behind no layer, or for a
+//!   peer in observe mode, any party that can reach the endpoint can store
+//!   fanout as a configured peer for that peer's rooms. Nothing in a FanoutMessage is
 //!   verified: with no Observer, the follower cannot check MLS signatures
 //!   (decision mimid-1wgh.7.2).
 //! - A user removed from a group stays a member of the room here, and
@@ -192,9 +194,9 @@ impl Follower {
     ///
     /// # Errors
     ///
-    /// Returns `relay` back if the follower already has one.
-    pub fn set_relay(&self, relay: Relay) -> Result<(), Relay> {
-        self.relay.set(relay)
+    /// Returns `relay` back, boxed, if the follower already has one.
+    pub fn set_relay(&self, relay: Relay) -> Result<(), Box<Relay>> {
+        self.relay.set(relay).map_err(Box::new)
     }
 
     /// The domain of the provider this follower serves.

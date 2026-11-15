@@ -15,7 +15,7 @@
 //!   requests; nothing is checked then.
 //!
 //! Only configured peers are tracked, so a `From` header naming anyone else
-//! (it is not authenticated, decision mimid-1wgh.17) adds no state and no
+//! (this check runs whether or not it was authenticated) adds no state and no
 //! log line. A peer out of range is reported at WARN at most once per
 //! [`WARN_INTERVAL`]; when its clock is back in range after a warning, one
 //! INFO line says so. Skew is a deployment problem, not a request failure:

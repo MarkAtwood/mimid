@@ -11,11 +11,13 @@
 //!
 //! - The JMAP Chat endpoint is a subset of draft-atwood-jmap-chat-00 and
 //!   -mimi-00; [`jmap`] lists what is missing (decision mimid-1wgh.12.22).
-//! - There is no authentication between providers (decision mimid-1wgh.17).
-//!   protocol-07 requires mutually authenticated TLS; mimid does not
-//!   implement it and does not claim conformance to it. Combined with
-//!   BasicCredential, mimid offers no protection against a malicious or
-//!   impersonated provider.
+//! - Providers authenticate with RFC 9421 request signatures and keys
+//!   configured per peer (mimid-75nk; decision mimid-1wgh.17 reversed),
+//!   but a peer in observe mode is let through unauthenticated, and the
+//!   mutually authenticated TLS protocol-07 §4.1 requires is not
+//!   implemented yet (mimid-75nk.4, .5, .6): mimid does not claim
+//!   conformance to it. With BasicCredential, a provider can still claim
+//!   any identity for its own users.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP; TLS must be terminated in front of it.
 //! - keyMaterial for users of this provider is served from the KeyPackages
@@ -86,4 +88,5 @@ pub mod local;
 pub mod logging;
 pub mod peer;
 pub mod peer_clock;
+pub mod provider_auth;
 pub mod store;

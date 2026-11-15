@@ -43,7 +43,7 @@ A Rust reference implementation of IETF MIMI over MLS (RFC 9420), plus enough pr
 
 Every design decision is a closed `decision` bead under epic `mimid-1wgh`. Persistent rules are in `bd memories`. Read the relevant ones before starting work on a bead.
 
-Known weaknesses that are deliberate: BasicCredential only, and no authentication between providers. Never describe mimid as protecting against a malicious or impersonated provider. Never claim conformance to protocol-07's mutually authenticated TLS.
+Known weaknesses that are deliberate: BasicCredential only, so a provider can claim any identity for its own users. Providers authenticate with RFC 9421 signatures and configured keys (epic mimid-75nk, which reversed decision mimid-1wgh.17), but a peer in observe mode is let through unauthenticated and mutual TLS is not built yet. Never describe mimid as protecting against a malicious provider. Never claim conformance to protocol-07's mutually authenticated TLS until mimid-75nk.5 lands.
 
 ## Crate map
 

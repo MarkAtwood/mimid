@@ -9,6 +9,14 @@
 //!
 //! [peers]
 //! "b.example" = "http://127.0.0.1:9080"
+//!
+//! # Optional: how peers prove who they are (crate::provider_auth).
+//! [provider_auth]
+//! mode = "enforce"        # the default for every provider
+//! selector = "mimid1"     # the keyid of this server's request signatures
+//! [provider_auth.peers."b.example"]
+//! mode = "observe"        # log a failure but accept the request
+//! keys = { "b1" = "<base64 Ed25519 public key>" }
 //! ```
 //!
 //! Parsing is strict: unknown keys, malformed domains and malformed base
@@ -84,6 +92,10 @@ pub struct Config {
     /// The longest URI accepted, in octets.
     #[serde(default = "default_max_uri_octets")]
     pub max_uri_octets: usize,
+    /// How providers authenticate (bead mimid-75nk.1). Without the table,
+    /// every provider is held to `enforce` with no trusted keys.
+    #[serde(default)]
+    pub provider_auth: crate::provider_auth::ProviderAuthConfig,
 }
 
 impl Config {
@@ -144,6 +156,9 @@ impl Config {
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let config: Self = toml::from_str(text)?;
         if config.peers.contains_key(&config.domain) {
+            return Err(ConfigError::OwnDomainInPeers(config.domain));
+        }
+        if config.provider_auth.peers.contains_key(&config.domain) {
             return Err(ConfigError::OwnDomainInPeers(config.domain));
         }
         Ok(config)
@@ -305,8 +320,32 @@ mod tests {
             max_name_octets: 1024,
             max_description_octets: 4096,
             max_uri_octets: 2048,
+            provider_auth: crate::provider_auth::ProviderAuthConfig::default(),
         };
         assert_eq!(config, expected);
+    }
+
+    #[test]
+    fn provider_auth_parses_and_refuses_the_own_domain() {
+        // A table after [peers] would be read as a peer, so it goes last.
+        let key = "JrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs=";
+        let text = format!(
+            "{VALID}\n[provider_auth]\nmode = \"observe\"\nselector = \"s1\"\n\
+             [provider_auth.peers.\"b.example\"]\nmode = \"enforce\"\nkeys = {{ \"b1\" = \"{key}\" }}\n"
+        );
+        let config = Config::parse(&text).unwrap();
+        let auth = &config.provider_auth;
+        assert_eq!(auth.mode, crate::provider_auth::AuthMode::Observe);
+        assert_eq!(auth.selector, "s1");
+        let b = &auth.peers[&domain("b.example")];
+        assert_eq!(b.mode, Some(crate::provider_auth::AuthMode::Enforce));
+        assert!(b.keys.contains_key("b1"));
+
+        let own = format!("{VALID}\n[provider_auth.peers.\"a.example\"]\nmode = \"observe\"\n");
+        assert!(matches!(
+            Config::parse(&own),
+            Err(ConfigError::OwnDomainInPeers(d)) if d.as_str() == "a.example"
+        ));
     }
 
     #[test]

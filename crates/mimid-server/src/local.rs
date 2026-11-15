@@ -146,6 +146,9 @@ impl LocalToken {
 struct LocalState {
     hub: Arc<Hub>,
     store: Store,
+    /// This server's request signer, for `provider-key` (bead
+    /// mimid-75nk.1).
+    signer: Option<Arc<crate::provider_auth::RequestSigner>>,
 }
 
 impl FromRef<LocalState> for Arc<Hub> {
@@ -163,7 +166,19 @@ impl FromRef<LocalState> for Store {
 /// The local control router over `hub` and `store`. With `token`, every
 /// route requires it.
 pub fn router(hub: Arc<Hub>, store: Store, token: Option<LocalToken>) -> Router {
+    router_with_signer(hub, store, token, None)
+}
+
+/// [`router`], with this server's request signer for
+/// `/local/v1/provider-key` (bead mimid-75nk.1).
+pub fn router_with_signer(
+    hub: Arc<Hub>,
+    store: Store,
+    token: Option<LocalToken>,
+    signer: Option<Arc<crate::provider_auth::RequestSigner>>,
+) -> Router {
     let routes = Router::new()
+        .route("/local/v1/provider-key", get(provider_key))
         .route("/local/v1/hub-sender", get(hub_sender))
         .route("/local/v1/rooms", post(create_room).get(list_rooms))
         .route("/local/v1/rooms/{room_id}", get(get_room))
@@ -171,7 +186,7 @@ pub fn router(hub: Arc<Hub>, store: Store, token: Option<LocalToken>) -> Router 
         .route("/local/v1/users", post(create_user).get(list_users))
         .route("/local/v1/users/{user}/tokens", post(issue_token))
         .route("/local/v1/consent", get(list_consent))
-        .with_state(LocalState { hub, store });
+        .with_state(LocalState { hub, store, signer });
     match token {
         Some(token) => routes.layer(middleware::from_fn_with_state(
             Arc::new(token),
@@ -209,6 +224,22 @@ async fn hub_sender(State(hub): State<Arc<Hub>>) -> Response {
     Json(serde_json::json!({
         "signatureKey": URL_SAFE_NO_PAD.encode(hub.signature_public_key()),
         "identity": format!("mimi://{}", hub.domain()),
+    }))
+    .into_response()
+}
+
+/// This server's request-signing key: the selector (`keyid`), the public
+/// key in standard base64, and the provisional DNS record of mimid-75nk.3.
+/// `404` when the server signs nothing.
+async fn provider_key(State(state): State<LocalState>) -> Response {
+    let Some(signer) = state.signer else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    Json(serde_json::json!({
+        "selector": signer.selector(),
+        "publicKey": base64::engine::general_purpose::STANDARD.encode(signer.public_key().to_bytes()),
+        "dnsName": format!("{}._mimi.{}", signer.selector(), state.hub.domain()),
+        "dnsTxt": signer.dns_record(),
     }))
     .into_response()
 }

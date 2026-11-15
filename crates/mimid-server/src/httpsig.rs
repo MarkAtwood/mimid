@@ -370,6 +370,19 @@ fn dictionary(headers: &HeaderMap, field: &'static str) -> Result<Dictionary, Er
         .map_err(|_| Error::Malformed(field))
 }
 
+/// The labels of the `Signature-Input` members in `headers`, in order.
+///
+/// # Errors
+///
+/// [`Error::Malformed`] if `Signature-Input` is not an RFC 9651
+/// dictionary.
+pub fn labels(headers: &HeaderMap) -> Result<Vec<String>, Error> {
+    Ok(dictionary(headers, SIGNATURE_INPUT)?
+        .keys()
+        .map(|key| key.as_str().to_owned())
+        .collect())
+}
+
 /// Signs `parts` with `key` under `label`, covering `params`, and returns
 /// the `Signature-Input` and `Signature` member values to add (the label
 /// and `=` included), so the caller can append them to existing fields.

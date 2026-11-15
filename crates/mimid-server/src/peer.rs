@@ -12,14 +12,15 @@
 //!
 //! # Limitations
 //!
-//! - There is no authentication between providers (decision mimid-1wgh.17):
-//!   no mutually authenticated TLS, and `http` base URLs are accepted
-//!   (decision mimid-1wgh.34).
+//! - Requests are signed with RFC 9421 when the client has a signer
+//!   ([`PeerClient::with_signer`]; bead mimid-75nk.1), but there is no
+//!   mutually authenticated TLS yet (mimid-75nk.5), and `http` base URLs
+//!   are accepted (decision mimid-1wgh.34).
 //! - The endpoint URLs in a peer's directory are used as given (decision
 //!   mimid-1wgh.6.48). A misconfigured or hostile peer can therefore direct
 //!   every POST to arbitrary hosts, including ones on this provider's
-//!   internal network. Peers are configured by the operator (decision
-//!   mimid-1wgh.17), so only list peers you trust with this.
+//!   internal network. Peers are configured by the operator, so only list
+//!   peers you trust with this.
 //! - Redirects are not followed; a redirect counts as a failed request.
 //! - A rejection's body ([`RejectedResponse`]) is decoded only for the five
 //!   endpoints whose protocol-07 response carries a result code.
@@ -195,6 +196,9 @@ pub struct PeerClient {
     /// Checks each response's `Date` against this server's clock
     /// ([`crate::peer_clock`]); none in tools that do not care.
     clocks: Option<Arc<PeerClocks>>,
+    /// Signs each protocol request (bead mimid-75nk.1); none sends them
+    /// unsigned.
+    signer: Option<Arc<crate::provider_auth::RequestSigner>>,
 }
 
 impl PeerClient {
@@ -218,6 +222,7 @@ impl PeerClient {
             peers,
             directories: Mutex::new(BTreeMap::new()),
             clocks: None,
+            signer: None,
         })
     }
 
@@ -226,6 +231,14 @@ impl PeerClient {
     #[must_use]
     pub fn with_clocks(mut self, clocks: Arc<PeerClocks>) -> Self {
         self.clocks = Some(clocks);
+        self
+    }
+
+    /// Signs every protocol request with `signer` (RFC 9421; bead
+    /// mimid-75nk.1). The directory fetch is not signed.
+    #[must_use]
+    pub fn with_signer(mut self, signer: Arc<crate::provider_auth::RequestSigner>) -> Self {
+        self.signer = Some(signer);
         self
     }
 
@@ -574,7 +587,24 @@ impl PeerClient {
             })?;
         let request_len = body.len();
         let started = Instant::now();
-        let headers = self.headers(domain, &url)?;
+        let mut headers = self.headers(domain, &url)?;
+        if let Some(signer) = &self.signer {
+            let uri = url
+                .parse::<axum::http::Uri>()
+                .map_err(|_| PeerError::Sign {
+                    endpoint: endpoint.name(),
+                    source: crate::httpsig::Error::BadValue("@target-uri".to_owned()),
+                })?;
+            let now = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+            signer
+                .sign(&axum::http::Method::POST, &uri, &mut headers, &body, now)
+                .map_err(|source| PeerError::Sign {
+                    endpoint: endpoint.name(),
+                    source,
+                })?;
+        }
         let sent = SystemTime::now();
         let response = self
             .http
@@ -799,6 +829,15 @@ pub enum PeerError {
     /// A domain is not a valid HTTP header value.
     #[error("invalid header value")]
     Header,
+    /// The request could not be signed (bead mimid-75nk.1).
+    #[error("cannot sign the {endpoint} request")]
+    Sign {
+        /// The endpoint's directory key.
+        endpoint: &'static str,
+        /// Why.
+        #[source]
+        source: crate::httpsig::Error,
+    },
     /// The directory request answered with a status other than `200`.
     #[error("directory request answered {0}")]
     DirectoryStatus(u16),

@@ -14,7 +14,9 @@
 //!   Commit);
 //! - `users`: every JMAP account; `add-user <userUri>`: create one;
 //!   `token <userUri>`: issue a bearer token for it;
-//! - `consent`: the consent entries other providers sent.
+//! - `consent`: the consent entries other providers sent;
+//! - `provider-key`: this server's request-signing selector and public key,
+//!   and the provisional DNS record for it (bead mimid-75nk.1).
 //!
 //! The answer's JSON body is printed as is. A problem answer is an error,
 //! whose message carries the status and the problem `type`.
@@ -29,7 +31,7 @@ use crate::local::LocalToken;
 pub enum AdminError {
     /// The command line is not a known command with its argument.
     #[error(
-        "usage: mimid admin <config.toml> hub-sender | rooms | room <roomId> | users | add-user <userUri> | token <userUri> | consent"
+        "usage: mimid admin <config.toml> hub-sender | rooms | room <roomId> | users | add-user <userUri> | token <userUri> | consent | provider-key"
     )]
     Usage,
     /// The configuration has no `local_listen`.
@@ -69,6 +71,7 @@ enum Command {
     AddUser(String),
     Token(String),
     Consent,
+    ProviderKey,
 }
 
 impl Command {
@@ -86,6 +89,7 @@ impl Command {
             [c, user] if c == "add-user" => Ok(Self::AddUser(user.clone())),
             [c, user] if c == "token" => Ok(Self::Token(user.clone())),
             [c] if c == "consent" => Ok(Self::Consent),
+            [c] if c == "provider-key" => Ok(Self::ProviderKey),
             _ => Err(AdminError::Usage),
         }
     }
@@ -137,6 +141,7 @@ pub async fn run(
             .body(serde_json::json!({ "user": user }).to_string()),
         Command::Token(user) => client.post(format!("{base}/users/{}/tokens", segment(user))),
         Command::Consent => client.get(format!("{base}/consent")),
+        Command::ProviderKey => client.get(format!("{base}/provider-key")),
     };
     let request = match token {
         Some(token) => request.bearer_auth(token.secret()),
