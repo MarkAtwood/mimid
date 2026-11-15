@@ -396,3 +396,28 @@ mod live {
         );
     }
 }
+
+#[cfg(test)]
+mod live_host {
+    use super::*;
+
+    /// Needs network access, run with `--ignored`: the mimid hackathon
+    /// host's published key (bead mimid-75nk.3) is found, DNSSEC-secure,
+    /// through mimid's own resolver and parser.
+    #[tokio::test]
+    #[ignore = "needs DNS"]
+    async fn the_mimid_hosts_key_record_is_secure() {
+        let resolver = HickoryTxtResolver::new(&["1.1.1.1".parse().unwrap()]).unwrap();
+        let keys = DnsKeys::new(Arc::new(resolver), true);
+        let domain = Domain::try_from("mimid.reviewcommit.com".to_owned()).unwrap();
+        let found = keys.key(&domain, "mimid1").await;
+        let KeyLookup::Found { key, dnssec } = found else {
+            panic!("{found:?}");
+        };
+        assert_eq!(dnssec, Some(DnssecStatus::Secure));
+        assert_eq!(
+            STANDARD.encode(key.to_bytes()),
+            "81rGxBkc1CHNwC9YBCnbDWqSbA1/7zdA6L56QLk27kQ="
+        );
+    }
+}
