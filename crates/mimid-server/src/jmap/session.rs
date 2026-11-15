@@ -21,7 +21,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use jmap_chat_types::capability::{ChatCapability, JMAP_CHAT_URI};
+use jmap_chat_types::{ChatCapability, JMAP_CHAT_URI};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 

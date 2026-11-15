@@ -60,7 +60,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jmap_chat_types::{Chat, ChatContact, Message};
 use jmap_server::{
-    BackendChangesError, BackendQueryError, ChangesResult, GetObject, HandlerFuture, Id,
+    BackendChangesError, BackendQueryError, CallContext, ChangesParams, ChangesResult, HandlerOutput, QueryChangesParams, QueryParams, GetObject, HandlerFuture, Id,
     JmapBackend, JmapError, JmapHandler, JmapObject, QueryChangesResult, QueryObject, QueryResult,
     SetError, SetErrorType, State, handle_changes, handle_query, handle_query_changes,
     resolve_query_start, server_fail_from_backend,
@@ -780,6 +780,10 @@ fn chat_object(
     let mut object = into_map(serde_json::to_value(serde_json::from_value::<Chat>(
         object,
     )?)?)?;
+    // crate-jmap 0.5 writes these VTC fields as null; they exist only with
+    // the VTC capability, which mimid does not offer (CHAT_PROPERTIES).
+    object.remove("activeCallId");
+    object.remove("activeCallAccountId");
     chat.text.write(&mut object, i18n, language);
     Ok(object)
 }
@@ -995,10 +999,10 @@ impl JmapBackend for Projection {
         &self,
         caller: &Account,
         _account_id: &Id,
-        since_state: &State,
-        max_changes: Option<u64>,
+        params: ChangesParams<'_>,
     ) -> Result<ChangesResult, BackendChangesError<Self::Error>> {
-        let since = since_state.as_ref();
+        let since = params.since_state.as_ref();
+        let max_changes = params.max_changes;
         match Kind::of::<O>()? {
             Kind::Chat => self.chat_changes(caller, since, max_changes).await,
             Kind::Message => self.message_changes(caller, since, max_changes).await,
@@ -1010,13 +1014,17 @@ impl JmapBackend for Projection {
         &self,
         caller: &Account,
         _account_id: &Id,
-        filter: Option<&O::Filter>,
-        sort: Option<&[O::Comparator]>,
-        limit: Option<u64>,
-        position: i64,
-        anchor: Option<&Id>,
-        anchor_offset: i64,
+        params: QueryParams<'_, O>,
     ) -> Result<QueryResult, BackendQueryError<Self::Error>> {
+        let QueryParams {
+            filter,
+            sort,
+            limit,
+            position,
+            anchor,
+            anchor_offset,
+            ..
+        } = params;
         let kind = Kind::of::<O>()?;
         let filter = filter
             .map(serde_json::to_value)
@@ -1054,12 +1062,7 @@ impl JmapBackend for Projection {
         &self,
         _caller: &Account,
         _account_id: &Id,
-        _since_query_state: &State,
-        _filter: Option<&O::Filter>,
-        _sort: Option<&[O::Comparator]>,
-        _max_changes: Option<u64>,
-        _up_to_id: Option<&Id>,
-        _collapse_threads: bool,
+        _params: QueryChangesParams<'_, O>,
     ) -> Result<QueryChangesResult, BackendChangesError<Self::Error>> {
         // Decision mimid-1wgh.12.22.
         Err(BackendChangesError::CannotCalculate)
@@ -1181,13 +1184,13 @@ struct Handler {
 }
 
 impl JmapHandler<Account> for Handler {
-    fn call(
-        &self,
-        _method: String,
-        _call_id: String,
-        args: Value,
-        caller: Account,
-    ) -> HandlerFuture {
+    fn call(&self, cx: CallContext<Account>) -> HandlerFuture {
+        let CallContext {
+            args,
+            caller,
+            using,
+            ..
+        } = cx;
         let projection = Arc::clone(&self.projection);
         let (kind, operation) = (self.kind, self.operation);
         Box::pin(async move {
@@ -1197,16 +1200,16 @@ impl JmapHandler<Account> for Handler {
                 (_, Operation::Get) => {
                     return get(projection, kind, args, caller)
                         .await
-                        .map(|v| (v, Vec::new()));
+                        .map(HandlerOutput::new);
                 }
                 (Kind::Chat, Operation::Changes) => {
-                    handle_changes::<ChatRecord, _>(projection, caller, args).await
+                    handle_changes::<ChatRecord, _>(projection, caller, args, &using).await
                 }
                 (Kind::Message, Operation::Changes) => {
-                    handle_changes::<MessageRecord, _>(projection, caller, args).await
+                    handle_changes::<MessageRecord, _>(projection, caller, args, &using).await
                 }
                 (Kind::ChatContact, Operation::Changes) => {
-                    handle_changes::<ContactRecord, _>(projection, caller, args).await
+                    handle_changes::<ContactRecord, _>(projection, caller, args, &using).await
                 }
                 (Kind::Chat, Operation::Query) => {
                     let args = without_language(args, caller)?;
@@ -1414,19 +1417,14 @@ struct SetHandler {
 }
 
 impl JmapHandler<Account> for SetHandler {
-    fn call(
-        &self,
-        _method: String,
-        _call_id: String,
-        args: Value,
-        caller: Account,
-    ) -> HandlerFuture {
+    fn call(&self, cx: CallContext<Account>) -> HandlerFuture {
+        let CallContext { args, caller, .. } = cx;
         let projection = Arc::clone(&self.projection);
         let (kind, rules) = (self.kind, self.rules);
         Box::pin(async move {
             refuse_set(&projection, kind, &rules, args, &caller)
                 .await
-                .map(|response| (response, Vec::new()))
+                .map(HandlerOutput::new)
         })
     }
 }

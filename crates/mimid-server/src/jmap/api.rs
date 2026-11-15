@@ -38,7 +38,7 @@ use axum::extract::rejection::BytesRejection;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use jmap_server::{
-    Dispatcher, HandlerFuture, JmapError, JmapHandler, check_known_capabilities, parse_request,
+    CallContext, Dispatcher, HandlerOutput, HandlerFuture, JmapError, JmapHandler, check_known_capabilities, parse_request,
     request_error,
 };
 use serde_json::Value;
@@ -118,8 +118,9 @@ impl Methods {
 struct Echo;
 
 impl JmapHandler<Account> for Echo {
-    fn call(&self, _method: String, _call_id: String, args: Value, _: Account) -> HandlerFuture {
-        Box::pin(async move { Ok((args, Vec::new())) })
+    fn call(&self, cx: CallContext<Account>) -> HandlerFuture {
+        let args = cx.args;
+        Box::pin(async move { Ok(HandlerOutput::new(args)) })
     }
 }
 
@@ -127,9 +128,9 @@ impl JmapHandler<Account> for Echo {
 struct Limited(Arc<dyn JmapHandler<Account>>);
 
 impl JmapHandler<Account> for Limited {
-    fn call(&self, method: String, call_id: String, args: Value, caller: Account) -> HandlerFuture {
-        match check_object_count(&method, &args) {
-            Ok(()) => self.0.call(method, call_id, args, caller),
+    fn call(&self, cx: CallContext<Account>) -> HandlerFuture {
+        match check_object_count(&cx.method, &cx.args) {
+            Ok(()) => self.0.call(cx),
             Err(error) => Box::pin(async move { Err(error) }),
         }
     }
@@ -370,7 +371,7 @@ mod tests {
         let get = |n| json!({"accountId": "A", "ids": ids(n)});
         assert!(check_object_count("Chat/get", &get(MAX_OBJECTS_IN_GET)).is_ok());
         let error = check_object_count("Chat/get", &get(MAX_OBJECTS_IN_GET + 1)).unwrap_err();
-        assert_eq!(error.error_type, "requestTooLarge");
+        assert_eq!(error.error_type.as_str(), "requestTooLarge");
 
         // RFC 8620 §2: creates, updates and destroys count together.
         let third = MAX_OBJECTS_IN_SET / 3;
@@ -385,7 +386,7 @@ mod tests {
         };
         assert!(check_object_count("KeyPackage/set", &set(rest)).is_ok());
         let error = check_object_count("KeyPackage/set", &set(rest + 1)).unwrap_err();
-        assert_eq!(error.error_type, "requestTooLarge");
+        assert_eq!(error.error_type.as_str(), "requestTooLarge");
 
         // Other methods are not counted.
         assert!(check_object_count("Core/echo", &get(MAX_OBJECTS_IN_GET + 1)).is_ok());
