@@ -2,17 +2,24 @@
 //! `consent_request` and `consent_update` tables (migration 0007). They are
 //! stored for a later JMAP surface to show users, not enforced (decision
 //! mimid-1wgh.7.35).
+//!
+//! The key columns hold the URIs in RFC 3986 §6.2.2 normal form (scheme and
+//! host in lowercase, percent-encoding normalized; see
+//! `hub::lookup_uri`), so two spellings of one request share a row. The
+//! migration's comments say "as received"; that predates the normalization
+//! and is wrong for these columns. The `entry` column is still the
+//! ConsentEntry byte for byte as received.
 
 use super::{Store, StoreError, from_sql_int, to_sql_int};
 
 /// A `ConsentScope` (protocol-07 §5.7), the key of both tables.
 #[derive(Debug, Clone, Copy)]
 pub struct ConsentKey<'a> {
-    /// `requesterUri`.
+    /// `requesterUri`, in RFC 3986 normal form.
     pub requester_uri: &'a str,
-    /// `targetUri`.
+    /// `targetUri`, in RFC 3986 normal form.
     pub target_uri: &'a str,
-    /// `roomId`, or `None` for any room.
+    /// `roomId` in RFC 3986 normal form, or `None` for any room.
     pub room_id: Option<&'a str>,
 }
 
