@@ -34,7 +34,7 @@
       "id": "jt-leave-01",
       "kind": "UpdateRequest",
       "outcome": {
-        "haven": "success: held for the next Commit (read from mimi-hubd at bafc5e6, not yet run)",
+        "haven": "success: held for the next Commit (run on Haven 8a1e656, 2026-11-15). Haven does not read canRemoveOwnClient or canRemoveSelf: it accepts a leave because it comes from the provider of the user leaving (its DIV-15), so role 2's grant is neither needed nor checked there",
         "mimid": "success: held for the next Commit",
         "spec": "the hub caches the proposals (protocol-07 §3.5 step 2); the drafts do not name the answer, and success is the one that does not refuse them"
       },
@@ -60,7 +60,7 @@
       "id": "jt-leave-02",
       "kind": "UpdateRequest",
       "outcome": {
-        "haven": "success; bob is no longer a participant (read from mimi-hubd at bafc5e6, not yet run)",
+        "haven": "success; bob is no longer a participant (run on Haven 8a1e656, 2026-11-15)",
         "mimid": "success; bob is no longer a participant",
         "spec": "valid: the Commit includes the cached proposals (protocol-07 §3.5 step 3)"
       },
@@ -86,7 +86,7 @@
       "id": "jt-leave-03",
       "kind": "UpdateRequest",
       "outcome": {
-        "haven": "invalidProposal naming the held proposals it leaves out by ProposalRef (read from mimi-hubd at bafc5e6, not yet run)",
+        "haven": "invalidProposal naming both held proposals by ProposalRef (run on Haven 8a1e656, 2026-11-15)",
         "mimid": "notAllowed: the Commit does not include every pending proposal",
         "spec": "refused: \"the hub requires the client to include the cached proposals\" (protocol-07 §3.5 step 3); whether that is notAllowed or invalidProposal (§5.3) the drafts do not say"
       },

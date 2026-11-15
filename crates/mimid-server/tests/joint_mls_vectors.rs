@@ -504,7 +504,7 @@ async fn generate_leave() -> Value {
         json!({
             "spec": "the hub caches the proposals (protocol-07 §3.5 step 2); the drafts do not name the answer, and success is the one that does not refuse them",
             "mimid": "success: held for the next Commit",
-            "haven": "success: held for the next Commit (read from mimi-hubd at bafc5e6, not yet run)",
+            "haven": "success: held for the next Commit (run on Haven 8a1e656, 2026-11-15). Haven does not read canRemoveOwnClient or canRemoveSelf: it accepts a leave because it comes from the provider of the user leaving (its DIV-15), so role 2's grant is neither needed nor checked there",
         }),
     );
     held["variant"] = json!("Proposal");
@@ -544,7 +544,7 @@ async fn generate_leave() -> Value {
                 json!({
                     "spec": "valid: the Commit includes the cached proposals (protocol-07 §3.5 step 3)",
                     "mimid": "success; bob is no longer a participant",
-                    "haven": "success; bob is no longer a participant (read from mimi-hubd at bafc5e6, not yet run)",
+                    "haven": "success; bob is no longer a participant (run on Haven 8a1e656, 2026-11-15)",
                 }),
             ),
             update_vector(
@@ -558,7 +558,7 @@ async fn generate_leave() -> Value {
                 json!({
                     "spec": "refused: \"the hub requires the client to include the cached proposals\" (protocol-07 §3.5 step 3); whether that is notAllowed or invalidProposal (§5.3) the drafts do not say",
                     "mimid": "notAllowed: the Commit does not include every pending proposal",
-                    "haven": "invalidProposal naming the held proposals it leaves out by ProposalRef (read from mimi-hubd at bafc5e6, not yet run)",
+                    "haven": "invalidProposal naming both held proposals by ProposalRef (run on Haven 8a1e656, 2026-11-15)",
                 }),
             ),
         ],
