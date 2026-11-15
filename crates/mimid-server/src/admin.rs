@@ -9,6 +9,9 @@
 //!
 //! - `hub-sender`: the hub's external-sender identity;
 //! - `rooms`: every hosted room; `room <roomId>`: one room;
+//! - `remove <roomId> <userUri>` and `ban <roomId> <userUri>`: the hub
+//!   proposes the user's removal or ban (it takes effect at the next
+//!   Commit);
 //! - `users`: every JMAP account; `add-user <userUri>`: create one;
 //!   `token <userUri>`: issue a bearer token for it;
 //! - `consent`: the consent entries other providers sent.
@@ -57,6 +60,11 @@ enum Command {
     HubSender,
     Rooms,
     Room(String),
+    Remove {
+        room: String,
+        user: String,
+        ban: bool,
+    },
     Users,
     AddUser(String),
     Token(String),
@@ -69,6 +77,11 @@ impl Command {
             [c] if c == "hub-sender" => Ok(Self::HubSender),
             [c] if c == "rooms" => Ok(Self::Rooms),
             [c, room] if c == "room" => Ok(Self::Room(room.clone())),
+            [c, room, user] if c == "remove" || c == "ban" => Ok(Self::Remove {
+                room: room.clone(),
+                user: user.clone(),
+                ban: c == "ban",
+            }),
             [c] if c == "users" => Ok(Self::Users),
             [c, user] if c == "add-user" => Ok(Self::AddUser(user.clone())),
             [c, user] if c == "token" => Ok(Self::Token(user.clone())),
@@ -113,6 +126,10 @@ pub async fn run(
         Command::HubSender => client.get(format!("{base}/hub-sender")),
         Command::Rooms => client.get(format!("{base}/rooms")),
         Command::Room(room) => client.get(format!("{base}/rooms/{}", segment(room))),
+        Command::Remove { room, user, ban } => client
+            .post(format!("{base}/rooms/{}/remove", segment(room)))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(serde_json::json!({ "user": user, "ban": ban }).to_string()),
         Command::Users => client.get(format!("{base}/users")),
         Command::AddUser(user) => client
             .post(format!("{base}/users"))

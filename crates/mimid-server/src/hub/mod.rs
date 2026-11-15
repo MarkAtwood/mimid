@@ -42,6 +42,7 @@ pub mod fanout;
 mod group_info;
 mod key_material;
 mod keys;
+mod operator;
 pub mod policy;
 mod room;
 mod state;
@@ -822,6 +823,14 @@ pub enum HubError {
     /// The room is not hosted here.
     #[error("no such room")]
     NoSuchRoom,
+    /// The user is not in the room's participant list (operator remove or
+    /// ban, bead mimid-1wgh.47.5).
+    #[error("user is not a participant of the room")]
+    NotListed,
+    /// The room's `external_senders` does not name this hub, so it cannot
+    /// propose in the room.
+    #[error("the hub is not the room's external sender")]
+    NotExternalSender,
     /// The endpoint is not implemented yet.
     #[error("{0} is not implemented")]
     NotImplemented(&'static str),

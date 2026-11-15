@@ -56,6 +56,12 @@ impl HubSigningKey {
         &self.public
     }
 
+    /// The 32-byte Ed25519 private key (RFC 8032 seed), for the hub's own
+    /// external proposals (bead mimid-1wgh.47.5).
+    pub(crate) fn private(&self) -> &[u8; 32] {
+        &self.private
+    }
+
     /// The franking HMAC key `hub_key` (protocol-07 §5.4.1.2).
     pub(crate) fn hub_key(&self) -> &HubKey {
         &self.hub_key

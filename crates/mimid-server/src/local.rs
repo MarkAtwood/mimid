@@ -32,6 +32,16 @@
 //! - `GET /local/v1/rooms/{roomId}`: one room's summary, the room ID
 //!   percent-encoded as one path segment; `404` if it is not hosted here.
 //!
+//! - `POST /local/v1/rooms/{roomId}/remove`: `{"user", "ban"}` (`ban`
+//!   optional, default false). The hub proposes the user's removal, or
+//!   with `ban` their change to role 1, as the room's external sender
+//!   (bead mimid-1wgh.47.5; see [`Hub::remove_user`]). `200` with
+//!   `{"result": "proposed"}` once the hub has accepted, stored and fanned
+//!   out its own proposals; the removal takes effect when a member next
+//!   commits. `404` if the room is not hosted here (`no-such-room`) or the
+//!   user is not a participant (`not-a-participant`); `409` if the hub
+//!   cannot propose in the room or refuses the proposals
+//!   (`proposal-refused`).
 //! - `GET /local/v1/users`: every JMAP account, as `{"users": [{"user",
 //!   "accountId", "createdAt"}, ...]}` ordered by user URI, `createdAt` in
 //!   milliseconds (bead mimid-1wgh.47.3).
@@ -76,6 +86,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use mimi_protocol::tls_codec::Deserialize as _;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -156,6 +167,7 @@ pub fn router(hub: Arc<Hub>, store: Store, token: Option<LocalToken>) -> Router 
         .route("/local/v1/hub-sender", get(hub_sender))
         .route("/local/v1/rooms", post(create_room).get(list_rooms))
         .route("/local/v1/rooms/{room_id}", get(get_room))
+        .route("/local/v1/rooms/{room_id}/remove", post(remove_user))
         .route("/local/v1/users", post(create_user).get(list_users))
         .route("/local/v1/users/{user}/tokens", post(issue_token))
         .route("/local/v1/consent", get(list_consent))
@@ -299,6 +311,48 @@ async fn list_consent(State(store): State<Store>) -> Response {
         }))
         .into_response(),
         Err(error) => store_failure("list consent", &error),
+    }
+}
+
+/// The body of `POST /local/v1/rooms/{roomId}/remove`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveUser {
+    user: String,
+    #[serde(default)]
+    ban: bool,
+}
+
+async fn remove_user(
+    State(hub): State<Arc<Hub>>,
+    Path(room_id): Path<String>,
+    body: Json<RemoveUser>,
+) -> Response {
+    let Json(RemoveUser { user, ban }) = body;
+    match hub.remove_user(&room_id, user.as_bytes(), ban).await {
+        Ok(answer) => {
+            let accepted = mimi_protocol::UpdateRoomResponse::tls_deserialize_exact(&answer[..])
+                .is_ok_and(|answer| {
+                    matches!(answer.result, mimi_protocol::UpdateResult::Success { .. })
+                });
+            if accepted {
+                Json(serde_json::json!({ "result": "proposed" })).into_response()
+            } else {
+                problem(StatusCode::CONFLICT, "proposal-refused")
+            }
+        }
+        Err(HubError::NoSuchRoom) => problem(StatusCode::NOT_FOUND, "no-such-room"),
+        Err(HubError::NotListed) => problem(StatusCode::NOT_FOUND, "not-a-participant"),
+        Err(HubError::NotExternalSender) => problem(StatusCode::CONFLICT, "proposal-refused"),
+        Err(error) => {
+            tracing::error!(
+                name: "local_remove_failed",
+                room_id,
+                error = &error as &dyn std::error::Error,
+                "operator removal failed"
+            );
+            problem(StatusCode::INTERNAL_SERVER_ERROR, "internal-error")
+        }
     }
 }
 

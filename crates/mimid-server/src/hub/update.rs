@@ -635,7 +635,7 @@ fn stage_proposals(
         };
         // Decisions mimid-1wgh.6.9, mimid-1wgh.6.56: the sender of
         // proposalOrCommit only; checked before any write.
-        if index == 0 && sender_domain(&state, &sender) != Some(from.clone()) {
+        if index == 0 && sender_domain(hub, &state, &sender) != Some(from.clone()) {
             return refuse(room_id, "From domain is not the proposer's domain", true);
         }
         if let Err(denied) = policy::authorize_proposal(&state, &kind, &sender) {
@@ -717,8 +717,13 @@ fn stage_proposals(
     }))
 }
 
-/// The provider domain of a proposal's sender.
-fn sender_domain(state: &RoomState, sender: &ProposalSender) -> Option<Domain> {
+/// The provider domain of a proposal's sender. An external sender is this
+/// hub: a hosted room's `external_senders` lists only the hub (decision
+/// mimid-1wgh.6.46 as amended 2026-11-15).
+fn sender_domain(hub: &Hub, state: &RoomState, sender: &ProposalSender) -> Option<Domain> {
+    if matches!(sender, ProposalSender::External { .. }) {
+        return Some(hub.domain().clone());
+    }
     match sender {
         ProposalSender::Member { leaf_index } => state
             .members

@@ -261,8 +261,9 @@ pub enum Denied {
     /// A SelfRemove proposal does not come from a member.
     #[error("SelfRemove needs a member sender")]
     NotAMember,
-    /// Proposals from MLS external senders are not accepted.
-    #[error("proposals from external senders are not accepted")]
+    /// An external sender's proposal other than the hub's operator Remove
+    /// or participant_list update.
+    #[error("this proposal from an external sender is not accepted")]
     ExternalSender,
     /// A credential identity change (decision mimid-1wgh.6.1).
     #[error("a credential identity change is refused")]
@@ -394,8 +395,12 @@ impl RoomState {
                 Ok((self.user_of(*leaf_index)?.to_vec(), true))
             }
             ProposalSender::NewMember { user } => Ok((user.clone(), false)),
-            // RFC 9420 §12.1.8; decision mimid-1wgh.6.46
-            ProposalSender::External { .. } => Err(Denied::ExternalSender),
+            // RFC 9420 §12.1.8. A hosted room's external_senders lists only
+            // the hub (room creation checks it), so a validated external
+            // proposal is the hub's own, sent for its operator: the empty
+            // actor, which is no participant (decision mimid-1wgh.6.46 as
+            // amended 2026-11-15). authorize_proposal limits its kinds.
+            ProposalSender::External { .. } => Ok((Vec::new(), false)),
         }
     }
 
@@ -550,6 +555,20 @@ pub fn authorize_proposal(
     sender: &ProposalSender,
 ) -> Result<(), Denied> {
     refuse_kind(kind)?;
+    // The hub's own external proposals, for operator remove and ban
+    // (decision mimid-1wgh.6.46 as amended 2026-11-15): a Remove, or a
+    // participant_list update. An operator power outside the drafts, which
+    // give the room's own roles alone the right to kick or ban.
+    if matches!(sender, ProposalSender::External { .. }) {
+        return match kind {
+            ProposalKind::Remove { .. }
+            | ProposalKind::AppDataUpdate {
+                component_id: PARTICIPANT_LIST,
+                op: AppDataOp::Update(_),
+            } => Ok(()),
+            _ => Err(Denied::ExternalSender),
+        };
+    }
     let (actor, is_member) = state.sender(sender)?;
     let role = state.role_of(&actor);
     if state.is_removed_or_banned(role, is_member) {

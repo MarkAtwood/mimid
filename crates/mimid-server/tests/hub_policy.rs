@@ -970,7 +970,10 @@ fn refused_proposals() {
             OK,
         ),
         (
-            "proposals from external senders",
+            // Decision mimid-1wgh.6.46 as amended 2026-11-15: the hub's
+            // external Remove comes with its participant_list change, which
+            // takes the user out; alone, it is a kick by a non-participant.
+            "the hub's external Remove without its list change",
             standard(a1()),
             Commit {
                 proposals: vec![Proposal {
@@ -979,7 +982,7 @@ fn refused_proposals() {
                 }],
                 ..commit(L_ALICE, vec![])
             },
-            Err(Denied::ExternalSender),
+            membership(A::Kick, missing(0, C::CAN_KICK)),
         ),
         (
             "a committer leaf that is not a member",
@@ -1591,10 +1594,20 @@ fn refused_standalone_proposals() {
             Err(Denied::IdentityChange),
         ),
         (
-            "external sender",
+            // Decision mimid-1wgh.6.46 as amended 2026-11-15: the hub, the
+            // room's only external sender, may propose a Remove and a
+            // participant_list update for its operator, and nothing else.
+            "external sender: Remove",
             standard(a1()),
             ProposalSender::External { sender_index: 0 },
             remove(L_CAROL),
+            Ok(()),
+        ),
+        (
+            "external sender: any other AppDataUpdate",
+            standard(a1()),
+            ProposalSender::External { sender_index: 0 },
+            app_data(ROLES_LIST, vec![0x00]),
             Err(Denied::ExternalSender),
         ),
         (

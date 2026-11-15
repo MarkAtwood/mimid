@@ -56,9 +56,11 @@
 //!     state and BasicCredential has no notion of a pseudonym.
 //!   - `canDestroyRoom` is not enforced: the hub offers no way to destroy a
 //!     room.
-//!   - Proposals from an MLS external sender are refused: the hub is the
-//!     only external sender (decision mimid-1wgh.4.21) and v1 sends none
-//!     (decision mimid-1wgh.6.46).
+//!   - The hub is a hosted room's only MLS external sender (decision
+//!     mimid-1wgh.4.21). Its external proposals are accepted only as a
+//!     Remove or a `participant_list` update, which it sends for operator
+//!     remove and ban (decision mimid-1wgh.6.46 as amended 2026-11-15; an
+//!     operator power outside the drafts); any other is refused.
 //!   - A new-member (external) proposal can only add a client of a user
 //!     already in the participant list (`canAddOwnClient`);
 //!     preauthorization is consulted only for external Commits (decision
