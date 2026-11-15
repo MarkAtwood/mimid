@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.4.5",
   "title": "mimi-mls: Safe AAD -10 wrapper",
   "description": "Per DR-2: whole authenticated_data is SafeAAD; never set_aad when safe_aad_required(); reject non-empty tail. Negative test: SafeAAD + trailing byte rejected.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T18:05:31.969229303Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T18:05:31.969229303Z",
+  "updated_at": "2026-11-15T23:15:28.726098416Z",
+  "closed_at": "2026-11-15T23:15:28.726098416Z",
+  "close_reason": "Covered by mimid-1wgh.4.17 (closed): whole authenticated_data is SafeAAD; trailing bytes rejected, tests observer.rs safe_aad_with_trailing_bytes_is_rejected_and_state_is_unchanged, member_mls_rs.rs safe_aad_with_trailing_bytes_is_rejected_and_group_stays_usable, truncated_input.rs member_marks_commit_with_trailing_aad_out_of_sync.",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.4.5",
