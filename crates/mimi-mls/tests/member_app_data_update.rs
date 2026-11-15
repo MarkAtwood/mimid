@@ -1,4 +1,4 @@
-//! Member AppDataUpdate (mls-extensions-10 §4.6-4.7, proposal type 0x0008)
+//! Member AppDataUpdate (mls-extensions-11 §4.6-4.7, proposal type 0x0008)
 //! beyond `member_app_data.rs` (bead mimid-1wgh.4.4): standalone proposals
 //! from [`Member::propose_app_data_update`], receiver-side enforcement of
 //! the §4.7 rules OpenMLS skips (openmls#2283, mimid-1wgh.4.42), hostile
@@ -62,10 +62,10 @@ const REQUIRED_CAPABILITIES: ExtensionType = ExtensionType::new(0x0003);
 /// RFC 9420 §17.3: external_senders extension type.
 const EXTERNAL_SENDERS: ExtensionType = ExtensionType::new(0x0005);
 
-/// mls-extensions-10 §7.1.1: app_data_dictionary extension type.
+/// mls-extensions-11 §7.1.1: app_data_dictionary extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
-/// mls-extensions-10 §7.5: private-use component ids, for tests only.
+/// mls-extensions-11 §7.5: private-use component ids, for tests only.
 const LOG: u16 = 0x8001;
 const META: u16 = 0x8002;
 const ABSENT: u16 = 0x8003;
@@ -76,7 +76,7 @@ const BOUNDARY_BASE: u16 = 0x8010;
 const UNKNOWN_LOW: u16 = 0x0100;
 const UNKNOWN_HIGH: u16 = 0xfff0;
 
-/// mls-extensions-10 §7.5: the app_components component.
+/// mls-extensions-11 §7.5: the app_components component.
 const APP_COMPONENTS: u16 = 0x0001;
 
 /// The test components every identity here declares (decision
@@ -95,9 +95,9 @@ const TEST_COMPONENTS: [u16; 10] = [
     UNKNOWN_HIGH,
 ];
 
-/// mls-extensions-10 §5 ComponentsList of [`TEST_COMPONENTS`], hand-encoded:
+/// mls-extensions-11 §5 ComponentsList of [`TEST_COMPONENTS`], hand-encoded:
 /// the GroupContext `app_components` list for groups holding test state
-/// (mls-extensions editor's copy, PR #110, rule 6), and peers' leaf lists.
+/// (mls-extensions-11 §5), and peers' leaf lists.
 const LIST_TEST_COMPONENTS: [u8; 21] = [
     0x14, // ComponentID component_ids<V>: 20 bytes
     0x80, 0x01, // LOG
@@ -112,7 +112,7 @@ const LIST_TEST_COMPONENTS: [u8; 21] = [
     0xff, 0xf0, // UNKNOWN_HIGH
 ];
 
-/// mls-extensions-10 §4.6 AppDataDictionary for an mls-rs LeafNode,
+/// mls-extensions-11 §4.6 AppDataDictionary for an mls-rs LeafNode,
 /// hand-encoded: its `app_components` list is [`LIST_TEST_COMPONENTS`].
 const LEAF_TEST_COMPONENTS: [u8; 25] = [
     0x18, // ComponentData component_data<V>: 24 bytes
@@ -124,7 +124,7 @@ const LEAF_TEST_COMPONENTS: [u8; 25] = [
     0x01, 0x00, 0xff, 0xf0, //   UNKNOWN_LOW, UNKNOWN_HIGH
 ];
 
-/// mls-extensions-10 §5 ComponentsList [UNKNOWN_LOW, LOG, UNKNOWN_HIGH],
+/// mls-extensions-11 §5 ComponentsList [UNKNOWN_LOW, LOG, UNKNOWN_HIGH],
 /// hand-encoded: the GroupContext list for the round-trip group.
 const LIST_UNKNOWN_AND_LOG: [u8; 7] = [
     0x06, // ComponentID component_ids<V>: 6 bytes
@@ -133,7 +133,7 @@ const LIST_UNKNOWN_AND_LOG: [u8; 7] = [
     0xff, 0xf0, // UNKNOWN_HIGH
 ];
 
-/// mls-extensions-10 §5 ComponentsList [LOG], hand-encoded: a GroupContext
+/// mls-extensions-11 §5 ComponentsList [LOG], hand-encoded: a GroupContext
 /// `app_components` list for groups whose only state is `LOG`.
 const LIST_LOG: [u8; 3] = [
     0x02, // ComponentID component_ids<V>: 2 bytes
@@ -158,8 +158,7 @@ const REQUIRE_DICTIONARY_ONLY: &[u8] = &[
 ];
 
 /// §4.6 AppDataDictionary { app_components: [LOG], LOG: "v0" }. The
-/// app_components entry lists `LOG` (mls-extensions editor's copy, PR #110,
-/// rule 6).
+/// app_components entry lists `LOG` (mls-extensions-11 §5).
 const DICTIONARY_V0: [u8; 12] = [
     0x0b, // component_data<V>: 11 bytes
     0x00, 0x01, // component_id = app_components
@@ -198,7 +197,7 @@ fn identity(name: &[u8]) -> Identity {
 }
 
 /// `components` plus the GroupContext `app_components` list that names
-/// every test component (mls-extensions editor's copy, PR #110, rule 6).
+/// every test component (mls-extensions-11 §5).
 fn listed(components: &[(u16, Vec<u8>)]) -> Vec<(u16, Vec<u8>)> {
     let mut all = components.to_vec();
     all.push((APP_COMPONENTS, LIST_TEST_COMPONENTS.to_vec()));
@@ -707,7 +706,7 @@ fn alice_naive_dave_and_group_info() -> (Identity, Member, NaiveClient, Vec<u8>)
         .extensions(vec![OpenMlsExtensionType::AppDataDictionary])
         .proposals(vec![OpenMlsProposalType::AppDataUpdate])
         .build();
-    // dave's leaf lists the test components (PR #110 rule 3).
+    // dave's leaf lists the test components (mls-extensions-11 §5).
     let mut leaf_dictionary = openmls::prelude::AppDataDictionary::new();
     leaf_dictionary.insert(APP_COMPONENTS, LIST_TEST_COMPONENTS.to_vec());
     let leaf_extensions =
@@ -888,10 +887,9 @@ fn tampered_app_data_update_fails_to_decode_and_changes_nothing() {
 
 /// The GroupContext extensions after dave's `[AppDataUpdate,
 /// GroupContextExtensions]` Commit, hand-encoded (RFC 9420 §7.2, §12.1.7;
-/// mls-extensions-10 §4.6-4.7): the GroupContextExtensions list, with the
+/// mls-extensions-11 §4.6-4.7): the GroupContextExtensions list, with the
 /// dictionary's LOG entry then updated in place to "v0+a". The dictionary
-/// keeps its app_components list (mls-extensions editor's copy, PR #110,
-/// rule 6).
+/// keeps its app_components list (mls-extensions-11 §5).
 const AFTER_UPDATE_THEN_GCE: [u8; 49] = [
     0x30, // extensions<V>: 48 bytes
     0x00, 0x06, // extension_type = app_data_dictionary
@@ -933,8 +931,7 @@ fn app_data_update_listed_before_gce_is_accepted() {
     let gce = OpenMlsExtensions::from_vec(vec![
         OpenMlsExtension::AppDataDictionary(AppDataDictionaryExtension::new({
             let mut dictionary = AppDataDictionary::new();
-            // The GroupContext keeps listing its components (PR #110
-            // rule 6).
+            // The GroupContext keeps listing its components (mls-extensions-11 §5).
             dictionary.insert(APP_COMPONENTS, LIST_TEST_COMPONENTS.to_vec());
             dictionary.insert(LOG, b"v0".to_vec());
             dictionary.insert(META, b"m0".to_vec());
@@ -1059,7 +1056,7 @@ fn add_mls_rs(
     name: &'static [u8],
 ) -> mls_rs::Group<impl mls_rs::client_builder::MlsConfig + use<>> {
     let client = mls_rs_client(name);
-    // The leaf lists the test components (PR #110 rule 3).
+    // The leaf lists the test components (mls-extensions-11 §5).
     let mut leaf = ExtensionList::new();
     leaf.set(Extension::new(
         APP_DATA_DICTIONARY,
@@ -1225,7 +1222,7 @@ fn unknown_components_round_trip_unchanged() {
         b"room-unknown",
         &[],
         &[
-            // The unknown components are listed (PR #110 rule 6) but have
+            // The unknown components are listed (mls-extensions-11 §5) but have
             // no handler.
             (APP_COMPONENTS, LIST_UNKNOWN_AND_LOG.to_vec()),
             (UNKNOWN_LOW, vec![0x00, 0xff]),
@@ -1329,7 +1326,7 @@ fn first_update_appends_the_dictionary_to_the_extensions() {
             &[],
             &[],
             // app_components is set in the same Commit, so the resulting
-            // GroupContext lists `LOG` (PR #110 rule 6).
+            // GroupContext lists `LOG` (mls-extensions-11 §5).
             &[
                 AppDataUpdate::Update {
                     component_id: APP_COMPONENTS,
@@ -1375,19 +1372,19 @@ fn first_update_appends_the_dictionary_to_the_extensions() {
 
 // ---- krmn K5: every component with state is listed ----
 //
-// mls-extensions editor's copy (PR #110) rule 6: a GroupContext is invalid
+// mls-extensions-11 §5: a GroupContext is invalid
 // if its app_data_dictionary holds an entry for a component (other than
 // app_components and safe_aad) that its app_components list does not name
 // (decision mimid-krmn.6). The naive OpenMLS committer does not enforce it.
 
-/// mls-extensions-10 §5 ComponentsList [LOG, META], hand-encoded.
+/// mls-extensions-11 §5 ComponentsList [LOG, META], hand-encoded.
 const LIST_LOG_META: [u8; 5] = [
     0x04, // component_ids<V>: 4 bytes
     0x80, 0x01, // LOG
     0x80, 0x02, // META
 ];
 
-/// mls-extensions-10 §5 ComponentsList [LOG, META, ABSENT], hand-encoded.
+/// mls-extensions-11 §5 ComponentsList [LOG, META, ABSENT], hand-encoded.
 const LIST_LOG_META_ABSENT: [u8; 7] = [
     0x06, // component_ids<V>: 6 bytes
     0x80, 0x01, // LOG

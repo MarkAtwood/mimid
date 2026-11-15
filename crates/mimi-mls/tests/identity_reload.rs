@@ -367,7 +367,7 @@ fn hostile_group_state_and_foreign_files_are_errors_not_panics() {
     assert!(matches!(result, Err(Error::StoreOpen(_))), "{result:?}");
 }
 
-/// mls-extensions-10 §5 ComponentsList [0x8001], hand-encoded: a GroupContext
+/// mls-extensions-11 §5 ComponentsList [0x8001], hand-encoded: a GroupContext
 /// `app_components` list requiring the private-use component 0x8001.
 const REQUIRE_8001: [u8; 3] = [
     0x02, // component_ids<V>: 2 bytes
@@ -377,7 +377,7 @@ const REQUIRE_8001: [u8; 3] = [
 /// Decision mimid-krmn.12: the extra components an identity declares
 /// survive a restart. A reloaded identity that declared 0x8001 still lists
 /// it, so it can create a group requiring 0x8001; one that declared nothing
-/// cannot (mls-extensions editor's copy, PR #110, rule 4).
+/// cannot (mls-extensions-11 §5).
 #[test]
 fn reloaded_identity_keeps_its_extra_components() {
     let require = [(0x0001, REQUIRE_8001.to_vec())];
@@ -409,7 +409,7 @@ fn reloaded_identity_keeps_its_extra_components() {
 }
 
 /// Decision mimid-krmn.12: app_components and safe_aad (implied), GREASE
-/// ids (mls-extensions-10 §7.5), mimid's built-in components and duplicates
+/// ids (mls-extensions-11 §7.5), mimid's built-in components and duplicates
 /// cannot be declared as extras.
 #[test]
 fn invalid_extra_components_are_refused() {

@@ -40,7 +40,7 @@ pub type ProposalType = u16;
 /// room-policy-04 §7 writes `WireFormats x<V>`; this crate reads that as a
 /// vector of `WireFormat` (decision mimid-1wgh.3.22).
 // room-policy-04 §7; decision mimid-1wgh.3.22; wg mimid-1wgh.37.24.
-// Read literally with mls-extensions-10's `struct { WireFormat
+// Read literally with mls-extensions-11's `struct { WireFormat
 // wire_formats<V>; } WireFormats`, `WireFormats x<V>` would be a vector of
 // vectors. mimid follows the intent of the sibling fields (`CipherSuite
 // cipher_suites<V>` etc.) and reads it as a flat list of WireFormat.

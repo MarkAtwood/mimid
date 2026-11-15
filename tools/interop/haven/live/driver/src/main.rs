@@ -113,7 +113,7 @@ const PRIVATE_APPLICATION: &[u8] = &[
 /// RFC 9420 §6 MLSMessage headers: mls10, then wire_format.
 const GROUP_INFO_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
 const WELCOME_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x03];
-/// mls-extensions-10 §5 `app_components` component.
+/// mls-extensions-11 §5 `app_components` component.
 const APP_COMPONENTS: u16 = 0x0001;
 
 fn uri(text: &str) -> IdentifierUri {
@@ -471,7 +471,7 @@ async fn main() {
         N.room_name.as_bytes(),
         &[],
         &[
-            // mls-extensions-10 §5: a ComponentsList naming participant_list.
+            // mls-extensions-11 §5: a ComponentsList naming participant_list.
             (APP_COMPONENTS, vec![0x02, 0x00, 0x22]),
             (PARTICIPANT_LIST, list(&[N.alice])),
         ],

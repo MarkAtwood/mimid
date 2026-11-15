@@ -24,7 +24,7 @@ use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 /// RFC 9420 §17.1: MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519.
 const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
 
-/// mls-extensions-10 §4.6: the `app_data_dictionary` extension type.
+/// mls-extensions-11 §4.6: the `app_data_dictionary` extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
 /// 2000-01-01T00:00:00Z. Expired KeyPackages are valid for one day from here.

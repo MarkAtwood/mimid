@@ -6,7 +6,7 @@
 //! 9420 §2.1.2), `uint64` big-endian, `optional<T>` as a presence byte then
 //! `T` (RFC 9420 §2.1.1), and `permitted_media_types` read as an optional
 //! list (decision mimid-1wgh.3.17). `MediaType` and `Parameter` follow
-//! mls-extensions-10 §6.2.2. Each test decodes the fixture, compares it to
+//! mls-extensions-11 §6.2.2. Each test decodes the fixture, compares it to
 //! the expected value, re-encodes it and requires byte-identical output.
 
 use mimi_room_policy::tls_codec::{Deserialize, Error, Serialize};

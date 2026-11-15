@@ -99,7 +99,7 @@ use crate::{ErrorSource, Store, label};
 /// (0x0001) and `wire_format` mls_group_info (0x0004).
 const GROUP_INFO_MESSAGE_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
 
-/// mls-extensions-10 §4.9: a SafeAAD struct with an empty `aad_items<V>`.
+/// mls-extensions-11 §4.9: a SafeAAD struct with an empty `aad_items<V>`.
 const EMPTY_SAFE_AAD: [u8; 1] = [0x00];
 
 /// RFC 9420 §12.4.3: the SignWithLabel label of a GroupInfo signature.
@@ -177,7 +177,7 @@ pub enum ProposalKind {
     ExternalInit,
     /// `group_context_extensions` (RFC 9420 §12.1.7).
     GroupContextExtensions,
-    /// `app_data_update` (mls-extensions-10 §4.7).
+    /// `app_data_update` (mls-extensions-11 §4.7).
     AppDataUpdate {
         /// The component whose data it changes.
         component_id: ComponentId,
@@ -187,9 +187,9 @@ pub enum ProposalKind {
         /// module's `# Limitations`).
         update: Option<Vec<u8>>,
     },
-    /// `self_remove` (mls-extensions-10 §6.3).
+    /// `self_remove` (mls-extensions-11 §6.3).
     SelfRemove,
-    /// `app_ephemeral` (mls-extensions-10 §4.8).
+    /// `app_ephemeral` (mls-extensions-11 §4.8).
     AppEphemeral,
     /// Any other proposal type, by its RFC 9420 §17.4 `ProposalType` value.
     Custom(u16),
@@ -261,12 +261,12 @@ pub enum ObserverError {
     #[error("the MLS message is invalid")]
     Process(#[source] ErrorSource),
     /// `authenticated_data` has bytes after the SafeAAD struct
-    /// (mls-extensions-10 §4.9, decision mimid-1wgh.4.17). The group state
+    /// (mls-extensions-11 §4.9, decision mimid-1wgh.4.17). The group state
     /// is unchanged.
     #[error("bytes follow the SafeAAD struct")]
     TrailingAad,
     /// The AppDataUpdate proposals for a component are invalid under
-    /// mls-extensions-10 §4.7.
+    /// mls-extensions-11 §4.7.
     #[error("invalid AppDataUpdate proposals for component {0:#06x}")]
     InvalidAppDataUpdate(ComponentId),
     /// The `apply` function rejected the AppDataUpdate proposals for a
@@ -281,7 +281,7 @@ pub enum ObserverError {
     },
     /// The data of the `safe_aad` (0x0002) or `app_components` (0x0001)
     /// component in the GroupContext is not a canonical `ComponentsList`
-    /// (mls-extensions-10 §5).
+    /// (mls-extensions-11 §5).
     #[error("component {component_id:#06x} is not a valid ComponentsList")]
     InvalidComponentsList {
         /// The component whose data is malformed.
@@ -302,7 +302,7 @@ pub enum ObserverError {
     MissingAppComponent(ComponentId),
     /// The GroupContext `app_data_dictionary` holds state for a component
     /// (other than app_components and safe_aad) that its `app_components`
-    /// list does not name (mls-extensions editor's copy, PR #110, rule 6;
+    /// list does not name (mls-extensions-11 §5;
     /// decision mimid-krmn.6). The group state is unchanged.
     #[error("the GroupContext holds state for component {0:#06x} but does not list it")]
     ComponentNotListed(ComponentId),
@@ -405,7 +405,7 @@ impl Observer {
     /// for its `lifetime` (see the module's `# Limitations`).
     ///
     /// A tree with a leaf that misses a required component is refused, and
-    /// nothing is stored (mls-extensions editor's copy, PR #110, rule 3;
+    /// nothing is stored (mls-extensions-11 §5;
     /// decision mimid-krmn.7).
     ///
     /// # Errors
@@ -459,8 +459,8 @@ impl Observer {
             LeafNodeLifetimePolicy::Skip,
         )
         .map_err(|e| ObserverError::InvalidGroupInfo(e.into()))?;
-        // Rule 3: a tree with a leaf that misses a required component is
-        // invalid (mls-extensions editor's copy, PR #110; decision
+        // mls-extensions-11 §5: a tree with a leaf that misses a required component is
+        // invalid (mls-extensions-11 §5; decision
         // mimid-krmn.7). from_external has stored the group already, so a
         // refused one is deleted again.
         if let Err(error) = check_tree(&group, &required, None) {
@@ -608,13 +608,13 @@ impl Observer {
         }
     }
 
-    /// Builds an AppDataUpdate proposal (mls-extensions-10 §4.7) from the
+    /// Builds an AppDataUpdate proposal (mls-extensions-11 §4.7) from the
     /// external sender at `sender_index` in the GroupContext
     /// `external_senders` extension (RFC 9420 §12.1.8.1), such as the hub
     /// (decision mimid-1wgh.4.21). Returns it as a TLS-encoded `MLSMessage`
     /// carrying a PublicMessage for the current epoch. Its
     /// `authenticated_data` is an empty SafeAAD struct if the GroupContext
-    /// carries the `safe_aad` component (mls-extensions-10 §4.9), and empty
+    /// carries the `safe_aad` component (mls-extensions-11 §4.9), and empty
     /// otherwise.
     ///
     /// `signer` is the external sender's key pair; its private key must
@@ -670,7 +670,7 @@ impl Observer {
         update: &AppDataUpdate,
     ) -> Result<Vec<u8>, ObserverError> {
         let context = self.group.group_context();
-        // mls-extensions-10 §4.9: with safe_aad present, the whole
+        // mls-extensions-11 §4.9: with safe_aad present, the whole
         // authenticated_data is a SafeAAD struct, here with no items.
         let authenticated_data = if context.safe_aad_required() {
             EMPTY_SAFE_AAD.to_vec()
@@ -807,7 +807,7 @@ impl Observer {
             .group
             .process_message(store.provider().crypto(), message)
             .map_err(|e| ObserverError::Process(e.into()))?;
-        // mls-extensions-10 §4.9: the whole authenticated_data is SafeAAD,
+        // mls-extensions-11 §4.9: the whole authenticated_data is SafeAAD,
         // as in Member::process.
         if processed.safe_aad().is_some() && !processed.tail_aad().is_empty() {
             return Err(ObserverError::TrailingAad);
@@ -975,7 +975,7 @@ impl Observer {
     }
 
     /// The component ids the current GroupContext requires as Safe AAD
-    /// components (mls-extensions-10 §5 `safe_aad` list), without GREASE
+    /// components (mls-extensions-11 §5 `safe_aad` list), without GREASE
     /// ids and without app_components and safe_aad, whose support is
     /// implied (decision mimid-krmn.6). Empty when the GroupContext has no
     /// `safe_aad` list.
@@ -1008,7 +1008,7 @@ impl Observer {
     }
 
     /// The data of a component in the GroupContext `app_data_dictionary`
-    /// (mls-extensions-10 §4.6).
+    /// (mls-extensions-11 §4.6).
     pub fn component(&self, component_id: ComponentId) -> Option<&[u8]> {
         self.group
             .group_context()

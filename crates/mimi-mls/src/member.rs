@@ -19,7 +19,7 @@
 //! # Application data
 //!
 //! The group's `app_data_dictionary` GroupContext extension
-//! (mls-extensions-10 §4.6) is set by [`Member::create`] and changed only
+//! (mls-extensions-11 §4.6) is set by [`Member::create`] and changed only
 //! through AppDataUpdate proposals (§4.7). This module enforces the §4.7
 //! validity rules. What a component's data means, and how an update changes
 //! it, is up to the caller's `apply` function (see [`ComponentOp`]).
@@ -28,35 +28,39 @@
 //!
 //! When the GroupContext carries the `safe_aad` component, the whole
 //! `authenticated_data` of every message is a SafeAAD struct
-//! (mls-extensions-10 §4.9, decision mimid-1wgh.4.17). This module never
+//! (mls-extensions-11 §4.9, decision mimid-1wgh.4.17). This module never
 //! sends raw authenticated data, and rejects incoming messages with bytes
 //! after the SafeAAD struct.
 //!
 //! # Required components
 //!
 //! The GroupContext `safe_aad` and `app_components` lists name the
-//! components every member must support (mls-extensions-10 §5), enforced
-//! as the mls-extensions editor's copy (PR #110) says, the way RFC 9420
-//! §11.1 enforces `required_capabilities` (INTERPRETATION, decision
-//! mimid-1wgh.4.45; decisions mimid-krmn.6, mimid-krmn.7):
+//! components every member must support, enforced "in the same way as the
+//! required_capabilities extension" (mls-extensions-11 §5; decisions
+//! mimid-1wgh.4.45, mimid-krmn.6, mimid-krmn.7, which -11 now confirms):
 //!
 //! - A Commit this module builds or receives is refused if any member of
 //!   the epoch it leads to lacks one of the resulting GroupContext's
 //!   required components in its own list: a leaf the Commit adds or
-//!   updates, or a member it keeps unchanged (rule 5).
+//!   updates, or a member it keeps unchanged (§5: "A Commit is invalid if
+//!   the GroupContext of the resulting epoch requires a component that a
+//!   member of the resulting epoch does not list").
 //! - The LeafNodes of Add (KeyPackage) and Update proposals and of a
 //!   Commit's UpdatePath must also meet the GroupContext before the Commit
-//!   (rule 3; decision mimid-krmn.9). A standalone Add or Update proposal is
+//!   (§5: such a LeafNode "is therefore checked against the GroupContext
+//!   before the Commit"; decision mimid-krmn.9). A standalone Add or Update proposal is
 //!   checked when it arrives and refused unstored.
 //! - [`Member::create`], [`Member::join_welcome`],
 //!   [`Member::join_external`] and
 //!   [`Observer::from_group_info`](crate::observer::Observer::from_group_info)
 //!   refuse a group whose tree has a leaf, this identity's own included,
-//!   that does not meet the lists (rules 3 and 4), and store nothing.
+//!   that does not meet the lists (§5: a client "MUST NOT join a group whose
+//!   GroupContext requires a component that the client does not
+//!   support"), and store nothing.
 //! - Every one of these refuses a GroupContext whose `app_data_dictionary`
 //!   holds state for a component, other than `app_components` and
 //!   `safe_aad`, that its `app_components` list does not name, with
-//!   [`MemberError::ComponentNotListed`] (rule 6). A Commit may list a
+//!   [`MemberError::ComponentNotListed`] (§5). A Commit may list a
 //!   component and set its state at once.
 //! - Every LeafNode checked above, in proposals, UpdatePaths and trees and
 //!   this identity's own, is also refused with
@@ -101,14 +105,14 @@
 //!   [`Member::propose_app_data_update`] is pending, OpenMLS refuses to
 //!   [`send`](Member::send) until a Commit covers it.
 //! - [`Member::commit`] covers every stored proposal. If a stored
-//!   AppDataUpdate proposal is invalid (mls-extensions-10 §4.7), or `apply`
+//!   AppDataUpdate proposal is invalid (mls-extensions-11 §4.7), or `apply`
 //!   rejects it, every Commit this member tries in that epoch fails. It does
 //!   not leave the proposal out, although RFC 9420 §12.4 lets a committer
 //!   include only the proposals that form a valid list (decision
 //!   mimid-1wgh.4.65).
 //! - The only size limit on an AppDataUpdate `update` or on component data
 //!   is tls_codec's: at most 2^30 - 1 bytes per vector. The caller bounds
-//!   the size of each message it passes in. mls-extensions-10 §4.7 notes
+//!   the size of each message it passes in. mls-extensions-11 §4.7 notes
 //!   that large data may hurt performance; hashing it instead (MAY) is not
 //!   offered (decision mimid-1wgh.4.67).
 //! - OpenMLS's StagedWelcome exposes no other leaf than this identity's,
@@ -184,7 +188,7 @@ pub struct ExternalSender {
 }
 
 /// One operation on a component's data, carried in an AppDataUpdate proposal
-/// (mls-extensions-10 §4.7).
+/// (mls-extensions-11 §4.7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppDataUpdate {
     /// `op = update`: the opaque `update` is interpreted by the component.
@@ -222,7 +226,7 @@ impl AppDataUpdate {
 /// - `Err(_)` if the component is unknown or the update is invalid.
 ///
 /// Any other answer makes the proposal list invalid
-/// (mls-extensions-10 §4.7).
+/// (mls-extensions-11 §4.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentOp<'a> {
     /// The `update` fields of every update proposal for the component, in
@@ -276,7 +280,7 @@ pub enum Incoming {
         sender_identity: Vec<u8>,
         /// The application data.
         data: Vec<u8>,
-        /// The SafeAAD items (mls-extensions-10 §4.9), in ascending
+        /// The SafeAAD items (mls-extensions-11 §4.9), in ascending
         /// component order. Empty when the group does not use Safe AAD.
         safe_aad: Vec<(ComponentId, Vec<u8>)>,
     },
@@ -363,7 +367,7 @@ pub enum MemberError {
     /// Building the identity's LeafNode material failed.
     #[error("cannot build the LeafNode")]
     Identity(#[source] crate::Error),
-    /// Two initial components share an id (mls-extensions-10 §4.6).
+    /// Two initial components share an id (mls-extensions-11 §4.6).
     #[error("component {0:#06x} is given more than once")]
     DuplicateComponent(ComponentId),
     /// The store holds no group with the requested group id.
@@ -412,7 +416,7 @@ pub enum MemberError {
     #[error("the MLS message is invalid")]
     Process(#[source] ErrorSource),
     /// `authenticated_data` has bytes after the SafeAAD struct
-    /// (mls-extensions-10 §4.9, decision mimid-1wgh.4.17). The group state
+    /// (mls-extensions-11 §4.9, decision mimid-1wgh.4.17). The group state
     /// is unchanged.
     #[error("bytes follow the SafeAAD struct")]
     TrailingAad,
@@ -423,7 +427,7 @@ pub enum MemberError {
     #[error("invalid SafeAAD items")]
     InvalidSafeAad(#[source] ErrorSource),
     /// The AppDataUpdate proposals for a component are invalid under
-    /// mls-extensions-10 §4.7.
+    /// mls-extensions-11 §4.7.
     #[error("invalid AppDataUpdate proposals for component {0:#06x}")]
     InvalidAppDataUpdate(ComponentId),
     /// The `apply` function rejected the AppDataUpdate proposals for a
@@ -438,7 +442,7 @@ pub enum MemberError {
     },
     /// The data of the `safe_aad` (0x0002) or `app_components` (0x0001)
     /// component in the GroupContext is not a canonical `ComponentsList`
-    /// (mls-extensions-10 §5).
+    /// (mls-extensions-11 §5).
     #[error("component {component_id:#06x} is not a valid ComponentsList")]
     InvalidComponentsList {
         /// The component whose data is malformed.
@@ -459,7 +463,7 @@ pub enum MemberError {
     MissingAppComponent(ComponentId),
     /// The GroupContext `app_data_dictionary` holds state for a component
     /// (other than app_components and safe_aad) that its `app_components`
-    /// list does not name (mls-extensions editor's copy, PR #110, rule 6;
+    /// list does not name (mls-extensions-11 §5;
     /// decision mimid-krmn.6). The group state is unchanged.
     #[error("the GroupContext holds state for component {0:#06x} but does not list it")]
     ComponentNotListed(ComponentId),
@@ -521,7 +525,7 @@ impl Member {
     ///
     /// The GroupContext carries `external_senders` (RFC 9420 §12.1.8.1) if
     /// any are given, and an `app_data_dictionary` holding `components`
-    /// (mls-extensions-10 §4.6) if any are given. Including the `safe_aad`
+    /// (mls-extensions-11 §4.6) if any are given. Including the `safe_aad`
     /// component (0x0002) turns on Safe AAD framing for the group (§4.9).
     /// The data of `safe_aad` and `app_components` (0x0001) must be a
     /// canonical `ComponentsList` (§5): the components every member must
@@ -578,7 +582,7 @@ impl Member {
         }
         let extensions =
             Extensions::from_vec(extensions).map_err(|e| MemberError::Create(e.into()))?;
-        // mls-extensions-10 §5: the lists are decoded strictly (decision
+        // mls-extensions-11 §5: the lists are decoded strictly (decision
         // mimid-1wgh.4.45), and our own leaf must meet them before anything
         // is stored (decision mimid-1wgh.4.57).
         let leaf_extensions =
@@ -642,7 +646,7 @@ impl Member {
     ///
     /// This identity's own leaf must list every component the GroupContext
     /// requires, or the join is refused before anything about the group is
-    /// stored (mls-extensions editor's copy, PR #110; decision
+    /// stored (mls-extensions-11 §5; decision
     /// mimid-krmn.6). So must every other leaf in the tree, or the join is
     /// refused, again before anything is stored (decisions mimid-krmn.7,
     /// mimid-krmn.10). A one-time KeyPackage is consumed only by an
@@ -700,7 +704,7 @@ impl Member {
         // Decoded before into_group stores the group; fails closed
         // (decisions mimid-1wgh.4.57, mimid-1wgh.4.59).
         let required = required_lists(staged.group_context().extensions())?;
-        // mls-extensions editor's copy (PR #110) rules 3 and 4: never join a
+        // mls-extensions-11 §5: never join a
         // group whose tree has a leaf, this identity's included, that misses
         // a required component (decisions mimid-krmn.6, mimid-krmn.7).
         // Checked before into_group, so a refused group is never stored
@@ -837,7 +841,7 @@ impl Member {
         // A malformed list fails closed (decisions mimid-1wgh.4.57,
         // mimid-1wgh.4.59).
         let required = required_lists(group_context.extensions())?;
-        // Decision mimid-1wgh.4.55, and rule 3 for the existing leaves
+        // Decision mimid-1wgh.4.55, and mls-extensions-11 §5 for the existing leaves
         // (decision mimid-krmn.7). Without a tree, build_group has failed.
         let resync_removed = match resync_lookup {
             Some((tree, group_info)) => {
@@ -1011,7 +1015,7 @@ impl Member {
         })
     }
 
-    /// Builds a standalone AppDataUpdate proposal (mls-extensions-10 §4.7),
+    /// Builds a standalone AppDataUpdate proposal (mls-extensions-11 §4.7),
     /// as a TLS-encoded `MLSMessage` carrying a PublicMessage, for example
     /// the AppDataUpdate proposal a leaving client sends the hub (protocol-07
     /// §3.5, decision mimid-1wgh.4.16).
@@ -1206,7 +1210,7 @@ impl Member {
             ComponentOp<'_>,
         ) -> Result<Option<Vec<u8>>, E>,
     ) -> Result<Incoming, MemberError> {
-        // mls-extensions-10 §4.9: the whole authenticated_data is SafeAAD.
+        // mls-extensions-11 §4.9: the whole authenticated_data is SafeAAD.
         // Checked before anything is stored or merged.
         // OpenMLS parses a SafeAAD prefix exactly when the group requires it.
         // Without Safe AAD, authenticated_data is accepted but not surfaced
@@ -1287,7 +1291,7 @@ impl Member {
     /// carrying a PrivateMessage).
     ///
     /// When the group uses Safe AAD, `safe_aad` becomes the message's
-    /// `authenticated_data`, as a SafeAAD struct (mls-extensions-10 §4.9);
+    /// `authenticated_data`, as a SafeAAD struct (mls-extensions-11 §4.9);
     /// its items must be in strictly ascending component order. Otherwise
     /// `safe_aad` must be empty, and `authenticated_data` is empty.
     ///
@@ -1495,7 +1499,7 @@ impl Member {
 /// The leaf index of `identity`'s existing leaf in the group that
 /// `group_info` and `tree` describe: the leaf OpenMLS's external Commit
 /// builder removes for a resync, the first with the same signature key.
-/// Also checks every other leaf against `required` (rule 3; decision
+/// Also checks every other leaf against `required` (mls-extensions-11 §5; decision
 /// mimid-krmn.7), so a refused join stores nothing.
 ///
 /// ponytail: OpenMLS exposes neither the staged external Commit nor the
@@ -1634,7 +1638,7 @@ impl From<SharedError> for MemberError {
 }
 
 /// Strictly decodes `data`, the GroupContext data of `component_id`, as a
-/// canonical mls-extensions-10 §5 `ComponentsList`.
+/// canonical mls-extensions-11 §5 `ComponentsList`.
 fn decode_components_list(
     component_id: ComponentId,
     data: &[u8],
@@ -1648,29 +1652,29 @@ fn decode_components_list(
 }
 
 /// Checks the leaves of the epoch `staged` leads to against the `safe_aad`
-/// and `app_components` lists of its GroupContext (mls-extensions-10 §5):
+/// and `app_components` lists of its GroupContext (mls-extensions-11 §5):
 /// every leaf it adds or updates (Add, Update and the UpdatePath leaf) and,
-/// per the mls-extensions editor's copy (PR #110) rule 5, every member of
-/// `current` (the pre-Commit group) that the Commit keeps unchanged
-/// (decision mimid-krmn.6). `committer` is the committer's leaf in
+/// per §5, every member of `current` (the pre-Commit group) that the Commit
+/// keeps unchanged (decision mimid-krmn.6). `committer` is the committer's leaf in
 /// `current`, if it has one; its UpdatePath leaf replaces it.
 ///
-/// INTERPRETATION, decision mimid-1wgh.4.45 (wg mimid-1wgh.37.39): the rule
-/// mirrors RFC 9420 §11.1 `required_capabilities`. A leaf's list must name
-/// every id in the GroupContext's list except GREASE ids and the implied
-/// 0x0001/0x0002; an absent list is empty. The GroupContext lists are
-/// decoded strictly and fail closed. Add, Update and UpdatePath leaves are
-/// also judged against the pre-Commit GroupContext (rule 3; decisions
-/// mimid-krmn.7, mimid-krmn.9); every member of the resulting epoch against
-/// the post-Commit one (rule 5; decision mimid-1wgh.4.49).
+/// mls-extensions-11 §5 (confirming decision mimid-1wgh.4.45, wg
+/// mimid-1wgh.37.39): the rule mirrors RFC 9420 §11.1
+/// `required_capabilities`. A leaf's list must name every id in the
+/// GroupContext's list except GREASE and unknown ids (§5.2) and the implied
+/// 0x0001/0x0002; an absent list is empty. Add, Update and UpdatePath leaves
+/// are judged against the pre-Commit GroupContext (decisions mimid-krmn.7,
+/// mimid-krmn.9); every member of the resulting epoch against the
+/// post-Commit one. The GroupContext lists are decoded strictly and fail
+/// closed (INTERPRETATION, decision mimid-1wgh.4.49: -11 is silent).
 pub(crate) fn check_staged_leaves(
     staged: &StagedCommit,
     current: &PublicGroup,
     committer: Option<LeafNodeIndex>,
 ) -> Result<(), SharedError> {
-    // Rule 3: the LeafNodes of Add (KeyPackage) and Update proposals and of
+    // §5, before the Commit: the LeafNodes of Add (KeyPackage) and Update proposals and of
     // the UpdatePath against the GroupContext before the Commit
-    // (mls-extensions editor's copy, PR #110; decisions mimid-krmn.7,
+    // (mls-extensions-11 §5; decisions mimid-krmn.7,
     // mimid-krmn.9).
     let before = required_lists(current.group_context().extensions())?;
     for add in staged.add_proposals() {
@@ -1686,7 +1690,7 @@ pub(crate) fn check_staged_leaves(
         check_leaf(leaf.extensions(), &before)?;
     }
 
-    // Rule 5: every member of the resulting epoch against the GroupContext
+    // §5, after the Commit: every member of the resulting epoch against the GroupContext
     // after the Commit (decision mimid-1wgh.4.49).
     let required = required_lists(staged.group_context().extensions())?;
     for add in staged.add_proposals() {
@@ -1702,7 +1706,7 @@ pub(crate) fn check_staged_leaves(
         check_leaf(leaf.extensions(), &required)?;
     }
 
-    // Rule 5: the members the Commit neither removes nor gives a new leaf.
+    // §5, after the Commit: the members the Commit neither removes nor gives a new leaf.
     let mut replaced = BTreeSet::new();
     for queued in staged.queued_proposals() {
         match queued.proposal() {
@@ -1758,8 +1762,7 @@ impl RequiredLists {
 ///
 /// It also refuses a GroupContext whose `app_data_dictionary` holds state
 /// for a component, other than app_components and safe_aad, that its
-/// `app_components` list does not name (mls-extensions editor's copy, PR
-/// #110, rule 6; decision mimid-krmn.6). Every caller judges a GroupContext
+/// `app_components` list does not name (mls-extensions-11 §5; decision mimid-krmn.6). Every caller judges a GroupContext
 /// through here: group creation, the epoch a Commit leads to, and the
 /// GroupContext a joiner receives.
 pub(crate) fn required_lists(
@@ -1787,7 +1790,7 @@ pub(crate) fn required_lists(
 }
 
 /// Checks every leaf of `group`'s tree against `required`, except the
-/// leaf at `skip` (mls-extensions editor's copy, PR #110, rule 3: a LeafNode
+/// leaf at `skip` (mls-extensions-11 §5: a LeafNode
 /// in a group that misses a required component is invalid; decision
 /// mimid-krmn.7).
 pub(crate) fn check_tree(
@@ -1808,7 +1811,7 @@ pub(crate) fn check_tree(
 
 /// Checks the LeafNode of a standalone Add (its KeyPackage's) or Update
 /// proposal against the GroupContext of `current`, before the proposal is
-/// stored (mls-extensions editor's copy, PR #110, rule 3; decisions
+/// stored (mls-extensions-11 §5; decisions
 /// mimid-krmn.7, mimid-krmn.9). Other proposals carry no LeafNode.
 pub(crate) fn check_proposal_leaf(
     proposal: &QueuedProposal,
@@ -1848,7 +1851,7 @@ fn check_leaf(
 /// untrusted input: an absent or malformed one counts as empty. GREASE ids
 /// in `required` are skipped (decision mimid-1wgh.4.49), and so are
 /// app_components and safe_aad, whose support is implied and whose entries
-/// in a list are ignored (mls-extensions editor's copy, PR #110; decision
+/// in a list are ignored (mls-extensions-11 §5; decision
 /// mimid-krmn.6).
 fn first_unsupported(
     extensions: &Extensions<LeafNode>,

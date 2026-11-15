@@ -48,9 +48,9 @@ const GROUP_INFO_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
 const WELCOME_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x03];
 
 const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
-/// mls-extensions-10 §4.9: a SafeAAD with no items, `aad_items<V>` empty.
+/// mls-extensions-11 §4.9: a SafeAAD with no items, `aad_items<V>` empty.
 pub const EMPTY_SAFE_AAD: [u8; 1] = [0x00];
-/// mls-extensions-10 §4.6: the `app_data_dictionary` extension type.
+/// mls-extensions-11 §4.6: the `app_data_dictionary` extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
 /// Roles: 1 `banned` with no capabilities; 2 `member`, which may add
@@ -108,7 +108,7 @@ pub fn members_list(users: &[&[u8]]) -> ParticipantListData {
 fn components(hub: &Hub, participants: &ParticipantListData) -> Vec<(u16, Vec<u8>)> {
     let key = *hub.signature_public_key();
     vec![
-        // PR #110 rule 6; first, since app_data_dictionary keeps entries in
+        // mls-extensions-11 §5; first, since app_data_dictionary keeps entries in
         // the order given and component ids must ascend.
         (APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec()),
         (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
@@ -145,7 +145,7 @@ pub fn mls_rs_client(name: &[u8]) -> Client<impl MlsConfig + use<>> {
 
 /// Leaf extensions for an mls-rs member of a hosted room: an
 /// `app_data_dictionary` whose `app_components` list names the room's
-/// components (mls-extensions editor's copy, PR #110, rules 3 and 5) and
+/// components (mls-extensions-11 §5) and
 /// whose `safe_aad` list names frank_aad, which the room requires (bead
 /// mimid-1wgh.6.74), hand-encoded.
 pub fn mls_rs_leaf_extensions() -> ExtensionList {
@@ -240,7 +240,7 @@ pub struct Prepared<C: MlsConfig> {
 /// copy that applies the Commit; `group` keeps the Commit pending.
 pub fn prepare_commit<C: MlsConfig>(group: &mut Group<C>) -> Prepared<C> {
     // The room has a safe_aad component, so authenticated_data is a SafeAAD
-    // (mls-extensions-10 §4.9): here one with no items, aad_items<V> empty.
+    // (mls-extensions-11 §4.9): here one with no items, aad_items<V> empty.
     let output = group
         .commit_builder()
         .authenticated_data(EMPTY_SAFE_AAD.to_vec())

@@ -30,21 +30,20 @@ pub const BOB: &[u8] = b"mimi://b.example/u/bob";
 /// mimid-1wgh.6.35).
 pub const HUB_IDENTITY: &[u8] = b"mimi://a.example";
 
-/// mls-extensions-10 §4.6 component id `safe_aad` (0x0002): the
+/// mls-extensions-11 §4.6 component id `safe_aad` (0x0002): the
 /// GroupContext list of required Safe AAD components.
 pub const SAFE_AAD: u16 = 0x0002;
-/// mls-extensions-10 §5 `ComponentsList` naming only `frank_aad` (0x0020),
+/// mls-extensions-11 §5 `ComponentsList` naming only `frank_aad` (0x0020),
 /// hand-encoded: `component_ids<V>` of 2 bytes, then 0x0020. A room the
 /// hub hosts must require frank_aad (bead mimid-1wgh.6.74).
 pub const FRANK_AAD_ONLY: [u8; 3] = [0x02, 0x00, 0x20];
 
-/// mls-extensions-10 §4.6 component id `app_components` (0x0001).
+/// mls-extensions-11 §4.6 component id `app_components` (0x0001).
 pub const APP_COMPONENTS: u16 = 0x0001;
-/// mls-extensions-10 §5 `ComponentsList` naming the MIMI components
+/// mls-extensions-11 §5 `ComponentsList` naming the MIMI components
 /// 0x0021 to 0x0029, hand-encoded: the GroupContext `app_components` list
 /// of a test room, so that its state for franking_agent, participant_list,
-/// roles_list, base_room_policy and the like is listed (mls-extensions
-/// editor's copy, PR #110, rule 6). Every mimid leaf lists these (decision
+/// roles_list, base_room_policy and the like is listed (mls-extensions-11 §5). Every mimid leaf lists these (decision
 /// mimid-krmn.12).
 pub const ROOM_APP_COMPONENTS: [u8; 19] = [
     0x12, // ComponentID component_ids<V>: 18 bytes
@@ -153,7 +152,7 @@ pub fn base_room_policy() -> Vec<u8> {
     .unwrap()
 }
 
-/// mls-extensions-10 §4.6 `ComponentData component_data<V>`, the data of an
+/// mls-extensions-11 §4.6 `ComponentData component_data<V>`, the data of an
 /// `app_data_dictionary` extension. `entries` must be in ascending order.
 pub fn app_data_dictionary(entries: &[(u16, &[u8])]) -> Vec<u8> {
     let mut list = Vec::new();
@@ -221,8 +220,7 @@ pub fn build_group(spec: &GroupSpec, group_id: &[u8]) -> BuiltGroup {
             identity: spec.sender_identity.clone(),
         })
         .collect();
-    // The room lists its components (mls-extensions editor's copy, PR #110,
-    // rule 6).
+    // The room lists its components (mls-extensions-11 §5).
     let mut components = vec![(APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec())];
     if let Some(data) = &spec.safe_aad {
         components.push((SAFE_AAD, data.clone()));

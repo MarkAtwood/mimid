@@ -6,7 +6,7 @@
 //! `debug_assert_eq!` in `VLBytes::tls_deserialize_bytes` fires. These tests
 //! run in debug builds, where that panic would fail them.
 //!
-//! Every input is hand-encoded from the RFC 9420 / mls-extensions-10 /
+//! Every input is hand-encoded from the RFC 9420 / mls-extensions-11 /
 //! ratchet-tree-options-02 TLS presentation-language text. Each one ends
 //! with an `opaque<V>` (or vector) whose length prefix claims 5 bytes while
 //! only 2 follow.
@@ -32,10 +32,10 @@ use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 /// RFC 9420 §17.1: ciphersuite 0x0001.
 const SUITE_1: MlsRsCipherSuite = MlsRsCipherSuite::CURVE25519_AES128;
 
-/// mls-extensions-10 §7.1.1: app_data_dictionary extension type.
+/// mls-extensions-11 §7.1.1: app_data_dictionary extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
-/// mls-extensions-10 §7.5: the safe_aad component.
+/// mls-extensions-11 §7.5: the safe_aad component.
 const SAFE_AAD: u16 = 0x0002;
 
 /// The truncated tail shared by every input: an `opaque<V>` claiming 5
@@ -133,7 +133,7 @@ fn wire_types_refuse_truncated_input() {
     for (name, bytes) in truncated_mls_messages() {
         assert_refused::<MLSMessage>(name, &bytes);
     }
-    // mls-extensions-10 §4.6: one ComponentData whose data<V> is short.
+    // mls-extensions-11 §4.6: one ComponentData whose data<V> is short.
     assert_refused::<AppDataDictionary>(
         "AppDataDictionary",
         &[
@@ -281,7 +281,7 @@ fn observer_entry_points_refuse_truncated_input() {
     assert_eq!(observer.epoch(), 1);
 }
 
-/// mls-extensions-10 §4.9 SafeAAD, cut short inside its only item. The
+/// mls-extensions-11 §4.9 SafeAAD, cut short inside its only item. The
 /// outer `aad_items<V>` length is consistent; the item's `aad_item_data<V>`
 /// claims 5 bytes but only 1 remains in the whole `authenticated_data`.
 const SHORT_SAFE_AAD: [u8; 5] = [
@@ -398,7 +398,7 @@ fn observer_refuses_proposal_with_truncated_safe_aad() {
 }
 
 /// Only a malformed SafeAAD is refused before authentication. Bytes after
-/// a well-formed SafeAAD (mls-extensions-10 §4.9) are refused after OpenMLS
+/// a well-formed SafeAAD (mls-extensions-11 §4.9) are refused after OpenMLS
 /// verifies the Commit, so a current-epoch Commit carrying them marks the
 /// group out of sync (decision mimid-1wgh.4.60).
 #[test]

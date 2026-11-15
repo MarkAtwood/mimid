@@ -1,4 +1,4 @@
-//! mls-extensions-10 §4.6 `AppDataDictionary`.
+//! mls-extensions-11 §4.6 `AppDataDictionary`.
 
 use std::io::Read;
 
@@ -7,7 +7,7 @@ use tls_codec::{Deserialize, Serialize, VLBytes};
 
 use super::{decode_canonical, impl_encoding_from_bytes};
 
-/// mls-extensions-10 §4.6: `AppDataDictionary`, the content of an
+/// mls-extensions-11 §4.6: `AppDataDictionary`, the content of an
 /// app_data_dictionary extension.
 ///
 /// Its `component_data` entries are strictly sorted by `component_id`

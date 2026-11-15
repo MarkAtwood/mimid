@@ -1,5 +1,5 @@
 //! The hub refuses a standalone AppDataUpdate proposal that would make the
-//! epoch's cached proposals invalid under mls-extensions-10 §4.7 (bead
+//! epoch's cached proposals invalid under mls-extensions-11 §4.7 (bead
 //! mimid-1wgh.6.73): protocol-07 §3.5 forces cached proposals into the next
 //! Commit, and a committer refuses to commit while holding an invalid one
 //! (decision mimid-1wgh.4.65), so such a proposal would block the epoch.
@@ -43,7 +43,7 @@ const NOW: u64 = 1_700_000_000_000;
 /// dave: a listed user of the hub's own provider, so `From: a.example`.
 const DAVE: &[u8] = b"mimi://a.example/u/dave";
 
-/// A private-use component (mls-extensions-10 §7.5) no hub logic knows.
+/// A private-use component (mls-extensions-11 §7.5) no hub logic knows.
 const UNKNOWN_COMPONENT: u16 = 0x8001;
 
 /// protocol-07 §7.6 `RoomMetaData` with every field empty, hand-encoded:
@@ -72,7 +72,7 @@ impl Dave {
     /// Sends `proposal` on its own, as a PublicMessage, and returns the
     /// TLS-encoded MLSMessage. OpenMLS frames authenticated_data as a
     /// SafeAAD itself, since the room has a safe_aad component
-    /// (mls-extensions-10 §4.9).
+    /// (mls-extensions-11 §4.9).
     fn propose(&mut self, proposal: &AppDataUpdateProposal) -> Vec<u8> {
         let (message, _) = self
             .group

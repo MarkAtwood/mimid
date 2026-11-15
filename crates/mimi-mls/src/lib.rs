@@ -48,8 +48,7 @@
 //!   any extra components the application declared with
 //!   [`Identity::generate_with_components`] (decisions mimid-1wgh.4.52,
 //!   mimid-krmn.12), never `app_components` or
-//!   `safe_aad` themselves, whose support is implied (mls-extensions
-//!   editor's copy, PR #110; decision mimid-krmn.6). The `safe_aad` list
+//!   `safe_aad` themselves, whose support is implied (mls-extensions-11 §5; decision mimid-krmn.6). The `safe_aad` list
 //!   names `frank_aad` (see [`Identity::key_package`]). A group whose
 //!   GroupContext requires any other component cannot add these clients,
 //!   and a client that does not implement every listed component must not
@@ -57,14 +56,17 @@
 //! - A GroupContext whose `app_data_dictionary` holds state for a component
 //!   (other than app_components and safe_aad) that its `app_components`
 //!   list does not name is refused at creation, after every Commit and on
-//!   joining (rule 6 of the editor's copy).
-//! - Required `safe_aad` and `app_components` lists are enforced as
-//!   RFC 9420 §11.1 enforces `required_capabilities`; mls-extensions-10 §5
-//!   gives no rule (INTERPRETATION, decision mimid-1wgh.4.45). Leaves are
-//!   judged against the post-Commit GroupContext, GREASE ids in required
-//!   lists are ignored, a malformed leaf list counts as empty, and a
-//!   malformed GroupContext list fails closed (decision mimid-1wgh.4.49).
-//!   Other implementations may accept leaves this crate refuses.
+//!   joining (mls-extensions-11 §5).
+//! - Required `safe_aad` and `app_components` lists are enforced "in the
+//!   same way as the required_capabilities extension" (mls-extensions-11
+//!   §5, which now states what decision mimid-1wgh.4.45 had to choose): an
+//!   absent leaf list is empty, GREASE and other unknown ids are ignored
+//!   (§5.2), proposal and UpdatePath leaves are judged against the
+//!   GroupContext before the Commit, and every member against the one
+//!   after it. Two choices remain mimid's own, since -11 is silent on them:
+//!   a malformed leaf list counts as empty (decisions mimid-1wgh.4.49,
+//!   mimid-1wgh.4.76.10), and a malformed GroupContext list fails closed
+//!   (INTERPRETATION, decision mimid-1wgh.4.49).
 //! - In a group that uses Safe AAD, OpenMLS parses each message's SafeAAD
 //!   with tls_codec's `DeserializeBytes`, which panics in debug builds on a
 //!   truncated item (bug mimid-1wgh.33). [`member::Member::process`] and

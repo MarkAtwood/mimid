@@ -22,7 +22,7 @@ use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 /// RFC 9420 §17.1: suite 1, MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519.
 pub const SUITE_1: MlsRsSuite = MlsRsSuite::CURVE25519_AES128;
 
-/// mls-extensions-10 §7.1.1: the app_data_dictionary extension type.
+/// mls-extensions-11 §7.1.1: the app_data_dictionary extension type.
 pub const APP_DATA_DICTIONARY: u16 = 0x0006;
 
 /// RFC 9420 §17.3: an extension type from the Private Use range.
@@ -84,7 +84,7 @@ pub fn client(
 pub fn key_package_message(client: &Client<impl MlsConfig>, last_resort: bool) -> MlsMessage {
     let mut extensions = ExtensionList::new();
     if last_resort {
-        // mls-extensions-10 §4.6 AppDataDictionary, §6.4.2 empty data.
+        // mls-extensions-11 §4.6 AppDataDictionary, §6.4.2 empty data.
         extensions.set(Extension::new(
             ExtensionType::new(APP_DATA_DICTIONARY),
             vec![

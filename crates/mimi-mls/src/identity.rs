@@ -19,16 +19,20 @@ use crate::{Error, Store};
 pub(crate) const CIPHERSUITE: Ciphersuite =
     Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 
-/// mls-extensions-10 §7.5 component registry: `app_components`.
+/// mls-extensions-11 §7.5 component registry: `app_components`.
+///
+/// PROVISIONAL: the MLS Component Types registry is created by
+/// mls-extensions, which is not yet published, so this and the other
+/// component ids here are not IANA-assigned (bead mimid-1wgh.4.76.9).
 pub(crate) const APP_COMPONENTS: ComponentId = 0x0001;
 
-/// mls-extensions-10 §7.5 component registry: `safe_aad`.
+/// mls-extensions-11 §7.5 component registry: `safe_aad`.
 pub(crate) const SAFE_AAD: ComponentId = 0x0002;
 
-/// mls-extensions-11 §10 component registry: `content_media_types`.
+/// mls-extensions-11 §7.5 component registry: `content_media_types`.
 pub(crate) const CONTENT_MEDIA_TYPES: ComponentId = 0x0003;
 
-/// mls-extensions-10 §7.5 component registry: the GREASE component ids.
+/// mls-extensions-11 §7.5 component registry: the GREASE component ids.
 /// RFC 9420 §13.5 GREASE goes on to 0xeaea, but 0x8a8a and above are
 /// component ids for Private Use, so OpenMLS's `random_grease_value` is
 /// not used for components.
@@ -36,7 +40,7 @@ pub(crate) const COMPONENT_GREASE: [ComponentId; 8] = [
     0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a,
 ];
 
-/// mls-extensions-10 §7.5 component registry: `last_resort_key_package`.
+/// mls-extensions-11 §7.5 component registry: `last_resort_key_package`.
 const LAST_RESORT_KEY_PACKAGE: ComponentId = 0x0004;
 
 /// protocol-07 §5.4.1 and §10.1: `frank_aad`, the Safe AAD component that
@@ -46,7 +50,7 @@ const LAST_RESORT_KEY_PACKAGE: ComponentId = 0x0004;
 const FRANK_AAD: ComponentId = 0x0020;
 
 /// The MIMI components mimid implements besides `frank_aad`, so every leaf
-/// lists them (mls-extensions editor's copy, PR #110, rules 3 and 6;
+/// lists them (mls-extensions-11 §5;
 /// decision mimid-krmn.12): protocol-07 §10 `franking_agent` (0x0021),
 /// `participant_list` (0x0022) and `room_metadata` (0x0023), and
 /// room-policy-04 §10.1 `mls_operational_policy` (0x0024), `roles_list`
@@ -73,7 +77,7 @@ pub enum KeyPackageKind {
     /// An ordinary KeyPackage, used at most once (RFC 9420 §10).
     OneTime,
     /// A last-resort KeyPackage (RFC 9420 §16.8), marked with the
-    /// `last_resort_key_package` component of mls-extensions-10 §6.4.
+    /// `last_resort_key_package` component of mls-extensions-11 §6.4.
     LastResort,
 }
 
@@ -135,8 +139,8 @@ impl Identity {
     /// # Errors
     ///
     /// As [`Identity::generate`], and [`Error::InvalidExtraComponent`] if an
-    /// extra is app_components or safe_aad (implied, mls-extensions editor's
-    /// copy PR #110), a GREASE value, a built-in, or a duplicate.
+    /// extra is app_components or safe_aad (implied, mls-extensions-11 §5),
+    /// a GREASE value, a built-in, or a duplicate.
     pub fn generate_with_components(
         identity: &[u8],
         store: Store,
@@ -268,15 +272,15 @@ impl Identity {
     /// `MLSMessage` wrapper.
     ///
     /// The LeafNode advertises ciphersuite 1, BasicCredential, the
-    /// `app_data_dictionary` extension (mls-extensions-10 §4.6) and the
-    /// `AppDataUpdate` proposal (mls-extensions-10 §4.7), plus GREASE
+    /// `app_data_dictionary` extension (mls-extensions-11 §4.6) and the
+    /// `AppDataUpdate` proposal (mls-extensions-11 §4.7), plus GREASE
     /// values. Its `app_data_dictionary` carries an `app_components` entry,
     /// which §4.6 requires of any client that advertises
     /// `app_data_dictionary`. That list names the components mimid
     /// implements, `last_resort_key_package` (0x0004), protocol-07's
     /// `frank_aad` (0x0020), the MIMI components 0x0021 to 0x0029 and the
     /// identity's extra components (decision mimid-krmn.12), but not `app_components` or `safe_aad`,
-    /// whose support is implied (mls-extensions editor's copy, PR #110;
+    /// whose support is implied (mls-extensions-11 §5;
     /// decision mimid-krmn.6). It
     /// also carries a `safe_aad` entry (§5) listing the supported Safe AAD
     /// components: `frank_aad` (decisions mimid-1wgh.4.45,
@@ -285,7 +289,7 @@ impl Identity {
     ///
     /// For [`KeyPackageKind::LastResort`] the KeyPackage's own extensions
     /// carry an `app_data_dictionary` with the `last_resort_key_package`
-    /// component (mls-extensions-10 §6.4). OpenMLS's own last-resort marker,
+    /// component (mls-extensions-11 §6.4). OpenMLS's own last-resort marker,
     /// extension type 10, is from an older draft and is never used.
     ///
     /// # Errors
@@ -305,10 +309,10 @@ impl Identity {
 
         let mut key_package_extensions = Vec::with_capacity(2);
         if kind == KeyPackageKind::LastResort {
-            // mls-extensions-10 §6.4.2: the component's data is empty.
+            // mls-extensions-11 §6.4.2: the component's data is empty.
             let mut dictionary = AppDataDictionary::new();
             dictionary.insert(LAST_RESORT_KEY_PACKAGE, Vec::new());
-            // mls-extensions-10 §5.1: GREASE components in the dictionary.
+            // mls-extensions-11 §5.2: GREASE components in the dictionary.
             dictionary.insert(random_component_grease(rand)?, Vec::new());
             key_package_extensions.push(Extension::AppDataDictionary(
                 AppDataDictionaryExtension::new(dictionary),
@@ -350,8 +354,8 @@ fn read_signature_key_pair<S: StorageProvider>(
 
 /// The LeafNode capabilities every mimid client advertises, in KeyPackages
 /// and as a group creator: ciphersuite 1, BasicCredential, the
-/// `app_data_dictionary` extension (mls-extensions-10 §4.6), the
-/// `AppDataUpdate` proposal (mls-extensions-10 §4.7) and the extension type
+/// `app_data_dictionary` extension (mls-extensions-11 §4.6), the
+/// `AppDataUpdate` proposal (mls-extensions-11 §4.7) and the extension type
 /// `grease_extension`, plus random GREASE values (RFC 9420 §13.5).
 pub(crate) fn leaf_capabilities(rand: &impl OpenMlsRand, grease_extension: u16) -> Capabilities {
     Capabilities::builder()
@@ -366,7 +370,7 @@ pub(crate) fn leaf_capabilities(rand: &impl OpenMlsRand, grease_extension: u16) 
         .with_grease(rand)
 }
 
-/// A random GREASE component id from the mls-extensions-10 §7.5 set.
+/// A random GREASE component id from the mls-extensions-11 §7.5 set.
 ///
 /// # Errors
 ///
@@ -386,7 +390,7 @@ where
 /// The LeafNode extensions every mimid client sends: an
 /// `app_data_dictionary` whose `app_components` entry lists the implemented
 /// components and whose `safe_aad` entry lists the implemented Safe AAD
-/// components, plus GREASE (mls-extensions-10 §4.6, §5, §5.1).
+/// components, plus GREASE (mls-extensions-11 §4.6, §5, §5.2).
 ///
 /// # Errors
 ///
@@ -403,8 +407,7 @@ where
 {
     // The app_components entry lists the built-in and extra components
     // (decision mimid-krmn.12). Support for app_components (0x0001) and safe_aad
-    // (0x0002) is implied, so they are not listed: mls-extensions editor's
-    // copy (PR #110); decision mimid-krmn.6.
+    // (0x0002) is implied, so they are not listed: mls-extensions-11 §5; decision mimid-krmn.6.
     //
     // mls-extensions-11 §5.2: one GREASE id per leaf. A GREASE dictionary
     // entry must be listed in app_components (§5), and a Safe AAD component
@@ -416,7 +419,7 @@ where
     let app_components = ComponentsList::new(implemented)
         .tls_serialize_detached()
         .map_err(|e| Error::Encode(e.into()))?;
-    // mls-extensions-10 §5: the supported Safe AAD components, plus GREASE
+    // mls-extensions-11 §5: the supported Safe AAD components, plus GREASE
     // (decisions mimid-1wgh.4.45, mimid-1wgh.4.52).
     let safe_aad = ComponentsList::new(vec![FRANK_AAD, grease])
         .tls_serialize_detached()

@@ -35,10 +35,10 @@ const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
 /// RFC 9420 §17.1: ciphersuite 0x0003, which mimid does not support.
 const SUITE_3: CipherSuite = CipherSuite::CURVE25519_CHACHA;
 
-/// mls-extensions-10 §7.1.1: app_data_dictionary extension type.
+/// mls-extensions-11 §7.1.1: app_data_dictionary extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
-/// mls-extensions-10 §4.6 AppDataDictionary, hand-encoded: a `safe_aad`
+/// mls-extensions-11 §4.6 AppDataDictionary, hand-encoded: a `safe_aad`
 /// (§5) list naming component 0x0020 (protocol-07 §5.4.1 `frank_aad`). In
 /// a GroupContext it requires 0x0020; in a LeafNode it supports it.
 const SAFE_AAD_0020: [u8; 7] = [
@@ -59,7 +59,7 @@ const SAFE_AAD_0021: [u8; 7] = [
     0x00, 0x21, //   ComponentID 0x0021
 ];
 
-/// mls-extensions-10 §4.6 AppDataDictionary, hand-encoded: an
+/// mls-extensions-11 §4.6 AppDataDictionary, hand-encoded: an
 /// `app_components` (§5) list naming the private-use component 0x8001,
 /// which mimi-mls leaves do not list.
 const APP_COMPONENTS_8001: [u8; 7] = [
@@ -70,7 +70,7 @@ const APP_COMPONENTS_8001: [u8; 7] = [
     0x80, 0x01, //   ComponentID 0x8001
 ];
 
-/// mls-extensions-10 §4.6 AppDataDictionary, hand-encoded: an
+/// mls-extensions-11 §4.6 AppDataDictionary, hand-encoded: an
 /// `app_components` (§5) list naming component 0x0020, which mimi-mls
 /// leaves list in `app_components` and mls-rs leaves here do not.
 const APP_COMPONENTS_0020: [u8; 7] = [
@@ -81,7 +81,7 @@ const APP_COMPONENTS_0020: [u8; 7] = [
     0x00, 0x20, //   ComponentID 0x0020
 ];
 
-/// mls-extensions-10 §4.6 AppDataDictionary, hand-encoded: `safe_aad` data
+/// mls-extensions-11 §4.6 AppDataDictionary, hand-encoded: `safe_aad` data
 /// that is not a ComponentsList (a 1-byte list cannot hold a 2-byte id).
 const SAFE_AAD_MALFORMED: [u8; 6] = [
     0x05, // ComponentData component_data<V>: 5 bytes
@@ -91,7 +91,7 @@ const SAFE_AAD_MALFORMED: [u8; 6] = [
     0x00, //   half a ComponentID
 ];
 
-/// mls-extensions-10 §4.9: an empty SafeAAD, the whole
+/// mls-extensions-11 §4.9: an empty SafeAAD, the whole
 /// `authenticated_data` of a message in a group that uses Safe AAD.
 const EMPTY_SAFE_AAD: [u8; 1] = [
     0x00, // SafeAADItem aad_items<V>: empty
@@ -537,7 +537,7 @@ fn leaf_missing_a_required_component_is_rejected_without_writing_state() {
     }
 }
 
-/// mls-extensions editor's copy (PR #110) rule 3: a LeafNode in the tree
+/// mls-extensions-11 §5: a LeafNode in the tree
 /// that misses a required component makes the tree invalid, so join_external
 /// and Observer::from_group_info refuse the group and join_external stores
 /// nothing (decision mimid-krmn.7, superseding mimid-1wgh.4.57's report).
@@ -653,7 +653,7 @@ fn join_and_observe_refuse_existing_leaves_missing_a_required_component() {
 /// group state in its Store. The rows of OpenMLS's group-data table are
 /// counted directly in the SQLite file; the valid group, observed through a
 /// fresh Store, shows that the count sees an Observer's state. dave's leaf
-/// lists only 0x0021 where the GroupContext requires 0x0020 (rule 3,
+/// lists only 0x0021 where the GroupContext requires 0x0020 (mls-extensions-11 §5,
 /// decision mimid-krmn.7).
 #[test]
 fn refused_observer_stores_nothing() {

@@ -51,7 +51,7 @@
 //! 6. Room policy must allow each proposal, with its sender as the actor
 //!    ([`policy::authorize_proposal`]).
 //! 7. An AppDataUpdate must keep the epoch's pending proposals valid under
-//!    mls-extensions-10 §4.7, since they all go into the next Commit
+//!    mls-extensions-11 §4.7, since they all go into the next Commit
 //!    (protocol-07 §3.5) and a committer refuses to commit an invalid one
 //!    (decision mimid-1wgh.4.65): its component must be one the hub's
 //!    AppDataUpdate logic knows ([`components::is_known_component`]), a
@@ -117,7 +117,8 @@ use crate::store::{EpochSnapshot, EventKind, NewEvent, OutboxEntry};
 /// (0x0001) and `wire_format` mls_welcome (0x0003).
 const WELCOME_MESSAGE_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x03];
 
-/// mls-extensions-10 §7.2: the suggested `app_ephemeral` ProposalType.
+/// mls-extensions-11 §7.2: the suggested `app_ephemeral` ProposalType.
+/// PROVISIONAL: "(suggested)", not IANA-assigned (bead mimid-1wgh.4.76.9).
 const APP_EPHEMERAL_PROPOSAL_TYPE: u16 = 0x0009;
 
 /// Runs [`Hub::update`].
@@ -672,7 +673,7 @@ fn stage_proposals(
             );
             return refuse(room_id, "a proposal is refused by room policy", true);
         }
-        // mls-extensions-10 §4.7; decision mimid-1wgh.4.65; bead
+        // mls-extensions-11 §4.7; decision mimid-1wgh.4.65; bead
         // mimid-1wgh.6.73.
         if let MlsProposal::AppDataUpdate {
             component_id,

@@ -107,7 +107,7 @@ async fn listed_user_joins_with_mls_rs() {
     let (store, hub) = open_hub(&path).await;
     let mut room = mls_rs_room(&hub, ROOM_ID, b"group-gi-mls-rs").await;
     // The room has a safe_aad component (bead mimid-1wgh.6.74), so
-    // authenticated_data is a SafeAAD (mls-extensions-10 §4.9).
+    // authenticated_data is a SafeAAD (mls-extensions-11 §4.9).
     let output = room
         .alice
         .commit_builder()

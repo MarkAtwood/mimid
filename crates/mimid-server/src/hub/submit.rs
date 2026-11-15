@@ -297,7 +297,7 @@ fn refuse(room_id: &str, reason: &str) -> Result<Checked, HubError> {
 /// The `franking_tag` of the request's `frank_aad` Safe AAD item
 /// (protocol-07 §5.4.1, §10.1).
 ///
-/// The whole `authenticated_data` is a SafeAAD struct (mls-extensions-10
+/// The whole `authenticated_data` is a SafeAAD struct (mls-extensions-11
 /// §4.9; decision mimid-1wgh.4.17), decoded strictly: items in strictly
 /// ascending component order, canonical lengths, no trailing bytes.
 fn frank_aad(request: &SubmitMessageRequest) -> Result<[u8; 32], &'static str> {
@@ -317,7 +317,7 @@ fn frank_aad(request: &SubmitMessageRequest) -> Result<[u8; 32], &'static str> {
 
 /// Decodes `struct { SafeAADItem aad_items<V>; } SafeAAD` with
 /// `struct { ComponentID component_id; opaque aad_item_data<V>; }
-/// SafeAADItem` (mls-extensions-10 §4.9).
+/// SafeAADItem` (mls-extensions-11 §4.9).
 ///
 /// The items are re-encoded and compared with the input, which rejects
 /// non-minimal length encodings (RFC 9420 §2.1.2).
@@ -395,7 +395,7 @@ fn destinations(observer: &Observer, from: &Domain) -> BTreeSet<String> {
 mod tests {
     use super::*;
 
-    /// SafeAAD structs hand-encoded from mls-extensions-10 §4.9.
+    /// SafeAAD structs hand-encoded from mls-extensions-11 §4.9.
     #[test]
     fn safe_aad_decoding_is_strict() {
         let tag = [0xab; 32];

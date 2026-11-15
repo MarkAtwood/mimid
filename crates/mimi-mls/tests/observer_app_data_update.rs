@@ -1,10 +1,10 @@
 //! [`Observer::propose_app_data_update`]: the hub, as the group's external
 //! sender (RFC 9420 §12.1.8.1), proposes an AppDataUpdate
-//! (mls-extensions-10 §4.7, proposal type 0x0008; External: Y, §7.2.1).
+//! (mls-extensions-11 §4.7, proposal type 0x0008; External: Y, §7.2.1).
 //!
 //! Oracles:
 //! - the whole `MLSMessage`, hand-encoded from RFC 9420 §6 and §12.1 and
-//!   mls-extensions-10 §4.7, with RFC 9420 §2.1.2 length prefixes;
+//!   mls-extensions-11 §4.7, with RFC 9420 §2.1.2 length prefixes;
 //! - the signature, verified with the hub's public key over a FramedContentTBS
 //!   built by hand (RFC 9420 §6.1: no GroupContext for an external sender);
 //! - the ProposalRef, recomputed from RFC 9420 §5.2 with mls-rs's SHA-256
@@ -30,17 +30,17 @@ use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 /// RFC 9420 §17.1: ciphersuite 0x0001.
 const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
 
-/// mls-extensions-10 §7.5: private-use component ids, for tests only.
+/// mls-extensions-11 §7.5: private-use component ids, for tests only.
 const LOG: u16 = 0x8001;
 const META: u16 = 0x8002;
 const ABSENT: u16 = 0x8003;
 /// First of five components used for the length-boundary updates.
 const BOUNDARY_BASE: u16 = 0x8010;
 
-/// mls-extensions-10 §7.5: the safe_aad component.
+/// mls-extensions-11 §7.5: the safe_aad component.
 const SAFE_AAD: u16 = 0x0002;
 
-/// mls-extensions-10 §7.5: the app_components component.
+/// mls-extensions-11 §7.5: the app_components component.
 const APP_COMPONENTS: u16 = 0x0001;
 
 /// The private test components every identity in this file declares
@@ -57,10 +57,9 @@ const TEST_COMPONENTS: [u16; 8] = [
     BOUNDARY_BASE + 4,
 ];
 
-/// mls-extensions-10 §5 ComponentsList of [`TEST_COMPONENTS`], hand-encoded:
+/// mls-extensions-11 §5 ComponentsList of [`TEST_COMPONENTS`], hand-encoded:
 /// the GroupContext `app_components` list every room carries, so its state
-/// for these components is listed (mls-extensions editor's copy, PR #110,
-/// rule 6).
+/// for these components is listed (mls-extensions-11 §5).
 const REQUIRE_TEST_COMPONENTS: [u8; 17] = [
     0x10, // ComponentID component_ids<V>: 16 bytes
     0x80, 0x01, // LOG
@@ -166,8 +165,7 @@ fn room_with(
 ) -> Room {
     let alice = identity(b"alice");
     let carol = identity(b"carol");
-    // Every room lists the test components it may hold state for (PR #110
-    // rule 6).
+    // Every room lists the test components it may hold state for (mls-extensions-11 §5).
     let mut components = components.to_vec();
     components.push((APP_COMPONENTS, REQUIRE_TEST_COMPONENTS.to_vec()));
     let mut alice_group = Member::create(&alice, GROUP_ID, senders, &components).expect("create");
@@ -520,7 +518,7 @@ fn wrong_signature_key_or_sender_index_is_refused_and_nothing_is_stored() {
 #[test]
 fn hub_update_in_safe_aad_group_carries_empty_safe_aad_and_is_committed() {
     // A GroupContext safe_aad (0x0002) with an empty ComponentsList turns
-    // on SafeAAD framing (mls-extensions-10 §4.9).
+    // on SafeAAD framing (mls-extensions-11 §4.9).
     let mut room = room(&[(SAFE_AAD, vec![0x00]), (LOG, b"v0".to_vec())]);
     let message = room
         .observer

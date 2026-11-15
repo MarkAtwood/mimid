@@ -1,4 +1,4 @@
-//! AppDataUpdate (mls-extensions-10 §4.7) through `mimi_mls::member::Member`.
+//! AppDataUpdate (mls-extensions-11 §4.7) through `mimi_mls::member::Member`.
 //!
 //! mls-rs at the pinned commit (decision mimid-1wgh.4.13) has no
 //! AppDataUpdate support, so it cannot process these Commits. The oracles
@@ -23,20 +23,20 @@ use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 /// RFC 9420 §17.1: ciphersuite 0x0001.
 const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
 
-/// mls-extensions-10 §7.1.1: app_data_dictionary extension type.
+/// mls-extensions-11 §7.1.1: app_data_dictionary extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
-/// mls-extensions-10 §7.5: private-use component ids, for tests only.
+/// mls-extensions-11 §7.5: private-use component ids, for tests only.
 const LOG: u16 = 0x8001;
 const META: u16 = 0x8002;
 const ABSENT: u16 = 0x8003;
 
-/// mls-extensions-10 §7.5: the app_components component.
+/// mls-extensions-11 §7.5: the app_components component.
 const APP_COMPONENTS: u16 = 0x0001;
 
-/// mls-extensions-10 §5 ComponentsList [LOG, META, ABSENT], hand-encoded:
+/// mls-extensions-11 §5 ComponentsList [LOG, META, ABSENT], hand-encoded:
 /// the GroupContext `app_components` list for the state the tests set
-/// (mls-extensions editor's copy, PR #110, rule 6).
+/// (mls-extensions-11 §5).
 const LIST_TEST_COMPONENTS: [u8; 7] = [
     0x06, // ComponentID component_ids<V>: 6 bytes
     0x80, 0x01, // LOG
@@ -44,7 +44,7 @@ const LIST_TEST_COMPONENTS: [u8; 7] = [
     0x80, 0x03, // ABSENT
 ];
 
-/// mls-extensions-10 §4.6 AppDataDictionary for an mls-rs LeafNode,
+/// mls-extensions-11 §4.6 AppDataDictionary for an mls-rs LeafNode,
 /// hand-encoded: its `app_components` list is [`LIST_TEST_COMPONENTS`].
 const LEAF_TEST_COMPONENTS: [u8; 11] = [
     0x0a, // ComponentData component_data<V>: 10 bytes
@@ -144,7 +144,7 @@ fn accept_all(
 
 /// RFC 9420 §12.4 `ProposalOrRef` with `type = proposal (1)`, holding a
 /// `Proposal` with `proposal_type = app_data_update (0x0008)` and the
-/// mls-extensions-10 §4.7 `AppDataUpdate` with `op = update (1)`.
+/// mls-extensions-11 §4.7 `AppDataUpdate` with `op = update (1)`.
 fn inline_update_proposal(component_id: u16, update: &[u8]) -> Vec<u8> {
     assert!(update.len() < 64, "one-byte varint length only");
     let [hi, lo] = component_id.to_be_bytes();
@@ -378,9 +378,8 @@ fn app_data_updates_apply_in_commit_order_and_reach_new_joiners() {
     let (eve, _) = eve_client
         .join_group(Some(tree), &welcome, None)
         .expect("eve joins");
-    // mls-extensions-10 §4.6 AppDataDictionary, hand-encoded. The
-    // app_components entry lists the test components (mls-extensions
-    // editor's copy, PR #110, rule 6).
+    // mls-extensions-11 §4.6 AppDataDictionary, hand-encoded. The
+    // app_components entry lists the test components (mls-extensions-11 §5).
     let expected_dictionary = [
         0x12, // ComponentData component_data<V>: 18 bytes
         0x00, 0x01, // component_id = app_components

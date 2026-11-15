@@ -27,37 +27,37 @@ const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
 /// RFC 9420 §17.3: external_senders extension type.
 const EXTERNAL_SENDERS: ExtensionType = ExtensionType::new(0x0005);
 
-/// mls-extensions-10 §7.1.1: app_data_dictionary extension type.
+/// mls-extensions-11 §7.1.1: app_data_dictionary extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
-/// mls-extensions-10 §7.2: AppDataUpdate proposal type.
+/// mls-extensions-11 §7.2: AppDataUpdate proposal type.
 const APP_DATA_UPDATE: u16 = 0x0008;
 
-/// mls-extensions-10 §7.5: the safe_aad component.
+/// mls-extensions-11 §7.5: the safe_aad component.
 const SAFE_AAD: u16 = 0x0002;
 
-/// mls-extensions-10 §7.5: the app_components component.
+/// mls-extensions-11 §7.5: the app_components component.
 const APP_COMPONENTS: u16 = 0x0001;
 
-/// mls-extensions-10 §7.5: a private-use component id, for tests only.
+/// mls-extensions-11 §7.5: a private-use component id, for tests only.
 const PRIVATE_COMPONENT: u16 = 0x8001;
 
-/// mls-extensions-10 §5 ComponentsList [0x0020, 0x3a3a], hand-encoded: a
+/// mls-extensions-11 §5 ComponentsList [0x0020, 0x3a3a], hand-encoded: a
 /// GroupContext `safe_aad` list requiring component 0x0020. 0x3a3a is a
-/// §7.5 GREASE id, which must be ignored (§5.1).
+/// §7.5 GREASE id, which must be ignored (§5.2).
 const REQUIRE_0020: [u8; 5] = [
     0x04, // ComponentID component_ids<V>: 4 bytes
     0x00, 0x20, // ComponentID 0x0020
     0x3a, 0x3a, // ComponentID GREASE
 ];
 
-/// mls-extensions-10 §4.9: an empty SafeAAD, the whole `authenticated_data`
+/// mls-extensions-11 §4.9: an empty SafeAAD, the whole `authenticated_data`
 /// of an mls-rs message in a group that uses Safe AAD.
 const EMPTY_SAFE_AAD: [u8; 1] = [
     0x00, // SafeAADItem aad_items<V>: empty
 ];
 
-/// mls-extensions-10 §4.6 AppDataDictionary for a LeafNode, hand-encoded:
+/// mls-extensions-11 §4.6 AppDataDictionary for a LeafNode, hand-encoded:
 /// its `safe_aad` list names component 0x0020.
 const LEAF_SAFE_AAD_0020: [u8; 7] = [
     0x06, // ComponentData component_data<V>: 6 bytes
@@ -229,7 +229,7 @@ fn mimi_creates_group_and_adds_mls_rs_member() {
         signature_key: hub_key.clone(),
         identity: b"hub.example".to_vec(),
     };
-    // safe_aad with an empty ComponentsList (mls-extensions-10 §5): the TLS
+    // safe_aad with an empty ComponentsList (mls-extensions-11 §5): the TLS
     // encoding of an empty component_ids<V> is the single byte 0x00.
     let mut group =
         Member::create(&alice, b"room-1", &[hub], &[(SAFE_AAD, vec![0x00])]).expect("create group");
@@ -271,7 +271,7 @@ fn mimi_creates_group_and_adds_mls_rs_member() {
             .extension_data,
         expected_senders
     );
-    // mls-extensions-10 §4.6 AppDataDictionary, hand-encoded.
+    // mls-extensions-11 §4.6 AppDataDictionary, hand-encoded.
     let expected_dictionary = [
         0x04, // ComponentData component_data<V>: 4 bytes
         0x00, 0x02, // component_id = safe_aad
@@ -285,7 +285,7 @@ fn mimi_creates_group_and_adds_mls_rs_member() {
             .extension_data,
         expected_dictionary
     );
-    // mls-extensions-10 §7.2: the creator's leaf advertises AppDataUpdate.
+    // mls-extensions-11 §7.2: the creator's leaf advertises AppDataUpdate.
     let creator = bob.member_at_index(0).expect("creator leaf");
     assert!(
         creator
@@ -305,7 +305,7 @@ fn mimi_creates_group_and_adds_mls_rs_member() {
         .expect("send");
     let (data, aad) = mls_rs_application(mls_rs_receive(&mut bob, &message));
     assert_eq!(data, b"hello bob");
-    // mls-extensions-10 §4.9 SafeAAD, hand-encoded.
+    // mls-extensions-11 §4.9 SafeAAD, hand-encoded.
     let expected_aad = [
         0x06, // SafeAADItem aad_items<V>: 6 bytes
         0x80, 0x01, // component_id
@@ -368,7 +368,7 @@ fn safe_aad_with_trailing_bytes_is_rejected_and_group_stays_usable() {
         .expect("join");
 
     // An empty SafeAAD (0x00) followed by one unsafe byte, which
-    // mls-extensions-10 §4.9 no longer allows (decision mimid-1wgh.4.17).
+    // mls-extensions-11 §4.9 no longer allows (decision mimid-1wgh.4.17).
     let message = bob
         .encrypt_application_message(b"tail", vec![0x00, 0xff])
         .expect("mls-rs encrypts")
@@ -435,7 +435,7 @@ fn mls_rs_creates_group_and_adds_mimi_member() {
         .expect("mls-rs commits the Add");
     alice.apply_pending_commit().expect("apply");
 
-    // mls-extensions-10 §7.2: the KeyPackage leaf advertises AppDataUpdate.
+    // mls-extensions-11 §7.2: the KeyPackage leaf advertises AppDataUpdate.
     let joined = alice.member_at_index(1).expect("added leaf");
     assert!(
         joined
@@ -870,7 +870,7 @@ fn mimi_key_package_joins_a_group_requiring_frank_aad() {
 
 #[test]
 fn adding_a_leaf_without_a_required_app_component_is_refused() {
-    // mls-extensions-10 §5 ComponentsList [0x0020], hand-encoded. The
+    // mls-extensions-11 §5 ComponentsList [0x0020], hand-encoded. The
     // creator's own leaf must list it (decision mimid-1wgh.4.57), and
     // mimi-mls leaves list 0x0020 in app_components.
     let required = vec![
@@ -889,7 +889,7 @@ fn adding_a_leaf_without_a_required_app_component_is_refused() {
     );
     assert_alone_in_epoch_0(&mut group, &alice);
 
-    // mls-extensions-10 §4.6 AppDataDictionary whose app_components list
+    // mls-extensions-11 §4.6 AppDataDictionary whose app_components list
     // names 0x0020, hand-encoded.
     let dictionary = [
         0x06, // ComponentData component_data<V>: 6 bytes
@@ -911,7 +911,7 @@ fn adding_a_leaf_without_a_required_app_component_is_refused() {
 
 #[test]
 fn app_components_and_safe_aad_ids_in_lists_are_ignored() {
-    // mls-extensions editor's copy (PR #110): support for app_components
+    // mls-extensions-11 §5: support for app_components
     // (0x0001) and safe_aad (0x0002) is implied, so they are not listed,
     // and an entry for either in a list is ignored. Decision mimid-krmn.6.
     // GroupContext requirements naming them, hand-encoded (§5
@@ -1088,7 +1088,7 @@ fn received_commit_with_a_leaf_missing_a_required_component_is_rejected() {
 
 #[test]
 fn malformed_components_lists_are_refused_at_create() {
-    // None is a canonical mls-extensions-10 §5 ComponentsList.
+    // None is a canonical mls-extensions-11 §5 ComponentsList.
     let malformed: [&[u8]; 5] = [
         &[],                 // no length prefix
         &[0x01, 0x00],       // odd length: half a ComponentID
@@ -1121,7 +1121,7 @@ fn create_with_a_requirement_our_leaf_does_not_meet_is_refused() {
     let cases: [(u16, Vec<u8>, u16); 2] = [
         (
             SAFE_AAD,
-            // mls-extensions-10 §5 ComponentsList [0x0021], hand-encoded.
+            // mls-extensions-11 §5 ComponentsList [0x0021], hand-encoded.
             vec![
                 0x02, // ComponentID component_ids<V>: 2 bytes
                 0x00, 0x21, // ComponentID 0x0021
@@ -1130,7 +1130,7 @@ fn create_with_a_requirement_our_leaf_does_not_meet_is_refused() {
         ),
         (
             APP_COMPONENTS,
-            // mls-extensions-10 §5 ComponentsList [0x8001], hand-encoded.
+            // mls-extensions-11 §5 ComponentsList [0x8001], hand-encoded.
             vec![
                 0x02, // ComponentID component_ids<V>: 2 bytes
                 0x80, 0x01, // ComponentID 0x8001
@@ -1156,7 +1156,7 @@ fn create_with_a_requirement_our_leaf_does_not_meet_is_refused() {
     }
 }
 
-/// mls-extensions editor's copy (PR #110) rule 3: a LeafNode in the tree
+/// mls-extensions-11 §5: a LeafNode in the tree
 /// that misses a required component makes the tree invalid, so join_welcome
 /// refuses the group and stores nothing (decision mimid-krmn.7, superseding
 /// mimid-1wgh.4.57's report). The mls-rs creator, which does not enforce the
@@ -1349,7 +1349,7 @@ const APP_COMPONENTS_8001: [u8; 7] = [
 
 #[test]
 fn join_welcome_refuses_a_group_requiring_a_component_our_leaf_lacks() {
-    // mls-extensions editor's copy (PR #110) rule 4: a client MUST NOT
+    // mls-extensions-11 §5: a client MUST NOT
     // join a group whose GroupContext requires a component it does not
     // support. mimid's leaf lists safe_aad [0x0020] and app_components
     // [0x0004, 0x0020..0x0029] (plus GREASE); this identity declares no
@@ -1407,12 +1407,12 @@ fn join_welcome_refuses_a_group_requiring_a_component_our_leaf_lacks() {
 
 // ---- krmn K3: every member of the resulting epoch is checked ----
 //
-// mls-extensions editor's copy (PR #110) rule 5: a Commit is invalid if the
+// mls-extensions-11 §5: a Commit is invalid if the
 // GroupContext of the resulting epoch requires a component that a member of
 // the resulting epoch does not list, not only a member the Commit adds or
 // updates (decision mimid-krmn.6).
 
-/// mls-extensions-10 §4.6 AppDataDictionary for bob's LeafNode: his
+/// mls-extensions-11 §4.6 AppDataDictionary for bob's LeafNode: his
 /// `app_components` list names 0x0004 and 0x8001, his `safe_aad` list 0x0020.
 const LEAF_0004_8001_SAFE_AAD_0020: [u8; 15] = [
     0x0e, // component_data<V>: 14 bytes
@@ -1429,7 +1429,7 @@ const LEAF_0004_8001_SAFE_AAD_0020: [u8; 15] = [
 const LIST_0004: [u8; 3] = [0x02, 0x00, 0x04];
 
 /// As [`mls_rs_client`], also advertising the AppDataUpdate proposal type
-/// (mls-extensions-10 §7.2, 0x0008), so alice may commit AppDataUpdates.
+/// (mls-extensions-11 §7.2, 0x0008), so alice may commit AppDataUpdates.
 fn mls_rs_client_with_app_data_update(
     name: &[u8],
 ) -> Client<impl mls_rs::client_builder::MlsConfig> {
@@ -1534,11 +1534,11 @@ fn member_refuses_to_build_a_commit_an_unchanged_member_cannot_meet() {
     assert_eq!(group.epoch(), 1);
 }
 
-// mls-extensions editor's copy (PR #110) rule 3: a LeafNode in a proposal or
+// mls-extensions-11 §5: a LeafNode in a proposal or
 // an UpdatePath is checked against the GroupContext before the Commit
-// (decision mimid-krmn.7), besides rule 5's check after it.
+// (decision mimid-krmn.7), besides the §5 check of the epoch after it.
 
-/// mls-extensions-10 §4.6 AppDataDictionary for bob's new LeafNode: his
+/// mls-extensions-11 §4.6 AppDataDictionary for bob's new LeafNode: his
 /// `app_components` list names only 0x8001 (not 0x0004), his `safe_aad` list
 /// 0x0020.
 const LEAF_8001_SAFE_AAD_0020: [u8; 13] = [
@@ -1553,8 +1553,7 @@ const LEAF_8001_SAFE_AAD_0020: [u8; 13] = [
 
 // Decision mimid-krmn.9 (reading B, Mark 2026-11-02): an Add's KeyPackage
 // LeafNode is also checked against the GroupContext before the Commit, and a
-// standalone Add proposal when it arrives (mls-extensions editor's copy, PR
-// #110, rule 3: "A LeafNode in a proposal ... is therefore checked against
+// standalone Add proposal when it arrives (mls-extensions-11 §5: "A LeafNode in a proposal ... is therefore checked against
 // the GroupContext before the Commit").
 
 /// carol's KeyPackage (mls-rs) whose leaf dictionary is `leaf`.
@@ -1622,18 +1621,18 @@ fn standalone_add_proposal_whose_leaf_lacks_a_required_component_is_refused() {
 
 // ---- krmn K5: every component with state is listed ----
 //
-// mls-extensions editor's copy (PR #110) rule 6: a GroupContext is invalid
+// mls-extensions-11 §5: a GroupContext is invalid
 // if its app_data_dictionary holds an entry for a component (other than
 // app_components and safe_aad) that its app_components list does not name
 // (decision mimid-krmn.6). mls-rs does not enforce it.
 
-/// mls-extensions-10 §5 ComponentsList [0x8001], hand-encoded.
+/// mls-extensions-11 §5 ComponentsList [0x8001], hand-encoded.
 const LIST_8001: [u8; 3] = [
     0x02, // component_ids<V>: 2 bytes
     0x80, 0x01, // ComponentID 0x8001
 ];
 
-/// mls-extensions-10 §4.6 AppDataDictionary for a GroupContext, hand-encoded:
+/// mls-extensions-11 §4.6 AppDataDictionary for a GroupContext, hand-encoded:
 /// `safe_aad` requires [0x0020, 0x3a3a] and component 0x8001 holds "x", but
 /// no `app_components` list names 0x8001.
 const GC_STATE_8001_UNLISTED: [u8; 13] = [

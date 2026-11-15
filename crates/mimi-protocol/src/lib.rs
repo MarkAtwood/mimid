@@ -215,8 +215,12 @@ pub use wire_profile::WireProfile;
 
 use tls_codec::{TlsDeserialize, TlsSerialize, TlsSize};
 
-/// MLS application component IDs (`uint16 ComponentID`, mls-extensions-10
+/// MLS application component IDs (`uint16 ComponentID`, mls-extensions-11
 /// §4.1) registered by protocol-07 §10.
+///
+/// PROVISIONAL: protocol-07 asks IANA for these in the MLS Component Types
+/// registry, which mls-extensions creates; neither is published, so none is
+/// assigned yet (bead mimid-1wgh.4.76.9).
 pub mod component_id {
     /// `frank_aad` (§10.1), a Safe AAD component carrying
     /// [`FrankAad`](crate::FrankAad).

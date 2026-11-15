@@ -108,22 +108,21 @@ const ROLE_MEMBER: u32 = 2;
 /// A user whose client is an mls-rs client, not listed at first.
 const DAVE: &[u8] = b"mimi://d.example/u/dave";
 
-/// mls-extensions-10 §4.6 component ids `app_components` (0x0001) and
+/// mls-extensions-11 §4.6 component ids `app_components` (0x0001) and
 /// `safe_aad` (0x0002), and the `app_data_dictionary` extension type.
 const APP_COMPONENTS: u16 = 0x0001;
 const SAFE_AAD: u16 = 0x0002;
 const APP_DATA_DICTIONARY: u16 = 0x0006;
-/// mls-extensions-10 §5 `ComponentsList` naming `frank_aad` (0x0020),
+/// mls-extensions-11 §5 `ComponentsList` naming `frank_aad` (0x0020),
 /// hand-encoded: `component_ids<V>` of 2 bytes.
 const FRANK_AAD_ONLY: [u8; 3] = [0x02, 0x00, 0x20];
 /// `ComponentsList` naming `app_components`, `safe_aad`, `frank_aad` and
-/// the room's components 0x0021..0x0029 (mls-extensions PR #110 rules 3
-/// and 5; decision mimid-krmn.12): `component_ids<V>` of 24 bytes.
+/// the room's components 0x0021..0x0029 (mls-extensions-11 §5; decision mimid-krmn.12): `component_ids<V>` of 24 bytes.
 const MLS_RS_APP_COMPONENTS: [u8; 25] = [
     0x18, 0x00, 0x01, 0x00, 0x02, 0x00, 0x20, 0x00, 0x21, 0x00, 0x22, 0x00, 0x23, 0x00, 0x24, 0x00,
     0x25, 0x00, 0x26, 0x00, 0x27, 0x00, 0x28, 0x00, 0x29,
 ];
-/// mls-extensions-10 §4.9: a SafeAAD with no items, `aad_items<V>` empty.
+/// mls-extensions-11 §4.9: a SafeAAD with no items, `aad_items<V>` empty.
 const EMPTY_SAFE_AAD: [u8; 1] = [0x00];
 /// RFC 9420 §6 MLSMessage headers: mls10 (0x0001), then the wire format.
 const GROUP_INFO_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
@@ -291,7 +290,7 @@ fn mls_rs_dave() -> (Client<impl MlsConfig + use<>>, Vec<u8>) {
 }
 
 /// The leaf `app_data_dictionary` of the mls-rs client, hand-encoded
-/// (mls-extensions-10 §4.6, §5): `app_components` and `safe_aad` lists, so
+/// (mls-extensions-11 §4.6, §5): `app_components` and `safe_aad` lists, so
 /// that its leaf supports the components the room requires.
 fn mls_rs_leaf_extensions() -> ExtensionList {
     let mut extensions = ExtensionList::new();
@@ -1376,7 +1375,7 @@ async fn room_lifecycle_across_restart() {
             reason_code: AbuseType::RESERVED,
             note: vec![],
             messages: vec![message],
-            // mls-extensions-10 §4.6: an empty ComponentData list.
+            // mls-extensions-11 §4.6: an empty ComponentData list.
             abuse_extensions: AppDataDictionary::tls_deserialize_exact([0x00]).unwrap(),
         }
         .tls_serialize_detached()

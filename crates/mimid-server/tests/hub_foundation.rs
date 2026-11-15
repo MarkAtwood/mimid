@@ -40,7 +40,7 @@ use tower::ServiceExt;
 
 /// RFC 9420 §17.1: ciphersuite 0x0001.
 const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
-/// mls-extensions-10 §4.6: the `app_data_dictionary` extension type.
+/// mls-extensions-11 §4.6: the `app_data_dictionary` extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 /// 2000-01-01T00:00:00Z. The expired KeyPackage is valid for one day from
 /// here.
@@ -208,7 +208,7 @@ async fn room_with_expired_leaf_loads_after_restart() {
     close_hub(store, hub).await;
 }
 
-/// mls-extensions-10 §5 ComponentsList naming the room's components except
+/// mls-extensions-11 §5 ComponentsList naming the room's components except
 /// base_room_policy (0x0027), hand-encoded: `component_ids<V>` of 16 bytes.
 const ROOM_APP_COMPONENTS_WITHOUT_0027: [u8; 17] = [
     0x10, // component_ids<V>: 16 bytes
@@ -216,7 +216,7 @@ const ROOM_APP_COMPONENTS_WITHOUT_0027: [u8; 17] = [
     0x00, 0x28, 0x00, 0x29, // 0x0028, 0x0029
 ];
 
-/// mls-extensions editor's copy (PR #110) rule 6: a GroupContext whose
+/// mls-extensions-11 §5: a GroupContext whose
 /// app_data_dictionary holds state for a component its app_components list
 /// does not name is invalid (decision mimid-krmn.6). mls-rs, which does not
 /// enforce the rule, builds a room holding base_room_policy state; the hub

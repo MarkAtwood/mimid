@@ -23,40 +23,39 @@ use mls_rs_crypto_rustcrypto::RustCryptoProvider;
 /// RFC 9420 §17.1: ciphersuite 0x0001.
 const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
 
-/// mls-extensions-10 §7.1.1: app_data_dictionary extension type.
+/// mls-extensions-11 §7.1.1: app_data_dictionary extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
-/// mls-extensions-10 §7.5: the safe_aad component.
+/// mls-extensions-11 §7.5: the safe_aad component.
 const SAFE_AAD: u16 = 0x0002;
 
-/// mls-extensions-10 §7.5: a private-use component id, for tests only.
+/// mls-extensions-11 §7.5: a private-use component id, for tests only.
 const PRIVATE_COMPONENT: u16 = 0x8001;
 
-/// mls-extensions-10 §7.5: the app_components component.
+/// mls-extensions-11 §7.5: the app_components component.
 const APP_COMPONENTS: u16 = 0x0001;
 
-/// mls-extensions-10 §5 ComponentsList [PRIVATE_COMPONENT], hand-encoded:
-/// the GroupContext list for its state (mls-extensions editor's copy, PR
-/// #110, rule 6).
+/// mls-extensions-11 §5 ComponentsList [PRIVATE_COMPONENT], hand-encoded:
+/// the GroupContext list for its state (mls-extensions-11 §5).
 const LIST_PRIVATE_COMPONENT: [u8; 3] = [
     0x02, // ComponentID component_ids<V>: 2 bytes
     0x80, 0x01, // PRIVATE_COMPONENT
 ];
 
-/// mls-extensions-10 §5 ComponentsList [0x0020], hand-encoded: a
+/// mls-extensions-11 §5 ComponentsList [0x0020], hand-encoded: a
 /// GroupContext `safe_aad` list requiring component 0x0020.
 const REQUIRE_0020: [u8; 3] = [
     0x02, // ComponentID component_ids<V>: 2 bytes
     0x00, 0x20, // ComponentID 0x0020
 ];
 
-/// mls-extensions-10 §4.9: an empty SafeAAD, the whole `authenticated_data`
+/// mls-extensions-11 §4.9: an empty SafeAAD, the whole `authenticated_data`
 /// of an mls-rs message in a group that uses Safe AAD.
 const EMPTY_SAFE_AAD: [u8; 1] = [
     0x00, // SafeAADItem aad_items<V>: empty
 ];
 
-/// mls-extensions-10 §4.6 AppDataDictionary for a LeafNode, hand-encoded:
+/// mls-extensions-11 §4.6 AppDataDictionary for a LeafNode, hand-encoded:
 /// its `safe_aad` list names component 0x0020.
 const LEAF_SAFE_AAD_0020: [u8; 7] = [
     0x06, // ComponentData component_data<V>: 6 bytes
@@ -398,7 +397,7 @@ fn unauthenticated_stale_and_non_commit_input_does_not_mark_out_of_sync() {
     assert_eq!(group.epoch(), 3);
 
     // An authenticated application message refused for bytes after its
-    // SafeAAD (mls-extensions-10 §4.9) is not a Commit.
+    // SafeAAD (mls-extensions-11 §4.9) is not a Commit.
     let mut aad = EMPTY_SAFE_AAD.to_vec();
     aad.push(0xff);
     let trailing = bob

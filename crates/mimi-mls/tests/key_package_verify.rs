@@ -31,7 +31,7 @@ const SUITE_1: MlsRsSuite = MlsRsSuite::CURVE25519_AES128;
 /// RFC 9420 §17.1: suite 3, MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519.
 const SUITE_3: MlsRsSuite = MlsRsSuite::CURVE25519_CHACHA;
 
-/// mls-extensions-10 §7.1.1: the app_data_dictionary extension type.
+/// mls-extensions-11 §7.1.1: the app_data_dictionary extension type.
 const APP_DATA_DICTIONARY: u16 = 0x0006;
 
 /// RFC 9420 §17.3: an extension type from the Private Use range.
@@ -209,7 +209,7 @@ fn mls_rs_key_package_with_extensions_verifies_and_reference_matches() {
         vec![0x01, 0x02, 0x03],
     ));
     let mut leaf_extensions = ExtensionList::new();
-    // mls-extensions-10 §4.6: an AppDataDictionary with no entries.
+    // mls-extensions-11 §4.6: an AppDataDictionary with no entries.
     leaf_extensions.set(Extension::new(
         ExtensionType::new(APP_DATA_DICTIONARY),
         vec![0x00], // component_data<V>: length 0
@@ -250,7 +250,7 @@ fn mls_rs_key_package_with_dictionary(dictionary: Vec<u8>) -> KeyPackage {
 
 #[test]
 fn mls_rs_last_resort_component_is_recognized() {
-    // mls-extensions-10 §4.6 AppDataDictionary, §6.4.2 empty data.
+    // mls-extensions-11 §4.6 AppDataDictionary, §6.4.2 empty data.
     let key_package = mls_rs_key_package_with_dictionary(vec![
         0x03, // component_data<V>: length 3
         0x00, 0x04, // component_id = last_resort_key_package

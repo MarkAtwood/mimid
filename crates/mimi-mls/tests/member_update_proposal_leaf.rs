@@ -1,4 +1,4 @@
-//! mls-extensions editor's copy (PR #110) rule 3: the LeafNode of a
+//! mls-extensions-11 §5: the LeafNode of a
 //! standalone Update proposal is checked on receipt against the current
 //! GroupContext (decision mimid-krmn.7).
 //!
@@ -24,7 +24,7 @@ use openmls::prelude::{
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 
-/// mls-extensions-10 §4.6 / §5 component ids.
+/// mls-extensions-11 §4.6 / §5 component ids.
 const APP_COMPONENTS: u16 = 0x0001;
 const SAFE_AAD: u16 = 0x0002;
 

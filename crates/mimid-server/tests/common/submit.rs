@@ -32,9 +32,9 @@ pub const MUTED: &[u8] = b"mimi://a.example/u/muted";
 /// A user not in the participant list.
 pub const MALLORY: &[u8] = b"mimi://c.example/u/mallory";
 
-/// mls-extensions-10 §4.6 component `safe_aad` (0x0002).
+/// mls-extensions-11 §4.6 component `safe_aad` (0x0002).
 const SAFE_AAD: u16 = 0x0002;
-/// mls-extensions-10 §5 `ComponentsList` naming 0x0020 (`frank_aad`),
+/// mls-extensions-11 §5 `ComponentsList` naming 0x0020 (`frank_aad`),
 /// hand-encoded: `component_ids<V>` of 2 bytes.
 const SAFE_AAD_FRANK_AAD: [u8; 3] = [0x02, 0x00, 0x20];
 

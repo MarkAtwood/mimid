@@ -170,7 +170,7 @@ fn encode(messages: Vec<AbusiveMessage>) -> Vec<u8> {
         reason_code: AbuseType::RESERVED,
         note: NOTE_CANARY.as_bytes().to_vec(),
         messages,
-        // mls-extensions-10 §4.6: an empty ComponentData list.
+        // mls-extensions-11 §4.6: an empty ComponentData list.
         abuse_extensions: AppDataDictionary::tls_deserialize_exact([0x00]).unwrap(),
     }
     .tls_serialize_detached()

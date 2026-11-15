@@ -1,4 +1,4 @@
-//! The `op` and `update` bytes of AppDataUpdate proposals (mls-extensions-10
+//! The `op` and `update` bytes of AppDataUpdate proposals (mls-extensions-11
 //! §4.7) in [`ProposalKind::AppDataUpdate`], from
 //! [`Observer::process_proposal`] and [`Observer::pending_commit_detail`]
 //! (bead mimid-1wgh.6.54).
@@ -29,16 +29,15 @@ use openmls::prelude::{
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 
-/// mls-extensions-10 §7.5: private-use component ids, for tests only.
+/// mls-extensions-11 §7.5: private-use component ids, for tests only.
 const LOG: u16 = 0x8001;
 const META: u16 = 0x8002;
 
-/// mls-extensions-10 §7.5: the app_components component.
+/// mls-extensions-11 §7.5: the app_components component.
 const APP_COMPONENTS: u16 = 0x0001;
 
-/// mls-extensions-10 §5 ComponentsList [LOG, META], hand-encoded: the
-/// GroupContext requirement for the state it holds (mls-extensions editor's
-/// copy, PR #110, rule 6), and dave's leaf list.
+/// mls-extensions-11 §5 ComponentsList [LOG, META], hand-encoded: the
+/// GroupContext requirement for the state it holds (mls-extensions-11 §5), and dave's leaf list.
 const LIST_LOG_META: [u8; 5] = [
     0x04, // ComponentID component_ids<V>: 4 bytes
     0x80, 0x01, // LOG
@@ -67,7 +66,7 @@ fn accept_all(
 }
 
 /// RFC 9420 §12.1 `Proposal` with `proposal_type = app_data_update
-/// (0x0008)`, holding the mls-extensions-10 §4.7 `AppDataUpdate` with
+/// (0x0008)`, holding the mls-extensions-11 §4.7 `AppDataUpdate` with
 /// `op = update (1)`.
 fn update_proposal(component_id: u16, update: &[u8]) -> Vec<u8> {
     assert!(update.len() < 64, "one-byte varint length only");
@@ -172,7 +171,7 @@ fn setup() -> (Identity, Member, OpenMlsClient, Store, Observer) {
         .extensions(vec![ExtensionType::AppDataDictionary])
         .proposals(vec![ProposalType::AppDataUpdate])
         .build();
-    // dave's leaf lists the components the group requires (PR #110 rule 3).
+    // dave's leaf lists the components the group requires (mls-extensions-11 §5).
     let mut leaf_dictionary = openmls::prelude::AppDataDictionary::new();
     leaf_dictionary.insert(APP_COMPONENTS, LIST_LOG_META.to_vec());
     let leaf_extensions =

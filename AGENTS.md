@@ -36,7 +36,7 @@ A Rust reference implementation of IETF MIMI over MLS (RFC 9420), plus enough pr
 | draft-ietf-mimi-content | -10 |
 | draft-ietf-mimi-room-policy | -04 |
 | draft-ietf-mimi-arch | -03 |
-| draft-ietf-mls-extensions | -10 |
+| draft-ietf-mls-extensions | -11 |
 | draft-ietf-mls-ratchet-tree-options | -02 |
 
 ## Settled decisions: do not relitigate

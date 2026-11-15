@@ -33,7 +33,7 @@ pub const HUB_PUBLIC_KEY: [u8; 32] = [
     0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a,
 ];
 
-/// mls-extensions-10 §4.6: the `app_data_dictionary` extension type.
+/// mls-extensions-11 §4.6: the `app_data_dictionary` extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
 fn client(name: &[u8], suite: CipherSuite) -> Client<impl mls_rs::client_builder::MlsConfig> {
@@ -84,8 +84,8 @@ fn group(suite: CipherSuite, group_id: &[u8]) -> (Vec<u8>, Vec<u8>) {
     context_extensions.set(Extension::new(
         APP_DATA_DICTIONARY,
         app_data_dictionary(&[
-            // Every component with state is listed (mls-extensions PR
-            // #110 rule 6; decision mimid-krmn.12).
+            // Every component with state is listed (mls-extensions-11 §5;
+            // decision mimid-krmn.12).
             (APP_COMPONENTS, &ROOM_APP_COMPONENTS),
             // The hub requires frank_aad as a Safe AAD component (bead
             // mimid-1wgh.6.74).

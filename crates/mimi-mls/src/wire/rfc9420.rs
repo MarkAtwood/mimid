@@ -193,7 +193,7 @@ const DEFAULT_EXTENSION_TYPES: std::ops::RangeInclusive<u16> = 0x0001..=0x0005;
 /// without listing them in `capabilities`.
 const DEFAULT_PROPOSAL_TYPES: std::ops::RangeInclusive<u16> = 0x0001..=0x0007;
 
-/// mls-extensions-10 §7.5 component registry: `last_resort_key_package`.
+/// mls-extensions-11 §7.5 component registry: `last_resort_key_package`.
 const LAST_RESORT_KEY_PACKAGE: u16 = 0x0004;
 
 /// Why [`KeyPackage::verify`] refused a KeyPackage.
@@ -310,7 +310,7 @@ impl KeyPackage {
             .and_then(KeyPackageRef::tls_deserialize_exact)
             .map_err(|e| KeyPackageError::Invalid(e.into()))?;
 
-        // mls-extensions-10 §6.4.2: the component's data is empty. An entry
+        // mls-extensions-11 §6.4.2: the component's data is empty. An entry
         // with data is malformed and is ignored rather than failing the
         // KeyPackage, which then counts as an ordinary one-time KeyPackage
         // (decision mimid-1wgh.7.26).
@@ -400,7 +400,7 @@ impl VerifiedKeyPackageInfo {
 
     /// Returns whether the KeyPackage's `extensions` carry an
     /// `app_data_dictionary` with an empty `last_resort_key_package`
-    /// component (mls-extensions-10 §6.4).
+    /// component (mls-extensions-11 §6.4).
     pub fn is_last_resort(&self) -> bool {
         self.last_resort
     }

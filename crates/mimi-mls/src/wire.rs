@@ -5,7 +5,7 @@
 //! without a length prefix, so it needs types that implement
 //! [`tls_codec`]'s traits but do not expose OpenMLS (decision
 //! mimid-1wgh.4.24). Each type here is named after the RFC 9420,
-//! mls-extensions-10 or ratchet-tree-options-02 structure it carries.
+//! mls-extensions-11 or ratchet-tree-options-02 structure it carries.
 //!
 //! # Decoding
 //!
@@ -63,7 +63,7 @@
 //!   §5.3.1). It returns a basic credential's identity for the caller to
 //!   check.
 //! - A `last_resort_key_package` component whose data is not empty
-//!   (mls-extensions-10 §6.4.2) is ignored, so
+//!   (mls-extensions-11 §6.4.2) is ignored, so
 //!   [`VerifiedKeyPackageInfo::is_last_resort`] is `false` for it (decision
 //!   mimid-1wgh.7.26). OpenMLS's
 //!   pre-standard `last_resort` extension (type 10) is not recognized.
@@ -131,7 +131,7 @@ where
 
 /// Checks that the `authenticated_data` of a TLS-encoded PublicMessage or
 /// PrivateMessage `MLSMessage` starts with one canonical SafeAAD struct
-/// (mls-extensions-10 §4.9), using only the Read-based decoders. Other wire
+/// (mls-extensions-11 §4.9), using only the Read-based decoders. Other wire
 /// formats pass.
 ///
 /// OpenMLS parses the SafeAAD itself with `DeserializeBytes`, which in

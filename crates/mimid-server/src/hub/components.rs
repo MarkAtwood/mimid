@@ -2,7 +2,7 @@
 //! `participant_list` (protocol-07 §7.5) and the room-policy-04
 //! `roles_list` (§3), `preauth_list` (§4) and `base_room_policy` (§5).
 //!
-//! mls-extensions-10 §4.7 hands the application, per component ID, the
+//! mls-extensions-11 §4.7 hands the application, per component ID, the
 //! `update` fields of a commit's AppDataUpdate proposals in commit order;
 //! the application returns the new data or calls the update invalid.
 //! [`apply_updates`] is that logic for the hub-tracked components:
@@ -50,7 +50,7 @@ use mimi_protocol::{
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ComponentID, PREAUTH_LIST, ROLES_LIST};
 use mimi_room_policy::{BaseRoomPolicy, PreAuthData, RoleData};
 
-/// Why a component update is invalid (mls-extensions-10 §4.7: "the
+/// Why a component update is invalid (mls-extensions-11 §4.7: "the
 /// application logic ... considers this update invalid").
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -90,7 +90,7 @@ pub enum ComponentError {
     /// The commit operates on a user more than once (protocol-07 §7.5).
     #[error("the commit operates on a participant list user more than once")]
     UserChangedTwice,
-    /// [`apply_updates`] was given no updates; mls-extensions-10 §4.7
+    /// [`apply_updates`] was given no updates; mls-extensions-11 §4.7
     /// calls the application with one or more.
     #[error("no updates to apply")]
     NoUpdates,
@@ -98,7 +98,7 @@ pub enum ComponentError {
     #[error("component {0:#06x} is not tracked by the hub")]
     NotHubTracked(ComponentID),
     /// The component is unknown to the hub, so an AppDataUpdate for it is
-    /// invalid (mls-extensions-10 §4.7; decision mimid-1wgh.6.53).
+    /// invalid (mls-extensions-11 §4.7; decision mimid-1wgh.6.53).
     #[error("component {0:#06x} is unknown to the hub")]
     UnknownComponent(ComponentID),
 }
@@ -306,7 +306,7 @@ pub fn is_known_component(component_id: ComponentID) -> bool {
         || MLS_BUILT_IN.contains(&component_id)
 }
 
-/// The mls-extensions-10 §4.7 application logic for a hub-tracked
+/// The mls-extensions-11 §4.7 application logic for a hub-tracked
 /// component: the new data after a commit's `updates` to it, in commit
 /// order. Participant list updates all index the list in `current`
 /// (protocol-07 §7.5; decision mimid-1wgh.6.75).
@@ -346,7 +346,7 @@ pub fn apply_updates(
     }
 }
 
-/// The hub's mls-extensions-10 §4.7 application logic for one component
+/// The hub's mls-extensions-11 §4.7 application logic for one component
 /// of a Commit, as the `apply` function of
 /// [`mimi_mls::observer::Observer::process`] (decision mimid-1wgh.6.53):
 ///

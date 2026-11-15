@@ -1,6 +1,6 @@
 //! KeyPackages from `mimi-mls`, checked by an independent implementation:
 //! mls-rs (decision mimid-1wgh.4.13) parses and fully validates them, and
-//! the mls-extensions-10 bytes are compared with hand-encoded expectations.
+//! the mls-extensions-11 bytes are compared with hand-encoded expectations.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -20,11 +20,11 @@ const IDENTITY: &[u8] = b"mimi://example.com/u/alice";
 /// RFC 9420 §17.1: ciphersuite 0x0001.
 const SUITE_1: CipherSuite = CipherSuite::CURVE25519_AES128;
 
-/// mls-extensions-10 §7.1.1: app_data_dictionary extension type.
+/// mls-extensions-11 §7.1.1: app_data_dictionary extension type.
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
 /// The pre-standard last_resort extension type that OpenMLS 0.9.2 uses;
-/// mls-extensions-10 replaced it with component 0x0004.
+/// mls-extensions-11 replaced it with component 0x0004.
 const STALE_LAST_RESORT: ExtensionType = ExtensionType::new(0x000a);
 
 /// RFC 9420 §13.5: the GREASE values.
@@ -36,7 +36,7 @@ const GREASE: [u16; 15] = [
 /// openmls default lifetime: 84 days ahead.
 const MAX_LIFETIME_SECONDS: u64 = 84 * 24 * 60 * 60;
 
-/// mls-extensions-10 §7.5: the GREASE component ids. 0x8a8a and above,
+/// mls-extensions-11 §7.5: the GREASE component ids. 0x8a8a and above,
 /// GREASE elsewhere in MLS, fall in the component Private Use range.
 const COMPONENT_GREASE: [u16; 8] = [
     0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a,
@@ -198,7 +198,7 @@ fn check_common(kind: KeyPackageKind) -> (KeyPackage, mls_rs::group::Member) {
     (parsed, member)
 }
 
-/// mls-extensions-10 §4.6 and §5: the LeafNode's app_data_dictionary holds
+/// mls-extensions-11 §4.6 and §5: the LeafNode's app_data_dictionary holds
 /// an app_components entry listing mimid's built-in components,
 /// last_resort_key_package, frank_aad and the MIMI components 0x0021 to
 /// 0x0029, and a GREASE id (decision mimid-krmn.12); a safe_aad entry
@@ -214,7 +214,7 @@ fn check_leaf_app_data_dictionary(leaf_extensions: &ExtensionList) {
         .expect("LeafNode app_data_dictionary")
         .extension_data;
     // app_components (0x0001) and safe_aad (0x0002) are not listed: their
-    // support is implied (mls-extensions editor's copy, PR #110; decision
+    // support is implied (mls-extensions-11 §5; decision
     // mimid-krmn.6).
     assert_eq!(data.len(), 40, "leaf dictionary: {data:02x?}");
     let listed_grease = u16::from_be_bytes([data[27], data[28]]);
@@ -362,12 +362,12 @@ fn last_resort_key_package_carries_component_0x0004() {
     let grease = u16::from_be_bytes([data[4], data[5]]);
     assert!(is_component_grease(grease), "{grease:#06x}");
     let [g_hi, g_lo] = grease.to_be_bytes();
-    // mls-extensions-10 §4.6 AppDataDictionary, entries sorted by id.
+    // mls-extensions-11 §4.6 AppDataDictionary, entries sorted by id.
     let expected = [
         0x06, // component_data<V>: 6 bytes follow
         0x00, 0x04, // ComponentData.component_id = last_resort_key_package
         0x00, // ComponentData.data<V>: empty (§6.4.2)
-        g_hi, g_lo, // ComponentData.component_id = GREASE (§5.1)
+        g_hi, g_lo, // ComponentData.component_id = GREASE (§5.2)
         0x00, // ComponentData.data<V>: empty
     ];
     assert_eq!(data, expected);

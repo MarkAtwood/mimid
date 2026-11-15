@@ -61,14 +61,14 @@ use serde_json::json;
 use crate::hub::{Hub, encode};
 use crate::state::{Room, RoomStatus, State, StateDir};
 
-/// mls-extensions-10 §5 `app_components`.
+/// mls-extensions-11 §5 `app_components`.
 const APP_COMPONENTS: u16 = 0x0001;
-/// mls-extensions-10 §5 `safe_aad` component: the Safe AAD components a
+/// mls-extensions-11 §5 `safe_aad` component: the Safe AAD components a
 /// room requires.
 const SAFE_AAD: u16 = 0x0002;
 /// RFC 9420 §11.1 RequiredCapabilities for keyMaterial (§5.2): extension
 /// `app_data_dictionary` (0x0006) and proposal `AppDataUpdate` (0x0008)
-/// from mls-extensions-10, which every room this client builds needs,
+/// from mls-extensions-11, which every room this client builds needs,
 /// because its GroupContext carries `participant_list`. A hub should then
 /// answer `nothingCompatible` for KeyPackages without them, instead of
 /// handing out one the Add will refuse. No credential types are required.
@@ -380,7 +380,7 @@ impl Client {
             room.as_bytes(),
             &[],
             &[
-                // mls-extensions-10 §5: a ComponentsList naming
+                // mls-extensions-11 §5: a ComponentsList naming
                 // participant_list (0x0022), roles_list (0x0025) and
                 // base_room_policy (0x0027), so /policy and --roles can set
                 // them: a component with state must be listed. Every member's
@@ -473,7 +473,7 @@ impl Client {
             ]
         } else {
             vec![
-                // mls-extensions-10 §5 app_components: franking_agent,
+                // mls-extensions-11 §5 app_components: franking_agent,
                 // participant_list, roles_list, base_room_policy. Every member's
                 // leaf must list these, and frank_aad (0x0020) below.
                 (
@@ -2287,7 +2287,7 @@ fn room_metadata(room: &str, name: &str) -> anyhow::Result<Vec<u8>> {
     })
 }
 
-/// An app_components ComponentsList (mls-extensions-10 §5) with
+/// An app_components ComponentsList (mls-extensions-11 §5) with
 /// `component` added in ascending order.
 fn add_component_id(list: &[u8], component: u16) -> anyhow::Result<Vec<u8>> {
     let (&len, ids) = list

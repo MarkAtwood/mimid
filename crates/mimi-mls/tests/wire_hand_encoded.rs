@@ -1,5 +1,5 @@
 //! `mimi_mls::wire` against bytes hand-encoded from the TLS presentation
-//! language in mls-extensions-10 §4.6, ratchet-tree-options-02 §3-4 and
+//! language in mls-extensions-11 §4.6, ratchet-tree-options-02 §3-4 and
 //! RFC 9420, with byte-by-byte comments. Each valid case is decoded,
 //! compared, re-encoded and required to be byte-identical; each invalid one
 //! must be rejected without panicking (tests run in debug, bug
@@ -38,7 +38,7 @@ fn decoding_error_mentions<T: std::fmt::Debug>(result: Result<T, Error>, needle:
     matches!(result, Err(Error::DecodingError(message)) if message.contains(needle))
 }
 
-// ---- mls-extensions-10 §4.6 AppDataDictionary ----
+// ---- mls-extensions-11 §4.6 AppDataDictionary ----
 
 const APP_DATA_DICTIONARY: [u8; 12] = [
     0x0b, // component_data<V>: 11 bytes
@@ -370,10 +370,10 @@ fn partial_group_info_rejects_non_minimal_signature_length() {
 fn required_capabilities_round_trips() {
     let encoded = [
         0x04, // extension_types<V>: 4 bytes
-        0x00, 0x06, // app_data_dictionary (mls-extensions-10 §7.1.1)
+        0x00, 0x06, // app_data_dictionary (mls-extensions-11 §7.1.1)
         0x0a, 0x0a, // GREASE
         0x02, // proposal_types<V>: 2 bytes
-        0x00, 0x08, // app_data_update (mls-extensions-10)
+        0x00, 0x08, // app_data_update (mls-extensions-11)
         0x02, // credential_types<V>: 2 bytes
         0x00, 0x01, // basic
     ];

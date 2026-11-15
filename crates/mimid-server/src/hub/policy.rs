@@ -129,7 +129,7 @@ pub enum Origin {
     ByReference(ProposalSender),
 }
 
-/// The operation of an AppDataUpdate proposal (mls-extensions-10 §4.7).
+/// The operation of an AppDataUpdate proposal (mls-extensions-11 §4.7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppDataOp {
     /// `update`, with the `update` field's bytes.
@@ -164,14 +164,14 @@ pub enum ProposalKind {
     ExternalInit,
     /// A GroupContextExtensions proposal.
     GroupContextExtensions,
-    /// An AppDataUpdate proposal (mls-extensions-10 §4.7).
+    /// An AppDataUpdate proposal (mls-extensions-11 §4.7).
     AppDataUpdate {
         /// The component.
         component_id: ComponentID,
         /// The operation.
         op: AppDataOp,
     },
-    /// A SelfRemove proposal (mls-extensions-10): the sender removes its
+    /// A SelfRemove proposal (mls-extensions-11): the sender removes its
     /// own client.
     SelfRemove,
     /// Any other proposal type.
@@ -503,7 +503,7 @@ fn refuse_kind(kind: &ProposalKind) -> Result<(), Denied> {
         ProposalKind::Update {
             identity_changed: true,
         } => Err(Denied::IdentityChange),
-        // protocol-07 §5.4.1, mls-extensions-10 §4.7; decision mimid-1wgh.6.42
+        // protocol-07 §5.4.1, mls-extensions-11 §4.7; decision mimid-1wgh.6.42
         ProposalKind::AppDataUpdate { component_id, .. } if *component_id == FRANKING_AGENT => {
             Err(Denied::HubComponent(FRANKING_AGENT))
         }
@@ -744,7 +744,7 @@ impl Occupancy for After<'_> {
 /// See the module documentation for the rules. The proposals are taken in
 /// `commit.proposals` order, which must be the order MLS applies them;
 /// participant list updates are applied in that order, all indexing the
-/// list at the start of the epoch (mls-extensions-10 §4.7; protocol-07
+/// list at the start of the epoch (mls-extensions-11 §4.7; protocol-07
 /// §7.5; decision mimid-1wgh.6.75).
 ///
 /// # Errors

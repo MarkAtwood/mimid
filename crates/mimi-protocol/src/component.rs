@@ -2,7 +2,7 @@
 //! application components.
 //!
 //! These are the `data` of a `ComponentData` entry in the GroupContext
-//! `app_data_dictionary` extension (mls-extensions-10 §4.6), and the `update`
+//! `app_data_dictionary` extension (mls-extensions-11 §4.6), and the `update`
 //! of an `AppDataUpdate` proposal (§4.7), under the component IDs in
 //! [`crate::component_id`].
 

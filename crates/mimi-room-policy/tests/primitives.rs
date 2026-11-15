@@ -1,7 +1,7 @@
 //! Fixture tests for the room-policy-04 primitives.
 //!
 //! Every fixture is hex encoded by hand from the TLS presentation-language
-//! text (room-policy-04 Appendix B, mls-extensions-10 §6.2.2), using the MLS
+//! text (room-policy-04 Appendix B, mls-extensions-11 §6.2.2), using the MLS
 //! varint length prefix of RFC 9420 §2.1.2: a first byte of 0b00xxxxxx is a
 //! 1-byte length, 0b01xxxxxx a 2-byte length, and 0b10xxxxxx a 4-byte
 //! length. The tests decode the fixture, compare it to the expected value,
@@ -283,7 +283,7 @@ fn media_type_without_parameters_fixture() {
 
 #[test]
 fn media_type_with_parameter_fixture() {
-    // mls-extensions-10 §6.2.2 example: text/plain ;charset="UTF-8"
+    // mls-extensions-11 §6.2.2 example: text/plain ;charset="UTF-8"
     let fixture = [
         0x0A, // type<V> length: 10
         b't', b'e', b'x', b't', b'/', b'p', b'l', b'a', b'i', b'n', // "text/plain"

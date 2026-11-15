@@ -12,8 +12,19 @@ mimid targets the latest revision of each draft. Where the drafts are ambiguous,
 | draft-ietf-mimi-content | -10 | |
 | draft-ietf-mimi-room-policy | -04 | |
 | draft-ietf-mimi-arch | -03 | |
-| draft-ietf-mls-extensions | -10 | |
+| draft-ietf-mls-extensions | -11 | |
 | draft-ietf-mls-ratchet-tree-options | -02 | |
+
+## Provisional codepoints
+
+These are values the drafts suggest or request but IANA has not assigned, because the registries or the documents are not yet published. mimid uses them as written and will follow any change at assignment.
+
+| Value | What | Source |
+|---|---|---|
+| extension types 0x0006–0x0008 | `app_data_dictionary`, `supported_wire_formats`, `required_wire_formats` | mls-extensions-11 §7.1, "(suggested)" |
+| proposal types 0x0008–0x000a | `app_data_update`, `app_ephemeral`, `self_remove` | mls-extensions-11 §7.2, "(suggested)" |
+| components 0x0001–0x0005 | `app_components`, `safe_aad`, `content_media_types`, `last_resort_key_package`, `app_ack` | mls-extensions-11 §7.5, initial contents of a registry not yet created |
+| components 0x0020–0x0023 | `frank_aad`, `franking_agent`, `participant_list`, `room_metadata` | protocol-07 §10, requested in that registry |
 
 ## Known weaknesses
 

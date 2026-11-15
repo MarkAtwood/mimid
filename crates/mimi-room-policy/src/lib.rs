@@ -418,7 +418,7 @@ fn check_uri(uri: &str) -> Result<(), Error> {
     }
 }
 
-/// The `Parameter` struct of mls-extensions-10 §6.2.2.
+/// The `Parameter` struct of mls-extensions-11 §6.2.2.
 ///
 /// A [`MediaType`] carries a list of these. `parameter_name` is an RFC 2045
 /// §5.1 `token`. `parameter_value` is the RFC 2045 §5.1 `value` with any
@@ -492,7 +492,7 @@ fn check_parameter(parameter_name: &str, parameter_value: &str) -> Result<(), Er
     Ok(())
 }
 
-/// The `MediaType` struct of mls-extensions-10 §6.2.2.
+/// The `MediaType` struct of mls-extensions-11 §6.2.2.
 ///
 /// room-policy-04 §6.4 and §7.1 use it. mimi-mls has its own copy, and the
 /// hub converts between the two, so that this crate stays free of MLS
@@ -569,7 +569,7 @@ fn check_media_type(r#type: &str) -> Result<(), Error> {
 /// The draft leaves these as TBD0 to TBD12. These are its suggested values
 /// (decision mimid-1wgh.3.27).
 pub mod component_id {
-    /// `uint16 ComponentID` of mls-extensions-10.
+    /// `uint16 ComponentID` of mls-extensions-11.
     pub type ComponentID = u16;
 
     /// `mls_operational_policy` (room-policy-04 §10.1.1, §7).
