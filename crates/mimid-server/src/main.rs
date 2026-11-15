@@ -68,7 +68,9 @@ use mimid_server::jmap::{self, JmapOptions};
 use mimid_server::logging::{LogFormat, json_subscriber};
 use mimid_server::peer::PeerClient;
 use mimid_server::peer_clock::{self, PeerClocks};
-use mimid_server::provider_auth::{AuthMode, ProviderAuth, RequestSigner};
+use mimid_server::provider_auth::{
+    AuthMode, HickoryTxtResolver, ProviderAuth, RequestSigner, TxtResolver, check_validation,
+};
 use mimid_server::store::Store;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -221,15 +223,31 @@ async fn main() -> anyhow::Result<()> {
     };
     // Provider authentication on the protocol routes only (bead
     // mimid-75nk.1); JMAP clients authenticate with bearer tokens.
-    let provider_auth = Arc::new(ProviderAuth::new(
-        &config.provider_auth,
-        &config.base_url,
-        Arc::clone(&clock),
-    ));
+    let mut provider_auth =
+        ProviderAuth::new(&config.provider_auth, &config.base_url, Arc::clone(&clock));
+    if config.provider_auth.dns_keys {
+        match HickoryTxtResolver::new(&config.provider_auth.dns_servers) {
+            Ok(resolver) => {
+                let resolver: Arc<dyn TxtResolver> = Arc::new(resolver);
+                // In the background: a slow resolver does not hold up start.
+                let check = Arc::clone(&resolver);
+                tokio::spawn(async move { check_validation(check.as_ref()).await });
+                provider_auth = provider_auth.with_dns(resolver);
+            }
+            Err(error) => tracing::warn!(
+                name: "provider_auth_dns_unavailable",
+                error = &error as &dyn std::error::Error,
+                "no DNS resolver; DNS-published provider keys are off"
+            ),
+        }
+    }
+    let provider_auth = Arc::new(provider_auth);
     tracing::info!(
         name: "provider_auth_configured",
         mode = ?config.provider_auth.mode,
         selector = signer.selector(),
+        dns_keys = config.provider_auth.dns_keys,
+        require_dnssec = config.provider_auth.require_dnssec,
         public_key = %base64::engine::general_purpose::STANDARD.encode(signer.public_key().to_bytes()),
         trusted_peers = config.provider_auth.peers.values().filter(|p| !p.keys.is_empty()).count(),
         observed_peers = config.provider_auth.peers.values().filter(|p| p.mode == Some(AuthMode::Observe)).count(),

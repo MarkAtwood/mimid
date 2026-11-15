@@ -19,7 +19,7 @@ mimid targets the latest revision of each draft. Where the drafts are ambiguous,
 
 These are deliberate in the current version:
 
-- **Provider authentication is partial.** Providers prove who they are with RFC 9421 request signatures and keys configured per peer (`[provider_auth]` in the configuration; `mimid admin <config> provider-key` prints this server's key). A peer set to `observe` is let through unauthenticated. protocol-07 requires mutually authenticated TLS; mimid doesn't implement it yet and doesn't claim conformance to it.
+- **Provider authentication is partial.** Providers prove who they are with RFC 9421 request signatures, with keys configured per peer or published in DNS at `<selector>._mimi.<domain>` (draft-atwood-mimi-provider-auth-00; `[provider_auth]` in the configuration; `mimid admin <config> provider-key` prints this server's key and its DNS record). DNS keys are looked up with DNSSEC validation, so the resolvers in `dns_servers` must pass DNSSEC records through. A peer set to `observe` is let through unauthenticated. protocol-07 requires mutually authenticated TLS; mimid doesn't implement it yet and doesn't claim conformance to it.
 - **BasicCredential only.** A provider can claim any identity for its own users, so mimid offers no protection against a malicious provider.
 - **Peers come from configuration**, not DNS discovery.
 

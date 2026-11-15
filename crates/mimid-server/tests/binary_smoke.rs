@@ -93,7 +93,8 @@ async fn binary_serves_with_two_peers_and_stops_on_sigint() {
          # These requests are unsigned: this test is about the follower's\n\
          # peer rules, not provider authentication (tests/provider_auth.rs).\n\
          [provider_auth]\n\
-         mode = \"observe\"\n",
+         mode = \"observe\"\n\
+         dns_keys = false\n",
         listen = base.trim_start_matches("http://"),
         database = database.display(),
     );
@@ -194,7 +195,12 @@ async fn json_log_format_writes_named_events() {
         "domain = \"b.example\"\n\
          listen = \"{listen}\"\n\
          base_url = \"{base}\"\n\
-         database = \"{database}\"\n",
+         database = \"{database}\"\n\
+         \n\
+         # No DNS lookups in tests: the DNSSEC check at start would log\n\
+         # an event of its own, whenever the network answers.\n\
+         [provider_auth]\n\
+         dns_keys = false\n",
         listen = base.trim_start_matches("http://"),
         database = dir.path().join("mimid.sqlite").display(),
     );

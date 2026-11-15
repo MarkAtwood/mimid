@@ -27,7 +27,10 @@ use mimid_server::http::router;
 use mimid_server::httpsig::SigningKey;
 use mimid_server::hub::{Clock, Hub, SystemClock};
 use mimid_server::peer::{PeerClient, PeerError};
-use mimid_server::provider_auth::{self, ProviderAuth, ProviderAuthConfig, RequestSigner};
+use mimid_server::provider_auth::{
+    self, BoxFuture, DnssecStatus, ProviderAuth, ProviderAuthConfig, RequestSigner, TxtAnswer,
+    TxtLookupError, TxtResolver,
+};
 use mimid_server::store::{ConsentKey, NewKeyPackage, Store};
 use tempfile::TempDir;
 
@@ -56,6 +59,11 @@ struct Target {
 }
 
 async fn target(auth: &str) -> Target {
+    target_with_dns(auth, None).await
+}
+
+/// [`target`], with DNS key records from `dns`.
+async fn target_with_dns(auth: &str, dns: Option<Arc<dyn TxtResolver>>) -> Target {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(&dir.path().join("mimid.sqlite"), &domain("b.example"))
         .await
@@ -87,7 +95,11 @@ async fn target(auth: &str) -> Target {
     let config: ProviderAuthConfig = toml::from_str(auth).unwrap();
     // Signatures carry real time, so the check uses the system clock.
     let system: Arc<dyn Clock> = Arc::new(SystemClock);
-    let check = Arc::new(ProviderAuth::new(&config, &base_url, system));
+    let mut check = ProviderAuth::new(&config, &base_url, system);
+    if let Some(dns) = dns {
+        check = check.with_dns(dns);
+    }
+    let check = Arc::new(check);
     let app = router(directory(&base_url), Arc::new(hub), Arc::new(follower)).layer(
         axum::middleware::from_fn_with_state(check, provider_auth::check),
     );
@@ -222,5 +234,47 @@ async fn a_refusal_is_403_with_accept_signature_and_a_problem_body() {
             .as_str()
             .unwrap()
             .ends_with(":provider-authentication")
+    );
+}
+
+/// DNS holding a.example's key at `a1._mimi.a.example.`.
+struct ADns;
+
+impl TxtResolver for ADns {
+    fn txt<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<TxtAnswer, TxtLookupError>> {
+        let answer = if name == "a1._mimi.a.example." {
+            Ok(TxtAnswer {
+                records: vec![(a_signer().dns_record().into_bytes(), DnssecStatus::Secure)],
+            })
+        } else {
+            Err(TxtLookupError::NoRecords)
+        };
+        Box::pin(std::future::ready(answer))
+    }
+}
+
+#[tokio::test]
+async fn a_request_signed_with_a_dns_published_key_is_accepted() {
+    // No trust list: the key comes from a1._mimi.a.example.
+    let b = target_with_dns("", Some(Arc::new(ADns))).await;
+    a_client(&b, Some(a_signer()))
+        .request_consent(&domain("b.example"), REQUEST.to_vec())
+        .await
+        .unwrap();
+    assert!(b.store.consent_request(&SCOPE).await.unwrap().is_some());
+
+    // A selector with no record is refused.
+    let b = target_with_dns("", Some(Arc::new(ADns))).await;
+    let other = Arc::new(RequestSigner::new(
+        SigningKey::from_seed(&[0x0a; 32]),
+        "a2".to_owned(),
+    ));
+    let error = a_client(&b, Some(other))
+        .request_consent(&domain("b.example"), REQUEST.to_vec())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, PeerError::Rejected { status: 403, .. }),
+        "{error:?}"
     );
 }

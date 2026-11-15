@@ -12,13 +12,18 @@
 //! failure and lets the request through, for rollout with peers that do not
 //! authenticate yet.
 //!
-//! Mechanisms (decision of mimid-75nk, in build order):
+//! Mechanisms (decision of mimid-75nk, in build order), tried in this
+//! order:
 //!
-//! 1. [`Mechanism::TrustList`] (this bead): RFC 9421 request signatures
-//!    ([`crate::httpsig`]) with Ed25519 keys configured per peer, by
-//!    selector, in `[provider_auth.peers."<domain>"] keys`.
-//! 2. DNS-published keys (mimid-75nk.3), 3. PKIX mutual TLS (mimid-75nk.5)
-//!    and 4. DANE (mimid-75nk.6) are not built yet.
+//! 1. [`Mechanism::TrustList`] (bead mimid-75nk.1): RFC 9421 request
+//!    signatures ([`crate::httpsig`]) with Ed25519 keys configured per
+//!    peer, by selector, in `[provider_auth.peers."<domain>"] keys`.
+//! 2. [`Mechanism::DnsKey`] (bead mimid-75nk.3): the same signatures with
+//!    keys published at `<selector>._mimi.<domain>`
+//!    (draft-atwood-mimi-provider-auth-00 §5; [`dns`]), looked up with a
+//!    DNSSEC-validating resolver. On unless `dns_keys = false`.
+//! 3. PKIX mutual TLS (mimid-75nk.5) and 4. DANE (mimid-75nk.6) are not
+//!    built yet.
 //!
 //! A signature counts only if it follows draft-atwood-mimi-provider-auth-00
 //! §5.2 and §5.3: it covers `@method`, `@target-uri` and `from`
@@ -54,6 +59,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::body::{Body, to_bytes};
@@ -159,13 +166,31 @@ pub struct ProviderAuthConfig {
     /// The mode for a provider with no `mode` of its own.
     #[serde(default)]
     pub mode: AuthMode,
-    /// The `keyid` of this server's request signatures, and its DNS
-    /// selector later (mimid-75nk.3).
+    /// The `keyid` of this server's request signatures, and the selector
+    /// of its DNS key record (`<selector>._mimi.<domain>`).
     #[serde(default = "default_selector")]
     pub selector: String,
+    /// Whether to look up keys in DNS (mechanism 1, mimid-75nk.3). On by
+    /// default: an open provider accepts DNS keys from anyone
+    /// (draft-atwood-mimi-provider-auth-00 §10).
+    #[serde(default = "default_true")]
+    pub dns_keys: bool,
+    /// Refuse a DNS key whose record is not DNSSEC-secure. Off by default:
+    /// the draft makes this local policy (§5.3).
+    #[serde(default)]
+    pub require_dnssec: bool,
+    /// The resolvers DNS key records are looked up through, validating
+    /// DNSSEC; the system's when empty. They must pass DNSSEC records
+    /// through (AWS's VPC resolver does not).
+    #[serde(default)]
+    pub dns_servers: Vec<std::net::IpAddr>,
     /// Per-provider settings.
     #[serde(default)]
     pub peers: BTreeMap<Domain, PeerAuthConfig>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for ProviderAuthConfig {
@@ -173,6 +198,9 @@ impl Default for ProviderAuthConfig {
         Self {
             mode: AuthMode::default(),
             selector: default_selector(),
+            dns_keys: true,
+            require_dnssec: false,
+            dns_servers: Vec::new(),
             peers: BTreeMap::new(),
         }
     }
@@ -200,6 +228,9 @@ pub struct PeerAuthConfig {
 pub enum Mechanism {
     /// An RFC 9421 signature with a key configured for the provider.
     TrustList,
+    /// An RFC 9421 signature with a key published in the provider's DNS
+    /// (draft-atwood-mimi-provider-auth-00 §5).
+    DnsKey,
 }
 
 impl Mechanism {
@@ -207,6 +238,7 @@ impl Mechanism {
     pub fn name(self) -> &'static str {
         match self {
             Self::TrustList => "trust_list",
+            Self::DnsKey => "dns_key",
         }
     }
 }
@@ -220,6 +252,8 @@ pub struct AuthenticatedProvider {
     pub mechanism: Mechanism,
     /// The key it used: the `keyid`.
     pub key_id: String,
+    /// For a key from DNS, the DNSSEC status of its record.
+    pub dnssec: Option<DnssecStatus>,
 }
 
 /// Why a provider was not authenticated.
@@ -235,6 +269,33 @@ pub enum Refusal {
     /// A signature's `keyid` names no key of the provider's.
     #[error("unknown keyid")]
     UnknownKey,
+    /// A signature has no `keyid` (draft-atwood-mimi-provider-auth-00
+    /// §5.2).
+    #[error("signature has no keyid")]
+    NoKeyId,
+    /// The `keyid` is not a selector: one DNS label, not starting with
+    /// `_` (§5.1).
+    #[error("keyid is not a selector")]
+    BadSelector,
+    /// No MIMI key record at `<keyid>._mimi.<domain>` (§5.3 step 5).
+    #[error("no MIMI key record")]
+    NoKeyRecord,
+    /// The key record's `p` is empty: the key is revoked (§5.1).
+    #[error("the key is revoked")]
+    KeyRevoked,
+    /// The key record is not usable: no or unknown `k`, or a malformed
+    /// `p`.
+    #[error("unusable key record: {0}")]
+    BadKeyRecord(&'static str),
+    /// The key record's DNSSEC validation failed ("bogus"; §5.3).
+    #[error("DNSSEC validation of the key record failed")]
+    DnssecBogus,
+    /// DNSSEC is required by local policy and the answer was not secure.
+    #[error("the key record is not DNSSEC-secure")]
+    NotSecure,
+    /// The DNS lookup failed.
+    #[error("DNS lookup failed")]
+    DnsFailure,
     /// A signature does not cover [`REQUIRED_COMPONENTS`].
     #[error("signature does not cover {0}")]
     NotCovered(&'static str),
@@ -274,14 +335,116 @@ pub struct InboundRequest<'a> {
     pub now: i64,
 }
 
+/// A boxed future, for the mechanisms that wait on the network.
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 /// One authentication mechanism.
 pub trait ProviderAuthenticator: Send + Sync {
     /// Checks `request`.
-    fn authenticate(&self, request: &InboundRequest<'_>) -> Outcome;
+    fn authenticate<'a>(&'a self, request: &'a InboundRequest<'a>) -> BoxFuture<'a, Outcome>;
 }
 
-/// Mechanism 4 of mimid-75nk: RFC 9421 signatures with keys configured
-/// per provider.
+/// What a [`KeySource`] found for a source domain and `keyid`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyLookup {
+    /// The key, and the DNSSEC status of the answer it came in, if from
+    /// DNS.
+    Found {
+        /// The public key.
+        key: VerifyingKey,
+        /// The DNSSEC status, for a key from DNS.
+        dnssec: Option<DnssecStatus>,
+    },
+    /// No usable key, and why.
+    Missing(Refusal),
+}
+
+/// Where a signature mechanism finds a source's keys.
+pub trait KeySource: Send + Sync {
+    /// The mechanism this source stands for.
+    fn mechanism(&self) -> Mechanism;
+    /// The key `domain` signs with under `keyid`.
+    fn key<'a>(&'a self, domain: &'a Domain, keyid: &'a str) -> BoxFuture<'a, KeyLookup>;
+}
+
+/// An RFC 9421 signature mechanism over a [`KeySource`]
+/// (draft-atwood-mimi-provider-auth-00 §5.3).
+#[derive(Debug)]
+pub struct Signatures<K>(pub K);
+
+impl<K: KeySource> ProviderAuthenticator for Signatures<K> {
+    fn authenticate<'a>(&'a self, request: &'a InboundRequest<'a>) -> BoxFuture<'a, Outcome> {
+        Box::pin(verify_signatures(&self.0, request))
+    }
+}
+
+/// draft-atwood-mimi-provider-auth-00 §5.3, steps 2 to 7, with keys from
+/// `source`.
+async fn verify_signatures(source: &dyn KeySource, request: &InboundRequest<'_>) -> Outcome {
+    let mut signatures = match httpsig::signatures(request.headers) {
+        Ok(signatures) if signatures.is_empty() => return Outcome::NotApplicable,
+        Ok(signatures) => signatures,
+        Err(error) => return Outcome::Refused(Refusal::Signature(error)),
+    };
+    // Step 6: the digest is checked when there is content.
+    if !request.body.is_empty()
+        && httpsig::check_content_digest(request.headers, request.body).is_err()
+    {
+        return Outcome::Refused(Refusal::Digest);
+    }
+    // Step 2: signatures tagged `mimi` first.
+    signatures.sort_by_key(|(_, params)| params.tag.as_deref() != Some(SIGNATURE_TAG));
+    let parts = httpsig::RequestParts {
+        method: request.method,
+        uri: request.uri,
+        headers: request.headers,
+    };
+    let time = TimePolicy {
+        now: request.now,
+        skew: SIGNATURE_SKEW_SECS,
+        max_age: MAX_SIGNATURE_AGE_SECS,
+    };
+    let mut refusal = Refusal::UnknownKey;
+    for (label, params) in signatures.iter().take(MAX_SIGNATURES_TRIED) {
+        // Step 3: coverage, created and keyid, before any lookup.
+        let covers = |c: &str| params.components.iter().any(|have| have == c);
+        if let Some(missing) = REQUIRED_COMPONENTS.into_iter().find(|c| !covers(c)) {
+            refusal = Refusal::NotCovered(missing);
+            continue;
+        }
+        if !request.body.is_empty() && !covers(httpsig::CONTENT_DIGEST) {
+            refusal = Refusal::NotCovered(httpsig::CONTENT_DIGEST);
+            continue;
+        }
+        let Some(keyid) = params.keyid.as_deref() else {
+            refusal = Refusal::NoKeyId;
+            continue;
+        };
+        // Step 5.
+        let (key, dnssec) = match source.key(request.from, keyid).await {
+            KeyLookup::Found { key, dnssec } => (key, dnssec),
+            KeyLookup::Missing(why) => {
+                refusal = why;
+                continue;
+            }
+        };
+        // Steps 4 and 7.
+        match httpsig::verify(&parts, label, time, |_| Some(key)) {
+            Ok(_) => {
+                return Outcome::Authenticated(AuthenticatedProvider {
+                    domain: request.from.clone(),
+                    mechanism: source.mechanism(),
+                    key_id: keyid.to_owned(),
+                    dnssec,
+                });
+            }
+            Err(error) => refusal = Refusal::Signature(error),
+        }
+    }
+    Outcome::Refused(refusal)
+}
+
+/// Mechanism 4 of mimid-75nk: keys configured per provider.
 #[derive(Debug, Default)]
 pub struct TrustList {
     keys: BTreeMap<Domain, BTreeMap<String, VerifyingKey>>,
@@ -309,80 +472,31 @@ impl TrustList {
     }
 }
 
-impl ProviderAuthenticator for TrustList {
-    fn authenticate(&self, request: &InboundRequest<'_>) -> Outcome {
-        let labels = match httpsig::labels(request.headers) {
-            Ok(labels) if labels.is_empty() => return Outcome::NotApplicable,
-            Ok(labels) => labels,
-            Err(error) => return Outcome::Refused(Refusal::Signature(error)),
+impl KeySource for TrustList {
+    fn mechanism(&self) -> Mechanism {
+        Mechanism::TrustList
+    }
+
+    fn key<'a>(&'a self, domain: &'a Domain, keyid: &'a str) -> BoxFuture<'a, KeyLookup> {
+        let found = match self.keys.get(domain) {
+            None => KeyLookup::Missing(Refusal::NoTrustedKey),
+            Some(keys) => match keys.get(keyid) {
+                Some(key) => KeyLookup::Found {
+                    key: *key,
+                    dnssec: None,
+                },
+                None => KeyLookup::Missing(Refusal::UnknownKey),
+            },
         };
-        let Some(keys) = self.keys.get(request.from) else {
-            return Outcome::Refused(Refusal::NoTrustedKey);
-        };
-        // §5.3 step 6: the digest is checked when there is content.
-        if !request.body.is_empty()
-            && httpsig::check_content_digest(request.headers, request.body).is_err()
-        {
-            return Outcome::Refused(Refusal::Digest);
-        }
-        // §5.3 step 2: signatures tagged `mimi` first.
-        let mut labels = labels;
-        if let Ok(signatures) = httpsig::signatures(request.headers) {
-            let tagged: BTreeSet<&str> = signatures
-                .iter()
-                .filter(|(_, p)| p.tag.as_deref() == Some(SIGNATURE_TAG))
-                .map(|(label, _)| label.as_str())
-                .collect();
-            labels.sort_by_key(|label| !tagged.contains(label.as_str()));
-        }
-        let parts = httpsig::RequestParts {
-            method: request.method,
-            uri: request.uri,
-            headers: request.headers,
-        };
-        let time = TimePolicy {
-            now: request.now,
-            skew: SIGNATURE_SKEW_SECS,
-            max_age: MAX_SIGNATURE_AGE_SECS,
-        };
-        let mut refusal = Refusal::UnknownKey;
-        for label in labels.iter().take(MAX_SIGNATURES_TRIED) {
-            let verified = httpsig::verify(&parts, label, time, |params| {
-                params.keyid.as_deref().and_then(|id| keys.get(id)).copied()
-            });
-            let params = match verified {
-                Ok(params) => params,
-                Err(httpsig::Error::UnknownKey) => {
-                    refusal = Refusal::UnknownKey;
-                    continue;
-                }
-                Err(error) => {
-                    refusal = Refusal::Signature(error);
-                    continue;
-                }
-            };
-            let covers = |c: &str| params.components.iter().any(|have| have == c);
-            if let Some(missing) = REQUIRED_COMPONENTS.into_iter().find(|c| !covers(c)) {
-                refusal = Refusal::NotCovered(missing);
-                continue;
-            }
-            if !request.body.is_empty() && !covers(httpsig::CONTENT_DIGEST) {
-                refusal = Refusal::NotCovered(httpsig::CONTENT_DIGEST);
-                continue;
-            }
-            return Outcome::Authenticated(AuthenticatedProvider {
-                domain: request.from.clone(),
-                mechanism: Mechanism::TrustList,
-                key_id: params.keyid.unwrap_or_default(),
-            });
-        }
-        Outcome::Refused(refusal)
+        Box::pin(std::future::ready(found))
     }
 }
 
 /// The inbound policy: the mechanisms in order and each provider's mode.
 pub struct ProviderAuth {
     authenticators: Vec<Box<dyn ProviderAuthenticator>>,
+    dns_keys: bool,
+    require_dnssec: bool,
     default_mode: AuthMode,
     modes: BTreeMap<Domain, AuthMode>,
     base_url: String,
@@ -405,7 +519,9 @@ impl ProviderAuth {
     /// the mechanisms built so far.
     pub fn new(config: &ProviderAuthConfig, base_url: &BaseUrl, clock: Arc<dyn Clock>) -> Self {
         Self {
-            authenticators: vec![Box::new(TrustList::new(config))],
+            authenticators: vec![Box::new(Signatures(TrustList::new(config)))],
+            dns_keys: config.dns_keys,
+            require_dnssec: config.require_dnssec,
             default_mode: config.mode,
             modes: config
                 .peers
@@ -416,6 +532,20 @@ impl ProviderAuth {
             clock,
             observed: Mutex::new(BTreeSet::new()),
         }
+    }
+
+    /// Adds mechanism 1, DNS-published keys looked up with `resolver`
+    /// (mimid-75nk.3), after the trust list, unless the configuration
+    /// turned it off (`dns_keys = false`).
+    #[must_use]
+    pub fn with_dns(mut self, resolver: Arc<dyn TxtResolver>) -> Self {
+        if self.dns_keys {
+            self.authenticators.push(Box::new(Signatures(DnsKeys::new(
+                resolver,
+                self.require_dnssec,
+            ))));
+        }
+        self
     }
 
     /// `domain`'s mode.
@@ -429,13 +559,13 @@ impl ProviderAuth {
     ///
     /// The refusal of the last mechanism that refused, or
     /// [`Refusal::NoCredentials`] if none applied.
-    pub fn authenticate(
+    pub async fn authenticate(
         &self,
         request: &InboundRequest<'_>,
     ) -> Result<AuthenticatedProvider, Refusal> {
         let mut refusal = Refusal::NoCredentials;
         for authenticator in &self.authenticators {
-            match authenticator.authenticate(request) {
+            match authenticator.authenticate(request).await {
                 Outcome::Authenticated(provider) => return Ok(provider),
                 Outcome::NotApplicable => {}
                 Outcome::Refused(why) => refusal = why,
@@ -504,12 +634,13 @@ pub async fn check(
         body: &body,
         now,
     };
-    match auth.authenticate(&request) {
+    match auth.authenticate(&request).await {
         Ok(provider) => {
             tracing::debug!(
                 peer = provider.domain.as_str(),
                 mechanism = provider.mechanism.name(),
                 key_id = provider.key_id,
+                dnssec = provider.dnssec.map(DnssecStatus::name),
                 "provider authenticated"
             );
             parts.extensions.insert(provider);
@@ -619,7 +750,8 @@ impl RequestSigner {
         httpsig::sign_headers(method, uri, headers, SIGNATURE_LABEL, &params, &self.key)
     }
 
-    /// The DNS TXT record value of mimid-75nk.3's provisional format, for
+    /// The DNS TXT record value (draft-atwood-mimi-provider-auth-00 §5.1)
+    /// for
     /// `<selector>._mimi.<domain>`.
     pub fn dns_record(&self) -> String {
         format!(
@@ -628,6 +760,13 @@ impl RequestSigner {
         )
     }
 }
+
+pub mod dns;
+
+pub use dns::{
+    DnsKeys, DnssecStatus, HickoryTxtResolver, KeyRecord, TxtAnswer, TxtLookupError, TxtResolver,
+    VALIDATION_CHECK_NAME, check_validation, parse_key_record, valid_selector,
+};
 
 #[cfg(test)]
 mod tests;

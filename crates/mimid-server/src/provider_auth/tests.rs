@@ -53,14 +53,23 @@ fn check_with(
 ) -> Result<AuthenticatedProvider, Refusal> {
     let from = domain(from);
     let uri: Uri = URI.parse().unwrap();
-    auth.authenticate(&InboundRequest {
+    block_on(auth.authenticate(&InboundRequest {
         from: &from,
         method: &Method::POST,
         uri: &uri,
         headers,
         body,
         now: NOW,
-    })
+    }))
+}
+
+/// Runs `future` to completion on a current-thread runtime.
+fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(future)
 }
 
 fn auth(config: &ProviderAuthConfig) -> ProviderAuth {
@@ -82,6 +91,7 @@ fn a_trusted_signature_authenticates_the_from_domain() {
             domain: domain("b.example"),
             mechanism: Mechanism::TrustList,
             key_id: "b1".to_owned(),
+            dnssec: None,
         }
     );
 }
@@ -318,17 +328,233 @@ mod draft_example {
         headers.insert(httpsig::SIGNATURE, HeaderValue::from_static(SIGNATURE));
         let from = domain("a.example");
         let uri: Uri = URI.parse().unwrap();
-        let provider = auth
-            .authenticate(&InboundRequest {
-                from: &from,
-                method: &Method::POST,
-                uri: &uri,
-                headers: &headers,
-                body: BODY,
-                now: CREATED,
-            })
-            .unwrap();
+        let provider = block_on(auth.authenticate(&InboundRequest {
+            from: &from,
+            method: &Method::POST,
+            uri: &uri,
+            headers: &headers,
+            body: BODY,
+            now: CREATED,
+        }))
+        .unwrap();
         assert_eq!(provider.key_id, "s1");
         assert_eq!(provider.domain, from);
+    }
+
+    /// A [`TxtResolver`] answering from a table, by absolute name.
+    struct FakeDns(BTreeMap<String, Result<TxtAnswer, TxtLookupError>>);
+
+    impl TxtResolver for FakeDns {
+        fn txt<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<TxtAnswer, TxtLookupError>> {
+            let answer = self
+                .0
+                .get(name)
+                .cloned()
+                .unwrap_or(Err(TxtLookupError::NoRecords));
+            Box::pin(std::future::ready(answer))
+        }
+    }
+
+    /// The draft's example record (§5.1), as one character-string.
+    const RECORD: &[u8] = b"v=MIMI1; k=ed25519; p=JrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs=";
+    const NAME: &str = "s1._mimi.a.example.";
+
+    fn answer(records: &[(&[u8], DnssecStatus)]) -> Result<TxtAnswer, TxtLookupError> {
+        Ok(TxtAnswer {
+            records: records.iter().map(|(d, s)| (d.to_vec(), *s)).collect(),
+        })
+    }
+
+    /// b.example's policy with no trust list, DNS answering `entry` for
+    /// [`NAME`], and `extra` TOML.
+    fn dns_auth(entry: Result<TxtAnswer, TxtLookupError>, extra: &str) -> ProviderAuth {
+        let config: ProviderAuthConfig = toml::from_str(extra).unwrap();
+        ProviderAuth::new(
+            &config,
+            &BaseUrl::try_from("https://b.example".to_owned()).unwrap(),
+            Arc::new(SystemClock),
+        )
+        .with_dns(Arc::new(FakeDns(BTreeMap::from([(
+            NAME.to_owned(),
+            entry,
+        )]))))
+    }
+
+    /// The draft's Appendix A request, checked at its `created` time.
+    fn check_example(auth: &ProviderAuth) -> Result<AuthenticatedProvider, Refusal> {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::FROM, HeaderValue::from_static("mimi@a.example"));
+        headers.insert(httpsig::CONTENT_DIGEST, HeaderValue::from_static(DIGEST));
+        headers.insert(httpsig::SIGNATURE_INPUT, HeaderValue::from_static(INPUT));
+        headers.insert(httpsig::SIGNATURE, HeaderValue::from_static(SIGNATURE));
+        let from = domain("a.example");
+        let uri: Uri = URI.parse().unwrap();
+        block_on(auth.authenticate(&InboundRequest {
+            from: &from,
+            method: &Method::POST,
+            uri: &uri,
+            headers: &headers,
+            body: BODY,
+            now: CREATED,
+        }))
+    }
+
+    #[test]
+    fn the_example_authenticates_with_its_dns_record() {
+        let auth = dns_auth(answer(&[(RECORD, DnssecStatus::Insecure)]), "");
+        let provider = check_example(&auth).unwrap();
+        assert_eq!(provider.mechanism, Mechanism::DnsKey);
+        assert_eq!(provider.key_id, "s1");
+        assert_eq!(provider.dnssec, Some(DnssecStatus::Insecure));
+        // The first MIMI key record counts; other TXT records are skipped.
+        let auth = dns_auth(
+            answer(&[
+                (b"v=DKIM1; p=xyz", DnssecStatus::Insecure),
+                (RECORD, DnssecStatus::Secure),
+            ]),
+            "",
+        );
+        assert_eq!(
+            check_example(&auth).unwrap().dnssec,
+            Some(DnssecStatus::Secure)
+        );
+    }
+
+    #[test]
+    fn dns_failures_refuse_with_the_reason() {
+        let revoked: &[u8] = b"v=MIMI1; k=ed25519; p=";
+        for (entry, refusal) in [
+            (Err(TxtLookupError::NoRecords), Refusal::NoKeyRecord),
+            (Err(TxtLookupError::Bogus), Refusal::DnssecBogus),
+            (
+                Err(TxtLookupError::Failed("timeout".to_owned())),
+                Refusal::DnsFailure,
+            ),
+            (
+                answer(&[(revoked, DnssecStatus::Insecure)]),
+                Refusal::KeyRevoked,
+            ),
+            (
+                answer(&[(b"v=DKIM1; p=x", DnssecStatus::Insecure)]),
+                Refusal::NoKeyRecord,
+            ),
+            (
+                answer(&[(b"v=MIMI1; k=rsa; p=AAAA", DnssecStatus::Insecure)]),
+                Refusal::BadKeyRecord("key type is not ed25519"),
+            ),
+        ] {
+            assert_eq!(check_example(&dns_auth(entry, "")), Err(refusal));
+        }
+        // A key that does not sign the request.
+        let other = format!(
+            "v=MIMI1; k=ed25519; p={}",
+            STANDARD.encode(SigningKey::from_seed(&[3; 32]).verifying_key().to_bytes())
+        );
+        assert_eq!(
+            check_example(&dns_auth(
+                answer(&[(other.as_bytes(), DnssecStatus::Insecure)]),
+                ""
+            )),
+            Err(Refusal::Signature(httpsig::Error::BadSignature))
+        );
+    }
+
+    #[test]
+    fn local_policy_can_require_dnssec_or_turn_dns_off() {
+        let strict = "require_dnssec = true\n";
+        assert_eq!(
+            check_example(&dns_auth(
+                answer(&[(RECORD, DnssecStatus::Insecure)]),
+                strict
+            )),
+            Err(Refusal::NotSecure)
+        );
+        assert!(
+            check_example(&dns_auth(answer(&[(RECORD, DnssecStatus::Secure)]), strict)).is_ok()
+        );
+        // dns_keys = false: only the trust list, which knows no a.example.
+        assert_eq!(
+            check_example(&dns_auth(
+                answer(&[(RECORD, DnssecStatus::Secure)]),
+                "dns_keys = false\n"
+            )),
+            Err(Refusal::NoTrustedKey)
+        );
+    }
+
+    #[test]
+    fn the_trust_list_is_tried_before_dns() {
+        let trusting = format!(
+            "[peers.\"a.example\"]\nkeys = {{ \"s1\" = \"{}\" }}\n",
+            key_text(&a_signer())
+        );
+        let auth = dns_auth(answer(&[(RECORD, DnssecStatus::Secure)]), &trusting);
+        assert_eq!(
+            check_example(&auth).unwrap().mechanism,
+            Mechanism::TrustList
+        );
+    }
+
+    #[test]
+    fn key_records_follow_the_draft_syntax() {
+        let key = match parse_key_record(RECORD) {
+            KeyRecord::Key(key) => key,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(key, a_signer().public_key());
+        // Tag order, spacing, tabs, unknown tags and a trailing ; are free.
+        for record in [
+            "v=MIMI1;p=JrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs=;k=ed25519",
+            "v=MIMI1 ;\tk = ed25519 ; t=y; p=JrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs= ;",
+        ] {
+            assert_eq!(
+                parse_key_record(record.as_bytes()),
+                KeyRecord::Key(key),
+                "{record}"
+            );
+        }
+        assert_eq!(
+            parse_key_record(b"v=MIMI1; k=ed25519; p="),
+            KeyRecord::Revoked
+        );
+        // v=MIMI1 must come first, exactly.
+        for record in [
+            "k=ed25519; v=MIMI1",
+            "v=MIMI10; k=ed25519",
+            "v=mimi1; k=ed25519",
+            "",
+        ] {
+            assert_eq!(
+                parse_key_record(record.as_bytes()),
+                KeyRecord::NotMimi,
+                "{record}"
+            );
+        }
+        for (record, why) in [
+            (
+                "v=MIMI1; p=JrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs=",
+                "no k tag",
+            ),
+            ("v=MIMI1; k=ed25519", "no p tag"),
+            ("v=MIMI1; k=ed25519; p=AAAA", "p is not an Ed25519 key"),
+            ("v=MIMI1; k=ed25519; garbage", "a tag without ="),
+            ("v=MIMI1; k=ed25519; 9x=1; p=", "a malformed tag"),
+        ] {
+            assert_eq!(
+                parse_key_record(record.as_bytes()),
+                KeyRecord::Unusable(why),
+                "{record}"
+            );
+        }
+    }
+
+    #[test]
+    fn selectors_are_single_labels() {
+        for ok in ["s1", "mimid1", "2026-11", &"a".repeat(63)] {
+            assert!(valid_selector(ok), "{ok}");
+        }
+        for bad in ["", "_s", "a.b", "-a", "a-", "a b", &"a".repeat(64)] {
+            assert!(!valid_selector(bad), "{bad}");
+        }
     }
 }

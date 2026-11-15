@@ -22,6 +22,9 @@ jmap-chat-mimi-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev =
 # RFC 9421 Ed25519 request signatures (bead mimid-75nk.2); already in
 # the lockfile through OpenMLS.
 ed25519-dalek = "=2.2.0"
+# DNS-published provider keys (bead mimid-75nk.3): a validating stub
+# resolver; aws-lc-rs as elsewhere (decision mimid-1wgh.26).
+hickory-resolver = { version = "=0.26.3", features = ["dnssec-aws-lc-rs"] }
 # Retry-After HTTP-date parsing (RFC 9110 §10.2.3); already in the lockfile.
 httpdate = "1.0.3"
 # Reads the salt and URIs of reported messages (protocol-07 §5.9).
