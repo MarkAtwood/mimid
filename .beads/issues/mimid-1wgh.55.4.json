@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.55.4",
+  "title": "Spec: follow #195 / PR #203 (opaque payload\u003cV\u003e for every GroupInfoOption) to a WG decision",
+  "description": "PR #203 implements option 1 of #195 so a receiver can skip a GroupInfoOption representation it doesn't implement; Haven's DIV-12 already length-prefixes Partial. Track the WG response and update the PR. No action without Mark's OK on posting.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T19:32:37.723949611Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T19:32:37.723949611Z",
+  "labels": [
+    "wg",
+    "spec",
+    "interop"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.55.4",
+      "depends_on_id": "mimid-1wgh.55",
+      "type": "parent-child",
+      "created_at": "2026-11-15T19:32:37.757590791Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
