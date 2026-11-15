@@ -1,1 +1,2 @@
 {"id":"01a1a7ad-e7ec-7e0a-abbe-5ce1d003459c","issue_id":"mimid-1wgh.4.76.9","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-11-04T17:49:14.60492206Z"}
+{"id":"01a1e152-6cb9-7f36-ae28-9335386a0618","issue_id":"mimid-1wgh.4.76.9","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Done in 734d6fa; comments/docs only; 1375 tests pass.","created_at":"2026-11-15T22:27:17.817997767Z"}
