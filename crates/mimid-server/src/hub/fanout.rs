@@ -2,8 +2,12 @@
 //! to each destination provider, in order.
 //!
 //! Each (room, domain) pair is a FIFO queue. Only its head row is ever
-//! attempted, and it is retried until accepted: a failed attempt is never
-//! skipped (decision mimid-1wgh.6.19). The delay before the next attempt is
+//! attempted. It is retried until accepted, unless the peer refuses it
+//! for good: a `4xx` other than `408` and `429` drops the row, so one
+//! message a peer will not take does not hold up every later Commit and
+//! Welcome of the room (decision mimid-1wgh.6.19, amended 2026-11-15 after
+//! Haven said it would refuse messages it cannot deliver). Network
+//! failures, `5xx`, `408` and `429` are retried. The delay before the next attempt is
 //! a capped exponential backoff, lengthened to honour a `Retry-After`
 //! header (§5.5 SHOULD). Rows for the hub's own domain go to a
 //! [`LocalDelivery`] hook instead of over HTTP (decision mimid-1wgh.6.17).
@@ -208,22 +212,26 @@ impl<L: LocalDelivery> Fanout<L> {
             attempts,
             ..
         } = row;
-        let result: Result<(), (Box<dyn Error + Send + Sync>, Option<RetryAfter>)> =
+        let result: Result<(), Failure> =
             if domain == self.own_domain {
                 self.local
                     .deliver(&room_id, &body)
                     .await
-                    .map_err(|error| (Box::new(error) as _, None))
+                    .map_err(|error| (Box::new(error) as _, None, false))
             } else {
                 self.peers
                     .notify(&domain, &room_id, body)
                     .await
                     .map_err(|error| {
-                        let retry_after = match &error {
-                            PeerError::Rejected { retry_after, .. } => *retry_after,
-                            _ => None,
+                        let (retry_after, refused) = match &error {
+                            PeerError::Rejected {
+                                status,
+                                retry_after,
+                                ..
+                            } => (*retry_after, refused_for_good(*status)),
+                            _ => (None, false),
                         };
-                        (Box::new(error) as _, retry_after)
+                        (Box::new(error) as _, retry_after, refused)
                     })
             };
         match result {
@@ -231,7 +239,37 @@ impl<L: LocalDelivery> Fanout<L> {
                 self.store.mark_delivered(id).await?;
                 tracing::debug!(%room_id, %domain, id, "fanout delivered");
             }
-            Err((error, retry_after)) => {
+            Err((error, _, true)) => {
+                self.store.drop_refused(id).await?;
+                let error: &(dyn Error + 'static) = &*error;
+                let rejection = RejectionFields::of(error);
+                crate::telemetry::metrics().fanout_dropped.add(
+                    1,
+                    &[
+                        opentelemetry::KeyValue::new("peer", domain.as_str().to_owned()),
+                        opentelemetry::KeyValue::new(
+                            "status",
+                            i64::from(rejection.status.unwrap_or_default()),
+                        ),
+                    ],
+                );
+                // The peer decided; this layer disposes of the row, and the
+                // room's later rows go on.
+                tracing::warn!(
+                    name: "fanout_delivery_refused",
+                    %room_id,
+                    %domain,
+                    id,
+                    attempts = attempts.saturating_add(1),
+                    error,
+                    status = rejection.status,
+                    response_len = rejection.response_len,
+                    response_code = rejection.response_code,
+                    error_description = rejection.error_description,
+                    "fanout delivery refused by the peer; dropped"
+                );
+            }
+            Err((error, retry_after, false)) => {
                 let now = self.clock.now_ms();
                 let attempts = attempts.saturating_add(1);
                 let delay = retry_delay_ms(
@@ -295,6 +333,16 @@ impl FanoutHandle {
 
 /// The delay before the next attempt after `attempts` failures: the capped
 /// exponential backoff, or the `Retry-After` delay if that is longer.
+/// A failed attempt: the error, the peer's `Retry-After`, and whether the
+/// peer refused the row for good.
+type Failure = (Box<dyn Error + Send + Sync>, Option<RetryAfter>, bool);
+
+/// Whether a peer's `status` refuses a delivery for good: any `4xx` but
+/// `408 Request Timeout` and `429 Too Many Requests`, which ask for a retry.
+fn refused_for_good(status: u16) -> bool {
+    (400..500).contains(&status) && status != 408 && status != 429
+}
+
 fn retry_delay_ms(attempts: u64, retry_after_ms: Option<u64>) -> u64 {
     let doublings = u32::try_from(attempts.saturating_sub(1)).unwrap_or(u32::MAX);
     let backoff = BASE_BACKOFF_MS

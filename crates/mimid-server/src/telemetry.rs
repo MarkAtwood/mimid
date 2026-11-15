@@ -280,6 +280,9 @@ pub struct Metrics {
     pub provider_auth: Counter<u64>,
     /// `mimid.hub.update.refusals`: refused update requests, by `reason`.
     pub update_refusals: Counter<u64>,
+    /// `mimid.fanout.dropped`: fanout rows a peer refused for good and
+    /// mimid dropped, by `peer` and `status`.
+    pub fanout_dropped: Counter<u64>,
 }
 
 /// The process's [`Metrics`], built on first use from the global meter.
@@ -315,6 +318,10 @@ pub fn metrics() -> &'static Metrics {
             update_refusals: meter
                 .u64_counter("mimid.hub.update.refusals")
                 .with_description("Update requests the hub refused, by reason")
+                .build(),
+            fanout_dropped: meter
+                .u64_counter("mimid.fanout.dropped")
+                .with_description("Fanout deliveries a peer refused for good, dropped")
                 .build(),
         }
     })

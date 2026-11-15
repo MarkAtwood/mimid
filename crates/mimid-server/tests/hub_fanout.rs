@@ -417,3 +417,55 @@ async fn logs_never_contain_request_bodies() {
         }
     }
 }
+
+/// A peer that refuses a delivery for good (a `4xx` other than 408 and
+/// 429) does not hold up the room: the row is dropped and logged, and the
+/// rows behind it go out in the same pass (decision mimid-1wgh.6.19,
+/// amended 2026-11-15). Oracle: the follower's record of requests.
+#[tokio::test]
+async fn a_definite_4xx_drops_the_row_and_the_queue_moves_on() {
+    for status in [400_u16, 403, 404, 409, 422] {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, _hub) = hub_with_room(&dir.path().join("db")).await;
+        let follower = Follower::start(&[Reply::status(status)]).await;
+        let sent = enqueue(&store, "b.example", 3, &commit_message()).await;
+        let clock = ManualClock::new(T);
+        let local = RecordingLocal::default();
+        let mut worker = fanout(&store, &[("b.example", &follower.base)], &local, &clock);
+
+        assert_eq!(worker.deliver_due().await.unwrap(), None, "{status}");
+        let received = follower.received();
+        assert_eq!(received.len(), 3, "{status}: refused once, then two");
+        for (got, want) in received.iter().zip(&sent) {
+            assert_request(got, "b.example", want);
+        }
+        assert!(heads(&store).await.is_empty(), "{status}");
+    }
+    let logs = visible_lines(&capture_logs().contents());
+    assert!(logs.contains("fanout delivery refused by the peer; dropped"));
+}
+
+/// `408`, `429` and `5xx` ask for a retry: the row stays at the head and
+/// nothing behind it is sent.
+#[tokio::test]
+async fn retryable_statuses_keep_the_row() {
+    for status in [408_u16, 429, 500, 502, 503] {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, _hub) = hub_with_room(&dir.path().join("db")).await;
+        let follower = Follower::start(&[Reply::status(status)]).await;
+        enqueue(&store, "b.example", 2, &commit_message()).await;
+        let clock = ManualClock::new(T);
+        let local = RecordingLocal::default();
+        let mut worker = fanout(&store, &[("b.example", &follower.base)], &local, &clock);
+
+        assert_eq!(
+            worker.deliver_due().await.unwrap(),
+            Some(T + 1_000),
+            "{status}"
+        );
+        assert_eq!(follower.received().len(), 1, "{status}");
+        let heads = heads(&store).await;
+        assert_eq!(heads.len(), 1, "{status}");
+        assert_eq!(heads[0].attempts, 1, "{status}");
+    }
+}
