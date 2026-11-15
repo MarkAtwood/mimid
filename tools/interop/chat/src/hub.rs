@@ -33,10 +33,15 @@ pub struct Hub {
     lane: Option<Url>,
     /// mimid's local control listener ([`mimid_server::local`]), for /host.
     local: Option<Url>,
+    /// The client's own mimid provider over JMAP (bead mimid-1wgh.12.41):
+    /// when set, every call below goes through it instead.
+    pub jmap: Option<crate::jmap::Jmap>,
     http: reqwest::Client,
 }
 
-/// The hub's external-sender identity, from mimid's local control listener.
+/// The hub's external-sender identity, from mimid's local control listener
+/// or the JMAP Session.
+#[derive(Clone)]
 pub struct HubSender {
     pub signature_key: [u8; 32],
     pub identity: String,
@@ -75,6 +80,7 @@ impl Hub {
             local,
             peer,
             lane,
+            jmap: None,
             http,
         })
     }
@@ -83,6 +89,9 @@ impl Hub {
 
     /// §5.2 keyMaterial; returns the KeyMaterialResponse body.
     pub async fn key_material(&self, target: &str, body: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+        if let Some(jmap) = &self.jmap {
+            return jmap.key_material(&body).await;
+        }
         self.peer
             .key_material(&self.domain, target, body)
             .await
@@ -91,6 +100,9 @@ impl Hub {
 
     /// §5.3 update.
     pub async fn update(&self, room: &str, body: Vec<u8>) -> anyhow::Result<UpdateRoomResponse> {
+        if let Some(jmap) = &self.jmap {
+            return jmap.update(room, body).await;
+        }
         let body = self
             .peer
             .update(&self.domain, room, body)
@@ -114,6 +126,9 @@ impl Hub {
 
     /// §5.4 submitMessage; returns the hub's accepted timestamp.
     pub async fn submit(&self, room: &str, body: Vec<u8>) -> anyhow::Result<u64> {
+        if let Some(jmap) = &self.jmap {
+            return jmap.submit(room, &body).await;
+        }
         let body = self
             .peer
             .submit_message(&self.domain, room, body)
@@ -218,6 +233,9 @@ impl Hub {
         user: &str,
         key_package: Vec<u8>,
     ) -> anyhow::Result<()> {
+        if let Some(jmap) = &self.jmap {
+            return jmap.publish_key_package(&key_package).await;
+        }
         self.lane_post(
             "/mimi/v1/keyMaterial/ingest",
             &[("user", user)],
@@ -302,6 +320,9 @@ impl Hub {
 
     /// `GET /local/v1/hub-sender`.
     pub async fn hub_sender(&self) -> anyhow::Result<HubSender> {
+        if let Some(jmap) = &self.jmap {
+            return Ok(jmap.hub_sender.clone());
+        }
         let response = self
             .http
             .get(self.local_url("/local/v1/hub-sender")?)
@@ -338,6 +359,13 @@ impl Hub {
         group_info: &[u8],
         ratchet_tree: &[u8],
     ) -> anyhow::Result<()> {
+        if let Some(jmap) = &self.jmap {
+            let created = jmap.create_room(group_info, ratchet_tree).await?;
+            if created != room {
+                bail!("Room/create hosted {created}, not {room}");
+            }
+            return Ok(());
+        }
         let body = serde_json::json!({
             "roomId": room,
             "creator": creator,

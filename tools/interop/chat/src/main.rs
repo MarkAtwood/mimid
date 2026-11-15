@@ -46,6 +46,7 @@
 
 mod chat;
 mod hub;
+mod jmap;
 mod state;
 
 use std::collections::VecDeque;
@@ -112,6 +113,15 @@ struct Args {
     /// http://127.0.0.1:9099 on the mimid host).
     #[arg(long, value_name = "URL")]
     local_url: Option<String>,
+    /// Talk to your own mimid server over JMAP at URL (its base, e.g.
+    /// https://mimid.reviewcommit.com) instead of the wire and JSON lanes
+    /// (bead mimid-1wgh.12.41). Needs --jmap-token-file; implies --no-lane,
+    /// but KeyPackages are still published, with KeyPackage/set.
+    #[arg(long, value_name = "URL", requires = "jmap_token_file")]
+    jmap_url: Option<String>,
+    /// A file holding the JMAP bearer token (from `mimid admin token`).
+    #[arg(long, value_name = "FILE")]
+    jmap_token_file: Option<PathBuf>,
 }
 
 fn parse_user(user: &str) -> Result<String, String> {
@@ -162,16 +172,27 @@ async fn run() -> anyhow::Result<i32> {
         .lane_url
         .clone()
         .unwrap_or_else(|| format!("https://{}:8443", args.hub));
-    let hub = Hub::new(
+    let jmap = match (&args.jmap_url, &args.jmap_token_file) {
+        (Some(url), Some(file)) => {
+            let token = std::fs::read_to_string(file)
+                .with_context(|| format!("reading {}", file.display()))?;
+            Some(jmap::Jmap::open(url, token.trim()).await?)
+        }
+        _ => None,
+    };
+    let no_lane = args.no_lane || jmap.is_some();
+    let mut hub = Hub::new(
         &args.own_domain,
         &args.hub,
         &base,
-        (!args.no_lane).then_some(lane.as_str()),
+        (!no_lane).then_some(lane.as_str()),
         args.local_url.as_deref(),
     )?;
+    let jmap_mode = jmap.is_some();
+    hub.jmap = jmap;
     let dir = StateDir::open(&args.state_dir)?;
     let mut client = Client::open(dir, me, hub)?;
-    client.auto_publish = !(args.no_publish || args.no_lane);
+    client.auto_publish = !(args.no_publish || (args.no_lane && !jmap_mode));
     client.top_up_key_packages().await;
     client.greet();
 

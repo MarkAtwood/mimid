@@ -71,6 +71,11 @@ pub struct State {
     /// ours. An estimate: the hub does not say when one is claimed.
     #[serde(default)]
     pub key_packages_outstanding: u32,
+    /// MLS group ID (hex) to room URI, for rooms whose group ID is not the
+    /// room URI's bytes: those created with Room/create, whose group ID is
+    /// 16 random octets (bead mimid-1wgh.12.41).
+    #[serde(default)]
+    pub group_rooms: BTreeMap<String, String>,
 }
 
 /// An open state directory.
@@ -126,6 +131,7 @@ impl StateDir {
             held: Vec::new(),
             consumed_welcomes: Vec::new(),
             key_packages_outstanding: 0,
+            group_rooms: BTreeMap::new(),
         };
         self.save(&state)?;
         Ok((identity, state, true))

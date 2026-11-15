@@ -15,6 +15,7 @@ Layout
                  module comment says how messages travel
   src/hub.rs     the hub: protocol-07 wire lane through mimid's PeerClient,
                  and mimi-hubd's JSON lane (/mimi/v1/*)
+  src/jmap.rs    JMAP to the user's own mimid server (--jmap-url)
   src/state.rs   the state directory
   chat.sh        runs mimid-chat interactively on the mimid host over ssh -t
   acceptance.sh  the two-user acceptance test on the mimid host
@@ -28,6 +29,23 @@ Build and copy to the mimid host
   /etc/hosts) adds mimid's mTLS client certificate, which names
   mimid.reviewcommit.com; /home/admin/interop/trust.pem trusts the hub. So
   mimid-chat runs there, not on this dev box.
+
+JMAP mode, against your own mimid server (bead mimid-1wgh.12.41)
+  With --jmap-url and --jmap-token-file, mimid-chat talks to the user's own
+  mimid server over JMAP (draft-atwood-jmap-chat-mimi-00) instead of the wire
+  and JSON lanes: KeyPackage/set to publish, Room/create for /host,
+  KeyMaterial/fetch and Room/update for /invite and other changes, Room/send
+  for messages. /host then makes a draft-conformant room ID (roomIdPrefix
+  and base32 of 16 random octets) and a random 16-octet group ID, and puts
+  the name in the room metadata. The account and token come from the
+  server's admin CLI:
+    mimid admin mimid.toml add-user mimi://a.example/u/alice
+    mimid admin mimid.toml token mimi://a.example/u/alice   # {"token": ...}
+    mimid-chat --user alice --own-domain a.example --hub a.example \
+      --hub-url http://127.0.0.1:18080 --jmap-url http://127.0.0.1:18080 \
+      --jmap-token-file alice.token --state-dir state-alice
+  Not yet: receiving over JMAP (Welcomes, Commits and messages as Messages),
+  so invitees cannot join through this mode yet.
 
 Running it (one terminal per user)
   From this dev box:

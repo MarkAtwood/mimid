@@ -42,13 +42,13 @@ use mimi_mls::wire::{
     SignaturePublicKey, Welcome,
 };
 use mimi_mls::{Identity, KeyPackageKind};
-use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST};
+use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_protocol::{
     AbuseReport, AbuseType, AbusiveMessage, ClientKeyMaterial, ConsentEntry, ConsentOperation,
     FanoutEvent, FanoutMessage, Frank, FrankingAgentData, GroupInfoOption, HandshakeBundle,
     IdentifierUri, KeyMaterialRequestTbs, KeyMaterialResponse, KeyMaterialUserCode,
-    ParticipantListData, ParticipantListUpdate, Protocol, SubmitMessageRequest, UpdateRequest,
-    UserRolePair, franking_tag,
+    ParticipantListData, ParticipantListUpdate, Protocol, RoomMetaData, SubmitMessageRequest,
+    UpdateRequest, UserRolePair, Utf8String, franking_tag,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{
@@ -153,7 +153,16 @@ impl Client {
             if room.status == RoomStatus::Left {
                 continue;
             }
-            match Member::load(&client.identity, uri.as_bytes()) {
+            // The group ID: from the group map for a Room/create room, else
+            // the room URI's bytes.
+            let group_id = client
+                .state
+                .group_rooms
+                .iter()
+                .find(|(_, r)| **r == uri)
+                .and_then(|(hex_id, _)| hex::decode(hex_id).ok())
+                .unwrap_or_else(|| uri.as_bytes().to_vec());
+            match Member::load(&client.identity, &group_id) {
                 Ok(mut member) => {
                     if let Some((epoch, reason)) = room.out_of_sync {
                         member.restore_out_of_sync(OutOfSync::new(epoch, reason));
@@ -410,7 +419,22 @@ impl Client {
             valid_name(name),
             "usage: /host <name> [--open] (a-z 0-9 . _ -, up to 64)"
         );
-        let room = format!("mimi://{}/r/{name}", self.hub.domain);
+        // Over JMAP, Room/create wants roomIdPrefix and the base32 of 16
+        // random octets, a 16-octet random group ID, and the name in the
+        // room metadata (draft-atwood-jmap-chat-mimi-00 §Room/create rules
+        // 5, 6); otherwise the room is named <name> and the group ID is the
+        // room URI.
+        let (room, group_id) = match &self.hub.jmap {
+            Some(jmap) => (
+                format!("{}{}", jmap.room_id_prefix, base32(&random::<16>()?)),
+                random::<16>()?.to_vec(),
+            ),
+            None => {
+                let room = format!("mimi://{}/r/{name}", self.hub.domain);
+                let group_id = room.as_bytes().to_vec();
+                (room, group_id)
+            }
+        };
         ensure!(
             !self.state.rooms.contains_key(&room),
             "you already have a room {room}"
@@ -434,7 +458,7 @@ impl Client {
             identity: sender.identity.into_bytes(),
         }];
         // Ascending component ids (app_data_dictionary order).
-        let components: Vec<(u16, Vec<u8>)> = if open {
+        let mut components: Vec<(u16, Vec<u8>)> = if open {
             // An open room (decision mimid-1wgh.52, bead mimid-1wgh.53): no
             // franking and no room policy, so only the participant list.
             // A hub that requires either refuses to host it.
@@ -459,7 +483,19 @@ impl Client {
                 (BASE_ROOM_POLICY, encode(&default_base_policy())?),
             ]
         };
-        let mut member = Member::create(&self.identity, room.as_bytes(), &senders, &components)
+        if self.hub.jmap.is_some() {
+            // room_metadata (protocol-07 §7.6), listed in app_components.
+            let metadata = room_metadata(&room, name)?;
+            let at = components
+                .iter()
+                .position(|(id, _)| *id > ROOM_METADATA)
+                .unwrap_or(components.len());
+            components.insert(at, (ROOM_METADATA, metadata));
+            if let Some((_, list)) = components.iter_mut().find(|(id, _)| *id == APP_COMPONENTS) {
+                *list = add_component_id(list, ROOM_METADATA)?;
+            }
+        }
+        let mut member = Member::create(&self.identity, &group_id, &senders, &components)
             .map_err(|e| anyhow!("creating the MLS group: {}", causes(&e)))?;
         let bundle = member
             .commit(&self.identity, &[], &[], &[], apply_commit_op)
@@ -474,6 +510,11 @@ impl Client {
             .create_room(&room, &self.me, &bundle.group_info, &tree)
             .await
             .context("having the hub host the room")?;
+        if group_id != room.as_bytes() {
+            self.state
+                .group_rooms
+                .insert(hex::encode(&group_id), room.clone());
+        }
         self.members.insert(room.clone(), member);
         self.state.rooms.insert(
             room.clone(),
@@ -941,10 +982,23 @@ impl Client {
             .len()
             .saturating_sub(MAX_CONSUMED_WELCOMES);
         self.state.consumed_welcomes.drain(..excess);
-        let room = String::from_utf8(member.group_id().to_vec())
-            .ok()
-            .filter(|r| IdentifierUri::new(r).is_ok())
-            .ok_or_else(|| anyhow!("joined a group whose ID is not a room URI"))?;
+        // The room is the room metadata's room_uri when the group has one
+        // (a Room/create room, whose group ID is random), else the group ID.
+        let room = member
+            .component(ROOM_METADATA)
+            .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
+            .map(|metadata| metadata.room_uri.as_str().to_owned())
+            .or_else(|| {
+                String::from_utf8(member.group_id().to_vec())
+                    .ok()
+                    .filter(|r| IdentifierUri::new(r).is_ok())
+            })
+            .ok_or_else(|| anyhow!("joined a group with no room URI"))?;
+        if member.group_id() != room.as_bytes() {
+            self.state
+                .group_rooms
+                .insert(hex::encode(member.group_id()), room.clone());
+        }
         let who = participants(&member)?;
         self.members.insert(room.clone(), member);
         self.state.rooms.insert(
@@ -1406,10 +1460,13 @@ impl Client {
     }
 
     async fn incoming_mls(&mut self, message: &MLSMessage) {
-        let Some(room) = message
-            .group_id()
-            .and_then(|g| String::from_utf8(g.to_vec()).ok())
-        else {
+        let Some(room) = message.group_id().and_then(|g| {
+            self.state
+                .group_rooms
+                .get(&hex::encode(g))
+                .cloned()
+                .or_else(|| String::from_utf8(g.to_vec()).ok())
+        }) else {
             self.error("an MLS message that is not for a group".to_owned());
             return;
         };
@@ -1987,6 +2044,65 @@ fn key_material_request(requester: &str, target: &str, room: &str) -> anyhow::Re
     .sign(&seed)
     .map_err(|e| anyhow!("signing the keyMaterial request: {e}"))?;
     encode(&request)
+}
+
+/// Unpadded lowercase RFC 4648 §6 base32.
+fn base32(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+    let (mut out, mut buffer, mut bits) = (String::new(), 0u32, 0);
+    for &byte in bytes {
+        buffer = (buffer << 8) | u32::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(char::from(ALPHABET[((buffer >> bits) & 31) as usize]));
+        }
+    }
+    if bits > 0 {
+        out.push(char::from(ALPHABET[((buffer << (5 - bits)) & 31) as usize]));
+    }
+    out
+}
+
+/// `RoomMetaData` (protocol-07 §7.6) for `room` named `name`.
+fn room_metadata(room: &str, name: &str) -> anyhow::Result<Vec<u8>> {
+    let uri = IdentifierUri::new(room).map_err(|e| anyhow!("room URI: {e:?}"))?;
+    let text = |t: &str| Utf8String::new(t.to_owned()).map_err(|e| anyhow!("{e:?}"));
+    encode(&RoomMetaData {
+        room_uri: uri.clone(),
+        room_name: text(name)?,
+        room_descriptions: vec![],
+        room_avatar: uri,
+        room_subject: text("")?,
+        room_mood: text("")?,
+    })
+}
+
+/// An app_components ComponentsList (mls-extensions-10 §5) with
+/// `component` added in ascending order.
+fn add_component_id(list: &[u8], component: u16) -> anyhow::Result<Vec<u8>> {
+    let (&len, ids) = list
+        .split_first()
+        .ok_or_else(|| anyhow!("empty app_components"))?;
+    ensure!(
+        usize::from(len) == ids.len() && len < 0x3e,
+        "unexpected app_components list"
+    );
+    let mut ids: Vec<u16> = ids
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_be_bytes(*pair))
+        .collect();
+    if !ids.contains(&component) {
+        ids.push(component);
+        ids.sort_unstable();
+    }
+    let mut out = vec![u8::try_from(ids.len() * 2)?];
+    for id in ids {
+        out.extend(id.to_be_bytes());
+    }
+    Ok(out)
 }
 
 fn random<const N: usize>() -> anyhow::Result<[u8; N]> {
