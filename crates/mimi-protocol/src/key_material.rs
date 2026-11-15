@@ -532,6 +532,32 @@ impl KeyMaterialResponse {
         client_extensions: &[AppDataDictionary],
     ) -> Result<Vec<u8>, tls_codec::Error> {
         check_clients(self.user_status, &self.clients).map_err(tls_codec::Error::EncodingError)?;
+        self.encode_unchecked(profile, client_extensions)
+    }
+
+    /// Re-encodes a response from one profile to another, checking only
+    /// its structure, so a response that departs from §5.2 in a way the
+    /// strict decoder refuses passes through unchanged for the caller to
+    /// judge. Returns the bytes under `to`, with no extensions, and the
+    /// extensions each client carried under `from`, in order.
+    ///
+    /// # Errors
+    ///
+    /// A tls_codec error if `bytes` does not decode under `from`.
+    pub fn transcode(
+        from: WireProfile,
+        to: WireProfile,
+        bytes: &[u8],
+    ) -> Result<(Vec<u8>, Vec<AppDataDictionary>), tls_codec::Error> {
+        let (response, extensions) = Self::read_unchecked(bytes, from)?;
+        Ok((response.encode_unchecked(to, &[])?, extensions))
+    }
+
+    fn encode_unchecked(
+        &self,
+        profile: WireProfile,
+        client_extensions: &[AppDataDictionary],
+    ) -> Result<Vec<u8>, tls_codec::Error> {
         if !client_extensions.is_empty() && client_extensions.len() != self.clients.len() {
             return Err(tls_codec::Error::EncodingError(
                 "client extensions must be one per client".to_owned(),

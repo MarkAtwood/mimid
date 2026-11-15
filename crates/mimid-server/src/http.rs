@@ -75,8 +75,8 @@ use axum::routing::post;
 use tower_http::trace::TraceLayer;
 use tracing::Span;
 
-use mimi_mls::tls_codec::Deserialize;
-use mimi_protocol::KeyMaterialRequest;
+use mimi_mls::tls_codec::{Deserialize, Serialize};
+use mimi_protocol::{KeyMaterialRequest, KeyMaterialResponse, WireProfile};
 
 use crate::config::Domain;
 use crate::directory::{self, Directory};
@@ -272,8 +272,39 @@ async fn key_material(
     let Some(from) = source_domain(&headers) else {
         return bad_from();
     };
+    // A peer on the mimi-protocol #190 profile: translate the request to
+    // protocol-07 here and the answer back below (bead mimid-1wgh.55.5).
+    let profile = hub.wire_profile(&from);
+    let body = if profile == WireProfile::Draft07 {
+        body
+    } else {
+        let plain =
+            KeyMaterialRequest::decode(profile, &body[..]).and_then(|(request, extensions)| {
+                log_extensions(&extensions);
+                request.tls_serialize_detached()
+            });
+        match plain {
+            Ok(plain) => Bytes::from(plain),
+            Err(error) => {
+                refused(&error, StatusCode::BAD_REQUEST);
+                return problem(StatusCode::BAD_REQUEST, "undecodable-request");
+            }
+        }
+    };
+    let translate = |answer: Vec<u8>| -> Result<Vec<u8>, HubError> {
+        if profile == WireProfile::Draft07 {
+            return Ok(answer);
+        }
+        KeyMaterialResponse::transcode(WireProfile::Draft07, profile, &answer)
+            .map(|(bytes, _)| bytes)
+            .map_err(HubError::Encode)
+    };
     if identity_domain(target_user.as_bytes()).as_ref() != Some(follower.domain()) {
-        return respond(hub.key_material(&target_user, &from, &body).await);
+        return respond(
+            hub.key_material(&target_user, &from, &body)
+                .await
+                .and_then(translate),
+        );
     }
     // Decision mimid-1wgh.7.27.
     let request = match KeyMaterialRequest::tls_deserialize_exact(&body[..]) {
@@ -285,13 +316,20 @@ async fn key_material(
     };
     let room_domain = identity_domain(request.tbs().room_id.as_str().as_bytes());
     if room_domain.as_ref() == Some(hub.domain()) {
-        respond(hub.key_material(&target_user, &from, &body).await)
+        respond(
+            hub.key_material(&target_user, &from, &body)
+                .await
+                .and_then(translate),
+        )
     } else {
         respond_follower(
             follower
                 .key_material(&target_user, &from, &body)
                 .await
-                .map(protocol_body),
+                .map(|answer| match translate(answer) {
+                    Ok(answer) => protocol_body(answer),
+                    Err(error) => respond(Err(error)),
+                }),
         )
     }
 }
@@ -454,6 +492,15 @@ fn bad_from() -> Response {
 }
 
 /// A protocol result: `200` with an `application/mimi-protocol` body.
+/// Logs the component IDs of extensions a peer sent with a request
+/// (bead mimid-1wgh.55.5); mimid acts on none of them yet.
+fn log_extensions(extensions: &mimi_mls::wire::AppDataDictionary) {
+    if !extensions.is_empty() {
+        let components: Vec<u16> = extensions.entries().map(|(id, _)| id).collect();
+        tracing::debug!(?components, "request carries extensions; ignored");
+    }
+}
+
 fn protocol_body(body: Vec<u8>) -> Response {
     (
         StatusCode::OK,

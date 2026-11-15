@@ -633,7 +633,7 @@ impl Hub {
         use mimi_mls::tls_codec::{Deserialize, Serialize};
         use mimi_protocol::{UpdateRequest, UpdateRoomResponse, WireProfile};
 
-        let profile = self.wire_profiles.get(from).copied().unwrap_or_default();
+        let profile = self.wire_profile(from);
         if profile == WireProfile::Draft07 {
             return update::update(self, room_id, from, request).await;
         }
@@ -650,6 +650,11 @@ impl Hub {
                 response.encode(profile, &mimi_mls::wire::AppDataDictionary::default())
             })
             .map_err(HubError::Encode)
+    }
+
+    /// The encoding `domain` speaks for the messages #190 extends.
+    pub fn wire_profile(&self, domain: &Domain) -> mimi_protocol::WireProfile {
+        self.wire_profiles.get(domain).copied().unwrap_or_default()
     }
 
     /// Speaks `profiles`' encodings to those peers for the messages #190

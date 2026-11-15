@@ -46,8 +46,9 @@ use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::wire::AppDataDictionary;
 use mimi_protocol::{
     Directory, GroupInfoCode, GroupInfoResponse, IdentifierQueryCode, IdentifierResponse,
-    KeyMaterialResponse, KeyMaterialUserCode, SubmitMessageResponse, SubmitResponseCode,
-    UpdateRequest, UpdateResponseCode, UpdateRoomResponse, UriTemplate, WireProfile,
+    KeyMaterialRequest, KeyMaterialResponse, KeyMaterialUserCode, SubmitMessageResponse,
+    SubmitResponseCode, UpdateRequest, UpdateResponseCode, UpdateRoomResponse, UriTemplate,
+    WireProfile,
 };
 use reqwest::header::{CONTENT_TYPE, DATE, FROM, HOST, HeaderMap, HeaderValue, RETRY_AFTER};
 use reqwest::{StatusCode, redirect};
@@ -539,8 +540,28 @@ impl PeerClient {
         target_user: &str,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, PeerError> {
-        self.post_read(domain, Endpoint::KeyMaterial, target_user, body)
-            .await
+        let profile = self.profile(domain);
+        if profile == WireProfile::Draft07 {
+            return self
+                .post_read(domain, Endpoint::KeyMaterial, target_user, body)
+                .await;
+        }
+        // The callers speak protocol-07: translate both ways, keeping the
+        // client's signed request as it is. The answer is only re-encoded,
+        // not checked, so the caller still sees any departure from §5.2.
+        let body = KeyMaterialRequest::tls_deserialize_exact(&body[..])
+            .and_then(|request| request.encode(profile, &AppDataDictionary::default()))
+            .map_err(PeerError::Wire)?;
+        let answer = self
+            .post_read(domain, Endpoint::KeyMaterial, target_user, body)
+            .await?;
+        let (answer, extensions) =
+            KeyMaterialResponse::transcode(profile, WireProfile::Draft07, &answer)
+                .map_err(PeerError::Wire)?;
+        for client in &extensions {
+            log_extensions("keyMaterial", client);
+        }
+        Ok(answer)
     }
 
     /// protocol-07 §5.3 `POST /update/{roomId}`: sends `body`, an
