@@ -11,7 +11,7 @@
       "id": "jt-consent-01",
       "kind": "ConsentEntry",
       "outcome": {
-        "haven": "202, stored (sent by Haven to mimid 2026-11-14)",
+        "haven": "202, stored",
         "mimid": "202, stored",
         "operation": "POST /requestConsent/b.example from a.example, alice has a client",
         "spec": "202, the request is held"
@@ -71,10 +71,10 @@
       "id": "jt-iq-01",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "success",
+        "haven": "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
         "mimid": "success, answered as mimi://b.example/u/alice",
         "operation": "POST /identifierQuery/b.example, alice has a client",
-        "spec": "the drafts say only \"matches exactly\"; proposed: success, by RFC 3986 §6.2.2"
+        "spec": "protocol-07 §5.8: \"the entire handle URI matches exactly (for example: im:alice.smith@a.example)\". Whether a handle is the mimi:// user URI is not said; if it is, proposed: compare by RFC 3986 §6.2.2"
       }
     },
     {
@@ -84,10 +84,10 @@
       "id": "jt-iq-02",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "success: compares the RFC 3986 canonical form",
+        "haven": "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
         "mimid": "success, answered as mimi://b.example/u/alice",
         "operation": "POST /identifierQuery/b.example, alice has a client",
-        "spec": "the drafts say only \"matches exactly\"; proposed: success, by RFC 3986 §6.2.2"
+        "spec": "protocol-07 §5.8: \"the entire handle URI matches exactly (for example: im:alice.smith@a.example)\". Whether a handle is the mimi:// user URI is not said; if it is, proposed: compare by RFC 3986 §6.2.2"
       }
     },
     {
@@ -97,10 +97,10 @@
       "id": "jt-iq-03",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "success: compares the RFC 3986 canonical form",
+        "haven": "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
         "mimid": "success, answered as mimi://b.example/u/alice",
         "operation": "POST /identifierQuery/b.example, alice has a client",
-        "spec": "the drafts say only \"matches exactly\"; proposed: success, by RFC 3986 §6.2.2"
+        "spec": "protocol-07 §5.8: \"the entire handle URI matches exactly (for example: im:alice.smith@a.example)\". Whether a handle is the mimi:// user URI is not said; if it is, proposed: compare by RFC 3986 §6.2.2"
       }
     },
     {

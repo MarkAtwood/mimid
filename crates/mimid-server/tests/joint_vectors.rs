@@ -204,7 +204,7 @@ fn vectors() -> Value {
         "POST /requestConsent/b.example from a.example, alice has a client",
         "202, the request is held",
         "202, stored",
-        "202, stored (sent by Haven to mimid 2026-11-14)",
+        "202, stored",
     ));
     v.push(with_outcome(
         vector(
@@ -281,19 +281,19 @@ fn vectors() -> Value {
             "jt-iq-01",
             ALICE,
             "handle query, the URI exactly",
-            "success",
+            "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
         ),
         (
             "jt-iq-02",
             "MIMI://B.Example/u/alice",
             "handle query, scheme and host in other case",
-            "success: compares the RFC 3986 canonical form",
+            "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
         ),
         (
             "jt-iq-03",
             "mimi://b.example/u/%61lice",
             "handle query, an unreserved character percent-encoded",
-            "success: compares the RFC 3986 canonical form",
+            "notFound: Haven matches a handle search against bare enrolled names (erin), not a URI; checked on the live hub 2026-11-15",
         ),
     ] {
         v.push(with_outcome(
@@ -305,7 +305,7 @@ fn vectors() -> Value {
                 "ok",
             ),
             "POST /identifierQuery/b.example, alice has a client",
-            "the drafts say only \"matches exactly\"; proposed: success, by RFC 3986 §6.2.2",
+            "protocol-07 §5.8: \"the entire handle URI matches exactly (for example: im:alice.smith@a.example)\". Whether a handle is the mimi:// user URI is not said; if it is, proposed: compare by RFC 3986 §6.2.2",
             "success, answered as mimi://b.example/u/alice",
             haven,
         ));
