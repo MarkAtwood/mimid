@@ -1,1 +1,2 @@
 {"id":"01a1de19-a366-78a8-b101-4400d8e91582","issue_id":"mimid-1wgh.12.42","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-15T07:26:24.614568379Z"}
+{"id":"01a1de21-7112-79bd-a010-29dd157aee36","issue_id":"mimid-1wgh.12.42","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Fixed: stable invite numbers, plain refusal of consent in JMAP mode; tried live on the host (deployed chat-dist/mimid-chat, previous at mimid-chat.prev-jmap1)","created_at":"2026-11-15T07:34:56.018641012Z"}
