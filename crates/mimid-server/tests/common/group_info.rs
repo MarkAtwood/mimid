@@ -86,7 +86,7 @@ impl Requester {
     /// this requester's key.
     pub fn request(&self, joining_code: Option<&[u8]>) -> Vec<u8> {
         self.tbs(joining_code)
-            .sign(self.signing.signature_key())
+            .sign(&self.signing)
             .unwrap()
             .tls_serialize_detached()
             .unwrap()

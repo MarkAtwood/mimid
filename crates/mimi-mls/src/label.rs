@@ -5,9 +5,12 @@
 //! the RFC writes, without the `"MLS 1.0 "` prefix: these functions add the
 //! prefix.
 //!
-//! Keys are raw bytes in the ciphersuite's encoding: a 32-byte Ed25519 seed
-//! or public key for signatures, a 32-byte X25519 private or public key for
-//! HPKE.
+//! Public keys are raw bytes in the ciphersuite's encoding: a 32-byte
+//! Ed25519 public key for [`verify_with_label`], a 32-byte X25519 public key
+//! for [`encrypt_with_label`]. Private keys stay inside this crate (bead
+//! mimid-1wgh.4.28): signing goes through a [`SignatureKeyPair`] and
+//! decryption through an [`HpkePrivateKey`], so callers never hold the key
+//! bytes after loading them.
 //!
 //! [`SignatureKeyPair::generate`] and [`random_array`] give the hub its
 //! Ed25519 key and its randomness from OpenMLS's crypto provider, so that
@@ -18,22 +21,23 @@
 //!
 //! - Only ciphersuite 1 (`MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`) is
 //!   supported (decision mimid-1wgh.23).
-//! - Private keys arrive as plain byte slices. The caller owns them and is
-//!   responsible for zeroizing them; this module neither copies them into
-//!   long-lived storage nor logs them.
-//! - A [`SignatureKeyPair`] does not zeroize its private key when dropped.
-//!   Its `Debug` output redacts it.
+//! - Loading a stored key ([`SignatureKeyPair::from_raw`],
+//!   [`HpkePrivateKey::from_raw`]) still starts from bytes the caller read,
+//!   and the hub reads its key back out to store it
+//!   ([`SignatureKeyPair::expose_signature_key`]). The key types zeroize
+//!   their copy when dropped and redact it in `Debug`; the caller's copy is
+//!   the caller's.
 
 use openmls::prelude::{
-    Ciphersuite, HpkeCiphertext as OpenMlsHpkeCiphertext, OpenMlsCrypto, OpenMlsRand, SignContent,
+    HpkeCiphertext as OpenMlsHpkeCiphertext, OpenMlsCrypto, OpenMlsRand, SignContent,
 };
 use openmls_rust_crypto::RustCrypto;
 use tls_codec::{Serialize, TlsSerialize, TlsSize, VLBytes};
+use zeroize::Zeroizing;
 
 use crate::ErrorSource;
 
-/// RFC 9420 suite 1, the only suite mimid supports (decision mimid-1wgh.23).
-const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+use crate::identity::CIPHERSUITE;
 
 /// RFC 9420 §5.1.2 and §5.1.3: `label = "MLS 1.0 " + Label`.
 const LABEL_PREFIX: &str = "MLS 1.0 ";
@@ -66,17 +70,27 @@ pub enum Error {
     /// The random number generator failed.
     #[error("cannot generate random bytes")]
     Random(#[source] ErrorSource),
+    /// A private key and public key given to
+    /// [`SignatureKeyPair::from_raw`] are not a pair.
+    #[error("the private and public keys are not a pair")]
+    KeyMismatch,
 }
 
-/// An Ed25519 signature key pair for [`sign_with_label`] and
-/// [`verify_with_label`], such as the hub's key (decision mimid-1wgh.6.18).
+/// An Ed25519 signature key pair, such as the hub's key (decision
+/// mimid-1wgh.6.18): the only way to make an RFC 9420 §5.1.2
+/// `SignWithLabel` signature ([`SignatureKeyPair::sign_with_label`]).
 ///
-/// Its `Debug` output never shows the private key.
+/// The private key is zeroized when the pair is dropped, and its `Debug`
+/// output never shows it.
 #[derive(Clone)]
 pub struct SignatureKeyPair {
-    signature_key: Vec<u8>,
+    signature_key: Zeroizing<Vec<u8>>,
     verification_key: Vec<u8>,
 }
+
+/// The label of the signature [`SignatureKeyPair::from_raw`] makes to check
+/// a pair. It is never sent.
+const PAIR_CHECK_LABEL: &str = "mimi-mls key pair check";
 
 impl SignatureKeyPair {
     /// Generates a fresh Ed25519 key pair with OpenMLS's crypto provider.
@@ -90,21 +104,56 @@ impl SignatureKeyPair {
             .signature_key_gen(CIPHERSUITE.signature_algorithm())
             .map_err(|e| Error::KeyGeneration(e.into()))?;
         Ok(Self {
-            signature_key,
+            signature_key: Zeroizing::new(signature_key),
             verification_key,
         })
     }
 
-    /// The 32-byte Ed25519 private key (RFC 8032 seed): the `SignatureKey`
-    /// argument of [`sign_with_label`].
-    pub fn signature_key(&self) -> &[u8] {
-        &self.signature_key
+    /// A pair from a stored 32-byte Ed25519 private key (RFC 8032 seed) and
+    /// its public key. The pair is checked by signing and verifying a test
+    /// message, so a mismatched or corrupt key fails here rather than at
+    /// the first signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::KeyMismatch`] if the keys are malformed or are not
+    /// a pair.
+    pub fn from_raw(signature_key: &[u8], verification_key: &[u8]) -> Result<Self, Error> {
+        let pair = Self {
+            signature_key: Zeroizing::new(signature_key.to_vec()),
+            verification_key: verification_key.to_vec(),
+        };
+        let signature = pair
+            .sign_with_label(PAIR_CHECK_LABEL, &[])
+            .map_err(|_| Error::KeyMismatch)?;
+        verify_with_label(verification_key, PAIR_CHECK_LABEL, &[], &signature)
+            .map_err(|_| Error::KeyMismatch)?;
+        Ok(pair)
+    }
+
+    /// RFC 9420 §5.1.2 `SignWithLabel(SignatureKey, Label, Content)` with
+    /// this pair's private key: the 64-byte Ed25519 signature over the
+    /// serialized `SignContent`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Encode`] if `content` is too long for `opaque <V>`,
+    /// and [`Error::Sign`] if the private key is malformed.
+    pub fn sign_with_label(&self, label: &str, content: &[u8]) -> Result<Vec<u8>, Error> {
+        sign_with_label(&self.signature_key, label, content)
     }
 
     /// The 32-byte Ed25519 public key: the `VerificationKey` argument of
     /// [`verify_with_label`].
     pub fn verification_key(&self) -> &[u8] {
         &self.verification_key
+    }
+
+    /// The 32-byte Ed25519 private key (RFC 8032 seed), for storing the
+    /// pair so [`SignatureKeyPair::from_raw`] can load it again. Nothing
+    /// else needs it: sign with [`SignatureKeyPair::sign_with_label`].
+    pub fn expose_signature_key(&self) -> &[u8] {
+        &self.signature_key
     }
 }
 
@@ -114,6 +163,50 @@ impl std::fmt::Debug for SignatureKeyPair {
             .field("signature_key", &"<redacted>")
             .field("verification_key", &self.verification_key)
             .finish()
+    }
+}
+
+/// An X25519 HPKE private key: the only way to run RFC 9420 §5.1.3
+/// `DecryptWithLabel` ([`HpkePrivateKey::decrypt_with_label`]).
+///
+/// The key is zeroized when dropped, and its `Debug` output never shows
+/// it.
+#[derive(Clone)]
+pub struct HpkePrivateKey {
+    private_key: Zeroizing<Vec<u8>>,
+}
+
+impl HpkePrivateKey {
+    /// The 32-byte X25519 private key `private_key`. It is not checked
+    /// here: a malformed key fails at decryption.
+    pub fn from_raw(private_key: &[u8]) -> Self {
+        Self {
+            private_key: Zeroizing::new(private_key.to_vec()),
+        }
+    }
+
+    /// RFC 9420 §5.1.3 `DecryptWithLabel(PrivateKey, Label, Context,
+    /// KEMOutput, Ciphertext)` with this key: HPKE `OpenBase(KEMOutput,
+    /// PrivateKey, EncryptContext, "", Ciphertext)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Encode`] if `label` or `context` is too long for
+    /// `opaque <V>`, and [`Error::Decrypt`] for every decryption failure.
+    pub fn decrypt_with_label(
+        &self,
+        label: &str,
+        context: &[u8],
+        kem_output: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, Error> {
+        decrypt_with_label(&self.private_key, label, context, kem_output, ciphertext)
+    }
+}
+
+impl std::fmt::Debug for HpkePrivateKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HpkePrivateKey").finish_non_exhaustive()
     }
 }
 
@@ -148,7 +241,8 @@ struct EncryptContext {
     context: VLBytes,
 }
 
-/// RFC 9420 §5.1.2 `SignWithLabel(SignatureKey, Label, Content)`.
+/// RFC 9420 §5.1.2 `SignWithLabel(SignatureKey, Label, Content)`, for
+/// [`SignatureKeyPair::sign_with_label`].
 ///
 /// `signature_key` is the 32-byte Ed25519 private key (RFC 8032 seed).
 /// Returns the 64-byte Ed25519 signature over the serialized `SignContent`.
@@ -157,11 +251,7 @@ struct EncryptContext {
 ///
 /// Returns [`Error::Encode`] if `content` is too long for `opaque <V>`, and
 /// [`Error::Sign`] if `signature_key` is malformed.
-pub fn sign_with_label(
-    signature_key: &[u8],
-    label: &str,
-    content: &[u8],
-) -> Result<Vec<u8>, Error> {
+fn sign_with_label(signature_key: &[u8], label: &str, content: &[u8]) -> Result<Vec<u8>, Error> {
     let sign_content = SignContent::new(label, content.into())
         .tls_serialize_detached()
         .map_err(Error::Encode)?;
@@ -231,9 +321,8 @@ pub fn encrypt_with_label(
     })
 }
 
-/// RFC 9420 §5.1.3 `DecryptWithLabel(PrivateKey, Label, Context, KEMOutput,
-/// Ciphertext)`: HPKE `OpenBase(KEMOutput, PrivateKey, EncryptContext, "",
-/// Ciphertext)`.
+/// RFC 9420 §5.1.3 `DecryptWithLabel`, for
+/// [`HpkePrivateKey::decrypt_with_label`].
 ///
 /// `private_key` is the 32-byte X25519 private key.
 ///
@@ -241,7 +330,7 @@ pub fn encrypt_with_label(
 ///
 /// Returns [`Error::Encode`] if `label` or `context` is too long for
 /// `opaque <V>`, and [`Error::Decrypt`] for every decryption failure.
-pub fn decrypt_with_label(
+fn decrypt_with_label(
     private_key: &[u8],
     label: &str,
     context: &[u8],

@@ -660,11 +660,11 @@ const SIGN_CONTENT_TEST_ABC: [u8; 17] = [
 #[test]
 fn hub_signature_key_signs_for_mls_rs_and_debug_redacts_it() {
     let key = SignatureKeyPair::generate().expect("generate");
-    assert_eq!(key.signature_key().len(), 32, "an Ed25519 seed");
+    assert_eq!(key.expose_signature_key().len(), 32, "an Ed25519 seed");
     assert_eq!(key.verification_key().len(), 32);
 
     // mls-rs verifies the signature over the hand-encoded SignContent.
-    let signature = label::sign_with_label(key.signature_key(), "Test", b"abc").expect("sign");
+    let signature = key.sign_with_label("Test", b"abc").expect("sign");
     suite()
         .verify(
             &SignaturePublicKey::new(key.verification_key().to_vec()),
@@ -673,7 +673,7 @@ fn hub_signature_key_signs_for_mls_rs_and_debug_redacts_it() {
         )
         .expect("mls-rs verifies");
 
-    let private = key.signature_key();
+    let private = key.expose_signature_key();
     let debug = format!("{key:?} {key:#?}");
     let lower: String = private.iter().map(|b| format!("{b:02x}")).collect();
     let upper: String = private.iter().map(|b| format!("{b:02X}")).collect();
@@ -683,7 +683,7 @@ fn hub_signature_key_signs_for_mls_rs_and_debug_redacts_it() {
     assert!(debug.contains("<redacted>"));
 
     let other = SignatureKeyPair::generate().expect("generate");
-    assert_ne!(other.signature_key(), key.signature_key());
+    assert_ne!(other.expose_signature_key(), key.expose_signature_key());
 }
 
 #[test]

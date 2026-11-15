@@ -1437,7 +1437,7 @@ async fn room_lifecycle_across_restart() {
     assert_secret_absent(&text, &dave_secret, "mls-rs client signing key");
     assert_secret_absent(
         &text,
-        requester.signing.signature_key(),
+        requester.signing.expose_signature_key(),
         "groupInfo requester signing key",
     );
     assert_secret_absent(

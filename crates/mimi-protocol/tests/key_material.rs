@@ -38,6 +38,10 @@ const REQUESTER_PUB: [u8; 32] = [
     0xd0, 0x22, 0x4a, 0xb7, 0x1a, 0x01, 0x6b, 0xaf, 0x85, 0x20, 0xa3, 0x32, 0xc9, 0x77, 0x87, 0x37,
 ];
 
+fn requester_pair() -> mimi_mls::label::SignatureKeyPair {
+    mimi_mls::label::SignatureKeyPair::from_raw(&REQUESTER_SEED, &REQUESTER_PUB).expect("pair")
+}
+
 const ALICE: &[u8] = b"mimi://a.example/u/alice"; // 24 bytes
 const BOB: &[u8] = b"mimi://b.example/u/bob"; // 22 bytes
 const ROOM: &[u8] = b"mimi://a.example/r/clubhouse"; // 28 bytes
@@ -217,7 +221,7 @@ fn check_request(room: &[u8], signature_name: &str) {
 
     // Our signer reproduces it.
     let signed = expected_tbs(room, &[1, 3])
-        .sign(&REQUESTER_SEED)
+        .sign(&requester_pair())
         .expect("signs");
     assert_eq!(signed, decoded);
     assert_eq!(signed.tls_serialize_detached().expect("encodes"), wire);
@@ -333,7 +337,7 @@ fn empty_acceptable_ciphersuites_rejected() {
         Err(tls_codec::Error::EncodingError(_))
     ));
     assert!(matches!(
-        tbs.sign(&REQUESTER_SEED),
+        tbs.sign(&requester_pair()),
         Err(Error::EmptyCipherSuites)
     ));
 }
@@ -350,7 +354,7 @@ fn suites_without_suite_1_cannot_sign_or_verify() {
         Err(Error::UnsupportedCipherSuite { cipher_suite: 3 })
     ));
     assert!(matches!(
-        expected_tbs(ROOM, &[3, 2]).sign(&REQUESTER_SEED),
+        expected_tbs(ROOM, &[3, 2]).sign(&requester_pair()),
         Err(Error::UnsupportedCipherSuite { cipher_suite: 3 })
     ));
 }
@@ -763,7 +767,7 @@ fn clients_vector_length_mismatch_rejected() {
 #[test]
 fn errors_name_the_problem() {
     let tbs = expected_tbs(ROOM, &[]);
-    let message = tbs.sign(&REQUESTER_SEED).expect_err("empty").to_string();
+    let message = tbs.sign(&requester_pair()).expect_err("empty").to_string();
     assert!(message.contains("acceptableCiphersuites"), "{message}");
     let err = response(KeyMaterialUserCode::UserUnknown, vec![expected_exhausted()])
         .tls_serialize_detached()

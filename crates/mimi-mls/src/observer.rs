@@ -617,8 +617,8 @@ impl Observer {
     /// carries the `safe_aad` component (mls-extensions-10 §4.9), and empty
     /// otherwise.
     ///
-    /// `signature_key` is the sender's 32-byte Ed25519 private key (RFC 8032
-    /// seed), as for [`crate::label::sign_with_label`].
+    /// `signer` is the external sender's key pair; its private key must
+    /// match the `external_senders` entry at `sender_index`.
     ///
     /// The proposal is verified against the `external_senders` entry and
     /// stored, as [`Observer::process_proposal`] would store it, so that a
@@ -635,20 +635,20 @@ impl Observer {
     /// [`ObserverError::InvalidAppDataUpdate`] for a remove of a component
     /// that has no data (§4.7), [`ObserverError::Propose`] if `sender_index`
     /// names no `external_senders` entry or the proposal cannot be signed,
-    /// [`ObserverError::Process`] if `signature_key` does not match that
+    /// [`ObserverError::Process`] if `signer` does not match that
     /// entry's key, [`ObserverError::Encode`] if the message cannot be
     /// encoded, and [`ObserverError::Merge`] if it cannot be stored.
     pub fn propose_app_data_update(
         &mut self,
         store: &Store,
-        signature_key: &[u8],
+        signer: &crate::label::SignatureKeyPair,
         sender_index: u32,
         update: &AppDataUpdate,
     ) -> Result<Vec<u8>, ObserverError> {
         if self.pending_commit.is_some() {
             return Err(ObserverError::PendingCommit);
         }
-        let message = self.external_app_data_update(signature_key, sender_index, update)?;
+        let message = self.external_app_data_update(signer, sender_index, update)?;
         self.process_proposal(store, &message)?;
         Ok(message)
     }
@@ -665,7 +665,7 @@ impl Observer {
     /// [`ObserverError::Encode`].
     pub fn external_app_data_update(
         &self,
-        signature_key: &[u8],
+        signer: &crate::label::SignatureKeyPair,
         sender_index: u32,
         update: &AppDataUpdate,
     ) -> Result<Vec<u8>, ObserverError> {
@@ -694,7 +694,7 @@ impl Observer {
         })?;
         let signer = SignatureKeyPair::from_raw(
             CIPHERSUITE.signature_algorithm(),
-            signature_key.to_vec(),
+            signer.expose_signature_key().to_vec(),
             sender.signature_key().to_vec(),
         );
         let message = ExternalProposal::new_app_data_update::<Provider>(
@@ -728,14 +728,14 @@ impl Observer {
     pub fn propose_remove(
         &mut self,
         store: &Store,
-        signature_key: &[u8],
+        signer: &crate::label::SignatureKeyPair,
         sender_index: u32,
         removed: u32,
     ) -> Result<Vec<u8>, ObserverError> {
         if self.pending_commit.is_some() {
             return Err(ObserverError::PendingCommit);
         }
-        let message = self.external_remove(signature_key, sender_index, removed)?;
+        let message = self.external_remove(signer, sender_index, removed)?;
         self.process_proposal(store, &message)?;
         Ok(message)
     }
@@ -751,7 +751,7 @@ impl Observer {
     /// [`ObserverError::Encode`].
     pub fn external_remove(
         &self,
-        signature_key: &[u8],
+        signer: &crate::label::SignatureKeyPair,
         sender_index: u32,
         removed: u32,
     ) -> Result<Vec<u8>, ObserverError> {
@@ -769,7 +769,7 @@ impl Observer {
         })?;
         let signer = SignatureKeyPair::from_raw(
             CIPHERSUITE.signature_algorithm(),
-            signature_key.to_vec(),
+            signer.expose_signature_key().to_vec(),
             sender.signature_key().to_vec(),
         );
         let message = ExternalProposal::new_remove_with_aad::<Provider>(

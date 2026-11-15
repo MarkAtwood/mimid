@@ -1335,7 +1335,7 @@ async fn three_providers_end_to_end() {
     for requester in [&cathy_requester, &bob_requester] {
         assert_secret_absent(
             &text,
-            requester.signing.signature_key(),
+            requester.signing.expose_signature_key(),
             "groupInfo requester signing key",
         );
         assert_secret_absent(

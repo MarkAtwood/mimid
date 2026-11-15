@@ -322,7 +322,7 @@ async fn bad_request_signature_is_refused() {
     let other = label::SignatureKeyPair::generate().unwrap();
     let wrong_key = bob
         .tbs(None)
-        .sign(other.signature_key())
+        .sign(&other)
         .unwrap()
         .tls_serialize_detached()
         .unwrap();
@@ -392,7 +392,11 @@ async fn log_canary() {
     let secret = store.hub_secret().await.unwrap().unwrap();
     assert_secret_absent(&text, &secret.signature_private_key, "hub signing key");
     assert_secret_absent(&text, &secret.hub_key, "hub franking key");
-    assert_secret_absent(&text, bob.signing.signature_key(), "requester signing key");
+    assert_secret_absent(
+        &text,
+        bob.signing.expose_signature_key(),
+        "requester signing key",
+    );
     assert_secret_absent(&text, &bob.hpke_secret, "requester HPKE key");
     close_hub(store, hub).await;
 }

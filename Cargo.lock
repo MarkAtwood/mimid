@@ -2108,6 +2108,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tls_codec",
+ "zeroize",
 ]
 
 [[package]]

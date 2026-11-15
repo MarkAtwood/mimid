@@ -12,14 +12,11 @@ use mimi_protocol::{Frank, FrankingIntegrityTbs, GroupInfoResponseTbs, GroupInfo
 use super::HubError;
 use crate::store::{Store, StoredHubSecret};
 
-/// The label of the self-test signature [`HubSigningKey::load`] makes. It
-/// is never sent, so it cannot be confused with a protocol signature.
-const SELF_TEST_LABEL: &str = "mimid hub key self-test";
-
-/// The hub's Ed25519 signing key pair and its franking HMAC key. `Debug`
-/// prints only the public key.
+/// The hub's Ed25519 signing key pair and its franking HMAC key. The
+/// private key stays inside the [`label::SignatureKeyPair`] (bead
+/// mimid-1wgh.4.28). `Debug` prints only the public key.
 pub(crate) struct HubSigningKey {
-    private: [u8; 32],
+    pair: label::SignatureKeyPair,
     public: [u8; 32],
     hub_key: HubKey,
 }
@@ -39,16 +36,17 @@ impl HubSigningKey {
     /// match the stored public key.
     pub(crate) async fn load(store: &Store) -> Result<Self, HubError> {
         let stored = store.hub_secret_or_insert(generate).await?;
-        let key = Self {
-            private: stored.signature_private_key,
+        // from_raw signs and verifies a test message.
+        let pair = label::SignatureKeyPair::from_raw(
+            &stored.signature_private_key,
+            &stored.signature_public_key,
+        )
+        .map_err(|_| HubError::CorruptHubSecret)?;
+        Ok(Self {
+            pair,
             public: stored.signature_public_key,
             hub_key: HubKey::new(stored.hub_key),
-        };
-        let signature = label::sign_with_label(&key.private, SELF_TEST_LABEL, &[])
-            .map_err(|_| HubError::CorruptHubSecret)?;
-        label::verify_with_label(&key.public, SELF_TEST_LABEL, &[], &signature)
-            .map_err(|_| HubError::CorruptHubSecret)?;
-        Ok(key)
+        })
     }
 
     /// The 32-byte Ed25519 public key.
@@ -56,10 +54,10 @@ impl HubSigningKey {
         &self.public
     }
 
-    /// The 32-byte Ed25519 private key (RFC 8032 seed), for the hub's own
-    /// external proposals (bead mimid-1wgh.47.5).
-    pub(crate) fn private(&self) -> &[u8; 32] {
-        &self.private
+    /// The key pair, for the hub's own external proposals (bead
+    /// mimid-1wgh.47.5).
+    pub(crate) fn pair(&self) -> &label::SignatureKeyPair {
+        &self.pair
     }
 
     /// The franking HMAC key `hub_key` (protocol-07 §5.4.1.2).
@@ -74,7 +72,7 @@ impl HubSigningKey {
     ///
     /// As [`FrankingIntegrityTbs::sign`].
     pub(crate) fn sign_frank(&self, tbs: &FrankingIntegrityTbs) -> Result<Frank, HubError> {
-        tbs.sign(&self.private).map_err(HubError::Franking)
+        tbs.sign(&self.pair).map_err(HubError::Franking)
     }
 
     /// Signs a groupInfo response with the hub's key as `hub_sender`
@@ -87,7 +85,7 @@ impl HubSigningKey {
         &self,
         tbs: GroupInfoResponseTbs,
     ) -> Result<GroupInfoSuccess, HubError> {
-        tbs.sign(&self.private).map_err(HubError::GroupInfoResponse)
+        tbs.sign(&self.pair).map_err(HubError::GroupInfoResponse)
     }
 }
 
@@ -105,7 +103,7 @@ fn generate() -> Result<StoredHubSecret, HubError> {
     let pair = label::SignatureKeyPair::generate().map_err(|_| HubError::KeyGeneration)?;
     let key = |bytes: &[u8]| <[u8; 32]>::try_from(bytes).map_err(|_| HubError::KeyGeneration);
     Ok(StoredHubSecret {
-        signature_private_key: key(pair.signature_key())?,
+        signature_private_key: key(pair.expose_signature_key())?,
         signature_public_key: key(pair.verification_key())?,
         hub_key: label::random_array::<32>().map_err(|_| HubError::KeyGeneration)?,
     })
@@ -123,8 +121,13 @@ mod tests {
         assert_ne!(a.signature_private_key, b.signature_private_key);
         assert_ne!(a.hub_key, b.hub_key);
         assert_ne!(a.signature_private_key, a.hub_key);
-        let signature = label::sign_with_label(&a.signature_private_key, "t", b"m").unwrap();
-        label::verify_with_label(&a.signature_public_key, "t", b"m", &signature).unwrap();
+        // from_raw checks that the two keys are a pair.
+        label::SignatureKeyPair::from_raw(&a.signature_private_key, &a.signature_public_key)
+            .unwrap();
+        assert!(
+            label::SignatureKeyPair::from_raw(&a.signature_private_key, &b.signature_public_key)
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -140,7 +143,10 @@ mod tests {
         let store = Store::open(&path, &domain).await.unwrap();
         let second = HubSigningKey::load(&store).await.unwrap();
         assert_eq!(first.public, second.public);
-        assert_eq!(first.private, second.private);
+        assert_eq!(
+            first.pair.expose_signature_key(),
+            second.pair.expose_signature_key()
+        );
         assert_eq!(store.hub_secret().await.unwrap().unwrap(), stored);
         store.close().await;
     }
@@ -149,7 +155,11 @@ mod tests {
     fn debug_shows_no_secret() {
         let secret = generate().unwrap();
         let key = HubSigningKey {
-            private: secret.signature_private_key,
+            pair: label::SignatureKeyPair::from_raw(
+                &secret.signature_private_key,
+                &secret.signature_public_key,
+            )
+            .unwrap(),
             public: secret.signature_public_key,
             hub_key: HubKey::new(secret.hub_key),
         };

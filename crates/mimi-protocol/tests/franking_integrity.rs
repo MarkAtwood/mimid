@@ -92,6 +92,11 @@ const BASIC_SIG: &str = "46ec6635d8ba0166ecfe29bcba1dd66c8009963f00d148125eb81b7
 /// `franking_integrity suite_3`: the basic TBS with ciphersuite 0x0003.
 const SUITE_3_SIG: &str = "875bceb552a26c8105d9db02f9535d2e75bf2fbeb3f73bf76c22175abcc44a74890d9f277172c031cdff42dd7b68dde1cabb6ee3eefd0bcee1f29341f0c92800";
 
+/// The franking key pair, from the oracle's seed and public key.
+fn franking_pair() -> mimi_mls::label::SignatureKeyPair {
+    mimi_mls::label::SignatureKeyPair::from_raw(&FRANKING_SEED, &h(FRANKING_PUB)).expect("pair")
+}
+
 fn suite(n: u16) -> CipherSuite {
     CipherSuite::from(n)
 }
@@ -216,7 +221,7 @@ fn integrity_tbs_rejects_truncation_and_trailing() {
 
 /// Sign with our signer, require the oracle signature, verify it.
 fn check_sign(tbs: FrankingIntegrityTbs, expected_sig: &str) {
-    let frank = tbs.sign(&FRANKING_SEED).expect("signs");
+    let frank = tbs.sign(&franking_pair()).expect("signs");
     assert_eq!(frank.server_frank, tbs.server_frank);
     assert_eq!(
         frank.franking_signature_ciphersuite,
@@ -309,7 +314,7 @@ fn hub_franks_spec_example() {
         franking_signature_ciphersuite: suite(1),
         context: context.clone(),
     }
-    .sign(&FRANKING_SEED)
+    .sign(&franking_pair())
     .expect("signs");
     assert_eq!(frank, basic_frank());
     // What the hub checks when validating an AbusiveMessage (§5.9).
@@ -409,7 +414,7 @@ fn integrity_refuses_unsupported_cipher_suite() {
         context: basic_context(),
     };
     assert!(matches!(
-        tbs.sign(&FRANKING_SEED),
+        tbs.sign(&franking_pair()),
         Err(Error::UnsupportedCipherSuite { cipher_suite: 3 })
     ));
     // The basic signature under suite 3 does not verify either way.

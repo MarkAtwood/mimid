@@ -128,9 +128,9 @@ impl KeyMaterialRequestTbs {
     /// Signs this TBS: `SignWithLabel(requesterSignatureKey,
     /// "KeyMaterialRequestTBS", KeyMaterialRequestTBS)`.
     ///
-    /// `signature_private_key` is the raw private key matching
-    /// `requester_signature_key`: a 32-byte Ed25519 seed, the scheme of
-    /// suite 1, which `acceptable_ciphersuites` must contain.
+    /// `signature_private_key` is the key pair whose public key is
+    /// `requester_signature_key`: Ed25519, the scheme of suite 1, which
+    /// `acceptable_ciphersuites` must contain.
     ///
     /// # Errors
     ///
@@ -138,12 +138,15 @@ impl KeyMaterialRequestTbs {
     /// [`Error::UnsupportedCipherSuite`] (naming the first listed suite)
     /// if it lacks suite 1, [`Error::Encoding`] if the TBS cannot be
     /// encoded, and [`Error::Label`] if signing fails.
-    pub fn sign(self, signature_private_key: &[u8]) -> Result<KeyMaterialRequest, Error> {
+    pub fn sign(
+        self,
+        signature_private_key: &label::SignatureKeyPair,
+    ) -> Result<KeyMaterialRequest, Error> {
         check_signing_suite(&self.acceptable_ciphersuites)?;
         let tbs_bytes = self.tls_serialize_detached().map_err(Error::Encoding)?;
-        let signature =
-            label::sign_with_label(signature_private_key, REQUEST_TBS_LABEL, &tbs_bytes)
-                .map_err(Error::Label)?;
+        let signature = signature_private_key
+            .sign_with_label(REQUEST_TBS_LABEL, &tbs_bytes)
+            .map_err(Error::Label)?;
         Ok(KeyMaterialRequest {
             tbs: self,
             tbs_bytes,

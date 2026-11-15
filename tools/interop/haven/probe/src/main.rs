@@ -62,7 +62,7 @@ async fn key_material(client: &PeerClient, hub: &Domain, step: &str, target: &st
         requester_signature_key: SignaturePublicKey::tls_deserialize_exact(&key).unwrap(),
         requester_credential: Credential::tls_deserialize_exact(&credential).unwrap(),
     }
-    .sign(&SEED)
+    .sign(&mimi_mls::label::SignatureKeyPair::from_raw(&SEED, &PUB).expect("SEED and PUB are a pair"))
     .expect("sign")
     .tls_serialize_detached()
     .expect("encode");

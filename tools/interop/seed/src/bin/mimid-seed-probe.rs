@@ -121,7 +121,7 @@ async fn probe(
         requester_signature_key: SignaturePublicKey::tls_deserialize_exact(&signature_key)?,
         requester_credential: Credential::tls_deserialize_exact(&credential)?,
     }
-    .sign(key.signature_key())
+    .sign(&key)
     .context("signing the request")?
     .tls_serialize_detached()?;
 

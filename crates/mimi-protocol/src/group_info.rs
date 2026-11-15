@@ -115,20 +115,23 @@ impl GroupInfoRequestTbs {
     /// Signs this TBS: `SignWithLabel(requestingSignatureKey,
     /// "GroupInfoRequestTBS", GroupInfoRequestTBS)`.
     ///
-    /// `signature_private_key` is the raw private key matching
-    /// `requesting_signature_key` (a 32-byte Ed25519 seed for suite 1).
+    /// `signature_private_key` is the key pair whose public key is
+    /// `requesting_signature_key` (Ed25519 for suite 1).
     ///
     /// # Errors
     ///
     /// [`Error::UnsupportedCipherSuite`] unless `cipher_suite` is 1,
     /// [`Error::Encoding`] if the TBS cannot be encoded, and
     /// [`Error::Label`] if signing fails.
-    pub fn sign(self, signature_private_key: &[u8]) -> Result<GroupInfoRequest, Error> {
+    pub fn sign(
+        self,
+        signature_private_key: &label::SignatureKeyPair,
+    ) -> Result<GroupInfoRequest, Error> {
         check_cipher_suite(self.cipher_suite)?;
         let tbs_bytes = self.tls_serialize_detached().map_err(Error::Encoding)?;
-        let signature =
-            label::sign_with_label(signature_private_key, REQUEST_TBS_LABEL, &tbs_bytes)
-                .map_err(Error::Label)?;
+        let signature = signature_private_key
+            .sign_with_label(REQUEST_TBS_LABEL, &tbs_bytes)
+            .map_err(Error::Label)?;
         Ok(GroupInfoRequest {
             tbs: self,
             tbs_bytes,
@@ -310,9 +313,8 @@ pub fn encrypt_group_info(
 
 /// Decrypts and decodes `encrypted_groupinfo_and_tree` (protocol-07 §5.6).
 ///
-/// `group_info_private_key` is the raw private key for the request's
-/// `groupInfoPublicKey` (32-byte X25519: suite-1 HPKE, decision
-/// mimid-1wgh.5.55). `room_id` is the raw
+/// `group_info_private_key` is the private key for the request's
+/// `groupInfoPublicKey` (X25519: suite-1 HPKE, decision mimid-1wgh.5.55). `room_id` is the raw
 /// bytes of the room URI the requester asked for (decision
 /// mimid-1wgh.5.30). The plaintext is decoded strictly, with no trailing
 /// bytes.
@@ -323,21 +325,21 @@ pub fn encrypt_group_info(
 /// tampered ciphertext), and [`Error::Decoding`] if the ciphertext
 /// encoding or the decrypted plaintext is malformed.
 pub fn decrypt_group_info(
-    group_info_private_key: &[u8],
+    group_info_private_key: &label::HpkePrivateKey,
     room_id: &[u8],
     encrypted_groupinfo_and_tree: &HPKECiphertext,
 ) -> Result<GroupInfoRatchetTreeTbe, Error> {
     let fields = HpkeCiphertextFields::tls_deserialize_exact(encrypted_groupinfo_and_tree)
         .map_err(Error::Decoding)?;
     // protocol-07 §5.6; decision mimid-1wgh.5.55 (suite-1 HPKE)
-    let plaintext = label::decrypt_with_label(
-        group_info_private_key,
-        ENCRYPTION_LABEL,
-        room_id,
-        fields.kem_output.as_slice(),
-        fields.ciphertext.as_slice(),
-    )
-    .map_err(Error::Label)?;
+    let plaintext = group_info_private_key
+        .decrypt_with_label(
+            ENCRYPTION_LABEL,
+            room_id,
+            fields.kem_output.as_slice(),
+            fields.ciphertext.as_slice(),
+        )
+        .map_err(Error::Label)?;
     GroupInfoRatchetTreeTbe::tls_deserialize_exact(plaintext).map_err(Error::Decoding)
 }
 
@@ -389,20 +391,23 @@ impl GroupInfoResponseTbs {
     /// Signs this TBS: `SignWithLabel(hub_sender.signature_key,
     /// "GroupInfoResponseTBS", GroupInfoResponseTBS)`.
     ///
-    /// `signature_private_key` is the raw private key matching
-    /// `hub_sender`'s signature key (a 32-byte Ed25519 seed for suite 1).
+    /// `signature_private_key` is the key pair whose public key is
+    /// `hub_sender`'s signature key (Ed25519 for suite 1).
     ///
     /// # Errors
     ///
     /// [`Error::UnsupportedCipherSuite`] unless `cipher_suite` is 1,
     /// [`Error::Encoding`] if the TBS cannot be encoded, and
     /// [`Error::Label`] if signing fails.
-    pub fn sign(self, signature_private_key: &[u8]) -> Result<GroupInfoSuccess, Error> {
+    pub fn sign(
+        self,
+        signature_private_key: &label::SignatureKeyPair,
+    ) -> Result<GroupInfoSuccess, Error> {
         check_cipher_suite(self.cipher_suite)?;
         let tbs_bytes = self.tls_serialize_detached().map_err(Error::Encoding)?;
-        let signature =
-            label::sign_with_label(signature_private_key, RESPONSE_TBS_LABEL, &tbs_bytes)
-                .map_err(Error::Label)?;
+        let signature = signature_private_key
+            .sign_with_label(RESPONSE_TBS_LABEL, &tbs_bytes)
+            .map_err(Error::Label)?;
         Ok(GroupInfoSuccess {
             tbs: self,
             tbs_bytes,

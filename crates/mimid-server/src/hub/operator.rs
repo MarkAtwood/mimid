@@ -77,7 +77,7 @@ impl Hub {
                 .ok_or(HubError::NotExternalSender)?;
             let sender_index =
                 u32::try_from(sender_index).map_err(|_| HubError::NotExternalSender)?;
-            let key = self.signing_key.private();
+            let key = self.signing_key.pair();
 
             let mut messages = Vec::new();
             for (leaf_index, identity) in observer.members() {

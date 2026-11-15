@@ -153,7 +153,7 @@ fn key_material_request(
         requester_signature_key: key,
         requester_credential: credential,
     }
-    .sign(pair.signature_key())
+    .sign(&pair)
     .unwrap()
     .tls_serialize_detached()
     .unwrap()

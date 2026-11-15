@@ -234,21 +234,21 @@ impl FrankingIntegrityTbs {
     /// `SignWithLabel(franking_private_key, "FrankingIntegrityTBS",
     /// FrankingIntegrityTBS)` (protocol-07 §5.4.1.2).
     ///
-    /// `franking_private_key` is the raw private key matching the group's
-    /// [`FrankingAgentData::franking_signature_key`] (a 32-byte Ed25519
-    /// seed for suite 1).
+    /// `franking_private_key` is the key pair whose public key is the
+    /// group's [`FrankingAgentData::franking_signature_key`] (Ed25519 for
+    /// suite 1).
     ///
     /// # Errors
     ///
     /// [`Error::UnsupportedCipherSuite`] unless
     /// `franking_signature_ciphersuite` is 1, [`Error::Encoding`] if the TBS
     /// cannot be encoded, and [`Error::Label`] if signing fails.
-    pub fn sign(&self, franking_private_key: &[u8]) -> Result<Frank, Error> {
+    pub fn sign(&self, franking_private_key: &label::SignatureKeyPair) -> Result<Frank, Error> {
         check_cipher_suite(self.franking_signature_ciphersuite)?;
         let tbs_bytes = self.tls_serialize_detached().map_err(Error::Encoding)?;
-        let franking_integrity_signature =
-            label::sign_with_label(franking_private_key, INTEGRITY_TBS_LABEL, &tbs_bytes)
-                .map_err(Error::Label)?;
+        let franking_integrity_signature = franking_private_key
+            .sign_with_label(INTEGRITY_TBS_LABEL, &tbs_bytes)
+            .map_err(Error::Label)?;
         Ok(Frank {
             server_frank: self.server_frank,
             franking_signature_ciphersuite: self.franking_signature_ciphersuite,

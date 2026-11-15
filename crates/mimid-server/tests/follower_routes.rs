@@ -60,7 +60,7 @@ fn key_material_request(target_user: &str, room_id: &str) -> Vec<u8> {
         requester_signature_key: key,
         requester_credential: credential,
     }
-    .sign(pair.signature_key())
+    .sign(&pair)
     .unwrap()
     .tls_serialize_detached()
     .unwrap()

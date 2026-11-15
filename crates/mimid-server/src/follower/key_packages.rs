@@ -23,7 +23,8 @@
 //!    authority (decision mimid-1wgh.7.10): KeyPackages are fetched through
 //!    the room's hub (§5.2), which is the room URI's authority (decision
 //!    mimid-1wgh.7.5).
-//! 5. The consent hook must allow the request ([`consent::allows`]).
+//! 5. The target user must not have refused the requester consent
+//!    ([`consent::refusal`]; bead mimid-1wgh.12.43).
 //! 6. The target user must have a client; an unknown user gets
 //!    `noConsent` (decision mimid-1wgh.7.9).
 //! 7. For each client, the stored KeyPackages that are unexpired, still

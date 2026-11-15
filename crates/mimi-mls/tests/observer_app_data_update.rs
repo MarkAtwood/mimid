@@ -299,7 +299,7 @@ fn hub_update_matches_hand_encoding_and_is_committed_by_reference() {
         .observer
         .propose_app_data_update(
             &room.store,
-            room.hub.signature_key(),
+            &room.hub,
             0,
             &AppDataUpdate::Update {
                 component_id: LOG,
@@ -378,7 +378,7 @@ fn hub_updates_at_length_boundaries_are_committed_by_reference() {
             .observer
             .propose_app_data_update(
                 &room.store,
-                room.hub.signature_key(),
+                &room.hub,
                 0,
                 &AppDataUpdate::Update {
                     component_id,
@@ -419,7 +419,7 @@ fn hub_remove_needs_existing_data() {
     // built or stored.
     let result = room.observer.propose_app_data_update(
         &room.store,
-        room.hub.signature_key(),
+        &room.hub,
         0,
         &AppDataUpdate::Remove {
             component_id: ABSENT,
@@ -435,7 +435,7 @@ fn hub_remove_needs_existing_data() {
         .observer
         .propose_app_data_update(
             &room.store,
-            room.hub.signature_key(),
+            &room.hub,
             0,
             &AppDataUpdate::Remove { component_id: META },
         )
@@ -471,31 +471,32 @@ fn wrong_signature_key_or_sender_index_is_refused_and_nothing_is_stored() {
     // A well-formed key that is not external_senders[0]'s: the Observer's
     // own verification refuses the proposal.
     let other = SignatureKeyPair::generate().expect("key");
-    let result =
-        room.observer
-            .propose_app_data_update(&room.store, other.signature_key(), 0, &update);
+    let result = room
+        .observer
+        .propose_app_data_update(&room.store, &other, 0, &update);
     assert!(
         matches!(result, Err(ObserverError::Process(_))),
         "{result:?}"
     );
 
-    // Malformed private keys: empty, one byte short, one byte long.
-    let long = [room.hub.signature_key(), &[0x00]].concat();
-    for key in [&[][..], &room.hub.signature_key()[..31], &long] {
-        let result = room
-            .observer
-            .propose_app_data_update(&room.store, key, 0, &update);
-        assert!(result.is_err(), "{}-byte key accepted", key.len());
+    // Malformed private keys (empty, one byte short, one byte long) can
+    // no longer reach the Observer: SignatureKeyPair::from_raw refuses them
+    // (bead mimid-1wgh.4.28).
+    let seed = room.hub.expose_signature_key();
+    let long = [seed, &[0x00]].concat();
+    for key in [&[][..], &seed[..31], &long] {
+        assert!(
+            SignatureKeyPair::from_raw(key, room.hub.verification_key()).is_err(),
+            "{}-byte key accepted",
+            key.len()
+        );
     }
 
     // No external_senders entry at the index.
     for index in [1, u32::MAX] {
-        let result = room.observer.propose_app_data_update(
-            &room.store,
-            room.hub.signature_key(),
-            index,
-            &update,
-        );
+        let result = room
+            .observer
+            .propose_app_data_update(&room.store, &room.hub, index, &update);
         assert!(
             matches!(result, Err(ObserverError::Propose(_))),
             "{result:?}"
@@ -506,9 +507,9 @@ fn wrong_signature_key_or_sender_index_is_refused_and_nothing_is_stored() {
     // No external_senders extension at all.
     let hub = SignatureKeyPair::generate().expect("hub key");
     let mut bare = room_with(&[], &[], hub);
-    let result =
-        bare.observer
-            .propose_app_data_update(&bare.store, bare.hub.signature_key(), 0, &update);
+    let result = bare
+        .observer
+        .propose_app_data_update(&bare.store, &bare.hub, 0, &update);
     assert!(
         matches!(result, Err(ObserverError::Propose(_))),
         "{result:?}"
@@ -525,7 +526,7 @@ fn hub_update_in_safe_aad_group_carries_empty_safe_aad_and_is_committed() {
         .observer
         .propose_app_data_update(
             &room.store,
-            room.hub.signature_key(),
+            &room.hub,
             0,
             &AppDataUpdate::Update {
                 component_id: LOG,
@@ -599,7 +600,7 @@ fn pending_commit_blocks_proposing() {
         .expect("Observer stages the Commit");
     let result = room.observer.propose_app_data_update(
         &room.store,
-        room.hub.signature_key(),
+        &room.hub,
         0,
         &AppDataUpdate::Update {
             component_id: LOG,
@@ -619,7 +620,7 @@ fn members_reject_a_tampered_hub_proposal() {
         .observer
         .propose_app_data_update(
             &room.store,
-            room.hub.signature_key(),
+            &room.hub,
             0,
             &AppDataUpdate::Update {
                 component_id: LOG,

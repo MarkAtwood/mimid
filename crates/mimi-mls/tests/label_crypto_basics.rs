@@ -6,8 +6,7 @@ use std::fs;
 use std::path::Path;
 
 use mimi_mls::label::{
-    self, HpkeCiphertext, decrypt_with_label, encrypt_with_label, sign_with_label,
-    verify_with_label,
+    self, HpkeCiphertext, HpkePrivateKey, SignatureKeyPair, encrypt_with_label, verify_with_label,
 };
 use openmls::prelude::{HashType, OpenMlsCrypto};
 use openmls_rust_crypto::RustCrypto;
@@ -62,6 +61,18 @@ struct Encrypt {
     plaintext: Vec<u8>,
     kem_output: Vec<u8>,
     ciphertext: Vec<u8>,
+}
+
+/// `DecryptWithLabel` with a raw private key, through [`HpkePrivateKey`]
+/// (bead mimid-1wgh.4.28), so the vectors read as the RFC writes them.
+fn decrypt_with_label(
+    private_key: &[u8],
+    label: &str,
+    context: &[u8],
+    kem_output: &[u8],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, label::Error> {
+    HpkePrivateKey::from_raw(private_key).decrypt_with_label(label, context, kem_output, ciphertext)
 }
 
 fn hex(s: &str) -> Vec<u8> {
@@ -148,7 +159,8 @@ fn sign_with_label_reproduces_vector_signature() {
     // Ed25519 (RFC 8032) is deterministic, so signing the vector's content
     // with the vector's key must give the vector's signature byte for byte.
     let v = sign_vector();
-    let signature = sign_with_label(&v.private, &v.label, &v.content).expect("sign");
+    let pair = SignatureKeyPair::from_raw(&v.private, &v.public).expect("the vector's pair");
+    let signature = pair.sign_with_label(&v.label, &v.content).expect("sign");
     assert_eq!(to_hex(&signature), to_hex(&v.signature));
     verify_with_label(&v.public, &v.label, &v.content, &signature).expect("own signature verifies");
 }
@@ -220,8 +232,9 @@ fn malformed_signature_inputs_are_errors_not_panics() {
         &[][..],
         &[v.private.as_slice(), &[0]].concat()[..],
     ] {
-        let err = sign_with_label(key, &v.label, &v.content).unwrap_err();
-        assert!(matches!(err, label::Error::Sign(_)), "{err:?}");
+        // A malformed private key cannot become a pair, so it never signs.
+        let err = SignatureKeyPair::from_raw(key, &v.public).unwrap_err();
+        assert!(matches!(err, label::Error::KeyMismatch), "{err:?}");
     }
 }
 
@@ -349,5 +362,19 @@ fn malformed_encryption_inputs_are_errors_not_panics() {
     for key in [&v.public[..31], &[][..], long_pub.as_slice()] {
         let err = encrypt_with_label(key, &v.label, &v.context, &v.plaintext).unwrap_err();
         assert!(matches!(err, label::Error::Encrypt(_)), "{err:?}");
+    }
+}
+
+#[test]
+fn hpke_private_key_debug_shows_no_key() {
+    let v = encrypt_vector();
+    let key = HpkePrivateKey::from_raw(&v.private);
+    let debug = format!("{key:?} {key:#?}");
+    for rendering in [
+        format!("{:?}", v.private),
+        to_hex(&v.private),
+        to_hex(&v.private).to_uppercase(),
+    ] {
+        assert!(!debug.contains(&rendering), "Debug leaks the key: {debug}");
     }
 }

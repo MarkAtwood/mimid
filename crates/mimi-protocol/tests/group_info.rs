@@ -64,6 +64,16 @@ const GROUP_INFO_PK: [u8; 32] = [
 ];
 const REQUESTER_SEED: [u8; 32] = [0x11; 32];
 const HUB_SEED: [u8; 32] = [0x22; 32];
+
+fn requester_pair() -> mimi_mls::label::SignatureKeyPair {
+    mimi_mls::label::SignatureKeyPair::from_raw(&REQUESTER_SEED, &REQUESTER_PUB).expect("pair")
+}
+
+fn hub_pair() -> mimi_mls::label::SignatureKeyPair {
+    mimi_mls::label::SignatureKeyPair::from_raw(&HUB_SEED, &HUB_PUB).expect("pair")
+}
+
+use mimi_mls::label::HpkePrivateKey;
 const GROUP_INFO_SK: [u8; 32] = [0x33; 32];
 const ROOM_ID: &[u8] = b"mimi://a.example/r/clubhouse";
 
@@ -281,7 +291,7 @@ fn request_fixture_verifies_oracle_signature() {
 
 #[test]
 fn request_sign_reproduces_oracle_signature() {
-    let request = request_tbs(true).sign(&REQUESTER_SEED).expect("signs");
+    let request = request_tbs(true).sign(&requester_pair()).expect("signs");
     assert_eq!(request.signature(), oracle("request_signature"));
     assert_eq!(
         request.tls_serialize_detached().expect("encodes"),
@@ -292,7 +302,7 @@ fn request_sign_reproduces_oracle_signature() {
 
 #[test]
 fn request_without_joining_code_signs_and_verifies() {
-    let request = request_tbs(false).sign(&REQUESTER_SEED).expect("signs");
+    let request = request_tbs(false).sign(&requester_pair()).expect("signs");
     let wire = request.tls_serialize_detached().expect("encodes");
     assert_eq!(
         &wire[..request_tbs_wire(false).len()],
@@ -318,7 +328,7 @@ fn request_tampered_byte_fails_verification() {
 
 #[test]
 fn request_signed_with_wrong_key_fails_verification() {
-    let request = request_tbs(true).sign(&HUB_SEED).expect("signs");
+    let request = request_tbs(true).sign(&hub_pair()).expect("signs");
     assert!(is_verify_failure(request.verify()));
 }
 
@@ -336,7 +346,7 @@ fn request_unsupported_cipher_suite_rejected() {
     let mut tbs = request_tbs(true);
     tbs.cipher_suite = CipherSuite::from(0x0003);
     assert!(matches!(
-        tbs.sign(&REQUESTER_SEED),
+        tbs.sign(&requester_pair()),
         Err(Error::UnsupportedCipherSuite { .. })
     ));
 }
@@ -399,7 +409,12 @@ fn pending_proposal_must_be_public_proposal() {
 #[test]
 fn decrypt_oracle_ciphertext() {
     let ciphertext = decode::<HPKECiphertext>(&oracle_ciphertext_wire());
-    let decrypted = decrypt_group_info(&GROUP_INFO_SK, ROOM_ID, &ciphertext).expect("decrypts");
+    let decrypted = decrypt_group_info(
+        &HpkePrivateKey::from_raw(&GROUP_INFO_SK),
+        ROOM_ID,
+        &ciphertext,
+    )
+    .expect("decrypts");
     assert_eq!(decrypted, tbe());
 }
 
@@ -413,12 +428,16 @@ fn decrypt_with_wrong_room_id_or_key_fails() {
     let prefixed = cat(&[&[0x1c], ROOM_ID]);
     for room_id in [wrong_room.as_slice(), prefixed.as_slice(), b"".as_slice()] {
         assert!(matches!(
-            decrypt_group_info(&GROUP_INFO_SK, room_id, &ciphertext),
+            decrypt_group_info(
+                &HpkePrivateKey::from_raw(&GROUP_INFO_SK),
+                room_id,
+                &ciphertext
+            ),
             Err(Error::Label(mimi_mls::label::Error::Decrypt))
         ));
     }
     assert!(matches!(
-        decrypt_group_info(&HUB_SEED, ROOM_ID, &ciphertext),
+        decrypt_group_info(&HpkePrivateKey::from_raw(&HUB_SEED), ROOM_ID, &ciphertext),
         Err(Error::Label(mimi_mls::label::Error::Decrypt))
     ));
 }
@@ -430,7 +449,11 @@ fn decrypt_tampered_ciphertext_fails() {
     wire[last] ^= 0x01;
     let ciphertext = decode::<HPKECiphertext>(&wire);
     assert!(matches!(
-        decrypt_group_info(&GROUP_INFO_SK, ROOM_ID, &ciphertext),
+        decrypt_group_info(
+            &HpkePrivateKey::from_raw(&GROUP_INFO_SK),
+            ROOM_ID,
+            &ciphertext
+        ),
         Err(Error::Label(mimi_mls::label::Error::Decrypt))
     ));
 }
@@ -442,9 +465,21 @@ fn encrypt_then_decrypt() {
     let public_key = decode::<HPKEPublicKey>(&cat(&[&[0x20], &GROUP_INFO_PK]));
     let ciphertext = encrypt_group_info(&public_key, ROOM_ID, &tbe()).expect("encrypts");
     assert_ne!(ciphertext.as_bytes(), oracle_ciphertext_wire());
-    let decrypted = decrypt_group_info(&GROUP_INFO_SK, ROOM_ID, &ciphertext).expect("decrypts");
+    let decrypted = decrypt_group_info(
+        &HpkePrivateKey::from_raw(&GROUP_INFO_SK),
+        ROOM_ID,
+        &ciphertext,
+    )
+    .expect("decrypts");
     assert_eq!(decrypted, tbe());
-    assert!(decrypt_group_info(&GROUP_INFO_SK, b"mimi://b.example/r/x", &ciphertext).is_err());
+    assert!(
+        decrypt_group_info(
+            &HpkePrivateKey::from_raw(&GROUP_INFO_SK),
+            b"mimi://b.example/r/x",
+            &ciphertext
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -474,7 +509,7 @@ fn response_fixture_verifies_oracle_signature() {
 
 #[test]
 fn response_sign_reproduces_oracle_signature() {
-    let success = response_tbs().sign(&HUB_SEED).expect("signs");
+    let success = response_tbs().sign(&hub_pair()).expect("signs");
     assert_eq!(success.signature(), oracle("response_signature"));
     let response = GroupInfoResponse::Success(success);
     assert_eq!(

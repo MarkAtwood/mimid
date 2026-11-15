@@ -153,9 +153,12 @@ impl Fixture {
     }
 
     /// The hub's franking HMAC key and Ed25519 private key, from the store.
-    async fn secrets(&self) -> ([u8; 32], [u8; 32]) {
+    async fn secrets(&self) -> ([u8; 32], SignatureKeyPair) {
         let stored = self.store.hub_secret().await.unwrap().unwrap();
-        (stored.hub_key, stored.signature_private_key)
+        let pair =
+            SignatureKeyPair::from_raw(&stored.signature_private_key, &stored.signature_public_key)
+                .unwrap();
+        (stored.hub_key, pair)
     }
 }
 
@@ -190,7 +193,7 @@ fn forge(
     genuine: &AbusiveMessage,
     salt: &[u8; 16],
     hub_key: [u8; 32],
-    signing_key: &[u8],
+    signing_key: &SignatureKeyPair,
 ) -> Frank {
     let context = context(genuine.accepted_timestamp);
     let tag = franking_tag(salt, &genuine.message_content);
@@ -249,7 +252,7 @@ async fn forged_or_tampered_franks_are_refused() {
         ("signature flipped", with(bad_signature)),
         (
             "right server_frank, wrong signing key",
-            with(forge(&genuine, &salt, hub_key, other.signature_key())),
+            with(forge(&genuine, &salt, hub_key, &other)),
         ),
         (
             "wrong hub_key, right signing key",
@@ -439,7 +442,11 @@ async fn log_canary() {
     assert!(text.contains("abuse report refused"), "outcome logged");
     let (hub_key, signing_key) = f.secrets().await;
     assert_secret_absent(&text, &hub_key, "hub_key");
-    assert_secret_absent(&text, &signing_key, "signature private key");
+    assert_secret_absent(
+        &text,
+        signing_key.expose_signature_key(),
+        "signature private key",
+    );
     assert_secret_absent(&text, &genuine.frank.server_frank, "server_frank");
     assert_secret_absent(&text, &data, "message_content");
     assert!(!text.contains(BODY_CANARY), "message body logged");

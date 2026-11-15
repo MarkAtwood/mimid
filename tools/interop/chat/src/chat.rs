@@ -2247,7 +2247,10 @@ fn key_material_request(requester: &str, target: &str, room: &str) -> anyhow::Re
         requester_credential: Credential::tls_deserialize_exact(&credential)
             .map_err(|e| anyhow!("{e:?}"))?,
     }
-    .sign(&seed)
+    .sign(
+        &mimi_mls::label::SignatureKeyPair::from_raw(&seed, &public)
+            .map_err(|e| anyhow!("the request key: {e}"))?,
+    )
     .map_err(|e| anyhow!("signing the keyMaterial request: {e}"))?;
     encode(&request)
 }
