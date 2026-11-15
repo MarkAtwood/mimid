@@ -32,6 +32,11 @@
 //! addresses = ["127.0.0.1", "::1"]
 //! header = "x-client-cert"   # base64 DER of the leaf certificate
 //!
+//! # Optional: peers that speak the mimi-protocol #190 extension points
+//! # (draft PR #220) for update requests and responses.
+//! [wire_profiles]
+//! "b.example" = "extensions190"   # default: "draft07"
+//!
 //! # Optional: TLS toward peers.
 //! [peer_tls]
 //! roots = ["/etc/mimid/peer-roots.pem"]  # CAs for peers' servers, plus the system's
@@ -130,6 +135,11 @@ pub struct Config {
     /// certificate (bead mimid-75nk.5).
     #[serde(default)]
     pub peer_tls: crate::tls::PeerTlsConfig,
+    /// Peers that speak an encoding other than protocol-07 for the
+    /// messages mimi-protocol #190 extends (bead mimid-1wgh.55.5). Each
+    /// must be in `peers`.
+    #[serde(default)]
+    pub wire_profiles: BTreeMap<Domain, WireProfileSetting>,
 }
 
 impl Config {
@@ -195,7 +205,34 @@ impl Config {
         if config.provider_auth.peers.contains_key(&config.domain) {
             return Err(ConfigError::OwnDomainInPeers(config.domain));
         }
+        if let Some(domain) = config
+            .wire_profiles
+            .keys()
+            .find(|domain| !config.peers.contains_key(*domain))
+        {
+            return Err(ConfigError::WireProfileForUnknownPeer(domain.clone()));
+        }
         Ok(config)
+    }
+}
+
+/// `[wire_profiles]` values: the encoding a peer speaks for the
+/// messages mimi-protocol #190 extends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WireProfileSetting {
+    /// protocol-07 as published.
+    Draft07,
+    /// protocol-07 with the #190 extension points (draft PR #220).
+    Extensions190,
+}
+
+impl From<WireProfileSetting> for mimi_protocol::WireProfile {
+    fn from(setting: WireProfileSetting) -> Self {
+        match setting {
+            WireProfileSetting::Draft07 => Self::Draft07,
+            WireProfileSetting::Extensions190 => Self::Extensions190,
+        }
     }
 }
 
@@ -218,6 +255,9 @@ pub enum ConfigError {
     /// The peer map contains this provider's own domain.
     #[error("peer map lists the provider's own domain {0}")]
     OwnDomainInPeers(Domain),
+    /// `[wire_profiles]` names a domain that is not in `peers`.
+    #[error("wire_profiles names {0}, which is not a configured peer")]
+    WireProfileForUnknownPeer(Domain),
 }
 
 /// A lowercase DNS domain name.
@@ -358,8 +398,33 @@ mod tests {
             tls: None,
             trusted_proxy: None,
             peer_tls: crate::tls::PeerTlsConfig::default(),
+            wire_profiles: BTreeMap::new(),
         };
         assert_eq!(config, expected);
+    }
+
+    #[test]
+    fn wire_profiles_parse_and_must_name_a_peer() {
+        // VALID's [peers] table is last, so the profiles table follows it.
+        let config = Config::parse(&format!(
+            "{VALID}\n[wire_profiles]\n\"b.example\" = \"extensions190\"\n"
+        ))
+        .unwrap();
+        assert_eq!(
+            config.wire_profiles[&domain("b.example")],
+            WireProfileSetting::Extensions190
+        );
+        assert_eq!(
+            mimi_protocol::WireProfile::from(WireProfileSetting::Draft07),
+            mimi_protocol::WireProfile::Draft07
+        );
+        let unknown = format!("{VALID}\n[wire_profiles]\n\"z.example\" = \"draft07\"\n");
+        assert!(matches!(
+            Config::parse(&unknown),
+            Err(ConfigError::WireProfileForUnknownPeer(d)) if d.as_str() == "z.example"
+        ));
+        let bad = format!("{VALID}\n[wire_profiles]\n\"b.example\" = \"draft08\"\n");
+        assert!(Config::parse(&bad).is_err());
     }
 
     #[test]

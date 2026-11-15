@@ -233,6 +233,9 @@ pub struct Hub {
     /// rules (decision mimid-1wgh.52).
     requirements: HubRequirements,
     limits: FieldLimits,
+    /// Peers that speak an encoding other than protocol-07 for the
+    /// messages #190 extends (bead mimid-1wgh.55.5).
+    wire_profiles: BTreeMap<Domain, mimi_protocol::WireProfile>,
 }
 
 /// What a deployment requires of the rooms it hosts beyond the drafts
@@ -315,6 +318,7 @@ impl Hub {
             local_key_material: None,
             requirements: HubRequirements::default(),
             limits: FieldLimits::default(),
+            wire_profiles: BTreeMap::new(),
         })
     }
 
@@ -615,13 +619,48 @@ impl Hub {
     /// [`HubError::Store`] for internal failures. Nothing is written on
     /// error, and the room's in-memory state is rebuilt from its stored
     /// state.
+    ///
+    /// From a peer with a [`mimi_protocol::WireProfile`] other than
+    /// protocol-07 ([`Hub::with_wire_profiles`]), the request and the
+    /// response are in that profile's encoding; extensions the peer sends
+    /// are logged and otherwise ignored, and the response carries none.
     pub async fn update(
         &self,
         room_id: &str,
         from: &Domain,
         request: &[u8],
     ) -> Result<Vec<u8>, HubError> {
-        update::update(self, room_id, from, request).await
+        use mimi_mls::tls_codec::{Deserialize, Serialize};
+        use mimi_protocol::{UpdateRequest, UpdateRoomResponse, WireProfile};
+
+        let profile = self.wire_profiles.get(from).copied().unwrap_or_default();
+        if profile == WireProfile::Draft07 {
+            return update::update(self, room_id, from, request).await;
+        }
+        let (decoded, extensions) =
+            UpdateRequest::decode(profile, request).map_err(HubError::InvalidRequest)?;
+        if !extensions.is_empty() {
+            let components: Vec<u16> = extensions.entries().map(|(id, _)| id).collect();
+            tracing::debug!(room_id, ?components, "update carries extensions; ignored");
+        }
+        let plain = decoded.tls_serialize_detached().map_err(HubError::Encode)?;
+        let answer = update::update(self, room_id, from, &plain).await?;
+        UpdateRoomResponse::tls_deserialize_exact(&answer[..])
+            .and_then(|response| {
+                response.encode(profile, &mimi_mls::wire::AppDataDictionary::default())
+            })
+            .map_err(HubError::Encode)
+    }
+
+    /// Speaks `profiles`' encodings to those peers for the messages #190
+    /// extends (bead mimid-1wgh.55.5); protocol-07 to every other.
+    #[must_use]
+    pub fn with_wire_profiles(
+        mut self,
+        profiles: BTreeMap<Domain, mimi_protocol::WireProfile>,
+    ) -> Self {
+        self.wire_profiles = profiles;
+        self
     }
 
     /// protocol-07 §5.4 `POST /submitMessage/{roomId}`: checks, franks and

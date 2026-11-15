@@ -42,11 +42,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
-use mimi_mls::tls_codec::Deserialize;
+use mimi_mls::tls_codec::{Deserialize, Serialize};
+use mimi_mls::wire::AppDataDictionary;
 use mimi_protocol::{
     Directory, GroupInfoCode, GroupInfoResponse, IdentifierQueryCode, IdentifierResponse,
     KeyMaterialResponse, KeyMaterialUserCode, SubmitMessageResponse, SubmitResponseCode,
-    UpdateResponseCode, UpdateRoomResponse, UriTemplate,
+    UpdateRequest, UpdateResponseCode, UpdateRoomResponse, UriTemplate, WireProfile,
 };
 use reqwest::header::{CONTENT_TYPE, DATE, FROM, HOST, HeaderMap, HeaderValue, RETRY_AFTER};
 use reqwest::{StatusCode, redirect};
@@ -138,6 +139,10 @@ impl Endpoint {
     /// decode as one.
     fn decode_response(self, body: &[u8]) -> Option<ErrorResponse> {
         match self {
+            // protocol-07 only: a refusal from a peer on another profile
+            // stays bytes, since the encodings cannot be told apart
+            // (protocol-07 with a trailing 0x00 reads as an empty #190
+            // dictionary).
             Self::Update => UpdateRoomResponse::tls_deserialize_exact(body)
                 .ok()
                 .map(ErrorResponse::Update),
@@ -200,6 +205,9 @@ pub struct PeerClient {
     /// Signs each protocol request (bead mimid-75nk.1); none sends them
     /// unsigned.
     signer: Option<Arc<crate::provider_auth::RequestSigner>>,
+    /// Peers that speak an encoding other than protocol-07 for the
+    /// messages #190 extends (bead mimid-1wgh.55.5).
+    profiles: BTreeMap<Domain, WireProfile>,
 }
 
 /// The contents of a `[peer_tls]` file.
@@ -208,6 +216,15 @@ fn read(path: &Path) -> Result<Vec<u8>, PeerError> {
         path: path.to_owned(),
         source,
     })
+}
+
+/// Logs the component IDs of extensions a peer sent (bead
+/// mimid-1wgh.55.5); mimid acts on none of them yet.
+fn log_extensions(endpoint: &'static str, extensions: &AppDataDictionary) {
+    if !extensions.is_empty() {
+        let components: Vec<u16> = extensions.entries().map(|(id, _)| id).collect();
+        tracing::debug!(endpoint, ?components, "peer sent extensions; ignored");
+    }
 }
 
 impl PeerClient {
@@ -261,6 +278,7 @@ impl PeerClient {
             directories: Mutex::new(BTreeMap::new()),
             clocks: None,
             signer: None,
+            profiles: BTreeMap::new(),
         })
     }
 
@@ -278,6 +296,19 @@ impl PeerClient {
     pub fn with_signer(mut self, signer: Arc<crate::provider_auth::RequestSigner>) -> Self {
         self.signer = Some(signer);
         self
+    }
+
+    /// Speaks `profiles`' encodings to those peers for the messages #190
+    /// extends (bead mimid-1wgh.55.5); protocol-07 to every other.
+    #[must_use]
+    pub fn with_wire_profiles(mut self, profiles: BTreeMap<Domain, WireProfile>) -> Self {
+        self.profiles = profiles;
+        self
+    }
+
+    /// The encoding `domain` speaks.
+    fn profile(&self, domain: &Domain) -> WireProfile {
+        self.profiles.get(domain).copied().unwrap_or_default()
     }
 
     /// Whether `domain` is in the peer map.
@@ -542,8 +573,24 @@ impl PeerClient {
         room_id: &str,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, PeerError> {
-        self.post_read(domain, Endpoint::Update, room_id, body)
-            .await
+        let profile = self.profile(domain);
+        if profile == WireProfile::Draft07 {
+            return self
+                .post_read(domain, Endpoint::Update, room_id, body)
+                .await;
+        }
+        // The callers speak protocol-07: translate both ways. The
+        // extensions are empty going out; any coming back are logged.
+        let body = UpdateRequest::tls_deserialize_exact(&body[..])
+            .and_then(|request| request.encode(profile, &AppDataDictionary::default()))
+            .map_err(PeerError::Wire)?;
+        let answer = self
+            .post_read(domain, Endpoint::Update, room_id, body)
+            .await?;
+        let (response, extensions) =
+            UpdateRoomResponse::decode(profile, &answer).map_err(PeerError::Wire)?;
+        log_extensions("update", &extensions);
+        response.tls_serialize_detached().map_err(PeerError::Wire)
     }
 
     /// protocol-07 §5.4 `POST /submitMessage/{roomId}`: as
@@ -867,6 +914,10 @@ pub enum PeerError {
     /// A domain is not a valid HTTP header value.
     #[error("invalid header value")]
     Header,
+    /// A message could not be translated to or from a peer's wire profile
+    /// (bead mimid-1wgh.55.5).
+    #[error("cannot translate the message for the peer's wire profile")]
+    Wire(#[source] mimi_mls::tls_codec::Error),
     /// A `[peer_tls]` file cannot be read.
     #[error("cannot read {}", path.display())]
     TlsFile {

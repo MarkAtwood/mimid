@@ -780,7 +780,8 @@ fn errors_name_the_problem() {
 //
 // Oracle: the draft change on MarkAtwood/mimi-protocol branch
 // extension-points-190: `key_material_request_extensions` after roomId in
-// KeyMaterialRequest and its TBS, `client_key_material_extensions` after
+// KeyMaterialRequest after the signature (outside the TBS),
+// `client_key_material_extensions` after
 // clientUri in each ClientKeyMaterial, each an AppDataDictionary
 // (mls-extensions §4.6).
 
@@ -791,51 +792,30 @@ fn ext() -> AppDataDictionary {
 const EXT_WIRE: &[u8] = &[0x05, 0x80, 0x01, 0x02, b'r', b'1'];
 
 #[test]
-fn request_extensions_follow_the_room_and_are_signed() {
-    let tbs = expected_tbs(ROOM, &[1, 3]);
-    let plain = tbs.tls_serialize_detached().unwrap();
-    let head = cat(&[
-        &tbs.protocol.tls_serialize_detached().unwrap(),
-        &tbs.requesting_user.tls_serialize_detached().unwrap(),
-        &tbs.target_user.tls_serialize_detached().unwrap(),
-        &tbs.room_id.tls_serialize_detached().unwrap(),
-    ]);
-    let tbs_with = cat(&[&head, EXT_WIRE, &plain[head.len()..]]);
+fn request_extensions_follow_the_signature() {
+    let none = AppDataDictionary::default();
+    let request = expected_tbs(ROOM, &[1, 3]).sign(&requester_pair()).unwrap();
+    let plain = request.tls_serialize_detached().unwrap();
+    assert_eq!(request.encode(WireProfile::Draft07, &none).unwrap(), plain);
 
-    let request = tbs
-        .clone()
-        .sign_with(WireProfile::Extensions190, ext(), &requester_pair())
-        .unwrap();
-    let wire = request.tls_serialize_detached().unwrap();
-    assert!(wire.starts_with(&tbs_with));
-    let decoded = KeyMaterialRequest::decode(WireProfile::Extensions190, &wire).unwrap();
-    assert_eq!(decoded.tbs(), &tbs);
-    assert_eq!(decoded.extensions(), &ext());
-    decoded.verify().unwrap();
-
-    // The signature covers the extensions: change "r1" to "r2".
-    let mut tampered = wire.clone();
-    let at = head.len() + EXT_WIRE.len() - 1;
-    tampered[at] = b'2';
-    let tampered = KeyMaterialRequest::decode(WireProfile::Extensions190, &tampered).unwrap();
-    assert!(tampered.verify().is_err());
-
-    // protocol-07: no field, and non-empty extensions cannot be signed.
-    let plain_request = KeyMaterialRequest::decode(
-        WireProfile::Draft07,
-        &tbs.clone()
-            .sign(&requester_pair())
-            .unwrap()
-            .tls_serialize_detached()
-            .unwrap(),
-    )
-    .unwrap();
-    assert!(plain_request.extensions().is_empty());
-    plain_request.verify().unwrap();
-    assert!(
-        tbs.sign_with(WireProfile::Draft07, ext(), &requester_pair())
-            .is_err()
+    // After the signature, outside the TBS: the provider can add them to a
+    // request its client signed, and the signature still verifies.
+    let with = cat(&[&plain, EXT_WIRE]);
+    assert_eq!(
+        request.encode(WireProfile::Extensions190, &ext()).unwrap(),
+        with
     );
+    let (decoded, got) = KeyMaterialRequest::decode(WireProfile::Extensions190, &with).unwrap();
+    assert_eq!((&decoded, &got), (&request, &ext()));
+    decoded.verify().unwrap();
+    assert_eq!(
+        KeyMaterialRequest::decode(WireProfile::Draft07, &plain).unwrap(),
+        (request.clone(), none)
+    );
+
+    // protocol-07 has no field for them; and its decoder sees trailing bytes.
+    assert!(request.encode(WireProfile::Draft07, &ext()).is_err());
+    assert!(KeyMaterialRequest::decode(WireProfile::Draft07, &with).is_err());
 }
 
 #[test]

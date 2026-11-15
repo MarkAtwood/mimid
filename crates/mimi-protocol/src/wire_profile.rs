@@ -3,8 +3,8 @@
 //!
 //! The draft change on MarkAtwood/mimi-protocol branch
 //! `extension-points-190` (for mimi-protocol issue 190) adds an
-//! `AppDataDictionary` extension point to `KeyMaterialRequest` (and its
-//! TBS), `ClientKeyMaterial`, `UpdateRequest` and `UpdateRoomResponse`.
+//! `AppDataDictionary` extension point to `KeyMaterialRequest` (after the
+//! signature, outside its TBS), `ClientKeyMaterial`, `UpdateRequest` and `UpdateRoomResponse`.
 //! That is a wire change, so each of those messages has a
 //! profile-aware encoder and decoder, taking or returning the extensions
 //! beside the message; the `tls_codec` traits stay protocol-07.

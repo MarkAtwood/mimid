@@ -95,23 +95,11 @@ fn check_acceptable(acceptable_ciphersuites: &[CipherSuite]) -> Result<(), Strin
 
 impl Serialize for KeyMaterialRequestTbs {
     fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
-        self.write(writer, WireProfile::Draft07, &AppDataDictionary::default())
-    }
-}
-
-impl KeyMaterialRequestTbs {
-    fn write<W: Write>(
-        &self,
-        writer: &mut W,
-        profile: WireProfile,
-        extensions: &AppDataDictionary,
-    ) -> Result<usize, tls_codec::Error> {
         check_acceptable(&self.acceptable_ciphersuites).map_err(tls_codec::Error::EncodingError)?;
         Ok(self.protocol.tls_serialize(writer)?
             + self.requesting_user.tls_serialize(writer)?
             + self.target_user.tls_serialize(writer)?
             + self.room_id.tls_serialize(writer)?
-            + profile.write_extensions(extensions, writer)?
             + self.acceptable_ciphersuites.tls_serialize(writer)?
             + self.required_capabilities.tls_serialize(writer)?
             + self.requester_signature_key.tls_serialize(writer)?
@@ -121,23 +109,13 @@ impl KeyMaterialRequestTbs {
 
 impl Deserialize for KeyMaterialRequestTbs {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
-        Self::read(bytes, WireProfile::Draft07).map(|(tbs, _)| tbs)
-    }
-}
-
-impl KeyMaterialRequestTbs {
-    fn read<R: Read>(
-        bytes: &mut R,
-        profile: WireProfile,
-    ) -> Result<(Self, AppDataDictionary), tls_codec::Error> {
         let protocol = Protocol::tls_deserialize(bytes)?;
         let requesting_user = IdentifierUri::tls_deserialize(bytes)?;
         let target_user = IdentifierUri::tls_deserialize(bytes)?;
         let room_id = IdentifierUri::tls_deserialize(bytes)?;
-        let extensions = profile.read_extensions(bytes)?;
         let acceptable_ciphersuites = Vec::<CipherSuite>::tls_deserialize(bytes)?;
         check_acceptable(&acceptable_ciphersuites).map_err(tls_codec::Error::DecodingError)?;
-        let tbs = Self {
+        Ok(Self {
             protocol,
             requesting_user,
             target_user,
@@ -146,8 +124,7 @@ impl KeyMaterialRequestTbs {
             required_capabilities: RequiredCapabilities::tls_deserialize(bytes)?,
             requester_signature_key: SignaturePublicKey::tls_deserialize(bytes)?,
             requester_credential: Credential::tls_deserialize(bytes)?,
-        };
-        Ok((tbs, extensions))
+        })
     }
 }
 
@@ -169,31 +146,8 @@ impl KeyMaterialRequestTbs {
         self,
         signature_private_key: &label::SignatureKeyPair,
     ) -> Result<KeyMaterialRequest, Error> {
-        self.sign_with(
-            WireProfile::Draft07,
-            AppDataDictionary::default(),
-            signature_private_key,
-        )
-    }
-
-    /// [`KeyMaterialRequestTbs::sign`] under `profile`, with `extensions`
-    /// (the #190 `key_material_request_extensions`, after `roomId`), which
-    /// the signature covers.
-    ///
-    /// # Errors
-    ///
-    /// As [`KeyMaterialRequestTbs::sign`]; [`Error::Encoding`] also if
-    /// `extensions` is not empty under [`WireProfile::Draft07`].
-    pub fn sign_with(
-        self,
-        profile: WireProfile,
-        extensions: AppDataDictionary,
-        signature_private_key: &label::SignatureKeyPair,
-    ) -> Result<KeyMaterialRequest, Error> {
         check_signing_suite(&self.acceptable_ciphersuites)?;
-        let mut tbs_bytes = Vec::new();
-        self.write(&mut tbs_bytes, profile, &extensions)
-            .map_err(Error::Encoding)?;
+        let tbs_bytes = self.tls_serialize_detached().map_err(Error::Encoding)?;
         let signature = signature_private_key
             .sign_with_label(REQUEST_TBS_LABEL, &tbs_bytes)
             .map_err(Error::Label)?;
@@ -201,7 +155,6 @@ impl KeyMaterialRequestTbs {
             tbs: self,
             tbs_bytes,
             signature,
-            extensions,
         })
     }
 }
@@ -216,7 +169,6 @@ pub struct KeyMaterialRequest {
     tbs: KeyMaterialRequestTbs,
     tbs_bytes: Vec<u8>,
     signature: Vec<u8>,
-    extensions: AppDataDictionary,
 }
 
 impl KeyMaterialRequest {
@@ -225,31 +177,37 @@ impl KeyMaterialRequest {
         &self.tbs
     }
 
-    /// The #190 `key_material_request_extensions`, signed with the TBS;
-    /// empty under [`WireProfile::Draft07`].
-    pub fn extensions(&self) -> &AppDataDictionary {
-        &self.extensions
+    /// Encodes this request under `profile`, with `extensions` (the #190
+    /// `key_material_request_extensions`, after the signature, so the
+    /// requester's provider can set them).
+    ///
+    /// # Errors
+    ///
+    /// A tls_codec error if `extensions` is not empty under
+    /// [`WireProfile::Draft07`].
+    pub fn encode(
+        &self,
+        profile: WireProfile,
+        extensions: &AppDataDictionary,
+    ) -> Result<Vec<u8>, tls_codec::Error> {
+        let mut out = self.tls_serialize_detached()?;
+        profile.write_extensions(extensions, &mut out)?;
+        Ok(out)
     }
 
-    /// Decodes all of `bytes` under `profile`.
+    /// Decodes all of `bytes` under `profile`: the request and its
+    /// extensions (empty under [`WireProfile::Draft07`]).
     ///
     /// # Errors
     ///
     /// A tls_codec error for anything malformed, or trailing bytes.
-    pub fn decode(profile: WireProfile, bytes: &[u8]) -> Result<Self, tls_codec::Error> {
-        exact(bytes, |reader| Self::read(reader, profile))
-    }
-
-    fn read<R: Read>(bytes: &mut R, profile: WireProfile) -> Result<Self, tls_codec::Error> {
-        let mut recorder = Recorder::new(bytes);
-        let (tbs, extensions) = KeyMaterialRequestTbs::read(&mut recorder, profile)?;
-        let tbs_bytes = recorder.consumed;
-        let signature = Vec::<u8>::tls_deserialize(bytes)?;
-        Ok(Self {
-            tbs,
-            tbs_bytes,
-            signature,
-            extensions,
+    pub fn decode(
+        profile: WireProfile,
+        bytes: &[u8],
+    ) -> Result<(Self, AppDataDictionary), tls_codec::Error> {
+        exact(bytes, |reader| {
+            let request = Self::tls_deserialize(reader)?;
+            Ok((request, profile.read_extensions(reader)?))
         })
     }
 
@@ -300,7 +258,15 @@ impl Serialize for KeyMaterialRequest {
 
 impl Deserialize for KeyMaterialRequest {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
-        Self::read(bytes, WireProfile::Draft07)
+        let mut recorder = Recorder::new(bytes);
+        let tbs = KeyMaterialRequestTbs::tls_deserialize(&mut recorder)?;
+        let tbs_bytes = recorder.consumed;
+        let signature = Vec::<u8>::tls_deserialize(bytes)?;
+        Ok(Self {
+            tbs,
+            tbs_bytes,
+            signature,
+        })
     }
 }
 

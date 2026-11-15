@@ -49,13 +49,14 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
 use base64::Engine;
-use mimid_server::config::Config;
+use mimid_server::config::{Config, Domain};
 use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
 use mimid_server::follower::key_packages::KeyPackages;
@@ -129,12 +130,20 @@ async fn main() -> anyhow::Result<()> {
         config.peers.keys().cloned(),
         Duration::from_secs(config.peer_clock_tolerance_secs),
     );
+    // Peers on the mimi-protocol #190 extension points (bead
+    // mimid-1wgh.55.5); protocol-07 for every other.
+    let wire_profiles: BTreeMap<Domain, mimi_protocol::WireProfile> = config
+        .wire_profiles
+        .iter()
+        .map(|(domain, setting)| (domain.clone(), (*setting).into()))
+        .collect();
     let peers = || {
         PeerClient::with_tls(&config.domain, config.peers.clone(), &config.peer_tls)
             .map(|client| {
                 client
                     .with_clocks(Arc::clone(&clocks))
                     .with_signer(Arc::clone(&signer))
+                    .with_wire_profiles(wire_profiles.clone())
             })
             .context("building the peer client")
     };
@@ -170,7 +179,8 @@ async fn main() -> anyhow::Result<()> {
                 config.require_franking,
                 config.require_room_policy,
             ))
-            .with_limits(config.field_limits()),
+            .with_limits(config.field_limits())
+            .with_wire_profiles(wire_profiles.clone()),
     );
     if follower
         .set_relay(Relay::new(Arc::clone(&hub), peers()?))
