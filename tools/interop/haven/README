@@ -56,6 +56,12 @@ Layout
     driver/       standalone crate: mimid crates by relative path, plus a copy
                   of the root Cargo.toml [patch] section (keep the two in step).
                   Mode make-kp <uri> <file> writes a mimid KeyPackage
+                  Mode unicode: the hub half of the Unicode tests (bead
+                  mimid-1wgh.54; src/unicode.rs): identifierQuery for
+                  non-ASCII enrolled names and for every naughty string,
+                  reportAbuse notes and consent keys read back from the
+                  hub's store. Needs HUB_DB_CMD. Run it on the mimid host
+                  as public.sh runs b4.sh, against our copy of the hub.
 
 Why a namespace and port 443: mimi-hubd builds its directory URLs as
 https://{provider_domain}, with no port (havenmessenger/interop#3). The

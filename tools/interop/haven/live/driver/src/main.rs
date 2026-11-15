@@ -8,6 +8,7 @@
 //!
 //! Usage:
 //!   mimid-haven-live make-kp <identity URI> <out file>   a mimid KeyPackage
+//!   mimid-haven-live unicode                             Unicode stress (src/unicode.rs)
 //!   mimid-haven-live                                     the live steps
 //!
 //! Each line starting with STEP is one request; its result is printed as
@@ -33,6 +34,8 @@ use mimi_protocol::{
 };
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::peer::{PeerClient, PeerError};
+
+mod unicode;
 
 /// The names one run uses. The defaults are the namespace run's
 /// (run.sh); a run against a public hub sets them from the environment:
@@ -400,6 +403,11 @@ async fn main() {
         )]),
     )
     .expect("PeerClient");
+
+    if args.get(1).map(String::as_str) == Some("unicode") {
+        unicode::run(&client, &haven).await;
+        return;
+    }
 
     // 1. Directory fetch (TLS trust + partial directory): groupInfo is
     // absent from Haven's directory, so a working fetch ends in NotOffered.
