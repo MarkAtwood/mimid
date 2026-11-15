@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.46.18",
+  "title": "Haven KeyPackages lack room_metadata (0x0023): JMAP-created mimid rooms cannot invite Haven users",
+  "description": "Live test 2026-11-15 (mimid-1wgh.12.41): inviting mimi://mimi.havenmessenger.com/u/erin into a room made by Room/create fails: a leaf does not support required component 0x0023. Room/create rule 5 needs room_metadata; mls-extensions rule 6 (editor's copy, PR #110) needs a component with state in the GroupContext to be listed in app_components, so required. erin's KeyPackages list 0x21, 0x22, 0x25, 0x27. Needs Haven to list 0x0023 in KeyPackage app_components; ask Jason on interop#1 or Zulip (Mark's OK to post). Then rerun tools/interop/chat jmap-erin.script on the host.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T07:35:05.324149252Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T07:35:05.324149252Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.18",
+      "depends_on_id": "mimid-1wgh.46",
+      "type": "parent-child",
+      "created_at": "2026-11-15T07:35:05.47834747Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
