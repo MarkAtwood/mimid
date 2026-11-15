@@ -1,0 +1,45 @@
+{
+  "id": "mimid-1wgh.55.7",
+  "title": "mimid: send and honor a retry hint for exhausted clients in keyMaterial",
+  "description": "Serve the hint when a local client is exhausted; the follower waits for it before asking a peer again. Depends on the spec entry.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T19:32:38.193052418Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T19:32:38.193052418Z",
+  "labels": [
+    "protocol",
+    "follower",
+    "interop",
+    "spec",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.55.7",
+      "depends_on_id": "mimid-1wgh.55",
+      "type": "parent-child",
+      "created_at": "2026-11-15T19:32:38.230520597Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.55.7",
+      "depends_on_id": "mimid-1wgh.55.3",
+      "type": "blocks",
+      "created_at": "2026-11-15T19:32:38.252010411Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.55.7",
+      "depends_on_id": "mimid-1wgh.55.5",
+      "type": "blocks",
+      "created_at": "2026-11-15T19:32:38.273115296Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
