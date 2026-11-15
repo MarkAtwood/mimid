@@ -1,0 +1,16 @@
+Haven's MIMI client certificate and its root, as Jason Bolduc posted them
+in zulip.ietf.org #mimi, topic "remote MIMI interop table", messages
+238225 (client) and 238226 (root), 2026-11-15 17:21Z. Public certificates
+only; no keys.
+
+Checked 2026-11-15 with OpenSSL:
+- root: CN=Haven MIMI Root CA, self-signed, CA:TRUE pathlen:0,
+  2026-06-14 to 2036-06-11, SHA-256
+  F3:5A:9D:22:09:B4:23:CE:C9:08:7D:69:1A:D5:C5:65:56:82:B3:A7:DA:AF:87:DF:86:33:B3:E5:42:EA:71:8A,
+  the fingerprint Jason gave in message 238223.
+- client: CN=haven-mimi, SAN DNS:mimi.havenmessenger.com, EKU clientAuth,
+  2026-11-15 to 2029-02-17; `openssl verify -CAfile haven-root.pem
+  -purpose sslclient haven-client.pem` is OK.
+
+The root is the trust anchor for Haven's peers once PKIX client
+certificates are checked (bead mimid-75nk.5).
