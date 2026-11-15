@@ -21,6 +21,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use jmap_chat_mimi_types::MimiCapability;
 use jmap_chat_types::{ChatCapability, JMAP_CHAT_URI};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -121,7 +122,7 @@ impl SessionTemplate {
     /// Returns an error if the Session does not serialize, which its types
     /// rule out.
     pub(super) fn session(&self, account: &Account) -> Result<Session, serde_json::Error> {
-        let body = self.body(account);
+        let body = self.body(account)?;
         let state = state_of(&body)?;
         Ok(Session { body, state })
     }
@@ -133,10 +134,10 @@ impl SessionTemplate {
     ///
     /// As [`SessionTemplate::session`].
     pub(super) fn state(&self, account: &Account) -> Result<String, serde_json::Error> {
-        state_of(&self.body(account))
+        state_of(&self.body(account)?)
     }
 
-    fn body(&self, account: &Account) -> SessionBody {
+    fn body(&self, account: &Account) -> Result<SessionBody, serde_json::Error> {
         let user_uri = account.user().as_str().to_owned();
         let account_id = account.account_id().to_owned();
         let base = &self.base_url;
@@ -146,17 +147,20 @@ impl SessionTemplate {
             is_read_only: false,
             account_capabilities: AccountCapabilities {
                 chat: self.chat.clone(),
-                mimi: MimiCapability {
-                    user_uri: user_uri.clone(),
-                    room_id_prefix: self.room_id_prefix.clone(),
-                    hub_sender: self.hub_sender.clone(),
-                    cipher_suites: CIPHER_SUITES.to_vec(),
-                    max_key_packages: self.max_key_packages,
-                },
+                // crate-jmap builds its non_exhaustive wire types from JSON
+                // (its bd:JMAP-sgrr.27), which also checks hubSender is
+                // base64url and cipherSuites is not empty.
+                mimi: serde_json::from_value::<MimiCapability>(serde_json::json!({
+                    "userUri": user_uri,
+                    "roomIdPrefix": self.room_id_prefix,
+                    "hubSender": self.hub_sender,
+                    "cipherSuites": CIPHER_SUITES,
+                    "maxKeyPackages": self.max_key_packages,
+                }))?,
                 i18n: Empty {},
             },
         };
-        SessionBody {
+        Ok(SessionBody {
             capabilities: SessionCapabilities {
                 core: CoreCapability {
                     max_size_upload: MAX_SIZE_UPLOAD,
@@ -190,7 +194,7 @@ impl SessionTemplate {
             // federation); draft-atwood-jmap-chat-mimi-00 L124 maps the
             // owner's user URI through it.
             owner_user_id: user_uri,
-        }
+        })
     }
 }
 
@@ -301,18 +305,6 @@ struct AccountCapabilities {
     /// Session (the draft dropped `preferredLanguages`, 2026-11-15).
     #[serde(rename = "urn:ietf:params:jmap:i18n")]
     i18n: Empty,
-}
-
-/// draft-atwood-jmap-chat-mimi-00 §3.2 (L150-167). crate-jmap has no type
-/// for it yet (mimid-1wgh.12.2).
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct MimiCapability {
-    user_uri: String,
-    room_id_prefix: String,
-    hub_sender: String,
-    cipher_suites: Vec<u16>,
-    max_key_packages: u64,
 }
 
 /// `GET /.well-known/jmap`: the Session for the authenticated account.

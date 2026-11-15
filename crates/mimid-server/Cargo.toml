@@ -18,6 +18,7 @@ base64 = "=0.22.1"
 # capability types; exact rev pin (decision mimid-1wgh.12.21).
 jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "0972e7a4a2533210f35917cafac973934ecce856" }
 jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "0972e7a4a2533210f35917cafac973934ecce856" }
+jmap-chat-mimi-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "0972e7a4a2533210f35917cafac973934ecce856" }
 # Retry-After HTTP-date parsing (RFC 9110 §10.2.3); already in the lockfile.
 httpdate = "1.0.3"
 # Reads the salt and URIs of reported messages (protocol-07 §5.9).

@@ -815,7 +815,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1536,6 +1536,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jmap-chat-mimi-types"
+version = "0.5.0"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=0972e7a4a2533210f35917cafac973934ecce856#0972e7a4a2533210f35917cafac973934ecce856"
+dependencies = [
+ "jmap-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jmap-chat-types"
 version = "0.5.0"
 source = "git+https://github.com/MarkAtwood/crate-jmap?rev=0972e7a4a2533210f35917cafac973934ecce856#0972e7a4a2533210f35917cafac973934ecce856"
@@ -2106,6 +2116,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "httpdate",
+ "jmap-chat-mimi-types",
  "jmap-chat-types",
  "jmap-server",
  "mimi-content",
@@ -2631,7 +2642,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2954,7 +2965,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4158,7 +4169,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
