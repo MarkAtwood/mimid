@@ -1,1 +1,2 @@
 {"id":"01a14b16-9250-780f-ba5e-9667b6ba7c34","issue_id":"mimid-1wgh.32","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-17T18:18:52.880528795Z"}
+{"id":"01a1dd39-a13a-7959-990f-f32cd37a9d12","issue_id":"mimid-1wgh.32","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Superseded by mimid-1wgh.47 (online sideband) and its mimid admin CLI sub-bead; Mark 2026-11-15.","created_at":"2026-11-15T03:21:43.994613602Z"}
