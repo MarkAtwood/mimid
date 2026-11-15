@@ -119,6 +119,21 @@ impl Store {
         Ok(())
     }
 
+    /// Removes row `id` without delivering it: the destination refused it
+    /// for good (decision mimid-1wgh.6.19, amended 2026-11-15).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::OutOfRange`] if `id` exceeds `i64::MAX`, and
+    /// [`StoreError::Sqlx`] if the delete fails.
+    pub async fn drop_refused(&self, id: u64) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM outbox WHERE id = ?")
+            .bind(to_sql_int(id)?)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Records a failed attempt on row `id`: counts it and sets the time of
     /// the next attempt.
     ///
