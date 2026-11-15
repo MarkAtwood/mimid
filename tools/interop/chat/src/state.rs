@@ -76,6 +76,14 @@ pub struct State {
     /// 16 random octets (bead mimid-1wgh.12.41).
     #[serde(default)]
     pub group_rooms: BTreeMap<String, String>,
+    /// The JMAP Message state read up to (bead mimid-1wgh.12.41), or none
+    /// before the first JMAP poll.
+    #[serde(default)]
+    pub jmap_message_state: Option<String>,
+    /// Digests of the MLSMessages sent over JMAP, newest last, so their
+    /// stored copies are skipped in later runs too.
+    #[serde(default)]
+    pub jmap_sent: Vec<u64>,
 }
 
 /// An open state directory.
@@ -132,6 +140,8 @@ impl StateDir {
             consumed_welcomes: Vec::new(),
             key_packages_outstanding: 0,
             group_rooms: BTreeMap::new(),
+            jmap_message_state: None,
+            jmap_sent: Vec::new(),
         };
         self.save(&state)?;
         Ok((identity, state, true))

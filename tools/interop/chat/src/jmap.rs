@@ -8,6 +8,12 @@
 //! Each call answers what the wire call it replaces answers, so the rest of
 //! the client is unchanged: KeyMaterial/fetch is turned back into a
 //! KeyMaterialResponse, Room/update into an UpdateRoomResponse.
+//!
+//! Receiving: [`Jmap::messages_since`] reads the Messages the server stored,
+//! every one the first time and then by `Message/changes`. Each body is a
+//! FanoutMessage, handled as one from the hub. The server also stores the
+//! client's own handshakes and messages; [`Jmap::is_own`] recognises those
+//! this process sent, so they are skipped.
 
 use std::time::Duration;
 
@@ -17,8 +23,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use mimi_mls::tls_codec::{Deserialize, Serialize, VLBytes};
 use mimi_mls::wire::{Capabilities, KeyPackage, ProposalRef};
 use mimi_protocol::{
-    ClientKeyMaterial, IdentifierUri, KeyMaterialRequest, KeyMaterialResponse, KeyMaterialUserCode,
-    Protocol, SubmitMessageRequest, UpdateResult, UpdateRoomResponse, Utf8String,
+    ClientKeyMaterial, FanoutEvent, FanoutMessage, HandshakeBundle, IdentifierUri,
+    KeyMaterialRequest, KeyMaterialResponse, KeyMaterialUserCode, Protocol, SubmitMessageRequest,
+    UpdateRequest, UpdateResult, UpdateRoomResponse, Utf8String,
 };
 use serde_json::{Value, json};
 
@@ -31,10 +38,28 @@ const USING: [&str; 3] = [
 ];
 const MIMI: &str = "urn:ietf:params:jmap:chat:mimi";
 
+/// How many sent-message digests are kept.
+const MAX_SENT: usize = 1024;
+
+/// A deterministic 64-bit digest of an MLSMessage's bytes: SipHash with
+/// fixed keys, the same in every run. Enough to recognise one's own
+/// messages among a room's.
+fn digest(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    #[allow(deprecated, reason = "SipHasher's fixed keys are what is wanted")]
+    let mut hasher = std::hash::SipHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// How long one JMAP request may take.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct Jmap {
+    /// Digests ([`digest`]) of the MLSMessages this client sent, which the
+    /// server also stores as Messages (draft §Room/update, §Room/send), so
+    /// polling skips them. Kept in the state across runs.
+    sent: std::sync::Mutex<Vec<u64>>,
     api_url: String,
     token: String,
     account_id: String,
@@ -81,6 +106,7 @@ impl Jmap {
             .as_str()
             .map_or_else(|| format!("{base}/jmap/api"), str::to_owned);
         Ok(Self {
+            sent: std::sync::Mutex::default(),
             api_url,
             token: token.to_owned(),
             account_id,
@@ -227,8 +253,136 @@ impl Jmap {
         .map_err(|e| anyhow!("re-encoding the KeyMaterialResponse: {e:?}"))
     }
 
+    fn remember_sent(&self, message: &impl Serialize) {
+        if let Ok(bytes) = message.tls_serialize_detached() {
+            let mut sent = self
+                .sent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            sent.push(digest(&bytes));
+            let excess = sent.len().saturating_sub(MAX_SENT);
+            sent.drain(..excess);
+        }
+    }
+
+    /// The digests of the messages sent, oldest first, for the state.
+    pub fn sent_digests(&self) -> Vec<u64> {
+        self.sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Restores the digests of messages sent in earlier runs.
+    pub fn restore_sent(&self, digests: &[u64]) {
+        *self
+            .sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = digests.to_vec();
+    }
+
+    /// Whether the FanoutMessage `body` carries an MLSMessage this client
+    /// sent.
+    pub fn is_own(&self, body: &[u8]) -> bool {
+        let Ok(fanouts) = FanoutMessage::decode_all(body) else {
+            return false;
+        };
+        let sent = self
+            .sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        fanouts.iter().any(|fanout| {
+            let message = match &fanout.event {
+                FanoutEvent::Application { message, .. }
+                | FanoutEvent::Commit { message, .. }
+                | FanoutEvent::Proposal { message, .. } => message,
+                FanoutEvent::Welcome { .. } => return false,
+            };
+            message
+                .tls_serialize_detached()
+                .is_ok_and(|bytes| sent.contains(&digest(&bytes)))
+        })
+    }
+
+    /// The Messages stored since `since` (every Message when `None`, or
+    /// when the server cannot calculate the changes), as (id, body), and
+    /// the new Message state. Each body is one FanoutMessage
+    /// (draft §application/mimi-fanout).
+    pub async fn messages_since(
+        &self,
+        since: Option<&str>,
+    ) -> anyhow::Result<(String, Vec<(String, Vec<u8>)>)> {
+        let (state, ids) = match since {
+            None => (None, Value::Null),
+            Some(since) => {
+                let mut ids = Vec::new();
+                let mut state = since.to_owned();
+                loop {
+                    let changes = match self
+                        .call("Message/changes", json!({"sinceState": state}))
+                        .await
+                    {
+                        Ok(changes) => changes,
+                        Err(e) if format!("{e}").contains("cannotCalculateChanges") => {
+                            return Box::pin(self.messages_since(None)).await;
+                        }
+                        Err(e) => return Err(e),
+                    };
+                    ids.extend(changes["created"].as_array().into_iter().flatten().cloned());
+                    state = changes["newState"]
+                        .as_str()
+                        .ok_or_else(|| anyhow!("Message/changes has no newState"))?
+                        .to_owned();
+                    if changes["hasMoreChanges"] != true {
+                        break;
+                    }
+                }
+                if ids.is_empty() {
+                    return Ok((state, Vec::new()));
+                }
+                (Some(state), Value::Array(ids))
+            }
+        };
+        let answer = self
+            .call("Message/get", json!({"ids": ids, "properties": ["body"]}))
+            .await?;
+        let state = match state {
+            Some(state) => state,
+            None => answer["state"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Message/get has no state"))?
+                .to_owned(),
+        };
+        let mut messages = Vec::new();
+        for message in answer["list"].as_array().into_iter().flatten() {
+            let id = message["id"].as_str().unwrap_or_default().to_owned();
+            let body = message["body"]
+                .as_str()
+                .and_then(|b| URL_SAFE_NO_PAD.decode(b).ok())
+                .ok_or_else(|| anyhow!("Message {id} has no base64url body"))?;
+            messages.push((id, body));
+        }
+        Ok((state, messages))
+    }
+
     /// Room/update, answered as the UpdateRoomResponse it decodes.
     pub async fn update(&self, room: &str, request: Vec<u8>) -> anyhow::Result<UpdateRoomResponse> {
+        if let Ok(decoded) = UpdateRequest::tls_deserialize_exact(&request[..]) {
+            match &decoded.bundle {
+                HandshakeBundle::Commit {
+                    proposal_or_commit, ..
+                } => self.remember_sent(proposal_or_commit),
+                HandshakeBundle::Proposal {
+                    proposal_or_commit,
+                    more_proposals,
+                } => {
+                    self.remember_sent(proposal_or_commit);
+                    for proposal in more_proposals {
+                        self.remember_sent(proposal);
+                    }
+                }
+            }
+        }
         let answer = self
             .call(
                 "Room/update",
@@ -273,6 +427,7 @@ impl Jmap {
             .app_message
             .tls_serialize_detached()
             .map_err(|e| anyhow!("own message: {e:?}"))?;
+        self.remember_sent(&request.app_message);
         let answer = self
             .call(
                 "Room/send",

@@ -192,6 +192,7 @@ async fn run() -> anyhow::Result<i32> {
     hub.jmap = jmap;
     let dir = StateDir::open(&args.state_dir)?;
     let mut client = Client::open(dir, me, hub)?;
+    client.restore_jmap_sent();
     client.auto_publish = !(args.no_publish || (args.no_lane && !jmap_mode));
     client.top_up_key_packages().await;
     client.greet();

@@ -999,6 +999,7 @@ impl Client {
                 .group_rooms
                 .insert(hex::encode(member.group_id()), room.clone());
         }
+        let held_key = format!("group:{}", hex::encode(member.group_id()));
         let who = participants(&member)?;
         self.members.insert(room.clone(), member);
         self.state.rooms.insert(
@@ -1022,7 +1023,7 @@ impl Client {
         // Messages that arrived before the join.
         let (replay, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.state.held)
             .into_iter()
-            .partition(|(r, _)| *r == room);
+            .partition(|(r, _)| *r == room || *r == held_key);
         self.state.held = keep;
         self.save();
         for (_, item) in replay {
@@ -1339,6 +1340,10 @@ impl Client {
 
     /// Pulls this user's queues and the current rooms' discard queues.
     pub async fn poll(&mut self) {
+        if self.hub.jmap.is_some() {
+            self.poll_jmap().await;
+            return;
+        }
         let mut errors = Vec::new();
         for _ in 0..MAX_PULLS_PER_POLL {
             match self.hub.pull_message(&self.me).await {
@@ -1380,6 +1385,58 @@ impl Client {
                 None => self.say("* polling the hub works again".to_owned()),
             }
             self.last_poll_error = now;
+        }
+    }
+
+    /// Hands the JMAP transport the digests of messages sent in earlier
+    /// runs (bead mimid-1wgh.12.41).
+    pub fn restore_jmap_sent(&self) {
+        if let Some(jmap) = &self.hub.jmap {
+            jmap.restore_sent(&self.state.jmap_sent);
+        }
+    }
+
+    /// Polling over JMAP (bead mimid-1wgh.12.41): every Message the server
+    /// stored since the last poll, each a FanoutMessage, except those
+    /// carrying this process's own MLSMessages.
+    async fn poll_jmap(&mut self) {
+        let Some(jmap) = &self.hub.jmap else {
+            return;
+        };
+        let since = self.state.jmap_message_state.clone();
+        let result = jmap.messages_since(since.as_deref()).await;
+        let error = match result {
+            Ok((state, messages)) => {
+                let own: Vec<bool> = messages.iter().map(|(_, body)| jmap.is_own(body)).collect();
+                for ((_, body), own) in messages.iter().zip(own) {
+                    if !own {
+                        self.incoming(body).await;
+                    }
+                }
+                // Incoming items may have sent more (a leave's Commit).
+                let sent = self
+                    .hub
+                    .jmap
+                    .as_ref()
+                    .map(|jmap| jmap.sent_digests())
+                    .unwrap_or_default();
+                if self.state.jmap_message_state.as_deref() != Some(state.as_str())
+                    || self.state.jmap_sent != sent
+                {
+                    self.state.jmap_message_state = Some(state);
+                    self.state.jmap_sent = sent;
+                    self.save();
+                }
+                None
+            }
+            Err(e) => Some(format!("{e:#}")),
+        };
+        if error != self.last_poll_error {
+            match &error {
+                Some(e) => self.error(format!("polling the server: {e}")),
+                None => self.say("* polling the server works again".to_owned()),
+            }
+            self.last_poll_error = error;
         }
     }
 
@@ -1460,12 +1517,20 @@ impl Client {
     }
 
     async fn incoming_mls(&mut self, message: &MLSMessage) {
-        let Some(room) = message.group_id().and_then(|g| {
+        // The room of the group; for a group not known yet whose ID is not a
+        // room URI (a Room/create room still to be joined), `group:<hex>`, so
+        // the message is held and replayed at /join.
+        let Some(room) = message.group_id().map(|g| {
             self.state
                 .group_rooms
                 .get(&hex::encode(g))
                 .cloned()
-                .or_else(|| String::from_utf8(g.to_vec()).ok())
+                .or_else(|| {
+                    String::from_utf8(g.to_vec())
+                        .ok()
+                        .filter(|r| IdentifierUri::new(r).is_ok())
+                })
+                .unwrap_or_else(|| format!("group:{}", hex::encode(g)))
         }) else {
             self.error("an MLS message that is not for a group".to_owned());
             return;

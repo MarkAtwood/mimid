@@ -44,8 +44,12 @@ JMAP mode, against your own mimid server (bead mimid-1wgh.12.41)
     mimid-chat --user alice --own-domain a.example --hub a.example \
       --hub-url http://127.0.0.1:18080 --jmap-url http://127.0.0.1:18080 \
       --jmap-token-file alice.token --state-dir state-alice
-  Not yet: receiving over JMAP (Welcomes, Commits and messages as Messages),
-  so invitees cannot join through this mode yet.
+  Receiving is by polling: every Message the first time, then
+  Message/changes; each body is a FanoutMessage, handled as one from the hub,
+  and the client's own handshakes and messages (which the server stores too)
+  are skipped by a digest kept in the state. A message for a room not joined
+  yet is held and replayed at /join. Tried locally: alice hosts and invites
+  bob and carol, each joins from the Welcome, and messages go both ways.
 
 Running it (one terminal per user)
   From this dev box:
