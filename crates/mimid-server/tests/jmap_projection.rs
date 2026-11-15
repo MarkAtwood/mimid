@@ -31,8 +31,9 @@ use axum::http::{Request, StatusCode, header};
 use common::{FixedClock, domain, open_hub};
 use mimi_mls::ErrorSource;
 use mimi_mls::member::{AppDataUpdate, ComponentOp};
+use mimi_mls::tls_codec::Serialize;
 use mimi_protocol::component_id::ROOM_METADATA;
-use mimi_protocol::{RoomMetaData, UpdateResult};
+use mimi_protocol::{IdentifierUri, RichDescription, RoomMetaData, UpdateResult, Utf8String};
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::follower::Follower;
 use mimid_server::hub::Hub;
@@ -200,7 +201,18 @@ impl Fixture {
     /// Makes one method call as `token`'s account and returns its
     /// response: [name, arguments].
     async fn call(&self, token: &BearerToken, method: &str, args: Value) -> (String, Value) {
-        let request = json!({"using": USING, "methodCalls": [[method, args, "c"]]});
+        self.call_using(token, &USING, method, args).await
+    }
+
+    /// As [`Fixture::call`], with `using` as given.
+    async fn call_using(
+        &self,
+        token: &BearerToken,
+        using: &[&str],
+        method: &str,
+        args: Value,
+    ) -> (String, Value) {
+        let request = json!({"using": using, "methodCalls": [[method, args, "c"]]});
         let response = self
             .app
             .clone()
@@ -1278,6 +1290,137 @@ async fn a_hosted_room_is_named_and_a_rename_changes_the_chat() {
         )
         .await;
     assert_eq!(changed(&changes), (vec![], vec![hosted]));
+    f.close().await;
+}
+
+/// [`USING`] with localized display text (draft-atwood-jmap-updates-00).
+const I18N_USING: [&str; 4] = [
+    "urn:ietf:params:jmap:core",
+    "urn:ietf:params:jmap:chat",
+    "urn:ietf:params:jmap:chat:mimi",
+    "urn:ietf:params:jmap:i18n",
+];
+
+/// `room_metadata` for [`common::ROOM_ID`] named "Clubhouse", with a
+/// plain-text description in each of `descriptions` (language tag, text).
+fn described(descriptions: &[(&str, &str)]) -> Vec<u8> {
+    let uri = IdentifierUri::new(common::ROOM_ID).unwrap();
+    RoomMetaData {
+        room_uri: uri.clone(),
+        room_name: Utf8String::new("Clubhouse".to_owned()).unwrap(),
+        room_descriptions: descriptions
+            .iter()
+            .map(|(tag, text)| RichDescription {
+                media_type: Vec::new(),
+                language_tag: tag.as_bytes().to_vec(),
+                description_content: text.as_bytes().to_vec(),
+            })
+            .collect(),
+        room_avatar: uri,
+        room_subject: Utf8String::new(String::new()).unwrap(),
+        room_mood: Utf8String::new(String::new()).unwrap(),
+    }
+    .tls_serialize_detached()
+    .unwrap()
+}
+
+/// mimid-1wgh.51: a hosted room's descriptions become the Chat's
+/// `description` and, with `urn:ietf:params:jmap:i18n` in `using`, its
+/// `localizations`; `language` chooses one by RFC 4647 Lookup
+/// (draft-atwood-jmap-updates-00 §4). Without the capability the Chat is
+/// as before and `language`, `locale` and `localizations` are refused.
+#[tokio::test]
+async fn room_descriptions_are_the_chats_localized_description() {
+    let f = fixture().await;
+    let mut room = update::member_room(&f.hub, common::ROOM_ID, b"i18n-group").await;
+    let since = f.store.follower_next_seq().await.unwrap();
+    f.join(common::ROOM_ID, ALICE, since, JOINED).await;
+    let hosted = f.chat_id(ALICE, common::ROOM_ID).await;
+    let account = f.alice_id.clone();
+    rename(
+        &f,
+        &mut room,
+        &described(&[("en", "Where we meet"), ("de", "Wo wir uns treffen")]),
+    )
+    .await;
+    let get = json!({"accountId": account, "ids": [hosted]});
+    let i18n = |method: &'static str, args: Value| {
+        let f = &f;
+        async move {
+            f.call_using(&f.alice_token, &I18N_USING, method, args)
+                .await
+        }
+    };
+
+    // Without the capability: the first description, nothing else.
+    let plain = f.alice("Chat/get", get.clone()).await;
+    let chat = &plain["list"][0];
+    assert_eq!(chat["name"], "Clubhouse");
+    assert_eq!(chat["description"], "Where we meet");
+    assert!(
+        chat.get("locale").is_none() && chat.get("localizations").is_none(),
+        "{chat}"
+    );
+    let mut with_language = get.clone();
+    with_language["language"] = json!(["de"]);
+    f.alice_error("Chat/get", with_language.clone(), "invalidArguments")
+        .await;
+    let mut with_locale = get.clone();
+    with_locale["properties"] = json!(["locale"]);
+    f.alice_error("Chat/get", with_locale, "invalidArguments")
+        .await;
+    f.alice_error(
+        "Chat/query",
+        json!({"accountId": account, "language": ["de"]}),
+        "invalidArguments",
+    )
+    .await;
+
+    // With it: the stored object, then the German view.
+    let (name, stored) = i18n("Chat/get", get.clone()).await;
+    assert_eq!(name, "Chat/get", "{stored}");
+    let chat = &stored["list"][0];
+    assert_eq!(chat["description"], "Where we meet");
+    assert_eq!(chat["locale"], Value::Null);
+    assert_eq!(
+        chat["localizations"],
+        json!({"de": {"description": "Wo wir uns treffen"}, "en": {"description": "Where we meet"}})
+    );
+    let mut swiss = get.clone();
+    swiss["language"] = json!(["de-CH", "en"]);
+    let (_, german) = i18n("Chat/get", swiss).await;
+    let chat = &german["list"][0];
+    assert_eq!(chat["name"], "Clubhouse");
+    assert_eq!(chat["description"], "Wo wir uns treffen");
+    assert_eq!(chat["locale"], "de");
+    // §4.2.1: the view keeps the stored object's state.
+    assert_eq!(german["state"], stored["state"]);
+    let (name, query) = i18n(
+        "Chat/query",
+        json!({"accountId": account, "language": ["de"]}),
+    )
+    .await;
+    assert_eq!(name, "Chat/query", "{query}");
+    assert_eq!(query["ids"], json!([hosted]));
+    let (name, error) = i18n("Chat/get", {
+        let mut bad = get.clone();
+        bad["language"] = json!("de");
+        bad
+    })
+    .await;
+    assert_eq!(
+        (name.as_str(), &error["type"]),
+        ("error", &json!("invalidArguments"))
+    );
+
+    // A changed description changes the Chat.
+    rename(&f, &mut room, &described(&[("en", "Where we eat")])).await;
+    let (_, after) = i18n("Chat/get", get).await;
+    assert_ne!(after["state"], stored["state"]);
+    assert_eq!(
+        after["list"][0]["localizations"],
+        json!({"en": {"description": "Where we eat"}})
+    );
     f.close().await;
 }
 

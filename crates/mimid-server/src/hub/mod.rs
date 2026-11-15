@@ -63,8 +63,8 @@ use crate::store::{RoomSnapshot, Store, StoreError};
 use fanout::FanoutHandle;
 pub use key_material::{LocalKeyMaterial, LocalKeyMaterialError, LocalKeyMaterialFuture};
 use keys::HubSigningKey;
-pub(crate) use state::{identity_domain, lookup_uri, room_uri_domain, user_uri_domain};
 pub use state::normalized_uri;
+pub(crate) use state::{identity_domain, lookup_uri, room_uri_domain, user_uri_domain};
 
 /// RFC 9420 §17.1: `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`, the only
 /// ciphersuite supported (decision mimid-1wgh.23).
@@ -150,6 +150,46 @@ pub struct PublicState {
     pub group_context: Vec<u8>,
     /// The TLS-encoded ratchet tree (RFC 9420 §12.4.3.3).
     pub ratchet_tree: Vec<u8>,
+}
+
+/// A hosted room's display text, from its `RoomMetaData` (protocol-07
+/// §7.6).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoomTexts {
+    /// `room_name`. It carries no language tag.
+    pub name: String,
+    /// The plain-text `room_descriptions`, in order, as (language tag,
+    /// text). A description whose media type is neither empty nor
+    /// `text/plain`, or whose tag or text is not UTF-8, is left out.
+    pub descriptions: Vec<(String, String)>,
+}
+
+impl From<&mimi_protocol::RoomMetaData> for RoomTexts {
+    fn from(metadata: &mimi_protocol::RoomMetaData) -> Self {
+        let descriptions = metadata
+            .room_descriptions
+            .iter()
+            .filter_map(|description| {
+                let media_type = std::str::from_utf8(&description.media_type).ok()?;
+                let plain = media_type.is_empty()
+                    || media_type
+                        .split(';')
+                        .next()
+                        .is_some_and(|t| t.trim().eq_ignore_ascii_case("text/plain"));
+                if !plain {
+                    return None;
+                }
+                Some((
+                    String::from_utf8(description.language_tag.clone()).ok()?,
+                    String::from_utf8(description.description_content.clone()).ok()?,
+                ))
+            })
+            .collect();
+        Self {
+            name: metadata.room_name.as_str().to_owned(),
+            descriptions,
+        }
+    }
 }
 
 /// The hub service.
@@ -455,16 +495,16 @@ impl Hub {
         })
     }
 
-    /// The current `room_name` (protocol-07 §7.6) of each room among
-    /// `room_ids` that this hub hosts, read from the `room_metadata`
-    /// component of its GroupContext, keyed by room ID. A room that is not
-    /// hosted here, has no `room_metadata`, or whose `room_metadata` does
-    /// not decode is left out: its name is unknown (decision
-    /// mimid-1wgh.12.25).
-    pub async fn room_names<'a>(
+    /// The current display text (protocol-07 §7.6 `RoomMetaData`) of each
+    /// room among `room_ids` that this hub hosts, read from the
+    /// `room_metadata` component of its GroupContext, keyed by room ID. A
+    /// room that is not hosted here, has no `room_metadata`, or whose
+    /// `room_metadata` does not decode is left out: its name is unknown
+    /// (decision mimid-1wgh.12.25).
+    pub async fn room_texts<'a>(
         &self,
         room_ids: impl IntoIterator<Item = &'a str>,
-    ) -> BTreeMap<String, String> {
+    ) -> BTreeMap<String, RoomTexts> {
         let rooms = self.rooms.lock().await;
         room_ids
             .into_iter()
@@ -478,7 +518,7 @@ impl Hub {
                     data,
                 )
                 .ok()?;
-                Some((room_id.to_owned(), metadata.room_name.as_str().to_owned()))
+                Some((room_id.to_owned(), RoomTexts::from(&metadata)))
             })
             .collect()
     }

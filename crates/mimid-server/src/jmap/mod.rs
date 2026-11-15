@@ -28,6 +28,7 @@
 pub mod api;
 pub mod auth;
 pub mod bus;
+pub mod language;
 mod methods;
 pub mod projection;
 pub mod session;

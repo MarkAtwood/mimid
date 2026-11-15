@@ -31,6 +31,7 @@ use super::api::{
     MAX_SIZE_REQUEST,
 };
 use super::auth::Account;
+use super::language::I18N_CAPABILITY;
 use crate::config::{BaseUrl, Domain};
 use crate::http::MAX_BODY_LEN;
 
@@ -42,7 +43,12 @@ pub const MIMI_CAPABILITY: &str = "urn:ietf:params:jmap:chat:mimi";
 
 /// Every capability the server supports: the keys of the Session's
 /// `capabilities`, and the only URIs a request may name in `using`.
-pub const CAPABILITIES: [&str; 3] = [CORE_CAPABILITY, JMAP_CHAT_URI, MIMI_CAPABILITY];
+pub const CAPABILITIES: [&str; 4] = [
+    CORE_CAPABILITY,
+    JMAP_CHAT_URI,
+    MIMI_CAPABILITY,
+    I18N_CAPABILITY,
+];
 
 /// `maxSizeUpload`: no blobs are accepted.
 pub const MAX_SIZE_UPLOAD: u64 = 0;
@@ -147,6 +153,9 @@ impl SessionTemplate {
                     cipher_suites: CIPHER_SUITES.to_vec(),
                     max_key_packages: self.max_key_packages,
                 },
+                i18n: I18nAccountCapability {
+                    preferred_languages: None,
+                },
             },
         };
         SessionBody {
@@ -163,6 +172,7 @@ impl SessionTemplate {
                 },
                 chat: Empty {},
                 mimi: Empty {},
+                i18n: Empty {},
             },
             primary_accounts: BTreeMap::from([
                 (JMAP_CHAT_URI, account_id.clone()),
@@ -251,6 +261,9 @@ struct SessionCapabilities {
     /// draft-atwood-jmap-chat-mimi-00 L148.
     #[serde(rename = "urn:ietf:params:jmap:chat:mimi")]
     mimi: Empty,
+    /// draft-atwood-jmap-updates-00 §3.
+    #[serde(rename = "urn:ietf:params:jmap:i18n")]
+    i18n: Empty,
 }
 
 #[derive(Debug, Serialize)]
@@ -286,6 +299,16 @@ struct AccountCapabilities {
     chat: ChatCapability,
     #[serde(rename = "urn:ietf:params:jmap:chat:mimi")]
     mimi: MimiCapability,
+    #[serde(rename = "urn:ietf:params:jmap:i18n")]
+    i18n: I18nAccountCapability,
+}
+
+/// draft-atwood-jmap-updates-00 §3: the account's i18n capability.
+/// mimid records no language preference, so `preferredLanguages` is null.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct I18nAccountCapability {
+    preferred_languages: Option<Vec<String>>,
 }
 
 /// draft-atwood-jmap-chat-mimi-00 §3.2 (L150-167). crate-jmap has no type

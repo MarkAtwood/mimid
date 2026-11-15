@@ -86,6 +86,7 @@ impl Authenticator {
         Ok(Account {
             account_id: owner.account_id,
             user,
+            i18n: false,
         })
     }
 }
@@ -114,6 +115,9 @@ fn bearer_token(headers: &HeaderMap) -> Option<BearerToken> {
 pub struct Account {
     account_id: String,
     user: LocalUser,
+    /// Whether the current request names `urn:ietf:params:jmap:i18n` in
+    /// `using` (draft-atwood-jmap-updates-00 §3).
+    i18n: bool,
 }
 
 impl Account {
@@ -125,6 +129,20 @@ impl Account {
     /// The authenticated local user.
     pub fn user(&self) -> &LocalUser {
         &self.user
+    }
+
+    /// Whether the request opted in to localized display text
+    /// (`urn:ietf:params:jmap:i18n` in `using`).
+    pub fn i18n(&self) -> bool {
+        self.i18n
+    }
+
+    /// This account for a request whose `using` does (`true`) or does not
+    /// name `urn:ietf:params:jmap:i18n`.
+    #[must_use]
+    pub(crate) fn with_i18n(mut self, i18n: bool) -> Self {
+        self.i18n = i18n;
+        self
     }
 
     /// Checks a method call's `accountId` argument against this account.

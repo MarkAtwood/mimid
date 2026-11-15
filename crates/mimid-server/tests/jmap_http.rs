@@ -192,7 +192,9 @@ fn expected_session(
             // draft-atwood-jmap-chat-00 L229.
             "urn:ietf:params:jmap:chat": {},
             // draft-atwood-jmap-chat-mimi-00 L148.
-            "urn:ietf:params:jmap:chat:mimi": {}
+            "urn:ietf:params:jmap:chat:mimi": {},
+            // draft-atwood-jmap-updates-00 §3.
+            "urn:ietf:params:jmap:i18n": {}
         },
         "accounts": {
             account_id: {
@@ -218,6 +220,10 @@ fn expected_session(
                         "hubSender": URL_SAFE_NO_PAD.encode(hub_sender(hub_key)),
                         "cipherSuites": [1],
                         "maxKeyPackages": max_key_packages
+                    },
+                    // draft-atwood-jmap-updates-00 §3: no preference kept.
+                    "urn:ietf:params:jmap:i18n": {
+                        "preferredLanguages": null
                     }
                 }
             }
