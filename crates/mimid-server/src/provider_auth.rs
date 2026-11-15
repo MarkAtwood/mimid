@@ -7,7 +7,8 @@
 //! [`ProviderAuthenticator`] in turn. The first that authenticates the
 //! source wins; the [`AuthenticatedProvider`] goes into the request's
 //! extensions. If none does, the source's [`AuthMode`] decides: `enforce`
-//! (the default; decision of mimid-75nk) answers `401`, `observe` logs the
+//! (the default; decision of mimid-75nk) answers `403` with an
+//! `Accept-Signature` field naming the signature it requires ([`refuse`]), `observe` logs the
 //! failure and lets the request through, for rollout with peers that do not
 //! authenticate yet.
 //!
@@ -19,15 +20,19 @@
 //! 2. DNS-published keys (mimid-75nk.3), 3. PKIX mutual TLS (mimid-75nk.5)
 //!    and 4. DANE (mimid-75nk.6) are not built yet.
 //!
-//! A signature counts only if it covers the provisional MIMI profile
-//! ([`REQUIRED_COMPONENTS`]): `@method`, `@target-uri`, `content-digest`
-//! and `from`, with `created`, and `Content-Digest` matches the body
-//! (RFC 9530). Since the key is chosen by the `From` domain and `from` is
+//! A signature counts only if it follows draft-atwood-mimi-provider-auth-00
+//! §5.2 and §5.3: it covers `@method`, `@target-uri` and `from`
+//! ([`REQUIRED_COMPONENTS`]), and `content-digest` when the request has a
+//! body, with `created` and `keyid`; and `Content-Digest`, when the body
+//! is not empty, matches it (RFC 9530). Signatures tagged `mimi` are tried
+//! first. Since the key is chosen by the `From` domain and `from` is
 //! covered, the authenticated domain is the `From` domain.
 //!
 //! Outbound, [`RequestSigner`] signs each request the
 //! [`crate::peer::PeerClient`] sends with this server's own key, under the
-//! label [`SIGNATURE_LABEL`], with the configured selector as `keyid`.
+//! label [`SIGNATURE_LABEL`], tagged `mimi`, with the configured selector
+//! as `keyid`, covering `@method`, `@target-uri`, `content-digest` and
+//! `from` (draft-atwood-mimi-provider-auth-00 §5.2).
 //!
 //! # Logging
 //!
@@ -53,7 +58,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, header};
 use axum::middleware::Next;
 use axum::response::Response;
 use base64::Engine;
@@ -68,10 +73,17 @@ use crate::hub::Clock;
 /// no MIMI document names one yet. Received signatures may use any label.
 pub const SIGNATURE_LABEL: &str = "mimi";
 
-/// The components a signature must cover to authenticate a provider: the
-/// provisional profile of the held MIMI trust-anchor issue (decision of
-/// mimid-75nk).
-pub const REQUIRED_COMPONENTS: [&str; 4] = ["@method", "@target-uri", "content-digest", "from"];
+/// The components a signature must cover to authenticate a provider
+/// (draft-atwood-mimi-provider-auth-00 §5.2); `content-digest` too when
+/// the request has a body.
+pub const REQUIRED_COMPONENTS: [&str; 3] = ["@method", "@target-uri", "from"];
+
+/// The `tag` of a MIMI provider signature (draft-atwood-mimi-provider-auth-00
+/// §5.2).
+pub const SIGNATURE_TAG: &str = "mimi";
+
+/// The components mimid's own signatures cover.
+const SIGNED_COMPONENTS: [&str; 4] = ["@method", "@target-uri", "content-digest", "from"];
 
 /// How far in the future a signature's `created` may be. INVENTED, NOT
 /// FROM SPEC.
@@ -94,7 +106,7 @@ const FROM_PREFIX: &str = "mimi@";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthMode {
-    /// Refuse it with `401`.
+    /// Refuse it with `403` ([`refuse`]).
     #[default]
     Enforce,
     /// Log the failure and accept it.
@@ -307,8 +319,21 @@ impl ProviderAuthenticator for TrustList {
         let Some(keys) = self.keys.get(request.from) else {
             return Outcome::Refused(Refusal::NoTrustedKey);
         };
-        if httpsig::check_content_digest(request.headers, request.body).is_err() {
+        // §5.3 step 6: the digest is checked when there is content.
+        if !request.body.is_empty()
+            && httpsig::check_content_digest(request.headers, request.body).is_err()
+        {
             return Outcome::Refused(Refusal::Digest);
+        }
+        // §5.3 step 2: signatures tagged `mimi` first.
+        let mut labels = labels;
+        if let Ok(signatures) = httpsig::signatures(request.headers) {
+            let tagged: BTreeSet<&str> = signatures
+                .iter()
+                .filter(|(_, p)| p.tag.as_deref() == Some(SIGNATURE_TAG))
+                .map(|(label, _)| label.as_str())
+                .collect();
+            labels.sort_by_key(|label| !tagged.contains(label.as_str()));
         }
         let parts = httpsig::RequestParts {
             method: request.method,
@@ -336,11 +361,13 @@ impl ProviderAuthenticator for TrustList {
                     continue;
                 }
             };
-            if let Some(missing) = REQUIRED_COMPONENTS
-                .into_iter()
-                .find(|c| !params.components.iter().any(|have| have == c))
-            {
+            let covers = |c: &str| params.components.iter().any(|have| have == c);
+            if let Some(missing) = REQUIRED_COMPONENTS.into_iter().find(|c| !covers(c)) {
                 refusal = Refusal::NotCovered(missing);
+                continue;
+            }
+            if !request.body.is_empty() && !covers(httpsig::CONTENT_DIGEST) {
+                refusal = Refusal::NotCovered(httpsig::CONTENT_DIGEST);
                 continue;
             }
             return Outcome::Authenticated(AuthenticatedProvider {
@@ -492,10 +519,10 @@ pub async fn check(
                 tracing::debug!(
                     peer = from.as_str(),
                     reason = %refusal,
-                    status = StatusCode::UNAUTHORIZED.as_u16(),
+                    status = StatusCode::FORBIDDEN.as_u16(),
                     "request refused: provider not authenticated"
                 );
-                return crate::http::problem(StatusCode::UNAUTHORIZED, "provider-authentication");
+                return refuse();
             }
             AuthMode::Observe => {
                 if auth.first_observed(&from) {
@@ -516,6 +543,28 @@ pub async fn check(
         },
     }
     next.run(Request::from_parts(parts, Body::from(body))).await
+}
+
+/// The `Accept-Signature` field of a refusal (RFC 9421 §5.1): one
+/// signature labeled [`SIGNATURE_LABEL`], covering `@method`,
+/// `@target-uri`, `content-digest` and `from`, with `created`, tagged
+/// `mimi`, by Ed25519.
+pub const ACCEPT_SIGNATURE: &str = "mimi=(\"@method\" \"@target-uri\" \"content-digest\" \"from\");created;tag=\"mimi\";alg=\"ed25519\"";
+
+/// The answer to a request whose source does not authenticate:
+/// `403 Forbidden`, as draft-atwood-mimi-provider-auth-00 §11 says, with
+/// [`ACCEPT_SIGNATURE`] and the RFC 9457 problem type
+/// `provider-authentication`. Not `401`: RFC 9110 §15.5.2 requires a 401
+/// to carry a `WWW-Authenticate` challenge, and RFC 9421 is not an HTTP
+/// authentication scheme. The reason stays in the log (the draft's
+/// SHOULD NOT on saying why each mechanism failed).
+pub fn refuse() -> Response {
+    let mut response = crate::http::problem(StatusCode::FORBIDDEN, "provider-authentication");
+    response.headers_mut().insert(
+        HeaderName::from_static("accept-signature"),
+        HeaderValue::from_static(ACCEPT_SIGNATURE),
+    );
+    response
 }
 
 /// Signs outbound requests with this server's key (see the module
@@ -561,9 +610,10 @@ impl RequestSigner {
     ) -> Result<(), httpsig::Error> {
         headers.insert(httpsig::CONTENT_DIGEST, httpsig::content_digest(body));
         let params = SignatureParams {
-            components: REQUIRED_COMPONENTS.map(str::to_owned).to_vec(),
+            components: SIGNED_COMPONENTS.map(str::to_owned).to_vec(),
             created: Some(now),
             keyid: Some(self.selector.clone()),
+            tag: Some(SIGNATURE_TAG.to_owned()),
             ..SignatureParams::default()
         };
         httpsig::sign_headers(method, uri, headers, SIGNATURE_LABEL, &params, &self.key)

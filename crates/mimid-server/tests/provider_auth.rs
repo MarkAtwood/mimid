@@ -2,11 +2,12 @@
 //! serves the protocol router behind [`provider_auth::check`], and
 //! a.example's [`PeerClient`] sends it a requestConsent over HTTP. A
 //! request signed with a key b.example trusts for a.example is accepted;
-//! an unsigned one, or one signed with another key, is `401` unless
+//! an unsigned one, or one signed with another key, is `403` unless
 //! a.example is in observe mode.
 //!
 //! Oracle: the `202` of an accepted requestConsent (protocol-07 §5.7), the
-//! entry stored in a.example's database, and the `401` problem.
+//! entry stored in b.example's database, and the `403` problem with its
+//! `Accept-Signature` (draft-atwood-mimi-provider-auth-00 §11).
 
 #![forbid(unsafe_code)]
 
@@ -159,7 +160,7 @@ async fn unsigned_or_wrongly_signed_requests_are_refused_when_enforcing() {
             .await
             .unwrap_err();
         assert!(
-            matches!(error, PeerError::Rejected { status: 401, .. }),
+            matches!(error, PeerError::Rejected { status: 403, .. }),
             "{error:?}"
         );
     }
@@ -185,4 +186,41 @@ async fn the_directory_is_not_authenticated() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn a_refusal_is_403_with_accept_signature_and_a_problem_body() {
+    let b = target(&trusting_a()).await;
+    let response = reqwest::Client::new()
+        .post(format!("{}/v1/requestConsent/b.example", b.base))
+        .header("From", "mimi@a.example")
+        .header("Content-Type", "application/mimi-protocol")
+        .body(REQUEST.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 403);
+    // RFC 9110 §15.5.2: no 401, so no WWW-Authenticate either.
+    assert!(response.headers().get("www-authenticate").is_none());
+    assert_eq!(
+        response.headers()["accept-signature"],
+        provider_auth::ACCEPT_SIGNATURE
+    );
+    // The value is an RFC 9651 dictionary naming the profile.
+    assert_eq!(
+        provider_auth::ACCEPT_SIGNATURE,
+        r#"mimi=("@method" "@target-uri" "content-digest" "from");created;tag="mimi";alg="ed25519""#
+    );
+    assert_eq!(
+        response.headers()["content-type"],
+        "application/problem+json"
+    );
+    let body: serde_json::Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    assert_eq!(body["status"], 403);
+    assert!(
+        body["type"]
+            .as_str()
+            .unwrap()
+            .ends_with(":provider-authentication")
+    );
 }

@@ -383,6 +383,26 @@ pub fn labels(headers: &HeaderMap) -> Result<Vec<String>, Error> {
         .collect())
 }
 
+/// The label and parameters of each `Signature-Input` member, in order;
+/// members that are not inner lists or carry parameters this module does
+/// not take are left out.
+///
+/// # Errors
+///
+/// [`Error::Malformed`] if `Signature-Input` is not an RFC 9651
+/// dictionary.
+pub fn signatures(headers: &HeaderMap) -> Result<Vec<(String, SignatureParams)>, Error> {
+    Ok(dictionary(headers, SIGNATURE_INPUT)?
+        .iter()
+        .filter_map(|(label, entry)| match entry {
+            ListEntry::InnerList(list) => SignatureParams::from_inner_list(list)
+                .ok()
+                .map(|params| (label.as_str().to_owned(), params)),
+            ListEntry::Item(_) => None,
+        })
+        .collect())
+}
+
 /// Signs `parts` with `key` under `label`, covering `params`, and returns
 /// the `Signature-Input` and `Signature` member values to add (the label
 /// and `=` included), so the caller can append them to existing fields.
