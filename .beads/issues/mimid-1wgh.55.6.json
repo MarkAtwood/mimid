@@ -1,0 +1,45 @@
+{
+  "id": "mimid-1wgh.55.6",
+  "title": "mimid: send a structured refusal reason in UpdateRoomResponse and log peers' reasons",
+  "description": "The hub already logs a reason for every refusal (hub/update.rs refuse(), mimid-1wgh.49). Put the matching reason (per the chosen naming) in the response extension, never English; PeerClient decodes it and logs it. Tests per refusal path; joint vectors jt-mls-01 and jt-leave-03 gain the reason.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T19:32:38.014327641Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T19:32:38.014327641Z",
+  "labels": [
+    "protocol",
+    "hub",
+    "interop",
+    "spec",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.55.6",
+      "depends_on_id": "mimid-1wgh.55",
+      "type": "parent-child",
+      "created_at": "2026-11-15T19:32:38.052960463Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.55.6",
+      "depends_on_id": "mimid-1wgh.55.2",
+      "type": "blocks",
+      "created_at": "2026-11-15T19:32:38.072967107Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.55.6",
+      "depends_on_id": "mimid-1wgh.55.5",
+      "type": "blocks",
+      "created_at": "2026-11-15T19:32:38.093992413Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
