@@ -22,8 +22,8 @@
 //!   mimid-1wgh.12.30).
 //! - Besides `Core/echo`, the read projection ([`projection`]), the
 //!   refusing `Chat/set` and `Message/set`, `KeyPackage/get`,
-//!   `KeyPackage/set`, `KeyMaterial/fetch` and `Room/create` are
-//!   implemented; every other method answers
+//!   `KeyPackage/set`, `KeyMaterial/fetch`, `Room/create`, `Room/update`,
+//!   `Room/send` and `Room/unbind` are implemented; every other method answers
 //!   `unknownMethod` until its bead lands.
 
 pub mod api;

@@ -33,9 +33,9 @@
 //! - The JMAP endpoint ([`mimid_server::jmap`]) serves the Session, the
 //!   Chat, Message and ChatContact projection, EventSource, and
 //!   `KeyPackage/get`, `KeyPackage/set` and `KeyMaterial/fetch`, so local
-//!   users can publish KeyPackages, fetch other users', and create rooms
-//!   hosted here (`Room/create`). They cannot yet update or send to rooms
-//!   over JMAP (beads mimid-1wgh.12.6 to mimid-1wgh.12.8).
+//!   users can publish KeyPackages, fetch other users', create rooms
+//!   hosted here, update, send to and unbind rooms. `GroupInfo/fetch`, for
+//!   external joins, is not there yet (bead mimid-1wgh.12.8).
 //! - The hub, follower, relay and fanout worker each have their own
 //!   [`PeerClient`], so each fetches and caches peer directories
 //!   separately.

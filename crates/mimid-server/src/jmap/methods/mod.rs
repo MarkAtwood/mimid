@@ -16,6 +16,7 @@ mod group_info;
 mod key_material;
 pub(crate) mod key_package;
 mod message_set;
+mod room_common;
 mod room_create;
 mod room_send;
 mod room_unbind;

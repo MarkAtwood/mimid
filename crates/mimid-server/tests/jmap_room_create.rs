@@ -1,9 +1,14 @@
-//! `Room/create` (draft-atwood-jmap-chat-mimi-00 §Room/create; bead
-//! mimid-1wgh.12.4) through the JMAP API: alice publishes a KeyPackage,
-//! builds a one-member group with mimi-mls, and has this server host it.
+//! `Room/create`, `Room/update`, `Room/send` and `Room/unbind`
+//! (draft-atwood-jmap-chat-mimi-00 §Rooms; beads mimid-1wgh.12.4,
+//! mimid-1wgh.12.6, mimid-1wgh.12.7) through the JMAP API: alice
+//! publishes a KeyPackage, builds a one-member group with mimi-mls, has
+//! this server host it, renames it, sends to it and unbinds it.
 
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
 mod common;
+#[allow(dead_code, reason = "each test binary uses part of the helpers")]
+#[path = "common/update.rs"]
+mod update;
 
 use std::sync::Arc;
 
@@ -14,20 +19,20 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use common::{
     APP_COMPONENTS, FRANK_AAD_ONLY, FixedClock, HUB_IDENTITY, ROOM_APP_COMPONENTS, SAFE_AAD,
-    base_room_policy, domain, franking_agent, no_components, open_hub, participant_list,
+    domain, franking_agent, no_components, open_hub,
 };
 use mimi_mls::member::{ExternalSender, Member};
 use mimi_mls::tls_codec::Serialize;
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_protocol::{IdentifierUri, RoomMetaData, Utf8String};
-use mimi_room_policy::component_id::BASE_ROOM_POLICY;
 use mimid_server::config::BaseUrl;
 use mimid_server::follower::Follower;
 use mimid_server::follower::key_packages::KeyPackages;
-use mimid_server::follower::relay::LocalUser;
+use mimid_server::follower::relay::{LocalUser, Relay};
 use mimid_server::hub::Hub;
 use mimid_server::jmap::{self, JmapOptions};
+use mimid_server::peer::PeerClient;
 use mimid_server::store::BearerToken;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -60,6 +65,12 @@ async fn fixture() -> Fixture {
     ));
     let follower = Follower::new(domain(), store.clone(), Arc::new(FixedClock(5)))
         .with_key_packages(Arc::clone(&key_packages));
+    follower
+        .set_relay(Relay::new(
+            Arc::clone(&hub),
+            PeerClient::new(&domain(), std::collections::BTreeMap::new()).unwrap(),
+        ))
+        .unwrap();
     let account = store.create_account(&domain(), ALICE, 1).await.unwrap();
     let token = store.issue_token(&account, 2).await.unwrap();
     let app = jmap::router(
@@ -132,6 +143,12 @@ struct Spec<'a> {
 /// alice's one-member group for `spec`, as (groupInfo, ratchetTree), and
 /// the room ID it names. `alice` has published a KeyPackage when `bound`.
 fn group(hub: &Hub, alice: &Identity, spec: Spec<'_>) -> (Vec<u8>, Vec<u8>, String) {
+    let (group_info, tree, room_id, _) = group_member(hub, alice, spec);
+    (group_info, tree, room_id)
+}
+
+/// As [`group`], with alice's group, to go on using it.
+fn group_member(hub: &Hub, alice: &Identity, spec: Spec<'_>) -> (Vec<u8>, Vec<u8>, String, Member) {
     let room_id = spec.room_id.map_or_else(
         || format!("mimi://a.example/r/{}", base32(&rand16())),
         str::to_owned,
@@ -145,12 +162,15 @@ fn group(hub: &Hub, alice: &Identity, spec: Spec<'_>) -> (Vec<u8>, Vec<u8>, Stri
         (APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec()),
         (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
         (FRANKING_AGENT, franking_agent(&key, HUB_IDENTITY)),
+        // alice as a member (role 2) of an open room, one with no
+        // base_room_policy (decision mimid-1wgh.52), so she may rename it.
         (
             PARTICIPANT_LIST,
-            participant_list(spec.participants.unwrap_or(&[ALICE.as_bytes()])),
+            update::members_list(spec.participants.unwrap_or(&[ALICE.as_bytes()]))
+                .tls_serialize_detached()
+                .unwrap(),
         ),
         (ROOM_METADATA, room_metadata(&room_id)),
-        (BASE_ROOM_POLICY, base_room_policy()),
     ];
     let group_id = spec
         .group_id
@@ -158,7 +178,8 @@ fn group(hub: &Hub, alice: &Identity, spec: Spec<'_>) -> (Vec<u8>, Vec<u8>, Stri
     let mut group = Member::create(alice, &group_id, &senders, &components).unwrap();
     let bundle = group.commit(alice, &[], &[], &[], no_components).unwrap();
     group.merge_pending_commit(alice).unwrap();
-    (bundle.group_info, group.ratchet_tree().unwrap(), room_id)
+    let tree = group.ratchet_tree().unwrap();
+    (bundle.group_info, tree, room_id, group)
 }
 
 fn rand16() -> [u8; 16] {
@@ -331,4 +352,161 @@ fn expected_reason(why: &str) -> &'static str {
         "rule 6: an 8-octet group ID" => "not 16 octets",
         _ => unreachable!("{why}"),
     }
+}
+
+fn rename_apply(
+    component_id: u16,
+    _current: Option<&[u8]>,
+    op: mimi_mls::member::ComponentOp<'_>,
+) -> Result<Option<Vec<u8>>, mimi_mls::ErrorSource> {
+    match (component_id, op) {
+        (ROOM_METADATA, mimi_mls::member::ComponentOp::Update(updates)) => {
+            Ok(updates.last().map(|update| update.to_vec()))
+        }
+        _ => Err("unexpected AppDataUpdate".into()),
+    }
+}
+
+/// The ids `Message/query` gives for the Chat `chat_id`.
+async fn message_ids(f: &Fixture, chat_id: &Value) -> Vec<Value> {
+    let (_, query) = f
+        .call("Message/query", json!({"filter": {"chatId": chat_id}}))
+        .await;
+    query["ids"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{query}"))
+        .clone()
+}
+
+/// Beads mimid-1wgh.12.6 to mimid-1wgh.12.8: once created, the room is
+/// renamed with Room/update and sent to with Room/send; each accepted
+/// handshake or message is stored as a Message of the Chat (the hub does
+/// not send the owner's own back). After Room/unbind the Chat is not bound:
+/// Room/send is refused, and Room/unbind still works.
+#[tokio::test]
+async fn a_room_is_updated_sent_to_and_unbound() {
+    let f = fixture().await;
+    let alice = f.alice(true).await;
+    let (group_info, tree, room_id, mut group) = group_member(&f.hub, &alice, Spec::default());
+    let (_, created) = f.create(&group_info, &tree).await;
+    let chat_id = created["chatId"].clone();
+    assert_eq!(message_ids(&f, &chat_id).await.len(), 0);
+
+    // Room/update: alice renames the room.
+    let renamed = {
+        let uri = IdentifierUri::new(&room_id).unwrap();
+        RoomMetaData {
+            room_uri: uri.clone(),
+            room_name: Utf8String::new("Launch".to_owned()).unwrap(),
+            room_descriptions: vec![],
+            room_avatar: uri,
+            room_subject: Utf8String::new(String::new()).unwrap(),
+            room_mood: Utf8String::new(String::new()).unwrap(),
+        }
+        .tls_serialize_detached()
+        .unwrap()
+    };
+    let bundle = group
+        .commit(
+            &alice,
+            &[],
+            &[],
+            &[mimi_mls::member::AppDataUpdate::Update {
+                component_id: ROOM_METADATA,
+                update: renamed,
+            }],
+            rename_apply,
+        )
+        .unwrap();
+    group.merge_pending_commit(&alice).unwrap();
+    let request = update::commit_request(
+        &bundle.commit,
+        None,
+        &bundle.group_info,
+        &group.ratchet_tree().unwrap(),
+    );
+    let (name, updated) = f
+        .call(
+            "Room/update",
+            json!({"roomId": room_id, "request": URL_SAFE_NO_PAD.encode(&request)}),
+        )
+        .await;
+    assert_eq!(name, "Room/update", "{updated}");
+    assert_eq!(updated["responseCode"], "success", "{updated}");
+    assert_eq!(updated["errorDescription"], "");
+    assert!(updated["acceptedAt"].as_str().unwrap().ends_with('Z'));
+    let (_, chats) = f.call("Chat/get", json!({"ids": [chat_id]})).await;
+    assert_eq!(chats["list"][0]["name"], "Launch");
+    assert_eq!(
+        message_ids(&f, &chat_id).await.len(),
+        1,
+        "alice's own Commit is stored"
+    );
+
+    // Room/send.
+    let data = b"hello room";
+    let tag = mimi_protocol::franking_tag(&[9; 16], data);
+    let message = group
+        .send(
+            &alice,
+            data,
+            &[(mimi_protocol::component_id::FRANK_AAD, tag.to_vec())],
+        )
+        .unwrap();
+    let (name, sent) = f
+        .call(
+            "Room/send",
+            json!({"roomId": room_id, "message": URL_SAFE_NO_PAD.encode(&message)}),
+        )
+        .await;
+    assert_eq!(name, "Room/send", "{sent}");
+    assert_eq!(sent["responseCode"], "accepted", "{sent}");
+    assert_eq!(
+        message_ids(&f, &chat_id).await.len(),
+        2,
+        "alice's own message is stored"
+    );
+
+    // Bad arguments.
+    for (method, args) in [
+        ("Room/update", json!({"roomId": room_id, "request": "AAAA"})),
+        ("Room/send", json!({"roomId": room_id, "message": "AAAA"})),
+        (
+            "Room/update",
+            json!({"roomId": "mimi://a.example/r/none", "request": "AAAA"}),
+        ),
+    ] {
+        let (name, error) = f.call(method, args.clone()).await;
+        assert_eq!(
+            (name.as_str(), &error["type"]),
+            ("error", &json!("invalidArguments")),
+            "{method} {args}"
+        );
+    }
+
+    // Room/unbind.
+    let (name, unbound) = f.call("Room/unbind", json!({"roomId": room_id})).await;
+    assert_eq!(
+        (name.as_str(), &unbound),
+        ("Room/unbind", &json!({"accountId": f.account}))
+    );
+    let (name, error) = f
+        .call(
+            "Room/send",
+            json!({"roomId": room_id, "message": URL_SAFE_NO_PAD.encode(&message)}),
+        )
+        .await;
+    assert_eq!(
+        (name.as_str(), &error["type"]),
+        ("error", &json!("invalidArguments"))
+    );
+    let (name, _) = f.call("Room/unbind", json!({"roomId": room_id})).await;
+    assert_eq!(name, "Room/unbind", "unbinding an unbound Chat is fine");
+    let (name, error) = f
+        .call("Room/unbind", json!({"roomId": "mimi://a.example/r/none"}))
+        .await;
+    assert_eq!(
+        (name.as_str(), &error["type"]),
+        ("error", &json!("invalidArguments"))
+    );
 }

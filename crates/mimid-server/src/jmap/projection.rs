@@ -707,7 +707,7 @@ pub(crate) fn contact_id(domain: &str) -> String {
 
 /// An RFC 8620 §1.4 UTCDate for `ms` milliseconds since the UNIX epoch,
 /// with the fraction omitted when it is zero.
-fn utc_date(ms: u64) -> String {
+pub(crate) fn utc_date(ms: u64) -> String {
     let secs = ms / 1000;
     let millis = ms % 1000;
     let days = secs / 86_400;
