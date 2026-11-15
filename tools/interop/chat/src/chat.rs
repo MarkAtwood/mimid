@@ -58,7 +58,7 @@ use mimid_server::hub::components::apply_commit_op;
 use mimid_server::hub::normalized_uri;
 
 use crate::hub::{Hub, encode};
-use crate::state::{Invite, Room, RoomStatus, State, StateDir};
+use crate::state::{Room, RoomStatus, State, StateDir};
 
 /// mls-extensions-10 §5 `app_components`.
 const APP_COMPONENTS: u16 = 0x0001;
@@ -337,7 +337,7 @@ impl Client {
             "/request <user>        ask <user> for consent to fetch their KeyPackages (requestConsent)",
             "/cancel <user>         withdraw that request (requestConsent cancel)",
             "/report [--message] <user> [note]\n                       report <user> in the current room (reportAbuse);\n                       --message attaches one AbusiveMessage",
-            "/join [n]              accept pending invite n (default: the oldest)",
+            "/join [n]              accept pending invite #n (default: the oldest)",
             "/rooms                 list rooms; /room <name|uri> switches the current room",
             "/who                   participants of the current room",
             "/leave [room]          leave the current (or named) room (protocol-07 §3.5)",
@@ -818,7 +818,20 @@ impl Client {
         Ok(())
     }
 
+    /// draft-atwood-jmap-chat-mimi-00 has no consent call, and the JSON
+    /// lane's updateConsent is for peer providers: a client in JMAP mode
+    /// cannot grant or request consent (bead mimid-1wgh.12.42).
+    fn no_consent_over_jmap(&self) -> anyhow::Result<()> {
+        ensure!(
+            self.hub.jmap.is_none(),
+            "consent is not available in JMAP mode: the JMAP MIMI draft has no consent call \
+             (KeyMaterial for users on your own server does not need it)"
+        );
+        Ok(())
+    }
+
     async fn allow(&mut self, arg: &str) -> anyhow::Result<()> {
+        self.no_consent_over_jmap()?;
         let requester = self.user_uri(arg)?;
         let entry = ConsentEntry {
             consent_operation: ConsentOperation::Grant,
@@ -843,6 +856,7 @@ impl Client {
         arg: &str,
         operation: ConsentOperation,
     ) -> anyhow::Result<()> {
+        self.no_consent_over_jmap()?;
         let target = self.user_uri(arg)?;
         ensure!(
             self.on_hub_domain(&target),
@@ -950,11 +964,19 @@ impl Client {
         let index = if arg.is_empty() {
             0
         } else {
-            arg.parse::<usize>()
+            let numbers = || {
+                let list: Vec<String> = self
+                    .state
+                    .invites
+                    .iter()
+                    .map(|i| i.number.to_string())
+                    .collect();
+                list.join(", ")
+            };
+            arg.parse::<u64>()
                 .ok()
-                .and_then(|n| n.checked_sub(1))
-                .filter(|&n| n < self.state.invites.len())
-                .ok_or_else(|| anyhow!("usage: /join [1..={}]", self.state.invites.len()))?
+                .and_then(|n| self.state.invites.iter().position(|i| i.number == n))
+                .ok_or_else(|| anyhow!("no invite {arg}; pending: {}", numbers()))?
         };
         let invite = self.state.invites[index].clone();
         let welcome = hex::decode(&invite.welcome)?;
@@ -1063,7 +1085,16 @@ impl Client {
         }
         let invites = self.state.invites.len();
         if invites > 0 {
-            self.say(format!("* {invites} pending invite(s): /join"));
+            let numbers: Vec<String> = self
+                .state
+                .invites
+                .iter()
+                .map(|i| format!("#{}", i.number))
+                .collect();
+            self.say(format!(
+                "* {invites} pending invite(s) ({}): /join <n>",
+                numbers.join(", ")
+            ));
         }
     }
 
@@ -1507,12 +1538,10 @@ impl Client {
             // The other route's copy of a Welcome already joined.
             return;
         }
-        self.state.invites.push(Invite {
-            welcome: welcome_hex,
-            ratchet_tree: tree.as_deref().map(hex::encode),
-        });
+        let n = self
+            .state
+            .push_invite(welcome_hex, tree.as_deref().map(hex::encode));
         self.save();
-        let n = self.state.invites.len();
         self.say(format!("* invite #{n} arrived: /join {n} to accept"));
     }
 

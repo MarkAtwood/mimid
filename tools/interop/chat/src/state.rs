@@ -47,6 +47,10 @@ pub struct Invite {
     pub welcome: String,
     /// The full ratchet tree, hex, when it came with the Welcome.
     pub ratchet_tree: Option<String>,
+    /// The number `/join` takes, kept while other invites come and go;
+    /// 0 in state written before numbers were kept (renumbered on load).
+    #[serde(default)]
+    pub number: u64,
 }
 
 /// `state.json`. Holds no private key: those are in `mls.sqlite` only.
@@ -84,6 +88,37 @@ pub struct State {
     /// stored copies are skipped in later runs too.
     #[serde(default)]
     pub jmap_sent: Vec<u64>,
+    /// The number the next invite gets (see [`Invite::number`]).
+    #[serde(default)]
+    pub next_invite: u64,
+}
+
+impl State {
+    /// Numbers the invites that have no number yet, after the highest one
+    /// given out.
+    pub fn number_invites(&mut self) {
+        let highest = self.invites.iter().map(|i| i.number).max().unwrap_or(0);
+        self.next_invite = self.next_invite.max(highest + 1);
+        for invite in &mut self.invites {
+            if invite.number == 0 {
+                invite.number = self.next_invite;
+                self.next_invite += 1;
+            }
+        }
+    }
+
+    /// Adds an invite under the next number, and returns that number.
+    pub fn push_invite(&mut self, welcome: String, ratchet_tree: Option<String>) -> u64 {
+        self.number_invites();
+        let number = self.next_invite;
+        self.next_invite += 1;
+        self.invites.push(Invite {
+            welcome,
+            ratchet_tree,
+            number,
+        });
+        number
+    }
 }
 
 /// An open state directory.
@@ -108,7 +143,7 @@ impl StateDir {
             private_file(&path)?;
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
-            let state: State = serde_json::from_str(&text)
+            let mut state: State = serde_json::from_str(&text)
                 .with_context(|| format!("parsing {}", path.display()))?;
             ensure!(
                 state.user_uri == user_uri,
@@ -120,6 +155,7 @@ impl StateDir {
                 .with_context(|| format!("{}: signature_public_key", path.display()))?;
             let identity = Identity::load(user_uri.as_bytes(), &public_key, self.mls_store()?)
                 .with_context(|| format!("reloading the identity from {}", self.dir.display()))?;
+            state.number_invites();
             return Ok((identity, state, false));
         }
         let mls = self.dir.join("mls.sqlite");
@@ -142,6 +178,7 @@ impl StateDir {
             group_rooms: BTreeMap::new(),
             jmap_message_state: None,
             jmap_sent: Vec::new(),
+            next_invite: 1,
         };
         self.save(&state)?;
         Ok((identity, state, true))
@@ -216,4 +253,54 @@ fn private_file(path: &Path) -> anyhow::Result<()> {
         mode & 0o777
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(invites: Vec<Invite>, next_invite: u64) -> State {
+        State {
+            user_uri: "mimi://a.example/u/bob".to_owned(),
+            signature_public_key: String::new(),
+            current_room: None,
+            rooms: BTreeMap::new(),
+            invites,
+            held: Vec::new(),
+            consumed_welcomes: Vec::new(),
+            key_packages_outstanding: 0,
+            group_rooms: BTreeMap::new(),
+            jmap_message_state: None,
+            jmap_sent: Vec::new(),
+            next_invite,
+        }
+    }
+
+    fn invite(welcome: &str, number: u64) -> Invite {
+        Invite {
+            welcome: welcome.to_owned(),
+            ratchet_tree: None,
+            number,
+        }
+    }
+
+    #[test]
+    fn invite_numbers_stay_put_when_an_earlier_invite_is_joined() {
+        let mut s = state(Vec::new(), 1);
+        assert_eq!(s.push_invite("w1".into(), None), 1);
+        assert_eq!(s.push_invite("w2".into(), None), 2);
+        s.invites.remove(0);
+        assert_eq!(s.invites[0].number, 2);
+        assert_eq!(s.push_invite("w3".into(), None), 3);
+    }
+
+    #[test]
+    fn invites_from_older_state_are_numbered_on_load() {
+        // State written before numbers were kept: no numbers, no counter.
+        let mut s = state(vec![invite("w1", 0), invite("w2", 0)], 0);
+        s.number_invites();
+        let numbers: Vec<u64> = s.invites.iter().map(|i| i.number).collect();
+        assert_eq!(numbers, [1, 2]);
+        assert_eq!(s.push_invite("w3".into(), None), 3);
+    }
 }
