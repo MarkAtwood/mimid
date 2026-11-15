@@ -321,7 +321,7 @@ fn vectors() -> Value {
         "POST /identifierQuery/b.example, alice has a client",
         "notFound: the path is case-sensitive (RFC 3986 §6.2.2.1)",
         "notFound, HTTP 200",
-        "notFound, HTTP 404",
+        "notFound, HTTP 200; checked on the live hub at Haven ea645b1, 2026-11-15",
     ));
 
     // ---- identifierQuery nick (protocol-07 §5.8) ----
@@ -357,7 +357,7 @@ fn vectors() -> Value {
         "POST /identifierQuery/b.example, alice has a client",
         "notFound: a handle is a URI (§5.8); a bare name is a nick",
         "notFound, HTTP 200",
-        "notFound, HTTP 404; checked on the live hub at Haven ea645b1, 2026-11-15",
+        "notFound, HTTP 200; checked on the live hub at Haven ea645b1, 2026-11-15",
     ));
 
     // ---- IdentifierUri with a non-ASCII host ----

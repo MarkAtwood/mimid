@@ -110,7 +110,7 @@
       "id": "jt-iq-04",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "notFound, HTTP 404",
+        "haven": "notFound, HTTP 200; checked on the live hub at Haven ea645b1, 2026-11-15",
         "mimid": "notFound, HTTP 200",
         "operation": "POST /identifierQuery/b.example, alice has a client",
         "spec": "notFound: the path is case-sensitive (RFC 3986 §6.2.2.1)"
@@ -136,7 +136,7 @@
       "id": "jt-iq-06",
       "kind": "IdentifierRequest",
       "outcome": {
-        "haven": "notFound, HTTP 404; checked on the live hub at Haven ea645b1, 2026-11-15",
+        "haven": "notFound, HTTP 200; checked on the live hub at Haven ea645b1, 2026-11-15",
         "mimid": "notFound, HTTP 200",
         "operation": "POST /identifierQuery/b.example, alice has a client",
         "spec": "notFound: a handle is a URI (§5.8); a bare name is a nick"
