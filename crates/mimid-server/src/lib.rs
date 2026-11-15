@@ -91,4 +91,5 @@ pub mod peer;
 pub mod peer_clock;
 pub mod provider_auth;
 pub mod store;
+pub mod telemetry;
 pub mod tls;

@@ -95,17 +95,23 @@ pub struct LogFormatError {
 }
 
 /// A subscriber that writes JSON lines (see the module documentation) to
-/// `writer`, keeping the events and spans `filter` enables.
-pub fn json_subscriber<W>(filter: EnvFilter, writer: W) -> impl Subscriber + Send + Sync + 'static
+/// `writer`, keeping the events and spans `filter` enables. It is a
+/// [`tracing_subscriber::Registry`], so more layers, including ones with
+/// their own filters, can be added to it.
+pub fn json_subscriber<W>(
+    filter: EnvFilter,
+    writer: W,
+) -> impl Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a> + Send + Sync + 'static
 where
     W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
 {
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(writer)
-        .fmt_fields(JsonFields::new())
-        .event_format(JsonEvents)
-        .finish()
+    use tracing_subscriber::layer::SubscriberExt as _;
+    tracing_subscriber::registry().with(filter).with(
+        tracing_subscriber::fmt::layer()
+            .with_writer(writer)
+            .fmt_fields(JsonFields::new())
+            .event_format(JsonEvents),
+    )
 }
 
 /// Formats each event as one JSON line (see the module documentation).

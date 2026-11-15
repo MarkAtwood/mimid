@@ -680,7 +680,12 @@ impl PeerClient {
         expect: &[StatusCode],
         read_body: bool,
     ) -> Result<Vec<u8>, PeerError> {
-        let directory = self.directory(domain).await?;
+        let started = Instant::now();
+        // A peer whose directory cannot be fetched is as unreachable as one
+        // whose endpoint does not answer.
+        let directory = self.directory(domain).await.inspect_err(|_| {
+            record_peer_call(domain, endpoint.name(), "error", started);
+        })?;
         let url = endpoint
             .template(&directory)
             .ok_or(PeerError::NotOffered {
@@ -692,7 +697,6 @@ impl PeerClient {
                 source,
             })?;
         let request_len = body.len();
-        let started = Instant::now();
         let mut headers = self.headers(domain, &url)?;
         if let Some(signer) = &self.signer {
             let uri = url
@@ -720,7 +724,10 @@ impl PeerClient {
             .body(body)
             .send()
             .await
-            .map_err(PeerError::Http)?;
+            .map_err(|error| {
+                record_peer_call(domain, endpoint.name(), "error", started);
+                PeerError::Http(error)
+            })?;
         if let Some(clocks) = &self.clocks {
             let date = response.headers().get(DATE).and_then(|v| v.to_str().ok());
             clocks.observe(domain, date, sent, SystemTime::now());
@@ -730,6 +737,7 @@ impl PeerClient {
             let retry_after = retry_after(response.headers());
             let rejected = RejectedResponse::new(endpoint, read_rejected(response).await);
             completed(
+                (domain, endpoint.name()),
                 status,
                 started,
                 request_len,
@@ -746,11 +754,19 @@ impl PeerClient {
             let response_len = response
                 .content_length()
                 .and_then(|len| usize::try_from(len).ok());
-            completed(status, started, request_len, response_len, None);
+            completed(
+                (domain, endpoint.name()),
+                status,
+                started,
+                request_len,
+                response_len,
+                None,
+            );
             return Ok(Vec::new());
         }
         let read = read_capped(response, MAX_BODY_LEN).await?;
         completed(
+            (domain, endpoint.name()),
             status,
             started,
             request_len,
@@ -843,15 +859,38 @@ impl PeerClient {
     }
 }
 
+/// Counts a request to `peer`'s `endpoint` and its duration (bead
+/// mimid-ndov). `status` is the HTTP status, or `error` when no response
+/// arrived. `peer` is a configured peer, so the label set is bounded.
+fn record_peer_call(peer: &Domain, endpoint: &'static str, status: &str, started: Instant) {
+    let metrics = crate::telemetry::metrics();
+    let peer = opentelemetry::KeyValue::new("peer", peer.as_str().to_owned());
+    let endpoint = opentelemetry::KeyValue::new("endpoint", endpoint);
+    metrics.peer_calls.add(
+        1,
+        &[
+            peer.clone(),
+            endpoint.clone(),
+            opentelemetry::KeyValue::new("status", status.to_owned()),
+        ],
+    );
+    metrics
+        .peer_duration
+        .record(started.elapsed().as_secs_f64(), &[peer, endpoint]);
+}
+
 /// Emits the DEBUG event of a request to a peer that got a response with
-/// `status`; `preview` is the start of a rejected response's body.
+/// `status`, and counts it; `preview` is the start of a rejected
+/// response's body.
 fn completed(
+    (peer, endpoint): (&Domain, &'static str),
     status: StatusCode,
     started: Instant,
     request_len: usize,
     response_len: Option<usize>,
     preview: Option<&[u8]>,
 ) {
+    record_peer_call(peer, endpoint, status.as_str(), started);
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     tracing::debug!(
         status = status.as_u16(),

@@ -158,7 +158,36 @@ pub fn router(directory: Directory, hub: Arc<Hub>, follower: Arc<Follower>) -> R
         })
         .on_eos(())
         .on_failure(());
-    directory::router(directory).merge(protocol).layer(trace)
+    directory::router(directory)
+        .merge(protocol)
+        .layer(axum::middleware::from_fn(record_metrics))
+        .layer(trace)
+}
+
+/// Counts each request and its duration by matched route and status
+/// (bead mimid-ndov; [`crate::telemetry::metrics`]).
+async fn record_metrics(request: Request, next: axum::middleware::Next) -> Response {
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or("unmatched", MatchedPath::as_str)
+        .to_owned();
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+    let metrics = crate::telemetry::metrics();
+    let status = i64::from(response.status().as_u16());
+    metrics.http_requests.add(
+        1,
+        &[
+            opentelemetry::KeyValue::new("route", route.clone()),
+            opentelemetry::KeyValue::new("status", status),
+        ],
+    );
+    metrics.http_duration.record(
+        started.elapsed().as_secs_f64(),
+        &[opentelemetry::KeyValue::new("route", route)],
+    );
+    response
 }
 
 #[tracing::instrument(

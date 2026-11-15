@@ -285,3 +285,88 @@ fn unknown_log_format_stops_startup() {
     assert!(stderr.contains("MIMID_LOG_FORMAT"), "{stderr}");
     assert!(output.stdout.is_empty());
 }
+
+/// With `[telemetry]` configured, the binary starts in both log formats,
+/// sends OTLP log records and metrics to the collector's endpoint, and
+/// stops cleanly on SIGINT (bead mimid-ndov). Oracle: the OTLP/HTTP signal
+/// paths a stand-in collector receives.
+#[tokio::test]
+async fn telemetry_exports_to_the_collector() {
+    use std::sync::{Arc, Mutex};
+
+    for format in ["text", "json"] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let collector = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let record = Arc::clone(&seen);
+        let app = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+            let record = Arc::clone(&record);
+            async move {
+                record.lock().unwrap().push(uri.path().to_owned());
+                StatusCode::OK
+            }
+        });
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = format!("http://127.0.0.1:{}", free_port());
+        let config = format!(
+            "domain = \"b.example\"\n\
+             listen = \"{listen}\"\n\
+             base_url = \"{base}\"\n\
+             database = \"{database}\"\n\
+             \n\
+             [provider_auth]\n\
+             dns_keys = false\n\
+             \n\
+             [telemetry]\n\
+             endpoint = \"{collector}\"\n\
+             metrics_interval_secs = 1\n",
+            listen = base.trim_start_matches("http://"),
+            database = dir.path().join("mimid.sqlite").display(),
+        );
+        let config_path = dir.path().join("mimid.toml");
+        std::fs::write(&config_path, config).unwrap();
+        let mut server = Server(
+            Command::new(env!("CARGO_BIN_EXE_mimid"))
+                .arg(&config_path)
+                .env("RUST_LOG", "debug")
+                .env("MIMID_LOG_FORMAT", format)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let http = reqwest::Client::new();
+        let directory = format!("{base}/.well-known/mimi-protocol-directory");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while http.get(&directory).send().await.is_err() {
+            assert!(
+                server.0.try_wait().unwrap().is_none(),
+                "{format}: server exited"
+            );
+            assert!(Instant::now() < deadline, "{format}: server did not start");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let pid = server.0.id().to_string();
+        assert!(
+            Command::new("kill")
+                .args(["-INT", &pid])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let status = tokio::task::spawn_blocking(move || server.0.wait().unwrap())
+            .await
+            .unwrap();
+        assert!(status.success(), "{format}: {status}");
+        // Shutdown flushes every signal, so all three have arrived.
+        let seen = seen.lock().unwrap().clone();
+        for path in ["/v1/logs", "/v1/metrics", "/v1/traces"] {
+            assert!(
+                seen.iter().any(|p| p == path),
+                "{format}: {path} not in {seen:?}"
+            );
+        }
+    }
+}

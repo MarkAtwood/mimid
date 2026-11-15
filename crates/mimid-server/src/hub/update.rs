@@ -337,6 +337,9 @@ fn success(accepted_timestamp: u64) -> Result<Vec<u8>, HubError> {
 /// Logs why a request is refused and answers `notAllowed` (decision
 /// mimid-1wgh.6.55); `reason` stays in the log (bead mimid-1wgh.49).
 fn refuse(room_id: &str, reason: &'static str, restore: bool) -> Result<Outcome, HubError> {
+    crate::telemetry::metrics()
+        .update_refusals
+        .add(1, &[opentelemetry::KeyValue::new("reason", reason)]);
     tracing::debug!(room_id, reason, "update refused");
     Ok(Outcome::Respond {
         response: respond(UpdateResult::NotAllowed)?,

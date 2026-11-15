@@ -19,6 +19,10 @@
 //!   line with each INFO, WARN and ERROR event's stable name. Any other
 //!   value stops `mimid` at startup. See [`mimid_server::logging`].
 //!
+//! With `[telemetry]` in the configuration, spans, the events `RUST_LOG`
+//! keeps and mimid's metrics also go to an OpenTelemetry collector over
+//! OTLP/HTTP; see [`mimid_server::telemetry`].
+//!
 //! # Limitations
 //!
 //! - Providers authenticate with RFC 9421 request signatures and keys
@@ -75,8 +79,10 @@ use mimid_server::provider_auth::{
     check_validation,
 };
 use mimid_server::store::Store;
+use mimid_server::telemetry::Telemetry;
 use mimid_server::tls::ProxyPolicy;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
@@ -96,17 +102,39 @@ async fn main() -> anyhow::Result<()> {
         println!("{body}");
         return Ok(());
     }
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
-    match LogFormat::from_env()? {
-        LogFormat::Json => json_subscriber(filter, std::io::stdout).init(),
-        _ => tracing_subscriber::fmt().with_env_filter(filter).init(),
-    }
-
+    let format = LogFormat::from_env()?;
     let mut args = std::env::args_os().skip(1);
     let (Some(config_path), None) = (args.next().map(PathBuf::from), args.next()) else {
         bail!("usage: mimid <config.toml>");
     };
+    // The configuration comes first, since it says where telemetry goes;
+    // an error loading it is printed by the runtime (bead mimid-ndov).
     let config = Config::load(&config_path)?;
+    let telemetry = Telemetry::new(config.telemetry.as_ref(), config.domain.as_str())
+        .context("starting telemetry")?;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    match format {
+        LogFormat::Json => json_subscriber(filter, std::io::stdout)
+            .with(telemetry.layers())
+            .init(),
+        // A registry rather than `fmt()`'s subscriber: the telemetry log
+        // layer has a filter of its own, which only a registry supports.
+        _ => tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(telemetry.layers())
+            .init(),
+    }
+    if let Some(telemetry_config) = &config.telemetry {
+        tracing::info!(
+            name: "telemetry_configured",
+            endpoint = telemetry_config.endpoint,
+            traces = telemetry_config.traces,
+            logs = telemetry_config.logs,
+            metrics = telemetry_config.metrics,
+            "OpenTelemetry export configured"
+        );
+    }
 
     let store = Store::open(&config.database, &config.domain)
         .await
@@ -336,6 +364,13 @@ async fn main() -> anyhow::Result<()> {
 
     store.close().await;
     tracing::info!(name: "server_stopped", "mimid stopped");
+    for failure in telemetry.shutdown() {
+        tracing::warn!(
+            name: "telemetry_flush_failed",
+            failure,
+            "telemetry not flushed at shutdown"
+        );
+    }
     Ok(())
 }
 

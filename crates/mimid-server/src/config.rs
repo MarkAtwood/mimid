@@ -37,6 +37,15 @@
 //! [wire_profiles]
 //! "b.example" = "extensions190"   # default: "draft07"
 //!
+//! # Optional: OpenTelemetry export over OTLP/HTTP (crate::telemetry).
+//! [telemetry]
+//! endpoint = "http://127.0.0.1:4318"  # /v1/traces, /v1/logs, /v1/metrics
+//! service_name = "mimid"              # the default
+//! traces = true                       # each signal defaults to true
+//! logs = true
+//! metrics = true
+//! metrics_interval_secs = 60
+//!
 //! # Optional: TLS toward peers.
 //! [peer_tls]
 //! roots = ["/etc/mimid/peer-roots.pem"]  # CAs for peers' servers, plus the system's
@@ -140,6 +149,8 @@ pub struct Config {
     /// must be in `peers`.
     #[serde(default)]
     pub wire_profiles: BTreeMap<Domain, WireProfileSetting>,
+    /// OpenTelemetry export (bead mimid-ndov); off when absent.
+    pub telemetry: Option<crate::telemetry::TelemetryConfig>,
 }
 
 impl Config {
@@ -399,6 +410,7 @@ mod tests {
             trusted_proxy: None,
             peer_tls: crate::tls::PeerTlsConfig::default(),
             wire_profiles: BTreeMap::new(),
+            telemetry: None,
         };
         assert_eq!(config, expected);
     }
