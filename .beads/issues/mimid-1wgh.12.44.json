@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.12.44",
+  "title": "JMAP draft: Room/create takes the room ID as an argument; room_metadata optional",
+  "description": "draft-atwood-jmap-chat-mimi-00 Room/create rule 5 reads the new room's ID from the room metadata's room_uri, so every JMAP-created room carries room_metadata (0x0023). mls-extensions-11 §5 then makes it a required component (state in the GroupContext must be listed in app_components; every member's leaf must list it), so users whose clients don't support 0x0023 (Haven's KeyPackages list 0x21, 0x22, 0x25, 0x27) can't be added. protocol-07 §7.6 makes room metadata optional descriptive data. Change the draft: roomId is a Room/create argument (roomIdPrefix + base32 of 16 octets, as now), room_metadata MAY be present and, if present, its room_uri MUST equal roomId. Found 2026-11-15 (mimid-1wgh.46.18); Mark: the bug is ours, not Haven's.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T21:37:40.745295302Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T21:37:40.745295302Z",
+  "labels": [
+    "jmap",
+    "spec",
+    "interop"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.44",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-11-15T21:37:40.776818365Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
