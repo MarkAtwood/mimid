@@ -197,7 +197,7 @@ fn vectors() -> Value {
         vector(
             "jt-consent-01",
             "ConsentEntry",
-            "requestConsent request: henry@a.example asks alice@b.example, any room",
+            "requestConsent request: henry (mimi://a.example/u/henry) asks alice (mimi://b.example/u/alice), any room",
             &consent(ConsentOperation::Request),
             "ok",
         ),

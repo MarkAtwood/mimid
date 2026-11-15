@@ -6,7 +6,7 @@
   "vectors": [
     {
       "decode": "ok",
-      "description": "requestConsent request: henry@a.example asks alice@b.example, any room",
+      "description": "requestConsent request: henry (mimi://a.example/u/henry) asks alice (mimi://b.example/u/alice), any room",
       "hex": "01186d696d693a2f2f612e6578616d706c652f752f68656e7279186d696d693a2f2f622e6578616d706c652f752f616c6963650000",
       "id": "jt-consent-01",
       "kind": "ConsentEntry",
