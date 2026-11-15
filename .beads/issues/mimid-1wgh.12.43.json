@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.12.43",
+  "title": "JMAP Consent: Consent/get, /changes, /query, /set (draft-atwood-jmap-chat-mimi §Consent, jmap-chat-spec 51d463b)",
+  "description": "Implement the Consent data type added to draft-atwood-jmap-chat-mimi-00 (jmap-chat-spec commit 51d463b). One record per ConsentScope with the account's user as requester or target; requested, decision. Consent/set sends requestConsent (request/cancel) or updateConsent (grant/revoke) via the peer client before answering (404 -\u003e invalidProperties; unreachable/other -\u003e SetError consentNotSent), or changes the other local account's record directly. Received requestConsent/updateConsent (store/consent.rs consent_request, consent_update) update the records; the hub's KeyMaterial consent check uses the target's grant/revoke (room scope before any-room). Consent type in StateChange and EventSource types. Then mimid-chat /allow, /request, /cancel use Consent/set in JMAP mode (replacing the refusal from mimid-1wgh.12.42).",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T07:43:16.821900835Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T07:43:16.821900835Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.43",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-11-15T07:43:16.975695358Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
