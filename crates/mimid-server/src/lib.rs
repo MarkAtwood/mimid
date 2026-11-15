@@ -78,6 +78,7 @@ pub mod config;
 pub mod directory;
 pub mod follower;
 pub mod http;
+pub mod httpsig;
 pub mod hub;
 pub mod jmap;
 pub mod limits;

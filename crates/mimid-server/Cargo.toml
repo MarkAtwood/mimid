@@ -19,6 +19,9 @@ base64 = "=0.22.1"
 jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "0972e7a4a2533210f35917cafac973934ecce856" }
 jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "0972e7a4a2533210f35917cafac973934ecce856" }
 jmap-chat-mimi-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "0972e7a4a2533210f35917cafac973934ecce856" }
+# RFC 9421 Ed25519 request signatures (bead mimid-75nk.2); already in
+# the lockfile through OpenMLS.
+ed25519-dalek = "=2.2.0"
 # Retry-After HTTP-date parsing (RFC 9110 §10.2.3); already in the lockfile.
 httpdate = "1.0.3"
 # Reads the salt and URIs of reported messages (protocol-07 §5.9).
@@ -30,6 +33,9 @@ mimi-room-policy = { path = "../mimi-room-policy" }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 serde.workspace = true
 serde_json.workspace = true
+# RFC 9651 structured fields: Signature-Input, Signature and
+# Content-Digest (bead mimid-75nk.2).
+sfv = "=0.14.0"
 # Request hashes for submitMessage retry deduplication.
 sha2.workspace = true
 sqlx.workspace = true
