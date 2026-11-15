@@ -124,12 +124,20 @@ pub struct Localized {
 
 impl Localized {
     /// The display text of a room's (language tag, text) descriptions.
-    /// An empty tag is a description of unknown language: it can be the
-    /// base value but not a localization.
+    /// A description whose tag is empty or not well formed (RFC 5646 §2.1
+    /// syntax, as RFC 4647 §2.1 basic ranges check it) is of unknown
+    /// language: it can be the base value but not a localization.
     pub fn new(name: String, descriptions: &[(String, String)]) -> Self {
         let mut by_tag = BTreeMap::new();
         for (tag, text) in descriptions {
-            if tag.is_empty() || by_tag.keys().any(|k: &String| k.eq_ignore_ascii_case(tag)) {
+            // A tag that is not a well-formed language tag (as another
+            // provider may send) cannot be a `localizations` key
+            // (draft-atwood-jmap-updates-00 §4.1); its text can still be the
+            // base description.
+            if tag == "*"
+                || !is_basic_range(tag)
+                || by_tag.keys().any(|k: &String| k.eq_ignore_ascii_case(tag))
+            {
                 continue;
             }
             by_tag.insert(tag.clone(), text.clone());

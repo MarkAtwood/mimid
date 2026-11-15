@@ -2091,6 +2091,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+ "unicode-normalization",
 ]
 
 [[package]]
