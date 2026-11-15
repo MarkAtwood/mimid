@@ -1,0 +1,28 @@
+{
+  "id": "mimid-1wgh.47.1",
+  "title": "sideband: optional local_token bearer auth on the loopback listener",
+  "description": "Setting local_token: when set, every /local/v1 call needs Authorization: Bearer \u003ctoken\u003e (constant-time compare); unset keeps loopback-only. A refused call is a 401 problem and logs at DEBUG. Decision 2 of mimid-1wgh.47.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-15T03:21:43.11621433Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-15T03:21:43.11621433Z",
+  "labels": [
+    "design",
+    "human",
+    "interop",
+    "tooling"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.47.1",
+      "depends_on_id": "mimid-1wgh.47",
+      "type": "parent-child",
+      "created_at": "2026-11-15T03:21:43.152260196Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
