@@ -2,13 +2,15 @@
   "id": "mimid-ndov",
   "title": "Export tracing via OpenTelemetry (traces, logs, metrics)",
   "description": "Mark (2026-11-13): move mimid's logging to OpenTelemetry. This follows mimid-bfzm, which gave mimid-server named events, structured fields, error source chains, per-request spans and optional JSON output, all on tracing.\n\nApproach: keep tracing as the instrumentation API and add OTel as the export layer; don't rewrite call sites into OTel APIs. This is the logging rule 'keep the established facility; change exporters, not call sites'.\n- Traces: tracing-opentelemetry turns the existing spans (http_request, protocol_request, peer_call and the handler spans) into OTel spans.\n- Logs: opentelemetry-appender-tracing sends tracing events as OTel log records. Event names become the event name and the named fields become attributes, with error source chains preserved.\n- Export: opentelemetry-otlp (gRPC or HTTP) to a collector.\n- Metrics: OTel metrics as mimid's first metrics facility, which mimid-bfzm deliberately left out. Candidates: requests by endpoint and status, refusals by reason, fanout queue depth and retries, KeyPackage stock per user, peer call latency and errors by peer.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "feature",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-13T22:17:14.874521715Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-13T22:17:14.874521715Z",
+  "updated_at": "2026-11-15T23:00:13.041088371Z",
+  "closed_at": "2026-11-15T23:00:13.041088371Z",
+  "close_reason": "991e82c: OTLP/HTTP traces, logs and metrics behind [telemetry]; not deployed (the host has no collector).",
   "labels": [
     "logging",
     "observability"

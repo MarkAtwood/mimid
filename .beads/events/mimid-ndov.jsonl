@@ -1,3 +1,4 @@
 {"id":"01a1d6fc-817d-7e00-9fb4-753d80a52a6b","issue_id":"mimid-ndov","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-13T22:17:14.877918464Z"}
 {"id":"01a1d6fc-8180-7ecc-a631-55b9babf0914","issue_id":"mimid-ndov","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: logging","created_at":"2026-11-13T22:17:14.880970006Z"}
 {"id":"01a1d6fc-8183-7b9f-9fec-19d9011e4380","issue_id":"mimid-ndov","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: observability","created_at":"2026-11-13T22:17:14.883761841Z"}
+{"id":"01a1e170-9075-71b2-b422-efcf0a65e448","issue_id":"mimid-ndov","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"991e82c: OTLP/HTTP traces, logs and metrics behind [telemetry]; not deployed (the host has no collector).","created_at":"2026-11-15T23:00:13.045111768Z"}
