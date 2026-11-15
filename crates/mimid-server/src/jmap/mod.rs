@@ -23,7 +23,7 @@
 //! - Besides `Core/echo`, the read projection ([`projection`]), the
 //!   refusing `Chat/set` and `Message/set`, `KeyPackage/get`,
 //!   `KeyPackage/set`, `KeyMaterial/fetch`, `Room/create`, `Room/update`,
-//!   `Room/send` and `Room/unbind` are implemented; every other method answers
+//!   `Room/send`, `Room/unbind` and `GroupInfo/fetch` are implemented; every other method answers
 //!   `unknownMethod` until its bead lands.
 
 pub mod api;

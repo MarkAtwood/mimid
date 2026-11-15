@@ -1,11 +1,14 @@
 //! `Room/create`, `Room/update`, `Room/send` and `Room/unbind`
 //! (draft-atwood-jmap-chat-mimi-00 §Rooms; beads mimid-1wgh.12.4,
-//! mimid-1wgh.12.6, mimid-1wgh.12.7) through the JMAP API: alice
+//! mimid-1wgh.12.6 to mimid-1wgh.12.8) through the JMAP API: alice
 //! publishes a KeyPackage, builds a one-member group with mimi-mls, has
 //! this server host it, renames it, sends to it and unbinds it.
 
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
 mod common;
+#[allow(dead_code, reason = "each test binary uses part of the helpers")]
+#[path = "common/group_info.rs"]
+mod group_info;
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
 #[path = "common/update.rs"]
 mod update;
@@ -509,4 +512,43 @@ async fn a_room_is_updated_sent_to_and_unbound() {
         (name.as_str(), &error["type"]),
         ("error", &json!("invalidArguments"))
     );
+}
+
+/// Bead mimid-1wgh.12.8: alice's second client fetches the GroupInfo of
+/// her room for an external join; the hub's GroupInfoResponse comes back
+/// whole. A junk request, or a room without a bound Chat, is refused.
+#[tokio::test]
+async fn a_second_client_fetches_the_group_info() {
+    use mimi_mls::tls_codec::Deserialize;
+    let f = fixture().await;
+    let alice = f.alice(true).await;
+    let (group_info, tree, room_id) = group(&f.hub, &alice, Spec::default());
+    f.create(&group_info, &tree).await;
+
+    let request = group_info::Requester::new(ALICE.as_bytes()).request(None);
+    let (name, fetched) = f
+        .call(
+            "GroupInfo/fetch",
+            json!({"roomId": room_id, "request": URL_SAFE_NO_PAD.encode(&request)}),
+        )
+        .await;
+    assert_eq!(name, "GroupInfo/fetch", "{fetched}");
+    assert_eq!(fetched["status"], "success", "{fetched}");
+    let response = URL_SAFE_NO_PAD
+        .decode(fetched["response"].as_str().unwrap())
+        .unwrap();
+    let decoded = mimi_protocol::GroupInfoResponse::tls_deserialize_exact(&response[..]).unwrap();
+    assert_eq!(decoded.status(), mimi_protocol::GroupInfoCode::Success);
+
+    for args in [
+        json!({"roomId": room_id, "request": "AAAA"}),
+        json!({"roomId": "mimi://a.example/r/none", "request": URL_SAFE_NO_PAD.encode(&request)}),
+    ] {
+        let (name, error) = f.call("GroupInfo/fetch", args.clone()).await;
+        assert_eq!(
+            (name.as_str(), &error["type"]),
+            ("error", &json!("invalidArguments")),
+            "{args}"
+        );
+    }
 }

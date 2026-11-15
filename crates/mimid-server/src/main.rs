@@ -34,8 +34,8 @@
 //!   Chat, Message and ChatContact projection, EventSource, and
 //!   `KeyPackage/get`, `KeyPackage/set` and `KeyMaterial/fetch`, so local
 //!   users can publish KeyPackages, fetch other users', create rooms
-//!   hosted here, update, send to and unbind rooms. `GroupInfo/fetch`, for
-//!   external joins, is not there yet (bead mimid-1wgh.12.8).
+//!   hosted here, update, send to and unbind rooms, and fetch a room's
+//!   GroupInfo for an external join.
 //! - The hub, follower, relay and fanout worker each have their own
 //!   [`PeerClient`], so each fetches and caches peer directories
 //!   separately.
