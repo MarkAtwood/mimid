@@ -32,9 +32,10 @@
 //!   mimid-1wgh.7.4), so fanout from any other provider is refused (`403`).
 //! - The JMAP endpoint ([`mimid_server::jmap`]) serves the Session, the
 //!   Chat, Message and ChatContact projection, EventSource, and
-//!   `KeyPackage/get` and `KeyPackage/set`, so local users can publish
-//!   KeyPackages for keyMaterial. They cannot yet create, update or send
-//!   to rooms over JMAP (beads mimid-1wgh.12.4 to mimid-1wgh.12.8).
+//!   `KeyPackage/get`, `KeyPackage/set` and `KeyMaterial/fetch`, so local
+//!   users can publish KeyPackages and fetch other users'. They cannot yet
+//!   create, update or send to rooms over JMAP (beads mimid-1wgh.12.4 and
+//!   mimid-1wgh.12.6 to mimid-1wgh.12.8).
 //! - The hub, follower, relay and fanout worker each have their own
 //!   [`PeerClient`], so each fetches and caches peer directories
 //!   separately.

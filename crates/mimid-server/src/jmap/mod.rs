@@ -21,8 +21,8 @@
 //! - Push is EventSource only: there is no PushSubscription (decision
 //!   mimid-1wgh.12.30).
 //! - Besides `Core/echo`, the read projection ([`projection`]), the
-//!   refusing `Chat/set` and `Message/set`, and `KeyPackage/get` and
-//!   `KeyPackage/set` are implemented; every other method answers
+//!   refusing `Chat/set` and `Message/set`, `KeyPackage/get`,
+//!   `KeyPackage/set` and `KeyMaterial/fetch` are implemented; every other method answers
 //!   `unknownMethod` until its bead lands.
 
 pub mod api;
