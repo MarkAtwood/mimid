@@ -964,6 +964,16 @@ impl Observer {
             .collect()
     }
 
+    /// The current members' leaf signature keys, as (leaf index, key), for
+    /// binding a leaf to the account that published KeyPackages with that
+    /// key (draft-atwood-jmap-chat-mimi-00 §Room/create rule 2).
+    pub fn member_signature_keys(&self) -> Vec<(u32, Vec<u8>)> {
+        self.group
+            .members()
+            .map(|member| (member.index.u32(), member.signature_key.clone()))
+            .collect()
+    }
+
     /// The component ids the current GroupContext requires as Safe AAD
     /// components (mls-extensions-10 §5 `safe_aad` list), without GREASE
     /// ids and without app_components and safe_aad, whose support is
