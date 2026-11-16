@@ -1538,7 +1538,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jmap-chat-mimi-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=0972e7a4a2533210f35917cafac973934ecce856#0972e7a4a2533210f35917cafac973934ecce856"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
 dependencies = [
  "jmap-types",
  "serde",
@@ -1548,7 +1548,7 @@ dependencies = [
 [[package]]
 name = "jmap-chat-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=0972e7a4a2533210f35917cafac973934ecce856#0972e7a4a2533210f35917cafac973934ecce856"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
 dependencies = [
  "jmap-cid-types",
  "jmap-did-types",
@@ -1561,7 +1561,7 @@ dependencies = [
 [[package]]
 name = "jmap-cid-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=0972e7a4a2533210f35917cafac973934ecce856#0972e7a4a2533210f35917cafac973934ecce856"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -1571,7 +1571,7 @@ dependencies = [
 [[package]]
 name = "jmap-did-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=0972e7a4a2533210f35917cafac973934ecce856#0972e7a4a2533210f35917cafac973934ecce856"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 3.0.0",
@@ -1587,7 +1587,7 @@ dependencies = [
 [[package]]
 name = "jmap-metadata-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=0972e7a4a2533210f35917cafac973934ecce856#0972e7a4a2533210f35917cafac973934ecce856"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
 dependencies = [
  "serde",
  "serde_json",
@@ -1596,7 +1596,7 @@ dependencies = [
 [[package]]
 name = "jmap-server"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=0972e7a4a2533210f35917cafac973934ecce856#0972e7a4a2533210f35917cafac973934ecce856"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
 dependencies = [
  "http",
  "jmap-metadata-types",
@@ -1611,7 +1611,7 @@ dependencies = [
 [[package]]
 name = "jmap-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=0972e7a4a2533210f35917cafac973934ecce856#0972e7a4a2533210f35917cafac973934ecce856"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
 dependencies = [
  "serde",
  "serde_json",
