@@ -24,6 +24,7 @@ use mimid_server::follower::relay::{LocalUser, Relay};
 use mimid_server::http::router;
 use mimid_server::hub::fanout::Fanout;
 use mimid_server::hub::{Clock, Hub, SystemClock};
+use mimid_server::jmap::{self, JmapOptions};
 use mimid_server::peer::PeerClient;
 use mimid_server::store::Store;
 use sqlx::SqlitePool;
@@ -167,11 +168,24 @@ impl Provider {
         follower
             .set_relay(Relay::new(Arc::clone(&hub), peer_client()))
             .unwrap();
-        self.front.0.lock().unwrap().router = Some(router(
-            directory(&self.base),
+        // JMAP shares the protocol listener, as in main.rs (decision
+        // mimid-1wgh.12.28).
+        let jmap = jmap::router(
+            &self.base,
+            store.clone(),
             Arc::clone(&hub),
             Arc::clone(&follower),
-        ));
+            JmapOptions::default(),
+        )
+        .unwrap();
+        self.front.0.lock().unwrap().router = Some(
+            router(
+                directory(&self.base),
+                Arc::clone(&hub),
+                Arc::clone(&follower),
+            )
+            .merge(jmap),
+        );
         self.stack = Some(Stack {
             store,
             hub,
