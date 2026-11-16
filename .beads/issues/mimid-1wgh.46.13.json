@@ -3,13 +3,15 @@
   "title": "Interop: re-run the content cross-check with Phoenix at content-10",
   "description": "Phoenix R\u0026D's phnx-im/mimi-content moved to draft-ietf-mimi-content-10 on 2026-11-03 (commit 9df1b6a, plus decode limits); Air pins 9690d8f. The earlier content cross-check (mimid-1wgh.46.2, closed) was against content-09. Re-run both directions: mimid's mimi-content encodes and phnx mimi-content decodes, and the reverse, using the draft's examples plus mimid's content-10 fixtures. Record each mismatch with the side and citations to draft-ietf-mimi-content-10.txt in ~/PROJECT/IETF/specs/. License: AGPL-3.0-or-later (REUSE LICENSES/ dir), so keep any harness as a separate standalone crate under tools/interop like the Haven harness, and don't vendor their code into mimid. Possible live fixture swap with Konrad Kohbrok (Phoenix) at the IETF 127 table if he attends (maybe-remote on the mimi list, 2026-11-05).",
   "notes": "2026-11-13 correction: the GitHub API reports no license for phnx-im/mimi-* repos; the 'AGPL-3.0-or-later (REUSE LICENSES/ dir)' claim above is unverified. Check the repo tree for LICENSES/ and per-file SPDX headers before reusing anything; until then treat it as all-rights-reserved and keep the harness separate.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-13T20:52:09.618309303Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-13T21:06:47.212045911Z",
+  "updated_at": "2026-11-16T00:07:59.729633784Z",
+  "closed_at": "2026-11-16T00:07:59.729633784Z",
+  "close_reason": "124afc1: Phoenix mimi-content main 9690d8f (content-10, Air's pin; AGPL-3.0-or-later verified via REUSE.toml/LICENSES) agrees with mimid both ways: 14/14 WG -10 examples decode, re-encode identically, message IDs match; Phoenix encodings unchanged and decoded by mimid. No findings to report.",
   "labels": [
     "interop"
   ],
