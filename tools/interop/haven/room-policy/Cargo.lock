@@ -1173,7 +1173,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "mimi-core"
 version = "0.0.1"
-source = "git+https://github.com/havenmessenger/interop?rev=f16980fe40eb92b7a79b49a59048bc0294a15306#f16980fe40eb92b7a79b49a59048bc0294a15306"
+source = "git+https://github.com/havenmessenger/interop?rev=ba552f81a9b6955acee268dfb9c2ef8d250da4d4#ba552f81a9b6955acee268dfb9c2ef8d250da4d4"
 dependencies = [
  "aes 0.8.4",
  "anyhow",

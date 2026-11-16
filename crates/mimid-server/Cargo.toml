@@ -16,9 +16,9 @@ axum.workspace = true
 base64 = "=0.22.1"
 # JMAP request parsing and method dispatch (RFC 8620), and the JMAP Chat
 # capability types; exact rev pin (decision mimid-1wgh.12.21).
-jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "0972e7a4a2533210f35917cafac973934ecce856" }
-jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "0972e7a4a2533210f35917cafac973934ecce856" }
-jmap-chat-mimi-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "0972e7a4a2533210f35917cafac973934ecce856" }
+jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "573c573f0598aa7519b6df4b08b92c0de2f0f178" }
+jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "573c573f0598aa7519b6df4b08b92c0de2f0f178" }
+jmap-chat-mimi-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "573c573f0598aa7519b6df4b08b92c0de2f0f178" }
 # RFC 9421 Ed25519 request signatures (bead mimid-75nk.2); already in
 # the lockfile through OpenMLS.
 ed25519-dalek = "=2.2.0"
@@ -36,8 +36,8 @@ tower = { version = "=0.5.2", features = ["util"] }
 # and RFC 9525 DNS-ID matching from crate-pkix, exact rev pin (decision of
 # mimid-75nk: git, pinned rev), with its RustCrypto RSA and ECDSA
 # verifiers; x509-cert and der at the versions crate-pkix uses.
-pkix-path = { git = "https://github.com/MarkAtwood/crate-pkix", rev = "8764cb20f5dda88d9fc4634453acf6c4d089ad02", default-features = false, features = ["std", "rsa", "p256", "p384"] }
-pkix-identity = { git = "https://github.com/MarkAtwood/crate-pkix", rev = "8764cb20f5dda88d9fc4634453acf6c4d089ad02", features = ["std"] }
+pkix-path = { git = "https://github.com/MarkAtwood/crate-pkix", rev = "1a02f504db1640c916f670081be64c5eddf3ce9d", default-features = false, features = ["std", "rsa", "p256", "p384"] }
+pkix-identity = { git = "https://github.com/MarkAtwood/crate-pkix", rev = "1a02f504db1640c916f670081be64c5eddf3ce9d", features = ["std"] }
 x509-cert = { version = "=0.2.5", default-features = false, features = ["std"] }
 der = { version = "=0.7.10", features = ["std"] }
 # OpenTelemetry export (bead mimid-ndov): tracing stays the API; these
