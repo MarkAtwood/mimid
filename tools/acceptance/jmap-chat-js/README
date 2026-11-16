@@ -1,0 +1,43 @@
+jmap-chat-js, unmodified, against mimid-agent (bead mimid-1wgh.13.11).
+Not run in CI: it needs node, npm and a jmap-chat-js checkout.
+
+  tools/acceptance/jmap-chat-js/run.sh
+
+run.sh copies the committed jmap-chat-js tree (git archive) to a scratch
+directory, runs npm ci there, starts mimid-agent's acceptance_fixture
+example (one in-process mimid server, alice's and bob's daemons, with
+http://localhost:$APP_PORT in allowed_origins) and runs, with the app's
+own tools:
+
+  agent.test.ts    Vitest, in Node: src/lib/jmap/session.ts and client.ts
+  browser.spec.ts  Playwright, in Chromium: the same modules served by the
+                   app's Vite dev server, cross-origin to the daemons;
+                   skipped when no Playwright Chromium is installed
+
+Playwright's Chromium does not come with npm ci. To get one without
+touching the system, point PLAYWRIGHT_BROWSERS_PATH at a scratch directory
+and run "npx playwright install chromium" from the copy (WORK=... KEEP=1
+keeps the copy), then pass the same PLAYWRIGHT_BROWSERS_PATH to run.sh.
+The tests use the full Chromium (channel "chromium"), not the headless
+shell. On the dev box the installer hung extracting the archive after
+downloading it; unzipping that archive into
+$PLAYWRIGHT_BROWSERS_PATH/chromium-1217/ by hand worked.
+
+What jmap-chat-js is (at 9934223): the protocol layer only, fetchSession
+and the JMAPClient request batcher. There is no chat UI (Landing.svelte is
+a heading, ConversationView.svelte a placeholder) and no EventSource or
+push code, so the tests drive the modules, not the app, and poll.
+
+Blockers to using it unmodified:
+  - src/lib/jmap/session.ts:71,91: fetchSession takes no credentials and
+    sends no Authorization header; the Session needs authentication (RFC
+    8620 §2) and the daemon refuses it with 401. The tests record that,
+    then wrap fetch to add the token, the one thing done around the
+    library.
+  - No push: nothing reads eventSourceUrl. A browser EventSource cannot
+    send Authorization either, and the daemon takes the token only in that
+    header, so a browser client must stream with fetch (the push test
+    shows both).
+  - src/lib/jmap/session.ts:84-86,113-115: plain http only for the host
+    names localhost and 127.0.0.1, so a daemon listening on [::1] would be
+    refused (SessionInsecureError).
