@@ -3,8 +3,9 @@
 //! offered, so the directory must not list one that answers `404`).
 //!
 //! Oracle: the full HTTP router, given a fallback that answers
-//! `418 I'm a teapot` for unmatched paths. Each advertised URL is posted to
-//! with an empty body; a routed endpoint may refuse it (even with its own
+//! `418 I'm a teapot` for unmatched paths. Each advertised URL is sent the
+//! method protocol-07 gives it (GET for proxyDownload, §5.10.2; POST for the
+//! rest) with an empty body; a routed endpoint may refuse it (even with its own
 //! `404` for an unknown room), but must not reach the fallback or answer
 //! `405 Method Not Allowed`.
 
@@ -63,7 +64,13 @@ async fn every_advertised_endpoint_is_routed() {
         let status = app
             .clone()
             .oneshot(
-                Request::post(&path)
+                Request::builder()
+                    .method(if name == "proxyDownload" {
+                        "GET"
+                    } else {
+                        "POST"
+                    })
+                    .uri(&path)
                     .header(header::FROM, "mimi@b.example")
                     .body(Body::empty())
                     .unwrap(),

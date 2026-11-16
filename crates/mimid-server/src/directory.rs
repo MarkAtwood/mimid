@@ -18,8 +18,7 @@ pub const DIRECTORY_PATH: &str = "/.well-known/mimi-protocol-directory";
 /// `base`, as mimi-protocol's [`Directory`].
 ///
 /// Only endpoints this server routes are listed, since an absent key means
-/// the endpoint is not offered (decision mimid-1wgh.5.75); `proxyDownload`
-/// is not yet listed (mimid-1wgh.8). The paths follow the §5.1 example,
+/// the endpoint is not offered (decision mimid-1wgh.5.75). The paths follow the §5.1 example,
 /// including its `/v1` prefix (decision mimid-1wgh.5.37). Placeholders are
 /// served as literal `{name}` text (decision mimid-1wgh.5.38).
 pub fn directory(base: &BaseUrl) -> Directory {
@@ -41,7 +40,7 @@ pub fn directory(base: &BaseUrl) -> Directory {
         update_consent: url("updateConsent/{requesterDomain}"),
         identifier_query: url("identifierQuery/{domain}"),
         report_abuse: url("reportAbuse/{roomId}"),
-        proxy_download: None,
+        proxy_download: url("proxyDownload/{downloadUrl}"),
         unknown: Default::default(),
     }
 }
@@ -65,9 +64,9 @@ mod tests {
 
     use super::*;
 
-    /// The protocol-07 §5.1 example, copied by hand from the draft text and
-    /// limited to the nine endpoints this server routes (decision
-    /// mimid-1wgh.5.75).
+    /// The protocol-07 §5.1 example, copied by hand from the draft text
+    /// (txt L1145-1162): all ten endpoints, which this server now routes
+    /// (decision mimid-1wgh.5.75; proxyDownload since bead mimid-1wgh.8).
     const SPEC_EXAMPLE: &str = r#"
     {
       "keyMaterial":
@@ -85,7 +84,9 @@ mod tests {
       "identifierQuery":
          "https://mimi.example.com/v1/identifierQuery/{domain}",
       "reportAbuse":
-         "https://mimi.example.com/v1/reportAbuse/{roomId}"
+         "https://mimi.example.com/v1/reportAbuse/{roomId}",
+      "proxyDownload":
+         "https://mimi.example.com/v1/proxyDownload/{downloadUrl}"
     }
     "#;
 

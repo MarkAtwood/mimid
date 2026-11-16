@@ -59,8 +59,8 @@
 //! - The `Host` header is not checked (protocol-07 §4.1).
 //! - keyMaterial for users of this provider answers `501` if the follower
 //!   was not given its KeyPackages ([`Follower::with_key_packages`]).
-//! - The proxyDownload endpoint is not implemented, so the directory does
-//!   not list it (decision mimid-1wgh.5.75).
+//! - proxyDownload (protocol-07 §5.10.2) is served; Oblivious HTTP
+//!   (§5.10.3) is not ([`crate::hub::assets`]).
 
 use std::error::Error;
 use std::sync::Arc;
@@ -71,7 +71,7 @@ use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, FromRef, MatchedPath, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use tower_http::trace::TraceLayer;
 use tracing::Span;
 
@@ -129,6 +129,7 @@ pub fn router(directory: Directory, hub: Arc<Hub>, follower: Arc<Follower>) -> R
         .route("/v1/requestConsent/{targetDomain}", post(request_consent))
         .route("/v1/updateConsent/{requesterDomain}", post(update_consent))
         .route("/v1/identifierQuery/{domain}", post(identifier_query))
+        .route("/v1/proxyDownload/{downloadUrl}", get(proxy_download))
         .layer(DefaultBodyLimit::max(MAX_BODY_LEN))
         .with_state(Roles { hub, follower });
     // Each request runs in an `http_request` span (see the module
@@ -389,6 +390,38 @@ async fn notify(
     }
 }
 
+/// protocol-07 §5.10.2 proxyDownload: `200` with the asset as received
+/// (its `Content-Type`, or `application/octet-stream`), `403` for a
+/// requester that is not a peer or a URL that is not a peer's asset,
+/// `502` when the asset provider fails ([`crate::hub::assets`]).
+#[tracing::instrument(
+    name = "protocol_request",
+    skip_all,
+    fields(endpoint = "proxyDownload")
+)]
+async fn proxy_download(
+    State(hub): State<Arc<Hub>>,
+    Path(download_url): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(from) = source_domain(&headers) else {
+        return bad_from();
+    };
+    match hub.proxy_download(&from, &download_url).await {
+        Ok(asset) => (
+            [(
+                axum::http::header::CONTENT_TYPE,
+                asset
+                    .content_type
+                    .unwrap_or_else(|| "application/octet-stream".to_owned()),
+            )],
+            asset.body,
+        )
+            .into_response(),
+        Err(error) => respond(Err(error)),
+    }
+}
+
 /// protocol-07 §5.7 requestConsent: `202` with no body when accepted, `422`
 /// for an operation other than `request` or `cancel` (decision
 /// mimid-1wgh.7.42), `404` for an unknown target user (decision
@@ -605,6 +638,14 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
         HubError::NoSuchRoom => (StatusCode::NOT_FOUND, "no-such-room"),
         HubError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, "undecodable-request"),
         HubError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not-implemented"),
+        // protocol-07 §5.10.2: not an open proxy.
+        HubError::AssetRefused(_) => (StatusCode::FORBIDDEN, "asset-refused"),
+        // The asset provider, not this hub, failed: the request is
+        // refused with 502 and logged at DEBUG, since a peer can ask for
+        // any URL under its own domain (bounded by the peer map).
+        HubError::AssetFetch(_) | HubError::AssetTooLarge => {
+            (StatusCode::BAD_GATEWAY, "asset-provider-failed")
+        }
         // Bead mimid-1wgh.52.2.
         HubError::FieldTooLong(_) => (StatusCode::UNPROCESSABLE_ENTITY, "field-too-long"),
         // Decision mimid-1wgh.6.65.

@@ -37,6 +37,7 @@
 //!   [`crate::store`].
 
 mod abuse;
+pub mod assets;
 pub mod components;
 pub mod fanout;
 mod group_info;
@@ -229,6 +230,9 @@ pub struct Hub {
     fanout: Option<FanoutHandle>,
     /// The client that forwards keyMaterial requests, if any.
     peers: Option<PeerClient>,
+    /// The HTTP client for proxyDownload fetches; [`assets`]'s own when
+    /// `None`.
+    asset_client: Option<reqwest::Client>,
     /// The server of keyMaterial for users of this provider, if any.
     local_key_material: Option<Arc<dyn LocalKeyMaterial>>,
     /// What a new room's group must carry beyond the MLS and protocol
@@ -317,6 +321,7 @@ impl Hub {
             rooms: Mutex::new(rooms),
             fanout: None,
             peers: None,
+            asset_client: None,
             local_key_material: None,
             requirements: HubRequirements::default(),
             limits: FieldLimits::default(),
@@ -356,6 +361,37 @@ impl Hub {
     pub fn with_peers(mut self, peers: PeerClient) -> Self {
         self.peers = Some(peers);
         self
+    }
+
+    /// Fetches proxyDownload assets with `client` instead of [`assets`]'s
+    /// own (no redirects, https only, [`assets::ASSET_TIMEOUT`]); it
+    /// should keep those limits. For other TLS roots, or tests.
+    #[must_use]
+    pub fn with_asset_client(mut self, client: reqwest::Client) -> Self {
+        self.asset_client = Some(client);
+        self
+    }
+
+    /// protocol-07 §5.10.2 proxyDownload: fetches `download_url` for the
+    /// peer `from` ([`assets`]).
+    ///
+    /// # Errors
+    ///
+    /// [`HubError::NotImplemented`] without a peer map,
+    /// [`HubError::AssetRefused`] if the request or URL is refused,
+    /// [`HubError::AssetFetch`] or [`HubError::AssetTooLarge`] if the fetch
+    /// fails.
+    pub async fn proxy_download(
+        &self,
+        from: &Domain,
+        download_url: &str,
+    ) -> Result<assets::Asset, HubError> {
+        let peers = self
+            .peers
+            .as_ref()
+            .ok_or(HubError::NotImplemented("proxyDownload"))?;
+        let url = assets::check(peers, from, download_url).map_err(HubError::AssetRefused)?;
+        assets::fetch(self.asset_client.as_ref(), url).await
     }
 
     /// Gives the hub the server of keyMaterial for users of this provider,
@@ -880,6 +916,16 @@ pub enum HubError {
     /// The endpoint is not implemented yet.
     #[error("{0} is not implemented")]
     NotImplemented(&'static str),
+    /// A proxyDownload request refused before any fetch (protocol-07
+    /// §5.10.2).
+    #[error("proxyDownload refused: {0}")]
+    AssetRefused(#[source] assets::AssetRefusal),
+    /// The asset provider failed or answered other than `2xx`.
+    #[error("the asset provider failed")]
+    AssetFetch(#[source] reqwest::Error),
+    /// The asset is larger than [`assets::MAX_ASSET_LEN`].
+    #[error("the asset is too large")]
+    AssetTooLarge,
     /// The request body does not decode.
     #[error("undecodable request")]
     InvalidRequest(#[source] mimi_mls::tls_codec::Error),

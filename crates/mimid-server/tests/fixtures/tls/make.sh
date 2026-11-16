@@ -17,4 +17,6 @@ issue() { # name subjectAltName extendedKeyUsage
 }
 issue server "DNS:localhost,IP:127.0.0.1" serverAuth
 issue client "DNS:a.example" clientAuth
+# An asset server under the peer domain b.example (proxyDownload tests).
+issue assets "DNS:assets.b.example" serverAuth
 rm -f ca.srl
