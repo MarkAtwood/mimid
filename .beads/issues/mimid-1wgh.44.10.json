@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.44.10",
   "title": "assay: draft-mahy-mimi-credential-preauth-00",
   "description": "Assay draft-mahy-mimi-credential-preauth-00 per the output contract on epic mimid-1wgh.44 (read the whole draft locally, never over the network; one human decision bead; conflict, feature, wg beads as found; 'no impact' is a valid finding). File: /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-credential-preauth-00.txt (sha256 in specs/PROVENANCE). Known hooks in mimid: room-policy-04 §4 preauthorization in crates/mimi-room-policy (preauth.rs, ClaimId matching; decisions mimid-1wgh.3.47-.3.49).",
+  "notes": "Assay done 2026-11-16: read L1-1568. Filed mimid-1wgh.44.29 (decision, human: track only) and mimid-1wgh.44.30 (wg, P4: internal inconsistencies). No code changes.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:16:48.639006322Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:16:48.639006322Z",
+  "updated_at": "2026-11-16T00:28:39.801982247Z",
   "labels": [
     "spec-assay"
   ],
