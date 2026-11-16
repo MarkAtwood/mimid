@@ -4,8 +4,17 @@ Phoenix's Air app uses. Findings are tracked in beads under mimid-1wgh.46,
 not here. None of this runs in CI: it builds third-party code.
 
 The crate depends on Phoenix twice, under two names, pinned by git rev in
-Cargo.toml: phx_main (main, pre-draft-09) and phx_pr20 (PR #20, the
-draft-09 update). Bump a `rev` there to test newer Phoenix code.
+Cargo.toml: phx_main (main at 9690d8f, draft-ietf-mimi-content-10, the
+revision Air pins) and phx_prev (the previous main, 31487f9, pre-draft-09,
+for comparison). The two APIs differ in the message ID type, so main.rs
+has a small adapter module per revision. Bump a `rev` there to test newer
+Phoenix code.
+
+Last run 2026-11-16 (bead mimid-1wgh.46.13): at 9690d8f every WG -10
+example decodes, re-encodes byte for byte and gives the draft's message
+ID; 31487f9 gets every message ID wrong (pre-09 formula). Phoenix's
+`write` output is identical at both revisions and to the committed
+fixtures.
 
 Modes
   wg <dir>      Phoenix decodes every WG -10 example in <dir>, re-encodes it,

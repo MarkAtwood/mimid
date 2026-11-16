@@ -3,11 +3,12 @@
 //!   mimid-phoenix-xcheck wg <dir>      Phoenix decodes each WG -10 example in
 //!                                      <dir>, re-encodes it, compares bytes,
 //!                                      and computes the message ID, at both
-//!                                      Phoenix revisions.
+//!                                      Phoenix revisions (main, content-10;
+//!                                      and the previous main, pre-09).
 //!   mimid-phoenix-xcheck write <dir>   Phoenix (main) encodes messages built
 //!                                      from fixed inputs into <dir>, and
-//!                                      reports whether PR #20 encodes the
-//!                                      same values identically.
+//!                                      reports whether the previous main
+//!                                      encodes the same values identically.
 //!
 //! The URIs and expected message IDs are copied from
 //! crates/mimi-content/tests/message_id.rs and tests/common/mod.rs.
@@ -106,9 +107,39 @@ fn message_id(fill: u8) -> Vec<u8> {
     id
 }
 
+/// What differs between the Phoenix revisions' APIs: 9690d8f (#14) made a
+/// message ID a `MimiId([u8; 32])` and `simple_receipt` take `&[MimiId]`;
+/// 31487f9 used `Vec<u8>` and `&[&Vec<u8>]`.
+mod api_main {
+    use phx_main::{MessageStatus, MimiContent, MimiId};
+    pub fn id(bytes: &[u8]) -> MimiId {
+        MimiId::try_from(bytes).expect("32 bytes")
+    }
+    pub fn bytes(id: &MimiId) -> Vec<u8> {
+        id.as_slice().to_vec()
+    }
+    pub fn receipt(target: &[u8], salt: [u8; 16], status: MessageStatus) -> MimiContent {
+        MimiContent::simple_receipt(&[id(target)], salt, status).expect("receipt").1
+    }
+}
+
+mod api_prev {
+    use phx_prev::{MessageStatus, MimiContent};
+    pub fn id(bytes: &[u8]) -> Vec<u8> {
+        bytes.to_vec()
+    }
+    pub fn bytes(id: &Vec<u8>) -> Vec<u8> {
+        id.clone()
+    }
+    pub fn receipt(target: &[u8], salt: [u8; 16], status: MessageStatus) -> MimiContent {
+        MimiContent::simple_receipt(&[&target.to_vec()], salt, status).expect("receipt").1
+    }
+}
+
 macro_rules! phoenix {
-    ($module:ident, $krate:ident) => {
+    ($module:ident, $krate:ident, $api:ident) => {
         mod $module {
+            use super::$api as api;
             use std::collections::BTreeMap;
 
             use $krate::cbor::Value;
@@ -138,7 +169,7 @@ macro_rules! phoenix {
                 };
                 let id = content
                     .message_id(sender.as_bytes(), super::ROOM.as_bytes())
-                    .map(|id| super::hex(&id))
+                    .map(|id| super::hex(&api::bytes(&id)))
                     .unwrap_or_else(|e| format!("error {e}"));
                 let id_ok = id == expected_id;
                 if !id_ok {
@@ -176,21 +207,16 @@ macro_rules! phoenix {
             pub fn messages() -> Vec<(&'static str, Vec<u8>)> {
                 let markdown =
                     MimiContent::simple_markdown_message("Hello, *world*".to_owned(), [0x11; 16]);
-                let (_, receipt) = MimiContent::simple_receipt(
-                    &[&super::message_id(0xaa)],
-                    [0x22; 16],
-                    MessageStatus::Read,
-                )
-                .expect("receipt");
+                let receipt = api::receipt(&super::message_id(0xaa), [0x22; 16], MessageStatus::Read);
 
                 let mut extensions = base(0x33, plain("hi"));
-                extensions.replaces = Some(super::message_id(0xbb));
+                extensions.replaces = Some(api::id(&super::message_id(0xbb)));
                 extensions.topic_id = b"topic-1".to_vec();
                 extensions.expires = Some(Expiration {
                     relative: true,
                     time: 3600,
                 });
-                extensions.in_reply_to = Some(super::message_id(0xcc));
+                extensions.in_reply_to = Some(api::id(&super::message_id(0xcc)));
                 extensions
                     .extensions
                     .insert(ExtensionName::Number(1), Value::Text(super::ALICE.into()));
@@ -263,16 +289,16 @@ macro_rules! phoenix {
     };
 }
 
-phoenix!(main_rev, phx_main);
-phoenix!(pr20_rev, phx_pr20);
+phoenix!(main_rev, phx_main, api_main);
+phoenix!(prev_rev, phx_prev, api_prev);
 
 fn wg(dir: &Path) -> ExitCode {
     for (label, check) in [
         (
-            "main 31487f9",
+            "main 9690d8f",
             main_rev::check as fn(&[u8], &str, &str) -> (bool, bool, bool, String),
         ),
-        ("PR #20 6378938", pr20_rev::check),
+        ("previous main 31487f9", prev_rev::check),
     ] {
         println!("== Phoenix {label}");
         println!(
@@ -300,14 +326,14 @@ fn write(dir: &Path) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let main = main_rev::messages();
-    let pr20 = pr20_rev::messages();
-    for ((name, bytes), (_, pr20_bytes)) in main.iter().zip(&pr20) {
-        let same = if bytes == pr20_bytes {
+    let prev = prev_rev::messages();
+    for ((name, bytes), (_, prev_bytes)) in main.iter().zip(&prev) {
+        let same = if bytes == prev_bytes {
             "identical"
         } else {
             "DIFFERENT"
         };
-        println!("{name}: {} bytes, PR #20 output {same}", bytes.len());
+        println!("{name}: {} bytes, previous main's output {same}", bytes.len());
         if let Err(e) = fs::write(dir.join(format!("{name}.cbor")), bytes) {
             eprintln!("{name}: {e}");
             return ExitCode::FAILURE;
