@@ -3,13 +3,15 @@
   "title": "assay: draft-mahy-cbor-pointer-01",
   "description": "Assay draft-mahy-cbor-pointer-01 per the output contract on epic mimid-1wgh.44 (read the whole draft locally, never over the network; one human decision bead; conflict, feature, wg beads as found; 'no impact' is a valid finding). File: /home/mark/PROJECT/IETF/specs/draft-mahy-cbor-pointer-01.txt (sha256 in specs/PROVENANCE). Known hooks in mimid: none (tooling).",
   "notes": "Assay done 2026-11-16: read whole draft. Filed mimid-1wgh.44.48 / mimid-1wgh.44.49 (decisions: track only) and mimid-1wgh.44.50 (shared wg bead, P4). No code changes.",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:16:50.129346316Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:41:58.680490829Z",
+  "updated_at": "2026-11-16T00:41:58.819116789Z",
+  "closed_at": "2026-11-16T00:41:58.819116789Z",
+  "close_reason": "Assayed; outputs mimid-1wgh.44.48, mimid-1wgh.44.49, mimid-1wgh.44.50.",
   "labels": [
     "spec-assay"
   ],
