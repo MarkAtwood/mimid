@@ -187,6 +187,7 @@ async fn two_agents_chat_through_their_server() {
     })
     .await;
     assert_eq!(bob.invites().len(), 1);
+    assert_eq!(bob.inviter(number).unwrap(), ALICE);
     assert_eq!(bob.join(number).unwrap(), room);
     assert!(bob.invites().is_empty());
     assert_eq!(bob.key_packages_outstanding(), 1);

@@ -546,6 +546,46 @@ impl Agent {
         self.commit(room, &adds, &[], &[update], "invite").await
     }
 
+    /// The user URI of the member that sent pending invite `number`: the
+    /// identity in the credential of the leaf that signed the Welcome's
+    /// GroupInfo (RFC 9420 §12.4.3.1). Read without joining; the invite
+    /// stays pending and its KeyPackage unused, so a caller can decide
+    /// from it whether to [`Agent::join`].
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchInvite`], or the MLS error of staging the
+    /// Welcome.
+    pub fn inviter(&self, number: u64) -> Result<String, AgentError> {
+        let (welcome, tree) = self.invite_material(number)?;
+        let identity = Member::welcome_sender(&self.identity, &welcome, tree.as_deref())
+            .map_err(|e| AgentError::mls("reading the Welcome", e))?;
+        Ok(String::from_utf8_lossy(&identity).into_owned())
+    }
+
+    /// The Welcome and ratchet tree (if any) of pending invite `number`.
+    fn invite_material(&self, number: u64) -> Result<(Vec<u8>, Option<Vec<u8>>), AgentError> {
+        let invite = self
+            .state
+            .invites
+            .iter()
+            .find(|i| i.number == number)
+            .ok_or(AgentError::NoSuchInvite(number))?;
+        let bad_hex = |what: &str| AgentError::State {
+            path: PathBuf::from("state.json"),
+            detail: format!("{what} of invite {number} is not hex"),
+            source: None,
+        };
+        let welcome = hex::decode(&invite.welcome).map_err(|_| bad_hex("the Welcome"))?;
+        let tree = invite
+            .ratchet_tree
+            .as_deref()
+            .map(hex::decode)
+            .transpose()
+            .map_err(|_| bad_hex("the ratchet tree"))?;
+        Ok((welcome, tree))
+    }
+
     /// Joins the room of pending invite `number` from its Welcome, and
     /// returns the room URI. Messages for the room that arrived before the
     /// join are processed; their events come with the next
@@ -561,19 +601,7 @@ impl Agent {
             .iter()
             .position(|i| i.number == number)
             .ok_or(AgentError::NoSuchInvite(number))?;
-        let invite = self.state.invites[index].clone();
-        let bad_hex = |what: &str| AgentError::State {
-            path: PathBuf::from("state.json"),
-            detail: format!("{what} of invite {number} is not hex"),
-            source: None,
-        };
-        let welcome = hex::decode(&invite.welcome).map_err(|_| bad_hex("the Welcome"))?;
-        let tree = invite
-            .ratchet_tree
-            .as_deref()
-            .map(hex::decode)
-            .transpose()
-            .map_err(|_| bad_hex("the ratchet tree"))?;
+        let (welcome, tree) = self.invite_material(number)?;
         let member = Member::join_welcome(&self.identity, &welcome, tree.as_deref())
             .map_err(|e| AgentError::mls("joining from the Welcome", e))?
             .member;
