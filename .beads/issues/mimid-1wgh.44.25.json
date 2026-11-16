@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.25",
+  "title": "Decision: draft-mahy-mls-ext-commit-pp-02 is track-only for mimid; worth backing in the WG",
+  "description": "Assay mimid-1wgh.44.8 of /home/mark/PROJECT/IETF/specs/draft-mahy-mls-ext-commit-pp-02.txt (392 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: an empty extension type external_pending_proposals (suggested 0x0009; L in §6). In required_capabilities it makes every external committer include, by reference, all pending proposals the GroupInfo provider gave it (§4). Motivation: leavers and policy enforcers lose their proposals when an external commit lands first (§3.1, §3.2), including a colluding pair delaying a ban (§3.2).\n\nHow it meets mimid: protocol-07 already hands the joiner the pending proposals with the GroupInfo (protocol-07 txt L2217, L2236-2246, PendingProposal), and mimid's hub fills them (crates/mimid-server/src/hub/group_info.rs:100). What protocol-07 lacks is a way to use them: RFC 9420 §12.4.3.2 forbids proposals by reference in an external Commit (rfc9420.xml L5732), so mimid chose H4 option A, refusing external commits while proposals are pending (decision mimid-1wgh.6.4; hub/update.rs:433-436), with option B (hub re-issues proposals, mimid-1wgh.6.33, open) as a follow-up. This draft is a third option that keeps the proposals and lets the external commit through.\n\nRECOMMEND: track only for code (individual Informational draft, L7; needs OpenMLS to build and accept external commits with proposals by reference, which RFC 9420 forbids, so fork work), but tell the WG mimid has the problem it solves (H4) and would implement it if adopted. If adopted: (1) mimi-mls: commit external with the given proposals by reference when the room requires 0x0009; (2) hub: in such a room, accept a NewMemberCommit that includes every pending proposal instead of refusing it (relax hub/update.rs:433); refuse one that omits any; (3) Observer must validate that set.\n\nConflict: none today (no room requires 0x0009). Note on mimid-1wgh.6.33: B becomes unnecessary in rooms that require this extension. Spec defects: wg bead.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:23:05.775590365Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:23:05.775590365Z",
+  "labels": [
+    "human",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.25",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:23:06.044265562Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
