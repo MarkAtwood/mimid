@@ -2565,6 +2565,7 @@ dependencies = [
  "mimi-content",
  "mimid-agent-core",
  "mimid-server",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",
