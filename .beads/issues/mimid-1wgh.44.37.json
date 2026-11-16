@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.37",
+  "title": "wg: draft-mahy-mls-new-framed-content-tbs-02 gaps (RefHash label, switch-over epoch)",
+  "description": "From assay mimid-1wgh.44.13 of /home/mark/PROJECT/IETF/specs/draft-mahy-mls-new-framed-content-tbs-02.txt. Posting needs Mark's OK.\n1. 'context_hash = RefHash(GroupContext)' (L146): RFC 9420 RefHash takes a label and a value (rfc9420.xml L1932: RefHash(label, value)). Name the label (e.g. 'MLS 1.0 GroupContext Reference') or use plain Hash.\n2. Switch-over: the requirement takes effect when a Commit adds it to required_capabilities. Say which TBS signs that Commit and the messages of the epoch it creates (presumably old for the Commit, new from the next epoch), and the reverse when it is removed.\n3. new_member_commit uses the context_hash of which GroupContext? For an external commit the joiner has the GroupInfo's; say so (matches RFC 9420 for the full context).\n4. §5 'indicates support the the extension' (typo); the extension is also needed in LeafNode capabilities by RFC 9420 required_capabilities rules, worth stating. mimi-protocol cited at -06.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:39:15.004865536Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:39:15.004865536Z",
+  "labels": [
+    "wg",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.37",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:39:15.038237782Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
