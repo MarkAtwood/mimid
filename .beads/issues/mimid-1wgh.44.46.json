@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.46",
+  "title": "Decision: draft-mahy-mimi-av-metadata-02 is adopt-later for mimid (cheap, with JMAP attachments)",
+  "description": "Assay mimid-1wgh.44.18 of /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-av-metadata-02.txt (336 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: a MIMI content extension (suggested key 6; free: draft-mimi-content-more-extensions-01 uses 3, 4, 5, 256) carrying per-part rendering hints: part index, media kind (audio 1, image 2, video 3), width, height, duration (ms), preview part, accessibility text, rotation (§3, CDDL). Informational (L7).\n\nHow it meets mimid: mimi-content keeps unknown extensions as opaque keys and values (crates/mimi-content/src/extension.rs; decode.rs), so messages carrying it already pass through intact. No conflict.\n\nRECOMMEND: adopt later, when mimid's JMAP projection handles attachments with dimensions: then (1) mimi-content: typed codec for key 6 (part_index must name a SinglePart or ExternalPart, content-10 part index §L751-754); (2) JMAP projection: width, height, duration and alt text onto the attachment fields. Small. Spec defects: wg bead.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:41:27.203643924Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:41:27.203643924Z",
+  "labels": [
+    "human",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.46",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:41:27.234469415Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
