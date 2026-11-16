@@ -72,6 +72,11 @@ pub(crate) struct State {
     /// estimate: the server does not say when one is claimed.
     #[serde(default)]
     pub key_packages_outstanding: u32,
+    /// Whether the server has accepted a KeyPackage of this identity, which
+    /// binds its signature key to the account; Room/create refuses a leaf
+    /// whose key is not bound (draft-atwood-jmap-chat-mimi-00 §KeyPackage/set).
+    #[serde(default)]
+    pub signature_key_bound: bool,
     /// MLS group ID (hex) to room URI. Rooms made with Room/create have a
     /// random 16-octet group ID (draft-atwood-jmap-chat-mimi-00
     /// §Room/create).
@@ -174,6 +179,7 @@ impl StateDir {
             held: Vec::new(),
             consumed_welcomes: Vec::new(),
             key_packages_outstanding: 0,
+            signature_key_bound: false,
             group_rooms: BTreeMap::new(),
             message_state: None,
             sent: Vec::new(),

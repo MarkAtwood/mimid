@@ -143,8 +143,8 @@ pub enum Event {
         /// The invite's number.
         number: u64,
     },
-    /// A message.
-    Message(ReceivedMessage),
+    /// A message (boxed: it is far larger than the other events).
+    Message(Box<ReceivedMessage>),
     /// A Commit changed the room; `participants` is the participant list
     /// after it.
     MembersChanged {
@@ -339,6 +339,7 @@ impl Agent {
                 .map_err(|e| AgentError::mls("minting a KeyPackage", e))?;
             self.jmap.publish_key_package(&bytes).await?;
             self.state.key_packages_outstanding += 1;
+            self.state.signature_key_bound = true;
             self.save()?;
         }
         Ok(())
@@ -348,7 +349,9 @@ impl Agent {
     /// only participant, and returns the room URI. The room ID is the
     /// server's `roomIdPrefix` and the base32 of 16 random octets, the MLS
     /// group ID 16 more random octets (draft-atwood-jmap-chat-mimi-00
-    /// §Room/create).
+    /// §Room/create). The server accepts the room only from a signature key
+    /// bound to the account, which the first KeyPackage/set does; if this
+    /// identity never published one, one is published first.
     ///
     /// # Errors
     ///
@@ -359,6 +362,9 @@ impl Agent {
             return Err(AgentError::Invalid(
                 "a room name is at most 255 octets".to_owned(),
             ));
+        }
+        if !self.state.signature_key_bound {
+            self.publish_key_packages(1).await?;
         }
         let room = format!("{}{}", self.jmap.room_id_prefix, base32(&random::<16>()?));
         let group_id = random::<16>()?.to_vec();
@@ -1051,7 +1057,7 @@ impl Agent {
             }) => {
                 let sender = String::from_utf8_lossy(&sender_identity).into_owned();
                 match received(&data, &sender, &room) {
-                    Ok(message) => events.push(Event::Message(message)),
+                    Ok(message) => events.push(Event::Message(Box::new(message))),
                     Err(description) => events.push(Event::Problem {
                         room: Some(room),
                         description,
@@ -1431,8 +1437,10 @@ fn add_component_id(list: &[u8], component: u16) -> Result<Vec<u8>, AgentError> 
         return Err(bad());
     }
     let mut ids: Vec<u16> = ids
-        .chunks_exact(2)
-        .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_be_bytes(*pair))
         .collect();
     if !ids.contains(&component) {
         ids.push(component);
