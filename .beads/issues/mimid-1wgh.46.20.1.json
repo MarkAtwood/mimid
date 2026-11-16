@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.20.1",
+  "title": "Before the interop day: deploy mimid's pending work to the host",
+  "description": "The host runs the 2026-11-15 09:52 build plus the fanout hotfix (now 2da2475 + a78c875 after the history rewrite; bead mimid-1wgh.46.9). Pending: PKIX/peer_tls, #190 wire profiles, mls-extensions-11, Room/create roomId (deploy with the matching mimid-chat), OpenTelemetry, role-1 list rule (1aa8400), nonces (6dbe357), jt-mls-01 vectors. Needs Mark's OK; keep rollback binaries and a DB backup as for earlier deploys.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T02:01:50.814645109Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T02:01:50.814645109Z",
+  "labels": [
+    "interop"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.20.1",
+      "depends_on_id": "mimid-1wgh.46.20",
+      "type": "parent-child",
+      "created_at": "2026-11-16T02:01:50.842750077Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
