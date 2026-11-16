@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.45",
+  "title": "wg: draft-mahy-mls-new-content-types-02 gaps (dropping before decrypt, registry template)",
+  "description": "From assay mimid-1wgh.44.17 of /home/mark/PROJECT/IETF/specs/draft-mahy-mls-new-content-types-02.txt. Posting needs Mark's OK.\n1. §4 last paragraph: the receiver decides a message is outdated before decrypting it ('older than its handling threshold'; 'a more recent status message of the same type from the same sender'). MLS messages carry no send time, and the status 'type' is inside the ciphertext, so the receiver can only judge by arrival time and must decrypt SenderData to know the sender. §6 then says clients MUST verify authenticity before deleting older generations, which needs decryption. Say what a receiver may skip, and what it must still do (advance the ratchet with generation checks).\n2. §5: the DS 'knows the identity of the sender ... and the type of status' only if the application exposes them (AAD or out of band, as the parenthesis admits); for MIMI this means the hub learns presence patterns. Worth stating in §6.\n3. §7.2 template text is copied from the component registry ('The numeric value of the component ID', 'The name of the component').\n4. Typos: 'PrivateMessgeContent' (§4), 'OperationalParamaters' (§4). Gist lists status/ephemeral against -01; fine.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:40:52.09200029Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:40:52.09200029Z",
+  "labels": [
+    "wg",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.45",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:40:52.12413079Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
