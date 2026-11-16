@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.44.49",
   "title": "Decision: draft-mahy-cbor-pointer-01 is track-only for mimid",
   "description": "Assay mimid-1wgh.44.20 of /home/mark/PROJECT/IETF/specs/draft-mahy-cbor-pointer-01.txt (504 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: a CBOR analogue of JSON Pointer: an array of pathspecs, implicit (meaning depends on the parent's type; negative integers count from the end; byte strings are re-read as embedded CBOR) or explicit (each pathspec tagged by expected type), plus array filters (§3). Tags and a simple value are TBD. Informational (L7).\n\nHow it meets mimid: none directly. It overlaps the claim pointers of draft-mahy-mimi-credential-preauth-00 (assay mimid-1wgh.44.10), which address CWT claims the same way; if preauth matures it may build on this. mimid has no CWT credentials (sd-cwt decision mimid-1wgh.44.27).\n\nRECOMMEND: track only, alongside credential-preauth.",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:41:58.133141032Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:41:58.133141032Z",
+  "updated_at": "2026-11-16T02:33:26.62215593Z",
+  "closed_at": "2026-11-16T02:33:26.62215593Z",
+  "close_reason": "Mark 2026-11-16: track only.",
   "labels": [
     "human",
     "spec-assay"
