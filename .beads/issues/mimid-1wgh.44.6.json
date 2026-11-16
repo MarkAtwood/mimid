@@ -3,13 +3,15 @@
   "title": "assay: draft-mahy-mls-semiprivatemessage-08",
   "description": "Assay draft-mahy-mls-semiprivatemessage-08 per the output contract on epic mimid-1wgh.44 (read the whole draft locally, never over the network; one human decision bead; conflict, feature, wg beads as found; 'no impact' is a valid finding). File: /home/mark/PROJECT/IETF/specs/draft-mahy-mls-semiprivatemessage-08.txt (sha256 in specs/PROVENANCE). Known hooks in mimid: protocol-07 carries SemiPrivateMessage (crates/mimi-protocol/src/notify.rs, update.rs, lib.rs; crates/mimi-mls/src/member.rs); beads mimid-1wgh.37.7, .5.51, .4.12, .37.40; JMAP-MIMI note on mimid-1wgh.12.",
   "notes": "Assay done 2026-11-16: read L1-560 of /home/mark/PROJECT/IETF/specs/draft-mahy-mls-semiprivatemessage-08.txt. Filed mimid-1wgh.44.21 (decision, human: track only, keep .4.12) and mimid-1wgh.44.22 (wg: 7 spec defects incl. external_receivers extension-vs-component and §3.3 hash verification without GroupContext). No conflict beads: mimid's refusal of SemiPrivateMessage (.4.12, mimi-protocol lib.rs:67-71) is already documented. No code changes.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:16:48.045952872Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:18:06.884810868Z",
+  "updated_at": "2026-11-16T00:18:06.99540426Z",
+  "closed_at": "2026-11-16T00:18:06.99540426Z",
+  "close_reason": "Assayed; outputs mimid-1wgh.44.21, mimid-1wgh.44.22.",
   "labels": [
     "spec-assay"
   ],
