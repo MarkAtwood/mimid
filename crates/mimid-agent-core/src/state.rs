@@ -61,10 +61,10 @@ pub(crate) struct State {
     pub rooms: BTreeMap<String, Room>,
     #[serde(default)]
     pub invites: Vec<Invite>,
-    /// MLSMessages (room URI or `group:<hex>`, hex) for rooms not joined
-    /// yet, oldest first.
+    /// MLSMessages (room URI or `group:<hex>`, hex, the hub's acceptance
+    /// time in milliseconds) for rooms not joined yet, oldest first.
     #[serde(default)]
-    pub held: Vec<(String, String)>,
+    pub held: Vec<(String, String, u64)>,
     /// Welcomes (hex) already joined, newest last.
     #[serde(default)]
     pub consumed_welcomes: Vec<String>,

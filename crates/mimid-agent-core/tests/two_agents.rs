@@ -203,9 +203,16 @@ async fn two_agents_chat_through_their_server() {
         (got.room.as_str(), got.sender.as_str(), got.text.as_deref()),
         (room.as_str(), ALICE, Some("hello bob"))
     );
-    assert_eq!(got.message_id, sent);
+    // The sender's SubmitMessageResponse time and the receiver's
+    // FanoutMessage timestamp are the same hub acceptance time, so both
+    // derive the same JMAP senderMsgId.
+    assert_eq!(
+        (got.message_id, got.accepted_at),
+        (sent.message_id, sent.accepted_at)
+    );
+    assert_ne!(sent.accepted_at, 0);
 
-    let sent = bob.send_text(&room, "hi alice").await.unwrap();
+    let sent = bob.send_text(&room, "hi alice").await.unwrap().message_id;
     let got = poll_until(&mut alice, |e| match e {
         Event::Message(m) => Some(m.clone()),
         _ => None,
@@ -236,7 +243,11 @@ async fn two_agents_chat_through_their_server() {
         [(room.as_str(), RoomStatus::Active)]
     );
     assert_agreement(&room, &alice, &bob);
-    let sent = alice.send_text(&room, "still there?").await.unwrap();
+    let sent = alice
+        .send_text(&room, "still there?")
+        .await
+        .unwrap()
+        .message_id;
     let got = poll_until(&mut bob, |e| match e {
         Event::Message(m) => Some(m.clone()),
         _ => None,

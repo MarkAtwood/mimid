@@ -127,10 +127,26 @@ pub struct ReceivedMessage {
     pub sender: String,
     /// The MIMI message ID (mimi-content-10 §3.3).
     pub message_id: MessageId,
+    /// The hub's acceptance time, in milliseconds since the epoch (the
+    /// FanoutMessage `timestamp`, protocol-07 §5.5). With `message_id` it
+    /// gives the JMAP `senderMsgId` (draft-atwood-jmap-chat-mimi-00
+    /// §Message Identifiers).
+    pub accepted_at: u64,
     /// The decoded content.
     pub content: MimiContent,
     /// The text, when the content is one `text/*` part.
     pub text: Option<String>,
+}
+
+/// A message this agent sent: its MIMI message ID and the hub's
+/// acceptance time in milliseconds (the SubmitMessageResponse's
+/// `accepted_timestamp`, protocol-07 §5.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sent {
+    /// The MIMI message ID (mimi-content-10 §3.3).
+    pub message_id: MessageId,
+    /// The hub's acceptance time, milliseconds since the epoch.
+    pub accepted_at: u64,
 }
 
 /// What [`Agent::poll`] (and [`Agent::join`]'s replay of held messages)
@@ -596,13 +612,13 @@ impl Agent {
         self.state.key_packages_outstanding = self.state.key_packages_outstanding.saturating_sub(1);
         let (replay, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.state.held)
             .into_iter()
-            .partition(|(r, _)| *r == room || *r == held_key);
+            .partition(|(r, _, _)| *r == room || *r == held_key);
         self.state.held = keep;
         self.save()?;
         let mut events = Vec::new();
-        for (_, item) in replay {
+        for (_, item, accepted_at) in replay {
             match hex::decode(&item).map(|b| MLSMessage::tls_deserialize_exact(&b[..])) {
-                Ok(Ok(message)) => self.incoming_mls(&message, &mut events),
+                Ok(Ok(message)) => self.incoming_mls(&message, accepted_at, &mut events),
                 _ => events.push(Event::Problem {
                     room: Some(room.clone()),
                     description: "a held message no longer decodes".to_owned(),
@@ -615,13 +631,13 @@ impl Agent {
     }
 
     /// Sends `text` as a one-part `text/plain` message to `room`, and
-    /// returns its MIMI message ID.
+    /// returns its MIMI message ID and the hub's acceptance time.
     ///
     /// # Errors
     ///
     /// [`AgentError::Invalid`] for text over [`MAX_TEXT_LEN`] octets, and
     /// the errors of [`Agent::send_content`].
-    pub async fn send_text(&mut self, room: &str, text: &str) -> Result<MessageId, AgentError> {
+    pub async fn send_text(&mut self, room: &str, text: &str) -> Result<Sent, AgentError> {
         if text.len() > MAX_TEXT_LEN {
             return Err(AgentError::Invalid("message too long".to_owned()));
         }
@@ -650,7 +666,8 @@ impl Agent {
 
     /// Sends `content` to `room` (Room/send), with a `frank_aad` item when
     /// the room's Safe AAD requires it (protocol-07 §5.4.1), and returns its
-    /// MIMI message ID. The caller makes the salt random and sets
+    /// MIMI message ID and the hub's acceptance time. The caller makes the
+    /// salt random and sets
     /// `senderUri`/`roomUri` if it wants them.
     ///
     /// # Errors
@@ -661,7 +678,7 @@ impl Agent {
         &mut self,
         room: &str,
         content: &MimiContent,
-    ) -> Result<MessageId, AgentError> {
+    ) -> Result<Sent, AgentError> {
         let bytes = content
             .encode()
             .map_err(|e| AgentError::encoding("encoding mimi-content", e))?;
@@ -677,9 +694,12 @@ impl Agent {
             .map_err(|e| AgentError::mls("encrypting", e))?;
         let message = MLSMessage::tls_deserialize_exact(&ciphertext[..])
             .map_err(|e| AgentError::tls("own message", e))?;
-        self.jmap.send(room, &message).await?;
+        let accepted_at = self.jmap.send(room, &message).await?;
         self.remember_sent()?;
-        Ok(message_id)
+        Ok(Sent {
+            message_id,
+            accepted_at,
+        })
     }
 
     /// Starts leaving `room` (protocol-07 §3.5): a Remove of this client
@@ -941,15 +961,15 @@ impl Agent {
         for fanout in fanouts {
             match fanout.event {
                 FanoutEvent::Application { message, .. } | FanoutEvent::Commit { message, .. } => {
-                    self.incoming_mls(&message, events);
+                    self.incoming_mls(&message, fanout.timestamp, events);
                 }
                 FanoutEvent::Proposal {
                     message,
                     more_proposals,
                 } => {
-                    self.incoming_mls(&message, events);
+                    self.incoming_mls(&message, fanout.timestamp, events);
                     for proposal in &more_proposals {
-                        self.incoming_mls(proposal, events);
+                        self.incoming_mls(proposal, fanout.timestamp, events);
                     }
                     if let Some((room, leaf)) = self.deferred_leaver.take() {
                         self.maybe_commit_leave(&room, leaf, events).await;
@@ -1001,7 +1021,7 @@ impl Agent {
         events.push(Event::InviteArrived { number });
     }
 
-    fn incoming_mls(&mut self, message: &MLSMessage, events: &mut Vec<Event>) {
+    fn incoming_mls(&mut self, message: &MLSMessage, accepted_at: u64, events: &mut Vec<Event>) {
         // The room of the group; for a group not known yet whose ID is not a
         // room URI (a Room/create room still to be joined), `group:<hex>`,
         // so the message is held and replayed at the join.
@@ -1033,7 +1053,9 @@ impl Agent {
         };
         match self.state.rooms.get(&room).map(|r| r.status) {
             None => {
-                self.state.held.push((room, hex::encode(&bytes)));
+                self.state
+                    .held
+                    .push((room, hex::encode(&bytes), accepted_at));
                 let excess = self.state.held.len().saturating_sub(MAX_HELD);
                 self.state.held.drain(..excess);
                 return;
@@ -1056,7 +1078,7 @@ impl Agent {
                 ..
             }) => {
                 let sender = String::from_utf8_lossy(&sender_identity).into_owned();
-                match received(&data, &sender, &room) {
+                match received(&data, &sender, &room, accepted_at) {
                     Ok(message) => events.push(Event::Message(Box::new(message))),
                     Err(description) => events.push(Event::Problem {
                         room: Some(room),
@@ -1162,7 +1184,12 @@ impl Agent {
 /// A received application message: decoded, its `senderUri` and `roomUri`
 /// checked against the authenticated sender and room (mimi-content-10
 /// §3.3), and its message ID computed from the bytes as received.
-fn received(data: &[u8], sender: &str, room: &str) -> Result<ReceivedMessage, String> {
+fn received(
+    data: &[u8],
+    sender: &str,
+    room: &str,
+    accepted_at: u64,
+) -> Result<ReceivedMessage, String> {
     let content = MimiContent::decode(data).map_err(|e| format!("not mimi-content: {e}"))?;
     if let Some(claimed) = &content.mimi_extensions.sender_uri
         && claimed != sender
@@ -1191,6 +1218,7 @@ fn received(data: &[u8], sender: &str, room: &str) -> Result<ReceivedMessage, St
         room: room.to_owned(),
         sender: sender.to_owned(),
         message_id,
+        accepted_at,
         content,
         text,
     })
@@ -1505,7 +1533,13 @@ mod tests {
             },
         };
         let bytes = content.encode().unwrap();
-        let message = received(&bytes, "mimi://a.example/u/alice", "mimi://a.example/r/x").unwrap();
+        let message = received(
+            &bytes,
+            "mimi://a.example/u/alice",
+            "mimi://a.example/r/x",
+            0,
+        )
+        .unwrap();
         assert_eq!(message.text.as_deref(), Some("hi"));
         assert_eq!(
             message.message_id,
@@ -1517,7 +1551,15 @@ mod tests {
             )
             .unwrap()
         );
-        assert!(received(&bytes, "mimi://a.example/u/eve", "mimi://a.example/r/x").is_err());
-        assert!(received(&bytes, "mimi://a.example/u/alice", "mimi://a.example/r/y").is_err());
+        assert!(received(&bytes, "mimi://a.example/u/eve", "mimi://a.example/r/x", 0).is_err());
+        assert!(
+            received(
+                &bytes,
+                "mimi://a.example/u/alice",
+                "mimi://a.example/r/y",
+                0
+            )
+            .is_err()
+        );
     }
 }
