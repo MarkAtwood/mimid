@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.47",
+  "title": "wg: draft-mahy-mimi-av-metadata-02 gaps (key text vs integer, CDDL reference, rotation)",
+  "description": "From assay mimid-1wgh.44.18 of /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-av-metadata-02.txt. Posting needs Mark's OK.\n1. Key: the CDDL uses the text key \"av_metadata\" (§3) while §6.1 registers integer key 6 named 'av-metadata'. content-10 §8.2.1 reserves text-string keys for private use, so the CDDL must use 6 (and one spelling of the name).\n2. CDDL citation is [RFC8160], 'IUTF8 Terminal Mode in Secure Shell' (§3, §7); CDDL is RFC 8610.\n3. Rotation vs orientation: width/height and 'width larger than height is landscape' (§3) are before or after applying rotation? Say which.\n4. part_index: point at content-10's definition of the part index (content-10 txt L751-754) and say what a receiver does with an index naming a MultiPart or a part that does not exist; preview_index's rules (§3) say 'must be an image with a disposition value of preview' but not what to do otherwise.\n5. Security TODO: accessibility_text can differ from the media (misleading alt text, e.g. hiding abusive images from screen-reader users or moderators); width/height/duration are sender claims a client must not trust for allocation.\n6. Example uses '/partIndex /' labels for part_index; content-09 reference (now -10).",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:41:27.351272604Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:41:27.351272604Z",
+  "labels": [
+    "wg",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.47",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:41:27.382581712Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
