@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.13.9",
   "title": "A2: inward JMAP Chat: a ChatBackend over crate-jmap's MemoryBackend, wired to the engine",
   "description": "Wrap crate-jmap-chat-server's memory::MemoryBackend (feature memory, v0.5.0): delegate storage and queries; hooks turn client writes into MIMI operations: Chat/set create (group) -\u003e host a room (Room/create) or join; Chat/set addMembers -\u003e invite (KeyMaterial/fetch + Room/update); Message/set create -\u003e encode mimi-content, encrypt, Room/send (senderMsgId per R1); Chat/set removeMembers / destroy -\u003e leave (protocol-07 §3.5, F5: send the MLS removal before the server's Follower::leave). Inbound: each decrypted application message inserted as a Message (mapping per draft-atwood-jmap-chat-mimi-00: message IDs, senders, edits, topics, reactions); participants from the participant list. Unsupported JMAP features answer per the spec (e.g. unknownMethod / forbidden).",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T03:01:46.404336861Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T03:01:46.404336861Z",
+  "updated_at": "2026-11-16T05:40:01.784445459Z",
+  "closed_at": "2026-11-16T05:40:01.784445459Z",
+  "close_reason": "Merged 68c6023: crates/mimid-agent-jmap (AgentChat over crate-jmap MemoryBackend), plus A1/mimi-mls additions (Sent/accepted_at, welcome_sender/inviter, room_name). 1421 tests pass, clippy clean. crate-jmap rough edges: mimid-s2qc.",
   "labels": [
     "agent"
   ],
