@@ -3,13 +3,15 @@
   "title": "assay: draft-mahy-mimi-msgid-aad-03",
   "description": "Assay draft-mahy-mimi-msgid-aad-03 per the output contract on epic mimid-1wgh.44 (read the whole draft locally, never over the network; one human decision bead; conflict, feature, wg beads as found; 'no impact' is a valid finding). File: /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-msgid-aad-03.txt (sha256 in specs/PROVENANCE). Known hooks in mimid: message IDs: beads mimid-1wgh.28, mimid-1wgh.12.26; mimi-content message ID code.",
   "notes": "Assay done 2026-11-16: read L1-224. Filed mimid-1wgh.44.23 (decision, human: track only; small if wanted) and mimid-1wgh.44.24 (wg: 5 gaps). No conflict beads. No code changes.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:16:48.196055012Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:22:12.072730265Z",
+  "updated_at": "2026-11-16T00:22:12.30220091Z",
+  "closed_at": "2026-11-16T00:22:12.30220091Z",
+  "close_reason": "Assayed; outputs mimid-1wgh.44.23, mimid-1wgh.44.24.",
   "labels": [
     "spec-assay"
   ],
