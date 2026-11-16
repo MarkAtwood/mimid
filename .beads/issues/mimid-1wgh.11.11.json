@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.11.11",
+  "title": "Read state and MIMI read receipts (adopt later, decision mimid-1wgh.44.31)",
+  "description": "Mark 2026-11-16: adopt draft-mahy-mimi-message-status-02 later, when mimid's JMAP gets read state. The mapping is in draft-atwood-jmap-chat-mimi-00 §Message Status (jmap-chat-spec fcb1f6f). Today Message/set refuses readAt and deletedAt (crates/mimid-server/src/jmap/methods/message_set.rs:15-16).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T02:30:18.239897362Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T02:30:18.239897362Z",
+  "labels": [
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.11.11",
+      "depends_on_id": "mimid-1wgh.11",
+      "type": "parent-child",
+      "created_at": "2026-11-16T02:30:18.26680497Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
