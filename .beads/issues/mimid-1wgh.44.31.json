@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.31",
+  "title": "Decision: draft-mahy-mimi-message-status-02 is adopt-later for mimid (with JMAP read state)",
+  "description": "Assay mimid-1wgh.44.11 of /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-message-status-02.txt (560 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: media type application/mimi-message-status, a CBOR array of [MessageId (32 bytes), status] pairs, status 0 unread, 1 delivered, 2 read, 3 expired, 4 deleted, 5 hidden, 6 error, 7-255 unknown (§4 CDDL). Sent by a member as an MLS application message to the room; can cover many messages in one report (§3). The example IDs match content-10 §5 (checked against mimid's message-ID test values). Informational.\n\nHow it meets mimid: it is end-to-end content, so the hub does not read it; it matters to the client side and the JMAP projection. mimid's JMAP refuses readAt and deletedAt today (crates/mimid-server/src/jmap/methods/message_set.rs:15-16: no ReadPosition or per-user Message state). draft-atwood-jmap-chat-mimi-00 cites it (MIMI-MESSAGE-STATUS, -01) for one sentence (§Message Status, L149).\n\nRECOMMEND: adopt later, when mimid gets JMAP read state: then (1) mimi-content: codec for the report (CBOR, MessageId 32 bytes, unknown statuses kept); (2) the mimid-agent / JMAP client side: send a report when the user reads (readAt set), receive reports into per-message read state; (3) the room's status_notification_policy (room-policy-04 §6.1) decides required/optional/forbidden. Nothing for the hub.\n\nConflict with our own draft: separate bead (jmap-chat-mimi cites -01 as expired, and maps only three statuses).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:38:06.589067562Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:38:06.589067562Z",
+  "labels": [
+    "human",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.31",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:38:06.617905286Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
