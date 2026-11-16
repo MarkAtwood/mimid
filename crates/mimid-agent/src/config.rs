@@ -9,10 +9,16 @@
 //! sync_interval_ms = 2000                 # optional
 //! key_packages = 10                       # optional
 //! invites = "from-allowed"                # optional: "any", "never"
+//! allowed_origins = ["http://localhost:5173"]  # optional CORS origins
 //! ```
 //!
 //! `token_file` holds the user's bearer token at `server_url`, as issued by
 //! the server (`mimid admin ... token`); surrounding whitespace is ignored.
+//!
+//! `allowed_origins` lists the web origins (RFC 6454 serializations:
+//! lowercase `http` or `https`, a host, an optional port, no path) that may
+//! call the endpoint from a browser (CORS); it defaults to none. `*` and
+//! `null` are refused.
 //!
 //! Parsing is strict: unknown keys are rejected rather than ignored, and a
 //! `listen` address that is not loopback is refused, since the endpoint
@@ -65,6 +71,10 @@ pub struct Config {
     /// Which room invites the agent joins.
     #[serde(default)]
     pub invites: Invites,
+    /// Web origins allowed cross-origin access (CORS), compared exactly
+    /// with a request's `Origin`. Empty: no CORS headers at all.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 }
 
 /// Which room invites the agent joins: [`InvitePolicy`] in the file.
@@ -149,6 +159,9 @@ impl Config {
         if self.key_packages > MAX_KEY_PACKAGES {
             return Err(ConfigError::OutOfRange("key_packages"));
         }
+        if let Some(origin) = self.allowed_origins.iter().find(|o| !is_origin(o)) {
+            return Err(ConfigError::Origin(origin.clone()));
+        }
         Ok(())
     }
 
@@ -156,6 +169,51 @@ impl Config {
     pub fn sync_interval(&self) -> Duration {
         Duration::from_millis(self.sync_interval_ms)
     }
+}
+
+/// Whether `text` is the serialization of an `http` or `https` origin
+/// (RFC 6454 §6.2), lowercase as browsers send it: scheme, `://`, a host
+/// (a name, an IPv4 address or a bracketed IPv6 address) and an optional
+/// port, nothing else.
+fn is_origin(text: &str) -> bool {
+    let Some(rest) = text
+        .strip_prefix("http://")
+        .or_else(|| text.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let (host, port) = match rest.strip_prefix('[') {
+        Some(v6) => match v6.split_once(']') {
+            Some((address, port)) => {
+                if address.is_empty()
+                    || !address
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.')
+                    || address.bytes().any(|b| b.is_ascii_uppercase())
+                {
+                    return false;
+                }
+                (address, port)
+            }
+            None => return false,
+        },
+        None => match rest.find(':') {
+            Some(colon) => (&rest[..colon], &rest[colon..]),
+            None => (rest, ""),
+        },
+    };
+    let host_ok = rest.starts_with('[')
+        || (!host.is_empty()
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.'));
+    let port_ok = port.is_empty()
+        || port.strip_prefix(':').is_some_and(|digits| {
+            !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && digits.parse::<u16>().is_ok()
+        });
+    host_ok && port_ok
 }
 
 /// Why a configuration was refused.
@@ -183,6 +241,10 @@ pub enum ConfigError {
     /// A number is outside its bounds.
     #[error("{0} is out of range")]
     OutOfRange(&'static str),
+    /// An `allowed_origins` entry is not a lowercase `http` or `https`
+    /// origin.
+    #[error("allowed_origins entry {0:?} is not an http or https origin")]
+    Origin(String),
 }
 
 #[cfg(test)]
@@ -256,6 +318,39 @@ mod tests {
             Config::parse(&bad_url),
             Err(ConfigError::ServerUrl(_))
         ));
+        for good in [
+            "http://localhost:5173",
+            "https://app.example",
+            "http://127.0.0.1:3000",
+            "http://[::1]:3000",
+        ] {
+            let config = Config::parse(&format!("{base}\nallowed_origins = [\"{good}\"]")).unwrap();
+            assert_eq!(config.allowed_origins, [good]);
+        }
+        for bad in [
+            "*",
+            "null",
+            "http://",
+            "localhost:5173",
+            "ftp://app.example",
+            "http://app.example/",
+            "http://app.example/path",
+            "http://App.example",
+            "HTTP://app.example",
+            "http://app.example:",
+            "http://app.example:99999",
+            "http://user@app.example",
+            "http://app.example?x",
+            "http://[::1",
+        ] {
+            assert!(
+                matches!(
+                    Config::parse(&format!("{base}\nallowed_origins = [\"{bad}\"]")),
+                    Err(ConfigError::Origin(_))
+                ),
+                "{bad}"
+            );
+        }
         let any = Config::parse(&format!("{base}\ninvites = \"any\"")).unwrap();
         assert_eq!(InvitePolicy::from(any.invites), InvitePolicy::Any);
     }

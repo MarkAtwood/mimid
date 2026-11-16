@@ -121,6 +121,8 @@ impl Daemon {
             changes,
             sync_now: Arc::new(Notify::new()),
             stop: stop_receiver,
+            allowed_origins: config.allowed_origins.clone(),
+            port: local_addr.port(),
         });
         Ok(Self {
             listener,

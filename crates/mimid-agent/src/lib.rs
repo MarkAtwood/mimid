@@ -31,6 +31,19 @@
 //! `Authorization: Bearer <that token>` and is otherwise `401`. Clients
 //! running as the user read it from the file.
 //!
+//! # Browsers: the Host check and CORS
+//!
+//! Against DNS rebinding, a request whose `Host` is not `127.0.0.1:<port>`,
+//! `[::1]:<port>` or `localhost:<port>` for the listening port is refused
+//! with `421`, before anything else. A browser client on another origin
+//! (a web app served elsewhere) needs that origin in `allowed_origins`:
+//! its CORS preflights are then answered without the token (methods `GET,
+//! POST, OPTIONS`; headers `Authorization, Content-Type`; no credentials
+//! mode), and responses to it carry `Access-Control-Allow-Origin` with
+//! that exact origin and `Vary: Origin`. Never `*`. With the list empty,
+//! the default, no CORS header is sent. The `http` module documents the
+//! order of the checks.
+//!
 //! # Running
 //!
 //! `mimid-agent <config.toml>`. `RUST_LOG` filters the log and defaults to
@@ -56,6 +69,11 @@
 //!   socket" check): any process that can read the token file can act as
 //!   the user.
 //! - The endpoint is plain HTTP on loopback; there is no TLS.
+//! - An allowed origin gets the same access as any holder of the token;
+//!   the token, not the origin, is what authorizes. A page from an allowed
+//!   origin still has to obtain the token from the user.
+//! - The browser `EventSource` API cannot send an `Authorization` header,
+//!   so a browser client must read the stream with `fetch` instead.
 //! - No blobs: upload and download answer `404`, and `maxSizeUpload` is 0.
 //! - Open EventSource streams are not counted against
 //!   `maxConcurrentRequests`.

@@ -6,9 +6,33 @@
 //! - `POST /jmap/upload/{accountId}/` and
 //!   `GET /jmap/download/{accountId}/{blobId}/{name}`: always `404`.
 //!
-//! Every request, on every path, must carry `Authorization: Bearer
-//! <local token>` ([`require_token`], this endpoint's only authorization
-//! point); any other request is `401` with an RFC 7807 body.
+//! Every request goes through [`guard`], in this order:
+//!
+//! 1. **Host.** Against DNS rebinding (a web page on another origin whose
+//!    name an attacker points at 127.0.0.1), the request's authority (its
+//!    one `Host` header, or the URI's authority) must be a loopback name
+//!    for the listening port: `127.0.0.1:<port>`, `[::1]:<port>` or
+//!    `localhost:<port>` (`localhost` in any case; the bare names too when
+//!    the port is 80). Anything else is `421 Misdirected Request` with an
+//!    RFC 7807 body.
+//! 2. **CORS preflight.** With `allowed_origins` configured, an `OPTIONS`
+//!    request carrying `Access-Control-Request-Method` from an `Origin` in
+//!    the list is answered `204` with `Access-Control-Allow-Origin: <that
+//!    origin>`, `Access-Control-Allow-Methods: GET, POST, OPTIONS`,
+//!    `Access-Control-Allow-Headers: Authorization, Content-Type` and
+//!    `Access-Control-Max-Age` ([`PREFLIGHT_MAX_AGE_SECS`]), without the
+//!    bearer token (a browser sends none on a preflight). Never `*`, and no
+//!    `Access-Control-Allow-Credentials`: authentication is a bearer
+//!    header, not cookies.
+//! 3. **The bearer token**, this endpoint's only authorization point:
+//!    every other request, on every path, must carry `Authorization:
+//!    Bearer <local token>`, or it is `401` with an RFC 7807 body.
+//!
+//! A response to a request whose `Origin` is in the list, the `401`
+//! included, carries `Access-Control-Allow-Origin` with that exact origin;
+//! with a non-empty list every response carries `Vary: Origin`. With the
+//! list empty (the default) no CORS header is ever sent, and a preflight is
+//! an ordinary unauthenticated request: `401`.
 //!
 //! An API request passes these checks in order, and the first failure
 //! answers with an RFC 7807 problem body (RFC 8620 §3.6.1):
@@ -39,7 +63,7 @@ use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::extract::rejection::BytesRejection;
 use axum::extract::{DefaultBodyLimit, Query, Request, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
@@ -132,6 +156,14 @@ const PROBLEM_CONTENT_TYPE: &str = "application/problem+json";
 /// RFC 7807 §4.2: with type `about:blank`, the title is the status phrase.
 const UNAUTHORIZED_BODY: &str = r#"{"type":"about:blank","title":"Unauthorized","status":401}"#;
 
+/// RFC 7807 body of the Host check's refusal.
+const MISDIRECTED_BODY: &str =
+    r#"{"type":"about:blank","title":"Misdirected Request","status":421}"#;
+
+/// `Access-Control-Max-Age` of a preflight answer, in seconds. INVENTED,
+/// NOT FROM SPEC.
+pub const PREFLIGHT_MAX_AGE_SECS: u32 = 600;
+
 /// RFC 8620 §2 recommends disabling HTTP caching of the Session.
 const NO_CACHE: &str = "no-cache, no-store, must-revalidate";
 
@@ -150,6 +182,10 @@ pub(crate) struct Endpoint {
     pub(crate) sync_now: Arc<Notify>,
     /// Becomes true at shutdown; open EventSource streams then end.
     pub(crate) stop: watch::Receiver<bool>,
+    /// Origins allowed cross-origin access (CORS), exactly as configured.
+    pub(crate) allowed_origins: Vec<String>,
+    /// The listening port, for the Host check.
+    pub(crate) port: u16,
 }
 
 /// A dispatcher with `Core/echo` and mimid-agent-jmap's methods over
@@ -249,37 +285,123 @@ pub(crate) fn router(endpoint: Arc<Endpoint>) -> Router {
         .route("/jmap/upload/{accountId}/", post(no_blobs))
         .route("/jmap/download/{accountId}/{blobId}/{name}", get(no_blobs))
         .layer(DefaultBodyLimit::max(MAX_SIZE_REQUEST))
-        .layer(middleware::from_fn_with_state(
-            Arc::clone(&endpoint),
-            require_token,
-        ))
+        .layer(middleware::from_fn_with_state(Arc::clone(&endpoint), guard))
         .with_state(endpoint)
 }
 
-/// The only authorization point: the request's one `Authorization: Bearer`
-/// header (RFC 6750 §2.1; the scheme is case-insensitive, RFC 9110 §11.1)
-/// must carry the local token. Every refusal looks the same.
-async fn require_token(
-    State(endpoint): State<Arc<Endpoint>>,
-    request: Request,
-    next: Next,
-) -> Response {
-    if bearer_token(request.headers()).is_some_and(|token| endpoint.token.matches(token)) {
-        return next.run(request).await;
+/// The Host check, the CORS preflight and the bearer token, in that order
+/// (see the module documentation); the CORS headers on the response.
+async fn guard(State(endpoint): State<Arc<Endpoint>>, request: Request, next: Next) -> Response {
+    if !host_allowed(request.headers(), request.uri(), endpoint.port) {
+        tracing::debug!("agent request refused: Host is not a loopback name for the port");
+        return problem_response(StatusCode::MISDIRECTED_REQUEST, MISDIRECTED_BODY);
     }
-    tracing::debug!("agent request refused: missing, malformed or wrong bearer token");
+    let origin = allowed_origin(request.headers(), &endpoint.allowed_origins);
+    if let Some(origin) = &origin
+        && request.method() == Method::OPTIONS
+        && request
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
+    {
+        return preflight(origin.clone());
+    }
+    let mut response =
+        if bearer_token(request.headers()).is_some_and(|token| endpoint.token.matches(token)) {
+            next.run(request).await
+        } else {
+            tracing::debug!("agent request refused: missing, malformed or wrong bearer token");
+            let mut response = problem_response(StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY);
+            response
+                .headers_mut()
+                .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+            response
+        };
+    let headers = response.headers_mut();
+    if !endpoint.allowed_origins.is_empty() {
+        headers.append(header::VARY, HeaderValue::from_static("Origin"));
+    }
+    if let Some(origin) = origin {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+    }
+    response
+}
+
+/// A response with RFC 7807 body `body`.
+fn problem_response(status: StatusCode, body: &'static str) -> Response {
     (
-        StatusCode::UNAUTHORIZED,
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static(PROBLEM_CONTENT_TYPE),
-            ),
-            (header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer")),
-        ],
-        UNAUTHORIZED_BODY,
+        status,
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(PROBLEM_CONTENT_TYPE),
+        )],
+        body,
     )
         .into_response()
+}
+
+/// The answer to a CORS preflight from allowed origin `origin`.
+fn preflight(origin: HeaderValue) -> Response {
+    (
+        StatusCode::NO_CONTENT,
+        [
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, origin),
+            (
+                header::ACCESS_CONTROL_ALLOW_METHODS,
+                HeaderValue::from_static("GET, POST, OPTIONS"),
+            ),
+            (
+                header::ACCESS_CONTROL_ALLOW_HEADERS,
+                HeaderValue::from_static("Authorization, Content-Type"),
+            ),
+            (
+                header::ACCESS_CONTROL_MAX_AGE,
+                HeaderValue::from(PREFLIGHT_MAX_AGE_SECS),
+            ),
+            (header::VARY, HeaderValue::from_static("Origin")),
+        ],
+    )
+        .into_response()
+}
+
+/// The request's one `Origin` header, if it is exactly one of `allowed`.
+fn allowed_origin(headers: &HeaderMap, allowed: &[String]) -> Option<HeaderValue> {
+    let mut values = headers.get_all(header::ORIGIN).iter();
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    let text = value.to_str().ok()?;
+    allowed
+        .iter()
+        .any(|origin| origin == text)
+        .then(|| value.clone())
+}
+
+/// Whether the request's authority (its one `Host` header, else the URI's
+/// authority, as in HTTP/2) is a loopback name for `port`.
+fn host_allowed(headers: &HeaderMap, uri: &axum::http::Uri, port: u16) -> bool {
+    let mut values = headers.get_all(header::HOST).iter();
+    let host = match (values.next(), values.next()) {
+        (Some(value), None) => match value.to_str() {
+            Ok(host) => host.to_owned(),
+            Err(_) => return false,
+        },
+        (None, _) => match uri.authority() {
+            Some(authority) => authority.as_str().to_owned(),
+            None => return false,
+        },
+        (Some(_), Some(_)) => return false,
+    };
+    let host = host.to_ascii_lowercase();
+    let mut names = vec![
+        format!("127.0.0.1:{port}"),
+        format!("[::1]:{port}"),
+        format!("localhost:{port}"),
+    ];
+    if port == 80 {
+        names.extend(["127.0.0.1", "[::1]", "localhost"].map(str::to_owned));
+    }
+    names.contains(&host)
 }
 
 /// The token octets of the request's one `Authorization: Bearer` header.
@@ -648,6 +770,72 @@ mod tests {
         assert_eq!(with(&["Bearer "]), None);
         assert_eq!(with(&["Bearerabc"]), None);
         assert_eq!(with(&["Bearer abc", "Bearer abc"]), None);
+    }
+
+    #[test]
+    fn only_loopback_names_for_the_port_pass_the_host_check() {
+        let check = |hosts: &[&str], port| {
+            let mut headers = HeaderMap::new();
+            for host in hosts {
+                headers.append(header::HOST, host.parse().unwrap());
+            }
+            host_allowed(&headers, &"/jmap/api".parse().unwrap(), port)
+        };
+        for good in [
+            "127.0.0.1:8484",
+            "[::1]:8484",
+            "localhost:8484",
+            "LocalHost:8484",
+        ] {
+            assert!(check(&[good], 8484), "{good}");
+        }
+        for bad in [
+            "127.0.0.1:8485",
+            "127.0.0.1",
+            "localhost",
+            "evil.example:8484",
+            "localhost.evil.example:8484",
+            "127.0.0.2:8484",
+            "[::ffff:127.0.0.1]:8484",
+            "0.0.0.0:8484",
+        ] {
+            assert!(!check(&[bad], 8484), "{bad}");
+        }
+        assert!(!check(&[], 8484));
+        assert!(!check(&["localhost:8484", "localhost:8484"], 8484));
+        assert!(check(&["localhost"], 80));
+        // HTTP/2: the URI's authority.
+        let uri = "http://localhost:8484/jmap/api".parse().unwrap();
+        assert!(host_allowed(&HeaderMap::new(), &uri, 8484));
+        let uri = "http://evil.example:8484/jmap/api".parse().unwrap();
+        assert!(!host_allowed(&HeaderMap::new(), &uri, 8484));
+    }
+
+    #[test]
+    fn only_a_listed_origin_is_allowed() {
+        let allowed = vec!["http://app.example:3000".to_owned()];
+        let check = |origins: &[&str]| {
+            let mut headers = HeaderMap::new();
+            for origin in origins {
+                headers.append(header::ORIGIN, origin.parse().unwrap());
+            }
+            allowed_origin(&headers, &allowed).map(|v| v.to_str().unwrap().to_owned())
+        };
+        assert_eq!(
+            check(&["http://app.example:3000"]).as_deref(),
+            Some("http://app.example:3000")
+        );
+        assert_eq!(check(&["http://app.example:3001"]), None);
+        assert_eq!(check(&["https://app.example:3000"]), None);
+        assert_eq!(check(&["null"]), None);
+        assert_eq!(check(&[]), None);
+        assert_eq!(
+            check(&["http://app.example:3000", "http://app.example:3000"]),
+            None
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, "http://app.example:3000".parse().unwrap());
+        assert_eq!(allowed_origin(&headers, &[]), None);
     }
 
     #[test]
