@@ -1,3 +1,4 @@
 {"id":"01a1e1cb-ad40-7f33-846e-759451445885","issue_id":"mimid-1wgh.44.38","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-16T00:39:44.192996927Z"}
 {"id":"01a1e1cb-ad43-7dd4-9081-a39fc8e246cc","issue_id":"mimid-1wgh.44.38","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-16T00:39:44.195906753Z"}
 {"id":"01a1e1cb-ad46-78e5-8e63-78793e258c3a","issue_id":"mimid-1wgh.44.38","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: spec-assay","created_at":"2026-11-16T00:39:44.198583276Z"}
+{"id":"01a1e233-5642-7e2f-99b3-6bdf16db9e2e","issue_id":"mimid-1wgh.44.38","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Mark 2026-11-16: ignore for mimid; report the private-signing-key issue to the authors (mimid-1wgh.44.39, text needs Mark's OK).","created_at":"2026-11-16T02:32:57.666930444Z"}
