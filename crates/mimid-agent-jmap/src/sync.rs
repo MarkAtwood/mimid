@@ -85,9 +85,9 @@ impl AgentChat {
         for _ in 0..2 {
             let events = agent.poll().await?;
             let joined = self.accept_invites(&mut agent, &mut report).await?;
-            self.reconcile_rooms(&agent).await?;
+            self.reconcile_rooms(&mut agent).await?;
             for event in events {
-                self.apply(&agent, event, &mut report).await?;
+                self.apply(&mut agent, event, &mut report).await?;
             }
             if joined == 0 {
                 break;
@@ -149,7 +149,7 @@ impl AgentChat {
     }
 
     /// Makes a Chat for every room the agent is in that has none.
-    async fn reconcile_rooms(&self, agent: &Agent) -> Result<(), SyncError> {
+    async fn reconcile_rooms(&self, agent: &mut Agent) -> Result<(), SyncError> {
         for room in agent.rooms() {
             if room.status != RoomStatus::Left && self.chat_of_room(&room.uri).is_none() {
                 self.make_chat(agent, &room.uri).await?;
@@ -159,7 +159,7 @@ impl AgentChat {
     }
 
     /// The Chat of `room`, made if there is none.
-    async fn chat_for(&self, agent: &Agent, room: &str) -> Result<Id, SyncError> {
+    async fn chat_for(&self, agent: &mut Agent, room: &str) -> Result<Id, SyncError> {
         match self.chat_of_room(room) {
             Some(chat) => Ok(chat),
             None => self.make_chat(agent, room).await,
@@ -168,7 +168,7 @@ impl AgentChat {
 
     /// A Chat for a room the agent joined: a group named by the room's
     /// `room_name`, its members the room's participants.
-    async fn make_chat(&self, agent: &Agent, room: &str) -> Result<Id, SyncError> {
+    async fn make_chat(&self, agent: &mut Agent, room: &str) -> Result<Id, SyncError> {
         let name = agent.room_name(room).ok().flatten().unwrap_or_default();
         let participants = agent.participants(room).unwrap_or_default();
         let members = self.members_of(&participants, &[]).await?;
@@ -256,7 +256,7 @@ impl AgentChat {
 
     async fn apply(
         &self,
-        agent: &Agent,
+        agent: &mut Agent,
         event: Event,
         report: &mut SyncReport,
     ) -> Result<(), SyncError> {
@@ -295,7 +295,7 @@ impl AgentChat {
 
     async fn set_members(
         &self,
-        agent: &Agent,
+        agent: &mut Agent,
         room: &str,
         participants: &[String],
     ) -> Result<(), SyncError> {
@@ -324,7 +324,7 @@ impl AgentChat {
     /// §Message Identifiers, §Senders, §Topics).
     async fn store_message(
         &self,
-        agent: &Agent,
+        agent: &mut Agent,
         received: ReceivedMessage,
         report: &mut SyncReport,
     ) -> Result<(), SyncError> {
@@ -391,5 +391,25 @@ impl AgentChat {
         self.link_message(&chat, reference, &id);
         report.messages += 1;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+
+    use super::*;
+
+    /// A daemon runs `sync` in a spawned task, which needs a `Send` future:
+    /// holding `&Agent` across an await does not give one, since `Agent`
+    /// (its SQLite connection) is not `Sync`. A compile-time check.
+    #[test]
+    fn the_sync_future_is_send() {
+        fn sync_of(
+            chat: &AgentChat,
+        ) -> impl Future<Output = Result<SyncReport, SyncError>> + Send + '_ {
+            chat.sync()
+        }
+        let _ = sync_of;
     }
 }
