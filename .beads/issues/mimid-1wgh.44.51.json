@@ -1,14 +1,14 @@
 {
   "id": "mimid-1wgh.44.51",
   "title": "assay: draft-barnes-mimi-identity-arch-04",
-  "description": "Mark 2026-11-16: assay it despite the draft-mahy-* scope rule (question from .44.3). Fetch the latest revision into ~/PROJECT/IETF/specs with a PROVENANCE line, read it whole, and follow the epic's output contract (one human decision bead, conflict/feature/wg beads as found). Context: identity-05 builds on it (identity-05 L145, L1212); Mark chose track-only for identity-05 and SD-CWT (.44.4, .44.27), so expect 'track' unless it says something new about multi-device (H1) or the credential-to-domain rule (mimi-protocol#159).",
+  "description": "Assay of draft-barnes-mimi-identity-arch-04 (~/PROJECT/IETF/specs, sha256 314ef24a144f4594cffe3219a23759f884c34c45e1678bd2d4fc86c51890d847; latest rev, 2026-11-01).\n\nRECOMMEND: track only, nothing to implement. Informational (L7), no BCP 14 keywords outside boilerplate; a framework (issuance / presentation / verification, §4) and a survey of instantiations (§5: manual fingerprints, X.509, VCs, SPICE). It sets no MIMI wire format or rule.\n\nWhat touches mimid:\n1. E2E identity is meant to protect against impersonation BY THE PROVIDER (L260-268). BasicCredential gives none: a verifying client learns only the URI string. Known gap behind mimi-protocol#159 and H1; the draft confirms it but offers no MIMI-specific answer.\n2. §6 (L681ff) lists the questions interoperating parties must agree on. mimid's answers: MLS; BasicCredential with the user URI; no revocation; authority implicitly the leaf's provider. Docs bead mimid-gb5k.\n3. Revocation (§4.3, L512-516): central compact CRLs authenticated by the authority, since the provider is untrusted. Relevant only with a non-Basic credential.\n4. SPICE / SD-CWT as \"a natural fit\" (§5.4, L662-670) backs the sd-cwt track (.44.27, track only).\n\nSpec nits (held, .37.99): [RFC633] at L480/L804 should be RFC 7633; I-D.ietf-oauth-status-list Normative (L735) but used only as an example (L522); typos L19/L121/L236/L237.\n\nScope: outside the draft-mahy-* rule, assayed on Mark's request 2026-11-16.\n",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T05:09:53.714220564Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T05:11:41.304795445Z",
+  "updated_at": "2026-11-16T05:11:50.310031028Z",
   "labels": [
     "spec-assay",
     "human"
