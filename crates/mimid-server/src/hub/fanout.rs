@@ -212,28 +212,27 @@ impl<L: LocalDelivery> Fanout<L> {
             attempts,
             ..
         } = row;
-        let result: Result<(), Failure> =
-            if domain == self.own_domain {
-                self.local
-                    .deliver(&room_id, &body)
-                    .await
-                    .map_err(|error| (Box::new(error) as _, None, false))
-            } else {
-                self.peers
-                    .notify(&domain, &room_id, body)
-                    .await
-                    .map_err(|error| {
-                        let (retry_after, refused) = match &error {
-                            PeerError::Rejected {
-                                status,
-                                retry_after,
-                                ..
-                            } => (*retry_after, refused_for_good(*status)),
-                            _ => (None, false),
-                        };
-                        (Box::new(error) as _, retry_after, refused)
-                    })
-            };
+        let result: Result<(), Failure> = if domain == self.own_domain {
+            self.local
+                .deliver(&room_id, &body)
+                .await
+                .map_err(|error| (Box::new(error) as _, None, false))
+        } else {
+            self.peers
+                .notify(&domain, &room_id, body)
+                .await
+                .map_err(|error| {
+                    let (retry_after, refused) = match &error {
+                        PeerError::Rejected {
+                            status,
+                            retry_after,
+                            ..
+                        } => (*retry_after, refused_for_good(*status)),
+                        _ => (None, false),
+                    };
+                    (Box::new(error) as _, retry_after, refused)
+                })
+        };
         match result {
             Ok(()) => {
                 self.store.mark_delivered(id).await?;
