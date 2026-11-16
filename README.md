@@ -45,8 +45,11 @@ Each crate documents its own limitations in the `# Limitations` section of its r
 | `mimi-room-policy` | room-policy codecs and policy evaluation |
 | `mimi-protocol` | protocol wire types and franking |
 | `mimid-server` | The `mimid` provider server: hub and follower roles, and a JMAP Chat endpoint (partial) |
+| `mimid-agent-core` | The client engine: one user's MLS keys and rooms, through their mimid server's JMAP API |
+| `mimid-agent-jmap` | JMAP Chat over `mimid-agent-core`: the user's rooms as Chats and Messages |
+| `mimid-agent` | The `mimid-agent` daemon: serves `mimid-agent-jmap` as a local JMAP Chat endpoint on loopback |
 
-The four `mimi-*` crates are synchronous and do no I/O. Planned but not yet written: an admin CLI, and a client-side agent that bridges standard JMAP Chat clients to MIMI. mimid ships no UI of its own.
+The four `mimi-*` crates are synchronous and do no I/O. Planned but not yet written: an admin CLI. mimid ships no UI of its own.
 
 mimid builds against a fork of OpenMLS ([MarkAtwood/openmls](https://github.com/MarkAtwood/openmls)) carrying fixes that are not yet in an OpenMLS release.
 
@@ -62,6 +65,8 @@ cargo test --workspace --all-features
 The full set of checks CI runs is in `.github/workflows/ci.yml`. Tests are fully offline.
 
 To run the server: `mimid <config.toml>`. The config format is documented in `mimid_server::config`.
+
+To run the agent for one user: `mimid-agent <config.toml>`. The config format is documented in `mimid_agent::config`; a JMAP Chat client authenticates with the token in `<state_dir>/agent-token`.
 
 ## Interoperability
 
