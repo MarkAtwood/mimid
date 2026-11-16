@@ -24,8 +24,9 @@
 //!
 //! - jt-mls-01: an Add and a roles_list change in one Commit. room-policy-04
 //!   §3 makes a roles_list change invalid "in the same commit as any
-//!   Participant List change"; mimid answers notAllowed, Haven
-//!   invalidProposal, and the drafts do not say which.
+//!   Participant List change"; both hubs answer notAllowed (Haven since
+//!   78d0165; it answered invalidProposal before). The drafts do not say
+//!   which code a policy refusal gets.
 //! - jt-mls-02: an Add and a base_room_policy change in one Commit, which
 //!   no rule forbids: success.
 //! - jt-mls-03: a Commit for epoch 1 sent after another Commit moved the
@@ -385,11 +386,11 @@ async fn generate() -> Value {
                 &roles_with_add,
                 &[ALICE, BOB],
                 "notAllowed",
-                Some("invalidProposal"),
+                None,
                 json!({
                     "spec": "refused: room-policy-04 §3 makes a roles_list change not valid in the same commit as any Participant List change. Whether that is notAllowed or invalidProposal (protocol-07 §5.3) the drafts do not say",
                     "mimid": "notAllowed: room policy refuses the Commit (protocol-07 §5.3: \"some type of policy or authorization prevented\" it)",
-                    "haven": "invalidProposal citing room-policy-04 §3, with an empty invalidProposals list",
+                    "haven": "notAllowed citing room-policy-04 §3 (Haven 78d0165, 2026-11-16; invalidProposal with an empty invalidProposals list before that)",
                 }),
             ),
             update_vector(

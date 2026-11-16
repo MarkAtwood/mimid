@@ -26,7 +26,6 @@
   "vectors": [
     {
       "answer": "notAllowed",
-      "answer_haven": "invalidProposal",
       "decode": "ok",
       "description": "alice adds carol and changes roles_list in the same Commit",
       "earlier": [],
@@ -34,7 +33,7 @@
       "id": "jt-mls-01",
       "kind": "UpdateRequest",
       "outcome": {
-        "haven": "invalidProposal citing room-policy-04 §3, with an empty invalidProposals list",
+        "haven": "notAllowed citing room-policy-04 §3 (Haven 78d0165, 2026-11-16; invalidProposal with an empty invalidProposals list before that)",
         "mimid": "notAllowed: room policy refuses the Commit (protocol-07 §5.3: \"some type of policy or authorization prevented\" it)",
         "spec": "refused: room-policy-04 §3 makes a roles_list change not valid in the same commit as any Participant List change. Whether that is notAllowed or invalidProposal (protocol-07 §5.3) the drafts do not say"
       },
