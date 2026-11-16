@@ -1,3 +1,4 @@
 {"id":"01a1e1bb-9d46-7765-b858-f749cfd3a251","issue_id":"mimid-1wgh.44.23","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-16T00:22:11.52648553Z"}
 {"id":"01a1e1bb-9d4e-7ec2-99df-a0aeb76f35ee","issue_id":"mimid-1wgh.44.23","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-16T00:22:11.534968233Z"}
 {"id":"01a1e1bb-9d58-7265-91af-b86738738666","issue_id":"mimid-1wgh.44.23","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: spec-assay","created_at":"2026-11-16T00:22:11.544157472Z"}
+{"id":"01a1e232-792e-704a-9fb0-98c6494ebcb0","issue_id":"mimid-1wgh.44.23","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Mark 2026-11-16: track only.","created_at":"2026-11-16T02:32:01.070019683Z"}
