@@ -848,7 +848,7 @@ impl Agent {
     ///
     /// The server's refusal.
     pub async fn request_consent(&mut self, target: &str) -> Result<(), AgentError> {
-        let args = match self.consent_id(&self.me.clone(), target).await? {
+        let args = match Self::consent_id(&self.jmap, &self.me, target).await? {
             Some(id) => json!({"update": {id: {"requested": true}}}),
             None => json!({"create": {"c": {"requesterUri": self.me, "targetUri": target}}}),
         };
@@ -861,8 +861,7 @@ impl Agent {
     ///
     /// [`AgentError::Invalid`] if there is none, and the server's refusal.
     pub async fn cancel_consent(&mut self, target: &str) -> Result<(), AgentError> {
-        let id = self
-            .consent_id(&self.me.clone(), target)
+        let id = Self::consent_id(&self.jmap, &self.me, target)
             .await?
             .ok_or_else(|| AgentError::Invalid(format!("no consent request to {target}")))?;
         self.jmap
@@ -872,11 +871,18 @@ impl Agent {
 
     /// The account's Consent records.
     ///
+    /// The future borrows only the JMAP client, not the whole agent, so it
+    /// is `Send`: an `Agent` is not `Sync` (its SQLite connection), and a
+    /// future holding `&Agent` across an await is not `Send`.
+    ///
     /// # Errors
     ///
     /// The server's refusal.
-    pub async fn consents(&self) -> Result<Vec<ConsentRecord>, AgentError> {
-        self.jmap.consents().await
+    pub fn consents(
+        &self,
+    ) -> impl Future<Output = Result<Vec<ConsentRecord>, AgentError>> + Send + '_ {
+        let jmap = &self.jmap;
+        async move { jmap.consents().await }
     }
 
     /// Reads what the server stored since the last poll and handles it:
@@ -925,13 +931,15 @@ impl Agent {
         self.save()
     }
 
+    /// The id of the any-room Consent record from `requester` to `target`.
+    /// It takes the JMAP client, not `&self`, so the futures of its callers
+    /// stay `Send` (see [`Agent::consents`]).
     async fn consent_id(
-        &self,
+        jmap: &Jmap,
         requester: &str,
         target: &str,
     ) -> Result<Option<String>, AgentError> {
-        Ok(self
-            .jmap
+        Ok(jmap
             .consents()
             .await?
             .into_iter()
@@ -940,7 +948,7 @@ impl Agent {
     }
 
     async fn decide(&mut self, requester: &str, decision: &str) -> Result<(), AgentError> {
-        let args = match self.consent_id(requester, &self.me.clone()).await? {
+        let args = match Self::consent_id(&self.jmap, requester, &self.me).await? {
             Some(id) => json!({"update": {id: {"decision": decision}}}),
             None => json!({"create": {"c": {"requesterUri": requester, "targetUri": self.me,
                                             "decision": decision}}}),
@@ -1587,6 +1595,29 @@ fn random<const N: usize>() -> Result<[u8; N], AgentError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A daemon drives an agent from spawned tasks, which need `Send`
+    /// futures; `Agent` is not `Sync`, so a future that holds `&Agent`
+    /// across an await is not `Send`. A compile-time check of the public
+    /// async methods.
+    #[test]
+    fn the_public_futures_are_send() {
+        fn send<T: Send>(_: &T) {}
+        async fn all(agent: &mut Agent) {
+            send(&agent.consents());
+            send(&agent.poll());
+            send(&agent.publish_key_packages(1));
+            send(&agent.host_room(&HostOptions::named("n")));
+            send(&agent.invite("r", "u"));
+            send(&agent.send_text("r", "t"));
+            send(&agent.leave("r"));
+            send(&agent.allow("u"));
+            send(&agent.deny("u"));
+            send(&agent.request_consent("u"));
+            send(&agent.cancel_consent("u"));
+        }
+        let _ = all;
+    }
 
     #[test]
     fn base32_is_rfc4648_lowercase_unpadded() {
