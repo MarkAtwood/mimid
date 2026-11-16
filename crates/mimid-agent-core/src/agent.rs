@@ -17,7 +17,7 @@ use mimi_mls::wire::{
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_protocol::{
-    ClientKeyMaterial, FanoutEvent, FanoutMessage, FrankingAgentData, GroupInfoOption,
+    ClientKeyMaterial, FanoutEvent, FanoutMessage, Frank, FrankingAgentData, GroupInfoOption,
     HandshakeBundle, IdentifierUri, KeyMaterialRequestTbs, KeyMaterialUserCode,
     ParticipantListData, ParticipantListUpdate, Protocol, RoomMetaData, UpdateRequest,
     UpdateResult, UserRolePair, Utf8String, franking_tag,
@@ -31,7 +31,8 @@ use serde_json::json;
 use crate::AgentError;
 use crate::client::{ConsentRecord, Jmap};
 use crate::components::apply_commit_op;
-use crate::state::{Room, RoomStatus, State, StateDir};
+use crate::frank::{self, VerifiedFrank};
+use crate::state::{Held, Room, RoomStatus, State, StateDir};
 use crate::uri::{normalized_uri, user_uri_domain};
 
 /// mls-extensions-11 §5 `app_components`.
@@ -136,6 +137,9 @@ pub struct ReceivedMessage {
     pub content: MimiContent,
     /// The text, when the content is one `text/*` part.
     pub text: Option<String>,
+    /// The hub's frank, verified (protocol-07 §5.4.1.3), or `None` for an
+    /// unfranked message in a room that does not require franking.
+    pub frank: Option<VerifiedFrank>,
 }
 
 /// A message this agent sent: its MIMI message ID and the hub's
@@ -654,13 +658,30 @@ impl Agent {
         self.state.key_packages_outstanding = self.state.key_packages_outstanding.saturating_sub(1);
         let (replay, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.state.held)
             .into_iter()
-            .partition(|(r, _, _)| *r == room || *r == held_key);
+            .partition(|held| held.room == room || held.room == held_key);
         self.state.held = keep;
         self.save()?;
         let mut events = Vec::new();
-        for (_, item, accepted_at) in replay {
-            match hex::decode(&item).map(|b| MLSMessage::tls_deserialize_exact(&b[..])) {
-                Ok(Ok(message)) => self.incoming_mls(&message, accepted_at, &mut events),
+        for held in replay {
+            let frank = match held.frank.as_deref().map(|f| {
+                hex::decode(f)
+                    .ok()
+                    .and_then(|b| Frank::tls_deserialize_exact(&b[..]).ok())
+            }) {
+                None => None,
+                Some(Some(frank)) => Some(frank),
+                Some(None) => {
+                    events.push(Event::Problem {
+                        room: Some(room.clone()),
+                        description: "a held message's frank no longer decodes".to_owned(),
+                    });
+                    continue;
+                }
+            };
+            match hex::decode(&held.message).map(|b| MLSMessage::tls_deserialize_exact(&b[..])) {
+                Ok(Ok(message)) => {
+                    self.incoming_mls(&message, held.accepted_at, frank.as_ref(), &mut events)
+                }
                 _ => events.push(Event::Problem {
                     room: Some(room.clone()),
                     description: "a held message no longer decodes".to_owned(),
@@ -1002,16 +1023,19 @@ impl Agent {
         };
         for fanout in fanouts {
             match fanout.event {
-                FanoutEvent::Application { message, .. } | FanoutEvent::Commit { message, .. } => {
-                    self.incoming_mls(&message, fanout.timestamp, events);
+                FanoutEvent::Application { message, frank } => {
+                    self.incoming_mls(&message, fanout.timestamp, frank.as_ref(), events);
+                }
+                FanoutEvent::Commit { message, .. } => {
+                    self.incoming_mls(&message, fanout.timestamp, None, events);
                 }
                 FanoutEvent::Proposal {
                     message,
                     more_proposals,
                 } => {
-                    self.incoming_mls(&message, fanout.timestamp, events);
+                    self.incoming_mls(&message, fanout.timestamp, None, events);
                     for proposal in &more_proposals {
-                        self.incoming_mls(proposal, fanout.timestamp, events);
+                        self.incoming_mls(proposal, fanout.timestamp, None, events);
                     }
                     if let Some((room, leaf)) = self.deferred_leaver.take() {
                         self.maybe_commit_leave(&room, leaf, events).await;
@@ -1063,7 +1087,13 @@ impl Agent {
         events.push(Event::InviteArrived { number });
     }
 
-    fn incoming_mls(&mut self, message: &MLSMessage, accepted_at: u64, events: &mut Vec<Event>) {
+    fn incoming_mls(
+        &mut self,
+        message: &MLSMessage,
+        accepted_at: u64,
+        frank: Option<&Frank>,
+        events: &mut Vec<Event>,
+    ) {
         // The room of the group; for a group not known yet whose ID is not a
         // room URI (a Room/create room still to be joined), `group:<hex>`,
         // so the message is held and replayed at the join.
@@ -1095,9 +1125,22 @@ impl Agent {
         };
         match self.state.rooms.get(&room).map(|r| r.status) {
             None => {
-                self.state
-                    .held
-                    .push((room, hex::encode(&bytes), accepted_at));
+                let frank = match frank.map(encode).transpose() {
+                    Ok(frank) => frank.map(hex::encode),
+                    Err(e) => {
+                        events.push(Event::Problem {
+                            room: Some(room),
+                            description: e.to_string(),
+                        });
+                        return;
+                    }
+                };
+                self.state.held.push(Held {
+                    room,
+                    message: hex::encode(&bytes),
+                    accepted_at,
+                    frank,
+                });
                 let excess = self.state.held.len().saturating_sub(MAX_HELD);
                 self.state.held.drain(..excess);
                 return;
@@ -1117,10 +1160,27 @@ impl Agent {
             Ok(Incoming::Application {
                 sender_identity,
                 data,
+                safe_aad,
                 ..
             }) => {
                 let sender = String::from_utf8_lossy(&sender_identity).into_owned();
-                match received(&data, &sender, &room, accepted_at) {
+                let checked =
+                    received(&data, &sender, &room, accepted_at).and_then(|mut message| {
+                        // protocol-07 §5.4.1.3; mimi-protocol#159 (bead
+                        // mimid-1wgh.13.6).
+                        message.frank = frank::check(&frank::Received {
+                            member,
+                            room: &room,
+                            sender: &sender,
+                            data: &data,
+                            content: &message.content,
+                            safe_aad: &safe_aad,
+                            frank,
+                            accepted_at,
+                        })?;
+                        Ok(message)
+                    });
+                match checked {
                     Ok(message) => events.push(Event::Message(Box::new(message))),
                     Err(description) => events.push(Event::Problem {
                         room: Some(room),
@@ -1263,6 +1323,7 @@ fn received(
         accepted_at,
         content,
         text,
+        frank: None,
     })
 }
 
@@ -1389,11 +1450,7 @@ fn default_base_policy() -> BaseRoomPolicy {
 /// message's franking tag (protocol-07 §5.4.1) when the room's `safe_aad`
 /// list requires frank_aad, and none otherwise.
 fn frank_aad_items(member: &Member, salt: &[u8; 16], content: &[u8]) -> Vec<(u16, Vec<u8>)> {
-    let required = member.component(SAFE_AAD).is_some_and(|list| {
-        list.get(1..)
-            .is_some_and(|ids| ids.chunks(2).any(|id| id == FRANK_AAD.to_be_bytes()))
-    });
-    if required {
+    if frank::requires_frank(member) {
         vec![(FRANK_AAD, franking_tag(salt, content).to_vec())]
     } else {
         vec![]

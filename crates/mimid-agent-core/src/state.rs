@@ -51,6 +51,21 @@ pub(crate) struct Invite {
     pub number: u64,
 }
 
+/// An MLSMessage held for a room not joined yet, replayed at the join.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Held {
+    /// The room URI, or `group:<hex>` for a group whose ID is not one.
+    pub room: String,
+    /// The MLSMessage, hex.
+    pub message: String,
+    /// The hub's acceptance time in milliseconds.
+    pub accepted_at: u64,
+    /// The hub's Frank for an application message, hex (protocol-07
+    /// §5.4).
+    #[serde(default)]
+    pub frank: Option<String>,
+}
+
 /// `state.json`. Holds no private key: those are in `mls.sqlite` only.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct State {
@@ -61,10 +76,9 @@ pub(crate) struct State {
     pub rooms: BTreeMap<String, Room>,
     #[serde(default)]
     pub invites: Vec<Invite>,
-    /// MLSMessages (room URI or `group:<hex>`, hex, the hub's acceptance
-    /// time in milliseconds) for rooms not joined yet, oldest first.
+    /// MLSMessages for rooms not joined yet, oldest first.
     #[serde(default)]
-    pub held: Vec<(String, String, u64)>,
+    pub held: Vec<Held>,
     /// Welcomes (hex) already joined, newest last.
     #[serde(default)]
     pub consumed_welcomes: Vec<String>,

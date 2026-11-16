@@ -10,6 +10,9 @@
 //! - Plaintext equality: each receiver gets exactly the text sent, from
 //!   the sender's URI, under the message ID the sender computed
 //!   (mimi-content-10 §3.3).
+//! - Franking: a message in the franked room carries a frank whose signed
+//!   context is the sender, room and acceptance time the test already
+//!   knows (protocol-07 §5.4.1.3).
 //! - The participant list each side reports, and alice's `Left` once
 //!   bob commits her leave (protocol-07 §3.5).
 
@@ -214,6 +217,18 @@ async fn two_agents_chat_through_their_server() {
         (sent.message_id, sent.accepted_at)
     );
     assert_ne!(sent.accepted_at, 0);
+    // The room is franked (HostOptions::named), so the hub's frank came
+    // with the message and verified (protocol-07 §5.4.1.3): its signed
+    // context is the sender, the room and the acceptance time.
+    let frank = got.frank.expect("a franked room's message carries a frank");
+    assert_eq!(
+        (
+            frank.context.sender_uri.as_str(),
+            frank.context.room_uri.as_str(),
+            frank.context.accepted_timestamp
+        ),
+        (ALICE, room.as_str(), sent.accepted_at)
+    );
 
     let sent = bob.send_text(&room, "hi alice").await.unwrap().message_id;
     let got = poll_until(&mut alice, |e| match e {

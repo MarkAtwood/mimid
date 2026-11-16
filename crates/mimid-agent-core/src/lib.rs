@@ -22,7 +22,8 @@
 //!   [`Agent::cancel_consent`], [`Agent::consents`]: Consent/set and
 //!   Consent/get;
 //! - [`Agent::poll`]: everything the server stored since the last poll
-//!   (Message/changes), as [`Event`]s for the caller (the future inward
+//!   (Message/changes), with each received message's frank checked
+//!   ([`frank`], protocol-07 §5.4.1.3), as [`Event`]s for the caller (the future inward
 //!   JMAP layer, bead mimid-1wgh.13.9) to turn into its own objects.
 //!
 //! The crate has no UI, no HTTP server and no runtime of its own: its
@@ -60,6 +61,7 @@ mod agent;
 mod client;
 pub mod components;
 mod error;
+pub mod frank;
 mod state;
 pub mod uri;
 
