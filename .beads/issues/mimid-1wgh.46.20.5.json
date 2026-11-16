@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.46.20.5",
   "title": "Interop day: re-record refusal codes in the joint vectors (jt-leave-03)",
   "description": "Haven moved policy refusals to notAllowed at 78d0165 (238475); jt-mls-01 is updated (mimid 5a141eb, PR #6 baff981). jt-leave-03 (a Commit leaving out cached proposals) was invalidProposal on Haven naming both ProposalRefs; rerun it against Haven at the current commit and update answer_haven/outcome on both sides if it changed.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T02:01:51.405713229Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T02:01:51.405713229Z",
+  "updated_at": "2026-11-16T05:16:28.667308616Z",
+  "closed_at": "2026-11-16T05:16:28.667308616Z",
+  "close_reason": "2026-11-16, by source reading at Haven 2357c3f (not a live run): a Commit leaving out held proposals is still UpdateRefusal::InvalidProposals naming the left-out refs (mimi-hubd/src/lib.rs ~L973, mapped to invalidProposal with invalid_proposals at http.rs ~L745). 78d0165 moved only policy refusals to notAllowed. jt-leave-03's answer_haven stays invalidProposal; no vector change. Haven's own up-x6 moved to notAllowed (refreshed in mimid's copy, 3a-era commit).",
   "labels": [
     "interop"
   ],
