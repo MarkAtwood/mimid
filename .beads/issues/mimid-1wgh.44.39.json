@@ -12,7 +12,8 @@
   "updated_at": "2026-11-16T02:35:13.788893821Z",
   "labels": [
     "wg",
-    "spec-assay"
+    "spec-assay",
+    "draft-ready"
   ],
   "dependencies": [
     {
