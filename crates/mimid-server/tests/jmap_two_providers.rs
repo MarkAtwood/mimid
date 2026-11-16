@@ -159,6 +159,17 @@ fn roles_list() -> Vec<u8> {
     };
     RoleData {
         roles: vec![
+            // An open room (room-policy-04 §8.1.1): anyone may join as a
+            // member, which step 9's rejoin uses.
+            role(
+                0,
+                "no_role",
+                vec![Capability::CAN_OPEN_JOIN],
+                vec![SingleSourceRoleChangeTargets {
+                    from_role_index: 0,
+                    target_role_indexes: vec![ROLE_MEMBER],
+                }],
+            ),
             role(1, "banned", vec![], vec![]),
             role(
                 ROLE_MEMBER,
@@ -801,13 +812,12 @@ async fn two_providers_over_jmap_only() {
             .await,
     );
 
-    // 9. GroupInfo/fetch for a room the account is not in reaches the
-    // hub, which decides by room policy (bead mimid-1wgh.12.46): this
-    // room lets no non-member join (no canOpenJoin, no preauthorization),
-    // so the hub answers notAuthorized, where JMAP used to refuse the call
-    // itself. A successful rejoin also needs the external Commit to carry
-    // the joiner's participant-list addition, which mimi-mls's
-    // join_external cannot build yet (bead filed with this change).
+    // 9. Epoch 5: alice rejoins the open room with a new client, with no
+    // bound Chat (bead mimid-1wgh.12.46): GroupInfo/fetch for a room her
+    // account is not in (the hub allows it: role 0 holds canOpenJoin),
+    // then an external Commit that also adds her to the participant list
+    // (Member::join_external_with, bead mimid-1wgh.4.80), at a. The hub's
+    // acceptance binds her Chat again.
     let requester = Requester::new(ALICE);
     let fetched = alice_jmap
         .ok(
@@ -815,7 +825,73 @@ async fn two_providers_over_jmap_only() {
             json!({"roomId": room_id, "request": b64(&requester.request(None))}),
         )
         .await;
-    assert_eq!(fetched["status"], "notAuthorized", "{fetched}");
+    assert_eq!(fetched["status"], "success", "{fetched}");
+    let served = group_info::open(&hub, &room_id, &requester, &unb64(&fetched["response"]));
+    let alice2 = Identity::generate(ALICE, memory()).unwrap();
+    let join = Member::join_external_with(
+        &alice2,
+        &[&GROUP_INFO_HEADER[..], served.group_info.as_bytes()].concat(),
+        served.ratchet_tree_option.ratchet_tree(),
+        &[list_update(vec![], &[ALICE])],
+        list_becomes(&[BOB, ALICE]),
+    )
+    .unwrap();
+    let mut alice2_group = join.member;
+    alice_jmap
+        .update(
+            &room_id,
+            &update::commit_request(
+                &join.commit_bundle.commit,
+                None,
+                &join.commit_bundle.group_info,
+                &alice2_group.ratchet_tree().unwrap(),
+            ),
+        )
+        .await;
+    // Chat.roomId is present only while the Chat is bound (draft
+    // §Chat.roomId).
+    let chats = alice_jmap.ok("Chat/get", json!({"ids": null})).await;
+    assert!(
+        chats["list"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|chat| chat["roomId"] == room_id.as_str()),
+        "alice's Chat is bound again: {chats}"
+    );
+    assert_eq!(
+        commit_bytes(&alice_jmap.next().await),
+        join.commit_bundle.commit,
+        "alice's own external Commit"
+    );
+    let stored = bob_jmap.next().await;
+    assert_eq!(commit_bytes(&stored), join.commit_bundle.commit);
+    commit(&bob, &mut bob_group, &stored, list_becomes(&[BOB, ALICE]));
+    commit(&bob2, &mut bob2_group, &stored, list_becomes(&[BOB, ALICE]));
+    assert_agreement(
+        &hub,
+        &room_id,
+        5,
+        &[
+            (&alice2, &alice2_group),
+            (&bob, &bob_group),
+            (&bob2, &bob2_group),
+        ],
+    )
+    .await;
+
+    // bob's next message reaches alice's new client.
+    let back = b"welcome back, alice";
+    let sent = franked(&bob, &mut bob_group, back);
+    bob_jmap.send(&room_id, &sent).await;
+    assert_eq!(mls_bytes(&bob_jmap.next().await), sent, "bob's own");
+    assert_decrypts(
+        &alice2,
+        &mut alice2_group,
+        &alice_jmap.next().await,
+        BOB,
+        back,
+    );
     alice_jmap.assert_empty().await;
     bob_jmap.assert_empty().await;
 }

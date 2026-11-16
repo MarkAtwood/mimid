@@ -788,6 +788,54 @@ impl Member {
         group_info: &[u8],
         ratchet_tree: Option<&[u8]>,
     ) -> Result<ExternalJoin, MemberError> {
+        Self::join_external_with(
+            identity,
+            group_info,
+            ratchet_tree,
+            &[],
+            |_, _, _| -> Result<Option<Vec<u8>>, std::convert::Infallible> {
+                unreachable!("no AppDataUpdate to apply")
+            },
+        )
+    }
+
+    /// [`Member::join_external`] with `app_updates` inline in the external
+    /// Commit, which mls-extensions-11 allows ("AppDataUpdate proposals can
+    /// be included in an external Commit", -11 txt L753). A joiner of an
+    /// open room or by a join link adds itself to the MIMI participant list
+    /// this way (room-policy-04 §8.1.1, §6.2; bead mimid-1wgh.4.80).
+    ///
+    /// `apply` computes the new component data, as for [`Member::commit`].
+    /// The MLS built-in components (`app_components`, `safe_aad`,
+    /// `content_media_types`) cannot be changed by a joiner: the
+    /// required-components check below assumes the Commit leaves them as
+    /// the GroupInfo has them.
+    ///
+    /// # Errors
+    ///
+    /// As [`Member::join_external`], and
+    /// [`MemberError::InvalidAppDataUpdate`] for an update to a built-in
+    /// component or an invalid set of updates (-11 §4.7), or
+    /// [`MemberError::AppDataRejected`] if `apply` rejects one.
+    pub fn join_external_with<E>(
+        identity: &Identity,
+        group_info: &[u8],
+        ratchet_tree: Option<&[u8]>,
+        app_updates: &[AppDataUpdate],
+        mut apply: impl FnMut(ComponentId, Option<&[u8]>, ComponentOp<'_>) -> Result<Option<Vec<u8>>, E>,
+    ) -> Result<ExternalJoin, MemberError>
+    where
+        E: Into<ErrorSource>,
+    {
+        for update in app_updates {
+            let component_id = match update {
+                AppDataUpdate::Update { component_id, .. }
+                | AppDataUpdate::Remove { component_id } => *component_id,
+            };
+            if [APP_COMPONENTS, SAFE_AAD, CONTENT_MEDIA_TYPES].contains(&component_id) {
+                return Err(MemberError::InvalidAppDataUpdate(component_id));
+            }
+        }
         let message = MlsMessageIn::tls_deserialize_exact(group_info)
             .map_err(|e| MemberError::Decode(e.into()))?;
         let MlsMessageBodyIn::GroupInfo(group_info) = message.extract() else {
@@ -827,7 +875,7 @@ impl Member {
             builder = builder.with_ratchet_tree(ratchet_tree);
         }
         // build_group writes nothing to storage; finalize does.
-        let builder = builder
+        let mut builder = builder
             .build_group(provider, group_info, identity.credential_with_key().clone())
             .map_err(|e| match e {
                 ExternalCommitBuilderError::MissingRatchetTree => MemberError::MissingRatchetTree,
@@ -863,12 +911,26 @@ impl Member {
             .with_extensions(leaf_extensions)
             .build();
 
-        let (group, bundle) = builder
+        for update in app_updates {
+            builder = builder.add_app_data_update_proposal(update.to_proposal());
+        }
+        let mut builder = builder
             .leaf_node_parameters(leaf)
             .load_psks(provider.storage())
             .map_err(|e| MemberError::Commit(e.into()))?
             // Without a ratchet_tree extension, as in Member::commit.
-            .create_group_info(true)
+            .create_group_info(true);
+        // As in Member::commit: OpenMLS takes the resulting dictionary from
+        // the committer (mls-extensions-11 §4.7).
+        let app_data_proposals: Vec<AppDataUpdateProposal> =
+            builder.app_data_update_proposals().cloned().collect();
+        if !app_data_proposals.is_empty() {
+            let mut updater = builder.app_data_dictionary_updater();
+            resolve_app_data_updates(&mut updater, &app_data_proposals, &mut apply)?;
+            let changes = updater.changes();
+            builder.with_app_data_dictionary_updates(changes);
+        }
+        let (group, bundle) = builder
             .build(rand, provider.crypto(), identity.signer(), |_| true)
             .map_err(|e| MemberError::Commit(e.into()))?
             .finalize(provider)

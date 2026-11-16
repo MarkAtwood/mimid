@@ -771,3 +771,31 @@ fn resync_reports_the_removed_leaf() {
     assert_eq!(roster[1].1, carol.signature_public_key());
     assert_same_epoch_secrets(&member, &carol, &bob);
 }
+
+/// bead mimid-1wgh.4.80: a joiner's inline AppDataUpdates may not change
+/// the MLS built-in components (app_components, safe_aad,
+/// content_media_types); refused before anything is built or stored.
+#[test]
+fn a_joiner_cannot_change_the_built_in_components() {
+    let (bob, _dave, _) = mls_rs_pair(SUITE_1, None);
+    let from_bob = group_info(&bob, true, true);
+    // A name of its own: tests run in parallel and the store file is
+    // named after it.
+    let (carol, carol_path) = file_identity("carol-built-in");
+    let before = store_bytes(&carol_path);
+    for component_id in [0x0001, 0x0002, 0x0003] {
+        let result = Member::join_external_with(
+            &carol,
+            &from_bob,
+            None,
+            &[mimi_mls::member::AppDataUpdate::Remove { component_id }],
+            |_, _, _| -> Result<Option<Vec<u8>>, std::convert::Infallible> { Ok(None) },
+        );
+        assert!(
+            matches!(result, Err(MemberError::InvalidAppDataUpdate(id)) if id == component_id),
+            "{component_id:#06x}: {:?}",
+            result.err()
+        );
+    }
+    assert_eq!(store_bytes(&carol_path), before, "nothing stored");
+}
