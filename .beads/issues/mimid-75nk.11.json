@@ -1,0 +1,29 @@
+{
+  "id": "mimid-75nk.11",
+  "title": "Post draft-atwood-mimi-provider-auth-01 and announce on mimi@ietf.org",
+  "description": "After the four -01 changes land: bump to -01, regenerate .xml/.txt/.html, submit to datatracker, and post a threaded announcement on the original thread (JMAP method in bd memory fm-cli-reply) summarizing the changes and crediting Jason's review.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:01:33.702979891Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:01:33.702979891Z",
+  "labels": [
+    "draft",
+    "mimi-provider-auth",
+    "design",
+    "interop",
+    "security"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-75nk.11",
+      "depends_on_id": "mimid-75nk",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:01:33.742187241Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
