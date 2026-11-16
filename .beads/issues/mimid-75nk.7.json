@@ -1,0 +1,30 @@
+{
+  "id": "mimid-75nk.7",
+  "title": "provider-auth -01: make the source-domain field REQUIRED and signed (From or its successor)",
+  "description": "Jason found Haven had treated From as optional because mimi-protocol-07 §4.1 has an editor's note questioning From (maybe From-Host). Once requests are signed, the source-domain field is what the signature binds to, so it cannot be optional. In -01: §5.2 Signing Requests and §12 Replacement Text say the source-domain field is REQUIRED on every MIMI request and MUST be covered by the signature; state that this applies to From or to whatever field replaces it. Keep the Open Issues bullet but point at the new mimi-protocol issue. mimid: verifier rejects a request with no From (or a From not covered) when the DNS-key mechanism is in use. Source: Jason Bolduc's review on mimi@ietf.org, 15 Nov 2026 (Message-ID CA+7d1z=LQ+iuYYum-z-SUssV8X5PJgeZL7EW5R2f0Jd4FkzTvA@mail.gmail.com); Mark committed to it publicly in his reply of 16 Nov (IETF notes/2026-11-16-mimi-provider-auth-jason-reply-sent.md). Draft source: ~/PROJECT/ietf-mimi-provider-auth/draft-atwood-mimi-provider-auth.md.",
+  "acceptance_criteria": "-01 text makes the field REQUIRED and covered, independent of its name; mimid enforces it.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:01:33.075417888Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:01:33.075417888Z",
+  "labels": [
+    "draft",
+    "mimi-provider-auth",
+    "design",
+    "interop",
+    "security"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-75nk.7",
+      "depends_on_id": "mimid-75nk",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:01:33.113979257Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
