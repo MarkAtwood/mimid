@@ -750,4 +750,72 @@ async fn two_providers_over_jmap_only() {
     .await;
     alice_jmap.assert_empty().await;
     bob_jmap.assert_empty().await;
+
+    // 7. alice, removed, unbinds her Chat (draft §Chat.roomId). With no
+    // bound Chat her account may send only an external Commit (bead
+    // mimid-1wgh.12.46): a proposal is refused before it reaches the hub.
+    alice_jmap
+        .ok("Room/unbind", json!({"roomId": room_id}))
+        .await;
+    let refused = |answer: (String, Value)| {
+        assert_eq!(answer.0, "error", "{answer:?}");
+        assert_eq!(answer.1["type"], "invalidArguments", "{answer:?}");
+    };
+    refused(
+        alice_jmap
+            .call(
+                "Room/update",
+                json!({"roomId": room_id, "request": b64(&update::proposal_request(&remove, &[]))}),
+            )
+            .await,
+    );
+
+    // 8. An external Commit must join as the account's own user: bob's
+    // account cannot join a client whose credential names alice.
+    let bob_requester = Requester::new(BOB);
+    let fetched = bob_jmap
+        .ok(
+            "GroupInfo/fetch",
+            json!({"roomId": room_id, "request": b64(&bob_requester.request(None))}),
+        )
+        .await;
+    let served = group_info::open(&hub, &room_id, &bob_requester, &unb64(&fetched["response"]));
+    let impostor = Identity::generate(ALICE, memory()).unwrap();
+    let forged = Member::join_external(
+        &impostor,
+        &[&GROUP_INFO_HEADER[..], served.group_info.as_bytes()].concat(),
+        served.ratchet_tree_option.ratchet_tree(),
+    )
+    .unwrap();
+    refused(
+        bob_jmap
+            .call(
+                "Room/update",
+                json!({"roomId": room_id, "request": b64(&update::commit_request(
+                    &forged.commit_bundle.commit,
+                    None,
+                    &forged.commit_bundle.group_info,
+                    &forged.member.ratchet_tree().unwrap(),
+                ))}),
+            )
+            .await,
+    );
+
+    // 9. GroupInfo/fetch for a room the account is not in reaches the
+    // hub, which decides by room policy (bead mimid-1wgh.12.46): this
+    // room lets no non-member join (no canOpenJoin, no preauthorization),
+    // so the hub answers notAuthorized, where JMAP used to refuse the call
+    // itself. A successful rejoin also needs the external Commit to carry
+    // the joiner's participant-list addition, which mimi-mls's
+    // join_external cannot build yet (bead filed with this change).
+    let requester = Requester::new(ALICE);
+    let fetched = alice_jmap
+        .ok(
+            "GroupInfo/fetch",
+            json!({"roomId": room_id, "request": b64(&requester.request(None))}),
+        )
+        .await;
+    assert_eq!(fetched["status"], "notAuthorized", "{fetched}");
+    alice_jmap.assert_empty().await;
+    bob_jmap.assert_empty().await;
 }

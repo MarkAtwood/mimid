@@ -169,7 +169,7 @@ pub(super) async fn update(
         } => stage_proposals(hub, room, room_id, from, proposal_or_commit, more_proposals),
     };
     let accepted = match staged {
-        Ok(Outcome::Accept(accepted)) => accepted,
+        Ok(Outcome::Accept(accepted)) => *accepted,
         Ok(Outcome::Respond { response, restore }) => {
             if restore {
                 restore_room(hub, &mut rooms, room_id).await?;
@@ -283,7 +283,7 @@ enum Outcome {
     /// because the Observer holds changes that must not stay.
     Respond { response: Vec<u8>, restore: bool },
     /// Write and answer `success`.
-    Accept(Accepted),
+    Accept(Box<Accepted>),
 }
 
 /// What to write for an accepted request.
@@ -597,7 +597,7 @@ fn stage_commit(
                 .map(|domain| (domain, welcome_body.clone())),
         );
     }
-    Ok(Outcome::Accept(Accepted {
+    Ok(Outcome::Accept(Box::new(Accepted {
         epoch,
         accepted_at,
         message: commit.clone(),
@@ -607,7 +607,7 @@ fn stage_commit(
             group_info,
             ratchet_tree,
         },
-    }))
+    })))
 }
 
 /// Runs the proposal steps 3 to 6 of the module documentation.
@@ -727,7 +727,7 @@ fn stage_proposals(
     // Decision mimid-1wgh.6.17.
     let mut destinations = member_domains(&room.observer);
     destinations.insert(from.as_str().to_owned());
-    Ok(Outcome::Accept(Accepted {
+    Ok(Outcome::Accept(Box::new(Accepted {
         epoch,
         accepted_at,
         message: proposal.clone(),
@@ -743,7 +743,7 @@ fn stage_proposals(
             references,
             app_data,
         },
-    }))
+    })))
 }
 
 /// The provider domain of a proposal's sender. An external sender is this

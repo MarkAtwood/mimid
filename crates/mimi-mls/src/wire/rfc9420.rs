@@ -579,6 +579,7 @@ pub struct MLSMessage {
     group_id: Option<Vec<u8>>,
     epoch: Option<u64>,
     authenticated_data: Option<Vec<u8>>,
+    external_commit_identity: Option<Vec<u8>>,
 }
 
 impl_encoding_from_bytes!(MLSMessage);
@@ -625,6 +626,63 @@ impl MLSMessage {
     pub fn authenticated_data(&self) -> Option<&[u8]> {
         self.authenticated_data.as_deref()
     }
+
+    /// For an external Commit (a PublicMessage whose sender is
+    /// `new_member_commit`, RFC 9420 §12.4.3.2), the `identity` of the
+    /// BasicCredential in its UpdatePath's leaf: the user who is joining.
+    /// `None` for any other message, or when that credential is not a
+    /// BasicCredential.
+    ///
+    /// Read from the clear bytes, without group state. Nothing is
+    /// authenticated here: the hub's MLS validation checks the Commit, and
+    /// this only tells a provider which user a client is joining as.
+    pub fn external_commit_identity(&self) -> Option<&[u8]> {
+        self.external_commit_identity.as_deref()
+    }
+}
+
+/// The BasicCredential identity of the UpdatePath leaf of the external
+/// Commit in `bytes`, a whole MLSMessage holding a PublicMessage. The
+/// layout up to that field is fixed (RFC 9420 §6, §6.2, §12.4, §7.2):
+/// `version`, `wire_format`, then FramedContent `group_id<V>`, `epoch`,
+/// `Sender` (one octet, 4 for `new_member_commit`, nothing after it),
+/// `authenticated_data<V>`, `content_type` (3 for commit), then Commit
+/// `proposals<V>`, `optional<UpdatePath>`, and in the UpdatePath's
+/// LeafNode `encryption_key<V>`, `signature_key<V>`, then the Credential:
+/// `credential_type` (1 for basic) and `identity<V>`. The message decoded
+/// already, so a failure here only means "not one".
+fn external_commit_identity(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut rest = bytes.get(4..)?;
+    let skip = |rest: &mut &[u8]| VLBytes::tls_deserialize(rest).ok().map(drop);
+    skip(&mut rest)?; // group_id
+    rest = rest.get(8..)?; // epoch
+    let (&sender_type, after) = rest.split_first()?;
+    if sender_type != 4 {
+        return None;
+    }
+    rest = after;
+    skip(&mut rest)?; // authenticated_data
+    let (&content_type, after) = rest.split_first()?;
+    if content_type != 3 {
+        return None;
+    }
+    rest = after;
+    skip(&mut rest)?; // proposals
+    let (&path_present, after) = rest.split_first()?;
+    if path_present != 1 {
+        return None;
+    }
+    rest = after;
+    skip(&mut rest)?; // encryption_key
+    skip(&mut rest)?; // signature_key
+    let credential_type = u16::from_be_bytes([*rest.first()?, *rest.get(1)?]);
+    if credential_type != 1 {
+        return None;
+    }
+    rest = rest.get(2..)?;
+    VLBytes::tls_deserialize(&mut rest)
+        .ok()
+        .map(|identity| identity.as_slice().to_vec())
 }
 
 impl Deserialize for MLSMessage {
@@ -638,12 +696,16 @@ impl Deserialize for MLSMessage {
             group_id: None,
             epoch: None,
             authenticated_data: None,
+            external_commit_identity: None,
         };
         match body {
             MlsMessageBodyIn::PublicMessage(m) => {
                 message.content_type = Some(m.content_type().into());
                 message.group_id = Some(m.group_id().as_slice().to_vec());
                 message.epoch = Some(m.epoch().as_u64());
+                if matches!(m.sender(), openmls::prelude::Sender::NewMemberCommit) {
+                    message.external_commit_identity = external_commit_identity(&message.bytes);
+                }
             }
             MlsMessageBodyIn::PrivateMessage(m) => {
                 message.wire_format = WireFormat::MlsPrivateMessage;

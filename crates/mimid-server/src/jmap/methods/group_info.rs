@@ -3,8 +3,11 @@
 //!
 //! Arguments: `accountId`, `roomId`, and `request`, the unpadded base64url
 //! of a GroupInfoRequest (protocol-07 §5.6) the client signed. It is
-//! `invalidArguments` if `request` does not decode or no Chat of the
-//! account is bound to the room. The request goes through the follower's
+//! `invalidArguments` if `request` does not decode, if `roomId` is not a
+//! MIMI room URI, or if the room's hub hosts no such room. The account
+//! need not be in the room: an external join reaches a room it is not in
+//! yet, and the hub decides by room policy (bead mimid-1wgh.12.46). The
+//! request goes through the follower's
 //! relay ([`Follower::relay_group_info`]), in-process when this server is
 //! the hub, else to the room's hub; a hub that cannot be reached is
 //! `serverUnavailable` (decision JM-6).
@@ -24,11 +27,10 @@ use mimi_protocol::{GroupInfoCode, GroupInfoRequest, GroupInfoResponse};
 use serde_json::{Value, json};
 
 use super::Services;
-use super::room_common::{bytes, invalid, relay_error, room_call, server_fail};
+use super::room_common::{bytes, invalid, relay_error, room_args, server_fail};
 use crate::follower::Follower;
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
-use crate::store::Store;
 
 const METHOD: &str = "GroupInfo/fetch";
 
@@ -38,35 +40,31 @@ pub(super) fn register(methods: &mut Methods, services: &Services) {
         METHOD,
         Arc::new(Handler {
             follower: Arc::clone(&services.follower),
-            store: services.store.clone(),
         }),
     );
 }
 
 struct Handler {
     follower: Arc<Follower>,
-    store: Store,
 }
 
 impl JmapHandler<Account> for Handler {
     fn call(&self, cx: CallContext<Account>) -> HandlerFuture {
         let CallContext { args, caller, .. } = cx;
-        let (follower, store) = (Arc::clone(&self.follower), self.store.clone());
+        let follower = Arc::clone(&self.follower);
         Box::pin(async move {
-            fetch(&follower, &store, &caller, args)
+            fetch(&follower, &caller, args)
                 .await
                 .map(HandlerOutput::new)
         })
     }
 }
 
-async fn fetch(
-    follower: &Follower,
-    store: &Store,
-    caller: &Account,
-    args: Value,
-) -> Result<Value, JmapError> {
-    let call = room_call(METHOD, store, caller, args, true).await?;
+async fn fetch(follower: &Follower, caller: &Account, args: Value) -> Result<Value, JmapError> {
+    // Any room the client names: the room's hub decides by its policy
+    // whether to answer (bead mimid-1wgh.12.46). The relay checks that the
+    // request's credential is the account's user.
+    let call = room_args(METHOD, caller, args)?;
     let request = bytes(METHOD, &call.args, "request")?;
     GroupInfoRequest::tls_deserialize_exact(&request[..])
         .map_err(|_| invalid(METHOD, "request is not a GroupInfoRequest"))?;

@@ -323,6 +323,15 @@ fn joins_mls_rs_group_and_all_agree() {
         // RFC 9420 §6: an MLSMessage with version mls10 and wire_format
         // mls_public_message (0x0001).
         assert_eq!(bundle.commit[..4], [0x00, 0x01, 0x00, 0x01], "{case}");
+        // The joiner, read from the clear bytes (MLSMessage
+        // external_commit_identity), as a provider checks it.
+        let commit_message =
+            <mimi_mls::wire::MLSMessage as mimi_mls::tls_codec::Deserialize>::tls_deserialize_exact(&bundle.commit[..]).expect("decodes");
+        assert_eq!(
+            commit_message.external_commit_identity(),
+            Some(&b"carol"[..]),
+            "{case}"
+        );
         let expected_aad = if context_dictionary.is_some() {
             EMPTY_SAFE_AAD.to_vec()
         } else {

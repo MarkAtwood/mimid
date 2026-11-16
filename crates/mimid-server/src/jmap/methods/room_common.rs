@@ -81,6 +81,56 @@ pub(super) async fn room_call(
     })
 }
 
+/// Checks `accountId` and that `roomId` is a MIMI room URI, without
+/// requiring a Chat of the account for it: GroupInfo/fetch and the
+/// external Commit of Room/update reach a room the account is not in yet
+/// (draft-atwood-jmap-chat-mimi-00 §GroupInfo/fetch, §Room/update; bead
+/// mimid-1wgh.12.46).
+pub(super) fn room_args(
+    method: &'static str,
+    caller: &Account,
+    args: Value,
+) -> Result<RoomCall, JmapError> {
+    let Value::Object(args) = args else {
+        return Err(invalid(method, "arguments must be an object"));
+    };
+    let account_id = match args.get("accountId") {
+        Some(Value::String(id)) => id.clone(),
+        _ => return Err(invalid(method, "accountId is required")),
+    };
+    caller
+        .check_account_id(&account_id)
+        .map_err(|_| JmapError::account_not_found())?;
+    let room_id = match args.get("roomId") {
+        Some(Value::String(room_id)) if crate::hub::room_uri_domain(room_id).is_some() => {
+            room_id.clone()
+        }
+        Some(Value::String(_)) => return Err(invalid(method, "roomId is not a MIMI room URI")),
+        _ => return Err(invalid(method, "roomId is required")),
+    };
+    Ok(RoomCall {
+        account_id,
+        room_id,
+        args,
+    })
+}
+
+/// Whether a Chat of `caller`'s account is bound to `room_id`.
+pub(super) async fn has_bound_chat(
+    method: &'static str,
+    store: &Store,
+    caller: &Account,
+    room_id: &str,
+) -> Result<bool, JmapError> {
+    let (_, chats) = store
+        .projection_chats(caller.user().as_str())
+        .await
+        .map_err(|e| server_fail(method, &e))?;
+    Ok(chats
+        .iter()
+        .any(|chat| chat.room_id == room_id && chat.bound))
+}
+
 /// The unpadded base64url argument `key`.
 pub(super) fn bytes(
     method: &'static str,
@@ -115,6 +165,12 @@ pub(super) fn relay_error(method: &'static str, error: FollowerError) -> JmapErr
                 }
                 _ => JmapError::server_unavailable(),
             }
+        }
+        // A room this server's hub does not host: as a remote hub's 404
+        // (bead mimid-1wgh.12.46: GroupInfo/fetch and an external
+        // Room/update can name any room).
+        FollowerError::Relay(RelayError::Hub(crate::hub::HubError::NoSuchRoom)) => {
+            invalid(method, "no such room")
         }
         FollowerError::Relay(
             RelayError::WrongIdentity { .. }
