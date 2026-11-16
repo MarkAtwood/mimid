@@ -13,5 +13,5 @@ publish = false
 
 [dev-dependencies]
 # Haven at the commit the results refer to; bump `rev` to test a newer Haven.
-mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "ba552f81a9b6955acee268dfb9c2ef8d250da4d4" }
+mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "2357c3ff7b48471aa6597e915719c8ab63225422" }
 mimi-room-policy = { path = "../../../../crates/mimi-room-policy" }
