@@ -1,0 +1,30 @@
+{
+  "id": "mimid-75nk.10",
+  "title": "provider-auth -01: Implementation Status gets the Haven/mimid hackathon interop",
+  "description": "Record in the Implementation Status section (RFC 7942 style): at the IETF 127 hackathon Haven's hub signed requests with the key at haven1._mimi.mimi.havenmessenger.com and mimid verified with DNSSEC; Haven's hub now also verifies signed requests alongside PKIX client certificates against configured CAs (§7), with the authenticated domain tied to From (§10). Key result: no trust anchor exchanged between the two providers, which is the problem mimi-protocol #218 describes. Confirm wording and contact with Jason before posting. Source: Jason Bolduc's review on mimi@ietf.org, 15 Nov 2026 (Message-ID CA+7d1z=LQ+iuYYum-z-SUssV8X5PJgeZL7EW5R2f0Jd4FkzTvA@mail.gmail.com); Mark committed to it publicly in his reply of 16 Nov (IETF notes/2026-11-16-mimi-provider-auth-jason-reply-sent.md). Draft source: ~/PROJECT/ietf-mimi-provider-auth/draft-atwood-mimi-provider-auth.md.",
+  "acceptance_criteria": "Implementation Status lists Haven and mimid with the interop result, confirmed by Jason.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:01:33.561928875Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:01:33.561928875Z",
+  "labels": [
+    "draft",
+    "mimi-provider-auth",
+    "design",
+    "interop",
+    "security"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-75nk.10",
+      "depends_on_id": "mimid-75nk",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:01:33.602647973Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
