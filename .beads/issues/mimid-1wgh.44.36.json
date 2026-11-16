@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.44.36",
   "title": "Decision: draft-mahy-mls-new-framed-content-tbs-02 is track-only for mimid",
   "description": "Assay mimid-1wgh.44.13 of /home/mark/PROJECT/IETF/specs/draft-mahy-mls-new-framed-content-tbs-02.txt (280 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: extension new_framed_content_tbs (suggested 0x000b, free per Rohan's gist). When required, FramedContentTBS signs context_hash = RefHash(GroupContext) instead of the whole GroupContext (§3 L146-160), so signers and verifiers hash a large GroupContext (e.g. MIMI's participant list) once per epoch. Informational (L7).\n\nHow it meets mimid: every signature mimid makes or checks (mimi-mls Member and Observer through OpenMLS, the hub's Observer on PublicMessage handshakes) would use the new TBS in a room that requires it. It is a pure efficiency change: mimid rooms are small, and OpenMLS has no support, so adopting means fork work in openmls framing for no visible gain now.\n\nRECOMMEND: track only. Revisit if a peer requires it, or if large rooms make signature cost matter. The earlier keyword hits (mimid-1wgh.4.68, .37.90.34) are unrelated (AAD on external proposals; partial-02 confirmation tag). No conflict beads.",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:39:14.854730925Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:39:14.854730925Z",
+  "updated_at": "2026-11-16T02:33:25.950136196Z",
+  "closed_at": "2026-11-16T02:33:25.950136196Z",
+  "close_reason": "Mark 2026-11-16: track only.",
   "labels": [
     "human",
     "spec-assay"
