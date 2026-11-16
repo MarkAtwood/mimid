@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.13.12",
   "title": "A5: persistence of the agent's plaintext state (MemoryBackend is in-memory)",
   "description": "After a restart the agent cannot re-decrypt old messages (MLS keys are consumed), so the plaintext Chats and Messages must be stored locally: a SQLite-backed ChatBackend (or snapshotting MemoryBackend), file mode 0600, alongside the mimi-mls store.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T03:01:47.244359478Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T03:01:47.244359478Z",
+  "updated_at": "2026-11-16T06:52:11.139303656Z",
+  "closed_at": "2026-11-16T06:52:11.139303656Z",
+  "close_reason": "Done in 02a2801: AgentChat::persisted_at + daemon chat.json. Crash window: mimid-s4b1.",
   "labels": [
     "agent"
   ],

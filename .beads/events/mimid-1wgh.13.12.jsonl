@@ -1,2 +1,3 @@
 {"id":"01a1e24d-ba73-7502-bbee-a00b4050615c","issue_id":"mimid-1wgh.13.12","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-16T03:01:47.251330267Z"}
 {"id":"01a1e24d-ba77-73b6-83f2-5629931197ad","issue_id":"mimid-1wgh.13.12","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-16T03:01:47.255244099Z"}
+{"id":"01a1e320-aa08-788e-9e1d-1b4ebac547d7","issue_id":"mimid-1wgh.13.12","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Done in 02a2801: AgentChat::persisted_at + daemon chat.json. Crash window: mimid-s4b1.","created_at":"2026-11-16T06:52:11.144562183Z"}
