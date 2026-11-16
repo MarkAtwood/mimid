@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.12.46",
+  "title": "jmap-chat-mimi: an external join is only possible for an account already bound to the room",
+  "description": "Found by the two-provider JMAP test (eab96ec, 2026-11-16). draft-atwood-jmap-chat-mimi-00: GroupInfo/fetch needs 'the roomId of a Chat in this account' (§GroupInfo/fetch), Room/update needs a bound Chat (L414), and an unbound Chat is treated 'as if no Chat in the account had that roomId'; only a Welcome binds again (L352). mimid follows it (crates/mimid-server/src/jmap/methods/room_common.rs room_call, bound=true). So over JMAP an external join (protocol-07 §3.5 external commit) works only for an account adding another of its own clients to a room it is in. Not possible: joining an open room or by join link (room-policy-04 canOpenJoin, §6.2), rejoining after leaving (follower_e2e step 11 does it through the follower API). Design question for Mark: e.g. GroupInfo/fetch accepts any roomId the client names (the hub's room policy decides), and a Room/update carrying an external Commit for an account with no bound Chat creates (or rebinds) the Chat when the hub accepts it. Then: draft text, mimid jmap methods, and a test (the rejoin flow in jmap_two_providers).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T03:06:44.507193312Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T03:06:44.507193312Z",
+  "labels": [
+    "design",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.12.46",
+      "depends_on_id": "mimid-1wgh.12",
+      "type": "parent-child",
+      "created_at": "2026-11-16T03:06:44.976111552Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
