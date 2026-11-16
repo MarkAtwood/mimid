@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.33",
+  "title": "wg: draft-mahy-mimi-message-status-02 gaps (extension statuses, ordering, sender binding)",
+  "description": "From assay mimid-1wgh.44.11 of /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-message-status-02.txt. Posting needs Mark's OK.\n1. CDDL: $extStatus is used but no range is reserved for extensions, while unknownStatus claims all of 7..255 (§4); say which values extensions take and how a receiver treats an unknown one (keep, ignore, or show as unknown).\n2. Ordering: reports can arrive out of order across a reporter's clients, and §3 allows read then unread; nothing says which report wins (latest by MLS order? by a timestamp?).\n3. Scope: a report may name message IDs from another room or IDs the receiver never saw; say receivers ignore them.\n4. §3 'Some status values might only be shared among the reporting user's own clients' with no way to send to own clients only in a room (needs a separate group or a targeted message).\n5. Reference is content-09 (now -10; §5 examples unchanged).",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:38:06.886473967Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:38:06.886473967Z",
+  "labels": [
+    "wg",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.33",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:38:06.916478821Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
