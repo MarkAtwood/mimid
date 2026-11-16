@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.13.8",
+  "title": "A1: mimid-agent-core library: the client engine factored out of mimid-chat's JMAP mode",
+  "description": "Plan 2026-11-16 (transport decided: loopback HTTP + token + EventSource). Extract from tools/interop/chat (jmap.rs, state.rs and the JMAP-mode paths of chat.rs) into crates/mimid-agent-core: identity and mimi-mls Member state (SQLite), the outward JMAP client to the mimid server (KeyPackage/set, Room/create with roomId, KeyMaterial/fetch, Room/update, Room/send, Room/unbind, GroupInfo/fetch, Consent/set, Message/changes polling), FanoutMessage processing (Welcome, Commit, application message), mimi-content encode/decode. No terminal, no HTTP server, no tokio runtime ownership (mobile embedding, mimid-1wgh.39). mimid-chat keeps working on top of it (its hub-mode/Haven-lane paths stay in the tool). Carries .13.7's rule: update bundles send RatchetTreeOption distributionService.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T03:01:46.243224327Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T03:01:46.243224327Z",
+  "labels": [
+    "agent"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.13.8",
+      "depends_on_id": "mimid-1wgh.13",
+      "type": "parent-child",
+      "created_at": "2026-11-16T03:01:46.273721274Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
