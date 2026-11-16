@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.20.4",
+  "title": "Interop day: rerun the room-policy cross-check against Haven's reference hub",
+  "description": "tools/interop/haven/room-policy (297ba49 era, now rewritten): bump the Haven rev to the one that separates reference behaviour from Haven's policy (Jason 238449/238476). Expect the four rows where Haven was stricter than room-policy-04 (min\u003emax constraint stays, per #33; role-1 name, role-0 capabilities, fixed-membership role 0 add) to change; update the expectations and the README.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T02:01:51.256630156Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T02:01:51.256630156Z",
+  "labels": [
+    "interop"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.20.4",
+      "depends_on_id": "mimid-1wgh.46.20",
+      "type": "parent-child",
+      "created_at": "2026-11-16T02:01:51.286261475Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
