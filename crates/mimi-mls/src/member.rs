@@ -319,6 +319,9 @@ pub struct CommitBundle {
 pub struct WelcomeJoin {
     /// The new member.
     pub member: Member,
+    /// The BasicCredential identity of the member that sent the Welcome:
+    /// the signer of its GroupInfo (RFC 9420 §12.4.3.1).
+    pub inviter: Vec<u8>,
 }
 
 /// The result of [`Member::join_external`].
@@ -671,36 +674,9 @@ impl Member {
         welcome: &[u8],
         ratchet_tree: Option<&[u8]>,
     ) -> Result<WelcomeJoin, MemberError> {
-        let message = MlsMessageIn::tls_deserialize_exact(welcome)
-            .map_err(|e| MemberError::Decode(e.into()))?;
-        let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
-            return Err(MemberError::UnexpectedMessage);
-        };
-        let ratchet_tree = ratchet_tree
-            .map(RatchetTreeIn::tls_deserialize_exact)
-            .transpose()
-            .map_err(|e| MemberError::Decode(e.into()))?;
-        let config = MlsGroupJoinConfig::builder()
-            .wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
-            .build();
+        let (staged, tree) = stage_welcome(identity, welcome, ratchet_tree)?;
         let provider = identity.provider();
-        let mut builder = StagedWelcome::build_from_welcome(provider, &config, welcome)
-            .map_err(|e| MemberError::Join(e.into()))?
-            // RFC 9420 §7.3; decision mimid-1wgh.4.56.
-            .skip_lifetime_validation();
-        // The tree build stages, chosen as OpenMLS chooses it: the
-        // GroupInfo's ratchet_tree extension, else the one given.
-        let tree = builder
-            .processed_welcome()
-            .unverified_group_info()
-            .extensions()
-            .ratchet_tree()
-            .map(|extension| extension.ratchet_tree().clone())
-            .or_else(|| ratchet_tree.clone());
-        if let Some(ratchet_tree) = ratchet_tree {
-            builder = builder.with_ratchet_tree(ratchet_tree);
-        }
-        let staged = builder.build().map_err(|e| MemberError::Join(e.into()))?;
+        let inviter = welcome_signer(&staged)?;
         // Decoded before into_group stores the group; fails closed
         // (decisions mimid-1wgh.4.57, mimid-1wgh.4.59).
         let required = required_lists(staged.group_context().extensions())?;
@@ -734,9 +710,82 @@ impl Member {
         // new leaf belongs to it.
         Ok(WelcomeJoin {
             member: Self::from_group(group, identity),
+            inviter,
         })
     }
 
+    /// The BasicCredential identity of the member that sent a Welcome (the
+    /// signer of its GroupInfo, RFC 9420 §12.4.3.1), found by staging the
+    /// Welcome as [`Member::join_welcome`] does, without joining: nothing
+    /// is stored and the KeyPackage stays usable. Lets a client decide
+    /// whether to join from who invited it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Member::join_welcome`] for a Welcome that cannot be staged:
+    /// [`MemberError::Decode`], [`MemberError::UnexpectedMessage`] and
+    /// [`MemberError::Join`].
+    pub fn welcome_sender(
+        identity: &Identity,
+        welcome: &[u8],
+        ratchet_tree: Option<&[u8]>,
+    ) -> Result<Vec<u8>, MemberError> {
+        let (staged, _) = stage_welcome(identity, welcome, ratchet_tree)?;
+        welcome_signer(&staged)
+    }
+}
+
+/// The identity of the leaf that signed a staged Welcome's GroupInfo.
+fn welcome_signer(staged: &StagedWelcome) -> Result<Vec<u8>, MemberError> {
+    staged
+        .welcome_sender()
+        .map(|leaf| basic_identity(leaf.credential()))
+        .map_err(|e| MemberError::Join(e.into()))
+}
+
+/// Stages a TLS-encoded Welcome `MLSMessage` for `identity` (RFC 9420
+/// §12.4.3.1) and returns it with the ratchet tree the build used: the
+/// GroupInfo's `ratchet_tree` extension, else `ratchet_tree`. Stores
+/// nothing; OpenMLS consumes the KeyPackage only in `into_group`.
+fn stage_welcome(
+    identity: &Identity,
+    welcome: &[u8],
+    ratchet_tree: Option<&[u8]>,
+) -> Result<(StagedWelcome, Option<RatchetTreeIn>), MemberError> {
+    let message =
+        MlsMessageIn::tls_deserialize_exact(welcome).map_err(|e| MemberError::Decode(e.into()))?;
+    let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
+        return Err(MemberError::UnexpectedMessage);
+    };
+    let ratchet_tree = ratchet_tree
+        .map(RatchetTreeIn::tls_deserialize_exact)
+        .transpose()
+        .map_err(|e| MemberError::Decode(e.into()))?;
+    let config = MlsGroupJoinConfig::builder()
+        .wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
+        .build();
+    let provider = identity.provider();
+    let mut builder = StagedWelcome::build_from_welcome(provider, &config, welcome)
+        .map_err(|e| MemberError::Join(e.into()))?
+        // RFC 9420 §7.3; decision mimid-1wgh.4.56.
+        .skip_lifetime_validation();
+    // The tree build stages, chosen as OpenMLS chooses it: the
+    // GroupInfo's ratchet_tree extension, else the one given.
+    let tree = builder
+        .processed_welcome()
+        .unverified_group_info()
+        .extensions()
+        .ratchet_tree()
+        .map(|extension| extension.ratchet_tree().clone())
+        .or_else(|| ratchet_tree.clone());
+    if let Some(ratchet_tree) = ratchet_tree {
+        builder = builder.with_ratchet_tree(ratchet_tree);
+    }
+    let staged = builder.build().map_err(|e| MemberError::Join(e.into()))?;
+    Ok((staged, tree))
+}
+
+impl Member {
     /// Joins a group by external Commit (RFC 9420 §12.4.3.2), from a
     /// TLS-encoded `MLSMessage` carrying the group's current GroupInfo.
     ///
