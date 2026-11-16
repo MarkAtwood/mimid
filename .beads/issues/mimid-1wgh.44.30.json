@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.30",
+  "title": "wg: draft-mahy-mimi-credential-preauth-00 internal inconsistencies (for when it is revised)",
+  "description": "From assay mimid-1wgh.44.10 of /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-credential-preauth-00.txt. Low priority: the draft is an early WIP. Posting needs Mark's OK.\n\n1. Three names for the pointer item kinds: examples use via_key / via_array_search (e.g. L453, L517); ClaimItemType has member_name/array_position (L864); ItemType has map_key/array_search/any (L890); JwtToken uses JwtItemType and array_index (L876-880). Pick one.\n2. Family names: ClaimFamily is x509/jwt/cwt but MapKey and FoundValue select on json/cbor/asn1 (L979, L996).\n3. OperationType skips 5-6, has no (255), and the Operation select uses 'ends_width' (L958) for ends_with; optional\u003cuint\u003e (L957-962) is not a TLS type.\n4. Examples vs syntax: §5.5 says it compares eur_per_hour but points at 'processor' (L659 vs L687); §5.3 searches 'DCBA-10177' in a document holding 'DCBA-101777' (L405 vs L494, L515), so as written it finds nothing; §5.6 uses match_as=scheme (L754) and §5.7 'uripath' (L770), neither in MatchAs; 'array_serach' (L1313).\n5. No rule for what a pointer returns on a type mismatch at a level, or how 'exists' interacts with no match (requirement 1, §4).\n6. §7 TODO; §8 X.509 examples empty; §9 is old text; reference is room-policy-03 (L1485; -04 is current).",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:28:39.679030161Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:28:39.679030161Z",
+  "labels": [
+    "wg",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.30",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:28:39.709878389Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
