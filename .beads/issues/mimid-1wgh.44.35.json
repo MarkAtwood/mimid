@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.35",
+  "title": "wg: draft-mahy-mimi-hub-retracted-messages-00 gaps (external sender's role, timestamps, references)",
+  "description": "From assay mimid-1wgh.44.12 of /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-hub-retracted-messages-00.txt. Posting needs Mark's OK.\n1. Authority: members accept the proposal when 'the proposal sender corresponds to a user in the participant list with a role containing canDeleteOtherMessage' (L186, L236). The hub sends it as an external proposal (§4 L257 external_senders), and an external sender is not a participant-list user. Say how an external sender holds a role (room-policy-04 preauthorization of external senders, §4 L399 there?) or define the rule for external senders directly.\n2. Range time base: starting_timestamp (L229, L249) is compared with which time? MIMI content carries no send time; the hub's accepted timestamp is in the FanoutMessage, not seen the same way by every member. 'since the receiver's earliest messages' (L241) depends on each receiver's history, so members can retract different sets.\n3. The same AppEphemeral can't be checked by members who joined after the retracted messages were sent; say what they do (nothing, presumably).\n4. IdentityUri (L196, L246, L248) is not a defined type; protocol-07 uses IdentifierUri (protocol-07 L1239).\n5. Stale refs: franking 'Section 3.4.1 of protocol' (L104) is now §5.4.1; component registry 'Section 7.6 of mls-extensions' (L275) is §7.5 in -11; content-08, room-policy-03, extensions-09 (L314, L329, L344).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:38:50.301661075Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:38:50.301661075Z",
+  "labels": [
+    "wg",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.35",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:38:50.331855798Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
