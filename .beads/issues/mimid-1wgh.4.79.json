@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.4.79",
+  "title": "SemiPrivateMessage handshakes (adopt later, decision mimid-1wgh.44.21)",
+  "description": "Mark 2026-11-16: adopt draft-mahy-mls-semiprivatemessage-08 later. Supersedes deferral mimid-1wgh.4.12 once built. Today mimi-protocol refuses SemiPrivateMessage handshakes (crates/mimi-protocol/src/lib.rs:67-71). Spec gaps (external_receivers extension vs component, §3.3 hash check without GroupContext) in mimid-1wgh.44.22: settle item 1 with the author before building the component.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T02:31:19.90634019Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T02:31:19.90634019Z",
+  "labels": [
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.79",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-11-16T02:31:19.935454515Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
