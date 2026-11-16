@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.4.81",
+  "title": "did:webvh credential (draft-atwood-mls-didwebvh-credential-00)",
+  "description": "Mark 2026-11-16: commits to implementing draft-atwood-mls-didwebvh-credential in mimid, and will say so at the MLS session at IETF 127 (Fri 20 Nov). Spec: ~/PROJECT/mls-didwebvh-credential/draft-atwood-mls-didwebvh-credential.md (-00). The goal is the first implementation, to support the WG question in the draft's Section 7 item 7 (encoding). Build on OpenMLS through the mimi-mls adapter. Credential type 0x0008 and extension type 0x0013 are suggested only, so keep them configurable. Feed what implementing it teaches into -01 (IETF-xgzc in ~/PROJECT/IETF).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T18:19:56.984621674Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T18:19:56.984621674Z",
+  "labels": [
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-11-16T18:19:57.012401239Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
