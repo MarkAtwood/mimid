@@ -3,13 +3,15 @@
   "title": "assay: draft-mahy-cbor-edn-for-tls-01",
   "description": "Assay draft-mahy-cbor-edn-for-tls-01 per the output contract on epic mimid-1wgh.44 (read the whole draft locally, never over the network; one human decision bead; conflict, feature, wg beads as found; 'no impact' is a valid finding). File: /home/mark/PROJECT/IETF/specs/draft-mahy-cbor-edn-for-tls-01.txt (sha256 in specs/PROVENANCE). Known hooks in mimid: none (tooling: EDN for TLS presentation language).",
   "notes": "Assay done 2026-11-16: read whole draft. Filed mimid-1wgh.44.48 / mimid-1wgh.44.49 (decisions: track only) and mimid-1wgh.44.50 (shared wg bead, P4). No code changes.",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:16:49.980273624Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:41:58.422379372Z",
+  "updated_at": "2026-11-16T00:41:58.563940998Z",
+  "closed_at": "2026-11-16T00:41:58.563940998Z",
+  "close_reason": "Assayed; outputs mimid-1wgh.44.48, mimid-1wgh.44.49, mimid-1wgh.44.50.",
   "labels": [
     "spec-assay"
   ],
