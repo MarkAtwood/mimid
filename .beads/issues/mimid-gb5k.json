@@ -1,0 +1,15 @@
+{
+  "id": "mimid-gb5k",
+  "title": "docs: state mimid's answers to identity-arch §6 interop questions",
+  "description": "From assay .44.51 (draft-barnes-mimi-identity-arch-04 §6, L681ff). Add to mimid's README/Limitations a short section: E2E protocol MLS (RFC 9420); credentials are BasicCredential carrying the mimi user URI; no revocation; the authority vouching for a leaf is implicitly its provider (domain of the URI), so mimid gives no E2E protection against impersonation by a provider (identity-arch L260-268). Link mimi-protocol#159 and decisions .44.4/.44.27 (track only).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T05:11:35.784095141Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T05:11:35.784095141Z",
+  "labels": [
+    "docs"
+  ]
+}
