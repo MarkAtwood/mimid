@@ -2416,6 +2416,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "mimid-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "getrandom 0.3.4",
+ "jmap-chat-types",
+ "jmap-server",
+ "mimid-agent-core",
+ "mimid-agent-jmap",
+ "mimid-server",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mimid-agent-core"
 version = "0.1.0"
 dependencies = [
