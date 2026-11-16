@@ -1,3 +1,4 @@
 {"id":"01a1e1bc-7171-7e38-836d-b68122688f91","issue_id":"mimid-1wgh.44.25","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-16T00:23:05.841934099Z"}
 {"id":"01a1e1bc-71b8-7a5b-a23f-b5726659f5c6","issue_id":"mimid-1wgh.44.25","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-16T00:23:05.912680059Z"}
 {"id":"01a1e1bc-71fc-73d1-afa9-89d81d2f9eba","issue_id":"mimid-1wgh.44.25","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: spec-assay","created_at":"2026-11-16T00:23:05.980251458Z"}
+{"id":"01a1e230-6eed-74a0-af11-90fbe0dec77b","issue_id":"mimid-1wgh.44.25","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Mark 2026-11-16: track; back it in the WG. No code now. The WG note (mimid has H4; would implement if adopted) goes with the gaps in mimid-1wgh.44.26, posting with Mark's OK.","created_at":"2026-11-16T02:29:47.373304003Z"}
