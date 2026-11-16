@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.44.32",
   "title": "jmap-chat-mimi draft: cite message-status-02 and map every status",
   "description": "From assay mimid-1wgh.44.11. ~/PROJECT/jmap-chat-spec/draft-atwood-jmap-chat-mimi-00.md L76-83 cites draft-mahy-mimi-message-status-01 with 'Work in progress; this individual draft expired on 2026-09-03.' -02 was posted 2026-11-01 and is active (expires 2027-05-05): update the reference and drop the 'expired' note. §Message Status (L147-149) says only that expired, hidden and error are not read acknowledgements; it does not say how delivered (1), read (2), unread (0) and deleted (4) map to JMAP (readAt, ReadPosition, deletedAt), or which direction converts. Our draft; editing it is in scope for the draft work (commit with a hackathon note only if Mark wants it in that batch).",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:38:06.742606865Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:38:06.742606865Z",
+  "updated_at": "2026-11-16T02:18:01.679678387Z",
+  "closed_at": "2026-11-16T02:18:01.679678387Z",
+  "close_reason": "jmap-chat-spec fcb1f6f: cites message-status-02; Message Status maps all seven statuses both ways.",
   "labels": [
     "spec-assay"
   ],
