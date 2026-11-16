@@ -48,7 +48,7 @@ use mimi_protocol::{
     FanoutEvent, FanoutMessage, Frank, FrankingAgentData, GroupInfoOption, HandshakeBundle,
     IdentifierUri, KeyMaterialRequestTbs, KeyMaterialResponse, KeyMaterialUserCode,
     ParticipantListData, ParticipantListUpdate, Protocol, RoomMetaData, SubmitMessageRequest,
-    UpdateRequest, UserRolePair, Utf8String, franking_tag,
+    UpdateRequest, UserRolePair, UserindexRolePair, Utf8String, franking_tag,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{
@@ -292,6 +292,7 @@ impl Client {
                 "invite" => self.invite(arg).await,
                 "policy" => self.policy(arg).await,
                 "roles" => self.roles(arg).await,
+                "ban" => self.ban(arg).await,
                 "stale-commit" => self.stale_commit(arg).await,
                 "allow" => self.allow(arg).await,
                 "deny" => self.deny(arg).await,
@@ -333,7 +334,8 @@ impl Client {
             "/invite <user>         add a user (a mimi:// URI, or a bare name on your domain)",
             "  ... --policy k=v ... the same Commit also changes base_room_policy",
             "  ... --roles          the same Commit also replaces roles_list (both hubs should refuse)",
-            "/roles                 set roles_list: 1 \"banned\", 2 \"member\" (needed before /policy on mimi-hubd)",
+            "/roles [ban|ban-no-banned]  set roles_list: 1 \"banned\", 2 \"member\" (needed before /policy on mimi-hubd);\n                       ban: member also holds canBan 2->1; ban-no-banned: the same without role 1",
+            "/ban <user>            move <user> to role 1 and remove their clients (canBan)",
             "/policy k=v ...        change base_room_policy: fixed_membership, multi_device,\n                       pseudonyms_allowed, persistent_room, discoverable (true|false),\n                       max_clients, max_users (a number or none)",
             "/stale-commit          test: send a roles_list Commit one epoch late (expect wrongEpoch)",
             "/allow <user>          let <user> fetch your KeyPackages (updateConsent grant)",
@@ -570,17 +572,79 @@ impl Client {
     /// `/roles`: a Commit with one roles_list AppDataUpdate (room-policy-04
     /// §3) setting [`default_roles`]. mimi-hubd refuses a base_room_policy
     /// for a room with no roles, so this goes first.
+    ///
+    /// `/roles ban` also gives the member role canBan with a change from
+    /// role 2 to role 1; `/roles ban-no-banned` does that without defining
+    /// role 1, which room-policy-04 §8.1.3 allows in the list but not for
+    /// a ban (the role-1 check with Haven, IETF 127 table).
     async fn roles(&mut self, arg: &str) -> anyhow::Result<()> {
-        ensure!(arg.is_empty(), "usage: /roles");
+        let (roles, described) = match arg {
+            "" => (
+                default_roles(),
+                "1 banned, 2 member (send, receive, reply, react, add, leave)",
+            ),
+            "ban" => (
+                ban_roles(true),
+                "1 banned, 2 member (as /roles, plus canBan 2->1)",
+            ),
+            "ban-no-banned" => (
+                ban_roles(false),
+                "2 member (as /roles, plus canBan 2->1), no role 1",
+            ),
+            _ => bail!("usage: /roles [ban|ban-no-banned]"),
+        };
         let room = self.current()?;
         let update = AppDataUpdate::Update {
             component_id: ROLES_LIST,
-            update: encode(&default_roles())?,
+            update: encode(&roles)?,
         };
         self.commit_one_update(&room, update, "roles_list").await?;
         self.say(format!(
-            "[{}] * roles_list set: 1 banned, 2 member (send, receive, reply, react, add, leave)",
+            "[{}] * roles_list set: {described}",
             short_room(&room)
+        ));
+        Ok(())
+    }
+
+    /// `/ban <user>`: one Commit that moves `user` to role 1 in the
+    /// participant list and removes all their clients (room-policy-04
+    /// §8.1.3 canBan; protocol-07 §7.6 changedRoleParticipants).
+    async fn ban(&mut self, arg: &str) -> anyhow::Result<()> {
+        let target = self.user_uri(arg.trim())?;
+        ensure!(target != self.me, "you cannot ban yourself");
+        let room = self.current()?;
+        let member = self.member(&room)?;
+        let list = participants(member)?;
+        let user_index = list
+            .iter()
+            .position(|u| normalized_uri(u) == normalized_uri(&target))
+            .ok_or_else(|| anyhow!("{target} is not a participant"))?;
+        let removes: Vec<u32> = member
+            .members()
+            .into_iter()
+            .filter(|(_, identity)| {
+                std::str::from_utf8(identity)
+                    .is_ok_and(|id| normalized_uri(id) == normalized_uri(&target))
+            })
+            .map(|(leaf, _)| leaf)
+            .collect();
+        let update = AppDataUpdate::Update {
+            component_id: PARTICIPANT_LIST,
+            update: encode(&ParticipantListUpdate {
+                changed_role_participants: vec![UserindexRolePair {
+                    user_index: u32::try_from(user_index)?,
+                    role_index: 1,
+                }],
+                removed_indices: vec![],
+                added_participants: vec![],
+            })?,
+        };
+        self.commit_removes_and_updates(&room, &removes, &[update], "ban")
+            .await?;
+        self.say(format!(
+            "[{}] * you banned {target} ({} client(s) removed)",
+            short_room(&room),
+            removes.len()
         ));
         Ok(())
     }
@@ -630,13 +694,26 @@ impl Client {
         update: AppDataUpdate,
         what: &str,
     ) -> anyhow::Result<()> {
+        self.commit_removes_and_updates(room, &[], &[update], what)
+            .await
+    }
+
+    /// A Commit removing the leaves `removes` and applying `updates`, sent
+    /// to the hub, merged and distributed to the participants before it.
+    async fn commit_removes_and_updates(
+        &mut self,
+        room: &str,
+        removes: &[u32],
+        updates: &[AppDataUpdate],
+        what: &str,
+    ) -> anyhow::Result<()> {
         let before = participants(self.member(room)?)?;
         let member = self
             .members
             .get_mut(room)
             .ok_or_else(|| anyhow!("no MLS group for {room}"))?;
         let bundle = member
-            .commit(&self.identity, &[], &[], &[update], apply_commit_op)
+            .commit(&self.identity, &[], removes, updates, apply_commit_op)
             .map_err(|e| anyhow!("building the Commit: {}", causes(&e)))?;
         let request = commit_request(&bundle)?;
         if let Err(e) = self.hub.update_ok(room, request).await {
@@ -2138,6 +2215,25 @@ fn default_roles() -> RoleData {
             ),
         ],
     }
+}
+
+/// [`default_roles`] with canBan and a change from role 2 to role 1 on the
+/// member role; with `banned` false, role 1 is left undefined.
+fn ban_roles(banned: bool) -> RoleData {
+    let mut roles = default_roles();
+    if let Some(member) = roles.roles.iter_mut().find(|r| r.role_index == ROLE) {
+        member.role_capabilities.push(Capability::CAN_BAN);
+        member
+            .authorized_role_changes
+            .push(SingleSourceRoleChangeTargets {
+                from_role_index: ROLE,
+                target_role_indexes: vec![1],
+            });
+    }
+    if !banned {
+        roles.roles.retain(|r| r.role_index != 1);
+    }
+    roles
 }
 
 /// The base_room_policy `/host` sets: open membership, several devices,

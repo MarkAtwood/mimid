@@ -130,6 +130,13 @@ Commands
                      and role 2 "member", the role mimid-chat gives every
                      participant. mimi-hubd refuses a base_room_policy for a
                      room with no roles, and requires role 1 to be "banned"
+  /roles ban | ban-no-banned
+                     as /roles, and the member role also holds canBan with
+                     a change from role 2 to role 1; ban-no-banned leaves
+                     role 1 undefined (room-policy-04 §8.1.3: a ban needs it)
+  /ban <user>        a Commit that moves <user> to role 1 in the participant
+                     list and removes all their clients (§8.1.3 canBan;
+                     protocol-07 §7.6 changedRoleParticipants)
   /policy k=v ...    a Commit with one base_room_policy update, starting
                      from the room's current policy: fixed_membership,
                      multi_device, pseudonyms_allowed, persistent_room,
