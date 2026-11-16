@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.11.11.2",
+  "title": "mimi-content: codec for application/mimi-message-status",
+  "description": "CBOR array of [MessageId (32 bytes), status]; statuses 0-6; keep 7-255 as unknown (message-status-02 §4); test with the draft's §5 example bytes.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T02:30:18.534546025Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T02:30:18.534546025Z",
+  "labels": [
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.11.11.2",
+      "depends_on_id": "mimid-1wgh.11.11",
+      "type": "parent-child",
+      "created_at": "2026-11-16T02:30:18.562397018Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
