@@ -288,17 +288,20 @@ mod draft_example {
         RequestSigner::new(SigningKey::from_seed(&d), "s1".to_owned())
     }
 
+    /// -00's example has no nonce; mimid's signer adds one since -01
+    /// §13.2, so the example is signed with none.
     #[test]
     fn mimids_signer_reproduces_the_example_byte_for_byte() {
         let mut headers = HeaderMap::new();
         headers.insert(header::FROM, HeaderValue::from_static("mimi@a.example"));
         a_signer()
-            .sign(
+            .sign_with_nonce(
                 &Method::POST,
                 &URI.parse().unwrap(),
                 &mut headers,
                 BODY,
                 CREATED,
+                None,
             )
             .unwrap();
         assert_eq!(headers[httpsig::CONTENT_DIGEST], DIGEST);
@@ -560,4 +563,68 @@ mod draft_example {
             assert!(!valid_selector(bad), "{bad}");
         }
     }
+}
+
+/// -01 §13.2 (bead mimid-75nk.9): mimid's signatures carry a fresh nonce,
+/// and a verified signature's nonce counts once per key in the window.
+#[test]
+fn a_replayed_signature_is_refused_by_its_nonce() {
+    let b = signer(7, "b1");
+    let auth = auth(&config_trusting(&b));
+    let headers = signed(&b, b"entry", NOW);
+    let (_, params) = httpsig::signatures(&headers).unwrap().remove(0);
+    let first = params.nonce.clone().expect("mimid signs with a nonce");
+    assert_eq!(first.len(), 22, "16 bytes, unpadded base64url");
+    // Two signings of the same request get different nonces.
+    let again = signed(&b, b"entry", NOW);
+    assert_ne!(httpsig::signatures(&again).unwrap()[0].1.nonce, Some(first));
+
+    assert!(check_with(&auth, &headers, b"entry", "b.example").is_ok());
+    assert!(matches!(
+        check_with(&auth, &headers, b"entry", "b.example"),
+        Err(Refusal::Nonce(nonce::NonceRefusal::Replayed))
+    ));
+    // The other signing is a different request.
+    assert!(check_with(&auth, &again, b"entry", "b.example").is_ok());
+}
+
+/// A signature without a nonce is still accepted (the draft's SHOULD is on
+/// the signer), and so can be replayed within the window.
+#[test]
+fn a_signature_without_a_nonce_is_accepted() {
+    let b = signer(7, "b1");
+    let auth = auth(&config_trusting(&b));
+    let mut headers = HeaderMap::new();
+    headers.insert(header::FROM, HeaderValue::from_static("mimi@b.example"));
+    headers.insert(httpsig::CONTENT_DIGEST, httpsig::content_digest(b"entry"));
+    let params = SignatureParams {
+        components: SIGNED_COMPONENTS.map(str::to_owned).to_vec(),
+        created: Some(NOW),
+        keyid: Some("b1".to_owned()),
+        tag: Some(SIGNATURE_TAG.to_owned()),
+        ..SignatureParams::default()
+    };
+    httpsig::sign_headers(
+        &Method::POST,
+        &URI.parse().unwrap(),
+        &mut headers,
+        SIGNATURE_LABEL,
+        &params,
+        &SigningKey::from_seed(&[7; 32]),
+    )
+    .unwrap();
+    assert!(check_with(&auth, &headers, b"entry", "b.example").is_ok());
+    assert!(check_with(&auth, &headers, b"entry", "b.example").is_ok());
+}
+
+/// A nonce is checked only after the signature verifies, so a forged
+/// request reusing a real nonce does not use it up.
+#[test]
+fn a_bad_signature_does_not_record_its_nonce() {
+    let b = signer(7, "b1");
+    let auth = auth(&config_trusting(&b));
+    let headers = signed(&b, b"entry", NOW);
+    // Same headers, other body: the digest fails before any nonce check.
+    assert!(check_with(&auth, &headers, b"other", "b.example").is_err());
+    assert!(check_with(&auth, &headers, b"entry", "b.example").is_ok());
 }

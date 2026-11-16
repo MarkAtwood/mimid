@@ -90,6 +90,9 @@ pub enum Error {
     /// or does not match the body (RFC 9530).
     #[error("content-digest does not match the body")]
     Digest,
+    /// No random bytes could be had for a signature's `nonce`.
+    #[error("no randomness for the signature nonce")]
+    Random,
 }
 
 /// An Ed25519 key that signs requests. Its `Debug` output never shows the

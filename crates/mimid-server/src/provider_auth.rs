@@ -41,7 +41,8 @@
 //! [`crate::peer::PeerClient`] sends with this server's own key, under the
 //! label [`SIGNATURE_LABEL`], tagged `mimi`, with the configured selector
 //! as `keyid`, covering `@method`, `@target-uri`, `content-digest` and
-//! `from` (draft-atwood-mimi-provider-auth-00 §5.2).
+//! `from` (draft-atwood-mimi-provider-auth-00 §5.2), with a random
+//! `nonce` (-01 §13.2).
 //!
 //! # Logging
 //!
@@ -53,8 +54,11 @@
 //!
 //! # Limitations
 //!
-//! - Nonces are not tracked, so a signed request can be replayed within
-//!   [`MAX_SIGNATURE_AGE_SECS`].
+//! - A signature without a `nonce` can be replayed within
+//!   [`MAX_SIGNATURE_AGE_SECS`]: -01 §13.2 asks signers for one, and a
+//!   nonce-less signature is still accepted. One with a nonce is refused
+//!   the second time ([`nonce`]). The nonces live in memory, so a restart
+//!   forgets them.
 //! - `@target-uri` is rebuilt from this server's configured `base_url`
 //!   and the request path, so a peer must sign the URL from this server's
 //!   directory.
@@ -71,13 +75,14 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, he
 use axum::middleware::Next;
 use axum::response::Response;
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde::Deserialize;
 
 use crate::config::{BaseUrl, Domain};
 use crate::httpsig::{self, SignatureParams, SigningKey, TimePolicy, VerifyingKey};
 use crate::hub::Clock;
 use crate::tls::ClientCertificate;
+use nonce::{NonceCache, NonceRefusal};
 
 /// The label of mimid's own request signatures. INVENTED, NOT FROM SPEC:
 /// no MIMI document names one yet. Received signatures may use any label.
@@ -322,6 +327,10 @@ pub enum Refusal {
     /// The signature is malformed, unsupported, expired or wrong.
     #[error("signature refused: {0}")]
     Signature(#[source] httpsig::Error),
+    /// The signature verifies but its `nonce` was already used by the same
+    /// key, or is too long ([`nonce`]; provider-auth -01 §13.2).
+    #[error("{0}")]
+    Nonce(#[source] NonceRefusal),
     /// The client certificate's path does not validate against the
     /// anchors for the provider (RFC 5280).
     #[error("certificate path refused: {0}")]
@@ -394,19 +403,36 @@ pub trait KeySource: Send + Sync {
 }
 
 /// An RFC 9421 signature mechanism over a [`KeySource`]
-/// (draft-atwood-mimi-provider-auth-00 §5.3).
+/// (draft-atwood-mimi-provider-auth-00 §5.3), refusing a replayed nonce
+/// ([`nonce`]).
 #[derive(Debug)]
-pub struct Signatures<K>(pub K);
+pub struct Signatures<K> {
+    source: K,
+    nonces: Arc<NonceCache>,
+}
+
+impl<K> Signatures<K> {
+    /// The mechanism with keys from `source`, recording nonces in
+    /// `nonces`, which every signature mechanism of a server shares so a
+    /// nonce cannot be replayed through another key source.
+    pub fn new(source: K, nonces: Arc<NonceCache>) -> Self {
+        Self { source, nonces }
+    }
+}
 
 impl<K: KeySource> ProviderAuthenticator for Signatures<K> {
     fn authenticate<'a>(&'a self, request: &'a InboundRequest<'a>) -> BoxFuture<'a, Outcome> {
-        Box::pin(verify_signatures(&self.0, request))
+        Box::pin(verify_signatures(&self.source, &self.nonces, request))
     }
 }
 
 /// draft-atwood-mimi-provider-auth-00 §5.3, steps 2 to 7, with keys from
-/// `source`.
-async fn verify_signatures(source: &dyn KeySource, request: &InboundRequest<'_>) -> Outcome {
+/// `source`, then the nonce check of -01 §13.2.
+async fn verify_signatures(
+    source: &dyn KeySource,
+    nonces: &NonceCache,
+    request: &InboundRequest<'_>,
+) -> Outcome {
     let mut signatures = match httpsig::signatures(request.headers) {
         Ok(signatures) if signatures.is_empty() => return Outcome::NotApplicable,
         Ok(signatures) => signatures,
@@ -456,7 +482,16 @@ async fn verify_signatures(source: &dyn KeySource, request: &InboundRequest<'_>)
         };
         // Steps 4 and 7.
         match httpsig::verify(&parts, label, time, |_| Some(key)) {
-            Ok(_) => {
+            Ok(verified) => {
+                // -01 §13.2: a nonce counts once per key in the window.
+                // verify checked created, so it is present.
+                if let (Some(nonce), Some(created)) = (&verified.nonce, verified.created)
+                    && let Err(why) =
+                        nonces.check_and_record(request.from, keyid, nonce, created, request.now)
+                {
+                    refusal = Refusal::Nonce(why);
+                    continue;
+                }
                 return Outcome::Authenticated(AuthenticatedProvider {
                     domain: request.from.clone(),
                     mechanism: source.mechanism(),
@@ -529,6 +564,9 @@ pub struct ProviderAuth {
     clock: Arc<dyn Clock>,
     /// Providers whose observe-mode failure has been logged at INFO.
     observed: Mutex<BTreeSet<Domain>>,
+    /// Nonces seen on verified signatures, shared by the signature
+    /// mechanisms.
+    nonces: Arc<NonceCache>,
 }
 
 impl fmt::Debug for ProviderAuth {
@@ -544,8 +582,15 @@ impl ProviderAuth {
     /// The policy of `config` for a server reachable at `base_url`, with
     /// the mechanisms built so far.
     pub fn new(config: &ProviderAuthConfig, base_url: &BaseUrl, clock: Arc<dyn Clock>) -> Self {
+        let nonces = Arc::new(NonceCache::new(
+            MAX_SIGNATURE_AGE_SECS.saturating_add(SIGNATURE_SKEW_SECS),
+        ));
         Self {
-            authenticators: vec![Box::new(Signatures(TrustList::new(config)))],
+            authenticators: vec![Box::new(Signatures::new(
+                TrustList::new(config),
+                Arc::clone(&nonces),
+            ))],
+            nonces,
             dns_keys: config.dns_keys,
             require_dnssec: config.require_dnssec,
             default_mode: config.mode,
@@ -566,10 +611,10 @@ impl ProviderAuth {
     #[must_use]
     pub fn with_dns(mut self, resolver: Arc<dyn TxtResolver>) -> Self {
         if self.dns_keys {
-            self.authenticators.push(Box::new(Signatures(DnsKeys::new(
-                resolver,
-                self.require_dnssec,
-            ))));
+            self.authenticators.push(Box::new(Signatures::new(
+                DnsKeys::new(resolver, self.require_dnssec),
+                Arc::clone(&self.nonces),
+            )));
         }
         self
     }
@@ -789,10 +834,40 @@ impl RequestSigner {
         body: &[u8],
         now: i64,
     ) -> Result<(), httpsig::Error> {
+        // -01 §13.2: a nonce on every request, so a replayed keyMaterial
+        // (or anything else that hands out what runs out) is refused by a
+        // verifier that tracks them. 16 random bytes, base64url.
+        let nonce = mimi_mls::label::random_array::<16>().map_err(|_| httpsig::Error::Random)?;
+        self.sign_with_nonce(
+            method,
+            uri,
+            headers,
+            body,
+            now,
+            Some(&URL_SAFE_NO_PAD.encode(nonce)),
+        )
+    }
+
+    /// [`RequestSigner::sign`] with the given `nonce`, or none: for
+    /// reproducing published examples.
+    ///
+    /// # Errors
+    ///
+    /// As [`RequestSigner::sign`], except [`httpsig::Error::Random`].
+    pub fn sign_with_nonce(
+        &self,
+        method: &Method,
+        uri: &Uri,
+        headers: &mut HeaderMap,
+        body: &[u8],
+        now: i64,
+        nonce: Option<&str>,
+    ) -> Result<(), httpsig::Error> {
         headers.insert(httpsig::CONTENT_DIGEST, httpsig::content_digest(body));
         let params = SignatureParams {
             components: SIGNED_COMPONENTS.map(str::to_owned).to_vec(),
             created: Some(now),
+            nonce: nonce.map(str::to_owned),
             keyid: Some(self.selector.clone()),
             tag: Some(SIGNATURE_TAG.to_owned()),
             ..SignatureParams::default()
@@ -812,6 +887,7 @@ impl RequestSigner {
 }
 
 pub mod dns;
+pub mod nonce;
 pub mod pkix;
 pub use pkix::{PkixCertificates, PkixConfigError};
 
