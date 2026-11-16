@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.44.29",
   "title": "Decision: draft-mahy-mimi-credential-preauth-00 is track-only for mimid (too early to build)",
   "description": "Assay mimid-1wgh.44.10 of /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-credential-preauth-00.txt (1568 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: a work-in-progress replacement for room-policy-04 §4 preauthorization, which it calls underspecified (L135). It defines claim pointers (path into a JWT, CWT or X.509 credential: map key, array position, array search with nested matchers, CBOR tag, bstr-encoded) and claim matchers (semantics, match_as with ~37 comparison kinds, operations such as substring and numeric predicates), as TLS structs (§6, L776-1125). Informational (L7).\n\nRECOMMEND: track only. Not buildable: §7 'Types of comparisons' is TODO (L1127); the §6 structs disagree with each other and with the examples (wg bead); §8 X.509 examples are mostly empty headings; §9 is 'Old text on Preauth' (L1333); Security TODO; cites room-policy-03. mimid keeps room-policy-04 §4 as implemented: ClaimId by credential type and opaque id, exact byte comparison, first match wins (crates/mimi-room-policy/src/preauth.rs; decisions mimid-1wgh.3.47-.3.49; WG item mimid-1wgh.37.58 on the claim-id encoding, which is the gap this draft addresses).\n\nRelevant to mimid later: matching a URI's domain or a mimi_uri part (§5.6) is what a 'any user of provider X may join as member' preauth needs, which room-policy-04 §4 exact matching cannot express. If the WG adopts this, the work is a new matcher module in mimi-room-policy plus credential parsers for the claim families mimid supports (only BasicCredential today, which has no claims, so preauth by claims cannot match anything in mimid now).\n\nNo conflict beads (nothing in mimid implements it). Spec defects: wg bead.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:28:39.550790569Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:28:39.550790569Z",
+  "updated_at": "2026-11-16T02:33:25.820741314Z",
+  "closed_at": "2026-11-16T02:33:25.820741314Z",
+  "close_reason": "Mark 2026-11-16: track only.",
   "labels": [
     "human",
     "spec-assay"
