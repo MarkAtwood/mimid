@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.44.44",
   "title": "Decision: draft-mahy-mls-new-content-types-02 is track-only for mimid",
   "description": "Assay mimid-1wgh.44.17 of /home/mark/PROJECT/IETF/specs/draft-mahy-mls-new-content-types-02.txt (504 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: two MLS content types, status(4) and ephemeral(5), each with its own secret-tree ratchet (§4 Figure 1), negotiated by supported_content_types (LN, 0x000F) and required_content_types (GC, 0x0010); a new MLS Content Types registry (§7.2). Receivers and the DS may drop stale ones without decrypting (§4, §5). For presence and typing indicators. Unrelated to mls-extensions-11 content_media_types (media types inside application data).\n\nHow it meets mimid: a PrivateMessage with content type 4 or 5 does not decode in mimid (mimi-mls wire ContentType has only application, proposal, commit: crates/mimi-mls/src/wire/rfc9420.rs:551-558; OpenMLS likewise), so the hub refuses it at submitMessage. If adopted: OpenMLS fork work in the key schedule and framing, the hub's submit path accepting the new types (and optionally dropping stale ephemeral fanout per §5), and JMAP typing/presence mapping (JMAP Chat has its own typing events).\n\nRECOMMEND: track only. mimid has no typing or presence over MIMI; the cost is a fork of OpenMLS's key schedule. No conflict today (no peer sends these).",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:40:51.943808033Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:40:51.943808033Z",
+  "updated_at": "2026-11-16T02:33:26.354638794Z",
+  "closed_at": "2026-11-16T02:33:26.354638794Z",
+  "close_reason": "Mark 2026-11-16: track only.",
   "labels": [
     "human",
     "spec-assay"
