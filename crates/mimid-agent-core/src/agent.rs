@@ -306,6 +306,20 @@ impl Agent {
         participants(self.member(room)?)
     }
 
+    /// The `room_name` of an active room's `room_metadata` (protocol-07
+    /// §7.6), or `None` if the room has no metadata or it does not decode.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`].
+    pub fn room_name(&self, room: &str) -> Result<Option<String>, AgentError> {
+        Ok(self
+            .member(room)?
+            .component(ROOM_METADATA)
+            .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
+            .map(|metadata| metadata.room_name.as_str().to_owned()))
+    }
+
     /// The Welcomes waiting for [`Agent::join`].
     pub fn invites(&self) -> Vec<PendingInvite> {
         self.state

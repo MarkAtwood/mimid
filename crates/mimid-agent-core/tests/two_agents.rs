@@ -192,6 +192,8 @@ async fn two_agents_chat_through_their_server() {
     assert!(bob.invites().is_empty());
     assert_eq!(bob.key_packages_outstanding(), 1);
     assert_eq!(bob.participants(&room).unwrap(), [ALICE, BOB]);
+    assert_eq!(bob.room_name(&room).unwrap().as_deref(), Some("planning"));
+    assert_eq!(alice.room_name(&room).unwrap().as_deref(), Some("planning"));
     assert_agreement(&room, &alice, &bob);
 
     let sent = alice.send_text(&room, "hello bob").await.unwrap();
