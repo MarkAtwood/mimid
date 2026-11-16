@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.43",
+  "title": "wg: draft-mahy-mls-credential-by-ref-00 gaps (hash construction, key binding, delivery)",
+  "description": "From assay mimid-1wgh.44.16 of /home/mark/PROJECT/IETF/specs/draft-mahy-mls-credential-by-ref-00.txt. Posting needs Mark's OK.\n1. Struct: 'HashReference referenced_credential_hash\u003cV\u003e' (§3) is a vector of HashReference, and RFC 9420 HashReference is already opaque\u003cV\u003e; one hash or a list? And 'the hash of the entire Credential struct' gives no label: RFC 9420 hash references use RefHash(label, value); name a label (e.g. 'MLS 1.0 Credential Reference').\n2. Key binding: say that the referenced credential must bind the LeafNode's signature key (e.g. X.509 subjectPublicKey or SD-CWT cnf equals it); otherwise any holder of a reference claims the identity.\n3. Delivery and failure: how a member gets the referenced credential (another group? a GroupContext component? a URL?), and what it does if it cannot (treat the leaf as invalid? pending?). RFC 9420 credential validation (§5.3.1) cannot finish without it.\n4. Cipher suite: 'the hash function from the cipher suite of the KeyPackage or the MLS group' (§3): if the referenced credential lives in a group with another suite, which hash?\n5. Security says 'must be careful' about scope (§4) with no rule; no references for MLS (RFC 9420 is used but only 2119/8174 are listed).",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:40:18.016388209Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:40:18.016388209Z",
+  "labels": [
+    "wg",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.43",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:40:18.046497991Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
