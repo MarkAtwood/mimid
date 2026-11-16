@@ -17,7 +17,7 @@ use jmap_server::{
     Dispatcher, GetObject, Id, JmapBackend, JmapObject, QueryChangesParams, QueryChangesResult,
     QueryObject, QueryParams, QueryResult, SetError, SetErrorType, SetObject, State,
 };
-use mimid_agent_core::{Agent, AgentError, HostOptions, RoomStatus};
+use mimid_agent_core::{Agent, AgentError, HostOptions, MAX_TEXT_LEN, RoomStatus};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
@@ -735,8 +735,19 @@ impl ChatBackend for AgentChat {
             .await
     }
 
+    /// What this backend accepts, not `MemoryBackend`'s defaults: one
+    /// `text/plain` body of at most [`MAX_TEXT_LEN`] octets (what
+    /// `Agent::send_text` takes), no attachments and no threads (see the
+    /// crate Limitations). The JMAP layer checks a create against these
+    /// before it reaches the agent.
     fn limits(&self, caller: &(), account_id: &Id) -> ChatLimits {
-        self.inner.limits(caller, account_id)
+        self.inner
+            .limits(caller, account_id)
+            .with_supported_body_types(&["text/plain"])
+            .with_max_body_bytes(MAX_TEXT_LEN as u64)
+            .with_max_attachments_per_message(0)
+            .with_max_attachment_bytes(0)
+            .with_supports_threads(false)
     }
 
     async fn attachment_blob(

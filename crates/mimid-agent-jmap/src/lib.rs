@@ -52,8 +52,11 @@
 //!   `updateMemberRoles` are `forbidden` (§Chat.roomId), and removing a
 //!   member other than the owner is `forbidden`: the agent has no remove.
 //!   MIMI roles are not mapped.
-//! - `Message/set` create with a `bodyType` other than `text/plain`, or
-//!   with `attachments`, `mentions`, `broadcastMentions`, `replyTo`,
+//! - The account's limits are what the agent takes: `text/plain` only,
+//!   at most `MAX_TEXT_LEN` octets, no attachments, no threads. A
+//!   `bodyType` other than `text/plain` is `invalidProperties` and a longer
+//!   body `tooLarge`, from crate-jmap's checks against those limits.
+//! - `Message/set` create with `attachments`, `mentions`, `broadcastMentions`, `replyTo`,
 //!   `threadRootId`, `topicId`, `subject`, or expiry or burn settings, is
 //!   `forbidden`, naming the property. Updating a Message other than its
 //!   `readAt` or `privateMetadata` (edits, `deletedForAll`, reactions) is

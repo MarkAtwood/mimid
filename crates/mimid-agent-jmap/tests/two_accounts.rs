@@ -360,8 +360,20 @@ async fn two_accounts_chat_through_jmap() {
             json!({"chatId": chat_a, "body": "*hi*", "bodyType": "text/markdown", "sentAt": SENT_AT}),
         )
         .await;
-    assert_eq!(refused["type"], json!("forbidden"), "{refused}");
+    // A body type outside the advertised supportedBodyTypes is the JMAP
+    // layer's invalidProperties.
+    assert_eq!(refused["type"], json!("invalidProperties"), "{refused}");
     assert_eq!(refused["properties"], json!(["bodyType"]), "{refused}");
+    // A body over the agent's MAX_TEXT_LEN is refused by the JMAP layer's
+    // limit check, before it reaches the agent.
+    let long = "x".repeat(mimid_agent_core::MAX_TEXT_LEN + 1);
+    let refused = alice
+        .refused_create(
+            "Message",
+            json!({"chatId": chat_a, "body": long, "sentAt": SENT_AT}),
+        )
+        .await;
+    assert_eq!(refused["type"], json!("tooLarge"), "{refused}");
     let refused = alice
         .refused_create("Chat", json!({"kind": "direct", "contactId": bob_contact}))
         .await;
