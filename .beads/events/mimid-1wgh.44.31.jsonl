@@ -1,3 +1,4 @@
 {"id":"01a1e1ca-2fff-7bd8-8cc4-cf94b523ab4f","issue_id":"mimid-1wgh.44.31","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-16T00:38:06.59177684Z"}
 {"id":"01a1e1ca-3002-76bb-8f9c-15ecb13756a1","issue_id":"mimid-1wgh.44.31","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-16T00:38:06.594441435Z"}
 {"id":"01a1e1ca-3004-7b6e-9dac-d68827298ae0","issue_id":"mimid-1wgh.44.31","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: spec-assay","created_at":"2026-11-16T00:38:06.596749497Z"}
+{"id":"01a1e230-e9e1-710a-a5eb-e40d5035c375","issue_id":"mimid-1wgh.44.31","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Mark 2026-11-16: adopt later. Feature beads under mimid-1wgh.11.11.","created_at":"2026-11-16T02:30:18.849072706Z"}
