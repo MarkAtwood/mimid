@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.48",
+  "title": "Decision: draft-mahy-cbor-edn-for-tls-01 is track-only for mimid (could help vectors)",
+  "description": "Assay mimid-1wgh.44.19 of /home/mark/PROJECT/IETF/specs/draft-mahy-cbor-edn-for-tls-01.txt (672 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: a convention for writing TLS-presentation-language instances as CBOR EDN: structs as maps keyed by field name, opaque as byte strings, other vectors as arrays, enums as integers with a comment, optional\u003cT\u003e as {present, value}, select arms by presence, framed by '# ~~~ tls \u003cStruct\u003e' (§3). Informational (L7). No codepoints.\n\nHow it meets mimid: none at runtime. It could make test vectors readable (mimid's joint IETF 127 vectors and fixtures are hex in JSON), but only once tools read it; none exist that mimid uses.\n\nRECOMMEND: track only. Spec defects: wg bead (shared with cbor-pointer's).",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:41:57.980501839Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:41:57.980501839Z",
+  "labels": [
+    "human",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.48",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:41:58.011183855Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
