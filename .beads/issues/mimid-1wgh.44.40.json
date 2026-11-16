@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.44.40",
   "title": "Decision: draft-mahy-oob-aad-00 is track-only for mimid (a sketch)",
   "description": "Assay mimid-1wgh.44.15 of /home/mark/PROJECT/IETF/specs/draft-mahy-oob-aad-00.txt (224 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: an outline for out-of-band AAD: a new oob_aad list of SafeAADItems added to PrivateContentAAD and FramedContentTBS (§3), so both sides bind values that are never sent (signalled by a GroupContext extension and two component types). It says itself it cannot be a 'safe' extension because the MLS stack must change (§3). No codepoints, IANA section empty, Security TODO, terms in §2 named but not defined.\n\nPossible MIMI use (not in the draft): binding hub-known state such as the room URI or the participant list hash into every message signature without sending it. mimid has no need today.\n\nRECOMMEND: track only; revisit if it gets a full revision. The earlier keyword hit (mimid-e05c, user discovery) is unrelated. No conflict beads.",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:39:59.994907785Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:39:59.994907785Z",
+  "updated_at": "2026-11-16T02:33:26.079558999Z",
+  "closed_at": "2026-11-16T02:33:26.079558999Z",
+  "close_reason": "Mark 2026-11-16: track only.",
   "labels": [
     "human",
     "spec-assay"
