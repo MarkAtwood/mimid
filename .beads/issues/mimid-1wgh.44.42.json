@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.44.42",
   "title": "Decision: draft-mahy-mls-credential-by-ref-00 is track-only for mimid",
   "description": "Assay mimid-1wgh.44.16 of /home/mark/PROJECT/IETF/specs/draft-mahy-mls-credential-by-ref-00.txt (224 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: credential type by_ref (suggested 0x0007, as in Rohan's gist): a LeafNode credential that is only the type and hash of another credential, delivered out of band or in another group (§1, §3). Its use is size: a large SD-CWT or X.509 chain sent once, then referenced.\n\nRECOMMEND: track only. mimid uses BasicCredential, which is tiny; by_ref only pays off with big credentials, i.e. after the sd-cwt decision (mimid-1wgh.44.27) is 'adopt'. Then revisit together. No conflict beads.",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:40:17.867106501Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:40:17.867106501Z",
+  "updated_at": "2026-11-16T02:33:26.222460332Z",
+  "closed_at": "2026-11-16T02:33:26.222460332Z",
+  "close_reason": "Mark 2026-11-16: track only.",
   "labels": [
     "human",
     "spec-assay"
