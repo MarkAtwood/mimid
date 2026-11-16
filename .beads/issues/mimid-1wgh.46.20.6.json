@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.20.6",
+  "title": "Interop day: a by-value invalid proposal, if the §5.3 gap has an answer",
+  "description": "Jason (238475) and we (238481) agree protocol-07 §5.3 invalidProposals (ProposalRefs) cannot name a proposal committed by value. If the WG or the two of us settle how (index into Commit.proposals, empty list meaning by value, or a #190 refusal reason), add a joint vector for it and implement the answer in mimid's hub (which answers notAllowed for every refusal today, decision mimid-1wgh.6.55).",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T02:01:51.559803584Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T02:01:51.559803584Z",
+  "labels": [
+    "interop"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.20.6",
+      "depends_on_id": "mimid-1wgh.46.20",
+      "type": "parent-child",
+      "created_at": "2026-11-16T02:01:51.587560007Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
