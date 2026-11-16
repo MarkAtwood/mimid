@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.50",
+  "title": "wg: draft-mahy-cbor-edn-for-tls-01 and draft-mahy-cbor-pointer-01 gaps (wrong core references, examples)",
+  "description": "From assays mimid-1wgh.44.19 and .44.20. Posting needs Mark's OK (CBOR WG list, or the author).\nedn-for-tls-01 (/home/mark/PROJECT/IETF/specs/draft-mahy-cbor-edn-for-tls-01.txt):\n1. §1 cites [RFC7094] as where diagnostic notation was described; RFC 7094 is 'Architectural Considerations of IP Anycast'. Diagnostic notation was RFC 7049 §6 (then RFC 8949 §8).\n2. §3 says opaque vectors are byte strings, but the LeafNode example shows extension_data (opaque\u003cV\u003e) as a decoded array of components; say when an opaque holding TLS-encoded data is shown decoded and how a converter knows its type.\n3. The example is not valid EDN: missing comma after \"signature\": h'' in the credential, '0xBABA.' and '0xDADA.' with stray periods, unquoted key credentials:; it names 'roles-list' (roles_list) and calls components 'extension'. References cite mls-extensions-09, room-policy-03, sd-cwt-credential-02.\ncbor-pointer-01 (/home/mark/PROJECT/IETF/specs/draft-mahy-cbor-pointer-01.txt):\n4. §1 cites [RFC8494] as CBOR; RFC 8494 is 'Multicast Email (MULE) over ACP 142'. CBOR is RFC 8949.\n5. §3.1 'a CBOR negative integer, hexadecimal 0x20 matches the last element': say -1 (0x20 is its encoding) and give the general rule (-n is the n-th from the end).\n6. Table 1 [777, 2] shows h'49a202182d63706471f4', which includes the byte-string header 0x49; the value is h'a202182d63706471f4'.\n7. §3.3 example 'TBD(1)' should be TBD2(1); §4 and §5 TODO.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:41:58.281192152Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:41:58.281192152Z",
+  "labels": [
+    "wg",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.50",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:41:58.313609529Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
