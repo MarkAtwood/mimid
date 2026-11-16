@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.6.33",
   "title": "hub: re-issue pending proposals on external commit (H4 option B)",
   "description": "Follow-up to H4: instead of refusing external commits while proposals are pending, the hub regenerates them as external sender and staples them (§5.5). Needs .4.9 (external AppDataUpdate) and external Remove signing. See the .6 design field (approved plan) and decisions .6.1-.6.21.",
+  "notes": "2026-11-16: draft-mahy-mls-ext-commit-pp-02 (assay .44.8, decision mimid-1wgh.44.25) offers another fix for H4: external committers include pending proposals by reference when the room requires extension 0x0009. If mimid adopts it, this bead is unnecessary in such rooms.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-18T17:11:40.399587535Z",
   "created_by": "agent",
-  "updated_at": "2026-10-18T17:11:40.399587535Z",
+  "updated_at": "2026-11-16T00:23:07.363744025Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.6.33",
