@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.6.81",
   "title": "Log remote user URIs that lack /u/ (decision mimid-1wgh.6.80)",
   "description": "Mark 2026-11-16: accept remote user URIs without the protocol-07 §2.1 /u/ form, and log the divergence (lenient on received meaning, mimid-1wgh.52 rule 3). Sites: follower/consent.rs (remote URI), hub/key_material.rs:107,134, hub/update.rs:421,461,672-673. At each, keep the domain check; when the path is not /u/\u003cname\u003e, emit one DEBUG event (bounded: a per-process set of seen (domain, path-shape) so a peer cannot flood the log; or a metric) naming the URI's domain. In hub/update.rs exclude the hub's own provider URI mimi://\u003cdomain\u003e (decision .6.35). Local users keep the refusal (.6.76/.6.79).",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T02:34:08.86901895Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T02:34:08.86901895Z",
+  "updated_at": "2026-11-16T02:50:09.763191014Z",
+  "closed_at": "2026-11-16T02:50:09.763191014Z",
+  "close_reason": "d1569ae: note_non_user_uri at keyMaterial, consent and proposal-sender sites; once per domain, capped at 256.",
   "labels": [
     "interop"
   ],
