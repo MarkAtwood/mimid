@@ -45,7 +45,7 @@ use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::JmapState;
@@ -136,6 +136,7 @@ pub(super) async fn get_eventsource(
         state.0.key_packages.clone(),
         state.0.store.clone(),
         state.0.bus.clone(),
+        state.0.stop.clone(),
         account,
         params,
         sender,
@@ -192,6 +193,7 @@ async fn stream(
     key_packages: Option<Arc<KeyPackages>>,
     store: Store,
     bus: ChangeBus,
+    mut stop: Option<watch::Receiver<bool>>,
     account: Account,
     params: Params,
     sender: mpsc::Sender<Result<Event, Infallible>>,
@@ -228,8 +230,20 @@ async fn stream(
                 None => std::future::pending().await,
             }
         };
+        let stopping = async {
+            match stop.as_mut() {
+                // A dropped sender means no shutdown is coming.
+                Some(stop) => {
+                    if stop.wait_for(|stopping| *stopping).await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                }
+                None => std::future::pending().await,
+            }
+        };
         tokio::select! {
             () = sender.closed() => return,
+            () = stopping => return,
             () = ping => {
                 let interval = params.ping.map_or(0, |p| p.as_secs());
                 let event = Event::default().event("ping").data(json!({"interval": interval}).to_string());

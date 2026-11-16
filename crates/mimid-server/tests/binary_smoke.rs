@@ -370,3 +370,108 @@ async fn telemetry_exports_to_the_collector() {
         }
     }
 }
+
+/// An open EventSource stream does not hold up a graceful shutdown: on
+/// SIGINT the stream ends and the binary exits. Before the fix the stream
+/// only ended when its client left, so axum's graceful shutdown waited on
+/// it forever.
+///
+/// Oracle: the process exits successfully within the deadline while the
+/// client still holds the stream open, and the client then sees the
+/// stream end.
+#[tokio::test]
+async fn an_open_eventsource_stream_does_not_block_shutdown() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = format!("http://127.0.0.1:{}", free_port());
+    let local = format!("127.0.0.1:{}", free_port());
+    let config = format!(
+        "domain = \"a.example\"\n\
+         listen = \"{listen}\"\n\
+         base_url = \"{base}\"\n\
+         database = \"{database}\"\n\
+         local_listen = \"{local}\"\n",
+        listen = base.trim_start_matches("http://"),
+        database = dir.path().join("mimid.sqlite").display(),
+    );
+    let config_path = dir.path().join("mimid.toml");
+    std::fs::write(&config_path, config).unwrap();
+    let mut server = Server(
+        Command::new(env!("CARGO_BIN_EXE_mimid"))
+            .arg(&config_path)
+            .env("RUST_LOG", "warn")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let http = reqwest::Client::new();
+    let local_base = format!("http://{local}/local/v1");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(response) = http
+            .post(format!("{local_base}/users"))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(serde_json::json!({"user": ALICE}).to_string())
+            .send()
+            .await
+        {
+            assert_eq!(response.status(), StatusCode::CREATED);
+            break;
+        }
+        assert!(server.0.try_wait().unwrap().is_none(), "server exited");
+        assert!(Instant::now() < deadline, "server did not start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let token = http
+        .post(format!(
+            "{local_base}/users/{}/tokens",
+            "mimi%3A%2F%2Fa.example%2Fu%2Falice"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let token: serde_json::Value = serde_json::from_slice(&token).unwrap();
+    let token = token["token"].as_str().unwrap().to_owned();
+
+    let mut stream = http
+        .get(format!(
+            "{base}/jmap/eventsource?types=Chat&closeafter=no&ping=0"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    // The headers are in, so the stream is open; it sends nothing until a
+    // change, and this test makes none.
+    assert_eq!(stream.status(), StatusCode::OK);
+
+    let pid = server.0.id().to_string();
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let exit = loop {
+        if let Some(exit) = server.0.try_wait().unwrap() {
+            break exit;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "server did not stop with an EventSource stream open"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert!(exit.success(), "{exit:?}");
+    // The stream ended (cleanly or by the connection closing); a timeout
+    // here would mean it was still open.
+    let end = tokio::time::timeout(Duration::from_secs(5), stream.chunk())
+        .await
+        .expect("the stream ended");
+    assert!(!matches!(end, Ok(Some(_))));
+}

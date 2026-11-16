@@ -220,6 +220,14 @@ async fn main() -> anyhow::Result<()> {
     // JMAP shares the protocol listener (decision mimid-1wgh.12.28).
     let mut jmap_options = JmapOptions::default();
     jmap_options.max_key_packages = config.max_key_packages;
+    // Fired when shutdown starts, so open EventSource streams end and the
+    // graceful shutdown below can finish.
+    let (stop_streams, streams_stopped) = tokio::sync::watch::channel(false);
+    jmap_options.stop = Some(streams_stopped);
+    let shutdown = async move {
+        shutdown_signal().await;
+        let _ = stop_streams.send(true);
+    };
     let jmap = jmap::router(
         &config.base_url,
         store.clone(),
@@ -342,14 +350,14 @@ async fn main() -> anyhow::Result<()> {
         // mimid-75nk.4).
         Some(tls) => {
             let server = mimid_server::tls::server_config(tls).context("reading [tls]")?;
-            mimid_server::tls::serve(listener, server, app, shutdown_signal()).await;
+            mimid_server::tls::serve(listener, server, app, shutdown).await;
         }
         // Connection info lets a trusted proxy's address be recognised.
         None => axum::serve(
             listener,
             app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
         )
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown)
         .await
         .context("serving HTTP")?,
     }

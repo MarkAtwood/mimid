@@ -54,17 +54,22 @@ use methods::Services;
 use session::{DEFAULT_MAX_KEY_PACKAGES, SessionTemplate};
 
 /// Settings of the JMAP endpoint.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct JmapOptions {
     /// `maxKeyPackages` (draft-atwood-jmap-chat-mimi-00 L166).
     pub max_key_packages: u64,
+    /// Becomes `true` when the server starts shutting down: open
+    /// EventSource streams then end, so a graceful shutdown does not wait
+    /// on them forever. `None`: they end only when their clients leave.
+    pub stop: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl Default for JmapOptions {
     fn default() -> Self {
         Self {
             max_key_packages: DEFAULT_MAX_KEY_PACKAGES,
+            stop: None,
         }
     }
 }
@@ -82,6 +87,7 @@ struct Inner {
     bus: ChangeBus,
     key_packages: Option<Arc<crate::follower::key_packages::KeyPackages>>,
     store: Store,
+    stop: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl FromRef<JmapState> for Authenticator {
@@ -147,6 +153,7 @@ pub fn router(
         bus,
         key_packages,
         store,
+        stop: options.stop,
     }));
     Ok(Router::new()
         .route("/.well-known/jmap", get(session::get_session))
