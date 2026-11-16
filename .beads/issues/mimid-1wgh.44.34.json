@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.34",
+  "title": "Decision: draft-mahy-mimi-hub-retracted-messages-00 is track-only for mimid (adopt later with hub moderation)",
+  "description": "Assay mimid-1wgh.44.12 of /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-hub-retracted-messages-00.txt (392 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: two AE components carried in AppEphemeral proposals (mls-extensions-11 app_ephemeral, External: Y) from the hub: hub_retracted_messages (suggested 0x0050: retract listed MIMI message IDs, with timestamp, remover URI, optional AbuseType; §3.1 L180-200) and hub_retracted_range (0x0051: retract everything one sender sent, optionally since a timestamp; §3.2 L210-250). Members check the proposer holds canDeleteOtherMessage (or canDeleteOtherReaction for reactions only). Follows a reportAbuse (protocol-07 §5.9). Informational (L7). 0x0050/0x0051 are free (Rohan's coordination gist cites -00).\n\nHow it meets mimid: the hub accepts reportAbuse and takes no action; it already recognizes app_ephemeral as a proposal type (crates/mimid-server/src/hub/update.rs:120-122, 841) and has a hub external-sender key (local /v1/hub-sender). Capability values match mimi-room-policy (CAN_DELETE_OTHER_MESSAGE 0x010b, CAN_DELETE_OTHER_REACTION 0x0108; capability.rs:72-79).\n\nRECOMMEND: track only now; adopt later if mimid builds hub moderation (acting on abuse reports). Then: (1) hub: an admin command that sends an AppEphemeral external proposal with either component (the hub computes message IDs from reported plaintext); (2) mimi-mls members: verify the proposer's authority (see wg item 1, unresolved) and apply; (3) JMAP projection: mark retracted messages (deletedAt or a retracted flag). Blocked on the authority question in the wg bead.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:38:50.14734891Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:38:50.14734891Z",
+  "labels": [
+    "human",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.34",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:38:50.177674514Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
