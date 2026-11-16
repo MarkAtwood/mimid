@@ -37,6 +37,9 @@ impl std::fmt::Debug for Daemon {
     }
 }
 
+/// The plaintext store's file name in the state directory.
+pub const CHAT_STORE_FILE: &str = "chat.json";
+
 /// Why [`Daemon::start`] failed.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -68,6 +71,9 @@ pub enum StartError {
     /// The Session does not build (a crate-jmap type changed).
     #[error("building the Session")]
     Session(#[from] serde_json::Error),
+    /// The plaintext store (`<state_dir>/chat.json`) could not be read.
+    #[error("opening the plaintext store")]
+    Store(#[from] mimid_agent_jmap::PersistError),
 }
 
 impl Daemon {
@@ -104,11 +110,16 @@ impl Daemon {
         let account = http::account_id(&config.user_uri);
         let (session, session_state) =
             http::session(&format!("http://{local_addr}"), &config.user_uri, &account)?;
-        let chat = Arc::new(AgentChat::new(
-            agent,
-            account,
-            Options::default().with_invites(config.invites.into()),
-        ));
+        // The decrypted Chats and Messages, kept across restarts (bead
+        // mimid-1wgh.13.12).
+        let chat = Arc::new(
+            AgentChat::new(
+                agent,
+                account,
+                Options::default().with_invites(config.invites.into()),
+            )
+            .persisted_at(config.state_dir.join(CHAT_STORE_FILE))?,
+        );
         let (stop, stop_receiver) = watch::channel(false);
         let (changes, _) = broadcast::channel(CHANGE_BUFFER);
         let endpoint = Arc::new(Endpoint {

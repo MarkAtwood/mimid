@@ -85,6 +85,10 @@ pub struct AgentChat {
     pub(crate) agent: Arc<Mutex<Agent>>,
     pub(crate) links: StdMutex<Links>,
     pub(crate) options: Options,
+    /// The plaintext store file ([`AgentChat::persisted_at`]).
+    pub(crate) store_path: Option<std::path::PathBuf>,
+    /// One [`AgentChat::save`] at a time.
+    pub(crate) save_lock: Mutex<()>,
 }
 
 impl std::fmt::Debug for AgentChat {
@@ -109,6 +113,8 @@ impl AgentChat {
             agent: Arc::new(Mutex::new(agent)),
             links: StdMutex::new(Links::default()),
             options,
+            store_path: None,
+            save_lock: Mutex::new(()),
         }
     }
 
@@ -142,6 +148,14 @@ impl AgentChat {
 
     pub(crate) fn links(&self) -> std::sync::MutexGuard<'_, Links> {
         self.links.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// `result`, after saving the store when it is a success.
+    async fn saved<T, E>(&self, result: Result<T, E>) -> Result<T, E> {
+        if result.is_ok() {
+            self.save_or_log().await;
+        }
+        result
     }
 
     pub(crate) fn link_room(&self, room: &str, chat: &Id) {
@@ -547,7 +561,7 @@ impl ChatBackend for AgentChat {
     {
         self.check_account(account_id)
             .map_err(SetFailure::into_backend)?;
-        match O::TYPE_NAME {
+        let result = match O::TYPE_NAME {
             "Chat" => self.create_chat(create_id, build).await,
             name if local(name) => {
                 self.inner
@@ -555,7 +569,8 @@ impl ChatBackend for AgentChat {
                     .await
             }
             name => Err(unsupported_type(name)),
-        }
+        };
+        self.saved(result).await
     }
 
     async fn create_message<F>(
@@ -570,7 +585,8 @@ impl ChatBackend for AgentChat {
     {
         self.check_account(account_id)
             .map_err(SetFailure::into_backend)?;
-        self.create_message_in_room(create_id, build).await
+        let result = self.create_message_in_room(create_id, build).await;
+        self.saved(result).await
     }
 
     async fn update_object<O: SetObject + Send + Sync>(
@@ -596,9 +612,11 @@ impl ChatBackend for AgentChat {
             name if local(name) => {}
             name => return Err(unsupported_type(name)),
         }
-        self.inner
+        let result = self
+            .inner
             .update_object::<O>(caller, account_id, id, patch)
-            .await
+            .await;
+        self.saved(result).await
     }
 
     async fn destroy_object<O: SetObject + Send + Sync>(
@@ -609,7 +627,7 @@ impl ChatBackend for AgentChat {
     ) -> Result<(), BackendSetError<MemoryError>> {
         self.check_account(account_id)
             .map_err(SetFailure::into_backend)?;
-        match O::TYPE_NAME {
+        let result = match O::TYPE_NAME {
             "Chat" => {
                 if let Some(room) = self.room_of_chat(id) {
                     let mut agent = self.agent.lock().await;
@@ -641,7 +659,8 @@ impl ChatBackend for AgentChat {
             }
             name if local(name) => self.inner.destroy_object::<O>(caller, account_id, id).await,
             name => Err(unsupported_type(name)),
-        }
+        };
+        self.saved(result).await
     }
 
     fn supports_type<O: JmapObject>(&self, _caller: &(), account_id: &Id) -> bool {

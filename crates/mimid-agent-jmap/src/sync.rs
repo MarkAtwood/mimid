@@ -43,6 +43,9 @@ pub enum SyncError {
     /// The store refused a write.
     #[error("storing: {0}")]
     Store(String),
+    /// The plaintext store file could not be written.
+    #[error(transparent)]
+    Persist(#[from] crate::PersistError),
 }
 
 impl From<MemoryError> for SyncError {
@@ -93,6 +96,9 @@ impl AgentChat {
                 break;
             }
         }
+        // Before anything else polls: what the agent delivered can't be
+        // decrypted again.
+        self.save().await?;
         Ok(report)
     }
 

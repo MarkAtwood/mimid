@@ -125,6 +125,18 @@ struct Client {
 
 impl Client {
     async fn new(server: &Server, user: &'static str, account: &str, dir: &Path) -> Self {
+        Self::open(server, user, account, dir, false).await
+    }
+
+    /// As [`Client::new`]; with `persisted`, the account's objects are kept
+    /// in `<dir>/<user>-chat.json` (bead mimid-1wgh.13.12).
+    async fn open(
+        server: &Server,
+        user: &'static str,
+        account: &str,
+        dir: &Path,
+        persisted: bool,
+    ) -> Self {
         let mut agent = Agent::open(AgentConfig {
             server_url: server.base.clone(),
             token: server.tokens[user].clone(),
@@ -134,7 +146,14 @@ impl Client {
         .await
         .unwrap();
         agent.publish_key_packages(2).await.unwrap();
-        let chat = Arc::new(AgentChat::new(agent, Id::from(account), Options::default()));
+        let name = user.rsplit('/').next().unwrap();
+        let mut chat = AgentChat::new(agent, Id::from(account), Options::default());
+        if persisted {
+            chat = chat
+                .persisted_at(dir.join(format!("{name}-chat.json")))
+                .unwrap();
+        }
+        let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();
         AgentChat::register(&chat, &mut dispatcher);
         Self { chat, dispatcher }
@@ -450,4 +469,75 @@ async fn two_accounts_chat_through_jmap() {
         !member_ids(&chats[0]).contains(&"alice".to_owned()),
         "{chats:?}"
     );
+}
+
+/// bob's Chats and Messages survive a restart of his agent and its JMAP
+/// layer (bead mimid-1wgh.13.12): the agent cannot decrypt a message
+/// twice, so the plaintext store is the only copy.
+///
+/// Oracles: the objects bob had before the restart, read through JMAP,
+/// compared with the same reads after; a message after the restart lands
+/// in the same Chat from the same ChatContact; the store file is 0600.
+#[tokio::test]
+async fn a_restart_keeps_chats_and_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Client::new(&server, ALICE, "alice", dir.path()).await;
+    let bob = Client::open(&server, BOB, "bob", dir.path(), true).await;
+    bob.chat.agent().lock().await.allow(ALICE).await.unwrap();
+
+    let bob_contact = alice.create("ChatContact", json!({"identity": BOB})).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let chat_a = alice
+        .create(
+            "Chat",
+            json!({"kind": "group", "name": "kept", "memberIds": [bob_contact]}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    bob.sync_until(|r| async move { (!r.joined.is_empty()).then_some(r) })
+        .await;
+    let chats = bob.get("Chat", None).await;
+    let chat_b = chats[0]["id"].as_str().unwrap().to_owned();
+    alice
+        .create(
+            "Message",
+            json!({"chatId": chat_a, "body": "before", "sentAt": SENT_AT}),
+        )
+        .await;
+    let before = bob.sync_until_messages(&chat_b, 1).await;
+    let chats = bob.get("Chat", None).await;
+    assert_eq!(chats[0]["unreadCount"], json!(1));
+    let contacts = bob.get("ChatContact", None).await;
+
+    // Restart: everything of bob's is dropped, then opened from disk.
+    drop(bob);
+    let bob = Client::open(&server, BOB, "bob", dir.path(), true).await;
+    assert_eq!(bob.get("Chat", None).await, chats);
+    assert_eq!(bob.get("ChatContact", None).await, contacts);
+    assert_eq!(bob.messages(&chat_b).await, before);
+
+    // The next message joins the same Chat, from the same contact.
+    alice
+        .create(
+            "Message",
+            json!({"chatId": chat_a, "body": "after", "sentAt": SENT_AT}),
+        )
+        .await;
+    let got = bob.sync_until_messages(&chat_b, 2).await;
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert_eq!(bob.get("Chat", None).await.len(), 1);
+    let new = got.iter().find(|m| m["body"] == json!("after")).unwrap();
+    assert_eq!(new["senderId"], before[0]["senderId"]);
+    let file = dir.path().join("bob-chat.json");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
 }

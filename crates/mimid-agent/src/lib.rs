@@ -54,9 +54,10 @@
 //!
 //! # Limitations
 //!
-//! - The JMAP store is mimid-agent-jmap's, in memory: after a restart the
-//!   Chats come back with new ids and without earlier Messages (see that
-//!   crate's Limitations for what does and does not map).
+//! - The decrypted Chats and Messages are kept in `<state_dir>/chat.json`
+//!   ([`CHAT_STORE_FILE`], mode 0600), rewritten whole after each change;
+//!   see mimid-agent-jmap's `persist` limits (state strings restart, so
+//!   clients resync after a restart).
 //! - The daemon polls its server on an interval; it does not listen to
 //!   the server's EventSource, so incoming messages wait for the next
 //!   sync.
@@ -90,6 +91,6 @@ mod http;
 pub mod token;
 
 pub use config::{Config, ConfigError, Invites};
-pub use daemon::{Daemon, StartError};
+pub use daemon::{CHAT_STORE_FILE, Daemon, StartError};
 pub use http::{CAPABILITIES, CHAT_CAPABILITY, CORE_CAPABILITY};
 pub use token::{LocalToken, TokenError};

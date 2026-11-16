@@ -67,9 +67,10 @@
 //!   is not sent.
 //! - Invites the policy refuses stay pending in the agent; JMAP Chat has
 //!   no object for them.
-//! - The store is in memory: after a restart, `sync` makes new Chats (with
-//!   new ids) for the rooms the agent is in, without earlier Messages, and
-//!   hosted rooms come back with the owner as `member`.
+//! - Without [`AgentChat::persisted_at`] the store is in memory: after a
+//!   restart, `sync` makes new Chats (with new ids) for the rooms the
+//!   agent is in, without earlier Messages. With it, objects come back
+//!   under their ids (see `persist` for its limits).
 //! - `/set` methods on Chats and Messages hold the agent while they send,
 //!   so they wait for a running `sync` and for the hub.
 
@@ -77,7 +78,9 @@
 
 mod backend;
 mod convert;
+mod persist;
 mod sync;
 
 pub use backend::{AgentChat, InvitePolicy, Options};
+pub use persist::PersistError;
 pub use sync::{SyncError, SyncReport};
