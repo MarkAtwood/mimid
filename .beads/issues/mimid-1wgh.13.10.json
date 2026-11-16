@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.13.10",
   "title": "A3: mimid-agent daemon: 127.0.0.1 HTTP JMAP, bearer token in a 0600 file, EventSource",
   "description": "Binary crates/mimid-agent over A1+A2: config (server URL, user, server token file, state dir), listens on 127.0.0.1 only (refuse other addresses), generates a per-user bearer token into a 0600 file on first start, serves the JMAP Session/API/EventSource from crate-jmap-server. Logs per mimid's logging rules. Decision mimid-1wgh.13 note 2026-11-16.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T03:01:46.572816237Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T03:01:46.572816237Z",
+  "updated_at": "2026-11-16T06:38:22.687460145Z",
+  "closed_at": "2026-11-16T06:38:22.687460145Z",
+  "close_reason": "Merged (crates/mimid-agent, 0889f16): loopback-only daemon, 0600 local token, Host check, CORS allowlist, Session/API/EventSource over A2, sync loop, graceful shutdown. Also fixed: A1 consent futures and A2 sync future made Send. 1447 workspace tests at the pre-merge run; clippy clean.",
   "labels": [
     "agent"
   ],
