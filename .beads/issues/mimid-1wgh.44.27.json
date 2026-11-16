@@ -3,13 +3,15 @@
   "title": "Decision: draft-mahy-mls-sd-cwt-credential-03 is adopt-later for mimid (with the identity decision)",
   "description": "Assay mimid-1wgh.44.9 of /home/mark/PROJECT/IETF/specs/draft-mahy-mls-sd-cwt-credential-03.txt (448 lines, read whole; sha256 in specs/PROVENANCE).\n\nWhat it is: two MLS credential types, sd_cwt (an SD-KBT holding an SD-CWT; suggested 0x0005, L327) and sd_jwt (SD-JWT+KB, classic or 'compacted' TLS struct; suggested 0x0006, L345). Informational (L7). The subject names one MLS client, e.g. a mimi client URI; other claims may name the user (L229-235). The confirmation key is encouraged to be the MLS signature key (L237-239).\n\nWhy it matters to mimid: mimid uses BasicCredential only, which gives (a) the multi-device limit H1 (stock mls-rs refuses two leaves with the same BasicCredential identity; crates/mimid-server/src/lib.rs Limitations) and (b) no domain rule for a credential (mimi-protocol#159, deferred to draft-mahy-mimi-identity; see decision bead mimid-1wgh.44.4). A per-client sd_cwt with a user claim solves (a). For (b), the issuer could be the provider, verified with the key mimid already publishes for provider authentication (\u003cselector\u003e._mimi.\u003cdomain\u003e, draft-atwood-mimi-provider-auth; mimid-75nk): one DNS key would vouch both for the provider's requests and for its users' credentials. That pairing is mimid's own idea, not in this draft.\n\nRECOMMEND: adopt later, decided together with .44.4 (identity-05). Not now: individual draft, Security and Privacy are TODO (L4/L5 sections), and the verification steps a member needs are missing (wg bead). Features if adopted: (1) mimi-mls: sd_cwt credential type through OpenMLS's Other credential type, with COSE/CBOR verification of the SD-KBT and SD-CWT; (2) the issuer: mimid signs an SD-CWT per client at KeyPackage publish (JMAP KeyPackage/set), subject = client URI, a user claim, cnf = the leaf signature key; (3) verifiers: issuer key from the user URI's domain (DNS key or trust list, as provider-auth); (4) hub: participant list keyed by the user claim, not the credential identity; (5) lift H1.\n\nNo conflict with code today (nothing sends these types). Codepoint: 0x0005 collides with weak-multi in draft-barnes-mls-addl-creds-01 (Rohan's gist; noted in mimid-1wgh.4.78).",
   "notes": "Correction: 'Security and Privacy are TODO (L4/L5 sections)' means §4 and §5 (both say TODO), not line numbers.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T00:28:01.504403717Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T00:28:05.552499949Z",
+  "updated_at": "2026-11-16T02:29:03.117606871Z",
+  "closed_at": "2026-11-16T02:29:03.117606871Z",
+  "close_reason": "Mark 2026-11-16: track only. Keep BasicCredential; watch identity-05 and sd-cwt-credential; no feature beads. (H1 multi-device and #159 domain rule stay open problems.)",
   "labels": [
     "human",
     "spec-assay"
