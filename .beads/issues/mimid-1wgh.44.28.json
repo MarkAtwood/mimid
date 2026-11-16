@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.28",
+  "title": "wg: draft-mahy-mls-sd-cwt-credential-03 gaps (key binding, verification, audience, issuer)",
+  "description": "From assay mimid-1wgh.44.9 of /home/mark/PROJECT/IETF/specs/draft-mahy-mls-sd-cwt-credential-03.txt. Posting needs Mark's OK (github.com/rohanmahy/... per the draft's About section).\n\n1. Key binding: the confirmation key is only 'encouraged' to be the MLS signature key (L237). If it is not, nothing binds the LeafNode's signature key to the token, which is the AS's first requirement as the draft itself quotes RFC 9750 (§3). Require cnf to be the LeafNode (or ExternalSender) signature key, or define the binding.\n2. Verification procedure: no steps for a member validating a credential: issuer signature, issuer key discovery and trust, KBT signature with cnf, audience, time validity versus the LeafNode lifetime and KeyPackage reuse, which claims identify the user.\n3. Audience: 'a representation of the MLS group' or a higher-level structure (L209-217) with no encoding; group_id bytes, a room URI? Without one, a KBT for one group verifies in another.\n4. 'Same client' (AS requirement 3, §3): no rule for comparing two sd_cwt credentials (subject equality? issuer and subject?).\n5. Codepoint: suggested 0x0005 collides with weak-multi in draft-barnes-mls-addl-creds-01 (coordination gist).\n6. Editorial: 'zero of more' (L189); [I-D.mahy-mls-member-secrets] is '*** BROKEN REFERENCE ***' (L418); mimi-protocol cited at -06 (now -07); §4 and §5 are TODO.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:28:01.645408457Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:28:01.645408457Z",
+  "labels": [
+    "wg",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.28",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:28:01.677402115Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
