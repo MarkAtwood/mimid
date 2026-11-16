@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.44.24",
+  "title": "wg: draft-mahy-mimi-msgid-aad-03 gaps (item encoding, verification, negotiation)",
+  "description": "From assay mimid-1wgh.44.7 of /home/mark/PROJECT/IETF/specs/draft-mahy-mimi-msgid-aad-03.txt. Posting needs Mark's OK (github.com/rohanmahy/mimi-msgid-aad).\n\n1. Encoding: L132-134 says the item 'MUST contain the MIMI content Message ID' but not the aad_item_data bytes; say it is the 32-octet Message ID of content-10 §3.3 as is (no further framing).\n2. Verification: a provider cannot check the value against the encrypted content, and the text never asks members to. A sender can put a different ID in the AAD than the content gives, misleading provider logs or abuse handling. Say members SHOULD (or MAY) compute the ID and compare, and what a mismatch means; say providers MUST NOT rely on it for anything but diagnostics. §4 (L143-147) covers only the privacy side.\n3. Negotiation: no rule on when a client may add the item. Under mls-extensions-11 §5 a component that uses Safe AAD is listed in app_components and safe_aad; say whether the item is sent only when the GroupContext safe_aad lists message_id.\n4. L138 calls it 'this extension'; it is a component.\n5. References: content-09 (L175-180) and mls-extensions-10 (L182-187) are now -10 and -11; the cited sections (content §3.3, extensions §4.9) are unchanged.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:22:11.772660557Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:22:11.772660557Z",
+  "labels": [
+    "wg",
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.24",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:22:11.876856378Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
