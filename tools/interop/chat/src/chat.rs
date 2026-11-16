@@ -334,7 +334,7 @@ impl Client {
             "/invite <user>         add a user (a mimi:// URI, or a bare name on your domain)",
             "  ... --policy k=v ... the same Commit also changes base_room_policy",
             "  ... --roles          the same Commit also replaces roles_list (both hubs should refuse)",
-            "/roles [ban|ban-no-banned]  set roles_list: 1 \"banned\", 2 \"member\" (needed before /policy on mimi-hubd);\n                       ban: member also holds canBan 2->1; ban-no-banned: the same without role 1",
+            "/roles [ban|ban-no-banned]  set roles_list: 1 \"banned\", 2 \"member\" (needed before /policy on mimi-hubd);\n                       ban: member also holds canBan 2->1; ban-no-banned: the same without role 1;\n                       no-ban: change 2->1 listed but no canBan; no-add: no canAddParticipant",
             "/ban <user>            move <user> to role 1 and remove their clients (canBan)",
             "/policy k=v ...        change base_room_policy: fixed_membership, multi_device,\n                       pseudonyms_allowed, persistent_room, discoverable (true|false),\n                       max_clients, max_users (a number or none)",
             "/stale-commit          test: send a roles_list Commit one epoch late (expect wrongEpoch)",
@@ -591,7 +591,15 @@ impl Client {
                 ban_roles(false),
                 "2 member (as /roles, plus canBan 2->1), no role 1",
             ),
-            _ => bail!("usage: /roles [ban|ban-no-banned]"),
+            "no-ban" => (
+                without(ban_roles(true), Capability::CAN_BAN),
+                "1 banned, 2 member (change 2->1 allowed, but no canBan)",
+            ),
+            "no-add" => (
+                without(default_roles(), Capability::CAN_ADD_PARTICIPANT),
+                "1 banned, 2 member (as /roles, but no canAddParticipant)",
+            ),
+            _ => bail!("usage: /roles [ban|ban-no-banned|no-ban|no-add]"),
         };
         let room = self.current()?;
         let update = AppDataUpdate::Update {
@@ -2232,6 +2240,16 @@ fn ban_roles(banned: bool) -> RoleData {
     }
     if !banned {
         roles.roles.retain(|r| r.role_index != 1);
+    }
+    roles
+}
+
+/// `roles` with `capability` taken off the member role, so the hub must
+/// refuse the action it authorizes even where the role change is listed
+/// (room-policy-04 §8.1; check mimid-1wgh.46.20.3).
+fn without(mut roles: RoleData, capability: Capability) -> RoleData {
+    if let Some(member) = roles.roles.iter_mut().find(|r| r.role_index == ROLE) {
+        member.role_capabilities.retain(|c| *c != capability);
     }
     roles
 }
