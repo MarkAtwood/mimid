@@ -1,0 +1,33 @@
+{
+  "id": "mimid-1wgh.44.6",
+  "title": "assay: draft-mahy-mls-semiprivatemessage-08",
+  "description": "Assay draft-mahy-mls-semiprivatemessage-08 per the output contract on epic mimid-1wgh.44 (read the whole draft locally, never over the network; one human decision bead; conflict, feature, wg beads as found; 'no impact' is a valid finding). File: /home/mark/PROJECT/IETF/specs/draft-mahy-mls-semiprivatemessage-08.txt (sha256 in specs/PROVENANCE). Known hooks in mimid: protocol-07 carries SemiPrivateMessage (crates/mimi-protocol/src/notify.rs, update.rs, lib.rs; crates/mimi-mls/src/member.rs); beads mimid-1wgh.37.7, .5.51, .4.12, .37.40; JMAP-MIMI note on mimid-1wgh.12.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:16:48.045952872Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:16:48.045952872Z",
+  "labels": [
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.6",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:16:48.072203752Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.44.6",
+      "depends_on_id": "mimid-1wgh.44.1",
+      "type": "blocks",
+      "created_at": "2026-11-16T00:16:48.093194545Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
