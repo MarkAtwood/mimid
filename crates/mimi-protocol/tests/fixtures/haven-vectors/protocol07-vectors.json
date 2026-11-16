@@ -281,9 +281,9 @@
       "variant": "Commit"
     },
     {
-      "answer": "invalidProposal",
+      "answer": "notAllowed",
       "decode": "ok",
-      "description": "an AppDataUpdate for base_room_policy (component 0x0027) for a room that has no roles yet is invalid",
+      "description": "an AppDataUpdate for base_room_policy (component 0x0027) for a room that has no roles yet is refused by the room's policy",
       "hex": "0001000110979794234aa8d9ca061fc46ee9b3869b000000000000000001000000000003110100080027010a0000000100000001000000404057876a204fd553470719e7e44a107ce217d746028b0a4e7443db68afd6d58a0cfca8768d79209766c96d7dbbd13061a18c90ea59b4a1b22b5b6dbd86d588a2002050cbdef34ceb25cddf5655b0e51d5182ac6aa466c5f0da89b18dcc18f132d13c20a0f5de27039e582fd2a7113a33e0f7fa24a4f4cb5fb57223a36c2aeec4cfe1ac00010001000110979794234aa8d9ca061fc46ee9b3869b000000000000000120cfabcf53566fe15969eb3daba39fa3d45589af236a0ec86acafeb4564c76a08b2078a4c6c5191d0f5b4903c5196ed04691d5d479e5849c33e619cbe60b4f606c3900240004212031be17f2627b0d3e75b5ad6e81f5f79f5b25cddf158e631c947059fccc5d9a462050cbdef34ceb25cddf5655b0e51d5182ac6aa466c5f0da89b18dcc18f132d13c0000000040403d73b51d9ef6266c1c8eda882f7ea758ba3bb77d10747136f7136a7a8c93d7c618b3d7b21f2831ee3d4893c6a4782f678621c87de205e3968fd330c2735c920304",
       "id": "up-x6-base-room-policy-before-roles",
       "kind": "UpdateRequest",
