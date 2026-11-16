@@ -1,0 +1,33 @@
+{
+  "id": "mimid-1wgh.44.13",
+  "title": "assay: draft-mahy-mls-new-framed-content-tbs-02",
+  "description": "Assay draft-mahy-mls-new-framed-content-tbs-02 per the output contract on epic mimid-1wgh.44 (read the whole draft locally, never over the network; one human decision bead; conflict, feature, wg beads as found; 'no impact' is a valid finding). File: /home/mark/PROJECT/IETF/specs/draft-mahy-mls-new-framed-content-tbs-02.txt (sha256 in specs/PROVENANCE). Known hooks in mimid: beads mimid-1wgh.4.68, mimid-1wgh.37.90.34.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-16T00:16:49.083581271Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-16T00:16:49.083581271Z",
+  "labels": [
+    "spec-assay"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.44.13",
+      "depends_on_id": "mimid-1wgh.44",
+      "type": "parent-child",
+      "created_at": "2026-11-16T00:16:49.111121168Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.44.13",
+      "depends_on_id": "mimid-1wgh.44.1",
+      "type": "blocks",
+      "created_at": "2026-11-16T00:16:49.132684071Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
