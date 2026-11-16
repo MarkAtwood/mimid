@@ -112,7 +112,7 @@ mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat cl
 
   | Boundary | Check |
   |---|---|
-  | Agent socket | Peer credentials |
+  | Agent (loopback HTTP) | Host is a loopback name for the port, then the local bearer token in a 0600 file (Mark 2026-11-16: loopback HTTP + token, not a socket) |
   | JMAP | Bearer token |
   | Hub | Room policy |
 
