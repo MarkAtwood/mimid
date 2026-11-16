@@ -45,12 +45,11 @@ use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::JmapState;
 use super::auth::Account;
-use super::bus::ChangeBus;
 use super::projection::{Kind, Projection};
 use crate::follower::key_packages::KeyPackages;
 use crate::http::problem;
@@ -131,16 +130,7 @@ pub(super) async fn get_eventsource(
         return problem(StatusCode::BAD_REQUEST, "eventsource-query");
     };
     let (sender, receiver) = mpsc::channel(EVENT_BUFFER);
-    tokio::spawn(stream(
-        Arc::clone(&state.0.projection),
-        state.0.key_packages.clone(),
-        state.0.store.clone(),
-        state.0.bus.clone(),
-        state.0.stop.clone(),
-        account,
-        params,
-        sender,
-    ));
+    tokio::spawn(stream(state.clone(), account, params, sender));
     Sse::new(ReceiverStream::new(receiver)).into_response()
 }
 
@@ -189,15 +179,16 @@ async fn states(
 /// Sends events until the client goes away, the bus closes, or, with
 /// `closeafter=state`, the first `state` event is sent.
 async fn stream(
-    projection: Arc<Projection>,
-    key_packages: Option<Arc<KeyPackages>>,
-    store: Store,
-    bus: ChangeBus,
-    mut stop: Option<watch::Receiver<bool>>,
+    state: JmapState,
     account: Account,
     params: Params,
     sender: mpsc::Sender<Result<Event, Infallible>>,
 ) {
+    let projection = Arc::clone(&state.0.projection);
+    let key_packages = state.0.key_packages.clone();
+    let store = state.0.store.clone();
+    let bus = state.0.bus.clone();
+    let mut stop = state.0.stop.clone();
     // Subscribe before reading the states, so no change falls between.
     let mut changes = bus.subscribe();
     let mut last = match states(
