@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.46.20.3",
   "title": "Interop day: committer authority on role changes (bans, adds) on both hubs",
   "description": "When Haven keeps the ratchet tree and checks who made a role change (Jason 238470: today only the target role is checked). Extend mimid-chat /roles with variants that give the member role no canBan, and no canAddParticipant; then on Haven's hub (or our copy at the new commit): a ban by a member without canBan, an add by a member without canAddParticipant, and a change not in the actor's authorized_role_changes must be refused; the same Commits refused by mimid's hub (hub/policy.rs authorize_commit). Today's ban test: mimid-1wgh.46.19, tools/interop/chat /ban.",
-  "notes": "2026-11-16 prep: mimid-chat 682585b adds /roles no-ban and /roles no-add. Baseline on local mimid (main): ban without canBan refused notAllowed; with canBan accepted; invite without canAddParticipant refused already at keyMaterial (mimid answers noConsent: hub/key_material.rs:131, no policy code in protocol-07 §5.2), so the Commit-level add check is not reached through mimid-chat. For Haven: their hub may not check keyMaterial authority; then the Commit-level check is what to test. Script: /host or /create; /roles no-ban; /invite \u003cb\u003e; /ban \u003cb\u003e (expect refused); /roles no-add; /invite \u003cc\u003e (expect refused); /roles ban; /ban \u003cb\u003e (expect accepted).",
+  "notes": "2026-11-16 prep: mimid-chat 682585b adds /roles no-ban and /roles no-add. Baseline on local mimid (main): ban without canBan refused notAllowed; with canBan accepted; invite without canAddParticipant refused already at keyMaterial (mimid answers noConsent: hub/key_material.rs:131, no policy code in protocol-07 §5.2), so the Commit-level add check is not reached through mimid-chat. For Haven: their hub may not check keyMaterial authority; then the Commit-level check is what to test. Script: /host or /create; /roles no-ban; /invite \u003cb\u003e; /ban \u003cb\u003e (expect refused); /roles no-add; /invite \u003cc\u003e (expect refused); /roles ban; /ban \u003cb\u003e (expect accepted).\nCorrection: the baseline ran mimid built at 00:54 from the rewritten main (before 6dbe357 nonces), not the current tip; the authorization code it exercises (hub/policy.rs, key_material.rs, update.rs) last changed in 10e30b5, before that build, so the result holds.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T02:01:51.109632679Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T02:06:53.127050524Z",
+  "updated_at": "2026-11-16T02:07:07.0736356Z",
   "labels": [
     "interop"
   ],
