@@ -2340,6 +2340,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "mimid-agent-core"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "hex",
+ "mimi-content",
+ "mimi-mls",
+ "mimi-protocol",
+ "mimi-room-policy",
+ "mimid-server",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "mimid-server"
 version = "0.1.0"
 dependencies = [

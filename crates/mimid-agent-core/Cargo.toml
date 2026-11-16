@@ -1,0 +1,30 @@
+[package]
+name = "mimid-agent-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The client engine of mimid-agent: MIMI rooms through a mimid server's JMAP API"
+
+# No UI, no HTTP server and no tokio runtime of its own (bead
+# mimid-1wgh.13.8; mimid-1wgh.39: a mobile app embeds it). The async fns run
+# on the caller's runtime.
+[dependencies]
+base64 = "=0.22.1"
+hex = "0.4.3"
+mimi-content = { path = "../mimi-content" }
+mimi-mls = { path = "../mimi-mls" }
+mimi-protocol = { path = "../mimi-protocol" }
+mimi-room-policy = { path = "../mimi-room-policy" }
+# The version and features mimid-server uses, so one HTTP and TLS stack.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+mimid-server = { path = "../mimid-server" }
+tempfile = "=3.23.0"
+tokio.workspace = true
