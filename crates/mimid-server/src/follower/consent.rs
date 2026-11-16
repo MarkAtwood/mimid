@@ -276,6 +276,7 @@ impl Follower {
         if identity_domain(remote.as_bytes()).as_ref() != Some(from) {
             return refuse(ConsentViolation::RemoteUriNotFromSender);
         }
+        crate::hub::note_non_user_uri("consent remote user", remote.as_bytes());
         // Decision mimid-1wgh.7.36: known means having a client, as for
         // keyMaterial (decision mimid-1wgh.7.9), under a user URI
         // (protocol-07 §2.1; decision mimid-1wgh.6.76).

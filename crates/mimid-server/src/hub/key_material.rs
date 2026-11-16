@@ -107,6 +107,7 @@ pub(super) async fn key_material(
     if identity_domain(identity).as_ref() != Some(from) {
         return refuse(target_user, "From domain is not the requester's domain");
     }
+    crate::hub::note_non_user_uri("requestingUser", identity);
 
     {
         // A `&Room` must not live across an await, and the lock must not be

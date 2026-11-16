@@ -754,11 +754,16 @@ fn sender_domain(hub: &Hub, state: &RoomState, sender: &ProposalSender) -> Optio
         return Some(hub.domain().clone());
     }
     match sender {
-        ProposalSender::Member { leaf_index } => state
-            .members
-            .get(leaf_index)
-            .and_then(|identity| identity_domain(identity)),
-        ProposalSender::NewMember { user } => identity_domain(user),
+        ProposalSender::Member { leaf_index } => {
+            state.members.get(leaf_index).and_then(|identity| {
+                crate::hub::note_non_user_uri("proposal sender", identity);
+                identity_domain(identity)
+            })
+        }
+        ProposalSender::NewMember { user } => {
+            crate::hub::note_non_user_uri("new-member proposal sender", user);
+            identity_domain(user)
+        }
         ProposalSender::External { .. } => None,
     }
 }

@@ -129,6 +129,44 @@ pub(crate) fn identity_domain(identity: &[u8]) -> Option<Domain> {
         .and_then(|domain| Domain::try_from(domain.to_owned()).ok())
 }
 
+/// The most remote provider domains [`note_non_user_uri`] remembers.
+/// INVENTED, NOT FROM SPEC.
+const MAX_NOTED_DOMAINS: usize = 256;
+
+/// Notes, once per provider domain per process, a remote identity whose
+/// domain is valid but which is not a user URI `mimi://<domain>/u/<id>`
+/// (protocol-07 §2.1). mimid accepts it, checking the domain only, and logs
+/// the divergence (decision mimid-1wgh.6.80, Mark 2026-11-16; rule 3 of
+/// mimid-1wgh.52). `field` names where it was seen. The callers' domains
+/// are tied to the authenticated `From` domain, so the set stays small; it
+/// is capped all the same.
+pub(crate) fn note_non_user_uri(field: &'static str, identity: &[u8]) {
+    static NOTED: std::sync::Mutex<std::collections::BTreeSet<Domain>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    let Some(domain) = identity_domain(identity) else {
+        return;
+    };
+    let Ok(text) = std::str::from_utf8(identity) else {
+        return;
+    };
+    if user_uri_domain(text).is_some() {
+        return;
+    }
+    // The set is valid after any panic: inserting is its only change.
+    let mut noted = NOTED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if noted.len() >= MAX_NOTED_DOMAINS || !noted.insert(domain.clone()) {
+        return;
+    }
+    tracing::debug!(
+        field,
+        domain = domain.as_str(),
+        uri = text,
+        "remote user URI is not mimi://<domain>/u/<id>; accepted (logged once per domain)"
+    );
+}
+
 /// The provider domain of a user URI `mimi://<domain>/u/<id>` (protocol-07
 /// §2.1), or `None` for any other URI, including the provider URI
 /// `mimi://<domain>` that is the hub's identity (decision mimid-1wgh.6.35).
@@ -297,5 +335,53 @@ mod tests {
         ] {
             assert!(identity_domain(identity).is_none(), "{identity:?}");
         }
+    }
+
+    /// Decision mimid-1wgh.6.80: a remote identity that is not
+    /// mimi://<domain>/u/<id> is logged once per domain; user URIs and
+    /// identities with no valid domain are not.
+    #[test]
+    fn a_non_user_remote_identity_is_logged_once_per_domain() {
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::layer::SubscriberExt;
+
+        #[derive(Clone, Default)]
+        struct Count(Arc<Mutex<Vec<String>>>);
+        impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Count {
+            fn on_event(
+                &self,
+                event: &tracing::Event<'_>,
+                _: tracing_subscriber::layer::Context<'_, S>,
+            ) {
+                struct Domain(Option<String>);
+                impl tracing::field::Visit for Domain {
+                    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                        if field.name() == "domain" {
+                            self.0 = Some(value.to_owned());
+                        }
+                    }
+                    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {
+                    }
+                }
+                let mut domain = Domain(None);
+                event.record(&mut domain);
+                if let Some(domain) = domain.0 {
+                    self.0.lock().unwrap().push(domain);
+                }
+            }
+        }
+        let count = Count::default();
+        let subscriber = tracing_subscriber::registry().with(count.clone());
+        tracing::subscriber::with_default(subscriber, || {
+            // Domains unique to this test, since the noted set is
+            // process-wide.
+            note_non_user_uri("t", b"mimi://nou-a.example/alice");
+            note_non_user_uri("t", b"mimi://nou-a.example/bob");
+            note_non_user_uri("t", b"mimi://nou-b.example/x/carol");
+            note_non_user_uri("t", b"mimi://nou-c.example/u/dave");
+            note_non_user_uri("t", b"https://nou-d.example/u/erin");
+            note_non_user_uri("t", b"mimi://");
+        });
+        assert_eq!(*count.0.lock().unwrap(), ["nou-a.example", "nou-b.example"]);
     }
 }
