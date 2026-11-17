@@ -10,6 +10,9 @@ description = "The client engine of mimid-agent: MIMI rooms through a mimid serv
 # mimid-1wgh.13.8; mimid-1wgh.39: a mobile app embeds it). The async fns run
 # on the caller's runtime.
 [dependencies]
+# AES-128-GCM for attachments (mimi-content-10 §4.5 MTI); the version
+# OpenMLS's RustCrypto provider already uses.
+aes-gcm = "=0.10.3"
 base64 = "=0.22.1"
 hex = "0.4.3"
 mimi-content = { path = "../mimi-content" }
@@ -20,6 +23,7 @@ mimi-room-policy = { path = "../mimi-room-policy" }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

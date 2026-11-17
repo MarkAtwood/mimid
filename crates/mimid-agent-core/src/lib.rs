@@ -58,6 +58,7 @@
 #![forbid(unsafe_code)]
 
 mod agent;
+pub mod asset;
 mod client;
 pub mod components;
 mod error;
@@ -67,11 +68,11 @@ mod state;
 pub mod uri;
 
 pub use agent::{
-    Agent, AgentConfig, Event, HostOptions, MAX_TEXT_LEN, PendingInvite, ReceivedMessage, RoomInfo,
-    Sent,
+    Agent, AgentConfig, Event, HostOptions, MAX_TEXT_LEN, OutgoingAttachment, PendingInvite,
+    ReceivedMessage, RoomInfo, Sent,
 };
 pub use client::ConsentRecord;
 pub use error::{AgentError, Source};
 pub use journal::Receipt;
-pub use mimi_content::{MessageId, MimiContent};
+pub use mimi_content::{ExternalPart, MessageId, MimiContent};
 pub use state::RoomStatus;

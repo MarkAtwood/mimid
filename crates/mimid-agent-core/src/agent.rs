@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use mimi_content::{Disposition, Extensions, MessageId, MimiContent, NestedPart, Part};
+use mimi_content::{
+    Disposition, Extensions, ExternalPart, MessageId, MimiContent, NestedPart, Part, PartSemantics,
+};
 use mimi_mls::member::{
     AppDataUpdate, CommitBundle, ExternalSender, Incoming, Member, OutOfSync, Sender,
 };
@@ -141,6 +143,53 @@ pub struct ReceivedMessage {
     /// The hub's frank, verified (protocol-07 §5.4.1.3), or `None` for an
     /// unfranked message in a room that does not require franking.
     pub frank: Option<VerifiedFrank>,
+}
+
+impl ReceivedMessage {
+    /// The message's attachments: the ExternalParts at the top level or
+    /// in a top-level `processAll` MultiPart (mimi-content-10 §4.5). Fetch
+    /// one with [`Agent::fetch_attachment`].
+    pub fn attachments(&self) -> Vec<&ExternalPart> {
+        top_level_parts(&self.content.nested_part)
+            .filter_map(|part| match &part.part {
+                Part::External(external) => Some(external),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// The part itself, or the parts of a top-level `processAll` MultiPart.
+fn top_level_parts(part: &NestedPart) -> impl Iterator<Item = &NestedPart> {
+    let parts: &[NestedPart] = match &part.part {
+        Part::Multi {
+            part_semantics: PartSemantics::ProcessAll,
+            parts,
+        } => parts,
+        _ => std::slice::from_ref(part),
+    };
+    parts.iter()
+}
+
+/// A file to send with [`Agent::send_message`].
+#[derive(Clone, PartialEq, Eq)]
+pub struct OutgoingAttachment {
+    /// The file's content.
+    pub content: Vec<u8>,
+    /// Its media type.
+    pub content_type: String,
+    /// A suggested file name, or empty.
+    pub filename: String,
+}
+
+impl std::fmt::Debug for OutgoingAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutgoingAttachment")
+            .field("len", &self.content.len())
+            .field("content_type", &self.content_type)
+            .field("filename", &self.filename)
+            .finish()
+    }
 }
 
 /// A message this agent sent: its MIMI message ID and the hub's
@@ -722,6 +771,108 @@ impl Agent {
             },
         };
         self.send_content(room, &content).await
+    }
+
+    /// Sends `text` with `attachments` to `room`. Each attachment is
+    /// encrypted under its own key ([`crate::asset::seal`]), uploaded to
+    /// this user's server, and sent as an ExternalPart with disposition
+    /// `attachment`; the text and the attachments go in a `processAll`
+    /// MultiPart (mimi-content-10 §4.5). Without attachments this is
+    /// [`Agent::send_text`]; empty text is left out.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Invalid`] for text over [`MAX_TEXT_LEN`] or nothing to
+    /// send, the upload's errors, and those of [`Agent::send_content`].
+    pub async fn send_message(
+        &mut self,
+        room: &str,
+        text: &str,
+        attachments: &[OutgoingAttachment],
+    ) -> Result<Sent, AgentError> {
+        if attachments.is_empty() {
+            return self.send_text(room, text).await;
+        }
+        if text.len() > MAX_TEXT_LEN {
+            return Err(AgentError::Invalid("message too long".to_owned()));
+        }
+        // Before any upload: an unknown room uploads nothing.
+        self.member(room)?;
+        let mut parts = Vec::with_capacity(attachments.len() + 1);
+        if !text.is_empty() {
+            parts.push(NestedPart {
+                disposition: Disposition::RENDER,
+                language: String::new(),
+                part: Part::Single {
+                    content_type: TEXT_PLAIN.to_owned(),
+                    content: text.as_bytes().to_vec(),
+                },
+            });
+        }
+        for attachment in attachments {
+            let sealed = crate::asset::seal(&attachment.content)?;
+            let url = self.jmap.upload(sealed.stored.clone()).await?;
+            parts.push(NestedPart {
+                disposition: Disposition::ATTACHMENT,
+                language: String::new(),
+                part: Part::External(sealed.part(
+                    url,
+                    attachment.content_type.clone(),
+                    attachment.filename.clone(),
+                    String::new(),
+                )),
+            });
+        }
+        let content = MimiContent {
+            salt: random()?,
+            replaces: None,
+            topic_id: vec![],
+            expires: None,
+            in_reply_to: None,
+            mimi_extensions: Extensions {
+                sender_uri: Some(self.me.clone()),
+                room_uri: Some(room.to_owned()),
+                other: BTreeMap::new(),
+            },
+            nested_part: NestedPart {
+                disposition: Disposition::RENDER,
+                language: String::new(),
+                part: Part::Multi {
+                    part_semantics: PartSemantics::ProcessAll,
+                    parts,
+                },
+            },
+        };
+        self.send_content(room, &content).await
+    }
+
+    /// Fetches attachment `part` of a message in `room` through this
+    /// user's server, checks it against its contentHash, and decrypts it
+    /// ([`crate::asset::open`]). An expired part (mimi-content-10 §4.5
+    /// `expires`) is not fetched.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Invalid`] for an expired part, the fetch's errors,
+    /// and [`AgentError::Asset`] if the content does not open.
+    pub fn fetch_attachment<'a>(
+        &'a self,
+        room: &'a str,
+        part: &'a ExternalPart,
+    ) -> impl Future<Output = Result<Vec<u8>, AgentError>> + Send + 'a {
+        // Only the JMAP client is held across the await, so the future is
+        // Send (see Agent::consents).
+        let jmap = &self.jmap;
+        async move {
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            if part.expires != 0 && u64::from(part.expires) < now {
+                return Err(AgentError::Invalid("the attachment has expired".to_owned()));
+            }
+            let stored = jmap.fetch_asset(room, &part.url).await?;
+            Ok(crate::asset::open(part, &stored)?)
+        }
     }
 
     /// Sends `content` to `room` (Room/send), with a `frank_aad` item when
@@ -1366,15 +1517,20 @@ fn received(
     }
     let message_id = MessageId::compute(sender, room, data, &content.salt)
         .map_err(|e| format!("the message ID: {e}"))?;
-    let text = match &content.nested_part.part {
+    // The one text part, or the first text part of a top-level processAll
+    // MultiPart that is not an attachment (a message with attachments,
+    // Agent::send_message).
+    let text = top_level_parts(&content.nested_part).find_map(|part| match &part.part {
         Part::Single {
             content_type,
             content,
-        } if content_type.to_ascii_lowercase().starts_with("text/") => {
+        } if content_type.to_ascii_lowercase().starts_with("text/")
+            && part.disposition != Disposition::ATTACHMENT =>
+        {
             Some(String::from_utf8_lossy(content).into_owned())
         }
         _ => None,
-    };
+    });
     Ok(ReceivedMessage {
         room: room.to_owned(),
         sender: sender.to_owned(),
@@ -1661,6 +1817,22 @@ mod tests {
             send(&agent.host_room(&HostOptions::named("n")));
             send(&agent.invite("r", "u"));
             send(&agent.send_text("r", "t"));
+            send(&agent.send_message("r", "t", &[]));
+            let part = ExternalPart {
+                content_type: String::new(),
+                url: String::new(),
+                expires: 0,
+                size: 0,
+                enc_alg: 0,
+                key: vec![],
+                nonce: vec![],
+                aad: vec![],
+                hash_alg: 0,
+                content_hash: vec![],
+                description: String::new(),
+                filename: String::new(),
+            };
+            send(&agent.fetch_attachment("r", &part));
             send(&agent.leave("r"));
             send(&agent.allow("u"));
             send(&agent.deny("u"));
@@ -1689,6 +1861,75 @@ mod tests {
         );
         assert_eq!(add_component_id(&list, 0x0022).unwrap(), list);
         assert!(add_component_id(&[0x03, 0, 0, 0], 1).is_err());
+    }
+
+    /// A message from Agent::send_message: its text is the text part and
+    /// its attachments the ExternalParts; an attachment-only message has no
+    /// text, and a text/plain part marked as an attachment is not the text.
+    #[test]
+    fn received_reads_text_and_attachments_of_a_process_all_message() {
+        let external = |name: &str| NestedPart {
+            disposition: Disposition::ATTACHMENT,
+            language: String::new(),
+            part: Part::External(crate::asset::seal(name.as_bytes()).unwrap().part(
+                format!("https://a.example/assets/{name}"),
+                "image/png".into(),
+                name.into(),
+                String::new(),
+            )),
+        };
+        let text = |body: &str, disposition| NestedPart {
+            disposition,
+            language: String::new(),
+            part: Part::Single {
+                content_type: TEXT_PLAIN.to_owned(),
+                content: body.as_bytes().to_vec(),
+            },
+        };
+        let message_of = |parts: Vec<NestedPart>| {
+            let content = MimiContent {
+                salt: [1; 16],
+                replaces: None,
+                topic_id: vec![],
+                expires: None,
+                in_reply_to: None,
+                mimi_extensions: Extensions::default(),
+                nested_part: NestedPart {
+                    disposition: Disposition::RENDER,
+                    language: String::new(),
+                    part: Part::Multi {
+                        part_semantics: PartSemantics::ProcessAll,
+                        parts,
+                    },
+                },
+            };
+            received(
+                &content.encode().unwrap(),
+                "mimi://a.example/u/a",
+                "mimi://a.example/r/x",
+                0,
+            )
+            .unwrap()
+        };
+        let both = message_of(vec![
+            text("look", Disposition::RENDER),
+            external("a.png"),
+            external("b.png"),
+        ]);
+        assert_eq!(both.text.as_deref(), Some("look"));
+        assert_eq!(
+            both.attachments()
+                .iter()
+                .map(|p| p.filename.as_str())
+                .collect::<Vec<_>>(),
+            ["a.png", "b.png"]
+        );
+        let only = message_of(vec![
+            text("notes", Disposition::ATTACHMENT),
+            external("c.png"),
+        ]);
+        assert_eq!(only.text, None);
+        assert_eq!(only.attachments().len(), 1);
     }
 
     #[test]

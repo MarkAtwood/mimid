@@ -39,6 +39,10 @@ const MIMI: &str = "urn:ietf:params:jmap:chat:mimi";
 /// How many sent-message digests are kept.
 pub(crate) const MAX_SENT: usize = 1024;
 
+/// The largest attachment fetched, in stored octets. INVENTED, NOT FROM
+/// SPEC; mimid-server stores blobs up to 16 MiB.
+pub const MAX_ASSET_LEN: usize = 16 * 1024 * 1024;
+
 /// How long one JMAP request may take.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -89,6 +93,13 @@ pub(crate) struct Jmap {
     account_id: String,
     pub hub_sender: HubSender,
     pub room_id_prefix: String,
+    /// The server's base URL, without a trailing `/`.
+    base: String,
+    /// The Session's `uploadUrl`.
+    upload_url: String,
+    /// The mimi capability's `assetUrl` template, if the server stores
+    /// attachments.
+    asset_url: Option<String>,
     http: reqwest::Client,
 }
 
@@ -132,6 +143,14 @@ impl Jmap {
         let api_url = session["apiUrl"]
             .as_str()
             .map_or_else(|| format!("{base}/jmap/api"), str::to_owned);
+        let upload_url = session["uploadUrl"]
+            .as_str()
+            .map_or_else(
+                || format!("{base}/jmap/upload/{{accountId}}/"),
+                str::to_owned,
+            )
+            .replace("{accountId}", &account_id);
+        let asset_url = mimi["assetUrl"].as_str().map(str::to_owned);
         Ok(Self {
             sent: Mutex::default(),
             api_url,
@@ -139,6 +158,9 @@ impl Jmap {
             account_id,
             hub_sender,
             room_id_prefix,
+            base: base.to_owned(),
+            upload_url,
+            asset_url,
             http,
         })
     }
@@ -191,6 +213,74 @@ impl Jmap {
             }
         }
         Ok(answer)
+    }
+
+    /// Uploads `bytes` (RFC 8620 §6.1) and returns the URL other
+    /// providers fetch them from: the mimi capability's `assetUrl` with
+    /// the blob's id (INVENTED, NOT FROM SPEC: draft-atwood-jmap-chat-mimi-00
+    /// does not define attachments).
+    pub async fn upload(&self, bytes: Vec<u8>) -> Result<String, AgentError> {
+        let what = "upload";
+        let template = self.asset_url.as_deref().ok_or_else(|| {
+            AgentError::Invalid("the server does not store attachments".to_owned())
+        })?;
+        let response = self
+            .http
+            .post(&self.upload_url)
+            .bearer_auth(&self.token)
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|source| AgentError::Http {
+                what: what.to_owned(),
+                source,
+            })?;
+        let answer = read_json(what, response).await?;
+        let blob_id = answer["blobId"]
+            .as_str()
+            .ok_or_else(|| AgentError::malformed(what, "no blobId"))?;
+        Ok(template.replace("{blobId}", blob_id))
+    }
+
+    /// Fetches the attachment at `url` for `room` through this user's
+    /// server (`GET /jmap/asset/{accountId}`, INVENTED, NOT FROM SPEC),
+    /// which reads its own assets and asks the room's hub for others
+    /// (protocol-07 §5.10.2). At most [`MAX_ASSET_LEN`] octets.
+    pub async fn fetch_asset(&self, room: &str, url: &str) -> Result<Vec<u8>, AgentError> {
+        let what = "GET /jmap/asset";
+        let endpoint = reqwest::Url::parse_with_params(
+            &format!("{}/jmap/asset/{}", self.base, self.account_id),
+            [("room", room), ("url", url)],
+        )
+        .map_err(|e| AgentError::Invalid(format!("the asset request URL: {e}")))?;
+        let mut response = self
+            .http
+            .get(endpoint)
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(|source| AgentError::Http {
+                what: what.to_owned(),
+                source,
+            })?;
+        if !response.status().is_success() {
+            return Err(read_json(what, response)
+                .await
+                .err()
+                .unwrap_or_else(|| AgentError::malformed(what, "an error status")));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|source| AgentError::Http {
+            what: what.to_owned(),
+            source,
+        })? {
+            if body.len() + chunk.len() > MAX_ASSET_LEN {
+                return Err(AgentError::malformed(what, "the attachment is too large"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
     }
 
     /// The account's Consent records.

@@ -73,6 +73,9 @@ pub enum AgentError {
     /// No pending invite with that number.
     #[error("no pending invite {0}")]
     NoSuchInvite(u64),
+    /// A fetched attachment could not be opened.
+    #[error("the attachment: {0}")]
+    Asset(#[from] crate::asset::AssetError),
     /// An MLS operation failed.
     #[error("{what}")]
     Mls {

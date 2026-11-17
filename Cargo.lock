@@ -2536,6 +2536,7 @@ dependencies = [
 name = "mimid-agent-core"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "axum",
  "base64 0.22.1",
  "hex",
@@ -2547,6 +2548,7 @@ dependencies = [
  "reqwest 0.13.5",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "tempfile",
  "thiserror",
  "tokio",
