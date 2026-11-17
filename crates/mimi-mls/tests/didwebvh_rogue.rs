@@ -242,6 +242,26 @@ impl Rogue {
     }
 }
 
+impl Rogue {
+    /// A standalone GroupContextExtensions proposal setting `extensions`.
+    fn propose_extensions(
+        &mut self,
+        extensions: Extensions<openmls::prelude::GroupContext>,
+    ) -> Vec<u8> {
+        let Rogue {
+            provider,
+            signer,
+            group,
+        } = self;
+        let (message, _) = group
+            .as_mut()
+            .expect("joined")
+            .propose_group_context_extensions(&*provider, extensions, signer)
+            .expect("OpenMLS builds the proposal");
+        message.tls_serialize_detached().expect("encode")
+    }
+}
+
 struct Room {
     alice: AliceLog,
     alice_d1: Identity,
@@ -489,4 +509,51 @@ fn a_commit_that_follows_the_rules_is_accepted() {
             .expect("record");
         assert_eq!(record, heads);
     }
+}
+
+/// Open Issue 5 of the draft: with a GroupContextExtensions proposal from
+/// another member pending, a Commit that must change the record cannot be
+/// built, and the device sends its new credential as an Update proposal
+/// instead (bead mimid-1wgh.4.81.28 (c), mimid-agent's fallback).
+#[test]
+fn a_pending_group_context_extensions_proposal_blocks_the_record_change_but_not_the_update() {
+    let mut room = room();
+    // The rogue proposes the extensions as they are (the hub would let it
+    // through: it changes nothing but the record, which it keeps).
+    let extensions = room.rogue.group().extensions().clone();
+    let proposal = room.rogue.propose_extensions(extensions);
+    room.a1
+        .process(&room.alice_d1, &proposal, no_components)
+        .expect("d1 stores the proposal");
+
+    // Alice's controller writes v3; d1 takes it.
+    let devices = [
+        key(&room.alice_d1),
+        key(&room.alice_d2),
+        room.rogue.public_key(),
+    ];
+    room.alice.set(&devices);
+    room.alice_d1
+        .set_did_webvh_credential(CP, room.alice.credential())
+        .expect("d1 takes v3");
+    let refused = room.a1.commit(&room.alice_d1, &[], &[], &[], no_components);
+    assert!(
+        matches!(
+            refused,
+            Err(MemberError::DidWebvh(
+                DidWebvhError::PendingGroupContextExtensions
+            ))
+        ),
+        "{refused:?}"
+    );
+    let update = room
+        .a1
+        .propose_credential_update(&room.alice_d1)
+        .expect("the Update proposal is built");
+    room.b1
+        .process(&room.bob_d1, &proposal, no_components)
+        .expect("bob stores the extensions proposal");
+    room.b1
+        .process(&room.bob_d1, &update, no_components)
+        .expect("bob stores d1's Update");
 }

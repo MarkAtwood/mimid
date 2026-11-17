@@ -8,7 +8,11 @@
 //! lists the device's signature key and the user's URI in `alsoKnownAs`
 //! (decision mimid-1wgh.4.81.21), either through
 //! [`crate::Agent::use_did_webvh_credential`] or a log file named in
-//! [`DidWebvhConfig::log_file`] and read at [`crate::Agent::open`].
+//! [`DidWebvhConfig::log_file`] and read at [`crate::Agent::open`]. The
+//! same method takes each newer log while the agent runs (the daemon's
+//! endpoint and file watch, bead mimid-1wgh.4.81.28): it commits the log
+//! to every active room, or, where that Commit cannot be built, sends it
+//! as an Update proposal that the room's lowest other leaf commits.
 //!
 //! # Limitations
 //!
@@ -21,6 +25,16 @@
 //!   the agent; it is [`mimi_mls::mls_didwebvh::controller`], run by the
 //!   user wherever the update keys are kept (draft §Custody).
 //! - Pins are kept per agent, not shared between a user's devices.
+//! - The Update-proposal fallback does not get around a pending
+//!   GroupContextExtensions proposal in a room of mimid agents: the member
+//!   that commits the Update must also change the record, and fails the
+//!   same way (the draft's Open Issue 5). And when that member is another
+//!   user's device, its Remove of a revoked device needs `canKick`: the hub
+//!   waives the capability only for a committer with the same SCID
+//!   (decision mimid-1wgh.4.81.26).
+//! - A log file at [`crate::Agent::open`] older than the log the agent
+//!   holds is skipped with a warning; one that is neither older nor a
+//!   successor stops the agent from opening.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

@@ -213,6 +213,35 @@ pub struct Sent {
     pub accepted_at: u64,
 }
 
+/// What [`Agent::use_did_webvh_credential`] did with a log
+/// (bead mimid-1wgh.4.81.28).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DidWebvhApplied {
+    /// The version number of the log's last entry.
+    pub version: u64,
+    /// The log is the credential the agent already holds; nothing was
+    /// done.
+    pub unchanged: bool,
+    /// The active rooms where this device committed the new credential.
+    pub committed: Vec<String>,
+    /// The active rooms where the Commit could not be built (for example
+    /// a GroupContextExtensions proposal from another member is pending,
+    /// the draft's Open Issue 5), so the credential was sent as an Update
+    /// proposal for another member to commit
+    /// (`Member::propose_credential_update`).
+    pub proposed: Vec<String>,
+    /// The active rooms where neither worked, with why. Each is also an
+    /// [`Event::Problem`].
+    pub failed: Vec<(String, String)>,
+}
+
+/// How [`Agent::offer_credential`] offered a new credential to a room.
+enum Offered {
+    Committed,
+    Proposed,
+}
+
 /// What [`Agent::poll`] (and [`Agent::join`]'s replay of held messages)
 /// found, for the caller to turn into its own objects.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -287,6 +316,11 @@ pub struct Agent {
     deferred_leaver: Option<(String, u32)>,
     /// [`AgentConfig::did_webvh`].
     did_webvh: DidWebvhConfig,
+    /// Test only: building a credential-update Commit fails as if a
+    /// GroupContextExtensions proposal were pending, to exercise the
+    /// fallback of [`Agent::use_did_webvh_credential`] through a real hub.
+    #[cfg(test)]
+    fail_credential_commits: bool,
 }
 
 impl std::fmt::Debug for Agent {
@@ -332,6 +366,8 @@ impl Agent {
                 .collect(),
             deferred_leaver: None,
             did_webvh: config.did_webvh.clone(),
+            #[cfg(test)]
+            fail_credential_commits: false,
         };
         let rooms: Vec<(String, Room)> = agent
             .state
@@ -363,7 +399,25 @@ impl Agent {
         }
         if let Some(path) = config.did_webvh.log_file.as_deref() {
             let credential = read_did_webvh_files(path, config.did_webvh.witness_file.as_deref())?;
-            if agent.identity.did_webvh_credential() != Some(&credential) {
+            // A file older than the log the agent holds (one handed to the
+            // running agent since, bead mimid-1wgh.4.81.28) is not an
+            // error at start: the agent keeps the newer one.
+            let older = match (
+                agent.identity.did_webvh_log(),
+                mimi_mls::mls_didwebvh::verify_credential(&credential),
+            ) {
+                (Some(current), Ok(file)) => {
+                    file.is_prefix_of(current)
+                        && file.head_version_number() < current.head_version_number()
+                }
+                _ => false,
+            };
+            if older {
+                tracing::warn!(
+                    name: "did_webvh_log_file_older",
+                    "the did_webvh log file is older than the log the agent holds; keeping that"
+                );
+            } else {
                 agent.use_did_webvh_credential(credential).await?;
             }
         }
@@ -395,31 +449,47 @@ impl Agent {
 
     /// Takes `credential`, a `did_webvh` credential from the user's
     /// controller (draft-atwood-mls-didwebvh-credential-01), and offers it
-    /// to every active room.
+    /// to every active room. This is the one check-and-apply path for a
+    /// new log, whether it comes from [`Agent::open`]'s log file, the
+    /// daemon's endpoint or its watch of that file (bead
+    /// mimid-1wgh.4.81.28).
     ///
-    /// The log must verify, authorize this device's signature key, and
-    /// name this user's URI in `alsoKnownAs` (decision mimid-1wgh.4.81.21).
-    /// The first credential may be taken only by a fresh identity, before
-    /// any KeyPackage or room (see [`crate::didwebvh`]). A later one must
-    /// be a newer log of the same DID (§Successor Credentials): each active
-    /// room then gets a Commit whose UpdatePath carries it, with the
-    /// record change and the Removes of devices the new log no longer
-    /// lists (§Revoking a Device). A room where that fails is reported as
-    /// an [`Event::Problem`] at the next [`Agent::poll`]; a device the new
-    /// log revokes cannot commit it itself (`CommitterUnauthorized`).
+    /// A log equal to the credential the agent holds changes nothing
+    /// ([`DidWebvhApplied::unchanged`]). Otherwise the log must verify,
+    /// authorize this device's signature key, and name this user's URI in
+    /// `alsoKnownAs` (decision mimid-1wgh.4.81.21). The first credential
+    /// may be taken only by a fresh identity, before any KeyPackage or
+    /// room (see [`crate::didwebvh`]). A later one must extend the current
+    /// log (§Successor Credentials). Each active room then gets a Commit
+    /// whose UpdatePath carries it, with the record change and the Removes
+    /// of devices the new log no longer lists (§Revoking a Device). Where
+    /// that Commit cannot be built, the credential is sent instead as an
+    /// Update proposal (`Member::propose_credential_update`) for another
+    /// member to commit (§Rules; the draft's Open Issue 5). A room where
+    /// neither works is in [`DidWebvhApplied::failed`] and reported as an
+    /// [`Event::Problem`] at the next [`Agent::poll`]. A device the new log
+    /// revokes cannot take it at all.
     ///
     /// # Errors
     ///
     /// [`AgentError::Invalid`] if the log names another user or the
     /// identity is not fresh, [`AgentError::Mls`] if the credential does not
-    /// verify, authorize this device, or succeed the current one, and
-    /// [`AgentError::State`] if it cannot be saved.
+    /// verify, authorize this device, or extend the current one, and
+    /// [`AgentError::State`] if it cannot be saved. Nothing is changed
+    /// then.
     pub async fn use_did_webvh_credential(
         &mut self,
         credential: mimi_mls::mls_didwebvh::DidWebvhCredential,
-    ) -> Result<(), AgentError> {
+    ) -> Result<DidWebvhApplied, AgentError> {
         let log = mimi_mls::mls_didwebvh::verify_credential(&credential)
             .map_err(|e| AgentError::mls("verifying the did_webvh log", e))?;
+        if self.identity.did_webvh_credential() == Some(&credential) {
+            return Ok(DidWebvhApplied {
+                version: log.head_version_number(),
+                unchanged: true,
+                ..DidWebvhApplied::default()
+            });
+        }
         let named = mimi_mls::didwebvh::mimi_user_uri(&log).map(normalized_uri);
         if named != Some(normalized_uri(&self.me)) {
             return Err(AgentError::Invalid(format!(
@@ -455,29 +525,100 @@ impl Agent {
             .filter(|(_, room)| room.status == RoomStatus::Active)
             .map(|(uri, _)| uri.clone())
             .collect();
+        let mut applied = DidWebvhApplied {
+            version: log.head_version_number(),
+            ..DidWebvhApplied::default()
+        };
         let mut events = Vec::new();
         for room in rooms {
-            match self.commit(&room, &[], &[], &[], "credential update").await {
-                Ok(()) => events.push(Event::MembersChanged {
-                    epoch: self.members.get(&room).map_or(0, Member::epoch),
-                    participants: self
-                        .members
-                        .get(&room)
-                        .map(participants)
-                        .transpose()
-                        .ok()
-                        .flatten()
-                        .unwrap_or_default(),
-                    room,
-                }),
-                Err(e) => events.push(Event::Problem {
-                    room: Some(room),
-                    description: format!("offering the new did_webvh credential: {e}"),
-                }),
+            match self.offer_credential(&room).await {
+                Ok(Offered::Committed) => {
+                    events.push(Event::MembersChanged {
+                        epoch: self.members.get(&room).map_or(0, Member::epoch),
+                        participants: self
+                            .members
+                            .get(&room)
+                            .map(participants)
+                            .transpose()
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default(),
+                        room: room.clone(),
+                    });
+                    applied.committed.push(room);
+                }
+                Ok(Offered::Proposed) => applied.proposed.push(room),
+                Err(e) => {
+                    let description = format!("offering the new did_webvh credential: {e}");
+                    events.push(Event::Problem {
+                        room: Some(room.clone()),
+                        description: description.clone(),
+                    });
+                    applied.failed.push((room, description));
+                }
             }
         }
+        tracing::info!(
+            name: "did_webvh_credential_offered",
+            committed = applied.committed.len(),
+            proposed = applied.proposed.len(),
+            failed = applied.failed.len(),
+            "did_webvh credential offered to the rooms"
+        );
         self.deliver(events);
-        self.save()
+        self.save()?;
+        Ok(applied)
+    }
+
+    /// Offers the identity's new credential to `room`: a Commit, or, when
+    /// that Commit cannot be built, an Update proposal (bead
+    /// mimid-1wgh.4.81.28 (c)). A Commit the hub refuses is not retried as
+    /// a proposal: the refusal is the answer.
+    async fn offer_credential(&mut self, room: &str) -> Result<Offered, AgentError> {
+        const WHAT: &str = "credential update";
+        #[cfg(test)]
+        let built = if self.fail_credential_commits {
+            Err(AgentError::mls(
+                format!("building the {WHAT} Commit"),
+                mimi_mls::member::MemberError::DidWebvh(
+                    mimi_mls::didwebvh::DidWebvhError::PendingGroupContextExtensions,
+                ),
+            ))
+        } else {
+            self.build_commit(room, &[], &[], &[], WHAT)
+        };
+        #[cfg(not(test))]
+        let built = self.build_commit(room, &[], &[], &[], WHAT);
+        match built {
+            Ok(request) => {
+                self.send_commit(room, &request, WHAT).await?;
+                Ok(Offered::Committed)
+            }
+            Err(error) => {
+                tracing::info!(
+                    name: "did_webvh_update_proposed",
+                    error = &error as &dyn std::error::Error,
+                    "the credential-update Commit cannot be built; proposing an Update instead"
+                );
+                let member = self
+                    .members
+                    .get_mut(room)
+                    .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
+                let proposal = member
+                    .propose_credential_update(&self.identity)
+                    .map_err(|e| AgentError::mls("building the credential Update proposal", e))?;
+                let request = UpdateRequest {
+                    bundle: HandshakeBundle::Proposal {
+                        proposal_or_commit: MLSMessage::tls_deserialize_exact(&proposal[..])
+                            .map_err(|e| AgentError::tls("own Update proposal", e))?,
+                        more_proposals: vec![],
+                    },
+                };
+                self.update_ok(room, &request, "credential Update proposal")
+                    .await?;
+                Ok(Offered::Proposed)
+            }
+        }
     }
 
     /// The leaves of an active room: each one's user and, for a `did_webvh`
@@ -1443,6 +1584,21 @@ impl Agent {
         updates: &[AppDataUpdate],
         what: &str,
     ) -> Result<(), AgentError> {
+        let request = self.build_commit(room, adds, removes, updates, what)?;
+        self.send_commit(room, &request, what).await
+    }
+
+    /// Builds a Commit with `adds`, `removes` and `updates`, left pending,
+    /// as the UpdateRequest that carries it. Nothing is pending on an
+    /// error.
+    fn build_commit(
+        &mut self,
+        room: &str,
+        adds: &[&[u8]],
+        removes: &[u32],
+        updates: &[AppDataUpdate],
+        what: &str,
+    ) -> Result<UpdateRequest, AgentError> {
         let member = self
             .members
             .get_mut(room)
@@ -1461,8 +1617,24 @@ impl Agent {
         } else {
             None
         };
-        let request = commit_request(&bundle, tree.as_deref())?;
-        if let Err(e) = self.update_ok(room, &request, what).await {
+        match commit_request(&bundle, tree.as_deref()) {
+            Ok(request) => Ok(request),
+            Err(e) => {
+                let _ = member.clear_pending_commit(&self.identity);
+                Err(e)
+            }
+        }
+    }
+
+    /// Sends the pending Commit `request` built by [`Agent::build_commit`]
+    /// and merges it; on a refusal the pending Commit is cleared.
+    async fn send_commit(
+        &mut self,
+        room: &str,
+        request: &UpdateRequest,
+        what: &str,
+    ) -> Result<(), AgentError> {
+        if let Err(e) = self.update_ok(room, request, what).await {
             if let Some(member) = self.members.get_mut(room) {
                 let _ = member.clear_pending_commit(&self.identity);
             }
@@ -1664,10 +1836,13 @@ impl Agent {
                     sender: name,
                 });
                 if let Sender::Member(leaf) = sender {
-                    // Taken as a §3.5 leave: the only proposals a member
-                    // sends here are its own Remove and participant-list
-                    // update. Committed once the FanoutMessage's proposals
-                    // are all stored, or at the end of the poll.
+                    // Taken as a §3.5 leave: the proposals a member sends
+                    // here are its own Remove and participant-list update,
+                    // or an Update carrying a new did_webvh credential it
+                    // could not commit (bead mimid-1wgh.4.81.28); either
+                    // way the lowest other leaf commits them. Committed
+                    // once the FanoutMessage's proposals are all stored, or
+                    // at the end of the poll.
                     self.deferred_leaver = Some((room, leaf));
                 }
             }
@@ -2306,3 +2481,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "agent_didwebvh_tests.rs"]
+mod didwebvh_tests;

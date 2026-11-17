@@ -76,8 +76,8 @@ mod state;
 pub mod uri;
 
 pub use agent::{
-    Agent, AgentConfig, Event, HostOptions, MAX_TEXT_LEN, OutgoingAttachment, PendingInvite,
-    ReceivedMessage, RoomInfo, Sent,
+    Agent, AgentConfig, DidWebvhApplied, Event, HostOptions, MAX_TEXT_LEN, OutgoingAttachment,
+    PendingInvite, ReceivedMessage, RoomInfo, Sent,
 };
 pub use client::ConsentRecord;
 pub use didwebvh::{DidWebvhConfig, RoomClient};

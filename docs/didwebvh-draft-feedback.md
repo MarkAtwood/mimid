@@ -456,6 +456,33 @@ automatically; there is no "accept the new identity" action yet.
 what accepting a new SCID means (re-pinning), so implementations agree on
 what a user sees.
 
+### 28. Handing a running device a new log, and the Update-proposal fallback
+
+The draft says what a device does with a newer log but not how it gets
+one. mimid's agent takes it from a local endpoint or by watching the file
+the controller writes (bead mimid-1wgh.4.81.28), and checks that it names
+the user and extends the current log before committing it.
+
+Where the Commit cannot be built, the agent sends the credential as an
+Update proposal for another member to commit, as §Rules suggests for a
+revoked committer. Implementing it showed two limits:
+
+- With Open Issue 5's cause (a GroupContextExtensions proposal from
+  another party pending), the other member is in the same position: its
+  Commit must include the pending proposal and must also change the
+  record, so it cannot be built either, unless the pending proposal
+  already sets the expected record. The fallback helps only once the
+  pending proposal is gone or is itself the record change.
+- When another member commits a user's Update that revokes a device, the
+  Remove of the revoked device is that member's, not the user's. mimid's
+  hub authorizes without a capability only the Removes required of a
+  committer with the same SCID (item 25), so this one needs `canKick`.
+
+**For -01:** if Update proposals are the recommended path for a revoked or
+blocked committer, say that the Removes the record then requires are
+mandatory whoever commits, so an application's authorization can follow
+the record rather than the committer.
+
 ## Section 7, item 7: the encoding question
 
 What implementing -00 taught about "Encoding without DIDs":
