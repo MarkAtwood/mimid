@@ -7,8 +7,10 @@
 //! their mimid server, keeps one-time KeyPackages published, and serves
 //! the [`mimid_agent_jmap::AgentChat`] dispatcher over HTTP: the Session at
 //! `GET /.well-known/jmap`, the API at `POST /jmap/api` and EventSource
-//! push at `GET /jmap/eventsource` (RFC 8620 §2, §3, §7.3; see the `http`
-//! module for the request checks). A background loop calls
+//! push at `GET /jmap/eventsource`, and upload and download at
+//! `POST /jmap/upload/{accountId}/` and
+//! `GET /jmap/download/{accountId}/{blobId}/{name}` (RFC 8620 §2, §3,
+//! §7.3, §6.1, §6.2; see the `http` module for the request checks). A background loop calls
 //! [`mimid_agent_jmap::AgentChat::sync`] every `sync_interval_ms`, and at
 //! once after a client's `Chat/set` or `Message/set`; EventSource clients
 //! get a StateChange whenever a sync or a request moves the state of
@@ -18,8 +20,21 @@
 //! `urn:ietf:params:jmap:core` and `urn:ietf:params:jmap:chat`, the URNs
 //! mimid-server advertises for them. Its `urn:ietf:params:jmap:chat`
 //! account capability states what mimid-agent-jmap accepts: `text/plain`
-//! bodies of at most [`mimid_agent_core::MAX_TEXT_LEN`] octets, no
-//! attachments, no threads.
+//! bodies of at most [`mimid_agent_core::MAX_TEXT_LEN`] octets, up to
+//! [`mimid_agent_jmap::MAX_ATTACHMENTS_PER_MESSAGE`] attachments of at most
+//! [`mimid_agent_jmap::MAX_ATTACHMENT_LEN`] octets each, no threads.
+//!
+//! # Attachments
+//!
+//! Uploads and received attachments are kept in plaintext in
+//! `<state_dir>/blobs` ([`BLOBS_DIR`], mimid-agent-jmap's `BlobStore`:
+//! directory 0700, files 0600, each named by the SHA-256 of its content).
+//! A client uploads a file ([`MAX_SIZE_UPLOAD`] octets at most, and
+//! [`MAX_CONCURRENT_UPLOAD`] uploads at once) and names its `blobId` in a
+//! Message's `attachments`; the agent encrypts it, uploads it to the
+//! user's mimid server and sends it as a MIMI ExternalPart. A received
+//! attachment is fetched and decrypted at sync, and downloads from the
+//! same store.
 //!
 //! # Configuration and the local token
 //!
@@ -75,7 +90,18 @@
 //!   origin still has to obtain the token from the user.
 //! - The browser `EventSource` API cannot send an `Authorization` header,
 //!   so a browser client must read the stream with `fetch` instead.
-//! - No blobs: upload and download answer `404`, and `maxSizeUpload` is 0.
+//! - `maxSizeUpload` ([`MAX_SIZE_UPLOAD`]) is under RFC 8620 §2's suggested
+//!   minimum of 50,000,000, so that a sealed attachment fits what
+//!   mimid-server stores.
+//! - Blobs are never deleted and have no quota; uploads not used in a
+//!   Message stay on disk.
+//! - Sending a file needs a mimid server that stores attachments; a
+//!   received attachment that cannot be fetched at sync is left out of
+//!   its Message for good (see mimid-agent-jmap's Limitations).
+//! - An upload over the limit is refused as soon as its `Content-Length`
+//!   or its body passes [`MAX_SIZE_UPLOAD`], without reading the rest, so
+//!   a client still sending may see its connection closed rather than
+//!   the `413`.
 //! - Open EventSource streams are not counted against
 //!   `maxConcurrentRequests`.
 //! - The log is text only: mimid-server's `MIMID_LOG_FORMAT=json` output
@@ -91,6 +117,8 @@ mod http;
 pub mod token;
 
 pub use config::{Config, ConfigError, Invites};
-pub use daemon::{CHAT_STORE_FILE, Daemon, StartError};
-pub use http::{CAPABILITIES, CHAT_CAPABILITY, CORE_CAPABILITY};
+pub use daemon::{BLOBS_DIR, CHAT_STORE_FILE, Daemon, StartError};
+pub use http::{
+    CAPABILITIES, CHAT_CAPABILITY, CORE_CAPABILITY, MAX_CONCURRENT_UPLOAD, MAX_SIZE_UPLOAD,
+};
 pub use token::{LocalToken, TokenError};

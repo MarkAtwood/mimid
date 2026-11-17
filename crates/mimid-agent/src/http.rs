@@ -3,8 +3,10 @@
 //! - `GET /.well-known/jmap`: the Session (RFC 8620 §2);
 //! - `POST /jmap/api`: the API (RFC 8620 §3);
 //! - `GET /jmap/eventsource`: EventSource push (RFC 8620 §7.3);
-//! - `POST /jmap/upload/{accountId}/` and
-//!   `GET /jmap/download/{accountId}/{blobId}/{name}`: always `404`.
+//! - `POST /jmap/upload/{accountId}/`: upload (RFC 8620 §6.1) to the
+//!   account's blob store (mimid-agent-jmap's `BlobStore`);
+//! - `GET /jmap/download/{accountId}/{blobId}/{name}?accept={type}`:
+//!   download (RFC 8620 §6.2) from it.
 //!
 //! Every request goes through [`guard`], in this order:
 //!
@@ -52,6 +54,26 @@
 //! crate-jmap's handlers apply `maxObjectsInGet` and `maxObjectsInSet`.
 //! After each request the EventSource streams recompute their states, and a
 //! request with a `Chat/set` or `Message/set` call wakes the sync loop.
+//!
+//! An upload names the agent's account, or it is `404`. At most
+//! [`MAX_CONCURRENT_UPLOAD`] run at once (`maxConcurrentUpload`), and
+//! another is `429`. The body, read with its own cap rather than the API's
+//! [`MAX_SIZE_REQUEST`], is at most [`MAX_SIZE_UPLOAD`] octets
+//! (`maxSizeUpload`) and otherwise `413`. Both refusals carry an RFC 7807
+//! body of type `urn:ietf:params:jmap:error:limit` naming the limit, as
+//! the API's do (RFC 8620 §3.6.1). The answer is `201` with `accountId`,
+//! `blobId`, `type` (the request's `Content-Type` if it is a valid media
+//! type, else `application/octet-stream`) and `size`. Identical content
+//! gets the same `blobId` (§6.1 allows it).
+//!
+//! A download of a blob the account's store has answers its octets with
+//! `Content-Type` from `accept` if that is a valid media type, else
+//! `application/octet-stream`; `Content-Disposition: attachment` with
+//! `name` (RFC 6266, its `filename*` in UTF-8 per RFC 8187);
+//! `X-Content-Type-Options: nosniff`; `Content-Security-Policy: sandbox`,
+//! so a browser that renders it anyway runs no script under this origin;
+//! and the immutable caching §6.2 recommends. Any other account or blob is
+//! `404`, with an RFC 7807 body.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -62,7 +84,7 @@ use axum::Json;
 use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::extract::rejection::BytesRejection;
-use axum::extract::{DefaultBodyLimit, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, Sse};
@@ -74,7 +96,7 @@ use jmap_server::{
     JmapObject, check_known_capabilities, parse_request, request_error,
 };
 use mimid_agent_core::MAX_TEXT_LEN;
-use mimid_agent_jmap::AgentChat;
+use mimid_agent_jmap::{AgentChat, MAX_ATTACHMENT_LEN, MAX_ATTACHMENTS_PER_MESSAGE, is_media_type};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -110,6 +132,14 @@ pub const MAX_CONCURRENT_REQUESTS: usize = 4;
 
 /// `maxCallsInRequest`: RFC 8620 §2's suggested minimum.
 pub const MAX_CALLS_IN_REQUEST: usize = 16;
+
+/// `maxSizeUpload`: one blob of mimid-agent-jmap's store. Under RFC 8620
+/// §2's suggested minimum of 50,000,000: a sealed attachment must fit what
+/// mimid-server stores.
+pub const MAX_SIZE_UPLOAD: usize = MAX_ATTACHMENT_LEN;
+
+/// `maxConcurrentUpload`: RFC 8620 §2's suggested minimum.
+pub const MAX_CONCURRENT_UPLOAD: usize = 4;
 
 /// `maxObjectsInGet`: RFC 8620 §2's suggested minimum, and crate-jmap's
 /// default, which its handlers enforce.
@@ -167,6 +197,15 @@ pub const PREFLIGHT_MAX_AGE_SECS: u32 = 600;
 /// RFC 8620 §2 recommends disabling HTTP caching of the Session.
 const NO_CACHE: &str = "no-cache, no-store, must-revalidate";
 
+/// RFC 8620 §6.2's example caching for a download: a blob is immutable.
+const IMMUTABLE: &str = "private, immutable, max-age=31536000";
+
+/// The media type of a blob whose type is unknown or invalid.
+const OCTET_STREAM: &str = "application/octet-stream";
+
+/// RFC 7807 body of a refusal for an unknown account or blob.
+const NOT_FOUND_BODY: &str = r#"{"type":"about:blank","title":"Not Found","status":404}"#;
+
 /// What the routes share.
 pub(crate) struct Endpoint {
     pub(crate) token: LocalToken,
@@ -176,6 +215,8 @@ pub(crate) struct Endpoint {
     pub(crate) session: Value,
     pub(crate) session_state: String,
     pub(crate) in_flight: Arc<Semaphore>,
+    /// Uploads in flight, at most [`MAX_CONCURRENT_UPLOAD`].
+    pub(crate) uploads: Arc<Semaphore>,
     /// Ticks whenever the account's states may have moved.
     pub(crate) changes: broadcast::Sender<()>,
     /// Wakes the sync loop.
@@ -229,12 +270,13 @@ pub(crate) fn session(
     account: &Id,
 ) -> Result<(Value, String), serde_json::Error> {
     // ChatCapability is #[non_exhaustive]: built through serde (AGENTS.md),
-    // which checks the fields. What mimid-agent-jmap accepts: text/plain
-    // bodies the agent can send, no attachments or threads.
+    // which checks the fields. What mimid-agent-jmap accepts with a blob
+    // store, which the daemon always gives it: text/plain bodies the agent
+    // can send, attachments, no threads.
     let chat: jmap_chat_types::ChatCapability = serde_json::from_value(json!({
         "maxBodyBytes": MAX_TEXT_LEN,
-        "maxAttachmentBytes": 0,
-        "maxAttachmentsPerMessage": 0,
+        "maxAttachmentBytes": MAX_ATTACHMENT_LEN,
+        "maxAttachmentsPerMessage": MAX_ATTACHMENTS_PER_MESSAGE,
         "supportedBodyTypes": ["text/plain"],
         "supportsThreads": false,
     }))?;
@@ -242,8 +284,8 @@ pub(crate) fn session(
     let mut session = json!({
         "capabilities": {
             CORE_CAPABILITY: {
-                "maxSizeUpload": 0,
-                "maxConcurrentUpload": 0,
+                "maxSizeUpload": MAX_SIZE_UPLOAD,
+                "maxConcurrentUpload": MAX_CONCURRENT_UPLOAD,
                 "maxSizeRequest": MAX_SIZE_REQUEST,
                 "maxConcurrentRequests": MAX_CONCURRENT_REQUESTS,
                 "maxCallsInRequest": MAX_CALLS_IN_REQUEST,
@@ -282,8 +324,10 @@ pub(crate) fn router(endpoint: Arc<Endpoint>) -> Router {
         .route("/.well-known/jmap", get(get_session))
         .route("/jmap/api", post(post_api))
         .route("/jmap/eventsource", get(get_eventsource))
-        .route("/jmap/upload/{accountId}/", post(no_blobs))
-        .route("/jmap/download/{accountId}/{blobId}/{name}", get(no_blobs))
+        // The upload reads its body itself, capped at MAX_SIZE_UPLOAD;
+        // DefaultBodyLimit applies only to extractors such as Bytes.
+        .route("/jmap/upload/{accountId}/", post(upload))
+        .route("/jmap/download/{accountId}/{blobId}/{name}", get(download))
         .layer(DefaultBodyLimit::max(MAX_SIZE_REQUEST))
         .layer(middleware::from_fn_with_state(Arc::clone(&endpoint), guard))
         .with_state(endpoint)
@@ -429,9 +473,201 @@ async fn get_session(State(endpoint): State<Arc<Endpoint>>) -> Response {
     response
 }
 
-/// Upload and download: there are no blobs.
-async fn no_blobs() -> StatusCode {
-    StatusCode::NOT_FOUND
+/// An RFC 7807 `urn:ietf:params:jmap:error:limit` body (RFC 8620 §3.6.1)
+/// naming `limit`, with `status`.
+fn limit_response(status: StatusCode, limit: &str) -> Response {
+    let body = json!({
+        "type": "urn:ietf:params:jmap:error:limit",
+        "limit": limit,
+        "status": status.as_u16(),
+        "detail": format!("the request exceeds {limit}"),
+    });
+    (
+        status,
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(PROBLEM_CONTENT_TYPE),
+        )],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+/// `500` with an RFC 7807 body, after logging `error`.
+fn blob_store_failed(error: &(dyn std::error::Error + 'static)) -> Response {
+    tracing::error!(
+        name: "agent_blob_store_failed",
+        error,
+        "the blob store failed"
+    );
+    problem_response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        r#"{"type":"about:blank","title":"Internal Server Error","status":500}"#,
+    )
+}
+
+/// `POST /jmap/upload/{accountId}/` (RFC 8620 §6.1; see the module
+/// documentation).
+async fn upload(
+    State(endpoint): State<Arc<Endpoint>>,
+    Path(account): Path<String>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    let Some(blobs) = endpoint.chat.blobs().cloned() else {
+        return problem_response(StatusCode::NOT_FOUND, NOT_FOUND_BODY);
+    };
+    if account != endpoint.chat.account_id().as_ref() {
+        tracing::debug!("agent upload refused: not this agent's account");
+        return problem_response(StatusCode::NOT_FOUND, NOT_FOUND_BODY);
+    }
+    let Ok(_admitted) = Arc::clone(&endpoint.uploads).try_acquire_owned() else {
+        return limit_response(StatusCode::TOO_MANY_REQUESTS, "maxConcurrentUpload");
+    };
+    let declared = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok());
+    if declared.is_some_and(|len| len > MAX_SIZE_UPLOAD as u64) {
+        return limit_response(StatusCode::PAYLOAD_TOO_LARGE, "maxSizeUpload");
+    }
+    let content = match read_capped(body, MAX_SIZE_UPLOAD).await {
+        Ok(content) => content,
+        Err(BodyError::TooLarge) => {
+            return limit_response(StatusCode::PAYLOAD_TOO_LARGE, "maxSizeUpload");
+        }
+        Err(BodyError::Unreadable) => {
+            tracing::debug!("agent upload refused: the body could not be read");
+            return problem_response(
+                StatusCode::BAD_REQUEST,
+                r#"{"type":"about:blank","title":"Bad Request","status":400}"#,
+            );
+        }
+    };
+    let content_type = one_header(&headers, header::CONTENT_TYPE)
+        .filter(|t| is_media_type(t))
+        .unwrap_or(OCTET_STREAM)
+        .to_owned();
+    let info = match tokio::task::spawn_blocking(move || blobs.put(&content)).await {
+        Ok(Ok(info)) => info,
+        Ok(Err(error)) => return blob_store_failed(&error),
+        Err(error) => return blob_store_failed(&error),
+    };
+    tracing::debug!(size = info.size, "agent upload stored");
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "accountId": account,
+            "blobId": info.id,
+            "type": content_type,
+            "size": info.size,
+        })),
+    )
+        .into_response()
+}
+
+/// Why [`read_capped`] read no body.
+#[derive(Debug, PartialEq, Eq)]
+enum BodyError {
+    /// It is over the cap.
+    TooLarge,
+    /// The connection failed.
+    Unreadable,
+}
+
+/// `body`, if it is at most `max` octets; reading stops at the first
+/// chunk past `max`, whatever `Content-Length` said.
+async fn read_capped(body: Body, max: usize) -> Result<Vec<u8>, BodyError> {
+    let mut content = Vec::new();
+    let mut stream = body.into_data_stream();
+    while let Some(chunk) = tokio_stream::StreamExt::next(&mut stream).await {
+        let chunk = chunk.map_err(|_| BodyError::Unreadable)?;
+        if content.len() + chunk.len() > max {
+            return Err(BodyError::TooLarge);
+        }
+        content.extend_from_slice(&chunk);
+    }
+    Ok(content)
+}
+
+/// The value of the request's one `name` header, if it is text.
+fn one_header(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> {
+    let mut values = headers.get_all(name).iter();
+    match (values.next(), values.next()) {
+        (Some(value), None) => value.to_str().ok(),
+        _ => None,
+    }
+}
+
+/// `GET /jmap/download/{accountId}/{blobId}/{name}?accept={type}` (RFC
+/// 8620 §6.2; see the module documentation).
+async fn download(
+    State(endpoint): State<Arc<Endpoint>>,
+    Path((account, blob_id, name)): Path<(String, String, String)>,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> Response {
+    let blobs = match endpoint.chat.blobs() {
+        Some(blobs) if account == endpoint.chat.account_id().as_ref() => blobs.clone(),
+        _ => return problem_response(StatusCode::NOT_FOUND, NOT_FOUND_BODY),
+    };
+    let content = match tokio::task::spawn_blocking(move || blobs.get(&blob_id)).await {
+        Ok(Ok(Some(content))) => content,
+        Ok(Ok(None)) => return problem_response(StatusCode::NOT_FOUND, NOT_FOUND_BODY),
+        Ok(Err(error)) => return blob_store_failed(&error),
+        Err(error) => return blob_store_failed(&error),
+    };
+    let content_type = query
+        .get("accept")
+        .map(String::as_str)
+        .filter(|t| is_media_type(t))
+        .and_then(|t| HeaderValue::from_str(t).ok())
+        .unwrap_or(HeaderValue::from_static(OCTET_STREAM));
+    let disposition = HeaderValue::from_str(&content_disposition(&name))
+        .unwrap_or(HeaderValue::from_static("attachment"));
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_DISPOSITION, disposition),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static("sandbox"),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static(IMMUTABLE)),
+        ],
+        content,
+    )
+        .into_response()
+}
+
+/// `attachment` with file name `name` (RFC 6266 §4.1): `filename` an ASCII
+/// fallback in a quoted string, printable characters other than `"` and
+/// `\` kept and the rest `_`; `filename*` the exact name, UTF-8 and
+/// percent-encoded outside RFC 8187 §3.2.1 `attr-char`.
+fn content_disposition(name: &str) -> String {
+    let fallback: String = name
+        .chars()
+        .map(|c| {
+            if (c == ' ' || c.is_ascii_graphic()) && c != '"' && c != '\\' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let mut encoded = String::with_capacity(name.len() * 3);
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
 }
 
 /// A request-level error (RFC 8620 §3.6.1) as an RFC 7807 response.
@@ -863,6 +1099,50 @@ mod tests {
         assert!(!with(&["application/json", "application/json"]));
     }
 
+    /// The cap holds for a body in chunks, with no length announced.
+    #[tokio::test]
+    async fn uploads_are_read_up_to_the_cap() {
+        let chunks = |parts: &[&'static [u8]]| {
+            let parts: Vec<Result<Bytes, Infallible>> =
+                parts.iter().map(|p| Ok(Bytes::from_static(p))).collect();
+            Body::from_stream(tokio_stream::iter(parts))
+        };
+        assert_eq!(
+            read_capped(chunks(&[b"ab", b"c"]), 3).await,
+            Ok(b"abc".to_vec())
+        );
+        assert_eq!(read_capped(chunks(&[]), 3).await, Ok(Vec::new()));
+        assert_eq!(
+            read_capped(chunks(&[b"ab", b"cd"]), 3).await,
+            Err(BodyError::TooLarge)
+        );
+        assert_eq!(
+            read_capped(chunks(&[b"abcd"]), 3).await,
+            Err(BodyError::TooLarge)
+        );
+        let failing = Body::from_stream(tokio_stream::iter([
+            Ok(Bytes::from_static(b"a")),
+            Err(std::io::Error::other("reset")),
+        ]));
+        assert_eq!(read_capped(failing, 3).await, Err(BodyError::Unreadable));
+    }
+
+    /// RFC 6266 §5's last example: `filename*=UTF-8''%e2%82%ac%20rates`
+    /// for "€ rates" (hex digits here upper case, which RFC 3986 §2.1
+    /// prefers and RFC 8187 accepts).
+    #[test]
+    fn content_disposition_follows_rfc_6266_and_8187() {
+        assert_eq!(
+            content_disposition("\u{20ac} rates"),
+            "attachment; filename=\"_ rates\"; filename*=UTF-8''%E2%82%AC%20rates"
+        );
+        assert_eq!(
+            content_disposition("a\"b\\c\r\n.txt"),
+            "attachment; filename=\"a_b_c__.txt\"; filename*=UTF-8''a%22b%5Cc%0D%0A.txt"
+        );
+        assert!(HeaderValue::from_str(&content_disposition("x\r\nSet-Cookie: a=b")).is_ok());
+    }
+
     #[test]
     fn the_session_names_one_chat_account() {
         let account = account_id("mimi://a.example/u/alice");
@@ -889,5 +1169,9 @@ mod tests {
         let chat = &session["accounts"][account.as_ref()]["accountCapabilities"][CHAT_CAPABILITY];
         assert_eq!(chat["supportedBodyTypes"], json!(["text/plain"]));
         assert_eq!(chat["maxBodyBytes"], json!(MAX_TEXT_LEN));
+        assert_eq!(chat["maxAttachmentBytes"], json!(MAX_ATTACHMENT_LEN));
+        let core = &session["capabilities"][CORE_CAPABILITY];
+        assert_eq!(core["maxSizeUpload"], json!(MAX_SIZE_UPLOAD));
+        assert_eq!(core["maxConcurrentUpload"], json!(MAX_CONCURRENT_UPLOAD));
     }
 }

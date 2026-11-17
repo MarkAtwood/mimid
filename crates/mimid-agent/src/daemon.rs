@@ -12,7 +12,9 @@ use tokio::net::TcpListener;
 use tokio::sync::{Notify, Semaphore, broadcast, watch};
 
 use crate::config::Config;
-use crate::http::{self, CHANGE_BUFFER, Endpoint, MAX_CONCURRENT_REQUESTS, stopped};
+use crate::http::{
+    self, CHANGE_BUFFER, Endpoint, MAX_CONCURRENT_REQUESTS, MAX_CONCURRENT_UPLOAD, stopped,
+};
 use crate::token::{LocalToken, TokenError};
 
 /// A started daemon: the agent is open, its KeyPackages published and the
@@ -39,6 +41,10 @@ impl std::fmt::Debug for Daemon {
 
 /// The plaintext store's file name in the state directory.
 pub const CHAT_STORE_FILE: &str = "chat.json";
+
+/// The blob store's directory in the state directory: attachments in
+/// plaintext.
+pub const BLOBS_DIR: &str = "blobs";
 
 /// Why [`Daemon::start`] failed.
 #[derive(Debug, thiserror::Error)]
@@ -74,6 +80,9 @@ pub enum StartError {
     /// The plaintext store (`<state_dir>/chat.json`) could not be read.
     #[error("opening the plaintext store")]
     Store(#[from] mimid_agent_jmap::PersistError),
+    /// The blob store (`<state_dir>/blobs`) could not be opened.
+    #[error("opening the blob store")]
+    Blobs(#[from] mimid_agent_jmap::BlobError),
 }
 
 impl Daemon {
@@ -118,7 +127,9 @@ impl Daemon {
                 account,
                 Options::default().with_invites(config.invites.into()),
             )
-            .persisted_at(config.state_dir.join(CHAT_STORE_FILE))?,
+            .persisted_at(config.state_dir.join(CHAT_STORE_FILE))?
+            // Attachments (bead mimid-1wgh.14).
+            .with_blobs(config.state_dir.join(BLOBS_DIR))?,
         );
         let (stop, stop_receiver) = watch::channel(false);
         let (changes, _) = broadcast::channel(CHANGE_BUFFER);
@@ -129,6 +140,7 @@ impl Daemon {
             session,
             session_state,
             in_flight: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
+            uploads: Arc::new(Semaphore::new(MAX_CONCURRENT_UPLOAD)),
             changes,
             sync_now: Arc::new(Notify::new()),
             stop: stop_receiver,
