@@ -1546,6 +1546,33 @@ impl Member {
             .map_err(|e| MemberError::Encode(e.into()))
     }
 
+    /// The TLS-encoded ratchet tree of the epoch this member's pending
+    /// Commit leads to: the tree that goes with that Commit's GroupInfo, for
+    /// a CommitBundle whose RatchetTreeOption is `full`
+    /// (draft-ietf-mls-ratchet-tree-options-02 §3, protocol-07 §5.3).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Commit`] if no Commit is pending or OpenMLS
+    /// cannot build its tree, and [`MemberError::Encode`] if the tree cannot
+    /// be encoded.
+    pub fn pending_ratchet_tree(&self, identity: &Identity) -> Result<Vec<u8>, MemberError> {
+        self.check_identity(identity)?;
+        let staged = self
+            .group
+            .pending_commit()
+            .ok_or_else(|| MemberError::Commit("no Commit is pending".into()))?;
+        staged
+            .export_ratchet_tree(
+                identity.provider().crypto(),
+                self.group.export_ratchet_tree(),
+            )
+            .map_err(|e| MemberError::Commit(e.into()))?
+            .ok_or_else(|| MemberError::Commit("the pending Commit has no tree".into()))?
+            .tls_serialize_detached()
+            .map_err(|e| MemberError::Encode(e.into()))
+    }
+
     /// Fails while this member is out of sync.
     fn check_in_sync(&self) -> Result<(), MemberError> {
         match self.out_of_sync {
