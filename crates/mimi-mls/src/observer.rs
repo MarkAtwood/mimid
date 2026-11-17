@@ -591,7 +591,12 @@ impl Observer {
         {
             let proposals: Vec<_> = unresolved.app_data_update_proposals().cloned().collect();
             let mut updater = self.group.app_data_dictionary_updater();
-            resolve_app_data_updates(&mut updater, &proposals, &mut apply)?;
+            resolve_app_data_updates(
+                &mut updater,
+                &proposals,
+                self.did_webvh.and_then(|c| c.heads_component()),
+                &mut apply,
+            )?;
             let changes = updater.changes();
             self.group
                 .resolve_app_data_commit(provider.crypto(), processed, changes)

@@ -34,7 +34,14 @@
 //! - The record is not carried across ReInit or branches (Open Issue 2), and
 //!   no proposal carries a newer log as evidence (Open Issue 3).
 //! - A GroupContextExtensions proposal already pending from another member
-//!   makes a record-changing Commit fail (Open Issue 5).
+//!   makes a record-changing Commit fail (Open Issue 5), unless the record
+//!   is carried as an `app_data_dictionary` component
+//!   ([`CodePoints::with_heads_component`](mls_didwebvh::CodePoints::with_heads_component)).
+//!   That form is a spike prototype (bead mimid-1wgh.4.81.32, decision
+//!   mimid-1wgh.4.81.33), not the draft: the hub's record-only
+//!   GroupContextExtensions exception (decision mimid-1wgh.4.81.22) is not
+//!   removed, and a pending AppDataUpdate that records an SCID with no
+//!   leaf makes every Commit fail (decision mimid-1wgh.4.65).
 //! - Verified logs are cached in memory by credential bytes, up to 4,096,
 //!   and the cache starts over when full.
 //!
@@ -181,15 +188,97 @@ pub(crate) fn openmls_credential(
 }
 
 /// The GroupContext's `did_webvh_heads`, strictly decoded, or `None` when
-/// it has none.
+/// it has none: the extension, or with
+/// [`CodePoints::heads_component`] the `app_data_dictionary` entry (spike
+/// bead mimid-1wgh.4.81.32).
 pub(crate) fn heads(
     code_points: CodePoints,
     extensions: &Extensions<GroupContext>,
 ) -> Result<Option<DidWebvhHeads>, DidWebvhError> {
-    extensions
-        .unknown(code_points.heads_extension_type())
-        .map(|UnknownExtension(data)| DidWebvhHeads::decode(data).map_err(DidWebvhError::Heads))
+    let data = match code_points.heads_component() {
+        Some(component_id) => extensions
+            .app_data_dictionary()
+            .and_then(|extension| extension.dictionary().get(&component_id)),
+        None => extensions
+            .unknown(code_points.heads_extension_type())
+            .map(|UnknownExtension(data)| data.as_slice()),
+    };
+    data.map(|data| DidWebvhHeads::decode(data).map_err(DidWebvhError::Heads))
         .transpose()
+}
+
+/// The application logic (mls-extensions-11 §4.7) of the record
+/// component, for [`CodePoints::heads_component`]: each `update` is a
+/// `DIDWebVHHeads` whose entries replace or add the entries for the same
+/// SCIDs, applied in Commit order to `current` (empty when absent). The
+/// rules then require the result to be the expected record, so a committer
+/// may send the whole record or only the entries it changes, and updates
+/// from several proposers compose.
+///
+/// INVENTED, NOT FROM SPEC (decision mimid-1wgh.4.81.33). A `remove` of
+/// the component is invalid: the record is never removed (§The Heads
+/// Extension); the caller refuses it.
+pub(crate) fn apply_heads_updates(
+    current: Option<&[u8]>,
+    updates: &[&[u8]],
+) -> Result<Vec<u8>, DidWebvhError> {
+    let mut record = match current {
+        Some(data) => DidWebvhHeads::decode(data).map_err(DidWebvhError::Heads)?,
+        None => DidWebvhHeads::new(),
+    };
+    for update in updates {
+        let entries = DidWebvhHeads::decode(update).map_err(DidWebvhError::Heads)?;
+        for head in entries.heads() {
+            record.insert(head.clone());
+        }
+    }
+    record
+        .encode()
+        .map_err(|_| DidWebvhError::Heads(DecodeError::Invalid("record too large")))
+}
+
+/// For [`CodePoints::heads_component`]: the AppDataUpdate operations that
+/// set the record to `heads` in a group whose GroupContext extensions are
+/// `current`. The whole record is sent (the update semantics of
+/// [`apply_heads_updates`] would also take only the changed entries). If
+/// the GroupContext's `app_components` list does not name the component
+/// yet, it is extended too, since a GroupContext may hold state only for a
+/// listed component (mls-extensions-11 §5); listing it is what makes every
+/// member support the draft, the job `required_capabilities` does for the
+/// extension form.
+pub(crate) fn record_updates(
+    component_id: u16,
+    current: &Extensions<GroupContext>,
+    heads: &DidWebvhHeads,
+) -> Result<Vec<crate::member::AppDataUpdate>, DidWebvhError> {
+    let invalid = |what| DidWebvhError::Heads(DecodeError::Invalid(what));
+    let mut updates = Vec::with_capacity(2);
+    let listed = current
+        .app_data_dictionary()
+        .and_then(|extension| extension.dictionary().get(&crate::identity::APP_COMPONENTS))
+        .map(|data| {
+            use tls_codec::Deserialize;
+            openmls::component::ComponentsList::tls_deserialize_exact(data)
+                .map(openmls::component::ComponentsList::into_ids)
+                .map_err(|_| invalid("app_components"))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    if !listed.contains(&component_id) {
+        let mut ids = listed;
+        ids.push(component_id);
+        updates.push(crate::member::AppDataUpdate::Update {
+            component_id: crate::identity::APP_COMPONENTS,
+            update: openmls::component::ComponentsList::new(ids)
+                .tls_serialize_detached()
+                .map_err(|_| invalid("app_components"))?,
+        });
+    }
+    updates.push(crate::member::AppDataUpdate::Update {
+        component_id,
+        update: heads.encode().map_err(|_| invalid("record too large"))?,
+    });
+    Ok(updates)
 }
 
 /// The credential type of an `ExternalSender`. OpenMLS keeps its getters
@@ -236,7 +325,11 @@ pub(crate) fn check_group_context(
         return Err(DidWebvhError::ExternalSender);
     }
     let heads = heads(code_points, extensions)?;
-    if heads.is_some() {
+    // As a component, the record needs no required_capabilities: a
+    // GroupContext may hold it only while its app_components list names it
+    // (mls-extensions-11 §5, checked with every GroupContext by
+    // member::required_lists), and every member must then list it.
+    if heads.is_some() && code_points.heads_component().is_none() {
         let listed = extensions.required_capabilities().is_some_and(|rc| {
             rc.extension_types()
                 .contains(&ExtensionType::from(code_points.heads_extension_type()))
@@ -496,7 +589,8 @@ pub(crate) fn check_staged(
 /// (decision mimid-1wgh.4.81.31; an Update is always by reference, so it
 /// is that user's own signed request). Leaf indices are those before the
 /// Commit. Empty if the Commit carries no GroupContextExtensions proposal
-/// (it then sets no record) or there is no vouching SCID.
+/// (with [`CodePoints::heads_component`], no AppDataUpdate of the record
+/// component; it then sets no record) or there is no vouching SCID.
 ///
 /// A hub uses this to authorize those Removes without a room-policy
 /// capability (decisions mimid-1wgh.4.81.26 and .31). Call it only on a
@@ -524,9 +618,15 @@ pub(crate) fn required_removes(
     if vouching.is_empty() {
         return Vec::new();
     }
-    let sets_record = staged
-        .queued_proposals()
-        .any(|queued| matches!(queued.proposal(), Proposal::GroupContextExtensions(_)));
+    let sets_record = staged.queued_proposals().any(|queued| {
+        match (queued.proposal(), code_points.heads_component()) {
+            (Proposal::GroupContextExtensions(_), None) => true,
+            (Proposal::AppDataUpdate(update), Some(component_id)) => {
+                update.component_id() == component_id
+            }
+            _ => false,
+        }
+    });
     if !sets_record {
         return Vec::new();
     }
@@ -618,13 +718,20 @@ pub(crate) fn check_join<'a>(
 /// For an external join: the tree after the joiner's Commit, `leaves`
 /// (signature key and credential of each existing leaf it keeps, and its
 /// own), checked against the unchanged record, since an external Commit
-/// cannot carry a GroupContextExtensions proposal (§Rules).
+/// cannot carry a GroupContextExtensions proposal (§Rules). Returns `None`.
+///
+/// With [`CodePoints::heads_component`] an external Commit can carry an
+/// AppDataUpdate (mls-extensions-11 §4.7), so the record may change: the
+/// tree is checked against the expected record, which is returned when it
+/// differs from the current one, for the joiner to set. INVENTED, NOT FROM
+/// SPEC (decision mimid-1wgh.4.81.33): the draft's §Rules forbid a newer
+/// log or a new SCID from joining externally.
 pub(crate) fn check_external_join<'a>(
     code_points: CodePoints,
     cache: &mut LogCache,
     extensions: &Extensions<GroupContext>,
     leaves: impl IntoIterator<Item = (&'a [u8], &'a Credential)>,
-) -> Result<(), DidWebvhError> {
+) -> Result<Option<DidWebvhHeads>, DidWebvhError> {
     let record = check_group_context(code_points, extensions)?.unwrap_or_default();
     let mut owned = Vec::new();
     for (key, credential) in leaves {
@@ -640,7 +747,13 @@ pub(crate) fn check_external_join<'a>(
             log,
         })
         .collect();
-    rules::check_commit(&record, &record, &rule_leaves).map_err(DidWebvhError::Rule)
+    if code_points.heads_component().is_some() {
+        let expected = rules::expected_heads(&record, &rule_leaves).map_err(DidWebvhError::Rule)?;
+        rules::check_commit(&record, &expected, &rule_leaves).map_err(DidWebvhError::Rule)?;
+        return Ok((expected != record).then_some(expected));
+    }
+    rules::check_commit(&record, &record, &rule_leaves).map_err(DidWebvhError::Rule)?;
+    Ok(None)
 }
 
 /// The leaf of a standalone Add or Update proposal, verified and bound;

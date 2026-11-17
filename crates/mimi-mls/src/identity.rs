@@ -368,6 +368,22 @@ impl Identity {
         &self.extra_components
     }
 
+    /// The components this identity's leaves list beyond mimid's built-ins:
+    /// [`Identity::extra_components`], and the `did_webvh` record component
+    /// when its code points carry the record as one (spike bead
+    /// mimid-1wgh.4.81.32).
+    pub(crate) fn leaf_components(&self) -> Vec<ComponentId> {
+        let mut components = self.extra_components.clone();
+        if let Some(component_id) = self
+            .did_webvh_code_points()
+            .and_then(|code_points| code_points.heads_component())
+            && !components.contains(&component_id)
+        {
+            components.push(component_id);
+        }
+        components
+    }
+
     /// The BasicCredential identity bytes, or for a `did_webvh` identity
     /// the SCID as ASCII bytes.
     pub fn identity(&self) -> &[u8] {
@@ -429,7 +445,7 @@ impl Identity {
         // put into the KeyPackage (RFC 9420 §13.5) is listed there too.
         let grease_extension = random_grease_value(rand);
         let capabilities = leaf_capabilities(rand, grease_extension, self.did_webvh_code_points());
-        let leaf_extensions = leaf_extensions(rand, &self.extra_components)?;
+        let leaf_extensions = leaf_extensions(rand, &self.leaf_components())?;
 
         let mut key_package_extensions = Vec::with_capacity(2);
         if kind == KeyPackageKind::LastResort {
@@ -498,7 +514,11 @@ pub(crate) fn leaf_capabilities(
     ];
     if let Some(code_points) = did_webvh {
         credentials.push(CredentialType::from(code_points.credential_type()));
-        extensions.push(ExtensionType::from(code_points.heads_extension_type()));
+        // As a component, the record is listed in app_components instead
+        // (spike bead mimid-1wgh.4.81.32).
+        if code_points.heads_component().is_none() {
+            extensions.push(ExtensionType::from(code_points.heads_extension_type()));
+        }
     }
     Capabilities::builder()
         .ciphersuites(vec![CIPHERSUITE])
