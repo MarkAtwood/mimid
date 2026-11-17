@@ -1,3 +1,4 @@
 {"id":"01a1e125-00af-7103-b2d6-082ad20b454e","issue_id":"mimid-1wgh.37.97","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-15T21:37:41.039066942Z"}
 {"id":"01a1e125-00b2-75e1-9881-f345a4624a95","issue_id":"mimid-1wgh.37.97","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: wg","created_at":"2026-11-15T21:37:41.042385723Z"}
 {"id":"01a1e125-00b5-73f9-9616-25909f4d0e19","issue_id":"mimid-1wgh.37.97","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: spec","created_at":"2026-11-15T21:37:41.045262695Z"}
+{"id":"01a1e7a7-2869-7da7-a88c-3d0c2f326b9c","issue_id":"mimid-1wgh.37.97","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Filed as https://github.com/ietf-wg-mimi/mimi-protocol/issues/223 (2026-11-17, Mark's OK).","created_at":"2026-11-17T03:57:34.185895585Z"}
