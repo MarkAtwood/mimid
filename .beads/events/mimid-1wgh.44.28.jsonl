@@ -1,3 +1,4 @@
 {"id":"01a1e1c0-f4f1-7015-993f-b14387f3511a","issue_id":"mimid-1wgh.44.28","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-16T00:28:01.649006006Z"}
 {"id":"01a1e1c0-f4f4-7722-bf67-e2395f86be07","issue_id":"mimid-1wgh.44.28","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: wg","created_at":"2026-11-16T00:28:01.652467889Z"}
 {"id":"01a1e1c0-f4f7-77e1-b353-1e3a2e988874","issue_id":"mimid-1wgh.44.28","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: spec-assay","created_at":"2026-11-16T00:28:01.655516715Z"}
+{"id":"01a1e7a8-07a0-74dc-b56d-4a26bba566ea","issue_id":"mimid-1wgh.44.28","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Filed as https://github.com/rohanmahy/mls-sd-cwt-credential/issues/3 (2026-11-17, Mark's OK).","created_at":"2026-11-17T03:58:31.328319519Z"}
