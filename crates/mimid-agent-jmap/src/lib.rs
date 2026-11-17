@@ -61,7 +61,8 @@
 //!   stores one plain-text notice Message in that room's Chat naming the
 //!   contact (its `displayName`, else its user URI), saying the identity
 //!   changed and should be verified; `did` changes to the new DID at the
-//!   same time. The notice's `senderId` is the accountId (JMAP Chat has no
+//!   same time, and `didChangedAt` is set (draft-atwood-jmap-chat-did-00
+//!   §DID changes; a first binding does not set it). The notice's `senderId` is the accountId (JMAP Chat has no
 //!   system sender; see `sync::store_identity_notice`), and it is stored
 //!   once per room and change, however often the agent reports it.
 //!   INVENTED, NOT FROM SPEC: the notice and its text.

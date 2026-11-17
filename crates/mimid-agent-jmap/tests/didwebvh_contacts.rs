@@ -249,6 +249,8 @@ async fn a_contact_s_did_is_shown_and_a_changed_scid_posts_one_notice() {
     let first_did = first_log.verified().head_did().to_owned();
     assert!(first_did.starts_with("did:webvh:"), "{first_did}");
     assert_eq!(bob.contact(ALICE).await["did"], json!(first_did));
+    // A first binding is not a change (jmap-chat-did-00 §DID changes).
+    assert!(bob.contact(ALICE).await.get("didChangedAt").is_none());
     assert!(
         bob.contact(CAROL).await.get("did").is_none(),
         "a BasicCredential contact has no did"
@@ -281,10 +283,11 @@ async fn a_contact_s_did_is_shown_and_a_changed_scid_posts_one_notice() {
     assert!(body.contains("Verify"), "{body}");
     assert!(body.contains(second_log.verified().scid()), "{body}");
     // The contact's DID follows the change.
-    assert_eq!(
-        bob.contact(ALICE).await["did"],
-        json!(second_log.verified().head_did())
-    );
+    let contact = bob.contact(ALICE).await;
+    assert_eq!(contact["did"], json!(second_log.verified().head_did()));
+    // Replacing a bound DID sets didChangedAt (§DID changes).
+    assert!(contact["didChangedAt"].is_string(), "{contact}");
+    assert!(bob.contact(CAROL).await.get("didChangedAt").is_none());
     assert!(bob.messages(&first_chat).await.is_empty());
 
     // alice's new device takes a newer log: its Commit makes bob's agent

@@ -439,7 +439,9 @@ impl AgentChat {
     /// `changed` (a user and the SCID an [`Event::IdentityChanged`]
     /// reported) picks the DID with that SCID, so `did` changes when the
     /// identity notice goes out; otherwise the one the contact has is
-    /// kept, and failing that the first in order.
+    /// kept, and failing that the first in order. Replacing or clearing a
+    /// DID the contact had also sets `didChangedAt` (§DID changes); a
+    /// first binding does not.
     ///
     /// The property is standard, server-set, and set here without the
     /// `urn:ietf:params:jmap:chat:did` capability, which the agent cannot
@@ -492,8 +494,16 @@ impl AgentChat {
             if wanted == current {
                 continue;
             }
-            let patch = serde_json::from_value(json!({ "did": wanted }))
-                .map_err(|e| SyncError::Store(e.to_string()))?;
+            // draft-atwood-jmap-chat-did-00 §DID changes: a DID bound
+            // before that is now different, or gone, sets didChangedAt; a
+            // first binding does not.
+            let patch = if current.is_some() {
+                json!({ "did": wanted, "didChangedAt": now() })
+            } else {
+                json!({ "did": wanted })
+            };
+            let patch =
+                serde_json::from_value(patch).map_err(|e| SyncError::Store(e.to_string()))?;
             self.inner
                 .update_object::<ChatContact>(&(), &self.account, &contact, patch)
                 .await?;
