@@ -43,9 +43,12 @@ pub struct SyncReport {
     /// attachments, or an edit.
     pub skipped: Vec<String>,
     /// The agent's problems ([`Event::Problem`]), and received
-    /// attachments left out because they could not be fetched, opened or
-    /// stored, as text.
+    /// attachments left out or waiting for a retry because they could not
+    /// be fetched, opened or stored, as text.
     pub problems: Vec<String>,
+    /// Attachments fetched on a retry and added to their Messages
+    /// ([`crate::retry`]).
+    pub attachments_retried: usize,
 }
 
 /// A failure of [`AgentChat::sync`].
@@ -116,6 +119,9 @@ impl AgentChat {
             if joined == 0 {
                 break;
             }
+        }
+        if self.retry_attachments(&mut agent, &mut report).await? {
+            self.save().await?;
         }
         Ok(report)
     }
@@ -376,7 +382,7 @@ impl AgentChat {
                 return Ok(());
             }
         };
-        let attachments = self
+        let (attachments, retry) = self
             .fetch_attachments(agent, &received.room, &parts, report)
             .await;
         let body_type = match &content.nested_part.part {
@@ -422,6 +428,7 @@ impl AgentChat {
             })
             .await?;
         self.link_message(&chat, reference, &id);
+        self.keep_for_retry(&id, &received.room, retry, report);
         report.messages += 1;
         Ok(())
     }
@@ -429,10 +436,11 @@ impl AgentChat {
     /// Fetches, opens and stores the attachments `parts` of a message in
     /// `room`, and returns them as JMAP Attachments: the part's file name
     /// (made safe, or [`FALLBACK_FILENAME`]) and media type (or
-    /// [`FALLBACK_CONTENT_TYPE`]), the plaintext's size and SHA-256. One
-    /// that fails is reported in `report.problems` and left out, as are
-    /// those past [`MAX_ATTACHMENTS_PER_MESSAGE`] and all of them without a
-    /// blob store.
+    /// [`FALLBACK_CONTENT_TYPE`]), the plaintext's size and SHA-256. Also
+    /// returns, by position, the ones whose fetch failed in a way that may
+    /// pass, for [`crate::retry`]. Any other failure is reported in
+    /// `report.problems` and left out, as are those past
+    /// [`MAX_ATTACHMENTS_PER_MESSAGE`] and all of them without a blob store.
     async fn fetch_attachments(
         &self,
         // Not &Agent: that is not Send across an await (see
@@ -441,17 +449,17 @@ impl AgentChat {
         room: &str,
         parts: &[&ExternalPart],
         report: &mut SyncReport,
-    ) -> Vec<Attachment> {
+    ) -> (Vec<Attachment>, Vec<(u32, ExternalPart)>) {
         if parts.is_empty() {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
-        let Some(blobs) = &self.blobs else {
+        if self.blobs.is_none() {
             report.problems.push(format!(
                 "{room}: {} attachments left out: no blob store",
                 parts.len()
             ));
-            return Vec::new();
-        };
+            return (Vec::new(), Vec::new());
+        }
         if parts.len() > MAX_ATTACHMENTS_PER_MESSAGE {
             report.problems.push(format!(
                 "{room}: {} attachments past the first {MAX_ATTACHMENTS_PER_MESSAGE} left out",
@@ -459,44 +467,163 @@ impl AgentChat {
             ));
         }
         let mut attachments = Vec::with_capacity(parts.len().min(MAX_ATTACHMENTS_PER_MESSAGE));
+        let mut retry = Vec::new();
         // Problems name an attachment by its position, not its file name:
         // the daemon logs them, and a file name is message content.
         for (number, part) in (1..).zip(parts.iter().take(MAX_ATTACHMENTS_PER_MESSAGE)) {
-            let filename = safe_filename(&part.filename);
-            let stored = match agent.fetch_attachment(room, part).await {
-                Ok(plaintext) => blobs.put(&plaintext).map_err(|e| e.to_string()),
-                Err(e) => Err(e.to_string()),
-            };
-            let info = match stored {
-                Ok(info) => info,
-                Err(e) => {
-                    report
-                        .problems
-                        .push(format!("{room}: attachment {number} left out: {e}"));
-                    continue;
-                }
-            };
-            let content_type = if is_media_type(&part.content_type) {
-                part.content_type.as_str()
-            } else {
-                FALLBACK_CONTENT_TYPE
-            };
-            // Attachment is #[non_exhaustive]: built through serde
-            // (AGENTS.md).
-            match serde_json::from_value(json!({
-                "blobId": info.id,
-                "filename": filename,
-                "contentType": content_type,
-                "size": info.size,
-                "sha256": hex(&info.sha256),
-            })) {
+            match self.fetch_one(agent, room, part).await {
                 Ok(attachment) => attachments.push(attachment),
-                Err(e) => report
+                Err((e, true)) => {
+                    report.problems.push(format!(
+                        "{room}: attachment {number} not fetched yet, will retry: {e}"
+                    ));
+                    retry.push((number, (*part).clone()));
+                }
+                Err((e, false)) => report
                     .problems
                     .push(format!("{room}: attachment {number} left out: {e}")),
             }
         }
-        attachments
+        (attachments, retry)
+    }
+
+    /// Fetches, opens and stores one attachment. The error says whether it
+    /// may pass ([`crate::retry`]; a blob store write failure may).
+    async fn fetch_one(
+        &self,
+        agent: &mut Agent,
+        room: &str,
+        part: &ExternalPart,
+    ) -> Result<Attachment, (String, bool)> {
+        let Some(blobs) = &self.blobs else {
+            return Err(("no blob store".to_owned(), false));
+        };
+        let plaintext = agent
+            .fetch_attachment(room, part)
+            .await
+            .map_err(|e| (e.to_string(), crate::retry::may_pass(&e)))?;
+        let info = blobs.put(&plaintext).map_err(|e| (e.to_string(), true))?;
+        let content_type = if is_media_type(&part.content_type) {
+            part.content_type.as_str()
+        } else {
+            FALLBACK_CONTENT_TYPE
+        };
+        // Attachment is #[non_exhaustive]: built through serde (AGENTS.md).
+        serde_json::from_value(json!({
+            "blobId": info.id,
+            "filename": safe_filename(&part.filename),
+            "contentType": content_type,
+            "size": info.size,
+            "sha256": hex(&info.sha256),
+        }))
+        .map_err(|e| (e.to_string(), false))
+    }
+
+    /// Keeps `failed`, attachments of Message `message` in `room`, for
+    /// retry; past [`crate::retry::MAX_PENDING`] they are given up.
+    fn keep_for_retry(
+        &self,
+        message: &Id,
+        room: &str,
+        failed: Vec<(u32, ExternalPart)>,
+        report: &mut SyncReport,
+    ) {
+        if failed.is_empty() {
+            return;
+        }
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (number, part) in failed {
+            if pending.len() >= crate::retry::MAX_PENDING {
+                report.problems.push(format!(
+                    "{room}: attachment {number} left out: too many attachments waiting for retry"
+                ));
+                continue;
+            }
+            pending.push(crate::retry::PendingAttachment::new(
+                message.as_ref().to_owned(),
+                room.to_owned(),
+                number,
+                &part,
+            ));
+        }
+    }
+
+    /// Fetches again up to [`crate::retry::MAX_RETRIES_PER_SYNC`] pending
+    /// attachments that are due; one that arrives is added to its Message.
+    /// Returns whether the pending list or a Message changed.
+    async fn retry_attachments(
+        &self,
+        agent: &mut Agent,
+        report: &mut SyncReport,
+    ) -> Result<bool, SyncError> {
+        let now = crate::retry::now_secs();
+        let due: Vec<crate::retry::PendingAttachment> = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|p| p.next_try <= now)
+            .take(crate::retry::MAX_RETRIES_PER_SYNC)
+            .cloned()
+            .collect();
+        if due.is_empty() {
+            return Ok(false);
+        }
+        for entry in due {
+            let (room, number) = (entry.room.clone(), entry.number);
+            let message_id = Id::from(entry.message.clone());
+            let outcome = match entry.part.external_part() {
+                None => Err(("the kept part is damaged".to_owned(), false)),
+                Some(part) => self.fetch_one(agent, &room, &part).await,
+            };
+            // The entry leaves the list unless it is kept for another try.
+            let mut keep = None;
+            match outcome {
+                Ok(attachment) => {
+                    // None: the Message was destroyed meanwhile.
+                    if let Some(message) = self.stored::<Message>(&message_id).await? {
+                        let mut attachments = message.attachments;
+                        attachments.push(attachment);
+                        let patch = serde_json::from_value(json!({ "attachments": attachments }))
+                            .map_err(|e| SyncError::Store(e.to_string()))?;
+                        self.inner
+                            .update_object::<Message>(&(), &self.account, &message_id, patch)
+                            .await?;
+                        report.attachments_retried += 1;
+                    }
+                }
+                Err((e, true)) if entry.attempts + 1 < crate::retry::MAX_ATTEMPTS => {
+                    let attempts = entry.attempts + 1;
+                    keep = Some(crate::retry::PendingAttachment {
+                        attempts,
+                        next_try: now.saturating_add(crate::retry::delay_after(attempts)),
+                        ..entry.clone()
+                    });
+                    report.problems.push(format!(
+                        "{room}: attachment {number} still not fetched, will retry: {e}"
+                    ));
+                }
+                Err((e, _)) => report
+                    .problems
+                    .push(format!("{room}: attachment {number} given up: {e}")),
+            }
+            let mut pending = self
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(index) = pending.iter().position(|p| *p == entry) {
+                match keep {
+                    Some(updated) => pending[index] = updated,
+                    None => {
+                        pending.remove(index);
+                    }
+                }
+            }
+        }
+        Ok(true)
     }
 }
 

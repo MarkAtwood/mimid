@@ -76,12 +76,14 @@
 //! - Sending attachments needs a mimid server that stores them (its
 //!   Session's mimi capability has `assetUrl`); otherwise a create with
 //!   attachments is refused with the agent's error.
-//! - A received attachment that cannot be fetched, opened or stored is
-//!   left out of its Message and reported in [`SyncReport::problems`]; the
-//!   message is acknowledged anyway, so a transient failure (the server
-//!   or the peer's hub unreachable) loses that attachment for good. So
-//!   are attachments past [`MAX_ATTACHMENTS_PER_MESSAGE`], and all of them
-//!   without a blob store. A received attachment's media type is not
+//! - A received attachment whose fetch fails for a reason that may pass
+//!   (the server or the peer's hub unreachable or failing) is kept and
+//!   fetched again on later syncs, then added to its Message ([`retry`]).
+//!   One that fails for good, or still fails after
+//!   [`retry::MAX_ATTEMPTS`], is left out and reported in
+//!   [`SyncReport::problems`], as are attachments past
+//!   [`MAX_ATTACHMENTS_PER_MESSAGE`], and all of them without a blob
+//!   store. A received attachment's media type is not
 //!   checked against its content, and an invalid one becomes
 //!   `application/octet-stream`.
 //! - Blobs are never deleted (see [`BlobStore`]), and attachments are
@@ -107,6 +109,7 @@ mod backend;
 mod blobs;
 mod convert;
 mod persist;
+pub mod retry;
 mod sync;
 
 pub use backend::{AgentChat, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, Options};

@@ -74,6 +74,8 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
 struct Assets {
     /// blobId to the stored (sealed) octets.
     stored: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    /// How many of the next `/jmap/asset` fetches answer 503.
+    unavailable: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Assets {
@@ -103,6 +105,14 @@ async fn assets_stub(
         return axum::Json(json!({"blobId": blob_id, "size": bytes.len()})).into_response();
     }
     if path.starts_with("/jmap/asset/") {
+        use std::sync::atomic::Ordering;
+        if assets
+            .unavailable
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
         let query: BTreeMap<String, String> =
             axum::extract::Query::try_from_uri(request.uri()).unwrap().0;
         let url = &query["url"];
@@ -879,4 +889,157 @@ async fn attachments_travel_sealed_and_arrive_whole() {
         "{problems:?}"
     );
     assert!(!problems[0].contains("data.bin"), "{problems:?}");
+}
+
+/// A received attachment whose fetch fails for a reason that may pass is
+/// kept and fetched again on a later sync (bead mimid-1wgh.14.5), also
+/// after a restart; a final failure gives it up.
+///
+/// Oracles: the stand-in server answers 503 exactly as often as told, so
+/// the first sync cannot have the file and the retry can; the retried
+/// Attachment's `sha256` is that of the octets alice sent (FIPS 180-2
+/// checked through `sha256_hex`), and bob's blob holds them; a 404 (the
+/// stand-in has no such blob) is final.
+#[tokio::test]
+async fn a_failed_attachment_fetch_is_retried_until_it_arrives() {
+    use std::sync::atomic::Ordering;
+    let dir = tempfile::tempdir().unwrap();
+    let assets = Assets::default();
+    let server = server_with(dir.path(), &[ALICE, BOB], Some(assets.clone())).await;
+    let alice = Client::open(&server, ALICE, "alice", dir.path(), false, true).await;
+    let bob = Client::open(&server, BOB, "bob", dir.path(), true, true).await;
+    bob.chat.agent().lock().await.allow(ALICE).await.unwrap();
+    let bob_contact = alice.create("ChatContact", json!({"identity": BOB})).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let chat_a = alice
+        .create(
+            "Chat",
+            json!({"kind": "group", "name": "files", "memberIds": [bob_contact]}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    bob.sync_until(|r| async move { (!r.joined.is_empty()).then_some(r) })
+        .await;
+    let chat_b = bob.get("Chat", None).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (alice, chat_a) = (&alice, &chat_a);
+    let send = |content: &'static [u8], name: &'static str| {
+        let blob = alice.chat.blobs().unwrap().put(content).unwrap();
+        let attachment = json!({
+            "blobId": blob.id, "filename": name, "contentType": "text/plain",
+            "size": content.len(), "sha256": sha256_hex(content),
+        });
+        let message = json!({"chatId": chat_a, "body": name, "sentAt": SENT_AT,
+                             "attachments": [attachment]});
+        async move { alice.create("Message", message).await }
+    };
+    // The server is down for bob's first fetch: the message arrives
+    // without its file, which waits for a retry.
+    assets.unavailable.store(1, Ordering::SeqCst);
+    send(b"first file", "one.txt").await;
+    let reports = sync_to(&bob, &chat_b, 1).await;
+    assert!(
+        reports
+            .iter()
+            .flat_map(|r| &r.problems)
+            .any(|p| p.contains("attachment 1 not fetched yet, will retry")),
+        "{reports:?}"
+    );
+    let got = bob.messages(&chat_b).await;
+    assert_eq!(got[0]["body"], json!("one.txt"));
+    assert_eq!(got[0]["attachments"], json!([]));
+    assert_eq!(bob.chat.pending_attachments(), 1);
+    // Not due yet: a sync now does not fetch.
+    let report = bob.chat.sync().await.unwrap();
+    assert_eq!(
+        (report.attachments_retried, bob.chat.pending_attachments()),
+        (0, 1)
+    );
+
+    bob.chat.retry_attachments_now();
+    let report = bob.chat.sync().await.unwrap();
+    assert_eq!(report.attachments_retried, 1, "{report:?}");
+    assert_eq!(bob.chat.pending_attachments(), 0);
+    let got = bob.messages(&chat_b).await;
+    let attachment = &got[0]["attachments"][0];
+    assert_eq!(attachment["sha256"], json!(sha256_hex(b"first file")));
+    assert_eq!(attachment["filename"], json!("one.txt"));
+    let blob_id = attachment["blobId"].as_str().unwrap();
+    assert_eq!(
+        bob.chat.blobs().unwrap().get(blob_id).unwrap().unwrap(),
+        b"first file"
+    );
+
+    // A pending retry survives a restart of bob's agent: it is kept in
+    // the plaintext store beside the Messages.
+    assets.unavailable.store(1, Ordering::SeqCst);
+    send(b"second file", "two.txt").await;
+    sync_to(&bob, &chat_b, 2).await;
+    assert_eq!(bob.chat.pending_attachments(), 1);
+    drop(bob);
+    let bob = Client::open(&server, BOB, "bob", dir.path(), true, true).await;
+    assert_eq!(bob.chat.pending_attachments(), 1);
+    bob.chat.retry_attachments_now();
+    let report = bob.chat.sync().await.unwrap();
+    assert_eq!(report.attachments_retried, 1, "{report:?}");
+    let two = bob
+        .messages(&chat_b)
+        .await
+        .into_iter()
+        .find(|m| m["body"] == json!("two.txt"))
+        .unwrap();
+    assert_eq!(
+        two["attachments"][0]["sha256"],
+        json!(sha256_hex(b"second file"))
+    );
+
+    // A failure that will not pass gives the attachment up: the server
+    // lost the blob (404) after the first attempt failed with a 503.
+    assets.unavailable.store(1, Ordering::SeqCst);
+    send(b"third file", "three.txt").await;
+    sync_to(&bob, &chat_b, 3).await;
+    assert_eq!(bob.chat.pending_attachments(), 1);
+    let newest = assets
+        .ids()
+        .into_iter()
+        .max_by_key(|id| id[4..].parse::<u32>().unwrap())
+        .unwrap();
+    assets.stored.lock().unwrap().remove(&newest);
+    bob.chat.retry_attachments_now();
+    let report = bob.chat.sync().await.unwrap();
+    assert_eq!(bob.chat.pending_attachments(), 0);
+    assert!(
+        report
+            .problems
+            .iter()
+            .any(|p| p.contains("attachment 1 given up")),
+        "{report:?}"
+    );
+    let three = bob
+        .messages(&chat_b)
+        .await
+        .into_iter()
+        .find(|m| m["body"] == json!("three.txt"))
+        .unwrap();
+    assert_eq!(three["attachments"], json!([]));
+}
+
+/// Syncs `client` until `chat` has `n` Messages, whatever problems the
+/// syncs report; returns the reports.
+async fn sync_to(client: &Client, chat: &str, n: usize) -> Vec<SyncReport> {
+    let mut reports = Vec::new();
+    for _ in 0..100 {
+        reports.push(client.chat.sync().await.unwrap());
+        if client.messages(chat).await.len() >= n {
+            return reports;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("{n} messages never arrived");
 }

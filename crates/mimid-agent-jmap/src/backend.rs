@@ -99,6 +99,8 @@ pub struct AgentChat {
     pub(crate) save_lock: Mutex<()>,
     /// The attachments' content ([`AgentChat::with_blobs`]).
     pub(crate) blobs: Option<BlobStore>,
+    /// Received attachments to fetch again ([`crate::retry`]).
+    pub(crate) pending: StdMutex<Vec<crate::retry::PendingAttachment>>,
 }
 
 impl std::fmt::Debug for AgentChat {
@@ -126,6 +128,7 @@ impl AgentChat {
             store_path: None,
             save_lock: Mutex::new(()),
             blobs: None,
+            pending: StdMutex::new(Vec::new()),
         }
     }
 

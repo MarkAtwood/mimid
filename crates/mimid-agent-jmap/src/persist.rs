@@ -69,6 +69,10 @@ struct Snapshot {
     account: String,
     /// `TYPE_NAME` to the objects of that type, as JSON.
     objects: std::collections::BTreeMap<String, Vec<Value>>,
+    /// Received attachments to fetch again ([`crate::retry`]). Absent in
+    /// a file written before retries, which reads as none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pending_attachments: Vec<crate::retry::PendingAttachment>,
 }
 
 /// The stored types, in the order they are restored.
@@ -125,6 +129,11 @@ impl AgentChat {
                 format!("account {} is not this one", snapshot.account),
             ));
         }
+        *self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            snapshot.pending_attachments.clone();
         for (name, values) in &snapshot.objects {
             let Some(&type_name) = TYPES.iter().find(|t| **t == name.as_str()) else {
                 return Err(malformed(path, format!("unknown type {name}")));
@@ -218,6 +227,11 @@ impl AgentChat {
             format: FORMAT,
             account: self.account.as_ref().to_owned(),
             objects,
+            pending_attachments: self
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
         };
         let bytes =
             serde_json::to_vec(&snapshot).map_err(|e| PersistError::Store(e.to_string()))?;

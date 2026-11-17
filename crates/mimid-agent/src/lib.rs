@@ -96,8 +96,9 @@
 //! - Blobs are never deleted and have no quota; uploads not used in a
 //!   Message stay on disk.
 //! - Sending a file needs a mimid server that stores attachments; a
-//!   received attachment that cannot be fetched at sync is left out of
-//!   its Message for good (see mimid-agent-jmap's Limitations).
+//!   received attachment whose fetch fails is retried on later syncs and
+//!   left out only when it fails for good (see mimid-agent-jmap's
+//!   Limitations and its `retry` module).
 //! - An upload over the limit is refused as soon as its `Content-Length`
 //!   or its body passes [`MAX_SIZE_UPLOAD`], without reading the rest, so
 //!   a client still sending may see its connection closed rather than
