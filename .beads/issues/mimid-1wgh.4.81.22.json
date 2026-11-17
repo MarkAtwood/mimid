@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.4.81.22",
+  "title": "Decision: the hub lets through a GroupContextExtensions proposal that only sets the did_webvh record (narrows mimid-1wgh.6.2)",
+  "description": "draft-atwood-mls-didwebvh-credential-01 §Expected Heads: \"A Commit that changes the expected value MUST therefore include a GroupContextExtensions proposal that sets it.\" Every Commit that adds a new did_webvh user, or carries a newer log (revocation, a new device), changes the record. mimid's hub refuses every GroupContextExtensions proposal (decision mimid-1wgh.6.2, hub/policy.rs), so as it stands no such Commit could pass a mimid hub.\n\nReadings: (a) keep refusing GroupContextExtensions; did_webvh rooms cannot add users or revoke devices. (b) allow any GroupContextExtensions in rooms with did_webvh members. (c) allow exactly the GroupContextExtensions proposal the rules require: one whose extensions differ from the current GroupContext only in did_webvh_heads and in required_capabilities gaining did_webvh_heads and did_webvh (what mimi-mls's with_heads writes; decision mimid-1wgh.4.81.16), checked while the Observer enforces the rules, which also checks the record equals the expected one.\n\nChosen: (c). mimi-mls's Observer reports such a proposal as ProposalKind::DidWebvhRecord (only after Observer::enforce_did_webvh), and the hub's policy needs no capability for it: the change is mechanical and fully determined by the tree (draft §Rules; decision mimid-1wgh.4.81.17). Every other GroupContextExtensions proposal is still refused. Narrows mimid-1wgh.6.2 for this one shape.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T16:22:06.222906922Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T16:22:06.222906922Z",
+  "labels": [
+    "didwebvh",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.22",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-17T16:22:06.458441599Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
