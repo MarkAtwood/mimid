@@ -1,0 +1,16 @@
+{
+  "id": "mimid-csl0",
+  "title": "[epic] libpurple protocol plugin: MIMI in Pidgin and Adium via mimid-agent's JMAP Chat",
+  "description": "A libpurple prpl that speaks JMAP Chat to the local mimid-agent, so Pidgin, Adium (macOS) and other libpurple clients get a native 'MIMI' account type rather than going through IRC or XMPP. Adium bundles an old libpurple; check what it can load. All adapters sit on mimid-agent's local JMAP Chat endpoint (decision mimid-1wgh.38): the agent does MLS and holds keys; the adapter translates plaintext JMAP Chat to the client's protocol on the user's own machine, loopback only, with the agent's bearer token. Never serve plaintext beyond the local machine (AGENTS.md). Map: Chat \u003c-\u003e room/channel/MUC, Message \u003c-\u003e message, ChatContact \u003c-\u003e nick/JID/URI, attachments via the agent's blob routes, presence only if JMAP Chat has it. Status: idea, not scheduled.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T16:36:47.237767209Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T16:36:47.237767209Z",
+  "labels": [
+    "adapter",
+    "client"
+  ]
+}
