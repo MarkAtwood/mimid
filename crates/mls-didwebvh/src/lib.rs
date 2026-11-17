@@ -13,7 +13,9 @@
 //! - [`rules`]: §Binding to the LeafNode, §Expected Heads, §Rules, the
 //!   Welcome checks and §Successor Credentials, over abstract leaves;
 //! - [`CodePoints`]: the credential and extension types, which IANA has not
-//!   assigned, as settings.
+//!   assigned, as settings;
+//! - [`controller`]: the controller side, writing a log whose DID documents
+//!   list the user's devices, with pre-rotation.
 //!
 //! `mimi-mls` applies all of this to OpenMLS groups.
 //!
@@ -45,10 +47,14 @@
 //!   a limit the draft does not set (decision mimid-1wgh.4.81.13).
 //! - In an MLS `Credential`, the structure is carried inside an
 //!   `opaque<V>`, which the draft does not say (decision mimid-1wgh.4.81.8).
+//! - [`controller`] writes no witness proofs and no `witness` parameter, and
+//!   its JCS handles only integers within ±(2^53 - 1). It does not publish
+//!   the log: [`controller::DidLog::did_log`] gives the bytes to publish.
 
 #![forbid(unsafe_code)]
 
 mod config;
+pub mod controller;
 mod credential;
 pub mod heads;
 mod json;
