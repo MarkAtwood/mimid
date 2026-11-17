@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.4.81.19",
+  "title": "Mark: review the did_webvh deviations before IETF 127 (opaque\u003cV\u003e carriage, AGENTS.md crate map)",
+  "description": "1. Decision mimid-1wgh.4.81.8: mimid carries DIDWebVHCredential inside opaque\u003cV\u003e, not as -00 writes it, because OpenMLS and mls-rs carry every unknown credential type as one opaque\u003cV\u003e. This is the first feedback item for -01 (docs/didwebvh-draft-feedback.md item 1); worth saying at the session that the first implementation hit it. 2. AGENTS.md's crate map has no row for the new crate mls-didwebvh (pure, sync, no OpenMLS; depends on jmap-did-types at the crate-jmap rev mimid pins; mimi-mls depends on it). Agents were told not to edit AGENTS.md. 3. Decision mimid-1wgh.4.81.16 narrows mimid-1wgh.4.33 (required_capabilities) for did_webvh groups.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T04:54:24.865723273Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T04:54:24.865723273Z",
+  "labels": [
+    "didwebvh",
+    "human",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.19",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-17T04:54:24.901988533Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
