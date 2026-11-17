@@ -1,3 +1,4 @@
 {"id":"01a1e1ca-dac1-71a2-8e2e-3eb72ade2439","issue_id":"mimid-1wgh.44.35","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-16T00:38:50.305107692Z"}
 {"id":"01a1e1ca-dac4-7498-b83e-3c2ddf0e06d9","issue_id":"mimid-1wgh.44.35","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: wg","created_at":"2026-11-16T00:38:50.308301636Z"}
 {"id":"01a1e1ca-dac7-72f9-9127-d9c31ff10728","issue_id":"mimid-1wgh.44.35","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: spec-assay","created_at":"2026-11-16T00:38:50.311195273Z"}
+{"id":"01a1e7a8-d12b-76e0-b839-dd9d3e5cdd09","issue_id":"mimid-1wgh.44.35","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Filed as https://github.com/rohanmahy/mimi-hub-deleted-messages/issues/1 (2026-11-17, Mark's OK).","created_at":"2026-11-17T03:59:22.923451785Z"}
