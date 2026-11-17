@@ -1,0 +1,16 @@
+{
+  "id": "mimid-0cu8",
+  "title": "did:plc (Bluesky / AT Protocol) credential: a second verified-log encoding beside did:webvh",
+  "description": "Mark 2026-11-17: would like Bluesky DIDs to work too. Draft note: mls-didwebvh-credential d67b425 (Open Issue 7).\n\nFit: did:plc gives what the group rules use (decision/feedback of mimid-1wgh.4.81, item 7): a self-certifying ID (DID = hash of the signed genesis op), a hash-chained log of signed operations (prev CID; public audit log at plc.directory/\u003cdid\u003e/log/audit, verifiable offline), and the keys each op lists. mls-didwebvh's rules work over abstract leaves, so this is a second log verifier and profile, not new group rules.\n\nDifferences to settle (decision beads when built):\n- Rollback: a did:plc rotation key can override ops up to 72 h old (nullification), so history is not strictly append-only; conflicts with 'heads never move backwards'. Options: treat ops younger than 72 h as provisional, or follow the directory's current view.\n- Keys: atproto keys are P-256 or secp256k1; the draft allows only Ed25519 MLS suites. P-256 fits MLS suite 0x0002; secp256k1 has none. Do not reuse the #atproto repo-signing key; add a per-device MLS verification method to the DID document.\n- Directory: plc.directory is one operator; verification is offline, freshness needs the directory.\n- did:web Bluesky accounts have no history: out of scope or a weaker mode.\n- Credential type: a separate type (e.g. did_plc) or the draft generalized to one type with a log-format field.\n\nStatus: idea, after the did:webvh wiring (mimid-1wgh.4.81.18).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T16:41:16.48463699Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T16:41:16.48463699Z",
+  "labels": [
+    "didwebvh",
+    "feature"
+  ]
+}
