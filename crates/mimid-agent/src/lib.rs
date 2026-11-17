@@ -36,6 +36,21 @@
 //! attachment is fetched and decrypted at sync, and downloads from the
 //! same store.
 //!
+//! # Taking a newer did:webvh log
+//!
+//! A running daemon takes a newer log from the user's did:webvh controller
+//! (draft-atwood-mls-didwebvh-credential-01; bead mimid-1wgh.4.81.28) in
+//! two ways, through one check-and-apply path: `POST /mimid/did-webvh/log`
+//! ([`didwebvh::DID_WEBVH_LOG_PATH`]) with the log in a JSON body, behind
+//! the same Host check, CORS rules and local token as the JMAP endpoint;
+//! and by watching `[did_webvh].log_file`. The log must name this user and
+//! extend the one the agent holds; it is then committed to every active
+//! room (a revocation removes the revoked devices), or proposed as an
+//! Update where the Commit cannot be built. The endpoint answers what
+//! happened, room by room, or why the log was refused. The path, body and
+//! answer are INVENTED, NOT FROM SPEC; the [`didwebvh`] module documents
+//! them.
+//!
 //! # Configuration and the local token
 //!
 //! [`Config`] is the TOML file (see the `config` module). The listen
@@ -114,6 +129,7 @@
 
 pub mod config;
 mod daemon;
+pub mod didwebvh;
 mod http;
 pub mod token;
 

@@ -24,7 +24,9 @@
 //! (`mimid_agent_core::DidWebvhConfig`). The agent uses a BasicCredential
 //! unless `log_file` is set: then, at every start, it takes that log from
 //! the user's controller as its credential if it is newer than the one it
-//! holds, and offers it to its rooms. The log must list the device's
+//! holds, and offers it to its rooms; while it runs, it takes the file
+//! again whenever it changes (see the `didwebvh` module, which also has an
+//! endpoint to hand it a log). The log must list the device's
 //! signature key and the user's URI in `alsoKnownAs`. `support` (default
 //! true) lets a BasicCredential agent share rooms with `did_webvh` users.
 //! The two code points are the draft's suggested values until IANA

@@ -7,6 +7,8 @@
 //!   account's blob store (mimid-agent-jmap's `BlobStore`);
 //! - `GET /jmap/download/{accountId}/{blobId}/{name}?accept={type}`:
 //!   download (RFC 8620 §6.2) from it.
+//! - `POST /mimid/did-webvh/log`: a newer did:webvh log for the agent
+//!   (INVENTED, NOT FROM SPEC; see the `didwebvh` module).
 //!
 //! Every request goes through [`guard`], in this order:
 //!
@@ -328,6 +330,12 @@ pub(crate) fn router(endpoint: Arc<Endpoint>) -> Router {
         // DefaultBodyLimit applies only to extractors such as Bytes.
         .route("/jmap/upload/{accountId}/", post(upload))
         .route("/jmap/download/{accountId}/{blobId}/{name}", get(download))
+        // INVENTED, NOT FROM SPEC (bead mimid-1wgh.4.81.28): see the
+        // didwebvh module. It reads its body itself, capped.
+        .route(
+            crate::didwebvh::DID_WEBVH_LOG_PATH,
+            post(crate::didwebvh::post_log),
+        )
         .layer(DefaultBodyLimit::max(MAX_SIZE_REQUEST))
         .layer(middleware::from_fn_with_state(Arc::clone(&endpoint), guard))
         .with_state(endpoint)
@@ -568,7 +576,7 @@ async fn upload(
 
 /// Why [`read_capped`] read no body.
 #[derive(Debug, PartialEq, Eq)]
-enum BodyError {
+pub(crate) enum BodyError {
     /// It is over the cap.
     TooLarge,
     /// The connection failed.
@@ -577,7 +585,7 @@ enum BodyError {
 
 /// `body`, if it is at most `max` octets; reading stops at the first
 /// chunk past `max`, whatever `Content-Length` said.
-async fn read_capped(body: Body, max: usize) -> Result<Vec<u8>, BodyError> {
+pub(crate) async fn read_capped(body: Body, max: usize) -> Result<Vec<u8>, BodyError> {
     let mut content = Vec::new();
     let mut stream = body.into_data_stream();
     while let Some(chunk) = tokio_stream::StreamExt::next(&mut stream).await {
@@ -726,7 +734,7 @@ async fn post_api(
 
 /// RFC 8620 §3.1: the request's one `Content-Type` is `application/json`,
 /// parameters allowed.
-fn is_json(headers: &HeaderMap) -> bool {
+pub(crate) fn is_json(headers: &HeaderMap) -> bool {
     let mut values = headers.get_all(header::CONTENT_TYPE).iter();
     let (Some(value), None) = (values.next(), values.next()) else {
         return false;

@@ -12,6 +12,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{Notify, Semaphore, broadcast, watch};
 
 use crate::config::Config;
+use crate::didwebvh::LogWatch;
 use crate::http::{
     self, CHANGE_BUFFER, Endpoint, MAX_CONCURRENT_REQUESTS, MAX_CONCURRENT_UPLOAD, stopped,
 };
@@ -28,6 +29,8 @@ pub struct Daemon {
     key_packages: u32,
     user_uri: String,
     server_url: String,
+    /// The watch of `[did_webvh].log_file`, when set.
+    log_watch: Option<LogWatch>,
 }
 
 impl std::fmt::Debug for Daemon {
@@ -161,6 +164,13 @@ impl Daemon {
             key_packages: config.key_packages,
             user_uri: config.user_uri.clone(),
             server_url: config.server_url.clone(),
+            // Bead mimid-1wgh.4.81.28: Agent::open has read the file; a
+            // change from now on is taken while running.
+            log_watch: config
+                .did_webvh
+                .log_file
+                .clone()
+                .map(|log| LogWatch::new(log, config.did_webvh.witness_file.clone())),
         })
     }
 
@@ -193,6 +203,7 @@ impl Daemon {
             Arc::clone(&self.endpoint),
             self.sync_interval,
             self.key_packages,
+            self.log_watch,
         ));
         let stop = self.stop;
         let served = axum::serve(self.listener, http::router(self.endpoint))
@@ -254,11 +265,20 @@ async fn top_up_key_packages(agent: &mut Agent, target: u32) {
 }
 
 /// Syncs at once, then every `interval` or when woken, until the daemon
-/// stops; after each sync, tells the EventSource streams to look and tops
+/// stops; before each sync, takes a changed did:webvh log file
+/// (`log_watch`); after it, tells the EventSource streams to look and tops
 /// the KeyPackages up.
-async fn sync_loop(endpoint: Arc<Endpoint>, interval: Duration, key_packages: u32) {
+async fn sync_loop(
+    endpoint: Arc<Endpoint>,
+    interval: Duration,
+    key_packages: u32,
+    mut log_watch: Option<LogWatch>,
+) {
     let mut stop = endpoint.stop.clone();
     loop {
+        if let Some(watch) = log_watch.as_mut() {
+            watch.check(&endpoint).await;
+        }
         match endpoint.chat.sync().await {
             Ok(report) => log_report(&report),
             Err(error) => tracing::warn!(
