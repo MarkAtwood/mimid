@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.14.5",
+  "title": "Agent: retry received attachments whose fetch failed",
+  "description": "AgentChat::sync (sync.rs fetch_attachments) leaves out a received attachment whose fetch through the user's server fails, reports it in SyncReport.problems, and acknowledges the message, so a transient failure (server or peer hub down) loses the attachment for good although the ExternalPart (url, key, nonce, hash) was received. Keep the ExternalPart of a failed fetch (e.g. in the Message's extra properties or a side table in chat.json, never logged) and retry on later syncs until it succeeds, is refused for good (hash mismatch, 404), or expires.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T03:05:33.632239756Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T03:05:33.632239756Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.14.5",
+      "depends_on_id": "mimid-1wgh.14",
+      "type": "parent-child",
+      "created_at": "2026-11-17T03:05:33.658301185Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
