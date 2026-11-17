@@ -244,7 +244,9 @@ pub struct CommitDetail {
     /// a member commits.
     ///
     /// A hub may authorize these Removes without a room-policy capability
-    /// (decision mimid-1wgh.4.81.26).
+    /// (decision mimid-1wgh.4.81.26). The leaf may also share the SCID of
+    /// an Update proposal the Commit includes, when another member commits
+    /// a user's own revocation (decision mimid-1wgh.4.81.31).
     pub did_webvh_required_removes: Vec<u32>,
 }
 

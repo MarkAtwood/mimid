@@ -227,11 +227,12 @@ pub struct Commit {
     /// Its proposals, in the order they are applied.
     pub proposals: Vec<Proposal>,
     /// The leaf indices of its Remove proposals that the `did_webvh` group
-    /// rules require of this committer, as the Observer reports them
+    /// rules require, as the Observer reports them
     /// (`CommitDetail::did_webvh_required_removes`): a leaf with the
-    /// committer's SCID whose key the record the same Commit sets no longer
-    /// authorizes. Authorized without a room-policy capability (decision
-    /// mimid-1wgh.4.81.26).
+    /// committer's SCID, or the SCID of an Update proposal in the same
+    /// Commit, whose key the record the Commit sets no longer authorizes.
+    /// Authorized without a room-policy capability (decisions
+    /// mimid-1wgh.4.81.26 and .31).
     pub did_webvh_required_removes: BTreeSet<u32>,
 }
 

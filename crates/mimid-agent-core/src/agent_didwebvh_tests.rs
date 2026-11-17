@@ -218,3 +218,101 @@ async fn a_credential_that_cannot_be_committed_is_proposed_and_another_member_co
         bob.epoch_authenticator(&room).unwrap()
     );
 }
+
+/// Decision mimid-1wgh.4.81.31: a revocation alice's device cannot commit
+/// itself goes out as an Update proposal, and bob, who has no kick
+/// permission in the default roles, commits it with the Remove of alice's
+/// revoked device. The hub accepts that Remove because alice's own Update
+/// in the same Commit vouches for it.
+///
+/// Oracles: the room's leaves before and after, from bob's MLS state (two
+/// alice leaves, then only a1's key); a1 and bob agree on the epoch
+/// authenticator; and a2, whose leaf is gone, sees `Left`.
+#[tokio::test]
+async fn a_revocation_proposed_by_the_user_is_committed_by_another_member() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut a1 = agent(&server, ALICE, dir.path(), "alice1").await;
+    let mut a2 = agent(&server, ALICE, dir.path(), "alice2").await;
+    let mut bob = agent(&server, BOB, dir.path(), "bob").await;
+    let signer = UpdateKey::from_seed(&[0x5b; 32]);
+    let mut log = DidLog::create_also_known_as(
+        "a.example",
+        "alice",
+        "2026-11-20T12:00:01Z",
+        &Parameters {
+            update_keys: Some(vec![signer.multikey()]),
+            next_key_hashes: None,
+        },
+        &signer,
+        &[key(&a1), key(&a2)],
+        &[ALICE.to_owned()],
+    )
+    .unwrap();
+    for device in [&mut a1, &mut a2] {
+        device
+            .use_did_webvh_credential(log.credential().unwrap())
+            .await
+            .unwrap();
+        device.publish_key_packages(1).await.unwrap();
+    }
+    bob.publish_key_packages(1).await.unwrap();
+    let room = bob.host_room(&HostOptions::named("r")).await.unwrap();
+    bob.invite(&room, ALICE).await.unwrap();
+    for device in [&mut a1, &mut a2] {
+        let number = poll_until(device, |e| match e {
+            Event::InviteArrived { number } => Some(*number),
+            _ => None,
+        })
+        .await;
+        device.join(number).unwrap();
+    }
+    let alice_keys = |bob: &Agent| -> Vec<Option<String>> {
+        bob.clients(&room)
+            .unwrap()
+            .into_iter()
+            .filter(|c| c.user == ALICE)
+            .map(|c| c.scid)
+            .collect()
+    };
+    assert_eq!(alice_keys(&bob).len(), 2, "both of alice's devices joined");
+    let epoch = bob.epoch(&room).unwrap();
+
+    // alice's controller drops a2; a1 cannot commit and proposes instead.
+    log.append(
+        "2026-11-20T12:00:02Z",
+        &Parameters::default(),
+        &signer,
+        &[key(&a1)],
+    )
+    .unwrap();
+    a1.fail_credential_commits = true;
+    let applied = a1
+        .use_did_webvh_credential(log.credential().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(applied.proposed, std::slice::from_ref(&room), "{applied:?}");
+
+    // bob commits it, removing a2; the hub accepts it without canKick.
+    let changed = poll_until(&mut bob, |e| match e {
+        Event::MembersChanged { epoch, .. } => Some(*epoch),
+        _ => None,
+    })
+    .await;
+    assert_eq!(changed, epoch + 1);
+    assert_eq!(alice_keys(&bob).len(), 1, "a2 was removed");
+    poll_until(&mut a1, |e| match e {
+        Event::MembersChanged { epoch: e, .. } if *e == epoch + 1 => Some(()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(
+        a1.epoch_authenticator(&room).unwrap(),
+        bob.epoch_authenticator(&room).unwrap()
+    );
+    poll_until(&mut a2, |e| match e {
+        Event::Left { room: left } if *left == room => Some(()),
+        _ => None,
+    })
+    .await;
+}

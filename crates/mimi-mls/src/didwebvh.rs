@@ -486,29 +486,44 @@ pub(crate) fn check_staged(
     .map_err(DidWebvhError::Rule)
 }
 
-/// The Removes of `staged` that the group rules require of its committer:
-/// each Remove of a leaf whose SCID is the committer's SCID and whose
-/// signature key the record the same Commit sets for that SCID does not
-/// authorize (§Rules, Authorization; §Revoking a Device). Leaf indices are
-/// those before the Commit. Empty if the Commit carries no
-/// GroupContextExtensions proposal (it then sets no record), the committer
-/// has no `did_webvh` leaf, or the new record has no entry for its SCID.
+/// The Removes of `staged` that the group rules require: each Remove of a
+/// leaf whose SCID is a vouching SCID and whose signature key the record
+/// the same Commit sets for that SCID does not authorize (§Rules,
+/// Authorization; §Revoking a Device). The vouching SCIDs are the
+/// committer's, and that of the new LeafNode of each Update proposal the
+/// Commit includes: a device whose new log revokes another device of its
+/// user, committed by another member because it could not commit itself
+/// (decision mimid-1wgh.4.81.31; an Update is always by reference, so it
+/// is that user's own signed request). Leaf indices are those before the
+/// Commit. Empty if the Commit carries no GroupContextExtensions proposal
+/// (it then sets no record) or there is no vouching SCID.
 ///
 /// A hub uses this to authorize those Removes without a room-policy
-/// capability (decision mimid-1wgh.4.81.26). Call it only on a Commit that
-/// [`check_staged`] accepted, so the record is the expected one.
+/// capability (decisions mimid-1wgh.4.81.26 and .31). Call it only on a
+/// Commit that [`check_staged`] accepted, so the record is the expected
+/// one.
 pub(crate) fn required_removes(
     code_points: CodePoints,
     staged: &StagedCommit,
     current: &PublicGroup,
     committer: LeafNodeIndex,
 ) -> Vec<u32> {
-    let Some(scid) = current
+    let mut vouching: Vec<String> = current
         .leaf(committer)
         .and_then(|leaf| scid_of(code_points, leaf.credential()))
-    else {
+        .into_iter()
+        .collect();
+    for queued in staged.queued_proposals() {
+        if let Proposal::Update(update) = queued.proposal()
+            && let Some(scid) = scid_of(code_points, update.leaf_node().credential())
+            && !vouching.contains(&scid)
+        {
+            vouching.push(scid);
+        }
+    }
+    if vouching.is_empty() {
         return Vec::new();
-    };
+    }
     let sets_record = staged
         .queued_proposals()
         .any(|queued| matches!(queued.proposal(), Proposal::GroupContextExtensions(_)));
@@ -516,9 +531,6 @@ pub(crate) fn required_removes(
         return Vec::new();
     }
     let Ok(Some(record)) = heads(code_points, staged.group_context().extensions()) else {
-        return Vec::new();
-    };
-    let Some(head) = record.get(&scid) else {
         return Vec::new();
     };
     staged
@@ -529,8 +541,12 @@ pub(crate) fn required_removes(
         })
         .filter(|&removed| {
             current.leaf(removed).is_some_and(|leaf| {
-                scid_of(code_points, leaf.credential()).as_deref() == Some(scid.as_str())
-                    && !head.authorizes(leaf.signature_key().as_slice())
+                scid_of(code_points, leaf.credential()).is_some_and(|scid| {
+                    vouching.contains(&scid)
+                        && record
+                            .get(&scid)
+                            .is_some_and(|head| !head.authorizes(leaf.signature_key().as_slice()))
+                })
             })
         })
         .map(|removed| removed.u32())
