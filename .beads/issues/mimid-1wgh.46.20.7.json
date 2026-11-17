@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.46.20.7",
   "title": "mimid clients send RatchetTreeOption distributionService, so mimi-hubd never tracks a mimid-made room and never checks committer authority there",
   "description": "mimi-hubd (Haven fdce222; ffd9e24, DIV-10, DIV-15) checks who made a role/membership/policy change (room-policy-04 §8.1, §8.6) only for a tracked room, and a room becomes tracked only from an accepted Commit whose bundle carries a Full GroupInfo and a full RatchetTreeOption. mimid-agent's commit_request (crates/mimid-agent-core/src/agent.rs ~L1683-1712) and mimid-chat (default) always send distributionService (bead mimid-1wgh.13.7; decision mimid-1wgh.6.12 is about mimid's hub ignoring the client's option). So any room a mimid client creates on a Haven hub stays untracked: Haven then accepts a ban by a member without canBan, an add without canAddParticipant, and a change outside authorized_role_changes (shown 2026-11-17, local mimi-hubd fdce222, same mimid-chat script as the tracked run but without /tree full: every Commit accepted, room_tree table empty). protocol-07 §5.3 lets the client choose the representation and gives the hub no way to ask. Question for Mark: should mimid-agent send full (the next epoch's tree, Member::pending_ratchet_tree, 55a863d on branch haven-recheck) to hubs that are not mimid, or always? Cost: the tree on every Commit. Also note for Haven-side: a tracked room refuses a first roles_list by Commit (room-policy PR #52 reading), so a client that seeds tracking from its first Commit must put roles_list in the group at creation (mimid's /host path does; mimid-chat /create does not).",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-17T04:32:46.613920086Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-17T04:32:46.613920086Z",
+  "updated_at": "2026-11-17T04:53:00.739714214Z",
+  "closed_at": "2026-11-17T04:53:00.739714214Z",
+  "close_reason": "Mark 2026-11-17: default distributionService, per-peer full via full_tree_hubs (57d0ef1); spec gap filed separately.",
   "labels": [
     "interop",
     "human"
