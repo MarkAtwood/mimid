@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.4.81.14",
+  "title": "Decision: ties for the newest log, and the consistency rule when there is no reference entry",
+  "description": "draft-atwood-mls-didwebvh-credential-00 §Expected Heads and §Rules, Consistency with the reference entry.\n\n1. Ties: \"Let L be the newest log among the resulting tree's credentials with SCID S\" — two forks can have heads with the same version number. Which is L is unspecified, so the expected extension is too. Chosen: L is the one with the highest version number, ties broken by the greatest head versionId bytes; any tie between different heads then fails consistency whichever is chosen, and mimid checks consistency before the extension match so that the reported error (Fork) does not depend on the tie-break.\n2. No reference entry: \"Every credential with SCID S whose head is newer than R's is a prefix of L\" is undefined when R does not exist (a new user). Read literally, two forked credentials of a new SCID could both be admitted, the extension recording one and the other leaf being judged only by authorization. Chosen: with no R, every credential of S must be a prefix of L.\n3. Credentials older than R are not checked against L or R at all (a leaf whose old log is on a dead branch stays valid while its key is recorded). Implemented as written.\n\ncrates/mls-didwebvh/src/rules.rs. For -01: state the tie rule (or that ties are invalid), and the no-R case.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T04:27:55.286104594Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T04:27:55.286104594Z",
+  "labels": [
+    "wg",
+    "didwebvh",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.14",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-17T04:27:55.337491324Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
