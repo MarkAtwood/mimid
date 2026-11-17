@@ -99,3 +99,18 @@ fn negative_scenarios() {
         }
     }
 }
+
+/// `head_also_known_as` reads the head DID document's `alsoKnownAs`. The
+/// expected values are copied by hand from the suite's
+/// `multi-update/ts/did.jsonl`: its last entry lists two did:web DIDs.
+#[test]
+fn head_also_known_as_is_the_head_documents() {
+    let log = verify(&root().join("multi-update/ts")).expect("valid");
+    assert_eq!(
+        log.head_also_known_as(),
+        ["did:web:example.com", "did:web:example.org"]
+    );
+    // basic-create has no alsoKnownAs.
+    let log = verify(&root().join("basic-create/ts")).expect("valid");
+    assert!(log.head_also_known_as().is_empty());
+}

@@ -194,3 +194,40 @@ fn unusable_dids_are_refused() {
         );
     }
 }
+
+/// The DID document's `alsoKnownAs` is written by `create_also_known_as`
+/// and kept by `append`. Oracle: the independent verifier's view of each
+/// entry's document, compared with the URI the test put in.
+#[test]
+fn also_known_as_is_written_and_kept() {
+    let u1 = key(1);
+    let uri = "mimi://example.com/u/alice".to_owned();
+    let mut log = DidLog::create_also_known_as(
+        "example.com",
+        "alice",
+        &time(1),
+        &Parameters {
+            update_keys: Some(vec![u1.multikey()]),
+            next_key_hashes: None,
+        },
+        &u1,
+        &[[0xa1; 32]],
+        std::slice::from_ref(&uri),
+    )
+    .expect("create");
+    log.append(&time(2), &Parameters::default(), &u1, &[[0xa2; 32]])
+        .expect("append");
+    let did = Did::parse(log.verified().head_did()).expect("did");
+    let result = verify_webvh_log(
+        &did,
+        &log.did_log(),
+        None,
+        UNIX_EPOCH + Duration::from_secs(1_900_000_000),
+    )
+    .expect("plain did:webvh accepts");
+    assert_eq!(
+        result.latest().document["alsoKnownAs"],
+        serde_json::json!([uri])
+    );
+    assert_eq!(log.verified().head_also_known_as(), [uri.as_str()]);
+}

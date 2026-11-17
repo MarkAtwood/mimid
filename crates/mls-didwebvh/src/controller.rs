@@ -186,8 +186,9 @@ fn proof(key: &UpdateKey, document: &Value, created: &str) -> Result<Value, Cont
 
 /// A DID document listing `devices` as authorized keys: one `Multikey`
 /// verification method each, `#device-<n>`, referenced from
-/// `authentication` (§Conventions, "Authorized key").
-fn document(did: &str, devices: &[PublicKey]) -> Value {
+/// `authentication` (§Conventions, "Authorized key"), and `also_known_as`
+/// as its `alsoKnownAs` when there is any.
+fn document(did: &str, devices: &[PublicKey], also_known_as: &[String]) -> Value {
     let methods: Vec<Value> = devices
         .iter()
         .enumerate()
@@ -203,12 +204,18 @@ fn document(did: &str, devices: &[PublicKey]) -> Value {
     let authentication: Vec<Value> = (1..=devices.len())
         .map(|i| Value::String(format!("#device-{i}")))
         .collect();
-    json!({
+    let mut document = json!({
         "@context": ["https://www.w3.org/ns/did/v1.1"],
         "id": did,
         "verificationMethod": methods,
         "authentication": authentication,
-    })
+    });
+    if !also_known_as.is_empty()
+        && let Value::Object(fields) = &mut document
+    {
+        fields.insert("alsoKnownAs".to_owned(), json!(also_known_as));
+    }
+    document
 }
 
 /// The parameters of a log entry this module writes.
@@ -260,6 +267,29 @@ impl DidLog {
         signer: &UpdateKey,
         devices: &[PublicKey],
     ) -> Result<Self, ControllerError> {
+        Self::create_also_known_as(domain, path, version_time, parameters, signer, devices, &[])
+    }
+
+    /// As [`DidLog::create`], with `also_known_as` as the DID document's
+    /// `alsoKnownAs` (DID Core §5.1.3). Later entries written by
+    /// [`DidLog::append`] keep it.
+    ///
+    /// mimid lists the user's MIMI user URI there, which is how a
+    /// `did_webvh` leaf is tied to a MIMI user (decision
+    /// mimid-1wgh.4.81.21, INVENTED, NOT FROM SPEC).
+    ///
+    /// # Errors
+    ///
+    /// As [`DidLog::create`].
+    pub fn create_also_known_as(
+        domain: &str,
+        path: &str,
+        version_time: &str,
+        parameters: &Parameters,
+        signer: &UpdateKey,
+        devices: &[PublicKey],
+        also_known_as: &[String],
+    ) -> Result<Self, ControllerError> {
         let usable = |s: &str| {
             !s.is_empty()
                 && s.bytes()
@@ -277,7 +307,7 @@ impl DidLog {
             "versionId": "{SCID}",
             "versionTime": version_time,
             "parameters": params,
-            "state": document(&placeholder_did, devices),
+            "state": document(&placeholder_did, devices, also_known_as),
         });
         // did:webvh v1.0 §Generate SCID, then the placeholder replaced
         // everywhere.
@@ -299,7 +329,8 @@ impl DidLog {
     /// Appends an entry whose DID document lists `devices`, signed by
     /// `signer`: an active update key (the previous entry's, or under
     /// pre-rotation one of this entry's `update_keys` that the previous
-    /// entry committed to).
+    /// entry committed to). The head's `alsoKnownAs` string entries are
+    /// kept.
     ///
     /// # Errors
     ///
@@ -313,12 +344,18 @@ impl DidLog {
         devices: &[PublicKey],
     ) -> Result<(), ControllerError> {
         let did = self.verified.head_did().to_owned();
+        let also_known_as: Vec<String> = self
+            .verified
+            .head_also_known_as()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
         let n = self.lines.len() + 1;
         let mut entry = json!({
             "versionId": self.verified.head_version_id(),
             "versionTime": version_time,
             "parameters": parameters.to_json(),
-            "state": document(&did, devices),
+            "state": document(&did, devices, &also_known_as),
         });
         let hash = multihash(jcs(&entry)?.as_bytes());
         entry["versionId"] = Value::String(format!("{n}-{hash}"));

@@ -204,6 +204,23 @@ mod verified {
         pub fn head_document(&self) -> &serde_json::Value {
             &self.head_document
         }
+
+        /// The string entries of the head DID document's `alsoKnownAs`
+        /// (DID Core §5.1.3: other identifiers of the same subject), in
+        /// order. Entries that are not strings, and an `alsoKnownAs` that
+        /// is not an array, give nothing.
+        pub fn head_also_known_as(&self) -> Vec<&str> {
+            self.head_document
+                .get("alsoKnownAs")
+                .and_then(serde_json::Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
     }
 }
 
