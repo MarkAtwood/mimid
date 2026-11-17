@@ -1,3 +1,4 @@
 {"id":"01a1ea50-fc4b-727f-86f2-81553909dc8a","issue_id":"mimid-1wgh.4.81.23","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-17T16:22:18.443165215Z"}
 {"id":"01a1ea50-fc91-7800-ae05-a7b4a0133583","issue_id":"mimid-1wgh.4.81.23","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: didwebvh","created_at":"2026-11-17T16:22:18.513525231Z"}
 {"id":"01a1ea50-fcd2-7654-a73c-e64b0a34415b","issue_id":"mimid-1wgh.4.81.23","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: feature","created_at":"2026-11-17T16:22:18.578415748Z"}
+{"id":"01a1ea75-1879-733d-a009-400d12e84027","issue_id":"mimid-1wgh.4.81.23","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Chosen by agent; 114b25c Identity::support_did_webvh, a2ded35 DidWebvhConfig.support default true; feedback item 26; flag to Mark","created_at":"2026-11-17T17:01:44.953213747Z"}
