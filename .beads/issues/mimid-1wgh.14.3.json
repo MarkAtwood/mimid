@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.14.3",
+  "title": "Write assetUrl and /jmap/asset into draft-atwood-jmap-chat-mimi",
+  "description": "Stage 1 of attachments invents two JMAP surfaces, marked INVENTED, NOT FROM SPEC in crates/mimid-server/src/jmap/{session,blobs}.rs: the assetUrl template ({base}/assets/{blobId}) in the account's urn:ietf:params:jmap:chat:mimi capability, and GET /jmap/asset/{accountId}?room=\u0026url= (a member's fetch of an attachment through the room's hub, protocol-07 5.10.2 proxyDownload). Neither is in draft-atwood-jmap-chat-mimi-00, and crate-jmap's MimiCapability carries assetUrl only through its extra map. Mark to decide whether they go into the draft (and a typed field in crate-jmap, which needs his approval).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T03:05:12.638262044Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T03:05:12.638262044Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.14.3",
+      "depends_on_id": "mimid-1wgh.14",
+      "type": "parent-child",
+      "created_at": "2026-11-17T03:05:12.69190039Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
