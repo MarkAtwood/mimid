@@ -1,0 +1,14 @@
+[package]
+name = "mls-didwebvh"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "draft-atwood-mls-didwebvh-credential-00: the did_webvh MLS credential, its log verification and group rules, for mimid"
+
+[dependencies]
+# did:webvh v1.0 Read (Resolve) verification over supplied bytes (decision
+# mimid-1wgh.4.81.7). The crate-jmap revision the rest of mimid uses.
+jmap-did-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "573c573f0598aa7519b6df4b08b92c0de2f0f178" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

@@ -1,6 +1,7 @@
 [default]
 # Content hashes in generated Beads markers.
-extend-ignore-re = ["hash:[0-9a-f]+"]
+# and base58btc multihashes and Ed25519 multikeys (did:webvh SCIDs, entry hashes, keys).
+extend-ignore-re = ["hash:[0-9a-f]+", "Qm[1-9A-HJ-NP-Za-km-z]{44}", "z6Mk[1-9A-HJ-NP-Za-km-z]{44}"]
 
 [default.extend-words]
 # CBOR Extended Diagnostic Notation (.edn files).
@@ -13,4 +14,5 @@ caf = "caf"
 [files]
 # Vendored mimi-content WG examples: EDN and diagnostic dumps are full of hex.
 # The Big List of Naughty Strings, base64: random letter runs.
-extend-exclude = ["*.edn", "*.pretty", "crates/mimi-content/tests/fixtures/blns/blns.base64.txt"]
+# did:webvh logs and the did_webvh vectors: base58btc keys, hashes and signatures.
+extend-exclude = ["*.edn", "*.pretty", "crates/mimi-content/tests/fixtures/blns/blns.base64.txt", "crates/mls-didwebvh/tests/fixtures/", "crates/mls-didwebvh/tests/vectors/vectors.json"]

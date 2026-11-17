@@ -2685,6 +2685,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mls-didwebvh"
+version = "0.1.0"
+dependencies = [
+ "jmap-did-types",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "mls-rs"
 version = "0.56.0"
 source = "git+https://github.com/awslabs/mls-rs?rev=d9af9507223e4c915db9599f6038da1de5d68d4b#d9af9507223e4c915db9599f6038da1de5d68d4b"
