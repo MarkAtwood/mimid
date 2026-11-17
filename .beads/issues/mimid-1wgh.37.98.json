@@ -3,13 +3,15 @@
   "title": "wg: protocol-07 §5.10.3 OHTTP download is not implementable as written (no gateway discovery, no key config, cut-off sentence)",
   "description": "Found 2026-11-16 sizing bead mimid-1wgh.8 (the hub 'MUST' implement an OHTTP Gateway, §5.10.3 txt ~L2830-2880). Gaps: (1) the §5.1 directory has no key for the hub's OHTTP Gateway URL, so a relay cannot find it; (2) nothing says how a client gets the gateway's key configuration (RFC 9458 §3, application/ohttp-keys) — via the directory, a well-known URI, or the downloading provider; (3) the encapsulated request is not specified (presumably a binary-HTTP GET of the downloadUrl; RFC 9292); (4) the hub's check 'Targets which are configured as asset storage locations for one of its peer providers' has the same open question as §5.10.2 (asset_policy is per room, the request names none); (5) 'Other providers SHOULD implement the OHTTP Relay capability and SHOULD enable the relay to access' ends mid-sentence. Proposal: add 'ohttpGateway' and 'ohttpKeys' directory entries, or reference RFC 9540 (OHTTP key discovery via SVCB). mimid implements §5.10.2 proxyDownload (b18f01e) and holds off on OHTTP until this is settled. Posting needs Mark's OK; batch with other spec feedback (list traffic).",
   "notes": "Posted 2026-11-17 (Mark's OK): https://github.com/ietf-wg-mimi/mimi-protocol/issues/222",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T05:03:28.66299983Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-17T03:56:37.887671631Z",
+  "updated_at": "2026-11-17T03:56:48.697445791Z",
+  "closed_at": "2026-11-17T03:56:48.697445791Z",
+  "close_reason": "Filed as ietf-wg-mimi/mimi-protocol#222; mimid-1wgh.8 waits on its answer.",
   "labels": [
     "wg"
   ],
