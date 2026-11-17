@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.4.81.8",
+  "title": "Decision: carry DIDWebVHCredential inside opaque\u003cV\u003e in the MLS Credential (OpenMLS and mls-rs cannot carry the draft's encoding)",
+  "description": "draft-atwood-mls-didwebvh-credential-00 §The did:webvh Credential puts `DIDWebVHCredential did_webvh;` (a struct of two opaque\u003cV\u003e) directly in the select arm of RFC 9420 Credential.\n\nProblem: OpenMLS 0.9 (credentials/mod.rs: `serialized_credential_content: VLBytes`, \"The implementation only works with credentials that are encoded as variable-sized vectors\") and mls-rs (CustomCredential `data` via mls_rs_codec::byte_vec) both encode every credential type they do not know as credential_type || opaque\u003cV\u003e. Neither can carry the draft's encoding: the parser reads did_log as the whole content and misparses witness_file as the next LeafNode field.\n\nReadings: (a) as written, which needs an OpenMLS fork change (Mark approval per AGENTS.md) and leaves mls-rs and every other stack unable to interoperate; (b) carry the TLS encoding of DIDWebVHCredential inside the opaque\u003cV\u003e both libraries already use, i.e. wire = credential_type || varint(len) || did_log\u003cV\u003e || witness_file\u003cV\u003e.\n\nChosen: (b), INVENTED, NOT FROM SPEC. mls_didwebvh::DidWebvhCredential encodes the inner struct; OpenMLS adds the outer length. A test decodes a mimid KeyPackage with mls-rs to show it is interoperable. For -01: define the arm as `opaque did_webvh\u003cV\u003e` holding DIDWebVHCredential, or say so in prose; new credential types in practice must be one opaque\u003cV\u003e. Label wg. Flag to Mark.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T04:27:52.381888767Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T04:27:52.381888767Z",
+  "labels": [
+    "wg",
+    "didwebvh",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.8",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-17T04:27:52.468556423Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
