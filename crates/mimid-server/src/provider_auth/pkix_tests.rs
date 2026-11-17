@@ -5,7 +5,7 @@
 //! whose leaf's SHA-256 was computed with `openssl x509 -outform der |
 //! sha256sum`; and certificates made by tests/fixtures/pkix/make.sh and
 //! tests/fixtures/tls/make.sh, each built to break one rule of
-//! draft-atwood-mimi-provider-auth-00 §6.
+//! draft-atwood-mimi-provider-auth-00 §7.
 
 use std::path::PathBuf;
 

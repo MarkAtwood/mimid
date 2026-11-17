@@ -1,6 +1,6 @@
 //! Mechanism 3 of mimid-75nk (bead mimid-75nk.5): a PKIX client
 //! certificate from configured trust anchors
-//! (draft-atwood-mimi-provider-auth-00 §6).
+//! (draft-atwood-mimi-provider-auth-00 §7).
 //!
 //! The certificate is the one the request's connection presented
 //! ([`ClientCertificate`](crate::tls::ClientCertificate), from mimid's own TLS listener or a trusted
@@ -11,7 +11,7 @@
 //!   every domain (`[provider_auth] pkix_anchors`), at the current time,
 //!   with RSA keys of at least [`MIN_RSA_BITS`] bits;
 //! - an extended key usage extension, if the leaf has one, includes
-//!   id-kp-clientAuth (§6); and
+//!   id-kp-clientAuth (§7); and
 //! - a subjectAltName dNSName of the leaf matches the `From` domain as a
 //!   DNS-ID (RFC 9525, through pkix-identity); the subject common name is
 //!   never used.
@@ -166,7 +166,7 @@ impl PkixCertificates {
         (self.global.len(), self.peers.values().map(Vec::len).sum())
     }
 
-    /// The §6 check of `chain` (leaf first, DER) for `from` at `now`.
+    /// The §7 check of `chain` (leaf first, DER) for `from` at `now`.
     fn check(&self, chain: &[Vec<u8>], from: &Domain, now: i64) -> Outcome {
         let anchors: Vec<&Anchor> = self
             .global
@@ -214,23 +214,29 @@ impl PkixCertificates {
         if verify_dns_name(leaf, &name).is_err() {
             return Outcome::Refused(Refusal::Certificate("no dNSName for the domain"));
         }
-        let mut key_id = String::from("sha256:");
-        for b in Sha256::digest(&chain[0]) {
-            let _ = write!(key_id, "{b:02x}");
-        }
         Outcome::Authenticated(AuthenticatedProvider {
             domain: from.clone(),
             mechanism: Mechanism::Pkix,
-            key_id,
+            key_id: leaf_key_id(&chain[0]),
             dnssec: None,
         })
     }
 }
 
+/// The key id of a certificate-authenticated provider: `sha256:` and the
+/// hex SHA-256 of the leaf's DER.
+pub(super) fn leaf_key_id(leaf: &[u8]) -> String {
+    let mut key_id = String::from("sha256:");
+    for b in Sha256::digest(leaf) {
+        let _ = write!(key_id, "{b:02x}");
+    }
+    key_id
+}
+
 /// Whether the leaf may authenticate a client: it has no extended key
-/// usage extension, or one that lists id-kp-clientAuth (§6). `Err` if the
+/// usage extension, or one that lists id-kp-clientAuth (§7). `Err` if the
 /// extension does not decode.
-fn client_auth(leaf: &Certificate) -> Result<bool, ()> {
+pub(super) fn client_auth(leaf: &Certificate) -> Result<bool, ()> {
     let Some(ext) = leaf
         .tbs_certificate
         .extensions

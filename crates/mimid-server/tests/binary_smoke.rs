@@ -94,7 +94,7 @@ async fn binary_serves_with_two_peers_and_stops_on_sigint() {
          # peer rules, not provider authentication (tests/provider_auth.rs).\n\
          [provider_auth]\n\
          mode = \"observe\"\n\
-         dns_keys = false\n",
+         dns_keys = false\ndane = false\n",
         listen = base.trim_start_matches("http://"),
         database = database.display(),
     );
@@ -200,7 +200,7 @@ async fn json_log_format_writes_named_events() {
          # No DNS lookups in tests: the DNSSEC check at start would log\n\
          # an event of its own, whenever the network answers.\n\
          [provider_auth]\n\
-         dns_keys = false\n",
+         dns_keys = false\ndane = false\n",
         listen = base.trim_start_matches("http://"),
         database = dir.path().join("mimid.sqlite").display(),
     );
@@ -317,7 +317,7 @@ async fn telemetry_exports_to_the_collector() {
              database = \"{database}\"\n\
              \n\
              [provider_auth]\n\
-             dns_keys = false\n\
+             dns_keys = false\ndane = false\n\
              \n\
              [telemetry]\n\
              endpoint = \"{collector}\"\n\

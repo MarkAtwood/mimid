@@ -95,7 +95,7 @@ async fn target() -> Target {
     let follower = Follower::new(domain("b.example"), store.clone(), clock)
         .with_peers(PeerClient::new(&domain("b.example"), peers).unwrap());
     let config: ProviderAuthConfig = toml::from_str(&format!(
-        "dns_keys = false\npkix_anchors = [\"{FIXTURES}/ca.pem\"]\n"
+        "dns_keys = false\ndane = false\npkix_anchors = [\"{FIXTURES}/ca.pem\"]\n"
     ))
     .unwrap();
     // Certificates are checked against real time.

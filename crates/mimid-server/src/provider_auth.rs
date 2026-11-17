@@ -25,9 +25,13 @@
 //! 3. [`Mechanism::Pkix`] (bead mimid-75nk.5): the client certificate of
 //!    the request's connection ([`crate::tls::ClientCertificate`]),
 //!    validated per RFC 5280 against configured anchors and matched to the
-//!    `From` domain as a DNS-ID (draft-atwood-mimi-provider-auth-00 §6;
+//!    `From` domain as a DNS-ID (draft-atwood-mimi-provider-auth-00 §7;
 //!    [`pkix`]). On when `pkix_anchors` names any.
-//! 4. DANE (mimid-75nk.6) is not built yet.
+//! 4. [`Mechanism::Dane`] (bead mimid-75nk.6): the client certificate
+//!    checked against DNSSEC-secure TLSA records at
+//!    `_mimi._client.<domain>` (draft-atwood-mimi-provider-auth-00 §6;
+//!    [`dane`]). On unless `dane = false`; tried before PKIX, so that a
+//!    provider with TLSA records is checked against them first.
 //!
 //! A signature counts only if it follows draft-atwood-mimi-provider-auth-00
 //! §5.2 and §5.3: it covers `@method`, `@target-uri` and `from`
@@ -192,9 +196,14 @@ pub struct ProviderAuthConfig {
     /// through (AWS's VPC resolver does not).
     #[serde(default)]
     pub dns_servers: Vec<std::net::IpAddr>,
+    /// Whether to check client certificates against TLSA records
+    /// (mechanism 2, mimid-75nk.6). On by default, like `dns_keys`; it
+    /// needs the same validating resolvers.
+    #[serde(default = "default_true")]
+    pub dane: bool,
     /// PEM files of trust anchors for PKIX client certificates from any
     /// provider (mechanism 3, mimid-75nk.5): a federation's CA, say. Not a
-    /// Web PKI root store (draft-atwood-mimi-provider-auth-00 §6).
+    /// Web PKI root store (draft-atwood-mimi-provider-auth-00 §7).
     #[serde(default)]
     pub pkix_anchors: Vec<std::path::PathBuf>,
     /// Per-provider settings.
@@ -212,6 +221,7 @@ impl Default for ProviderAuthConfig {
             mode: AuthMode::default(),
             selector: default_selector(),
             dns_keys: true,
+            dane: true,
             require_dnssec: false,
             dns_servers: Vec::new(),
             pkix_anchors: Vec::new(),
@@ -249,8 +259,11 @@ pub enum Mechanism {
     /// An RFC 9421 signature with a key published in the provider's DNS
     /// (draft-atwood-mimi-provider-auth-00 §5).
     DnsKey,
-    /// A client certificate from a configured trust anchor (§6).
+    /// A client certificate from a configured trust anchor (-00 §7).
     Pkix,
+    /// A client certificate matching the provider's DNSSEC-signed TLSA
+    /// records (-00 §6).
+    Dane,
 }
 
 impl Mechanism {
@@ -260,6 +273,7 @@ impl Mechanism {
             Self::TrustList => "trust_list",
             Self::DnsKey => "dns_key",
             Self::Pkix => "pkix",
+            Self::Dane => "dane",
         }
     }
 }
@@ -557,6 +571,7 @@ impl KeySource for TrustList {
 pub struct ProviderAuth {
     authenticators: Vec<Box<dyn ProviderAuthenticator>>,
     dns_keys: bool,
+    dane: bool,
     require_dnssec: bool,
     default_mode: AuthMode,
     modes: BTreeMap<Domain, AuthMode>,
@@ -592,6 +607,7 @@ impl ProviderAuth {
             ))],
             nonces,
             dns_keys: config.dns_keys,
+            dane: config.dane,
             require_dnssec: config.require_dnssec,
             default_mode: config.mode,
             modes: config
@@ -615,6 +631,18 @@ impl ProviderAuth {
                 DnsKeys::new(resolver, self.require_dnssec),
                 Arc::clone(&self.nonces),
             )));
+        }
+        self
+    }
+
+    /// Adds mechanism 2, DANE client certificates (mimid-75nk.6), with
+    /// TLSA records from `resolver`, unless `dane = false`. Call it before
+    /// [`ProviderAuth::with_pkix`], so TLSA records are checked first.
+    #[must_use]
+    pub fn with_dane(mut self, resolver: Arc<dyn TlsaResolver>) -> Self {
+        if self.dane {
+            self.authenticators
+                .push(Box::new(DaneCertificates::new(resolver)));
         }
         self
     }
@@ -886,9 +914,11 @@ impl RequestSigner {
     }
 }
 
+pub mod dane;
 pub mod dns;
 pub mod nonce;
 pub mod pkix;
+pub use dane::{DaneCertificates, TlsaRecord, TlsaResolver};
 pub use pkix::{PkixCertificates, PkixConfigError};
 
 pub use dns::{

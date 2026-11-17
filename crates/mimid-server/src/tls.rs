@@ -84,7 +84,7 @@ pub struct PeerTlsConfig {
     #[serde(default)]
     pub roots: Vec<PathBuf>,
     /// This provider's client certificate, presented to every peer
-    /// (draft-atwood-mimi-provider-auth-00 §6, protocol-07 §4.1).
+    /// (draft-atwood-mimi-provider-auth-00 §6 and §7, protocol-07 §4.1).
     pub identity: Option<TlsConfig>,
 }
 

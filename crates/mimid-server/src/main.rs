@@ -275,19 +275,22 @@ async fn main() -> anyhow::Result<()> {
     // mimid-75nk.1); JMAP clients authenticate with bearer tokens.
     let mut provider_auth =
         ProviderAuth::new(&config.provider_auth, &config.base_url, Arc::clone(&clock));
-    if config.provider_auth.dns_keys {
+    // One validating resolver for DNS key records and TLSA records.
+    if config.provider_auth.dns_keys || config.provider_auth.dane {
         match HickoryTxtResolver::new(&config.provider_auth.dns_servers) {
             Ok(resolver) => {
-                let resolver: Arc<dyn TxtResolver> = Arc::new(resolver);
+                let resolver = Arc::new(resolver);
                 // In the background: a slow resolver does not hold up start.
                 let check = Arc::clone(&resolver);
                 tokio::spawn(async move { check_validation(check.as_ref()).await });
-                provider_auth = provider_auth.with_dns(resolver);
+                provider_auth = provider_auth
+                    .with_dns(Arc::clone(&resolver) as Arc<dyn TxtResolver>)
+                    .with_dane(resolver);
             }
             Err(error) => tracing::warn!(
                 name: "provider_auth_dns_unavailable",
                 error = &error as &dyn std::error::Error,
-                "no DNS resolver; DNS-published provider keys are off"
+                "no DNS resolver; DNS-published provider keys and DANE are off"
             ),
         }
     }
@@ -303,6 +306,7 @@ async fn main() -> anyhow::Result<()> {
         mode = ?config.provider_auth.mode,
         selector = signer.selector(),
         dns_keys = config.provider_auth.dns_keys,
+        dane = config.provider_auth.dane,
         require_dnssec = config.provider_auth.require_dnssec,
         global_anchors,
         peer_anchors,

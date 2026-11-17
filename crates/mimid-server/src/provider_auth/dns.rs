@@ -7,7 +7,8 @@
 //! first record of an answer that is a MIMI key record is used (§5.3 step
 //! 5); an empty `p` means the key is revoked.
 //!
-//! Lookups go through a [`TxtResolver`]. [`HickoryTxtResolver`] is a
+//! Lookups go through a [`TxtResolver`] (and TLSA lookups for DANE,
+//! [`super::dane`], through the same resolver). [`HickoryTxtResolver`] is a
 //! validating stub resolver, over the system's resolvers or the ones
 //! configured in `dns_servers` (decision by Mark, 2026-11-15): a "bogus"
 //! answer fails, and the DNSSEC status of the record used is reported with
@@ -157,6 +158,49 @@ impl TxtResolver for HickoryTxtResolver {
                 return Err(TxtLookupError::NoRecords);
             }
             Ok(TxtAnswer { records })
+        })
+    }
+}
+
+impl super::dane::TlsaResolver for HickoryTxtResolver {
+    fn tlsa<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<(super::dane::TlsaRecord, DnssecStatus)>, TxtLookupError>> {
+        Box::pin(async move {
+            let lookup = match self.0.lookup(name, RecordType::TLSA).await {
+                Ok(lookup) => lookup,
+                Err(NetError::Dns(DnsError::NoRecordsFound(_))) => {
+                    return Err(TxtLookupError::NoRecords);
+                }
+                Err(NetError::Dns(DnsError::DnssecBogus)) => return Err(TxtLookupError::Bogus),
+                Err(error) => return Err(TxtLookupError::Failed(error.to_string())),
+            };
+            let mut records = Vec::new();
+            for record in lookup.answers() {
+                let RData::TLSA(tlsa) = &record.data else {
+                    continue;
+                };
+                let status = match record.proof {
+                    Proof::Secure => DnssecStatus::Secure,
+                    Proof::Insecure => DnssecStatus::Insecure,
+                    Proof::Bogus => return Err(TxtLookupError::Bogus),
+                    _ => DnssecStatus::Indeterminate,
+                };
+                records.push((
+                    super::dane::TlsaRecord {
+                        usage: tlsa.cert_usage.into(),
+                        selector: tlsa.selector.into(),
+                        matching: tlsa.matching.into(),
+                        data: tlsa.cert_data.clone(),
+                    },
+                    status,
+                ));
+            }
+            if records.is_empty() {
+                return Err(TxtLookupError::NoRecords);
+            }
+            Ok(records)
         })
     }
 }

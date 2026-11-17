@@ -15,6 +15,7 @@
 //! mode = "enforce"        # the default for every provider
 //! selector = "mimid1"     # the keyid of this server's request signatures
 //! dns_keys = true         # look up <selector>._mimi.<domain> keys in DNS
+//! dane = true             # check client certificates against _mimi._client.<domain> TLSA
 //! require_dnssec = false  # accept a key from an unsigned zone
 //! dns_servers = ["1.1.1.1", "9.9.9.9"]  # must pass DNSSEC; default: system
 //! pkix_anchors = []       # PEM CA files for any peer's client certificate
@@ -462,7 +463,7 @@ mod tests {
         let key = "JrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs=";
         let text = format!(
             "{VALID}\n[provider_auth]\nmode = \"observe\"\nselector = \"s1\"\n\
-             dns_keys = false\nrequire_dnssec = true\ndns_servers = [\"1.1.1.1\", \"2606:4700:4700::1111\"]\n\
+             dns_keys = false\ndane = false\nrequire_dnssec = true\ndns_servers = [\"1.1.1.1\", \"2606:4700:4700::1111\"]\n\
              pkix_anchors = [\"/etc/fed.pem\"]\n\
              [provider_auth.peers.\"b.example\"]\nmode = \"enforce\"\nkeys = {{ \"b1\" = \"{key}\" }}\n\
              pkix_anchors = [\"/etc/b.pem\"]\n"
@@ -471,7 +472,11 @@ mod tests {
         let auth = &config.provider_auth;
         assert_eq!(auth.mode, crate::provider_auth::AuthMode::Observe);
         assert_eq!(auth.selector, "s1");
-        assert!(!auth.dns_keys && auth.require_dnssec);
+        assert!(!auth.dns_keys && !auth.dane && auth.require_dnssec);
+        assert!(
+            Config::parse(VALID).unwrap().provider_auth.dane,
+            "on by default"
+        );
         assert_eq!(auth.dns_servers.len(), 2);
         let b = &auth.peers[&domain("b.example")];
         assert_eq!(b.mode, Some(crate::provider_auth::AuthMode::Enforce));
