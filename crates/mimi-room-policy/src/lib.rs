@@ -423,10 +423,10 @@ fn check_uri(uri: &str) -> Result<(), Error> {
 /// A [`MediaType`] carries a list of these. `parameter_name` is an RFC 2045
 /// §5.1 `token`. `parameter_value` is the RFC 2045 §5.1 `value` with any
 /// quoted-string quotation marks and quoted-pair backslashes removed, as
-/// ext-10 §6.2.2 requires. The removed form can hold anything a
-/// quoted-string can carry; this crate reads that per RFC 5322 §3.2.4 as
-/// HTAB and printable ASCII (`%x09 / %x20-7E`), possibly empty, so NUL, CR,
-/// LF and other control characters are rejected (decision mimid-1wgh.3.33).
+/// ext-11 §6.2.2 requires. Its characters are HTAB and printable ASCII
+/// (`%x09 / %x20-7E`), possibly empty, so NUL, CR, LF and other control
+/// characters are rejected. -11 says so in §6.2.2; under -10 this crate
+/// read the same rule from RFC 5322 §3.2.4 (decision mimid-1wgh.3.33).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, TlsSize, TlsSerialize)]
 pub struct Parameter {
     parameter_name: String,
@@ -500,7 +500,7 @@ fn check_parameter(parameter_name: &str, parameter_value: &str) -> Result<(), Er
 ///
 /// `type` is an RFC 6838 §4.2 `type-name "/" subtype-name`, each a
 /// `restricted-name` of at most [`MAX_RESTRICTED_NAME_LENGTH`] characters.
-/// It is never empty here: ext-10 §6.2.4 allows a zero-length type only in
+/// It is never empty here: ext-11 §6.2.4 allows a zero-length type only in
 /// `ApplicationFraming`, which room-policy-04 does not use (decision
 /// mimid-1wgh.36). Case is preserved, not folded.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, TlsSize, TlsSerialize)]
