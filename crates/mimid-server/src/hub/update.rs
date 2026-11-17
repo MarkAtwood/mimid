@@ -798,6 +798,8 @@ fn commit_summary(detail: &CommitDetail) -> Result<Commit, &'static str> {
             .as_ref()
             .is_some_and(|path| path.identity_changed),
         proposals,
+        // Decision mimid-1wgh.4.81.26.
+        did_webvh_required_removes: detail.did_webvh_required_removes.iter().copied().collect(),
     })
 }
 

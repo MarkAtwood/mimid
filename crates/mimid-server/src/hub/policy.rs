@@ -49,6 +49,10 @@
 //!   (`canKick`) or the removal of the proposer's own client
 //!   (`canRemoveOwnClient`). This is checked for proposals by reference
 //!   too: the proposal arm cannot know which action a Remove belongs to.
+//!   The exception is a Remove the `did_webvh` group rules require of the
+//!   committer (a leaf of the committer's own SCID that the record the same
+//!   Commit sets no longer authorizes, a revoked device): it needs no
+//!   capability (decision mimid-1wgh.4.81.26).
 //! - A `roles_list` update may not share a commit with any participant
 //!   list change, and a `preauth_list` update with any but removals
 //!   (room-policy-04 §3, §4).
@@ -63,7 +67,7 @@
 //!
 //! Its limitations are listed in the crate documentation.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST};
 use mimi_protocol::{ParticipantListData, ParticipantListUpdate};
@@ -222,6 +226,13 @@ pub struct Commit {
     pub path_identity_changed: bool,
     /// Its proposals, in the order they are applied.
     pub proposals: Vec<Proposal>,
+    /// The leaf indices of its Remove proposals that the `did_webvh` group
+    /// rules require of this committer, as the Observer reports them
+    /// (`CommitDetail::did_webvh_required_removes`): a leaf with the
+    /// committer's SCID whose key the record the same Commit sets no longer
+    /// authorizes. Authorized without a room-policy capability (decision
+    /// mimid-1wgh.4.81.26).
+    pub did_webvh_required_removes: BTreeSet<u32>,
 }
 
 /// What an authorized Commit changes in the hub-tracked components.
@@ -920,6 +931,19 @@ pub fn authorize_commit(state: &RoomState, commit: &Commit) -> Result<PolicyOutc
     for removal in &removals {
         removed_leaves.insert(removal.leaf_index);
         if gone.contains(removal.target.as_slice()) {
+            continue;
+        }
+        // Decision mimid-1wgh.4.81.26 (Mark 2026-11-17, "always allow"):
+        // draft-atwood-mls-didwebvh-credential-01 §Rules make the Commit
+        // that sets a record remove every leaf of the committer's SCID the
+        // record no longer authorizes, so room policy cannot be allowed to
+        // refuse that Remove: the revoked device would stay. Only those
+        // Removes skip the capability check; the rest of the Commit,
+        // including every other Remove, goes through room policy below.
+        if commit
+            .did_webvh_required_removes
+            .contains(&removal.leaf_index)
+        {
             continue;
         }
         if removal.target == removal.proposer {

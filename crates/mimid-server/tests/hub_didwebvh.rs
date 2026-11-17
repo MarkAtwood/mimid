@@ -2,7 +2,9 @@
 //! mimid-1wgh.4.81.18): in a hosted room with `did_webvh` members, a Commit
 //! that breaks the group rules is refused, and of the GroupContextExtensions
 //! proposals only one that sets the record alone passes room policy
-//! (decision mimid-1wgh.4.81.22).
+//! (decision mimid-1wgh.4.81.22). A revocation Commit's Remove of the
+//! revoked device passes without `canRemoveOwnClient`, and no other Remove
+//! does (decision mimid-1wgh.4.81.26).
 //!
 //! Oracle: dave's second device is a plain OpenMLS client (the rogue) that
 //! knows nothing of the draft and builds Commits MLS accepts. The logs come
@@ -27,8 +29,8 @@ use openmls::extensions::{AppDataDictionary, AppDataDictionaryExtension};
 use openmls::prelude::{
     Capabilities, Ciphersuite, Credential, CredentialType, CredentialWithKey,
     Extension as OpenMlsExtension, ExtensionType as OpenMlsExtensionType,
-    Extensions as OpenMlsExtensions, GroupContext, KeyPackage, LeafNodeParameters, MlsGroup,
-    MlsGroupJoinConfig, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider,
+    Extensions as OpenMlsExtensions, GroupContext, KeyPackage, LeafNodeIndex, LeafNodeParameters,
+    MlsGroup, MlsGroupJoinConfig, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider,
     PURE_PLAINTEXT_WIRE_FORMAT_POLICY, ProposalType as OpenMlsProposalType, RatchetTreeIn,
     StagedWelcome, UnknownExtension,
 };
@@ -173,14 +175,16 @@ impl Rogue {
         self.group.as_ref().unwrap().extensions().clone()
     }
 
-    /// A Commit with a GroupContextExtensions proposal setting `extensions`
-    /// and, with `credential`, an UpdatePath leaf carrying it; as a
+    /// A Commit with a GroupContextExtensions proposal setting `extensions`,
+    /// Removes of the leaves in `removes`, and, with `credential`, an
+    /// UpdatePath leaf carrying it; as a
     /// protocol-07 §5.3 UpdateRequest. The Commit is merged, so the request
     /// carries the next epoch's tree.
     fn commit(
         &mut self,
         extensions: OpenMlsExtensions<GroupContext>,
         credential: Option<&DidWebvhCredential>,
+        removes: &[u32],
     ) -> Vec<u8> {
         let leaf = credential.map(|c| {
             LeafNodeParameters::builder()
@@ -196,7 +200,8 @@ impl Rogue {
         let mut builder = group
             .commit_builder()
             .propose_group_context_extensions(extensions)
-            .unwrap();
+            .unwrap()
+            .propose_removals(removes.iter().copied().map(LeafNodeIndex::new));
         if let Some(leaf) = leaf {
             builder = builder.leaf_node_parameters(leaf);
         }
@@ -226,6 +231,28 @@ impl Rogue {
             .unwrap();
         commit_request(&commit, None, &group_info, &tree)
     }
+}
+
+/// The rogue's GroupContext extensions with dave's record raised to the
+/// controller's current log.
+fn raised_record(rogue: &Rogue, controller: &Controller) -> OpenMlsExtensions<GroupContext> {
+    let mut heads = mimi_mls::mls_didwebvh::DidWebvhHeads::decode(
+        &rogue
+            .extensions()
+            .unknown(CP.heads_extension_type())
+            .unwrap()
+            .0,
+    )
+    .unwrap();
+    heads.insert(DidWebvhHead::from_log(controller.log.verified()));
+    let mut extensions = rogue.extensions();
+    extensions
+        .add_or_replace(OpenMlsExtension::Unknown(
+            CP.heads_extension_type(),
+            UnknownExtension(heads.encode().unwrap()),
+        ))
+        .unwrap();
+    extensions
 }
 
 struct Room {
@@ -290,23 +317,8 @@ async fn a_commit_that_breaks_the_did_webvh_rules_is_refused() {
             &[rogue.public_key()],
         )
         .unwrap();
-    let mut heads = mimi_mls::mls_didwebvh::DidWebvhHeads::decode(
-        &rogue
-            .extensions()
-            .unknown(CP.heads_extension_type())
-            .unwrap()
-            .0,
-    )
-    .unwrap();
-    heads.insert(DidWebvhHead::from_log(controller.log.verified()));
-    let mut extensions = rogue.extensions();
-    extensions
-        .add_or_replace(OpenMlsExtension::Unknown(
-            CP.heads_extension_type(),
-            UnknownExtension(heads.encode().unwrap()),
-        ))
-        .unwrap();
-    let request = rogue.commit(extensions, Some(&controller.credential()));
+    let extensions = raised_record(&rogue, &controller);
+    let request = rogue.commit(extensions, Some(&controller.credential()), &[]);
     let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
     assert_not_allowed(logs, &refused, "the commit is not valid");
     assert!(
@@ -330,7 +342,7 @@ async fn a_group_context_extensions_proposal_that_changes_more_than_the_record_i
     // mimid-1wgh.6.2).
     let mut extensions = rogue.extensions();
     extensions.remove(OpenMlsExtensionType::ExternalSenders);
-    let request = rogue.commit(extensions, None);
+    let request = rogue.commit(extensions, None, &[]);
     let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
     assert_not_allowed(logs, &refused, "refused by room policy");
     assert_eq!(hub.public_state(ROOM_ID).await.unwrap().epoch, epoch);
@@ -346,7 +358,7 @@ async fn a_group_context_extensions_proposal_that_only_sets_the_record_is_accept
     let epoch = hub.public_state(ROOM_ID).await.unwrap().epoch;
     // The record as it is, which the rules expect (decision
     // mimid-1wgh.4.81.22): no capability needed.
-    let request = rogue.commit(rogue.extensions(), None);
+    let request = rogue.commit(rogue.extensions(), None, &[]);
     let accepted = hub.update(ROOM_ID, &a(), &request).await.unwrap();
     assert!(
         matches!(
@@ -357,5 +369,111 @@ async fn a_group_context_extensions_proposal_that_only_sets_the_record_is_accept
         response(&accepted)
     );
     assert_eq!(hub.public_state(ROOM_ID).await.unwrap().epoch, epoch + 1);
+    close_hub(store, hub).await;
+}
+
+/// Leaves of [`room`]: alice, then dave's d1 and the rogue, in the order
+/// alice's Commit adds them.
+const LEAF_ALICE: u32 = 0;
+const LEAF_D1: u32 = 1;
+
+/// The room's member role lacks `canRemoveOwnClient`
+/// ([`update::roles_list`]), yet the Commit that revokes d1 and removes it,
+/// as the rules require, is accepted (decision mimid-1wgh.4.81.26).
+#[tokio::test]
+async fn a_revocation_commit_needs_no_can_remove_own_client() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mimid.sqlite");
+    let (store, hub) = open_hub(&path).await;
+    let roles = mimi_room_policy::RoleData::tls_deserialize_exact(roles_list()).unwrap();
+    assert!(
+        roles.roles.iter().all(|role| !role
+            .role_capabilities
+            .contains(&mimi_room_policy::Capability::CAN_REMOVE_OWN_CLIENT)),
+        "the room's roles grant no canRemoveOwnClient"
+    );
+    let Room {
+        mut controller,
+        mut rogue,
+    } = room(&hub).await;
+    let epoch = hub.public_state(ROOM_ID).await.unwrap().epoch;
+    controller
+        .log
+        .append(
+            "2026-11-20T13:00:02Z",
+            &Parameters::default(),
+            &controller.signer,
+            &[rogue.public_key()],
+        )
+        .unwrap();
+    let extensions = raised_record(&rogue, &controller);
+    let request = rogue.commit(extensions, Some(&controller.credential()), &[LEAF_D1]);
+    let accepted = hub.update(ROOM_ID, &a(), &request).await.unwrap();
+    assert!(
+        matches!(
+            response(&accepted).0,
+            mimi_protocol::UpdateResult::Success { .. }
+        ),
+        "{:?}",
+        response(&accepted)
+    );
+    assert_eq!(hub.public_state(ROOM_ID).await.unwrap().epoch, epoch + 1);
+    close_hub(store, hub).await;
+}
+
+/// A Commit that sets the record but removes dave's d1, whose key the
+/// record still authorizes, is an ordinary own-client removal: refused
+/// without `canRemoveOwnClient`.
+#[tokio::test]
+async fn removing_an_own_device_the_record_still_authorizes_needs_room_policy() {
+    let logs = capture_logs();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mimid.sqlite");
+    let (store, hub) = open_hub(&path).await;
+    let Room { mut rogue, .. } = room(&hub).await;
+    let epoch = hub.public_state(ROOM_ID).await.unwrap().epoch;
+    let request = rogue.commit(rogue.extensions(), None, &[LEAF_D1]);
+    let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
+    assert_not_allowed(logs, &refused, "refused by room policy");
+    assert!(
+        logs.contents().contains("RemoveOwnClient"),
+        "refused as an own-client removal"
+    );
+    assert_eq!(hub.public_state(ROOM_ID).await.unwrap().epoch, epoch);
+    close_hub(store, hub).await;
+}
+
+/// A revocation Commit that also removes alice's leaf: the revoked
+/// device's Remove needs nothing, but alice's is a kick, refused.
+#[tokio::test]
+async fn a_revocation_commit_that_also_removes_another_user_is_refused() {
+    let logs = capture_logs();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mimid.sqlite");
+    let (store, hub) = open_hub(&path).await;
+    let Room {
+        mut controller,
+        mut rogue,
+    } = room(&hub).await;
+    let epoch = hub.public_state(ROOM_ID).await.unwrap().epoch;
+    controller
+        .log
+        .append(
+            "2026-11-20T13:00:02Z",
+            &Parameters::default(),
+            &controller.signer,
+            &[rogue.public_key()],
+        )
+        .unwrap();
+    let extensions = raised_record(&rogue, &controller);
+    let request = rogue.commit(
+        extensions,
+        Some(&controller.credential()),
+        &[LEAF_D1, LEAF_ALICE],
+    );
+    let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
+    assert_not_allowed(logs, &refused, "refused by room policy");
+    assert!(logs.contents().contains("Kick"), "refused as a kick");
+    assert_eq!(hub.public_state(ROOM_ID).await.unwrap().epoch, epoch);
     close_hub(store, hub).await;
 }

@@ -12,7 +12,7 @@
 #[path = "../../mimi-room-policy/tests/appendix_a/mod.rs"]
 mod appendix_a;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use appendix_a::{a1, a2, a3, banned, role};
 use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
@@ -265,6 +265,7 @@ fn commit(leaf_index: u32, proposals: Vec<Proposal>) -> Commit {
         committer: Committer::Member { leaf_index },
         path_identity_changed: false,
         proposals,
+        did_webvh_required_removes: BTreeSet::new(),
     }
 }
 
@@ -275,6 +276,7 @@ fn external(user: &[u8], proposals: Vec<Proposal>) -> Commit {
         },
         path_identity_changed: false,
         proposals,
+        did_webvh_required_removes: BTreeSet::new(),
     }
 }
 
@@ -474,6 +476,24 @@ fn wrong_role_rejected_in_commit() {
             a3_room(),
             commit(L_BOB, vec![inline(remove(L_BOB2))]),
             membership(A::RemoveOwnClient, missing(4, C::CAN_REMOVE_OWN_CLIENT)),
+        ),
+        (
+            "decision .4.81.26: a Remove the did_webvh rules require needs no canRemoveOwnClient",
+            a3_room(),
+            Commit {
+                did_webvh_required_removes: BTreeSet::from([L_BOB2]),
+                ..commit(L_BOB, vec![inline(remove(L_BOB2))])
+            },
+            OK,
+        ),
+        (
+            "decision .4.81.26: only the listed Removes skip room policy",
+            a3_room(),
+            Commit {
+                did_webvh_required_removes: BTreeSet::from([L_BOB2]),
+                ..commit(L_BOB, vec![inline(remove(L_BOB2)), inline(remove(L_CAROL))])
+            },
+            membership(A::Kick, missing(4, C::CAN_KICK)),
         ),
         (
             "§8.1.2 ordinary_user lacks canKick",

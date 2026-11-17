@@ -235,6 +235,17 @@ pub struct CommitDetail {
     pub proposals: Vec<ProposalDetail>,
     /// The UpdatePath, if the Commit carries one.
     pub path: Option<UpdatePathDetail>,
+    /// The leaf indices (in the current epoch) of the Commit's Remove
+    /// proposals that the `did_webvh` group rules require of this
+    /// committer: the removed leaf has the committer's SCID, and the record
+    /// the same Commit sets does not authorize its key (a revoked device;
+    /// draft-atwood-mls-didwebvh-credential-01 §Revoking a Device). Empty
+    /// unless the rules are enforced ([`Observer::enforce_did_webvh`]) and
+    /// a member commits.
+    ///
+    /// A hub may authorize these Removes without a room-policy capability
+    /// (decision mimid-1wgh.4.81.26).
+    pub did_webvh_required_removes: Vec<u32>,
 }
 
 /// The result of [`Observer::from_group_info`].
@@ -912,7 +923,17 @@ impl Observer {
             .queued_proposals()
             .map(|queued| self.proposal_detail(queued))
             .collect::<Result<_, _>>()?;
+        let did_webvh_required_removes = match (self.did_webvh, committer) {
+            (Some(code_points), Sender::Member(index)) => crate::didwebvh::required_removes(
+                code_points,
+                staged,
+                &self.group,
+                LeafNodeIndex::new(*index),
+            ),
+            _ => Vec::new(),
+        };
         Ok(CommitDetail {
+            did_webvh_required_removes,
             committer: *committer,
             committer_leaf: committer_leaf.u32(),
             committer_identity,

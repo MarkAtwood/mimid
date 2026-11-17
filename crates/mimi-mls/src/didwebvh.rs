@@ -486,6 +486,57 @@ pub(crate) fn check_staged(
     .map_err(DidWebvhError::Rule)
 }
 
+/// The Removes of `staged` that the group rules require of its committer:
+/// each Remove of a leaf whose SCID is the committer's SCID and whose
+/// signature key the record the same Commit sets for that SCID does not
+/// authorize (§Rules, Authorization; §Revoking a Device). Leaf indices are
+/// those before the Commit. Empty if the Commit carries no
+/// GroupContextExtensions proposal (it then sets no record), the committer
+/// has no `did_webvh` leaf, or the new record has no entry for its SCID.
+///
+/// A hub uses this to authorize those Removes without a room-policy
+/// capability (decision mimid-1wgh.4.81.26). Call it only on a Commit that
+/// [`check_staged`] accepted, so the record is the expected one.
+pub(crate) fn required_removes(
+    code_points: CodePoints,
+    staged: &StagedCommit,
+    current: &PublicGroup,
+    committer: LeafNodeIndex,
+) -> Vec<u32> {
+    let Some(scid) = current
+        .leaf(committer)
+        .and_then(|leaf| scid_of(code_points, leaf.credential()))
+    else {
+        return Vec::new();
+    };
+    let sets_record = staged
+        .queued_proposals()
+        .any(|queued| matches!(queued.proposal(), Proposal::GroupContextExtensions(_)));
+    if !sets_record {
+        return Vec::new();
+    }
+    let Ok(Some(record)) = heads(code_points, staged.group_context().extensions()) else {
+        return Vec::new();
+    };
+    let Some(head) = record.get(&scid) else {
+        return Vec::new();
+    };
+    staged
+        .queued_proposals()
+        .filter_map(|queued| match queued.proposal() {
+            Proposal::Remove(remove) => Some(remove.removed()),
+            _ => None,
+        })
+        .filter(|&removed| {
+            current.leaf(removed).is_some_and(|leaf| {
+                scid_of(code_points, leaf.credential()).as_deref() == Some(scid.as_str())
+                    && !head.authorizes(leaf.signature_key().as_slice())
+            })
+        })
+        .map(|removed| removed.u32())
+        .collect()
+}
+
 /// For a Commit being built: what it must change, given the epoch it
 /// leads to as staged so far.
 pub(crate) fn plan(

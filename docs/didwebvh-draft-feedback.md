@@ -409,13 +409,22 @@ gates behind `canRemoveOwnClient`. A room whose roles do not grant it cannot
 complete a revocation, and the revoked device stays until someone with
 `canKick` removes it.
 
-**mimid:** its default member role now holds `canRemoveOwnClient` (decision
-mimid-1wgh.4.81.25); a hub that authorized Removes the rules require
-without a capability is a possible follow-up.
+**mimid:** its default member role holds `canRemoveOwnClient` (decision
+mimid-1wgh.4.81.25), and its hub also authorizes, whatever the room policy,
+exactly the Removes the rules require of the committer: a leaf with the
+committer's own SCID whose key the record set by the same Commit no longer
+authorizes (decision mimid-1wgh.4.81.26). Every other Remove in that Commit
+still needs `canRemoveOwnClient` or `canKick`. The rules decide which
+Removes are mandatory from the tree and the record alone, so a hub that
+enforces the rules can compute the set; one that does not cannot.
 
 **For -01:** note under §Revoking a Device that an application's own
 authorization (for MIMI, room policy) must allow a user's device to remove
-another device of the same user.
+another device of the same user, or must treat the Removes the rules require
+as authorized by the record change itself. The second reading needs the
+authorizer to enforce the rules; the draft could say which Removes are
+"required" in a form an authorizer can check (same SCID as the committer,
+key not in the new record).
 
 ### 26. Every member's provider must already support the draft
 
