@@ -1,0 +1,16 @@
+{
+  "id": "mimid-peim",
+  "title": "[epic] SIP/SIMPLE and RCS adapter: SIP MESSAGE, MSRP and RCS chat over mimid-agent's JMAP Chat",
+  "description": "SIMPLE (RFC 3428 SIP MESSAGE; RFC 4975 MSRP sessions; RFC 3856 presence) and RCS (GSMA RCC.07 Universal Profile chat and group chat, built on SIP+MSRP+CPIM) share most of a stack, so one epic. A local SIP registrar/UA for desktop SIP clients first; RCS on handsets mostly needs carrier IMS integration, so likely research only. All adapters sit on mimid-agent's local JMAP Chat endpoint (decision mimid-1wgh.38): the agent does MLS and holds keys; the adapter translates plaintext JMAP Chat to the client's protocol on the user's own machine, loopback only, with the agent's bearer token. Never serve plaintext beyond the local machine (AGENTS.md). Map: Chat \u003c-\u003e room/channel/MUC, Message \u003c-\u003e message, ChatContact \u003c-\u003e nick/JID/URI, attachments via the agent's blob routes, presence only if JMAP Chat has it. Status: idea, not scheduled.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T16:36:46.610344709Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T16:36:46.610344709Z",
+  "labels": [
+    "adapter",
+    "client"
+  ]
+}
