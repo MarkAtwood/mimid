@@ -2,3 +2,4 @@
 {"id":"01a1e7c2-ee7a-767c-ada4-4a8444215b1c","issue_id":"mimid-1wgh.4.81.12","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: wg","created_at":"2026-11-17T04:27:54.362425982Z"}
 {"id":"01a1e7c2-ee7f-7033-afbc-7dd541b548a7","issue_id":"mimid-1wgh.4.81.12","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: didwebvh","created_at":"2026-11-17T04:27:54.367013915Z"}
 {"id":"01a1e7c2-ee82-7343-9c12-4066738c6461","issue_id":"mimid-1wgh.4.81.12","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: feature","created_at":"2026-11-17T04:27:54.370214506Z"}
+{"id":"01a1e7c3-0c40-7d0a-b3e6-0e352d5b053c","issue_id":"mimid-1wgh.4.81.12","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Chosen by agent per the reading in the description; recorded in docs/didwebvh-draft-feedback.md for -01; flag to Mark","created_at":"2026-11-17T04:28:01.984855695Z"}
