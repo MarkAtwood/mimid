@@ -84,9 +84,9 @@ use tls_codec::{Deserialize, Serialize, VLBytes};
 
 use crate::identity::CIPHERSUITE;
 use crate::member::{
-    AppDataUpdate, CommitSummary, ComponentOp, Sender, SharedError, basic_identity,
-    check_proposal_leaf, check_staged_leaves, check_tree, convert_sender, member_leaf,
-    required_lists, resolve_app_data_updates, summarize,
+    AppDataUpdate, CommitSummary, ComponentOp, Sender, SharedError, check_proposal_leaf,
+    check_staged_leaves, check_tree, convert_sender, member_identity, member_leaf, required_lists,
+    resolve_app_data_updates, summarize,
 };
 use crate::store::Provider;
 use crate::wire::{
@@ -147,14 +147,14 @@ pub struct ProposalDetail {
 pub enum ProposalKind {
     /// `add` (RFC 9420 §12.1.1).
     Add {
-        /// The BasicCredential identity of the KeyPackage's LeafNode.
+        /// The member identity ([`Observer::members`]) of the KeyPackage's LeafNode.
         identity: Vec<u8>,
         /// The KeyPackageRef of the added KeyPackage (RFC 9420 §5.2).
         key_package_ref: KeyPackageRef,
     },
     /// `update` (RFC 9420 §12.1.2).
     Update {
-        /// The BasicCredential identity of the new LeafNode.
+        /// The member identity of the new LeafNode.
         identity: Vec<u8>,
         /// Whether `identity` differs from the identity of the sender's
         /// current leaf. Always `true` if the sender is not a member, which
@@ -165,7 +165,7 @@ pub enum ProposalKind {
     Remove {
         /// The leaf index to remove, in the current epoch.
         removed: u32,
-        /// The BasicCredential identity of that leaf, or empty if the leaf
+        /// The member identity of that leaf, or empty if the leaf
         /// is blank, which MLS validation does not allow.
         identity: Vec<u8>,
     },
@@ -177,6 +177,14 @@ pub enum ProposalKind {
     ExternalInit,
     /// `group_context_extensions` (RFC 9420 §12.1.7).
     GroupContextExtensions,
+    /// A `group_context_extensions` proposal whose only change is the one
+    /// the `did_webvh` group rules require: the `did_webvh_heads` record,
+    /// and `required_capabilities` listing it and `did_webvh`
+    /// (draft-atwood-mls-didwebvh-credential-01 §Expected Heads; decision
+    /// mimid-1wgh.4.81.22). Reported only while the rules are enforced
+    /// ([`Observer::enforce_did_webvh`]), which also checks that the record
+    /// is the expected one.
+    DidWebvhRecord,
     /// `app_data_update` (mls-extensions-11 §4.7).
     AppDataUpdate {
         /// The component whose data it changes.
@@ -199,7 +207,7 @@ pub enum ProposalKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct UpdatePathDetail {
-    /// The BasicCredential identity of the UpdatePath's LeafNode.
+    /// The member identity of the UpdatePath's LeafNode.
     pub identity: Vec<u8>,
     /// Whether `identity` differs from the identity of the committer's
     /// current leaf. Always `false` in an external Commit (see the module's
@@ -217,7 +225,7 @@ pub struct CommitDetail {
     /// The committer's leaf index in the new epoch. For an external Commit,
     /// the leaf the joiner takes (RFC 9420 §12.4.3.2).
     pub committer_leaf: u32,
-    /// The BasicCredential identity whose signature key signed the Commit:
+    /// The member identity whose signature key signed the Commit:
     /// the committer's current leaf for a member, the UpdatePath's LeafNode
     /// for an external joiner.
     pub committer_identity: Vec<u8>,
@@ -613,7 +621,7 @@ impl Observer {
                         return Err(ObserverError::UnexpectedMessage);
                     }
                 };
-                let summary = summarize(sender, &staged, false);
+                let summary = summarize(sender, &staged, false, self.did_webvh);
                 self.pending_commit = Some((*staged, sender, committer));
                 Ok(Observed::Commit(summary))
             }
@@ -886,7 +894,7 @@ impl Observer {
             .ok_or(ObserverError::NoPendingCommit)?;
         let path_identity = staged
             .update_path_leaf_node()
-            .map(|leaf| basic_identity(leaf.credential()));
+            .map(|leaf| member_identity(self.did_webvh, leaf.credential()));
         let committer_identity = match committer {
             Sender::Member(index) => self
                 .leaf_identity(LeafNodeIndex::new(*index))
@@ -914,12 +922,12 @@ impl Observer {
         })
     }
 
-    /// The BasicCredential identity of a leaf in the current epoch, or
-    /// `None` if the leaf is blank.
+    /// The member identity of a leaf in the current epoch (see
+    /// [`Observer::members`]), or `None` if the leaf is blank.
     fn leaf_identity(&self, index: LeafNodeIndex) -> Option<Vec<u8>> {
         self.group
             .leaf(index)
-            .map(|leaf| basic_identity(leaf.credential()))
+            .map(|leaf| member_identity(self.did_webvh, leaf.credential()))
     }
 
     /// Describes a proposal against the current epoch's leaves.
@@ -938,12 +946,12 @@ impl Observer {
                     .hash_ref(&RustCrypto::default())
                     .map_err(|e| ObserverError::Encode(e.into()))?;
                 ProposalKind::Add {
-                    identity: basic_identity(key_package.leaf_node().credential()),
+                    identity: member_identity(self.did_webvh, key_package.leaf_node().credential()),
                     key_package_ref: to_wire(&key_package_ref)?,
                 }
             }
             OpenMlsProposal::Update(update) => {
-                let identity = basic_identity(update.leaf_node().credential());
+                let identity = member_identity(self.did_webvh, update.leaf_node().credential());
                 let current = match sender {
                     Sender::Member(index) => self.leaf_identity(LeafNodeIndex::new(index)),
                     _ => None,
@@ -960,6 +968,17 @@ impl Observer {
             OpenMlsProposal::PreSharedKey(_) => ProposalKind::PreSharedKey,
             OpenMlsProposal::ReInit(_) => ProposalKind::ReInit,
             OpenMlsProposal::ExternalInit(_) => ProposalKind::ExternalInit,
+            OpenMlsProposal::GroupContextExtensions(proposal)
+                if self.did_webvh.is_some_and(|code_points| {
+                    crate::didwebvh::is_record_change(
+                        code_points,
+                        self.group.group_context().extensions(),
+                        proposal.extensions(),
+                    )
+                }) =>
+            {
+                ProposalKind::DidWebvhRecord
+            }
             OpenMlsProposal::GroupContextExtensions(_) => ProposalKind::GroupContextExtensions,
             OpenMlsProposal::AppDataUpdate(proposal) => ProposalKind::AppDataUpdate {
                 component_id: proposal.component_id(),
@@ -1027,11 +1046,34 @@ impl Observer {
         self.group.group_context().epoch().as_u64()
     }
 
-    /// The current members as (leaf index, BasicCredential identity).
+    /// The current members as (leaf index, member identity): the
+    /// BasicCredential identity, or, while the `did_webvh` rules are
+    /// enforced, the MIMI user URI a `did_webvh` leaf's log names (empty if
+    /// it names none; decision mimid-1wgh.4.81.21).
     pub fn members(&self) -> Vec<(u32, Vec<u8>)> {
         self.group
             .members()
-            .map(|member| (member.index.u32(), basic_identity(&member.credential)))
+            .map(|member| {
+                (
+                    member.index.u32(),
+                    member_identity(self.did_webvh, &member.credential),
+                )
+            })
+            .collect()
+    }
+
+    /// The current members whose credential is `did_webvh`, as (leaf index,
+    /// SCID), while the rules are enforced; empty otherwise.
+    pub fn did_webvh_members(&self) -> Vec<(u32, String)> {
+        let Some(code_points) = self.did_webvh else {
+            return Vec::new();
+        };
+        self.group
+            .members()
+            .filter_map(|member| {
+                crate::didwebvh::scid_of(code_points, &member.credential)
+                    .map(|scid| (member.index.u32(), scid))
+            })
             .collect()
     }
 

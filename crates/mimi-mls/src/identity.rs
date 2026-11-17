@@ -97,6 +97,9 @@ pub struct Identity {
     /// The `did_webvh` credential, when this identity uses one instead of
     /// its BasicCredential (draft-atwood-mls-didwebvh-credential-00).
     did_webvh: Option<DidWebvhState>,
+    /// The code points under which a BasicCredential identity supports
+    /// `did_webvh` without holding it (decision mimid-1wgh.4.81.23).
+    did_webvh_support: Option<CodePoints>,
 }
 
 /// An identity's `did_webvh` credential: the code points it is carried
@@ -251,6 +254,7 @@ impl Identity {
             identity: identity.to_vec(),
             extra_components,
             did_webvh: None,
+            did_webvh_support: None,
         }
     }
 
@@ -322,10 +326,30 @@ impl Identity {
         Ok(identity)
     }
 
-    /// The code points of this identity's `did_webvh` credential, or `None`
-    /// for a BasicCredential identity.
+    /// Has this BasicCredential identity support `did_webvh` under
+    /// `code_points` without holding such a credential: every leaf it
+    /// builds lists `did_webvh` and `did_webvh_heads` in its capabilities,
+    /// and the groups it is a member of enforce the group rules of
+    /// draft-atwood-mls-didwebvh-credential-01, as for a `did_webvh`
+    /// identity. That is what lets it share a group with `did_webvh`
+    /// leaves (RFC 9420 §7.2; §The Heads Extension; decision
+    /// mimid-1wgh.4.81.23).
+    ///
+    /// The setting is not stored: the caller sets it again after
+    /// [`Identity::load`]. An identity that holds a `did_webvh` credential
+    /// uses that credential's code points, whatever is set here.
+    pub fn support_did_webvh(&mut self, code_points: CodePoints) {
+        self.did_webvh_support = Some(code_points);
+    }
+
+    /// The code points under which this identity uses `did_webvh`: its
+    /// credential's, else those set by [`Identity::support_did_webvh`], or
+    /// `None` for a BasicCredential identity that does not support it.
     pub fn did_webvh_code_points(&self) -> Option<CodePoints> {
-        self.did_webvh.as_ref().map(|state| state.code_points)
+        self.did_webvh
+            .as_ref()
+            .map(|state| state.code_points)
+            .or(self.did_webvh_support)
     }
 
     /// This identity's `did_webvh` credential.

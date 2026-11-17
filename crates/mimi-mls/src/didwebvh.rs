@@ -286,6 +286,20 @@ pub(crate) fn with_heads(
     if !extension_types.contains(&heads_type) {
         extension_types.push(heads_type);
     }
+    // OpenMLS refuses a GroupContextExtensions proposal unless every
+    // non-default extension it carries is listed in its
+    // required_capabilities (public_group/validation.rs,
+    // ExtensionNotInRequiredCapabilities), stricter than RFC 9420 §12.1.7.
+    // A MIMI room carries app_data_dictionary, so it is listed too; every
+    // member already supports it. Feedback item 23.
+    for extension in current.iter() {
+        let t = extension.extension_type();
+        // RFC 9420 §7.2's default extension types, 1 to 5.
+        let default = (1..=5).contains(&u16::from(t));
+        if !default && t != heads_type && !extension_types.contains(&t) {
+            extension_types.push(t);
+        }
+    }
     if !credential_types.contains(&credential_type) {
         credential_types.push(credential_type);
     }
@@ -591,6 +605,119 @@ pub(crate) fn check_proposal(
     Ok(())
 }
 
+/// The MIMI user URI a verified log names: the one entry of its head DID
+/// document's `alsoKnownAs` whose scheme is `mimi` (ASCII case-insensitive),
+/// or `None` if there is none or more than one.
+///
+/// INVENTED, NOT FROM SPEC (decision mimid-1wgh.4.81.21): the draft makes
+/// the SCID the credential's identity (§Binding to the LeafNode) and does
+/// not say how an application ties it to its own name for the user. MIMI
+/// names users by URI, so mimid has the controller list the user URI there;
+/// the user's update keys sign it, so a provider cannot rebind the SCID.
+/// The URI is returned as written; whether it is a well-formed user URI is
+/// the caller's check.
+pub fn mimi_user_uri(log: &VerifiedLog) -> Option<&str> {
+    only_mimi_uri(log.head_also_known_as().into_iter())
+}
+
+/// The one `mimi:` URI among `entries`, or `None` if there is none or more
+/// than one.
+fn only_mimi_uri<'a>(mut entries: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let is_mimi = |entry: &&str| {
+        entry
+            .get(..5)
+            .is_some_and(|s| s.eq_ignore_ascii_case("mimi:"))
+    };
+    let first = entries.by_ref().find(is_mimi)?;
+    entries.find(is_mimi).is_none().then_some(first)
+}
+
+/// [`mimi_user_uri`] of a `did_webvh` credential already verified, read
+/// from the last entry's DID document without verifying again, or `None`
+/// for another credential type or when the log names no single user URI.
+pub(crate) fn user_uri_of(code_points: CodePoints, credential: &Credential) -> Option<String> {
+    if credential.credential_type() != CredentialType::from(code_points.credential_type()) {
+        return None;
+    }
+    let decoded = DidWebvhCredential::decode(credential.serialized_content()).ok()?;
+    // §did:webvh Profile: every line ends in LF, so the head is the last
+    // non-empty piece.
+    let head = decoded
+        .did_log()
+        .split(|&b| b == b'\n')
+        .rfind(|line| !line.is_empty())?;
+    let entry: serde_json::Value = serde_json::from_slice(head).ok()?;
+    let entries = entry["state"]["alsoKnownAs"].as_array()?;
+    only_mimi_uri(entries.iter().filter_map(serde_json::Value::as_str)).map(str::to_owned)
+}
+
+/// Whether `proposed`, the extensions of a GroupContextExtensions proposal,
+/// differ from `current` only in what the record change needs: a
+/// `did_webvh_heads` record, and a `required_capabilities` that keeps what
+/// it listed and adds `did_webvh_heads`, `did_webvh`, and possibly extension
+/// types the GroupContext already carries (which OpenMLS requires a
+/// GroupContextExtensions proposal to list, see [`with_heads`]). A hub that
+/// refuses other GroupContextExtensions proposals lets these through, since
+/// the group rules require them (decision mimid-1wgh.4.81.22).
+pub(crate) fn is_record_change(
+    code_points: CodePoints,
+    current: &Extensions<GroupContext>,
+    proposed: &Extensions<GroupContext>,
+) -> bool {
+    let heads_type = ExtensionType::from(code_points.heads_extension_type());
+    let credential_type = CredentialType::from(code_points.credential_type());
+    if !matches!(heads(code_points, proposed), Ok(Some(_))) {
+        return false;
+    }
+    // Every other extension is kept exactly.
+    let others = |extensions: &Extensions<GroupContext>| {
+        let mut all = extensions
+            .iter()
+            .filter(|e| {
+                e.extension_type() != heads_type
+                    && e.extension_type() != ExtensionType::RequiredCapabilities
+            })
+            .map(Serialize::tls_serialize_detached)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        all.sort();
+        Some(all)
+    };
+    if !matches!((others(current), others(proposed)), (Some(a), Some(b)) if a == b) {
+        return false;
+    }
+    let Some(new) = proposed.required_capabilities() else {
+        return false;
+    };
+    let (old_extensions, old_proposals, old_credentials) = match current.required_capabilities() {
+        Some(rc) => (
+            rc.extension_types().to_vec(),
+            rc.proposal_types().to_vec(),
+            rc.credential_types().to_vec(),
+        ),
+        None => (Vec::new(), Vec::new(), Vec::new()),
+    };
+    let present: Vec<ExtensionType> = current.iter().map(Extension::extension_type).collect();
+    let extensions_ok = old_extensions
+        .iter()
+        .chain([&heads_type])
+        .all(|t| new.extension_types().contains(t))
+        && new
+            .extension_types()
+            .iter()
+            .all(|t| old_extensions.contains(t) || *t == heads_type || present.contains(t));
+    let mut credentials_expected = old_credentials;
+    if !credentials_expected.contains(&credential_type) {
+        credentials_expected.push(credential_type);
+    }
+    let same_set = |a: &[CredentialType], b: &[CredentialType]| {
+        a.iter().all(|x| b.contains(x)) && b.iter().all(|x| a.contains(x))
+    };
+    extensions_ok
+        && new.proposal_types() == old_proposals.as_slice()
+        && same_set(new.credential_types(), &credentials_expected)
+}
+
 /// The SCID of a `did_webvh` credential already verified, read from the
 /// first entry's `scid` parameter without verifying again.
 pub(crate) fn scid_of(code_points: CodePoints, credential: &Credential) -> Option<String> {
@@ -601,4 +728,108 @@ pub(crate) fn scid_of(code_points: CodePoints, credential: &Credential) -> Optio
     let first = decoded.did_log().split(|&b| b == b'\n').next()?;
     let entry: serde_json::Value = serde_json::from_slice(first).ok()?;
     entry["parameters"]["scid"].as_str().map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use mls_didwebvh::DidWebvhHead;
+    use mls_didwebvh::controller::{DidLog, Parameters, UpdateKey};
+    use openmls::prelude::ProposalType;
+
+    use super::*;
+
+    const CP: CodePoints = CodePoints::SUGGESTED;
+
+    fn record() -> DidWebvhHeads {
+        let signer = UpdateKey::from_seed(&[3; 32]);
+        let log = DidLog::create(
+            "example.com",
+            "alice",
+            "2026-11-20T09:00:00Z",
+            &Parameters {
+                update_keys: Some(vec![signer.multikey()]),
+                next_key_hashes: None,
+            },
+            &signer,
+            &[[0xa1; 32]],
+        )
+        .expect("log");
+        let mut heads = DidWebvhHeads::new();
+        heads.insert(DidWebvhHead::from_log(log.verified()));
+        heads
+    }
+
+    /// The extensions a record-setting proposal carries, built by hand
+    /// from §The Heads Extension rather than by `with_heads`.
+    fn by_hand(heads: &DidWebvhHeads, proposals: &[ProposalType]) -> Extensions<GroupContext> {
+        Extensions::from_vec(vec![
+            Extension::Unknown(0x0013, UnknownExtension(heads.encode().expect("encode"))),
+            Extension::RequiredCapabilities(RequiredCapabilitiesExtension::new(
+                &[ExtensionType::from(0x0013)],
+                proposals,
+                &[CredentialType::from(0x0008)],
+            )),
+        ])
+        .expect("extensions")
+    }
+
+    #[test]
+    fn only_the_record_and_its_required_capabilities_count_as_a_record_change() {
+        let empty = Extensions::<GroupContext>::empty();
+        let heads = record();
+        assert!(is_record_change(CP, &empty, &by_hand(&heads, &[])));
+        // No record at all.
+        assert!(!is_record_change(CP, &empty, &empty));
+        // required_capabilities gains something else too.
+        assert!(!is_record_change(
+            CP,
+            &empty,
+            &by_hand(&heads, &[ProposalType::AppDataUpdate])
+        ));
+        // Another extension rides along.
+        let mut extra = by_hand(&heads, &[]);
+        extra
+            .add_or_replace(Extension::Unknown(0xff00, UnknownExtension(vec![1])))
+            .expect("add");
+        assert!(!is_record_change(CP, &empty, &extra));
+        // The record without required_capabilities.
+        let bare = Extensions::single(Extension::Unknown(
+            0x0013,
+            UnknownExtension(heads.encode().expect("encode")),
+        ))
+        .expect("extensions");
+        assert!(!is_record_change(CP, &empty, &bare));
+        // An existing extension is dropped.
+        let current = Extensions::single(Extension::Unknown(0xff00, UnknownExtension(vec![1])))
+            .expect("extensions");
+        assert!(!is_record_change(CP, &current, &by_hand(&heads, &[])));
+        // An existing extension is kept, and listed in required_capabilities
+        // as OpenMLS asks; listing it is allowed, not listing it too.
+        let mut kept = by_hand(&heads, &[]);
+        kept.add_or_replace(Extension::Unknown(0xff00, UnknownExtension(vec![1])))
+            .expect("add");
+        assert!(is_record_change(CP, &current, &kept));
+        kept.add_or_replace(Extension::RequiredCapabilities(
+            RequiredCapabilitiesExtension::new(
+                &[ExtensionType::from(0x0013), ExtensionType::from(0xff00)],
+                &[],
+                &[CredentialType::from(0x0008)],
+            ),
+        ))
+        .expect("replace");
+        assert!(is_record_change(CP, &current, &kept));
+        // But not an extension type the GroupContext does not carry.
+        kept.add_or_replace(Extension::RequiredCapabilities(
+            RequiredCapabilitiesExtension::new(
+                &[ExtensionType::from(0x0013), ExtensionType::from(0xff01)],
+                &[],
+                &[CredentialType::from(0x0008)],
+            ),
+        ))
+        .expect("replace");
+        assert!(!is_record_change(CP, &current, &kept));
+        // with_heads writes what is_record_change accepts.
+        let written = with_heads(CP, &current, &heads).expect("with_heads");
+        assert!(is_record_change(CP, &current, &written));
+    }
 }

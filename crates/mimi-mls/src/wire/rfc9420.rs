@@ -324,6 +324,7 @@ impl KeyPackage {
         Ok(VerifiedKeyPackageInfo {
             identity: (credential.credential_type() == CredentialType::Basic)
                 .then(|| credential.serialized_content().to_vec()),
+            credential: credential.clone(),
             signature_key: leaf_node.signature_key().as_slice().to_vec(),
             reference,
             last_resort,
@@ -371,6 +372,7 @@ fn check_leaf_node_capabilities(
 #[derive(Clone, Debug)]
 pub struct VerifiedKeyPackageInfo {
     identity: Option<Vec<u8>>,
+    credential: openmls::prelude::Credential,
     signature_key: Vec<u8>,
     reference: KeyPackageRef,
     last_resort: bool,
@@ -385,6 +387,35 @@ impl VerifiedKeyPackageInfo {
     /// `None` for any other `credential_type`.
     pub fn identity(&self) -> Option<&[u8]> {
         self.identity.as_deref()
+    }
+
+    /// For a LeafNode whose credential is `did_webvh` under `code_points`
+    /// (draft-atwood-mls-didwebvh-credential-01): the log, verified
+    /// (§Log Verification) and bound to the LeafNode's `signature_key`
+    /// (§Binding to the LeafNode). `None` for any other credential type.
+    /// Its SCID is [`VerifiedLog::scid`](crate::mls_didwebvh::VerifiedLog::scid)
+    /// and its MIMI user URI [`crate::didwebvh::mimi_user_uri`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::didwebvh::DidWebvhError`] if the credential does not
+    /// decode or verify, or does not authorize the `signature_key`.
+    pub fn did_webvh(
+        &self,
+        code_points: crate::mls_didwebvh::CodePoints,
+    ) -> Result<Option<crate::mls_didwebvh::VerifiedLog>, crate::didwebvh::DidWebvhError> {
+        use crate::didwebvh::DidWebvhError;
+        if self.credential.credential_type() != CredentialType::from(code_points.credential_type())
+        {
+            return Ok(None);
+        }
+        let decoded =
+            crate::mls_didwebvh::DidWebvhCredential::decode(self.credential.serialized_content())
+                .map_err(DidWebvhError::Credential)?;
+        let log = crate::mls_didwebvh::verify_credential(&decoded).map_err(DidWebvhError::Log)?;
+        crate::mls_didwebvh::rules::check_binding(&self.signature_key, &log)
+            .map_err(DidWebvhError::Rule)?;
+        Ok(Some(log))
     }
 
     /// Returns the LeafNode's `signature_key`, without its length prefix.

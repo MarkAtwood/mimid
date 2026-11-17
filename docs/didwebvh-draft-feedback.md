@@ -332,6 +332,102 @@ that deployments will set lower operational limits, and that a member must
 still accept up to the draft's limits to stay deterministic (or the draft
 picks a smaller limit).
 
+## Using it in MIMI (mimid-server and mimid-agent)
+
+These came from wiring the credential into mimid's hub and agent (bead
+mimid-1wgh.4.81.18), with an end-to-end test through a real mimid server:
+a user with two `did_webvh` devices and a BasicCredential user share a room,
+one device is revoked, and the hub refuses the revoked device afterwards.
+
+### 22. Tying a credential to the application's name for the user
+
+**§Reference Identifiers** says the presented identifier is the SCID, and
+that applications pin "the SCID for each contact". It does not say how an
+application knows which contact a credential belongs to. MIMI names users by
+URI (`mimi://example.com/u/alice`) in the participant list, room policy,
+keyMaterial and franking (protocol-07 §5.4.1.3 compares "the sender's
+identity in its credential" with `senderUri`), and the hub authorizes by
+that URI. A credential whose only identity is an SCID gives the hub nothing
+to authorize and the member nothing to pin it under.
+
+**mimid:** the controller lists the user's MIMI URI in the head DID
+document's `alsoKnownAs`; a `did_webvh` leaf belongs to the one `mimi:` URI
+there (none or several: it belongs to no user, and the hub's participant
+check refuses it). The update keys sign it, so the provider cannot move an
+SCID to another user, and the hub keeps its usual rule that a user URI's
+domain is its provider's. Contacts are pinned by user URI. A BasicCredential
+leaf for a user pinned to an SCID is treated as a change too: otherwise the
+provider defeats the draft by adding a BasicCredential device for that user.
+INVENTED, NOT FROM SPEC; decision mimid-1wgh.4.81.21.
+
+**For -01:** say how an application maps a credential to its own name for a
+user (suggest `alsoKnownAs`, or leave it to the application but say it must
+exist), and say that a pinned contact presenting a non-`did_webvh`
+credential is a change of SCID for the purposes of the MUST alert.
+
+### 23. OpenMLS wants every GroupContext extension in required_capabilities
+
+**§Expected Heads** has the record set by a GroupContextExtensions proposal,
+and **§The Heads Extension** asks for `required_capabilities` listing
+`did_webvh_heads` and `did_webvh`. OpenMLS refuses a GroupContextExtensions
+proposal unless every non-default extension it carries is also listed in its
+`required_capabilities` (`ExtensionNotInRequiredCapabilities`), which is
+stricter than RFC 9420 §12.1.7. A MIMI room carries `app_data_dictionary`,
+so the proposal that first sets the record must also list
+`app_data_dictionary` (0x0006) in `extension_types`, or OpenMLS will not
+build or accept it.
+
+**mimid:** lists every non-default extension the GroupContext already
+carries when it writes `required_capabilities`, and its hub accepts such a
+listing as part of a record change (decision mimid-1wgh.4.81.22).
+
+**For -01:** a sentence that the `required_capabilities` the proposal sets may
+need to list other extensions the group carries, so implementations do not
+read "lists `did_webvh_heads` and `did_webvh`" as "lists only those".
+
+### 24. A hub that refuses GroupContextExtensions proposals
+
+A MIMI hub has reason to refuse GroupContextExtensions proposals in
+general: one could drop the hub from `external_senders` or change
+`required_capabilities` to lock members out. mimid's hub refused them all.
+The draft makes one mandatory in every Commit that adds a new user or
+carries a newer log, so a hub must recognize the record change and let it
+through, while still refusing anything else in the same proposal.
+
+**mimid:** accepts a GroupContextExtensions proposal only if it differs from
+the current GroupContext in the record and the `required_capabilities`
+additions it needs, and only while it enforces the rules (decision
+mimid-1wgh.4.81.22). This is also an argument for Open Issue 1: as an
+`app_data_dictionary` component the record would travel in an AppDataUpdate,
+which MIMI hubs already handle per component.
+
+### 25. Revocation needs a room-policy capability
+
+**§Revoking a Device** has a remaining device commit the Removes. In a MIMI
+room that is the removal of one's own client, which room-policy-04 §8.1.2
+gates behind `canRemoveOwnClient`. A room whose roles do not grant it cannot
+complete a revocation, and the revoked device stays until someone with
+`canKick` removes it.
+
+**mimid:** its default member role now holds `canRemoveOwnClient` (decision
+mimid-1wgh.4.81.25); a hub that authorized Removes the rules require
+without a capability is a possible follow-up.
+
+**For -01:** note under §Revoking a Device that an application's own
+authorization (for MIMI, room policy) must allow a user's device to remove
+another device of the same user.
+
+### 26. Every member's provider must already support the draft
+
+With item 15, a BasicCredential client must list `did_webvh` and enforce the
+rules to share a room with a `did_webvh` user. mimid's agents do so by
+default (decision mimid-1wgh.4.81.23), so in a mimid-only deployment a
+BasicCredential user needs no configuration. In a federation, every
+provider's clients in the room must do the same before one user can use the
+credential, and a keyMaterial request (protocol-07 §5.2) from such a room
+should require `did_webvh` and `did_webvh_heads`, or a provider may return a
+KeyPackage that cannot be added (decision mimid-1wgh.4.81.24).
+
 ## Section 7, item 7: the encoding question
 
 What implementing -00 taught about "Encoding without DIDs":

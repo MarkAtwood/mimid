@@ -514,6 +514,9 @@ pub struct Member {
     out_of_sync: Option<OutOfSync>,
     /// Verified `did_webvh` logs, so each is verified once.
     did_cache: LogCache,
+    /// The owner identity's `did_webvh` code points when the member was
+    /// built, for reporting `did_webvh` leaves by their user URI.
+    code_points: Option<mls_didwebvh::CodePoints>,
 }
 
 impl Member {
@@ -529,6 +532,7 @@ impl Member {
             owner_signature_key: identity.signature_public_key().to_vec(),
             out_of_sync: None,
             did_cache: LogCache::default(),
+            code_points: identity.did_webvh_code_points(),
         }
     }
 
@@ -701,7 +705,7 @@ impl Member {
     ) -> Result<WelcomeJoin, MemberError> {
         let (staged, tree) = stage_welcome(identity, welcome, ratchet_tree)?;
         let provider = identity.provider();
-        let inviter = welcome_signer(&staged)?;
+        let inviter = welcome_signer(identity, &staged)?;
         // Decoded before into_group stores the group; fails closed
         // (decisions mimid-1wgh.4.57, mimid-1wgh.4.59).
         let required = required_lists(staged.group_context().extensions())?;
@@ -767,16 +771,27 @@ impl Member {
         ratchet_tree: Option<&[u8]>,
     ) -> Result<Vec<u8>, MemberError> {
         let (staged, _) = stage_welcome(identity, welcome, ratchet_tree)?;
-        welcome_signer(&staged)
+        welcome_signer(identity, &staged)
     }
 }
 
-/// The identity of the leaf that signed a staged Welcome's GroupInfo.
-fn welcome_signer(staged: &StagedWelcome) -> Result<Vec<u8>, MemberError> {
-    staged
+/// The member identity ([`member_identity`]) of the leaf that signed a
+/// staged Welcome's GroupInfo. A `did_webvh` leaf's log is verified and
+/// bound to the leaf here, since nothing else has checked it yet.
+fn welcome_signer(identity: &Identity, staged: &StagedWelcome) -> Result<Vec<u8>, MemberError> {
+    let leaf = staged
         .welcome_sender()
-        .map(|leaf| basic_identity(leaf.credential()))
-        .map_err(|e| MemberError::Join(e.into()))
+        .map_err(|e| MemberError::Join(e.into()))?;
+    if let Some(code_points) = identity.did_webvh_code_points()
+        && let Some(log) = LogCache::default()
+            .verify_leaf(code_points, leaf)
+            .map_err(MemberError::DidWebvh)?
+    {
+        return Ok(didwebvh::mimi_user_uri(&log)
+            .map(|uri| uri.as_bytes().to_vec())
+            .unwrap_or_default());
+    }
+    Ok(basic_identity(leaf.credential()))
 }
 
 /// Stages a TLS-encoded Welcome `MLSMessage` for `identity` (RFC 9420
@@ -1544,7 +1559,7 @@ impl Member {
                     .collect()
             })
             .unwrap_or_default();
-        let sender_identity = basic_identity(processed.credential());
+        let sender_identity = member_identity(code_points, processed.credential());
         let processed = self.resolve(provider, processed, apply)?;
 
         match processed.into_content() {
@@ -1598,7 +1613,7 @@ impl Member {
                     )
                     .map_err(MemberError::DidWebvh)?;
                 }
-                let summary = summarize(sender, &staged, staged.self_removed());
+                let summary = summarize(sender, &staged, staged.self_removed(), code_points);
                 self.group
                     .merge_staged_commit(provider, *staged)
                     .map_err(|e| MemberError::Merge(e.into()))?;
@@ -1608,7 +1623,7 @@ impl Member {
                 let summary = self
                     .group
                     .pending_commit()
-                    .map(|staged| summarize(sender, staged, staged.self_removed()))
+                    .map(|staged| summarize(sender, staged, staged.self_removed(), code_points))
                     .ok_or(MemberError::UnexpectedMessage)?;
                 self.group
                     .merge_pending_commit(provider)
@@ -1722,11 +1737,18 @@ impl Member {
         self.out_of_sync = Some(state);
     }
 
-    /// The current members as (leaf index, BasicCredential identity).
+    /// The current members as (leaf index, member identity): the
+    /// BasicCredential identity, or for a `did_webvh` leaf the MIMI user URI
+    /// its log names ([`crate::didwebvh::mimi_user_uri`]; empty if none).
     pub fn members(&self) -> Vec<(u32, Vec<u8>)> {
         self.group
             .members()
-            .map(|member| (member.index.u32(), basic_identity(&member.credential)))
+            .map(|member| {
+                (
+                    member.index.u32(),
+                    member_identity(self.code_points, &member.credential),
+                )
+            })
             .collect()
     }
 
@@ -1978,10 +2000,16 @@ pub(crate) fn summarize(
     committer: Sender,
     staged: &StagedCommit,
     self_removed: bool,
+    code_points: Option<mls_didwebvh::CodePoints>,
 ) -> CommitSummary {
     let added = staged
         .add_proposals()
-        .map(|add| basic_identity(add.add_proposal().key_package().leaf_node().credential()))
+        .map(|add| {
+            member_identity(
+                code_points,
+                add.add_proposal().key_package().leaf_node().credential(),
+            )
+        })
         .collect();
     let removed = staged
         .remove_proposals()
@@ -2430,9 +2458,29 @@ pub(crate) fn convert_sender(sender: &openmls::prelude::Sender) -> Result<Sender
     })
 }
 
+/// The identity a member is known by: the BasicCredential identity, or,
+/// under `code_points`, the MIMI user URI a `did_webvh` credential's log
+/// names (decision mimid-1wgh.4.81.21, [`didwebvh::mimi_user_uri`]); empty
+/// for a `did_webvh` credential that names none, and for any other type.
+/// The `did_webvh` log is read without verifying it again: it was verified
+/// when the leaf entered the group, since the rules are enforced whenever
+/// `code_points` is `Some`.
+pub(crate) fn member_identity(
+    code_points: Option<mls_didwebvh::CodePoints>,
+    credential: &Credential,
+) -> Vec<u8> {
+    if let Some(code_points) = code_points
+        && credential.credential_type()
+            == openmls::prelude::CredentialType::from(code_points.credential_type())
+    {
+        return didwebvh::user_uri_of(code_points, credential)
+            .map(String::into_bytes)
+            .unwrap_or_default();
+    }
+    basic_identity(credential)
+}
+
 /// The BasicCredential identity, or empty for any other credential type.
-/// Only BasicCredential is negotiated (decision mimid-1wgh.16), so OpenMLS
-/// rejects other types before this is reached.
 pub(crate) fn basic_identity(credential: &Credential) -> Vec<u8> {
     BasicCredential::try_from(credential.clone())
         .map(|basic| basic.identity().to_vec())

@@ -30,15 +30,23 @@
 //!   the user's update keys; the draft's own gaps (first contact, custody,
 //!   stale logs) remain.
 //! - `did_webvh` (see [`didwebvh`]): only identities that hold such a
-//!   credential list it in their capabilities and enforce its rules, so a
-//!   BasicCredential mimid identity cannot share a group with `did_webvh`
-//!   leaves. The credential is carried inside an `opaque<V>` (decision
+//!   credential, or BasicCredential identities that
+//!   [`Identity::support_did_webvh`] (decision mimid-1wgh.4.81.23), list it
+//!   in their capabilities and enforce its rules; any other identity cannot
+//!   share a group with `did_webvh` leaves. A `did_webvh` member is known by
+//!   the MIMI user URI its log lists in `alsoKnownAs`
+//!   ([`didwebvh::mimi_user_uri`]; decision mimid-1wgh.4.81.21, INVENTED,
+//!   NOT FROM SPEC), and is reported with an empty identity when it lists
+//!   none or several. The credential is carried inside an `opaque<V>` (decision
 //!   mimid-1wgh.4.81.8). [`member::Member::commit`] adds the record change
 //!   and the Removes the rules require by itself (decision
 //!   mimid-1wgh.4.81.17), and refuses when a GroupContextExtensions proposal
 //!   is already pending (the draft's Open Issue 5). An
 //!   [`observer::Observer`] enforces the rules only after
-//!   [`observer::Observer::enforce_did_webvh`]. Update and UpdatePath leaves
+//!   [`observer::Observer::enforce_did_webvh`], and reports a
+//!   GroupContextExtensions proposal that only sets the record as
+//!   [`observer::ProposalKind::DidWebvhRecord`] (decision
+//!   mimid-1wgh.4.81.22). Update and UpdatePath leaves
 //!   may not switch between `did_webvh` and BasicCredential (decision
 //!   mimid-1wgh.4.81.15). Neither ReInit nor a branch carries the record
 //!   (the draft's Open Issue 2).
