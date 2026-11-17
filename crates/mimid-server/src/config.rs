@@ -47,6 +47,12 @@
 //! metrics = true
 //! metrics_interval_secs = 60
 //!
+//! # Optional: the code points of draft-atwood-mls-didwebvh-credential,
+//! # which IANA has not assigned (bead mimid-1wgh.4.81.18).
+//! [did_webvh]
+//! credential_type = 0x0008        # the draft's suggested value, the default
+//! heads_extension_type = 0x0013   # likewise
+//!
 //! # Optional: TLS toward peers.
 //! [peer_tls]
 //! roots = ["/etc/mimid/peer-roots.pem"]  # CAs for peers' servers, plus the system's
@@ -152,6 +158,29 @@ pub struct Config {
     pub wire_profiles: BTreeMap<Domain, WireProfileSetting>,
     /// OpenTelemetry export (bead mimid-ndov); off when absent.
     pub telemetry: Option<crate::telemetry::TelemetryConfig>,
+    /// The `did_webvh` credential type and `did_webvh_heads` extension
+    /// type (draft-atwood-mls-didwebvh-credential-01 §IANA
+    /// Considerations), used by the hub to enforce the draft's rules and on
+    /// KeyPackage upload. Defaults to the draft's suggested 0x0008 and
+    /// 0x0013; a value RFC 9420 or OpenMLS already uses is refused.
+    #[serde(default, deserialize_with = "did_webvh_code_points")]
+    pub did_webvh: mimi_mls::mls_didwebvh::CodePoints,
+}
+
+/// The `[did_webvh]` table.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DidWebvhSetting {
+    credential_type: u16,
+    heads_extension_type: u16,
+}
+
+fn did_webvh_code_points<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<mimi_mls::mls_didwebvh::CodePoints, D::Error> {
+    let setting = DidWebvhSetting::deserialize(deserializer)?;
+    mimi_mls::mls_didwebvh::CodePoints::new(setting.credential_type, setting.heads_extension_type)
+        .map_err(serde::de::Error::custom)
 }
 
 impl Config {
@@ -412,8 +441,30 @@ mod tests {
             peer_tls: crate::tls::PeerTlsConfig::default(),
             wire_profiles: BTreeMap::new(),
             telemetry: None,
+            did_webvh: mimi_mls::mls_didwebvh::CodePoints::SUGGESTED,
         };
         assert_eq!(config, expected);
+    }
+
+    #[test]
+    fn did_webvh_code_points_parse_and_collisions_are_refused() {
+        let config = Config::parse(&format!(
+            "{VALID}\n[did_webvh]\ncredential_type = 0xf008\nheads_extension_type = 0xf013\n"
+        ))
+        .unwrap();
+        assert_eq!(config.did_webvh.credential_type(), 0xf008);
+        assert_eq!(config.did_webvh.heads_extension_type(), 0xf013);
+        for table in [
+            // basic, and the required_capabilities extension type.
+            "credential_type = 0x0001\nheads_extension_type = 0x0013",
+            "credential_type = 0x0008\nheads_extension_type = 0x0003",
+            // 65536 is not a u16.
+            "credential_type = 65536\nheads_extension_type = 0x0013",
+            "credential_type = 0x0008",
+        ] {
+            let err = Config::parse(&format!("{VALID}\n[did_webvh]\n{table}\n")).unwrap_err();
+            assert!(matches!(err, ConfigError::Parse(_)), "{table}: {err:?}");
+        }
     }
 
     #[test]

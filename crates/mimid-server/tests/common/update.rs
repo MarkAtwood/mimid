@@ -105,7 +105,7 @@ pub fn members_list(users: &[&[u8]]) -> ParticipantListData {
 /// The room's components, in ascending component order: `safe_aad`
 /// requiring frank_aad (bead mimid-1wgh.6.74), the hub's `franking_agent`,
 /// `participants`, the roles and the base policy.
-fn components(hub: &Hub, participants: &ParticipantListData) -> Vec<(u16, Vec<u8>)> {
+pub fn components(hub: &Hub, participants: &ParticipantListData) -> Vec<(u16, Vec<u8>)> {
     let key = *hub.signature_public_key();
     vec![
         // mls-extensions-11 §5; first, since app_data_dictionary keeps entries in

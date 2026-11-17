@@ -55,6 +55,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use mimi_mls::mls_didwebvh::CodePoints;
 use mimi_mls::observer::{Observer, ObserverError, ObserverStart, ProposalKind as MlsProposal};
 use mimi_mls::wire::ProposalRef;
 use tokio::sync::Mutex;
@@ -248,9 +249,15 @@ pub struct Hub {
 }
 
 /// What a deployment requires of the rooms it hosts beyond the drafts
-/// (decision mimid-1wgh.52; bead mimid-1wgh.53). Both default to false:
-/// franking and room policy are SHOULD. A room without them is hosted;
-/// the features that need them are unavailable in it.
+/// (decision mimid-1wgh.52; bead mimid-1wgh.53). Both requirements default
+/// to false: franking and room policy are SHOULD. A room without them is
+/// hosted; the features that need them are unavailable in it.
+///
+/// It also carries the code points under which every hosted room's
+/// `did_webvh` leaves are checked against the rules of
+/// draft-atwood-mls-didwebvh-credential-01 (bead mimid-1wgh.4.81.18): IANA
+/// has not assigned them, so they are a setting, by default the draft's
+/// suggested values.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HubRequirements {
@@ -263,16 +270,28 @@ pub struct HubRequirements {
     /// ([`HubError::MissingBaseRoomPolicy`]): the rule of decision
     /// mimid-1wgh.6.57.
     pub room_policy: bool,
+    /// The `did_webvh` credential type and `did_webvh_heads` extension type
+    /// the hub enforces the rules under ([`Observer::enforce_did_webvh`]).
+    pub did_webvh: CodePoints,
 }
 
 impl HubRequirements {
-    /// Both requirements as given.
+    /// Both requirements as given, and the suggested `did_webvh` code
+    /// points.
     #[must_use]
     pub fn new(franking: bool, room_policy: bool) -> Self {
         Self {
             franking,
             room_policy,
+            did_webvh: CodePoints::SUGGESTED,
         }
+    }
+
+    /// The same, with `did_webvh` code points other than the suggested ones.
+    #[must_use]
+    pub fn with_did_webvh(mut self, code_points: CodePoints) -> Self {
+        self.did_webvh = code_points;
+        self
     }
 }
 
@@ -302,13 +321,29 @@ impl Hub {
         domain: Domain,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, HubError> {
+        Self::open_with_requirements(store, domain, clock, HubRequirements::default()).await
+    }
+
+    /// As [`Hub::open`], with `requirements` in force from the start, so
+    /// that rebuilt rooms are checked under its `did_webvh` code points.
+    ///
+    /// # Errors
+    ///
+    /// As [`Hub::open`]; a stored room whose state fails the `did_webvh`
+    /// rules is a [`HubError::Rebuild`].
+    pub async fn open_with_requirements(
+        store: Store,
+        domain: Domain,
+        clock: Arc<dyn Clock>,
+        requirements: HubRequirements,
+    ) -> Result<Self, HubError> {
         let signing_key = HubSigningKey::load(&store).await?;
         let mut rooms = BTreeMap::new();
         for snapshot in store.rooms().await? {
             let pending = store
                 .pending_proposals(&snapshot.room_id, snapshot.epoch)
                 .await?;
-            let room = rebuild(&snapshot, &pending)?;
+            let room = rebuild(&snapshot, &pending, requirements.did_webvh)?;
             rooms.insert(snapshot.room_id, room);
         }
         tracing::info!(
@@ -327,7 +362,7 @@ impl Hub {
             asset_client: None,
             base_url: None,
             local_key_material: None,
-            requirements: HubRequirements::default(),
+            requirements,
             limits: FieldLimits::default(),
             wire_profiles: BTreeMap::new(),
         })
@@ -344,7 +379,9 @@ impl Hub {
 
     /// Sets what new rooms must carry beyond the drafts (decision
     /// mimid-1wgh.52). Without this, neither franking nor a room policy is
-    /// required.
+    /// required. Rooms already rebuilt by [`Hub::open`] stay checked under
+    /// the `did_webvh` code points they were rebuilt with; to change those,
+    /// use [`Hub::open_with_requirements`].
     #[must_use]
     pub fn with_requirements(mut self, requirements: HubRequirements) -> Self {
         self.requirements = requirements;
@@ -466,6 +503,12 @@ impl Hub {
         &self.domain
     }
 
+    /// The code points under which hosted rooms' `did_webvh` leaves are
+    /// checked ([`HubRequirements::did_webvh`]).
+    pub fn did_webvh_code_points(&self) -> CodePoints {
+        self.requirements.did_webvh
+    }
+
     /// The hub's Ed25519 public key: the only `external_senders` entry and
     /// the `franking_agent` key of every hosted room (decision
     /// mimid-1wgh.6.18).
@@ -543,9 +586,15 @@ impl Hub {
             return Err(HubError::RoomExists);
         }
         let mls_store = mimi_mls::Store::open_in_memory().map_err(HubError::MlsStore)?;
-        let ObserverStart { observer, .. } =
+        let ObserverStart { mut observer, .. } =
             Observer::from_group_info(&mls_store, group_info, Some(ratchet_tree))
                 .map_err(HubError::InvalidGroupInfo)?;
+        // draft-atwood-mls-didwebvh-credential-01 §Group Consistency Rules:
+        // the hub checks them on every Commit, starting with the group as
+        // it is (bead mimid-1wgh.4.81.18).
+        observer
+            .enforce_did_webvh(self.requirements.did_webvh)
+            .map_err(HubError::InvalidGroupInfo)?;
         // Decision mimid-1wgh.23: ciphersuite 1 only.
         let cipher_suite = u16::from(submit::cipher_suite(&observer)?);
         if cipher_suite != SUITE_1 {
@@ -878,7 +927,11 @@ impl Hub {
 /// `pending` proposals, in hub order (decision mimid-1wgh.6.6).
 /// [`Observer::from_group_info`] sets the leaf lifetime policy to Skip
 /// itself, so leaves that expired while the hub was down still load.
-fn rebuild(snapshot: &RoomSnapshot, pending: &[Vec<u8>]) -> Result<Room, HubError> {
+fn rebuild(
+    snapshot: &RoomSnapshot,
+    pending: &[Vec<u8>],
+    did_webvh: CodePoints,
+) -> Result<Room, HubError> {
     let rebuild_error = |source| HubError::Rebuild {
         room_id: snapshot.room_id.clone(),
         source,
@@ -895,6 +948,9 @@ fn rebuild(snapshot: &RoomSnapshot, pending: &[Vec<u8>]) -> Result<Room, HubErro
             room_id: snapshot.room_id.clone(),
         });
     }
+    observer
+        .enforce_did_webvh(did_webvh)
+        .map_err(rebuild_error)?;
     let mut references = Vec::with_capacity(pending.len());
     let mut app_data = PendingAppData::default();
     for proposal in pending {
@@ -940,7 +996,7 @@ async fn restore_room(
         .await?
         .ok_or(StoreError::Corrupt("hosted room is not stored"))?;
     let pending = hub.store.pending_proposals(room_id, snapshot.epoch).await?;
-    let room = rebuild(&snapshot, &pending)?;
+    let room = rebuild(&snapshot, &pending, hub.requirements.did_webvh)?;
     tracing::debug!(
         room_id,
         epoch = snapshot.epoch,

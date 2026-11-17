@@ -31,7 +31,8 @@
 //!
 //! - GroupContextExtensions and PreSharedKey proposals are refused
 //!   (decision mimid-1wgh.6.2), as is any proposal type the hub does not
-//!   know.
+//!   know, except a GroupContextExtensions proposal that only sets the
+//!   `did_webvh` record (decision mimid-1wgh.4.81.22).
 //! - A change of credential identity, by Update proposal or UpdatePath, is
 //!   refused: it would let a client become another user.
 //! - A client of a user that is removed or banned may not commit, and may
@@ -164,6 +165,11 @@ pub enum ProposalKind {
     ExternalInit,
     /// A GroupContextExtensions proposal.
     GroupContextExtensions,
+    /// A GroupContextExtensions proposal that only sets the `did_webvh`
+    /// record the draft-atwood-mls-didwebvh-credential-01 rules require,
+    /// which the Observer has checked (decision mimid-1wgh.4.81.22). It
+    /// needs no capability: its content follows from the tree.
+    DidWebvhRecord,
     /// An AppDataUpdate proposal (mls-extensions-11 §4.7).
     AppDataUpdate {
         /// The component.
@@ -630,6 +636,7 @@ pub fn authorize_proposal(
         | ProposalKind::ExternalInit
         | ProposalKind::PreSharedKey
         | ProposalKind::GroupContextExtensions
+        | ProposalKind::DidWebvhRecord
         | ProposalKind::Other { .. } => Ok(()),
     }
 }
@@ -865,6 +872,7 @@ pub fn authorize_commit(state: &RoomState, commit: &Commit) -> Result<PolicyOutc
             | ProposalKind::ExternalInit
             | ProposalKind::PreSharedKey
             | ProposalKind::GroupContextExtensions
+            | ProposalKind::DidWebvhRecord
             | ProposalKind::Other { .. } => {}
         }
     }

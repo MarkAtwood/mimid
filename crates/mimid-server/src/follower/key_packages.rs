@@ -6,7 +6,9 @@
 //! (signatures, suite 1, lifetime within
 //! [`mimi_mls::wire::MAX_KEY_PACKAGE_LIFETIME_SECONDS`]), whose
 //! BasicCredential identity is the uploading user's URI (decision
-//! mimid-1wgh.6.1). Its client is named by its leaf signature key
+//! mimid-1wgh.6.1), or whose `did_webvh` credential (under the configured
+//! code points, [`KeyPackages::with_did_webvh`]) verifies and names that URI
+//! in its log's `alsoKnownAs` (decision mimid-1wgh.4.81.21). Its client is named by its leaf signature key
 //! ([`client_uri`]; decision mimid-1wgh.7.8). A KeyPackageRef already
 //! stored or already claimed is refused, and a client keeps at most one
 //! last-resort KeyPackage (decision mimid-1wgh.12.16).
@@ -69,6 +71,8 @@
 //!   on each request; the ceiling is two signature checks per KeyPackage
 //!   per request. Upgrade path: store the capabilities at upload.
 
+use mimi_mls::didwebvh as mimi_didwebvh;
+use mimi_mls::mls_didwebvh::CodePoints;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -154,6 +158,8 @@ pub struct KeyPackages {
     store: Store,
     domain: Domain,
     clock: Arc<dyn Clock>,
+    /// The code points of `did_webvh` KeyPackages accepted on upload.
+    did_webvh: CodePoints,
     /// Announces the user whose stored KeyPackages may have changed.
     changes: tokio::sync::broadcast::Sender<String>,
 }
@@ -187,8 +193,17 @@ impl KeyPackages {
             store,
             domain,
             clock,
+            did_webvh: CodePoints::SUGGESTED,
             changes: tokio::sync::broadcast::channel(KEY_PACKAGE_CHANGES_CAPACITY).0,
         }
+    }
+
+    /// Sets the `did_webvh` code points of accepted KeyPackages. Without
+    /// this, the draft's suggested values are used.
+    #[must_use]
+    pub fn with_did_webvh(mut self, code_points: CodePoints) -> Self {
+        self.did_webvh = code_points;
+        self
     }
 
     /// Receives the URI of each user whose stored KeyPackages may have
@@ -253,8 +268,15 @@ impl KeyPackages {
         let info = key_package
             .verify(at(self.now_ms()))
             .map_err(UploadError::Invalid)?;
-        // Decision mimid-1wgh.6.1.
-        if info.identity() != Some(user.as_str().as_bytes()) {
+        // Decision mimid-1wgh.6.1; for did_webvh, decision
+        // mimid-1wgh.4.81.21: the log, verified and bound to the leaf, names
+        // the user.
+        let names_user = match info.did_webvh(self.did_webvh) {
+            Ok(Some(log)) => mimi_didwebvh::mimi_user_uri(&log) == Some(user.as_str()),
+            Ok(None) => info.identity() == Some(user.as_str().as_bytes()),
+            Err(_) => false,
+        };
+        if !names_user {
             return Err(UploadError::IdentityMismatch);
         }
         let entry = KeyPackageEntry {
@@ -593,7 +615,9 @@ pub enum UploadError {
     #[error("invalid KeyPackage")]
     Invalid(#[source] KeyPackageError),
     /// The KeyPackage's credential is not a BasicCredential naming the
-    /// uploading user (decision mimid-1wgh.6.1).
+    /// uploading user (decision mimid-1wgh.6.1), nor a `did_webvh`
+    /// credential whose verified log names the user (decision
+    /// mimid-1wgh.4.81.21).
     #[error("the KeyPackage credential does not name the user")]
     IdentityMismatch,
     /// The KeyPackage is already stored, or was already served.

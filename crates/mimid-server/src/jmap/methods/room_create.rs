@@ -160,9 +160,14 @@ async fn create(
     // The group as the hub will see it; the hub repeats the MLS checks.
     let room_id = {
         let mls_store = mimi_mls::Store::open_in_memory().map_err(|e| server_fail(&e))?;
-        let observer = Observer::from_group_info(&mls_store, &group_info, Some(&ratchet_tree))
+        let mut observer = Observer::from_group_info(&mls_store, &group_info, Some(&ratchet_tree))
             .map_err(|_| invalid("groupInfo and ratchetTree are not a valid group"))?
             .observer;
+        // A did_webvh creator is known by the user URI its log names
+        // (decision mimid-1wgh.4.81.21); the hub checks the rules again.
+        observer
+            .enforce_did_webvh(hub.did_webvh_code_points())
+            .map_err(|_| invalid("the group fails the did_webvh rules"))?;
 
         // Rule 6 (length; the hub checks it is unused).
         if observer.group_id().len() != ID_OCTETS {

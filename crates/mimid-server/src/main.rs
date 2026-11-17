@@ -175,11 +175,10 @@ async fn main() -> anyhow::Result<()> {
             })
             .context("building the peer client")
     };
-    let key_packages = Arc::new(KeyPackages::new(
-        store.clone(),
-        config.domain.clone(),
-        Arc::clone(&clock),
-    ));
+    let key_packages = Arc::new(
+        KeyPackages::new(store.clone(), config.domain.clone(), Arc::clone(&clock))
+            .with_did_webvh(config.did_webvh),
+    );
     let follower = Arc::new(
         Follower::new(config.domain.clone(), store.clone(), Arc::clone(&clock))
             .with_peers(peers()?)
@@ -197,19 +196,21 @@ async fn main() -> anyhow::Result<()> {
     )
     .spawn();
     let hub = Arc::new(
-        Hub::open(store.clone(), config.domain.clone(), Arc::clone(&clock))
-            .await
-            .context("starting the hub")?
-            .with_fanout(fanout)
-            .with_peers(peers()?)
-            .with_base_url(config.base_url.clone())
-            .with_local_key_material(key_packages)
-            .with_requirements(HubRequirements::new(
-                config.require_franking,
-                config.require_room_policy,
-            ))
-            .with_limits(config.field_limits())
-            .with_wire_profiles(wire_profiles.clone()),
+        Hub::open_with_requirements(
+            store.clone(),
+            config.domain.clone(),
+            Arc::clone(&clock),
+            HubRequirements::new(config.require_franking, config.require_room_policy)
+                .with_did_webvh(config.did_webvh),
+        )
+        .await
+        .context("starting the hub")?
+        .with_fanout(fanout)
+        .with_peers(peers()?)
+        .with_base_url(config.base_url.clone())
+        .with_local_key_material(key_packages)
+        .with_limits(config.field_limits())
+        .with_wire_profiles(wire_profiles.clone()),
     );
     if follower
         .set_relay(Relay::new(Arc::clone(&hub), peers()?))

@@ -45,6 +45,20 @@
 //!   user URI (decision mimid-1wgh.6.1). Stock mls-rs clients reject two
 //!   leaves with the same identity, so a user with two devices cannot share
 //!   a group with mls-rs-based members.
+//! - draft-atwood-mls-didwebvh-credential-01 (bead mimid-1wgh.4.81.18): the
+//!   hub enforces the draft's group rules in every hosted room under the
+//!   code points of `[did_webvh]` (default the suggested 0x0008 and
+//!   0x0013), and KeyPackage upload accepts a `did_webvh` KeyPackage whose
+//!   log names the uploading user. A `did_webvh` leaf is taken to belong to
+//!   the one `mimi:` URI its log lists in `alsoKnownAs` (decision
+//!   mimid-1wgh.4.81.21, INVENTED, NOT FROM SPEC), and room policy judges
+//!   it by that URI. The only GroupContextExtensions proposal the hub
+//!   accepts is one that sets the `did_webvh` record alone (decision
+//!   mimid-1wgh.4.81.22). A revocation's Remove still needs
+//!   `canRemoveOwnClient` (decision mimid-1wgh.4.81.25). keyMaterial
+//!   requests still carry a BasicCredential for the requester. The hub
+//!   cannot itself bring a newer log to a room (draft §Withheld or Stale
+//!   Logs).
 //! - Room policy ([`hub::policy`]):
 //!   - Only BasicCredential is supported, and it carries no claims, so
 //!     preauthorization matches only `preauth_list` entries with an empty
