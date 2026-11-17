@@ -159,18 +159,36 @@ fn check_object_count(method: &str, args: &Value) -> Result<(), JmapError> {
     }
 }
 
-/// Counts each account's API requests in flight.
-#[derive(Debug, Clone, Default)]
-pub(super) struct InFlight(Arc<Mutex<HashMap<String, usize>>>);
+/// Counts each account's requests in flight to one endpoint.
+#[derive(Debug, Clone)]
+pub(super) struct InFlight {
+    counts: Arc<Mutex<HashMap<String, usize>>>,
+    limit: usize,
+}
+
+impl Default for InFlight {
+    /// The API's counter: at most [`MAX_CONCURRENT_REQUESTS`].
+    fn default() -> Self {
+        Self::with_limit(MAX_CONCURRENT_REQUESTS)
+    }
+}
 
 impl InFlight {
+    /// A counter admitting at most `limit` requests per account.
+    pub(super) fn with_limit(limit: usize) -> Self {
+        Self {
+            counts: Arc::default(),
+            limit,
+        }
+    }
+
     /// Admits one more request for `account_id`, or `None` if it already
-    /// has [`MAX_CONCURRENT_REQUESTS`] in flight. The request stays counted
-    /// until the guard is dropped.
-    fn admit(&self, account_id: &str) -> Option<InFlightGuard> {
-        let mut counts = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+    /// has the limit in flight. The request stays counted until the guard
+    /// is dropped.
+    pub(super) fn admit(&self, account_id: &str) -> Option<InFlightGuard> {
+        let mut counts = self.counts.lock().unwrap_or_else(PoisonError::into_inner);
         let count = counts.entry(account_id.to_owned()).or_default();
-        if *count >= MAX_CONCURRENT_REQUESTS {
+        if *count >= self.limit {
             return None;
         }
         *count += 1;
@@ -182,7 +200,7 @@ impl InFlight {
 }
 
 /// One admitted request; see [`InFlight::admit`].
-struct InFlightGuard {
+pub(super) struct InFlightGuard {
     in_flight: InFlight,
     account_id: String,
 }
@@ -191,7 +209,7 @@ impl Drop for InFlightGuard {
     fn drop(&mut self) {
         let mut counts = self
             .in_flight
-            .0
+            .counts
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if let Some(count) = counts.get_mut(&self.account_id) {

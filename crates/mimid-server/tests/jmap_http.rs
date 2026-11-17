@@ -177,9 +177,10 @@ fn expected_session(
     json!({
         "capabilities": {
             "urn:ietf:params:jmap:core": {
-                // No blobs.
-                "maxSizeUpload": 0,
-                "maxConcurrentUpload": 0,
+                // MAX_BLOB_LEN, 16 MiB: 16 * 1048576 = 16777216.
+                "maxSizeUpload": 16_777_216,
+                // RFC 8620 §2's suggested minimum.
+                "maxConcurrentUpload": 4,
                 // base64 of 4 MiB: 4 * ceil(4194304 / 3) = 4 * 1398102
                 // = 5592408, plus the 65536-octet envelope allowance.
                 "maxSizeRequest": 5_657_944,
@@ -219,7 +220,9 @@ fn expected_session(
                         "roomIdPrefix": "mimi://a.example/r/",
                         "hubSender": URL_SAFE_NO_PAD.encode(hub_sender(hub_key)),
                         "cipherSuites": [1],
-                        "maxKeyPackages": max_key_packages
+                        "maxKeyPackages": max_key_packages,
+                        // INVENTED, NOT FROM SPEC (bead mimid-1wgh.14).
+                        "assetUrl": "https://mimi.a.example/assets/{blobId}"
                     },
                     // draft-atwood-jmap-updates-00 §3: an empty object.
                     "urn:ietf:params:jmap:i18n": {}
@@ -532,26 +535,6 @@ async fn malformed_requests_are_refused() {
             not_json.clone(),
         );
     }
-    f.store.close().await;
-}
-
-#[tokio::test]
-async fn upload_and_download_answer_404() {
-    let f = fixture().await;
-    let token = bearer(&f.alice_token);
-    let upload = Request::post(format!("/jmap/upload/{}/", f.alice_id))
-        .header(header::AUTHORIZATION, &token)
-        .body(Body::from("blob"))
-        .unwrap();
-    assert_eq!(send(&f.app, upload).await.0, StatusCode::NOT_FOUND);
-    let download = Request::get(format!(
-        "/jmap/download/{}/b1/name?accept=text/plain",
-        f.alice_id
-    ))
-    .header(header::AUTHORIZATION, &token)
-    .body(Body::empty())
-    .unwrap();
-    assert_eq!(send(&f.app, download).await.0, StatusCode::NOT_FOUND);
     f.store.close().await;
 }
 

@@ -8,16 +8,20 @@
 //! - `POST /jmap/api`: the API ([`api`]; RFC 8620 §3);
 //! - `GET /jmap/eventsource`: EventSource push (RFC 8620 §7.3);
 //! - `POST /jmap/upload/{accountId}/` and
-//!   `GET /jmap/download/{accountId}/{blobId}/{name}`: always `404`.
+//!   `GET /jmap/download/{accountId}/{blobId}/{name}`: blobs (RFC 8620 §6;
+//!   [`blobs`]);
+//! - `GET /assets/{blobId}`: the asset server, unauthenticated (INVENTED,
+//!   NOT FROM SPEC; [`blobs`]).
 //!
-//! Every JMAP route has a body limit of [`api::MAX_SIZE_REQUEST`]
+//! The upload route's body limit is [`blobs::MAX_BLOB_LEN`];
+//! every other JMAP route has a body limit of [`api::MAX_SIZE_REQUEST`]
 //! (decision mimid-1wgh.12.36). [`auth`] authenticates bearer tokens and is
 //! the endpoint's only authorization point (AGENTS.md, security
 //! invariants). [`bus`] carries the changes that move JMAP state.
 //!
 //! # Limitations
 //!
-//! - No blobs: upload and download answer `404`.
+//! - Blobs are never deleted ([`blobs`]).
 //! - Push is EventSource only: there is no PushSubscription (decision
 //!   mimid-1wgh.12.30).
 //! - Besides `Core/echo`, the read projection ([`projection`]), the
@@ -28,6 +32,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod blobs;
 pub mod bus;
 mod eventsource;
 pub mod language;
@@ -39,7 +44,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, FromRef};
-use axum::http::StatusCode;
 use axum::routing::{get, post};
 use jmap_server::Dispatcher;
 
@@ -88,6 +92,8 @@ struct Inner {
     key_packages: Option<Arc<crate::follower::key_packages::KeyPackages>>,
     store: Store,
     stop: Option<tokio::sync::watch::Receiver<bool>>,
+    /// Uploads in flight per account ([`blobs::MAX_CONCURRENT_UPLOAD`]).
+    uploads: InFlight,
 }
 
 impl FromRef<JmapState> for Authenticator {
@@ -154,18 +160,22 @@ pub fn router(
         key_packages,
         store,
         stop: options.stop,
+        uploads: InFlight::with_limit(blobs::MAX_CONCURRENT_UPLOAD),
     }));
     Ok(Router::new()
         .route("/.well-known/jmap", get(session::get_session))
         .route("/jmap/api", post(api::post_api))
         .route("/jmap/eventsource", get(eventsource::get_eventsource))
-        .route("/jmap/upload/{accountId}/", post(no_blobs))
-        .route("/jmap/download/{accountId}/{blobId}/{name}", get(no_blobs))
+        // The route's own limit replaces the router's for uploads.
+        .route(
+            "/jmap/upload/{accountId}/",
+            post(blobs::upload).layer(DefaultBodyLimit::max(blobs::MAX_BLOB_LEN)),
+        )
+        .route(
+            "/jmap/download/{accountId}/{blobId}/{name}",
+            get(blobs::download),
+        )
+        .route("/assets/{blobId}", get(blobs::asset))
         .layer(DefaultBodyLimit::max(api::MAX_SIZE_REQUEST))
         .with_state(state))
-}
-
-/// Upload and download: there are no blobs.
-async fn no_blobs() -> StatusCode {
-    StatusCode::NOT_FOUND
 }

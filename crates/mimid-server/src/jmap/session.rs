@@ -4,14 +4,20 @@
 //! The Session is per account: a bearer token authenticates exactly one
 //! account, so `accounts` always has one entry.
 //!
+//! `uploadUrl` and `downloadUrl` lead to the blob routes
+//! ([`super::blobs`]): `maxSizeUpload` is [`MAX_BLOB_LEN`] and
+//! `maxConcurrentUpload` RFC 8620 §2's suggested 4. The account's
+//! `urn:ietf:params:jmap:chat:mimi` capability carries `assetUrl`, the
+//! template of the asset server's URLs ([`ASSET_URL_TEMPLATE`]; INVENTED,
+//! NOT FROM SPEC).
+//!
 //! # Limitations
 //!
-//! - There is no blob support: `uploadUrl` and `downloadUrl` point at
-//!   routes that answer `404`, and `maxSizeUpload`, `maxConcurrentUpload`,
-//!   `maxAttachmentBytes` and `maxAttachmentsPerMessage` are `0`.
+//! - `maxAttachmentBytes` and `maxAttachmentsPerMessage` are `0`: the
+//!   server takes no JMAP Chat attachments, since `Message/set` create is
+//!   refused; clients encrypt attachments and upload them as blobs.
+//! - `assetUrl` is not in draft-atwood-jmap-chat-mimi-00.
 //! - No collation algorithm is advertised.
-//! - `eventSourceUrl` is advertised, since RFC 8620 §2 requires it, but
-//!   answers `404` until EventSource (mimid-1wgh.11.6) lands.
 
 use std::collections::BTreeMap;
 
@@ -35,6 +41,7 @@ use super::auth::Account;
 use super::language::I18N_CAPABILITY;
 use crate::config::{BaseUrl, Domain};
 use crate::http::MAX_BODY_LEN;
+use crate::store::MAX_BLOB_LEN;
 
 /// RFC 8620 §2: the core capability.
 pub const CORE_CAPABILITY: &str = "urn:ietf:params:jmap:core";
@@ -51,11 +58,18 @@ pub const CAPABILITIES: [&str; 4] = [
     I18N_CAPABILITY,
 ];
 
-/// `maxSizeUpload`: no blobs are accepted.
-pub const MAX_SIZE_UPLOAD: u64 = 0;
+/// `maxSizeUpload`: [`MAX_BLOB_LEN`].
+pub const MAX_SIZE_UPLOAD: u64 = MAX_BLOB_LEN as u64;
 
-/// `maxConcurrentUpload`: no blobs are accepted.
-pub const MAX_CONCURRENT_UPLOAD: u64 = 0;
+/// `maxConcurrentUpload`: [`super::blobs::MAX_CONCURRENT_UPLOAD`].
+pub const MAX_CONCURRENT_UPLOAD: u64 = super::blobs::MAX_CONCURRENT_UPLOAD as u64;
+
+/// The `assetUrl` template in the account's
+/// `urn:ietf:params:jmap:chat:mimi` capability, after the base URL: where
+/// the asset server serves a blob ([`super::blobs`]). INVENTED, NOT FROM
+/// SPEC: draft-atwood-jmap-chat-mimi-00 does not define attachments
+/// (bead mimid-1wgh.14).
+pub const ASSET_URL_TEMPLATE: &str = "/assets/{blobId}";
 
 /// `maxBodyBytes` (draft-atwood-jmap-chat-00 L235): the longest body a
 /// Message can have. Every Message body is the unpadded base64url
@@ -156,6 +170,7 @@ impl SessionTemplate {
                     "hubSender": self.hub_sender,
                     "cipherSuites": CIPHER_SUITES,
                     "maxKeyPackages": self.max_key_packages,
+                    "assetUrl": format!("{base}{ASSET_URL_TEMPLATE}"),
                 }))?,
                 i18n: Empty {},
             },
