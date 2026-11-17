@@ -99,6 +99,14 @@ pub(crate) struct State {
     /// The JMAP Message state read up to, or none before the first poll.
     #[serde(default)]
     pub message_state: Option<String>,
+    /// The ids of the Messages after `message_state` already handled: a
+    /// poll interrupted part way does not handle them twice.
+    #[serde(default)]
+    pub handled: Vec<String>,
+    /// Events delivered and not yet acknowledged, oldest first (see
+    /// [`crate::journal`]).
+    #[serde(default)]
+    pub journal: Vec<crate::journal::Journaled>,
     /// Digests of the MLSMessages this user sent, newest last, so their
     /// stored copies are skipped when polling (draft §Room/update).
     #[serde(default)]
@@ -196,6 +204,8 @@ impl StateDir {
             signature_key_bound: false,
             group_rooms: BTreeMap::new(),
             message_state: None,
+            handled: Vec::new(),
+            journal: Vec::new(),
             sent: Vec::new(),
             next_invite: 1,
         };

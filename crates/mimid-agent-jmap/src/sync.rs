@@ -86,19 +86,22 @@ impl AgentChat {
         // A join's held messages come with the next poll, so a round that
         // joins is followed by one more.
         for _ in 0..2 {
-            let events = agent.poll().await?;
+            let (events, receipt) = agent.receive().await?;
             let joined = self.accept_invites(&mut agent, &mut report).await?;
             self.reconcile_rooms(&mut agent).await?;
             for event in events {
                 self.apply(&mut agent, event, &mut report).await?;
             }
+            // Stored first, then acknowledged: what the agent delivered
+            // can't be decrypted again, and an event not acknowledged
+            // comes again after a crash (store_message skips a message it
+            // has).
+            self.save().await?;
+            agent.acknowledge(receipt)?;
             if joined == 0 {
                 break;
             }
         }
-        // Before anything else polls: what the agent delivered can't be
-        // decrypted again.
-        self.save().await?;
         Ok(report)
     }
 

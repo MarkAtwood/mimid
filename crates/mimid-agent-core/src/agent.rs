@@ -32,6 +32,7 @@ use crate::AgentError;
 use crate::client::{ConsentRecord, Jmap};
 use crate::components::apply_commit_op;
 use crate::frank::{self, VerifiedFrank};
+use crate::journal::{Journaled, Receipt};
 use crate::state::{Held, Room, RoomStatus, State, StateDir};
 use crate::uri::{normalized_uri, user_uri_domain};
 
@@ -205,9 +206,6 @@ pub struct Agent {
     dir: StateDir,
     jmap: Jmap,
     members: BTreeMap<String, Member>,
-    /// Events found outside [`Agent::poll`] (held messages replayed by a
-    /// join, a leave done locally), returned by the next poll.
-    pending: Vec<Event>,
     /// The room and leaf of a member whose leave proposals are stored and
     /// not yet committed.
     deferred_leaver: Option<(String, u32)>,
@@ -249,7 +247,6 @@ impl Agent {
             dir,
             jmap,
             members: BTreeMap::new(),
-            pending: Vec::new(),
             deferred_leaver: None,
         };
         let rooms: Vec<(String, Room)> = agent
@@ -274,10 +271,10 @@ impl Agent {
                     }
                     agent.members.insert(uri, member);
                 }
-                Err(e) => agent.pending.push(Event::Problem {
+                Err(e) => agent.deliver(vec![Event::Problem {
                     room: Some(uri.clone()),
                     description: format!("cannot reload the MLS group: {e}"),
-                }),
+                }]),
             }
         }
         Ok(agent)
@@ -688,7 +685,7 @@ impl Agent {
                 }),
             }
         }
-        self.pending.extend(events);
+        self.deliver(events);
         self.save()?;
         Ok(room)
     }
@@ -814,9 +811,9 @@ impl Agent {
         self.save()?;
         if alone {
             self.finish_leaving(room);
-            self.pending.push(Event::Left {
+            self.deliver(vec![Event::Left {
                 room: room.to_owned(),
-            });
+            }]);
             self.save()?;
         }
         Ok(())
@@ -890,26 +887,79 @@ impl Agent {
     /// application messages are decrypted. A member's leave proposals are
     /// committed by the remaining member with the lowest leaf index.
     ///
+    /// Returns every event not yet acknowledged, oldest first: those of
+    /// earlier calls (and of [`Agent::join`] and [`Agent::leave`]) and the
+    /// new ones. They are saved in the state directory before they are
+    /// returned and stay there until [`Agent::acknowledge`] with the
+    /// [`Receipt`], so a caller that crashes before storing them gets them
+    /// again (see [`crate::journal`]); the caller must tolerate an event it
+    /// has seen. [`Agent::poll`] acknowledges at once.
+    ///
     /// # Errors
     ///
-    /// The errors of reaching the server. An item that cannot be handled is
-    /// an [`Event::Problem`], not an error.
-    pub async fn poll(&mut self) -> Result<Vec<Event>, AgentError> {
-        let mut events = std::mem::take(&mut self.pending);
+    /// The errors of reaching the server, and [`AgentError::State`] if the
+    /// state cannot be saved. An item that cannot be handled is an
+    /// [`Event::Problem`], not an error.
+    pub async fn receive(&mut self) -> Result<(Vec<Event>, Receipt), AgentError> {
         let since = self.state.message_state.clone();
         let (state, messages) = self.jmap.messages_since(since.as_deref()).await?;
-        for (_, body) in &messages {
+        for (id, body) in &messages {
+            if self.state.handled.contains(id) {
+                continue;
+            }
+            let mut events = Vec::new();
             if !self.jmap.is_own(body) {
                 self.incoming(body, &mut events).await;
             }
+            // One save per Message: its events and that it was handled.
+            self.deliver(events);
+            self.state.handled.push(id.clone());
+            self.save()?;
         }
         // A leave stored outside a proposal bundle (a join's replay).
         if let Some((room, leaf)) = self.deferred_leaver.take() {
+            let mut events = Vec::new();
             self.maybe_commit_leave(&room, leaf, &mut events).await;
+            self.deliver(events);
         }
         self.state.message_state = Some(state);
+        self.state.handled.clear();
         self.remember_sent()?;
-        events.extend(std::mem::take(&mut self.pending));
+        let events = self.state.journal.iter().map(Journaled::event).collect();
+        Ok((
+            events,
+            Receipt {
+                count: self.state.journal.len(),
+            },
+        ))
+    }
+
+    /// Drops the events `receipt` delivered from the journal: the caller
+    /// has stored them. Events found since stay.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::State`] if the state cannot be saved; the events then
+    /// come again.
+    pub fn acknowledge(&mut self, receipt: Receipt) -> Result<(), AgentError> {
+        if receipt.count == 0 {
+            return Ok(());
+        }
+        let count = receipt.count.min(self.state.journal.len());
+        self.state.journal.drain(..count);
+        self.save()
+    }
+
+    /// [`Agent::receive`] and [`Agent::acknowledge`] together, for a
+    /// caller that keeps nothing it could lose: a crash after this returns
+    /// loses the events.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Agent::receive`] and [`Agent::acknowledge`].
+    pub async fn poll(&mut self) -> Result<Vec<Event>, AgentError> {
+        let (events, receipt) = self.receive().await?;
+        self.acknowledge(receipt)?;
         Ok(events)
     }
 
@@ -923,6 +973,13 @@ impl Agent {
 
     fn save(&self) -> Result<(), AgentError> {
         self.dir.save(&self.state)
+    }
+
+    /// Adds `events` to the journal; the next save keeps them.
+    fn deliver(&mut self, events: Vec<Event>) {
+        self.state
+            .journal
+            .extend(events.into_iter().map(Journaled::of));
     }
 
     /// Saves the sent-message digests with the state.
@@ -1064,12 +1121,6 @@ impl Agent {
                     }),
                 },
             }
-        }
-        if let Err(e) = self.save() {
-            events.push(Event::Problem {
-                room: None,
-                description: format!("saving the state: {e}"),
-            });
         }
     }
 

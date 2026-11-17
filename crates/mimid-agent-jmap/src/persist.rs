@@ -16,8 +16,12 @@
 //!   one device, slow for a very large one.
 //! - State strings start again after a restart, so a client's `/changes`
 //!   from before the restart is `cannotCalculateChanges` and it resyncs.
-//! - The agent records that it has polled a message before this file
-//!   records the message: a crash between the two loses those messages.
+//! - [`AgentChat::sync`] acknowledges what the agent delivered only after
+//!   this file is written, so a crash between the two delivers it again
+//!   (bead mimid-s4b1). The agent's own window remains: OpenMLS writes the
+//!   consumed secrets to `mls.sqlite` before the agent writes the
+//!   decrypted event to its journal, so a crash in that one write loses
+//!   the message.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

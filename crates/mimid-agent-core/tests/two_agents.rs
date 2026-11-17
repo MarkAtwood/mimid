@@ -1,7 +1,7 @@
 //! Two Agents, alice and bob, on one mimid server (a.example) served on
 //! loopback with its JMAP API, as `mimid` serves it: publish, host, bob
 //! allows alice, invite, bob joins, both send and receive, bob restarts,
-//! alice leaves (bead mimid-1wgh.13.8).
+//! bob gets an unacknowledged message again after a restart, alice leaves (bead mimid-1wgh.13.8).
 //!
 //! Oracles:
 //!
@@ -274,6 +274,51 @@ async fn two_agents_chat_through_their_server() {
     assert_eq!(
         (got.text.as_deref(), got.message_id),
         (Some("still there?"), sent)
+    );
+
+    // A received message not acknowledged survives a crash: bob receives
+    // it, "crashes" before storing it, and gets it again after a restart
+    // (bead mimid-s4b1); once acknowledged it is gone.
+    let sent = alice
+        .send_text(&room, "do not lose me")
+        .await
+        .unwrap()
+        .message_id;
+    let mut delivered = false;
+    for _ in 0..100 {
+        let (events, receipt) = bob.receive().await.unwrap();
+        if events
+            .iter()
+            .any(|e| matches!(e, Event::Message(m) if m.message_id == sent))
+        {
+            drop(receipt);
+            delivered = true;
+            break;
+        }
+        bob.acknowledge(receipt).unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(delivered, "bob never received the message");
+    drop(bob);
+    let mut bob = agent(&server, BOB, dir.path()).await;
+    let (events, receipt) = bob.receive().await.unwrap();
+    let again: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Message(m) => Some((m.text.as_deref(), m.message_id, m.frank.is_some())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(again, [(Some("do not lose me"), sent, true)]);
+    bob.acknowledge(receipt).unwrap();
+    drop(bob);
+    let mut bob = agent(&server, BOB, dir.path()).await;
+    assert!(
+        !bob.poll()
+            .await
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Event::Message(_)))
     );
 
     // alice leaves: her proposals reach bob, who commits them; she sees it.

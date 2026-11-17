@@ -62,6 +62,7 @@ mod client;
 pub mod components;
 mod error;
 pub mod frank;
+mod journal;
 mod state;
 pub mod uri;
 
@@ -71,5 +72,6 @@ pub use agent::{
 };
 pub use client::ConsentRecord;
 pub use error::{AgentError, Source};
+pub use journal::Receipt;
 pub use mimi_content::{MessageId, MimiContent};
 pub use state::RoomStatus;
