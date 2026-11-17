@@ -30,6 +30,11 @@
 //!   [`hub::fanout`] delivers the outbox through it, at least once, so
 //!   followers must deduplicate ([`follower`] does, decision
 //!   mimid-1wgh.7.3).
+//! - Attachments (bead mimid-1wgh.14): the server stores encrypted blobs
+//!   and serves them at an unauthenticated asset URL, and fetches a
+//!   room's attachments for its members through the room's hub
+//!   ([`jmap::blobs`]). Blobs are never deleted, and room-policy-04's
+//!   `asset_policy` is not consulted ([`hub::assets`]).
 //! - The follower runs no MLS Observer: it checks decoding and envelope
 //!   consistency only (decision mimid-1wgh.7.2). Its other limitations are
 //!   listed in [`follower`].

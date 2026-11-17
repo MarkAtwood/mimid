@@ -107,6 +107,15 @@ pub struct FollowerEvent {
     pub bytes: Vec<u8>,
 }
 
+/// What [`Store::follower_room_access`] finds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomAccess {
+    /// The room's hub domain, as stored.
+    pub hub_domain: String,
+    /// Whether the user is a current member.
+    pub member: bool,
+}
+
 impl Store {
     /// Records that this provider follows the room `room_id`, hosted by
     /// `hub_domain`, first seen at `first_seen` (milliseconds since the UNIX
@@ -285,6 +294,30 @@ impl Store {
         .await?
         .rows_affected();
         Ok(left == 1)
+    }
+
+    /// The hub of the followed room `room_id` and whether `user_uri` is a
+    /// current member of it, or `None` if this provider does not follow
+    /// the room (bead mimid-1wgh.14: who may fetch the room's assets).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails.
+    pub async fn follower_room_access(
+        &self,
+        room_id: &str,
+        user_uri: &str,
+    ) -> Result<Option<RoomAccess>, StoreError> {
+        let row: Option<(String, bool)> = sqlx::query_as(
+            "SELECT r.hub_domain, EXISTS (SELECT 1 FROM follower_member m \
+             WHERE m.room_id = r.room_id AND m.user_uri = ? AND m.left_at IS NULL) \
+             FROM follower_room r WHERE r.room_id = ?",
+        )
+        .bind(user_uri)
+        .bind(room_id)
+        .fetch_optional(&self.reader)
+        .await?;
+        Ok(row.map(|(hub_domain, member)| RoomAccess { hub_domain, member }))
     }
 
     /// The followed rooms `user_uri` is a member of, by room ID.
@@ -490,6 +523,41 @@ mod tests {
         .fetch_all(&store.pool)
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn room_access_names_the_hub_and_current_membership() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("mimid.sqlite"), &domain("b.example"))
+            .await
+            .unwrap();
+        let room = "mimi://a.example/r/clubhouse";
+        let bob = "mimi://b.example/u/bob";
+        let carol = "mimi://b.example/u/carol";
+        assert_eq!(store.follower_room_access(room, bob).await.unwrap(), None);
+        store
+            .add_follower_member(room, &domain("a.example"), bob, 1, 1000)
+            .await
+            .unwrap();
+        let access = |member| {
+            Some(RoomAccess {
+                hub_domain: "a.example".to_owned(),
+                member,
+            })
+        };
+        assert_eq!(
+            store.follower_room_access(room, bob).await.unwrap(),
+            access(true)
+        );
+        assert_eq!(
+            store.follower_room_access(room, carol).await.unwrap(),
+            access(false)
+        );
+        store.leave_follower_room(room, bob, 2000).await.unwrap();
+        assert_eq!(
+            store.follower_room_access(room, bob).await.unwrap(),
+            access(false)
+        );
     }
 
     #[tokio::test]

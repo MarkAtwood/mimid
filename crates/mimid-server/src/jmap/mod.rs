@@ -11,7 +11,9 @@
 //!   `GET /jmap/download/{accountId}/{blobId}/{name}`: blobs (RFC 8620 §6;
 //!   [`blobs`]);
 //! - `GET /assets/{blobId}`: the asset server, unauthenticated (INVENTED,
-//!   NOT FROM SPEC; [`blobs`]).
+//!   NOT FROM SPEC; [`blobs`]);
+//! - `GET /jmap/asset/{accountId}?room=&url=`: a user's fetch of an
+//!   attachment from any provider (INVENTED, NOT FROM SPEC; [`blobs`]).
 //!
 //! The upload route's body limit is [`blobs::MAX_BLOB_LEN`];
 //! every other JMAP route has a body limit of [`api::MAX_SIZE_REQUEST`]
@@ -92,6 +94,10 @@ struct Inner {
     key_packages: Option<Arc<crate::follower::key_packages::KeyPackages>>,
     store: Store,
     stop: Option<tokio::sync::watch::Receiver<bool>>,
+    /// This server's base URL, for its own asset URLs.
+    base_url: BaseUrl,
+    /// The hub, for attachment fetches ([`blobs`]).
+    hub: Arc<Hub>,
     /// Uploads in flight per account ([`blobs::MAX_CONCURRENT_UPLOAD`]).
     uploads: InFlight,
 }
@@ -143,7 +149,7 @@ pub fn router(
         &mut methods,
         &Services {
             store: store.clone(),
-            hub,
+            hub: Arc::clone(&hub),
             follower,
             bus: bus.clone(),
             projection: Arc::clone(&projection),
@@ -160,6 +166,8 @@ pub fn router(
         key_packages,
         store,
         stop: options.stop,
+        base_url: base_url.clone(),
+        hub: Arc::clone(&hub),
         uploads: InFlight::with_limit(blobs::MAX_CONCURRENT_UPLOAD),
     }));
     Ok(Router::new()
@@ -175,6 +183,7 @@ pub fn router(
             "/jmap/download/{accountId}/{blobId}/{name}",
             get(blobs::download),
         )
+        .route("/jmap/asset/{accountId}", get(blobs::fetch_asset))
         .route("/assets/{blobId}", get(blobs::asset))
         .layer(DefaultBodyLimit::max(api::MAX_SIZE_REQUEST))
         .with_state(state))

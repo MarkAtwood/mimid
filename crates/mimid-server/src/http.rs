@@ -393,7 +393,8 @@ async fn notify(
 /// protocol-07 §5.10.2 proxyDownload: `200` with the asset as received
 /// (its `Content-Type`, or `application/octet-stream`), `403` for a
 /// requester that is not a peer or a URL that is not a peer's asset,
-/// `502` when the asset provider fails ([`crate::hub::assets`]).
+/// `404` for this server's own asset URL naming no blob, `502` when the
+/// asset provider fails ([`crate::hub::assets`]).
 #[tracing::instrument(
     name = "protocol_request",
     skip_all,
@@ -640,6 +641,8 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
         HubError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not-implemented"),
         // protocol-07 §5.10.2: not an open proxy.
         HubError::AssetRefused(_) => (StatusCode::FORBIDDEN, "asset-refused"),
+        // This server's own asset URL, naming no blob (bead mimid-1wgh.14).
+        HubError::NoSuchAsset => (StatusCode::NOT_FOUND, "no-such-asset"),
         // The asset provider, not this hub, failed: the request is
         // refused with 502 and logged at DEBUG, since a peer can ask for
         // any URL under its own domain (bounded by the peer map).

@@ -15,7 +15,23 @@
 //!   no CORS headers. The Session advertises the template as `assetUrl`
 //!   ([`super::session`]).
 //!
-//! Both JMAP routes take the bearer token as the other JMAP routes do, and
+//! - `GET /jmap/asset/{accountId}?room={roomUri}&url={downloadUrl}`
+//!   (INVENTED, NOT FROM SPEC): a user's fetch of an attachment, which may
+//!   live at any provider. This server's own asset URL
+//!   (`{base}/assets/{blobId}`) is served from the store, whatever the
+//!   room. Any other URL goes through the room's hub, for a current member
+//!   of a room this provider follows only (else `404`, as for an unknown
+//!   room): when this server is the hub, after
+//!   [`crate::hub::assets::check_url`], as for a peer's proxyDownload;
+//!   when a peer is, by a provider-authenticated protocol-07 §5.10.2
+//!   proxyDownload to it ([`crate::peer::PeerClient::proxy_download`]).
+//!   The body is served as at `/assets`, at most
+//!   [`crate::hub::assets::MAX_ASSET_LEN`] octets. Refusals use the
+//!   protocol routes' problem types (`crate::http`): `403`
+//!   `asset-refused`, `404` `no-such-room` or `no-such-asset`, `502`
+//!   `asset-provider-failed` or `peer-provider-failed`.
+//!
+//! The JMAP routes take the bearer token as the other JMAP routes do, and
 //! an `accountId` other than the token's is `404`, as for an account that
 //! does not exist. Another account's blob is `404` too: an unreferenced
 //! blob is the uploader's only (RFC 8620 §6.1).
@@ -42,6 +58,9 @@
 //!   [`MAX_CONCURRENT_UPLOAD`] per account at once.
 //! - `/assets` sets no caching headers and has no rate limit; anyone who
 //!   learns an asset URL can fetch it.
+//! - `/jmap/asset` checks room membership from the follower's records
+//!   only, not the room's participant list, and caches nothing. A peer
+//!   hub's `Content-Type` is not passed on.
 
 use axum::Json;
 use axum::body::Bytes;
@@ -52,7 +71,10 @@ use serde::{Deserialize, Serialize};
 
 use super::JmapState;
 use super::auth::Account;
-use crate::hub::{Clock, SystemClock};
+use crate::config::Domain;
+use crate::hub::assets::local_asset_id;
+use crate::hub::{Clock, HubError, SystemClock};
+use crate::peer::{PeerError, RejectionFields};
 use crate::store::{BlobError, BlobId, BlobQuota};
 
 pub use crate::store::MAX_BLOB_LEN;
@@ -315,6 +337,163 @@ pub(super) fn octet_stream(bytes: Vec<u8>) -> Response {
         bytes,
     )
         .into_response()
+}
+
+/// `GET /jmap/asset/{accountId}`'s query: the room the attachment was
+/// sent in, and the attachment's URL.
+#[derive(Debug, Deserialize)]
+pub(super) struct AssetQuery {
+    room: String,
+    url: String,
+}
+
+/// `GET /jmap/asset/{accountId}?room={roomUri}&url={downloadUrl}`
+/// (INVENTED, NOT FROM SPEC; bead mimid-1wgh.14): a user's fetch of an
+/// attachment from any provider. See the module documentation.
+#[tracing::instrument(name = "jmap_asset_fetch", skip_all, fields(room_id = tracing::field::Empty))]
+pub(super) async fn fetch_asset(
+    State(state): State<JmapState>,
+    account: Account,
+    Path(account_id): Path<String>,
+    query: Result<Query<AssetQuery>, axum::extract::rejection::QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return blank_problem(StatusCode::BAD_REQUEST);
+    };
+    if account.check_account_id(&account_id).is_err() {
+        return blank_problem(StatusCode::NOT_FOUND);
+    }
+    tracing::Span::current().record("room_id", query.room.as_str());
+    let inner = &state.0;
+    // This server's own asset: the blob id is the capability, as at
+    // /assets, so the room is not consulted.
+    if let Some(blob_id) = local_asset_id(&inner.base_url, &query.url) {
+        return match inner.store.asset(&blob_id).await {
+            Ok(Some(bytes)) => octet_stream(bytes),
+            Ok(None) => refused(StatusCode::NOT_FOUND, "no-such-asset", "no such asset"),
+            Err(error) => store_failed(&error),
+        };
+    }
+    // Anything else goes through the room's hub, and only for a member
+    // of a room this provider follows. A room the user is not in looks
+    // like one this provider does not know.
+    let access = match inner
+        .store
+        .follower_room_access(&query.room, account.user().as_str())
+        .await
+    {
+        Ok(Some(access)) if access.member => access,
+        Ok(_) => {
+            return refused(
+                StatusCode::NOT_FOUND,
+                "no-such-room",
+                "not a member of a followed room",
+            );
+        }
+        Err(error) => return store_failed(&error),
+    };
+    let Ok(hub_domain) = Domain::try_from(access.hub_domain) else {
+        tracing::error!(
+            name: "jmap_asset_bad_hub_domain",
+            "stored hub domain of a followed room is not a domain"
+        );
+        return blank_problem(StatusCode::INTERNAL_SERVER_ERROR);
+    };
+    let fetched = if &hub_domain == inner.hub.domain() {
+        inner
+            .hub
+            .fetch_asset(&query.url)
+            .await
+            .map(|asset| asset.body)
+    } else {
+        let Some(peers) = inner.hub.peers() else {
+            return refused(
+                StatusCode::NOT_IMPLEMENTED,
+                "not-implemented",
+                "no peer client",
+            );
+        };
+        match peers.proxy_download(&hub_domain, &query.url).await {
+            Ok(body) => Ok(body),
+            Err(error) => return peer_failed(&hub_domain, &error),
+        }
+    };
+    match fetched {
+        Ok(body) => octet_stream(body),
+        Err(error) => hub_failed(&error),
+    }
+}
+
+/// A refusal of `/jmap/asset`, in the problem form of the protocol routes
+/// ([`crate::http::problem`]), logged at DEBUG with `why`.
+fn refused(status: StatusCode, kind: &str, why: &str) -> Response {
+    tracing::debug!(
+        status = status.as_u16(),
+        kind,
+        why,
+        "jmap asset fetch refused"
+    );
+    crate::http::problem(status, kind)
+}
+
+/// Maps this hub's own fetch failure as the proxyDownload route does
+/// (`crate::http`): `403` refused, `404` no such own asset, `502` the
+/// asset provider failed.
+fn hub_failed(error: &HubError) -> Response {
+    let (status, kind) = match error {
+        HubError::AssetRefused(_) => (StatusCode::FORBIDDEN, "asset-refused"),
+        HubError::NoSuchAsset => (StatusCode::NOT_FOUND, "no-such-asset"),
+        HubError::AssetFetch(_) | HubError::AssetTooLarge => {
+            (StatusCode::BAD_GATEWAY, "asset-provider-failed")
+        }
+        HubError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not-implemented"),
+        _ => {
+            tracing::error!(
+                name: "jmap_asset_fetch_failed",
+                error = error as &dyn std::error::Error,
+                "jmap asset fetch failed"
+            );
+            return crate::http::problem(StatusCode::INTERNAL_SERVER_ERROR, "internal-error");
+        }
+    };
+    // The user chose the URL: a refusal or a failing asset provider is
+    // the request's outcome, not this server's failure.
+    tracing::debug!(
+        status = status.as_u16(),
+        error = error as &dyn std::error::Error,
+        "jmap asset fetch refused"
+    );
+    crate::http::problem(status, kind)
+}
+
+/// Maps a failed proxyDownload at the peer hub `hub`: its `403` and
+/// `404` pass through, anything else is `502`.
+fn peer_failed(hub: &Domain, error: &PeerError) -> Response {
+    let (status, kind) = match error {
+        PeerError::Rejected { status: 403, .. } => (StatusCode::FORBIDDEN, "asset-refused"),
+        PeerError::Rejected { status: 404, .. } => (StatusCode::NOT_FOUND, "no-such-asset"),
+        PeerError::Rejected { .. } | PeerError::ResponseTooLarge => {
+            (StatusCode::BAD_GATEWAY, "peer-provider-failed")
+        }
+        _ => {
+            let rejection = RejectionFields::of(error);
+            tracing::error!(
+                name: "jmap_asset_peer_failed",
+                peer = %hub,
+                error = error as &dyn std::error::Error,
+                status = rejection.status,
+                "proxyDownload at the room's hub failed"
+            );
+            return crate::http::problem(StatusCode::BAD_GATEWAY, "peer-provider-failed");
+        }
+    };
+    tracing::debug!(
+        peer = %hub,
+        status = status.as_u16(),
+        error = error as &dyn std::error::Error,
+        "proxyDownload at the room's hub refused"
+    );
+    crate::http::problem(status, kind)
 }
 
 #[cfg(test)]

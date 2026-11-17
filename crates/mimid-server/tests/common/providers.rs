@@ -163,6 +163,7 @@ impl Provider {
                 .unwrap()
                 .with_fanout(fanout)
                 .with_peers(peer_client())
+                .with_base_url(self.base.clone())
                 .with_local_key_material(Arc::clone(&key_packages) as _),
         );
         follower

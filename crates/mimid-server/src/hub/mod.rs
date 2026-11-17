@@ -59,7 +59,7 @@ use mimi_mls::observer::{Observer, ObserverError, ObserverStart, ProposalKind as
 use mimi_mls::wire::ProposalRef;
 use tokio::sync::Mutex;
 
-use crate::config::Domain;
+use crate::config::{BaseUrl, Domain};
 use crate::peer::{PeerClient, PeerError};
 use crate::store::{RoomSnapshot, Store, StoreError};
 use fanout::FanoutHandle;
@@ -233,6 +233,9 @@ pub struct Hub {
     /// The HTTP client for proxyDownload fetches; [`assets`]'s own when
     /// `None`.
     asset_client: Option<reqwest::Client>,
+    /// This server's base URL, for recognising its own asset URLs
+    /// ([`assets::local_asset_id`]); none recognises none.
+    base_url: Option<BaseUrl>,
     /// The server of keyMaterial for users of this provider, if any.
     local_key_material: Option<Arc<dyn LocalKeyMaterial>>,
     /// What a new room's group must carry beyond the MLS and protocol
@@ -322,6 +325,7 @@ impl Hub {
             fanout: None,
             peers: None,
             asset_client: None,
+            base_url: None,
             local_key_material: None,
             requirements: HubRequirements::default(),
             limits: FieldLimits::default(),
@@ -390,8 +394,56 @@ impl Hub {
             .peers
             .as_ref()
             .ok_or(HubError::NotImplemented("proxyDownload"))?;
-        let url = assets::check(peers, from, download_url).map_err(HubError::AssetRefused)?;
+        if !peers.knows(from) {
+            return Err(HubError::AssetRefused(assets::AssetRefusal::NotAPeer));
+        }
+        self.fetch_asset(download_url).await
+    }
+
+    /// Fetches `download_url` for a user of this provider in a room this
+    /// hub hosts (bead mimid-1wgh.14): this server's own asset URL from the
+    /// store, any other after [`assets::check_url`]. The caller has
+    /// checked the user may read the room.
+    ///
+    /// # Errors
+    ///
+    /// As [`Hub::proxy_download`], and [`HubError::NoSuchAsset`] for an own
+    /// asset URL naming no blob.
+    pub async fn fetch_asset(&self, download_url: &str) -> Result<assets::Asset, HubError> {
+        if let Some(blob_id) = self
+            .base_url
+            .as_ref()
+            .and_then(|base| assets::local_asset_id(base, download_url))
+        {
+            let body = self
+                .store
+                .asset(&blob_id)
+                .await?
+                .ok_or(HubError::NoSuchAsset)?;
+            return Ok(assets::Asset {
+                content_type: Some("application/octet-stream".to_owned()),
+                body,
+            });
+        }
+        let peers = self
+            .peers
+            .as_ref()
+            .ok_or(HubError::NotImplemented("proxyDownload"))?;
+        let url = assets::check_url(peers, download_url).map_err(HubError::AssetRefused)?;
         assets::fetch(self.asset_client.as_ref(), url).await
+    }
+
+    /// Recognises `base_url`'s asset URLs as this server's own, served
+    /// from the store ([`Hub::fetch_asset`]; bead mimid-1wgh.14).
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: BaseUrl) -> Self {
+        self.base_url = Some(base_url);
+        self
+    }
+
+    /// The client this hub reaches its peers with, if it has one.
+    pub fn peers(&self) -> Option<&PeerClient> {
+        self.peers.as_ref()
     }
 
     /// Gives the hub the server of keyMaterial for users of this provider,
@@ -926,6 +978,9 @@ pub enum HubError {
     /// The asset is larger than [`assets::MAX_ASSET_LEN`].
     #[error("the asset is too large")]
     AssetTooLarge,
+    /// An asset URL of this server names no blob (bead mimid-1wgh.14).
+    #[error("no such asset")]
+    NoSuchAsset,
     /// The request body does not decode.
     #[error("undecodable request")]
     InvalidRequest(#[source] mimi_mls::tls_codec::Error),

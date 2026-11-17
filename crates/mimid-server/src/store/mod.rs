@@ -38,7 +38,7 @@ pub use blobs::{
 };
 pub use consent::{ConsentDecision, ConsentKey, ConsentRow, ReceivedConsent};
 pub use consent_record::{ConsentChanges, ConsentPatch, ConsentRecord};
-pub use follower_log::{AppendedFanout, FanoutKind, FollowerEvent, NewFanout};
+pub use follower_log::{AppendedFanout, FanoutKind, FollowerEvent, NewFanout, RoomAccess};
 pub use jmap::{
     BearerToken, ChatRow, HubRow, JmapStoreError, MalformedToken, MessageChanges, MessageRow,
     ProjectionCursor, TOKEN_LEN, TokenOwner,

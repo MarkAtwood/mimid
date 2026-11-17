@@ -1,8 +1,9 @@
 //! Client for peer providers: directory fetch and cache, and outbound
 //! `/notify`, `/keyMaterial`, `/update`, `/submitMessage`, `/groupInfo`,
 //! `/requestConsent`, `/updateConsent`, `/identifierQuery` and `/reportAbuse`
-//! requests over reqwest (plans of mimid-1wgh.6 and mimid-1wgh.7;
-//! mimid-1wgh.7.32, mimid-1wgh.7.33, mimid-1wgh.7.34).
+//! requests and `GET /proxyDownload` (bead mimid-1wgh.14) over reqwest
+//! (plans of mimid-1wgh.6 and mimid-1wgh.7; mimid-1wgh.7.32,
+//! mimid-1wgh.7.33, mimid-1wgh.7.34).
 //!
 //! A peer's base URL comes from the configured peer map, which replaces DNS
 //! discovery (decision mimid-1wgh.17). Its directory (protocol-07 §5.1) is
@@ -56,6 +57,7 @@ use reqwest::{StatusCode, redirect};
 use crate::config::{BaseUrl, Domain};
 use crate::directory::DIRECTORY_PATH;
 use crate::http::{MAX_BODY_LEN, PROTOCOL_CONTENT_TYPE};
+use crate::hub::assets::{ASSET_TIMEOUT, MAX_ASSET_LEN};
 use crate::peer_clock::PeerClocks;
 
 /// The longest directory document accepted, in bytes. INVENTED, NOT FROM
@@ -102,6 +104,8 @@ enum Endpoint {
     IdentifierQuery,
     /// §5.9 `POST /reportAbuse/{roomId}`.
     ReportAbuse,
+    /// §5.10.2 `GET /proxyDownload/{downloadUrl}` (bead mimid-1wgh.14).
+    ProxyDownload,
 }
 
 impl Endpoint {
@@ -117,6 +121,35 @@ impl Endpoint {
             Self::UpdateConsent => "updateConsent",
             Self::IdentifierQuery => "identifierQuery",
             Self::ReportAbuse => "reportAbuse",
+            Self::ProxyDownload => "proxyDownload",
+        }
+    }
+
+    /// The endpoint's HTTP method: `GET` for proxyDownload, `POST` for
+    /// every other (protocol-07 §5).
+    fn method(self) -> reqwest::Method {
+        match self {
+            Self::ProxyDownload => reqwest::Method::GET,
+            _ => reqwest::Method::POST,
+        }
+    }
+
+    /// The longest response body read: [`MAX_ASSET_LEN`] for an asset,
+    /// [`MAX_BODY_LEN`] for every other (decision mimid-1wgh.6.67).
+    fn response_limit(self) -> usize {
+        match self {
+            Self::ProxyDownload => MAX_ASSET_LEN,
+            _ => MAX_BODY_LEN,
+        }
+    }
+
+    /// How long the whole request may take: the hub's own asset fetch
+    /// ([`ASSET_TIMEOUT`]) and [`REQUEST_TIMEOUT`] for proxyDownload,
+    /// [`REQUEST_TIMEOUT`] for every other.
+    fn timeout(self) -> Duration {
+        match self {
+            Self::ProxyDownload => ASSET_TIMEOUT + REQUEST_TIMEOUT,
+            _ => REQUEST_TIMEOUT,
         }
     }
 
@@ -132,6 +165,7 @@ impl Endpoint {
             Self::RequestConsent => "targetDomain",
             Self::UpdateConsent => "requesterDomain",
             Self::IdentifierQuery => "domain",
+            Self::ProxyDownload => "downloadUrl",
         }
     }
 
@@ -159,7 +193,11 @@ impl Endpoint {
             Self::IdentifierQuery => IdentifierResponse::tls_deserialize_exact(body)
                 .ok()
                 .map(|response| ErrorResponse::IdentifierQuery(Box::new(response))),
-            Self::Notify | Self::RequestConsent | Self::UpdateConsent | Self::ReportAbuse => None,
+            Self::Notify
+            | Self::RequestConsent
+            | Self::UpdateConsent
+            | Self::ReportAbuse
+            | Self::ProxyDownload => None,
         }
     }
 
@@ -176,6 +214,7 @@ impl Endpoint {
             Self::UpdateConsent => directory.update_consent.as_ref(),
             Self::IdentifierQuery => directory.identifier_query.as_ref(),
             Self::ReportAbuse => directory.report_abuse.as_ref(),
+            Self::ProxyDownload => directory.proxy_download.as_ref(),
         }
     }
 }
@@ -346,7 +385,7 @@ impl PeerClient {
         body: Vec<u8>,
     ) -> Result<(), PeerError> {
         // protocol-07 §5.5; decision mimid-1wgh.5.15
-        self.post(
+        self.call(
             domain,
             Endpoint::Notify,
             room_id,
@@ -378,7 +417,7 @@ impl PeerClient {
         )
     )]
     pub async fn request_consent(&self, domain: &Domain, body: Vec<u8>) -> Result<(), PeerError> {
-        self.post(
+        self.call(
             domain,
             Endpoint::RequestConsent,
             domain.as_str(),
@@ -411,7 +450,7 @@ impl PeerClient {
         )
     )]
     pub async fn update_consent(&self, domain: &Domain, body: Vec<u8>) -> Result<(), PeerError> {
-        self.post(
+        self.call(
             domain,
             Endpoint::UpdateConsent,
             domain.as_str(),
@@ -504,7 +543,7 @@ impl PeerClient {
         // protocol-07 §5.9 names no success code: mimid's hub answers 200
         // (decision mimid-1wgh.6.65), Haven's 201, so both count (bead
         // mimid-1wgh.46.6.2).
-        self.post(
+        self.call(
             domain,
             Endpoint::ReportAbuse,
             room_id,
@@ -666,12 +705,46 @@ impl PeerClient {
             .await
     }
 
-    /// Posts `body` to `endpoint` of `domain`, with the endpoint's template
-    /// expanded with `value` (decision mimid-1wgh.5.18). If the response's
-    /// status is one of `expect`, returns its body when `read_body` is set (at
-    /// most [`MAX_BODY_LEN`] bytes: the request body cap bounds responses
+    /// protocol-07 §5.10.2 `GET /proxyDownload/{downloadUrl}`: asks the
+    /// hub `domain` to fetch the asset at `download_url` for this provider
+    /// (bead mimid-1wgh.14), and returns its body, at most
+    /// [`MAX_ASSET_LEN`] octets. The URL is percent-encoded into one path
+    /// segment by the directory template's expansion.
+    ///
+    /// # Errors
+    ///
+    /// As for [`PeerClient::update`]; [`PeerError::ResponseTooLarge`] if
+    /// the asset exceeds [`MAX_ASSET_LEN`].
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(peer = %domain, endpoint = "proxyDownload")
+    )]
+    pub async fn proxy_download(
+        &self,
+        domain: &Domain,
+        download_url: &str,
+    ) -> Result<Vec<u8>, PeerError> {
+        self.call(
+            domain,
+            Endpoint::ProxyDownload,
+            download_url,
+            Vec::new(),
+            &[StatusCode::OK],
+            true,
+        )
+        .await
+    }
+
+    /// Sends `body` to `endpoint` of `domain` with the endpoint's method
+    /// (a `GET` has no body), with the endpoint's template expanded with
+    /// `value` (decision mimid-1wgh.5.18). If the response's status is one
+    /// of `expect`, returns its body when `read_body` is set (at most the
+    /// endpoint's response limit: for every endpoint but proxyDownload
+    /// [`MAX_BODY_LEN`] bytes, since the request body cap bounds responses
     /// too, decision mimid-1wgh.6.67), or nothing without reading it.
-    async fn post(
+    async fn call(
         &self,
         domain: &Domain,
         endpoint: Endpoint,
@@ -709,25 +782,27 @@ impl PeerClient {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
             signer
-                .sign(&axum::http::Method::POST, &uri, &mut headers, &body, now)
+                .sign(&endpoint.method(), &uri, &mut headers, &body, now)
                 .map_err(|source| PeerError::Sign {
                     endpoint: endpoint.name(),
                     source,
                 })?;
         }
         let sent = SystemTime::now();
-        let response = self
+        let mut request = self
             .http
-            .post(url)
+            .request(endpoint.method(), url)
             .headers(headers)
-            .header(CONTENT_TYPE, PROTOCOL_CONTENT_TYPE)
-            .body(body)
-            .send()
-            .await
-            .map_err(|error| {
-                record_peer_call(domain, endpoint.name(), "error", started);
-                PeerError::Http(error)
-            })?;
+            .timeout(endpoint.timeout());
+        if endpoint.method() == reqwest::Method::POST {
+            request = request
+                .header(CONTENT_TYPE, PROTOCOL_CONTENT_TYPE)
+                .body(body);
+        }
+        let response = request.send().await.map_err(|error| {
+            record_peer_call(domain, endpoint.name(), "error", started);
+            PeerError::Http(error)
+        })?;
         if let Some(clocks) = &self.clocks {
             let date = response.headers().get(DATE).and_then(|v| v.to_str().ok());
             clocks.observe(domain, date, sent, SystemTime::now());
@@ -764,7 +839,7 @@ impl PeerClient {
             );
             return Ok(Vec::new());
         }
-        let read = read_capped(response, MAX_BODY_LEN).await?;
+        let read = read_capped(response, endpoint.response_limit()).await?;
         completed(
             (domain, endpoint.name()),
             status,
@@ -776,7 +851,7 @@ impl PeerClient {
         read.ok_or(PeerError::ResponseTooLarge)
     }
 
-    /// [`PeerClient::post`] expecting `200` and returning the body.
+    /// [`PeerClient::call`] expecting `200` and returning the body.
     async fn post_read(
         &self,
         domain: &Domain,
@@ -784,7 +859,7 @@ impl PeerClient {
         value: &str,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, PeerError> {
-        self.post(domain, endpoint, value, body, &[StatusCode::OK], true)
+        self.call(domain, endpoint, value, body, &[StatusCode::OK], true)
             .await
     }
 

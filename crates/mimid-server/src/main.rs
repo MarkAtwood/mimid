@@ -202,6 +202,7 @@ async fn main() -> anyhow::Result<()> {
             .context("starting the hub")?
             .with_fanout(fanout)
             .with_peers(peers()?)
+            .with_base_url(config.base_url.clone())
             .with_local_key_material(key_packages)
             .with_requirements(HubRequirements::new(
                 config.require_franking,

@@ -9,6 +9,12 @@
 //! a subdomain of one. Only configured peers may ask (as for `/notify`,
 //! decision mimid-1wgh.7.4).
 //!
+//! The hub serves its own asset URLs (`{base}/assets/{blobId}`, bead
+//! mimid-1wgh.14) from its store, with no fetch, to a peer as to its own
+//! users ([`super::Hub::proxy_download`], [`super::Hub::fetch_asset`]);
+//! the peer check still applies to a peer. A hub's own users skip the
+//! requester check ([`check_url`]).
+//!
 //! The fetch sends no client headers, follows no redirects, and is bounded
 //! in time ([`ASSET_TIMEOUT`]) and size ([`MAX_ASSET_LEN`]). The body is
 //! returned as received, with the asset provider's `Content-Type`.
@@ -29,8 +35,9 @@ use std::time::Duration;
 use axum::http::header::CONTENT_TYPE;
 
 use super::HubError;
-use crate::config::Domain;
+use crate::config::{BaseUrl, Domain};
 use crate::peer::PeerClient;
+use crate::store::BlobId;
 
 /// The largest asset proxied. INVENTED, NOT FROM SPEC.
 pub const MAX_ASSET_LEN: usize = 64 * 1024 * 1024;
@@ -80,6 +87,17 @@ pub fn check(
     if !peers.knows(from) {
         return Err(AssetRefusal::NotAPeer);
     }
+    check_url(peers, download_url)
+}
+
+/// [`check`] without the requester check: the URL checks alone, for a
+/// fetch this hub makes for one of its own users (bead mimid-1wgh.14).
+///
+/// # Errors
+///
+/// The [`AssetRefusal`] for the first check that fails; never
+/// [`AssetRefusal::NotAPeer`].
+pub fn check_url(peers: &PeerClient, download_url: &str) -> Result<reqwest::Url, AssetRefusal> {
     let url = reqwest::Url::parse(download_url).map_err(|_| AssetRefusal::NotHttps)?;
     if url.scheme() != "https" {
         return Err(AssetRefusal::NotHttps);
@@ -100,6 +118,20 @@ pub fn check(
         Err(AssetRefusal::NotAPeerHost)
     }
 }
+
+/// The blob id of `url` if it is one of this server's own asset URLs,
+/// `{base_url}/assets/{blobId}` exactly (the `assetUrl` template;
+/// INVENTED, NOT FROM SPEC, bead mimid-1wgh.14).
+pub fn local_asset_id(base_url: &BaseUrl, url: &str) -> Option<BlobId> {
+    let id = url
+        .strip_prefix(base_url.to_string().as_str())?
+        .strip_prefix(ASSET_PATH)?;
+    BlobId::parse(id).ok()
+}
+
+/// The path under the base URL at which the asset server serves blobs,
+/// before the blob id.
+pub const ASSET_PATH: &str = "/assets/";
 
 /// The HTTP client for asset fetches: no redirects, https only, bounded.
 fn client() -> Result<&'static reqwest::Client, HubError> {
@@ -162,7 +194,6 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::config::BaseUrl;
 
     fn domain(name: &str) -> Domain {
         Domain::try_from(name.to_owned()).unwrap()
@@ -205,5 +236,34 @@ mod tests {
             check(&peers, &domain("c.example"), "https://b.example/1"),
             Err(AssetRefusal::NotAPeer)
         );
+        // For a local user, the URL checks alone.
+        assert!(check_url(&peers, "https://assets.b.example/1").is_ok());
+        assert_eq!(
+            check_url(&peers, "https://c.example/1"),
+            Err(AssetRefusal::NotAPeerHost)
+        );
+    }
+
+    #[test]
+    fn local_asset_ids_are_exact_matches_of_the_template() {
+        let base = BaseUrl::try_from("https://mimi.a.example".to_owned()).unwrap();
+        let id = "AAECAwQFBgcICQoLDA0ODw";
+        assert_eq!(
+            local_asset_id(&base, &format!("https://mimi.a.example/assets/{id}"))
+                .unwrap()
+                .as_str(),
+            id
+        );
+        for other in [
+            format!("http://mimi.a.example/assets/{id}"),
+            format!("https://mimi.a.example:443/assets/{id}"),
+            format!("https://mimi.a.example.evil/assets/{id}"),
+            format!("https://mimi.a.example/assets/{id}?x"),
+            format!("https://mimi.a.example/assets/{id}/"),
+            format!("https://mimi.a.example/asset/{id}"),
+            "https://mimi.a.example/assets/short".to_owned(),
+        ] {
+            assert_eq!(local_asset_id(&base, &other), None, "{other}");
+        }
     }
 }
