@@ -234,6 +234,153 @@ document). Decision mimid-1wgh.4.81.13.
 **For -01:** say that a malformed extension means rejection, and either set a
 limit on entries or say none is intended.
 
+### 14. Successor credentials across credential types
+
+**§Successor Credentials** defines did_webvh-to-did_webvh succession only.
+RFC 9420 §5.3.1 leaves the replacement check to the application, so the draft
+does not say whether an Update or UpdatePath may switch a leaf between
+`did_webvh` and `basic`/`x509`. Switching away would let a leaf leave the
+record's authorization rule while keeping its place; switching to it changes
+an existing leaf's identity.
+
+**mimid:** refuses both. Decision mimid-1wgh.4.81.15.
+
+**For -01:** say so.
+
+### 15. Every member of a mixed group must implement the draft
+
+**§Negotiation and Mandating the Credential** describes "a group that also
+admits `basic` or `x509` credentials". But RFC 9420 §7.2 already requires
+every member to list every credential type in use, the draft requires
+`did_webvh` in `required_capabilities`, and §The Heads Extension says a client
+listing `did_webvh` MUST implement the rules. So a basic-only client can never
+share a group with a did_webvh leaf; the basic members of a mixed group are
+clients that implement this draft and happen to use basic credentials.
+(OpenMLS enforces the RFC 9420 rule.)
+
+**mimid:** sets `required_capabilities` itself whenever it sets the record,
+keeping other entries. Decision mimid-1wgh.4.81.16.
+
+**For -01:** say this in §Negotiation; it affects MIMI deployment (every
+provider's clients in a room must implement the draft before one user can use
+it).
+
+### 16. The hub validates Commits too
+
+**§Delivery Service and Hub** discusses what a DS or hub can do to the
+credential, but a MIMI hub also *validates* every Commit before ordering it
+(protocol-07; mimid's hub does, through its Observer). The group rules need
+only the public tree and GroupContext, so a hub can apply them; if it does
+not, it accepts Commits that every member refuses, and those members fall out
+of sync with the hub's order.
+
+**mimid:** the hub's Observer enforces the same rules once told the code
+points (`Observer::enforce_did_webvh`); tests show it refusing each rule-
+breaking Commit the members refuse.
+
+**For -01:** say that a DS or hub that validates Commits MUST (or SHOULD)
+apply §Group Consistency Rules, and that it can, without any secret.
+
+### 17. External joins and MIMI rooms
+
+**§Rules:** "A client whose SCID has no entry in `did_webvh_heads`, which
+includes every new user, cannot join by external Commit". MIMI open rooms
+and join links (protocol-07, room-policy-04 §6.2) join by external Commit, so
+in a room that requires `did_webvh`, no new user can use them. This makes Open
+Issue 1 more pressing. It is also implementable today: mls-extensions-11
+allows AppDataUpdate proposals in an external Commit ("AppDataUpdate proposals
+can be included in an external Commit"), and mimid already sends such
+Commits for joins.
+
+**For -01:** mention the MIMI consequence under Open Issue 1.
+
+### 18. Open Issue 5 is real in practice
+
+A GroupContextExtensions proposal replaces the whole list, and
+mls-extensions-11 §4.7 requires it to carry `app_data_dictionary` unchanged
+(the dictionary of the *current* epoch, even when the same Commit has
+AppDataUpdate proposals). A record change therefore always needs a fresh GCE
+proposal built from the current extensions, and conflicts with any pending GCE
+proposal from someone else.
+
+**mimid:** refuses a record-changing Commit while a GCE proposal is pending
+(decision mimid-1wgh.4.81.17).
+
+### 19. The record change is mechanical; say who adds it
+
+The draft says a Commit that changes the expected value MUST include the GCE
+proposal, and a Commit that raises a head MUST remove the leaves it no longer
+authorizes. Both are fully determined by the resulting tree. mimid's
+`Member::commit` computes them and adds them itself, so revocation is "give the
+device the new log, then commit". The draft could say an implementation MAY do
+this, so that applications do not each re-derive it.
+
+### 20. Revocation through another device works as described
+
+§Rules' path for revoking the committing device ("committing an Update
+proposal, sent by one of the user's other devices, that carries the new log")
+works over OpenMLS unchanged: mimid tests have d2 propose an Update with a log
+that drops d1, and Bob's Commit removes d1. No change needed; noted as
+confirmation.
+
+### 21. Size
+
+Each leaf carries the whole log, so KeyPackages and the ratchet tree grow with
+every device change. MIMI servers bound request sizes; a 2 MiB leaf limit is
+far above what most deployments will accept for a KeyPackage. Worth a sentence
+that deployments will set lower operational limits, and that a member must
+still accept up to the draft's limits to stay deterministic (or the draft
+picks a smaller limit).
+
 ## Section 7, item 7: the encoding question
 
-To be completed once the OpenMLS integration is done; see the end of this file.
+What implementing -00 taught about "Encoding without DIDs":
+
+1. **The mechanism is independent of the encoding, and the code shows it.**
+   The group rules (`crates/mls-didwebvh/src/rules.rs`, about 200 lines of
+   code, plus the `did_webvh_heads` codec, about 150) use exactly four things
+   from a credential: the SCID, the ordered list of version identifiers, the
+   set of 32-byte keys the head authorizes, and the prefix relation between two
+   logs. Nothing in them knows about JSON, DIDs or did:webvh. Any log format
+   that yields those four things plugs in unchanged; so does the OpenMLS glue
+   (`crates/mimi-mls/src/didwebvh.rs`).
+
+2. **Almost all of the ambiguity came from the encoding.** Of the items in
+   this file, items 2 to 10 and 13 (JSON Lines, I-JSON numbers, nesting,
+   domain syntax, IDNA, `ttl`, clocks, DID URL resolution, verification method
+   selection, witness pruning) exist only because the log is did:webvh JSON.
+   Each is a place where two careful implementations can reach different
+   validity decisions, which is the one thing §Deterministic Validation says
+   must not happen. A log defined in TLS presentation language, signed over the
+   exact bytes as MLS signs everything else, would have none of them: no
+   canonicalization, no number model, no parser differences, no
+   internationalization, and no clock-bearing fields.
+
+3. **But did:webvh paid for itself in testing.** Because did:webvh exists, the
+   first implementation could reuse a verifier already tested against the DIF
+   did:webvh test suite (six independent implementations), and test against
+   those implementations' logs on day one. A new TLS-PL format would start with
+   no implementations and no test suite. The same suite also showed that two of
+   the six implementations' output fails the draft's profile (item 2), so
+   "reuse did:webvh" in practice means "reuse a profile of did:webvh that some
+   did:webvh tools do not produce".
+
+4. **The verifier is large relative to the mechanism.** The did:webvh
+   verification mimid relies on is about 1,200 lines in crate-jmap
+   (`webvh.rs` and `jcs.rs`) plus about 450 lines of profile layered on top
+   (`verify.rs`, `json.rs`, `keys.rs`), against about 350 lines for the rules
+   and the record. A TLS-PL log of entries (previous hash, version, authorized
+   device keys, update keys, next-key commitments, one signature) would need a
+   verifier of perhaps 200 lines.
+
+5. **The wire problem (item 1) is independent of the encoding.** Whatever the
+   log format, the credential must be carried as one `opaque<V>` to work with
+   existing MLS stacks.
+
+6. **A possible way to put the question to the WG:** define the group
+   mechanism against an abstract "verified log" (SCID, version identifiers,
+   authorized keys per version, prefix), as mimid's code does, and treat the
+   encoding as a separable choice: did:webvh with a strict profile now
+   (implementations exist), or a TLS-PL log (determinism by construction),
+   or a CWT/SD-CWT chain. mimid can add a second encoding behind the same
+   rules if the WG wants to compare them.

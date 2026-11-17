@@ -338,6 +338,10 @@ pub enum ObserverError {
     /// A structure could not be TLS-encoded.
     #[error("cannot encode an MLS structure")]
     Encode(#[source] ErrorSource),
+    /// The draft-atwood-mls-didwebvh-credential-00 rules refused the input
+    /// (see [`Observer::enforce_did_webvh`]). The group state is unchanged.
+    #[error("refused by the did_webvh rules")]
+    DidWebvh(#[source] crate::didwebvh::DidWebvhError),
 }
 
 impl From<SharedError> for ObserverError {
@@ -389,6 +393,11 @@ pub struct Observer {
     pending_commit: Option<(StagedCommit, Sender, LeafNodeIndex)>,
     /// The leaf index of the committer of the last merged Commit.
     committer: Option<LeafNodeIndex>,
+    /// The code points under which the draft-atwood-mls-didwebvh-credential-00
+    /// rules are enforced, once [`Observer::enforce_did_webvh`] is called.
+    did_webvh: Option<mls_didwebvh::CodePoints>,
+    /// Verified `did_webvh` logs.
+    did_cache: crate::didwebvh::LogCache,
 }
 
 impl Observer {
@@ -473,8 +482,43 @@ impl Observer {
                 group,
                 pending_commit: None,
                 committer: None,
+                did_webvh: None,
+                did_cache: crate::didwebvh::LogCache::default(),
             },
         })
+    }
+
+    /// From now on, applies the rules of draft-atwood-mls-didwebvh-credential-00
+    /// to this group under `code_points`, as a [`Member`] whose identity
+    /// uses `did_webvh` does: every `did_webvh` leaf in Proposals and
+    /// Commits is verified and bound, and every Commit is checked against
+    /// the epoch it leads to (§Group Consistency Rules). The current tree
+    /// and GroupContext are checked first, as a joiner checks a GroupInfo.
+    ///
+    /// [`Member`]: crate::member::Member
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::DidWebvh`] if the current state fails the
+    /// rules; nothing is enforced then.
+    pub fn enforce_did_webvh(
+        &mut self,
+        code_points: mls_didwebvh::CodePoints,
+    ) -> Result<(), ObserverError> {
+        let leaves: Vec<_> = self
+            .group
+            .members()
+            .filter_map(|member| self.group.leaf(member.index))
+            .collect();
+        crate::didwebvh::check_join(
+            code_points,
+            &mut self.did_cache,
+            self.group.group_context().extensions(),
+            leaves,
+        )
+        .map_err(ObserverError::DidWebvh)?;
+        self.did_webvh = Some(code_points);
+        Ok(())
     }
 
     /// Processes one TLS-encoded `MLSMessage` carrying a PublicMessage
@@ -539,6 +583,7 @@ impl Observer {
             ProcessedMessageContent::ProposalMessage(proposal)
             | ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
                 check_proposal_leaf(&proposal, &self.group)?;
+                self.check_did_webvh_proposal(proposal.proposal())?;
                 self.group
                     .add_proposal(provider.storage(), *proposal)
                     .map_err(|e| ObserverError::Merge(e.into()))?;
@@ -546,6 +591,16 @@ impl Observer {
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {
                 check_staged_leaves(&staged, &self.group, member_leaf(&sender))?;
+                if let Some(code_points) = self.did_webvh {
+                    crate::didwebvh::check_staged(
+                        code_points,
+                        &mut self.did_cache,
+                        &staged,
+                        &self.group,
+                        member_leaf(&sender),
+                    )
+                    .map_err(ObserverError::DidWebvh)?;
+                }
                 let committer = match sender {
                     Sender::Member(index) => LeafNodeIndex::new(index),
                     // RFC 9420 §12.4.3.2: the joiner takes the leftmost
@@ -598,6 +653,7 @@ impl Observer {
             ProcessedMessageContent::ProposalMessage(proposal)
             | ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
                 check_proposal_leaf(&proposal, &self.group)?;
+                self.check_did_webvh_proposal(proposal.proposal())?;
                 let detail = self.proposal_detail(&proposal)?;
                 self.group
                     .add_proposal(store.provider().storage(), *proposal)
@@ -949,6 +1005,21 @@ impl Observer {
     /// The group ID.
     pub fn group_id(&self) -> &[u8] {
         self.group.group_id().as_slice()
+    }
+
+    /// draft-atwood-mls-didwebvh-credential-00 §When the Rules Apply: a
+    /// proposal's leaf is checked on its own, when the rules are enforced.
+    fn check_did_webvh_proposal(
+        &mut self,
+        proposal: &openmls::messages::proposals::Proposal,
+    ) -> Result<(), ObserverError> {
+        match self.did_webvh {
+            Some(code_points) => {
+                crate::didwebvh::check_proposal(code_points, &mut self.did_cache, proposal)
+                    .map_err(ObserverError::DidWebvh)
+            }
+            None => Ok(()),
+        }
     }
 
     /// The current epoch.

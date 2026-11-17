@@ -12,6 +12,9 @@ use openmls_basic_credential::{SignatureKeyPair, StorageId};
 use openmls_traits::storage::{CURRENT_VERSION, Entity, Key, StorageProvider as _, traits};
 use tls_codec::Serialize;
 
+use mls_didwebvh::{CodePoints, DidWebvhCredential, VerifiedLog};
+
+use crate::didwebvh::{DidWebvhError, openmls_credential};
 use crate::store::Provider;
 use crate::{Error, Store};
 
@@ -91,6 +94,17 @@ pub struct Identity {
     /// Components the application implements beyond mimid's built-ins,
     /// listed in every leaf this identity creates (decision mimid-krmn.12).
     extra_components: Vec<ComponentId>,
+    /// The `did_webvh` credential, when this identity uses one instead of
+    /// its BasicCredential (draft-atwood-mls-didwebvh-credential-00).
+    did_webvh: Option<DidWebvhState>,
+}
+
+/// An identity's `did_webvh` credential: the code points it is carried
+/// under, the credential, and its verified log.
+struct DidWebvhState {
+    code_points: CodePoints,
+    credential: DidWebvhCredential,
+    log: VerifiedLog,
 }
 
 /// The storage key for an identity's extra components: the signature
@@ -236,7 +250,92 @@ impl Identity {
             credential_with_key,
             identity: identity.to_vec(),
             extra_components,
+            did_webvh: None,
         }
+    }
+
+    /// Switches this identity to the `did_webvh` credential `credential`,
+    /// carried under `code_points` (draft-atwood-mls-didwebvh-credential-00).
+    /// From then on every leaf it builds carries it, lists `did_webvh` and
+    /// `did_webvh_heads` in its capabilities, and the groups it is a member
+    /// of enforce the draft's group rules.
+    ///
+    /// The log is verified (§Log Verification) and must authorize this
+    /// identity's signature key (§Binding to the LeafNode). If the identity
+    /// already holds a `did_webvh` credential, the new one must be a valid
+    /// successor (§Successor Credentials) under the same code points. A
+    /// member's next [`Member::commit`](crate::member::Member::commit)
+    /// carries the new credential in its UpdatePath.
+    ///
+    /// [`Identity::identity`] becomes the SCID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DidWebvh`] if the log does not verify, does not
+    /// authorize this identity's key, or is not a valid successor.
+    pub fn set_did_webvh_credential(
+        &mut self,
+        code_points: CodePoints,
+        credential: DidWebvhCredential,
+    ) -> Result<(), Error> {
+        let log = mls_didwebvh::verify_credential(&credential)
+            .map_err(|e| Error::DidWebvh(DidWebvhError::Log(e)))?;
+        if !log.authorizes(self.signer.public()) {
+            return Err(Error::DidWebvh(DidWebvhError::NotAuthorized));
+        }
+        if let Some(current) = &self.did_webvh
+            && (current.code_points != code_points
+                || !mls_didwebvh::rules::is_valid_successor(&current.log, &log))
+        {
+            return Err(Error::DidWebvh(DidWebvhError::NotASuccessor));
+        }
+        let mls_credential =
+            openmls_credential(code_points, &credential).map_err(|e| Error::Encode(e.into()))?;
+        self.credential_with_key = CredentialWithKey {
+            credential: mls_credential,
+            signature_key: self.signer.to_public_vec().into(),
+        };
+        self.identity = log.scid().as_bytes().to_vec();
+        self.did_webvh = Some(DidWebvhState {
+            code_points,
+            credential,
+            log,
+        });
+        Ok(())
+    }
+
+    /// Reloads an identity whose `did_webvh` credential is `credential`, as
+    /// [`Identity::load`] reloads a BasicCredential identity. OpenMLS
+    /// storage has no place for the credential, so the caller keeps it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Identity::load`], and as [`Identity::set_did_webvh_credential`].
+    pub fn load_did_webvh(
+        code_points: CodePoints,
+        credential: DidWebvhCredential,
+        signature_public_key: &[u8],
+        store: Store,
+    ) -> Result<Self, Error> {
+        let mut identity = Self::load(b"", signature_public_key, store)?;
+        identity.set_did_webvh_credential(code_points, credential)?;
+        Ok(identity)
+    }
+
+    /// The code points of this identity's `did_webvh` credential, or `None`
+    /// for a BasicCredential identity.
+    pub fn did_webvh_code_points(&self) -> Option<CodePoints> {
+        self.did_webvh.as_ref().map(|state| state.code_points)
+    }
+
+    /// This identity's `did_webvh` credential.
+    pub fn did_webvh_credential(&self) -> Option<&DidWebvhCredential> {
+        self.did_webvh.as_ref().map(|state| &state.credential)
+    }
+
+    /// The verified log of this identity's `did_webvh` credential.
+    pub fn did_webvh_log(&self) -> Option<&VerifiedLog> {
+        self.did_webvh.as_ref().map(|state| &state.log)
     }
 
     /// The components this identity declares beyond mimid's built-ins
@@ -245,7 +344,8 @@ impl Identity {
         &self.extra_components
     }
 
-    /// The BasicCredential identity bytes.
+    /// The BasicCredential identity bytes, or for a `did_webvh` identity
+    /// the SCID as ASCII bytes.
     pub fn identity(&self) -> &[u8] {
         &self.identity
     }
@@ -304,7 +404,7 @@ impl Identity {
         // must be listed in the capabilities, so the GREASE extension type
         // put into the KeyPackage (RFC 9420 §13.5) is listed there too.
         let grease_extension = random_grease_value(rand);
-        let capabilities = leaf_capabilities(rand, grease_extension);
+        let capabilities = leaf_capabilities(rand, grease_extension, self.did_webvh_code_points());
         let leaf_extensions = leaf_extensions(rand, &self.extra_components)?;
 
         let mut key_package_extensions = Vec::with_capacity(2);
@@ -357,14 +457,29 @@ fn read_signature_key_pair<S: StorageProvider>(
 /// `app_data_dictionary` extension (mls-extensions-11 §4.6), the
 /// `AppDataUpdate` proposal (mls-extensions-11 §4.7) and the extension type
 /// `grease_extension`, plus random GREASE values (RFC 9420 §13.5).
-pub(crate) fn leaf_capabilities(rand: &impl OpenMlsRand, grease_extension: u16) -> Capabilities {
+///
+/// A `did_webvh` identity (`did_webvh` is `Some`) also lists the
+/// `did_webvh` credential type and, as
+/// draft-atwood-mls-didwebvh-credential-00 §The Heads Extension requires
+/// of a client listing it, the `did_webvh_heads` extension type.
+pub(crate) fn leaf_capabilities(
+    rand: &impl OpenMlsRand,
+    grease_extension: u16,
+    did_webvh: Option<CodePoints>,
+) -> Capabilities {
+    let mut credentials = vec![CredentialType::Basic];
+    let mut extensions = vec![
+        ExtensionType::AppDataDictionary,
+        ExtensionType::Grease(grease_extension),
+    ];
+    if let Some(code_points) = did_webvh {
+        credentials.push(CredentialType::from(code_points.credential_type()));
+        extensions.push(ExtensionType::from(code_points.heads_extension_type()));
+    }
     Capabilities::builder()
         .ciphersuites(vec![CIPHERSUITE])
-        .credentials(vec![CredentialType::Basic])
-        .extensions(vec![
-            ExtensionType::AppDataDictionary,
-            ExtensionType::Grease(grease_extension),
-        ])
+        .credentials(credentials)
+        .extensions(extensions)
         .proposals(vec![ProposalType::AppDataUpdate])
         .build()
         .with_grease(rand)

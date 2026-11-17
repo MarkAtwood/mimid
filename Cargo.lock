@@ -2463,6 +2463,7 @@ dependencies = [
 name = "mimi-mls"
 version = "0.1.0"
 dependencies = [
+ "mls-didwebvh",
  "mls-rs",
  "mls-rs-crypto-rustcrypto",
  "openmls",
@@ -2688,9 +2689,11 @@ dependencies = [
 name = "mls-didwebvh"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek 3.0.0",
  "jmap-did-types",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "thiserror",
 ]
 

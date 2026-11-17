@@ -170,6 +170,7 @@ use openmls::prelude::{
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use tls_codec::{Deserialize, Serialize};
 
+use crate::didwebvh::{self, DidWebvhError, LogCache};
 use crate::identity::{
     APP_COMPONENTS, CIPHERSUITE, COMPONENT_GREASE, CONTENT_MEDIA_TYPES, SAFE_AAD,
     leaf_capabilities, leaf_extensions,
@@ -495,6 +496,11 @@ pub enum MemberError {
     /// A structure could not be TLS-encoded.
     #[error("cannot encode an MLS structure")]
     Encode(#[source] ErrorSource),
+    /// A `did_webvh` credential, or the group rules of
+    /// draft-atwood-mls-didwebvh-credential-00, refused the input. The group
+    /// state is unchanged.
+    #[error("refused by the did_webvh rules")]
+    DidWebvh(#[source] DidWebvhError),
 }
 
 /// One client's membership in one MLS group.
@@ -506,6 +512,8 @@ pub struct Member {
     /// Set when this member refuses a Commit for its current epoch that MLS
     /// authenticated.
     out_of_sync: Option<OutOfSync>,
+    /// Verified `did_webvh` logs, so each is verified once.
+    did_cache: LogCache,
 }
 
 impl Member {
@@ -520,6 +528,7 @@ impl Member {
             group,
             owner_signature_key: identity.signature_public_key().to_vec(),
             out_of_sync: None,
+            did_cache: LogCache::default(),
         }
     }
 
@@ -583,8 +592,20 @@ impl Member {
                 AppDataDictionaryExtension::new(dictionary),
             ));
         }
-        let extensions =
+        let mut extensions =
             Extensions::from_vec(extensions).map_err(|e| MemberError::Create(e.into()))?;
+        // draft-atwood-mls-didwebvh-credential-00 §The Heads Extension: a
+        // group whose tree holds a did_webvh credential carries the record,
+        // with required_capabilities listing it and did_webvh (decision
+        // mimid-1wgh.4.81.16).
+        if let (Some(code_points), Some(log)) =
+            (identity.did_webvh_code_points(), identity.did_webvh_log())
+        {
+            let mut heads = mls_didwebvh::DidWebvhHeads::new();
+            heads.insert(mls_didwebvh::DidWebvhHead::from_log(log));
+            extensions = didwebvh::with_heads(code_points, &extensions, &heads)
+                .map_err(MemberError::DidWebvh)?;
+        }
         // mls-extensions-11 §5: the lists are decoded strictly (decision
         // mimid-1wgh.4.45), and our own leaf must meet them before anything
         // is stored (decision mimid-1wgh.4.57).
@@ -596,7 +617,11 @@ impl Member {
             .with_group_id(GroupId::from_slice(group_id))
             .ciphersuite(CIPHERSUITE)
             .with_wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
-            .with_capabilities(leaf_capabilities(rand, random_grease_value(rand)))
+            .with_capabilities(leaf_capabilities(
+                rand,
+                random_grease_value(rand),
+                identity.did_webvh_code_points(),
+            ))
             .with_leaf_node_extensions(leaf_extensions)
             .map_err(|e| MemberError::Create(e.into()))?
             .with_group_context_extensions(extensions)
@@ -703,15 +728,26 @@ impl Member {
         for leaf in tree.leaves() {
             check_leaf(leaf.extensions(), &required)?;
         }
+        // draft-atwood-mls-didwebvh-credential-00 §Group Consistency Rules:
+        // a joiner by Welcome checks the tree and GroupContext it receives.
+        let mut did_cache = LogCache::default();
+        if let Some(code_points) = identity.did_webvh_code_points() {
+            didwebvh::check_join(
+                code_points,
+                &mut did_cache,
+                staged.group_context().extensions(),
+                tree.leaves(),
+            )
+            .map_err(MemberError::DidWebvh)?;
+        }
         let group = staged
             .into_group(provider)
             .map_err(|e| MemberError::Join(e.into()))?;
         // The Welcome was decrypted with this identity's KeyPackage, so the
         // new leaf belongs to it.
-        Ok(WelcomeJoin {
-            member: Self::from_group(group, identity),
-            inviter,
-        })
+        let mut member = Self::from_group(group, identity);
+        member.did_cache = did_cache;
+        Ok(WelcomeJoin { member, inviter })
     }
 
     /// The BasicCredential identity of the member that sent a Welcome (the
@@ -956,7 +992,11 @@ impl Member {
             leaf_extensions(rand, identity.extra_components()).map_err(MemberError::Identity)?;
         check_leaf(&leaf_extensions, &required)?;
         let leaf = LeafNodeParameters::builder()
-            .with_capabilities(leaf_capabilities(rand, random_grease_value(rand)))
+            .with_capabilities(leaf_capabilities(
+                rand,
+                random_grease_value(rand),
+                identity.did_webvh_code_points(),
+            ))
             .with_extensions(leaf_extensions)
             .build();
 
@@ -1056,6 +1096,148 @@ impl Member {
                     .map_err(|e| MemberError::InvalidKeyPackage(e.into()))
             })
             .collect::<Result<Vec<_>, _>>()?;
+
+        // draft-atwood-mls-didwebvh-credential-00: an identity whose
+        // credential is newer than its leaf's carries it in the UpdatePath
+        // (§Revoking a Device, step 2).
+        let leaf_parameters = self
+            .group
+            .own_leaf()
+            .filter(|own| own.credential() != &identity.credential_with_key().credential)
+            .map(|_| {
+                LeafNodeParameters::builder()
+                    .with_credential_with_key(identity.credential_with_key().clone())
+                    .build()
+            });
+        let code_points = identity.did_webvh_code_points();
+        // The rules can require a record change and Removes that the caller
+        // did not ask for (draft §Group Consistency Rules). The Commit is
+        // staged, judged, and staged again with those added; removing
+        // leaves never changes the expected record, so two rounds suffice,
+        // and a third catches a removed leaf that carried the newest log.
+        let mut removes: Vec<u32> = removes.to_vec();
+        let mut group_context_extensions: Option<Extensions<GroupContext>> = None;
+        for _round in 0..3 {
+            let (commit, welcome, group_info) = self.stage_commit(
+                identity,
+                &key_packages,
+                &removes,
+                app_updates,
+                group_context_extensions.clone(),
+                leaf_parameters.clone(),
+                &mut apply,
+            )?;
+            let own_index = self.group.own_leaf_index();
+            // The staged Commit shows every new or updated leaf, including
+            // those of stored proposals, and the GroupContext it leads to.
+            let mut checked = match self.group.pending_commit() {
+                Some(staged) => {
+                    check_staged_leaves(staged, self.group.public_group(), Some(own_index))
+                        .map_err(MemberError::from)
+                }
+                None => Err(MemberError::Commit("OpenMLS left no Commit pending".into())),
+            };
+            let mut replan = None;
+            if checked.is_ok()
+                && let Some(code_points) = code_points
+                && let Some(staged) = self.group.pending_commit()
+            {
+                checked = match didwebvh::plan(
+                    code_points,
+                    &mut self.did_cache,
+                    staged,
+                    self.group.public_group(),
+                    own_index,
+                ) {
+                    Ok(plan) if plan.heads.is_none() && plan.removes.is_empty() => {
+                        didwebvh::check_staged(
+                            code_points,
+                            &mut self.did_cache,
+                            staged,
+                            self.group.public_group(),
+                            Some(own_index),
+                        )
+                        .map_err(MemberError::DidWebvh)
+                    }
+                    Ok(plan) => {
+                        replan = Some(plan);
+                        Ok(())
+                    }
+                    Err(e) => Err(MemberError::DidWebvh(e)),
+                };
+            }
+            let checked = checked.and_then(|()| {
+                group_info
+                    .ok_or_else(|| MemberError::Commit("OpenMLS exported no GroupInfo".into()))
+            });
+            let group_info =
+                match checked {
+                    Ok(group_info) if replan.is_none() => group_info,
+                    result => {
+                        self.group
+                            .clear_pending_commit(provider.storage())
+                            .map_err(|e| MemberError::Merge(e.into()))?;
+                        result?;
+                        let (Some(plan), Some(code_points)) = (replan, code_points) else {
+                            return Err(MemberError::Commit("no Commit plan".into()));
+                        };
+                        for index in plan.removes {
+                            if !removes.contains(&index.u32()) {
+                                removes.push(index.u32());
+                            }
+                        }
+                        if let Some(heads) = plan.heads {
+                            if self.group.pending_proposals().any(|p| {
+                                matches!(p.proposal(), Proposal::GroupContextExtensions(_))
+                            }) {
+                                return Err(MemberError::DidWebvh(
+                                    DidWebvhError::PendingGroupContextExtensions,
+                                ));
+                            }
+                            group_context_extensions = Some(
+                                didwebvh::with_heads(code_points, self.group.extensions(), &heads)
+                                    .map_err(MemberError::DidWebvh)?,
+                            );
+                        }
+                        continue;
+                    }
+                };
+            return Ok(CommitBundle {
+                commit: encode(&commit)?,
+                welcome: welcome.as_ref().map(encode).transpose()?,
+                group_info: encode(&group_info)?,
+            });
+        }
+        Err(MemberError::Commit(
+            "the did_webvh rules did not settle in three rounds".into(),
+        ))
+    }
+
+    /// Builds and stages one Commit for [`Member::commit`] and returns its
+    /// messages. The Commit is left pending.
+    #[allow(clippy::too_many_arguments)]
+    fn stage_commit<E: Into<ErrorSource>>(
+        &mut self,
+        identity: &Identity,
+        key_packages: &[openmls::prelude::KeyPackage],
+        removes: &[u32],
+        app_updates: &[AppDataUpdate],
+        group_context_extensions: Option<Extensions<GroupContext>>,
+        leaf_parameters: Option<LeafNodeParameters>,
+        apply: &mut impl FnMut(
+            ComponentId,
+            Option<&[u8]>,
+            ComponentOp<'_>,
+        ) -> Result<Option<Vec<u8>>, E>,
+    ) -> Result<
+        (
+            openmls::prelude::MlsMessageOut,
+            Option<openmls::prelude::MlsMessageOut>,
+            Option<openmls::prelude::MlsMessageOut>,
+        ),
+        MemberError,
+    > {
+        let provider = identity.provider();
         let proposals = app_updates
             .iter()
             .map(|update| Proposal::AppDataUpdate(Box::new(update.to_proposal())));
@@ -1063,9 +1245,18 @@ impl Member {
         let mut builder = self
             .group
             .commit_builder()
-            .propose_adds(key_packages)
+            .propose_adds(key_packages.to_vec())
             .propose_removals(removes.iter().copied().map(LeafNodeIndex::new))
-            .add_proposals(proposals)
+            .add_proposals(proposals);
+        if let Some(extensions) = group_context_extensions {
+            builder = builder
+                .propose_group_context_extensions(extensions)
+                .map_err(|e| MemberError::Commit(e.into()))?;
+        }
+        if let Some(parameters) = leaf_parameters {
+            builder = builder.leaf_node_parameters(parameters);
+        }
+        let mut builder = builder
             .load_psks(provider.storage())
             .map_err(|e| MemberError::Commit(e.into()))?
             // Without a ratchet_tree extension: the group's config leaves
@@ -1080,7 +1271,7 @@ impl Member {
             builder.app_data_update_proposals().cloned().collect();
         if !app_data_proposals.is_empty() {
             let mut updater = builder.app_data_dictionary_updater();
-            resolve_app_data_updates(&mut updater, &app_data_proposals, &mut apply)?;
+            resolve_app_data_updates(&mut updater, &app_data_proposals, apply)?;
             let changes = updater.changes();
             builder.with_app_data_dictionary_updates(changes);
         }
@@ -1095,35 +1286,7 @@ impl Member {
             .map_err(|e| MemberError::Commit(e.into()))?
             .stage_commit(provider)
             .map_err(|e| MemberError::Commit(e.into()))?;
-        let (commit, welcome, group_info) = bundle.into_messages();
-        // The staged Commit shows every new or updated leaf, including those
-        // of stored proposals, and the GroupContext it leads to.
-        let checked = match self.group.pending_commit() {
-            Some(staged) => check_staged_leaves(
-                staged,
-                self.group.public_group(),
-                Some(self.group.own_leaf_index()),
-            )
-            .map_err(MemberError::from),
-            None => Err(MemberError::Commit("OpenMLS left no Commit pending".into())),
-        }
-        .and_then(|()| {
-            group_info.ok_or_else(|| MemberError::Commit("OpenMLS exported no GroupInfo".into()))
-        });
-        let group_info = match checked {
-            Ok(group_info) => group_info,
-            Err(e) => {
-                self.group
-                    .clear_pending_commit(provider.storage())
-                    .map_err(|e| MemberError::Merge(e.into()))?;
-                return Err(e);
-            }
-        };
-        Ok(CommitBundle {
-            commit: encode(&commit)?,
-            welcome: welcome.as_ref().map(encode).transpose()?,
-            group_info: encode(&group_info)?,
-        })
+        Ok(bundle.into_messages())
     }
 
     /// Builds a standalone AppDataUpdate proposal (mls-extensions-11 §4.7),
@@ -1168,6 +1331,41 @@ impl Member {
                 component_id,
                 proposal.operation().clone(),
             )
+            .map_err(|e| MemberError::Propose(e.into()))?;
+        encode(&message)
+    }
+
+    /// Builds an Update proposal (RFC 9420 §12.1.2) whose LeafNode carries
+    /// `identity`'s current credential, as a TLS-encoded `MLSMessage`
+    /// carrying a PublicMessage, and stores it as
+    /// [`Member::propose_app_data_update`] stores its proposal.
+    ///
+    /// This is how a device hands a newer `did_webvh` log to the group when
+    /// it cannot commit the change itself, for example a log that revokes
+    /// the device that would otherwise commit, or one sent while another
+    /// member is the one to commit (draft-atwood-mls-didwebvh-credential-00
+    /// §Rules: "committing an Update proposal, sent by one of the user's
+    /// other devices, that carries the new log"). The committer's
+    /// [`Member::commit`] then adds the record change and the Removes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::WrongIdentity`] if `identity` does not own
+    /// this member, [`MemberError::Propose`] if OpenMLS cannot build or
+    /// store the proposal, and [`MemberError::OutOfSync`] if the member is
+    /// out of sync. The group state is unchanged on error.
+    pub fn propose_credential_update(
+        &mut self,
+        identity: &Identity,
+    ) -> Result<Vec<u8>, MemberError> {
+        self.check_identity(identity)?;
+        self.check_in_sync()?;
+        let leaf = LeafNodeParameters::builder()
+            .with_credential_with_key(identity.credential_with_key().clone())
+            .build();
+        let (message, _) = self
+            .group
+            .propose_self_update(identity.provider(), identity.signer(), leaf)
             .map_err(|e| MemberError::Propose(e.into()))?;
         encode(&message)
     }
@@ -1304,7 +1502,12 @@ impl Member {
                 });
             }
         };
-        match self.apply_processed(provider, processed, &mut apply) {
+        match self.apply_processed(
+            provider,
+            identity.did_webvh_code_points(),
+            processed,
+            &mut apply,
+        ) {
             Err(error) if current_epoch_commit => Err(self.mark_out_of_sync(error)),
             result => result,
         }
@@ -1314,6 +1517,7 @@ impl Member {
     fn apply_processed<E: Into<ErrorSource>>(
         &mut self,
         provider: &crate::store::Provider,
+        code_points: Option<mls_didwebvh::CodePoints>,
         processed: ProcessedMessage,
         apply: &mut impl FnMut(
             ComponentId,
@@ -1358,6 +1562,12 @@ impl Member {
             ProcessedMessageContent::ProposalMessage(proposal)
             | ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
                 check_proposal_leaf(&proposal, self.group.public_group())?;
+                // draft-atwood-mls-didwebvh-credential-00 §When the Rules
+                // Apply: a proposal's leaf is checked on its own.
+                if let Some(code_points) = code_points {
+                    didwebvh::check_proposal(code_points, &mut self.did_cache, proposal.proposal())
+                        .map_err(MemberError::DidWebvh)?;
+                }
                 // A proposal that arrives again, such as this member's own
                 // proposal echoed by the hub, is stored once. OpenMLS keeps
                 // duplicates, and a Commit built over them would reference
@@ -1376,6 +1586,18 @@ impl Member {
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {
                 check_staged_leaves(&staged, self.group.public_group(), member_leaf(&sender))?;
+                // draft-atwood-mls-didwebvh-credential-00 §Group Consistency
+                // Rules, once per Commit, against the epoch it leads to.
+                if let Some(code_points) = code_points {
+                    didwebvh::check_staged(
+                        code_points,
+                        &mut self.did_cache,
+                        &staged,
+                        self.group.public_group(),
+                        member_leaf(&sender),
+                    )
+                    .map_err(MemberError::DidWebvh)?;
+                }
                 let summary = summarize(sender, &staged, staged.self_removed());
                 self.group
                     .merge_staged_commit(provider, *staged)
@@ -1506,6 +1728,43 @@ impl Member {
             .members()
             .map(|member| (member.index.u32(), basic_identity(&member.credential)))
             .collect()
+    }
+
+    /// The current members whose credential is `did_webvh`, as (leaf index,
+    /// SCID), for an identity that uses `did_webvh`
+    /// (draft-atwood-mls-didwebvh-credential-00 §Reference Identifiers: the
+    /// SCID is the presented identifier). Empty for a BasicCredential
+    /// identity.
+    pub fn did_webvh_members(&self, identity: &Identity) -> Vec<(u32, String)> {
+        let Some(code_points) = identity.did_webvh_code_points() else {
+            return Vec::new();
+        };
+        self.group
+            .members()
+            .filter_map(|member| {
+                didwebvh::scid_of(code_points, &member.credential)
+                    .map(|scid| (member.index.u32(), scid))
+            })
+            .collect()
+    }
+
+    /// The GroupContext's `did_webvh_heads` record, strictly decoded, or
+    /// `None` when the group has none or the identity does not use
+    /// `did_webvh`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::DidWebvh`] if the record does not decode.
+    pub fn did_webvh_heads(
+        &self,
+        identity: &Identity,
+    ) -> Result<Option<mls_didwebvh::DidWebvhHeads>, MemberError> {
+        match identity.did_webvh_code_points() {
+            Some(code_points) => {
+                didwebvh::heads(code_points, self.group.extensions()).map_err(MemberError::DidWebvh)
+            }
+            None => Ok(None),
+        }
     }
 
     /// The current epoch's `epoch_authenticator` (RFC 9420 §8.7).
@@ -1672,6 +1931,32 @@ fn inspect_tree(
     // The resync's old leaf leaves the group in the Commit, so only the
     // leaves that stay are judged.
     check_tree(&group, required, resync)?;
+    // draft-atwood-mls-didwebvh-credential-00 §Rules: the GroupInfo's tree
+    // and GroupContext are checked as a Welcome's are; then the tree after
+    // the external Commit, which cannot change the record, must satisfy the
+    // rules with the record unchanged.
+    if let Some(code_points) = identity.did_webvh_code_points() {
+        let mut cache = LogCache::default();
+        let extensions = group.group_context().extensions();
+        let leaves: Vec<&LeafNode> = group
+            .members()
+            .filter_map(|member| group.leaf(member.index))
+            .collect();
+        didwebvh::check_join(code_points, &mut cache, extensions, leaves.iter().copied())
+            .map_err(MemberError::DidWebvh)?;
+        let own = identity.credential_with_key();
+        let after = group
+            .members()
+            .filter(|member| Some(member.index) != resync)
+            .filter_map(|member| group.leaf(member.index))
+            .map(|leaf| (leaf.signature_key().as_slice(), leaf.credential()))
+            .chain(std::iter::once((
+                own.signature_key.as_slice(),
+                &own.credential,
+            )));
+        didwebvh::check_external_join(code_points, &mut cache, extensions, after)
+            .map_err(MemberError::DidWebvh)?;
+    }
     Ok(resync.map(|index| index.u32()))
 }
 

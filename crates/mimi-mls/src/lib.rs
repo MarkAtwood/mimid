@@ -6,6 +6,10 @@
 //! A client is an [`Identity`]: an MLS BasicCredential plus an Ed25519
 //! signature key, fixed to ciphersuite
 //! `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519` (RFC 9420 suite 1). An
+//! identity can instead carry a `did_webvh` credential
+//! (draft-atwood-mls-didwebvh-credential-00, [`Identity::set_did_webvh_credential`]):
+//! the user's own did:webvh log authorizes each device, and the groups it
+//! joins enforce the draft's rules ([`didwebvh`]). An
 //! [`Identity`] publishes KeyPackages through [`Identity::key_package`]. The
 //! private halves of each KeyPackage are kept in a [`Store`], an SQLite
 //! database, so that a later Welcome can be processed.
@@ -18,9 +22,26 @@
 //!
 //! # Limitations
 //!
-//! - Only BasicCredential is supported (decision mimid-1wgh.16). Nothing
-//!   binds the identity to the signature key, so a malicious or impersonated
-//!   provider can substitute keys undetected.
+//! - BasicCredential (decision mimid-1wgh.16) and the `did_webvh`
+//!   credential of draft-atwood-mls-didwebvh-credential-00 are supported.
+//!   With BasicCredential nothing binds the identity to the signature key,
+//!   so a malicious or impersonated provider can substitute keys
+//!   undetected. With `did_webvh` it cannot authorize a key without one of
+//!   the user's update keys; the draft's own gaps (first contact, custody,
+//!   stale logs) remain.
+//! - `did_webvh` (see [`didwebvh`]): only identities that hold such a
+//!   credential list it in their capabilities and enforce its rules, so a
+//!   BasicCredential mimid identity cannot share a group with `did_webvh`
+//!   leaves. The credential is carried inside an `opaque<V>` (decision
+//!   mimid-1wgh.4.81.8). [`member::Member::commit`] adds the record change
+//!   and the Removes the rules require by itself (decision
+//!   mimid-1wgh.4.81.17), and refuses when a GroupContextExtensions proposal
+//!   is already pending (the draft's Open Issue 5). An
+//!   [`observer::Observer`] enforces the rules only after
+//!   [`observer::Observer::enforce_did_webvh`]. Update and UpdatePath leaves
+//!   may not switch between `did_webvh` and BasicCredential (decision
+//!   mimid-1wgh.4.81.15). Neither ReInit nor a branch carries the record
+//!   (the draft's Open Issue 2).
 //! - Every client of a user carries the same BasicCredential identity, the
 //!   user URI (decision mimid-1wgh.6.1). Stock mls-rs clients reject two
 //!   leaves with the same identity, so a user with two devices cannot share
@@ -92,6 +113,7 @@
 //!   AppDataUpdate), and cannot be reloaded after a restart.
 #![forbid(unsafe_code)]
 
+pub mod didwebvh;
 mod identity;
 pub mod label;
 mod media_type;
@@ -101,6 +123,7 @@ mod store;
 pub mod wire;
 
 pub use identity::{Identity, KeyPackageKind};
+pub use mls_didwebvh;
 pub use store::Store;
 pub use tls_codec;
 
@@ -146,4 +169,9 @@ pub enum Error {
     /// mimid's built-in components, or a duplicate (decision mimid-krmn.12).
     #[error("{0:#06x} cannot be declared as an extra component")]
     InvalidExtraComponent(u16),
+    /// A `did_webvh` credential failed verification, does not authorize
+    /// the identity's key, or is not a valid successor
+    /// (draft-atwood-mls-didwebvh-credential-00).
+    #[error("the did_webvh credential is unusable")]
+    DidWebvh(#[source] didwebvh::DidWebvhError),
 }
