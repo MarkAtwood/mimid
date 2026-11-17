@@ -253,7 +253,7 @@ fn main() {
             name,
             run(
                 &read(name),
-                |b| decode_consent_entry(b).map_err(e),
+                |b| decode_consent_entry(b, &mimi_core::gate::default_mls_ciphersuites()).map_err(e),
                 |v| same(v, &want),
                 |v| encode_consent_entry(v).map_err(e),
             ),
@@ -312,7 +312,7 @@ fn main() {
             name,
             run(
                 &read(name),
-                |b| KeyMaterialResponse::decode(b).map_err(e),
+                |b| KeyMaterialResponse::decode(b, &mimi_core::gate::default_mls_ciphersuites()).map_err(e),
                 |v| match &want {
                     Some(w) => same(v, w),
                     None => Err(format!("unexpected decode: {v:?}")),
@@ -326,7 +326,7 @@ fn main() {
         "handshake_bundle_proposal",
         run(
             &read("handshake_bundle_proposal"),
-            |b| HandshakeBundle::decode(b).map_err(e),
+            |b| HandshakeBundle::decode(b, &mimi_core::gate::default_mls_ciphersuites()).map_err(e),
             |v| {
                 same(
                     v,
@@ -346,7 +346,7 @@ fn main() {
         "handshake_bundle_commit",
         run(
             &read("handshake_bundle_commit"),
-            |b| HandshakeBundle::decode(b).map_err(e),
+            |b| HandshakeBundle::decode(b, &mimi_core::gate::default_mls_ciphersuites()).map_err(e),
             |v| {
                 same(
                     v,
@@ -519,7 +519,7 @@ fn main() {
         haven_shape.extend([0x40 | (g >> 8) as u8, g as u8]); // opaque<V> length
         haven_shape.extend(group_info);
         haven_shape.extend(&wire[gi_at + g..]);
-        match HandshakeBundle::decode(&haven_shape) {
+        match HandshakeBundle::decode(&haven_shape, &mimi_core::gate::default_mls_ciphersuites()) {
             Ok(v) => println!(
                 "DIAG handshake_bundle_commit in the 2c14e62 shape: decode ok (unexpected), re-encode identical to rewrite: {}",
                 v.encode().map(|b| b == haven_shape).unwrap_or(false)
@@ -535,7 +535,7 @@ fn main() {
         let hkp = read("haven_key_package");
         let grant = run(
             &read("consent_grant_haven_kp"),
-            |b| decode_consent_entry(b).map_err(e),
+            |b| decode_consent_entry(b, &mimi_core::gate::default_mls_ciphersuites()).map_err(e),
             |v| {
                 same(
                     v,
@@ -551,7 +551,7 @@ fn main() {
         );
         let success = run(
             &read("key_material_response_success_haven_kp"),
-            |b| KeyMaterialResponse::decode(b).map_err(e),
+            |b| KeyMaterialResponse::decode(b, &mimi_core::gate::default_mls_ciphersuites()).map_err(e),
             |v| {
                 same(
                     v,
@@ -565,7 +565,7 @@ fn main() {
         );
         let partial = run(
             &read("key_material_response_partial_success_haven_kp"),
-            |b| KeyMaterialResponse::decode(b).map_err(e),
+            |b| KeyMaterialResponse::decode(b, &mimi_core::gate::default_mls_ciphersuites()).map_err(e),
             |v| same(v, &partial_success(&hkp)),
             |v| v.encode().map_err(e),
         );

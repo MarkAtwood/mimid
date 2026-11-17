@@ -42,12 +42,13 @@ Layout
     run.sh        builds mimi-hubd from $HAVEN, makes a throwaway CA, and
                   enters an unprivileged user+network namespace (unshare)
     up.sh         (inside) starts mimi-hubd as haven.localhost on
-                  127.0.0.1:8443 with mTLS, and socat on haven.localhost:443,
+                  127.0.0.1:8443 with mTLS, its operator listener on
+                  127.0.0.1:9090, and socat on haven.localhost:443,
                   which presents a haven.localhost certificate and forwards
                   with the client certificate; sets SSL_CERT_FILE; runs the
                   given command
     selftest.sh   the proxy path works without a client certificate, and the
-                  hub refuses direct access
+                  hub refuses an update sent directly without one
     public.sh     runs b4.sh on the mimid host against a public hub (below)
     b4.sh         (inside) seeds Haven over its JSON lane (a Haven-minted
                   and a mimid-minted KeyPackage, consent, the room's first
@@ -152,7 +153,8 @@ The driver covers every PeerClient call Haven's directory offers: directory,
 keyMaterial, submitMessage, update (one change; Add beside the change; two
 changes; a member's leave as proposals, a Commit leaving them out, and the
 Commit including them by reference), notify, requestConsent, updateConsent,
-identifierQuery and reportAbuse. Haven offers no groupInfo (DIV-1).
+identifierQuery and reportAbuse. Haven offers groupInfo since 9195662
+(DIV-1); the driver only checks that an empty body is refused there.
 
 Haven-encoded fixtures (the other direction) are regenerated with the
 generator in crates/mimi-protocol/tests/fixtures/haven/gen; its PROVENANCE

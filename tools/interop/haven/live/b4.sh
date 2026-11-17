@@ -8,6 +8,8 @@
 # Environment (defaults are the namespace run's):
 #   HAVEN_DOMAIN, OWN_DOMAIN, RUN_TAG   as for the driver (driver/src/main.rs)
 #   HAVEN_LANE   base URL of the hub's mTLS lanes (default https://HAVEN_DOMAIN)
+#   HAVEN_ADMIN  base URL of the hub's operator listener, which serves
+#                addParticipant (default http://127.0.0.1:9090, as up.sh sets)
 #   CURL_OPTS    extra curl options, word-split (e.g. --cacert FILE)
 #   HUB_DB_CMD   a command that runs the SQL on its stdin against the hub's
 #                store and prints the rows (default: python3 on $WORK/hub.db)
@@ -16,6 +18,7 @@ set -uo pipefail
 HAVEN_DOMAIN=${HAVEN_DOMAIN:-haven.localhost}; OWN_DOMAIN=${OWN_DOMAIN:-b.example}; RUN_TAG=${RUN_TAG:-}
 export HAVEN_DOMAIN OWN_DOMAIN RUN_TAG
 H=${HAVEN_LANE:-https://$HAVEN_DOMAIN}
+ADMIN=${HAVEN_ADMIN:-http://127.0.0.1:9090}
 read -r -a CURL_X <<<"${CURL_OPTS:-}"
 OUT=${OUT:-"$(cd "$(dirname "$0")" && pwd)/out"}
 enc() { python3 -I -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))' "$1"; }
@@ -28,7 +31,8 @@ ALICE=$(u "$OWN_DOMAIN" alice); CAROL=$(u "$OWN_DOMAIN" carol); DAVE=$(u "$OWN_D
 ERIN=$(u "$OWN_DOMAIN" erin); FRANK=$(u "$OWN_DOMAIN" frank)
 BOB=$(u "$HAVEN_DOMAIN" bob); GRACE=$(u "$HAVEN_DOMAIN" grace); ROOM=mimi://$HAVEN_DOMAIN/r/live1$RUN_TAG
 echo "RUN haven=$HAVEN_DOMAIN own=$OWN_DOMAIN lane=$H room=$ROOM tag='$RUN_TAG' at $(date -u +%FT%TZ)"
-st() { curl "${CURL_X[@]}" -sS -o "$WORK/resp.bin" -w '%{http_code}' "$@"; }
+# mimi-hubd requires From on its JSON lane too, since d750a8d (DIV-16).
+st() { curl "${CURL_X[@]}" -sS -o "$WORK/resp.bin" -w '%{http_code}' -H "From: mimi@$OWN_DOMAIN" "$@"; }
 body() { head -c 300 "$WORK/resp.bin" | tr -d '\0'; }
 "$DRIVER" make-kp "$GRACE" "$WORK/grace_kp.bin"
 echo "SETUP publish Haven-minted KeyPackage for $BOB: $(st -X POST --data-binary @"$KP" "$H/mimi/v1/keyMaterial/ingest?user=$(enc $BOB)") $(body)"
@@ -36,7 +40,7 @@ echo "SETUP publish mimid-minted KeyPackage for $GRACE: $(st -X POST --data-bina
 for target in "$BOB" "$GRACE"; do
   echo "SETUP grant consent $ALICE -> $target: $(st -X POST -H 'content-type: application/json' -d "{\"operation\":2,\"requester_uri\":\"$ALICE\",\"target_uri\":\"$target\"}" "$H/mimi/v1/updateConsent")"
 done
-echo "SETUP addParticipant $ALICE to $ROOM: $(st -X POST "$H/mimi/v1/addParticipant?room=$(enc $ROOM)&member=$(enc $ALICE)") $(body)"
+echo "SETUP addParticipant $ALICE to $ROOM: $(st -X POST "$ADMIN/mimi/v1/addParticipant?room=$(enc $ROOM)&member=$(enc $ALICE)") $(body)"
 echo "SETUP enroll handle bob (no route; written to the hub's store): $(db "INSERT OR IGNORE INTO enrolled (username) VALUES ('bob$RUN_TAG')")"
 "$DRIVER"; rc=$?
 mkdir -p "$OUT"
@@ -61,5 +65,8 @@ for ct in application/mimi-protocol application/octet-stream; do
     --data-binary @"$WORK/update_commit.bin" "$H/mimi/pl/update/$(enc $ROOM)")
   echo "DIAG update with request Content-Type $ct (body: a bare Commit, not an UpdateRequest): $code, response $(grep -i '^content-type' "$WORK/hdr.txt" | tr -d '\r') $(body)"
 done
-echo "DIAG From header naming another domain: $(st -X POST -H 'Content-Type: application/mimi-protocol' -H 'From: mimi@c.example' --data-binary @"$WORK/junk.bin" "$H/mimi/pl/update/$(enc $ROOM)")"
+fromdiag() { curl "${CURL_X[@]}" -sS -o "$WORK/resp.bin" -w '%{http_code}' -X POST -H 'Content-Type: application/mimi-protocol' "$@" --data-binary @"$WORK/junk.bin" "$H/mimi/pl/update/$(enc $ROOM)"; }
+echo "DIAG From header naming another domain: $(fromdiag -H 'From: mimi@c.example')"
+echo "DIAG two From headers, ours then another domain's: $(fromdiag -H "From: mimi@$OWN_DOMAIN" -H 'From: mimi@c.example')"
+echo "DIAG two From headers, another domain's then ours: $(fromdiag -H 'From: mimi@c.example' -H "From: mimi@$OWN_DOMAIN")"
 exit $rc

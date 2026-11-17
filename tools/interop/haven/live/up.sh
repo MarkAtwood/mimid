@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Runs inside the private namespace started by run.sh.
+# Runs inside the private namespace started by run.sh. The operator's
+# listener (addParticipant, roomPolicy, untrackRoom; plain HTTP, loopback
+# only) is on 127.0.0.1:9090: mimi-hubd moved those routes off the mTLS
+# lane in DIV-16 (before ffd9e24).
 set -euo pipefail
 C="$WORK/certs"
 ip link set lo up
 MIMI_PROVIDER_DOMAIN=haven.localhost MIMI_BIND_ADDR=127.0.0.1:8443 \
 MIMI_DB_PATH="$WORK/hub.db" MIMI_SERVER_CERT="$C/hub.pem" MIMI_SERVER_KEY="$C/hub-key.pem" \
-MIMI_CLIENT_CA="$C/ca.pem" "$HUBD" >"$WORK/hubd.log" 2>&1 &
+MIMI_CLIENT_CA="$C/ca.pem" MIMI_ADMIN_BIND_ADDR=127.0.0.1:9090 "$HUBD" >"$WORK/hubd.log" 2>&1 &
 HUB=$!
 socat OPENSSL-LISTEN:443,pf=ip6,ipv6only=0,reuseaddr,fork,cert="$C/proxy.pem",key="$C/proxy-key.pem",verify=0 \
   OPENSSL:127.0.0.1:8443,cert="$C/client.pem",key="$C/client-key.pem",cafile="$C/ca.pem",verify=1,commonname=localhost,snihost=localhost \

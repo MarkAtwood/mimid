@@ -193,8 +193,13 @@ fn print_error(e: &PeerError) {
     }
 }
 
-/// protocol-07 §5.3 UpdateRequest around a mimid CommitBundle.
-fn commit_request(member: &Member, bundle: &CommitBundle) -> Vec<u8> {
+/// protocol-07 §5.3 UpdateRequest around a mimid CommitBundle, pending in
+/// `member`. The `full` RatchetTreeOption is the tree of the epoch the
+/// Commit leads to, the one its GroupInfo describes: mimi-hubd since
+/// ffd9e24 seeds a room's tree from the two, and refused the current
+/// epoch's tree sent here before ("its GroupInfo and tree are not a valid
+/// group"; bead mimid-1wgh.46.6).
+fn commit_request(member: &Member, identity: &Identity, bundle: &CommitBundle) -> Vec<u8> {
     UpdateRequest {
         bundle: HandshakeBundle::Commit {
             proposal_or_commit: MLSMessage::tls_deserialize_exact(&bundle.commit).expect("commit"),
@@ -211,8 +216,12 @@ fn commit_request(member: &Member, bundle: &CommitBundle) -> Vec<u8> {
                 )
                 .expect("group info"),
             },
-            ratchet_tree_option: RatchetTreeOption::full(&member.ratchet_tree().expect("tree"))
-                .expect("tree option"),
+            ratchet_tree_option: RatchetTreeOption::full(
+                &member
+                    .pending_ratchet_tree(identity)
+                    .expect("the next epoch's tree"),
+            )
+            .expect("tree option"),
         },
     }
     .tls_serialize_detached()
@@ -289,7 +298,7 @@ async fn commit_at_haven(
 ) -> bool {
     std::fs::write(work(file), &bundle.commit).unwrap();
     let accepted = matches!(
-        update(client, haven, step, commit_request(group, bundle)).await,
+        update(client, haven, step, commit_request(group, alice, bundle)).await,
         Some(UpdateResult::Success { .. })
     );
     if accepted {
@@ -409,11 +418,23 @@ async fn main() {
         return;
     }
 
-    // 1. Directory fetch (TLS trust + partial directory): groupInfo is
-    // absent from Haven's directory, so a working fetch ends in NotOffered.
+    // 1. Directory fetch (TLS trust + partial directory). Before 9195662
+    // Haven's directory had no groupInfo, so a working fetch ended in
+    // NotOffered; since then it offers groupInfo, and the empty body this
+    // sends is refused there with a 400 problem (bead mimid-1wgh.46.6).
     match client.group_info(&haven, N.room, vec![]).await {
         Err(PeerError::NotOffered { endpoint }) => {
             println!("STEP 1: ok - directory fetched over TLS and parsed; {endpoint} not offered")
+        }
+        Err(PeerError::Rejected {
+            status: 400,
+            response,
+            ..
+        }) => {
+            println!(
+                "STEP 1: ok - directory fetched over TLS and parsed; groupInfo offered, an empty body refused 400 {}",
+                String::from_utf8_lossy(&response.preview)
+            )
         }
         other => {
             println!("STEP 1: FAIL - {other:?}");

@@ -10,7 +10,7 @@ publish = false
 [dependencies]
 # Haven at the commit the committed results refer to; bump `rev` to test a
 # newer Haven.
-mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "07ce96f1f56f8143d584114665fb98c21ea0691a", features = ["test-helpers"] }
+mimi-core = { git = "https://github.com/havenmessenger/interop", rev = "fdce22294eb820f50d50bb9e40f75de29cf86b5b", features = ["test-helpers"] }
 # The OpenMLS revision Haven's Cargo.toml pins at that commit.
 openmls = { git = "https://github.com/openmls/openmls", rev = "28369d5b48608bef4ddf8371d91503b0f3852bb3" }
 openmls_rust_crypto = { git = "https://github.com/openmls/openmls", rev = "28369d5b48608bef4ddf8371d91503b0f3852bb3" }
