@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.4.81.7",
+  "title": "Decision: did:webvh verification reuses jmap-did-types with the draft's profile layered on top",
+  "description": "draft-atwood-mls-didwebvh-credential-00 §Log Verification: \"The verifier MUST verify did_log and witness_file with the Read (Resolve) verification steps of [DIDWEBVH], with these changes\".\n\nReadings: (a) write a did:webvh v1.0 verifier inside mimid; (b) reuse a maintained crate. Checked crates.io (2026-11-17): didwebvh-rs 0.8.3 (decentralized-identity/didwebvh-rs, Affinidi; maintained, updated today) is the main one, but it depends non-optionally on tokio, async-trait and the affinidi-* stack, and mimid's spec crates must be synchronous and pure (AGENTS.md); did-webvh 0.1.8 is on ssi and last updated 2025-08. The DIF suite's 'rust' vectors, which mimid's tests use, come from the DIF Rust implementation, so its behaviour is covered as an oracle anyway. Mark's own crate-jmap has jmap-did-types::verify_webvh_log (crate-jmap 14fb8573, already in mimid's lockfile at rev 573c573 through mimid-agent's crate-jmap deps): pure, no I/O, a supplied clock, tested against the DIF did:webvh test suite (commit 703f97f, six implementations).\n\nChosen: (b), reuse jmap-did-types at the rev mimid already pins, and add the draft's changes and profile as a layer in the new crate mls-didwebvh (crates/mls-didwebvh/src/verify.rs): strict JSON Lines, I-JSON, versionTime form, no leading zeros, no null parameters, exactly one proof, ASCII domain, witness_file empty when no witnesses, no deactivated head, every entry must verify (invalid_entry() must be None), and the clock pinned to 9999-12-31T23:59:59Z so no versionTime is compared with a real clock. Consequence: where jmap-did-types differs from v1.0 so does mimid; notably it applies IDNA to the domain (a malformed xn-- label is refused). No write to crate-jmap was needed.\n\ndid:webvh version used: spec-v1.0 at decentralized-identity/didwebvh 91f3cba (the draft's citation); spec-v1.0/ is byte-identical at deef9cf (the ~/PROJECT/IETF/specs copy) and main bf3d9b4 (2026-11-02), checked with git diff.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T04:27:51.805080946Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T04:27:51.805080946Z",
+  "labels": [
+    "wg",
+    "didwebvh",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.7",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-17T04:27:51.872818852Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
