@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.46.6.4",
   "title": "haven: a Commit with two ParticipantListUpdates is refused (DIV-10, confirmed live)",
   "description": "Confirmed live (B4 step 4c), Haven 07ce96f; documented in DIVERGENCES.md DIV-10 (L162-164, L180). protocol-07 §7.5 L3186-3188 and L3197: indices hold 'even when a commit contains more than one ParticipantListUpdate', so a Commit with two is valid; mls-extensions-10 §4.7 L641-646 allows one or more update operations per component. mimid's Commit with two AppDataUpdate(0x0022) proposals (add erin, add frank) gets 200 UpdateRoomResponse invalidProposal, invalidProposals empty, errorDescription 'the commit is not one this hub can read' (commit_wire.rs L630: 'a second participant-list or room-policy change in one Commit'); nothing applied. The refusal is clean and decodes in mimid. Wrong reading: Haven, documented; no ask. At the table mimid should send one change per Commit.",
+  "notes": "2026-11-17 recheck at Haven fdce222 (local namespace, B4 step 4c): still refused, 200 UpdateRoomResponse invalidProposal, invalidProposals empty, errorDescription now 'more than one participant-list update in one Commit (this hub reads one)' (was 'the commit is not one this hub can read'). DIV-10 at fdce222 still says one participant-list update per Commit, stricter than -07 §7.5. Unchanged otherwise; stays open.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-13T20:08:11.06253955Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-13T20:08:11.06253955Z",
+  "updated_at": "2026-11-17T04:33:20.793015564Z",
   "labels": [
     "upstream"
   ],
