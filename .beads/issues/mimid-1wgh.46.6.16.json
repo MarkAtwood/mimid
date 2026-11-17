@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.46.6.16",
+  "title": "haven: keyMaterial for a user of this hub does not check the requester's canAddParticipant; for another provider's user it does",
+  "description": "Haven fdce222. key_material_proxy.rs key_material_route (L47-90): a target on another provider is forwarded only for a participant whose role holds canAddParticipant (DIV-5: 'as mimid does'), else noConsent. For a local target (KeyMaterialRoute::Local) http.rs key_material_wire calls serve_key_material_for, which checks consent only (lib.rs keypackage_access L803-830), not the requester's role. Seen 2026-11-17 (local namespace run, mimid-chat 58d2734): with /roles no-add (member role without canAddParticipant), keyMaterial for mimi://haven.localhost/u/erin answered success and claimed a KeyPackage; the hub then refused the Commit (tracked room: notAllowed 'the proposer's role does not authorize the change'). mimid answers noConsent at keyMaterial for the same role (hub/key_material.rs, log 'keyMaterial refused by room policy ... role 2 does not hold capability 0x0000'). protocol-07 §5.2 has no rule either way, so not a spec violation; the cost is a KeyPackage used up by a requester who cannot add. Mention only with Mark's OK.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T04:33:05.940934091Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T04:33:05.940934091Z",
+  "labels": [
+    "upstream",
+    "haven"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.6.16",
+      "depends_on_id": "mimid-1wgh.46.6",
+      "type": "parent-child",
+      "created_at": "2026-11-17T04:33:06.240778378Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
