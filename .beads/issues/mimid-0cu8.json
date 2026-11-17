@@ -12,5 +12,15 @@
   "labels": [
     "didwebvh",
     "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-0cu8",
+      "depends_on_id": "mimid-1wgh.4.81.18",
+      "type": "blocks",
+      "created_at": "2026-11-17T16:41:16.696707533Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
   ]
 }
