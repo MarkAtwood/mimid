@@ -139,6 +139,22 @@ Commands
                      still listed), or as /roles without canAddParticipant:
                      a hub must refuse /ban or /invite by that member
                      (§8.1; the committer-authority check)
+  /roles ban-no-change
+                     as /roles ban without the 2->1 change in the member
+                     role's authorized_role_changes: a hub must refuse /ban
+                     although the role holds canBan
+  /fetch <user>      keyMaterial for <user> now, kept for your next /invite
+                     of them: fetch while your role may add, take
+                     canAddParticipant away, and /invite reaches the hub's
+                     Commit check (a mimid hub refuses the keyMaterial
+                     itself then, with noConsent)
+  /tree full|ds      Commits carry the next epoch's ratchet tree as a full
+                     RatchetTreeOption, or distributionService (default).
+                     mimi-hubd (since ffd9e24) keeps a room's tree once a
+                     Commit bundle with a Full GroupInfo and a full tree
+                     seeds it, and only then checks who made each change
+                     (its DIV-10, DIV-15). A tracked room refuses a first
+                     roles_list by Commit, so set /roles before /tree full
   /ban <user>        a Commit that moves <user> to role 1 in the participant
                      list and removes all their clients (§8.1.3 canBan;
                      protocol-07 §7.6 changedRoleParticipants)
@@ -194,6 +210,10 @@ How things reach a user when the hub never dials out
     submitMessage, so every member drains the room's queue and discards it;
   - the Commit removing a leaver is also deposited for the leaver, whose
     client then marks the room left.
+  JSON-lane requests carry From: mimi@<own-domain>; mimi-hubd requires it
+  there since d750a8d. Its operator routes (addParticipant, roomPolicy) are
+  on a loopback listener of their own since then, so /create fails against
+  such a hub: add the first participant there, then /adopt.
   The consent and KeyPackage parts are the hub's own: KeyPackages are
   published on the JSON lane (POST /mimi/v1/keyMaterial/ingest?user=) and
   served by the wire keyMaterial route only to requesters the target

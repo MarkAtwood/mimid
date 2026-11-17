@@ -37,6 +37,9 @@ pub struct Hub {
     /// when set, every call below goes through it instead.
     pub jmap: Option<crate::jmap::Jmap>,
     http: reqwest::Client,
+    /// `mimi@<own domain>`, the From header of JSON-lane requests:
+    /// mimi-hubd requires it there too since d750a8d (its DIV-16).
+    from: String,
 }
 
 /// The hub's external-sender identity, from mimid's local control listener
@@ -58,6 +61,7 @@ impl Hub {
         local_url: Option<&str>,
     ) -> anyhow::Result<Self> {
         let domain = Domain::try_from(hub.to_owned()).map_err(|e| anyhow!("--hub {hub:?}: {e}"))?;
+        let from = format!("mimi@{own}");
         let own =
             Domain::try_from(own.to_owned()).map_err(|e| anyhow!("--own-domain {own:?}: {e}"))?;
         let base = BaseUrl::try_from(base_url.to_owned())
@@ -82,6 +86,7 @@ impl Hub {
             lane,
             jmap: None,
             http,
+            from,
         })
     }
 
@@ -200,6 +205,7 @@ impl Hub {
         let response = self
             .http
             .post(url)
+            .header(reqwest::header::FROM, &self.from)
             .body(body)
             .send()
             .await
@@ -270,6 +276,7 @@ impl Hub {
         let response = self
             .http
             .get(url)
+            .header(reqwest::header::FROM, &self.from)
             .send()
             .await
             .with_context(|| format!("GET {path}"))?;

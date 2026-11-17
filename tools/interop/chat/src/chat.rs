@@ -115,6 +115,15 @@ pub struct Client {
     deferring_leave: bool,
     /// The room and leaf of a proposal sender seen while deferring.
     deferred_leaver: Option<(String, u32)>,
+    /// `/tree full`: Commits go to the hub with the next epoch's tree as a
+    /// `full` RatchetTreeOption instead of `distributionService`, so a hub
+    /// that keeps a room's tree once a bundle gives it one (Haven
+    /// mimi-hubd ffd9e24, DIV-10) starts tracking the room.
+    full_tree: bool,
+    /// `/fetch`: keyMaterial answers kept for the next `/invite` of each
+    /// user, so a test can fetch while its role may add and commit the Add
+    /// after taking canAddParticipant away (check mimid-1wgh.46.20.3).
+    prefetched: BTreeMap<String, Vec<u8>>,
 }
 
 impl Client {
@@ -133,6 +142,8 @@ impl Client {
             auto_publish: true,
             deferring_leave: false,
             deferred_leaver: None,
+            full_tree: false,
+            prefetched: BTreeMap::new(),
         };
         client.say(format!(
             "* {} {} (hub {})",
@@ -294,6 +305,8 @@ impl Client {
                 "roles" => self.roles(arg).await,
                 "ban" => self.ban(arg).await,
                 "stale-commit" => self.stale_commit(arg).await,
+                "tree" => self.tree(arg),
+                "fetch" => self.fetch(arg).await,
                 "allow" => self.allow(arg).await,
                 "deny" => self.deny(arg).await,
                 "consents" => self.consents().await,
@@ -334,10 +347,12 @@ impl Client {
             "/invite <user>         add a user (a mimi:// URI, or a bare name on your domain)",
             "  ... --policy k=v ... the same Commit also changes base_room_policy",
             "  ... --roles          the same Commit also replaces roles_list (both hubs should refuse)",
-            "/roles [ban|ban-no-banned]  set roles_list: 1 \"banned\", 2 \"member\" (needed before /policy on mimi-hubd);\n                       ban: member also holds canBan 2->1; ban-no-banned: the same without role 1;\n                       no-ban: change 2->1 listed but no canBan; no-add: no canAddParticipant",
+            "/roles [ban|ban-no-banned]  set roles_list: 1 \"banned\", 2 \"member\" (needed before /policy on mimi-hubd);\n                       ban: member also holds canBan 2->1; ban-no-banned: the same without role 1;\n                       no-ban: change 2->1 listed but no canBan; no-add: no canAddParticipant;\n                       ban-no-change: canBan, but 2->1 not in authorized_role_changes",
             "/ban <user>            move <user> to role 1 and remove their clients (canBan)",
             "/policy k=v ...        change base_room_policy: fixed_membership, multi_device,\n                       pseudonyms_allowed, persistent_room, discoverable (true|false),\n                       max_clients, max_users (a number or none)",
             "/stale-commit          test: send a roles_list Commit one epoch late (expect wrongEpoch)",
+            "/fetch <user>          test: keyMaterial for <user> now, kept for your next /invite of them",
+            "/tree full|ds          send Commits with the next epoch's full ratchet tree, or (default)\n                       distributionService; full seeds a tree-tracking hub (mimi-hubd)",
             "/allow <user>          let <user> fetch your KeyPackages (updateConsent grant)",
             "/deny <user>           refuse <user> consent to fetch your KeyPackages (revoke)",
             "/request <user>        ask <user> for consent to fetch their KeyPackages (requestConsent)",
@@ -599,7 +614,11 @@ impl Client {
                 without(default_roles(), Capability::CAN_ADD_PARTICIPANT),
                 "1 banned, 2 member (as /roles, but no canAddParticipant)",
             ),
-            _ => bail!("usage: /roles [ban|ban-no-banned|no-ban|no-add]"),
+            "ban-no-change" => (
+                without_change(ban_roles(true), ROLE, 1),
+                "1 banned, 2 member (canBan, but no change 2->1 listed)",
+            ),
+            _ => bail!("usage: /roles [ban|ban-no-banned|no-ban|no-add|ban-no-change]"),
         };
         let room = self.current()?;
         let update = AppDataUpdate::Update {
@@ -657,6 +676,39 @@ impl Client {
         Ok(())
     }
 
+    /// `/fetch <user>`: keyMaterial (§5.2) for `user` in the current room,
+    /// kept unread for the next `/invite` of them.
+    async fn fetch(&mut self, arg: &str) -> anyhow::Result<()> {
+        let target = self.user_uri(arg.trim())?;
+        let room = self.current()?;
+        let request = key_material_request(&self.me, &target, &room)?;
+        let body = self.hub.key_material(&target, request).await?;
+        self.say(format!(
+            "* keyMaterial for {target}: {} bytes kept for /invite",
+            body.len()
+        ));
+        self.prefetched.insert(target, body);
+        Ok(())
+    }
+
+    /// `/tree full|ds`: whether Commits carry the next epoch's full tree.
+    fn tree(&mut self, arg: &str) -> anyhow::Result<()> {
+        self.full_tree = match arg.trim() {
+            "full" => true,
+            "ds" => false,
+            _ => bail!("usage: /tree full|ds"),
+        };
+        self.say(format!(
+            "* Commits now carry RatchetTreeOption {}",
+            if self.full_tree {
+                "full (the next epoch's tree)"
+            } else {
+                "distributionService"
+            }
+        ));
+        Ok(())
+    }
+
     /// Test of a hub's epoch check (protocol-07 §5.3): builds a roles_list
     /// Commit at the current epoch and keeps it unsent, sends the same
     /// change as a second Commit to move the room on one epoch, then sends
@@ -678,7 +730,7 @@ impl Client {
         let stale = member
             .commit(&self.identity, &[], &[], &[update()?], apply_commit_op)
             .map_err(|e| anyhow!("building the first Commit: {}", causes(&e)))?;
-        let stale_request = commit_request(&stale)?;
+        let stale_request = commit_request(&stale, None)?;
         member
             .clear_pending_commit(&self.identity)
             .map_err(|e| anyhow!("setting the first Commit aside: {}", causes(&e)))?;
@@ -723,7 +775,8 @@ impl Client {
         let bundle = member
             .commit(&self.identity, &[], removes, updates, apply_commit_op)
             .map_err(|e| anyhow!("building the Commit: {}", causes(&e)))?;
-        let request = commit_request(&bundle)?;
+        let tree = next_tree(self.full_tree, member, &self.identity)?;
+        let request = commit_request(&bundle, tree.as_deref())?;
         if let Err(e) = self.hub.update_ok(room, request).await {
             if let Err(clear) = member.clear_pending_commit(&self.identity) {
                 self.error(format!("clearing the refused Commit: {}", causes(&clear)));
@@ -784,9 +837,20 @@ impl Client {
             "{target} is already a participant"
         );
 
-        // §5.2 keyMaterial for the target, through the hub.
-        let request = key_material_request(&self.me, &target, &room)?;
-        let body = self.hub.key_material(&target, request).await?;
+        // §5.2 keyMaterial for the target, through the hub, unless /fetch
+        // already has the answer.
+        let body = match self.prefetched.remove(&target) {
+            Some(body) => {
+                self.say(format!(
+                    "* using the keyMaterial answer /fetch kept for {target}"
+                ));
+                body
+            }
+            None => {
+                let request = key_material_request(&self.me, &target, &room)?;
+                self.hub.key_material(&target, request).await?
+            }
+        };
         let (response, divergence) = KeyMaterialResponse::decode_for_requester(&body[..])
             .map_err(|e| anyhow!("the hub's KeyMaterialResponse does not decode: {e:?}"))?;
         if let Some(divergence) = divergence {
@@ -857,7 +921,8 @@ impl Client {
         let bundle = member
             .commit(&self.identity, &adds, &[], &updates, apply_commit_op)
             .map_err(|e| anyhow!("building the Commit: {}", causes(&e)))?;
-        let request = commit_request(&bundle)?;
+        let tree = next_tree(self.full_tree, member, &self.identity)?;
+        let request = commit_request(&bundle, tree.as_deref())?;
         if let Err(e) = self.hub.update_ok(&room, request).await {
             if let Err(clear) = member.clear_pending_commit(&self.identity) {
                 self.error(format!("clearing the refused Commit: {}", causes(&clear)));
@@ -1915,7 +1980,8 @@ impl Client {
         let bundle = member
             .commit(&self.identity, &[], &[], &[], apply_commit_op)
             .map_err(|e| anyhow!("building the Commit: {}", causes(&e)))?;
-        let request = commit_request(&bundle)?;
+        let tree = next_tree(self.full_tree, member, &self.identity)?;
+        let request = commit_request(&bundle, tree.as_deref())?;
         if let Err(e) = self.hub.update_ok(room, request).await {
             if let Err(clear) = member.clear_pending_commit(&self.identity) {
                 self.error(format!("clearing the refused Commit: {}", causes(&clear)));
@@ -2254,6 +2320,24 @@ fn without(mut roles: RoleData, capability: Capability) -> RoleData {
     roles
 }
 
+/// `roles` with `target` taken out of the change from `from` on the member
+/// role, so the hub must refuse that change although the role holds the
+/// capability for it (room-policy-04 §8.1: the actor's
+/// authorized_role_changes; check mimid-1wgh.46.20.3).
+fn without_change(mut roles: RoleData, from: u32, target: u32) -> RoleData {
+    if let Some(member) = roles.roles.iter_mut().find(|r| r.role_index == ROLE) {
+        for change in &mut member.authorized_role_changes {
+            if change.from_role_index == from {
+                change.target_role_indexes.retain(|t| *t != target);
+            }
+        }
+        member
+            .authorized_role_changes
+            .retain(|change| !change.target_role_indexes.is_empty());
+    }
+    roles
+}
+
 /// The base_room_policy `/host` sets: open membership, several devices,
 /// no limits, persistent (room-policy-04 §5).
 fn default_base_policy() -> BaseRoomPolicy {
@@ -2304,13 +2388,23 @@ fn participants(member: &Member) -> anyhow::Result<Vec<String>> {
         .collect())
 }
 
+/// The tree of the epoch `member`'s pending Commit leads to, when `full`
+/// (`/tree full`); otherwise none.
+fn next_tree(full: bool, member: &Member, identity: &Identity) -> anyhow::Result<Option<Vec<u8>>> {
+    full.then(|| member.pending_ratchet_tree(identity))
+        .transpose()
+        .map_err(|e| anyhow!("the next epoch's ratchet tree: {}", causes(&e)))
+}
+
 /// protocol-07 §5.3 UpdateRequest around a CommitBundle. The bundle's
-/// RatchetTreeOption is `distributionService` (ratchet-tree-options-02): a
-/// mimid hub rebuilds the tree from the Commits it accepts and attaches its
-/// own to Welcomes (decision mimid-1wgh.6.12), and mimi-hubd reads no tree,
-/// so a `full` tree here was uploaded on every Commit and never used. A
+/// RatchetTreeOption is `distributionService` (ratchet-tree-options-02)
+/// unless `tree` is given: a mimid hub rebuilds the tree from the Commits it
+/// accepts and attaches its own to Welcomes (decision mimid-1wgh.6.12). A
+/// mimi-hubd since ffd9e24 keeps a room's tree once a bundle carries a Full
+/// GroupInfo and a `full` tree (its DIV-10), and checks who made each change
+/// from then on; `/tree full` sends `tree`, the next epoch's, for that. A
 /// joiner still gets the full tree in the Welcome this client delivers.
-fn commit_request(bundle: &CommitBundle) -> anyhow::Result<Vec<u8>> {
+fn commit_request(bundle: &CommitBundle, tree: Option<&[u8]>) -> anyhow::Result<Vec<u8>> {
     let welcome = bundle
         .welcome
         .as_ref()
@@ -2334,7 +2428,11 @@ fn commit_request(bundle: &CommitBundle) -> anyhow::Result<Vec<u8>> {
                 group_info: GroupInfo::tls_deserialize_exact(group_info)
                     .map_err(|e| anyhow!("own GroupInfo: {e:?}"))?,
             },
-            ratchet_tree_option: RatchetTreeOption::distribution_service(),
+            ratchet_tree_option: match tree {
+                Some(tree) => RatchetTreeOption::full(tree)
+                    .map_err(|e| anyhow!("ratchet tree option: {e:?}"))?,
+                None => RatchetTreeOption::distribution_service(),
+            },
         },
     })
 }
