@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.4.81.10",
+  "title": "Decision: authorized-key details (no point check, fragment-only relative references, unique ids)",
+  "description": "draft-atwood-mls-didwebvh-credential-00 §Conventions, \"Authorized key\". Three gaps:\n\n1. \"a 32-byte public key in the format of [RFC8032]\": must the 32 bytes decode as a valid Ed25519 point? If some members check and others do not, they compute different authorized_keys, so the did_webvh_heads extension differs and members disagree. Chosen: no point check; any 32 bytes count. A leaf with such a key fails MLS signature checks anyway.\n2. \"A relative reference is resolved against the document's id as [DID-CORE] specifies\": DID Core points to RFC 3986 §5.2, under which only a fragment-only reference (\"#k1\") has an obvious result for a did: base. Chosen: \"#frag\" resolves to id + \"#frag\"; an absolute \"did:...\" reference is used as is; any other relative form (\"k1\", \"?x\", \"/p\") resolves to nothing. Verification method ids are resolved the same way before comparing.\n3. Where a reference may resolve to: Chosen: only objects in the document's top-level verificationMethod array (embedded methods in authentication count directly). An id shared by two methods resolves to nothing (DID Core requires unique ids; the document is not made invalid, per the draft's \"neither makes the document invalid\").\n\nAlso: a method's controller must be a string equal to id (DID Core allows a set for the document's controller, not for a method's). crates/mls-didwebvh/src/keys.rs. For -01: say all three.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T04:27:53.387332253Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T04:27:53.387332253Z",
+  "labels": [
+    "wg",
+    "didwebvh",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.10",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-17T04:27:53.435923857Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
