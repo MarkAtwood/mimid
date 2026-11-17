@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.4.81.3",
   "title": "did_webvh_heads GroupContext extension",
   "description": "did_webvh_heads GroupContext extension: encode and decode, compute expected heads, check the group consistency rules on Commit, Welcome and GroupInfo, never move backwards. Spec: draft-atwood-mls-didwebvh-credential-00.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T18:19:57.438806992Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T18:19:57.438806992Z",
+  "updated_at": "2026-11-17T04:54:09.367865393Z",
+  "closed_at": "2026-11-17T04:54:09.367865393Z",
+  "close_reason": "d86ff85 codec + expected heads + commit/join rules; ef2b7a1 enforced on Commit, Welcome, GroupInfo/external join by Member and Observer, never removed, RC (decision .16)",
   "labels": [
     "feature"
   ],

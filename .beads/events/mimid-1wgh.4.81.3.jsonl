@@ -1,2 +1,3 @@
 {"id":"01a1e596-5682-74a7-a17c-c8be864ad8d6","issue_id":"mimid-1wgh.4.81.3","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-16T18:19:57.442305857Z"}
 {"id":"01a1e596-5685-79bd-a649-18b1a2190aba","issue_id":"mimid-1wgh.4.81.3","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: feature","created_at":"2026-11-16T18:19:57.445638719Z"}
+{"id":"01a1e7da-f6db-7e31-9f39-193eeae9a9b5","issue_id":"mimid-1wgh.4.81.3","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"d86ff85 codec + expected heads + commit/join rules; ef2b7a1 enforced on Commit, Welcome, GroupInfo/external join by Member and Observer, never removed, RC (decision .16)","created_at":"2026-11-17T04:54:09.371930876Z"}
