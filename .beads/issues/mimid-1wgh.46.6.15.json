@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.46.6.15",
+  "title": "haven: mimi-hubd reads only the first of several From headers",
+  "description": "Haven fdce222, local namespace run 2026-11-17 (tools/interop/haven/live/b4.sh DIAG lines, commit 095e1c9). An update POST over the mTLS lane whose client certificate names b.example: one 'From: mimi@c.example' -\u003e 403 not-authenticated; 'From: mimi@b.example' then 'From: mimi@c.example' -\u003e 200 (the request reaches update); 'From: mimi@c.example' then 'From: mimi@b.example' -\u003e 403. Cause: mimi-hubd/src/provider_auth.rs L83-87 takes headers().get(FROM), the first value only. RFC 9110 §10.1.2 defines From as a single mailbox, not a list, so a request with two is malformed (§5.3: a sender MUST NOT generate several field lines for a field that is not a list). Impact low with certificates (the first value must still match the certificate). With RFC 9421 signatures the covered 'from' component is the combined field value (RFC 9421 §2.1) while the check reads one line: worth a look when Haven verifies signatures inbound. Fix on their side: refuse a request with more than one From. mimid's own provider_auth: not checked here. Haven is commercial: no issue/PR; Mark decides whether to mention it.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T04:33:05.625428127Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T04:33:05.625428127Z",
+  "labels": [
+    "upstream",
+    "haven"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.6.15",
+      "depends_on_id": "mimid-1wgh.46.6",
+      "type": "parent-child",
+      "created_at": "2026-11-17T04:33:05.739502419Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
