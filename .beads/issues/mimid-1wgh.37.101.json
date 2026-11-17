@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.101",
+  "title": "wg: §5.3 can't name a by-value proposal in invalidProposals; joint post with Haven (index in Commit.proposals)",
+  "description": "Agreed with Jason Bolduc on #mimi (Zulip 238481, 240186): a ProposalRef can't name a proposal committed by value. Both prefer naming failing proposals by index in Commit.proposals; a #190 refusal reason can sit beside it. Jason drafts the list post and sends it to Mark before it goes to mimi@ietf.org. Waiting on his draft; posting needs Mark's OK. Must say it came out of the IETF 127 hackathon interop table.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T03:29:28.151585774Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T03:29:28.151585774Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.101",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-17T03:29:28.178089211Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
