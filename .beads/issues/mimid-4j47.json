@@ -12,7 +12,8 @@
   "labels": [
     "interop",
     "bridge",
-    "matrix"
+    "matrix",
+    "adapter"
   ],
   "dependencies": [
     {
