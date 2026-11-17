@@ -4,3 +4,4 @@
 {"id":"01a1e1a8-b7a0-70e2-95eb-3200b31a51db","issue_id":"mimid-75nk.7","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: design","created_at":"2026-11-16T00:01:33.088058689Z"}
 {"id":"01a1e1a8-b7a2-7e67-8b5d-fa1c2cba273f","issue_id":"mimid-75nk.7","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: interop","created_at":"2026-11-16T00:01:33.090944623Z"}
 {"id":"01a1e1a8-b7a5-7bbd-9cae-9a413a07b301","issue_id":"mimid-75nk.7","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: security","created_at":"2026-11-16T00:01:33.09377006Z"}
+{"id":"01a1e7a2-731c-723b-ab16-de21696fd3af","issue_id":"mimid-75nk.7","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"ietf-mimi-provider-auth 70a1384: From REQUIRED on every request, signed; successor field per mimi-protocol#221 takes its place.","created_at":"2026-11-17T03:52:25.628147008Z"}
