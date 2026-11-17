@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.4.81.25",
+  "title": "Decision: mimid-agent's default member role gets canRemoveOwnClient, so a did_webvh revocation Commit passes room policy",
+  "description": "draft-atwood-mls-didwebvh-credential-01 §Revoking a Device: a remaining device of the user commits the new log \"together with Remove proposals for the revoked device's leaves\"; §Rules make the Remove mandatory. In MIMI the hub then applies room policy (room-policy-04 §8.1.2): removing one's own client without leaving needs canRemoveOwnClient. mimid-agent's default \"member\" role (crates/mimid-agent-core/src/agent.rs default_roles) did not hold it, so in a room made by mimid-agent a revocation Commit was refused by the hub and the revoked device stayed.\n\nReadings: (a) give the default member role canRemoveOwnClient, so a user can remove their own devices, revoked or not. (b) have the hub authorize, without any capability, a Remove that the did_webvh rules require (the removed leaf's key is not in the record the same Commit sets for its own SCID, and the committer has that SCID). (c) both.\n\nChosen: (a) now; (b) filed as follow-up (it needs the Observer to say which Removes the rules required). (a) changes only rooms created from now on; existing rooms keep their roles_list, and in them a revocation needs a role change first. Removing one's own other device is an ordinary room-policy capability, and the draft makes it the revocation mechanism, so a messenger room that supports multiple devices needs it.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T16:32:42.093494376Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T16:32:42.093494376Z",
+  "labels": [
+    "didwebvh",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.25",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-17T16:32:42.131968673Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
