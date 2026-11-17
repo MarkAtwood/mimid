@@ -52,6 +52,7 @@ Dependencies point down this table, never up.
 | Crate | Owns | Must not |
 |---|---|---|
 | `mimi-mls` | All OpenMLS usage, the `wire` newtypes, label helpers | Do I/O |
+| `mls-didwebvh` | draft-atwood-mls-didwebvh-credential: the credential codec, did:webvh log verification (over crate-jmap's `jmap-did-types`), the `did_webvh_heads` record, the group rules over abstract leaves, the controller side | Depend on openmls (`mimi-mls` applies its rules to OpenMLS groups); do I/O |
 | `mimi-content` | mimi-content-10 CBOR and MessageId | Depend on openmls or tokio; contain encryption (attachments are `.14`) |
 | `mimi-room-policy` | room-policy-04 codecs and policy evaluation | Depend on `mimi-mls` |
 | `mimi-protocol` | protocol wire types and franking | Use openmls directly (MLS types come only through `mimi_mls::wire`); do I/O |
@@ -60,7 +61,7 @@ Dependencies point down this table, never up.
 
 mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat client talks plaintext JMAP Chat to the local agent.
 
-- The spec crates (`mimi-*`) are synchronous and pure. Only the server and agent are async.
+- The spec crates (`mimi-*`, `mls-didwebvh`) are synchronous and pure. Only the server and agent are async.
 - JMAP Chat types come from `~/PROJECT/crate-jmap`. Build its `#[non_exhaustive]` types through serde, not new constructors.
 - Before any write to `~/PROJECT/crate-jmap`, `~/PROJECT/jmap-chat-spec` or the openmls patch branch, ask Mark. Each write needs its own approval.
 
