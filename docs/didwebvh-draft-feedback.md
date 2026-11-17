@@ -483,6 +483,33 @@ blocked committer, say that the Removes the record then requires are
 mandatory whoever commits, so an application's authorization can follow
 the record rather than the committer.
 
+### 29. The record as an `app_data_dictionary` component: Open Issues 1 and 5
+
+**§The Heads Extension, §Expected Heads, Open Issues 1 and 5.** Items 18,
+24 and 28 all come from the record being a GroupContext extension changed
+by a GroupContextExtensions proposal. mimid prototyped the alternative
+Open Issue 1 names: the record as an `app_data_dictionary` component
+changed by AppDataUpdate proposals (mls-extensions-11 §4.6, §4.7), with the
+group rules unchanged (spike bead mimid-1wgh.4.81.32, decision
+mimid-1wgh.4.81.33, `docs/didwebvh-appdata-spike.md`).
+
+**mimid:** behind a code-point switch, so the draft's form stays the
+default. With the component, a revocation Commit and the Update-proposal
+fallback both succeed with another party's GroupContextExtensions proposal
+pending; two record changes (a device's by reference and the committer's)
+combine in one Commit; a device whose log is newer than the record joins by
+external Commit; and the hub needs no record-specific exception. The update
+semantics had to be invented: the `update` is a `DIDWebVHHeads` whose
+entries replace or add the entries with the same SCID. Listing the
+component in the GroupContext `app_components` does the work
+`required_capabilities` does now (mls-extensions-11 §5).
+
+**For -01:** carry the record as a component and close Open Issues 1 and
+5; define the update semantics and forbid `remove`; let an external Commit
+set the record. The spike document has suggested text for §The Heads
+Extension, §Expected Heads, §Rules, §Revoking a Device, Open Issue 5 and
+IANA. The cost is a normative dependency on mls-extensions.
+
 ## Section 7, item 7: the encoding question
 
 What implementing -00 taught about "Encoding without DIDs":
