@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.4.81.11",
+  "title": "Decision: did_log JSON Lines details (CR LF refused, inner whitespace allowed, missing final LF refused)",
+  "description": "draft-atwood-mls-didwebvh-credential-00 §did:webvh Profile, Encoding: \"did_log MUST be UTF-8 JSON Lines: one JSON object per line, each line ending in a single LF (0x0A), with no blank lines and nothing after the last LF.\"\n\nGaps: (1) CR LF: JSON Lines (jsonlines.org) tolerates \\r\\n because whitespace around a value is ignored; \"a single LF\" suggests not. (2) JSON whitespace inside a line (spaces between tokens) is not forbidden; did:webvh says entries have \"all extra whitespace removed\" but hashes over JCS, so whitespace does not affect validity under v1.0. (3) An empty did_log.\n\nChosen: a line ending in CR before its LF is refused; other JSON whitespace inside a line is accepted (hashes are over JCS, so it cannot change meaning); an empty did_log is refused (it must hold the first entry). Observed: in the DIF did:webvh test suite (commit 703f97f) the dart and java implementations write no final LF, so this profile rejects their logs; python, rust, ts and java-eecc conform. For -01: decide whether to tolerate a missing final LF (that would cost nothing, since entries are delimited anyway) and say CR LF and whitespace explicitly. crates/mls-didwebvh/src/verify.rs lines().\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T04:27:53.892568366Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T04:27:53.892568366Z",
+  "labels": [
+    "wg",
+    "didwebvh",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.11",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-17T04:27:53.960685189Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
