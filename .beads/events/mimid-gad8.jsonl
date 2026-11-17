@@ -1,3 +1,4 @@
 {"id":"01a1ea5f-504f-7c0b-8ff1-c4333f222189","issue_id":"mimid-gad8","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-17T16:37:57.455808668Z"}
 {"id":"01a1ea5f-50d2-703b-a51f-d12598f237d2","issue_id":"mimid-gad8","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: adapter","created_at":"2026-11-17T16:37:57.586016684Z"}
 {"id":"01a1ea5f-5110-7c6a-a614-2171cae847a4","issue_id":"mimid-gad8","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: client","created_at":"2026-11-17T16:37:57.648814875Z"}
+{"id":"01a1ea5f-53d1-7eb7-b7cb-e97332b8de6e","issue_id":"mimid-gad8","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Decided by Mark 2026-11-17.","created_at":"2026-11-17T16:37:58.353965572Z"}
