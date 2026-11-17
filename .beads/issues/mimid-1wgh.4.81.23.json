@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.4.81.23",
+  "title": "Decision: BasicCredential mimid agents list did_webvh and enforce its rules by default, so mixed rooms work",
+  "description": "draft-atwood-mls-didwebvh-credential-01 §The Heads Extension: a GroupContext with did_webvh_heads MUST have required_capabilities listing did_webvh_heads and did_webvh, and a client that lists did_webvh MUST list did_webvh_heads and implement the rules. RFC 9420 §7.2 already requires every member to support every credential type in use (feedback item 15). So a BasicCredential user can share a room with a did_webvh user only if the BasicCredential client lists did_webvh in its capabilities and enforces the rules. Before this decision, mimi-mls listed did_webvh only for identities that hold such a credential, so a BasicCredential mimid client could never share a room with a did_webvh one.\n\nReadings: (a) only did_webvh users list it: mixed rooms are impossible. (b) a BasicCredential client may list did_webvh and enforce the rules without holding the credential, opt in. (c) the same, on by default for every mimid agent, with a setting to turn it off.\n\nChosen: (c). mimi-mls gains Identity::support_did_webvh(code_points): a BasicCredential identity that lists did_webvh and did_webvh_heads in its leaves and enforces the group rules like a did_webvh identity. mimid-agent turns it on by default with the configured code points (default: the draft's suggested 0x0008 / 0x0013), so a BasicCredential user can be in a room with did_webvh users with no configuration; `did_webvh.support = false` turns it off. The only change for existing BasicCredential rooms is two more entries in each new leaf's capabilities; a room with no did_webvh leaf never gets the record, and the rules are then no-ops. The draft's §Negotiation reading follows: \"a group that also admits basic or x509 credentials\" means one whose basic/x509 members implement this draft.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T16:22:18.387065512Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T16:22:18.387065512Z",
+  "labels": [
+    "didwebvh",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.23",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-17T16:22:18.668326432Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
