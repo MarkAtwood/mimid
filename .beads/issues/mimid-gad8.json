@@ -1,0 +1,16 @@
+{
+  "id": "mimid-gad8",
+  "title": "Decision: client adapters may use their own binary client/server protocol to the agent",
+  "description": "Mark 2026-11-17: libpurple and the other adapters are allowed to make up their own binary client/server protocol; they need not speak JMAP Chat (JSON over HTTP) to mimid-agent.\n\nApplies to every adapter epic (mimid-1vul IRC, mimid-vhbl XMPP, mimid-peim SIP/SIMPLE+RCS, mimid-csl0 libpurple, mimid-4j47 Matrix/Beeper). Each picks JMAP Chat on the agent's local endpoint, or a protocol of its own, whichever suits the client (a C plugin like libpurple's is the obvious case).\n\nWhat does not change: the agent alone does MLS and holds keys (mimid-1wgh.38); a custom protocol is still local only (loopback or a Unix socket with 0600/0700 permissions), authenticated like the JMAP endpoint (the agent's token or socket permissions), and never carries plaintext off the machine (AGENTS.md). A custom protocol is mimid's own: document it in the repo and mark it INVENTED, NOT FROM SPEC; it is not a MIMI or JMAP standard.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T16:37:57.358081867Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T16:37:57.358081867Z",
+  "labels": [
+    "adapter",
+    "client"
+  ]
+}
