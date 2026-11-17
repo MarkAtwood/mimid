@@ -1,0 +1,29 @@
+{
+  "id": "mimid-4j47.1",
+  "title": "Client check: Beeper (desktop and mobile) through mautrix-mimi",
+  "description": "Acceptance with stock Beeper against a self-hosted mautrix-mimi bridge: join, send and receive text and an attachment. Note Beeper's own bridge hosting rules.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T16:36:53.012824883Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T16:36:53.012824883Z",
+  "labels": [
+    "adapter",
+    "client",
+    "bridge",
+    "interop",
+    "matrix"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-4j47.1",
+      "depends_on_id": "mimid-4j47",
+      "type": "parent-child",
+      "created_at": "2026-11-17T16:36:53.256008353Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
