@@ -235,6 +235,7 @@ impl Client {
             token: server.tokens[user].clone(),
             user_uri: user.to_owned(),
             state_dir: dir.join(user.rsplit('/').next().unwrap()),
+            full_tree_hubs: Vec::new(),
         })
         .await
         .unwrap();

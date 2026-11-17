@@ -93,9 +93,35 @@ pub fn user_uri_domain(uri: &str) -> Option<&str> {
     (!domain.is_empty() && !id.is_empty() && !id.contains(['/', '?', '#'])).then_some(domain)
 }
 
+/// The hub provider's domain of a room URI `mimi://<domain>/r/<id>`, or
+/// `None` for any other string.
+pub fn room_uri_domain(uri: &str) -> Option<&str> {
+    let rest = uri.strip_prefix("mimi://")?;
+    let (domain, path) = rest.split_once('/')?;
+    let id = path.strip_prefix("r/")?;
+    (!domain.is_empty() && !id.is_empty() && !id.contains(['/', '?', '#'])).then_some(domain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn room_uri_domain_takes_only_room_uris() {
+        assert_eq!(
+            room_uri_domain("mimi://hub.example/r/x"),
+            Some("hub.example")
+        );
+        for not in [
+            "mimi://hub.example/u/x",
+            "mimi://hub.example/r/",
+            "mimi:///r/x",
+            "mimi://hub.example/r/x/y",
+            "https://hub.example/r/x",
+        ] {
+            assert_eq!(room_uri_domain(not), None, "{not}");
+        }
+    }
 
     #[test]
     fn normalized_uri_follows_rfc3986_6_2_2() {

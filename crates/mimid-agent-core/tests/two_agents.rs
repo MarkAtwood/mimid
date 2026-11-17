@@ -43,6 +43,42 @@ const BOB: &str = "mimi://a.example/u/bob";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// The UpdateRequest of every Room/update call the server received,
+    /// in order.
+    updates: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+}
+
+/// Records the UpdateRequest of each Room/update call into `updates`
+/// (draft-atwood-jmap-chat-mimi-00 §Room/update: `request` is its
+/// base64url).
+async fn record_updates(
+    axum::extract::State(updates): axum::extract::State<Arc<std::sync::Mutex<Vec<Vec<u8>>>>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use base64::Engine;
+    if request.uri().path() != "/jmap/api" {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+        for call in value["methodCalls"].as_array().into_iter().flatten() {
+            if call[0] == "Room/update" {
+                let request = call[1]["request"].as_str().unwrap();
+                updates.lock().unwrap().push(
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .decode(request)
+                        .unwrap(),
+                );
+            }
+        }
+    }
+    next.run(axum::extract::Request::from_parts(
+        parts,
+        axum::body::Body::from(bytes),
+    ))
+    .await
 }
 
 /// Starts a.example's stack as `main.rs` wires it (hub, follower, fanout
@@ -101,11 +137,15 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
-    let app = router(directory(&base), hub, follower).merge(jmap);
+    let updates = Arc::default();
+    let app = router(directory(&base), hub, follower).merge(jmap).layer(
+        axum::middleware::from_fn_with_state(Arc::clone(&updates), record_updates),
+    );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        updates,
     }
 }
 
@@ -115,6 +155,7 @@ async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
         token: server.tokens[user].clone(),
         user_uri: user.to_owned(),
         state_dir: dir.join(user.rsplit('/').next().unwrap()),
+        full_tree_hubs: Vec::new(),
     })
     .await
     .unwrap()
@@ -382,6 +423,7 @@ async fn bad_input_is_refused_before_any_request() {
             token: server.tokens[ALICE].clone(),
             user_uri: "mimi://a.example/alice".to_owned(),
             state_dir: dir.path().join("x"),
+            full_tree_hubs: Vec::new(),
         })
         .await,
         Err(AgentError::Invalid(_))
@@ -393,6 +435,7 @@ async fn bad_input_is_refused_before_any_request() {
             token: "wrong".to_owned(),
             user_uri: ALICE.to_owned(),
             state_dir: dir.path().join("y"),
+            full_tree_hubs: Vec::new(),
         })
         .await,
         Err(AgentError::Status { status: 401, .. })
@@ -414,4 +457,86 @@ async fn bad_input_is_refused_before_any_request() {
             .await,
         Err(AgentError::Invalid(_))
     ));
+}
+
+/// The RatchetTreeOption of the last Commit `server` received.
+fn last_commit_tree_option(server: &Server) -> mimi_mls::wire::RatchetTreeOption {
+    use mimi_mls::tls_codec::Deserialize;
+    let updates = server.updates.lock().unwrap();
+    updates
+        .iter()
+        .rev()
+        .find_map(|bytes| {
+            match mimi_protocol::UpdateRequest::tls_deserialize_exact(&bytes[..])
+                .unwrap()
+                .bundle
+            {
+                mimi_protocol::HandshakeBundle::Commit {
+                    ratchet_tree_option,
+                    ..
+                } => Some(ratchet_tree_option),
+                _ => None,
+            }
+        })
+        .expect("a Commit was sent")
+}
+
+/// A hub listed in `full_tree_hubs` gets the full ratchet tree with each
+/// Commit; any other gets `distributionService` (bead mimid-1wgh.46.20.7;
+/// protocol-07 §5.3, ratchet-tree-options-02 §3).
+///
+/// Oracles: the tree in alice's Commit equals the tree bob holds after
+/// joining from the Welcome, which he took from the hub's fanout, not from
+/// alice's bundle; and bob, who lists no hub, commits alice's leave with
+/// `distributionService`, which the hub accepts as before.
+#[tokio::test]
+async fn full_tree_hubs_get_the_next_epochs_tree_with_each_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut alice = Agent::open(AgentConfig {
+        server_url: server.base.clone(),
+        token: server.tokens[ALICE].clone(),
+        user_uri: ALICE.to_owned(),
+        state_dir: dir.path().join("alice"),
+        // Upper case: the domain is compared without regard to case.
+        full_tree_hubs: vec!["A.Example".to_owned()],
+    })
+    .await
+    .unwrap();
+    let mut bob = agent(&server, BOB, dir.path()).await;
+    alice.publish_key_packages(1).await.unwrap();
+    bob.publish_key_packages(1).await.unwrap();
+    let room = alice.host_room(&HostOptions::named("trees")).await.unwrap();
+    bob.allow(ALICE).await.unwrap();
+    alice.invite(&room, BOB).await.unwrap();
+    let number = poll_until(&mut bob, |e| match e {
+        Event::InviteArrived { number } => Some(*number),
+        _ => None,
+    })
+    .await;
+    bob.join(number).unwrap();
+    assert_agreement(&room, &alice, &bob);
+
+    let option = last_commit_tree_option(&server);
+    assert_eq!(
+        option.representation(),
+        mimi_mls::wire::RatchetTreeRepresentation::Full
+    );
+    assert_eq!(
+        option.ratchet_tree(),
+        Some(&bob.ratchet_tree(&room).unwrap()[..])
+    );
+
+    alice.leave(&room).await.unwrap();
+    poll_until(&mut bob, |e| match e {
+        Event::MembersChanged { participants, .. } => Some(participants.clone()),
+        _ => None,
+    })
+    .await;
+    let option = last_commit_tree_option(&server);
+    assert_eq!(
+        option.representation(),
+        mimi_mls::wire::RatchetTreeRepresentation::DistributionService
+    );
+    assert_eq!(option.ratchet_tree(), None);
 }

@@ -74,6 +74,15 @@ pub struct AgentConfig {
     pub user_uri: String,
     /// The state directory (created 0700).
     pub state_dir: PathBuf,
+    /// The provider domains of hubs whose rooms get the full ratchet tree
+    /// with every Commit (RatchetTreeOption `full`) instead of
+    /// `distributionService`, which is the default (bead mimid-1wgh.46.20.7).
+    /// Both are allowed (protocol-07 §5.3, ratchet-tree-options-02 §3);
+    /// `full` is for a hub that does not rebuild the tree from the Commits
+    /// it sees, and so cannot check who made a change without it. It costs
+    /// the tree, which grows with the room, on every Commit. Compared
+    /// without regard to ASCII case.
+    pub full_tree_hubs: Vec<String>,
 }
 
 /// How [`Agent::host_room`] makes a room.
@@ -255,6 +264,8 @@ pub struct Agent {
     dir: StateDir,
     jmap: Jmap,
     members: BTreeMap<String, Member>,
+    /// [`AgentConfig::full_tree_hubs`], lowercase.
+    full_tree_hubs: std::collections::BTreeSet<String>,
     /// The room and leaf of a member whose leave proposals are stored and
     /// not yet committed.
     deferred_leaver: Option<(String, u32)>,
@@ -296,6 +307,11 @@ impl Agent {
             dir,
             jmap,
             members: BTreeMap::new(),
+            full_tree_hubs: config
+                .full_tree_hubs
+                .iter()
+                .map(|d| d.to_ascii_lowercase())
+                .collect(),
             deferred_leaver: None,
         };
         let rooms: Vec<(String, Room)> = agent
@@ -380,6 +396,19 @@ impl Agent {
                 has_ratchet_tree: i.ratchet_tree.is_some(),
             })
             .collect()
+    }
+
+    /// The TLS-encoded ratchet tree (RFC 9420 §12.4.3.3) of an active
+    /// room in the current epoch: public group state, for diagnostics and
+    /// for checking that members agree.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`], and the MLS error of exporting it.
+    pub fn ratchet_tree(&self, room: &str) -> Result<Vec<u8>, AgentError> {
+        self.member(room)?
+            .ratchet_tree()
+            .map_err(|e| AgentError::mls("exporting the ratchet tree", e))
     }
 
     /// The MLS epoch authenticator (RFC 9420 §8.7) of an active room, for
@@ -1209,7 +1238,18 @@ impl Agent {
         let bundle = member
             .commit(&self.identity, adds, removes, updates, apply_commit_op)
             .map_err(|e| AgentError::mls(format!("building the {what} Commit"), e))?;
-        let request = commit_request(&bundle)?;
+        let tree = if wants_full_tree(&self.full_tree_hubs, room) {
+            match member.pending_ratchet_tree(&self.identity) {
+                Ok(tree) => Some(tree),
+                Err(e) => {
+                    let _ = member.clear_pending_commit(&self.identity);
+                    return Err(AgentError::mls(format!("the {what} Commit's tree"), e));
+                }
+            }
+        } else {
+            None
+        };
+        let request = commit_request(&bundle, tree.as_deref())?;
         if let Err(e) = self.update_ok(room, &request, what).await {
             if let Some(member) = self.members.get_mut(room) {
                 let _ = member.clear_pending_commit(&self.identity);
@@ -1679,11 +1719,19 @@ fn frank_aad_items(member: &Member, salt: &[u8; 16], content: &[u8]) -> Vec<(u16
     }
 }
 
+/// Whether Commits in `room` carry the full tree: its hub's domain is in
+/// `hubs` ([`AgentConfig::full_tree_hubs`], lowercase).
+fn wants_full_tree(hubs: &std::collections::BTreeSet<String>, room: &str) -> bool {
+    crate::uri::room_uri_domain(room).is_some_and(|d| hubs.contains(&d.to_ascii_lowercase()))
+}
+
 /// protocol-07 §5.3 UpdateRequest around a CommitBundle. The
-/// RatchetTreeOption is `distributionService` (ratchet-tree-options-02;
-/// bead mimid-1wgh.13.7): a mimid hub rebuilds the tree from the Commits it
-/// accepts and attaches its own to the Welcomes it fans out.
-fn commit_request(bundle: &CommitBundle) -> Result<UpdateRequest, AgentError> {
+/// RatchetTreeOption is `full` with `tree`, the next epoch's ratchet tree,
+/// when given ([`AgentConfig::full_tree_hubs`]), else `distributionService`
+/// (ratchet-tree-options-02 §3; beads mimid-1wgh.13.7, mimid-1wgh.46.20.7):
+/// a mimid hub rebuilds the tree from the Commits it accepts and attaches
+/// its own to the Welcomes it fans out.
+fn commit_request(bundle: &CommitBundle, tree: Option<&[u8]>) -> Result<UpdateRequest, AgentError> {
     let welcome = bundle
         .welcome
         .as_ref()
@@ -1707,7 +1755,11 @@ fn commit_request(bundle: &CommitBundle) -> Result<UpdateRequest, AgentError> {
                 group_info: GroupInfo::tls_deserialize_exact(group_info)
                     .map_err(|e| AgentError::tls("own GroupInfo", e))?,
             },
-            ratchet_tree_option: RatchetTreeOption::distribution_service(),
+            ratchet_tree_option: match tree {
+                Some(tree) => RatchetTreeOption::full(tree)
+                    .map_err(|e| AgentError::tls("own ratchet tree", e))?,
+                None => RatchetTreeOption::distribution_service(),
+            },
         },
     })
 }

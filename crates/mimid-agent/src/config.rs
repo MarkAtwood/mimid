@@ -10,7 +10,13 @@
 //! key_packages = 10                       # optional
 //! invites = "from-allowed"                # optional: "any", "never"
 //! allowed_origins = ["http://localhost:5173"]  # optional CORS origins
+//! full_tree_hubs = ["mimi.hub.example"]   # optional; see below
 //! ```
+//!
+//! `full_tree_hubs` lists the provider domains of hubs whose rooms get the
+//! full ratchet tree with every Commit, for a hub that does not rebuild the
+//! tree from the Commits it sees. Others get `distributionService`, the
+//! default (`mimid_agent_core::AgentConfig::full_tree_hubs`).
 //!
 //! `token_file` holds the user's bearer token at `server_url`, as issued by
 //! the server (`mimid admin ... token`); surrounding whitespace is ignored.
@@ -75,6 +81,10 @@ pub struct Config {
     /// with a request's `Origin`. Empty: no CORS headers at all.
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    /// Hub provider domains whose rooms get the full ratchet tree with
+    /// every Commit (`mimid_agent_core::AgentConfig::full_tree_hubs`).
+    #[serde(default)]
+    pub full_tree_hubs: Vec<String>,
 }
 
 /// Which room invites the agent joins: [`InvitePolicy`] in the file.
@@ -271,7 +281,17 @@ mod tests {
             assert_eq!(config.sync_interval_ms, DEFAULT_SYNC_INTERVAL_MS);
             assert_eq!(config.key_packages, DEFAULT_KEY_PACKAGES);
             assert_eq!(config.invites, Invites::FromAllowed);
+            assert!(
+                config.full_tree_hubs.is_empty(),
+                "distributionService by default"
+            );
         }
+        let config = Config::parse(&format!(
+            "{}\nfull_tree_hubs = [\"mimi.hub.example\"]",
+            config_with_listen("127.0.0.1:0")
+        ))
+        .unwrap();
+        assert_eq!(config.full_tree_hubs, ["mimi.hub.example"]);
     }
 
     #[test]

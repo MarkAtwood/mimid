@@ -102,6 +102,7 @@ impl Daemon {
             token: server_token,
             user_uri: config.user_uri.clone(),
             state_dir: config.state_dir.clone(),
+            full_tree_hubs: config.full_tree_hubs.clone(),
         })
         .await?;
         top_up_key_packages(&mut agent, config.key_packages).await;
