@@ -777,8 +777,9 @@ impl Agent {
     /// encrypted under its own key ([`crate::asset::seal`]), uploaded to
     /// this user's server, and sent as an ExternalPart with disposition
     /// `attachment`; the text and the attachments go in a `processAll`
-    /// MultiPart (mimi-content-10 §4.5). Without attachments this is
-    /// [`Agent::send_text`]; empty text is left out.
+    /// MultiPart (mimi-content-10 §4.5), or one attachment without text on
+    /// its own. Without attachments this is [`Agent::send_text`]; empty
+    /// text is left out.
     ///
     /// # Errors
     ///
@@ -834,13 +835,19 @@ impl Agent {
                 room_uri: Some(room.to_owned()),
                 other: BTreeMap::new(),
             },
-            nested_part: NestedPart {
-                disposition: Disposition::RENDER,
-                language: String::new(),
-                part: Part::Multi {
-                    part_semantics: PartSemantics::ProcessAll,
-                    parts,
-                },
+            // A MultiPart has at least two parts (mimi-content-10 §4.5), so
+            // one attachment without text is sent on its own.
+            nested_part: if parts.len() == 1 {
+                parts.remove(0)
+            } else {
+                NestedPart {
+                    disposition: Disposition::RENDER,
+                    language: String::new(),
+                    part: Part::Multi {
+                        part_semantics: PartSemantics::ProcessAll,
+                        parts,
+                    },
+                }
             },
         };
         self.send_content(room, &content).await
@@ -1043,7 +1050,7 @@ impl Agent {
     /// new ones. They are saved in the state directory before they are
     /// returned and stay there until [`Agent::acknowledge`] with the
     /// [`Receipt`], so a caller that crashes before storing them gets them
-    /// again (see [`crate::journal`]); the caller must tolerate an event it
+    /// again (the module `journal`); the caller must tolerate an event it
     /// has seen. [`Agent::poll`] acknowledges at once.
     ///
     /// # Errors

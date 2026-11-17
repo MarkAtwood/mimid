@@ -642,15 +642,14 @@ fn abc_attachment(blob_id: &str, size: u64, sha256: &str) -> Value {
     })
 }
 
-/// A Message/set create with attachments, against a mimid server that does
-/// not store them (this one's Session has no `assetUrl`; bead
-/// mimid-1wgh.14): every refusal is a SetError and stores nothing.
+/// Message/set creates with attachments (bead mimid-1wgh.14): a correct
+/// one is sent; each wrong one is a SetError and stores nothing.
 ///
 /// Oracles: the blob of "abc" has the FIPS 180-2 digest, so crate-jmap's
 /// comparison with `attachment_blob` passes for it and fails for another
-/// digest or size; `Message/query` finds no Message after the refusals.
+/// digest or size; `Message/query` finds only the correct Message.
 #[tokio::test]
-async fn attachments_are_refused_cleanly_without_server_support() {
+async fn attachments_are_checked_against_the_blob_store_and_limits() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
     let alice = Client::open(&server, ALICE, "alice", dir.path(), false, true).await;
@@ -667,20 +666,18 @@ async fn attachments_are_refused_cleanly_without_server_support() {
     let blob_id = blob.id.as_ref().to_owned();
     let message = |attachments: Vec<Value>| json!({"chatId": chat, "body": "a file", "sentAt": SENT_AT, "attachments": attachments});
 
-    // A correct Attachment passes the JMAP layer and reaches the agent,
-    // whose upload the server cannot take.
-    let refused = alice
-        .refused_create(
+    // A correct Attachment passes the JMAP layer, reaches the agent, and
+    // is sealed, uploaded to the server and sent.
+    let created = alice
+        .create(
             "Message",
             message(vec![abc_attachment(&blob_id, 3, SHA256_ABC)]),
         )
         .await;
-    assert_eq!(refused["type"], json!("invalidProperties"), "{refused}");
-    assert!(
-        refused["description"]
-            .as_str()
-            .is_some_and(|d| d.contains("does not store attachments")),
-        "{refused}"
+    assert_eq!(
+        created["attachments"][0]["blobId"],
+        json!(blob_id),
+        "{created}"
     );
 
     // The JMAP layer's checks against the blob store and the limits.
@@ -721,7 +718,8 @@ async fn attachments_are_refused_cleanly_without_server_support() {
         let refused = alice.refused_create("Message", message(attachments)).await;
         assert_eq!(refused["type"], json!(kind), "{refused}");
     }
-    assert!(alice.messages(&chat).await.is_empty());
+    // Only the correct create above stored a Message.
+    assert_eq!(alice.messages(&chat).await.len(), 1);
 
     // Without a blob store the account allows no attachments at all.
     let bob = Client::new(&server, BOB, "bob", dir.path()).await;
@@ -751,7 +749,7 @@ async fn attachments_are_refused_cleanly_without_server_support() {
             json!({"chatId": chat, "body": "text", "sentAt": SENT_AT}),
         )
         .await;
-    assert_eq!(alice.messages(&chat).await.len(), 1);
+    assert_eq!(alice.messages(&chat).await.len(), 2);
 }
 
 /// SHA-256 of `bytes` in lowercase hex. The test using it first checks

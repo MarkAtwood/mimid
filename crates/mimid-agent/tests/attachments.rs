@@ -269,8 +269,9 @@ async fn upload_and_download_through_the_daemon() {
     // largest.
     assert_eq!(std::fs::read_dir(&blobs).unwrap().count(), 3);
 
-    // An uploaded blob passes the JMAP layer's checks; this server cannot
-    // take the sealed upload, so the create is a SetError, not a Message.
+    // A Message/set create with the uploaded blob is sealed, uploaded to
+    // the server and sent; the stored Message keeps the client's
+    // Attachment as given.
     let created = client
         .create(
             "Chat",
@@ -290,12 +291,23 @@ async fn upload_and_download_through_the_daemon() {
             }}}),
         )
         .await;
+    let attachment = &answer["created"]["m"]["attachments"][0];
     assert_eq!(
-        answer["notCreated"]["m"]["type"],
-        json!("invalidProperties"),
+        (
+            &attachment["blobId"],
+            &attachment["sha256"],
+            &attachment["size"],
+            &attachment["filename"]
+        ),
+        (
+            &json!(format!("s{SHA256_ABC}")),
+            &json!(SHA256_ABC),
+            &json!(3),
+            &json!("abc.txt")
+        ),
         "{answer}"
     );
-    assert!(client.messages(&chat_id).await.is_empty());
+    assert_eq!(client.messages(&chat_id).await.len(), 1);
     daemon.stop().await;
 }
 
@@ -303,7 +315,6 @@ async fn upload_and_download_through_the_daemon() {
 /// fetches, decrypts and stores it, and his client downloads exactly the
 /// octets alice uploaded.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "needs mimid-server blob support (branch attach-server)"]
 async fn a_file_sent_by_one_daemon_arrives_at_another() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
