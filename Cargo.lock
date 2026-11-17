@@ -54,15 +54,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
-name = "android_system_properties"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae221649c9976a6f6c56ae1facf410f3ddb33cc661c4b7b61020a912d4237fbc"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -331,17 +322,6 @@ dependencies = [
  "cipher",
  "poly1305",
  "zeroize",
-]
-
-[[package]]
-name = "chrono"
-version = "0.4.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
-dependencies = [
- "iana-time-zone",
- "num-traits",
- "windows-link",
 ]
 
 [[package]]
@@ -1584,34 +1564,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "iana-time-zone"
-version = "0.1.65"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e31bc9ad994ba00e440a8aa5c9ef0ec67d5cb5e5cb0cc7f8b744a35b389cc470"
-dependencies = [
- "android_system_properties",
- "core-foundation-sys",
- "iana-time-zone-haiku",
- "js-sys",
- "log",
- "wasm-bindgen",
- "windows-core",
-]
-
-[[package]]
-name = "iana-time-zone-haiku"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "icu_casemap"
-version = "2.4.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a6f143e9349267b80ae071a6ec25d4797c45756d8b2671a8b24b7b25b81ab94"
+checksum = "070f98b5b82798fcb93654bf96ed9f40064fc44c86f51a09ea711092cd5cc5be"
 dependencies = [
  "icu_casemap_data",
  "icu_collections",
@@ -1625,15 +1581,15 @@ dependencies = [
 
 [[package]]
 name = "icu_casemap_data"
-version = "2.4.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71a5c321208537711696af55bc2ab5dad939e4f6e0aef92dd6a2555deceedf3a"
+checksum = "846b0857ca091204be3c874bc93daaf89d4777e8d2d20b0d3ffe8f671d98014b"
 
 [[package]]
 name = "icu_collections"
-version = "2.4.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe090a42a0d3140fed8c63263ed1fecc02422cb2f4bfe55cd8de2de1b8e105dd"
+checksum = "2984d1cd16c883d7935b9e07e44071dca8d917fd52ecc02c04d5fa0b5a3f191c"
 dependencies = [
  "displaydoc",
  "potential_utf",
@@ -1641,6 +1597,21 @@ dependencies = [
  "utf8_iter",
  "yoke",
  "zerofrom",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_locale"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5a396343c7208121dc86e35623d3dfe19814a7613cfd14964994cdc9c9a2e26"
+dependencies = [
+ "icu_collections",
+ "icu_locale_core",
+ "icu_locale_data",
+ "icu_provider",
+ "potential_utf",
+ "tinystr",
  "zerovec",
 ]
 
@@ -1659,10 +1630,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "icu_normalizer"
-version = "2.4.0"
+name = "icu_locale_data"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "404a3b8c486f205c87fe7f23ab6894d84a4ad76d6e4671ae1981ba7def87c599"
+checksum = "d5fdcc9ac77c6d74ff5cf6e65ef3181d6af32003b16fce3a77fb451d2f695993"
+
+[[package]]
+name = "icu_normalizer"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c56e5ee99d6e3d33bd91c5d85458b6005a22140021cc324cea84dd0e72cff3b4"
 dependencies = [
  "icu_collections",
  "icu_normalizer_data",
@@ -1674,17 +1651,16 @@ dependencies = [
 
 [[package]]
 name = "icu_normalizer_data"
-version = "2.4.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20f0088bfb7441f7a37fa0c9e20cb1e9cba1cac6b9ce8cd2a6dc44294f8e8cbc"
+checksum = "da3be0ae77ea334f4da67c12f149704f19f81d1adf7c51cf482943e84a2bad38"
 
 [[package]]
 name = "icu_properties"
-version = "2.4.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ea83d991c56158f7cf898bf86436c1dfe7c07ee82fe88951f2695c9f37a379f"
+checksum = "bee3b67d0ea5c2cca5003417989af8996f8604e34fb9ddf96208a033901e70de"
 dependencies = [
- "displaydoc",
  "icu_collections",
  "icu_locale_core",
  "icu_properties_data",
@@ -1695,9 +1671,9 @@ dependencies = [
 
 [[package]]
 name = "icu_properties_data"
-version = "2.4.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b98f29af82d02b163fe50161388350e743bb3107cc8e8c2f7314cb505faddfcf"
+checksum = "8e2bbb201e0c04f7b4b3e14382af113e17ba4f63e2c9d2ee626b720cbce54a14"
 
 [[package]]
 name = "icu_provider"
@@ -1715,6 +1691,27 @@ dependencies = [
  "zerotrie",
  "zerovec",
 ]
+
+[[package]]
+name = "icu_segmenter"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0794db0b1a86193ac9c48768d0e6c52c54448e0870ad87907d456ee0dac964"
+dependencies = [
+ "icu_collections",
+ "icu_locale",
+ "icu_provider",
+ "icu_segmenter_data",
+ "potential_utf",
+ "utf8_iter",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_segmenter_data"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4a2c462a4d927d512f5f882a033ddd62f33a05bb9f230d98f736ac3dc85938f"
 
 [[package]]
 name = "ident_case"
@@ -1820,13 +1817,15 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jmap-base-client"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures",
  "http",
  "httpdate",
+ "idna",
+ "iri-string",
  "jmap-cid-types",
  "jmap-did-types",
  "jmap-types",
@@ -1844,12 +1843,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "jmap-blob-types"
+version = "0.5.0"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
+dependencies = [
+ "base64 0.22.1",
+ "jmap-types",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "jmap-chat-client"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
- "chrono",
  "jmap-base-client",
+ "jmap-blob-types",
  "jmap-chat-types",
  "jmap-types",
  "serde",
@@ -1860,7 +1872,7 @@ dependencies = [
 [[package]]
 name = "jmap-chat-mimi-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
  "jmap-types",
  "serde",
@@ -1870,7 +1882,7 @@ dependencies = [
 [[package]]
 name = "jmap-chat-server"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -1890,7 +1902,7 @@ dependencies = [
 [[package]]
 name = "jmap-chat-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
  "jmap-cid-types",
  "jmap-did-types",
@@ -1903,7 +1915,7 @@ dependencies = [
 [[package]]
 name = "jmap-cid-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -1913,7 +1925,7 @@ dependencies = [
 [[package]]
 name = "jmap-did-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 3.0.0",
@@ -1929,7 +1941,7 @@ dependencies = [
 [[package]]
 name = "jmap-metadata-server"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
  "icu_casemap",
  "icu_normalizer",
@@ -1941,8 +1953,18 @@ dependencies = [
 [[package]]
 name = "jmap-metadata-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jmap-object-history-types"
+version = "0.5.0"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
+dependencies = [
+ "jmap-types",
  "serde",
  "serde_json",
 ]
@@ -1950,7 +1972,7 @@ dependencies = [
 [[package]]
 name = "jmap-peer-auth"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 3.0.0",
@@ -1968,10 +1990,11 @@ dependencies = [
 [[package]]
 name = "jmap-server"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
  "http",
  "jmap-metadata-types",
+ "jmap-object-history-types",
  "jmap-types",
  "serde",
  "serde_json",
@@ -1983,8 +2006,10 @@ dependencies = [
 [[package]]
 name = "jmap-types"
 version = "0.5.0"
-source = "git+https://github.com/MarkAtwood/crate-jmap?rev=573c573f0598aa7519b6df4b08b92c0de2f0f178#573c573f0598aa7519b6df4b08b92c0de2f0f178"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=83a08405c641138ffe9e8e99094ab602e9a26256#83a08405c641138ffe9e8e99094ab602e9a26256"
 dependencies = [
+ "icu_segmenter",
+ "iri-string",
  "serde",
  "serde_json",
  "thiserror",
@@ -5352,41 +5377,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
-dependencies = [
- "windows-implement",
- "windows-interface",
- "windows-link",
- "windows-result",
- "windows-strings",
-]
-
-[[package]]
-name = "windows-implement"
-version = "0.60.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "windows-interface"
-version = "0.59.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
