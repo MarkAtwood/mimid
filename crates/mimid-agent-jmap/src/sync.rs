@@ -3,19 +3,31 @@
 use jmap_chat_server::ChatBackend;
 use jmap_chat_server::memory::MemoryError;
 use jmap_chat_types::{
-    BodyType, Chat, ChatContact, ChatKind, ChatMember, ChatMemberRole, DeliveryState, Message,
+    Attachment, BodyType, Chat, ChatContact, ChatKind, ChatMember, ChatMemberRole, DeliveryState,
+    Message,
 };
 use jmap_server::{BackendSetError, Id, JmapBackend, now_utc_string};
-use mimi_content::Part;
+use mimi_content::{ExternalPart, Part};
 use mimid_agent_core::{Agent, AgentError, Event, ReceivedMessage, RoomStatus};
 use serde_json::json;
 
-use crate::backend::{AgentChat, InvitePolicy, ROOM_ID};
+use crate::backend::{AgentChat, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, ROOM_ID};
+use crate::blobs::{hex, is_media_type};
 use crate::convert::{message_ref, sender_msg_id, topic_id, utc_date};
 
 /// The creation id given to the store for objects sync makes; no client
 /// sees it.
 const SYNC_CREATE_ID: &str = "sync";
+
+/// The longest file name kept for a received attachment, in characters;
+/// a longer one is cut. INVENTED, NOT FROM SPEC.
+pub(crate) const MAX_FILENAME_CHARS: usize = 255;
+
+/// The file name of a received attachment that has none.
+const FALLBACK_FILENAME: &str = "attachment";
+
+/// The media type of a received attachment whose own is not one.
+const FALLBACK_CONTENT_TYPE: &str = "application/octet-stream";
 
 /// What one [`AgentChat::sync`] did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -27,9 +39,12 @@ pub struct SyncReport {
     pub joined: Vec<String>,
     /// Invites left pending by the invite policy, by number.
     pub pending_invites: Vec<u64>,
-    /// Received messages not stored, with why: not text, or an edit.
+    /// Received messages not stored, with why: neither text nor
+    /// attachments, or an edit.
     pub skipped: Vec<String>,
-    /// The agent's problems ([`Event::Problem`]), as text.
+    /// The agent's problems ([`Event::Problem`]), and received
+    /// attachments left out because they could not be fetched, opened or
+    /// stored, as text.
     pub problems: Vec<String>,
 }
 
@@ -350,12 +365,20 @@ impl AgentChat {
                 .push(format!("{}: an edit or retraction", received.room));
             return Ok(());
         }
-        let Some(text) = received.text.clone() else {
-            report
-                .skipped
-                .push(format!("{}: not a text message", received.room));
-            return Ok(());
+        let parts = received.attachments();
+        let text = match received.text.clone() {
+            Some(text) => text,
+            None if !parts.is_empty() => String::new(),
+            None => {
+                report
+                    .skipped
+                    .push(format!("{}: neither text nor attachments", received.room));
+                return Ok(());
+            }
         };
+        let attachments = self
+            .fetch_attachments(agent, &received.room, &parts, report)
+            .await;
         let body_type = match &content.nested_part.part {
             Part::Single { content_type, .. }
                 if content_type
@@ -390,6 +413,7 @@ impl AgentChat {
         );
         message.reply_to = reply_to;
         message.topic_id = topic_id(&content.topic_id);
+        message.attachments = attachments;
         let (id, _) = self
             .inner
             .create_object::<Message, _>(&(), &self.account, SYNC_CREATE_ID, move |id| {
@@ -400,6 +424,102 @@ impl AgentChat {
         self.link_message(&chat, reference, &id);
         report.messages += 1;
         Ok(())
+    }
+
+    /// Fetches, opens and stores the attachments `parts` of a message in
+    /// `room`, and returns them as JMAP Attachments: the part's file name
+    /// (made safe, or [`FALLBACK_FILENAME`]) and media type (or
+    /// [`FALLBACK_CONTENT_TYPE`]), the plaintext's size and SHA-256. One
+    /// that fails is reported in `report.problems` and left out, as are
+    /// those past [`MAX_ATTACHMENTS_PER_MESSAGE`] and all of them without a
+    /// blob store.
+    async fn fetch_attachments(
+        &self,
+        // Not &Agent: that is not Send across an await (see
+        // the_sync_future_is_send).
+        agent: &mut Agent,
+        room: &str,
+        parts: &[&ExternalPart],
+        report: &mut SyncReport,
+    ) -> Vec<Attachment> {
+        if parts.is_empty() {
+            return Vec::new();
+        }
+        let Some(blobs) = &self.blobs else {
+            report.problems.push(format!(
+                "{room}: {} attachments left out: no blob store",
+                parts.len()
+            ));
+            return Vec::new();
+        };
+        if parts.len() > MAX_ATTACHMENTS_PER_MESSAGE {
+            report.problems.push(format!(
+                "{room}: {} attachments past the first {MAX_ATTACHMENTS_PER_MESSAGE} left out",
+                parts.len() - MAX_ATTACHMENTS_PER_MESSAGE
+            ));
+        }
+        let mut attachments = Vec::with_capacity(parts.len().min(MAX_ATTACHMENTS_PER_MESSAGE));
+        // Problems name an attachment by its position, not its file name:
+        // the daemon logs them, and a file name is message content.
+        for (number, part) in (1..).zip(parts.iter().take(MAX_ATTACHMENTS_PER_MESSAGE)) {
+            let filename = safe_filename(&part.filename);
+            let stored = match agent.fetch_attachment(room, part).await {
+                Ok(plaintext) => blobs.put(&plaintext).map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            };
+            let info = match stored {
+                Ok(info) => info,
+                Err(e) => {
+                    report
+                        .problems
+                        .push(format!("{room}: attachment {number} left out: {e}"));
+                    continue;
+                }
+            };
+            let content_type = if is_media_type(&part.content_type) {
+                part.content_type.as_str()
+            } else {
+                FALLBACK_CONTENT_TYPE
+            };
+            // Attachment is #[non_exhaustive]: built through serde
+            // (AGENTS.md).
+            match serde_json::from_value(json!({
+                "blobId": info.id,
+                "filename": filename,
+                "contentType": content_type,
+                "size": info.size,
+                "sha256": hex(&info.sha256),
+            })) {
+                Ok(attachment) => attachments.push(attachment),
+                Err(e) => report
+                    .problems
+                    .push(format!("{room}: attachment {number} left out: {e}")),
+            }
+        }
+        attachments
+    }
+}
+
+/// A received attachment's file name as an Attachment may carry it
+/// (draft-atwood-jmap-chat-00 §Attachment: no `/`, `\` or null): those
+/// and other control characters become `_`, it is cut to
+/// [`MAX_FILENAME_CHARS`], and an empty one is [`FALLBACK_FILENAME`].
+pub(crate) fn safe_filename(name: &str) -> String {
+    let safe: String = name
+        .chars()
+        .take(MAX_FILENAME_CHARS)
+        .map(|c| {
+            if c == '/' || c == '\\' || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    if safe.trim().is_empty() {
+        FALLBACK_FILENAME.to_owned()
+    } else {
+        safe
     }
 }
 
@@ -412,6 +532,20 @@ mod tests {
     /// A daemon runs `sync` in a spawned task, which needs a `Send` future:
     /// holding `&Agent` across an await does not give one, since `Agent`
     /// (its SQLite connection) is not `Sync`. A compile-time check.
+    #[test]
+    fn received_file_names_are_made_safe() {
+        assert_eq!(safe_filename("report.pdf"), "report.pdf");
+        assert_eq!(safe_filename("../../etc/passwd"), ".._.._etc_passwd");
+        assert_eq!(safe_filename("a\\b\0c\nd"), "a_b_c_d");
+        assert_eq!(safe_filename(""), FALLBACK_FILENAME);
+        assert_eq!(safe_filename("   "), FALLBACK_FILENAME);
+        // Bidi and zero-width characters are the client's to render
+        // safely; they are not control characters (Cc) and stay.
+        assert_eq!(safe_filename("a\u{202e}b\u{200b}"), "a\u{202e}b\u{200b}");
+        let long = "\u{e9}".repeat(MAX_FILENAME_CHARS + 10);
+        assert_eq!(safe_filename(&long).chars().count(), MAX_FILENAME_CHARS);
+    }
+
     #[test]
     fn the_sync_future_is_send() {
         fn sync_of(

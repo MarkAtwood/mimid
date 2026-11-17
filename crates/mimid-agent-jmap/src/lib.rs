@@ -29,7 +29,20 @@
 //! - **Message**: `Message/set` create sends `body` as one `text/plain`
 //!   part. Received messages with a `text/*` single part are stored with
 //!   `bodyType` `text/markdown` for `text/markdown` and `text/plain`
-//!   otherwise. `senderMsgId` is the ULID of the hub's acceptance time and
+//!   otherwise.
+//! - **Attachments** (bead mimid-1wgh.14), with a blob store
+//!   ([`AgentChat::with_blobs`], a [`BlobStore`] of plaintext files): a
+//!   created Message's attachments are read from the store, and
+//!   `Agent::send_message` encrypts each, uploads it to the user's mimid
+//!   server and sends it as an ExternalPart (mimi-content-10 §4.5) beside
+//!   the text; the stored Message keeps the client's Attachments. A
+//!   received message's ExternalParts are fetched through the user's
+//!   server and decrypted (`Agent::fetch_attachment`), stored, and listed
+//!   in `attachments` with the part's file name and media type and the
+//!   plaintext's `size` and `sha256`; a message with attachments and no
+//!   text is stored with an empty `body`. The account allows
+//!   [`MAX_ATTACHMENTS_PER_MESSAGE`] attachments of at most
+//!   [`MAX_ATTACHMENT_LEN`] octets each, and none without a store. `senderMsgId` is the ULID of the hub's acceptance time and
 //!   the message ID (§Message Identifiers), so sender and receivers agree;
 //!   `sentAt` is the hub's acceptance time; `senderId` follows §Senders.
 //!   `inReplyTo` resolves to `replyTo` within the Chat; `topicId` follows
@@ -53,16 +66,30 @@
 //!   member other than the owner is `forbidden`: the agent has no remove.
 //!   MIMI roles are not mapped.
 //! - The account's limits are what the agent takes: `text/plain` only,
-//!   at most `MAX_TEXT_LEN` octets, no attachments, no threads. A
-//!   `bodyType` other than `text/plain` is `invalidProperties` and a longer
-//!   body `tooLarge`, from crate-jmap's checks against those limits.
-//! - `Message/set` create with `attachments`, `mentions`, `broadcastMentions`, `replyTo`,
+//!   at most `MAX_TEXT_LEN` octets, no threads, and attachments only with
+//!   a blob store. A `bodyType` other than `text/plain` is
+//!   `invalidProperties` and a longer body `tooLarge`, from crate-jmap's
+//!   checks against those limits.
+//! - `Message/set` create with `mentions`, `broadcastMentions`, `replyTo`,
 //!   `threadRootId`, `topicId`, `subject`, or expiry or burn settings, is
-//!   `forbidden`, naming the property. Updating a Message other than its
+//!   `forbidden`, naming the property.
+//! - Sending attachments needs a mimid server that stores them (its
+//!   Session's mimi capability has `assetUrl`); otherwise a create with
+//!   attachments is refused with the agent's error.
+//! - A received attachment that cannot be fetched, opened or stored is
+//!   left out of its Message and reported in [`SyncReport::problems`]; the
+//!   message is acknowledged anyway, so a transient failure (the server
+//!   or the peer's hub unreachable) loses that attachment for good. So
+//!   are attachments past [`MAX_ATTACHMENTS_PER_MESSAGE`], and all of them
+//!   without a blob store. A received attachment's media type is not
+//!   checked against its content, and an invalid one becomes
+//!   `application/octet-stream`.
+//! - Blobs are never deleted (see [`BlobStore`]), and attachments are
+//!   fetched one at a time while `sync` holds the agent. Updating a Message other than its
 //!   `readAt` or `privateMetadata` (edits, `deletedForAll`, reactions) is
 //!   `forbidden`.
-//! - Received edits and retractions (`replaces`, §Edits) and non-text
-//!   messages are not stored; [`SyncReport::skipped`] lists them. Message
+//! - Received edits and retractions (`replaces`, §Edits) and messages with
+//!   neither text nor attachments are not stored; [`SyncReport::skipped`] lists them. Message
 //!   status reports (§Message Status) are neither sent nor read, and typing
 //!   is not sent.
 //! - Invites the policy refuses stay pending in the agent; JMAP Chat has
@@ -77,10 +104,12 @@
 #![forbid(unsafe_code)]
 
 mod backend;
+mod blobs;
 mod convert;
 mod persist;
 mod sync;
 
-pub use backend::{AgentChat, InvitePolicy, Options};
+pub use backend::{AgentChat, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, Options};
+pub use blobs::{BlobError, BlobInfo, BlobStore, MAX_ATTACHMENT_LEN, is_media_type};
 pub use persist::PersistError;
 pub use sync::{SyncError, SyncReport};

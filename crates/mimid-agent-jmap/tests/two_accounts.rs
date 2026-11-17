@@ -23,8 +23,12 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use axum::extract::Request;
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 
 use jmap_server::{Dispatcher, Id, JmapRequest, State};
 use mimid_agent_core::{Agent, AgentConfig, RoomStatus};
@@ -56,6 +60,75 @@ struct Server {
 /// Starts a.example's stack as `main.rs` wires it, as
 /// mimid-agent-core's two_agents test does, with accounts for `users`.
 async fn server(dir: &Path, users: &[&'static str]) -> Server {
+    server_with(dir, users, None).await
+}
+
+/// A stand-in for mimid-server's attachment routes, which are being built
+/// on another branch (bead mimid-1wgh.14), as mimid-agent-core uses them:
+/// `POST /jmap/upload/{accountId}/` keeps the octets and answers a
+/// `blobId`; the Session's mimi account capability gets `assetUrl`
+/// `{base}/assets/{blobId}`; `GET /jmap/asset/{accountId}?room=&url=`
+/// answers the octets stored for the URL's blobId. No authorization: the
+/// test's server is reached only by its agents.
+#[derive(Clone, Default)]
+struct Assets {
+    /// blobId to the stored (sealed) octets.
+    stored: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+}
+
+impl Assets {
+    /// The octets stored under `blob_id`, replaced by `change` of them.
+    fn tamper(&self, blob_id: &str, change: impl FnOnce(&mut Vec<u8>)) {
+        change(self.stored.lock().unwrap().get_mut(blob_id).unwrap());
+    }
+
+    fn ids(&self) -> Vec<String> {
+        self.stored.lock().unwrap().keys().cloned().collect()
+    }
+}
+
+async fn assets_stub(
+    axum::extract::State((assets, base)): axum::extract::State<(Assets, String)>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let path = request.uri().path().to_owned();
+    if request.method() == axum::http::Method::POST && path.starts_with("/jmap/upload/") {
+        let bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let mut stored = assets.stored.lock().unwrap();
+        let blob_id = format!("blob{}", stored.len());
+        stored.insert(blob_id.clone(), bytes.to_vec());
+        return axum::Json(json!({"blobId": blob_id, "size": bytes.len()})).into_response();
+    }
+    if path.starts_with("/jmap/asset/") {
+        let query: BTreeMap<String, String> =
+            axum::extract::Query::try_from_uri(request.uri()).unwrap().0;
+        let url = &query["url"];
+        let blob_id = url.strip_prefix(&format!("{base}/assets/")).unwrap();
+        return match assets.stored.lock().unwrap().get(blob_id) {
+            Some(bytes) => bytes.clone().into_response(),
+            None => axum::http::StatusCode::NOT_FOUND.into_response(),
+        };
+    }
+    let response = next.run(request).await;
+    if path != "/.well-known/jmap" {
+        return response;
+    }
+    let (mut parts, body) = response.into_parts();
+    let mut session: Value =
+        serde_json::from_slice(&axum::body::to_bytes(body, usize::MAX).await.unwrap()).unwrap();
+    for account in session["accounts"].as_object_mut().unwrap().values_mut() {
+        account["accountCapabilities"]["urn:ietf:params:jmap:chat:mimi"]["assetUrl"] =
+            json!(format!("{base}/assets/{{blobId}}"));
+    }
+    parts.headers.remove(axum::http::header::CONTENT_LENGTH);
+    Response::from_parts(parts, axum::body::Body::from(session.to_string()))
+}
+
+/// As [`server`], with [`Assets`] in front of it when `assets` is given.
+async fn server_with(dir: &Path, users: &[&'static str], assets: Option<Assets>) -> Server {
     let domain = Domain::try_from("a.example".to_owned()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_text = format!("http://{}", listener.local_addr().unwrap());
@@ -108,7 +181,15 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
-    let app = router(directory(&base), hub, follower).merge(jmap);
+    let mut app = router(directory(&base), hub, follower).merge(jmap);
+    if let Some(assets) = assets {
+        app = axum::Router::new()
+            .fallback_service(app)
+            .layer(middleware::from_fn_with_state(
+                (assets, base_text.clone()),
+                assets_stub,
+            ));
+    }
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
@@ -125,17 +206,19 @@ struct Client {
 
 impl Client {
     async fn new(server: &Server, user: &'static str, account: &str, dir: &Path) -> Self {
-        Self::open(server, user, account, dir, false).await
+        Self::open(server, user, account, dir, false, false).await
     }
 
     /// As [`Client::new`]; with `persisted`, the account's objects are kept
-    /// in `<dir>/<user>-chat.json` (bead mimid-1wgh.13.12).
+    /// in `<dir>/<user>-chat.json` (bead mimid-1wgh.13.12), and with
+    /// `blobs`, attachments in `<dir>/<user>-blobs` (bead mimid-1wgh.14).
     async fn open(
         server: &Server,
         user: &'static str,
         account: &str,
         dir: &Path,
         persisted: bool,
+        blobs: bool,
     ) -> Self {
         let mut agent = Agent::open(AgentConfig {
             server_url: server.base.clone(),
@@ -152,6 +235,9 @@ impl Client {
             chat = chat
                 .persisted_at(dir.join(format!("{name}-chat.json")))
                 .unwrap();
+        }
+        if blobs {
+            chat = chat.with_blobs(dir.join(format!("{name}-blobs"))).unwrap();
         }
         let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();
@@ -483,7 +569,7 @@ async fn a_restart_keeps_chats_and_messages() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
     let alice = Client::new(&server, ALICE, "alice", dir.path()).await;
-    let bob = Client::open(&server, BOB, "bob", dir.path(), true).await;
+    let bob = Client::open(&server, BOB, "bob", dir.path(), true, false).await;
     bob.chat.agent().lock().await.allow(ALICE).await.unwrap();
 
     let bob_contact = alice.create("ChatContact", json!({"identity": BOB})).await["id"]
@@ -516,7 +602,7 @@ async fn a_restart_keeps_chats_and_messages() {
 
     // Restart: everything of bob's is dropped, then opened from disk.
     drop(bob);
-    let bob = Client::open(&server, BOB, "bob", dir.path(), true).await;
+    let bob = Client::open(&server, BOB, "bob", dir.path(), true, false).await;
     assert_eq!(bob.get("Chat", None).await, chats);
     assert_eq!(bob.get("ChatContact", None).await, contacts);
     assert_eq!(bob.messages(&chat_b).await, before);
@@ -540,4 +626,259 @@ async fn a_restart_keeps_chats_and_messages() {
         let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
+}
+
+/// SHA-256("abc"), FIPS 180-2 Appendix B.1.
+const SHA256_ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+/// An Attachment of the blob of "abc" with `size` and `sha256`.
+fn abc_attachment(blob_id: &str, size: u64, sha256: &str) -> Value {
+    json!({
+        "blobId": blob_id,
+        "filename": "abc.txt",
+        "contentType": "text/plain",
+        "size": size,
+        "sha256": sha256,
+    })
+}
+
+/// A Message/set create with attachments, against a mimid server that does
+/// not store them (this one's Session has no `assetUrl`; bead
+/// mimid-1wgh.14): every refusal is a SetError and stores nothing.
+///
+/// Oracles: the blob of "abc" has the FIPS 180-2 digest, so crate-jmap's
+/// comparison with `attachment_blob` passes for it and fails for another
+/// digest or size; `Message/query` finds no Message after the refusals.
+#[tokio::test]
+async fn attachments_are_refused_cleanly_without_server_support() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Client::open(&server, ALICE, "alice", dir.path(), false, true).await;
+    let chat = alice
+        .create(
+            "Chat",
+            json!({"kind": "group", "name": "files", "memberIds": []}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let blob = alice.chat.blobs().unwrap().put(b"abc").unwrap();
+    let blob_id = blob.id.as_ref().to_owned();
+    let message = |attachments: Vec<Value>| json!({"chatId": chat, "body": "a file", "sentAt": SENT_AT, "attachments": attachments});
+
+    // A correct Attachment passes the JMAP layer and reaches the agent,
+    // whose upload the server cannot take.
+    let refused = alice
+        .refused_create(
+            "Message",
+            message(vec![abc_attachment(&blob_id, 3, SHA256_ABC)]),
+        )
+        .await;
+    assert_eq!(refused["type"], json!("invalidProperties"), "{refused}");
+    assert!(
+        refused["description"]
+            .as_str()
+            .is_some_and(|d| d.contains("does not store attachments")),
+        "{refused}"
+    );
+
+    // The JMAP layer's checks against the blob store and the limits.
+    let wrong_digest = format!("{}e", &SHA256_ABC[..63]);
+    for (attachments, kind) in [
+        (
+            vec![abc_attachment(&blob_id, 4, SHA256_ABC)],
+            "invalidProperties",
+        ),
+        (
+            vec![abc_attachment(&blob_id, 3, &wrong_digest)],
+            "invalidProperties",
+        ),
+        (
+            vec![abc_attachment(
+                &format!("s{}", "0".repeat(64)),
+                3,
+                SHA256_ABC,
+            )],
+            "invalidProperties",
+        ),
+        (
+            vec![
+                abc_attachment(&blob_id, 3, SHA256_ABC);
+                mimid_agent_jmap::MAX_ATTACHMENTS_PER_MESSAGE + 1
+            ],
+            "tooLarge",
+        ),
+        (
+            vec![abc_attachment(
+                &blob_id,
+                mimid_agent_jmap::MAX_ATTACHMENT_LEN as u64 + 1,
+                SHA256_ABC,
+            )],
+            "tooLarge",
+        ),
+    ] {
+        let refused = alice.refused_create("Message", message(attachments)).await;
+        assert_eq!(refused["type"], json!(kind), "{refused}");
+    }
+    assert!(alice.messages(&chat).await.is_empty());
+
+    // Without a blob store the account allows no attachments at all.
+    let bob = Client::new(&server, BOB, "bob", dir.path()).await;
+    let bobs = bob
+        .create(
+            "Chat",
+            json!({"kind": "group", "name": "none", "memberIds": []}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let refused = bob
+        .refused_create(
+            "Message",
+            json!({"chatId": bobs, "body": "x", "sentAt": SENT_AT,
+                   "attachments": [abc_attachment(&blob_id, 3, SHA256_ABC)]}),
+        )
+        .await;
+    assert_eq!(refused["type"], json!("tooLarge"), "{refused}");
+    assert!(bob.messages(&bobs).await.is_empty());
+
+    // Text still goes.
+    alice
+        .create(
+            "Message",
+            json!({"chatId": chat, "body": "text", "sentAt": SENT_AT}),
+        )
+        .await;
+    assert_eq!(alice.messages(&chat).await.len(), 1);
+}
+
+/// SHA-256 of `bytes` in lowercase hex. The test using it first checks
+/// it against FIPS 180-2's "abc" vector.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// A file alice sends arrives in bob's account (bead mimid-1wgh.14),
+/// through [`Assets`] standing in for the server's attachment routes.
+///
+/// Oracles: bob's blob holds exactly the octets alice's blob held; what
+/// the server stored is not them (it is sealed: 16 octets longer, the GCM
+/// tag); the received Attachment's `sha256` and `size` are those of the
+/// plaintext; altered stored octets fail mimi-content-10 §4.5's hash check
+/// and leave that attachment out with a problem reported.
+#[tokio::test]
+async fn attachments_travel_sealed_and_arrive_whole() {
+    assert_eq!(sha256_hex(b"abc"), SHA256_ABC);
+    let dir = tempfile::tempdir().unwrap();
+    let assets = Assets::default();
+    let server = server_with(dir.path(), &[ALICE, BOB], Some(assets.clone())).await;
+    let alice = Client::open(&server, ALICE, "alice", dir.path(), false, true).await;
+    let bob = Client::open(&server, BOB, "bob", dir.path(), false, true).await;
+    bob.chat.agent().lock().await.allow(ALICE).await.unwrap();
+    let bob_contact = alice.create("ChatContact", json!({"identity": BOB})).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let chat_a = alice
+        .create(
+            "Chat",
+            json!({"kind": "group", "name": "files", "memberIds": [bob_contact]}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    bob.sync_until(|r| async move { (!r.joined.is_empty()).then_some(r) })
+        .await;
+    let chat_b = bob.get("Chat", None).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let content: Vec<u8> = (0..=255u8).cycle().take(100_000).collect();
+    let blob = alice.chat.blobs().unwrap().put(&content).unwrap();
+    let attachment = json!({
+        "blobId": blob.id, "filename": "data.bin", "contentType": "application/x-test",
+        "size": content.len(), "sha256": sha256_hex(&content),
+    });
+    let sent = alice
+        .create(
+            "Message",
+            json!({"chatId": chat_a, "body": "a file", "sentAt": SENT_AT,
+                   "attachments": [attachment]}),
+        )
+        .await;
+    let mine = alice
+        .get("Message", Some(vec![sent["id"].as_str().unwrap()]))
+        .await;
+    assert_eq!(mine[0]["attachments"], json!([attachment]));
+    let uploaded = assets.ids();
+    assert_eq!(uploaded.len(), 1);
+    let sealed = assets.stored.lock().unwrap()[&uploaded[0]].clone();
+    assert_eq!(sealed.len(), content.len() + 16);
+    assert_ne!(&sealed[..content.len()], content.as_slice());
+
+    let got = bob.sync_until_messages(&chat_b, 1).await;
+    assert_eq!(got[0]["body"], json!("a file"));
+    assert_eq!(got[0]["senderMsgId"], mine[0]["senderMsgId"]);
+    let received = &got[0]["attachments"][0];
+    assert_eq!(received["filename"], json!("data.bin"));
+    assert_eq!(received["contentType"], json!("application/x-test"));
+    assert_eq!(received["size"], json!(content.len()));
+    assert_eq!(received["sha256"], json!(sha256_hex(&content)));
+    let kept = bob
+        .chat
+        .blobs()
+        .unwrap()
+        .get(received["blobId"].as_str().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept, content);
+
+    // Two attachments with no text; the stored octets of the second are
+    // altered before bob fetches them.
+    let other = alice.chat.blobs().unwrap().put(b"abc").unwrap();
+    let abc = abc_attachment(other.id.as_ref(), 3, SHA256_ABC);
+    alice
+        .create(
+            "Message",
+            json!({"chatId": chat_a, "body": "", "sentAt": SENT_AT,
+                   "attachments": [abc, attachment]}),
+        )
+        .await;
+    let ids = assets.ids();
+    assert_eq!(ids.len(), 3);
+    // Uploads are numbered in order: the third is the second attachment.
+    assets.tamper(&ids[2], |octets| octets[0] ^= 1);
+    let mut problems = Vec::new();
+    let mut got = Vec::new();
+    for _ in 0..100 {
+        problems.extend(bob.chat.sync().await.unwrap().problems);
+        got = bob.messages(&chat_b).await;
+        if got.len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(got.len(), 2, "{got:?}");
+    let only = got.iter().find(|m| m["body"] == json!("")).unwrap();
+    assert_eq!(
+        only["attachments"],
+        json!([{
+            "blobId": other.id, "filename": "abc.txt", "contentType": "text/plain",
+            "size": 3, "sha256": SHA256_ABC,
+        }])
+    );
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].contains("attachment 2 left out"),
+        "{problems:?}"
+    );
+    assert!(!problems[0].contains("data.bin"), "{problems:?}");
 }

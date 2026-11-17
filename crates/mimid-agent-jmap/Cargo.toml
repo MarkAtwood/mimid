@@ -19,6 +19,8 @@ jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "573c573
 jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "573c573f0598aa7519b6df4b08b92c0de2f0f178" }
 serde.workspace = true
 serde_json.workspace = true
+# Blob ids are the SHA-256 of the content.
+sha2.workspace = true
 thiserror.workspace = true
 # Only the async Mutex around the Agent.
 tokio = { version = "1.53.3", default-features = false, features = ["sync"] }

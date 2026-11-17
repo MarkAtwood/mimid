@@ -17,10 +17,13 @@ use jmap_server::{
     Dispatcher, GetObject, Id, JmapBackend, JmapObject, QueryChangesParams, QueryChangesResult,
     QueryObject, QueryParams, QueryResult, SetError, SetErrorType, SetObject, State,
 };
-use mimid_agent_core::{Agent, AgentError, HostOptions, MAX_TEXT_LEN, RoomStatus};
+use mimid_agent_core::{
+    Agent, AgentError, HostOptions, MAX_TEXT_LEN, OutgoingAttachment, RoomStatus,
+};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
+use crate::blobs::{BlobError, BlobStore, MAX_ATTACHMENT_LEN};
 use crate::convert::{MessageRef, message_ref, sender_msg_id, utc_date};
 
 /// The Chat property that names its MIMI room
@@ -30,6 +33,11 @@ pub(crate) const ROOM_ID: &str = "roomId";
 /// The id passed to a handler's `build` closure before the store mints the
 /// real one; the object is rebuilt under the real id before it is stored.
 const PLACEHOLDER_ID: &str = "pending";
+
+/// The most attachments one Message carries, sent or received; the
+/// account's `maxAttachmentsPerMessage` when it has a blob store.
+/// INVENTED, NOT FROM SPEC.
+pub const MAX_ATTACHMENTS_PER_MESSAGE: usize = 8;
 
 /// Which pending invites [`AgentChat::sync`] joins.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -89,6 +97,8 @@ pub struct AgentChat {
     pub(crate) store_path: Option<std::path::PathBuf>,
     /// One [`AgentChat::save`] at a time.
     pub(crate) save_lock: Mutex<()>,
+    /// The attachments' content ([`AgentChat::with_blobs`]).
+    pub(crate) blobs: Option<BlobStore>,
 }
 
 impl std::fmt::Debug for AgentChat {
@@ -115,7 +125,28 @@ impl AgentChat {
             options,
             store_path: None,
             save_lock: Mutex::new(()),
+            blobs: None,
         }
+    }
+
+    /// Keeps attachments in a [`BlobStore`] in `dir` (created 0700 if
+    /// missing): uploads, the attachments of Messages sent, and those
+    /// fetched for Messages received. Without it Messages carry no
+    /// attachments: the account's limits allow none and received ones are
+    /// left out.
+    ///
+    /// # Errors
+    ///
+    /// The [`BlobError`] of [`BlobStore::open`].
+    pub fn with_blobs(mut self, dir: impl Into<std::path::PathBuf>) -> Result<Self, BlobError> {
+        self.blobs = Some(BlobStore::open(dir)?);
+        Ok(self)
+    }
+
+    /// The blob store, if there is one: the daemon serves uploads and
+    /// downloads from it.
+    pub fn blobs(&self) -> Option<&BlobStore> {
+        self.blobs.as_ref()
     }
 
     /// Registers the JMAP Chat methods (`Chat/*`, `Message/*`,
@@ -336,7 +367,9 @@ impl AgentChat {
     }
 
     /// `Message/set` create: the body goes to the Chat's room as a
-    /// `text/plain` MIMI message, and the stored Message carries the
+    /// `text/plain` MIMI message, with each attachment's blob encrypted,
+    /// uploaded and sent as an ExternalPart (`Agent::send_message`), and
+    /// the stored Message, the client's attachments included, carries the
     /// `senderMsgId` its recipients derive.
     async fn create_message_in_room<F>(
         &self,
@@ -359,11 +392,12 @@ impl AgentChat {
                 .with_properties([property]),
             )));
         }
+        let attachments = self.outgoing_attachments(&message)?;
         let sent = self
             .agent
             .lock()
             .await
-            .send_text(&room, &message.body)
+            .send_message(&room, &message.body, &attachments)
             .await
             .map_err(agent_failure)?;
         message.sender_msg_id = sender_msg_id(sent.accepted_at, &sent.message_id);
@@ -380,6 +414,49 @@ impl AgentChat {
         self.link_message(&chat_id, message_ref(&sent.message_id), &id);
         Ok((id, stored))
     }
+
+    /// The content of `message`'s attachments, read from the blob store,
+    /// with the media type and file name the client gave. crate-jmap has
+    /// already checked each blob's size and digest (`attachment_blob`); a
+    /// blob gone since is `invalidProperties`.
+    fn outgoing_attachments(
+        &self,
+        message: &Message,
+    ) -> Result<Vec<OutgoingAttachment>, BackendSetError<MemoryError>> {
+        if message.attachments.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(blobs) = &self.blobs else {
+            return Err(no_blob(None));
+        };
+        message
+            .attachments
+            .iter()
+            .map(|attachment| {
+                let content = blobs
+                    .get(attachment.blob_id.as_ref())
+                    .map_err(|e| BackendSetError::Other(MemoryError::new(e.to_string())))?
+                    .ok_or_else(|| no_blob(Some(&attachment.blob_id)))?;
+                Ok(OutgoingAttachment {
+                    content,
+                    content_type: attachment.content_type.clone(),
+                    filename: attachment.filename.clone(),
+                })
+            })
+            .collect()
+    }
+}
+
+/// `invalidProperties` on `attachments`: blob `id` is not in the store, or
+/// there is no store.
+fn no_blob(id: Option<&Id>) -> BackendSetError<MemoryError> {
+    let description = match id {
+        Some(id) => format!("no blob {id}"),
+        None => "this account stores no attachments".to_owned(),
+    };
+    BackendSetError::SetError(Box::new(
+        set_error(SetErrorType::InvalidProperties, description).with_properties(["attachments"]),
+    ))
 }
 
 /// The first property of a Message to create that MIMI text messages do
@@ -387,8 +464,6 @@ impl AgentChat {
 fn unsupported_message_property(message: &Message) -> Option<&'static str> {
     if message.body_type != BodyType::Plain {
         Some("bodyType")
-    } else if !message.attachments.is_empty() {
-        Some("attachments")
     } else if !message.mentions.is_empty() {
         Some("mentions")
     } else if !message.broadcast_mentions.is_empty() {
@@ -756,28 +831,50 @@ impl ChatBackend for AgentChat {
 
     /// What this backend accepts, not `MemoryBackend`'s defaults: one
     /// `text/plain` body of at most [`MAX_TEXT_LEN`] octets (what
-    /// `Agent::send_text` takes), no attachments and no threads (see the
-    /// crate Limitations). The JMAP layer checks a create against these
-    /// before it reaches the agent.
+    /// `Agent::send_message` takes) and no threads (see the crate
+    /// Limitations). With a blob store, up to
+    /// [`MAX_ATTACHMENTS_PER_MESSAGE`] attachments of at most
+    /// [`MAX_ATTACHMENT_LEN`] octets each; without one, none. The JMAP
+    /// layer checks a create against these before it reaches the agent.
     fn limits(&self, caller: &(), account_id: &Id) -> ChatLimits {
+        let (count, bytes) = match self.blobs {
+            Some(_) => (
+                MAX_ATTACHMENTS_PER_MESSAGE as u64,
+                MAX_ATTACHMENT_LEN as u64,
+            ),
+            None => (0, 0),
+        };
         self.inner
             .limits(caller, account_id)
             .with_supported_body_types(&["text/plain"])
             .with_max_body_bytes(MAX_TEXT_LEN as u64)
-            .with_max_attachments_per_message(0)
-            .with_max_attachment_bytes(0)
+            .with_max_attachments_per_message(count)
+            .with_max_attachment_bytes(bytes)
             .with_supports_threads(false)
     }
 
+    /// The size and digest of a blob in the store, which crate-jmap
+    /// compares with the Attachment; a blob the store does not have is
+    /// `invalidProperties` on `attachments`.
     async fn attachment_blob(
         &self,
-        caller: &(),
+        _caller: &(),
         account_id: &Id,
         blob_id: &Id,
     ) -> Result<Result<Option<AttachmentBlob>, SetError>, MemoryError> {
-        self.inner
-            .attachment_blob(caller, account_id, blob_id)
-            .await
+        let refused = |e: BackendSetError<MemoryError>| match e {
+            BackendSetError::SetError(e) => Ok(Err(*e)),
+            BackendSetError::Other(e) => Err(e),
+            e => Err(MemoryError::new(e.to_string())),
+        };
+        let Some(blobs) = self.blobs.as_ref().filter(|_| *account_id == self.account) else {
+            return refused(no_blob(None));
+        };
+        match blobs.info(blob_id.as_ref()) {
+            Ok(Some(info)) => Ok(Ok(Some(AttachmentBlob::new(info.size, info.sha256)))),
+            Ok(None) => refused(no_blob(Some(blob_id))),
+            Err(e) => Err(MemoryError::new(e.to_string())),
+        }
     }
 
     fn protect_last_admin(&self, caller: &(), account_id: &Id) -> bool {
