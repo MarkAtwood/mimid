@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.4.81.26",
+  "title": "Hub: authorize the Removes the did_webvh rules require without canRemoveOwnClient",
+  "description": "Follow-up to decision mimid-1wgh.4.81.25 reading (b). Today a revocation Commit's Remove of the user's own revoked device needs canRemoveOwnClient in room policy; mimid-agent's default member role now has it, but rooms made before, or by other clients, may not. The Observer could report which Removes the rules required (leaf's SCID = committer's SCID, key not in the record the same Commit sets), and hub/policy.rs could authorize those without a capability. Needs a decision bead on whether room policy may be bypassed for this.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-17T16:45:01.916960544Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-17T16:45:01.916960544Z",
+  "labels": [
+    "didwebvh",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.26",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-17T16:45:02.379989558Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
