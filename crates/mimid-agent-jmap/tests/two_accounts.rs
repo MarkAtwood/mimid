@@ -236,6 +236,7 @@ impl Client {
             user_uri: user.to_owned(),
             state_dir: dir.join(user.rsplit('/').next().unwrap()),
             full_tree_hubs: Vec::new(),
+            did_webvh: Default::default(),
         })
         .await
         .unwrap();

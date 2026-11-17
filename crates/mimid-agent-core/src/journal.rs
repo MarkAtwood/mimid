@@ -59,6 +59,12 @@ pub(crate) enum Journaled {
     Left {
         room: String,
     },
+    IdentityChanged {
+        room: String,
+        user: String,
+        pinned: String,
+        presented: Option<String>,
+    },
     Problem {
         room: Option<String>,
         description: String,
@@ -90,6 +96,17 @@ impl Journaled {
             },
             Event::Proposal { room, sender } => Self::Proposal { room, sender },
             Event::Left { room } => Self::Left { room },
+            Event::IdentityChanged {
+                room,
+                user,
+                pinned,
+                presented,
+            } => Self::IdentityChanged {
+                room,
+                user,
+                pinned,
+                presented,
+            },
             Event::Problem { room, description } => Self::Problem { room, description },
         }
     }
@@ -117,6 +134,17 @@ impl Journaled {
             },
             Self::Proposal { room, sender } => Event::Proposal { room, sender },
             Self::Left { room } => Event::Left { room },
+            Self::IdentityChanged {
+                room,
+                user,
+                pinned,
+                presented,
+            } => Event::IdentityChanged {
+                room,
+                user,
+                pinned,
+                presented,
+            },
             Self::Problem { room, description } => Event::Problem { room, description },
         }
     }

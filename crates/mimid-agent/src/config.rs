@@ -11,7 +11,24 @@
 //! invites = "from-allowed"                # optional: "any", "never"
 //! allowed_origins = ["http://localhost:5173"]  # optional CORS origins
 //! full_tree_hubs = ["mimi.hub.example"]   # optional; see below
+//!
+//! [did_webvh]                             # optional; see below
+//! support = true                          # the default
+//! credential_type = 0x0008                # the default
+//! heads_extension_type = 0x0013           # the default
+//! log_file = "/home/alice/.config/mimid-agent/did.jsonl"
+//! witness_file = "/home/alice/.config/mimid-agent/did-witness.json"
 //! ```
+//!
+//! `[did_webvh]` configures draft-atwood-mls-didwebvh-credential
+//! (`mimid_agent_core::DidWebvhConfig`). The agent uses a BasicCredential
+//! unless `log_file` is set: then, at every start, it takes that log from
+//! the user's controller as its credential if it is newer than the one it
+//! holds, and offers it to its rooms. The log must list the device's
+//! signature key and the user's URI in `alsoKnownAs`. `support` (default
+//! true) lets a BasicCredential agent share rooms with `did_webvh` users.
+//! The two code points are the draft's suggested values until IANA
+//! assigns them.
 //!
 //! `full_tree_hubs` lists the provider domains of hubs whose rooms get the
 //! full ratchet tree with every Commit, for a hub that does not rebuild the
@@ -85,6 +102,78 @@ pub struct Config {
     /// every Commit (`mimid_agent_core::AgentConfig::full_tree_hubs`).
     #[serde(default)]
     pub full_tree_hubs: Vec<String>,
+    /// draft-atwood-mls-didwebvh-credential (bead mimid-1wgh.4.81.18).
+    #[serde(default)]
+    pub did_webvh: DidWebvhSetting,
+}
+
+/// The `[did_webvh]` table.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DidWebvhSetting {
+    /// Whether a BasicCredential identity supports `did_webvh` rooms.
+    #[serde(default = "yes")]
+    pub support: bool,
+    /// The `did_webvh` credential type.
+    #[serde(default = "suggested_credential_type")]
+    pub credential_type: u16,
+    /// The `did_webvh_heads` extension type.
+    #[serde(default = "suggested_heads_extension_type")]
+    pub heads_extension_type: u16,
+    /// The controller's `did.jsonl` for this device; none for a
+    /// BasicCredential.
+    #[serde(default)]
+    pub log_file: Option<PathBuf>,
+    /// The `did-witness.json` that goes with `log_file`.
+    #[serde(default)]
+    pub witness_file: Option<PathBuf>,
+}
+
+impl Default for DidWebvhSetting {
+    fn default() -> Self {
+        Self {
+            support: true,
+            credential_type: suggested_credential_type(),
+            heads_extension_type: suggested_heads_extension_type(),
+            log_file: None,
+            witness_file: None,
+        }
+    }
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn suggested_credential_type() -> u16 {
+    mimid_agent_core::mls_didwebvh::CodePoints::SUGGESTED.credential_type()
+}
+
+fn suggested_heads_extension_type() -> u16 {
+    mimid_agent_core::mls_didwebvh::CodePoints::SUGGESTED.heads_extension_type()
+}
+
+impl DidWebvhSetting {
+    /// The agent's setting.
+    ///
+    /// # Errors
+    ///
+    /// A code point that RFC 9420 or OpenMLS already uses.
+    pub fn to_agent(
+        &self,
+    ) -> Result<mimid_agent_core::DidWebvhConfig, mimid_agent_core::mls_didwebvh::CodePointError>
+    {
+        let config = mimid_agent_core::DidWebvhConfig {
+            code_points: mimid_agent_core::mls_didwebvh::CodePoints::new(
+                self.credential_type,
+                self.heads_extension_type,
+            )?,
+            support: self.support,
+            log_file: self.log_file.clone(),
+            witness_file: self.witness_file.clone(),
+        };
+        Ok(config)
+    }
 }
 
 /// Which room invites the agent joins: [`InvitePolicy`] in the file.
@@ -171,6 +260,9 @@ impl Config {
         }
         if let Some(origin) = self.allowed_origins.iter().find(|o| !is_origin(o)) {
             return Err(ConfigError::Origin(origin.clone()));
+        }
+        if self.did_webvh.to_agent().is_err() {
+            return Err(ConfigError::OutOfRange("did_webvh"));
         }
         Ok(())
     }
@@ -292,6 +384,35 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(config.full_tree_hubs, ["mimi.hub.example"]);
+    }
+
+    #[test]
+    fn did_webvh_defaults_to_basic_with_support_and_parses() {
+        let config = Config::parse(&config_with_listen("127.0.0.1:0")).unwrap();
+        let agent = config.did_webvh.to_agent().unwrap();
+        assert!(agent.support);
+        assert!(agent.log_file.is_none());
+        assert_eq!(agent.code_points.credential_type(), 0x0008);
+        assert_eq!(agent.code_points.heads_extension_type(), 0x0013);
+        let config = Config::parse(&format!(
+            "{}\n[did_webvh]\nsupport = false\ncredential_type = 0xf008\n\
+             heads_extension_type = 0xf013\nlog_file = \"/x/did.jsonl\"\n",
+            config_with_listen("127.0.0.1:0")
+        ))
+        .unwrap();
+        let agent = config.did_webvh.to_agent().unwrap();
+        assert!(!agent.support);
+        assert_eq!(agent.code_points.credential_type(), 0xf008);
+        assert_eq!(agent.log_file.as_deref(), Some(Path::new("/x/did.jsonl")));
+        // basic (0x0001) cannot be the did_webvh credential type.
+        let refused = Config::parse(&format!(
+            "{}\n[did_webvh]\ncredential_type = 1\n",
+            config_with_listen("127.0.0.1:0")
+        ));
+        assert!(
+            matches!(refused, Err(ConfigError::OutOfRange("did_webvh"))),
+            "{refused:?}"
+        );
     }
 
     #[test]

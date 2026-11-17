@@ -103,6 +103,10 @@ impl Daemon {
             user_uri: config.user_uri.clone(),
             state_dir: config.state_dir.clone(),
             full_tree_hubs: config.full_tree_hubs.clone(),
+            did_webvh: config
+                .did_webvh
+                .to_agent()
+                .map_err(|e| AgentError::Invalid(format!("[did_webvh]: {e}")))?,
         })
         .await?;
         top_up_key_packages(&mut agent, config.key_packages).await;

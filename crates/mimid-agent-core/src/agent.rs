@@ -33,6 +33,7 @@ use serde_json::json;
 use crate::AgentError;
 use crate::client::{ConsentRecord, Jmap};
 use crate::components::apply_commit_op;
+use crate::didwebvh::{DidWebvhConfig, Pin, RoomClient, check_pin, required_capabilities};
 use crate::frank::{self, VerifiedFrank};
 use crate::journal::{Journaled, Receipt};
 use crate::state::{Held, Room, RoomStatus, State, StateDir};
@@ -42,11 +43,6 @@ use crate::uri::{normalized_uri, user_uri_domain};
 const APP_COMPONENTS: u16 = 0x0001;
 /// mls-extensions-11 §5 `safe_aad` component.
 const SAFE_AAD: u16 = 0x0002;
-/// RFC 9420 §11.1 RequiredCapabilities for keyMaterial (protocol-07 §5.2):
-/// extension `app_data_dictionary` (0x0006) and proposal `AppDataUpdate`
-/// (0x0008) of mls-extensions-11, which every room this agent builds
-/// needs. No credential types are required.
-const REQUIRED_CAPABILITIES: [u8; 7] = [0x02, 0x00, 0x06, 0x02, 0x00, 0x08, 0x00];
 /// RFC 9420 §6 MLSMessage headers: mls10, then wire_format.
 const GROUP_INFO_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
 const WELCOME_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x03];
@@ -83,6 +79,11 @@ pub struct AgentConfig {
     /// the tree, which grows with the room, on every Commit. Compared
     /// without regard to ASCII case.
     pub full_tree_hubs: Vec<String>,
+    /// draft-atwood-mls-didwebvh-credential-01: the code points, whether a
+    /// BasicCredential identity supports `did_webvh` (default yes), and an
+    /// optional log file from the user's controller that switches this
+    /// device to a `did_webvh` credential (bead mimid-1wgh.4.81.18).
+    pub did_webvh: DidWebvhConfig,
 }
 
 /// How [`Agent::host_room`] makes a room.
@@ -246,6 +247,21 @@ pub enum Event {
         /// The room URI.
         room: String,
     },
+    /// draft-atwood-mls-didwebvh-credential-01 §Reference Identifiers: a
+    /// leaf in a room presents another SCID for a contact than the one
+    /// pinned for it, or a BasicCredential for a contact pinned to an SCID
+    /// (decision mimid-1wgh.4.81.21). The draft's "MUST alert the user".
+    /// The pin is kept.
+    IdentityChanged {
+        /// The room URI.
+        room: String,
+        /// The contact's user URI.
+        user: String,
+        /// The SCID pinned for the contact.
+        pinned: String,
+        /// The SCID the leaf presents, or `None` for a BasicCredential.
+        presented: Option<String>,
+    },
     /// An item could not be handled; it is dropped. Polling goes on.
     Problem {
         /// The room, when known.
@@ -269,6 +285,8 @@ pub struct Agent {
     /// The room and leaf of a member whose leave proposals are stored and
     /// not yet committed.
     deferred_leaver: Option<(String, u32)>,
+    /// [`AgentConfig::did_webvh`].
+    did_webvh: DidWebvhConfig,
 }
 
 impl std::fmt::Debug for Agent {
@@ -297,7 +315,7 @@ impl Agent {
             )));
         }
         let dir = StateDir::open(&config.state_dir)?;
-        let (identity, state) = dir.load_or_create(&config.user_uri)?;
+        let (identity, state) = dir.load_or_create(&config.user_uri, &config.did_webvh)?;
         let jmap = Jmap::open(&config.server_url, &config.token).await?;
         jmap.restore_sent(&state.sent);
         let mut agent = Self {
@@ -313,6 +331,7 @@ impl Agent {
                 .map(|d| d.to_ascii_lowercase())
                 .collect(),
             deferred_leaver: None,
+            did_webvh: config.did_webvh.clone(),
         };
         let rooms: Vec<(String, Room)> = agent
             .state
@@ -342,7 +361,168 @@ impl Agent {
                 }]),
             }
         }
+        if let Some(path) = config.did_webvh.log_file.as_deref() {
+            let credential = read_did_webvh_files(path, config.did_webvh.witness_file.as_deref())?;
+            if agent.identity.did_webvh_credential() != Some(&credential) {
+                agent.use_did_webvh_credential(credential).await?;
+            }
+        }
         Ok(agent)
+    }
+
+    /// This device's Ed25519 signature public key: what the user's
+    /// controller lists as an authorized key in the did:webvh log to give
+    /// this device a `did_webvh` credential (draft-atwood-mls-didwebvh-
+    /// credential-01 §Adding a Device, step 1).
+    pub fn signature_public_key(&self) -> &[u8] {
+        self.identity.signature_public_key()
+    }
+
+    /// The SCID of this device's `did_webvh` credential, or `None` with a
+    /// BasicCredential.
+    pub fn did_webvh_scid(&self) -> Option<&str> {
+        self.identity.did_webvh_log().map(|log| log.scid())
+    }
+
+    /// The SCID pinned for `user` (draft-atwood-mls-didwebvh-credential-01
+    /// §Reference Identifiers), if any.
+    pub fn pinned_scid(&self, user: &str) -> Option<&str> {
+        self.state
+            .pinned_scids
+            .get(normalized_uri(user).as_ref())
+            .map(String::as_str)
+    }
+
+    /// Takes `credential`, a `did_webvh` credential from the user's
+    /// controller (draft-atwood-mls-didwebvh-credential-01), and offers it
+    /// to every active room.
+    ///
+    /// The log must verify, authorize this device's signature key, and
+    /// name this user's URI in `alsoKnownAs` (decision mimid-1wgh.4.81.21).
+    /// The first credential may be taken only by a fresh identity, before
+    /// any KeyPackage or room (see [`crate::didwebvh`]). A later one must
+    /// be a newer log of the same DID (§Successor Credentials): each active
+    /// room then gets a Commit whose UpdatePath carries it, with the
+    /// record change and the Removes of devices the new log no longer
+    /// lists (§Revoking a Device). A room where that fails is reported as
+    /// an [`Event::Problem`] at the next [`Agent::poll`]; a device the new
+    /// log revokes cannot commit it itself (`CommitterUnauthorized`).
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Invalid`] if the log names another user or the
+    /// identity is not fresh, [`AgentError::Mls`] if the credential does not
+    /// verify, authorize this device, or succeed the current one, and
+    /// [`AgentError::State`] if it cannot be saved.
+    pub async fn use_did_webvh_credential(
+        &mut self,
+        credential: mimi_mls::mls_didwebvh::DidWebvhCredential,
+    ) -> Result<(), AgentError> {
+        let log = mimi_mls::mls_didwebvh::verify_credential(&credential)
+            .map_err(|e| AgentError::mls("verifying the did_webvh log", e))?;
+        let named = mimi_mls::didwebvh::mimi_user_uri(&log).map(normalized_uri);
+        if named != Some(normalized_uri(&self.me)) {
+            return Err(AgentError::Invalid(format!(
+                "the did_webvh log does not name {} in alsoKnownAs",
+                self.me
+            )));
+        }
+        let first = self.identity.did_webvh_credential().is_none();
+        if first && (self.state.signature_key_bound || !self.state.rooms.is_empty()) {
+            return Err(AgentError::Invalid(
+                "a BasicCredential identity that published a KeyPackage or joined a room cannot \
+                 switch to did_webvh"
+                    .to_owned(),
+            ));
+        }
+        let encoded = credential
+            .encode()
+            .map_err(|e| AgentError::encoding("the did_webvh credential", e))?;
+        self.identity
+            .set_did_webvh_credential(self.did_webvh.code_points, credential)
+            .map_err(|e| AgentError::mls("taking the did_webvh credential", e))?;
+        self.state.did_webvh_credential = Some(hex::encode(encoded));
+        self.save()?;
+        tracing::info!(
+            name: "did_webvh_credential_taken",
+            version = log.head_version_number(),
+            "did_webvh credential taken"
+        );
+        let rooms: Vec<String> = self
+            .state
+            .rooms
+            .iter()
+            .filter(|(_, room)| room.status == RoomStatus::Active)
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        let mut events = Vec::new();
+        for room in rooms {
+            match self.commit(&room, &[], &[], &[], "credential update").await {
+                Ok(()) => events.push(Event::MembersChanged {
+                    epoch: self.members.get(&room).map_or(0, Member::epoch),
+                    participants: self
+                        .members
+                        .get(&room)
+                        .map(participants)
+                        .transpose()
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default(),
+                    room,
+                }),
+                Err(e) => events.push(Event::Problem {
+                    room: Some(room),
+                    description: format!("offering the new did_webvh credential: {e}"),
+                }),
+            }
+        }
+        self.deliver(events);
+        self.save()
+    }
+
+    /// The leaves of an active room: each one's user and, for a `did_webvh`
+    /// leaf, its SCID (draft-atwood-mls-didwebvh-credential-01 §Negotiation:
+    /// "Applications SHOULD indicate to users which members are
+    /// authenticated by a did_webvh credential").
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`].
+    pub fn clients(&self, room: &str) -> Result<Vec<RoomClient>, AgentError> {
+        let member = self.member(room)?;
+        Ok(room_clients(member, &self.identity))
+    }
+
+    /// Checks every leaf of `room` against the contact pins, pinning new
+    /// SCIDs, and returns an [`Event::IdentityChanged`] per mismatch.
+    fn check_contacts(&mut self, room: &str) -> Vec<Event> {
+        let Some(member) = self.members.get(room) else {
+            return Vec::new();
+        };
+        let me = normalized_uri(&self.me);
+        let mut events = Vec::new();
+        for client in room_clients(member, &self.identity) {
+            let user = normalized_uri(&client.user);
+            if client.user.is_empty() || user == me {
+                continue;
+            }
+            if let Pin::Changed { pinned, presented } =
+                check_pin(&mut self.state.pinned_scids, &user, client.scid.as_deref())
+            {
+                tracing::warn!(
+                    name: "did_webvh_scid_changed",
+                    leaf = client.leaf,
+                    "a contact's leaf presents another SCID than the pinned one"
+                );
+                events.push(Event::IdentityChanged {
+                    room: room.to_owned(),
+                    user: client.user,
+                    pinned,
+                    presented,
+                });
+            }
+        }
+        events
     }
 
     /// The user's URI.
@@ -588,7 +768,14 @@ impl Agent {
                 "{user} is already a participant"
             )));
         }
-        let request = key_material_request(&self.me, user, room)?;
+        let did_webvh_room = self
+            .member(room)?
+            .did_webvh_heads(&self.identity)
+            .ok()
+            .flatten()
+            .and(self.identity.did_webvh_code_points());
+        let request =
+            key_material_request(&self.me, user, room, &required_capabilities(did_webvh_room))?;
         let response = self.jmap.key_material(&request).await?;
         match response.user_status {
             KeyMaterialUserCode::Success | KeyMaterialUserCode::PartialSuccess => {}
@@ -606,24 +793,49 @@ impl Agent {
                 let info = key_package
                     .verify(SystemTime::now())
                     .map_err(|e| AgentError::tls("a KeyPackage does not verify", e))?;
+                // A did_webvh KeyPackage names its user in its verified log
+                // (decision mimid-1wgh.4.81.21).
+                let did_webvh = match self.identity.did_webvh_code_points() {
+                    Some(code_points) => info.did_webvh(code_points).map_err(|e| {
+                        AgentError::malformed(
+                            "KeyMaterial/fetch",
+                            format!("a did_webvh KeyPackage does not verify: {e}"),
+                        )
+                    })?,
+                    None => None,
+                };
                 // The URI as given may be another spelling of the one in
                 // the credential (RFC 3986 §6.2.2; decision mimid-1wgh.52):
                 // compare normal forms, then use the credential's bytes.
-                let identity = info
-                    .identity()
-                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                    .ok_or_else(|| {
-                        AgentError::malformed(
-                            "KeyMaterial/fetch",
-                            "a KeyPackage has no UTF-8 identity",
-                        )
-                    })?;
+                let identity = match &did_webvh {
+                    Some(log) => mimi_mls::didwebvh::mimi_user_uri(log),
+                    None => info
+                        .identity()
+                        .and_then(|bytes| std::str::from_utf8(bytes).ok()),
+                }
+                .ok_or_else(|| {
+                    AgentError::malformed("KeyMaterial/fetch", "a KeyPackage names no user")
+                })?;
                 if normalized_uri(identity) != normalized_uri(user) {
                     return Err(AgentError::malformed(
                         "KeyMaterial/fetch",
                         format!("a KeyPackage for another identity ({identity})"),
                     ));
                 }
+                // draft-atwood-mls-didwebvh-credential-01 §Reference
+                // Identifiers: the SCID pinned for this contact.
+                let mut pins = self.state.pinned_scids.clone();
+                if let Pin::Changed { pinned, presented } = check_pin(
+                    &mut pins,
+                    &normalized_uri(identity),
+                    did_webvh.as_ref().map(|log| log.scid()),
+                ) {
+                    return Err(AgentError::Invalid(format!(
+                        "{identity} is pinned to SCID {pinned}, and a KeyPackage presents {}",
+                        presented.as_deref().unwrap_or("a BasicCredential")
+                    )));
+                }
+                self.state.pinned_scids = pins;
                 target = identity.to_owned();
                 key_packages.push(encode(key_package)?);
             }
@@ -736,7 +948,7 @@ impl Agent {
             .partition(|held| held.room == room || held.room == held_key);
         self.state.held = keep;
         self.save()?;
-        let mut events = Vec::new();
+        let mut events = self.check_contacts(&room);
         for held in replay {
             let frank = match held.frank.as_deref().map(|f| {
                 hex::decode(f)
@@ -1472,11 +1684,13 @@ impl Agent {
                         .ok()
                         .flatten()
                         .unwrap_or_default();
+                    let alerts = self.check_contacts(&room);
                     events.push(Event::MembersChanged {
                         room,
                         epoch: summary.epoch,
                         participants,
                     });
+                    events.extend(alerts);
                 }
             }
             Ok(_) => {}
@@ -1627,6 +1841,44 @@ fn list_change(removed_indices: Vec<u32>, added: &[&str]) -> Result<AppDataUpdat
 }
 
 /// The participant list (protocol-07 §7.5) of `member`'s group.
+/// The leaves of `member`'s group with their users and SCIDs.
+fn room_clients(member: &Member, identity: &Identity) -> Vec<RoomClient> {
+    let scids: BTreeMap<u32, String> = member.did_webvh_members(identity).into_iter().collect();
+    member
+        .members()
+        .into_iter()
+        .map(|(leaf, user)| RoomClient {
+            leaf,
+            user: String::from_utf8_lossy(&user).into_owned(),
+            scid: scids.get(&leaf).cloned(),
+        })
+        .collect()
+}
+
+/// Reads a `did_webvh` credential from the controller's `did.jsonl` and,
+/// if given, `did-witness.json`.
+fn read_did_webvh_files(
+    log: &std::path::Path,
+    witness: Option<&std::path::Path>,
+) -> Result<mimi_mls::mls_didwebvh::DidWebvhCredential, AgentError> {
+    let read = |path: &std::path::Path| {
+        std::fs::read(path).map_err(|e| AgentError::State {
+            path: path.to_path_buf(),
+            detail: "cannot be read".to_owned(),
+            source: Some(e),
+        })
+    };
+    let did_log = read(log)?;
+    let witness_file = witness.map(read).transpose()?.unwrap_or_default();
+    mimi_mls::mls_didwebvh::DidWebvhCredential::new(did_log, witness_file).map_err(|e| {
+        AgentError::State {
+            path: log.to_path_buf(),
+            detail: format!("is not a usable did:webvh log: {e}"),
+            source: None,
+        }
+    })
+}
+
 fn participants(member: &Member) -> Result<Vec<String>, AgentError> {
     let Some(data) = member.component(PARTICIPANT_LIST) else {
         return Ok(vec![]);
@@ -1668,6 +1920,9 @@ fn default_roles() -> RoleData {
                 vec![
                     Capability::CAN_ADD_PARTICIPANT,
                     Capability::CAN_REMOVE_SELF,
+                    // A revoked did_webvh device is removed by another
+                    // device of its user (decision mimid-1wgh.4.81.25).
+                    Capability::CAN_REMOVE_OWN_CLIENT,
                     Capability::CAN_SEND_MESSAGE,
                     Capability::CAN_RECEIVE_MESSAGE,
                     Capability::CAN_REPLY_TO_MESSAGE,
@@ -1766,7 +2021,12 @@ fn commit_request(bundle: &CommitBundle, tree: Option<&[u8]>) -> Result<UpdateRe
 
 /// A signed protocol-07 §5.2 KeyMaterialRequest, with a fresh Ed25519 key
 /// per request: [`Identity`] does not hand out the MLS signing key.
-fn key_material_request(requester: &str, target: &str, room: &str) -> Result<Vec<u8>, AgentError> {
+fn key_material_request(
+    requester: &str,
+    target: &str,
+    room: &str,
+    required: &[u8],
+) -> Result<Vec<u8>, AgentError> {
     let pair = mimi_mls::label::SignatureKeyPair::generate()
         .map_err(|e| AgentError::mls("the request key", e))?;
     let key = encode(&VLBytes::new(pair.verification_key().to_vec()))?;
@@ -1784,7 +2044,7 @@ fn key_material_request(requester: &str, target: &str, room: &str) -> Result<Vec
             CipherSuite::tls_deserialize_exact([0x00, 0x01])
                 .map_err(|e| AgentError::tls("cipher suite", e))?,
         ],
-        required_capabilities: RequiredCapabilities::tls_deserialize_exact(REQUIRED_CAPABILITIES)
+        required_capabilities: RequiredCapabilities::tls_deserialize_exact(required)
             .map_err(|e| AgentError::tls("required capabilities", e))?,
         requester_signature_key: SignaturePublicKey::tls_deserialize_exact(&key)
             .map_err(|e| AgentError::tls("the request key", e))?,

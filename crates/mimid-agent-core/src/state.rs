@@ -114,6 +114,16 @@ pub(crate) struct State {
     /// The number the next invite gets.
     #[serde(default = "one")]
     pub next_invite: u64,
+    /// This device's `did_webvh` credential, the TLS encoding of its
+    /// `DIDWebVHCredential`, hex; none for a BasicCredential identity
+    /// (draft-atwood-mls-didwebvh-credential-01).
+    #[serde(default)]
+    pub did_webvh_credential: Option<String>,
+    /// The SCID pinned for each contact that presented a `did_webvh`
+    /// credential, by the contact's normalized user URI (draft §Reference
+    /// Identifiers; decision mimid-1wgh.4.81.21).
+    #[serde(default)]
+    pub pinned_scids: BTreeMap<String, String>,
 }
 
 fn one() -> u64 {
@@ -154,8 +164,27 @@ impl StateDir {
     }
 
     /// Reloads the identity and state for `user_uri`, or mints a new
-    /// identity if the directory holds none.
-    pub fn load_or_create(&self, user_uri: &str) -> Result<(Identity, State), AgentError> {
+    /// identity if the directory holds none. With `did_webvh.support`, a
+    /// BasicCredential identity supports `did_webvh` (decision
+    /// mimid-1wgh.4.81.23); a stored `did_webvh` credential is reloaded
+    /// under `did_webvh.code_points`.
+    pub fn load_or_create(
+        &self,
+        user_uri: &str,
+        did_webvh: &crate::DidWebvhConfig,
+    ) -> Result<(Identity, State), AgentError> {
+        let (mut identity, state) = self.load_or_create_identity(user_uri, did_webvh)?;
+        if did_webvh.support {
+            identity.support_did_webvh(did_webvh.code_points);
+        }
+        Ok((identity, state))
+    }
+
+    fn load_or_create_identity(
+        &self,
+        user_uri: &str,
+        did_webvh: &crate::DidWebvhConfig,
+    ) -> Result<(Identity, State), AgentError> {
         let path = self.dir.join("state.json");
         if path.exists() {
             private_file(&path)?;
@@ -178,8 +207,29 @@ impl StateDir {
                     detail: "signature_public_key is not hex".to_owned(),
                     source: None,
                 })?;
-            let identity = Identity::load(user_uri.as_bytes(), &public_key, self.mls_store()?)
-                .map_err(|e| AgentError::mls("reloading the identity", e))?;
+            let identity = match &state.did_webvh_credential {
+                None => Identity::load(user_uri.as_bytes(), &public_key, self.mls_store()?)
+                    .map_err(|e| AgentError::mls("reloading the identity", e))?,
+                Some(hex_credential) => {
+                    let credential = hex::decode(hex_credential)
+                        .ok()
+                        .and_then(|bytes| {
+                            mimi_mls::mls_didwebvh::DidWebvhCredential::decode(&bytes).ok()
+                        })
+                        .ok_or_else(|| AgentError::State {
+                            path: path.clone(),
+                            detail: "did_webvh_credential is not a DIDWebVHCredential".to_owned(),
+                            source: None,
+                        })?;
+                    Identity::load_did_webvh(
+                        did_webvh.code_points,
+                        credential,
+                        &public_key,
+                        self.mls_store()?,
+                    )
+                    .map_err(|e| AgentError::mls("reloading the did_webvh identity", e))?
+                }
+            };
             return Ok((identity, state));
         }
         let mls = self.dir.join("mls.sqlite");
@@ -208,6 +258,8 @@ impl StateDir {
             journal: Vec::new(),
             sent: Vec::new(),
             next_invite: 1,
+            did_webvh_credential: None,
+            pinned_scids: BTreeMap::new(),
         };
         self.save(&state)?;
         Ok((identity, state))
@@ -306,7 +358,9 @@ mod tests {
     fn invite_numbers_stay_put_when_an_earlier_invite_is_joined() {
         let dir = tempfile::tempdir().unwrap();
         let state_dir = StateDir::open(&dir.path().join("s")).unwrap();
-        let (_, mut s) = state_dir.load_or_create("mimi://a.example/u/bob").unwrap();
+        let (_, mut s) = state_dir
+            .load_or_create("mimi://a.example/u/bob", &crate::DidWebvhConfig::default())
+            .unwrap();
         assert_eq!(s.push_invite("w1".into(), None), 1);
         assert_eq!(s.push_invite("w2".into(), None), 2);
         s.invites.remove(0);
@@ -320,20 +374,20 @@ mod tests {
         let path = dir.path().join("s");
         let (identity, _) = StateDir::open(&path)
             .unwrap()
-            .load_or_create("mimi://a.example/u/bob")
+            .load_or_create("mimi://a.example/u/bob", &crate::DidWebvhConfig::default())
             .unwrap();
         let public = identity.signature_public_key().to_vec();
         drop(identity);
         let (again, _) = StateDir::open(&path)
             .unwrap()
-            .load_or_create("mimi://a.example/u/bob")
+            .load_or_create("mimi://a.example/u/bob", &crate::DidWebvhConfig::default())
             .unwrap();
         assert_eq!(again.signature_public_key(), public);
         drop(again);
         assert!(matches!(
             StateDir::open(&path)
                 .unwrap()
-                .load_or_create("mimi://a.example/u/eve"),
+                .load_or_create("mimi://a.example/u/eve", &crate::DidWebvhConfig::default()),
             Err(AgentError::State { .. })
         ));
     }

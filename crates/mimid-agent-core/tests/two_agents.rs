@@ -156,6 +156,7 @@ async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
         user_uri: user.to_owned(),
         state_dir: dir.join(user.rsplit('/').next().unwrap()),
         full_tree_hubs: Vec::new(),
+        did_webvh: Default::default(),
     })
     .await
     .unwrap()
@@ -424,6 +425,7 @@ async fn bad_input_is_refused_before_any_request() {
             user_uri: "mimi://a.example/alice".to_owned(),
             state_dir: dir.path().join("x"),
             full_tree_hubs: Vec::new(),
+            did_webvh: Default::default(),
         })
         .await,
         Err(AgentError::Invalid(_))
@@ -436,6 +438,7 @@ async fn bad_input_is_refused_before_any_request() {
             user_uri: ALICE.to_owned(),
             state_dir: dir.path().join("y"),
             full_tree_hubs: Vec::new(),
+            did_webvh: Default::default(),
         })
         .await,
         Err(AgentError::Status { status: 401, .. })
@@ -500,6 +503,7 @@ async fn full_tree_hubs_get_the_next_epochs_tree_with_each_commit() {
         state_dir: dir.path().join("alice"),
         // Upper case: the domain is compared without regard to case.
         full_tree_hubs: vec!["A.Example".to_owned()],
+        did_webvh: Default::default(),
     })
     .await
     .unwrap();

@@ -34,15 +34,22 @@
 //!
 //! The state directory (mode 0700) holds `mls.sqlite`, the MLS store with
 //! the identity's private keys and the groups, and `state.json`: rooms,
-//! pending invites, held messages, the JMAP Message state and the digests
-//! of sent messages. Both files are 0600.
+//! pending invites, held messages, the JMAP Message state, the digests
+//! of sent messages, the device's `did_webvh` credential if it has one and
+//! the SCIDs pinned for contacts. Both files are 0600.
 //!
 //! # Limitations
 //!
-//! - One client per user: the identity is the user URI in a
-//!   BasicCredential, so a second device of the same user cannot join the
-//!   same room (mls-rs refuses two leaves with the same identity; the
-//!   multi-device limit H1).
+//! - One client per user with a BasicCredential: the identity is the user
+//!   URI, so a second device of the same user cannot join the same room
+//!   (mls-rs refuses two leaves with the same identity; the multi-device
+//!   limit H1). With a `did_webvh` credential ([`didwebvh`]) several
+//!   devices of one user can share a room with mimid members.
+//! - draft-atwood-mls-didwebvh-credential-01: see [`didwebvh`]. A
+//!   BasicCredential agent supports `did_webvh` rooms by default (decision
+//!   mimid-1wgh.4.81.23). Contacts are pinned by SCID per agent; a change
+//!   is reported as [`Event::IdentityChanged`] for a room the agent is in,
+//!   and refused when the agent itself adds the contact.
 //! - Every proposal from another member is taken as that member's
 //!   protocol-07 §3.5 leave, and the remaining member with the lowest leaf
 //!   index commits it. No other proposals are sent by this crate.
@@ -61,6 +68,7 @@ mod agent;
 pub mod asset;
 mod client;
 pub mod components;
+pub mod didwebvh;
 mod error;
 pub mod frank;
 mod journal;
@@ -72,7 +80,9 @@ pub use agent::{
     ReceivedMessage, RoomInfo, Sent,
 };
 pub use client::ConsentRecord;
+pub use didwebvh::{DidWebvhConfig, RoomClient};
 pub use error::{AgentError, Source};
 pub use journal::Receipt;
 pub use mimi_content::{ExternalPart, MessageId, MimiContent};
+pub use mimi_mls::mls_didwebvh;
 pub use state::RoomStatus;
