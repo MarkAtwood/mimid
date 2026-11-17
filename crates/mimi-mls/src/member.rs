@@ -1770,6 +1770,24 @@ impl Member {
             .collect()
     }
 
+    /// The current members whose credential is `did_webvh`, as (leaf index,
+    /// DID): the `id` of the head DID document of each leaf's log, the DID
+    /// string draft-atwood-mls-didwebvh-credential-01 §Reference
+    /// Identifiers says applications SHOULD display. Empty for a
+    /// BasicCredential identity, as [`Member::did_webvh_members`].
+    pub fn did_webvh_member_dids(&self, identity: &Identity) -> Vec<(u32, String)> {
+        let Some(code_points) = identity.did_webvh_code_points() else {
+            return Vec::new();
+        };
+        self.group
+            .members()
+            .filter_map(|member| {
+                didwebvh::did_of(code_points, &member.credential)
+                    .map(|did| (member.index.u32(), did))
+            })
+            .collect()
+    }
+
     /// The GroupContext's `did_webvh_heads` record, strictly decoded, or
     /// `None` when the group has none or the identity does not use
     /// `did_webvh`.

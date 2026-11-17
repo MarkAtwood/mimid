@@ -49,6 +49,31 @@
 //!   §Topics. Own Messages are `deliveryState` `"delivered"` with
 //!   `deliveredAt` once the hub accepts them; received ones are
 //!   `"delivered"`.
+//! - **did:webvh contacts** (draft-atwood-mls-didwebvh-credential-01
+//!   §Reference Identifiers; bead mimid-1wgh.4.81.27): a ChatContact whose
+//!   user has `did_webvh` leaves in the agent's rooms carries that user's
+//!   DID in `did` (draft-atwood-jmap-chat-did-00 §Optional `did` field:
+//!   the `id` of the head DID document, not the bare SCID); a user seen
+//!   only with BasicCredential leaves has none. It is set again whenever
+//!   a room's epoch moves. When the agent reports that a contact's SCID
+//!   changed (`Event::IdentityChanged`: another SCID, or a
+//!   BasicCredential device for a contact pinned to an SCID), `sync`
+//!   stores one plain-text notice Message in that room's Chat naming the
+//!   contact (its `displayName`, else its user URI), saying the identity
+//!   changed and should be verified; `did` changes to the new DID at the
+//!   same time. The notice's `senderId` is the accountId (JMAP Chat has no
+//!   system sender; see `sync::store_identity_notice`), and it is stored
+//!   once per room and change, however often the agent reports it.
+//!   INVENTED, NOT FROM SPEC: the notice and its text.
+//!
+//!   Decision note (bead mimid-1wgh.4.81.27): the Session does not
+//!   advertise `urn:ietf:params:jmap:chat:did`. draft-atwood-jmap-chat-did-00
+//!   §Capability and §Mandatory DID Methods let a server advertise it only
+//!   if it also advertises `urn:ietf:params:jmap:did` and can resolve
+//!   `did:web`, `did:key` and `did:plc`; the agent resolves no DID (it
+//!   verifies the did:webvh logs its peers carry in their MLS
+//!   credentials). `did` is a property of ChatContact that the server sets
+//!   and a client may ignore, so it is set without the capability.
 //! - **Invites**: [`Options::invites`] decides which Welcomes `sync`
 //!   joins; by default only those sent by a user this user allowed
 //!   (`Agent::allow`).
@@ -102,6 +127,13 @@
 //!   under their ids (see `persist` for its limits).
 //! - `/set` methods on Chats and Messages hold the agent while they send,
 //!   so they wait for a running `sync` and for the hub.
+//! - The identity notice is local to this account: it is not sent to the
+//!   room, and a client may show it as the user's own message. A notice is
+//!   kept until the client destroys it.
+//! - ChatContact `did` follows the rooms the agent is in; a user who
+//!   leaves every room keeps the last DID seen. Per-member did_webvh
+//!   status in a Chat (§Negotiation's SHOULD) waits for JMAP Chat
+//!   properties (Mark's decision (3) on bead mimid-1wgh.4.81.27).
 
 #![forbid(unsafe_code)]
 

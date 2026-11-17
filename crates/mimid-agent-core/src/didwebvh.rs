@@ -75,6 +75,10 @@ pub struct RoomClient {
     /// The SCID of a `did_webvh` leaf (draft §Reference Identifiers), or
     /// `None` for a BasicCredential leaf.
     pub scid: Option<String>,
+    /// The DID of a `did_webvh` leaf: the `id` of its log's head DID
+    /// document (`did:webvh:<SCID>:<domain>...`), which the draft says
+    /// applications SHOULD display; `None` for a BasicCredential leaf.
+    pub did: Option<String>,
 }
 
 /// What [`check_pin`] makes of a leaf presented for a contact.

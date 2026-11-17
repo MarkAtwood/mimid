@@ -1844,6 +1844,7 @@ fn list_change(removed_indices: Vec<u32>, added: &[&str]) -> Result<AppDataUpdat
 /// The leaves of `member`'s group with their users and SCIDs.
 fn room_clients(member: &Member, identity: &Identity) -> Vec<RoomClient> {
     let scids: BTreeMap<u32, String> = member.did_webvh_members(identity).into_iter().collect();
+    let dids: BTreeMap<u32, String> = member.did_webvh_member_dids(identity).into_iter().collect();
     member
         .members()
         .into_iter()
@@ -1851,6 +1852,7 @@ fn room_clients(member: &Member, identity: &Identity) -> Vec<RoomClient> {
             leaf,
             user: String::from_utf8_lossy(&user).into_owned(),
             scid: scids.get(&leaf).cloned(),
+            did: dids.get(&leaf).cloned(),
         })
         .collect()
 }

@@ -13,7 +13,7 @@ use serde_json::json;
 
 use crate::backend::{AgentChat, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, ROOM_ID};
 use crate::blobs::{hex, is_media_type};
-use crate::convert::{message_ref, sender_msg_id, topic_id, utc_date};
+use crate::convert::{MessageRef, message_ref, sender_msg_id, topic_id, utc_date};
 
 /// The creation id given to the store for objects sync makes; no client
 /// sees it.
@@ -109,6 +109,26 @@ impl AgentChat {
             self.reconcile_rooms(&mut agent).await?;
             for event in events {
                 self.apply(&mut agent, event, &mut report).await?;
+            }
+            // A Commit or a join may bring or change a contact's did_webvh
+            // leaves (their ChatContact `did`).
+            let epochs: std::collections::BTreeMap<String, u64> = agent
+                .rooms()
+                .into_iter()
+                .filter(|room| room.status != RoomStatus::Left)
+                .filter_map(|room| agent.epoch(&room.uri).ok().map(|e| (room.uri, e)))
+                .collect();
+            let moved = *self
+                .did_epochs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                != epochs;
+            if moved {
+                self.refresh_contact_dids(&mut agent, None).await?;
+                *self
+                    .did_epochs
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = epochs;
             }
             // Stored first, then acknowledged: what the agent delivered
             // can't be decrypted again, and an event not acknowledged
@@ -291,6 +311,17 @@ impl AgentChat {
         report: &mut SyncReport,
     ) -> Result<(), SyncError> {
         match event {
+            Event::IdentityChanged {
+                room,
+                user,
+                pinned,
+                presented,
+            } => {
+                self.store_identity_notice(agent, &room, &user, &pinned, presented.as_deref())
+                    .await?;
+                self.refresh_contact_dids(agent, Some((&user, presented.as_deref())))
+                    .await
+            }
             Event::Message(message) => self.store_message(agent, *message, report).await,
             Event::MembersChanged {
                 room, participants, ..
@@ -321,6 +352,153 @@ impl AgentChat {
             // Invites are read from Agent::invites; proposals need nothing.
             _ => Ok(()),
         }
+    }
+
+    /// draft-atwood-mls-didwebvh-credential-01 §Reference Identifiers
+    /// ("MUST alert the user if a contact's SCID changes"): stores, in the
+    /// Chat of `room`, a plain-text notice that `user`'s identity changed
+    /// and should be verified (bead mimid-1wgh.4.81.27, Mark's decision
+    /// (1)). It is a Message any JMAP Chat client shows, with no property
+    /// of mimid's own (Mark rejected mimid-only properties).
+    ///
+    /// The notice's `senderId` is the accountId. JMAP Chat has no system
+    /// sender, and mimid-agent-jmap had no convention for one; a made-up
+    /// ChatContact would be shown as a person, and could be confused with a
+    /// participant. The notice is written by the account's own agent, so
+    /// the accountId is truthful and can never be read as coming from the
+    /// contact; the body says it is the agent's notice. INVENTED, NOT FROM
+    /// SPEC (bead mimid-1wgh.4.81.27).
+    ///
+    /// Idempotent: the notice is keyed by (Chat, [`notice_ref`] of the
+    /// room, user, pinned and presented SCIDs), the same key received
+    /// Messages use, and that key is rebuilt from `senderMsgId` when the
+    /// store is restored. An event the journal delivers again, or the same
+    /// mismatch reported again at a later Commit (the pin is kept), stores
+    /// nothing more.
+    async fn store_identity_notice(
+        &self,
+        agent: &mut Agent,
+        room: &str,
+        user: &str,
+        pinned: &str,
+        presented: Option<&str>,
+    ) -> Result<(), SyncError> {
+        let chat = self.chat_for(agent, room).await?;
+        let reference = notice_ref(room, user, pinned, presented);
+        if self
+            .links()
+            .messages
+            .contains_key(&(chat.as_ref().to_owned(), reference))
+        {
+            return Ok(());
+        }
+        let contact = self.contact_for(user).await?;
+        let name = self
+            .stored::<ChatContact>(&contact)
+            .await?
+            .and_then(|c| c.display_name)
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| user.to_owned());
+        let body = identity_notice(&name, pinned, presented);
+        let at = crate::retry::now_secs().saturating_mul(1000);
+        let mut random = [0u8; 16];
+        random[6..].copy_from_slice(&reference);
+        let sender_msg_id = Id::from(
+            ulid::Ulid::from_parts(at, u128::from_be_bytes(random))
+                .to_string()
+                .as_str(),
+        );
+        let mut message = Message::new(
+            Id::from("pending"),
+            sender_msg_id,
+            self.account.clone(),
+            chat.clone(),
+            body,
+            BodyType::Plain,
+            utc_date(at),
+            now(),
+            DeliveryState::Delivered,
+        );
+        let (id, _) = self
+            .inner
+            .create_object::<Message, _>(&(), &self.account, SYNC_CREATE_ID, move |id| {
+                message.id = id.clone();
+                message
+            })
+            .await?;
+        self.link_message(&chat, reference, &id);
+        Ok(())
+    }
+
+    /// Sets each ChatContact's `did` (draft-atwood-jmap-chat-did-00
+    /// §Optional `did` field) to the DID of its user's `did_webvh` leaves
+    /// in the agent's active rooms (the head DID document's `id`, not the
+    /// bare SCID), and clears it for a user seen only with
+    /// BasicCredential leaves. A user absent from every room keeps what
+    /// the contact has. When the user's leaves present several DIDs,
+    /// `changed` (a user and the SCID an [`Event::IdentityChanged`]
+    /// reported) picks the DID with that SCID, so `did` changes when the
+    /// identity notice goes out; otherwise the one the contact has is
+    /// kept, and failing that the first in order.
+    ///
+    /// The property is standard, server-set, and set here without the
+    /// `urn:ietf:params:jmap:chat:did` capability, which the agent cannot
+    /// advertise (see the crate documentation, # Mapping).
+    pub(crate) async fn refresh_contact_dids(
+        &self,
+        agent: &mut Agent,
+        changed: Option<(&str, Option<&str>)>,
+    ) -> Result<(), SyncError> {
+        // user -> (SCID, DID) of its did_webvh leaves; Basic-only users map
+        // to an empty list.
+        let mut seen: std::collections::BTreeMap<String, Vec<(String, String)>> =
+            std::collections::BTreeMap::new();
+        for room in agent.rooms() {
+            if room.status == RoomStatus::Left {
+                continue;
+            }
+            let Ok(clients) = agent.clients(&room.uri) else {
+                continue;
+            };
+            for client in clients {
+                if client.user.is_empty() || client.user == self.user {
+                    continue;
+                }
+                let entry = seen.entry(client.user).or_default();
+                if let (Some(scid), Some(did)) = (client.scid, client.did)
+                    && !entry.iter().any(|(_, d)| *d == did)
+                {
+                    entry.push((scid, did));
+                }
+            }
+        }
+        for (user, mut dids) in seen {
+            dids.sort();
+            let contact = self.contact_for(&user).await?;
+            let current = self
+                .stored::<ChatContact>(&contact)
+                .await?
+                .and_then(|c| c.did)
+                .map(|d| d.to_string());
+            let preferred = changed
+                .filter(|(u, _)| *u == user)
+                .and_then(|(_, scid)| scid)
+                .and_then(|scid| dids.iter().find(|(s, _)| s == scid))
+                .map(|(_, did)| did.clone());
+            let kept = current.clone().filter(|c| dids.iter().any(|(_, d)| d == c));
+            let wanted = preferred
+                .or(kept)
+                .or_else(|| dids.first().map(|(_, did)| did.clone()));
+            if wanted == current {
+                continue;
+            }
+            let patch = serde_json::from_value(json!({ "did": wanted }))
+                .map_err(|e| SyncError::Store(e.to_string()))?;
+            self.inner
+                .update_object::<ChatContact>(&(), &self.account, &contact, patch)
+                .await?;
+        }
+        Ok(())
     }
 
     async fn set_members(
@@ -631,6 +809,54 @@ impl AgentChat {
 /// (draft-atwood-jmap-chat-00 §Attachment: no `/`, `\` or null): those
 /// and other control characters become `_`, it is cut to
 /// [`MAX_FILENAME_CHARS`], and an empty one is [`FALLBACK_FILENAME`].
+/// The reference octets (the random part of `senderMsgId`) of the identity
+/// notice for one mismatch: the first 10 octets of SHA-256 over a label and
+/// the room, user, pinned SCID and presented SCID (`basic` for a
+/// BasicCredential leaf), each ended by a NUL. INVENTED, NOT FROM SPEC.
+pub(crate) fn notice_ref(
+    room: &str,
+    user: &str,
+    pinned: &str,
+    presented: Option<&str>,
+) -> MessageRef {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for part in [
+        "mimid identity-changed notice",
+        room,
+        user,
+        pinned,
+        presented.unwrap_or("basic"),
+    ] {
+        hash.update(part.as_bytes());
+        hash.update([0]);
+    }
+    let digest = hash.finalize();
+    let mut out = [0u8; 10];
+    out.copy_from_slice(&digest[..10]);
+    out
+}
+
+/// The text of an identity notice for contact `name`. Only public values:
+/// the name and the SCIDs.
+pub(crate) fn identity_notice(name: &str, pinned: &str, presented: Option<&str>) -> String {
+    let change = match presented {
+        Some(presented) => format!(
+            "A device of {name} now presents a different did:webvh identity (SCID {presented}) \
+             from the one first seen for them (SCID {pinned})."
+        ),
+        None => format!(
+            "A device of {name} presents no did:webvh credential, but {name} was first seen \
+             with one (SCID {pinned})."
+        ),
+    };
+    format!(
+        "Security notice from your mimid agent, not from {name}: the identity of {name} \
+         changed. {change} Verify the new identity with {name} by other means before you \
+         trust messages from that device."
+    )
+}
+
 pub(crate) fn safe_filename(name: &str) -> String {
     let safe: String = name
         .chars()

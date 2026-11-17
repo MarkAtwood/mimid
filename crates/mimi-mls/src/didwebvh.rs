@@ -769,6 +769,23 @@ pub(crate) fn is_record_change(
         && same_set(new.credential_types(), &credentials_expected)
 }
 
+/// The DID of a `did_webvh` credential already verified: the `id` of its
+/// last entry's DID document (§Reference Identifiers: applications SHOULD
+/// display the DID string), read without verifying again; `None` for
+/// another credential type.
+pub(crate) fn did_of(code_points: CodePoints, credential: &Credential) -> Option<String> {
+    if credential.credential_type() != CredentialType::from(code_points.credential_type()) {
+        return None;
+    }
+    let decoded = DidWebvhCredential::decode(credential.serialized_content()).ok()?;
+    let head = decoded
+        .did_log()
+        .split(|&b| b == b'\n')
+        .rfind(|line| !line.is_empty())?;
+    let entry: serde_json::Value = serde_json::from_slice(head).ok()?;
+    entry["state"]["id"].as_str().map(str::to_owned)
+}
+
 /// The SCID of a `did_webvh` credential already verified, read from the
 /// first entry's `scid` parameter without verifying again.
 pub(crate) fn scid_of(code_points: CodePoints, credential: &Credential) -> Option<String> {

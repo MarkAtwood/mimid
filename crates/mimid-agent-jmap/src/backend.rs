@@ -101,6 +101,9 @@ pub struct AgentChat {
     pub(crate) blobs: Option<BlobStore>,
     /// Received attachments to fetch again ([`crate::retry`]).
     pub(crate) pending: StdMutex<Vec<crate::retry::PendingAttachment>>,
+    /// Each active room's epoch when ChatContact `did`s were last set
+    /// from its leaves; a change of any sets them again.
+    pub(crate) did_epochs: StdMutex<BTreeMap<String, u64>>,
 }
 
 impl std::fmt::Debug for AgentChat {
@@ -129,6 +132,7 @@ impl AgentChat {
             save_lock: Mutex::new(()),
             blobs: None,
             pending: StdMutex::new(Vec::new()),
+            did_epochs: StdMutex::new(BTreeMap::new()),
         }
     }
 

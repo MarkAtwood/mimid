@@ -437,6 +437,25 @@ credential, and a keyMaterial request (protocol-07 §5.2) from such a room
 should require `did_webvh` and `did_webvh_heads`, or a provider may return a
 KeyPackage that cannot be added (decision mimid-1wgh.4.81.24).
 
+### 27. The alert when a contact's SCID changes is repeated by design
+
+**§Reference Identifiers** says applications MUST alert the user if a
+contact's SCID changes, and pin the first SCID. Keeping the pin means the
+mismatch is found again at every later Commit in that room, so an
+implementation that alerts on each finding alerts many times for one
+change. A messenger that shows chats through a stock client (mimid's agent
+behind JMAP Chat) has only a chat message to alert with.
+
+**mimid:** the agent reports the mismatch each time; its JMAP layer stores
+one notice Message per room and per (pinned SCID, presented SCID), keyed so
+a replay or a repeat stores nothing more, and sets the contact's JMAP
+`did` to the new DID (bead mimid-1wgh.4.81.27). The pin is never moved
+automatically; there is no "accept the new identity" action yet.
+
+**For -01:** say whether "alert" is once per change or per occurrence, and
+what accepting a new SCID means (re-pinning), so implementations agree on
+what a user sees.
+
 ## Section 7, item 7: the encoding question
 
 What implementing -00 taught about "Encoding without DIDs":
