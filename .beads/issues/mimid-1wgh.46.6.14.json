@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.46.6.14",
   "title": "mimid: interop driver sent the current epoch's tree as a full RatchetTreeOption with the next epoch's GroupInfo",
   "description": "Found 2026-11-17 against local mimi-hubd fdce222 (namespace run, tools/interop/haven/live). The B4 driver's commit_request built RatchetTreeOption::full from member.ratchet_tree() before merge_pending_commit, i.e. the current epoch's tree, beside the Full GroupInfo of the epoch after the Commit. ratchet-tree-options-02 §3: the tree goes with the GroupInfo. mimi-hubd ffd9e24+ seeds a room's tree from the pair (PublicGroup::from_external) and logged '\u003croom\u003e stays untracked: its GroupInfo and tree are not a valid group' for steps 4b and 4f. mimi-mls had no accessor for the pending Commit's tree. Fix: Member::pending_ratchet_tree (55a863d, test crates/mimi-mls/tests/member_pending_tree.rs: pending tree != current, == tree after merge; error with nothing pending) and the driver uses it (095e1c9); after the fix the hub's only refusal to seed is 'a participant the hub lists is not in its tree' (dave, listed without a client, step 4a), which is correct. mimid's own hub ignores the client's tree (decision mimid-1wgh.6.12), so nothing else was affected; the mimid-server test helper tests/common/update.rs passes a tree the hub never reads.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-17T04:32:37.340362043Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-17T04:32:37.340362043Z",
+  "updated_at": "2026-11-17T04:32:46.471485999Z",
+  "closed_at": "2026-11-17T04:32:46.471485999Z",
+  "close_reason": "Fixed on branch haven-recheck: 55a863d (Member::pending_ratchet_tree + test), 095e1c9 (driver). Not merged to main.",
   "labels": [
     "interop"
   ],

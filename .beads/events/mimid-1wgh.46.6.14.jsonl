@@ -1,2 +1,3 @@
 {"id":"01a1e7c7-3fe0-7a20-a99a-67893b331c47","issue_id":"mimid-1wgh.46.6.14","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-17T04:32:37.344664447Z"}
 {"id":"01a1e7c7-3fe4-7c02-bc3c-f1717ab6aab4","issue_id":"mimid-1wgh.46.6.14","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: interop","created_at":"2026-11-17T04:32:37.348788113Z"}
+{"id":"01a1e7c7-638d-791f-a5d0-62da1a797107","issue_id":"mimid-1wgh.46.6.14","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Fixed on branch haven-recheck: 55a863d (Member::pending_ratchet_tree + test), 095e1c9 (driver). Not merged to main.","created_at":"2026-11-17T04:32:46.477598914Z"}
