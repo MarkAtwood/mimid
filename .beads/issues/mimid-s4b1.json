@@ -2,13 +2,15 @@
   "id": "mimid-s4b1",
   "title": "agent: commit the Message/changes position only after the caller has stored what poll returned",
   "description": "From A5 (mimid-1wgh.13.12). Agent::poll saves state.json (the server's Message state, consumed MLS keys) before AgentChat::sync writes the plaintext store, so a crash between the two loses the messages that poll decrypted: they cannot be decrypted again. Fix: poll returns events plus a token; the caller calls Agent::commit(token) after it has stored them. MLS key consumption is the hard part: OpenMLS deletes the secret tree entries in process_message, so a re-decrypt after a crash needs the plaintext kept first (e.g. the agent writes received plaintext to its own journal in the same transaction). Documented in mimid-agent-jmap persist.rs Limitations.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T06:45:56.438749357Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T06:45:56.438749357Z",
+  "updated_at": "2026-11-17T02:38:45.681307351Z",
+  "closed_at": "2026-11-17T02:38:45.681307351Z",
+  "close_reason": "Journal in state.json; receive/acknowledge; sync acknowledges after its store write. The window between the OpenMLS sqlite write and the journal save remains, documented in journal.rs.",
   "labels": [
     "agent"
   ]
