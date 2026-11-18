@@ -1,0 +1,16 @@
+{
+  "id": "mimid-6x2f",
+  "title": "mTLS tested with a real peer (both halves), and an interop-day test plan",
+  "description": "Promised to Rohan Mahy and Konrad Kohbrok in Mark's email of 2026-11-18 (IETF notes/2026-11-18-mimid-interop-answers-sent.md). Before the interop day; Mark offered to do it with Rohan and Konrad. Both halves exist (PKIX inbound mimid-75nk.5, outbound client identity; DANE mimid-75nk.6) but were never deployed or tested with a peer. Write the test plan (which peer, CA or DANE records, which mechanisms, expected results) and run it on the January/December host (mimid-1wgh.46.20.1).",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-18T16:23:41.150581903Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-18T16:23:41.150581903Z",
+  "labels": [
+    "interop",
+    "provider-auth"
+  ]
+}
