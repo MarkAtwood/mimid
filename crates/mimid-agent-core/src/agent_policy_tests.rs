@@ -311,6 +311,20 @@ fn the_member_role_holds_no_admin_capability() {
     }
 }
 
+/// Bead mimid-umnp: room-policy-04 §8.3 canReportAbuse ("the holder can
+/// report a franked instant message as abusive") is held by both the
+/// member and the admin role, so any participant of a default room may
+/// report.
+#[test]
+fn members_and_the_admin_may_report_abuse() {
+    let room = hosted_room();
+    for role_index in [ROLE, ADMIN_ROLE] {
+        room.roles
+            .authorize_capability(role_index, Capability::CAN_REPORT_ABUSE)
+            .unwrap_or_else(|e| panic!("role {role_index}: {e}"));
+    }
+}
+
 /// The default roles with canKick added to the member role, as a
 /// `roles_list` AppDataUpdate.
 fn member_gets_kick() -> ProposalKind {

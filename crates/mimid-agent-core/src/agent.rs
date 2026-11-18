@@ -2103,9 +2103,10 @@ fn participants(member: &Member) -> Result<Vec<String>, AgentError> {
 /// The roles a hosted room starts with (decision mimid-1wgh.56):
 ///
 /// - 1 "banned" (room-policy-04 §8.1.3), no capabilities;
-/// - 2 "member", which every added participant gets: send, receive, reply
-///   and react (§8.3), add participants (§8.1.1), leave and remove an own
-///   client (§8.1.2); nothing of §8.2 or §8.6 (bug mimid-y2hi);
+/// - 2 "member", which every added participant gets: send, receive,
+///   reply, react and report abuse (§8.3), add participants (§8.1.1),
+///   leave and remove an own client (§8.1.2); nothing of §8.2 or §8.6
+///   (bug mimid-y2hi);
 /// - 3 "admin", which the room's creator gets: everything a member holds,
 ///   and kick, remove, ban, unban and change other users' roles (§8.1.2,
 ///   §8.1.3), change the room metadata (§8.2), and change the role list,
@@ -2146,6 +2147,8 @@ fn default_roles() -> RoleData {
         Capability::CAN_RECEIVE_MESSAGE,
         Capability::CAN_REPLY_TO_MESSAGE,
         Capability::CAN_REACT_TO_MESSAGE,
+        // Bead mimid-umnp: the hub checks it on reportAbuse.
+        Capability::CAN_REPORT_ABUSE,
     ];
     // Bug mimid-y2hi: no canChangeRoleDefinitions, which would let any
     // member give the member role any capability in one Commit.
