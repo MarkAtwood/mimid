@@ -616,6 +616,7 @@ impl AgentChat {
             })
             .await?;
         self.link_message(&chat, reference, &id);
+        self.keep_frank(&id, &received, report);
         self.keep_for_retry(&id, &received.room, retry, report);
         report.messages += 1;
         Ok(())

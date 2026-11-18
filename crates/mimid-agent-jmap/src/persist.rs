@@ -1,6 +1,7 @@
 //! The plaintext store (bead mimid-1wgh.13.12): the account's Chats,
 //! Messages, ChatContacts and ReadPositions in one JSON file, so they
-//! survive a restart. They must: the agent cannot decrypt a message again,
+//! survive a restart, with the kept franks of received Messages
+//! ([`crate::report`]), dropped with their Message. They must: the agent cannot decrypt a message again,
 //! since MLS consumes the keys (RFC 9420 §9.2).
 //!
 //! The file is rewritten whole after every change that succeeds, to a
@@ -23,6 +24,7 @@
 //!   decrypted event to its journal, so a crash in that one write loses
 //!   the message.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -68,11 +70,15 @@ struct Snapshot {
     format: u32,
     account: String,
     /// `TYPE_NAME` to the objects of that type, as JSON.
-    objects: std::collections::BTreeMap<String, Vec<Value>>,
+    objects: BTreeMap<String, Vec<Value>>,
     /// Received attachments to fetch again ([`crate::retry`]). Absent in
     /// a file written before retries, which reads as none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pending_attachments: Vec<crate::retry::PendingAttachment>,
+    /// The kept franks, by Message id ([`crate::report`]). Absent in a
+    /// file written before abuse reports, which reads as none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    franks: BTreeMap<String, crate::report::KeptFrank>,
 }
 
 /// The stored types, in the order they are restored.
@@ -134,6 +140,10 @@ impl AgentChat {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             snapshot.pending_attachments.clone();
+        *self
+            .franks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = snapshot.franks.clone();
         for (name, values) in &snapshot.objects {
             let Some(&type_name) = TYPES.iter().find(|t| **t == name.as_str()) else {
                 return Err(malformed(path, format!("unknown type {name}")));
@@ -212,13 +222,28 @@ impl AgentChat {
             return Ok(());
         };
         let _one_at_a_time = self.save_lock.lock().await;
-        let mut objects = std::collections::BTreeMap::new();
+        let mut objects = BTreeMap::new();
         objects.insert(
             ChatContact::TYPE_NAME.to_owned(),
             self.all::<ChatContact>().await?,
         );
         objects.insert(Chat::TYPE_NAME.to_owned(), self.all::<Chat>().await?);
-        objects.insert(Message::TYPE_NAME.to_owned(), self.all::<Message>().await?);
+        let messages = self.all::<Message>().await?;
+        // A frank is kept only while its Message is: one the client
+        // destroyed is dropped here.
+        let franks = {
+            let mut franks = self
+                .franks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let ids: std::collections::BTreeSet<&str> = messages
+                .iter()
+                .filter_map(|m| m.get("id").and_then(Value::as_str))
+                .collect();
+            franks.retain(|id, _| ids.contains(id.as_str()));
+            franks.clone()
+        };
+        objects.insert(Message::TYPE_NAME.to_owned(), messages);
         objects.insert(
             ReadPosition::TYPE_NAME.to_owned(),
             self.all::<ReadPosition>().await?,
@@ -232,6 +257,7 @@ impl AgentChat {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone(),
+            franks,
         };
         let bytes =
             serde_json::to_vec(&snapshot).map_err(|e| PersistError::Store(e.to_string()))?;

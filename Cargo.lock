@@ -2586,13 +2586,19 @@ name = "mimid-agent-jmap"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
+ "hex",
  "jmap-chat-server",
  "jmap-chat-types",
  "jmap-server",
  "jmap-types",
  "mimi-content",
+ "mimi-mls",
+ "mimi-protocol",
+ "mimi-room-policy",
  "mimid-agent-core",
  "mimid-server",
+ "reqwest 0.13.5",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -2600,6 +2606,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "ulid 3.0.0",
 ]
 

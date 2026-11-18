@@ -91,6 +91,9 @@
 //! - The daemon polls its server on an interval; it does not listen to
 //!   the server's EventSource, so incoming messages wait for the next
 //!   sync.
+//! - The endpoint serves `Message/reportAbuse` (mimid-agent-jmap's
+//!   `report` module), a method no JMAP Chat draft defines (INVENTED, NOT
+//!   FROM SPEC), under the JMAP Chat capability.
 //! - Consent decisions (`Agent::allow`, `Agent::deny`) have no JMAP Chat
 //!   method, so a client cannot make them here. Which invites are joined
 //!   is fixed by the `invites` setting: `from-allowed` (the default) joins

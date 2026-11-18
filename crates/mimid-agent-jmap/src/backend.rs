@@ -104,6 +104,9 @@ pub struct AgentChat {
     /// Each active room's epoch when ChatContact `did`s were last set
     /// from its leaves; a change of any sets them again.
     pub(crate) did_epochs: StdMutex<BTreeMap<String, u64>>,
+    /// The frank of every received franked Message, by Message id, for
+    /// `Message/reportAbuse` ([`crate::report`]).
+    pub(crate) franks: StdMutex<BTreeMap<String, crate::report::KeptFrank>>,
 }
 
 impl std::fmt::Debug for AgentChat {
@@ -133,6 +136,7 @@ impl AgentChat {
             blobs: None,
             pending: StdMutex::new(Vec::new()),
             did_epochs: StdMutex::new(BTreeMap::new()),
+            franks: StdMutex::new(BTreeMap::new()),
         }
     }
 
@@ -157,10 +161,12 @@ impl AgentChat {
     }
 
     /// Registers the JMAP Chat methods (`Chat/*`, `Message/*`,
-    /// `ChatContact/*` and the rest of crate-jmap's set) on `dispatcher`,
-    /// served by `this`.
+    /// `ChatContact/*` and the rest of crate-jmap's set) and
+    /// `Message/reportAbuse` ([`crate::report`]) on `dispatcher`, served by
+    /// `this`.
     pub fn register(this: &Arc<Self>, dispatcher: &mut Dispatcher<()>) {
         jmap_chat_server::register_chat_handlers(dispatcher, Arc::clone(this));
+        crate::report::register(this, dispatcher);
     }
 
     /// The JMAP account id.

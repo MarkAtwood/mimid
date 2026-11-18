@@ -39,7 +39,6 @@ These are deliberate in the current version:
 Not deliberate; each is being fixed:
 
 - A room's creator holds `canKick`, bans and role changes in the default room policy, but mimid-agent has no operation that uses them yet, so removing another user from a mimid-agent room needs another client or the operator (`mimid admin remove|ban`). Bead mimid-90cd.
-- Nothing sends an abuse report: the hub receives protocol-07 §5.9 reportAbuse and verifies its franks, but no user-side method or provider send exists, and the hub doesn't check `canReportAbuse`. Bead mimid-oon0.
 - The server serves a last-resort KeyPackage more than once, against protocol-07 §5.2 (mls-extensions-11 §6.4 allows reuse). Bead mimid-gunw.
 - A user's new device is not added to rooms the user is already in. Bead mimid-d464.
 - Two devices of one user can't share a group with stock mls-rs, which refuses two leaves with the same BasicCredential. Epic mimid-4lp4.
