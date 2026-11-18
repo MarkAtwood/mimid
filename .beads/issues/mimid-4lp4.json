@@ -1,0 +1,16 @@
+{
+  "id": "mimid-4lp4",
+  "title": "[two-device] Two-device users that interoperate with mls-rs",
+  "description": "Promised to Rohan Mahy and Konrad Kohbrok in Mark's email of 2026-11-18 (IETF notes/2026-11-18-mimid-interop-answers-sent.md). Before the interop day. Stock mls-rs rejects two leaves with the same BasicCredential identity, so a mimid user with two devices can't share a group with an mls-rs client. Mark chose BOTH fixes (2026-11-18), as the two children.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-18T16:23:39.918123383Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-18T16:23:39.918123383Z",
+  "labels": [
+    "interop",
+    "credential"
+  ]
+}
