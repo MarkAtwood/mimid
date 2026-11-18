@@ -26,7 +26,8 @@ use mimi_protocol::{
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{
-    BaseRoomPolicy, Bool, Capability, Role, RoleData, SingleSourceRoleChangeTargets,
+    BANNED_ROLE_INDEX, BaseRoomPolicy, Bool, Capability, Role, RoleData,
+    SingleSourceRoleChangeTargets,
 };
 use serde_json::json;
 
@@ -53,6 +54,9 @@ const MAX_HELD: usize = 256;
 /// The role every participant this agent adds gets: 2, "member" in
 /// [`default_roles`] (room-policy-04 §8.1.3 reserves 1 for "banned").
 const ROLE: u32 = 2;
+/// The role the creator of a room this agent hosts gets: 3, "admin" in
+/// [`default_roles`] (decision mimid-1wgh.56).
+const ADMIN_ROLE: u32 = 3;
 /// The longest text sent as one message, in octets. INVENTED, NOT FROM
 /// SPEC.
 pub const MAX_TEXT_LEN: usize = 16 * 1024;
@@ -801,7 +805,8 @@ impl Agent {
         let mut components: Vec<(u16, Vec<u8>)> = if options.open {
             vec![
                 (APP_COMPONENTS, vec![0x02, 0x00, 0x22]),
-                (PARTICIPANT_LIST, participant_list(&[self.me.as_str()])?),
+                // An open room has no roles_list: any non-zero role.
+                (PARTICIPANT_LIST, participant_list(&self.me, ROLE)?),
             ]
         } else {
             let mut franking_key = vec![0x20];
@@ -829,7 +834,9 @@ impl Agent {
                 ),
                 (SAFE_AAD, vec![0x02, 0x00, 0x20]),
                 (FRANKING_AGENT, franking_agent),
-                (PARTICIPANT_LIST, participant_list(&[self.me.as_str()])?),
+                // The creator is the room's admin (decision
+                // mimid-1wgh.56).
+                (PARTICIPANT_LIST, participant_list(&self.me, ADMIN_ROLE)?),
                 (ROLES_LIST, encode(&default_roles())?),
                 (BASE_ROOM_POLICY, encode(&default_base_policy())?),
             ]
@@ -2017,9 +2024,13 @@ fn pairs(users: &[&str]) -> Vec<UserRolePair> {
         .collect()
 }
 
-fn participant_list(users: &[&str]) -> Result<Vec<u8>, AgentError> {
+/// A new room's participant list: its creator alone, with `role_index`.
+fn participant_list(creator: &str, role_index: u32) -> Result<Vec<u8>, AgentError> {
     encode(&ParticipantListData {
-        participants: pairs(users),
+        participants: vec![UserRolePair {
+            user: creator.as_bytes().to_vec(),
+            role_index,
+        }],
     })
 }
 
@@ -2088,10 +2099,18 @@ fn participants(member: &Member) -> Result<Vec<String>, AgentError> {
         .collect())
 }
 
-/// The roles a hosted room starts with: 1 "banned" (room-policy-04 §8.1.3,
-/// no capabilities) and 2 "member", which every added participant gets:
-/// send, receive, reply and react (§8.3), add participants (§8.1.1),
-/// leave (§8.1.2) and change the role list (§8.6).
+/// The roles a hosted room starts with (decision mimid-1wgh.56):
+///
+/// - 1 "banned" (room-policy-04 §8.1.3), no capabilities;
+/// - 2 "member", which every added participant gets: send, receive, reply
+///   and react (§8.3), add participants (§8.1.1), leave and remove an own
+///   client (§8.1.2), and change the role list (§8.6);
+/// - 3 "admin", which the room's creator gets: everything a member holds,
+///   and kick, remove, ban, unban and change other users' roles (§8.1.2,
+///   §8.1.3), change the room metadata (§8.2), and change the role list,
+///   the preauthorization list and the membership style (§8.6). Its
+///   transitions are those of room-policy-04 Appendix A.1's
+///   `group_admin` over roles 0 to 3.
 fn default_roles() -> RoleData {
     let role = |role_index: u32,
                 name: &str,
@@ -2107,36 +2126,67 @@ fn default_roles() -> RoleData {
         maximum_active_participants_constraint: None,
         authorized_role_changes,
     };
+    let changes = |entries: &[(u32, &[u32])]| {
+        entries
+            .iter()
+            .map(|(from, targets)| SingleSourceRoleChangeTargets {
+                from_role_index: *from,
+                target_role_indexes: targets.to_vec(),
+            })
+            .collect::<Vec<_>>()
+    };
+    let ordinary = [
+        Capability::CAN_ADD_PARTICIPANT,
+        Capability::CAN_REMOVE_SELF,
+        // A revoked did_webvh device is removed by another
+        // device of its user (decision mimid-1wgh.4.81.25).
+        Capability::CAN_REMOVE_OWN_CLIENT,
+        Capability::CAN_SEND_MESSAGE,
+        Capability::CAN_RECEIVE_MESSAGE,
+        Capability::CAN_REPLY_TO_MESSAGE,
+        Capability::CAN_REACT_TO_MESSAGE,
+    ];
+    let mut member = ordinary.to_vec();
+    member.push(Capability::CAN_CHANGE_ROLE_DEFINITIONS);
+    let mut admin = ordinary.to_vec();
+    admin.extend([
+        Capability::CAN_REMOVE_PARTICIPANT,
+        Capability::CAN_KICK,
+        Capability::CAN_BAN,
+        Capability::CAN_UN_BAN,
+        Capability::CAN_CHANGE_USER_ROLE,
+        Capability::CAN_CHANGE_ROOM_NAME,
+        Capability::CAN_CHANGE_ROOM_DESCRIPTION,
+        Capability::CAN_CHANGE_ROOM_AVATAR,
+        Capability::CAN_CHANGE_ROOM_SUBJECT,
+        Capability::CAN_CHANGE_ROOM_MOOD,
+        Capability::CAN_CHANGE_ROOM_MEMBERSHIP_STYLE,
+        Capability::CAN_CHANGE_ROLE_DEFINITIONS,
+        Capability::CAN_CHANGE_PREAUTHORIZED_USER_LIST,
+    ]);
     RoleData {
         roles: vec![
-            role(1, "banned", vec![], vec![]),
+            role(BANNED_ROLE_INDEX, "banned", vec![], vec![]),
+            // §8.1: adding moves a user from role 0 to a member role,
+            // leaving moves the leaver back to 0.
             role(
                 ROLE,
                 "member",
-                vec![
-                    Capability::CAN_ADD_PARTICIPANT,
-                    Capability::CAN_REMOVE_SELF,
-                    // A revoked did_webvh device is removed by another
-                    // device of its user (decision mimid-1wgh.4.81.25).
-                    Capability::CAN_REMOVE_OWN_CLIENT,
-                    Capability::CAN_SEND_MESSAGE,
-                    Capability::CAN_RECEIVE_MESSAGE,
-                    Capability::CAN_REPLY_TO_MESSAGE,
-                    Capability::CAN_REACT_TO_MESSAGE,
-                    Capability::CAN_CHANGE_ROLE_DEFINITIONS,
-                ],
-                // §8.1: adding moves a user from role 0 to a member role,
-                // leaving moves the leaver back to 0.
-                vec![
-                    SingleSourceRoleChangeTargets {
-                        from_role_index: 0,
-                        target_role_indexes: vec![ROLE],
-                    },
-                    SingleSourceRoleChangeTargets {
-                        from_role_index: ROLE,
-                        target_role_indexes: vec![0],
-                    },
-                ],
+                member,
+                changes(&[(0, &[ROLE]), (ROLE, &[0])]),
+            ),
+            // Appendix A.1 group_admin: add, remove, ban, unban, promote
+            // and demote among roles 0 to 3.
+            role(
+                ADMIN_ROLE,
+                "admin",
+                admin,
+                changes(&[
+                    (0, &[BANNED_ROLE_INDEX, ROLE, ADMIN_ROLE]),
+                    (BANNED_ROLE_INDEX, &[0, ROLE, ADMIN_ROLE]),
+                    (ROLE, &[0, BANNED_ROLE_INDEX, ADMIN_ROLE]),
+                    (ADMIN_ROLE, &[0, BANNED_ROLE_INDEX, ROLE]),
+                ]),
             ),
         ],
     }
@@ -2504,3 +2554,7 @@ mod tests {
 #[cfg(test)]
 #[path = "agent_didwebvh_tests.rs"]
 mod didwebvh_tests;
+
+#[cfg(test)]
+#[path = "agent_policy_tests.rs"]
+mod policy_tests;

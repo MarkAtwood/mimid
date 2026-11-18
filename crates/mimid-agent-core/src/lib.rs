@@ -55,6 +55,16 @@
 //!   index commits it. No other proposals are sent by this crate.
 //! - No room-policy actions beyond the defaults: no role changes, bans or
 //!   policy edits; no external joins (GroupInfo/fetch); no attachments.
+//!   A hosted room's creator gets the "admin" role, which holds `canKick`,
+//!   bans and role changes, but this crate has no operation that uses
+//!   them; another client of the creator, or the operator (`mimid admin
+//!   remove|ban`), must (decision mimid-1wgh.56; bead mimid-90cd).
+//! - A room keeps the `roles_list` it was created with. Rooms hosted by an
+//!   earlier version have no admin role, until someone changes the role
+//!   list.
+//! - The admin role has no minimum participant count, so if the creator
+//!   leaves, the room has no admin (decision mimid-1wgh.56 item 5; bead
+//!   mimid-f3bk).
 //! - Delivery to users of other providers is the server's job (fanout);
 //!   this crate talks only to its own server.
 //! - `components` and `uri` are copies of mimid-server code, kept so this

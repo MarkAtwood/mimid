@@ -46,6 +46,8 @@ struct Server {
     /// The UpdateRequest of every Room/update call the server received,
     /// in order.
     updates: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    /// The hub, to read what it holds.
+    hub: Arc<Hub>,
 }
 
 /// Records the UpdateRequest of each Room/update call into `updates`
@@ -138,14 +140,18 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
     )
     .unwrap();
     let updates = Arc::default();
-    let app = router(directory(&base), hub, follower).merge(jmap).layer(
-        axum::middleware::from_fn_with_state(Arc::clone(&updates), record_updates),
-    );
+    let app = router(directory(&base), Arc::clone(&hub), follower)
+        .merge(jmap)
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&updates),
+            record_updates,
+        ));
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
         updates,
+        hub,
     }
 }
 
@@ -237,6 +243,21 @@ async fn two_agents_chat_through_their_server() {
     assert!(bob.invites().is_empty());
     assert_eq!(bob.key_packages_outstanding(), 1);
     assert_eq!(bob.participants(&room).unwrap(), [ALICE, BOB]);
+    // Decision mimid-1wgh.56: the hub holds alice, who created the room,
+    // as its admin (role 3) and bob as a member (role 2).
+    let summary = server.hub.room_summaries(Some(&room)).await.remove(0);
+    assert_eq!(
+        summary.participants.unwrap(),
+        [(ALICE.as_bytes().to_vec(), 3), (BOB.as_bytes().to_vec(), 2)]
+    );
+    assert_eq!(
+        summary.roles.unwrap(),
+        [
+            (1, "banned".to_owned()),
+            (2, "member".to_owned()),
+            (3, "admin".to_owned())
+        ]
+    );
     assert_eq!(bob.room_name(&room).unwrap().as_deref(), Some("planning"));
     assert_eq!(alice.room_name(&room).unwrap().as_deref(), Some("planning"));
     assert_agreement(&room, &alice, &bob);
