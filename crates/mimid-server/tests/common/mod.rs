@@ -84,6 +84,18 @@ pub async fn open_hub(path: &Path) -> (Store, Hub) {
     (store, hub)
 }
 
+/// As [`open_hub`], for a deployment whose operator allows rooms without
+/// a `base_room_policy` (`require_room_policy = false`; bead mimid-jf20).
+#[allow(
+    dead_code,
+    reason = "not every test binary that includes common uses it"
+)]
+pub async fn open_hub_allowing_open_rooms(path: &Path) -> (Store, Hub) {
+    let (store, hub) = open_hub(path).await;
+    let hub = hub.with_requirements(mimid_server::hub::HubRequirements::new(false, false));
+    (store, hub)
+}
+
 /// Stops a hub and closes its store, as a process exit would.
 pub async fn close_hub(store: Store, hub: Hub) {
     drop(hub);

@@ -64,7 +64,9 @@ fn group(hub: &Hub, alice: &Identity, listed: &[&[u8]]) -> (Member, Vec<u8>, Vec
 #[tokio::test]
 async fn a_room_listing_an_over_long_uri_is_not_hosted() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    // The groups have no base_room_policy: the operator allows open
+    // rooms (bead mimid-jf20), which this test is not about.
+    let (store, hub) = open_hub_allowing_open_rooms(&dir.path().join("mimid.sqlite")).await;
     let hub = hub.with_limits(low());
     let alice = Identity::generate(ALICE, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
     let (_, group_info, tree) = group(&hub, &alice, &[ALICE, BOB, CAROLYN]);
@@ -79,7 +81,9 @@ async fn a_room_listing_an_over_long_uri_is_not_hosted() {
 /// alice adds carolyn: her client and her participant-list entry.
 async fn add_carolyn(limits: FieldLimits) -> UpdateResult {
     let dir = tempfile::tempdir().unwrap();
-    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    // The groups have no base_room_policy: the operator allows open
+    // rooms (bead mimid-jf20), which this test is not about.
+    let (store, hub) = open_hub_allowing_open_rooms(&dir.path().join("mimid.sqlite")).await;
     let hub = hub.with_limits(limits);
     let alice = Identity::generate(ALICE, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
     let (mut group, group_info, tree) = group(&hub, &alice, &[ALICE, BOB]);

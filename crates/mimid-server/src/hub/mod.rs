@@ -24,8 +24,13 @@
 //!   hub cannot authenticate a PrivateMessage's sender, does not withhold
 //!   messages from clients whose removal is pending (protocol-07 §5.3), and
 //!   refuses messages in rooms with a malformed policy component. Rooms
-//!   without franking or without a `base_room_policy` are hosted
-//!   (decision mimid-1wgh.52; [`HubRequirements`]).
+//!   without franking are hosted (decision mimid-1wgh.52); rooms without
+//!   a `base_room_policy` only if the operator turns
+//!   [`HubRequirements::room_policy`] off (bead mimid-jf20).
+//! - A room without a `base_room_policy` that the hub already stores is
+//!   still served as an open room after a restart with
+//!   [`HubRequirements::room_policy`] on; the hub logs a warning
+//!   (`open_room_kept`) for each at start.
 //! - [`Hub::update`] has the limitations listed in `update.rs`.
 //! - If a room cannot be rebuilt after a failed request, it is dropped from
 //!   memory, and requests for it get [`HubError::NoSuchRoom`] until the hub
@@ -249,16 +254,20 @@ pub struct Hub {
 }
 
 /// What a deployment requires of the rooms it hosts beyond the drafts
-/// (decision mimid-1wgh.52; bead mimid-1wgh.53). Both requirements default
-/// to false: franking and room policy are SHOULD. A room without them is
-/// hosted; the features that need them are unavailable in it.
+/// (decision mimid-1wgh.52; bead mimid-1wgh.53). Franking is a SHOULD and
+/// is not required by default: a room without it is hosted, and abuse
+/// reports in it cannot be verified. A `base_room_policy` is required by
+/// default (bead mimid-jf20): a room without one is an open room, in which
+/// every participant holds every capability ([`policy::RoomState::open`]),
+/// so the hub hosts one only if its operator turns
+/// [`HubRequirements::room_policy`] off.
 ///
 /// It also carries the code points under which every hosted room's
 /// `did_webvh` leaves are checked against the rules of
 /// draft-atwood-mls-didwebvh-credential-01 (bead mimid-1wgh.4.81.18): IANA
 /// has not assigned them, so they are a setting, by default
 /// [`CodePoints::DEFAULT`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HubRequirements {
     /// Refuse a room whose Safe AAD does not require `frank_aad`
@@ -268,11 +277,19 @@ pub struct HubRequirements {
     pub franking: bool,
     /// Refuse a room without a `base_room_policy`
     /// ([`HubError::MissingBaseRoomPolicy`]): the rule of decision
-    /// mimid-1wgh.6.57.
+    /// mimid-1wgh.6.57. On by default (bead mimid-jf20).
     pub room_policy: bool,
     /// The `did_webvh` credential type and record component the hub
     /// enforces the rules under ([`Observer::enforce_did_webvh`]).
     pub did_webvh: CodePoints,
+}
+
+impl Default for HubRequirements {
+    /// No franking requirement, a `base_room_policy` required (bead
+    /// mimid-jf20), and the default `did_webvh` code points.
+    fn default() -> Self {
+        Self::new(false, true)
+    }
 }
 
 impl HubRequirements {
@@ -344,6 +361,21 @@ impl Hub {
                 .pending_proposals(&snapshot.room_id, snapshot.epoch)
                 .await?;
             let room = rebuild(&snapshot, &pending, requirements.did_webvh)?;
+            // Bead mimid-jf20: a room stored before a policy was required
+            // keeps being served as it is.
+            if requirements.room_policy
+                && room
+                    .observer
+                    .component(mimi_room_policy::component_id::BASE_ROOM_POLICY)
+                    .is_none()
+            {
+                tracing::warn!(
+                    name: "open_room_kept",
+                    room_id = snapshot.room_id,
+                    "a stored room has no base_room_policy and stays an open room, \
+                     although new ones are refused"
+                );
+            }
             rooms.insert(snapshot.room_id, room);
         }
         tracing::info!(
@@ -378,8 +410,8 @@ impl Hub {
     }
 
     /// Sets what new rooms must carry beyond the drafts (decision
-    /// mimid-1wgh.52). Without this, neither franking nor a room policy is
-    /// required. Rooms already rebuilt by [`Hub::open`] stay checked under
+    /// mimid-1wgh.52). Without this, [`HubRequirements::default`] applies:
+    /// a room policy is required and franking is not. Rooms already rebuilt by [`Hub::open`] stay checked under
     /// the `did_webvh` code points they were rebuilt with; to change those,
     /// use [`Hub::open_with_requirements`].
     #[must_use]

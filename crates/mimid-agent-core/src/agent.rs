@@ -101,8 +101,9 @@ pub struct HostOptions {
     /// not can leave it out (draft-atwood-jmap-chat-mimi-00 §Room/create).
     pub metadata: bool,
     /// An open room: no franking and no room policy, only the participant
-    /// list (decision mimid-1wgh.52). A hub that requires either refuses
-    /// to host it.
+    /// list (decision mimid-1wgh.52). A mimid hub refuses to host it
+    /// unless its operator sets `require_room_policy = false` (bead
+    /// mimid-jf20), and so does any hub that requires franking.
     pub open: bool,
 }
 

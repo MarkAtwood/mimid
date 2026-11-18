@@ -423,11 +423,17 @@ async fn create_room_requires_frank_aad_only_where_the_deployment_does() {
     }
 }
 
-/// Builds a group per `spec` and checks that a fresh hub with no
+/// Builds a group per `spec` and checks that a fresh hub with the default
 /// requirements hosts it.
 async fn hosted(spec: impl FnOnce(&Hub) -> GroupSpec) {
+    hosted_requiring(HubRequirements::default(), spec).await;
+}
+
+/// As [`hosted`], on a hub with `requirements`.
+async fn hosted_requiring(requirements: HubRequirements, spec: impl FnOnce(&Hub) -> GroupSpec) {
     let dir = tempfile::tempdir().unwrap();
     let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let hub = hub.with_requirements(requirements);
     let group = build_group(&spec(&hub), b"group-hosted");
     hub.create_room(ROOM_ID, ALICE, &group.group_info, &group.ratchet_tree)
         .await
@@ -491,16 +497,18 @@ async fn create_room_rejects_missing_or_malformed_participant_list() {
 /// Decision mimid-1wgh.6.57: a hosted room needs a valid base_room_policy.
 #[tokio::test]
 async fn create_room_rejects_malformed_and_by_setting_missing_base_room_policy() {
-    // Room policy is a SHOULD (decision mimid-1wgh.52): a room without
-    // base_room_policy is hosted as an open room unless the deployment
-    // requires one (decision mimid-1wgh.6.57). A malformed one is refused.
+    // A room without base_room_policy is refused by default (bead
+    // mimid-jf20) and hosted as an open room only when the operator allows
+    // it (decision mimid-1wgh.52). A malformed one is refused.
     let missing = |hub: &Hub| GroupSpec {
         base_room_policy: None,
         ..GroupSpec::valid_for(hub)
     };
-    hosted(missing).await;
+    let err = rejected(missing, ALICE).await;
+    assert!(matches!(err, HubError::MissingBaseRoomPolicy), "{err:?}");
     let err = rejected_requiring(HubRequirements::new(false, true), missing, ALICE).await;
     assert!(matches!(err, HubError::MissingBaseRoomPolicy), "{err:?}");
+    hosted_requiring(HubRequirements::new(false, false), missing).await;
 
     let mut trailing = base_room_policy();
     trailing.push(0x00);

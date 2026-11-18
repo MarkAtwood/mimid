@@ -23,9 +23,9 @@
 //! 6. the group ID is 16 octets, not used here yet (the hub checks it is
 //!    unused);
 //! 7. `franking_agent` names the hub and `base_room_policy` parses: the hub
-//!    checks both when present, and requires them only when configured to
-//!    (`require_franking`, `require_room_policy`): franking and room policy
-//!    are SHOULD in mimid (decision mimid-1wgh.52), not the draft's MUST.
+//!    checks both when present. It requires a `base_room_policy` unless the
+//!    operator sets `require_room_policy = false` (bead mimid-jf20), and
+//!    franking only with `require_franking` (decision mimid-1wgh.52).
 //!
 //! On success the room is hosted, the account's Chat is bound to it, and
 //! the answer is `{accountId, roomId, chatId}`.

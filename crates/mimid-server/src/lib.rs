@@ -67,6 +67,16 @@
 //!   cannot itself bring a newer log to a room (draft §Withheld or Stale
 //!   Logs).
 //! - Room policy ([`hub::policy`]):
+//!   - A room without a `base_room_policy` is an open room, in which every
+//!     participant holds every capability (decision mimid-1wgh.52). The
+//!     hub hosts a new one only if its operator sets `require_room_policy
+//!     = false` (bead mimid-jf20); a peer cannot make it host one, since
+//!     only local Room/create and the local control route create rooms,
+//!     and no Commit can remove a room's `base_room_policy`. Rooms stored
+//!     before the setting was turned on stay open rooms (logged at start
+//!     as `open_room_kept`). Rooms other providers host follow their
+//!     hub's policy: the follower relays them whatever they carry, and a
+//!     local user may join a policy-less room hosted elsewhere.
 //!   - Only BasicCredential is supported, and it carries no claims, so
 //!     preauthorization matches only `preauth_list` entries with an empty
 //!     `claimset` (room-policy-04 §4; decision mimid-1wgh.3.47).

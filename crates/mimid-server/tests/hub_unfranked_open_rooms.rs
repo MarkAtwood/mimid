@@ -1,5 +1,6 @@
 //! Rooms without franking and without a base_room_policy (decision
-//! mimid-1wgh.52, bead mimid-1wgh.53): the hub hosts them, accepts their
+//! mimid-1wgh.52, bead mimid-1wgh.53): a hub whose operator allows open
+//! rooms (`require_room_policy = false`; bead mimid-jf20) hosts them, accepts their
 //! messages unfranked, accepts abuse reports in them with the messages
 //! unverified, and authorizes them as open rooms. Groups are built with
 //! mimi-mls Members; the hub's answers are decoded with mimi-protocol.
@@ -76,7 +77,7 @@ async fn plain_room(hub: &Hub) -> (Identity, Member, Identity, Member) {
 #[tokio::test]
 async fn a_message_is_accepted_unfranked() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let (store, hub) = open_hub_allowing_open_rooms(&dir.path().join("mimid.sqlite")).await;
     let (alice, mut group, _, _) = plain_room(&hub).await;
     let message = group.send(&alice, b"no frank here", &[]).unwrap();
     let answer = hub
@@ -94,7 +95,7 @@ async fn a_message_is_accepted_unfranked() {
 #[tokio::test]
 async fn an_abuse_report_is_accepted_with_its_messages_unverified() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let (store, hub) = open_hub_allowing_open_rooms(&dir.path().join("mimid.sqlite")).await;
     let logs = capture_logs();
     let _room = plain_room(&hub).await;
     // A frank that could never verify: there is nothing to verify it
@@ -137,7 +138,7 @@ async fn an_abuse_report_is_accepted_with_its_messages_unverified() {
 #[tokio::test]
 async fn an_open_room_takes_an_add_from_a_participant() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let (store, hub) = open_hub_allowing_open_rooms(&dir.path().join("mimid.sqlite")).await;
     let (alice, mut group, _, _) = plain_room(&hub).await;
     let carol = Identity::generate(CAROL, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
     let key_package = carol.key_package(KeyPackageKind::OneTime).unwrap();
@@ -191,7 +192,7 @@ async fn an_open_room_takes_a_leave_committed_by_reference() {
     // participant-list update, one proposal bundle; alice commits both by
     // reference with nothing of her own.
     let dir = tempfile::tempdir().unwrap();
-    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let (store, hub) = open_hub_allowing_open_rooms(&dir.path().join("mimid.sqlite")).await;
     let (alice, mut group, bob, mut bob_group) = plain_room(&hub).await;
     let remove = bob_group.propose_self_remove(&bob).unwrap();
     let list_update = bob_group

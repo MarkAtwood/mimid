@@ -29,6 +29,7 @@ use mimi_mls::tls_codec::Serialize;
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_protocol::{IdentifierUri, RoomMetaData, Utf8String};
+use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimid_server::config::BaseUrl;
 use mimid_server::follower::Follower;
 use mimid_server::follower::key_packages::KeyPackages;
@@ -144,6 +145,8 @@ struct Spec<'a> {
     metadata_room_uri: Option<&'a str>,
     group_id: Option<&'a [u8]>,
     participants: Option<&'a [&'a [u8]]>,
+    /// No roles_list and no base_room_policy: an open room.
+    open: bool,
 }
 
 /// alice's one-member group for `spec`, as (groupInfo, ratchetTree), and
@@ -176,8 +179,9 @@ fn group_member(hub: &Hub, alice: &Identity, spec: Spec<'_>) -> (Vec<u8>, Vec<u8
         ),
         (SAFE_AAD, FRANK_AAD_ONLY.to_vec()),
         (FRANKING_AGENT, franking_agent(&key, HUB_IDENTITY)),
-        // alice as a member (role 2) of an open room, one with no
-        // base_room_policy (decision mimid-1wgh.52), so she may rename it.
+        // alice as a member (role 2); room_metadata updates need no
+        // capability at the hub (decision mimid-1wgh.6.2), so she may
+        // rename the room.
         (
             PARTICIPANT_LIST,
             update::members_list(spec.participants.unwrap_or(&[ALICE.as_bytes()]))
@@ -190,6 +194,11 @@ fn group_member(hub: &Hub, alice: &Identity, spec: Spec<'_>) -> (Vec<u8>, Vec<u8
             ROOM_METADATA,
             room_metadata(spec.metadata_room_uri.unwrap_or(&room_id)),
         ));
+    }
+    // The hub requires a base_room_policy by default (bead mimid-jf20).
+    if !spec.open {
+        components.push((ROLES_LIST, update::roles_list()));
+        components.push((BASE_ROOM_POLICY, common::base_room_policy()));
     }
     let group_id = spec
         .group_id
@@ -358,6 +367,14 @@ async fn groups_that_break_a_rule_are_refused() {
             },
         ),
         (
+            "rule 7: no base_room_policy, which the hub requires by default",
+            &bound,
+            Spec {
+                open: true,
+                ..Spec::default()
+            },
+        ),
+        (
             "rule 6: an 8-octet group ID",
             &bound,
             Spec {
@@ -434,6 +451,9 @@ fn expected_reason(why: &str) -> &'static str {
         "rule 5: a room ID that is not base32 of 16 octets" => "base32 of 16 octets",
         "rule 5: another provider's room ID" => "base32 of 16 octets",
         "rule 6: an 8-octet group ID" => "not 16 octets",
+        "rule 7: no base_room_policy, which the hub requires by default" => {
+            "the hub refuses this group"
+        }
         _ => unreachable!("{why}"),
     }
 }

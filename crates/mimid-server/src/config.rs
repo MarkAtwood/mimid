@@ -122,9 +122,13 @@ pub struct Config {
     /// default: franking is a SHOULD (decision mimid-1wgh.52).
     #[serde(default)]
     pub require_franking: bool,
-    /// Refuse to host a room without a `base_room_policy`. Off by default:
-    /// room policy is a SHOULD (decision mimid-1wgh.52).
-    #[serde(default)]
+    /// Refuse to host a room without a `base_room_policy`. On by default
+    /// (bead mimid-jf20): in a room without one every participant holds
+    /// every capability (decision mimid-1wgh.52), so such open rooms are
+    /// hosted only if the operator sets this to false. It applies to rooms
+    /// this provider hosts; a room another provider hosts follows that
+    /// provider's choice.
+    #[serde(default = "default_require_room_policy")]
     pub require_room_policy: bool,
     /// How far, in seconds, a configured peer's clock may be from this
     /// server's before mimid logs a warning ([`crate::peer_clock`]).
@@ -218,6 +222,10 @@ fn default_max_description_octets() -> usize {
 
 fn default_max_uri_octets() -> usize {
     crate::limits::DEFAULT_MAX_URI_OCTETS
+}
+
+fn default_require_room_policy() -> bool {
+    true
 }
 
 fn default_peer_clock_tolerance_secs() -> u64 {
@@ -440,7 +448,7 @@ mod tests {
             local_listen: None,
             local_token: None,
             require_franking: false,
-            require_room_policy: false,
+            require_room_policy: true,
             peer_clock_tolerance_secs: 5,
             max_name_octets: 1024,
             max_description_octets: 4096,
@@ -583,15 +591,20 @@ mod tests {
     }
 
     #[test]
-    fn requirements_default_off_and_parse() {
+    /// Franking is off by default (decision mimid-1wgh.52); a room policy
+    /// is required by default, and open rooms only by the operator's
+    /// choice (bead mimid-jf20).
+    fn requirements_default_and_parse() {
         let config = Config::parse(VALID).unwrap();
-        assert!(!config.require_franking && !config.require_room_policy);
+        assert!(!config.require_franking);
+        assert!(config.require_room_policy);
         let text = VALID.replace(
             "[peers]",
-            "require_franking = true\nrequire_room_policy = true\n[peers]",
+            "require_franking = true\nrequire_room_policy = false\n[peers]",
         );
         let config = Config::parse(&text).unwrap();
-        assert!(config.require_franking && config.require_room_policy);
+        assert!(config.require_franking);
+        assert!(!config.require_room_policy);
     }
 
     /// Mark's choice of default (mimid-1wgh.11.2): 97.

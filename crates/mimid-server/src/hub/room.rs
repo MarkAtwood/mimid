@@ -100,8 +100,9 @@ pub(super) fn is_franked(observer: &Observer) -> Result<bool, HubError> {
 ///   §5);
 /// - with [`HubRequirements::franking`], the room must be franked
 ///   (decision mimid-1wgh.6.74), and with [`HubRequirements::room_policy`]
-///   it must carry a `base_room_policy` (decision mimid-1wgh.6.57). Without
-///   them neither is required (decision mimid-1wgh.52);
+///   it must carry a `base_room_policy` (decision mimid-1wgh.6.57). By
+///   default ([`HubRequirements::default`]) the policy is required and
+///   franking is not (decision mimid-1wgh.52; bead mimid-jf20);
 /// - the participant list (protocol-07 §7.5) lists `creator` and the
 ///   credential identity of every member, which is the member's user URI
 ///   (decision mimid-1wgh.6.1).
@@ -164,8 +165,9 @@ pub(super) fn check_group(
         return Err(HubError::FrankAadNotRequired);
     }
 
-    // A base_room_policy, where present, decodes; it is required only if
-    // the deployment says so (decisions mimid-1wgh.52, mimid-1wgh.6.57).
+    // A base_room_policy, where present, decodes; it is required unless
+    // the operator allows open rooms (decisions mimid-1wgh.52,
+    // mimid-1wgh.6.57; bead mimid-jf20).
     match observer.component(BASE_ROOM_POLICY) {
         Some(base) => {
             decode::<BaseRoomPolicy>(BASE_ROOM_POLICY, base)
