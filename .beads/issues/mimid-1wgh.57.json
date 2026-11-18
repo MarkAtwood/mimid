@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.57",
+  "title": "Hub reportAbuse: canReportAbuse for reportingUser (role 0 if absent or unlisted), reportingUser domain must be From, 403 report-not-allowed",
+  "description": "protocol-07 §5.9 says nothing about authorizing a report; room-policy-04 §8.3 defines canReportAbuse ('the holder can report a franked instant message as abusive') but not who checks it or against which identity. §5.9 makes reportingUser optional (empty means absent, decision mimid-1wgh.5.59) and the hub sees only the From provider.\n\nReadings: (a) do not check (the previous state, decision mimid-1wgh.21); (b) check the From provider only, which has no role; (c) check reportingUser's role; for an empty or unlisted reportingUser, role 0 (room-policy-04 §8: role 0 is the role of a non-participant).\n\nChosen (c). The hub's single policy point (hub/policy.rs authorize_report_abuse) refuses a banned user and requires canReportAbuse of the role; in an open room (no base_room_policy, decision mimid-1wgh.52) a listed participant holds every capability and role 0 none, as for every other check. A non-empty reportingUser's domain must be the From domain, a consistency check as for sendingUri in submitMessage (decision mimid-1wgh.6.9), so a provider cannot borrow another provider's user's role; this reverses the old Limitation 'From is not compared with reportingUser'. The policy check runs before any frank is verified. A refusal is HTTP 403 with problem type report-not-allowed (§5.9: the code only says whether the report was accepted; 422 stays for an unverifiable message, decision mimid-1wgh.6.65). INVENTED, NOT FROM SPEC: the 403 and its problem type.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-18T23:55:53.926552117Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-18T23:55:53.926552117Z",
+  "labels": [
+    "abuse",
+    "server"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.57",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-18T23:55:53.994966087Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
