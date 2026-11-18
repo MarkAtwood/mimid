@@ -1,5 +1,5 @@
 //! Abuse reports from a JMAP Chat client (bead mimid-oon0; decision
-//! mimid-1wgh.58). INVENTED, NOT FROM SPEC: neither draft-atwood-jmap-chat-00
+//! mimid-1wgh.59). INVENTED, NOT FROM SPEC: neither draft-atwood-jmap-chat-00
 //! nor draft-atwood-jmap-chat-mimi-00 defines a report method.
 //!
 //! When [`AgentChat::sync`] stores a received franked message, it keeps the

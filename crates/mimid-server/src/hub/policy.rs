@@ -28,7 +28,7 @@
 //!   preauthorization (room-policy-04 §8.1.1).
 //! - [`authorize_report_abuse`]: the reporter's role, or role 0 for an
 //!   absent or unlisted reporter, holds `canReportAbuse` (room-policy-04
-//!   §8.3; decision mimid-1wgh.56).
+//!   §8.3; decision mimid-1wgh.57).
 //!
 //! The commit-level rules are:
 //!
@@ -1118,7 +1118,7 @@ pub fn authorize_group_info(
 /// Authorizes `reporting_user` to report abuse in the room: its role, or
 /// role 0 for an absent (`None`) or unlisted reporter, holds
 /// `canReportAbuse` (room-policy-04 §8.3; protocol-07 §5.9; decision
-/// mimid-1wgh.56). A banned user may not report.
+/// mimid-1wgh.57). A banned user may not report.
 ///
 /// # Errors
 ///

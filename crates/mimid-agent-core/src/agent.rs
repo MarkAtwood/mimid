@@ -142,7 +142,7 @@ pub const MAX_REPORTED_MESSAGES: usize = 16;
 pub const MAX_NOTE_LEN: usize = 4096;
 
 /// The hub's answer to [`Agent::report_abuse`], as the user's server
-/// relays it (decision mimid-1wgh.57).
+/// relays it (decision mimid-1wgh.58).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ReportOutcome {
@@ -150,7 +150,7 @@ pub enum ReportOutcome {
     /// taken (protocol-07 §5.9).
     Accepted,
     /// The hub's room policy does not let this user report
-    /// (room-policy-04 §8.3 `canReportAbuse`; decision mimid-1wgh.56).
+    /// (room-policy-04 §8.3 `canReportAbuse`; decision mimid-1wgh.57).
     NotAllowed,
     /// A reported message's frank did not verify at the hub (decision
     /// mimid-1wgh.6.65).
@@ -1505,7 +1505,7 @@ impl Agent {
 
     /// Reports `messages`, received in `room`, as abusive to the room's hub
     /// (protocol-07 §5.9) through the user's server (`Room/reportAbuse`,
-    /// INVENTED, NOT FROM SPEC; decisions mimid-1wgh.57, mimid-1wgh.58).
+    /// INVENTED, NOT FROM SPEC; decisions mimid-1wgh.58, mimid-1wgh.59).
     /// Take each message from [`ReceivedMessage::abusive_message`], now or
     /// from where the caller kept it.
     ///
@@ -2308,7 +2308,7 @@ fn default_roles() -> RoleData {
         Capability::CAN_RECEIVE_MESSAGE,
         Capability::CAN_REPLY_TO_MESSAGE,
         Capability::CAN_REACT_TO_MESSAGE,
-        // Bead mimid-umnp: the hub checks it on reportAbuse.
+        // Bead mimid-14bu: the hub checks it on reportAbuse.
         Capability::CAN_REPORT_ABUSE,
     ];
     // Bug mimid-y2hi: no canChangeRoleDefinitions, which would let any

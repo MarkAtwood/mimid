@@ -1,13 +1,13 @@
 //! Abuse reports end to end (bead mimid-oon0): alice@a.example hosts two
 //! franked rooms on her provider, which is their hub; bob@b.example joins
 //! both through his own provider and reports alice's messages from his
-//! JMAP Chat account (`Message/reportAbuse`, decision mimid-1wgh.58). bob's
+//! JMAP Chat account (`Message/reportAbuse`, decision mimid-1wgh.59). bob's
 //! agent assembles the protocol-07 §5.9 AbuseReport and sends it to his
-//! server (`Room/reportAbuse`, decision mimid-1wgh.57), which relays it to
+//! server (`Room/reportAbuse`, decision mimid-1wgh.58), which relays it to
 //! a.example's `/reportAbuse` with provider-to-provider HTTP.
 //!
 //! Room "allowed" gives the member role room-policy-04 §8.3
-//! `canReportAbuse`; room "denied" does not (decision mimid-1wgh.56).
+//! `canReportAbuse`; room "denied" does not (decision mimid-1wgh.57).
 //!
 //! Oracles:
 //!

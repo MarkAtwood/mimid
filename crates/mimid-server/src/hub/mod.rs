@@ -900,7 +900,7 @@ impl Hub {
 
     /// protocol-07 §5.9 `POST /reportAbuse/{roomId}`: authorizes the
     /// reporter by room policy (room-policy-04 §8.3 `canReportAbuse`;
-    /// decision mimid-1wgh.56), validates the frank of every message in the
+    /// decision mimid-1wgh.57), validates the frank of every message in the
     /// TLS-encoded `AbuseReport` `request` and logs the outcome. No action
     /// is taken (decision mimid-1wgh.21). `from` is the domain of the
     /// request's `From` header, which a non-empty `reportingUser` must
@@ -1213,7 +1213,7 @@ pub enum HubError {
     },
     /// Room policy does not let the reporter report abuse: its role lacks
     /// room-policy-04 §8.3 `canReportAbuse`, it is banned, or its domain is
-    /// not the `From` domain (decision mimid-1wgh.56).
+    /// not the `From` domain (decision mimid-1wgh.57).
     #[error("the reporter may not report abuse in this room")]
     ReportNotAllowed,
 }

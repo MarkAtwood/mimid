@@ -519,7 +519,7 @@ impl PeerClient {
     /// decision mimid-1wgh.6.65). §5.9 names no success code, so `200` and
     /// `201` both count (bead mimid-1wgh.46.6.2); the body may be at most
     /// [`MAX_BODY_LEN`] bytes. The relay calls it for a user's
-    /// `Room/reportAbuse` (decision mimid-1wgh.57).
+    /// `Room/reportAbuse` (decision mimid-1wgh.58).
     ///
     /// # Errors
     ///

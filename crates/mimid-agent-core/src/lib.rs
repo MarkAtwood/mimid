@@ -24,7 +24,7 @@
 //! - [`Agent::report_abuse`]: a protocol-07 §5.9 AbuseReport of received
 //!   franked messages ([`ReceivedMessage::abusive_message`]), sent to the
 //!   room's hub through the server (`Room/reportAbuse`, INVENTED, NOT FROM
-//!   SPEC; decision mimid-1wgh.58);
+//!   SPEC; decision mimid-1wgh.59);
 //! - [`Agent::poll`]: everything the server stored since the last poll
 //!   (Message/changes), with each received message's frank checked
 //!   ([`frank`], protocol-07 §5.4.1.3), as [`Event`]s for the caller (the future inward
@@ -81,8 +81,9 @@
 //!   with this user as `reportingUser` (no anonymous reports, no report
 //!   without messages) and no `abuse_extensions`. It does not check the
 //!   franks again before sending. Whether the user may report is the
-//!   hub's room policy (`canReportAbuse`), which the default role list
-//!   does not grant (bead mimid-umnp); [`HostOptions::roles`] can.
+//!   hub's room policy (`canReportAbuse`), which the default member and
+//!   admin roles hold (bead mimid-14bu); [`HostOptions::roles`] can
+//!   replace them.
 
 #![forbid(unsafe_code)]
 

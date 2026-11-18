@@ -604,7 +604,7 @@ impl Jmap {
         })
     }
 
-    /// Room/reportAbuse (INVENTED, NOT FROM SPEC; decision mimid-1wgh.57)
+    /// Room/reportAbuse (INVENTED, NOT FROM SPEC; decision mimid-1wgh.58)
     /// of the TLS-encoded AbuseReport `report` about `room`: the hub's
     /// answer as the server relays it.
     pub async fn report_abuse(

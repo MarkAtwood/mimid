@@ -78,7 +78,7 @@
 //! - **Invites**: [`Options::invites`] decides which Welcomes `sync`
 //!   joins; by default only those sent by a user this user allowed
 //!   (`Agent::allow`).
-//! - **Abuse reports** ([`report`]; decision mimid-1wgh.58): the frank of
+//! - **Abuse reports** ([`report`]; decision mimid-1wgh.59): the frank of
 //!   each received franked Message is kept with it, and
 //!   `Message/reportAbuse` (INVENTED, NOT FROM SPEC) reports Messages to
 //!   the room's hub through the agent.

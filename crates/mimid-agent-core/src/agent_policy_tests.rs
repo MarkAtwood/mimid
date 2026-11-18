@@ -311,7 +311,7 @@ fn the_member_role_holds_no_admin_capability() {
     }
 }
 
-/// Bead mimid-umnp: room-policy-04 §8.3 canReportAbuse ("the holder can
+/// Bead mimid-14bu: room-policy-04 §8.3 canReportAbuse ("the holder can
 /// report a franked instant message as abusive") is held by both the
 /// member and the admin role, so any participant of a default room may
 /// report.

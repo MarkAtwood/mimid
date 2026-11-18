@@ -5,7 +5,7 @@
 //! The steps:
 //!
 //! 1. Look up the room, then decode the [`AbuseReport`].
-//! 2. Authorize the reporter (decision mimid-1wgh.56): a non-empty
+//! 2. Authorize the reporter (decision mimid-1wgh.57): a non-empty
 //!    `reportingUser` must be a user of the `From` provider (a consistency
 //!    check, as for `sendingUri` in submitMessage, decision mimid-1wgh.6.9),
 //!    and its role (role 0 for an empty or unlisted one) must hold
@@ -112,7 +112,7 @@ pub(super) async fn report_abuse(
         .map_err(HubError::FieldTooLong)?;
     let reporting_user = report.reporting_user.as_str();
     let alleged_abuser = report.alleged_abuser_uri.as_str();
-    // Decision mimid-1wgh.56: the reporter, before any frank.
+    // Decision mimid-1wgh.57: the reporter, before any frank.
     let reporter = (!reporting_user.is_empty()).then_some(reporting_user.as_bytes());
     let refusal = match (&state, reporter) {
         (Err(_), _) => Some("room policy state unusable"),

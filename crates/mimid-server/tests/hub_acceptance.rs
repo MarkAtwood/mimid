@@ -1367,7 +1367,7 @@ async fn room_lifecycle_across_restart() {
     // reportAbuse: bob reports alice's first message, franked before the
     // restart, and carol the one after it. Both are listed members (bob's
     // client was kicked, his user was not), whose role holds
-    // canReportAbuse (decision mimid-1wgh.56), so both are accepted
+    // canReportAbuse (decision mimid-1wgh.57), so both are accepted
     // (decision mimid-1wgh.6.65: 200, empty body).
     for (reporter, from, message) in [
         (BOB, "b.example", franked[0].clone()),

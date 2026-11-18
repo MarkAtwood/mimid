@@ -1,4 +1,4 @@
-//! `Room/reportAbuse` (bead mimid-oon0; decision mimid-1wgh.57).
+//! `Room/reportAbuse` (bead mimid-oon0; decision mimid-1wgh.58).
 //! INVENTED, NOT FROM SPEC: draft-atwood-jmap-chat-mimi-00 defines no way
 //! for a client to send a protocol-07 §5.9 AbuseReport.
 //!
@@ -16,7 +16,7 @@
 //! - `accepted`: the hub accepted the report (200 or 201, bead
 //!   mimid-1wgh.46.6.2);
 //! - `notAllowed`: the hub's room policy refused the reporter (a mimid
-//!   hub's `403 report-not-allowed`, decision mimid-1wgh.56);
+//!   hub's `403 report-not-allowed`, decision mimid-1wgh.57);
 //! - `unverifiedMessage`: a reported message's frank did not verify (a
 //!   mimid hub's `422 unverified-abusive-message`, decision
 //!   mimid-1wgh.6.65);

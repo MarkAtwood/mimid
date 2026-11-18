@@ -651,7 +651,7 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
         }
         // Bead mimid-1wgh.52.2.
         HubError::FieldTooLong(_) => (StatusCode::UNPROCESSABLE_ENTITY, "field-too-long"),
-        // Decision mimid-1wgh.56.
+        // Decision mimid-1wgh.57.
         HubError::ReportNotAllowed => (StatusCode::FORBIDDEN, "report-not-allowed"),
         // Decision mimid-1wgh.6.65.
         HubError::UnverifiedAbusiveMessage { .. } => (

@@ -10,7 +10,7 @@
 //!
 //! The reporter is authorized by the room's roles (`common/submit.rs`):
 //! bob's member role holds `canReportAbuse`, the muted role, the banned
-//! role and role 0 do not (room-policy-04 §8.3; decision mimid-1wgh.56).
+//! role and role 0 do not (room-policy-04 §8.3; decision mimid-1wgh.57).
 
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
 mod common;
@@ -418,7 +418,7 @@ async fn content_uri_extensions_must_match_the_enclosing_protocol() {
 /// A reporter whose role lacks `canReportAbuse`, or who is banned,
 /// unlisted, absent or of another provider than `From`, is refused with
 /// `403 report-not-allowed` before any frank is checked: each refused
-/// report carries a frank that would not verify (decision mimid-1wgh.56).
+/// report carries a frank that would not verify (decision mimid-1wgh.57).
 #[tokio::test]
 async fn reporters_without_can_report_abuse_are_refused() {
     let mut f = fixture().await;

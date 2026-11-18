@@ -18,7 +18,7 @@
 //!      `requesterCredential` (decision mimid-1wgh.6.1);
 //!    - groupInfo: the BasicCredential identity of `requestingCredential`;
 //!    - reportAbuse: `reportingUser`, which must therefore not be empty:
-//!      mimid sends no anonymous report (decision mimid-1wgh.57);
+//!      mimid sends no anonymous report (decision mimid-1wgh.58);
 //!    - update: nothing. The Commit or proposals are MLS-signed by a
 //!      member, and the hub authenticates that signature against the
 //!      group's ratchet tree (protocol-07 §5.3; decision mimid-1wgh.6.9);
@@ -290,7 +290,7 @@ impl Relay {
 
     /// protocol-07 §5.9: relays `request`, a TLS-encoded `AbuseReport`
     /// whose `reportingUser` must be `user`, to the hub of `room_id`
-    /// (decision mimid-1wgh.57). `Ok` means the hub accepted the report;
+    /// (decision mimid-1wgh.58). `Ok` means the hub accepted the report;
     /// its body, empty from a mimid hub (decision mimid-1wgh.6.65), is
     /// dropped.
     ///
