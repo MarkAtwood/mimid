@@ -255,6 +255,62 @@ fn the_creator_can_change_role_definitions() {
     authorize_commit(&room, &commit_by(L_ALICE, vec![member_gets_kick()])).unwrap();
 }
 
+/// Bug mimid-y2hi: room-policy-04 §8.6 canChangeRoleDefinitions is the
+/// admin's alone. A member's Commit or proposal that gives the member role
+/// canKick is refused for lacking it; the same Commit from the admin is
+/// accepted (above). The member then still cannot kick (§8.1.2).
+#[test]
+fn a_member_cannot_change_role_definitions() {
+    let room = hosted_room();
+    let denied = Err(Denied::Capability(missing(
+        2,
+        Capability::CAN_CHANGE_ROLE_DEFINITIONS,
+    )));
+    assert_eq!(
+        authorize_commit(&room, &commit_by(L_BOB, vec![member_gets_kick()])).map(drop),
+        denied
+    );
+    assert_eq!(
+        authorize_proposal(
+            &room,
+            &member_gets_kick(),
+            &ProposalSender::Member { leaf_index: L_BOB }
+        ),
+        denied
+    );
+}
+
+/// Bug mimid-y2hi: the member role holds none of the admin-grade
+/// capabilities of room-policy-04 §8.1.2, §8.1.3, §8.2 and §8.6.
+#[test]
+fn the_member_role_holds_no_admin_capability() {
+    let room = hosted_room();
+    let member = room.roles.role(ROLE).unwrap();
+    for capability in [
+        Capability::CAN_REMOVE_PARTICIPANT,
+        Capability::CAN_KICK,
+        Capability::CAN_BAN,
+        Capability::CAN_UN_BAN,
+        Capability::CAN_CHANGE_USER_ROLE,
+        Capability::CAN_CHANGE_OWN_ROLE,
+        Capability::CAN_CHANGE_ROOM_NAME,
+        Capability::CAN_CHANGE_ROOM_DESCRIPTION,
+        Capability::CAN_CHANGE_ROOM_AVATAR,
+        Capability::CAN_CHANGE_ROOM_SUBJECT,
+        Capability::CAN_CHANGE_ROOM_MOOD,
+        Capability::CAN_CHANGE_ROOM_MEMBERSHIP_STYLE,
+        Capability::CAN_CHANGE_ROLE_DEFINITIONS,
+        Capability::CAN_CHANGE_PREAUTHORIZED_USER_LIST,
+        Capability::CAN_DESTROY_ROOM,
+        Capability::CAN_SEND_MLS_REINIT_PROPOSAL,
+    ] {
+        assert!(
+            !member.role_capabilities.contains(&capability),
+            "member holds {capability:?}"
+        );
+    }
+}
+
 /// The default roles with canKick added to the member role, as a
 /// `roles_list` AppDataUpdate.
 fn member_gets_kick() -> ProposalKind {

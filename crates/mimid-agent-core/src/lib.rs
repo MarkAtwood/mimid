@@ -60,8 +60,9 @@
 //!   them; another client of the creator, or the operator (`mimid admin
 //!   remove|ban`), must (decision mimid-1wgh.56; bead mimid-90cd).
 //! - A room keeps the `roles_list` it was created with. Rooms hosted by an
-//!   earlier version have no admin role, until someone changes the role
-//!   list.
+//!   earlier version have no admin role, and in them every member holds
+//!   `canChangeRoleDefinitions`, so any member can give itself any
+//!   capability (bug mimid-y2hi), until someone changes the role list.
 //! - The admin role has no minimum participant count, so if the creator
 //!   leaves, the room has no admin (decision mimid-1wgh.56 item 5; bead
 //!   mimid-f3bk).
