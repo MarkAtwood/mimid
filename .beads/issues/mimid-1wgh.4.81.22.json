@@ -9,8 +9,8 @@
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-17T16:22:06.222906922Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-18T16:44:37.820216364Z",
-  "closed_at": "2026-11-17T17:01:44.340124931Z",
+  "updated_at": "2026-11-18T16:44:38.605237014Z",
+  "closed_at": "2026-11-18T16:44:38.605236517Z",
   "close_reason": "Chosen by agent; 114b25c ProposalKind::DidWebvhRecord, 088d81f hub policy; hub_didwebvh.rs tests both sides; feedback items 23-24; flag to Mark",
   "labels": [
     "didwebvh",
@@ -22,6 +22,14 @@
       "depends_on_id": "mimid-1wgh.4.81",
       "type": "parent-child",
       "created_at": "2026-11-17T16:22:06.458441599Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.4.81.22",
+      "depends_on_id": "mimid-1wgh.4.81.34",
+      "type": "supersedes",
+      "created_at": "2026-11-18T16:44:38.556751815Z",
       "created_by": "Mark Atwood",
       "metadata": "{}"
     }
