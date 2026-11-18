@@ -1,0 +1,27 @@
+{
+  "id": "mimid-f3bk",
+  "title": "Last-admin protection: admin minimum_participants_constraint = 1 needs an admin handover before leave",
+  "description": "Decision mimid-1wgh.56 item 5 keeps the default admin role's minimum_participants_constraint at 0. room-policy-04 Appendix A.1 group_admin uses 1, so a room never loses its last admin. That needs the agent to hand admin to another participant (a canChangeUserRole Commit, 2-\u003e3) before the sole admin leaves, and to refuse or reorder a leave that the hub would refuse; otherwise the refused leave proposals block the room. Mark: want this, and if so is automatic handover (to whom?) or an explicit role-change operation in the JMAP surface the way?",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-18T20:00:54.550348931Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-18T20:00:54.550348931Z",
+  "labels": [
+    "room-policy",
+    "agent",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-f3bk",
+      "depends_on_id": "mimid-d4i0",
+      "type": "discovered-from",
+      "created_at": "2026-11-18T20:00:54.623564889Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
