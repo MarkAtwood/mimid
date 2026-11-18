@@ -12,7 +12,8 @@
   "updated_at": "2026-11-18T16:46:51.738740586Z",
   "labels": [
     "interop",
-    "credential"
+    "credential",
+    "deferred"
   ],
   "dependencies": [
     {
