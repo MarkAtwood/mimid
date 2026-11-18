@@ -13,7 +13,8 @@
   "labels": [
     "abuse",
     "agent",
-    "jmap"
+    "jmap",
+    "decided"
   ],
   "dependencies": [
     {
