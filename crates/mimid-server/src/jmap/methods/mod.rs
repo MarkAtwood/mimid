@@ -19,6 +19,7 @@ pub(crate) mod key_package;
 mod message_set;
 mod room_common;
 mod room_create;
+mod room_report_abuse;
 mod room_send;
 mod room_unbind;
 mod room_update;
@@ -46,6 +47,7 @@ pub(super) fn register_all(methods: &mut Methods, services: &Services) {
     room_create::register(methods, services);
     room_update::register(methods, services);
     room_send::register(methods, services);
+    room_report_abuse::register(methods, services);
     room_unbind::register(methods, services);
     group_info::register(methods, services);
 }

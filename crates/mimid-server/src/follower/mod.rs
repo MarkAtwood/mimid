@@ -368,6 +368,24 @@ impl Follower {
             .map_err(FollowerError::Relay)
     }
 
+    /// Relays `user`'s TLS-encoded `AbuseReport` to the hub of `room_id`
+    /// ([`Relay::relay_report_abuse`]). Nothing is stored.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Follower::relay_submit_message`].
+    pub async fn relay_report_abuse(
+        &self,
+        user: &LocalUser,
+        room_id: &str,
+        request: &[u8],
+    ) -> Result<(), FollowerError> {
+        self.relay()?
+            .relay_report_abuse(user, room_id, request)
+            .await
+            .map_err(FollowerError::Relay)
+    }
+
     /// Ends `user`'s membership of the followed room `room_id`: events
     /// stored from now on are not shown to the user, until the user joins
     /// again (decision mimid-1wgh.7.7). Does nothing if `user` is not a

@@ -518,8 +518,8 @@ impl PeerClient {
     /// and returns the response body as received (empty from a mimid hub,
     /// decision mimid-1wgh.6.65). §5.9 names no success code, so `200` and
     /// `201` both count (bead mimid-1wgh.46.6.2); the body may be at most
-    /// [`MAX_BODY_LEN`] bytes. Nothing in mimid calls it yet:
-    /// reporting has no user surface in v1 (decision mimid-1wgh.21).
+    /// [`MAX_BODY_LEN`] bytes. The relay calls it for a user's
+    /// `Room/reportAbuse` (decision mimid-1wgh.57).
     ///
     /// # Errors
     ///

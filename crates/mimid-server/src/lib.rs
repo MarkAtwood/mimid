@@ -25,8 +25,11 @@
 //! - keyMaterial for users of this provider is served from the KeyPackages
 //!   they upload, with implicit consent ([`follower::key_packages`];
 //!   decision mimid-1wgh.7.9). The hub proxies keyMaterial for users of
-//!   other providers. reportAbuse validates franks and logs the outcome;
-//!   no action follows (decision mimid-1wgh.21).
+//!   other providers. reportAbuse checks `canReportAbuse`, validates
+//!   franks and logs the outcome; no action follows (decision
+//!   mimid-1wgh.21). A user sends one with `Room/reportAbuse`, a JMAP
+//!   method draft-atwood-jmap-chat-mimi-00 does not define (INVENTED,
+//!   NOT FROM SPEC; decision mimid-1wgh.57).
 //! - [`peer`] sends `/notify` requests to configured peers, and
 //!   [`hub::fanout`] delivers the outbox through it, at least once, so
 //!   followers must deduplicate ([`follower`] does, decision

@@ -17,6 +17,8 @@
 //!    - keyMaterial: `requestingUser` and the BasicCredential identity of
 //!      `requesterCredential` (decision mimid-1wgh.6.1);
 //!    - groupInfo: the BasicCredential identity of `requestingCredential`;
+//!    - reportAbuse: `reportingUser`, which must therefore not be empty:
+//!      mimid sends no anonymous report (decision mimid-1wgh.57);
 //!    - update: nothing. The Commit or proposals are MLS-signed by a
 //!      member, and the hub authenticates that signature against the
 //!      group's ratchet tree (protocol-07 §5.3; decision mimid-1wgh.6.9);
@@ -25,7 +27,7 @@
 //!    provider's own [`Hub`], with this provider's domain as `From`, or
 //!    over HTTP through [`PeerClient`];
 //! 5. checks that the hub's response decodes, and returns its bytes as
-//!    received. Over HTTP the response is capped at [`MAX_BODY_LEN`] bytes
+//!    received (reportAbuse has no response body: only acceptance counts). Over HTTP the response is capped at [`MAX_BODY_LEN`] bytes
 //!    (decision mimid-1wgh.6.67).
 //!
 //! The relay writes nothing locally: on the hub's success
@@ -48,7 +50,7 @@
 
 use mimi_mls::tls_codec::{self, Deserialize};
 use mimi_protocol::{
-    GroupInfoRequest, GroupInfoResponse, KeyMaterialRequest, KeyMaterialResponse,
+    AbuseReport, GroupInfoRequest, GroupInfoResponse, KeyMaterialRequest, KeyMaterialResponse,
     SubmitMessageRequest, SubmitMessageResponse, UpdateRequest, UpdateRoomResponse,
 };
 use std::sync::Arc;
@@ -284,6 +286,51 @@ impl Relay {
         }
         relayed("keyMaterial", user, room_id);
         Ok(response)
+    }
+
+    /// protocol-07 §5.9: relays `request`, a TLS-encoded `AbuseReport`
+    /// whose `reportingUser` must be `user`, to the hub of `room_id`
+    /// (decision mimid-1wgh.57). `Ok` means the hub accepted the report;
+    /// its body, empty from a mimid hub (decision mimid-1wgh.6.65), is
+    /// dropped.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Relay::relay_update`], and [`RelayError::WrongIdentity`] if
+    /// `reportingUser` is not `user`. A refusal by this provider's hub is
+    /// [`RelayError::Hub`] (among them [`HubError::ReportNotAllowed`] and
+    /// [`HubError::UnverifiedAbusiveMessage`]); one by another provider's
+    /// hub is [`RelayError::Peer`] with [`PeerError::Rejected`].
+    pub async fn relay_report_abuse(
+        &self,
+        user: &LocalUser,
+        room_id: &str,
+        request: &[u8],
+    ) -> Result<(), RelayError> {
+        check_size(request)?;
+        let decoded =
+            AbuseReport::tls_deserialize_exact(request).map_err(RelayError::InvalidRequest)?;
+        check_identity(
+            user,
+            "reportingUser",
+            decoded.reporting_user.as_str().as_bytes(),
+        )?;
+        match self.route(room_id)? {
+            Route::Own => self
+                .hub
+                .report_abuse(room_id, self.hub.domain(), request)
+                .await
+                .map(drop)
+                .map_err(RelayError::Hub)?,
+            Route::Peer(hub) => self
+                .peers
+                .report_abuse(&hub, room_id, request.to_vec())
+                .await
+                .map(drop)
+                .map_err(RelayError::Peer)?,
+        }
+        relayed("reportAbuse", user, room_id);
+        Ok(())
     }
 
     /// The hub of `room_id`: the room URI's authority (decision
