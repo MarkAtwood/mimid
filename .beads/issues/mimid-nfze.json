@@ -1,0 +1,27 @@
+{
+  "id": "mimid-nfze",
+  "title": "Hub does not check room-policy-04 §8.2 metadata capabilities on room_metadata updates",
+  "description": "hub/policy.rs policy_capability covers roles_list, preauth_list and base_room_policy only; an AppDataUpdate of room_metadata (protocol-07 §7.6) needs no capability, so any participant can change the room name, description, avatar, subject or mood. room-policy-04 §8.2 gives each field its own capability (canChangeRoomName ... canChangeRoomMood). Fix: compare the old and new RoomMetaData and require the capability of each field that changed. Found 2026-11-18 while doing mimid-d4i0 (decision mimid-1wgh.56 item 7).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-18T20:00:55.753227601Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-18T20:00:55.753227601Z",
+  "labels": [
+    "room-policy",
+    "server",
+    "security"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-nfze",
+      "depends_on_id": "mimid-d4i0",
+      "type": "discovered-from",
+      "created_at": "2026-11-18T20:00:55.853623347Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
