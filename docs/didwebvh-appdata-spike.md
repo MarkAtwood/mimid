@@ -3,6 +3,18 @@
 Bead mimid-1wgh.4.81.32 (decision mimid-1wgh.4.81.33). Branch
 `didwebvh-appdata`.
 
+**Outcome (2026-11-18).** Mark chose the component form. Since bead
+mimid-1wgh.4.81.34 it is mimid's only form: the code-point switch, the
+extension form and what it needed (`ProposalKind::DidWebvhRecord`,
+`is_record_change`, decision mimid-1wgh.4.81.22, the `required_capabilities`
+handling of `with_heads`, `PendingGroupContextExtensions`) are gone, and the
+scenario tests below are regular tests. The component ID defaults to the
+private-use 0xF013 and stays a setting (decision mimid-1wgh.4.81.35); a
+keyMaterial request from a `did_webvh` room requires the credential type and
+takes it to imply the component (decision mimid-1wgh.4.81.36). The text below
+is the spike's report as written: its references to the extension form, the
+switch and the extension-form tests describe the code before the switch.
+
 **Question.** draft-atwood-mls-didwebvh-credential keeps the
 `did_webvh_heads` record as a GroupContext extension, changed by a
 GroupContextExtensions (GCE) proposal. RFC 9420 §12.4 allows one GCE per

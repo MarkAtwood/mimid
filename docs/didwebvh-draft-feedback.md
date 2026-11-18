@@ -10,8 +10,14 @@ decentralized-identity/didwebvh at 91f3cba, the commit the draft cites.
 `spec-v1.0/` is byte-identical at deef9cf and at main bf3d9b4 (2026-11-02).
 
 Code: `crates/mls-didwebvh` (the credential, log verification, the heads
-extension and the group rules, with no MLS library) and `crates/mimi-mls` (the
+record and the group rules, with no MLS library) and `crates/mimi-mls` (the
 same rules applied to OpenMLS groups).
+
+Since bead mimid-1wgh.4.81.34 (Mark, 2026-11-18) mimid carries the record
+only as an `app_data_dictionary` component changed by AppDataUpdate
+proposals, not as the draft's GroupContext extension (item 29). Items that
+the switch closes say so in a **Status** line; their text describes the
+extension form as it was implemented.
 
 ## Wire format
 
@@ -259,7 +265,11 @@ clients that implement this draft and happen to use basic credentials.
 (OpenMLS enforces the RFC 9420 rule.)
 
 **mimid:** sets `required_capabilities` itself whenever it sets the record,
-keeping other entries. Decision mimid-1wgh.4.81.16.
+keeping other entries. Decision mimid-1wgh.4.81.16. Since item 29 it writes
+no `required_capabilities`: the GroupContext `app_components` list names the
+record component, which makes every member list it (mls-extensions-11 §5).
+The observation stands, since RFC 9420 §7.2 alone keeps a basic-only client
+out.
 
 **For -01:** say this in §Negotiation; it affects MIMI deployment (every
 provider's clients in a room must implement the draft before one user can use
@@ -294,6 +304,12 @@ Commits for joins.
 
 **For -01:** mention the MIMI consequence under Open Issue 1.
 
+**Status:** closed in mimid by carrying the record as an
+`app_data_dictionary` component, the only form since bead mimid-1wgh.4.81.34
+(Mark, 2026-11-18; item 29). An external Commit carries the AppDataUpdate
+that sets the joiner's entry (decision mimid-1wgh.4.81.33), which departs
+from §Rules as written.
+
 ### 18. Open Issue 5 is real in practice
 
 A GroupContextExtensions proposal replaces the whole list, and
@@ -305,6 +321,12 @@ proposal from someone else.
 
 **mimid:** refuses a record-changing Commit while a GCE proposal is pending
 (decision mimid-1wgh.4.81.17).
+
+**Status:** closed in mimid by carrying the record as an
+`app_data_dictionary` component, the only form since bead mimid-1wgh.4.81.34
+(Mark, 2026-11-18; item 29). A record change is AppDataUpdate proposals,
+which a Commit holds next to another party's GroupContextExtensions proposal;
+`PendingGroupContextExtensions` is gone.
 
 ### 19. The record change is mechanical; say who adds it
 
@@ -385,6 +407,13 @@ listing as part of a record change (decision mimid-1wgh.4.81.22).
 need to list other extensions the group carries, so implementations do not
 read "lists `did_webvh_heads` and `did_webvh`" as "lists only those".
 
+**Status:** closed in mimid by carrying the record as an
+`app_data_dictionary` component, the only form since bead mimid-1wgh.4.81.34
+(Mark, 2026-11-18; item 29). No GroupContextExtensions proposal and no
+`required_capabilities` are written for the record, so the workaround is
+gone. (OpenMLS's stricter check still applies to any GroupContextExtensions
+proposal, which mimid's hub refuses anyway.)
+
 ### 24. A hub that refuses GroupContextExtensions proposals
 
 A MIMI hub has reason to refuse GroupContextExtensions proposals in
@@ -400,6 +429,13 @@ additions it needs, and only while it enforces the rules (decision
 mimid-1wgh.4.81.22). This is also an argument for Open Issue 1: as an
 `app_data_dictionary` component the record would travel in an AppDataUpdate,
 which MIMI hubs already handle per component.
+
+**Status:** closed in mimid by carrying the record as an
+`app_data_dictionary` component, the only form since bead mimid-1wgh.4.81.34
+(Mark, 2026-11-18; item 29). The hub again refuses every
+GroupContextExtensions proposal (decision mimid-1wgh.6.2); decision
+mimid-1wgh.4.81.22 and `ProposalKind::DidWebvhRecord` are gone. Room policy
+treats the record like any component it does not track.
 
 ### 25. Revocation needs a room-policy capability
 
@@ -436,6 +472,15 @@ provider's clients in the room must do the same before one user can use the
 credential, and a keyMaterial request (protocol-07 §5.2) from such a room
 should require `did_webvh` and `did_webvh_heads`, or a provider may return a
 KeyPackage that cannot be added (decision mimid-1wgh.4.81.24).
+
+With the record as a component (item 29) the KeyPackage must list the
+component in its leaf's `app_components`, which a protocol-07
+`RequiredCapabilities` cannot express. mimid's requests name the `did_webvh`
+credential type only, and both the target provider and the requester take it
+to imply the component (decision mimid-1wgh.4.81.36): mimid's provider serves
+such a request only KeyPackages that list it. A provider that does not know
+that convention may still return one that cannot be added. For -01, or for
+protocol: a way to require components in keyMaterial.
 
 ### 27. The alert when a contact's SCID changes is repeated by design
 
@@ -483,6 +528,14 @@ blocked committer, say that the Removes the record then requires are
 mandatory whoever commits, so an application's authorization can follow
 the record rather than the committer.
 
+**Status:** the first limit is closed by item 29 (bead mimid-1wgh.4.81.34):
+with the record a component, the other member commits the Update with the
+GroupContextExtensions proposal pending. The second was closed earlier by
+decision mimid-1wgh.4.81.31: the hub also authorizes the Removes vouched for
+by an Update proposal the Commit includes. The fallback remains for Commits
+that still cannot be built, such as one that would cover a pending record
+update naming an SCID with no leaf (decision mimid-1wgh.4.65).
+
 ### 29. The record as an `app_data_dictionary` component: Open Issues 1 and 5
 
 **§The Heads Extension, §Expected Heads, Open Issues 1 and 5.** Items 18,
@@ -493,8 +546,10 @@ changed by AppDataUpdate proposals (mls-extensions-11 §4.6, §4.7), with the
 group rules unchanged (spike bead mimid-1wgh.4.81.32, decision
 mimid-1wgh.4.81.33, `docs/didwebvh-appdata-spike.md`).
 
-**mimid:** behind a code-point switch, so the draft's form stays the
-default. With the component, a revocation Commit and the Update-proposal
+**mimid:** first behind a code-point switch; since bead mimid-1wgh.4.81.34
+(Mark, 2026-11-18) the component is the only form, with the private-use
+component ID 0xF013 as a configurable default (decision mimid-1wgh.4.81.35).
+With the component, a revocation Commit and the Update-proposal
 fallback both succeed with another party's GroupContextExtensions proposal
 pending; two record changes (a device's by reference and the committer's)
 combine in one Commit; a device whose log is newer than the record joins by
