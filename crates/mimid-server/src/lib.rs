@@ -11,12 +11,13 @@
 //!
 //! - The JMAP Chat endpoint is a subset of draft-atwood-jmap-chat-00 and
 //!   -mimi-00; [`jmap`] lists what is missing (decision mimid-1wgh.12.22).
-//! - Providers authenticate with RFC 9421 request signatures and keys
-//!   configured per peer (mimid-75nk; decision mimid-1wgh.17 reversed),
-//!   but a peer in observe mode is let through unauthenticated, and the
-//!   mutually authenticated TLS protocol-07 §4.1 requires is not
-//!   implemented yet (mimid-75nk.4, .5, .6): mimid does not claim
-//!   conformance to it. With BasicCredential, a provider can still claim
+//! - Providers authenticate with RFC 9421 request signatures (keys
+//!   configured per peer or published in DNS), PKIX client certificates
+//!   or DANE (mimid-75nk; decision mimid-1wgh.17 reversed), but a peer in
+//!   observe mode is let through unauthenticated. Both halves of the
+//!   mutually authenticated TLS protocol-07 §4.1 requires are written
+//!   (mimid-75nk.4, .5, .6) but not yet deployed or tested with a peer
+//!   (bead mimid-6x2f): mimid does not claim conformance to it. With BasicCredential, a provider can still claim
 //!   any identity for its own users.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP unless `[tls]` is configured, when it
@@ -54,8 +55,8 @@
 //!   mimid-1wgh.4.81.21, INVENTED, NOT FROM SPEC), and room policy judges
 //!   it by that URI. The only GroupContextExtensions proposal the hub
 //!   accepts is one that sets the `did_webvh` record alone (decision
-//!   mimid-1wgh.4.81.22). A revocation's Remove still needs
-//!   `canRemoveOwnClient` (decision mimid-1wgh.4.81.25). keyMaterial
+//!   mimid-1wgh.4.81.22). A revocation's Removes need no room-policy
+//!   capability (decisions mimid-1wgh.4.81.26 and .31). keyMaterial
 //!   requests still carry a BasicCredential for the requester. The hub
 //!   cannot itself bring a newer log to a room (draft §Withheld or Stale
 //!   Logs).

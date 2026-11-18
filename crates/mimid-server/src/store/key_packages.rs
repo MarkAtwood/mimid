@@ -97,6 +97,11 @@ pub struct KeyPackageClaim<'a> {
     /// Milliseconds since the UNIX epoch. A KeyPackage whose `not_after`
     /// is before this time, in seconds, is not claimed.
     pub claimed_at: u64,
+    /// Whether a last-resort KeyPackage claimed before may be claimed
+    /// again (mls-extensions-11 §6.4 "MAY be used more than once"). When
+    /// false, as protocol-07 §5.2 requires ("MUST NOT be provided in any
+    /// other response"), it is claimed at most once (bead mimid-gunw).
+    pub reuse_last_resort: bool,
 }
 
 impl Store {
@@ -284,7 +289,8 @@ impl Store {
     /// transaction. `clients` holds each client's candidates in order of
     /// preference; the first one still stored and not expired at
     /// `claim.claimed_at` is claimed. A single-use KeyPackage is deleted; a
-    /// last-resort one stays. Every claim is recorded in
+    /// last-resort one stays, and is claimed again only with
+    /// `claim.reuse_last_resort`. Every claim is recorded in
     /// `key_package_claim`.
     ///
     /// Returns, for each client, the index of the claimed candidate, or
@@ -309,13 +315,20 @@ impl Store {
             let mut pick = None;
             for (index, candidate) in candidates.iter().enumerate() {
                 let available = if candidate.last_resort {
+                    // Stays stored either way; without reuse, a claim
+                    // recorded for it means it was served already.
                     sqlx::query_scalar(
                         "SELECT EXISTS (SELECT 1 FROM key_package \
-                         WHERE ref = ? AND client_id = ? AND last_resort = 1 AND not_after >= ?)",
+                         WHERE ref = ? AND client_id = ? AND last_resort = 1 AND not_after >= ?) \
+                         AND (? OR NOT EXISTS (SELECT 1 FROM key_package_claim \
+                         WHERE ref = ? AND client_id = ?))",
                     )
                     .bind(candidate.reference)
                     .bind(candidate.client_id)
                     .bind(now)
+                    .bind(claim.reuse_last_resort)
+                    .bind(candidate.reference)
+                    .bind(candidate.client_id)
                     .fetch_one(&mut *tx)
                     .await?
                 } else {
@@ -386,6 +399,7 @@ mod tests {
         requester: "mimi://a.example/u/alice",
         room_id: "mimi://a.example/r/one",
         claimed_at: 1_000_000,
+        reuse_last_resort: true,
     };
 
     async fn claims(store: &Store) -> Vec<Vec<u8>> {
@@ -517,6 +531,53 @@ mod tests {
             claims(&store).await,
             [b"r1".to_vec(), b"lr".to_vec(), b"lr".to_vec()]
         );
+    }
+
+    /// protocol-07 §5.2: key material in one response "MUST NOT be provided
+    /// in any other response". Without reuse, the last-resort KeyPackage is
+    /// claimed once and then never again, though it stays stored.
+    #[tokio::test]
+    async fn without_reuse_a_last_resort_key_package_is_claimed_once() {
+        let (_dir, store) = open().await;
+        store
+            .insert_key_package(&new("c1", b"r1", false))
+            .await
+            .unwrap();
+        store
+            .insert_key_package(&new("c1", b"lr", true))
+            .await
+            .unwrap();
+        let candidates = vec![vec![
+            ClaimCandidate {
+                reference: b"r1",
+                client_id: "c1",
+                last_resort: false,
+            },
+            ClaimCandidate {
+                reference: b"lr",
+                client_id: "c1",
+                last_resort: true,
+            },
+        ]];
+        let once = KeyPackageClaim {
+            reuse_last_resort: false,
+            ..CLAIM
+        };
+        for expected in [Some(0), Some(1), None, None] {
+            assert_eq!(
+                store.claim_key_packages(&once, &candidates).await.unwrap(),
+                [expected]
+            );
+        }
+        assert_eq!(claims(&store).await, [b"r1".to_vec(), b"lr".to_vec()]);
+        let left: Vec<_> = store
+            .key_packages_of_user("mimi://b.example/u/bob")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|kp| kp.reference)
+            .collect();
+        assert_eq!(left, [b"lr".to_vec()]);
     }
 
     #[tokio::test]

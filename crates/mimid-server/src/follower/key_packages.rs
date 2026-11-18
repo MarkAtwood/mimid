@@ -36,8 +36,9 @@
 //!    last-resort one. The first candidate still stored is claimed, all
 //!    clients in one transaction ([`Store::claim_key_packages`]): a
 //!    one-time KeyPackage is removed, so it is never served twice; a
-//!    last-resort one stays. Every claim is recorded (decision
-//!    mimid-1wgh.7.15).
+//!    last-resort one stays stored but, by default, is served only once
+//!    (protocol-07 §5.2; [`KeyPackages::with_last_resort_reuse`]). Every
+//!    claim is recorded (decision mimid-1wgh.7.15).
 //! 8. A client with usable KeyPackages but no suitable one is
 //!    `nothingCompatible`; a client that got none otherwise, including one
 //!    whose candidates concurrent requests claimed first, is
@@ -50,9 +51,13 @@
 //!
 //! # Limitations
 //!
-//! - A last-resort KeyPackage is served again in later responses, against
-//!   §5.2's "MUST NOT be provided in any other response"; this is a
-//!   deliberate deviation (decisions mimid-1wgh.12.16, mimid-1wgh.7.14).
+//! - With `reuse_last_resort_key_packages` on, a last-resort KeyPackage is
+//!   served again in later responses, as mls-extensions-11 §6.4 allows but
+//!   against §5.2's "MUST NOT be provided in any other response" (bead
+//!   mimid-gunw, wg item mimid-1dzo; earlier decisions mimid-1wgh.12.16,
+//!   mimid-1wgh.7.14 served it again always). Off, a client whose
+//!   last-resort KeyPackage was served is `keyMaterialExhausted` until it
+//!   publishes more.
 //! - The target-side checks are consistency checks, not security: the
 //!   requester's credential is a BasicCredential that nothing binds to its
 //!   key, and `From` is unauthenticated (decision mimid-1wgh.6.9).
@@ -160,6 +165,9 @@ pub struct KeyPackages {
     clock: Arc<dyn Clock>,
     /// The code points of `did_webvh` KeyPackages accepted on upload.
     did_webvh: CodePoints,
+    /// Serve a last-resort KeyPackage in more than one response
+    /// ([`KeyPackages::with_last_resort_reuse`]).
+    reuse_last_resort: bool,
     /// Announces the user whose stored KeyPackages may have changed.
     changes: tokio::sync::broadcast::Sender<String>,
 }
@@ -194,6 +202,7 @@ impl KeyPackages {
             domain,
             clock,
             did_webvh: CodePoints::SUGGESTED,
+            reuse_last_resort: false,
             changes: tokio::sync::broadcast::channel(KEY_PACKAGE_CHANGES_CAPACITY).0,
         }
     }
@@ -203,6 +212,17 @@ impl KeyPackages {
     #[must_use]
     pub fn with_did_webvh(mut self, code_points: CodePoints) -> Self {
         self.did_webvh = code_points;
+        self
+    }
+
+    /// Whether a last-resort KeyPackage may be served in more than one
+    /// response. Off by default, as protocol-07 §5.2 requires ("MUST NOT
+    /// be provided in any other response"); mls-extensions-11 §6.4 lets a
+    /// last-resort KeyPackage "be used more than once", which this turns on
+    /// (bead mimid-gunw; the conflict is wg item mimid-1dzo).
+    #[must_use]
+    pub fn with_last_resort_reuse(mut self, reuse: bool) -> Self {
+        self.reuse_last_resort = reuse;
         self
     }
 
@@ -502,6 +522,7 @@ impl KeyPackages {
             requester: tbs.requesting_user.as_str(),
             room_id: tbs.room_id.as_str(),
             claimed_at: now_ms,
+            reuse_last_resort: self.reuse_last_resort,
         };
         let chosen = self.store.claim_key_packages(&claim, &candidates).await?;
 

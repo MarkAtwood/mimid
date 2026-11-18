@@ -91,14 +91,24 @@ struct Provider {
 
 impl Provider {
     async fn open() -> Self {
+        Self::open_with_reuse(false).await
+    }
+
+    /// With `reuse`, a last-resort KeyPackage is served in more than one
+    /// response (mls-extensions-11 §6.4); without, once (protocol-07
+    /// §5.2, the default; bead mimid-gunw).
+    async fn open_with_reuse(reuse: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mimid.sqlite");
         let store = Store::open(&path, &domain("b.example")).await.unwrap();
-        let key_packages = Arc::new(KeyPackages::new(
-            store.clone(),
-            domain("b.example"),
-            Arc::new(FixedClock(now_ms())),
-        ));
+        let key_packages = Arc::new(
+            KeyPackages::new(
+                store.clone(),
+                domain("b.example"),
+                Arc::new(FixedClock(now_ms())),
+            )
+            .with_last_resort_reuse(reuse),
+        );
         Self {
             _dir: dir,
             path,
@@ -409,8 +419,18 @@ async fn concurrent_claims_never_serve_a_key_package_twice() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_claims_fall_back_to_the_last_resort_only_when_one_time_ones_are_gone() {
+    for reuse in [false, true] {
+        concurrent_claims(reuse).await;
+    }
+}
+
+/// Twelve concurrent requests for three one-time KeyPackages and one
+/// last-resort one: each one-time KeyPackage is served exactly once; the
+/// last-resort one fills the rest with `reuse`, and serves one request
+/// only without it, the others answered keyMaterialExhausted.
+async fn concurrent_claims(reuse: bool) {
     const REQUESTS: usize = 12;
-    let p = Provider::open().await;
+    let p = Provider::open_with_reuse(reuse).await;
     let phone = client(TARGET, 30 * DAY, &[]);
     let one_time: BTreeSet<Vec<u8>> = (0..3).map(|_| key_package(&phone, false)).collect();
     let last_resort = key_package(&phone, true);
@@ -431,8 +451,18 @@ async fn concurrent_claims_fall_back_to_the_last_resort_only_when_one_time_ones_
         .collect();
     let mut served_one_time = Vec::new();
     let mut served_last_resort = 0;
+    let mut exhausted = 0;
     for task in tasks {
         let response = decode(&task.await.unwrap());
+        if response.user_status == KeyMaterialUserCode::NoCompatibleMaterial {
+            assert!(!reuse, "with reuse every request is served");
+            assert!(matches!(
+                response.clients[..],
+                [ClientKeyMaterial::KeyMaterialExhausted { .. }]
+            ));
+            exhausted += 1;
+            continue;
+        }
         assert_eq!(response.user_status, KeyMaterialUserCode::Success);
         for kp in served(&response) {
             if kp == last_resort {
@@ -449,13 +479,55 @@ async fn concurrent_claims_fall_back_to_the_last_resort_only_when_one_time_ones_
         "a KeyPackage was served twice"
     );
     assert_eq!(distinct, one_time);
-    assert_eq!(served_last_resort, REQUESTS - one_time.len());
+    if reuse {
+        assert_eq!(served_last_resort, REQUESTS - one_time.len());
+    } else {
+        assert_eq!(served_last_resort, 1);
+        assert_eq!(exhausted, REQUESTS - one_time.len() - 1);
+    }
     assert_eq!(p.listed().await, BTreeSet::from([reference(&last_resort)]));
 }
 
+/// By default (protocol-07 §5.2) the last-resort KeyPackage, after the
+/// one-time ones, is served once; it stays stored, and the next request
+/// is keyMaterialExhausted.
 #[tokio::test]
-async fn last_resort_is_served_after_one_time_ones_and_never_consumed() {
+async fn last_resort_is_served_after_one_time_ones_and_once_by_default() {
     let p = Provider::open().await;
+    let phone = client(TARGET, 30 * DAY, &[]);
+    let last_resort = key_package(&phone, true);
+    let one_time = key_package(&phone, false);
+    p.upload(TARGET, &last_resort).await;
+    p.upload(TARGET, &one_time).await;
+    assert_eq!(
+        served(&decode(&p.serve(&request(&ask())).await)),
+        [one_time]
+    );
+    assert_eq!(
+        served(&decode(&p.serve(&request(&ask())).await)),
+        std::slice::from_ref(&last_resort)
+    );
+    for _ in 0..2 {
+        let response = decode(&p.serve(&request(&ask())).await);
+        assert_eq!(
+            response.user_status,
+            KeyMaterialUserCode::NoCompatibleMaterial
+        );
+        assert!(matches!(
+            response.clients[..],
+            [ClientKeyMaterial::KeyMaterialExhausted { .. }]
+        ));
+    }
+    assert_eq!(p.listed().await, BTreeSet::from([reference(&last_resort)]));
+    assert_eq!(p.claims().await.len(), 2);
+}
+
+/// With reuse on (mls-extensions-11 §6.4), the last-resort KeyPackage is
+/// served after the one-time ones and in every later response, never
+/// consumed.
+#[tokio::test]
+async fn with_reuse_last_resort_is_served_again_and_never_consumed() {
+    let p = Provider::open_with_reuse(true).await;
     let phone = client(TARGET, 30 * DAY, &[]);
     let last_resort = key_package(&phone, true);
     let one_time = key_package(&phone, false);

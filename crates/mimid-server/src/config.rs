@@ -6,6 +6,7 @@
 //! base_url = "https://mimi.a.example"
 //! database = "/var/lib/mimid/mimid.sqlite"
 //! max_key_packages = 97   # optional
+//! reuse_last_resort_key_packages = false  # optional; true serves a last-resort KeyPackage again
 //!
 //! [peers]
 //! "b.example" = "http://127.0.0.1:9080"
@@ -102,6 +103,11 @@ pub struct Config {
     /// [`DEFAULT_MAX_KEY_PACKAGES`].
     #[serde(default = "default_max_key_packages")]
     pub max_key_packages: u64,
+    /// Serve a last-resort KeyPackage in more than one keyMaterial
+    /// response, as mls-extensions-11 §6.4 allows. Off by default, as
+    /// protocol-07 §5.2 requires (bead mimid-gunw).
+    #[serde(default)]
+    pub reuse_last_resort_key_packages: bool,
     /// The loopback address of the local control listener
     /// ([`crate::local`]), or none to leave it off. The server refuses to
     /// start if it is not a loopback address.
@@ -427,6 +433,7 @@ mod tests {
                 (domain("c.example"), base("https://mimi.c.example:8443")),
             ]),
             max_key_packages: 97,
+            reuse_last_resort_key_packages: false,
             local_listen: None,
             local_token: None,
             require_franking: false,

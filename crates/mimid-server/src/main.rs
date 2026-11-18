@@ -177,7 +177,8 @@ async fn main() -> anyhow::Result<()> {
     };
     let key_packages = Arc::new(
         KeyPackages::new(store.clone(), config.domain.clone(), Arc::clone(&clock))
-            .with_did_webvh(config.did_webvh),
+            .with_did_webvh(config.did_webvh)
+            .with_last_resort_reuse(config.reuse_last_resort_key_packages),
     );
     let follower = Arc::new(
         Follower::new(config.domain.clone(), store.clone(), Arc::clone(&clock))
