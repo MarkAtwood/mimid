@@ -31,8 +31,19 @@ These are values the drafts suggest or request but IANA has not assigned, becaus
 These are deliberate in the current version:
 
 - **Provider authentication is partial.** Providers prove who they are with RFC 9421 request signatures, with keys configured per peer or published in DNS at `<selector>._mimi.<domain>` (draft-atwood-mimi-provider-auth-00; `[provider_auth]` in the configuration; `mimid admin <config> provider-key` prints this server's key and its DNS record). DNS keys are looked up with DNSSEC validation, so the resolvers in `dns_servers` must pass DNSSEC records through. A peer's TLS client certificate authenticates it when its path validates against a CA configured in `pkix_anchors` and it names the peer's domain as a SAN dNSName, or when it matches DNSSEC-secure TLSA records the peer publishes at `_mimi._client.<domain>` (DANE; on unless `dane = false`; usages DANE-EE and DANE-TA only); the certificate reaches mimid from its own TLS listener (`[tls]`) or from a trusted proxy (`[trusted_proxy]`). mimid presents its own client certificate to peers when `[peer_tls.identity]` is set. A peer set to `observe` is let through unauthenticated. protocol-07 requires mutually authenticated TLS; mimid has both halves, but they haven't been deployed or tested with a peer yet, so it doesn't claim conformance.
-- **BasicCredential only.** A provider can claim any identity for its own users, so mimid offers no protection against a malicious provider. In the terms of draft-barnes-mimi-identity-arch-04 §6: the end-to-end protocol is MLS (RFC 9420); a client's credential is a BasicCredential holding its user's MIMI URI; there is no revocation; and the only authority behind a leaf is, implicitly, the provider of the URI's domain. That draft's goal, protection against impersonation by the provider (§3), isn't met. The credential-to-domain rule is open in mimi-protocol#159.
+- **BasicCredential by default.** A client's credential is a BasicCredential holding its user's MIMI URI, so the user's provider can claim any identity for its own users, and mimid offers no protection against a malicious provider for them. In the terms of draft-barnes-mimi-identity-arch-04 §6: the end-to-end protocol is MLS (RFC 9420); there is no revocation; and the only authority behind such a leaf is, implicitly, the provider of the URI's domain. The credential-to-domain rule is open in mimi-protocol#159. A user can instead use a did:webvh credential (draft-atwood-mls-didwebvh-credential; `[did_webvh]` in the agent's configuration): the user's own keys sign the log that authorizes each device, members pin the user's DID on first sight and flag a change, and a revoked device is removed from every room. That protects against the provider only from first contact on.
 - **Peers come from configuration**, not DNS discovery.
+
+## Known gaps
+
+Not deliberate; each is being fixed:
+
+- The default room policy gives members no `canKick`, so removing another user needs the operator (`mimid admin remove|ban`). Bead mimid-d4i0.
+- Nothing sends an abuse report: the hub receives protocol-07 §5.9 reportAbuse and verifies its franks, but no user-side method or provider send exists, and the hub doesn't check `canReportAbuse`. Bead mimid-oon0.
+- The server serves a last-resort KeyPackage more than once, against protocol-07 §5.2 (mls-extensions-11 §6.4 allows reuse). Bead mimid-gunw.
+- A user's new device is not added to rooms the user is already in. Bead mimid-d464.
+- Two devices of one user can't share a group with stock mls-rs, which refuses two leaves with the same BasicCredential. Epic mimid-4lp4.
+- Received edits and retractions are skipped. Bead mimid-kmhd.
 
 Each crate documents its own limitations in the `# Limitations` section of its rustdoc.
 
