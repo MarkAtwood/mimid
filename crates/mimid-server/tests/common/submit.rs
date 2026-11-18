@@ -27,7 +27,8 @@ use crate::common::{
 
 /// A user listed with the banned role (room-policy-04 §8.1.3).
 pub const EVE: &[u8] = b"mimi://b.example/u/eve";
-/// A user listed with a role that lacks `canSendMessage`.
+/// A user listed with a role that lacks `canSendMessage` and
+/// `canReportAbuse`.
 pub const MUTED: &[u8] = b"mimi://a.example/u/muted";
 /// A user not in the participant list.
 pub const MALLORY: &[u8] = b"mimi://c.example/u/mallory";
@@ -39,7 +40,7 @@ const SAFE_AAD: u16 = 0x0002;
 const SAFE_AAD_FRANK_AAD: [u8; 3] = [0x02, 0x00, 0x20];
 
 /// Roles: 1 `banned` with no capabilities, 2 `member` with
-/// `canSendMessage`, 3 `muted` with none.
+/// `canSendMessage` and `canReportAbuse`, 3 `muted` with none.
 const ROLE_MEMBER: u32 = 2;
 const ROLE_MUTED: u32 = 3;
 
@@ -89,7 +90,11 @@ fn roles_list() -> Vec<u8> {
     RoleData {
         roles: vec![
             role(1, "banned", vec![]),
-            role(ROLE_MEMBER, "member", vec![Capability::CAN_SEND_MESSAGE]),
+            role(
+                ROLE_MEMBER,
+                "member",
+                vec![Capability::CAN_SEND_MESSAGE, Capability::CAN_REPORT_ABUSE],
+            ),
             role(ROLE_MUTED, "muted", vec![]),
         ],
     }

@@ -7,6 +7,10 @@
 //! `server_frank` and `FrankingIntegrityTbs::sign` using a wrong `hub_key`
 //! or a wrong signing key, so each of the two checks is shown to bite on
 //! its own.
+//!
+//! The reporter is authorized by the room's roles (`common/submit.rs`):
+//! bob's member role holds `canReportAbuse`, the muted role, the banned
+//! role and role 0 do not (room-policy-04 §8.3; decision mimid-1wgh.56).
 
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
 mod common;
@@ -136,12 +140,21 @@ impl Fixture {
     }
 
     async fn post(&self, room_encoded: &str, body: Vec<u8>) -> (StatusCode, Vec<u8>) {
+        self.post_from(room_encoded, "mimi@b.example", body).await
+    }
+
+    async fn post_from(
+        &self,
+        room_encoded: &str,
+        from_header: &str,
+        body: Vec<u8>,
+    ) -> (StatusCode, Vec<u8>) {
         let base = BaseUrl::try_from("https://a.example".to_owned()).unwrap();
         let follower = Follower::new(domain(), self.store.clone(), Arc::new(FixedClock(0)));
         let response = router(directory(&base), Arc::clone(&self.hub), Arc::new(follower))
             .oneshot(
                 Request::post(format!("/v1/reportAbuse/{room_encoded}"))
-                    .header(header::FROM, "mimi@b.example")
+                    .header(header::FROM, from_header)
                     .body(Body::from(body))
                     .unwrap(),
             )
@@ -164,8 +177,14 @@ impl Fixture {
 
 /// An AbuseReport from bob about alice carrying `messages`.
 fn encode(messages: Vec<AbusiveMessage>) -> Vec<u8> {
+    encode_from(BOB, messages)
+}
+
+/// An AbuseReport from `reporting_user` (empty: absent) about alice
+/// carrying `messages`.
+fn encode_from(reporting_user: &[u8], messages: Vec<AbusiveMessage>) -> Vec<u8> {
     AbuseReport {
-        reporting_user: IdentifierUri::new("mimi://b.example/u/bob").unwrap(),
+        reporting_user: IdentifierUri::new(std::str::from_utf8(reporting_user).unwrap()).unwrap(),
         alleged_abuser_uri: IdentifierUri::new("mimi://a.example/u/alice").unwrap(),
         reason_code: AbuseType::RESERVED,
         note: NOTE_CANARY.as_bytes().to_vec(),
@@ -394,6 +413,44 @@ async fn content_uri_extensions_must_match_the_enclosing_protocol() {
             .await;
         assert_refused(f.report(vec![message]).await, 0, name);
     }
+}
+
+/// A reporter whose role lacks `canReportAbuse`, or who is banned,
+/// unlisted, absent or of another provider than `From`, is refused with
+/// `403 report-not-allowed` before any frank is checked: each refused
+/// report carries a frank that would not verify (decision mimid-1wgh.56).
+#[tokio::test]
+async fn reporters_without_can_report_abuse_are_refused() {
+    let mut f = fixture().await;
+    let salt = [9; 16];
+    let genuine = f.send(&content(salt, "reported"), salt).await;
+    let mut broken = genuine.clone();
+    broken.frank.server_frank[0] ^= 0x01;
+    for (name, reporter, from_domain) in [
+        ("muted role", MUTED, "a.example"),
+        ("banned", EVE, "b.example"),
+        ("not a participant", MALLORY, "c.example"),
+        ("absent reportingUser, role 0", &b""[..], "b.example"),
+        ("reportingUser of another provider", BOB, "c.example"),
+    ] {
+        let body = encode_from(reporter, vec![broken.clone()]);
+        assert!(
+            matches!(
+                f.hub.report_abuse(ROOM_ID, &from(from_domain), &body).await,
+                Err(HubError::ReportNotAllowed)
+            ),
+            "{name}"
+        );
+        let (status, response) = f
+            .post_from(ROOM_ID_ENCODED, &format!("mimi@{from_domain}"), body)
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{name}");
+        assert_eq!(problem_kind(&response), "report-not-allowed", "{name}");
+    }
+    // The same broken frank from bob, who may report, reaches the frank
+    // check, and his genuine report is accepted.
+    assert_refused(f.report(vec![broken]).await, 0, "bob, broken frank");
+    assert_eq!(f.report(vec![genuine]).await.unwrap(), b"");
 }
 
 #[tokio::test]

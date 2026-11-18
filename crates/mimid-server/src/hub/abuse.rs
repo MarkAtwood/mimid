@@ -5,7 +5,15 @@
 //! The steps:
 //!
 //! 1. Look up the room, then decode the [`AbuseReport`].
-//! 2. For each [`AbusiveMessage`], in order: decode `message_content` as a
+//! 2. Authorize the reporter (decision mimid-1wgh.56): a non-empty
+//!    `reportingUser` must be a user of the `From` provider (a consistency
+//!    check, as for `sendingUri` in submitMessage, decision mimid-1wgh.6.9),
+//!    and its role (role 0 for an empty or unlisted one) must hold
+//!    room-policy-04 §8.3 `canReportAbuse`
+//!    ([`policy::authorize_report_abuse`]). Otherwise the report is
+//!    refused with [`HubError::ReportNotAllowed`], before any frank is
+//!    checked.
+//! 3. For each [`AbusiveMessage`], in order: decode `message_content` as a
 //!    MIMI content message (mimi-content-10 §4.1), take its `salt` and its
 //!    `senderUri` and `roomUri` extensions (§4.3), recompute the
 //!    `franking_tag` over `message_content` and the
@@ -13,7 +21,7 @@
 //!    `server_frank` with the hub's `hub_key` ([`verify_server_frank`]),
 //!    and verify `franking_integrity_signature` under the room's
 //!    `franking_agent` key ([`mimi_protocol::Frank::verify_integrity`]).
-//! 3. If every message passes, the report is accepted and the response has
+//! 4. If every message passes, the report is accepted and the response has
 //!    no body; otherwise it is refused with
 //!    [`HubError::UnverifiedAbusiveMessage`] (decision mimid-1wgh.6.65).
 //!
@@ -29,15 +37,19 @@
 //!
 //! # Limitations
 //!
-//! - No action is taken on an accepted report, and `canReportAbuse` is not
-//!   checked (decision mimid-1wgh.21).
+//! - No action is taken on an accepted report (decision mimid-1wgh.21).
+//! - The reporter is judged by the room's policy as it stands when the
+//!   report arrives: a user removed since receiving the messages is judged
+//!   as role 0.
 //! - `message_content` is read as the whole MLS `application_data` the
 //!   `franking_tag` covers (decisions mimid-1wgh.5.29, mimid-1wgh.6.66),
 //!   so a message sent
 //!   with content advertisement framing does not verify.
 //! - A report is refused whole if any of its messages does not verify.
-//! - `From` is not compared with `reportingUser`: §5.9 asks for no such
-//!   check.
+//! - `reportingUser` is compared with `From` only by domain: with
+//!   BasicCredential the hub cannot tell which of a provider's users sent a
+//!   report, so a provider can report as any of its own users (decision
+//!   mimid-1wgh.6.9).
 
 use mimi_content::MimiContent;
 use mimi_mls::tls_codec::Deserialize;
@@ -47,23 +59,27 @@ use mimi_protocol::{
     franking_tag, verify_server_frank,
 };
 
-use super::{Hub, HubError, room};
+use super::state::{identity_domain, room_state};
+use super::{Hub, HubError, policy, room};
 use crate::config::Domain;
 
 /// Runs [`Hub::report_abuse`].
 pub(super) async fn report_abuse(
     hub: &Hub,
     room_id: &str,
-    _from: &Domain,
+    from: &Domain,
     request: &[u8],
 ) -> Result<Vec<u8>, HubError> {
     // A franked room's franking_agent; none for a room without franking,
     // where reports are accepted with their messages unverified (decision
     // mimid-1wgh.52, bead mimid-1wgh.53).
-    let franking_agent = {
+    // The room's policy state is read under the same lock; a malformed
+    // policy component is refused at creation (decision mimid-1wgh.6.51),
+    // so an unusable one is defence in depth.
+    let (franking_agent, state) = {
         let rooms = hub.rooms.lock().await;
         let room = rooms.get(room_id).ok_or(HubError::NoSuchRoom)?;
-        if room::is_franked(&room.observer)? {
+        let franking_agent = if room::is_franked(&room.observer)? {
             // create_room checked that this is present and names the hub's
             // key.
             let data = room
@@ -76,7 +92,8 @@ pub(super) async fn report_abuse(
             )
         } else {
             None
-        }
+        };
+        (franking_agent, room_state(&room.observer))
     };
     let report = AbuseReport::tls_deserialize_exact(request).map_err(HubError::InvalidRequest)?;
     // Bead mimid-1wgh.52.2.
@@ -95,6 +112,37 @@ pub(super) async fn report_abuse(
         .map_err(HubError::FieldTooLong)?;
     let reporting_user = report.reporting_user.as_str();
     let alleged_abuser = report.alleged_abuser_uri.as_str();
+    // Decision mimid-1wgh.56: the reporter, before any frank.
+    let reporter = (!reporting_user.is_empty()).then_some(reporting_user.as_bytes());
+    let refusal = match (&state, reporter) {
+        (Err(_), _) => Some("room policy state unusable"),
+        (Ok(_), Some(user)) if identity_domain(user).as_ref() != Some(from) => {
+            Some("From domain is not the reportingUser domain")
+        }
+        (Ok(state), reporter) => policy::authorize_report_abuse(state, reporter)
+            .err()
+            .map(|_| "room policy refuses the reporter (canReportAbuse, or banned)"),
+    };
+    if let Some(reason) = refusal {
+        if let Err(error) = &state {
+            tracing::warn!(
+                name: "abuse_report_policy_unusable",
+                room_id,
+                error = error as &dyn std::error::Error,
+                "room policy state unusable; abuse report refused"
+            );
+        }
+        tracing::info!(
+            name: "abuse_report_refused",
+            room_id,
+            reporting_user,
+            alleged_abuser,
+            from = from.as_str(),
+            reason,
+            "abuse report refused: the reporter may not report"
+        );
+        return Err(HubError::ReportNotAllowed);
+    }
     for (index, message) in report.messages.iter().enumerate() {
         let Some(franking_agent) = &franking_agent else {
             break;

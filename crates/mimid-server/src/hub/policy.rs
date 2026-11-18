@@ -26,6 +26,9 @@
 //! - [`authorize_group_info`]: a listed participant holding
 //!   `canAddOwnClient`, or a user that may join by `canOpenJoin` or by
 //!   preauthorization (room-policy-04 §8.1.1).
+//! - [`authorize_report_abuse`]: the reporter's role, or role 0 for an
+//!   absent or unlisted reporter, holds `canReportAbuse` (room-policy-04
+//!   §8.3; decision mimid-1wgh.56).
 //!
 //! The commit-level rules are:
 //!
@@ -1110,4 +1113,23 @@ pub fn authorize_group_info(
         ),
         None => Err(open_denied),
     }
+}
+
+/// Authorizes `reporting_user` to report abuse in the room: its role, or
+/// role 0 for an absent (`None`) or unlisted reporter, holds
+/// `canReportAbuse` (room-policy-04 §8.3; protocol-07 §5.9; decision
+/// mimid-1wgh.56). A banned user may not report.
+///
+/// # Errors
+///
+/// [`Denied::RemovedOrBanned`] or [`Denied::Capability`].
+pub fn authorize_report_abuse(
+    state: &RoomState,
+    reporting_user: Option<&[u8]>,
+) -> Result<(), Denied> {
+    let role = reporting_user.map_or(NO_ROLE_INDEX, |user| state.role_of(user));
+    if state.is_banned(role) {
+        return Err(Denied::RemovedOrBanned);
+    }
+    state.capability(role, Capability::CAN_REPORT_ABUSE)
 }

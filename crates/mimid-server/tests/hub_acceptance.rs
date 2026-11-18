@@ -10,7 +10,8 @@
 //! alice's Commit covers the pending proposals; carol joins by
 //! external Commit after `/groupInfo`; the hub restarts from the same
 //! SQLite file with a fanout row still undelivered; alice sends and carol
-//! commits; two franked messages are reported.
+//! commits; two franked messages are reported by members whose role
+//! holds `canReportAbuse`.
 //!
 //! Oracles:
 //!
@@ -177,6 +178,7 @@ fn roles_list() -> Vec<u8> {
                     Capability::CAN_REMOVE_OWN_CLIENT,
                     Capability::CAN_KICK,
                     Capability::CAN_SEND_MESSAGE,
+                    Capability::CAN_REPORT_ABUSE,
                 ],
                 vec![SingleSourceRoleChangeTargets {
                     from_role_index: 0,
@@ -1363,8 +1365,10 @@ async fn room_lifecycle_across_restart() {
     ));
 
     // reportAbuse: bob reports alice's first message, franked before the
-    // restart, and carol the one after it. Both are accepted (decision
-    // mimid-1wgh.6.65: 200, empty body).
+    // restart, and carol the one after it. Both are listed members (bob's
+    // client was kicked, his user was not), whose role holds
+    // canReportAbuse (decision mimid-1wgh.56), so both are accepted
+    // (decision mimid-1wgh.6.65: 200, empty body).
     for (reporter, from, message) in [
         (BOB, "b.example", franked[0].clone()),
         (CAROL, "c.example", franked[2].clone()),

@@ -18,8 +18,8 @@
 //!   users of this provider only if [`Hub::with_local_key_material`] gave
 //!   it a [`LocalKeyMaterial`]; its limitations are listed in
 //!   `key_material.rs`.
-//! - [`Hub::report_abuse`] validates franks and logs; no action follows
-//!   (decision mimid-1wgh.21). Its limitations are listed in `abuse.rs`.
+//! - [`Hub::report_abuse`] checks `canReportAbuse`, validates franks and
+//!   logs; no action follows (decision mimid-1wgh.21). Its limitations are listed in `abuse.rs`.
 //! - [`Hub::submit_message`] has the limitations listed in `submit.rs`: the
 //!   hub cannot authenticate a PrivateMessage's sender, does not withhold
 //!   messages from clients whose removal is pending (protocol-07 §5.3), and
@@ -898,10 +898,13 @@ impl Hub {
         group_info::group_info(self, room_id, from, request).await
     }
 
-    /// protocol-07 §5.9 `POST /reportAbuse/{roomId}`: validates the frank
-    /// of every message in the TLS-encoded `AbuseReport` `request` and logs
-    /// the outcome. No action is taken (decision mimid-1wgh.21). `from` is
-    /// the domain of the request's `From` header; it is not used.
+    /// protocol-07 §5.9 `POST /reportAbuse/{roomId}`: authorizes the
+    /// reporter by room policy (room-policy-04 §8.3 `canReportAbuse`;
+    /// decision mimid-1wgh.56), validates the frank of every message in the
+    /// TLS-encoded `AbuseReport` `request` and logs the outcome. No action
+    /// is taken (decision mimid-1wgh.21). `from` is the domain of the
+    /// request's `From` header, which a non-empty `reportingUser` must
+    /// belong to.
     ///
     /// Returns an empty body if the report is accepted. The steps are
     /// listed in `abuse.rs`.
@@ -910,8 +913,10 @@ impl Hub {
     ///
     /// Returns [`HubError::NoSuchRoom`] if the room is not hosted here,
     /// [`HubError::InvalidRequest`] if `request` does not decode,
-    /// [`HubError::UnverifiedAbusiveMessage`] if a reported message's frank
-    /// does not verify, and [`HubError::MissingFrankingAgent`] or
+    /// [`HubError::ReportNotAllowed`] if room policy does not let the
+    /// reporter report, [`HubError::UnverifiedAbusiveMessage`] if a reported
+    /// message's frank does not verify, and
+    /// [`HubError::MissingFrankingAgent`] or
     /// [`HubError::WrongFrankingAgent`] if the room's `franking_agent`
     /// cannot be read.
     pub async fn report_abuse(
@@ -1206,4 +1211,9 @@ pub enum HubError {
         /// The message's position in the report.
         index: usize,
     },
+    /// Room policy does not let the reporter report abuse: its role lacks
+    /// room-policy-04 §8.3 `canReportAbuse`, it is banned, or its domain is
+    /// not the `From` domain (decision mimid-1wgh.56).
+    #[error("the reporter may not report abuse in this room")]
+    ReportNotAllowed,
 }

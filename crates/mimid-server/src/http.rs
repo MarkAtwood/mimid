@@ -651,6 +651,8 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
         }
         // Bead mimid-1wgh.52.2.
         HubError::FieldTooLong(_) => (StatusCode::UNPROCESSABLE_ENTITY, "field-too-long"),
+        // Decision mimid-1wgh.56.
+        HubError::ReportNotAllowed => (StatusCode::FORBIDDEN, "report-not-allowed"),
         // Decision mimid-1wgh.6.65.
         HubError::UnverifiedAbusiveMessage { .. } => (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -777,6 +779,7 @@ mod tests {
                 HubError::InvalidRequest(mimi_mls::tls_codec::Error::EndOfStream),
                 HubError::NotImplemented("proxyDownload"),
                 HubError::UnverifiedAbusiveMessage { index: 0 },
+                HubError::ReportNotAllowed,
             ] {
                 respond(Err(error));
             }
