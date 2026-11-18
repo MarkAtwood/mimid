@@ -23,12 +23,15 @@
 
 use mimi_content::MimiContent;
 use mimi_mls::member::Member;
-use mimi_mls::tls_codec::Deserialize;
+use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::wire::CipherSuite;
 use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT};
 use mimi_protocol::{
-    Frank, FrankAad, FrankingAgentData, IdentifierUri, ReceivedFrank, ServerFrankingContext,
+    AbusiveMessage, Frank, FrankAad, FrankingAgentData, IdentifierUri, ReceivedFrank,
+    ServerFrankingContext,
 };
+
+use crate::AgentError;
 
 /// The one ciphersuite mimi-mls supports, so the suite of every group the
 /// agent is in (MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519, RFC 9420
@@ -47,6 +50,31 @@ pub struct VerifiedFrank {
     pub frank: Frank,
     /// The context the hub signed.
     pub context: ServerFrankingContext,
+}
+
+/// The TLS encoding of `message` (protocol-07 §5.9), for a caller that
+/// keeps what [`crate::ReceivedMessage::abusive_message`] gave until the
+/// user reports it.
+///
+/// # Errors
+///
+/// [`AgentError::Encoding`] if it does not encode (a field over the
+/// codec's length limit).
+pub fn encode_abusive_message(message: &AbusiveMessage) -> Result<Vec<u8>, AgentError> {
+    message
+        .tls_serialize_detached()
+        .map_err(|e| AgentError::tls("an AbusiveMessage", e))
+}
+
+/// An AbusiveMessage back from [`encode_abusive_message`]'s bytes, decoded
+/// strictly.
+///
+/// # Errors
+///
+/// [`AgentError::Encoding`] if `bytes` are not one AbusiveMessage.
+pub fn decode_abusive_message(bytes: &[u8]) -> Result<AbusiveMessage, AgentError> {
+    AbusiveMessage::tls_deserialize_exact(bytes)
+        .map_err(|e| AgentError::tls("a kept AbusiveMessage", e))
 }
 
 /// Whether `member`'s room requires `frank_aad` in the Safe AAD.

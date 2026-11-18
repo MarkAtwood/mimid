@@ -420,6 +420,7 @@ async fn a_room_without_metadata_and_a_lone_leave() {
             name: "quiet".to_owned(),
             metadata: false,
             open: false,
+            roles: None,
         })
         .await
         .unwrap();

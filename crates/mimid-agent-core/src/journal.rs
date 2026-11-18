@@ -26,8 +26,8 @@ use crate::agent::{Event, ReceivedMessage};
 use crate::frank::VerifiedFrank;
 
 /// One journaled [`Event`]. Binary fields are hex: a received message's
-/// content is its mimi-content CBOR, its frank and the frank's context
-/// their TLS encodings.
+/// content is its `application_data` as received (mimi-content CBOR), its
+/// frank and the frank's context their TLS encodings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -165,8 +165,9 @@ impl Journaled {
         let id: [u8; 32] = unhex(message_id, "the message ID")?
             .try_into()
             .map_err(|_| "the message ID is not 32 octets".to_owned())?;
-        let content = MimiContent::decode(&unhex(content, "the content")?)
-            .map_err(|e| format!("the content: {e}"))?;
+        let application_data = unhex(content, "the content")?;
+        let content =
+            MimiContent::decode(&application_data).map_err(|e| format!("the content: {e}"))?;
         let frank = match frank {
             None => None,
             Some((frank, context)) => Some(VerifiedFrank {
@@ -184,6 +185,7 @@ impl Journaled {
             message_id: MessageId(id),
             accepted_at: *accepted_at,
             content,
+            application_data,
             text: text.clone(),
             frank,
         })
@@ -191,10 +193,6 @@ impl Journaled {
 }
 
 fn message_of(message: ReceivedMessage) -> Result<Journaled, String> {
-    let content = message
-        .content
-        .encode()
-        .map_err(|e| format!("the content: {e}"))?;
     let frank = match &message.frank {
         None => None,
         Some(verified) => Some((
@@ -217,7 +215,7 @@ fn message_of(message: ReceivedMessage) -> Result<Journaled, String> {
         sender: message.sender,
         message_id: hex::encode(message.message_id.0),
         accepted_at: message.accepted_at,
-        content: hex::encode(content),
+        content: hex::encode(&message.application_data),
         text: message.text,
         frank,
     })

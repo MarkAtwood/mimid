@@ -21,6 +21,10 @@
 //! - [`Agent::allow`], [`Agent::deny`], [`Agent::request_consent`],
 //!   [`Agent::cancel_consent`], [`Agent::consents`]: Consent/set and
 //!   Consent/get;
+//! - [`Agent::report_abuse`]: a protocol-07 §5.9 AbuseReport of received
+//!   franked messages ([`ReceivedMessage::abusive_message`]), sent to the
+//!   room's hub through the server (`Room/reportAbuse`, INVENTED, NOT FROM
+//!   SPEC; decision mimid-1wgh.58);
 //! - [`Agent::poll`]: everything the server stored since the last poll
 //!   (Message/changes), with each received message's frank checked
 //!   ([`frank`], protocol-07 §5.4.1.3), as [`Event`]s for the caller (the future inward
@@ -71,7 +75,14 @@
 //! - `components` and `uri` are copies of mimid-server code, kept so this
 //!   crate does not depend on the server's stack; they must stay in step.
 //! - Received messages are returned, not stored: keeping the plaintext is
-//!   the caller's job (bead mimid-1wgh.13.12).
+//!   the caller's job (bead mimid-1wgh.13.12). So is keeping a message's
+//!   frank and `application_data` until the user reports it.
+//! - [`Agent::report_abuse`] reports only franked messages, of one sender,
+//!   with this user as `reportingUser` (no anonymous reports, no report
+//!   without messages) and no `abuse_extensions`. It does not check the
+//!   franks again before sending. Whether the user may report is the
+//!   hub's room policy (`canReportAbuse`), which the default role list
+//!   does not grant (bead mimid-umnp); [`HostOptions::roles`] can.
 
 #![forbid(unsafe_code)]
 
@@ -87,8 +98,9 @@ mod state;
 pub mod uri;
 
 pub use agent::{
-    Agent, AgentConfig, DidWebvhApplied, Event, HostOptions, MAX_TEXT_LEN, OutgoingAttachment,
-    PendingInvite, ReceivedMessage, RoomInfo, Sent,
+    Agent, AgentConfig, DidWebvhApplied, Event, HostOptions, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES,
+    MAX_TEXT_LEN, OutgoingAttachment, PendingInvite, ReceivedMessage, ReportOutcome, RoomInfo,
+    Sent,
 };
 pub use client::ConsentRecord;
 pub use didwebvh::{DidWebvhConfig, RoomClient};
@@ -96,4 +108,5 @@ pub use error::{AgentError, Source};
 pub use journal::Receipt;
 pub use mimi_content::{ExternalPart, MessageId, MimiContent};
 pub use mimi_mls::mls_didwebvh;
+pub use mimi_protocol::{AbuseType, AbusiveMessage};
 pub use state::RoomStatus;

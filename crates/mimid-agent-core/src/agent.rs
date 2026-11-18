@@ -13,16 +13,16 @@ use mimi_mls::member::{
 };
 use mimi_mls::tls_codec::{Deserialize, Serialize, VLBytes};
 use mimi_mls::wire::{
-    CipherSuite, Credential, GroupInfo, MLSMessage, RatchetTreeOption, RequiredCapabilities,
-    SignaturePublicKey, Welcome,
+    AppDataDictionary, CipherSuite, Credential, GroupInfo, MLSMessage, RatchetTreeOption,
+    RequiredCapabilities, SignaturePublicKey, Welcome,
 };
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_protocol::{
-    ClientKeyMaterial, FanoutEvent, FanoutMessage, Frank, FrankingAgentData, GroupInfoOption,
-    HandshakeBundle, IdentifierUri, KeyMaterialRequestTbs, KeyMaterialUserCode,
-    ParticipantListData, ParticipantListUpdate, Protocol, RoomMetaData, UpdateRequest,
-    UpdateResult, UserRolePair, Utf8String, franking_tag,
+    AbuseReport, AbuseType, AbusiveMessage, ClientKeyMaterial, FanoutEvent, FanoutMessage, Frank,
+    FrankingAgentData, GroupInfoOption, HandshakeBundle, IdentifierUri, KeyMaterialRequestTbs,
+    KeyMaterialUserCode, ParticipantListData, ParticipantListUpdate, Protocol, RoomMetaData,
+    UpdateRequest, UpdateResult, UserRolePair, Utf8String, franking_tag,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{
@@ -105,6 +105,10 @@ pub struct HostOptions {
     /// unless its operator sets `require_room_policy = false` (bead
     /// mimid-jf20), and so does any hub that requires franking.
     pub open: bool,
+    /// The room's `roles_list` in place of the default one (room-policy-04
+    /// §3), for a room that is not open. Participants this agent adds get
+    /// role 2, so the list must define it.
+    pub roles: Option<RoleData>,
 }
 
 impl HostOptions {
@@ -115,6 +119,7 @@ impl HostOptions {
             name: name.into(),
             metadata: true,
             open: false,
+            roles: None,
         }
     }
 }
@@ -126,6 +131,35 @@ pub struct RoomInfo {
     pub uri: String,
     /// Where it stands.
     pub status: RoomStatus,
+}
+
+/// The most messages [`Agent::report_abuse`] puts in one report.
+/// INVENTED, NOT FROM SPEC.
+pub const MAX_REPORTED_MESSAGES: usize = 16;
+
+/// The longest `note` [`Agent::report_abuse`] sends, in octets: mimid-server's
+/// default description limit. INVENTED, NOT FROM SPEC.
+pub const MAX_NOTE_LEN: usize = 4096;
+
+/// The hub's answer to [`Agent::report_abuse`], as the user's server
+/// relays it (decision mimid-1wgh.57).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ReportOutcome {
+    /// The hub accepted the report. That says nothing about any action
+    /// taken (protocol-07 §5.9).
+    Accepted,
+    /// The hub's room policy does not let this user report
+    /// (room-policy-04 §8.3 `canReportAbuse`; decision mimid-1wgh.56).
+    NotAllowed,
+    /// A reported message's frank did not verify at the hub (decision
+    /// mimid-1wgh.6.65).
+    UnverifiedMessage,
+    /// Another provider's hub refused the report with this HTTP status.
+    Refused {
+        /// The `4xx` status.
+        status: u16,
+    },
 }
 
 /// A Welcome waiting for [`Agent::join`].
@@ -153,6 +187,11 @@ pub struct ReceivedMessage {
     pub accepted_at: u64,
     /// The decoded content.
     pub content: MimiContent,
+    /// The MLS `application_data` exactly as received: the content's
+    /// encoding, which the `franking_tag` and the message ID cover. An
+    /// abuse report carries these bytes (protocol-07 §5.9; decision
+    /// mimid-1wgh.6.66), never a re-encoding of `content`.
+    pub application_data: Vec<u8>,
     /// The text, when the content is one `text/*` part.
     pub text: Option<String>,
     /// The hub's frank, verified (protocol-07 §5.4.1.3), or `None` for an
@@ -171,6 +210,18 @@ impl ReceivedMessage {
                 _ => None,
             })
             .collect()
+    }
+
+    /// The protocol-07 §5.9 `AbusiveMessage` for reporting this message
+    /// with [`Agent::report_abuse`]: its `application_data`, its frank and
+    /// the hub's acceptance time. `None` for an unfranked message, which
+    /// cannot be reported.
+    pub fn abusive_message(&self) -> Option<AbusiveMessage> {
+        self.frank.as_ref().map(|verified| AbusiveMessage {
+            message_content: self.application_data.clone(),
+            frank: verified.frank.clone(),
+            accepted_timestamp: verified.context.accepted_timestamp,
+        })
     }
 }
 
@@ -838,7 +889,10 @@ impl Agent {
                 // The creator is the room's admin (decision
                 // mimid-1wgh.56).
                 (PARTICIPANT_LIST, participant_list(&self.me, ADMIN_ROLE)?),
-                (ROLES_LIST, encode(&default_roles())?),
+                (
+                    ROLES_LIST,
+                    encode(&options.roles.clone().unwrap_or_else(default_roles))?,
+                ),
                 (BASE_ROOM_POLICY, encode(&default_base_policy())?),
             ]
         };
@@ -1449,6 +1503,112 @@ impl Agent {
         async move { jmap.consents().await }
     }
 
+    /// Reports `messages`, received in `room`, as abusive to the room's hub
+    /// (protocol-07 §5.9) through the user's server (`Room/reportAbuse`,
+    /// INVENTED, NOT FROM SPEC; decisions mimid-1wgh.57, mimid-1wgh.58).
+    /// Take each message from [`ReceivedMessage::abusive_message`], now or
+    /// from where the caller kept it.
+    ///
+    /// The AbuseReport has this user as `reportingUser`, the one sender of
+    /// the messages (their content's `senderUri`) as `allegedAbuserUri`,
+    /// `reason` as `reasonCode`, `note` as `note` and no
+    /// `abuse_extensions`. The franks are not checked again: the agent
+    /// verified them on receipt (protocol-07 §5.4.1.3) and the hub verifies
+    /// them now. The hub's room policy decides whether this user may report
+    /// (room-policy-04 §8.3 `canReportAbuse`).
+    ///
+    /// The future borrows only the JMAP client, as [`Agent::consents`]
+    /// does, so it is `Send`.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`] for a room this agent never knew;
+    /// [`AgentError::Invalid`] for no messages or more than
+    /// [`MAX_REPORTED_MESSAGES`], a `note` over [`MAX_NOTE_LEN`] octets, or
+    /// a message whose content does not decode, has no `senderUri`, names
+    /// another sender than the first message or another room than `room`;
+    /// and the server's errors. A refusal by the hub is not an error but a
+    /// [`ReportOutcome`].
+    pub fn report_abuse<'a>(
+        &'a self,
+        room: &str,
+        messages: &[AbusiveMessage],
+        reason: AbuseType,
+        note: &str,
+    ) -> impl Future<Output = Result<ReportOutcome, AgentError>> + Send + 'a {
+        let report = self.abuse_report(room, messages, reason, note);
+        let room = room.to_owned();
+        let jmap = &self.jmap;
+        async move {
+            let report = report?;
+            jmap.report_abuse(&room, &report).await
+        }
+    }
+
+    /// The encoded AbuseReport of [`Agent::report_abuse`].
+    fn abuse_report(
+        &self,
+        room: &str,
+        messages: &[AbusiveMessage],
+        reason: AbuseType,
+        note: &str,
+    ) -> Result<Vec<u8>, AgentError> {
+        if !self.state.rooms.contains_key(room) {
+            return Err(AgentError::NoSuchRoom(room.to_owned()));
+        }
+        if messages.is_empty() || messages.len() > MAX_REPORTED_MESSAGES {
+            return Err(AgentError::Invalid(format!(
+                "a report carries 1 to {MAX_REPORTED_MESSAGES} messages, not {}",
+                messages.len()
+            )));
+        }
+        if note.len() > MAX_NOTE_LEN {
+            return Err(AgentError::Invalid(format!(
+                "the note is over {MAX_NOTE_LEN} octets"
+            )));
+        }
+        let mut alleged_abuser: Option<String> = None;
+        for (index, message) in messages.iter().enumerate() {
+            let content = MimiContent::decode(&message.message_content).map_err(|e| {
+                AgentError::Invalid(format!("reported message {index} is not mimi-content: {e}"))
+            })?;
+            let extensions = content.mimi_extensions;
+            if extensions.room_uri.as_deref() != Some(room) {
+                return Err(AgentError::Invalid(format!(
+                    "reported message {index} is not from the room {room}"
+                )));
+            }
+            let sender = extensions.sender_uri.ok_or_else(|| {
+                AgentError::Invalid(format!("reported message {index} has no senderUri"))
+            })?;
+            match &alleged_abuser {
+                None => alleged_abuser = Some(sender),
+                Some(first) if *first == sender => {}
+                Some(_) => {
+                    return Err(AgentError::Invalid(format!(
+                        "reported message {index} has another sender than the first: \
+                         a report names one alleged abuser"
+                    )));
+                }
+            }
+        }
+        let uri = |value: &str, what: &str| {
+            IdentifierUri::new(value)
+                .map_err(|e| AgentError::Invalid(format!("{what} is not a MIMI URI: {e}")))
+        };
+        let alleged_abuser = alleged_abuser.unwrap_or_default();
+        encode(&AbuseReport {
+            reporting_user: uri(&self.me, "this user")?,
+            alleged_abuser_uri: uri(&alleged_abuser, "the senderUri")?,
+            reason_code: reason,
+            note: note.as_bytes().to_vec(),
+            messages: messages.to_vec(),
+            // mls-extensions-11 §4.6: an empty ComponentData list.
+            abuse_extensions: AppDataDictionary::tls_deserialize_exact(&[0x00][..])
+                .map_err(|e| AgentError::tls("an empty AppDataDictionary", e))?,
+        })
+    }
+
     /// Reads what the server stored since the last poll and handles it:
     /// Welcomes become invites, Commits and proposals change the groups,
     /// application messages are decrypted. A member's leave proposals are
@@ -2000,6 +2160,7 @@ fn received(
         message_id,
         accepted_at,
         content,
+        application_data: data.to_vec(),
         text,
         frank: None,
     })

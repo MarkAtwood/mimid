@@ -28,6 +28,7 @@ use mimi_protocol::{
 use serde_json::{Value, json};
 
 use crate::AgentError;
+use crate::agent::ReportOutcome;
 
 const USING: [&str; 3] = [
     "urn:ietf:params:jmap:core",
@@ -601,6 +602,38 @@ impl Jmap {
             .map_err(|e| AgentError::malformed(WHAT, format!("errorDescription: {e:?}")))?,
             result,
         })
+    }
+
+    /// Room/reportAbuse (INVENTED, NOT FROM SPEC; decision mimid-1wgh.57)
+    /// of the TLS-encoded AbuseReport `report` about `room`: the hub's
+    /// answer as the server relays it.
+    pub async fn report_abuse(
+        &self,
+        room: &str,
+        report: &[u8],
+    ) -> Result<ReportOutcome, AgentError> {
+        const WHAT: &str = "Room/reportAbuse";
+        let answer = self
+            .call(
+                WHAT,
+                json!({"roomId": room, "report": URL_SAFE_NO_PAD.encode(report)}),
+            )
+            .await?;
+        match answer["responseCode"].as_str() {
+            Some("accepted") => Ok(ReportOutcome::Accepted),
+            Some("notAllowed") => Ok(ReportOutcome::NotAllowed),
+            Some("unverifiedMessage") => Ok(ReportOutcome::UnverifiedMessage),
+            Some("refused") => Ok(ReportOutcome::Refused {
+                status: answer["status"]
+                    .as_u64()
+                    .and_then(|status| u16::try_from(status).ok())
+                    .ok_or_else(|| AgentError::malformed(WHAT, "refused without a status"))?,
+            }),
+            other => Err(AgentError::malformed(
+                WHAT,
+                format!("unknown responseCode {other:?}"),
+            )),
+        }
     }
 
     /// Room/send of the MLSMessage `message`; the hub's accepted time in
