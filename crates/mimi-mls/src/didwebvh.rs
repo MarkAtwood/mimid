@@ -14,34 +14,51 @@
 //!   valid successor (§Successor Credentials);
 //! - every Commit is checked against the tree and GroupContext it leads to
 //!   (§Group Consistency Rules), and a joiner checks what it receives;
-//! - `did_webvh_heads` is never removed once present, comes with a
-//!   `required_capabilities` that lists it and `did_webvh`, and no
-//!   `did_webvh` credential appears in `external_senders`.
+//! - the `did_webvh_heads` record is never removed once present, the
+//!   GroupContext's `app_components` list names it whenever it is present,
+//!   and no `did_webvh` credential appears in `external_senders`.
+//!
+//! # The record as a component
+//!
+//! The draft carries the record as a GroupContext extension set by a
+//! GroupContextExtensions proposal. mimid carries the same `DIDWebVHHeads`
+//! bytes as the entry [`CodePoints::heads_component`] of the GroupContext
+//! `app_data_dictionary` extension, changed by AppDataUpdate proposals
+//! (mls-extensions-11 §4.6, §4.7; decision mimid-1wgh.4.81.33, Mark
+//! 2026-11-18, bead mimid-1wgh.4.81.34). INVENTED, NOT FROM SPEC:
+//!
+//! - this module is the component's application logic, as mimi-mls is for
+//!   the mls-extensions-11 §5.1 built-ins, so the callers' `apply` functions
+//!   never see it;
+//! - each `update` is a `DIDWebVHHeads` whose entries replace or add the
+//!   entries for the same SCIDs, applied in Commit order
+//!   ([`apply_heads_updates`]); a `remove` is invalid;
+//! - the GroupContext's `app_components` list names the component, which
+//!   makes every member list it in its leaf (mls-extensions-11 §5), the job
+//!   the draft gives `required_capabilities`; no `required_capabilities`
+//!   is written;
+//! - an external Commit may set the record, which the draft's §Rules
+//!   forbid (its Open Issue 1).
 //!
 //! [`Member::commit`](crate::member::Member::commit) computes the record a
 //! Commit must set (§Expected Heads) and the leaves it must remove, and adds
-//! the GroupContextExtensions proposal and the Removes itself (decision
+//! the AppDataUpdate proposals and the Removes itself (decision
 //! mimid-1wgh.4.81.17). Creating a group with a `did_webvh` identity puts
-//! its record and a `required_capabilities` listing it and `did_webvh` in
-//! the first GroupContext (decision mimid-1wgh.4.81.16).
+//! its record, and `app_components` naming it, in the first GroupContext.
 //!
 //! # Limitations
 //!
 //! - The credential is carried inside an `opaque<V>`, not as the draft
 //!   writes it (decision mimid-1wgh.4.81.8).
+//! - The record is a component, not the draft's extension (above): a peer
+//!   that implements the draft as written does not interoperate.
 //! - The cipher suite is not checked here: mimi-mls supports only suite 1,
 //!   whose signature scheme is Ed25519, as the draft requires.
 //! - The record is not carried across ReInit or branches (Open Issue 2), and
 //!   no proposal carries a newer log as evidence (Open Issue 3).
-//! - A GroupContextExtensions proposal already pending from another member
-//!   makes a record-changing Commit fail (Open Issue 5), unless the record
-//!   is carried as an `app_data_dictionary` component
-//!   ([`CodePoints::with_heads_component`](mls_didwebvh::CodePoints::with_heads_component)).
-//!   That form is a spike prototype (bead mimid-1wgh.4.81.32, decision
-//!   mimid-1wgh.4.81.33), not the draft: the hub's record-only
-//!   GroupContextExtensions exception (decision mimid-1wgh.4.81.22) is not
-//!   removed, and a pending AppDataUpdate that records an SCID with no
-//!   leaf makes every Commit fail (decision mimid-1wgh.4.65).
+//! - A pending AppDataUpdate that records an SCID with no leaf cannot be
+//!   undone by a later update (entries are never removed), so every Commit
+//!   that covers it fails (decision mimid-1wgh.4.65).
 //! - Verified logs are cached in memory by credential bytes, up to 4,096,
 //!   and the cache starts over when full.
 //!
@@ -56,13 +73,16 @@ use mls_didwebvh::{
     CodePoints, DecodeError, DidWebvhCredential, DidWebvhHeads, LogError, VerifiedLog,
     verify_credential,
 };
+use openmls::component::ComponentsList;
 use openmls::group::StagedCommit;
-use openmls::messages::proposals::Proposal;
+use openmls::messages::proposals::{AppDataUpdateOperation, Proposal};
 use openmls::prelude::{
-    Credential, CredentialType, Extension, ExtensionType, Extensions, GroupContext, LeafNode,
-    LeafNodeIndex, PublicGroup, RequiredCapabilitiesExtension, UnknownExtension,
+    Credential, CredentialType, Extensions, GroupContext, LeafNode, LeafNodeIndex, PublicGroup,
 };
-use tls_codec::Serialize;
+use tls_codec::{Deserialize, Serialize};
+
+use crate::identity::APP_COMPONENTS;
+use crate::member::AppDataUpdate;
 
 /// Why a `did_webvh` check failed.
 #[derive(Debug, thiserror::Error)]
@@ -78,22 +98,23 @@ pub enum DidWebvhError {
     /// A group rule, or the binding to the LeafNode, fails.
     #[error("a did_webvh rule fails")]
     Rule(#[source] RuleError),
-    /// The GroupContext's `did_webvh_heads` extension does not decode
-    /// (decision mimid-1wgh.4.81.13).
-    #[error("the did_webvh_heads extension does not decode")]
+    /// The GroupContext's `did_webvh_heads` record, or an AppDataUpdate
+    /// for it, does not decode (decision mimid-1wgh.4.81.13).
+    #[error("the did_webvh_heads record does not decode")]
     Heads(#[source] DecodeError),
-    /// The GroupContext carries `did_webvh_heads` without a
-    /// `required_capabilities` extension that lists it in `extension_types`
-    /// and `did_webvh` in `credential_types` (§The Heads Extension).
-    #[error("did_webvh_heads without required_capabilities listing it and did_webvh")]
-    RequiredCapabilities,
+    /// The GroupContext holds the record but its `app_components` list does
+    /// not name the record's component, or the list does not decode; or an
+    /// external joiner would have to add the component to the list
+    /// (decision mimid-1wgh.4.81.33).
+    #[error("the did_webvh_heads component is not in the GroupContext's app_components")]
+    HeadsNotListed,
     /// A `did_webvh` credential is in `external_senders` (§Binding to the
     /// LeafNode).
     #[error("a did_webvh credential is in external_senders")]
     ExternalSender,
-    /// The Commit removes `did_webvh_heads` from the GroupContext (§The
-    /// Heads Extension: "a group that carries it MUST NOT remove it").
-    #[error("the Commit removes did_webvh_heads")]
+    /// The Commit or proposal removes the record (§The Heads Extension: "a
+    /// group that carries it MUST NOT remove it").
+    #[error("the record did_webvh_heads is removed")]
     HeadsRemoved,
     /// An Update or UpdatePath LeafNode replaces a `did_webvh` credential
     /// with one that is not a valid successor (§Successor Credentials), or
@@ -109,10 +130,6 @@ pub enum DidWebvhError {
     /// A leaf this Commit adds is not authorized by the record it sets.
     #[error("an added member is not authorized by the record")]
     AddedUnauthorized,
-    /// A GroupContextExtensions proposal is already pending, and the
-    /// record change needs its own (Open Issue 5 of the draft).
-    #[error("a GroupContextExtensions proposal is already pending")]
-    PendingGroupContextExtensions,
     /// The identity has no `did_webvh` credential, or one for other code
     /// points.
     #[error("the identity holds no did_webvh credential for these code points")]
@@ -187,33 +204,41 @@ pub(crate) fn openmls_credential(
     ))
 }
 
-/// The GroupContext's `did_webvh_heads`, strictly decoded, or `None` when
-/// it has none: the extension, or with
-/// [`CodePoints::heads_component`] the `app_data_dictionary` entry (spike
-/// bead mimid-1wgh.4.81.32).
+/// The GroupContext's `did_webvh_heads` record, the `app_data_dictionary`
+/// entry [`CodePoints::heads_component`], strictly decoded, or `None` when
+/// it has none.
 pub(crate) fn heads(
     code_points: CodePoints,
     extensions: &Extensions<GroupContext>,
 ) -> Result<Option<DidWebvhHeads>, DidWebvhError> {
-    let data = match code_points.heads_component() {
-        Some(component_id) => extensions
-            .app_data_dictionary()
-            .and_then(|extension| extension.dictionary().get(&component_id)),
-        None => extensions
-            .unknown(code_points.heads_extension_type())
-            .map(|UnknownExtension(data)| data.as_slice()),
-    };
-    data.map(|data| DidWebvhHeads::decode(data).map_err(DidWebvhError::Heads))
+    extensions
+        .app_data_dictionary()
+        .and_then(|extension| extension.dictionary().get(&code_points.heads_component()))
+        .map(|data| DidWebvhHeads::decode(data).map_err(DidWebvhError::Heads))
         .transpose()
 }
 
+/// The GroupContext's `app_components` list (mls-extensions-11 §5),
+/// strictly decoded; empty when absent.
+fn listed_components(extensions: &Extensions<GroupContext>) -> Result<Vec<u16>, DidWebvhError> {
+    extensions
+        .app_data_dictionary()
+        .and_then(|extension| extension.dictionary().get(&APP_COMPONENTS))
+        .map(|data| {
+            ComponentsList::tls_deserialize_exact(data)
+                .map(ComponentsList::into_ids)
+                .map_err(|_| DidWebvhError::HeadsNotListed)
+        })
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
 /// The application logic (mls-extensions-11 §4.7) of the record
-/// component, for [`CodePoints::heads_component`]: each `update` is a
-/// `DIDWebVHHeads` whose entries replace or add the entries for the same
-/// SCIDs, applied in Commit order to `current` (empty when absent). The
-/// rules then require the result to be the expected record, so a committer
-/// may send the whole record or only the entries it changes, and updates
-/// from several proposers compose.
+/// component: each `update` is a `DIDWebVHHeads` whose entries replace or
+/// add the entries for the same SCIDs, applied in Commit order to `current`
+/// (empty when absent). The rules then require the result to be the
+/// expected record, so a committer may send the whole record or only the
+/// entries it changes, and updates from several proposers compose.
 ///
 /// INVENTED, NOT FROM SPEC (decision mimid-1wgh.4.81.33). A `remove` of
 /// the component is invalid: the record is never removed (§The Heads
@@ -237,44 +262,34 @@ pub(crate) fn apply_heads_updates(
         .map_err(|_| DidWebvhError::Heads(DecodeError::Invalid("record too large")))
 }
 
-/// For [`CodePoints::heads_component`]: the AppDataUpdate operations that
-/// set the record to `heads` in a group whose GroupContext extensions are
-/// `current`. The whole record is sent (the update semantics of
-/// [`apply_heads_updates`] would also take only the changed entries). If
-/// the GroupContext's `app_components` list does not name the component
-/// yet, it is extended too, since a GroupContext may hold state only for a
-/// listed component (mls-extensions-11 §5); listing it is what makes every
-/// member support the draft, the job `required_capabilities` does for the
-/// extension form.
+/// The AppDataUpdate operations that set the record to `heads` in a group
+/// whose GroupContext extensions are `current`. The whole record is sent
+/// (the update semantics of [`apply_heads_updates`] would also take only
+/// the changed entries). If the GroupContext's `app_components` list does
+/// not name the component yet, it is extended too, since a GroupContext
+/// may hold state only for a listed component (mls-extensions-11 §5);
+/// listing it is what makes every member support the draft, the job the
+/// draft gives `required_capabilities`.
 pub(crate) fn record_updates(
-    component_id: u16,
+    code_points: CodePoints,
     current: &Extensions<GroupContext>,
     heads: &DidWebvhHeads,
-) -> Result<Vec<crate::member::AppDataUpdate>, DidWebvhError> {
+) -> Result<Vec<AppDataUpdate>, DidWebvhError> {
+    let component_id = code_points.heads_component();
     let invalid = |what| DidWebvhError::Heads(DecodeError::Invalid(what));
     let mut updates = Vec::with_capacity(2);
-    let listed = current
-        .app_data_dictionary()
-        .and_then(|extension| extension.dictionary().get(&crate::identity::APP_COMPONENTS))
-        .map(|data| {
-            use tls_codec::Deserialize;
-            openmls::component::ComponentsList::tls_deserialize_exact(data)
-                .map(openmls::component::ComponentsList::into_ids)
-                .map_err(|_| invalid("app_components"))
-        })
-        .transpose()?
-        .unwrap_or_default();
+    let listed = listed_components(current)?;
     if !listed.contains(&component_id) {
         let mut ids = listed;
         ids.push(component_id);
-        updates.push(crate::member::AppDataUpdate::Update {
-            component_id: crate::identity::APP_COMPONENTS,
-            update: openmls::component::ComponentsList::new(ids)
+        updates.push(AppDataUpdate::Update {
+            component_id: APP_COMPONENTS,
+            update: ComponentsList::new(ids)
                 .tls_serialize_detached()
                 .map_err(|_| invalid("app_components"))?,
         });
     }
-    updates.push(crate::member::AppDataUpdate::Update {
+    updates.push(AppDataUpdate::Update {
         component_id,
         update: heads.encode().map_err(|_| invalid("record too large"))?,
     });
@@ -311,8 +326,13 @@ fn external_sender_credential_type(sender: &openmls::extensions::ExternalSender)
 }
 
 /// The GroupContext rules that do not depend on the tree: no `did_webvh`
-/// credential in `external_senders`, and `required_capabilities` listing
-/// `did_webvh_heads` and `did_webvh` whenever the record is present.
+/// credential in `external_senders`, and `app_components` naming the
+/// record's component whenever the record is present. Returns the record.
+///
+/// mls-extensions-11 §5 already makes a GroupContext invalid that holds
+/// state for an unlisted component (checked with every GroupContext by
+/// `member::required_lists`); this checks it again for the record, so that
+/// the rule does not depend on the order of the checks.
 pub(crate) fn check_group_context(
     code_points: CodePoints,
     extensions: &Extensions<GroupContext>,
@@ -325,87 +345,10 @@ pub(crate) fn check_group_context(
         return Err(DidWebvhError::ExternalSender);
     }
     let heads = heads(code_points, extensions)?;
-    // As a component, the record needs no required_capabilities: a
-    // GroupContext may hold it only while its app_components list names it
-    // (mls-extensions-11 §5, checked with every GroupContext by
-    // member::required_lists), and every member must then list it.
-    if heads.is_some() && code_points.heads_component().is_none() {
-        let listed = extensions.required_capabilities().is_some_and(|rc| {
-            rc.extension_types()
-                .contains(&ExtensionType::from(code_points.heads_extension_type()))
-                && rc
-                    .credential_types()
-                    .contains(&CredentialType::from(code_points.credential_type()))
-        });
-        if !listed {
-            return Err(DidWebvhError::RequiredCapabilities);
-        }
+    if heads.is_some() && !listed_components(extensions)?.contains(&code_points.heads_component()) {
+        return Err(DidWebvhError::HeadsNotListed);
     }
     Ok(heads)
-}
-
-/// The GroupContext extensions `current` with `did_webvh_heads` set to
-/// `heads` and `required_capabilities` extended, if needed, to list it and
-/// `did_webvh`. Every other extension is kept as it is, as a
-/// GroupContextExtensions proposal must (mls-extensions-11 §4.7 for
-/// `app_data_dictionary`).
-pub(crate) fn with_heads(
-    code_points: CodePoints,
-    current: &Extensions<GroupContext>,
-    heads: &DidWebvhHeads,
-) -> Result<Extensions<GroupContext>, DidWebvhError> {
-    let mut extensions = current.clone();
-    let data = heads
-        .encode()
-        .map_err(|_| DidWebvhError::Heads(DecodeError::Invalid("record too large")))?;
-    let heads_type = ExtensionType::from(code_points.heads_extension_type());
-    let credential_type = CredentialType::from(code_points.credential_type());
-    let invalid = |_| DidWebvhError::Heads(DecodeError::Invalid("extension list"));
-    extensions
-        .add_or_replace(Extension::Unknown(
-            code_points.heads_extension_type(),
-            UnknownExtension(data),
-        ))
-        .map_err(invalid)?;
-    let (mut extension_types, proposal_types, mut credential_types) =
-        match current.required_capabilities() {
-            Some(rc) => (
-                rc.extension_types().to_vec(),
-                rc.proposal_types().to_vec(),
-                rc.credential_types().to_vec(),
-            ),
-            None => (Vec::new(), Vec::new(), Vec::new()),
-        };
-    if !extension_types.contains(&heads_type) {
-        extension_types.push(heads_type);
-    }
-    // OpenMLS refuses a GroupContextExtensions proposal unless every
-    // non-default extension it carries is listed in its
-    // required_capabilities (public_group/validation.rs,
-    // ExtensionNotInRequiredCapabilities), stricter than RFC 9420 §12.1.7.
-    // A MIMI room carries app_data_dictionary, so it is listed too; every
-    // member already supports it. Feedback item 23.
-    for extension in current.iter() {
-        let t = extension.extension_type();
-        // RFC 9420 §7.2's default extension types, 1 to 5.
-        let default = (1..=5).contains(&u16::from(t));
-        if !default && t != heads_type && !extension_types.contains(&t) {
-            extension_types.push(t);
-        }
-    }
-    if !credential_types.contains(&credential_type) {
-        credential_types.push(credential_type);
-    }
-    extensions
-        .add_or_replace(Extension::RequiredCapabilities(
-            RequiredCapabilitiesExtension::new(
-                &extension_types,
-                &proposal_types,
-                &credential_types,
-            ),
-        ))
-        .map_err(invalid)?;
-    Ok(extensions)
 }
 
 /// One leaf of the tree a staged Commit leads to.
@@ -588,9 +531,8 @@ pub(crate) fn check_staged(
 /// user, committed by another member because it could not commit itself
 /// (decision mimid-1wgh.4.81.31; an Update is always by reference, so it
 /// is that user's own signed request). Leaf indices are those before the
-/// Commit. Empty if the Commit carries no GroupContextExtensions proposal
-/// (with [`CodePoints::heads_component`], no AppDataUpdate of the record
-/// component; it then sets no record) or there is no vouching SCID.
+/// Commit. Empty if the Commit carries no AppDataUpdate of the record
+/// component (it then sets no record) or there is no vouching SCID.
 ///
 /// A hub uses this to authorize those Removes without a room-policy
 /// capability (decisions mimid-1wgh.4.81.26 and .31). Call it only on a
@@ -619,13 +561,8 @@ pub(crate) fn required_removes(
         return Vec::new();
     }
     let sets_record = staged.queued_proposals().any(|queued| {
-        match (queued.proposal(), code_points.heads_component()) {
-            (Proposal::GroupContextExtensions(_), None) => true,
-            (Proposal::AppDataUpdate(update), Some(component_id)) => {
-                update.component_id() == component_id
-            }
-            _ => false,
-        }
+        matches!(queued.proposal(), Proposal::AppDataUpdate(update)
+            if update.component_id() == code_points.heads_component())
     });
     if !sets_record {
         return Vec::new();
@@ -717,15 +654,13 @@ pub(crate) fn check_join<'a>(
 
 /// For an external join: the tree after the joiner's Commit, `leaves`
 /// (signature key and credential of each existing leaf it keeps, and its
-/// own), checked against the unchanged record, since an external Commit
-/// cannot carry a GroupContextExtensions proposal (§Rules). Returns `None`.
-///
-/// With [`CodePoints::heads_component`] an external Commit can carry an
-/// AppDataUpdate (mls-extensions-11 §4.7), so the record may change: the
-/// tree is checked against the expected record, which is returned when it
-/// differs from the current one, for the joiner to set. INVENTED, NOT FROM
-/// SPEC (decision mimid-1wgh.4.81.33): the draft's §Rules forbid a newer
-/// log or a new SCID from joining externally.
+/// own), checked against the record the Commit must set. An external
+/// Commit can carry an AppDataUpdate (mls-extensions-11 §4.7), so the
+/// record may change: the expected record is returned when it differs from
+/// the current one, for the joiner to set. INVENTED, NOT FROM SPEC
+/// (decision mimid-1wgh.4.81.33): the draft's §Rules, written for the
+/// GroupContext extension, forbid a newer log or a new SCID from joining
+/// externally (its Open Issue 1).
 pub(crate) fn check_external_join<'a>(
     code_points: CodePoints,
     cache: &mut LogCache,
@@ -747,18 +682,17 @@ pub(crate) fn check_external_join<'a>(
             log,
         })
         .collect();
-    if code_points.heads_component().is_some() {
-        let expected = rules::expected_heads(&record, &rule_leaves).map_err(DidWebvhError::Rule)?;
-        rules::check_commit(&record, &expected, &rule_leaves).map_err(DidWebvhError::Rule)?;
-        return Ok((expected != record).then_some(expected));
-    }
-    rules::check_commit(&record, &record, &rule_leaves).map_err(DidWebvhError::Rule)?;
-    Ok(None)
+    let expected = rules::expected_heads(&record, &rule_leaves).map_err(DidWebvhError::Rule)?;
+    rules::check_commit(&record, &expected, &rule_leaves).map_err(DidWebvhError::Rule)?;
+    Ok((expected != record).then_some(expected))
 }
 
 /// The leaf of a standalone Add or Update proposal, verified and bound;
 /// a GroupContextExtensions proposal that would put a `did_webvh`
-/// credential in `external_senders` is refused (§Binding to the LeafNode).
+/// credential in `external_senders` is refused (§Binding to the LeafNode),
+/// and so is an AppDataUpdate proposal for the record that removes it or
+/// does not decode as a `DIDWebVHHeads` (decision mimid-1wgh.4.81.33), as
+/// a Commit covering it would be.
 pub(crate) fn check_proposal(
     code_points: CodePoints,
     cache: &mut LogCache,
@@ -780,9 +714,53 @@ pub(crate) fn check_proposal(
                 return Err(DidWebvhError::ExternalSender);
             }
         }
+        Proposal::AppDataUpdate(update)
+            if update.component_id() == code_points.heads_component() =>
+        {
+            match update.operation() {
+                AppDataUpdateOperation::Update(data) => {
+                    DidWebvhHeads::decode(data.as_slice()).map_err(DidWebvhError::Heads)?;
+                }
+                AppDataUpdateOperation::Remove => return Err(DidWebvhError::HeadsRemoved),
+            }
+        }
         _ => {}
     }
     Ok(())
+}
+
+/// Whether a KeyPackage meets what a protocol-07 §5.2 keyMaterial request
+/// asks of it for `did_webvh`: when `required` lists the `did_webvh`
+/// credential type, the KeyPackage's LeafNode must also list the record
+/// component in its `app_components`, or no `did_webvh` room could add it
+/// (mls-extensions-11 §5). True when `required` does not list `did_webvh`,
+/// or does not decode (which [`VerifiedKeyPackageInfo::satisfies`] then
+/// refuses).
+///
+/// A keyMaterial request has no field for required components, so the
+/// component is implied by the credential type: a client that lists
+/// `did_webvh` implements the draft, and so lists the record (decision
+/// mimid-1wgh.4.81.36). A target provider applies this next to
+/// [`VerifiedKeyPackageInfo::satisfies`], and a requester to the
+/// KeyPackages it gets back.
+///
+/// [`VerifiedKeyPackageInfo::satisfies`]: crate::wire::VerifiedKeyPackageInfo::satisfies
+pub fn key_package_lists_record(
+    info: &crate::wire::VerifiedKeyPackageInfo,
+    required: &crate::wire::RequiredCapabilities,
+    code_points: CodePoints,
+) -> bool {
+    let Ok(required) =
+        openmls::prelude::RequiredCapabilitiesExtension::tls_deserialize_exact(required.as_bytes())
+    else {
+        return true;
+    };
+    !required
+        .credential_types()
+        .contains(&CredentialType::from(code_points.credential_type()))
+        || info
+            .app_components()
+            .contains(&code_points.heads_component())
 }
 
 /// The MIMI user URI a verified log names: the one entry of its head DID
@@ -831,73 +809,6 @@ pub(crate) fn user_uri_of(code_points: CodePoints, credential: &Credential) -> O
     only_mimi_uri(entries.iter().filter_map(serde_json::Value::as_str)).map(str::to_owned)
 }
 
-/// Whether `proposed`, the extensions of a GroupContextExtensions proposal,
-/// differ from `current` only in what the record change needs: a
-/// `did_webvh_heads` record, and a `required_capabilities` that keeps what
-/// it listed and adds `did_webvh_heads`, `did_webvh`, and possibly extension
-/// types the GroupContext already carries (which OpenMLS requires a
-/// GroupContextExtensions proposal to list, see [`with_heads`]). A hub that
-/// refuses other GroupContextExtensions proposals lets these through, since
-/// the group rules require them (decision mimid-1wgh.4.81.22).
-pub(crate) fn is_record_change(
-    code_points: CodePoints,
-    current: &Extensions<GroupContext>,
-    proposed: &Extensions<GroupContext>,
-) -> bool {
-    let heads_type = ExtensionType::from(code_points.heads_extension_type());
-    let credential_type = CredentialType::from(code_points.credential_type());
-    if !matches!(heads(code_points, proposed), Ok(Some(_))) {
-        return false;
-    }
-    // Every other extension is kept exactly.
-    let others = |extensions: &Extensions<GroupContext>| {
-        let mut all = extensions
-            .iter()
-            .filter(|e| {
-                e.extension_type() != heads_type
-                    && e.extension_type() != ExtensionType::RequiredCapabilities
-            })
-            .map(Serialize::tls_serialize_detached)
-            .collect::<Result<Vec<_>, _>>()
-            .ok()?;
-        all.sort();
-        Some(all)
-    };
-    if !matches!((others(current), others(proposed)), (Some(a), Some(b)) if a == b) {
-        return false;
-    }
-    let Some(new) = proposed.required_capabilities() else {
-        return false;
-    };
-    let (old_extensions, old_proposals, old_credentials) = match current.required_capabilities() {
-        Some(rc) => (
-            rc.extension_types().to_vec(),
-            rc.proposal_types().to_vec(),
-            rc.credential_types().to_vec(),
-        ),
-        None => (Vec::new(), Vec::new(), Vec::new()),
-    };
-    let present: Vec<ExtensionType> = current.iter().map(Extension::extension_type).collect();
-    let extensions_ok = old_extensions
-        .iter()
-        .chain([&heads_type])
-        .all(|t| new.extension_types().contains(t))
-        && new
-            .extension_types()
-            .iter()
-            .all(|t| old_extensions.contains(t) || *t == heads_type || present.contains(t));
-    let mut credentials_expected = old_credentials;
-    if !credentials_expected.contains(&credential_type) {
-        credentials_expected.push(credential_type);
-    }
-    let same_set = |a: &[CredentialType], b: &[CredentialType]| {
-        a.iter().all(|x| b.contains(x)) && b.iter().all(|x| a.contains(x))
-    };
-    extensions_ok
-        && new.proposal_types() == old_proposals.as_slice()
-        && same_set(new.credential_types(), &credentials_expected)
-}
-
 /// The DID of a `did_webvh` credential already verified: the `id` of its
 /// last entry's DID document (§Reference Identifiers: applications SHOULD
 /// display the DID string), read without verifying again; `None` for
@@ -931,102 +842,138 @@ pub(crate) fn scid_of(code_points: CodePoints, credential: &Credential) -> Optio
 mod tests {
     use mls_didwebvh::DidWebvhHead;
     use mls_didwebvh::controller::{DidLog, Parameters, UpdateKey};
-    use openmls::prelude::ProposalType;
+    use openmls::extensions::{AppDataDictionary, AppDataDictionaryExtension, Extension};
 
     use super::*;
 
-    const CP: CodePoints = CodePoints::SUGGESTED;
+    const CP: CodePoints = CodePoints::DEFAULT;
 
-    fn record() -> DidWebvhHeads {
-        let signer = UpdateKey::from_seed(&[3; 32]);
-        let log = DidLog::create(
+    /// A user's log listing one device, and the head of each version:
+    /// `heads[0]` is v1, `heads[1]` v2.
+    fn heads_of(name: &str, seed: u8) -> Vec<DidWebvhHead> {
+        let signer = UpdateKey::from_seed(&[seed; 32]);
+        let mut log = DidLog::create(
             "example.com",
-            "alice",
+            name,
             "2026-11-20T09:00:00Z",
             &Parameters {
                 update_keys: Some(vec![signer.multikey()]),
                 next_key_hashes: None,
             },
             &signer,
-            &[[0xa1; 32]],
+            &[[seed; 32]],
         )
         .expect("log");
-        let mut heads = DidWebvhHeads::new();
-        heads.insert(DidWebvhHead::from_log(log.verified()));
-        heads
+        let v1 = DidWebvhHead::from_log(log.verified());
+        log.append(
+            "2026-11-20T09:00:01Z",
+            &Parameters::default(),
+            &signer,
+            &[[seed; 32], [seed ^ 0xff; 32]],
+        )
+        .expect("append");
+        vec![v1, DidWebvhHead::from_log(log.verified())]
     }
 
-    /// The extensions a record-setting proposal carries, built by hand
-    /// from §The Heads Extension rather than by `with_heads`.
-    fn by_hand(heads: &DidWebvhHeads, proposals: &[ProposalType]) -> Extensions<GroupContext> {
-        Extensions::from_vec(vec![
-            Extension::Unknown(0x0013, UnknownExtension(heads.encode().expect("encode"))),
-            Extension::RequiredCapabilities(RequiredCapabilitiesExtension::new(
-                &[ExtensionType::from(0x0013)],
-                proposals,
-                &[CredentialType::from(0x0008)],
-            )),
-        ])
-        .expect("extensions")
+    fn record(heads: &[&DidWebvhHead]) -> Vec<u8> {
+        let mut record = DidWebvhHeads::new();
+        for head in heads {
+            record.insert((*head).clone());
+        }
+        record.encode().expect("encode")
     }
 
+    /// Decision mimid-1wgh.4.81.33: an update replaces the entries of its
+    /// SCIDs and keeps the others; updates apply in order, so the later
+    /// one for an SCID wins; a full record is an update too.
     #[test]
-    fn only_the_record_and_its_required_capabilities_count_as_a_record_change() {
-        let empty = Extensions::<GroupContext>::empty();
-        let heads = record();
-        assert!(is_record_change(CP, &empty, &by_hand(&heads, &[])));
-        // No record at all.
-        assert!(!is_record_change(CP, &empty, &empty));
-        // required_capabilities gains something else too.
-        assert!(!is_record_change(
-            CP,
-            &empty,
-            &by_hand(&heads, &[ProposalType::AppDataUpdate])
+    fn record_updates_replace_or_add_entries_by_scid_in_order() {
+        let alice = heads_of("alice", 0x41);
+        let bob = heads_of("bob", 0x42);
+        let current = record(&[&alice[0], &bob[0]]);
+        let applied = apply_heads_updates(Some(&current), &[&record(&[&alice[1]])])
+            .expect("a partial update");
+        assert_eq!(applied, record(&[&alice[1], &bob[0]]));
+        let applied = apply_heads_updates(
+            Some(&current),
+            &[&record(&[&alice[1]]), &record(&[&bob[1], &alice[0]])],
+        )
+        .expect("two updates");
+        assert_eq!(applied, record(&[&alice[0], &bob[1]]));
+        let applied = apply_heads_updates(None, &[&record(&[&bob[1]])]).expect("the first record");
+        assert_eq!(applied, record(&[&bob[1]]));
+        // An empty update changes nothing: entries are never removed.
+        assert_eq!(
+            apply_heads_updates(Some(&current), &[&record(&[])]).expect("empty"),
+            current
+        );
+        // An update that does not decode is invalid.
+        assert!(matches!(
+            apply_heads_updates(Some(&current), &[&[0x01]]),
+            Err(DidWebvhError::Heads(_))
         ));
-        // Another extension rides along.
-        let mut extra = by_hand(&heads, &[]);
-        extra
-            .add_or_replace(Extension::Unknown(0xff00, UnknownExtension(vec![1])))
-            .expect("add");
-        assert!(!is_record_change(CP, &empty, &extra));
-        // The record without required_capabilities.
-        let bare = Extensions::single(Extension::Unknown(
-            0x0013,
-            UnknownExtension(heads.encode().expect("encode")),
-        ))
-        .expect("extensions");
-        assert!(!is_record_change(CP, &empty, &bare));
-        // An existing extension is dropped.
-        let current = Extensions::single(Extension::Unknown(0xff00, UnknownExtension(vec![1])))
-            .expect("extensions");
-        assert!(!is_record_change(CP, &current, &by_hand(&heads, &[])));
-        // An existing extension is kept, and listed in required_capabilities
-        // as OpenMLS asks; listing it is allowed, not listing it too.
-        let mut kept = by_hand(&heads, &[]);
-        kept.add_or_replace(Extension::Unknown(0xff00, UnknownExtension(vec![1])))
-            .expect("add");
-        assert!(is_record_change(CP, &current, &kept));
-        kept.add_or_replace(Extension::RequiredCapabilities(
-            RequiredCapabilitiesExtension::new(
-                &[ExtensionType::from(0x0013), ExtensionType::from(0xff00)],
-                &[],
-                &[CredentialType::from(0x0008)],
-            ),
-        ))
-        .expect("replace");
-        assert!(is_record_change(CP, &current, &kept));
-        // But not an extension type the GroupContext does not carry.
-        kept.add_or_replace(Extension::RequiredCapabilities(
-            RequiredCapabilitiesExtension::new(
-                &[ExtensionType::from(0x0013), ExtensionType::from(0xff01)],
-                &[],
-                &[CredentialType::from(0x0008)],
-            ),
-        ))
-        .expect("replace");
-        assert!(!is_record_change(CP, &current, &kept));
-        // with_heads writes what is_record_change accepts.
-        let written = with_heads(CP, &current, &heads).expect("with_heads");
-        assert!(is_record_change(CP, &current, &written));
+    }
+
+    /// mls-extensions-11 §5 `ComponentsList` by hand: a one-octet varint
+    /// length, then big-endian component IDs.
+    #[test]
+    fn the_record_must_be_named_in_app_components() {
+        let alice = heads_of("alice", 0x41);
+        let with = |entries: &[(u16, Vec<u8>)]| {
+            let mut dictionary = AppDataDictionary::new();
+            for (id, data) in entries {
+                dictionary.insert(*id, data.clone());
+            }
+            Extensions::single(Extension::AppDataDictionary(
+                AppDataDictionaryExtension::new(dictionary),
+            ))
+            .expect("extensions")
+        };
+        let listed = with(&[
+            (APP_COMPONENTS, vec![0x02, 0xf0, 0x13]),
+            (0xf013, record(&[&alice[0]])),
+        ]);
+        assert!(matches!(check_group_context(CP, &listed), Ok(Some(_))));
+        let unlisted = with(&[
+            (APP_COMPONENTS, vec![0x02, 0x00, 0x22]),
+            (0xf013, record(&[&alice[0]])),
+        ]);
+        assert!(matches!(
+            check_group_context(CP, &unlisted),
+            Err(DidWebvhError::HeadsNotListed)
+        ));
+        let no_list = with(&[(0xf013, record(&[&alice[0]]))]);
+        assert!(matches!(
+            check_group_context(CP, &no_list),
+            Err(DidWebvhError::HeadsNotListed)
+        ));
+        // No record: nothing to list.
+        let none = with(&[(APP_COMPONENTS, vec![0x00])]);
+        assert!(matches!(check_group_context(CP, &none), Ok(None)));
+
+        // record_updates lists the component the first time only.
+        let heads = DidWebvhHeads::decode(&record(&[&alice[1]])).expect("decode");
+        let first = record_updates(CP, &none, &heads).expect("updates");
+        assert_eq!(
+            first,
+            [
+                AppDataUpdate::Update {
+                    component_id: APP_COMPONENTS,
+                    update: vec![0x02, 0xf0, 0x13],
+                },
+                AppDataUpdate::Update {
+                    component_id: 0xf013,
+                    update: record(&[&alice[1]]),
+                },
+            ]
+        );
+        let later = record_updates(CP, &listed, &heads).expect("updates");
+        assert_eq!(
+            later,
+            [AppDataUpdate::Update {
+                component_id: 0xf013,
+                update: record(&[&alice[1]]),
+            }]
+        );
     }
 }

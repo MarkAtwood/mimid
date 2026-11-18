@@ -25,13 +25,13 @@
 //!   the agent; it is [`mimi_mls::mls_didwebvh::controller`], run by the
 //!   user wherever the update keys are kept (draft §Custody).
 //! - Pins are kept per agent, not shared between a user's devices.
-//! - The Update-proposal fallback does not get around a pending
-//!   GroupContextExtensions proposal in a room of mimid agents: the member
-//!   that commits the Update must also change the record, and fails the
-//!   same way (the draft's Open Issue 5). And when that member is another
-//!   user's device, its Remove of a revoked device needs `canKick`: the hub
-//!   waives the capability only for a committer with the same SCID
-//!   (decision mimid-1wgh.4.81.26).
+//! - The record is an `app_data_dictionary` component (decision
+//!   mimid-1wgh.4.81.33), so a pending GroupContextExtensions proposal no
+//!   longer blocks a credential Commit; the Update-proposal fallback is for
+//!   Commits that still cannot be built, such as one covering a pending
+//!   record update that names an SCID with no leaf (decision
+//!   mimid-1wgh.4.65), and the member that commits the Update fails the
+//!   same way then.
 //! - A log file at [`crate::Agent::open`] older than the log the agent
 //!   holds is skipped with a warning; one that is neither older nor a
 //!   successor stops the agent from opening.
@@ -44,10 +44,11 @@ use mimi_mls::mls_didwebvh::CodePoints;
 /// How an agent uses the `did_webvh` credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DidWebvhConfig {
-    /// The `did_webvh` credential type and `did_webvh_heads` extension
-    /// type, which IANA has not assigned. Every member of a room must use
-    /// the same values. Defaults to the draft's suggested 0x0008 and
-    /// 0x0013.
+    /// The `did_webvh` credential type and the record's
+    /// `app_data_dictionary` component ID, which IANA has not assigned.
+    /// Every member of a room must use the same values. Defaults to the
+    /// draft's suggested credential type 0x0008 and the private-use
+    /// component 0xF013 (decision mimid-1wgh.4.81.35).
     pub code_points: CodePoints,
     /// Whether a BasicCredential identity lists `did_webvh` in its leaves
     /// and enforces the draft's group rules, which a room with `did_webvh`
@@ -67,7 +68,7 @@ pub struct DidWebvhConfig {
 impl Default for DidWebvhConfig {
     fn default() -> Self {
         Self {
-            code_points: CodePoints::SUGGESTED,
+            code_points: CodePoints::DEFAULT,
             support: true,
             log_file: None,
             witness_file: None,
@@ -140,17 +141,21 @@ pub(crate) fn check_pin(
 /// (protocol-07 §5.2) for a room: mimid's own requirements, the
 /// `app_data_dictionary` extension (0x0006) and the `AppDataUpdate`
 /// proposal (0x0008) of mls-extensions-11, plus, in a room whose
-/// GroupContext carries the `did_webvh` record, the `did_webvh_heads`
-/// extension type and the `did_webvh` credential type that the group's
-/// `required_capabilities` lists (§The Heads Extension; decision
-/// mimid-1wgh.4.81.24). A KeyPackage without them could not be added.
+/// GroupContext carries the `did_webvh` record, the `did_webvh` credential
+/// type (decision mimid-1wgh.4.81.24).
+///
+/// Such a room's GroupContext `app_components` names the record component,
+/// which a KeyPackage must list too, but `RequiredCapabilities` has no
+/// field for components: the credential type stands for it, and the
+/// KeyPackages that come back are checked with
+/// [`mimi_mls::didwebvh::key_package_lists_record`] (decision
+/// mimid-1wgh.4.81.36).
 pub(crate) fn required_capabilities(did_webvh_room: Option<CodePoints>) -> Vec<u8> {
     match did_webvh_room {
         None => vec![0x02, 0x00, 0x06, 0x02, 0x00, 0x08, 0x00],
         Some(code_points) => {
-            let [eh, el] = code_points.heads_extension_type().to_be_bytes();
             let [ch, cl] = code_points.credential_type().to_be_bytes();
-            vec![0x04, 0x00, 0x06, eh, el, 0x02, 0x00, 0x08, 0x02, ch, cl]
+            vec![0x02, 0x00, 0x06, 0x02, 0x00, 0x08, 0x02, ch, cl]
         }
     }
 }
@@ -202,11 +207,11 @@ mod tests {
             ]
         );
         assert_eq!(
-            required_capabilities(Some(CodePoints::SUGGESTED)),
+            required_capabilities(Some(CodePoints::DEFAULT)),
             [
-                0x04, 0x00, 0x06, 0x00, 0x13, // app_data_dictionary, did_webvh_heads
-                0x02, 0x00, 0x08, // AppDataUpdate
-                0x02, 0x00, 0x08, // did_webvh
+                0x02, 0x00, 0x06, // extension_types: app_data_dictionary
+                0x02, 0x00, 0x08, // proposal_types: AppDataUpdate
+                0x02, 0x00, 0x08, // credential_types: did_webvh
             ]
         );
     }

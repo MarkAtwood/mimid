@@ -600,13 +600,10 @@ impl Member {
             Extensions::from_vec(extensions).map_err(|e| MemberError::Create(e.into()))?;
         // draft-atwood-mls-didwebvh-credential-00 §The Heads Extension: a
         // group whose tree holds a did_webvh credential carries the record,
-        // with required_capabilities listing it and did_webvh (decision
-        // mimid-1wgh.4.81.16). As a component (spike bead
-        // mimid-1wgh.4.81.32), the record is an app_data_dictionary entry
-        // that app_components lists instead.
+        // here as an app_data_dictionary entry that app_components lists
+        // (decision mimid-1wgh.4.81.33).
         if let (Some(code_points), Some(log)) =
             (identity.did_webvh_code_points(), identity.did_webvh_log())
-            && let Some(component_id) = code_points.heads_component()
         {
             let mut heads = mls_didwebvh::DidWebvhHeads::new();
             heads.insert(mls_didwebvh::DidWebvhHead::from_log(log));
@@ -614,7 +611,7 @@ impl Member {
                 .app_data_dictionary()
                 .map(|extension| extension.dictionary().clone())
                 .unwrap_or_default();
-            for update in didwebvh::record_updates(component_id, &extensions, &heads)
+            for update in didwebvh::record_updates(code_points, &extensions, &heads)
                 .map_err(MemberError::DidWebvh)?
             {
                 if let AppDataUpdate::Update {
@@ -630,13 +627,6 @@ impl Member {
                     AppDataDictionaryExtension::new(dictionary),
                 ))
                 .map_err(|e| MemberError::Create(e.into()))?;
-        } else if let (Some(code_points), Some(log)) =
-            (identity.did_webvh_code_points(), identity.did_webvh_log())
-        {
-            let mut heads = mls_didwebvh::DidWebvhHeads::new();
-            heads.insert(mls_didwebvh::DidWebvhHead::from_log(log));
-            extensions = didwebvh::with_heads(code_points, &extensions, &heads)
-                .map_err(MemberError::DidWebvh)?;
         }
         // mls-extensions-11 §5: the lists are decoded strictly (decision
         // mimid-1wgh.4.45), and our own leaf must meet them before anything
@@ -1025,22 +1015,20 @@ impl Member {
             }
             None => (None, None),
         };
-        // With the record as a component, an external Commit can set it
-        // (mls-extensions-11 §4.7: AppDataUpdate "can be included in an
-        // external Commit"); spike bead mimid-1wgh.4.81.32. The joiner may
-        // not change app_components, so the record must already be listed.
+        // An external Commit can set the record (mls-extensions-11 §4.7:
+        // AppDataUpdate "can be included in an external Commit"; decision
+        // mimid-1wgh.4.81.33). The joiner does not change app_components,
+        // so the record must already be listed.
         let mut app_updates = app_updates.to_vec();
         if let Some(heads) = record
-            && let Some(component_id) = identity
-                .did_webvh_code_points()
-                .and_then(|code_points| code_points.heads_component())
+            && let Some(code_points) = identity.did_webvh_code_points()
         {
-            for update in didwebvh::record_updates(component_id, group_context.extensions(), &heads)
+            for update in didwebvh::record_updates(code_points, group_context.extensions(), &heads)
                 .map_err(MemberError::DidWebvh)?
             {
                 if matches!(&update, AppDataUpdate::Update { component_id, .. } if *component_id == APP_COMPONENTS)
                 {
-                    return Err(MemberError::DidWebvh(DidWebvhError::RequiredCapabilities));
+                    return Err(MemberError::DidWebvh(DidWebvhError::HeadsNotListed));
                 }
                 app_updates.push(update);
             }
@@ -1081,9 +1069,7 @@ impl Member {
             resolve_app_data_updates(
                 &mut updater,
                 &app_data_proposals,
-                identity
-                    .did_webvh_code_points()
-                    .and_then(|c| c.heads_component()),
+                identity.did_webvh_code_points(),
                 &mut apply,
             )?;
             let changes = updater.changes();
@@ -1186,9 +1172,8 @@ impl Member {
         // leaves never changes the expected record, so two rounds suffice,
         // and a third catches a removed leaf that carried the newest log.
         let mut removes: Vec<u32> = removes.to_vec();
-        let mut group_context_extensions: Option<Extensions<GroupContext>> = None;
-        // With the record as a component (spike bead mimid-1wgh.4.81.32),
-        // the record change is AppDataUpdates after the caller's.
+        // The record change is AppDataUpdates after the caller's (decision
+        // mimid-1wgh.4.81.33).
         let mut record_updates: Vec<AppDataUpdate> = Vec::new();
         for _round in 0..3 {
             let all_updates: Vec<AppDataUpdate> =
@@ -1198,7 +1183,6 @@ impl Member {
                 &key_packages,
                 &removes,
                 &all_updates,
-                group_context_extensions.clone(),
                 leaf_parameters.clone(),
                 &mut apply,
             )?;
@@ -1260,30 +1244,15 @@ impl Member {
                             removes.push(index.u32());
                         }
                     }
-                    if let Some(heads) = &plan.heads
-                        && let Some(component_id) = code_points.heads_component()
-                    {
-                        // No GroupContextExtensions proposal, so a
-                        // pending one does not block this Commit: it is
-                        // covered by reference and the AppDataUpdate is
-                        // applied after it (mls-extensions-11 §4.7).
+                    if let Some(heads) = &plan.heads {
+                        // No GroupContextExtensions proposal, so a pending
+                        // one from another member does not block this
+                        // Commit: it is covered by reference and the
+                        // AppDataUpdates are applied after it
+                        // (mls-extensions-11 §4.7).
                         record_updates =
-                            didwebvh::record_updates(component_id, self.group.extensions(), heads)
+                            didwebvh::record_updates(code_points, self.group.extensions(), heads)
                                 .map_err(MemberError::DidWebvh)?;
-                    } else if let Some(heads) = plan.heads {
-                        if self
-                            .group
-                            .pending_proposals()
-                            .any(|p| matches!(p.proposal(), Proposal::GroupContextExtensions(_)))
-                        {
-                            return Err(MemberError::DidWebvh(
-                                DidWebvhError::PendingGroupContextExtensions,
-                            ));
-                        }
-                        group_context_extensions = Some(
-                            didwebvh::with_heads(code_points, self.group.extensions(), &heads)
-                                .map_err(MemberError::DidWebvh)?,
-                        );
                     }
                     continue;
                 }
@@ -1308,7 +1277,6 @@ impl Member {
         key_packages: &[openmls::prelude::KeyPackage],
         removes: &[u32],
         app_updates: &[AppDataUpdate],
-        group_context_extensions: Option<Extensions<GroupContext>>,
         leaf_parameters: Option<LeafNodeParameters>,
         apply: &mut impl FnMut(
             ComponentId,
@@ -1334,11 +1302,6 @@ impl Member {
             .propose_adds(key_packages.to_vec())
             .propose_removals(removes.iter().copied().map(LeafNodeIndex::new))
             .add_proposals(proposals);
-        if let Some(extensions) = group_context_extensions {
-            builder = builder
-                .propose_group_context_extensions(extensions)
-                .map_err(|e| MemberError::Commit(e.into()))?;
-        }
         if let Some(parameters) = leaf_parameters {
             builder = builder.leaf_node_parameters(parameters);
         }
@@ -1360,9 +1323,7 @@ impl Member {
             resolve_app_data_updates(
                 &mut updater,
                 &app_data_proposals,
-                identity
-                    .did_webvh_code_points()
-                    .and_then(|c| c.heads_component()),
+                identity.did_webvh_code_points(),
                 apply,
             )?;
             let changes = updater.changes();
@@ -2003,12 +1964,7 @@ impl Member {
         let proposals: Vec<AppDataUpdateProposal> =
             unresolved.app_data_update_proposals().cloned().collect();
         let mut updater = self.group.app_data_dictionary_updater();
-        resolve_app_data_updates(
-            &mut updater,
-            &proposals,
-            self.code_points.and_then(|c| c.heads_component()),
-            apply,
-        )?;
+        resolve_app_data_updates(&mut updater, &proposals, self.code_points, apply)?;
         let changes = updater.changes();
         self.group
             .resolve_app_data_commit(provider, processed, changes)
@@ -2422,7 +2378,7 @@ fn first_unsupported(
 /// The ids in the `component_id` list of a leaf's `app_data_dictionary` (in
 /// `extensions`). A leaf's list is untrusted input: an absent or malformed
 /// one counts as empty.
-fn leaf_list(
+pub(crate) fn leaf_list(
     extensions: &Extensions<LeafNode>,
     component_id: ComponentId,
 ) -> BTreeSet<ComponentId> {
@@ -2462,11 +2418,16 @@ pub(crate) fn first_unlisted_entry(extensions: &Extensions<LeafNode>) -> Option<
 /// application logic (§5.1) and `apply` is not asked: each update carries
 /// the complete new value and must decode as a ComponentsList or a
 /// MediaTypeList, the last update in the Commit wins, and a remove deletes
-/// the entry (bead mimid-1wgh.4.76.7).
+/// the entry (bead mimid-1wgh.4.76.7). With `did_webvh`, so is it for the
+/// record component [`CodePoints::heads_component`]: each update's entries
+/// replace or add entries by SCID ([`didwebvh::apply_heads_updates`]), and
+/// a remove is invalid (decision mimid-1wgh.4.81.33).
+///
+/// [`CodePoints::heads_component`]: mls_didwebvh::CodePoints::heads_component
 pub(crate) fn resolve_app_data_updates<E: Into<ErrorSource>>(
     updater: &mut AppDataDictionaryUpdater<'_>,
     proposals: &[AppDataUpdateProposal],
-    heads_component: Option<ComponentId>,
+    did_webvh: Option<mls_didwebvh::CodePoints>,
     apply: &mut impl FnMut(ComponentId, Option<&[u8]>, ComponentOp<'_>) -> Result<Option<Vec<u8>>, E>,
 ) -> Result<(), SharedError> {
     for group in proposals.chunk_by(|a, b| a.component_id() == b.component_id()) {
@@ -2508,10 +2469,10 @@ pub(crate) fn resolve_app_data_updates<E: Into<ErrorSource>>(
             continue;
         }
 
-        // The did_webvh record as a component (spike bead
-        // mimid-1wgh.4.81.32): this crate is its application logic, as it
-        // is for the built-ins above. It is never removed.
-        if Some(component_id) == heads_component {
+        // The did_webvh record (decision mimid-1wgh.4.81.33): this crate
+        // is its application logic, as it is for the built-ins above. It is
+        // never removed.
+        if did_webvh.is_some_and(|code_points| code_points.heads_component() == component_id) {
             if updates.len() != group.len() {
                 return Err(SharedError::InvalidAppDataUpdate(component_id));
             }

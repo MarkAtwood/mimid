@@ -30,7 +30,7 @@ fn mls_rs_reads_the_did_webvh_credential() {
     .expect("log");
     let credential = log.credential().expect("credential");
     identity
-        .set_did_webvh_credential(CodePoints::SUGGESTED, credential.clone())
+        .set_did_webvh_credential(CodePoints::DEFAULT, credential.clone())
         .expect("set");
     let key_package = identity
         .key_package(KeyPackageKind::OneTime)

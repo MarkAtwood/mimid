@@ -38,15 +38,17 @@
 //!   ([`didwebvh::mimi_user_uri`]; decision mimid-1wgh.4.81.21, INVENTED,
 //!   NOT FROM SPEC), and is reported with an empty identity when it lists
 //!   none or several. The credential is carried inside an `opaque<V>` (decision
-//!   mimid-1wgh.4.81.8). [`member::Member::commit`] adds the record change
-//!   and the Removes the rules require by itself (decision
-//!   mimid-1wgh.4.81.17), and refuses when a GroupContextExtensions proposal
-//!   is already pending (the draft's Open Issue 5). An
-//!   [`observer::Observer`] enforces the rules only after
-//!   [`observer::Observer::enforce_did_webvh`], and reports a
-//!   GroupContextExtensions proposal that only sets the record as
-//!   [`observer::ProposalKind::DidWebvhRecord`] (decision
-//!   mimid-1wgh.4.81.22). Update and UpdatePath leaves
+//!   mimid-1wgh.4.81.8). The `did_webvh_heads` record is an
+//!   `app_data_dictionary` component changed by AppDataUpdate proposals,
+//!   not the draft's GroupContext extension (decision mimid-1wgh.4.81.33;
+//!   INVENTED, NOT FROM SPEC), so a peer implementing the draft as written
+//!   does not interoperate, and its default component ID is a private-use
+//!   value (decision mimid-1wgh.4.81.35). [`member::Member::commit`] adds
+//!   the record change and the Removes the rules require by itself
+//!   (decision mimid-1wgh.4.81.17). An [`observer::Observer`] enforces the
+//!   rules only after [`observer::Observer::enforce_did_webvh`]; without
+//!   it, the record component is handed to `apply` like any other. Update
+//!   and UpdatePath leaves
 //!   may not switch between `did_webvh` and BasicCredential (decision
 //!   mimid-1wgh.4.81.15). Neither ReInit nor a branch carries the record
 //!   (the draft's Open Issue 2).

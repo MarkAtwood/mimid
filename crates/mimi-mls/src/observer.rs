@@ -177,14 +177,6 @@ pub enum ProposalKind {
     ExternalInit,
     /// `group_context_extensions` (RFC 9420 §12.1.7).
     GroupContextExtensions,
-    /// A `group_context_extensions` proposal whose only change is the one
-    /// the `did_webvh` group rules require: the `did_webvh_heads` record,
-    /// and `required_capabilities` listing it and `did_webvh`
-    /// (draft-atwood-mls-didwebvh-credential-01 §Expected Heads; decision
-    /// mimid-1wgh.4.81.22). Reported only while the rules are enforced
-    /// ([`Observer::enforce_did_webvh`]), which also checks that the record
-    /// is the expected one.
-    DidWebvhRecord,
     /// `app_data_update` (mls-extensions-11 §4.7).
     AppDataUpdate {
         /// The component whose data it changes.
@@ -591,12 +583,7 @@ impl Observer {
         {
             let proposals: Vec<_> = unresolved.app_data_update_proposals().cloned().collect();
             let mut updater = self.group.app_data_dictionary_updater();
-            resolve_app_data_updates(
-                &mut updater,
-                &proposals,
-                self.did_webvh.and_then(|c| c.heads_component()),
-                &mut apply,
-            )?;
+            resolve_app_data_updates(&mut updater, &proposals, self.did_webvh, &mut apply)?;
             let changes = updater.changes();
             self.group
                 .resolve_app_data_commit(provider.crypto(), processed, changes)
@@ -996,17 +983,6 @@ impl Observer {
             OpenMlsProposal::PreSharedKey(_) => ProposalKind::PreSharedKey,
             OpenMlsProposal::ReInit(_) => ProposalKind::ReInit,
             OpenMlsProposal::ExternalInit(_) => ProposalKind::ExternalInit,
-            OpenMlsProposal::GroupContextExtensions(proposal)
-                if self.did_webvh.is_some_and(|code_points| {
-                    crate::didwebvh::is_record_change(
-                        code_points,
-                        self.group.group_context().extensions(),
-                        proposal.extensions(),
-                    )
-                }) =>
-            {
-                ProposalKind::DidWebvhRecord
-            }
             OpenMlsProposal::GroupContextExtensions(_) => ProposalKind::GroupContextExtensions,
             OpenMlsProposal::AppDataUpdate(proposal) => ProposalKind::AppDataUpdate {
                 component_id: proposal.component_id(),

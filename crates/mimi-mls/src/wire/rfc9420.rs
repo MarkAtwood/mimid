@@ -332,6 +332,12 @@ impl KeyPackage {
             not_before: lifetime.not_before(),
             not_after: lifetime.not_after(),
             capabilities: capabilities.clone(),
+            app_components: crate::member::leaf_list(
+                leaf_node.extensions(),
+                crate::identity::APP_COMPONENTS,
+            )
+            .into_iter()
+            .collect(),
         })
     }
 }
@@ -380,9 +386,17 @@ pub struct VerifiedKeyPackageInfo {
     not_before: u64,
     not_after: u64,
     capabilities: openmls::prelude::Capabilities,
+    app_components: Vec<u16>,
 }
 
 impl VerifiedKeyPackageInfo {
+    /// Returns the component IDs the LeafNode's `app_components` lists
+    /// (mls-extensions-11 §5), in ascending order. An absent or malformed
+    /// list is empty, as it counts in a group (decision mimid-1wgh.4.49).
+    pub fn app_components(&self) -> &[u16] {
+        &self.app_components
+    }
+
     /// Returns the `identity` of the LeafNode's `basic` credential, or
     /// `None` for any other `credential_type`.
     pub fn identity(&self) -> Option<&[u8]> {

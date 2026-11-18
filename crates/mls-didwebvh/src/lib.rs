@@ -9,11 +9,13 @@
 //!   draft's 1,048,576-byte limits on `did_log` and `witness_file`;
 //! - [`verify_credential`]: §Log Verification and §did:webvh Profile, giving
 //!   a [`VerifiedLog`];
-//! - [`DidWebvhHeads`]: the `did_webvh_heads` GroupContext extension;
+//! - [`DidWebvhHeads`]: the `did_webvh_heads` record, which mimid carries
+//!   as an `app_data_dictionary` component rather than as the draft's
+//!   GroupContext extension (decision mimid-1wgh.4.81.33);
 //! - [`rules`]: §Binding to the LeafNode, §Expected Heads, §Rules, the
 //!   Welcome checks and §Successor Credentials, over abstract leaves;
-//! - [`CodePoints`]: the credential and extension types, which IANA has not
-//!   assigned, as settings;
+//! - [`CodePoints`]: the credential type and the record's component ID,
+//!   which IANA has not assigned, as settings;
 //! - [`controller`]: the controller side, writing a log whose DID documents
 //!   list the user's devices, with pre-rotation.
 //!
@@ -45,6 +47,14 @@
 //!   signature verification anyway (decision mimid-1wgh.4.81.10).
 //! - [`DidWebvhHeads`] decoding is capped at [`heads::MAX_HEADS`] entries,
 //!   a limit the draft does not set (decision mimid-1wgh.4.81.13).
+//! - The record is not the draft's GroupContext extension: it is the
+//!   `app_data_dictionary` component [`CodePoints::heads_component`],
+//!   changed by AppDataUpdate proposals whose `update` entries replace or
+//!   add the entries of the same SCIDs, and never removed. The draft does
+//!   not define this form (its Open Issues 1 and 5 ask about it), and the
+//!   default component ID is a private-use value (INVENTED, NOT FROM SPEC;
+//!   decisions mimid-1wgh.4.81.33, mimid-1wgh.4.81.35). The struct and its
+//!   codec are the draft's.
 //! - In an MLS `Credential`, the structure is carried inside an
 //!   `opaque<V>`, which the draft does not say (decision mimid-1wgh.4.81.8).
 //! - [`controller`] writes no witness proofs and no `witness` parameter, and

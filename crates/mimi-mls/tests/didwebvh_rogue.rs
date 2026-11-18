@@ -6,7 +6,9 @@
 //! accepts each of them; mimi-mls members must refuse each, citing the
 //! rule. The logs come from `mls_didwebvh::controller`; the records the
 //! rogue writes are built by hand from the draft's struct definitions via
-//! `DidWebvhHeads`, whose codec has its own hand-encoded fixtures.
+//! `DidWebvhHeads`, whose codec has its own hand-encoded fixtures, and sent
+//! as AppDataUpdate proposals for the record component (decision
+//! mimid-1wgh.4.81.33).
 
 #![forbid(unsafe_code)]
 
@@ -20,16 +22,21 @@ use mimi_mls::mls_didwebvh::{
 use mimi_mls::observer::{Observer, ObserverError, ObserverStart};
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
+use openmls::component::ComponentData;
+use openmls::extensions::{AppDataDictionary, AppDataDictionaryExtension};
+use openmls::messages::proposals::{AppDataUpdateOperation, AppDataUpdateProposal, Proposal};
 use openmls::prelude::{
     Capabilities, Ciphersuite, Credential, CredentialType, CredentialWithKey, Extension,
     ExtensionType, Extensions, KeyPackage, LeafNodeParameters, MIXED_PLAINTEXT_WIRE_FORMAT_POLICY,
     MlsGroup, MlsGroupJoinConfig, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider, ProposalType,
-    RatchetTreeIn, StagedWelcome, UnknownExtension,
+    RatchetTreeIn, StagedWelcome,
 };
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 
-const CP: CodePoints = CodePoints::SUGGESTED;
+const CP: CodePoints = CodePoints::DEFAULT;
+/// mls-extensions-11 §5 `app_components` component.
+const APP_COMPONENTS: u16 = 0x0001;
 const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 
 fn device() -> Identity {
@@ -127,8 +134,9 @@ impl Rogue {
         }
     }
 
-    /// A KeyPackage carrying `credential`, with the capabilities §The Heads
-    /// Extension asks of a client listing did_webvh.
+    /// A KeyPackage carrying `credential`, whose leaf lists the record
+    /// component in its `app_components` (mls-extensions-11 §5), as a group
+    /// carrying the record requires.
     fn key_package(&self, credential: &DidWebvhCredential) -> Vec<u8> {
         let capabilities = Capabilities::builder()
             .ciphersuites(vec![SUITE])
@@ -136,14 +144,19 @@ impl Rogue {
                 CredentialType::Basic,
                 CredentialType::Other(CP.credential_type()),
             ])
-            .extensions(vec![
-                ExtensionType::AppDataDictionary,
-                ExtensionType::Unknown(CP.heads_extension_type()),
-            ])
+            .extensions(vec![ExtensionType::AppDataDictionary])
             .proposals(vec![ProposalType::AppDataUpdate])
             .build();
+        let mut dictionary = AppDataDictionary::new();
+        // ComponentID component_ids<V>: 2 bytes, 0xf013.
+        dictionary.insert(APP_COMPONENTS, vec![0x02, 0xf0, 0x13]);
+        let leaf_extensions = Extensions::single(Extension::AppDataDictionary(
+            AppDataDictionaryExtension::new(dictionary),
+        ))
+        .expect("leaf extensions");
         KeyPackage::builder()
             .leaf_node_capabilities(capabilities)
+            .leaf_node_extensions(leaf_extensions)
             .build(
                 SUITE,
                 &self.provider,
@@ -176,38 +189,13 @@ impl Rogue {
         self.group = Some(group);
     }
 
-    fn group(&mut self) -> &mut MlsGroup {
-        self.group.as_mut().expect("joined")
-    }
-
-    /// The group's extensions with `did_webvh_heads` replaced by `heads`,
-    /// or removed for `None`.
-    fn extensions_with(
-        &mut self,
-        heads: Option<&DidWebvhHeads>,
-    ) -> Extensions<openmls::prelude::GroupContext> {
-        let mut extensions = self.group().extensions().clone();
-        match heads {
-            Some(heads) => {
-                extensions
-                    .add_or_replace(Extension::Unknown(
-                        CP.heads_extension_type(),
-                        UnknownExtension(heads.encode().expect("encode")),
-                    ))
-                    .expect("replace");
-            }
-            None => {
-                extensions.remove(ExtensionType::Unknown(CP.heads_extension_type()));
-            }
-        }
-        extensions
-    }
-
-    /// A Commit with an optional GroupContextExtensions proposal and an
-    /// UpdatePath leaf carrying `credential`; no Removes.
+    /// A Commit with, if `record` is given, one AppDataUpdate of the
+    /// record component (`Some` an update with those entries, resolved here
+    /// as the component's logic does; `None` a remove), and an UpdatePath
+    /// leaf carrying `credential`; no Removes.
     fn commit(
         &mut self,
-        extensions: Option<Extensions<openmls::prelude::GroupContext>>,
+        record: Option<Option<&DidWebvhHeads>>,
         credential: Option<&DidWebvhCredential>,
         adds: Vec<KeyPackage>,
     ) -> Vec<u8> {
@@ -222,32 +210,53 @@ impl Rogue {
             group,
         } = self;
         let group = group.as_mut().expect("joined");
+        let current = group
+            .extensions()
+            .app_data_dictionary()
+            .and_then(|d| d.dictionary().get(&CP.heads_component()))
+            .map(|data| DidWebvhHeads::decode(data).expect("the group's record"));
         let mut builder = group.commit_builder().propose_adds(adds);
-        if let Some(extensions) = extensions {
-            builder = builder
-                .propose_group_context_extensions(extensions)
-                .expect("GCE");
+        let update = record.map(|heads| match heads {
+            Some(heads) => {
+                AppDataUpdateProposal::update(CP.heads_component(), heads.encode().expect("encode"))
+            }
+            None => AppDataUpdateProposal::remove(CP.heads_component()),
+        });
+        if let Some(update) = &update {
+            builder = builder.add_proposals([Proposal::AppDataUpdate(Box::new(update.clone()))]);
         }
         if let Some(leaf) = leaf {
             builder = builder.leaf_node_parameters(leaf);
         }
+        let mut builder = builder.load_psks(provider.storage()).expect("psks");
+        if let Some(heads) = record {
+            let mut updater = builder.app_data_dictionary_updater();
+            match heads {
+                Some(heads) => {
+                    let mut resulting = current.unwrap_or_default();
+                    for head in heads.heads() {
+                        resulting.insert(head.clone());
+                    }
+                    updater.set(ComponentData::from_parts(
+                        CP.heads_component(),
+                        resulting.encode().expect("encode").into(),
+                    ));
+                }
+                None => updater.remove(&CP.heads_component()),
+            }
+            let changes = updater.changes();
+            builder.with_app_data_dictionary_updates(changes);
+        }
         let bundle = builder
-            .load_psks(provider.storage())
-            .expect("psks")
             .build(provider.rand(), provider.crypto(), signer, |_| true)
             .expect("OpenMLS builds the Commit")
             .stage_commit(&*provider)
             .expect("OpenMLS stages the Commit");
         bundle.commit().tls_serialize_detached().expect("encode")
     }
-}
 
-impl Rogue {
-    /// A standalone GroupContextExtensions proposal setting `extensions`.
-    fn propose_extensions(
-        &mut self,
-        extensions: Extensions<openmls::prelude::GroupContext>,
-    ) -> Vec<u8> {
+    /// A standalone AppDataUpdate proposal for the record component.
+    fn propose_record(&mut self, operation: AppDataUpdateOperation) -> Vec<u8> {
         let Rogue {
             provider,
             signer,
@@ -256,7 +265,7 @@ impl Rogue {
         let (message, _) = group
             .as_mut()
             .expect("joined")
-            .propose_group_context_extensions(&*provider, extensions, signer)
+            .propose_app_data_update(&*provider, signer, CP.heads_component(), operation)
             .expect("OpenMLS builds the proposal");
         message.tls_serialize_detached().expect("encode")
     }
@@ -382,8 +391,7 @@ fn raising_the_record_without_removing_the_revoked_device_is_refused() {
         .expect("heads")
         .expect("record");
     heads.insert(DidWebvhHead::from_log(room.alice.log.verified()));
-    let extensions = room.rogue.extensions_with(Some(&heads));
-    let commit = room.rogue.commit(Some(extensions), Some(&v3), Vec::new());
+    let commit = room.rogue.commit(Some(Some(&heads)), Some(&v3), Vec::new());
     let d2 = key(&room.alice_d2).to_vec();
     refused_by_all(
         &mut room,
@@ -410,14 +418,61 @@ fn a_newer_log_without_the_record_change_is_refused() {
     });
 }
 
+/// §The Heads Extension: a group that carries the record MUST NOT remove
+/// it. As a component, a `remove` of it is an invalid AppDataUpdate
+/// (decision mimid-1wgh.4.81.33).
 #[test]
 fn removing_the_record_is_refused() {
     let mut room = room();
-    let extensions = room.rogue.extensions_with(None);
-    let commit = room.rogue.commit(Some(extensions), None, Vec::new());
-    refused_by_all(&mut room, &commit, |e| {
-        matches!(e, DidWebvhError::HeadsRemoved)
-    });
+    let commit = room.rogue.commit(Some(None), None, Vec::new());
+    for (member, identity) in [(&mut room.a1, &room.alice_d1), (&mut room.b1, &room.bob_d1)] {
+        let result = member.process(identity, &commit, no_components);
+        assert!(
+            matches!(
+                result,
+                Err(MemberError::InvalidAppDataUpdate(id)) if id == CP.heads_component()
+            ),
+            "{result:?}"
+        );
+    }
+    let observed = room.hub.process(&room.hub_store, &commit, no_components);
+    assert!(observed.is_err(), "the hub refuses too: {observed:?}");
+}
+
+/// A standalone AppDataUpdate that removes the record, or whose update is
+/// not a `DIDWebVHHeads`, is refused on arrival and not stored.
+#[test]
+fn a_standalone_proposal_that_removes_or_breaks_the_record_is_refused() {
+    let mut room = room();
+    let remove = room.rogue.propose_record(AppDataUpdateOperation::Remove);
+    let garbage = room
+        .rogue
+        .propose_record(AppDataUpdateOperation::Update(vec![0x01].into()));
+    for (proposal, expected) in [
+        (&remove, "remove"),
+        (&garbage, "an update that does not decode"),
+    ] {
+        let result = room.a1.process(&room.alice_d1, proposal, no_components);
+        assert!(
+            matches!(
+                result,
+                Err(MemberError::DidWebvh(
+                    DidWebvhError::HeadsRemoved | DidWebvhError::Heads(_)
+                ))
+            ),
+            "{expected}: {result:?}"
+        );
+        let observed = room.hub.process(&room.hub_store, proposal, no_components);
+        assert!(
+            matches!(
+                observed,
+                Err(ObserverError::DidWebvh(
+                    DidWebvhError::HeadsRemoved | DidWebvhError::Heads(_)
+                ))
+            ),
+            "{expected}: {observed:?}"
+        );
+    }
 }
 
 #[test]
@@ -432,8 +487,7 @@ fn moving_the_record_backwards_is_refused() {
         .expect("heads")
         .expect("record");
     heads.insert(DidWebvhHead::from_log(v1.verified()));
-    let extensions = room.rogue.extensions_with(Some(&heads));
-    let commit = room.rogue.commit(Some(extensions), None, Vec::new());
+    let commit = room.rogue.commit(Some(Some(&heads)), None, Vec::new());
     refused_by_all(&mut room, &commit, |e| {
         matches!(e, DidWebvhError::Rule(RuleError::ExtensionMismatch { .. }))
     });
@@ -497,8 +551,7 @@ fn a_commit_that_follows_the_rules_is_accepted() {
         .expect("heads")
         .expect("record");
     heads.insert(DidWebvhHead::from_log(room.alice.log.verified()));
-    let extensions = room.rogue.extensions_with(Some(&heads));
-    let commit = room.rogue.commit(Some(extensions), Some(&v3), Vec::new());
+    let commit = room.rogue.commit(Some(Some(&heads)), Some(&v3), Vec::new());
     for (member, identity) in [(&mut room.a1, &room.alice_d1), (&mut room.b1, &room.bob_d1)] {
         member
             .process(identity, &commit, no_components)
@@ -509,51 +562,4 @@ fn a_commit_that_follows_the_rules_is_accepted() {
             .expect("record");
         assert_eq!(record, heads);
     }
-}
-
-/// Open Issue 5 of the draft: with a GroupContextExtensions proposal from
-/// another member pending, a Commit that must change the record cannot be
-/// built, and the device sends its new credential as an Update proposal
-/// instead (bead mimid-1wgh.4.81.28 (c), mimid-agent's fallback).
-#[test]
-fn a_pending_group_context_extensions_proposal_blocks_the_record_change_but_not_the_update() {
-    let mut room = room();
-    // The rogue proposes the extensions as they are (the hub would let it
-    // through: it changes nothing but the record, which it keeps).
-    let extensions = room.rogue.group().extensions().clone();
-    let proposal = room.rogue.propose_extensions(extensions);
-    room.a1
-        .process(&room.alice_d1, &proposal, no_components)
-        .expect("d1 stores the proposal");
-
-    // Alice's controller writes v3; d1 takes it.
-    let devices = [
-        key(&room.alice_d1),
-        key(&room.alice_d2),
-        room.rogue.public_key(),
-    ];
-    room.alice.set(&devices);
-    room.alice_d1
-        .set_did_webvh_credential(CP, room.alice.credential())
-        .expect("d1 takes v3");
-    let refused = room.a1.commit(&room.alice_d1, &[], &[], &[], no_components);
-    assert!(
-        matches!(
-            refused,
-            Err(MemberError::DidWebvh(
-                DidWebvhError::PendingGroupContextExtensions
-            ))
-        ),
-        "{refused:?}"
-    );
-    let update = room
-        .a1
-        .propose_credential_update(&room.alice_d1)
-        .expect("the Update proposal is built");
-    room.b1
-        .process(&room.bob_d1, &proposal, no_components)
-        .expect("bob stores the extensions proposal");
-    room.b1
-        .process(&room.bob_d1, &update, no_components)
-        .expect("bob stores d1's Update");
 }

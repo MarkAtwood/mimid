@@ -225,11 +225,9 @@ pub struct DidWebvhApplied {
     pub unchanged: bool,
     /// The active rooms where this device committed the new credential.
     pub committed: Vec<String>,
-    /// The active rooms where the Commit could not be built (for example
-    /// a GroupContextExtensions proposal from another member is pending,
-    /// the draft's Open Issue 5), so the credential was sent as an Update
-    /// proposal for another member to commit
-    /// (`Member::propose_credential_update`).
+    /// The active rooms where the Commit could not be built, so the
+    /// credential was sent as an Update proposal for another member to
+    /// commit (`Member::propose_credential_update`).
     pub proposed: Vec<String>,
     /// The active rooms where neither worked, with why. Each is also an
     /// [`Event::Problem`].
@@ -316,9 +314,9 @@ pub struct Agent {
     deferred_leaver: Option<(String, u32)>,
     /// [`AgentConfig::did_webvh`].
     did_webvh: DidWebvhConfig,
-    /// Test only: building a credential-update Commit fails as if a
-    /// GroupContextExtensions proposal were pending, to exercise the
-    /// fallback of [`Agent::use_did_webvh_credential`] through a real hub.
+    /// Test only: building a credential-update Commit fails, to exercise
+    /// the fallback of [`Agent::use_did_webvh_credential`] through a real
+    /// hub.
     #[cfg(test)]
     fail_credential_commits: bool,
 }
@@ -465,7 +463,10 @@ impl Agent {
     /// of devices the new log no longer lists (§Revoking a Device). Where
     /// that Commit cannot be built, the credential is sent instead as an
     /// Update proposal (`Member::propose_credential_update`) for another
-    /// member to commit (§Rules; the draft's Open Issue 5). A room where
+    /// member to commit (§Rules). The record is an `app_data_dictionary`
+    /// component (decision mimid-1wgh.4.81.33), so another party's pending
+    /// GroupContextExtensions proposal does not stop the Commit (the
+    /// draft's Open Issue 5). A room where
     /// neither works is in [`DidWebvhApplied::failed`] and reported as an
     /// [`Event::Problem`] at the next [`Agent::poll`]. A device the new log
     /// revokes cannot take it at all.
@@ -580,9 +581,7 @@ impl Agent {
         let built = if self.fail_credential_commits {
             Err(AgentError::mls(
                 format!("building the {WHAT} Commit"),
-                mimi_mls::member::MemberError::DidWebvh(
-                    mimi_mls::didwebvh::DidWebvhError::PendingGroupContextExtensions,
-                ),
+                mimi_mls::member::MemberError::Commit("injected by the test".into()),
             ))
         } else {
             self.build_commit(room, &[], &[], &[], WHAT)
@@ -915,8 +914,10 @@ impl Agent {
             .ok()
             .flatten()
             .and(self.identity.did_webvh_code_points());
-        let request =
-            key_material_request(&self.me, user, room, &required_capabilities(did_webvh_room))?;
+        let required = required_capabilities(did_webvh_room);
+        let request_required = RequiredCapabilities::tls_deserialize_exact(&required)
+            .map_err(|e| AgentError::tls("own RequiredCapabilities", e))?;
+        let request = key_material_request(&self.me, user, room, &required)?;
         let response = self.jmap.key_material(&request).await?;
         match response.user_status {
             KeyMaterialUserCode::Success | KeyMaterialUserCode::PartialSuccess => {}
@@ -934,6 +935,24 @@ impl Agent {
                 let info = key_package
                     .verify(SystemTime::now())
                     .map_err(|e| AgentError::tls("a KeyPackage does not verify", e))?;
+                // In a did_webvh room the KeyPackage must also list the
+                // record component, which the request could not ask for
+                // (decision mimid-1wgh.4.81.36); one that does not could
+                // not be added, so it is not used.
+                if let Some(code_points) = did_webvh_room
+                    && !mimi_mls::didwebvh::key_package_lists_record(
+                        &info,
+                        &request_required,
+                        code_points,
+                    )
+                {
+                    tracing::info!(
+                        name: "key_package_without_did_webvh_record",
+                        "a KeyPackage from a did_webvh room's keyMaterial request does not list \
+                         the record component; not used"
+                    );
+                    continue;
+                }
                 // A did_webvh KeyPackage names its user in its verified log
                 // (decision mimid-1wgh.4.81.21).
                 let did_webvh = match self.identity.did_webvh_code_points() {

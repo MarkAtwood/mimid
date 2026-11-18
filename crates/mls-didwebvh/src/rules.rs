@@ -35,7 +35,9 @@ pub enum RuleError {
         version_id: String,
     },
     /// §Rules, Extension matches: `did_webvh_heads` is not exactly the
-    /// expected entries.
+    /// expected entries. Named for the draft's rule; in mimid the record is
+    /// an `app_data_dictionary` component, not an extension (decision
+    /// mimid-1wgh.4.81.33).
     #[error("did_webvh_heads does not hold exactly the expected entries")]
     ExtensionMismatch {
         /// The expected record.
@@ -231,9 +233,11 @@ fn check_authorization(
 /// with its reference entry; and every leaf must be authorized by the
 /// recorded head of its SCID.
 ///
-/// For an external Commit, or a member joining by one, `previous` and
-/// `resulting` are the same record: an external Commit cannot carry a
-/// GroupContextExtensions proposal.
+/// For an external Commit, `resulting` may differ from `previous` when the
+/// joiner sets the record: with the record as an `app_data_dictionary`
+/// component, an external Commit can carry the AppDataUpdate proposal that
+/// sets it (mls-extensions-11 §4.7; decision mimid-1wgh.4.81.33). The
+/// draft's §Rules, written for the GroupContext extension, say it cannot.
 ///
 /// # Errors
 ///

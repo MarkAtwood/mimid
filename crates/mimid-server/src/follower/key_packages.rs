@@ -31,8 +31,9 @@
 //!    `noConsent` (decision mimid-1wgh.7.9).
 //! 7. For each client, the stored KeyPackages that are unexpired, still
 //!    verify, and suit the request
-//!    ([`mimi_mls::wire::VerifiedKeyPackageInfo::satisfies`]) are the
-//!    candidates: one-time ones first, soonest `not_after` first, then the
+//!    ([`mimi_mls::wire::VerifiedKeyPackageInfo::satisfies`], and, when it
+//!    requires `did_webvh`, [`mimi_didwebvh::key_package_lists_record`];
+//!    decision mimid-1wgh.4.81.36) are the candidates: one-time ones first, soonest `not_after` first, then the
 //!    last-resort one. The first candidate still stored is claimed, all
 //!    clients in one transaction ([`Store::claim_key_packages`]): a
 //!    one-time KeyPackage is removed, so it is never served twice; a
@@ -163,7 +164,8 @@ pub struct KeyPackages {
     store: Store,
     domain: Domain,
     clock: Arc<dyn Clock>,
-    /// The code points of `did_webvh` KeyPackages accepted on upload.
+    /// The code points of `did_webvh` KeyPackages accepted on upload and
+    /// required by keyMaterial requests.
     did_webvh: CodePoints,
     /// Serve a last-resort KeyPackage in more than one response
     /// ([`KeyPackages::with_last_resort_reuse`]).
@@ -201,14 +203,14 @@ impl KeyPackages {
             store,
             domain,
             clock,
-            did_webvh: CodePoints::SUGGESTED,
+            did_webvh: CodePoints::DEFAULT,
             reuse_last_resort: false,
             changes: tokio::sync::broadcast::channel(KEY_PACKAGE_CHANGES_CAPACITY).0,
         }
     }
 
     /// Sets the `did_webvh` code points of accepted KeyPackages. Without
-    /// this, the draft's suggested values are used.
+    /// this, [`CodePoints::DEFAULT`] is used.
     #[must_use]
     pub fn with_did_webvh(mut self, code_points: CodePoints) -> Self {
         self.did_webvh = code_points;
@@ -499,7 +501,16 @@ impl KeyPackages {
                 }
             };
             plan.usable = true;
-            if info.satisfies(&tbs.required_capabilities, &tbs.acceptable_ciphersuites) {
+            // A request that requires did_webvh also needs the record
+            // component, which RequiredCapabilities cannot name (decision
+            // mimid-1wgh.4.81.36).
+            if info.satisfies(&tbs.required_capabilities, &tbs.acceptable_ciphersuites)
+                && mimi_didwebvh::key_package_lists_record(
+                    &info,
+                    &tbs.required_capabilities,
+                    self.did_webvh,
+                )
+            {
                 plan.candidates.push((kp, key_package));
             }
         }

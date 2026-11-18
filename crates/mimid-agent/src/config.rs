@@ -15,7 +15,7 @@
 //! [did_webvh]                             # optional; see below
 //! support = true                          # the default
 //! credential_type = 0x0008                # the default
-//! heads_extension_type = 0x0013           # the default
+//! heads_component = 0xf013                # the default
 //! log_file = "/home/alice/.config/mimid-agent/did.jsonl"
 //! witness_file = "/home/alice/.config/mimid-agent/did-witness.json"
 //! ```
@@ -29,8 +29,11 @@
 //! endpoint to hand it a log). The log must list the device's
 //! signature key and the user's URI in `alsoKnownAs`. `support` (default
 //! true) lets a BasicCredential agent share rooms with `did_webvh` users.
-//! The two code points are the draft's suggested values until IANA
-//! assigns them.
+//! The credential type defaults to the draft's suggested value, and the
+//! `app_data_dictionary` component that carries the record to the
+//! private-use 0xf013 (decisions mimid-1wgh.4.81.33, mimid-1wgh.4.81.35),
+//! until IANA assigns them. The extension form's `heads_extension_type` is
+//! gone and is refused as an unknown field.
 //!
 //! `full_tree_hubs` lists the provider domains of hubs whose rooms get the
 //! full ratchet tree with every Commit, for a hub that does not rebuild the
@@ -119,9 +122,10 @@ pub struct DidWebvhSetting {
     /// The `did_webvh` credential type.
     #[serde(default = "suggested_credential_type")]
     pub credential_type: u16,
-    /// The `did_webvh_heads` extension type.
-    #[serde(default = "suggested_heads_extension_type")]
-    pub heads_extension_type: u16,
+    /// The `app_data_dictionary` component that carries the
+    /// `did_webvh_heads` record.
+    #[serde(default = "default_heads_component")]
+    pub heads_component: u16,
     /// The controller's `did.jsonl` for this device; none for a
     /// BasicCredential.
     #[serde(default)]
@@ -136,7 +140,7 @@ impl Default for DidWebvhSetting {
         Self {
             support: true,
             credential_type: suggested_credential_type(),
-            heads_extension_type: suggested_heads_extension_type(),
+            heads_component: default_heads_component(),
             log_file: None,
             witness_file: None,
         }
@@ -148,11 +152,11 @@ fn yes() -> bool {
 }
 
 fn suggested_credential_type() -> u16 {
-    mimid_agent_core::mls_didwebvh::CodePoints::SUGGESTED.credential_type()
+    mimid_agent_core::mls_didwebvh::CodePoints::DEFAULT.credential_type()
 }
 
-fn suggested_heads_extension_type() -> u16 {
-    mimid_agent_core::mls_didwebvh::CodePoints::SUGGESTED.heads_extension_type()
+fn default_heads_component() -> u16 {
+    mimid_agent_core::mls_didwebvh::CodePoints::DEFAULT.heads_component()
 }
 
 impl DidWebvhSetting {
@@ -160,7 +164,7 @@ impl DidWebvhSetting {
     ///
     /// # Errors
     ///
-    /// A code point that RFC 9420 or OpenMLS already uses.
+    /// A code point that RFC 9420 or mls-extensions-11 already uses.
     pub fn to_agent(
         &self,
     ) -> Result<mimid_agent_core::DidWebvhConfig, mimid_agent_core::mls_didwebvh::CodePointError>
@@ -168,7 +172,7 @@ impl DidWebvhSetting {
         let config = mimid_agent_core::DidWebvhConfig {
             code_points: mimid_agent_core::mls_didwebvh::CodePoints::new(
                 self.credential_type,
-                self.heads_extension_type,
+                self.heads_component,
             )?,
             support: self.support,
             log_file: self.log_file.clone(),
@@ -395,16 +399,17 @@ mod tests {
         assert!(agent.support);
         assert!(agent.log_file.is_none());
         assert_eq!(agent.code_points.credential_type(), 0x0008);
-        assert_eq!(agent.code_points.heads_extension_type(), 0x0013);
+        assert_eq!(agent.code_points.heads_component(), 0xf013);
         let config = Config::parse(&format!(
             "{}\n[did_webvh]\nsupport = false\ncredential_type = 0xf008\n\
-             heads_extension_type = 0xf013\nlog_file = \"/x/did.jsonl\"\n",
+             heads_component = 0xf014\nlog_file = \"/x/did.jsonl\"\n",
             config_with_listen("127.0.0.1:0")
         ))
         .unwrap();
         let agent = config.did_webvh.to_agent().unwrap();
         assert!(!agent.support);
         assert_eq!(agent.code_points.credential_type(), 0xf008);
+        assert_eq!(agent.code_points.heads_component(), 0xf014);
         assert_eq!(agent.log_file.as_deref(), Some(Path::new("/x/did.jsonl")));
         // basic (0x0001) cannot be the did_webvh credential type.
         let refused = Config::parse(&format!(
@@ -415,6 +420,21 @@ mod tests {
             matches!(refused, Err(ConfigError::OutOfRange("did_webvh"))),
             "{refused:?}"
         );
+        // app_components (0x0001) cannot be the record's component.
+        let refused = Config::parse(&format!(
+            "{}\n[did_webvh]\nheads_component = 1\n",
+            config_with_listen("127.0.0.1:0")
+        ));
+        assert!(
+            matches!(refused, Err(ConfigError::OutOfRange("did_webvh"))),
+            "{refused:?}"
+        );
+        // The extension form's setting is gone (bead mimid-1wgh.4.81.34).
+        let refused = Config::parse(&format!(
+            "{}\n[did_webvh]\nheads_extension_type = 0x0013\n",
+            config_with_listen("127.0.0.1:0")
+        ));
+        assert!(refused.is_err(), "{refused:?}");
     }
 
     #[test]

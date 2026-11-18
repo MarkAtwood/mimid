@@ -4,10 +4,13 @@
 //! Update proposal, the hub accepts it, and another member's agent commits
 //! it with the record change.
 //!
-//! The Commit's failure is injected (`fail_credential_commits`, the error
-//! `Member::commit` returns for a pending GroupContextExtensions proposal):
-//! no mimid component sends a standalone GroupContextExtensions proposal,
-//! and mimi-mls's own test of that error is in its didwebvh tests.
+//! The Commit's failure is injected (`fail_credential_commits`). With the
+//! record an `app_data_dictionary` component (decision mimid-1wgh.4.81.33),
+//! a pending GroupContextExtensions proposal no longer makes the Commit
+//! fail, and what still does (a pending record update for an SCID with no
+//! leaf, decision mimid-1wgh.4.65) would make the other member's Commit
+//! fail too; mimi-mls's `didwebvh_appdata` tests run the fallback with a
+//! pending GroupContextExtensions proposal.
 //!
 //! Oracles: the did:webvh logs come from `mls_didwebvh::controller`, whose
 //! output the mls-didwebvh tests check against an independent verifier;

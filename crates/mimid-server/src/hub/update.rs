@@ -837,8 +837,6 @@ fn proposal_kind(proposal: &MlsProposal) -> Result<ProposalKind, &'static str> {
         MlsProposal::ReInit => ProposalKind::ReInit,
         MlsProposal::ExternalInit => ProposalKind::ExternalInit,
         MlsProposal::GroupContextExtensions => ProposalKind::GroupContextExtensions,
-        // Decision mimid-1wgh.4.81.22.
-        MlsProposal::DidWebvhRecord => ProposalKind::DidWebvhRecord,
         MlsProposal::AppDataUpdate {
             component_id,
             update,

@@ -52,7 +52,8 @@
 //! # which IANA has not assigned (bead mimid-1wgh.4.81.18).
 //! [did_webvh]
 //! credential_type = 0x0008        # the draft's suggested value, the default
-//! heads_extension_type = 0x0013   # likewise
+//! heads_component = 0xf013        # the record's app_data_dictionary
+//!                                 # component; private use, the default
 //!
 //! # Optional: TLS toward peers.
 //! [peer_tls]
@@ -164,11 +165,13 @@ pub struct Config {
     pub wire_profiles: BTreeMap<Domain, WireProfileSetting>,
     /// OpenTelemetry export (bead mimid-ndov); off when absent.
     pub telemetry: Option<crate::telemetry::TelemetryConfig>,
-    /// The `did_webvh` credential type and `did_webvh_heads` extension
-    /// type (draft-atwood-mls-didwebvh-credential-01 §IANA
-    /// Considerations), used by the hub to enforce the draft's rules and on
-    /// KeyPackage upload. Defaults to the draft's suggested 0x0008 and
-    /// 0x0013; a value RFC 9420 or OpenMLS already uses is refused.
+    /// The `did_webvh` credential type (draft-atwood-mls-didwebvh-credential-01
+    /// §IANA Considerations) and the `app_data_dictionary` component that
+    /// carries the `did_webvh_heads` record (decision mimid-1wgh.4.81.33),
+    /// used by the hub to enforce the draft's rules, on KeyPackage upload
+    /// and in keyMaterial. Defaults to the draft's suggested 0x0008 and the
+    /// private-use component 0xF013 (decision mimid-1wgh.4.81.35); a value
+    /// RFC 9420 or mls-extensions-11 already uses is refused.
     #[serde(default, deserialize_with = "did_webvh_code_points")]
     pub did_webvh: mimi_mls::mls_didwebvh::CodePoints,
 }
@@ -178,14 +181,14 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 struct DidWebvhSetting {
     credential_type: u16,
-    heads_extension_type: u16,
+    heads_component: u16,
 }
 
 fn did_webvh_code_points<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<mimi_mls::mls_didwebvh::CodePoints, D::Error> {
     let setting = DidWebvhSetting::deserialize(deserializer)?;
-    mimi_mls::mls_didwebvh::CodePoints::new(setting.credential_type, setting.heads_extension_type)
+    mimi_mls::mls_didwebvh::CodePoints::new(setting.credential_type, setting.heads_component)
         .map_err(serde::de::Error::custom)
 }
 
@@ -448,7 +451,7 @@ mod tests {
             peer_tls: crate::tls::PeerTlsConfig::default(),
             wire_profiles: BTreeMap::new(),
             telemetry: None,
-            did_webvh: mimi_mls::mls_didwebvh::CodePoints::SUGGESTED,
+            did_webvh: mimi_mls::mls_didwebvh::CodePoints::DEFAULT,
         };
         assert_eq!(config, expected);
     }
@@ -456,18 +459,20 @@ mod tests {
     #[test]
     fn did_webvh_code_points_parse_and_collisions_are_refused() {
         let config = Config::parse(&format!(
-            "{VALID}\n[did_webvh]\ncredential_type = 0xf008\nheads_extension_type = 0xf013\n"
+            "{VALID}\n[did_webvh]\ncredential_type = 0xf008\nheads_component = 0xf014\n"
         ))
         .unwrap();
         assert_eq!(config.did_webvh.credential_type(), 0xf008);
-        assert_eq!(config.did_webvh.heads_extension_type(), 0xf013);
+        assert_eq!(config.did_webvh.heads_component(), 0xf014);
         for table in [
-            // basic, and the required_capabilities extension type.
-            "credential_type = 0x0001\nheads_extension_type = 0x0013",
-            "credential_type = 0x0008\nheads_extension_type = 0x0003",
+            // basic, and the app_components component.
+            "credential_type = 0x0001\nheads_component = 0xf013",
+            "credential_type = 0x0008\nheads_component = 0x0001",
             // 65536 is not a u16.
-            "credential_type = 65536\nheads_extension_type = 0x0013",
+            "credential_type = 65536\nheads_component = 0xf013",
             "credential_type = 0x0008",
+            // The extension form's setting is gone (bead mimid-1wgh.4.81.34).
+            "credential_type = 0x0008\nheads_extension_type = 0x0013",
         ] {
             let err = Config::parse(&format!("{VALID}\n[did_webvh]\n{table}\n")).unwrap_err();
             assert!(matches!(err, ConfigError::Parse(_)), "{table}: {err:?}");

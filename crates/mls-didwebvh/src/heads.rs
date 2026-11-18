@@ -1,5 +1,7 @@
-//! The `did_webvh_heads` GroupContext extension
-//! (draft-atwood-mls-didwebvh-credential-00 §The Heads Extension).
+//! The `did_webvh_heads` record (draft-atwood-mls-didwebvh-credential-00
+//! §The Heads Extension). The draft carries it as a GroupContext
+//! extension; mimid carries the same bytes as an `app_data_dictionary`
+//! component (decision mimid-1wgh.4.81.33).
 
 use std::collections::BTreeSet;
 
@@ -146,7 +148,7 @@ impl DidWebvhHeads {
     /// strictly ascending `scid` byte order (so at most one per SCID), each
     /// `authorized_keys` list of 32-byte keys in strictly ascending byte
     /// order, `scid` and `version_id` ASCII, and a `version_id` that starts
-    /// with a version number. A GroupContext whose extension fails is
+    /// with a version number. A GroupContext whose record fails is
     /// refused, not ignored (decision mimid-1wgh.4.81.13).
     ///
     /// # Errors

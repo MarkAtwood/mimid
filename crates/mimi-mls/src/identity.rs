@@ -260,9 +260,9 @@ impl Identity {
 
     /// Switches this identity to the `did_webvh` credential `credential`,
     /// carried under `code_points` (draft-atwood-mls-didwebvh-credential-00).
-    /// From then on every leaf it builds carries it, lists `did_webvh` and
-    /// `did_webvh_heads` in its capabilities, and the groups it is a member
-    /// of enforce the draft's group rules.
+    /// From then on every leaf it builds carries it, lists `did_webvh` in
+    /// its capabilities and the record component in its `app_components`,
+    /// and the groups it is a member of enforce the draft's group rules.
     ///
     /// The log is verified (§Log Verification) and must authorize this
     /// identity's signature key (§Binding to the LeafNode). If the identity
@@ -328,8 +328,8 @@ impl Identity {
 
     /// Has this BasicCredential identity support `did_webvh` under
     /// `code_points` without holding such a credential: every leaf it
-    /// builds lists `did_webvh` and `did_webvh_heads` in its capabilities,
-    /// and the groups it is a member of enforce the group rules of
+    /// builds lists `did_webvh` in its capabilities and the record
+    /// component in its `app_components`, and the groups it is a member of enforce the group rules of
     /// draft-atwood-mls-didwebvh-credential-01, as for a `did_webvh`
     /// identity. That is what lets it share a group with `did_webvh`
     /// leaves (RFC 9420 §7.2; §The Heads Extension; decision
@@ -370,16 +370,15 @@ impl Identity {
 
     /// The components this identity's leaves list beyond mimid's built-ins:
     /// [`Identity::extra_components`], and the `did_webvh` record component
-    /// when its code points carry the record as one (spike bead
-    /// mimid-1wgh.4.81.32).
+    /// when the identity supports `did_webvh` (a client that lists the
+    /// credential type implements the rules, so it lists the record;
+    /// decision mimid-1wgh.4.81.33).
     pub(crate) fn leaf_components(&self) -> Vec<ComponentId> {
         let mut components = self.extra_components.clone();
-        if let Some(component_id) = self
-            .did_webvh_code_points()
-            .and_then(|code_points| code_points.heads_component())
-            && !components.contains(&component_id)
+        if let Some(code_points) = self.did_webvh_code_points()
+            && !components.contains(&code_points.heads_component())
         {
-            components.push(component_id);
+            components.push(code_points.heads_component());
         }
         components
     }
@@ -499,26 +498,25 @@ fn read_signature_key_pair<S: StorageProvider>(
 /// `grease_extension`, plus random GREASE values (RFC 9420 §13.5).
 ///
 /// A `did_webvh` identity (`did_webvh` is `Some`) also lists the
-/// `did_webvh` credential type and, as
-/// draft-atwood-mls-didwebvh-credential-00 §The Heads Extension requires
-/// of a client listing it, the `did_webvh_heads` extension type.
+/// `did_webvh` credential type. What §The Heads Extension asks of a client
+/// listing it, support for the record, is the record component in the
+/// leaf's `app_components` instead of an extension type here (decision
+/// mimid-1wgh.4.81.33).
 pub(crate) fn leaf_capabilities(
     rand: &impl OpenMlsRand,
     grease_extension: u16,
     did_webvh: Option<CodePoints>,
 ) -> Capabilities {
     let mut credentials = vec![CredentialType::Basic];
-    let mut extensions = vec![
+    let extensions = vec![
         ExtensionType::AppDataDictionary,
         ExtensionType::Grease(grease_extension),
     ];
     if let Some(code_points) = did_webvh {
+        // The record is a component, listed in the leaf's app_components
+        // (Identity::leaf_components), not an extension type (decision
+        // mimid-1wgh.4.81.33).
         credentials.push(CredentialType::from(code_points.credential_type()));
-        // As a component, the record is listed in app_components instead
-        // (spike bead mimid-1wgh.4.81.32).
-        if code_points.heads_component().is_none() {
-            extensions.push(ExtensionType::from(code_points.heads_extension_type()));
-        }
     }
     Capabilities::builder()
         .ciphersuites(vec![CIPHERSUITE])

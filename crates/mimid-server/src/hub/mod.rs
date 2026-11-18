@@ -256,8 +256,8 @@ pub struct Hub {
 /// It also carries the code points under which every hosted room's
 /// `did_webvh` leaves are checked against the rules of
 /// draft-atwood-mls-didwebvh-credential-01 (bead mimid-1wgh.4.81.18): IANA
-/// has not assigned them, so they are a setting, by default the draft's
-/// suggested values.
+/// has not assigned them, so they are a setting, by default
+/// [`CodePoints::DEFAULT`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HubRequirements {
@@ -270,24 +270,24 @@ pub struct HubRequirements {
     /// ([`HubError::MissingBaseRoomPolicy`]): the rule of decision
     /// mimid-1wgh.6.57.
     pub room_policy: bool,
-    /// The `did_webvh` credential type and `did_webvh_heads` extension type
-    /// the hub enforces the rules under ([`Observer::enforce_did_webvh`]).
+    /// The `did_webvh` credential type and record component the hub
+    /// enforces the rules under ([`Observer::enforce_did_webvh`]).
     pub did_webvh: CodePoints,
 }
 
 impl HubRequirements {
-    /// Both requirements as given, and the suggested `did_webvh` code
+    /// Both requirements as given, and the default `did_webvh` code
     /// points.
     #[must_use]
     pub fn new(franking: bool, room_policy: bool) -> Self {
         Self {
             franking,
             room_policy,
-            did_webvh: CodePoints::SUGGESTED,
+            did_webvh: CodePoints::DEFAULT,
         }
     }
 
-    /// The same, with `did_webvh` code points other than the suggested ones.
+    /// The same, with `did_webvh` code points other than the default ones.
     #[must_use]
     pub fn with_did_webvh(mut self, code_points: CodePoints) -> Self {
         self.did_webvh = code_points;

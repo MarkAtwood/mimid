@@ -1,10 +1,14 @@
 //! The hub enforces draft-atwood-mls-didwebvh-credential-01 (bead
-//! mimid-1wgh.4.81.18): in a hosted room with `did_webvh` members, a Commit
-//! that breaks the group rules is refused, and of the GroupContextExtensions
-//! proposals only one that sets the record alone passes room policy
-//! (decision mimid-1wgh.4.81.22). A revocation Commit's Remove of the
-//! revoked device passes without `canRemoveOwnClient`, and no other Remove
-//! does (decision mimid-1wgh.4.81.26).
+//! mimid-1wgh.4.81.18) with the record as an `app_data_dictionary`
+//! component changed by AppDataUpdate (decision mimid-1wgh.4.81.33): in a
+//! hosted room with `did_webvh` members, a Commit that breaks the group
+//! rules is refused, every GroupContextExtensions proposal is refused
+//! (decision mimid-1wgh.6.2, with no exception for the record since bead
+//! mimid-1wgh.4.81.34), and a revocation Commit's Remove of the revoked
+//! device passes without `canRemoveOwnClient` while no other Remove does
+//! (decision mimid-1wgh.4.81.26). The hub has no code of its own for the
+//! record: its Observer applies the record's update logic and the rules,
+//! and room policy sees an AppDataUpdate of a component it does not track.
 //!
 //! Oracle: dave's second device is a plain OpenMLS client (the rogue) that
 //! knows nothing of the draft and builds Commits MLS accepts. The logs come
@@ -21,30 +25,46 @@ mod update;
 use common::*;
 use mimi_mls::member::{ExternalSender, Member};
 use mimi_mls::mls_didwebvh::controller::{DidLog, Parameters, UpdateKey};
-use mimi_mls::mls_didwebvh::{CodePoints, DidWebvhCredential, DidWebvhHead, PublicKey};
+use mimi_mls::mls_didwebvh::{
+    CodePoints, DidWebvhCredential, DidWebvhHead, DidWebvhHeads, PublicKey,
+};
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::{Identity, KeyPackageKind};
 use mimid_server::hub::Hub;
+use openmls::component::ComponentData;
 use openmls::extensions::{AppDataDictionary, AppDataDictionaryExtension};
+use openmls::messages::proposals::{AppDataUpdateProposal, Proposal};
 use openmls::prelude::{
     Capabilities, Ciphersuite, Credential, CredentialType, CredentialWithKey,
     Extension as OpenMlsExtension, ExtensionType as OpenMlsExtensionType,
     Extensions as OpenMlsExtensions, GroupContext, KeyPackage, LeafNodeIndex, LeafNodeParameters,
     MlsGroup, MlsGroupJoinConfig, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider,
     PURE_PLAINTEXT_WIRE_FORMAT_POLICY, ProposalType as OpenMlsProposalType, RatchetTreeIn,
-    StagedWelcome, UnknownExtension,
+    RequiredCapabilitiesExtension, StagedWelcome,
 };
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use update::*;
 
-const CP: CodePoints = CodePoints::SUGGESTED;
+/// The default record component, a private-use ID (mls-extensions-11 §7.5;
+/// decision mimid-1wgh.4.81.35), written out so a change of the default
+/// shows here.
+const HEADS_COMPONENT: u16 = 0xf013;
 const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 /// dave: a user of the hub's own provider, so `From: a.example`.
 const DAVE: &[u8] = b"mimi://a.example/u/dave";
 
-fn a() -> mimid_server::config::Domain {
-    mimid_server::config::Domain::try_from("a.example".to_owned()).unwrap()
+fn cp() -> CodePoints {
+    CodePoints::DEFAULT
+}
+
+/// [`ROOM_APP_COMPONENTS`] with the record component appended: what a
+/// leaf of this room lists, hand-encoded (mls-extensions-11 §5).
+fn leaf_app_components() -> Vec<u8> {
+    let mut list = ROOM_APP_COMPONENTS.to_vec();
+    list[0] += 2; // ComponentID component_ids<V>: 18 + 2 bytes
+    list.extend_from_slice(&[0xf0, 0x13]);
+    list
 }
 
 fn key(identity: &Identity) -> PublicKey {
@@ -79,6 +99,18 @@ impl Controller {
     fn credential(&self) -> DidWebvhCredential {
         self.log.credential().unwrap()
     }
+
+    /// dave's controller drops every device but `devices`.
+    fn set(&mut self, devices: &[PublicKey]) {
+        self.log
+            .append(
+                "2026-11-20T13:00:02Z",
+                &Parameters::default(),
+                &self.signer,
+                devices,
+            )
+            .unwrap();
+    }
 }
 
 /// dave's second device: a plain OpenMLS client.
@@ -102,34 +134,30 @@ impl Rogue {
     }
 
     fn credential_with_key(&self, credential: &DidWebvhCredential) -> CredentialWithKey {
-        // The DIDWebVHCredential inside opaque<V> (decision
-        // mimid-1wgh.4.81.8; the draft's -01 text).
         CredentialWithKey {
             credential: Credential::new(
-                CredentialType::Other(CP.credential_type()),
+                CredentialType::Other(cp().credential_type()),
                 credential.encode().unwrap(),
             ),
             signature_key: self.signer.to_public_vec().into(),
         }
     }
 
-    /// A KeyPackage listing did_webvh and did_webvh_heads, and the room's
-    /// components and frank_aad, as the room requires.
+    /// A KeyPackage listing did_webvh, and the room's components plus the
+    /// record component, as the room requires; no `did_webvh_heads`
+    /// extension type.
     fn key_package(&self, credential: &DidWebvhCredential) -> Vec<u8> {
         let capabilities = Capabilities::builder()
             .ciphersuites(vec![SUITE])
             .credentials(vec![
                 CredentialType::Basic,
-                CredentialType::Other(CP.credential_type()),
+                CredentialType::Other(cp().credential_type()),
             ])
-            .extensions(vec![
-                OpenMlsExtensionType::AppDataDictionary,
-                OpenMlsExtensionType::Unknown(CP.heads_extension_type()),
-            ])
+            .extensions(vec![OpenMlsExtensionType::AppDataDictionary])
             .proposals(vec![OpenMlsProposalType::AppDataUpdate])
             .build();
         let mut dictionary = AppDataDictionary::new();
-        dictionary.insert(APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec());
+        dictionary.insert(APP_COMPONENTS, leaf_app_components());
         dictionary.insert(SAFE_AAD, FRANK_AAD_ONLY.to_vec());
         let leaf_extensions = OpenMlsExtensions::single(OpenMlsExtension::AppDataDictionary(
             AppDataDictionaryExtension::new(dictionary),
@@ -171,24 +199,38 @@ impl Rogue {
         );
     }
 
-    fn extensions(&self) -> OpenMlsExtensions<GroupContext> {
-        self.group.as_ref().unwrap().extensions().clone()
+    /// The record the group holds, with dave's entry raised to the
+    /// controller's current log.
+    fn raised_record(&self, controller: &Controller) -> Vec<u8> {
+        let group = self.group.as_ref().unwrap();
+        let data = group
+            .extensions()
+            .app_data_dictionary()
+            .unwrap()
+            .dictionary()
+            .get(&HEADS_COMPONENT)
+            .unwrap();
+        let mut heads = DidWebvhHeads::decode(data).unwrap();
+        heads.insert(DidWebvhHead::from_log(controller.log.verified()));
+        heads.encode().unwrap()
     }
 
-    /// A Commit with a GroupContextExtensions proposal setting `extensions`,
-    /// Removes of the leaves in `removes`, and, with `credential`, an
-    /// UpdatePath leaf carrying it; as a
-    /// protocol-07 §5.3 UpdateRequest. The Commit is merged, so the request
-    /// carries the next epoch's tree.
+    /// A Commit with, if `record` is given, one AppDataUpdate of the record
+    /// component setting it (resolved here as the component's logic does:
+    /// the whole record replaces every entry it names), with `extensions`
+    /// a GroupContextExtensions proposal, Removes of `removes`, and with
+    /// `credential` an UpdatePath leaf carrying it; as a protocol-07 §5.3
+    /// UpdateRequest with the next epoch's tree.
     fn commit(
         &mut self,
-        extensions: OpenMlsExtensions<GroupContext>,
+        record: Option<Vec<u8>>,
+        extensions: Option<OpenMlsExtensions<GroupContext>>,
         credential: Option<&DidWebvhCredential>,
         removes: &[u32],
     ) -> Vec<u8> {
-        let leaf = credential.map(|c| {
+        let leaf = credential.map(|credential| {
             LeafNodeParameters::builder()
-                .with_credential_with_key(self.credential_with_key(c))
+                .with_credential_with_key(self.credential_with_key(credential))
                 .build()
         });
         let Rogue {
@@ -199,16 +241,31 @@ impl Rogue {
         let group = group.as_mut().unwrap();
         let mut builder = group
             .commit_builder()
-            .propose_group_context_extensions(extensions)
-            .unwrap()
             .propose_removals(removes.iter().copied().map(LeafNodeIndex::new));
+        if let Some(record) = &record {
+            builder = builder.add_proposals([Proposal::AppDataUpdate(Box::new(
+                AppDataUpdateProposal::update(HEADS_COMPONENT, record.clone()),
+            ))]);
+        }
+        if let Some(extensions) = extensions {
+            builder = builder
+                .propose_group_context_extensions(extensions)
+                .unwrap();
+        }
         if let Some(leaf) = leaf {
             builder = builder.leaf_node_parameters(leaf);
         }
-        let bundle = builder
+        let mut builder = builder
             .load_psks(provider.storage())
             .unwrap()
-            .create_group_info(true)
+            .create_group_info(true);
+        if let Some(record) = record {
+            let mut updater = builder.app_data_dictionary_updater();
+            updater.set(ComponentData::from_parts(HEADS_COMPONENT, record.into()));
+            let changes = updater.changes();
+            builder.with_app_data_dictionary_updates(changes);
+        }
+        let bundle = builder
             .build(provider.rand(), provider.crypto(), signer, |_| true)
             .unwrap()
             .stage_commit(&*provider)
@@ -219,7 +276,7 @@ impl Rogue {
             vec![0x00, 0x01, 0x00, 0x04],
             bundle
                 .group_info()
-                .expect("OpenMLS exports a GroupInfo")
+                .unwrap()
                 .tls_serialize_detached()
                 .unwrap(),
         ]
@@ -231,29 +288,17 @@ impl Rogue {
             .unwrap();
         commit_request(&commit, None, &group_info, &tree)
     }
+
+    /// The group's GroupContext extensions.
+    fn extensions(&self) -> OpenMlsExtensions<GroupContext> {
+        self.group.as_ref().unwrap().extensions().clone()
+    }
 }
 
-/// The rogue's GroupContext extensions with dave's record raised to the
-/// controller's current log.
-fn raised_record(rogue: &Rogue, controller: &Controller) -> OpenMlsExtensions<GroupContext> {
-    let mut heads = mimi_mls::mls_didwebvh::DidWebvhHeads::decode(
-        &rogue
-            .extensions()
-            .unknown(CP.heads_extension_type())
-            .unwrap()
-            .0,
-    )
-    .unwrap();
-    heads.insert(DidWebvhHead::from_log(controller.log.verified()));
-    let mut extensions = rogue.extensions();
-    extensions
-        .add_or_replace(OpenMlsExtension::Unknown(
-            CP.heads_extension_type(),
-            UnknownExtension(heads.encode().unwrap()),
-        ))
-        .unwrap();
-    extensions
-}
+/// Leaves of [`room`]: alice, then dave's d1 and the rogue, in the order
+/// alice's Commit adds them.
+const LEAF_ALICE: u32 = 0;
+const LEAF_D1: u32 = 1;
 
 struct Room {
     controller: Controller,
@@ -261,17 +306,17 @@ struct Room {
 }
 
 /// alice (mimi-mls, BasicCredential, supporting did_webvh) hosts a room
-/// listing alice and dave and adds dave's two devices: d1 (mimi-mls) and
-/// the rogue. alice's Commit sets dave's record; the room is hosted in
-/// epoch 1.
+/// listing alice and dave and adds dave's d1 (mimi-mls) and the rogue.
+/// alice's Commit lists the record component in app_components and sets
+/// dave's entry, both by AppDataUpdate; the room is hosted in epoch 1.
 async fn room(hub: &Hub) -> Room {
     let hub_key = *hub.signature_public_key();
     let mut alice = Identity::generate(ALICE, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
-    alice.support_did_webvh(CP);
+    alice.support_did_webvh(cp());
     let mut d1 = Identity::generate(b"unset", mimi_mls::Store::open_in_memory().unwrap()).unwrap();
     let mut rogue = Rogue::new();
     let controller = Controller::new(&[key(&d1), rogue.public_key()]);
-    d1.set_did_webvh_credential(CP, controller.credential())
+    d1.set_did_webvh_credential(cp(), controller.credential())
         .unwrap();
 
     let senders = [ExternalSender {
@@ -286,6 +331,11 @@ async fn room(hub: &Hub) -> Room {
         .commit(&alice, &[&d1_kp, &rogue_kp], &[], &[], no_components)
         .unwrap();
     alice_group.merge_pending_commit(&alice).unwrap();
+    assert_eq!(
+        alice_group.component(APP_COMPONENTS).unwrap(),
+        leaf_app_components().as_slice(),
+        "the Commit listed the record component"
+    );
     let tree = alice_group.ratchet_tree().unwrap();
     rogue.join(bundle.welcome.as_deref().unwrap(), &tree);
     hub.create_room(ROOM_ID, ALICE, &bundle.group_info, &tree)
@@ -294,31 +344,21 @@ async fn room(hub: &Hub) -> Room {
     Room { controller, rogue }
 }
 
+/// The rogue raises dave's entry, which revokes d1, but does not remove d1
+/// (§Rules, Authorization).
 #[tokio::test]
 async fn a_commit_that_breaks_the_did_webvh_rules_is_refused() {
     let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("mimid.sqlite");
-    let (store, hub) = open_hub(&path).await;
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     let Room {
         mut controller,
         mut rogue,
     } = room(&hub).await;
     let epoch = hub.public_state(ROOM_ID).await.unwrap().epoch;
-
-    // dave's controller revokes d1. The rogue takes the new log and raises
-    // the record, but does not remove d1 (§Rules, Authorization).
-    controller
-        .log
-        .append(
-            "2026-11-20T13:00:02Z",
-            &Parameters::default(),
-            &controller.signer,
-            &[rogue.public_key()],
-        )
-        .unwrap();
-    let extensions = raised_record(&rogue, &controller);
-    let request = rogue.commit(extensions, Some(&controller.credential()), &[]);
+    controller.set(&[rogue.public_key()]);
+    let record = rogue.raised_record(&controller);
+    let request = rogue.commit(Some(record), None, Some(&controller.credential()), &[]);
     let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
     assert_not_allowed(logs, &refused, "the commit is not valid");
     assert!(
@@ -329,62 +369,48 @@ async fn a_commit_that_breaks_the_did_webvh_rules_is_refused() {
     close_hub(store, hub).await;
 }
 
+/// Decision mimid-1wgh.6.2 holds without the exception decision
+/// mimid-1wgh.4.81.22 made for the record: a GroupContextExtensions
+/// proposal that leaves the record and every other extension as they are
+/// (OpenMLS asks for `app_data_dictionary` in `required_capabilities`,
+/// feedback item 23) passes MLS and the did_webvh rules, and room policy
+/// refuses it.
 #[tokio::test]
-async fn a_group_context_extensions_proposal_that_changes_more_than_the_record_is_refused() {
+async fn every_group_context_extensions_proposal_is_refused() {
     let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("mimid.sqlite");
-    let (store, hub) = open_hub(&path).await;
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     let Room { mut rogue, .. } = room(&hub).await;
     let epoch = hub.public_state(ROOM_ID).await.unwrap().epoch;
-    // The record unchanged, but the hub dropped from external_senders: MLS
-    // and the did_webvh rules accept it, room policy does not (decision
-    // mimid-1wgh.6.2).
     let mut extensions = rogue.extensions();
-    extensions.remove(OpenMlsExtensionType::ExternalSenders);
-    let request = rogue.commit(extensions, None, &[]);
+    extensions
+        .add_or_replace(OpenMlsExtension::RequiredCapabilities(
+            RequiredCapabilitiesExtension::new(
+                &[OpenMlsExtensionType::AppDataDictionary],
+                &[],
+                &[],
+            ),
+        ))
+        .unwrap();
+    let request = rogue.commit(None, Some(extensions), None, &[]);
     let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
     assert_not_allowed(logs, &refused, "refused by room policy");
+    assert!(
+        logs.contents().contains("GroupContextExtensions"),
+        "refused as a GroupContextExtensions proposal"
+    );
     assert_eq!(hub.public_state(ROOM_ID).await.unwrap().epoch, epoch);
     close_hub(store, hub).await;
 }
 
-#[tokio::test]
-async fn a_group_context_extensions_proposal_that_only_sets_the_record_is_accepted() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("mimid.sqlite");
-    let (store, hub) = open_hub(&path).await;
-    let Room { mut rogue, .. } = room(&hub).await;
-    let epoch = hub.public_state(ROOM_ID).await.unwrap().epoch;
-    // The record as it is, which the rules expect (decision
-    // mimid-1wgh.4.81.22): no capability needed.
-    let request = rogue.commit(rogue.extensions(), None, &[]);
-    let accepted = hub.update(ROOM_ID, &a(), &request).await.unwrap();
-    assert!(
-        matches!(
-            response(&accepted).0,
-            mimi_protocol::UpdateResult::Success { .. }
-        ),
-        "{:?}",
-        response(&accepted)
-    );
-    assert_eq!(hub.public_state(ROOM_ID).await.unwrap().epoch, epoch + 1);
-    close_hub(store, hub).await;
-}
-
-/// Leaves of [`room`]: alice, then dave's d1 and the rogue, in the order
-/// alice's Commit adds them.
-const LEAF_ALICE: u32 = 0;
-const LEAF_D1: u32 = 1;
-
 /// The room's member role lacks `canRemoveOwnClient`
 /// ([`update::roles_list`]), yet the Commit that revokes d1 and removes it,
-/// as the rules require, is accepted (decision mimid-1wgh.4.81.26).
+/// as the rules require, is accepted (decision mimid-1wgh.4.81.26), with
+/// the record set by AppDataUpdate and no GroupContextExtensions proposal.
 #[tokio::test]
 async fn a_revocation_commit_needs_no_can_remove_own_client() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("mimid.sqlite");
-    let (store, hub) = open_hub(&path).await;
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     let roles = mimi_room_policy::RoleData::tls_deserialize_exact(roles_list()).unwrap();
     assert!(
         roles.roles.iter().all(|role| !role
@@ -397,17 +423,14 @@ async fn a_revocation_commit_needs_no_can_remove_own_client() {
         mut rogue,
     } = room(&hub).await;
     let epoch = hub.public_state(ROOM_ID).await.unwrap().epoch;
-    controller
-        .log
-        .append(
-            "2026-11-20T13:00:02Z",
-            &Parameters::default(),
-            &controller.signer,
-            &[rogue.public_key()],
-        )
-        .unwrap();
-    let extensions = raised_record(&rogue, &controller);
-    let request = rogue.commit(extensions, Some(&controller.credential()), &[LEAF_D1]);
+    controller.set(&[rogue.public_key()]);
+    let record = rogue.raised_record(&controller);
+    let request = rogue.commit(
+        Some(record),
+        None,
+        Some(&controller.credential()),
+        &[LEAF_D1],
+    );
     let accepted = hub.update(ROOM_ID, &a(), &request).await.unwrap();
     assert!(
         matches!(
@@ -421,18 +444,21 @@ async fn a_revocation_commit_needs_no_can_remove_own_client() {
     close_hub(store, hub).await;
 }
 
-/// A Commit that sets the record but removes dave's d1, whose key the
-/// record still authorizes, is an ordinary own-client removal: refused
-/// without `canRemoveOwnClient`.
+/// A Commit that sets the record, unchanged, but removes dave's d1, whose
+/// key the record still authorizes, is an ordinary own-client removal:
+/// refused without `canRemoveOwnClient`.
 #[tokio::test]
 async fn removing_an_own_device_the_record_still_authorizes_needs_room_policy() {
     let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("mimid.sqlite");
-    let (store, hub) = open_hub(&path).await;
-    let Room { mut rogue, .. } = room(&hub).await;
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let Room {
+        controller,
+        mut rogue,
+    } = room(&hub).await;
     let epoch = hub.public_state(ROOM_ID).await.unwrap().epoch;
-    let request = rogue.commit(rogue.extensions(), None, &[LEAF_D1]);
+    let record = rogue.raised_record(&controller);
+    let request = rogue.commit(Some(record), None, None, &[LEAF_D1]);
     let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
     assert_not_allowed(logs, &refused, "refused by room policy");
     assert!(
@@ -449,25 +475,17 @@ async fn removing_an_own_device_the_record_still_authorizes_needs_room_policy() 
 async fn a_revocation_commit_that_also_removes_another_user_is_refused() {
     let logs = capture_logs();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("mimid.sqlite");
-    let (store, hub) = open_hub(&path).await;
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     let Room {
         mut controller,
         mut rogue,
     } = room(&hub).await;
     let epoch = hub.public_state(ROOM_ID).await.unwrap().epoch;
-    controller
-        .log
-        .append(
-            "2026-11-20T13:00:02Z",
-            &Parameters::default(),
-            &controller.signer,
-            &[rogue.public_key()],
-        )
-        .unwrap();
-    let extensions = raised_record(&rogue, &controller);
+    controller.set(&[rogue.public_key()]);
+    let record = rogue.raised_record(&controller);
     let request = rogue.commit(
-        extensions,
+        Some(record),
+        None,
         Some(&controller.credential()),
         &[LEAF_D1, LEAF_ALICE],
     );
@@ -476,4 +494,8 @@ async fn a_revocation_commit_that_also_removes_another_user_is_refused() {
     assert!(logs.contents().contains("Kick"), "refused as a kick");
     assert_eq!(hub.public_state(ROOM_ID).await.unwrap().epoch, epoch);
     close_hub(store, hub).await;
+}
+
+fn a() -> mimid_server::config::Domain {
+    mimid_server::config::Domain::try_from("a.example".to_owned()).unwrap()
 }

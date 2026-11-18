@@ -48,16 +48,22 @@
 //!   a group with mls-rs-based members.
 //! - draft-atwood-mls-didwebvh-credential-01 (bead mimid-1wgh.4.81.18): the
 //!   hub enforces the draft's group rules in every hosted room under the
-//!   code points of `[did_webvh]` (default the suggested 0x0008 and
-//!   0x0013), and KeyPackage upload accepts a `did_webvh` KeyPackage whose
-//!   log names the uploading user. A `did_webvh` leaf is taken to belong to
-//!   the one `mimi:` URI its log lists in `alsoKnownAs` (decision
-//!   mimid-1wgh.4.81.21, INVENTED, NOT FROM SPEC), and room policy judges
-//!   it by that URI. The only GroupContextExtensions proposal the hub
-//!   accepts is one that sets the `did_webvh` record alone (decision
-//!   mimid-1wgh.4.81.22). A revocation's Removes need no room-policy
-//!   capability (decisions mimid-1wgh.4.81.26 and .31). keyMaterial
-//!   requests still carry a BasicCredential for the requester. The hub
+//!   code points of `[did_webvh]` (default the suggested credential type
+//!   0x0008 and the private-use component 0xf013), and KeyPackage upload
+//!   accepts a `did_webvh` KeyPackage whose log names the uploading user.
+//!   The record is an `app_data_dictionary` component changed by
+//!   AppDataUpdate, not the draft's GroupContext extension (decision
+//!   mimid-1wgh.4.81.33, INVENTED, NOT FROM SPEC), so the hub refuses every
+//!   GroupContextExtensions proposal (decision mimid-1wgh.6.2) and room
+//!   policy needs no capability for the record. A `did_webvh` leaf is
+//!   taken to belong to the one `mimi:` URI its log lists in `alsoKnownAs`
+//!   (decision mimid-1wgh.4.81.21, INVENTED, NOT FROM SPEC), and room
+//!   policy judges it by that URI. A Remove the rules require of a Commit
+//!   (a revoked device) needs no capability (decisions mimid-1wgh.4.81.26,
+//!   mimid-1wgh.4.81.31). A keyMaterial request that requires `did_webvh`
+//!   is served only KeyPackages that list the record component (decision
+//!   mimid-1wgh.4.81.36). keyMaterial requests still carry a
+//!   BasicCredential for the requester. The hub
 //!   cannot itself bring a newer log to a room (draft §Withheld or Stale
 //!   Logs).
 //! - Room policy ([`hub::policy`]):

@@ -1,5 +1,6 @@
 //! A BasicCredential member and a `did_webvh` user in one group
-//! (decisions mimid-1wgh.4.81.21, mimid-1wgh.4.81.22, mimid-1wgh.4.81.23).
+//! (decisions mimid-1wgh.4.81.21, mimid-1wgh.4.81.23, mimid-1wgh.4.81.33,
+//! mimid-1wgh.4.81.36).
 //!
 //! Bob holds a BasicCredential and supports `did_webvh`
 //! ([`Identity::support_did_webvh`]); Alice has two devices whose log lists
@@ -18,11 +19,11 @@ use mimi_mls::member::{ComponentOp, Incoming, Member};
 use mimi_mls::mls_didwebvh::controller::{DidLog, Parameters, UpdateKey};
 use mimi_mls::mls_didwebvh::{CodePoints, PublicKey};
 use mimi_mls::observer::{Observed, Observer, ObserverStart, ProposalKind};
-use mimi_mls::tls_codec::Deserialize;
-use mimi_mls::wire::KeyPackage;
+use mimi_mls::tls_codec::{Deserialize, Serialize};
+use mimi_mls::wire::{KeyPackage, RequiredCapabilities};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
 
-const CP: CodePoints = CodePoints::SUGGESTED;
+const CP: CodePoints = CodePoints::DEFAULT;
 const ALICE: &str = "mimi://example.com/u/alice";
 const BOB: &[u8] = b"mimi://example.org/u/bob";
 
@@ -114,9 +115,10 @@ fn a_basic_member_shares_a_group_with_a_did_webvh_user() {
     } = Observer::from_group_info(&hub_store, &group_info, Some(&tree)).expect("hub");
     hub.enforce_did_webvh(CP).expect("nothing to check yet");
 
-    // Bob adds both of Alice's devices. The Commit sets the record with a
-    // GroupContextExtensions proposal Bob did not ask for, and the hub sees
-    // it as the record change and nothing else.
+    // Bob adds both of Alice's devices. The Commit sets the record with
+    // AppDataUpdate proposals Bob did not ask for: one that adds the record
+    // component to app_components, then the record (decision
+    // mimid-1wgh.4.81.33), and no GroupContextExtensions proposal.
     let bundle = b
         .commit(&bob, &[&d1_kp, &d2_kp], &[], &[], no_components)
         .expect("add alice");
@@ -128,7 +130,28 @@ fn a_basic_member_shares_a_group_with_a_did_webvh_user() {
     };
     let detail = hub.pending_commit_detail().expect("detail");
     let kinds: Vec<&ProposalKind> = detail.proposals.iter().map(|p| &p.proposal).collect();
-    assert!(kinds.contains(&&ProposalKind::DidWebvhRecord), "{kinds:?}");
+    let updated: Vec<u16> = kinds
+        .iter()
+        .filter_map(|kind| match kind {
+            ProposalKind::AppDataUpdate {
+                component_id,
+                update: Some(_),
+            } => Some(*component_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(updated, [0x0001, CP.heads_component()], "{kinds:?}");
+    // mls-extensions-11 §5 ComponentsList: the record component appended.
+    assert_eq!(
+        kinds.iter().find_map(|kind| match kind {
+            ProposalKind::AppDataUpdate {
+                component_id: 0x0001,
+                update: Some(update),
+            } => Some(update.as_slice()),
+            _ => None,
+        }),
+        Some([0x02, 0xf0, 0x13].as_slice())
+    );
     assert!(
         !kinds.contains(&&ProposalKind::GroupContextExtensions),
         "{kinds:?}"
@@ -218,11 +241,16 @@ fn a_basic_member_shares_a_group_with_a_did_webvh_user() {
     hub.process(&hub_store, &bundle.commit, no_components)
         .expect("the hub accepts");
     let detail = hub.pending_commit_detail().expect("detail");
+    assert!(detail.proposals.iter().any(|p| matches!(
+        &p.proposal,
+        ProposalKind::AppDataUpdate { component_id, update: Some(_) }
+            if *component_id == CP.heads_component()
+    )));
     assert!(
-        detail
+        !detail
             .proposals
             .iter()
-            .any(|p| p.proposal == ProposalKind::DidWebvhRecord)
+            .any(|p| p.proposal == ProposalKind::GroupContextExtensions)
     );
     assert!(detail.proposals.iter().any(|p| matches!(
         &p.proposal,
@@ -300,4 +328,97 @@ fn a_log_naming_two_mimi_uris_gives_no_user() {
     // The leaf is in the group, but no user claims it: the application
     // (the hub's participant list check) refuses it.
     assert_eq!(b.members()[1], (1, Vec::new()));
+}
+
+/// Decision mimid-1wgh.4.81.36: a keyMaterial request that requires the
+/// `did_webvh` credential type takes it to imply the record component, so
+/// a KeyPackage that lists the credential type but not the component in its
+/// leaf's `app_components` is not served, though it satisfies the
+/// `RequiredCapabilities` (RFC 9420 §11.1). Oracle: that KeyPackage comes
+/// from plain OpenMLS; the requirements are hand-encoded.
+#[test]
+fn a_did_webvh_key_material_request_implies_the_record_component() {
+    use mimi_mls::didwebvh::key_package_lists_record;
+    use openmls::prelude::{
+        BasicCredential, Capabilities, Ciphersuite, CredentialType, CredentialWithKey,
+        ExtensionType, KeyPackage as OpenMlsKeyPackage, ProposalType,
+    };
+
+    // RFC 9420 §11.1: three vectors, each a one-octet length and uint16s.
+    let with_did_webvh = RequiredCapabilities::tls_deserialize_exact([
+        0x02, 0x00, 0x06, // extension_types: app_data_dictionary
+        0x02, 0x00, 0x08, // proposal_types: AppDataUpdate
+        0x02, 0x00, 0x08, // credential_types: did_webvh
+    ])
+    .expect("requirements");
+    let without =
+        RequiredCapabilities::tls_deserialize_exact([0x02, 0x00, 0x06, 0x02, 0x00, 0x08, 0x00])
+            .expect("requirements");
+    let verify = |bytes: &[u8]| {
+        KeyPackage::tls_deserialize_exact(bytes)
+            .expect("decode")
+            .verify(std::time::SystemTime::now())
+            .expect("verify")
+    };
+
+    // mimi-mls lists the record component with did_webvh, for a did_webvh
+    // identity and for a BasicCredential one that supports it.
+    let mut bob = device(BOB);
+    bob.support_did_webvh(CP);
+    let mut alice = device(b"unset");
+    let log = alice_log(&[key(&alice)]);
+    alice
+        .set_did_webvh_credential(CP, log.credential().expect("credential"))
+        .expect("alice");
+    for identity in [&bob, &alice] {
+        let info = verify(&identity.key_package(KeyPackageKind::OneTime).expect("kp"));
+        assert!(info.app_components().contains(&CP.heads_component()));
+        assert!(info.satisfies(&with_did_webvh, &[info_suite()]));
+        assert!(key_package_lists_record(&info, &with_did_webvh, CP));
+    }
+
+    // Plain OpenMLS: did_webvh in the capabilities, no app_components.
+    let suite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+    let provider = openmls_rust_crypto::OpenMlsRustCrypto::default();
+    let signer =
+        openmls_basic_credential::SignatureKeyPair::new(suite.signature_algorithm()).expect("key");
+    let bytes = OpenMlsKeyPackage::builder()
+        .leaf_node_capabilities(
+            Capabilities::builder()
+                .ciphersuites(vec![suite])
+                .credentials(vec![
+                    CredentialType::Basic,
+                    CredentialType::Other(CP.credential_type()),
+                ])
+                .extensions(vec![ExtensionType::AppDataDictionary])
+                .proposals(vec![ProposalType::AppDataUpdate])
+                .build(),
+        )
+        .build(
+            suite,
+            &provider,
+            &signer,
+            CredentialWithKey {
+                credential: BasicCredential::new(b"mimi://example.net/u/carol".to_vec()).into(),
+                signature_key: signer.to_public_vec().into(),
+            },
+        )
+        .expect("KeyPackage")
+        .key_package()
+        .tls_serialize_detached()
+        .expect("encode");
+    let info = verify(&bytes);
+    assert!(info.app_components().is_empty());
+    assert!(
+        info.satisfies(&with_did_webvh, &[info_suite()]),
+        "RequiredCapabilities alone lets it through"
+    );
+    assert!(!key_package_lists_record(&info, &with_did_webvh, CP));
+    // A request that does not require did_webvh asks nothing of it.
+    assert!(key_package_lists_record(&info, &without, CP));
+}
+
+/// Suite 1 as a wire `CipherSuite`.
+fn info_suite() -> mimi_mls::wire::CipherSuite {
+    mimi_mls::wire::CipherSuite::tls_deserialize_exact([0x00, 0x01]).expect("suite")
 }

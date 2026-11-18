@@ -1,22 +1,20 @@
-//! Spike (bead mimid-1wgh.4.81.32): the `did_webvh_heads` record carried
-//! as an `app_data_dictionary` component changed by AppDataUpdate proposals
-//! (mls-extensions-11 §4.6, §4.7) instead of as a GroupContext extension
-//! changed by GroupContextExtensions proposals, selected by
-//! `CodePoints::with_heads_component`. The group rules are unchanged.
-//!
-//! Each test is a scenario that fails in the draft's form (the GCE form,
-//! tested in `didwebvh_rogue.rs` and `didwebvh_group.rs`):
+//! The `did_webvh_heads` record as an `app_data_dictionary` component
+//! changed by AppDataUpdate proposals (mls-extensions-11 §4.6, §4.7;
+//! decision mimid-1wgh.4.81.33), in the scenarios that the draft's form, a
+//! GroupContext extension changed by GroupContextExtensions proposals,
+//! cannot handle. They came from the spike (bead mimid-1wgh.4.81.32) that
+//! led to the switch (bead mimid-1wgh.4.81.34):
 //!
 //! - a revocation Commit while an unrelated GroupContextExtensions
-//!   proposal is pending (Open Issue 5; the GCE form refuses with
-//!   `PendingGroupContextExtensions`);
+//!   proposal is pending (the draft's Open Issue 5);
 //! - the Update-proposal fallback with that proposal still pending
 //!   (feedback item 28);
 //! - two record changes in one Commit, one by reference from the device
 //!   whose log changed, one from the committer;
 //! - a device whose log is newer than the record joining by external
-//!   Commit (the GCE form refuses: an external Commit cannot carry a
-//!   GroupContextExtensions proposal).
+//!   Commit (in the extension form, an external Commit cannot carry the
+//!   GroupContextExtensions proposal);
+//! - a `remove` of the record.
 //!
 //! Oracles: the logs come from `mls_didwebvh::controller` (checked by the
 //! mls-didwebvh tests against an independent did:webvh verifier); which
@@ -46,16 +44,16 @@ use openmls::prelude::{
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 
-/// A private-use component ID (mls-extensions-11 §7.5: 0x8000 to 0xFFFF).
+/// The default record component, a private-use ID (mls-extensions-11 §7.5:
+/// 0x8000 to 0xFFFF; decision mimid-1wgh.4.81.35), written out so a change
+/// of the default shows here.
 const HEADS_COMPONENT: u16 = 0xf013;
 const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 /// mls-extensions-11 §5 `app_components` component.
 const APP_COMPONENTS: u16 = 0x0001;
 
 fn cp() -> CodePoints {
-    CodePoints::SUGGESTED
-        .with_heads_component(HEADS_COMPONENT)
-        .expect("private-use id")
+    CodePoints::DEFAULT
 }
 
 fn device() -> Identity {
@@ -344,10 +342,9 @@ fn leaf(member: &Member) -> u32 {
     member.own_leaf_index()
 }
 
-/// Open Issue 5. In the GCE form this Commit fails with
-/// `PendingGroupContextExtensions`
-/// (`didwebvh_rogue::a_pending_group_context_extensions_proposal_blocks_the_record_change_but_not_the_update`).
-/// As a component, d1's revocation of d2 covers the pending proposal by
+/// Open Issue 5. In the extension form this Commit failed (mimi-mls refused
+/// it with `PendingGroupContextExtensions`, since removed). As a component,
+/// d1's revocation of d2 covers the pending proposal by
 /// reference and sets the record by AppDataUpdate; both take effect.
 #[test]
 fn a_revocation_commits_while_an_unrelated_group_context_extensions_proposal_is_pending() {
@@ -421,7 +418,7 @@ fn a_revocation_commits_while_an_unrelated_group_context_extensions_proposal_is_
     assert_eq!(record.get(room.alice.scid()), Some(&room.alice.head()));
 }
 
-/// Feedback item 28: in the GCE form the Update-proposal fallback fails the
+/// Feedback item 28: in the extension form the Update-proposal fallback failed the
 /// same way, because the member who commits it must also add a
 /// GroupContextExtensions proposal. As a component it goes through: d2
 /// revokes d1, Bob commits d2's Update with the extensions proposal
@@ -497,7 +494,7 @@ fn the_update_proposal_fallback_commits_with_a_pending_group_context_extensions_
 /// Update with an AppDataUpdate carrying only Alice's entry; Bob takes his
 /// own v2 and commits both. The Commit carries two AppDataUpdates for the
 /// record (d2's by reference, Bob's inline), applied in order, and the
-/// record ends with both users' new heads. In the GCE form d2's partial
+/// record ends with both users' new heads. In the extension form d2's partial
 /// change cannot exist: a GroupContextExtensions proposal replaces the
 /// whole list, and a Commit holds at most one.
 #[test]
@@ -578,12 +575,12 @@ fn two_record_changes_compose_in_one_commit() {
         .expect("d1 accepts");
 }
 
-/// In the GCE form a device whose log is newer than the record cannot join
-/// by external Commit
-/// (`didwebvh_group::a_device_not_yet_in_the_record_cannot_join_externally`).
-/// mls-extensions-11 §4.7 lets an external Commit carry AppDataUpdate, so
-/// as a component the joiner raises the record itself. (The draft's §Rules
-/// still forbid it; this is Open Issue 1.)
+/// In the extension form a device whose log is newer than the record cannot
+/// join by external Commit: the Commit cannot carry a
+/// GroupContextExtensions proposal. mls-extensions-11 §4.7 lets an external
+/// Commit carry AppDataUpdate, so as a component the joiner raises the
+/// record itself. (The draft's §Rules still forbid it; this is Open
+/// Issue 1.)
 #[test]
 fn a_device_newer_than_the_record_joins_by_external_commit() {
     let mut room = room();

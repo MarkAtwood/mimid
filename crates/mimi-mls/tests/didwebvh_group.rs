@@ -13,12 +13,11 @@
 use mimi_mls::didwebvh::DidWebvhError;
 use mimi_mls::member::{ComponentOp, Incoming, Member, MemberError};
 use mimi_mls::mls_didwebvh::controller::{DidLog, Parameters, UpdateKey};
-use mimi_mls::mls_didwebvh::rules::RuleError;
 use mimi_mls::mls_didwebvh::{CodePoints, PublicKey};
 use mimi_mls::observer::{Observed, Observer, ObserverStart};
 use mimi_mls::{ErrorSource, Identity, KeyPackageKind, Store};
 
-const CP: CodePoints = CodePoints::SUGGESTED;
+const CP: CodePoints = CodePoints::DEFAULT;
 
 fn device() -> Identity {
     Identity::generate(b"unset", Store::open_in_memory().expect("store")).expect("identity")
@@ -333,7 +332,7 @@ fn a_device_the_log_does_not_list_cannot_take_the_credential() {
 }
 
 #[test]
-fn a_device_not_yet_in_the_record_cannot_join_externally() {
+fn a_device_not_yet_in_the_record_joins_externally_and_raises_it() {
     let Room {
         mut alice,
         alice_d1,
@@ -362,17 +361,26 @@ fn a_device_not_yet_in_the_record_cannot_join_externally() {
     alice_d3
         .set_did_webvh_credential(CP, alice.credential())
         .expect("d3");
-    let refused = Member::join_external(&alice_d3, &group_info, Some(&tree));
-    // §Rules: an external Commit cannot change the record, and d3's log is
-    // newer than the recorded head.
-    assert!(
-        matches!(
-            refused,
-            Err(MemberError::DidWebvh(DidWebvhError::Rule(
-                RuleError::ExtensionMismatch { .. }
-            )))
-        ),
-        "{refused:?}"
+    // The draft's §Rules say an external Commit cannot change the record,
+    // so d3, whose log is newer than the recorded head, could not join. As
+    // an app_data_dictionary component the record can be set by an
+    // AppDataUpdate in the external Commit (mls-extensions-11 §4.7;
+    // decision mimid-1wgh.4.81.33), and d3 raises Alice's entry itself.
+    let joined = Member::join_external(&alice_d3, &group_info, Some(&tree)).expect("d3 joins");
+    let record = joined
+        .member
+        .did_webvh_heads(&alice_d3)
+        .expect("heads")
+        .expect("record");
+    let head = record.get(alice.log.verified().scid()).expect("alice");
+    assert_eq!(head.version_id(), alice.log.verified().head_version_id());
+    a1.process(&alice_d1, &joined.commit_bundle.commit, no_components)
+        .expect("d1 accepts the external Commit");
+    assert_eq!(
+        a1.did_webvh_heads(&alice_d1)
+            .expect("heads")
+            .expect("record"),
+        record
     );
 }
 
