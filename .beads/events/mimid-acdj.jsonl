@@ -2,3 +2,4 @@
 {"id":"01a1f116-a57d-7d14-a5bb-a373a67faed1","issue_id":"mimid-acdj","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-18T23:55:55.645858783Z"}
 {"id":"01a1f116-a586-7a9d-b385-3258288436a8","issue_id":"mimid-acdj","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: abuse","created_at":"2026-11-18T23:55:55.654696657Z"}
 {"id":"01a1f116-a58c-75e5-b4ec-e4b6570052d5","issue_id":"mimid-acdj","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: jmap","created_at":"2026-11-18T23:55:55.66038674Z"}
+{"id":"01a1f476-9035-7152-a90f-f810e91f9612","issue_id":"mimid-acdj","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"jmap-chat-spec 3be0ddf (Mark 2026-11-19).","created_at":"2026-11-19T15:39:33.301088763Z"}
