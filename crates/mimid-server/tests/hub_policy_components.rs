@@ -10,11 +10,12 @@
 //! protocol-07 §7.5 and room-policy-04 §3-§5, with MLS variable-length
 //! vector lengths (RFC 9420 §2.1.2), commented byte by byte.
 
+use mimi_mls::member::ComponentOp;
 use mimi_protocol::component_id::{PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_protocol::{ParticipantListData, ParticipantListUpdate, UserRolePair, UserindexRolePair};
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, PREAUTH_LIST, ROLES_LIST};
 use mimid_server::hub::components::{
-    ComponentError, ParticipantChange, ParticipantListCommit, apply_updates,
+    ComponentError, ParticipantChange, ParticipantListCommit, apply_commit_op, apply_updates,
 };
 
 fn list(entries: &[(&str, u32)]) -> ParticipantListData {
@@ -512,5 +513,38 @@ fn apply_updates_needs_hub_component_and_updates() {
     assert_eq!(
         apply_updates(ROLES_LIST, None, &[]),
         Err(ComponentError::NoUpdates)
+    );
+}
+
+/// protocol-07 §7.6 `RoomMetaData` with every field empty: six zero-length
+/// vectors (room_uri, room_name, room_descriptions, room_avatar,
+/// room_subject, room_mood).
+const EMPTY_ROOM_METADATA: &[u8] = &[0x00; 6];
+/// The same with room_name "x": length 1, then 0x78.
+const NAMED_ROOM_METADATA: &[u8] = &[0x00, 0x01, 0x78, 0x00, 0x00, 0x00, 0x00];
+
+#[test]
+fn one_room_metadata_update_replaces_the_data() {
+    assert_eq!(
+        apply_commit_op(
+            ROOM_METADATA,
+            Some(EMPTY_ROOM_METADATA),
+            ComponentOp::Update(&[NAMED_ROOM_METADATA]),
+        ),
+        Ok(Some(NAMED_ROOM_METADATA.to_vec()))
+    );
+}
+
+#[test]
+fn two_room_metadata_updates_in_one_commit_are_invalid() {
+    // protocol-07 §7.6: "Only a single Room metadata update is valid per
+    // commit"; decision mimid-1wgh.64 item 5.
+    assert_eq!(
+        apply_commit_op(
+            ROOM_METADATA,
+            Some(EMPTY_ROOM_METADATA),
+            ComponentOp::Update(&[NAMED_ROOM_METADATA, EMPTY_ROOM_METADATA]),
+        ),
+        Err(ComponentError::RepeatedUpdate(ROOM_METADATA))
     );
 }

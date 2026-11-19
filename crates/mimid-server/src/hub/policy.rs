@@ -65,6 +65,15 @@
 //!   `canChangePreauthorizedUserList`, `base_room_policy`
 //!   `canChangeRoomMembershipStyle`, and ReInit `canSendMLSReinitProposal`
 //!   (room-policy-04 §8.6; decision mimid-1wgh.6.2).
+//! - A `room_metadata` update (protocol-07 §7.6) needs the room-policy-04
+//!   §8.2 capability of each field it changes against the data at the
+//!   start of the epoch: `room_name` `canChangeRoomName`,
+//!   `room_descriptions` `canChangeRoomDescription`, `room_avatar`
+//!   `canChangeRoomAvatar`, `room_subject` `canChangeRoomSubject`,
+//!   `room_mood` `canChangeRoomMood`. An unchanged field needs nothing. A
+//!   change of `room_uri`, which has no capability, is refused in every
+//!   room, and a `remove` is judged as an update to the all-empty data
+//!   (decision mimid-1wgh.64).
 //! - After the commit, the role list passes its structural checks, the §5
 //!   `max_clients`, `max_users` and `multi_device` limits hold, and every
 //!   role's §3 participant constraints hold, checked once on the state
@@ -74,8 +83,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST};
-use mimi_protocol::{ParticipantListData, ParticipantListUpdate};
+use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
+use mimi_protocol::{ParticipantListData, ParticipantListUpdate, RoomMetaData};
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ComponentID, PREAUTH_LIST, ROLES_LIST};
 use mimi_room_policy::{
     BANNED_ROLE_INDEX, BaseRoomPolicy, Capability, Denied as RoomDenied, MembershipAction,
@@ -100,6 +109,10 @@ pub struct RoomState {
     /// The MLS group's members: leaf index to credential identity, the
     /// user URI (decision mimid-1wgh.6.1).
     pub members: BTreeMap<u32, Vec<u8>>,
+    /// The `room_metadata` component's data (protocol-07 §7.6), `None` if
+    /// the room has none. Kept undecoded: a malformed value refuses only
+    /// `room_metadata` updates (decision mimid-1wgh.64).
+    pub room_metadata: Option<Vec<u8>>,
     /// The room has no `base_room_policy`: an open room (decision
     /// mimid-1wgh.52). Every capability and membership action is granted
     /// to an actor with a non-zero role, that is a listed participant; role
@@ -262,7 +275,7 @@ pub enum Denied {
         reason: RoomDenied,
     },
     /// The actor's role does not hold a capability the request needs
-    /// (room-policy-04 §8.3, §8.6).
+    /// (room-policy-04 §8.2, §8.3, §8.6).
     #[error("capability check failed")]
     Capability(#[source] RoomDenied),
     /// A §3 participant constraint fails after the commit (decision
@@ -299,6 +312,11 @@ pub enum Denied {
     /// A proposal type the hub does not know.
     #[error("proposal type {0:#06x} is not supported")]
     UnsupportedProposal(u16),
+    /// A `room_metadata` update or remove changes `room_uri`, the room's
+    /// identifier, for which room-policy-04 §8.2 defines no capability
+    /// (decision mimid-1wgh.64).
+    #[error("room_uri cannot be changed")]
+    RoomUriChange,
     /// An AppDataUpdate `remove` of a hub-tracked component.
     #[error("component {0:#06x} cannot be removed")]
     ComponentRemoval(ComponentID),
@@ -558,6 +576,73 @@ fn decode_policy(component_id: ComponentID, bytes: &[u8]) -> Result<(), Denied> 
     .map_err(Denied::from)
 }
 
+/// The room-policy-04 §8.2 capabilities a `room_metadata` operation needs:
+/// one for each field whose value differs from `current`, the data at the
+/// start of the epoch (decision mimid-1wgh.64). Absent data, and the
+/// result of a `remove`, are the all-empty `RoomMetaData`.
+///
+/// # Errors
+///
+/// [`Denied::Component`] if `current` or the update does not decode, and
+/// [`Denied::RoomUriChange`] if `room_uri` changes.
+fn metadata_capabilities(
+    current: Option<&[u8]>,
+    op: &AppDataOp,
+) -> Result<Vec<Capability>, Denied> {
+    let decode_or_empty = |bytes: Option<&[u8]>| {
+        bytes.map_or_else(
+            || Ok(RoomMetaData::default()),
+            |bytes| decode::<RoomMetaData>(ROOM_METADATA, bytes),
+        )
+    };
+    let old = decode_or_empty(current)?;
+    let new = match op {
+        AppDataOp::Update(bytes) => decode_or_empty(Some(bytes))?,
+        AppDataOp::Remove => RoomMetaData::default(),
+    };
+    // protocol-07 §2.1: the room's identifier; no §8.2 capability covers
+    // it (decision mimid-1wgh.64 item 2).
+    if old.room_uri != new.room_uri {
+        return Err(Denied::RoomUriChange);
+    }
+    Ok([
+        (
+            old.room_name != new.room_name,
+            Capability::CAN_CHANGE_ROOM_NAME,
+        ),
+        (
+            old.room_descriptions != new.room_descriptions,
+            Capability::CAN_CHANGE_ROOM_DESCRIPTION,
+        ),
+        (
+            old.room_avatar != new.room_avatar,
+            Capability::CAN_CHANGE_ROOM_AVATAR,
+        ),
+        (
+            old.room_subject != new.room_subject,
+            Capability::CAN_CHANGE_ROOM_SUBJECT,
+        ),
+        (
+            old.room_mood != new.room_mood,
+            Capability::CAN_CHANGE_ROOM_MOOD,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(changed, capability)| changed.then_some(capability))
+    .collect())
+}
+
+impl RoomState {
+    /// Authorizes a `room_metadata` operation for an actor with
+    /// `actor_role` (room-policy-04 §8.2; decision mimid-1wgh.64).
+    fn authorize_metadata(&self, actor_role: u32, op: &AppDataOp) -> Result<(), Denied> {
+        for capability in metadata_capabilities(self.room_metadata.as_deref(), op)? {
+            self.capability(actor_role, capability)?;
+        }
+        Ok(())
+    }
+}
+
 /// Authorizes a proposal sent on its own, with `sender` as the actor.
 ///
 /// The commit-level rules that need the whole Commit (clients of removed
@@ -624,6 +709,11 @@ pub fn authorize_proposal(
         }
         ProposalKind::SelfRemove => Err(Denied::NotAMember),
         ProposalKind::ReInit => state.capability(role, Capability::CAN_SEND_MLS_REINIT_PROPOSAL),
+        // room-policy-04 §8.2; decision mimid-1wgh.64
+        ProposalKind::AppDataUpdate {
+            component_id: ROOM_METADATA,
+            op,
+        } => state.authorize_metadata(role, op),
         ProposalKind::AppDataUpdate {
             component_id: PARTICIPANT_LIST,
             op: AppDataOp::Update(bytes),
@@ -850,6 +940,11 @@ pub fn authorize_commit(state: &RoomState, commit: &Commit) -> Result<PolicyOutc
             ProposalKind::ReInit if !by_reference => {
                 state.capability(proposer_role, Capability::CAN_SEND_MLS_REINIT_PROPOSAL)?;
             }
+            // room-policy-04 §8.2; decision mimid-1wgh.64
+            ProposalKind::AppDataUpdate {
+                component_id: ROOM_METADATA,
+                op,
+            } if !by_reference => state.authorize_metadata(proposer_role, op)?,
             ProposalKind::AppDataUpdate {
                 component_id: PARTICIPANT_LIST,
                 op: AppDataOp::Update(bytes),

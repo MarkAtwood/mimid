@@ -94,6 +94,11 @@ pub enum ComponentError {
     /// calls the application with one or more.
     #[error("no updates to apply")]
     NoUpdates,
+    /// A Commit updates `room_metadata` more than once: "Only a single
+    /// Room metadata update is valid per commit" (protocol-07 §7.6;
+    /// decision mimid-1wgh.64).
+    #[error("component {0:#06x} is updated more than once in the commit")]
+    RepeatedUpdate(ComponentID),
     /// The component is not one the hub tracks.
     #[error("component {0:#06x} is not tracked by the hub")]
     NotHubTracked(ComponentID),
@@ -352,9 +357,11 @@ pub fn apply_updates(
 ///
 /// - the four hub-tracked components go through [`apply_updates`];
 /// - `room_metadata` (protocol-07 §7.6) and `franking_agent` (§5.4.1)
-///   updates are decoded strictly, and the last one replaces the data. Room
-///   policy still refuses any `franking_agent` change (decision
-///   mimid-1wgh.6.42);
+///   updates are decoded strictly, and the last one replaces the data. A
+///   Commit may update `room_metadata` only once (protocol-07 §7.6;
+///   decision mimid-1wgh.64). Room policy checks the §8.2 capabilities of
+///   a `room_metadata` change and refuses any `franking_agent` change
+///   (decision mimid-1wgh.6.42);
 /// - a `remove` of any of these components passes through; room policy
 ///   refuses it for the hub-tracked ones;
 /// - every other component is unknown to the hub, and its AppDataUpdate is
@@ -376,6 +383,8 @@ pub fn apply_commit_op(
         return Ok(None);
     };
     match component_id {
+        // protocol-07 §7.6; decision mimid-1wgh.64
+        ROOM_METADATA if updates.len() > 1 => Err(ComponentError::RepeatedUpdate(component_id)),
         ROOM_METADATA => replace::<RoomMetaUpdate>(component_id, updates),
         FRANKING_AGENT => replace::<FrankingAgentUpdate>(component_id, updates),
         _ => apply_updates(component_id, current, updates),

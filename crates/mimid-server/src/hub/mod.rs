@@ -129,13 +129,15 @@ struct AppDataOps {
 impl PendingAppData {
     /// Whether adding an AppDataUpdate of `component_id` (a remove when
     /// `remove`) would make the list invalid under mls-extensions-11 §4.7:
-    /// two removes, or a remove and an update, for one component.
+    /// two removes, or a remove and an update, for one component; or two
+    /// updates of `room_metadata`, of which a Commit may carry only one
+    /// (protocol-07 §7.6; decision mimid-1wgh.64).
     fn conflicts(&self, component_id: u16, remove: bool) -> bool {
         let ops = self.0.get(&component_id).copied().unwrap_or_default();
         if remove {
             ops.remove || ops.update
         } else {
-            ops.remove
+            ops.remove || (ops.update && component_id == mimi_protocol::component_id::ROOM_METADATA)
         }
     }
 
