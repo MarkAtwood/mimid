@@ -49,7 +49,7 @@ Not deliberate; each is being fixed:
 - A user's new device joins only rooms another device of the user accepted, and only after that device has synced once since accepting; the record is the Chat's `privateMetadata` on the user's server (decision mimid-1wgh.63).
 - Leaving a room removes all of the user's devices from it; leaving on one device only is not offered. Bead mimid-pv2k.
 - A member removed because its app lacks AppDataUpdate gets an in-chat notice, but this is not yet tested end to end through a hub. Bead mimid-4lp4.4.
-- The server deletes every uploaded attachment 30 days after upload (`blob_lifetime_secs`), whether or not anyone has fetched it, since it can't read the messages that name it, and there is no `Blob/set` destroy. Decision mimid-1wgh.67.
+- The server deletes every uploaded attachment 30 days after upload (`blob_lifetime_secs`), whether or not anyone has fetched it, since it can't read the messages that name it. Decision mimid-1wgh.67.
 
 Each crate documents its own limitations in the `# Limitations` section of its rustdoc.
 

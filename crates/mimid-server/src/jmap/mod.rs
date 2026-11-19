@@ -33,7 +33,9 @@
 //!   `Chat/set` of `privateMetadata` only ([`metadata`]; decision
 //!   mimid-1wgh.63), the refusing `Message/set`, `KeyPackage/get`,
 //!   `KeyPackage/set`, `KeyMaterial/fetch`, `Room/create`, `Room/update`,
-//!   `Room/send`, `Room/unbind` and `GroupInfo/fetch` are implemented; every other method answers
+//!   `Room/send`, `Room/unbind`, `GroupInfo/fetch` and the blobext-03
+//!   `Blob/get`, `Blob/set`, `Blob/lookup` and `Blob/convert` (decision
+//!   mimid-1wgh.69) are implemented; every other method answers
 //!   `unknownMethod` until its bead lands.
 
 pub mod api;
@@ -171,6 +173,7 @@ pub fn router(
         &hub.hub_sender()?,
         options.max_key_packages,
         options.asset_lifetime,
+        methods::blob::blob_capability(&options.blob_quota),
     );
     let bus = ChangeBus::new();
     bus.forward(follower.subscribe());
@@ -192,6 +195,9 @@ pub fn router(
             bus: bus.clone(),
             projection: Arc::clone(&projection),
             max_key_packages: options.max_key_packages,
+            clock: Arc::clone(&options.clock),
+            blob_quota: options.blob_quota,
+            asset_lifetime: options.asset_lifetime,
         },
     );
     let state = JmapState(Arc::new(Inner {

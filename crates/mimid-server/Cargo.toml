@@ -26,6 +26,10 @@ jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc85
 jmap-metadata-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
 jmap-metadata-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
 jmap-chat-mimi-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
+# draft-ietf-jmap-blobext-03 Blob/get, set, lookup and convert (bead
+# mimid-1wgh.14.7).
+jmap-blob-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
+jmap-blob-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
 # RFC 9421 Ed25519 request signatures (bead mimid-75nk.2); already in
 # the lockfile through OpenMLS.
 ed25519-dalek = "=2.2.0"

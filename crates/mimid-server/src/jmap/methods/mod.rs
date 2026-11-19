@@ -8,9 +8,10 @@ use super::api::Methods;
 use super::bus::ChangeBus;
 use super::projection::{self, Projection};
 use crate::follower::Follower;
-use crate::hub::Hub;
-use crate::store::Store;
+use crate::hub::{Clock, Hub};
+use crate::store::{BlobQuota, Store};
 
+pub(crate) mod blob;
 mod chat_set;
 mod consent;
 mod group_info;
@@ -34,6 +35,12 @@ pub(crate) struct Services {
     pub(crate) projection: Arc<Projection>,
     /// `maxKeyPackages` (draft-atwood-jmap-chat-mimi-00 L166).
     pub(crate) max_key_packages: u64,
+    /// Stamps blobs created by `Blob/set`.
+    pub(crate) clock: Arc<dyn Clock>,
+    /// Limits blobs created by `Blob/set`, as uploads.
+    pub(crate) blob_quota: BlobQuota,
+    /// How long a blob lives, in seconds (`JmapOptions::asset_lifetime`).
+    pub(crate) asset_lifetime: Option<u64>,
 }
 
 /// Registers every method file's handlers.
@@ -50,4 +57,5 @@ pub(super) fn register_all(methods: &mut Methods, services: &Services) {
     room_report_abuse::register(methods, services);
     room_unbind::register(methods, services);
     group_info::register(methods, services);
+    blob::register(methods, services);
 }

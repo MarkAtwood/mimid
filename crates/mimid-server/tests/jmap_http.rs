@@ -197,7 +197,9 @@ fn expected_session(
             // draft-atwood-jmap-updates-00 §3.
             "urn:ietf:params:jmap:i18n": {},
             // draft-ietf-jmap-metadata-05 §1.2.1: an empty object.
-            "urn:ietf:params:jmap:metadata": {}
+            "urn:ietf:params:jmap:metadata": {},
+            // draft-ietf-jmap-blobext-03 §2.1: "MUST be an empty object".
+            "urn:ietf:params:jmap:blob2": {}
         },
         "accounts": {
             account_id: {
@@ -244,6 +246,28 @@ fn expected_session(
                                 "maxDepth": 4
                             }
                         }
+                    },
+                    // draft-ietf-jmap-blobext-03 §2.1: every property
+                    // present; decision mimid-1wgh.69. maxSizeBlobSet is
+                    // MAX_BLOB_LEN, 64 the §2.1 minimum of maxDataSources.
+                    "urn:ietf:params:jmap:blob2": {
+                        "maxSizeBlobSet": 16_777_216,
+                        "maxDataSources": 64,
+                        "supportedTypeNames": [],
+                        "supportedDigestAlgorithms": ["sha-256"],
+                        "uploadUrl": null,
+                        "chunkSize": null,
+                        "supportedImageReadTypes": null,
+                        "supportedImageWriteTypes": null,
+                        "supportedArchiveTypes": null,
+                        "supportedExtractTypes": null,
+                        "supportedCompressTypes": null,
+                        "supportedDecompressTypes": null,
+                        "supportedDeltaTypes": null,
+                        "supportedPatchTypes": null,
+                        "maxConvertSize": null,
+                        "maxArchiveEntries": null,
+                        "maxImageDimension": null
                     }
                 }
             }

@@ -33,7 +33,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use crate::config::Domain;
 
 pub use blobs::{
-    Blob, BlobError, BlobId, BlobQuota, DEFAULT_BLOB_LIFETIME_SECS, ExpiredBlobs,
+    Blob, BlobError, BlobId, BlobInfo, BlobQuota, DEFAULT_BLOB_LIFETIME_SECS, ExpiredBlobs,
     MAX_ACCOUNT_BLOB_BYTES, MAX_ACCOUNT_BLOBS, MAX_BLOB_LEN, MAX_MEDIA_TYPE_LEN,
     MIN_BLOB_LIFETIME_SECS, MalformedBlobId,
 };

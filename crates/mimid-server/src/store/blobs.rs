@@ -312,6 +312,73 @@ impl Store {
     }
 }
 
+/// What [`Store::blob_info`] reads of a blob: everything but its octets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BlobInfo {
+    /// The media type the upload named.
+    pub media_type: String,
+    /// The length in octets.
+    pub len: u64,
+    /// Upload time, milliseconds since the UNIX epoch.
+    pub created_at: u64,
+}
+
+impl Store {
+    /// The media type, length and upload time of the blob `blob_id` if
+    /// `account_id` uploaded it, without reading its octets; `None` as for
+    /// [`Store::blob`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::blob`].
+    pub async fn blob_info(
+        &self,
+        account_id: &str,
+        blob_id: &BlobId,
+    ) -> Result<Option<BlobInfo>, StoreError> {
+        let row: Option<(String, i64, i64)> = sqlx::query_as(
+            "SELECT media_type, length(bytes), created_at FROM blob \
+             WHERE blob_id = ? AND account_id = ?",
+        )
+        .bind(blob_id.as_str())
+        .bind(account_id)
+        .fetch_optional(&self.reader)
+        .await?;
+        row.map(|(media_type, len, created_at)| {
+            Ok(BlobInfo {
+                media_type,
+                len: from_sql_int(len)?,
+                created_at: from_sql_int(created_at)?,
+            })
+        })
+        .transpose()
+    }
+
+    /// Deletes the blob `blob_id` if `account_id` uploaded it, and says
+    /// whether it did: another account's blob is left alone and reported
+    /// as `false`, as is an unknown one. Afterwards neither
+    /// [`Store::blob`] nor [`Store::asset`] finds it, and it no longer
+    /// counts against the account's quota.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails; nothing is deleted
+    /// then.
+    pub async fn delete_blob(
+        &self,
+        account_id: &str,
+        blob_id: &BlobId,
+    ) -> Result<bool, StoreError> {
+        let deleted = sqlx::query("DELETE FROM blob WHERE blob_id = ? AND account_id = ?")
+            .bind(blob_id.as_str())
+            .bind(account_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(deleted.rows_affected() > 0)
+    }
+}
+
 impl Store {
     /// Deletes every blob, of any account, uploaded before `cutoff_ms`
     /// (milliseconds since the UNIX epoch), and says how many and how many
@@ -555,6 +622,42 @@ mod tests {
             store.delete_blobs_created_before(2000).await.unwrap(),
             ExpiredBlobs::default()
         );
+    }
+
+    #[tokio::test]
+    async fn a_blob_is_deleted_by_its_owner_only() {
+        let (_dir, store, alice, bob) = open().await;
+        let quota = BlobQuota::new(10, 10, 100);
+        let id = store
+            .insert_blob(&alice, "image/png", &[7; 10], 42, quota)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.blob_info(&alice, &id).await.unwrap(),
+            Some(BlobInfo {
+                media_type: "image/png".to_owned(),
+                len: 10,
+                created_at: 42
+            })
+        );
+        assert_eq!(store.blob_info(&bob, &id).await.unwrap(), None);
+        // Alice is full.
+        assert!(matches!(
+            store.insert_blob(&alice, "a/b", &[0; 1], 43, quota).await,
+            Err(BlobError::OverQuota)
+        ));
+
+        assert!(!store.delete_blob(&bob, &id).await.unwrap());
+        assert_eq!(store.asset(&id).await.unwrap(), Some(vec![7; 10]));
+        assert!(store.delete_blob(&alice, &id).await.unwrap());
+        assert_eq!(store.asset(&id).await.unwrap(), None);
+        assert_eq!(store.blob_info(&alice, &id).await.unwrap(), None);
+        assert!(!store.delete_blob(&alice, &id).await.unwrap(), "only once");
+        // The quota has room again.
+        store
+            .insert_blob(&alice, "a/b", &[0; 10], 44, quota)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

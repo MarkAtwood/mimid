@@ -41,7 +41,8 @@
 //! blob is the uploader's only (RFC 8620 §6.1).
 //!
 //! [`BlobSweeper`] deletes every blob a lifetime after its upload
-//! (decision mimid-1wgh.67), every [`BLOB_SWEEP_INTERVAL`]; then
+//! (decision mimid-1wgh.67), every [`BLOB_SWEEP_INTERVAL`], and the
+//! uploader may delete one earlier with `Blob/set` destroy; then
 //! download, `/assets` and `/jmap/asset` answer `404` for it, as for an id
 //! never issued.
 //!
@@ -62,13 +63,11 @@
 //! # Limitations
 //!
 //! - A blob is deleted a fixed lifetime after upload ([`BlobSweeper`];
-//!   decision mimid-1wgh.67), whether or not a message still names it, and
-//!   only by the sweep: an expired blob may be served for up to
-//!   [`BLOB_SWEEP_INTERVAL`] longer, and counts against the quota until
-//!   then. A full account frees up only as its blobs expire.
-//! - There is no `Blob/set` destroy (draft-ietf-jmap-blobext-03 §4; RFC
-//!   8620 defines no blob deletion): crate-jmap's `jmap-blob-server` has
-//!   it, but needs a whole blob2 backend (decision mimid-1wgh.67).
+//!   decision mimid-1wgh.67), whether or not a message still names it, or
+//!   earlier by its uploader's draft-ietf-jmap-blobext-03 `Blob/set`
+//!   destroy (`super::methods::blob`; decision mimid-1wgh.69). An expired
+//!   blob may be served for up to [`BLOB_SWEEP_INTERVAL`] longer, and
+//!   counts against the quota until then.
 //! - The sending agent does not set the ExternalPart's `expires`
 //!   (mimi-content-10 §4.5) to the server's lifetime, so a recipient is
 //!   not told when an attachment will be gone.

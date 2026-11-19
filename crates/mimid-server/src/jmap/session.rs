@@ -14,7 +14,9 @@
 //! §Account-Level Capability Object defines them (jmap-chat-spec 92fecd6),
 //! and, when the server deletes blobs, `assetLifetime`, the seconds a blob
 //! stays at `assetUrl` after its upload (jmap-chat-spec 120db2c;
-//! [`super::JmapOptions::asset_lifetime`]).
+//! [`super::JmapOptions::asset_lifetime`]). Each account also has
+//! draft-ietf-jmap-blobext-03's `urn:ietf:params:jmap:blob2`
+//! (`super::methods::blob`).
 //!
 //! # Limitations
 //!
@@ -31,6 +33,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use jmap_blob_types::BlobAccountCapability;
 use jmap_chat_mimi_types::MimiCapability;
 use jmap_chat_types::{ChatCapability, JMAP_CHAT_URI};
 use serde::Serialize;
@@ -55,13 +58,18 @@ pub const MIMI_CAPABILITY: &str = "urn:ietf:params:jmap:chat:mimi";
 
 /// Every capability the server supports: the keys of the Session's
 /// `capabilities`, and the only URIs a request may name in `using`.
-pub const CAPABILITIES: [&str; 5] = [
+pub const CAPABILITIES: [&str; 6] = [
     CORE_CAPABILITY,
     JMAP_CHAT_URI,
     MIMI_CAPABILITY,
     JMAP_I18N_URI,
     METADATA_CAPABILITY,
+    BLOB2_CAPABILITY,
 ];
+
+/// draft-ietf-jmap-blobext-03 §2.1: `Blob/get`, `Blob/set`, `Blob/lookup`
+/// and `Blob/convert` (bead mimid-1wgh.14.7).
+pub const BLOB2_CAPABILITY: &str = jmap_blob_types::JMAP_BLOB2_URI;
 
 /// draft-ietf-jmap-metadata-05 §1.2.1: Chat `privateMetadata` (decision
 /// mimid-1wgh.63).
@@ -120,13 +128,16 @@ pub(super) struct SessionTemplate {
     hub_sender: String,
     max_key_packages: u64,
     asset_lifetime: Option<u64>,
+    blob: BlobAccountCapability,
 }
 
 impl SessionTemplate {
     /// The template for a server reachable at `base_url`, serving users of
     /// `domain`, whose hub signs with the TLS-encoded ExternalSender
     /// `hub_sender`, which keeps a blob at `assetUrl` for
-    /// `asset_lifetime` seconds after its upload (`None`: no limit).
+    /// `asset_lifetime` seconds after its upload (`None`: no limit), and
+    /// whose accounts have the `urn:ietf:params:jmap:blob2` capability
+    /// `blob`.
     ///
     /// # Panics
     ///
@@ -139,6 +150,7 @@ impl SessionTemplate {
         hub_sender: &[u8],
         max_key_packages: u64,
         asset_lifetime: Option<u64>,
+        blob: BlobAccountCapability,
     ) -> Self {
         Self {
             base_url: base_url.to_string(),
@@ -150,6 +162,7 @@ impl SessionTemplate {
             hub_sender: URL_SAFE_NO_PAD.encode(hub_sender),
             max_key_packages,
             asset_lifetime,
+            blob,
         }
     }
 
@@ -206,6 +219,7 @@ impl SessionTemplate {
                 metadata: AccountMetadata {
                     data_types: BTreeMap::from([("Chat", super::metadata::chat_info())]),
                 },
+                blob: self.blob.clone(),
             },
         };
         Ok(SessionBody {
@@ -224,6 +238,7 @@ impl SessionTemplate {
                 mimi: Empty {},
                 i18n: Empty {},
                 metadata: Empty {},
+                blob: Empty {},
             },
             primary_accounts: BTreeMap::from([
                 (JMAP_CHAT_URI, account_id.clone()),
@@ -318,6 +333,9 @@ struct SessionCapabilities {
     /// draft-ietf-jmap-metadata-05 §1.2.1: an empty object.
     #[serde(rename = "urn:ietf:params:jmap:metadata")]
     metadata: Empty,
+    /// draft-ietf-jmap-blobext-03 §2.1: "MUST be an empty object".
+    #[serde(rename = "urn:ietf:params:jmap:blob2")]
+    blob: Empty,
 }
 
 #[derive(Debug, Serialize)]
@@ -367,6 +385,9 @@ struct AccountCapabilities {
     i18n: Empty,
     #[serde(rename = "urn:ietf:params:jmap:metadata")]
     metadata: AccountMetadata,
+    /// draft-ietf-jmap-blobext-03 §2.1.
+    #[serde(rename = "urn:ietf:params:jmap:blob2")]
+    blob: BlobAccountCapability,
 }
 
 /// `GET /.well-known/jmap`: the Session for the authenticated account.

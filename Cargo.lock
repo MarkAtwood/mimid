@@ -1855,6 +1855,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "jmap-blob-server"
+version = "0.5.0"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=b85dfc856dbc26398aef5dc92d0da8ec1973c01c#b85dfc856dbc26398aef5dc92d0da8ec1973c01c"
+dependencies = [
+ "base64 0.22.1",
+ "jmap-blob-types",
+ "jmap-server",
+ "jmap-types",
+ "serde_json",
+]
+
+[[package]]
 name = "jmap-blob-types"
 version = "0.5.0"
 source = "git+https://github.com/MarkAtwood/crate-jmap?rev=b85dfc856dbc26398aef5dc92d0da8ec1973c01c#b85dfc856dbc26398aef5dc92d0da8ec1973c01c"
@@ -2656,6 +2668,8 @@ dependencies = [
  "httpdate",
  "hyper",
  "hyper-util",
+ "jmap-blob-server",
+ "jmap-blob-types",
  "jmap-chat-mimi-types",
  "jmap-chat-types",
  "jmap-metadata-server",
