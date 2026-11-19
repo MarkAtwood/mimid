@@ -7,10 +7,10 @@ use mimi_protocol::{FrankingAgentData, IdentifierUri, ParticipantListData, compo
 use mimi_room_policy::BaseRoomPolicy;
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 
-use super::components::decode;
 use super::state::room_uri_domain;
 use super::{HubError, HubRequirements};
 use crate::config::Domain;
+use mimi_protocol::components::decode;
 
 /// RFC 9420 §5.3: `CredentialType` basic (0x0001).
 const BASIC_CREDENTIAL_TYPE: [u8; 2] = [0x00, 0x01];

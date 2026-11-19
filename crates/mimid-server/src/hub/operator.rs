@@ -29,7 +29,9 @@ use mimi_protocol::{
     UpdateRoomResponse, UserindexRolePair,
 };
 
-use super::{Hub, HubError, components};
+use mimi_protocol::components;
+
+use super::{Hub, HubError};
 
 /// room-policy-04 §8.1.3: the banned role.
 const BANNED_ROLE: u32 = 1;

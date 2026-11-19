@@ -19,13 +19,13 @@ use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::wire::CipherSuite;
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::PARTICIPANT_LIST;
+use mimi_protocol::components::apply_commit_op;
 use mimi_protocol::{
     AbuseReport, AbuseType, AbusiveMessage, Frank, ParticipantListUpdate, SubmitMessageResponse,
     SubmitResult, UpdateResult, UserRolePair,
 };
 use mimid_server::config::Domain;
 use mimid_server::hub::Hub;
-use mimid_server::hub::components::apply_commit_op;
 
 use common::*;
 use submit::submit_request;

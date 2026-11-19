@@ -43,7 +43,7 @@
 
 mod abuse;
 pub mod assets;
-pub mod components;
+use mimi_protocol::components;
 pub mod fanout;
 mod group_info;
 mod key_material;

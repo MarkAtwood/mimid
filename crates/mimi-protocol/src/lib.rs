@@ -137,10 +137,10 @@
 //!   `externalProposals` or `invalidProposals` list, or an empty `/notify`
 //!   body, decodes (decision mimid-1wgh.5.49). [`NotifyRequest::decode`]
 //!   rejects an empty `roomId` (decision mimid-1wgh.5.50).
-//! - Component codecs check the wire form only. Applying a
-//!   [`ParticipantListUpdate`] (index ranges, at most one change per user
-//!   per commit) and authorizing any update are left to the caller (task
-//!   mimid-1wgh.5.48).
+//! - Component codecs check the wire form only. [`components`] applies a
+//!   commit's component updates (index ranges, at most one change per user
+//!   per commit; see its own Limitations); authorizing any update is left
+//!   to the caller (task mimid-1wgh.5.48).
 //! - Opaque fields stay opaque: [`UserRolePair::user`] is not checked to be
 //!   a URI (decision mimid-1wgh.5.46), and [`RichDescription`]'s fields are
 //!   not checked to be UTF-8, a media type or a language tag (decision
@@ -166,6 +166,7 @@
 
 mod abuse;
 mod component;
+pub mod components;
 mod consent;
 mod directory;
 mod frank;

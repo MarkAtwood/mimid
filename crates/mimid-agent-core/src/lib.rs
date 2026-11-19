@@ -108,8 +108,10 @@
 //!   mimid-f3bk).
 //! - Delivery to users of other providers is the server's job (fanout);
 //!   this crate talks only to its own server.
-//! - `components` and `uri` are copies of mimid-server code, kept so this
-//!   crate does not depend on the server's stack; they must stay in step.
+//! - `uri` is a copy of mimid-server code, kept so this crate does not
+//!   depend on the server's stack (its HTTP, SQLite and TLS stack has no
+//!   place on a phone); the two must stay in step. Component application
+//!   is shared through `mimi_protocol::components` (bead mimid-mxm5).
 //! - Received messages are returned, not stored: keeping the plaintext is
 //!   the caller's job (bead mimid-1wgh.13.12). So is keeping a message's
 //!   frank and `application_data` until the user reports it.
@@ -130,7 +132,6 @@
 mod agent;
 pub mod asset;
 mod client;
-pub mod components;
 pub mod didwebvh;
 mod error;
 pub mod frank;

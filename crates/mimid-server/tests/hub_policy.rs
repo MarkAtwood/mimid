@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use appendix_a::{a1, a2, a3, banned, role};
 use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
+use mimi_protocol::components::ComponentError;
 use mimi_protocol::tls_codec::Serialize;
 use mimi_protocol::{
     IdentifierUri, ParticipantListData, ParticipantListUpdate, RichDescription, RoomMetaData,
@@ -26,7 +27,6 @@ use mimi_room_policy::{
     BaseRoomPolicy, Capability as C, Denied as R, MembershipAction as A, PolicyError, PreAuthData,
     PreAuthRoleEntry, RoleData,
 };
-use mimid_server::hub::components::ComponentError;
 use mimid_server::hub::policy::{
     AppDataOp, Commit, Committer, Denied, Origin, Proposal, ProposalKind as K, ProposalSender,
     RoomState, authorize_commit, authorize_group_info, authorize_key_material, authorize_proposal,

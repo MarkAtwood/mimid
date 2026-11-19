@@ -91,8 +91,8 @@ use mimi_room_policy::{
     NO_ROLE_INDEX, Occupancy, PolicyError, PreAuthData, RoleData,
 };
 
-use super::components::{
-    self, ComponentError, ParticipantChange, ParticipantListCommit, decode, is_hub_tracked,
+use mimi_protocol::components::{
+    self, ComponentError, ParticipantChange, ParticipantListCommit, decode, is_policy_component,
 };
 
 /// The policy-relevant state of a room before a commit or proposal.
@@ -549,7 +549,7 @@ fn refuse_kind(kind: &ProposalKind) -> Result<(), Denied> {
         ProposalKind::AppDataUpdate {
             component_id,
             op: AppDataOp::Remove,
-        } if is_hub_tracked(*component_id) => Err(Denied::ComponentRemoval(*component_id)),
+        } if is_policy_component(*component_id) => Err(Denied::ComponentRemoval(*component_id)),
         _ => Ok(()),
     }
 }

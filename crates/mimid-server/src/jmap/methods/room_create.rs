@@ -48,7 +48,9 @@ use serde_json::{Value, json};
 
 use super::Services;
 use crate::follower::key_packages::client_uri;
-use crate::hub::{Hub, HubError, components};
+use mimi_protocol::components;
+
+use crate::hub::{Hub, HubError};
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
 use crate::jmap::bus::{Change, ChangeBus};

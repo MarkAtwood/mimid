@@ -35,12 +35,12 @@ use serde_json::json;
 
 use crate::AgentError;
 use crate::client::{ConsentRecord, Jmap};
-use crate::components::apply_commit_op;
 use crate::didwebvh::{DidWebvhConfig, Pin, RoomClient, check_pin, required_capabilities};
 use crate::frank::{self, VerifiedFrank};
 use crate::journal::{Journaled, Receipt};
 use crate::state::{Held, Room, RoomStatus, State, StateDir};
 use crate::uri::{normalized_uri, user_uri_domain};
+use mimi_protocol::components::apply_commit_op;
 
 /// mls-extensions-11 §5 `app_components`.
 const APP_COMPONENTS: u16 = 0x0001;

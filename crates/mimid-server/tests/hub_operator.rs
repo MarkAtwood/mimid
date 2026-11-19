@@ -10,8 +10,8 @@ mod common;
 mod update;
 
 use mimi_protocol::UpdateResult;
+use mimi_protocol::components::apply_commit_op;
 use mimid_server::hub::HubError;
-use mimid_server::hub::components::apply_commit_op;
 
 use common::*;
 use update::{commit_request, member_room, response};

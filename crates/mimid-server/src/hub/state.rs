@@ -9,9 +9,9 @@ use mimi_protocol::component_id::{PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_room_policy::BaseRoomPolicy;
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ComponentID, PREAUTH_LIST, ROLES_LIST};
 
-use super::components::{ComponentError, decode};
 use super::policy::RoomState;
 use crate::config::Domain;
+use mimi_protocol::components::{ComponentError, decode};
 
 /// The URI scheme of MIMI identifiers (protocol-07 §2.1).
 const MIMI_SCHEME_PREFIX: &str = "mimi://";

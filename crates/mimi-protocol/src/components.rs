@@ -1,11 +1,16 @@
-//! Application logic for the MLS application components the hub tracks:
-//! `participant_list` (protocol-07 §7.5) and the room-policy-04
-//! `roles_list` (§3), `preauth_list` (§4) and `base_room_policy` (§5).
+//! The mls-extensions-11 §4.7 application logic for the MLS application
+//! components mimid rooms carry: `participant_list` (protocol-07 §7.5),
+//! `room_metadata` (§7.6), `franking_agent` (§5.4.1) and the
+//! room-policy-04 `roles_list` (§3), `preauth_list` (§4) and
+//! `base_room_policy` (§5).
 //!
 //! mls-extensions-11 §4.7 hands the application, per component ID, the
 //! `update` fields of a commit's AppDataUpdate proposals in commit order;
-//! the application returns the new data or calls the update invalid.
-//! [`apply_updates`] is that logic for the hub-tracked components:
+//! the application returns the new data or calls the update invalid. The
+//! hub and every member must compute the same next GroupContext, so
+//! mimid-server's hub and mimid-agent-core both use this module (bead
+//! mimid-mxm5). [`apply_updates`] is that logic for the
+//! [policy components](is_policy_component):
 //!
 //! - every `ParticipantListUpdate` of a commit is resolved against the
 //!   list at the start of the epoch (protocol-07 §7.5; decision
@@ -22,33 +27,39 @@
 //! Every update is decoded strictly: trailing bytes, non-minimal lengths
 //! and invalid enum values are rejected.
 //!
-//! [`apply_commit_op`] wraps it as the hub's `apply` function for every
-//! component a Commit updates (decision mimid-1wgh.6.53).
+//! [`apply_commit_op`] wraps it as the `apply` function for every
+//! component a Commit updates (decision mimid-1wgh.6.53), adding
+//! `room_metadata` and `franking_agent`.
 //!
 //! # Limitations
 //!
 //! - A `roles_list` update is only decoded here. Its §3/§5 structural rules
-//!   depend on the `base_room_policy` after the commit, so
-//!   [`crate::hub::policy::authorize_commit`] validates it.
+//!   depend on the `base_room_policy` after the commit, so the hub's room
+//!   policy check validates it.
 //! - A `participant_list` entry with role 0 is accepted here; room policy
 //!   denies an action that gives a user role 0 (room-policy-04 §3).
 //! - [`apply_updates`] does not handle an AppDataUpdate `remove`;
-//!   [`apply_commit_op`] passes it through and room policy refuses it for
-//!   these components.
-//! - AppDataUpdates for components other than these four,
-//!   `room_metadata` and `franking_agent` are invalid, including the
-//!   room-policy-04 §6 and §7 components (decision mimid-1wgh.6.53).
+//!   [`apply_commit_op`] passes it through and the hub's room policy
+//!   refuses it for the policy components.
+//! - Nothing here authorizes an update: the §8.2 capabilities of a
+//!   `room_metadata` change, the `room_uri` rules and the refusal of any
+//!   `franking_agent` change are the hub's room policy (decisions
+//!   mimid-1wgh.64, mimid-1wgh.6.42).
+//! - AppDataUpdates for components other than these six and the
+//!   [`MLS_BUILT_IN`] ones are invalid, including the room-policy-04 §6
+//!   and §7 components (decision mimid-1wgh.6.53).
 
 use std::collections::HashSet;
 
 use mimi_mls::member::ComponentOp;
-use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
-use mimi_protocol::tls_codec::{self, Deserialize, Serialize};
-use mimi_protocol::{
-    FrankingAgentUpdate, ParticipantListData, ParticipantListUpdate, RoomMetaUpdate, UserRolePair,
-};
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ComponentID, PREAUTH_LIST, ROLES_LIST};
 use mimi_room_policy::{BaseRoomPolicy, PreAuthData, RoleData};
+use tls_codec::{Deserialize, Serialize};
+
+use crate::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
+use crate::{
+    FrankingAgentUpdate, ParticipantListData, ParticipantListUpdate, RoomMetaUpdate, UserRolePair,
+};
 
 /// Why a component update is invalid (mls-extensions-11 §4.7: "the
 /// application logic ... considers this update invalid").
@@ -99,12 +110,14 @@ pub enum ComponentError {
     /// decision mimid-1wgh.64).
     #[error("component {0:#06x} is updated more than once in the commit")]
     RepeatedUpdate(ComponentID),
-    /// The component is not one the hub tracks.
-    #[error("component {0:#06x} is not tracked by the hub")]
-    NotHubTracked(ComponentID),
-    /// The component is unknown to the hub, so an AppDataUpdate for it is
-    /// invalid (mls-extensions-11 §4.7; decision mimid-1wgh.6.53).
-    #[error("component {0:#06x} is unknown to the hub")]
+    /// [`apply_updates`] was given a component that is not a
+    /// [policy component](is_policy_component).
+    #[error("component {0:#06x} is not a policy component")]
+    NotPolicyComponent(ComponentID),
+    /// The component is not one [`is_known_component`] accepts, so an
+    /// AppDataUpdate for it is invalid (mls-extensions-11 §4.7; decision
+    /// mimid-1wgh.6.53).
+    #[error("component {0:#06x} is unknown")]
     UnknownComponent(ComponentID),
 }
 
@@ -267,7 +280,11 @@ impl ParticipantListCommit {
 
 /// Decodes `bytes` as the data or update of `component_id`, rejecting
 /// trailing bytes.
-pub(crate) fn decode<T: Deserialize>(
+///
+/// # Errors
+///
+/// [`ComponentError::Decode`] if `bytes` is not exactly one `T`.
+pub fn decode<T: Deserialize>(
     component_id: ComponentID,
     bytes: &[u8],
 ) -> Result<T, ComponentError> {
@@ -278,15 +295,20 @@ pub(crate) fn decode<T: Deserialize>(
 }
 
 /// Encodes a participant list as component data.
-pub(crate) fn encode_participant_list(
-    list: &ParticipantListData,
-) -> Result<Vec<u8>, ComponentError> {
+///
+/// # Errors
+///
+/// [`ComponentError::Encode`] if the list does not encode.
+pub fn encode_participant_list(list: &ParticipantListData) -> Result<Vec<u8>, ComponentError> {
     list.tls_serialize_detached()
         .map_err(ComponentError::Encode)
 }
 
-/// Whether the hub tracks `component_id` and [`apply_updates`] handles it.
-pub fn is_hub_tracked(component_id: ComponentID) -> bool {
+/// Whether `component_id` is a policy component: `participant_list` or
+/// the room-policy-04 `roles_list`, `preauth_list` or `base_room_policy`,
+/// the components room policy is evaluated over and [`apply_updates`]
+/// handles.
+pub fn is_policy_component(component_id: ComponentID) -> bool {
     matches!(
         component_id,
         PARTICIPANT_LIST | ROLES_LIST | PREAUTH_LIST | BASE_ROOM_POLICY
@@ -294,25 +316,24 @@ pub fn is_hub_tracked(component_id: ComponentID) -> bool {
 }
 
 /// mls-extensions-11 §5.1: the components whose AppDataUpdates mimi-mls
-/// itself applies (app_components, safe_aad, content_media_types); the
-/// hub's [`apply_commit_op`] is never asked about them.
+/// itself applies (app_components, safe_aad, content_media_types);
+/// [`apply_commit_op`] is never asked about them.
 pub const MLS_BUILT_IN: [ComponentID; 3] = [0x0001, 0x0002, 0x0003];
 
-/// Whether the hub accepts an AppDataUpdate of `component_id`: the
-/// hub-tracked components, `room_metadata` and `franking_agent`, which
+/// Whether an AppDataUpdate of `component_id` can be valid: the policy
+/// components, `room_metadata` and `franking_agent`, which
 /// [`apply_commit_op`] applies, and the [`MLS_BUILT_IN`] components, which
 /// mimi-mls applies (decision mimid-1wgh.4.76.2). An AppDataUpdate of any
 /// other component makes a Commit invalid, so the hub also refuses it as a
 /// standalone proposal (bead mimid-1wgh.6.73).
 pub fn is_known_component(component_id: ComponentID) -> bool {
-    is_hub_tracked(component_id)
+    is_policy_component(component_id)
         || component_id == ROOM_METADATA
         || component_id == FRANKING_AGENT
         || MLS_BUILT_IN.contains(&component_id)
 }
 
-/// The mls-extensions-11 §4.7 application logic for a hub-tracked
-/// component: the new data after a commit's `updates` to it, in commit
+/// The mls-extensions-11 §4.7 application logic for a policy component: the new data after a commit's `updates` to it, in commit
 /// order. Participant list updates all index the list in `current`
 /// (protocol-07 §7.5; decision mimid-1wgh.6.75).
 ///
@@ -322,7 +343,7 @@ pub fn is_known_component(component_id: ComponentID) -> bool {
 ///
 /// # Errors
 ///
-/// [`ComponentError::NotHubTracked`], [`ComponentError::NoUpdates`], or
+/// [`ComponentError::NotPolicyComponent`], [`ComponentError::NoUpdates`], or
 /// the first update that does not decode or apply.
 pub fn apply_updates(
     component_id: ComponentID,
@@ -347,15 +368,17 @@ pub fn apply_updates(
         ROLES_LIST => replace::<RoleData>(component_id, updates),
         PREAUTH_LIST => replace::<PreAuthData>(component_id, updates),
         BASE_ROOM_POLICY => replace::<BaseRoomPolicy>(component_id, updates),
-        other => Err(ComponentError::NotHubTracked(other)),
+        other => Err(ComponentError::NotPolicyComponent(other)),
     }
 }
 
-/// The hub's mls-extensions-11 §4.7 application logic for one component
-/// of a Commit, as the `apply` function of
-/// [`mimi_mls::observer::Observer::process`] (decision mimid-1wgh.6.53):
+/// The mls-extensions-11 §4.7 application logic for one component of a
+/// Commit, as the `apply` function of the hub's
+/// [`mimi_mls::observer::Observer::process`] and a member's
+/// [`mimi_mls::member::Member::process`] and `commit` (decision
+/// mimid-1wgh.6.53):
 ///
-/// - the four hub-tracked components go through [`apply_updates`];
+/// - the four policy components go through [`apply_updates`];
 /// - `room_metadata` (protocol-07 §7.6) and `franking_agent` (§5.4.1)
 ///   updates are decoded strictly, and the last one replaces the data. A
 ///   Commit may update `room_metadata` only once (protocol-07 §7.6;
@@ -363,9 +386,8 @@ pub fn apply_updates(
 ///   a `room_metadata` change and refuses any `franking_agent` change
 ///   (decision mimid-1wgh.6.42);
 /// - a `remove` of any of these components passes through; room policy
-///   refuses it for the hub-tracked ones;
-/// - every other component is unknown to the hub, and its AppDataUpdate is
-///   invalid.
+///   refuses it for the policy components;
+/// - every other component is unknown, and its AppDataUpdate is invalid.
 ///
 /// # Errors
 ///

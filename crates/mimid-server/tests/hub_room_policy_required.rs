@@ -19,10 +19,10 @@ use mimi_mls::member::{AppDataUpdate, ComponentOp, ExternalSender, Member};
 use mimi_mls::tls_codec::Serialize;
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST};
+use mimi_protocol::components::{ComponentError, apply_commit_op};
 use mimi_protocol::{UpdateResult, UserRolePair};
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{Capability, Role, RoleData, SingleSourceRoleChangeTargets};
-use mimid_server::hub::components::{ComponentError, apply_commit_op};
 use mimid_server::hub::{Hub, HubError};
 
 use common::*;

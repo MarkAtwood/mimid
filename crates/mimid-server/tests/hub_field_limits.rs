@@ -13,9 +13,9 @@ use mimi_mls::member::{AppDataUpdate, ExternalSender, Member};
 use mimi_mls::tls_codec::Serialize;
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::PARTICIPANT_LIST;
+use mimi_protocol::components::apply_commit_op;
 use mimi_protocol::{ParticipantListUpdate, UpdateResult, UserRolePair};
 use mimid_server::config::Domain;
-use mimid_server::hub::components::apply_commit_op;
 use mimid_server::hub::{Hub, HubError};
 use mimid_server::limits::FieldLimits;
 

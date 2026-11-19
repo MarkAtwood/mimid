@@ -55,7 +55,7 @@ Dependencies point down this table, never up.
 | `mls-didwebvh` | draft-atwood-mls-didwebvh-credential: the credential codec, did:webvh log verification (over crate-jmap's `jmap-did-types`), the `did_webvh_heads` record, the group rules over abstract leaves, the controller side | Depend on openmls (`mimi-mls` applies its rules to OpenMLS groups); do I/O |
 | `mimi-content` | mimi-content-10 CBOR and MessageId | Depend on openmls or tokio; contain encryption (attachments are `.14`) |
 | `mimi-room-policy` | room-policy-04 codecs and policy evaluation | Depend on `mimi-mls` |
-| `mimi-protocol` | protocol wire types and franking | Use openmls directly (MLS types come only through `mimi_mls::wire`); do I/O |
+| `mimi-protocol` | protocol wire types and franking; `components`, the mls-extensions-11 §4.7 application logic for the room components (protocol-07 and room-policy-04) that the hub and agents share. Depends on `mimi-room-policy` | Use openmls directly (MLS types come only through `mimi_mls::wire` and `mimi_mls::member::ComponentOp`); do I/O |
 | `mimid-server` | Hub and follower roles, the provider's JMAP Chat endpoint, admin CLI | Parse or decrypt application ciphertext; put SQL outside its store module |
 | `mimid-agent` | MLS keys and plaintext. It is the only component that sees either. It is the JMAP Chat ↔ MIMI bridge: users run a standard JMAP Chat client against its local endpoint | Serve plaintext anywhere except its local endpoint |
 

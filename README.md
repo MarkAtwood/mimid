@@ -60,7 +60,7 @@ Each crate documents its own limitations in the `# Limitations` section of its r
 | `mimi-mls` | All OpenMLS usage, MLS wire newtypes, label helpers |
 | `mimi-content` | mimi-content CBOR message format and MessageId |
 | `mimi-room-policy` | room-policy codecs and policy evaluation |
-| `mimi-protocol` | protocol wire types and franking |
+| `mimi-protocol` | protocol wire types and franking, and the room component update logic the hub and agents share |
 | `mimid-server` | The `mimid` provider server: hub and follower roles, and a JMAP Chat endpoint (partial) |
 | `mimid-agent-core` | The client engine: one user's MLS keys and rooms, through their mimid server's JMAP API |
 | `mimid-agent-jmap` | JMAP Chat over `mimid-agent-core`: the user's rooms as Chats and Messages |

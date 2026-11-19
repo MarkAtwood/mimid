@@ -2,8 +2,9 @@
 //! `mimi://<domain>/u/<id>` user URI shape (protocol-07 §2.1).
 //!
 //! [`normalized_uri`] is a copy of mimid-server's `hub::normalized_uri`
-//! (bead mimid-1wgh.13.8; see [`crate::components`] for why this crate
-//! carries copies). Keep the two in step.
+//! (bead mimid-1wgh.13.8; this crate does not depend on mimid-server, whose
+//! HTTP, SQLite and TLS stack has no place on a phone). Keep the two in
+//! step.
 
 /// `uri` in the normal form of RFC 3986 §6.2.2.1 and §6.2.2.2: the scheme
 /// and host in lowercase, percent-encoding hex digits in uppercase, and

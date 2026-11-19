@@ -1,4 +1,4 @@
-//! Tests for the hub-tracked component apply logic (`hub::components`).
+//! Tests for the component apply logic (`mimi_protocol::components`).
 //!
 //! Oracle: the expected lists are worked by hand from protocol-07 §7.5 and
 //! decision mimid-1wgh.6.75 (every update's indices refer to the list at
@@ -12,11 +12,11 @@
 
 use mimi_mls::member::ComponentOp;
 use mimi_protocol::component_id::{PARTICIPANT_LIST, ROOM_METADATA};
-use mimi_protocol::{ParticipantListData, ParticipantListUpdate, UserRolePair, UserindexRolePair};
-use mimi_room_policy::component_id::{BASE_ROOM_POLICY, PREAUTH_LIST, ROLES_LIST};
-use mimid_server::hub::components::{
+use mimi_protocol::components::{
     ComponentError, ParticipantChange, ParticipantListCommit, apply_commit_op, apply_updates,
 };
+use mimi_protocol::{ParticipantListData, ParticipantListUpdate, UserRolePair, UserindexRolePair};
+use mimi_room_policy::component_id::{BASE_ROOM_POLICY, PREAUTH_LIST, ROLES_LIST};
 
 fn list(entries: &[(&str, u32)]) -> ParticipantListData {
     ParticipantListData {
@@ -501,10 +501,10 @@ fn malformed_policy_updates_rejected() {
 }
 
 #[test]
-fn apply_updates_needs_hub_component_and_updates() {
+fn apply_updates_needs_policy_component_and_updates() {
     assert_eq!(
         apply_updates(ROOM_METADATA, None, &[BASE]),
-        Err(ComponentError::NotHubTracked(ROOM_METADATA))
+        Err(ComponentError::NotPolicyComponent(ROOM_METADATA))
     );
     assert_eq!(
         apply_updates(PARTICIPANT_LIST, Some(LIST_A2), &[]),

@@ -103,7 +103,6 @@ use mimi_protocol::{
 };
 use sha2::{Digest, Sha256};
 
-use super::components;
 use super::policy::{
     self, AppDataOp, Commit, Committer, Origin, Proposal, ProposalKind, ProposalSender, RoomState,
 };
@@ -112,6 +111,7 @@ use super::state::{identity_domain, member_domains, room_state};
 use super::{Hub, HubError, PendingAppData, Room, restore_room};
 use crate::config::Domain;
 use crate::store::{EpochSnapshot, EventKind, NewEvent, OutboxEntry};
+use mimi_protocol::components;
 
 /// RFC 9420 §6: the MLSMessage header of a Welcome, `version` mls10
 /// (0x0001) and `wire_format` mls_welcome (0x0003).

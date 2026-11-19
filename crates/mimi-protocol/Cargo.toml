@@ -7,6 +7,9 @@ description = "draft-ietf-mimi-protocol-07 wire types for the mimid MIMI referen
 
 [dependencies]
 mimi-mls = { path = "../mimi-mls" }
+# Component application (`components`) decodes the room-policy-04
+# components (bead mimid-mxm5).
+mimi-room-policy = { path = "../mimi-room-policy" }
 thiserror.workspace = true
 tls_codec.workspace = true
 iri-string.workspace = true

@@ -59,6 +59,7 @@ use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::wire::{GroupInfo, MLSMessage, RatchetTreeOption, Welcome};
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST};
+use mimi_protocol::components::apply_commit_op;
 use mimi_protocol::{
     GroupInfoOption, HandshakeBundle, ParticipantListData, ParticipantListUpdate, UpdateRequest,
     UpdateResult, UserRolePair,
@@ -67,7 +68,6 @@ use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{BaseRoomPolicy, Capability, Role, RoleData, SingleSourceRoleChangeTargets};
 use mimid_server::config::Domain;
 use mimid_server::hub::Hub;
-use mimid_server::hub::components::apply_commit_op;
 use mimid_server::store::{Store, StoredHubSecret};
 use serde_json::{Value, json};
 
