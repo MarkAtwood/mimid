@@ -11,7 +11,10 @@
 //! template of the asset server's URLs ([`ASSET_URL_TEMPLATE`]), and
 //! `assetDownloadUrl`, the template of the account's attachment fetches
 //! ([`asset_download_url`]), as draft-atwood-jmap-chat-mimi-00
-//! §Account-Level Capability Object defines them (jmap-chat-spec 92fecd6).
+//! §Account-Level Capability Object defines them (jmap-chat-spec 92fecd6),
+//! and, when the server deletes blobs, `assetLifetime`, the seconds a blob
+//! stays at `assetUrl` after its upload (jmap-chat-spec 120db2c;
+//! [`super::JmapOptions::asset_lifetime`]).
 //!
 //! # Limitations
 //!
@@ -116,12 +119,14 @@ pub(super) struct SessionTemplate {
     room_id_prefix: String,
     hub_sender: String,
     max_key_packages: u64,
+    asset_lifetime: Option<u64>,
 }
 
 impl SessionTemplate {
     /// The template for a server reachable at `base_url`, serving users of
     /// `domain`, whose hub signs with the TLS-encoded ExternalSender
-    /// `hub_sender`.
+    /// `hub_sender`, which keeps a blob at `assetUrl` for
+    /// `asset_lifetime` seconds after its upload (`None`: no limit).
     ///
     /// # Panics
     ///
@@ -133,6 +138,7 @@ impl SessionTemplate {
         domain: &Domain,
         hub_sender: &[u8],
         max_key_packages: u64,
+        asset_lifetime: Option<u64>,
     ) -> Self {
         Self {
             base_url: base_url.to_string(),
@@ -143,6 +149,7 @@ impl SessionTemplate {
             // draft-atwood-jmap-chat-mimi-00 L101, L160.
             hub_sender: URL_SAFE_NO_PAD.encode(hub_sender),
             max_key_packages,
+            asset_lifetime,
         }
     }
 
@@ -191,6 +198,8 @@ impl SessionTemplate {
                     }))?;
                     mimi.asset_url = Some(format!("{base}{ASSET_URL_TEMPLATE}"));
                     mimi.asset_download_url = Some(asset_download_url(base, &account_id));
+                    // Present only with assetUrl, which is always set here.
+                    mimi.asset_lifetime = self.asset_lifetime;
                     mimi
                 },
                 i18n: Empty {},

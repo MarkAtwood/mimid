@@ -561,3 +561,67 @@ async fn an_open_eventsource_stream_does_not_block_shutdown() {
         .expect("the stream ended");
     assert!(!matches!(end, Ok(Some(_))));
 }
+
+/// The Session's `assetLifetime` is the config file's
+/// `blob_lifetime_secs` (draft-atwood-jmap-chat-mimi-00 §Account-Level
+/// Capability Object, jmap-chat-spec 120db2c; bead mimid-1wgh.14.6).
+/// Oracle: the value written into the config file.
+#[tokio::test]
+async fn the_session_advertises_the_configured_blob_lifetime() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = |addrs: &Addrs| {
+        format!(
+            "domain = \"a.example\"\n\
+         listen = \"{listen}\"\n\
+         base_url = \"{base}\"\n\
+         database = \"{database}\"\n\
+         local_listen = \"{local}\"\n\
+         blob_lifetime_secs = 7201\n",
+            listen = addrs.listen,
+            base = addrs.base(),
+            local = addrs.local,
+            database = dir.path().join("mimid.sqlite").display(),
+        )
+    };
+    let (_server, addrs) =
+        Server::start(dir.path(), &[("RUST_LOG", "warn,mimid=info")], config).await;
+    let http = reqwest::Client::new();
+    let local_base = format!("http://{}/local/v1", addrs.local);
+    let response = http
+        .post(format!("{local_base}/users"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(serde_json::json!({"user": ALICE}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let token: serde_json::Value = http
+        .post(format!(
+            "{local_base}/users/{}/tokens",
+            "mimi%3A%2F%2Fa.example%2Fu%2Falice"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .map(|b| serde_json::from_slice(&b).unwrap())
+        .unwrap();
+    let session: serde_json::Value = http
+        .get(format!("{}/.well-known/jmap", addrs.base()))
+        .bearer_auth(token["token"].as_str().unwrap())
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .map(|b| serde_json::from_slice(&b).unwrap())
+        .unwrap();
+    let account = session["primaryAccounts"]["urn:ietf:params:jmap:chat:mimi"]
+        .as_str()
+        .unwrap();
+    let mimi =
+        &session["accounts"][account]["accountCapabilities"]["urn:ietf:params:jmap:chat:mimi"];
+    assert_eq!(mimi["assetLifetime"], serde_json::json!(7201), "{mimi}");
+    assert!(mimi["assetUrl"].is_string(), "{mimi}");
+}

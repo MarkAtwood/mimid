@@ -1803,7 +1803,9 @@ impl Agent {
     /// this user's server, and sent as an ExternalPart with disposition
     /// `attachment`; the text and the attachments go in a `processAll`
     /// MultiPart (mimi-content-10 §4.5), or one attachment without text on
-    /// its own. Without attachments this is [`Agent::send_text`]; empty
+    /// its own. Each part's `expires` is the upload time plus the server's
+    /// `assetLifetime`, or 0 (never) if the server states none
+    /// ([`crate::asset::expiry`]). Without attachments this is [`Agent::send_text`]; empty
     /// text is left out.
     ///
     /// # Errors
@@ -1837,6 +1839,11 @@ impl Agent {
         }
         for attachment in attachments {
             let sealed = crate::asset::seal(&attachment.content)?;
+            // The upload response has no time (RFC 8620 §6.1): the clock
+            // before the upload stands for the server's (asset.rs).
+            let uploaded_at = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
             let url = self.jmap.upload(sealed.stored.clone()).await?;
             parts.push(NestedPart {
                 disposition: Disposition::ATTACHMENT,
@@ -1846,6 +1853,7 @@ impl Agent {
                     attachment.content_type.clone(),
                     attachment.filename.clone(),
                     String::new(),
+                    crate::asset::expiry(uploaded_at, self.jmap.asset_lifetime),
                 )),
             });
         }
@@ -3682,6 +3690,7 @@ mod tests {
                 "image/png".into(),
                 name.into(),
                 String::new(),
+                0,
             )),
         };
         let text = |body: &str, disposition| NestedPart {

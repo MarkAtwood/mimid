@@ -234,7 +234,9 @@ async fn main() -> anyhow::Result<()> {
         let _ = stop_streams.send(true);
     };
     jmap_options.clock = Arc::clone(&clock);
-    // Uploads expire (decision mimid-1wgh.67); the sweep runs until exit.
+    // Uploads expire (decision mimid-1wgh.67); the sweep runs until exit,
+    // and the Session says when (assetLifetime).
+    jmap_options.asset_lifetime = Some(config.blob_lifetime_secs);
     let _blob_sweep = BlobSweeper::new(
         store.clone(),
         Arc::clone(&clock),

@@ -1,5 +1,6 @@
 //! A mimid server on loopback and agents against it, for the tests that
-//! need several users and devices (own_devices.rs, admin.rs).
+//! need several users and devices (own_devices.rs, admin.rs,
+//! attachment_expiry.rs).
 
 #![allow(dead_code)]
 
@@ -36,6 +37,11 @@ pub struct Server {
 /// local delivery, key packages, the protocol and JMAP routers) on
 /// `127.0.0.1:0`, with an account for each of `users`.
 pub async fn server(dir: &Path, users: &[&'static str]) -> Server {
+    server_with(dir, users, JmapOptions::default()).await
+}
+
+/// [`server`] with the JMAP endpoint's `options`.
+pub async fn server_with(dir: &Path, users: &[&'static str], options: JmapOptions) -> Server {
     let domain = Domain::try_from("a.example".to_owned()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_text = format!("http://{}", listener.local_addr().unwrap());
@@ -85,7 +91,7 @@ pub async fn server(dir: &Path, users: &[&'static str]) -> Server {
         store,
         Arc::clone(&hub),
         Arc::clone(&follower),
-        JmapOptions::default(),
+        options,
     )
     .unwrap();
     let app = router(directory(&base), Arc::clone(&hub), follower).merge(jmap);

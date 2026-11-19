@@ -17,6 +17,10 @@
 //!   plaintext or the stored octets. [`seal`]'s callers set it to the
 //!   stored octets.
 //! - `expires` is not checked here; the caller has the clock.
+//! - [`expiry`] counts from the sender's clock at the start of the upload,
+//!   not the server's upload time: an RFC 8620 §6.1 upload response
+//!   carries no time. A sender clock behind the server's only makes the
+//!   stated expiry early; one ahead makes it late.
 //! - The whole content is in memory.
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
@@ -85,19 +89,22 @@ impl std::fmt::Debug for Sealed {
 }
 
 impl Sealed {
-    /// The ExternalPart for this content stored at `url`. `size` is the
-    /// stored octets (see the module's Limitations); it does not expire.
+    /// The ExternalPart for this content stored at `url`, which stops
+    /// working at `expires` (mimi-content-10 §4.5: seconds since the UNIX
+    /// epoch, or 0 if it does not expire; see [`expiry`]). `size` is the
+    /// stored octets (see the module's Limitations).
     pub fn part(
         &self,
         url: String,
         content_type: String,
         filename: String,
         description: String,
+        expires: u32,
     ) -> ExternalPart {
         ExternalPart {
             content_type,
             url,
-            expires: 0,
+            expires,
             size: self.stored.len() as u64,
             enc_alg: AES_128_GCM,
             key: self.key.to_vec(),
@@ -109,6 +116,25 @@ impl Sealed {
             filename,
         }
     }
+}
+
+/// The ExternalPart `expires` (mimi-content-10 §4.5) of content uploaded
+/// at `uploaded_at` (seconds since the UNIX epoch) to a server that keeps
+/// it `lifetime` seconds, its mimi capability's `assetLifetime`
+/// (draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object,
+/// jmap-chat-spec 120db2c: a client MAY set `expires` to the upload time
+/// plus `assetLifetime`).
+///
+/// `None` (no limit stated) is 0, "does not expire". The sum saturates at
+/// `u32::MAX`, the largest `uint .size 4`, so a lifetime past 2106 reads
+/// as the latest time the field can carry; and it is at least 1, so that
+/// it never reads as 0.
+pub fn expiry(uploaded_at: u64, lifetime: Option<u64>) -> u32 {
+    lifetime.map_or(0, |lifetime| {
+        u32::try_from(uploaded_at.saturating_add(lifetime))
+            .unwrap_or(u32::MAX)
+            .max(1)
+    })
 }
 
 /// Encrypts `plaintext` under a fresh random key and nonce.
@@ -222,12 +248,38 @@ mod tests {
             "application/octet-stream".into(),
             String::new(),
             String::new(),
+            0,
         );
         assert_eq!(
             (part.enc_alg, part.hash_alg, part.size, part.aad.len()),
             (AES_128_GCM, SHA_256, 32, 0)
         );
         assert_eq!(open(&part, &sealed.stored).unwrap(), [0u8; 16]);
+    }
+
+    /// mimi-content-10 §4.5: `expires` is a `uint .size 4` of seconds
+    /// since the UNIX epoch, 0 for never. 1_763_510_400 is
+    /// 2025-11-19T00:00:00Z; 4_294_967_295 (2^32 - 1) is the largest
+    /// value of the field.
+    #[test]
+    fn expiry_is_upload_time_plus_lifetime_within_the_field() {
+        assert_eq!(expiry(1_763_510_400, None), 0);
+        assert_eq!(expiry(1_763_510_400, Some(2_592_000)), 1_766_102_400);
+        assert_eq!(expiry(1_763_510_400, Some(0)), 1_763_510_400);
+        assert_eq!(expiry(4_294_967_000, Some(295)), 4_294_967_295);
+        assert_eq!(expiry(4_294_967_000, Some(296)), u32::MAX);
+        assert_eq!(expiry(1_763_510_400, Some(u64::MAX)), u32::MAX);
+        assert_eq!(expiry(u64::MAX, Some(1)), u32::MAX);
+        // A clock before 1970 reads as 0; the result still is not "never".
+        assert_eq!(expiry(0, Some(0)), 1);
+        let part = seal(b"x").unwrap().part(
+            "u".into(),
+            "t".into(),
+            String::new(),
+            String::new(),
+            expiry(1_763_510_400, Some(3_600)),
+        );
+        assert_eq!(part.expires, 1_763_514_000);
     }
 
     #[test]
@@ -240,6 +292,7 @@ mod tests {
             "text/plain".into(),
             "f.txt".into(),
             String::new(),
+            0,
         );
         assert_eq!(open(&part, &a.stored).unwrap(), b"a file");
     }
@@ -247,7 +300,7 @@ mod tests {
     #[test]
     fn tampering_and_bad_parts_are_refused() {
         let sealed = seal(b"secret").unwrap();
-        let part = sealed.part("u".into(), "t".into(), String::new(), String::new());
+        let part = sealed.part("u".into(), "t".into(), String::new(), String::new(), 0);
         let mut changed = sealed.stored.clone();
         changed[0] ^= 1;
         assert_eq!(open(&part, &changed), Err(AssetError::HashMismatch));

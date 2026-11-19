@@ -80,6 +80,14 @@ pub struct JmapOptions {
     /// The limits every upload is checked against;
     /// [`BlobQuota::default`] by default.
     pub blob_quota: BlobQuota,
+    /// How long, in seconds, a blob stays at `assetUrl` after its upload,
+    /// advertised as the mimi capability's `assetLifetime`
+    /// (draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object,
+    /// jmap-chat-spec 120db2c). It states what a [`blobs::BlobSweeper`]
+    /// enforces, so whoever runs the sweeper sets it to the sweeper's
+    /// lifetime; the router does not sweep. `None` (the default):
+    /// `assetLifetime` is left out, as for a server that deletes nothing.
+    pub asset_lifetime: Option<u64>,
 }
 
 impl std::fmt::Debug for JmapOptions {
@@ -88,6 +96,7 @@ impl std::fmt::Debug for JmapOptions {
             .field("max_key_packages", &self.max_key_packages)
             .field("stop", &self.stop)
             .field("blob_quota", &self.blob_quota)
+            .field("asset_lifetime", &self.asset_lifetime)
             .finish_non_exhaustive()
     }
 }
@@ -99,6 +108,7 @@ impl Default for JmapOptions {
             stop: None,
             clock: Arc::new(SystemClock),
             blob_quota: BlobQuota::default(),
+            asset_lifetime: None,
         }
     }
 }
@@ -160,6 +170,7 @@ pub fn router(
         hub.domain(),
         &hub.hub_sender()?,
         options.max_key_packages,
+        options.asset_lifetime,
     );
     let bus = ChangeBus::new();
     bus.forward(follower.subscribe());

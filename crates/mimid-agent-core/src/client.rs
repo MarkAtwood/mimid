@@ -120,6 +120,11 @@ pub(crate) struct Jmap {
     /// The mimi capability's `assetUrl` template, if the server stores
     /// attachments.
     asset_url: Option<String>,
+    /// The mimi capability's `assetLifetime`: the seconds an upload stays
+    /// at `assetUrl` (draft-atwood-jmap-chat-mimi-00 §Account-Level
+    /// Capability Object, jmap-chat-spec 120db2c), or `None` if the server
+    /// states no limit.
+    pub asset_lifetime: Option<u64>,
     /// The mimi capability's `assetDownloadUrl` template, if the server
     /// fetches attachments.
     asset_download_url: Option<String>,
@@ -178,6 +183,8 @@ impl Jmap {
             )
             .replace("{accountId}", &account_id);
         let asset_url = mimi["assetUrl"].as_str().map(str::to_owned);
+        let asset_lifetime =
+            parse_asset_lifetime(mimi).map_err(|detail| AgentError::malformed(what, detail))?;
         let asset_download_url = mimi["assetDownloadUrl"].as_str().map(str::to_owned);
         let chat_info =
             &session["accounts"][&account_id]["accountCapabilities"][METADATA]["dataTypes"]["Chat"];
@@ -193,6 +200,7 @@ impl Jmap {
             room_id_prefix,
             upload_url,
             asset_url,
+            asset_lifetime,
             asset_download_url,
             chat_metadata,
             http,
@@ -810,6 +818,23 @@ async fn read_json(what: &str, response: reqwest::Response) -> Result<Value, Age
 
 /// The hub's ExternalSender from its base64url: `SignaturePublicKey` then
 /// a BasicCredential.
+/// The mimi capability's `assetLifetime`, `None` if absent or null.
+/// Anything but an UnsignedInt (RFC 8620 §1.3) is refused rather than read
+/// as "no limit", which would state a false "never" in every ExternalPart.
+fn parse_asset_lifetime(mimi: &Value) -> Result<Option<u64>, String> {
+    match mimi.get("assetLifetime") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .filter(|&n| n <= MAX_UNSIGNED_INT)
+            .map(Some)
+            .ok_or_else(|| format!("assetLifetime {value} is not an UnsignedInt")),
+    }
+}
+
+/// The largest JMAP UnsignedInt, 2^53 - 1 (RFC 8620 §1.3).
+const MAX_UNSIGNED_INT: u64 = (1 << 53) - 1;
+
 fn parse_hub_sender(text: &str) -> Result<HubSender, String> {
     let bytes = URL_SAFE_NO_PAD
         .decode(text)
@@ -917,6 +942,34 @@ pub(crate) fn expand_template(template: &str, vars: &[(&str, &str)]) -> Result<S
 
 #[cfg(test)]
 mod tests {
+
+    /// RFC 8620 §1.3: an UnsignedInt is an integer in 0..=2^53-1.
+    #[test]
+    fn asset_lifetime_is_an_unsigned_int_or_absent() {
+        use super::parse_asset_lifetime as parse;
+        use serde_json::json;
+        assert_eq!(parse(&json!({})), Ok(None));
+        assert_eq!(parse(&json!({"assetLifetime": null})), Ok(None));
+        assert_eq!(parse(&json!({"assetLifetime": 0})), Ok(Some(0)));
+        assert_eq!(
+            parse(&json!({"assetLifetime": 2_592_000})),
+            Ok(Some(2_592_000))
+        );
+        assert_eq!(
+            parse(&json!({"assetLifetime": 9_007_199_254_740_991_u64})),
+            Ok(Some(9_007_199_254_740_991))
+        );
+        for bad in [
+            json!(9_007_199_254_740_992_u64),
+            json!(-1),
+            json!(1.5),
+            json!("3600"),
+            json!(true),
+            json!([3600]),
+        ] {
+            assert!(parse(&json!({"assetLifetime": bad})).is_err(), "{bad}");
+        }
+    }
 
     // RFC 6570 §1.2 (level 1) and §3.2.2 examples, with var := "value",
     // hello := "Hello World!", half := "50%", empty := "" and undef

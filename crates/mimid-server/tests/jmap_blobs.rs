@@ -45,6 +45,10 @@ struct Fixture {
 }
 
 async fn fixture() -> Fixture {
+    fixture_with(JmapOptions::default()).await
+}
+
+async fn fixture_with(options: JmapOptions) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     let alice_id = store.create_account(&domain(), ALICE, 1).await.unwrap();
@@ -57,7 +61,7 @@ async fn fixture() -> Fixture {
         store.clone(),
         Arc::new(hub),
         Arc::new(follower),
-        JmapOptions::default(),
+        options,
     )
     .unwrap();
     Fixture {
@@ -364,5 +368,26 @@ async fn the_session_advertises_the_asset_urls_and_upload_limits() {
         session["capabilities"]["urn:ietf:params:jmap:core"]["maxSizeUpload"],
         16 * 1024 * 1024
     );
+    // No lifetime configured: no assetLifetime (the draft: "Absent if the
+    // server states no limit").
+    assert!(mimi.get("assetLifetime").is_none(), "{mimi}");
+    f.store.close().await;
+}
+
+#[tokio::test]
+async fn the_session_advertises_the_configured_asset_lifetime() {
+    // draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object
+    // (jmap-chat-spec 120db2c): `assetLifetime`, an UnsignedInt, beside
+    // `assetUrl`.
+    let mut options = JmapOptions::default();
+    options.asset_lifetime = Some(7_200);
+    let f = fixture_with(options).await;
+    let (status, _, body) = get(&f.app, "/.well-known/jmap", Some(&f.alice_token)).await;
+    assert_eq!(status, StatusCode::OK);
+    let session = json_of(&body);
+    let mimi =
+        &session["accounts"][&f.alice_id]["accountCapabilities"]["urn:ietf:params:jmap:chat:mimi"];
+    assert_eq!(mimi["assetLifetime"], json!(7_200));
+    assert_eq!(mimi["assetUrl"], "https://mimi.a.example/assets/{blobId}");
     f.store.close().await;
 }
