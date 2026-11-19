@@ -1,0 +1,16 @@
+{
+  "id": "mimid-64xc",
+  "title": "Test: an mls-rs member removed through a real mimid hub for lacking AppDataUpdate",
+  "description": "removal_notice.rs (b5be25d) covers a plain OpenMLS client; docs/didwebvh-mls-rs.md notes an mls-rs member removed through a real hub is untested.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-19T19:18:16.705053882Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-19T19:18:16.705053882Z",
+  "labels": [
+    "test",
+    "didwebvh"
+  ]
+}
