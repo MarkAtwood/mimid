@@ -565,6 +565,62 @@ set the record. The spike document has suggested text for §The Heads
 Extension, §Expected Heads, §Rules, §Revoking a Device, Open Issue 5 and
 IANA. The cost is a normative dependency on mls-extensions.
 
+## With mls-rs
+
+From bead mimid-4lp4.2: an mls-rs member and a mimid user with two
+`did_webvh` devices in one group, against stock mls-rs
+(`docs/didwebvh-mls-rs.md`, `crates/mimi-mls/tests/didwebvh_mls_rs.rs`).
+
+### 30. "The credential's identity" is the user's, not the member's
+
+**§Binding to the LeafNode** says "The SCID of the log is the credential's
+identity." All of a user's devices share the SCID. mls-rs indexes members
+by an identity its `IdentityProvider` returns and refuses a second leaf
+with the same one (`DuplicateLeafData`). An mls-rs application that takes
+the sentence literally and returns the SCID cannot have two devices of one
+user in a group, which is the very case the credential is for. With the SCID
+plus the leaf's `signature_key`, both devices join, and mls-rs and mimid
+agree on every epoch (test
+`an_identity_provider_keyed_by_scid_alone_refuses_the_second_device` and
+the tests after it).
+
+**mimid:** the SCID names the user (§Reference Identifiers);
+OpenMLS has no per-leaf identity index.
+
+**For -01:** say that the SCID identifies the user (the presented
+identifier of §Reference Identifiers) and that a member is a device, so
+an implementation that needs a unique identity per leaf uses the SCID
+together with the `signature_key`.
+
+### 31. A member without AppDataUpdate blocks revocation
+
+**§The Heads Component, §Negotiation and Mandating the Credential.** Since
+item 29 the record changes only by AppDataUpdate. mls-extensions-11 §4.7
+requires every member that processes such a Commit to support
+AppDataUpdate (RFC 9420 §12.2 for proposal types). Stock mls-rs has no
+AppDataUpdate, and its custom-proposal API cannot carry one (it wraps an
+unknown proposal in one `opaque<V>`). With an mls-rs member in the group
+that truthfully does not list the proposal type, OpenMLS refuses every
+record change: no new `did_webvh` user, no device with a newer log, and no
+revocation, unless the Commit also removes that member. If the member lists
+the type without supporting it, the Commit goes through and mls-rs cannot
+parse it. The draft's MUSTs today require a client that lists `did_webvh`
+to list the component and implement the rules, but they do not mention the
+proposal type. A BasicCredential member must also list the component, so
+the same applies to it.
+
+**mimid:** adds such a member today; what to do about it is bead
+mimid-4lp4.3.
+
+**For -01:** say in §The Heads Component that a client listing the
+component also lists the AppDataUpdate proposal type, and in
+§Negotiation that a group carrying the record MAY list AppDataUpdate in
+`required_capabilities` so that a member without it cannot be added. Say
+in Security Considerations that a member that cannot process AppDataUpdate
+delays a revocation until it is removed. The extension form (GCE) would let
+RFC 9420-only stacks change the record, but it brings back items 18, 24 and
+28. The better fix is AppDataUpdate in the MLS libraries.
+
 ## Section 7, item 7: the encoding question
 
 What implementing -00 taught about "Encoding without DIDs":

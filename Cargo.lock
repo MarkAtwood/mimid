@@ -2490,6 +2490,7 @@ version = "0.1.0"
 dependencies = [
  "mls-didwebvh",
  "mls-rs",
+ "mls-rs-core",
  "mls-rs-crypto-rustcrypto",
  "openmls",
  "openmls_basic_credential",
