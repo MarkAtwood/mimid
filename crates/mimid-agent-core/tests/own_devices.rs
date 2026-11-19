@@ -19,6 +19,8 @@
 //!   a pending invite to.
 //! - did_webvh: a device the user's controller adds to the log joins a
 //!   did_webvh room, and bob sees its leaf under alice's SCID.
+//! - Leaving (bead mimid-pv2k): with two devices in the room, a leave
+//!   removes both; another user's member commits it and the hub accepts.
 //! - Acceptance (bead mimid-f2rn; decision mimid-1wgh.63): a new device
 //!   does not join a room another device left the invite to pending, and
 //!   joins it once a device accepted it; it does not join a room its user
@@ -214,6 +216,68 @@ async fn a_new_device_joins_its_users_room_and_talks() {
         &mut [&mut a2, &mut a1],
     )
     .await;
+}
+
+/// Leaving with two devices in the room removes both (bead mimid-pv2k;
+/// room-policy-04 §8.1.2 `canRemoveSelf`): bob commits the proposals, the
+/// hub accepts the Commit (bob's epoch moves and alice's devices both see
+/// it), and no leaf of alice remains. The record of alice's acceptance
+/// goes with it, so a third device does not rejoin (decision
+/// mimid-1wgh.63 item 6).
+#[tokio::test]
+async fn leaving_removes_every_device_of_the_user() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut a1 = device(&server, ALICE, dir.path(), "a1").await;
+    let mut bob = device(&server, BOB, dir.path(), "bob").await;
+    a1.publish_key_packages(1).await.unwrap();
+    bob.publish_key_packages(1).await.unwrap();
+    let room = a1.host_room(&HostOptions::named("leaving")).await.unwrap();
+    a1.invite(&room, BOB).await.unwrap();
+    accept(&mut bob, &room).await;
+    assert_eq!(a1.join_own_rooms().await.unwrap(), Default::default());
+    let mut a2 = device(&server, ALICE, dir.path(), "a2").await;
+    let joined = a2.join_own_rooms().await.unwrap();
+    assert_eq!(joined.joined, std::slice::from_ref(&room), "{joined:?}");
+    catch_up(&mut bob, &a2, &room).await;
+    catch_up(&mut a1, &a2, &room).await;
+    let epoch = bob.epoch(&room).unwrap();
+
+    a1.leave(&room).await.unwrap();
+    // bob, the only member of another user, commits the leave.
+    let participants = poll_until(&mut bob, |e| match e {
+        Event::MembersChanged {
+            room: r,
+            participants,
+            ..
+        } if *r == room => Some(participants.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(participants, [BOB]);
+    assert_eq!(bob.epoch(&room).unwrap(), epoch + 1);
+    assert_eq!(leaves(&bob, &room), [(BOB.to_owned(), None)]);
+    for alice in [&mut a1, &mut a2] {
+        poll_until(alice, |e| match e {
+            Event::Left { room: r } if *r == room => Some(()),
+            _ => None,
+        })
+        .await;
+        assert!(
+            alice
+                .rooms()
+                .iter()
+                .all(|r| r.uri != room || r.status == RoomStatus::Left)
+        );
+    }
+    sends(&mut bob, &room, "alone now", BOB, &mut []).await;
+
+    // a1 withdraws alice's acceptance; a third device does not join.
+    a1.join_own_rooms().await.unwrap();
+    assert!(accepted_rooms(&server, ALICE).await.is_empty());
+    let mut a3 = device(&server, ALICE, dir.path(), "a3").await;
+    let outcome = a3.join_own_rooms().await.unwrap();
+    assert!(outcome.joined.is_empty(), "{outcome:?}");
 }
 
 /// The default roles without `canAddOwnClient`.

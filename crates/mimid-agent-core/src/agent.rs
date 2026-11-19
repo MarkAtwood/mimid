@@ -1914,11 +1914,14 @@ impl Agent {
         })
     }
 
-    /// Starts leaving `room` (protocol-07 §3.5): a Remove of this client
-    /// and the participant-list update removing this user, sent together
-    /// as proposals. The room is `Leaving` until another member's Commit
-    /// covers them ([`Event::Left`]); if this user is the last participant
-    /// the room is left at once.
+    /// Starts leaving `room` (protocol-07 §3.5): a Remove of this client,
+    /// a Remove of each other client of this user (room-policy-04 §8.1.2
+    /// `canRemoveSelf`: "MUST simultaneously propose to remove all of its
+    /// remaining clients"; bead mimid-pv2k), and the participant-list
+    /// update removing this user, sent together as proposals. The user
+    /// leaves on every device. The room is `Leaving` until another user's
+    /// member commits them ([`Event::Left`]); if this user is the last
+    /// participant the room is left at once.
     ///
     /// # Errors
     ///
@@ -1940,26 +1943,45 @@ impl Agent {
             .members
             .get_mut(room)
             .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
+        let own_leaf = member.own_leaf_index();
+        let me = normalized_uri(&self.me);
+        let siblings: Vec<u32> = room_clients(member, &self.identity)
+            .into_iter()
+            .filter(|client| client.leaf != own_leaf && normalized_uri(&client.user) == me)
+            .map(|client| client.leaf)
+            .collect();
         let remove = member
             .propose_self_remove(&self.identity)
             .map_err(|e| AgentError::mls("building the Remove proposal", e))?;
-        let update = member
-            .propose_app_data_update(&self.identity, &list_change(vec![index], &[])?)
-            .map_err(|e| AgentError::mls("building the leave proposal", e))?;
+        let mut more = Vec::with_capacity(siblings.len() + 1);
+        for leaf in siblings {
+            more.push(
+                member
+                    .propose_remove(&self.identity, leaf)
+                    .map_err(|e| AgentError::mls("building a Remove of another own client", e))?,
+            );
+        }
+        more.push(
+            member
+                .propose_app_data_update(&self.identity, &list_change(vec![index], &[])?)
+                .map_err(|e| AgentError::mls("building the leave proposal", e))?,
+        );
         let request = UpdateRequest {
             bundle: HandshakeBundle::Proposal {
                 proposal_or_commit: MLSMessage::tls_deserialize_exact(&remove[..])
                     .map_err(|e| AgentError::tls("own Remove proposal", e))?,
-                more_proposals: vec![
-                    MLSMessage::tls_deserialize_exact(&update[..])
-                        .map_err(|e| AgentError::tls("own proposal", e))?,
-                ],
+                more_proposals: more
+                    .iter()
+                    .map(|bytes| MLSMessage::tls_deserialize_exact(&bytes[..]))
+                    .collect::<Result<_, _>>()
+                    .map_err(|e| AgentError::tls("own proposal", e))?,
             },
         };
         self.update_ok(room, &request, "leave").await?;
         if let Some(r) = self.state.rooms.get_mut(room) {
             r.status = RoomStatus::Leaving;
         }
+        self.withdraw(room);
         self.save()?;
         if alone {
             self.finish_leaving(room);
@@ -2875,16 +2897,28 @@ impl Agent {
 
     /// The remaining member with the lowest leaf index commits a member's
     /// leave proposals by reference, adding nothing of its own (a hub may
-    /// count a change of the committer's as a second change).
+    /// count a change of the committer's as a second change). A client of
+    /// the leaver's user is not a candidate: a leave removes all of them
+    /// (bead mimid-pv2k), and a Commit cannot remove its committer
+    /// (RFC 9420 §12.4).
     async fn maybe_commit_leave(&mut self, room: &str, leaver: u32, events: &mut Vec<Event>) {
         let Some(member) = self.members.get(room) else {
             return;
         };
-        let committer = member
-            .members()
-            .into_iter()
-            .map(|(leaf, _)| leaf)
-            .filter(|&leaf| leaf != leaver)
+        let clients = room_clients(member, &self.identity);
+        let leaving_user = clients
+            .iter()
+            .find(|client| client.leaf == leaver)
+            .map(|client| normalized_uri(&client.user));
+        let committer = clients
+            .iter()
+            .filter(|client| {
+                client.leaf != leaver
+                    && leaving_user
+                        .as_ref()
+                        .is_none_or(|user| *user != normalized_uri(&client.user))
+            })
+            .map(|client| client.leaf)
             .min();
         if committer != Some(member.own_leaf_index()) {
             return;

@@ -1534,6 +1534,38 @@ impl Member {
         encode(&message)
     }
 
+    /// Builds a Remove proposal for the leaf at `leaf_index` (RFC 9420
+    /// §12.1.3), as a TLS-encoded `MLSMessage` carrying a PublicMessage,
+    /// and stores it like [`Member::propose_self_remove`]. A leaving
+    /// client sends one for each other client of its user, beside its own
+    /// Remove (room-policy-04 §8.1.2 `canRemoveSelf`: "MUST simultaneously
+    /// propose to remove all of its remaining clients").
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::WrongIdentity`] if `identity` does not own
+    /// this member, [`MemberError::Propose`] if OpenMLS cannot build or
+    /// store the proposal (for example, no member is at `leaf_index`), and
+    /// [`MemberError::OutOfSync`] if the member is out of sync. The group
+    /// state is unchanged on error.
+    pub fn propose_remove(
+        &mut self,
+        identity: &Identity,
+        leaf_index: u32,
+    ) -> Result<Vec<u8>, MemberError> {
+        self.check_identity(identity)?;
+        self.check_in_sync()?;
+        let (message, _) = self
+            .group
+            .propose_remove_member(
+                identity.provider(),
+                identity.signer(),
+                LeafNodeIndex::new(leaf_index),
+            )
+            .map_err(|e| MemberError::Propose(e.into()))?;
+        encode(&message)
+    }
+
     /// Merges this member's pending Commit, after the hub accepted it.
     ///
     /// # Errors

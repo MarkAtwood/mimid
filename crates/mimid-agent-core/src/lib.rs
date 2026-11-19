@@ -68,18 +68,23 @@
 //!   this device knows, left ones included. Rooms hosted before the
 //!   default roles held `canAddOwnClient` refuse new devices. Messages
 //!   from before the join are not readable on the new device.
-//!   [`Agent::leave`] proposes only this device's removal with the
-//!   user's removal from the participant list, while room-policy-04
-//!   §8.1.2 wants all the user's clients removed with it (bead
-//!   mimid-pv2k).
+//! - [`Agent::leave`] removes every device of the user (room-policy-04
+//!   §8.1.2); there is no leaving on one device only. The Removes of the
+//!   other devices are proposals of this device, so a room whose roles
+//!   lack `canRemoveOwnClient` refuses the leave of a user with several
+//!   devices there. A leave is committed by a client of another user; a
+//!   room whose only other members are the user's own devices is left at
+//!   once on this device and its other devices stay. The same rule makes
+//!   another user's client commit a member's credential Update proposal.
 //! - draft-atwood-mls-didwebvh-credential-01: see [`didwebvh`]. A
 //!   BasicCredential agent supports `did_webvh` rooms by default (decision
 //!   mimid-1wgh.4.81.23). Contacts are pinned by SCID per agent; a change
 //!   is reported as [`Event::IdentityChanged`] for a room the agent is in,
 //!   and refused when the agent itself adds the contact.
 //! - Every proposal from another member is taken as that member's
-//!   protocol-07 §3.5 leave, and the remaining member with the lowest leaf
-//!   index commits it. No other proposals are sent by this crate.
+//!   protocol-07 §3.5 leave, and the remaining member of another user
+//!   with the lowest leaf index commits it. This crate sends no proposals
+//!   but a leave's and a credential Update.
 //! - No policy edits (role definitions, preauthorization, membership
 //!   style, room metadata); no external joins other than
 //!   [`Agent::join_own_rooms`] (no open rooms, join links or codes).
