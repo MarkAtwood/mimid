@@ -264,6 +264,12 @@ pub enum Sender {
 pub struct CommitSummary {
     /// Who sent the Commit.
     pub committer: Sender,
+    /// The committer's identity, as [`Member::members`] gives it: that of
+    /// the committer's leaf before the Commit, or for an external Commit
+    /// (RFC 9420 §12.4.3.2) that of the joiner's leaf in its path. `None`
+    /// for any other sender, which RFC 9420 §6.1 does not let send a
+    /// Commit.
+    pub committer_identity: Option<Vec<u8>>,
     /// The epoch the group is in after the Commit.
     pub epoch: u64,
     /// BasicCredential identities of the members added.
@@ -2247,6 +2253,13 @@ pub(crate) fn summarize(
         .remove_proposals()
         .map(|remove| remove.remove_proposal().removed().u32())
         .collect();
+    let committer_leaf = match committer {
+        Sender::Member(leaf) => current.leaf(LeafNodeIndex::new(leaf)),
+        Sender::NewMemberCommit => staged.update_path_leaf_node(),
+        Sender::External(_) | Sender::NewMemberProposal => None,
+    };
+    let committer_identity =
+        committer_leaf.map(|leaf| member_identity(code_points, leaf.credential()));
     let mut components: Vec<ComponentId> = staged
         .app_data_update_proposals()
         .map(|queued| queued.app_data_update_proposal().component_id())
@@ -2255,6 +2268,7 @@ pub(crate) fn summarize(
     components.dedup();
     CommitSummary {
         committer,
+        committer_identity,
         epoch: staged.epoch().as_u64(),
         added,
         removed,

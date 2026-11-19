@@ -5,6 +5,9 @@
 //! promotes bob (`updateMemberRoles`), bans and unbans carol (`ChatBan/set`
 //! create and destroy), bans her again with an `expiresAt` that has passed,
 //! kicks bob (`Chat/set` `kickMembers`) and removes him (`removeMembers`).
+//! bob, made admin, bans carol from his device, and alice's device
+//! mirrors that ban with bob's ChatContact as `bannedBy`; a ban alice's
+//! agent makes outside JMAP is mirrored as the accountId's.
 //! carol, a member, tries a kick, which the hub refuses, and a ban, which
 //! crate-jmap refuses before the hub.
 //!
@@ -256,6 +259,19 @@ impl Client {
         panic!("{}: members {seen:?}, not {wanted:?}", self.account());
     }
 
+    /// Syncs until this device is at `other`'s epoch of `room`.
+    async fn catch_up(&self, other: &Client, room: &str) {
+        let epoch = other.chat.agent().lock().await.epoch(room).unwrap();
+        for _ in 0..100 {
+            self.chat.sync().await.unwrap();
+            if self.chat.agent().lock().await.epoch(room).unwrap() == epoch {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("{}: never reached epoch {epoch} of {room}", self.account());
+    }
+
     /// The ChatContact id of user URI `user`.
     async fn contact(&self, user: &str) -> String {
         let (_, answer) = self.call("ChatContact/get", json!({"ids": null})).await;
@@ -451,15 +467,14 @@ async fn an_admin_moderates_through_jmap_and_a_member_is_refused() {
     // Sync keeps alice's own ChatBan rather than mirroring a second one.
     assert_eq!(alice.bans().await.len(), 1);
     // bob, the other admin, sees the ban mirrored from the room, issued by
-    // his own accountId (decision mimid-1wgh.62 item 13).
-    bob.members_become(
-        &room,
-        &[(&bob.contact(ALICE).await, "admin"), ("bob", "admin")],
-    )
-    .await;
+    // alice, the Commit's sender (bead mimid-cqof; decision mimid-1wgh.62
+    // item 13).
+    let alice_at_bob = bob.contact(ALICE).await;
+    bob.members_become(&room, &[(&alice_at_bob, "admin"), ("bob", "admin")])
+        .await;
     assert_eq!(
         bob.bans().await,
-        vec![(chat_b.clone(), carol_at_bob.clone(), "bob".to_owned())]
+        vec![(chat_b.clone(), carol_at_bob.clone(), alice_at_bob.clone())]
     );
     for _ in 0..100 {
         carol.chat.sync().await.unwrap();
@@ -553,6 +568,95 @@ async fn an_admin_moderates_through_jmap_and_a_member_is_refused() {
         hub_list(&server, &room).await,
         list(&[(ALICE, 3), (BOB, 3), (CAROL, 2)])
     );
+    assert_eq!(alice.bans().await, vec![]);
+
+    // bob bans carol from his device: alice's device mirrors the ban as
+    // bob's, the ChatContact whose identity is bob's user URI (bead
+    // mimid-cqof).
+    bob.catch_up(&alice, &room).await;
+    bob.set_one(
+        "ChatBan/set",
+        json!({"create": {"b": {"chatId": chat_b, "userId": carol_at_bob}}}),
+        "b",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        hub_list(&server, &room).await,
+        list(&[(ALICE, 3), (BOB, 3), (CAROL, 1)])
+    );
+    alice
+        .members_become(&room, &[("alice", "admin"), (bob_id, "admin")])
+        .await;
+    assert_eq!(alice.contact(BOB).await, bob_id);
+    let [(chat, user, banned_by)] = alice.bans().await.try_into().unwrap();
+    assert_eq!((chat, user), (chat_a.clone(), carol_id.to_owned()));
+    assert_eq!(banned_by, bob_id);
+    let [(_, _, by_bob)] = bob.bans().await.try_into().unwrap();
+    assert_eq!(by_bob, "bob");
+    // bob lifts it; it goes from alice's device too.
+    let (_, answer) = bob.call("ChatBan/get", json!({"ids": null})).await;
+    let bob_ban = answer["list"][0]["id"].as_str().unwrap().to_owned();
+    bob.set_one("ChatBan/set", json!({"destroy": [bob_ban]}), &bob_ban)
+        .await
+        .unwrap();
+    assert_eq!(
+        hub_list(&server, &room).await,
+        list(&[(ALICE, 3), (BOB, 3), (CAROL, 2)])
+    );
+    alice
+        .members_become(
+            &room,
+            &[("alice", "admin"), (bob_id, "admin"), (carol_id, "member")],
+        )
+        .await;
+    assert_eq!(alice.bans().await, vec![]);
+    // bob reads his own unban's Commit before alice's next ban: a ban read
+    // in the same sync as a Commit by another member has no known banner.
+    bob.catch_up(&alice, &room).await;
+
+    // A ban made by alice's device outside JMAP (her agent's own Commit)
+    // is mirrored at the next sync as hers: the accountId. bob's device
+    // names alice's contact.
+    alice
+        .chat
+        .agent()
+        .lock()
+        .await
+        .ban(&room, CAROL)
+        .await
+        .unwrap();
+    assert_eq!(
+        hub_list(&server, &room).await,
+        list(&[(ALICE, 3), (BOB, 3), (CAROL, 1)])
+    );
+    alice
+        .members_become(&room, &[("alice", "admin"), (bob_id, "admin")])
+        .await;
+    assert_eq!(
+        alice.bans().await,
+        vec![(chat_a.clone(), carol_id.to_owned(), "alice".to_owned())]
+    );
+    bob.members_become(&room, &[(&alice_at_bob, "admin"), ("bob", "admin")])
+        .await;
+    assert_eq!(
+        bob.bans().await,
+        vec![(chat_b.clone(), carol_at_bob.clone(), alice_at_bob.clone())]
+    );
+    alice
+        .chat
+        .agent()
+        .lock()
+        .await
+        .unban(&room, CAROL)
+        .await
+        .unwrap();
+    alice
+        .members_become(
+            &room,
+            &[("alice", "admin"), (bob_id, "admin"), (carol_id, "member")],
+        )
+        .await;
     assert_eq!(alice.bans().await, vec![]);
 
     // alice kicks bob: his clients leave, he stays a participant and a

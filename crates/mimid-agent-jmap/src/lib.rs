@@ -124,7 +124,8 @@
 //! - Space, SpaceInvite, SpaceBan, CustomEmoji and PresenceStatus writes
 //!   are `forbidden`, and `supports_type` is false for them.
 //! - See [`moderate`] for the limits of bans and kicks; a ChatBan
-//!   mirrored from a room names the accountId as `bannedBy`.
+//!   mirrored from a room whose banner is not known names the accountId
+//!   as `bannedBy`.
 //! - The store keeps [`CHANGE_LOG_LIMIT`] change-log entries per data
 //!   type ([`Options::with_change_log_limit`]); a `/changes` from an older
 //!   state is `cannotCalculateChanges` and the client resyncs (decision

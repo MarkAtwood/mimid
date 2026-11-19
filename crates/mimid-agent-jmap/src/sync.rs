@@ -16,6 +16,7 @@ use crate::backend::{
 };
 use crate::blobs::{hex, is_media_type};
 use crate::convert::{MessageRef, message_ref, sender_msg_id, topic_id, utc_date};
+use crate::moderate::Committers;
 
 /// The creation id given to the store for objects sync makes; no client
 /// sees it.
@@ -152,10 +153,17 @@ impl AgentChat {
                     .push(format!("listing this user's rooms: {e}")),
             }
             self.reconcile_rooms(&mut agent).await?;
+            let mut committers = Committers::default();
             for event in events {
+                if let Event::MembersChanged {
+                    room, committer, ..
+                } = &event
+                {
+                    committers.saw(room, committer.as_deref());
+                }
                 self.apply(&mut agent, event, &mut report).await?;
             }
-            self.mirror_bans(&mut agent).await?;
+            self.mirror_bans(&mut agent, &committers).await?;
             // A Commit or a join may bring or change a contact's did_webvh
             // leaves (their ChatContact `did`).
             let epochs: std::collections::BTreeMap<String, u64> = agent

@@ -354,6 +354,12 @@ fn joins_mls_rs_group_and_all_agree() {
             panic!("{case}: not a Commit");
         };
         assert_eq!(summary.committer, Sender::NewMemberCommit, "{case}");
+        // The joiner, from the LeafNode in the Commit's path.
+        assert_eq!(
+            summary.committer_identity.as_deref(),
+            Some(&b"carol"[..]),
+            "{case}"
+        );
         assert_eq!(summary.epoch, 2, "{case}");
         observer
             .merge_pending_commit(&observer_store)

@@ -404,6 +404,16 @@ pub enum Event {
         epoch: u64,
         /// The participants' user URIs.
         participants: Vec<String>,
+        /// The user URI of the Commit's sender: the user of the leaf that
+        /// sent it, as that leaf named it before the Commit, or for an
+        /// external Commit (RFC 9420 §12.4.3.2) the joiner; this user's
+        /// own URI for a Commit of this device. The hub is never the
+        /// committer: RFC 9420 §6.1 lets an external sender send only
+        /// proposals, so a hub proposal is committed by a member, who is
+        /// then the committer. `None` when not known: a leaf whose
+        /// credential names no user, or an event journaled before the
+        /// committer was recorded (bead mimid-cqof).
+        committer: Option<String>,
     },
     /// Another member proposed something (protocol-07 §3.5: a leave).
     Proposal {
@@ -701,6 +711,7 @@ impl Agent {
             match self.offer_credential(&room).await {
                 Ok(Offered::Committed) => {
                     events.push(Event::MembersChanged {
+                        committer: Some(self.me.clone()),
                         epoch: self.members.get(&room).map_or(0, Member::epoch),
                         participants: self
                             .members
@@ -1611,6 +1622,7 @@ impl Agent {
         events.push(Event::MembersChanged {
             room: room.to_owned(),
             epoch,
+            committer: Some(self.me.clone()),
             participants: self
                 .members
                 .get(room)
@@ -2198,6 +2210,7 @@ impl Agent {
             room: room.to_owned(),
             epoch: member.epoch(),
             participants: participants(member)?,
+            committer: Some(self.me.clone()),
         };
         tracing::info!(name: "room_moderated", action = what, "moderation Commit accepted");
         self.deliver(vec![event]);
@@ -2926,10 +2939,15 @@ impl Agent {
                         .flatten()
                         .unwrap_or_default();
                     let alerts = self.check_contacts(&room);
+                    let committer = summary
+                        .committer_identity
+                        .filter(|identity| !identity.is_empty())
+                        .map(|identity| String::from_utf8_lossy(&identity).into_owned());
                     events.push(Event::MembersChanged {
                         room,
                         epoch: summary.epoch,
                         participants,
+                        committer,
                     });
                     events.extend(alerts);
                 }
@@ -2997,6 +3015,7 @@ impl Agent {
                     room: room.to_owned(),
                     epoch,
                     participants,
+                    committer: Some(self.me.clone()),
                 });
             }
             Err(e) => events.push(Event::Problem {

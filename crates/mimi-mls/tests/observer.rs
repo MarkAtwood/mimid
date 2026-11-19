@@ -344,6 +344,7 @@ fn commits_and_stored_proposals_track_mls_rs() {
         panic!("not a Commit");
     };
     assert_eq!(summary.committer, Sender::Member(0));
+    assert_eq!(summary.committer_identity.as_deref(), Some(&b"alice"[..]));
     assert_eq!(summary.epoch, 2);
     assert!(!summary.self_removed);
     assert!(summary.added.is_empty() && summary.removed.is_empty());

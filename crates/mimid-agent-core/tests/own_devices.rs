@@ -136,6 +136,19 @@ async fn a_new_device_joins_its_users_room_and_talks() {
     })
     .await;
 
+    // bob reads a2's external Commit with the joiner as its committer
+    // (bead mimid-cqof).
+    let committer = poll_until(&mut bob, |e| match e {
+        Event::MembersChanged {
+            room: r,
+            epoch: e,
+            committer,
+            ..
+        } if *r == room && *e == epoch + 1 => Some(committer.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(committer.as_deref(), Some(ALICE));
     catch_up(&mut bob, &a2, &room).await;
     catch_up(&mut a1, &a2, &room).await;
     assert_agreement(&room, &a1, &bob);
@@ -245,16 +258,19 @@ async fn leaving_removes_every_device_of_the_user() {
 
     a1.leave(&room).await.unwrap();
     // bob, the only member of another user, commits the leave.
-    let participants = poll_until(&mut bob, |e| match e {
+    let (participants, committer) = poll_until(&mut bob, |e| match e {
         Event::MembersChanged {
             room: r,
             participants,
+            committer,
             ..
-        } if *r == room => Some(participants.clone()),
+        } if *r == room => Some((participants.clone(), committer.clone())),
         _ => None,
     })
     .await;
     assert_eq!(participants, [BOB]);
+    // bob's own Commit names bob.
+    assert_eq!(committer.as_deref(), Some(BOB));
     assert_eq!(bob.epoch(&room).unwrap(), epoch + 1);
     assert_eq!(leaves(&bob, &room), [(BOB.to_owned(), None)]);
     for alice in [&mut a1, &mut a2] {

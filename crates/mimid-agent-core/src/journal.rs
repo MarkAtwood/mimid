@@ -51,6 +51,10 @@ pub(crate) enum Journaled {
         room: String,
         epoch: u64,
         participants: Vec<String>,
+        /// Absent in entries written before bead mimid-cqof, which read
+        /// as an unknown committer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        committer: Option<String>,
     },
     Proposal {
         room: String,
@@ -94,10 +98,12 @@ impl Journaled {
                 room,
                 epoch,
                 participants,
+                committer,
             } => Self::MembersChanged {
                 room,
                 epoch,
                 participants,
+                committer,
             },
             Event::Proposal { room, sender } => Self::Proposal { room, sender },
             Event::Left { room } => Self::Left { room },
@@ -135,10 +141,12 @@ impl Journaled {
                 room,
                 epoch,
                 participants,
+                committer,
             } => Event::MembersChanged {
                 room,
                 epoch,
                 participants,
+                committer,
             },
             Self::Proposal { room, sender } => Event::Proposal { room, sender },
             Self::Left { room } => Event::Left { room },
@@ -242,4 +250,47 @@ fn unhex(text: &str, what: &str) -> Result<Vec<u8>, String> {
 #[must_use = "events stay in the journal and come again until acknowledged"]
 pub struct Receipt {
     pub(crate) count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `membersChanged` entry as `state.json` holds it, decoded to the
+    /// expected event and encoded back to the same bytes: one written
+    /// before bead mimid-cqof, without `committer`, reads as an unknown
+    /// committer; one with it keeps it. The entries are written by hand,
+    /// in the journal's documented form (serde's internal `kind` tag,
+    /// camelCase fields).
+    #[test]
+    fn members_changed_entries_round_trip_with_and_without_a_committer() {
+        let cases = [
+            (
+                r#"{"kind":"membersChanged","room":"mimi://a.example/r/one","epoch":7,"participants":["mimi://a.example/u/alice","mimi://a.example/u/bob"]}"#,
+                None,
+            ),
+            (
+                r#"{"kind":"membersChanged","room":"mimi://a.example/r/one","epoch":7,"participants":["mimi://a.example/u/alice","mimi://a.example/u/bob"],"committer":"mimi://a.example/u/bob"}"#,
+                Some("mimi://a.example/u/bob".to_owned()),
+            ),
+        ];
+        for (entry, committer) in cases {
+            let journaled: Journaled = serde_json::from_str(entry).unwrap();
+            let event = journaled.event();
+            assert_eq!(
+                event,
+                Event::MembersChanged {
+                    room: "mimi://a.example/r/one".to_owned(),
+                    epoch: 7,
+                    participants: vec![
+                        "mimi://a.example/u/alice".to_owned(),
+                        "mimi://a.example/u/bob".to_owned(),
+                    ],
+                    committer,
+                },
+                "{entry}"
+            );
+            assert_eq!(serde_json::to_string(&Journaled::of(event)).unwrap(), entry);
+        }
+    }
 }

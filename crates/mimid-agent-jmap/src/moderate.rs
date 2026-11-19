@@ -26,10 +26,17 @@
 //! - **Bans made elsewhere**: at each sync, every participant that an
 //!   active room holds in its "banned" role (role 1) has one ChatBan in
 //!   the room's Chat, and a ChatBan whose user no longer holds that role
-//!   is destroyed. A ban made by another admin, or before this device
-//!   joined, is created with `bannedBy` the accountId and no `reason`:
-//!   the participant list does not say who banned the user. INVENTED,
-//!   NOT FROM SPEC (decision mimid-1wgh.62 item 13).
+//!   is destroyed. The participant list does not say who banned a user,
+//!   so a new ChatBan's `bannedBy` comes from the Commits this sync read
+//!   for the room (bead mimid-cqof; decision mimid-1wgh.62 item 13): when
+//!   they all have the same committer, the ban is that committer's, and
+//!   `bannedBy` is its ChatContact id, or the accountId when the
+//!   committer is the owner (another device of the owner, or this one).
+//!   Otherwise the banner is not known and `bannedBy` is the accountId,
+//!   as before: a ban from before this device joined, one read in the
+//!   same sync as another member's Commit to the room, or one read back
+//!   from a journal entry older than the committer. INVENTED, NOT FROM
+//!   SPEC. A mirrored ban has no `reason`.
 //!
 //! crate-jmap checks first that the caller holds the `"admin"` role in the
 //! Chat's `members` (the mirror of the room's "admin" role), so a member's
@@ -50,6 +57,11 @@
 //! - A ban this account issued keeps its `bannedBy`, `reason` and
 //!   `expiresAt` only on this device; another device of the user, or
 //!   this one after losing the store, sees it as made elsewhere.
+//! - A mirrored ban whose banner is not known names the accountId as
+//!   `bannedBy`, though the owner may not have banned anyone. That
+//!   happens for bans from before this device joined the room, for a ban
+//!   read in the same sync as a Commit by another member of the room, and
+//!   for every ban when the store is rebuilt.
 //! - An expired ban the hub refuses to lift (the owner lost `canUnban`)
 //!   stays, and each sync reports it in [`crate::SyncReport::problems`].
 
@@ -57,6 +69,8 @@ use jmap_chat_server::ChatBackend;
 use jmap_chat_server::memory::MemoryError;
 use jmap_chat_types::{Chat, ChatBan, ChatMember};
 use jmap_server::{BackendSetError, Id, JmapBackend, SetError, SetErrorType};
+use std::collections::BTreeMap;
+
 use mimid_agent_core::{Agent, RoomStatus};
 use serde_json::json;
 
@@ -85,6 +99,32 @@ pub(crate) fn banned_users(agent: &Agent, room: &str) -> Option<Vec<String>> {
             .map(|(user, _)| user)
             .collect(),
     )
+}
+
+/// The committers of the Commits one sync read, per room: a room's entry
+/// is its committer when every Commit read for it had the same known one,
+/// and `None` otherwise (bead mimid-cqof).
+#[derive(Debug, Default)]
+pub(crate) struct Committers(BTreeMap<String, Option<String>>);
+
+impl Committers {
+    /// Records a Commit to `room` by `committer` (`None`: not known).
+    pub(crate) fn saw(&mut self, room: &str, committer: Option<&str>) {
+        let committer = committer.map(str::to_owned);
+        self.0
+            .entry(room.to_owned())
+            .and_modify(|seen| {
+                if *seen != committer {
+                    *seen = None;
+                }
+            })
+            .or_insert(committer);
+    }
+
+    /// The one committer of every Commit read for `room`, if known.
+    fn of(&self, room: &str) -> Option<&str> {
+        self.0.get(room).and_then(Option::as_deref)
+    }
 }
 
 fn invalid_property(property: &str, description: impl Into<String>) -> SetError {
@@ -224,8 +264,14 @@ impl AgentChat {
 
     /// Sync: each participant an active room holds banned has one ChatBan
     /// in the room's Chat, and no one else has one (decision
-    /// mimid-1wgh.62 item 13).
-    pub(crate) async fn mirror_bans(&self, agent: &mut Agent) -> Result<(), SyncError> {
+    /// mimid-1wgh.62 item 13). A new ChatBan's `bannedBy` is the room's
+    /// one committer in `committers`, else the accountId (bead
+    /// mimid-cqof).
+    pub(crate) async fn mirror_bans(
+        &self,
+        agent: &mut Agent,
+        committers: &Committers,
+    ) -> Result<(), SyncError> {
         let (bans, _) = self
             .inner
             .get_objects::<ChatBan>(&(), &self.account, None, None)
@@ -251,15 +297,23 @@ impl AgentChat {
                         .await?;
                 }
             }
-            for user in banned_ids {
-                if bans.iter().any(|b| b.chat_id == chat && b.user_id == user) {
-                    continue;
-                }
+            let new: Vec<Id> = banned_ids
+                .into_iter()
+                .filter(|user| !bans.iter().any(|b| b.chat_id == chat && b.user_id == *user))
+                .collect();
+            if new.is_empty() {
+                continue;
+            }
+            let banned_by = match committers.of(&room.uri) {
+                Some(committer) if committer != self.user => self.contact_for(committer).await?,
+                _ => self.account.clone(),
+            };
+            for user in new {
                 let ban = ChatBan::new(
                     self.inner.mint_id(),
                     chat.clone(),
                     user,
-                    self.account.clone(),
+                    banned_by.clone(),
                     jmap_server::now_utc_string(),
                 );
                 self.inner.insert_object(&self.account, ban).await?;
