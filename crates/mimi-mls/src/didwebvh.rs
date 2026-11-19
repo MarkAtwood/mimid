@@ -32,7 +32,7 @@
 //!   never see it;
 //! - each `update` is a `DIDWebVHHeads` whose entries replace or add the
 //!   entries for the same SCIDs, applied in Commit order
-//!   ([`apply_heads_updates`]); a `remove` is invalid;
+//!   (`apply_heads_updates`); a `remove` is invalid;
 //! - the GroupContext's `app_components` list names the component, which
 //!   makes every member list it in its leaf (mls-extensions-11 §5), the job
 //!   the draft gives `required_capabilities`; no `required_capabilities`
