@@ -19,7 +19,7 @@
 //!   [`MIN_PING_SECS`]..=[`MAX_PING_SECS`] (RFC 8620 §7.3 lets the server
 //!   do so), and each ping reports the interval used.
 //!
-//! Each change on the [`ChangeBus`] makes the stream recompute the
+//! Each change on the [`ChangeBus`](super::bus::ChangeBus) makes the stream recompute the
 //! account's state strings for the requested types; when any differ from
 //! the last ones sent (or, for the first, from those at connection), it
 //! sends a `state` event whose data is a StateChange object (RFC 8620

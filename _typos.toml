@@ -1,7 +1,8 @@
 [default]
 # Content hashes in generated Beads markers.
+# base64url test keys (httpsig tests),
 # and base58btc multihashes and Ed25519 multikeys (did:webvh SCIDs, entry hashes, keys).
-extend-ignore-re = ["hash:[0-9a-f]+", "Qm[1-9A-HJ-NP-Za-km-z]{44}", "z6Mk[1-9A-HJ-NP-Za-km-z]{44}"]
+extend-ignore-re = ["hash:[0-9a-f]+", "TEST_KEY_[A-Z]+: &str = \"[A-Za-z0-9_-]+\"", "Qm[1-9A-HJ-NP-Za-km-z]{44}", "z6Mk[1-9A-HJ-NP-Za-km-z]{44}"]
 
 [default.extend-words]
 # CBOR Extended Diagnostic Notation (.edn files).

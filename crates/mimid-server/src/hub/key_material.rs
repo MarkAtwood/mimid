@@ -23,7 +23,7 @@
 //!    (decision mimid-1wgh.7.11). A hub given none answers
 //!    [`HubError::NotImplemented`] (decision mimid-1wgh.6.64).
 //! 8. The request bytes, as received, go to the target user's provider
-//!    ([`PeerClient::key_material`]); its `200` body must decode as a
+//!    ([`PeerClient::key_material`](crate::peer::PeerClient::key_material)); its `200` body must decode as a
 //!    [`KeyMaterialResponse`] and is returned as received.
 //!
 //! A request refused at steps 2 to 4 or 6 gets a `noConsent` response

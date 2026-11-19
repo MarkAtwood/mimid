@@ -16,7 +16,7 @@
 //!
 //! For a Commit:
 //!
-//! 4. [`Observer::process`] stages it. MLS validity alone decides whether
+//! 4. [`Observer::process`](mimi_mls::observer::Observer::process) stages it. MLS validity alone decides whether
 //!    it can win the epoch (decision mimid-1wgh.6.5); the hub's `apply`
 //!    function for AppDataUpdates is [`components::apply_commit_op`]
 //!    (decision mimid-1wgh.6.53).
@@ -46,7 +46,7 @@
 //!
 //! For proposals, `proposalOrCommit` and then each `moreProposals` entry:
 //!
-//! 4. [`Observer::process_proposal`] validates and stores it.
+//! 4. [`Observer::process_proposal`](mimi_mls::observer::Observer::process_proposal) validates and stores it.
 //! 5. The `From` domain must be the domain of `proposalOrCommit`'s sender.
 //! 6. Room policy must allow each proposal, with its sender as the actor
 //!    ([`policy::authorize_proposal`]).
