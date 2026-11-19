@@ -2,13 +2,15 @@
   "id": "mimid-cu6d",
   "title": "Migrate AgentChat to crate-jmap's split ChatBackend hook traits (pin \u003e= 2f00d5d9)",
   "description": "crate-jmap phase 1 (7353ae03 split, 2f4ebe6b Delegate* traits; pin 2f00d5d9+) breaks AgentChat. One impl per hook trait: ChatStore (create_object, create_message, update_object, destroy_object, supports_type), ChatModeration (ban hooks, kick_chat_members), ChatRestrictions (may_update_chat, may_update_message), ChatSettings (limits, retains_edit_history, owner_user_id, maintains_unread_count forward), ChatResolvers (attachment_blob), empty ChatEvents. Delegate to self.inner: DelegateChatSpaces, DelegateSpacePolicy, DelegateChatAccessPolicy, DelegateChatMessageLifecycle. Import hook traits where hooks are called on concrete types (all re-exported at jmap_chat_server root). JmapBackend still hand-forwarded (phase 2 JMAP-fmi6). Start after blob-limits merges (both touch mimid-agent-jmap).",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-19T18:58:11.469472392Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-19T18:58:11.469472392Z",
+  "updated_at": "2026-11-19T19:28:35.518587023Z",
+  "closed_at": "2026-11-19T19:28:35.518587023Z",
+  "close_reason": "AgentChat split over hook traits; crate-jmap pinned at b85dfc85",
   "labels": [
     "agent",
     "jmap"

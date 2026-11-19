@@ -1,3 +1,4 @@
 {"id":"01a1f52c-6bce-7353-9ee2-cc155e2e9d10","issue_id":"mimid-cu6d","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-19T18:58:11.534219555Z"}
 {"id":"01a1f52c-6c59-771f-b9c5-c3d9339a163a","issue_id":"mimid-cu6d","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-19T18:58:11.67347247Z"}
 {"id":"01a1f52c-6c6a-78fd-9b33-b575a8eed966","issue_id":"mimid-cu6d","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: jmap","created_at":"2026-11-19T18:58:11.690590983Z"}
+{"id":"01a1f548-40c4-71f9-b6b5-d3ca83e0b4ae","issue_id":"mimid-cu6d","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"AgentChat split over hook traits; crate-jmap pinned at b85dfc85","created_at":"2026-11-19T19:28:35.524130753Z"}
