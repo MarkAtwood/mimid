@@ -6,8 +6,9 @@
 //! server (`Room/reportAbuse`, decision mimid-1wgh.58), which relays it to
 //! a.example's `/reportAbuse` with provider-to-provider HTTP.
 //!
-//! Room "allowed" gives the member role room-policy-04 §8.3
-//! `canReportAbuse`; room "denied" does not (decision mimid-1wgh.57).
+//! Room "allowed" has mimid-agent-core's default roles, whose member role
+//! holds room-policy-04 §8.3 `canReportAbuse` (bead mimid-14bu); room
+//! "denied" has roles without it (decision mimid-1wgh.57).
 //!
 //! Oracles:
 //!
@@ -318,19 +319,17 @@ impl Client {
     }
 }
 
-/// The roles of a room alice hosts: 1 "banned" and 2 "member" as in
-/// mimid-agent-core's defaults, with `canReportAbuse` when `may_report`.
-fn roles(may_report: bool) -> RoleData {
-    let mut capabilities = vec![
+/// The roles of room "denied": 1 "banned", 2 "member" and 3 "admin" (the
+/// creator's role) as in mimid-agent-core's defaults, none of them with
+/// `canReportAbuse`.
+fn roles_without_reporting() -> RoleData {
+    let capabilities = vec![
         Capability::CAN_ADD_PARTICIPANT,
         Capability::CAN_REMOVE_SELF,
         Capability::CAN_REMOVE_OWN_CLIENT,
         Capability::CAN_SEND_MESSAGE,
         Capability::CAN_RECEIVE_MESSAGE,
     ];
-    if may_report {
-        capabilities.push(Capability::CAN_REPORT_ABUSE);
-    }
     let role = |role_index: u32, name: &str, role_capabilities, authorized_role_changes| Role {
         role_index,
         role_name: name.to_owned(),
@@ -342,24 +341,23 @@ fn roles(may_report: bool) -> RoleData {
         maximum_active_participants_constraint: None,
         authorized_role_changes,
     };
+    let changes = || {
+        vec![
+            SingleSourceRoleChangeTargets {
+                from_role_index: 0,
+                target_role_indexes: vec![2],
+            },
+            SingleSourceRoleChangeTargets {
+                from_role_index: 2,
+                target_role_indexes: vec![0],
+            },
+        ]
+    };
     RoleData {
         roles: vec![
             role(1, "banned", vec![], vec![]),
-            role(
-                2,
-                "member",
-                capabilities,
-                vec![
-                    SingleSourceRoleChangeTargets {
-                        from_role_index: 0,
-                        target_role_indexes: vec![2],
-                    },
-                    SingleSourceRoleChangeTargets {
-                        from_role_index: 2,
-                        target_role_indexes: vec![0],
-                    },
-                ],
-            ),
+            role(2, "member", capabilities.clone(), changes()),
+            role(3, "admin", capabilities, changes()),
         ],
     }
 }
@@ -437,13 +435,15 @@ async fn reports_reach_the_hub_through_the_reporters_provider() {
     bob.chat.agent().lock().await.allow(ALICE).await.unwrap();
 
     // alice hosts the two rooms on a.example and invites bob into both.
-    let host = |name: &str, may_report: bool| {
-        let mut options = HostOptions::named(name);
-        options.roles = Some(roles(may_report));
-        options
-    };
-    let allowed = alice.host_room(&host("allowed", true)).await.unwrap();
-    let denied = alice.host_room(&host("denied", false)).await.unwrap();
+    // "allowed" has the default roles, whose member role holds
+    // canReportAbuse (bead mimid-14bu); "denied" has roles without it.
+    let allowed = alice
+        .host_room(&HostOptions::named("allowed"))
+        .await
+        .unwrap();
+    let mut denied = HostOptions::named("denied");
+    denied.roles = Some(roles_without_reporting());
+    let denied = alice.host_room(&denied).await.unwrap();
     for room in [&allowed, &denied] {
         assert!(room.starts_with("mimi://a.example/r/"), "{room}");
         alice.invite(room, BOB).await.unwrap();

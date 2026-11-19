@@ -106,8 +106,9 @@ pub struct HostOptions {
     /// mimid-jf20), and so does any hub that requires franking.
     pub open: bool,
     /// The room's `roles_list` in place of the default one (room-policy-04
-    /// §3), for a room that is not open. Participants this agent adds get
-    /// role 2, so the list must define it.
+    /// §3), for a room that is not open. The creator gets role 3 and
+    /// participants this agent adds get role 2, so the list must define
+    /// both.
     pub roles: Option<RoleData>,
 }
 
