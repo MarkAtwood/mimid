@@ -10,10 +10,11 @@
 //! - `POST /jmap/upload/{accountId}/` and
 //!   `GET /jmap/download/{accountId}/{blobId}/{name}`: blobs (RFC 8620 §6;
 //!   [`blobs`]);
-//! - `GET /assets/{blobId}`: the asset server, unauthenticated (INVENTED,
-//!   NOT FROM SPEC; [`blobs`]);
+//! - `GET /assets/{blobId}`: the asset server, unauthenticated, at the
+//!   `assetUrl` template ([`blobs`]);
 //! - `GET /jmap/asset/{accountId}?room=&url=`: a user's fetch of an
-//!   attachment from any provider (INVENTED, NOT FROM SPEC; [`blobs`]).
+//!   attachment from any provider, at the `assetDownloadUrl` template
+//!   ([`blobs`]).
 //!
 //! The upload route's body limit is [`blobs::MAX_BLOB_LEN`];
 //! every other JMAP route has a body limit of [`api::MAX_SIZE_REQUEST`]

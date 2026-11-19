@@ -1,5 +1,7 @@
-//! `GET /jmap/asset/{accountId}?room=&url=` (bead mimid-1wgh.14; INVENTED,
-//! NOT FROM SPEC): a user's fetch of an attachment from any provider.
+//! `GET /jmap/asset/{accountId}?room=&url=` (bead mimid-1wgh.14), the
+//! `assetDownloadUrl` template of draft-atwood-jmap-chat-mimi-00
+//! §Account-Level Capability Object: a user's fetch of an attachment from
+//! any provider.
 //!
 //! - Two providers on loopback: the asset is uploaded at a.example, which
 //!   hosts the room; bob at b.example, a member of the room, fetches it
@@ -8,7 +10,9 @@
 //!   authentication with b.example's key.
 //! - One provider that is the room's hub, fetching a peer-hosted asset
 //!   from an HTTPS asset server (fixtures/tls `assets.pem`) itself.
-//! - This server's own asset URL, served from its store.
+//! - This server's own asset URL, served from its store for a room the
+//!   user is in, and refused for any other room (the draft: "The server
+//!   MUST refuse a `roomId` that no Chat of the account has").
 //!
 //! Oracles: the bytes fetched equal the bytes uploaded or served, octet
 //! for octet; refusals carry the status and problem type the hub's
@@ -432,7 +436,7 @@ async fn the_hub_fetches_a_peer_hosted_asset_for_its_own_member() {
 }
 
 #[tokio::test]
-async fn an_own_asset_url_is_served_from_the_store_for_any_room() {
+async fn an_own_asset_url_is_served_from_the_store_only_for_the_users_room() {
     let a = start(
         "a.example",
         bind().await,
@@ -443,19 +447,28 @@ async fn an_own_asset_url_is_served_from_the_store_for_any_room() {
         None,
     )
     .await;
+    a.store
+        .add_follower_member(ROOM, &domain("a.example"), ALICE, 0, NOW)
+        .await
+        .unwrap();
     let blob_id = upload(&a, ciphertext()).await;
-    // The blob id is the capability: no room membership is needed.
     let url = format!("{}/assets/{blob_id}", a.base);
     assert_octets(
-        fetch(&a, &a.account_id, &a.token, OTHER_ROOM, &url).await,
+        fetch(&a, &a.account_id, &a.token, ROOM, &url).await,
         &ciphertext(),
+    );
+    // A room alice is not in, even for this server's own asset.
+    assert_refused(
+        fetch(&a, &a.account_id, &a.token, OTHER_ROOM, &url).await,
+        404,
+        "no-such-room",
     );
     assert_refused(
         fetch(
             &a,
             &a.account_id,
             &a.token,
-            OTHER_ROOM,
+            ROOM,
             &format!("{}/assets/AAECAwQFBgcICQoLDA0ODw", a.base),
         )
         .await,

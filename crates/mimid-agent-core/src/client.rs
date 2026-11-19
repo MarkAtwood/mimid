@@ -115,13 +115,14 @@ pub(crate) struct Jmap {
     account_id: String,
     pub hub_sender: HubSender,
     pub room_id_prefix: String,
-    /// The server's base URL, without a trailing `/`.
-    base: String,
     /// The Session's `uploadUrl`.
     upload_url: String,
     /// The mimi capability's `assetUrl` template, if the server stores
     /// attachments.
     asset_url: Option<String>,
+    /// The mimi capability's `assetDownloadUrl` template, if the server
+    /// fetches attachments.
+    asset_download_url: Option<String>,
     /// Whether the account keeps Chat `privateMetadata` in vendor
     /// namespaces (draft-ietf-jmap-metadata-05 §1.2.1), where accepted
     /// rooms are recorded (decision mimid-1wgh.63).
@@ -177,6 +178,7 @@ impl Jmap {
             )
             .replace("{accountId}", &account_id);
         let asset_url = mimi["assetUrl"].as_str().map(str::to_owned);
+        let asset_download_url = mimi["assetDownloadUrl"].as_str().map(str::to_owned);
         let chat_info =
             &session["accounts"][&account_id]["accountCapabilities"][METADATA]["dataTypes"]["Chat"];
         let chat_metadata = session["capabilities"].get(METADATA).is_some()
@@ -189,9 +191,9 @@ impl Jmap {
             account_id,
             hub_sender,
             room_id_prefix,
-            base: base.to_owned(),
             upload_url,
             asset_url,
+            asset_download_url,
             chat_metadata,
             http,
         })
@@ -252,9 +254,9 @@ impl Jmap {
     }
 
     /// Uploads `bytes` (RFC 8620 §6.1) and returns the URL other
-    /// providers fetch them from: the mimi capability's `assetUrl` with
-    /// the blob's id (INVENTED, NOT FROM SPEC: draft-atwood-jmap-chat-mimi-00
-    /// does not define attachments).
+    /// providers fetch them from: the mimi capability's `assetUrl`
+    /// expanded with the blob's id (draft-atwood-jmap-chat-mimi-00
+    /// §Account-Level Capability Object).
     pub async fn upload(&self, bytes: Vec<u8>) -> Result<String, AgentError> {
         let what = "upload";
         let template = self.asset_url.as_deref().ok_or_else(|| {
@@ -276,20 +278,25 @@ impl Jmap {
         let blob_id = answer["blobId"]
             .as_str()
             .ok_or_else(|| AgentError::malformed(what, "no blobId"))?;
-        Ok(template.replace("{blobId}", blob_id))
+        expand_template(template, &[("blobId", blob_id)])
+            .map_err(|detail| AgentError::malformed("assetUrl", detail))
     }
 
     /// Fetches the attachment at `url` for `room` through this user's
-    /// server (`GET /jmap/asset/{accountId}`, INVENTED, NOT FROM SPEC),
-    /// which reads its own assets and asks the room's hub for others
-    /// (protocol-07 §5.10.2). At most [`MAX_ASSET_LEN`] octets.
+    /// server, at the mimi capability's `assetDownloadUrl` expanded with
+    /// `roomId` and `url` (draft-atwood-jmap-chat-mimi-00 §Account-Level
+    /// Capability Object); the server reads its own assets and asks the
+    /// room's hub for others (protocol-07 §5.10.2). At most
+    /// [`MAX_ASSET_LEN`] octets.
     pub async fn fetch_asset(&self, room: &str, url: &str) -> Result<Vec<u8>, AgentError> {
-        let what = "GET /jmap/asset";
-        let endpoint = reqwest::Url::parse_with_params(
-            &format!("{}/jmap/asset/{}", self.base, self.account_id),
-            [("room", room), ("url", url)],
-        )
-        .map_err(|e| AgentError::Invalid(format!("the asset request URL: {e}")))?;
+        let what = "GET assetDownloadUrl";
+        let template = self.asset_download_url.as_deref().ok_or_else(|| {
+            AgentError::Invalid("the server does not fetch attachments".to_owned())
+        })?;
+        let endpoint = expand_template(template, &[("roomId", room), ("url", url)])
+            .map_err(|detail| AgentError::malformed("assetDownloadUrl", detail))?;
+        let endpoint = reqwest::Url::parse(&endpoint)
+            .map_err(|e| AgentError::malformed("assetDownloadUrl", e.to_string()))?;
         let mut response = self
             .http
             .get(endpoint)
@@ -866,8 +873,106 @@ pub(crate) fn utc_date_ms(text: &str) -> Result<u64, String> {
     Ok(((days * 24 + hour) * 60 + minute) * 60_000 + second * 1000 + millis)
 }
 
+/// `template` expanded with `vars` as an RFC 6570 level 1 URI Template
+/// (§1.2, §3.2.2 simple string expansion): each `{name}` becomes the
+/// variable's value with every octet outside the unreserved set
+/// (ALPHA, DIGIT, `-`, `.`, `_`, `~`) percent-encoded, and an undefined
+/// variable expands to nothing (§2.3). Literals are copied unchanged.
+///
+/// # Errors
+///
+/// An expression of a higher level (an operator, a variable list or a
+/// modifier) or an unclosed brace, as text.
+pub(crate) fn expand_template(template: &str, vars: &[(&str, &str)]) -> Result<String, String> {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let close = after
+            .find('}')
+            .ok_or_else(|| "an unclosed expression".to_owned())?;
+        let name = &after[..close];
+        let level1 = !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'%'));
+        if !level1 {
+            return Err(format!("{{{name}}} is not a level 1 expression"));
+        }
+        if let Some((_, value)) = vars.iter().find(|(n, _)| *n == name) {
+            for b in value.bytes() {
+                if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+                    out.push(char::from(b));
+                } else {
+                    out.push_str(&format!("%{b:02X}"));
+                }
+            }
+        }
+        rest = &after[close + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
+
+    // RFC 6570 §1.2 (level 1) and §3.2.2 examples, with var := "value",
+    // hello := "Hello World!", half := "50%", empty := "" and undef
+    // undefined.
+    #[test]
+    fn level_1_templates_expand_as_rfc_6570_shows() {
+        let vars = [
+            ("var", "value"),
+            ("hello", "Hello World!"),
+            ("half", "50%"),
+            ("empty", ""),
+        ];
+        for (template, expanded) in [
+            ("{var}", "value"),
+            ("{hello}", "Hello%20World%21"),
+            ("{half}", "50%25"),
+            ("O{empty}X", "OX"),
+            ("O{undef}X", "OX"),
+        ] {
+            assert_eq!(
+                super::expand_template(template, &vars).as_deref(),
+                Ok(expanded),
+                "{template}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_asset_download_template_escapes_room_and_url() {
+        assert_eq!(
+            super::expand_template(
+                "https://p.example/jmap/asset/A1?room={roomId}&url={url}",
+                &[
+                    ("roomId", "mimi://a.example/r/one"),
+                    ("url", "https://b.example/a/1?x=1&y=é"),
+                ],
+            )
+            .as_deref(),
+            Ok(
+                "https://p.example/jmap/asset/A1?room=mimi%3A%2F%2Fa.example%2Fr%2Fone\
+                &url=https%3A%2F%2Fb.example%2Fa%2F1%3Fx%3D1%26y%3D%C3%A9"
+            )
+        );
+    }
+
+    #[test]
+    fn higher_level_and_unclosed_expressions_are_refused() {
+        for template in [
+            "{+var}", "{#var}", "{x,y}", "{var:3}", "{list*}", "{}", "a{var",
+        ] {
+            assert!(
+                super::expand_template(template, &[("var", "v")]).is_err(),
+                "{template}"
+            );
+        }
+    }
     use super::*;
 
     #[test]

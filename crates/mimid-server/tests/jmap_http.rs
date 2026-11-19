@@ -223,8 +223,13 @@ fn expected_session(
                         "hubSender": URL_SAFE_NO_PAD.encode(hub_sender(hub_key)),
                         "cipherSuites": [1],
                         "maxKeyPackages": max_key_packages,
-                        // INVENTED, NOT FROM SPEC (bead mimid-1wgh.14).
-                        "assetUrl": "https://mimi.a.example/assets/{blobId}"
+                        // mimi-00 §Account-Level Capability Object
+                        // (jmap-chat-spec 92fecd6): RFC 6570 level 1
+                        // templates; the paths are mimid's own.
+                        "assetUrl": "https://mimi.a.example/assets/{blobId}",
+                        "assetDownloadUrl": format!(
+                            "https://mimi.a.example/jmap/asset/{account_id}?room={{roomId}}&url={{url}}"
+                        )
                     },
                     // draft-atwood-jmap-updates-00 §3: an empty object.
                     "urn:ietf:params:jmap:i18n": {},

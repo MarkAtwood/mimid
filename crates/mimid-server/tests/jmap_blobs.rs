@@ -344,14 +344,21 @@ async fn assets_serve_without_auth_and_404_an_unknown_id() {
 }
 
 #[tokio::test]
-async fn the_session_advertises_the_asset_url_and_upload_limits() {
+async fn the_session_advertises_the_asset_urls_and_upload_limits() {
     let f = fixture().await;
     let (status, _, body) = get(&f.app, "/.well-known/jmap", Some(&f.alice_token)).await;
     assert_eq!(status, StatusCode::OK);
     let session = json_of(&body);
+    // draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object.
+    let mimi =
+        &session["accounts"][&f.alice_id]["accountCapabilities"]["urn:ietf:params:jmap:chat:mimi"];
+    assert_eq!(mimi["assetUrl"], "https://mimi.a.example/assets/{blobId}");
     assert_eq!(
-        session["accounts"][&f.alice_id]["accountCapabilities"]["urn:ietf:params:jmap:chat:mimi"]["assetUrl"],
-        "https://mimi.a.example/assets/{blobId}"
+        mimi["assetDownloadUrl"],
+        format!(
+            "https://mimi.a.example/jmap/asset/{}?room={{roomId}}&url={{url}}",
+            f.alice_id
+        )
     );
     assert_eq!(
         session["capabilities"]["urn:ietf:params:jmap:core"]["maxSizeUpload"],

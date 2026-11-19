@@ -8,15 +8,16 @@
 //! ([`super::blobs`]): `maxSizeUpload` is [`MAX_BLOB_LEN`] and
 //! `maxConcurrentUpload` RFC 8620 §2's suggested 4. The account's
 //! `urn:ietf:params:jmap:chat:mimi` capability carries `assetUrl`, the
-//! template of the asset server's URLs ([`ASSET_URL_TEMPLATE`]; INVENTED,
-//! NOT FROM SPEC).
+//! template of the asset server's URLs ([`ASSET_URL_TEMPLATE`]), and
+//! `assetDownloadUrl`, the template of the account's attachment fetches
+//! ([`asset_download_url`]), as draft-atwood-jmap-chat-mimi-00
+//! §Account-Level Capability Object defines them (jmap-chat-spec 92fecd6).
 //!
 //! # Limitations
 //!
 //! - `maxAttachmentBytes` and `maxAttachmentsPerMessage` are `0`: the
 //!   server takes no JMAP Chat attachments, since `Message/set` create is
 //!   refused; clients encrypt attachments and upload them as blobs.
-//! - `assetUrl` is not in draft-atwood-jmap-chat-mimi-00.
 //! - No collation algorithm is advertised.
 
 use std::collections::BTreeMap;
@@ -71,10 +72,21 @@ pub const MAX_CONCURRENT_UPLOAD: u64 = super::blobs::MAX_CONCURRENT_UPLOAD as u6
 
 /// The `assetUrl` template in the account's
 /// `urn:ietf:params:jmap:chat:mimi` capability, after the base URL: where
-/// the asset server serves a blob ([`super::blobs`]). INVENTED, NOT FROM
-/// SPEC: draft-atwood-jmap-chat-mimi-00 does not define attachments
-/// (bead mimid-1wgh.14).
+/// the asset server serves a blob ([`super::blobs`]). An RFC 6570 level 1
+/// template with the variable `blobId` (draft-atwood-jmap-chat-mimi-00
+/// §Account-Level Capability Object). The path is mimid's own.
 pub const ASSET_URL_TEMPLATE: &str = "/assets/{blobId}";
+
+/// The `assetDownloadUrl` template of account `account_id` at `base`
+/// (draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object: an
+/// RFC 6570 level 1 template with the variables `roomId` and `url`):
+/// `{base}/jmap/asset/{account_id}?room={roomId}&url={url}`, the route of
+/// [`super::blobs`]. The account id is written in, not a variable: the
+/// capability is the account's own, and an RFC 8620 Id needs no
+/// escaping.
+pub fn asset_download_url(base: &str, account_id: &str) -> String {
+    format!("{base}/jmap/asset/{account_id}?room={{roomId}}&url={{url}}")
+}
 
 /// `maxBodyBytes` (draft-atwood-jmap-chat-00 L235): the longest body a
 /// Message can have. Every Message body is the unpadded base64url
@@ -169,14 +181,18 @@ impl SessionTemplate {
                 // crate-jmap builds its non_exhaustive wire types from JSON
                 // (its bd:JMAP-sgrr.27), which also checks hubSender is
                 // base64url and cipherSuites is not empty.
-                mimi: serde_json::from_value::<MimiCapability>(serde_json::json!({
-                    "userUri": user_uri,
-                    "roomIdPrefix": self.room_id_prefix,
-                    "hubSender": self.hub_sender,
-                    "cipherSuites": CIPHER_SUITES,
-                    "maxKeyPackages": self.max_key_packages,
-                    "assetUrl": format!("{base}{ASSET_URL_TEMPLATE}"),
-                }))?,
+                mimi: {
+                    let mut mimi = serde_json::from_value::<MimiCapability>(serde_json::json!({
+                        "userUri": user_uri,
+                        "roomIdPrefix": self.room_id_prefix,
+                        "hubSender": self.hub_sender,
+                        "cipherSuites": CIPHER_SUITES,
+                        "maxKeyPackages": self.max_key_packages,
+                    }))?;
+                    mimi.asset_url = Some(format!("{base}{ASSET_URL_TEMPLATE}"));
+                    mimi.asset_download_url = Some(asset_download_url(base, &account_id));
+                    mimi
+                },
                 i18n: Empty {},
                 metadata: AccountMetadata {
                     data_types: BTreeMap::from([("Chat", super::metadata::chat_info())]),

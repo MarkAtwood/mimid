@@ -138,9 +138,12 @@
 //! - `Message/set` create with `mentions`, `broadcastMentions`, `replyTo`,
 //!   `threadRootId`, `topicId`, `subject`, or expiry or burn settings, is
 //!   `forbidden`, naming the property.
-//! - Sending attachments needs a mimid server that stores them (its
-//!   Session's mimi capability has `assetUrl`); otherwise a create with
-//!   attachments is refused with the agent's error.
+//! - Sending attachments needs a server that stores them (its Session's
+//!   mimi capability has `assetUrl`), and receiving them one that fetches
+//!   them (`assetDownloadUrl`; draft-atwood-jmap-chat-mimi-00
+//!   §Account-Level Capability Object); otherwise a create with
+//!   attachments is refused with the agent's error, and a received
+//!   attachment is left out and reported.
 //! - A received attachment whose fetch fails for a reason that may pass
 //!   (the server or the peer's hub unreachable or failing) is kept and
 //!   fetched again on later syncs, then added to its Message ([`retry`]).

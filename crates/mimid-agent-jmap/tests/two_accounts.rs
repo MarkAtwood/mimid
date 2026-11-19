@@ -63,18 +63,23 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
     server_with(dir, users, None).await
 }
 
-/// A stand-in for mimid-server's attachment routes, which are being built
-/// on another branch (bead mimid-1wgh.14), as mimid-agent-core uses them:
-/// `POST /jmap/upload/{accountId}/` keeps the octets and answers a
-/// `blobId`; the Session's mimi account capability gets `assetUrl`
-/// `{base}/assets/{blobId}`; `GET /jmap/asset/{accountId}?room=&url=`
-/// answers the octets stored for the URL's blobId. No authorization: the
-/// test's server is reached only by its agents.
+/// A stand-in for mimid-server's attachment routes, so a test can see and
+/// alter what is stored: `POST /jmap/upload/{accountId}/` keeps the octets
+/// and answers a `blobId`; the Session's mimi account capability gets
+/// `assetUrl` `{base}/assets/{blobId}` and `assetDownloadUrl`
+/// `{base}/stub-download?r={roomId}&u={url}`, a path of the stand-in's
+/// own, so a fetch reaches it only through the template
+/// (draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object; bead
+/// mimid-sqxc); `GET /stub-download` answers the octets stored for the
+/// URL's blobId. No authorization: the test's server is reached only by
+/// its agents.
 #[derive(Clone, Default)]
 struct Assets {
     /// blobId to the stored (sealed) octets.
     stored: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
-    /// How many of the next `/jmap/asset` fetches answer 503.
+    /// The `roomId` of each fetch, as the stand-in decoded it.
+    fetched_rooms: Arc<Mutex<Vec<String>>>,
+    /// How many of the next `/stub-download` fetches answer 503.
     unavailable: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -104,7 +109,7 @@ async fn assets_stub(
         stored.insert(blob_id.clone(), bytes.to_vec());
         return axum::Json(json!({"blobId": blob_id, "size": bytes.len()})).into_response();
     }
-    if path.starts_with("/jmap/asset/") {
+    if path == "/stub-download" {
         use std::sync::atomic::Ordering;
         if assets
             .unavailable
@@ -115,7 +120,12 @@ async fn assets_stub(
         }
         let query: BTreeMap<String, String> =
             axum::extract::Query::try_from_uri(request.uri()).unwrap().0;
-        let url = &query["url"];
+        assets
+            .fetched_rooms
+            .lock()
+            .unwrap()
+            .push(query["r"].clone());
+        let url = &query["u"];
         let blob_id = url.strip_prefix(&format!("{base}/assets/")).unwrap();
         return match assets.stored.lock().unwrap().get(blob_id) {
             Some(bytes) => bytes.clone().into_response(),
@@ -130,8 +140,9 @@ async fn assets_stub(
     let mut session: Value =
         serde_json::from_slice(&axum::body::to_bytes(body, usize::MAX).await.unwrap()).unwrap();
     for account in session["accounts"].as_object_mut().unwrap().values_mut() {
-        account["accountCapabilities"]["urn:ietf:params:jmap:chat:mimi"]["assetUrl"] =
-            json!(format!("{base}/assets/{{blobId}}"));
+        let mimi = &mut account["accountCapabilities"]["urn:ietf:params:jmap:chat:mimi"];
+        mimi["assetUrl"] = json!(format!("{base}/assets/{{blobId}}"));
+        mimi["assetDownloadUrl"] = json!(format!("{base}/stub-download?r={{roomId}}&u={{url}}"));
     }
     parts.headers.remove(axum::http::header::CONTENT_LENGTH);
     Response::from_parts(parts, axum::body::Body::from(session.to_string()))
@@ -849,6 +860,12 @@ async fn attachments_travel_sealed_and_arrive_whole() {
         .unwrap()
         .unwrap();
     assert_eq!(kept, content);
+    // bob fetched through the Session's assetDownloadUrl, for the room.
+    let room = bob.get("Chat", None).await[0]["roomId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(*assets.fetched_rooms.lock().unwrap(), vec![room]);
 
     // Two attachments with no text; the stored octets of the second are
     // altered before bob fetches them.

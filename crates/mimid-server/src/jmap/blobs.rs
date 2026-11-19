@@ -8,20 +8,24 @@
 //!   8620 §6.2): the account's own blob, with `Content-Type` set to
 //!   `accept` (the stored type when it is absent) and `name` as the
 //!   `Content-Disposition` filename.
-//! - `GET /assets/{blobId}` (INVENTED, NOT FROM SPEC): the asset server.
+//! - `GET /assets/{blobId}`: the asset server, at the `assetUrl` template
+//!   (draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object;
+//!   the path is mimid's own).
 //!   No authentication: the blob id, 128 random bits, is the capability,
 //!   and the content is ciphertext the client encrypted. Served as
 //!   `application/octet-stream` with `X-Content-Type-Options: nosniff` and
-//!   no CORS headers. The Session advertises the template as `assetUrl`
-//!   ([`super::session`]).
+//!   no CORS headers.
 //!
-//! - `GET /jmap/asset/{accountId}?room={roomUri}&url={downloadUrl}`
-//!   (INVENTED, NOT FROM SPEC): a user's fetch of an attachment, which may
-//!   live at any provider. This server's own asset URL
-//!   (`{base}/assets/{blobId}`) is served from the store, whatever the
-//!   room. Any other URL goes through the room's hub, for a current member
-//!   of a room this provider follows only (else `404`, as for an unknown
-//!   room): when this server is the hub, after
+//! - `GET /jmap/asset/{accountId}?room={roomUri}&url={downloadUrl}`: a
+//!   user's fetch of an attachment, which may live at any provider, at the
+//!   `assetDownloadUrl` template ([`super::session::asset_download_url`];
+//!   draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object; the
+//!   path is mimid's own). Only for a current member of a room this
+//!   provider follows (else `404`, as for an unknown room; the draft:
+//!   "The server MUST refuse a `roomId` that no Chat of the account
+//!   has"). This server's own asset URL (`{base}/assets/{blobId}`) is
+//!   served from the store. Any other URL goes through the room's hub:
+//!   when this server is the hub, after
 //!   [`crate::hub::assets::check_url`], as for a peer's proxyDownload;
 //!   when a peer is, by a provider-authenticated protocol-07 §5.10.2
 //!   proxyDownload to it ([`crate::peer::PeerClient::proxy_download`]).
@@ -347,9 +351,10 @@ pub(super) struct AssetQuery {
     url: String,
 }
 
-/// `GET /jmap/asset/{accountId}?room={roomUri}&url={downloadUrl}`
-/// (INVENTED, NOT FROM SPEC; bead mimid-1wgh.14): a user's fetch of an
-/// attachment from any provider. See the module documentation.
+/// `GET /jmap/asset/{accountId}?room={roomUri}&url={downloadUrl}`, the
+/// `assetDownloadUrl` template (draft-atwood-jmap-chat-mimi-00
+/// §Account-Level Capability Object; bead mimid-1wgh.14): a user's fetch
+/// of an attachment from any provider. See the module documentation.
 #[tracing::instrument(name = "jmap_asset_fetch", skip_all, fields(room_id = tracing::field::Empty))]
 pub(super) async fn fetch_asset(
     State(state): State<JmapState>,
@@ -365,18 +370,11 @@ pub(super) async fn fetch_asset(
     }
     tracing::Span::current().record("room_id", query.room.as_str());
     let inner = &state.0;
-    // This server's own asset: the blob id is the capability, as at
-    // /assets, so the room is not consulted.
-    if let Some(blob_id) = local_asset_id(&inner.base_url, &query.url) {
-        return match inner.store.asset(&blob_id).await {
-            Ok(Some(bytes)) => octet_stream(bytes),
-            Ok(None) => refused(StatusCode::NOT_FOUND, "no-such-asset", "no such asset"),
-            Err(error) => store_failed(&error),
-        };
-    }
-    // Anything else goes through the room's hub, and only for a member
-    // of a room this provider follows. A room the user is not in looks
-    // like one this provider does not know.
+    // Only for a member of a room this provider follows
+    // (draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object:
+    // "The server MUST refuse a `roomId` that no Chat of the account
+    // has"). A room the user is not in looks like one this provider does
+    // not know.
     let access = match inner
         .store
         .follower_room_access(&query.room, account.user().as_str())
@@ -392,6 +390,15 @@ pub(super) async fn fetch_asset(
         }
         Err(error) => return store_failed(&error),
     };
+    // This server's own asset is read from the store; anything else goes
+    // through the room's hub.
+    if let Some(blob_id) = local_asset_id(&inner.base_url, &query.url) {
+        return match inner.store.asset(&blob_id).await {
+            Ok(Some(bytes)) => octet_stream(bytes),
+            Ok(None) => refused(StatusCode::NOT_FOUND, "no-such-asset", "no such asset"),
+            Err(error) => store_failed(&error),
+        };
+    }
     let Ok(hub_domain) = Domain::try_from(access.hub_domain) else {
         tracing::error!(
             name: "jmap_asset_bad_hub_domain",

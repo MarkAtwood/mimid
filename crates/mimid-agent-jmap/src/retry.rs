@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn only_unreachable_and_server_side_failures_may_pass() {
         let status = |status| AgentError::Status {
-            what: "GET /jmap/asset".into(),
+            what: "GET assetDownloadUrl".into(),
             status,
             body: String::new(),
         };
