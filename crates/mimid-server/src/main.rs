@@ -25,13 +25,14 @@
 //!
 //! # Limitations
 //!
-//! - Providers authenticate with RFC 9421 request signatures and keys
-//!   configured per peer (mimid-75nk; decision mimid-1wgh.17 reversed),
-//!   but a peer in observe mode is let through unauthenticated, and the
-//!   mutually authenticated TLS protocol-07 §4.1 requires is not
-//!   implemented yet (mimid-75nk.4, .5, .6): mimid does not claim
-//!   conformance to it. With BasicCredential, a provider can still claim
-//!   any identity for its own users.
+//! - Providers authenticate with RFC 9421 request signatures, keys in DNS,
+//!   or client certificates by DANE or PKIX (mimid-75nk; decision
+//!   mimid-1wgh.17 reversed), but a peer in observe mode is let through
+//!   unauthenticated. Both halves of the mutually authenticated TLS of
+//!   protocol-07 §4.1 exist (mimid-75nk.4, .5, .6) and are tested between
+//!   two mimid binaries, but not yet with another implementation: mimid
+//!   does not claim conformance to it. With BasicCredential, a provider
+//!   can still claim any identity for its own users.
 //! - Peer providers are found through the configured peer map, not DNS.
 //! - The listener speaks plain HTTP unless `[tls]` is configured, when it
 //!   serves HTTPS and asks for client certificates ([`mimid_server::tls`]).
