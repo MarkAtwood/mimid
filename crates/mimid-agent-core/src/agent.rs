@@ -23,7 +23,8 @@ use mimi_protocol::{
     FrankingAgentData, GroupInfoOption, GroupInfoRequestTbs, GroupInfoResponse, HandshakeBundle,
     IdentifierUri, KeyMaterialRequestTbs, KeyMaterialUserCode, MAX_UNVERIFIED_ABUSIVE_MESSAGES,
     ParticipantListData, ParticipantListUpdate, Protocol, RoomMetaData, UnverifiedAbusiveMessage,
-    UnverifiedAbusiveMessages, UpdateRequest, UpdateResult, UserRolePair, Utf8String, franking_tag,
+    UnverifiedAbusiveMessages, UpdateRequest, UpdateResult, UserRolePair, UserindexRolePair,
+    Utf8String, franking_tag,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{
@@ -58,6 +59,9 @@ const ROLE: u32 = 2;
 /// The role the creator of a room this agent hosts gets: 3, "admin" in
 /// [`default_roles`] (decision mimid-1wgh.56).
 const ADMIN_ROLE: u32 = 3;
+/// room-policy-04 §8.1.3: role 1 must have this name for canBan and
+/// canUnban.
+const BANNED_ROLE_NAME: &str = "banned";
 /// The longest text sent as one message, in octets. INVENTED, NOT FROM
 /// SPEC.
 pub const MAX_TEXT_LEN: usize = 16 * 1024;
@@ -339,6 +343,16 @@ pub struct DidWebvhApplied {
 enum Offered {
     Committed,
     Proposed,
+}
+
+/// The user a moderation operation acts on, in one room.
+struct Target {
+    /// Its index in the participant list.
+    index: u32,
+    /// Its role.
+    role_index: u32,
+    /// Its leaves in the group.
+    leaves: Vec<u32>,
 }
 
 /// What [`Agent::join_own_rooms`] did.
@@ -1205,6 +1219,15 @@ impl Agent {
             .position(|i| i.number == number)
             .ok_or(AgentError::NoSuchInvite(number))?;
         let (welcome, tree) = self.invite_material(number)?;
+        // A group this device left before, perhaps under an earlier
+        // version that kept its state: OpenMLS refuses the Welcome while
+        // the state is there.
+        if let Ok(group_id) = Member::welcome_group_id(&self.identity, &welcome, tree.as_deref())
+            && !self.members.values().any(|m| m.group_id() == group_id)
+            && let Ok(stale) = Member::load(&self.identity, &group_id)
+        {
+            forget_group(&self.identity, stale);
+        }
         let member = Member::join_welcome(&self.identity, &welcome, tree.as_deref())
             .map_err(|e| AgentError::mls("joining from the Welcome", e))?
             .member;
@@ -1442,13 +1465,7 @@ impl Agent {
         if let Err(e) = sent {
             // Nothing of the group is kept, so a later join (a Welcome, or
             // this again) can be made.
-            if let Err(error) = member.delete(&self.identity) {
-                tracing::warn!(
-                    name: "external_join_state_not_deleted",
-                    error = &error as &dyn std::error::Error,
-                    "the state of a group not joined cannot be deleted"
-                );
-            }
+            forget_group(&self.identity, member);
             return Err(e);
         }
         let epoch = member.epoch();
@@ -1781,6 +1798,233 @@ impl Agent {
             self.save()?;
         }
         Ok(())
+    }
+
+    /// The participant list of an active room with each participant's
+    /// role index (protocol-07 §7.5).
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`], or [`AgentError::Encoding`] if the list
+    /// does not decode.
+    pub fn participant_roles(&self, room: &str) -> Result<Vec<(String, u32)>, AgentError> {
+        Ok(participant_list_of(self.member(room)?)?
+            .participants
+            .into_iter()
+            .map(|p| (String::from_utf8_lossy(&p.user).into_owned(), p.role_index))
+            .collect())
+    }
+
+    /// The roles of an active room's `roles_list` (room-policy-04 §3) as
+    /// (`role_index`, `role_name`); empty for a room without one (an open
+    /// room) or whose list does not decode.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`].
+    pub fn roles(&self, room: &str) -> Result<Vec<(u32, String)>, AgentError> {
+        Ok(self
+            .member(room)?
+            .component(ROLES_LIST)
+            .and_then(|data| RoleData::tls_deserialize_exact(data).ok())
+            .map(|roles| {
+                roles
+                    .roles
+                    .into_iter()
+                    .map(|r| (r.role_index, r.role_name))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Removes every client of `user` from `room` without changing the
+    /// participant list: room-policy-04 §8.1.2 `canKick`. The user stays a
+    /// participant (protocol-07 §7.5: "temporarily kicked").
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Invalid`] for this user itself, a user not in the
+    /// participant list or one with no client in the group,
+    /// [`AgentError::Refused`] if the hub refuses (the room policy), and
+    /// the errors of building the Commit.
+    pub async fn kick(&mut self, room: &str, user: &str) -> Result<(), AgentError> {
+        let target = self.moderation_target(room, user)?;
+        if target.leaves.is_empty() {
+            return Err(AgentError::Invalid(format!(
+                "{user} has no client in {room}"
+            )));
+        }
+        self.moderate(room, &target.leaves, &[], "kick").await
+    }
+
+    /// Removes `user` from `room`'s participant list and all its clients
+    /// from the group, in one Commit: room-policy-04 §8.1.2
+    /// `canRemoveParticipant`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Agent::kick`], except that a user with no client can be
+    /// removed.
+    pub async fn remove(&mut self, room: &str, user: &str) -> Result<(), AgentError> {
+        let target = self.moderation_target(room, user)?;
+        let update = participant_change(vec![], vec![target.index])?;
+        self.moderate(room, &target.leaves, &[update], "remove")
+            .await
+    }
+
+    /// Bans `user` from `room`: its role becomes 1, "banned", and all its
+    /// clients are removed, in one Commit (room-policy-04 §8.1.3
+    /// `canBan`). A banned user stays in the participant list, so it
+    /// cannot be invited again until it is unbanned.
+    ///
+    /// # Errors
+    ///
+    /// As [`Agent::remove`], and [`AgentError::Invalid`] if the user is
+    /// banned already or the room has no role 1 named "banned".
+    pub async fn ban(&mut self, room: &str, user: &str) -> Result<(), AgentError> {
+        let target = self.moderation_target(room, user)?;
+        if !self
+            .roles(room)?
+            .iter()
+            .any(|(index, name)| *index == BANNED_ROLE_INDEX && name == BANNED_ROLE_NAME)
+        {
+            return Err(AgentError::Invalid(format!(
+                "{room} has no \"banned\" role"
+            )));
+        }
+        if target.role_index == BANNED_ROLE_INDEX {
+            return Err(AgentError::Invalid(format!("{user} is banned already")));
+        }
+        let update = participant_change(
+            vec![UserindexRolePair {
+                user_index: target.index,
+                role_index: BANNED_ROLE_INDEX,
+            }],
+            vec![],
+        )?;
+        self.moderate(room, &target.leaves, &[update], "ban").await
+    }
+
+    /// Unbans `user` in `room`: its role goes from 1, "banned", to 2, the
+    /// role this agent gives every participant it adds (room-policy-04
+    /// §8.1.3 `canUnban`; decision mimid-1wgh.62 item 4). No client is
+    /// added.
+    ///
+    /// # Errors
+    ///
+    /// As [`Agent::remove`], and [`AgentError::Invalid`] if the user is
+    /// not banned.
+    pub async fn unban(&mut self, room: &str, user: &str) -> Result<(), AgentError> {
+        let target = self.moderation_target(room, user)?;
+        if target.role_index != BANNED_ROLE_INDEX {
+            return Err(AgentError::Invalid(format!("{user} is not banned")));
+        }
+        self.set_role(room, &target, ROLE, "unban").await
+    }
+
+    /// Gives `user` role `role_index` in `room` (room-policy-04 §8.1.3
+    /// `canChangeUserRole`). Banning is [`Agent::ban`], which also removes
+    /// the user's clients, so role 1 is refused here, as is role 0
+    /// (removal is [`Agent::remove`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Agent::remove`], and [`AgentError::Invalid`] for role 0 or 1
+    /// or a user that has the role already.
+    pub async fn change_role(
+        &mut self,
+        room: &str,
+        user: &str,
+        role_index: u32,
+    ) -> Result<(), AgentError> {
+        if role_index == 0 || role_index == BANNED_ROLE_INDEX {
+            return Err(AgentError::Invalid(format!(
+                "role {role_index} is not set by a role change; use remove or ban"
+            )));
+        }
+        let target = self.moderation_target(room, user)?;
+        if target.role_index == role_index {
+            return Err(AgentError::Invalid(format!(
+                "{user} has role {role_index} already"
+            )));
+        }
+        self.set_role(room, &target, role_index, "role change")
+            .await
+    }
+
+    async fn set_role(
+        &mut self,
+        room: &str,
+        target: &Target,
+        role_index: u32,
+        what: &str,
+    ) -> Result<(), AgentError> {
+        let update = participant_change(
+            vec![UserindexRolePair {
+                user_index: target.index,
+                role_index,
+            }],
+            vec![],
+        )?;
+        self.moderate(room, &[], &[update], what).await
+    }
+
+    /// A moderation Commit with `removes` and `updates`; once the hub has
+    /// accepted it, an [`Event::MembersChanged`] for the next
+    /// [`Agent::poll`], as for a Commit received, so the caller's view of
+    /// the room follows this device's own change too.
+    async fn moderate(
+        &mut self,
+        room: &str,
+        removes: &[u32],
+        updates: &[AppDataUpdate],
+        what: &str,
+    ) -> Result<(), AgentError> {
+        self.commit(room, &[], removes, updates, what).await?;
+        let member = self.member(room)?;
+        let event = Event::MembersChanged {
+            room: room.to_owned(),
+            epoch: member.epoch(),
+            participants: participants(member)?,
+        };
+        tracing::info!(name: "room_moderated", action = what, "moderation Commit accepted");
+        self.deliver(vec![event]);
+        self.save()
+    }
+
+    /// Where `user` is in `room`: its participant-list index, its role and
+    /// its leaves. Moderation acts on another user only (room-policy-04
+    /// §8.1.2, §8.1.3).
+    fn moderation_target(&self, room: &str, user: &str) -> Result<Target, AgentError> {
+        if self.state.rooms.get(room).map(|r| r.status) != Some(RoomStatus::Active) {
+            return Err(AgentError::NoSuchRoom(room.to_owned()));
+        }
+        let wanted = normalized_uri(user);
+        if wanted == normalized_uri(&self.me) {
+            return Err(AgentError::Invalid(
+                "moderation acts on another user, not on this one".to_owned(),
+            ));
+        }
+        let member = self.member(room)?;
+        let list = participant_list_of(member)?;
+        let (index, entry) = list
+            .participants
+            .iter()
+            .enumerate()
+            .find(|(_, p)| normalized_uri(&String::from_utf8_lossy(&p.user)) == wanted)
+            .ok_or_else(|| AgentError::Invalid(format!("{user} is not a participant of {room}")))?;
+        let leaves = member
+            .members()
+            .into_iter()
+            .filter(|(_, id)| normalized_uri(&String::from_utf8_lossy(id)) == wanted)
+            .map(|(leaf, _)| leaf)
+            .collect();
+        Ok(Target {
+            index: u32::try_from(index)
+                .map_err(|_| AgentError::Invalid("participant index".to_owned()))?,
+            role_index: entry.role_index,
+            leaves,
+        })
     }
 
     /// Lets `requester` fetch this user's KeyPackages for any room
@@ -2199,7 +2443,11 @@ impl Agent {
     }
 
     fn finish_leaving(&mut self, room: &str) {
-        self.members.remove(room);
+        // The group state is of no more use, and OpenMLS refuses a Welcome
+        // back into a group it holds.
+        if let Some(member) = self.members.remove(room) {
+            forget_group(&self.identity, member);
+        }
         if let Some(r) = self.state.rooms.get_mut(room) {
             r.status = RoomStatus::Left;
         }
@@ -2572,6 +2820,47 @@ fn participant_list(creator: &str, role_index: u32) -> Result<Vec<u8>, AgentErro
             role_index,
         }],
     })
+}
+
+/// Deletes `member`'s group state from the MLS store
+/// ([`Member::delete`]); a failure is logged, and leaves a later join of
+/// the same group to fail.
+fn forget_group(identity: &Identity, member: Member) {
+    if let Err(error) = member.delete(identity) {
+        tracing::warn!(
+            name: "group_state_not_deleted",
+            error = &error as &dyn std::error::Error,
+            "the state of a group no longer used cannot be deleted"
+        );
+    }
+}
+
+/// A participant-list change (protocol-07 §7.5) that changes roles and
+/// removes users, all indexing the list at the start of the epoch.
+fn participant_change(
+    changed_role_participants: Vec<UserindexRolePair>,
+    removed_indices: Vec<u32>,
+) -> Result<AppDataUpdate, AgentError> {
+    Ok(AppDataUpdate::Update {
+        component_id: PARTICIPANT_LIST,
+        update: encode(&ParticipantListUpdate {
+            changed_role_participants,
+            removed_indices,
+            added_participants: vec![],
+        })?,
+    })
+}
+
+/// The participant list (protocol-07 §7.5) of `member`'s group, empty if
+/// it has none.
+fn participant_list_of(member: &Member) -> Result<ParticipantListData, AgentError> {
+    match member.component(PARTICIPANT_LIST) {
+        None => Ok(ParticipantListData {
+            participants: vec![],
+        }),
+        Some(data) => ParticipantListData::tls_deserialize_exact(data)
+            .map_err(|e| AgentError::tls("the participant list", e)),
+    }
 }
 
 fn list_change(removed_indices: Vec<u32>, added: &[&str]) -> Result<AppDataUpdate, AgentError> {

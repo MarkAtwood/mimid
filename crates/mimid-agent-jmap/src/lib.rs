@@ -19,16 +19,23 @@
 //!   `room_name` as `name`. `Chat/set` create of a group Chat hosts a room
 //!   named by the Chat's `name` and invites the members of `memberIds`; if
 //!   an invite fails the room is left and the create fails. `addMembers`
-//!   invites. The owner's own removal, and destroying the Chat, leave the
-//!   room. Rooms the agent joins become Chats at the next `sync`,
+//!   invites, `removeMembers` of another member removes that user from
+//!   the room, and `updateMemberRoles` changes its role in the room; the
+//!   hub's room policy decides (decision mimid-1wgh.62). The owner's own
+//!   removal, and destroying the Chat, leave the room. Rooms the agent joins become Chats at the next `sync`,
 //!   including the user's rooms that a new device joins by external
 //!   Commit at each `sync` (`Agent::join_own_rooms`; decision
 //!   mimid-1wgh.61).
 //! - **members**: the room's participant list, mirrored at each `sync`.
 //!   The owner's entry is the accountId; every other participant is a
 //!   ChatContact whose `identity` and `login` are its MIMI user URI, made
-//!   when first seen (§Senders). The owner is `admin` of a Chat it created
-//!   here and `member` of one it joined; everyone else is `member`.
+//!   when first seen (§Senders). A participant whose room role is named
+//!   "admin" is `admin`, any other `member`, and a banned one (role 1,
+//!   "banned") is not listed.
+//! - **Moderation** ([`moderate`]; decision mimid-1wgh.62): `Chat/kick`,
+//!   `Chat/ban` and `Chat/unban` (INVENTED, NOT FROM SPEC: JMAP Chat has
+//!   no kick or ban for a group Chat) act on a member of a room-bound
+//!   Chat through the agent.
 //! - **Message**: `Message/set` create sends `body` as one `text/plain`
 //!   part. Received messages with a `text/*` single part are stored with
 //!   `bodyType` `text/markdown` for `text/markdown` and `text/plain`
@@ -95,10 +102,10 @@
 //! - Space, SpaceInvite, SpaceBan, CustomEmoji and PresenceStatus writes
 //!   are `forbidden`, and `supports_type` is false for them.
 //! - Direct Chats are `forbidden` (only group Chats map to rooms).
-//! - On a room-bound Chat, `name`, `description`, `avatarBlobId` and
-//!   `updateMemberRoles` are `forbidden` (§Chat.roomId), and removing a
-//!   member other than the owner is `forbidden`: the agent has no remove.
-//!   MIMI roles are not mapped.
+//! - On a room-bound Chat, `name`, `description` and `avatarBlobId` are
+//!   `forbidden` (§Chat.roomId). Roles map only to "admin" (the room's
+//!   role of that name) and "member" (role 2); other roles of a room show
+//!   as `member`, and the owner's own role cannot be changed.
 //! - The account's limits are what the agent takes: `text/plain` only,
 //!   at most `MAX_TEXT_LEN` octets, no threads, and attachments only with
 //!   a blob store. A `bodyType` other than `text/plain` is
@@ -152,6 +159,7 @@
 mod backend;
 mod blobs;
 mod convert;
+pub mod moderate;
 mod persist;
 pub mod report;
 pub mod retry;

@@ -45,7 +45,6 @@ These are deliberate in the current version:
 
 Not deliberate; each is being fixed:
 
-- A room's creator holds `canKick`, bans and role changes in the default room policy, but mimid-agent has no operation that uses them yet, so removing another user from a mimid-agent room needs another client or the operator (`mimid admin remove|ban`). Bead mimid-90cd.
 - Two devices of one user can't share a group with stock mls-rs, which refuses two leaves with the same BasicCredential. Epic mimid-4lp4.
 - Received edits and retractions are skipped. Bead mimid-kmhd.
 

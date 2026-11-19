@@ -21,6 +21,10 @@
 //!   message (Room/send), with a `frank_aad` item when the room requires
 //!   franking;
 //! - [`Agent::leave`]: protocol-07 §3.5, proposals another member commits;
+//! - [`Agent::kick`], [`Agent::remove`], [`Agent::ban`], [`Agent::unban`],
+//!   [`Agent::change_role`]: moderation of another user by one Commit
+//!   (room-policy-04 §8.1.2, §8.1.3; decision mimid-1wgh.62), which the
+//!   hub allows to the room's admin role;
 //! - [`Agent::allow`], [`Agent::deny`], [`Agent::request_consent`],
 //!   [`Agent::cancel_consent`], [`Agent::consents`]: Consent/set and
 //!   Consent/get;
@@ -70,13 +74,15 @@
 //! - Every proposal from another member is taken as that member's
 //!   protocol-07 §3.5 leave, and the remaining member with the lowest leaf
 //!   index commits it. No other proposals are sent by this crate.
-//! - No room-policy actions beyond the defaults: no role changes, bans or
-//!   policy edits; no external joins other than
+//! - No policy edits (role definitions, preauthorization, membership
+//!   style, room metadata); no external joins other than
 //!   [`Agent::join_own_rooms`] (no open rooms, join links or codes).
-//!   A hosted room's creator gets the "admin" role, which holds `canKick`,
-//!   bans and role changes, but this crate has no operation that uses
-//!   them; another client of the creator, or the operator (`mimid admin
-//!   remove|ban`), must (decision mimid-1wgh.56; bead mimid-90cd).
+//! - Moderation: [`Agent::ban`] takes only a current participant;
+//!   [`Agent::unban`] gives role 2 back and adds no client, and the
+//!   user's devices do not rejoin by themselves (an admin removes and
+//!   invites the user again); a kicked user stays a participant whose
+//!   devices do not come back by themselves either. Every operation is
+//!   one Commit by this device; there are no moderation proposals.
 //! - A room keeps the `roles_list` it was created with. Rooms hosted by an
 //!   earlier version have no admin role, and in them every member holds
 //!   `canChangeRoleDefinitions`, so any member can give itself any

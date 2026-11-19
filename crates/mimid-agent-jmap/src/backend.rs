@@ -10,7 +10,7 @@ use jmap_chat_server::{
     OutboundEvent, SlowModeError, SpacePatchOp,
 };
 use jmap_chat_types::{
-    BodyType, Chat, ChatContact, ChatMember, ChatPermission, DeliveryState, Message,
+    BodyType, Chat, ChatContact, ChatMember, ChatMemberRole, ChatPermission, DeliveryState, Message,
 };
 use jmap_server::{
     BackendChangesError, BackendQueryError, BackendSetError, ChangesParams, ChangesResult,
@@ -29,6 +29,13 @@ use crate::convert::{MessageRef, message_ref, sender_msg_id, utc_date};
 /// The Chat property that names its MIMI room
 /// (draft-atwood-jmap-chat-mimi-00 §Chat.roomId).
 pub(crate) const ROOM_ID: &str = "roomId";
+
+/// room-policy-04 §8.1.3: the "banned" role's index.
+pub(crate) const BANNED_ROLE_INDEX: u32 = 1;
+
+/// The role the agent gives the participants it adds: "member" in its
+/// default role list (decision mimid-1wgh.56).
+const MEMBER_ROLE_INDEX: u32 = 2;
 
 /// The id passed to a handler's `build` closure before the store mints the
 /// real one; the object is rebuilt under the real id before it is stored.
@@ -163,11 +170,14 @@ impl AgentChat {
 
     /// Registers the JMAP Chat methods (`Chat/*`, `Message/*`,
     /// `ChatContact/*` and the rest of crate-jmap's set) and
-    /// `Message/reportAbuse` ([`crate::report`]) on `dispatcher`, served by
+    /// `Message/reportAbuse` ([`crate::report`]) and `Chat/kick`,
+    /// `Chat/ban` and `Chat/unban` ([`crate::moderate`]) on `dispatcher`,
+    /// served by
     /// `this`.
     pub fn register(this: &Arc<Self>, dispatcher: &mut Dispatcher<()>) {
         jmap_chat_server::register_chat_handlers(dispatcher, Arc::clone(this));
         crate::report::register(this, dispatcher);
+        crate::moderate::register(this, dispatcher);
     }
 
     /// The JMAP account id.
@@ -230,7 +240,7 @@ impl AgentChat {
     }
 
     /// The `identity` of ChatContact `id`.
-    async fn contact_identity(&self, id: &Id) -> Result<Option<String>, MemoryError> {
+    pub(crate) async fn contact_identity(&self, id: &Id) -> Result<Option<String>, MemoryError> {
         Ok(self.stored::<ChatContact>(id).await?.map(|c| c.identity))
     }
 
@@ -330,8 +340,12 @@ impl AgentChat {
     }
 
     /// `Chat/set` update of a Chat bound to `room`: added members are
-    /// invited, and the owner's own removal leaves the room. Removing
-    /// another member is `forbidden`.
+    /// invited, removed members are removed from the room
+    /// (`Agent::remove`), a changed role is a role change
+    /// (`Agent::change_role`: "admin" is the room's role named "admin",
+    /// "member" role 2), and the owner's own removal leaves the room
+    /// (decision mimid-1wgh.62 items 7, 8). The owner's own role cannot be
+    /// changed.
     async fn update_room_chat(
         &self,
         room: &str,
@@ -363,18 +377,63 @@ impl AgentChat {
             .filter(|m| !has(&before, &m.id))
             .map(|m| m.id.clone())
             .collect();
-        if removed.iter().any(|id| *id != self.account) {
-            return Err(SetFailure::set(set_error(
-                SetErrorType::Forbidden,
-                "removing another member from a MIMI room is not supported",
-            )));
+        let role_of = |list: &[ChatMember], id: &Id| {
+            list.iter().find(|m| m.id == *id).map(|m| m.role.clone())
+        };
+        let changed: Vec<(Id, ChatMemberRole)> = after
+            .iter()
+            .filter(|m| role_of(&before, &m.id).is_some_and(|r| r != m.role))
+            .map(|m| (m.id.clone(), m.role.clone()))
+            .collect();
+        if changed.iter().any(|(id, _)| *id == self.account) {
+            return Err(SetFailure::set(
+                set_error(
+                    SetErrorType::Forbidden,
+                    "the owner's own role in a MIMI room cannot be changed",
+                )
+                .with_properties(["members"]),
+            ));
         }
-        let users = self.users_of(&added, "addMembers").await?;
+        let others: Vec<Id> = removed
+            .iter()
+            .filter(|id| **id != self.account)
+            .cloned()
+            .collect();
+        let leaving = others.len() < removed.len();
+        let added = self.users_of(&added, "addMembers").await?;
+        let removed = self.users_of(&others, "removeMembers").await?;
+        let changed_ids: Vec<Id> = changed.iter().map(|(id, _)| id.clone()).collect();
+        let changed_users = self.users_of(&changed_ids, "updateMemberRoles").await?;
         let mut agent = self.agent.lock().await;
-        for user in &users {
+        for user in &added {
             agent.invite(room, user).await.map_err(agent_set_failure)?;
         }
-        if !removed.is_empty() {
+        for user in &removed {
+            agent.remove(room, user).await.map_err(agent_set_failure)?;
+        }
+        for (user, (_, role)) in changed_users.iter().zip(&changed) {
+            let index = if *role == ChatMemberRole::Admin {
+                agent
+                    .roles(room)
+                    .map_err(agent_set_failure)?
+                    .into_iter()
+                    .find(|(_, name)| name == "admin")
+                    .map(|(index, _)| index)
+                    .ok_or_else(|| {
+                        SetFailure::set(
+                            set_error(SetErrorType::Forbidden, "the room has no admin role")
+                                .with_properties(["members"]),
+                        )
+                    })?
+            } else {
+                MEMBER_ROLE_INDEX
+            };
+            agent
+                .change_role(room, user, index)
+                .await
+                .map_err(agent_set_failure)?;
+        }
+        if leaving {
             agent.leave(room).await.map_err(agent_set_failure)?;
         }
         Ok(())
@@ -770,8 +829,9 @@ impl ChatBackend for AgentChat {
     }
 
     /// draft-atwood-jmap-chat-mimi-00 §Chat.roomId: a room's name,
-    /// description and avatar are MLS group state, and roles are not
-    /// mapped, so a client may not set them on a room-bound Chat.
+    /// description and avatar are MLS group state that the agent does not
+    /// change, so a client may not set them on a room-bound Chat. Member
+    /// roles go to the room (`update_room_chat`; decision mimid-1wgh.62).
     async fn may_update_chat(
         &self,
         _caller: &(),
@@ -779,7 +839,7 @@ impl ChatBackend for AgentChat {
         chat: &Chat,
         patch_keys: &[&str],
     ) -> Result<Result<(), SetError>, MemoryError> {
-        const ROOM_STATE: &[&str] = &["name", "description", "avatarBlobId", "updateMemberRoles"];
+        const ROOM_STATE: &[&str] = &["name", "description", "avatarBlobId"];
         let refused = patch_keys
             .iter()
             .map(|k| k.split('/').next().unwrap_or(k))

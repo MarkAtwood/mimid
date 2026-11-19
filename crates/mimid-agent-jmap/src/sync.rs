@@ -11,7 +11,9 @@ use mimi_content::{ExternalPart, Part};
 use mimid_agent_core::{Agent, AgentError, Event, ReceivedMessage, RoomStatus};
 use serde_json::json;
 
-use crate::backend::{AgentChat, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, ROOM_ID};
+use crate::backend::{
+    AgentChat, BANNED_ROLE_INDEX, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, ROOM_ID,
+};
 use crate::blobs::{hex, is_media_type};
 use crate::convert::{MessageRef, message_ref, sender_msg_id, topic_id, utc_date};
 
@@ -28,6 +30,23 @@ const FALLBACK_FILENAME: &str = "attachment";
 
 /// The media type of a received attachment whose own is not one.
 const FALLBACK_CONTENT_TYPE: &str = "application/octet-stream";
+
+/// A room's participants with their roles, and its role names, read from
+/// the agent before an await (the agent is not `Sync`).
+struct RoomRoles {
+    participants: Vec<(String, u32)>,
+    names: Vec<(u32, String)>,
+}
+
+impl RoomRoles {
+    /// Empty for a room the agent is not in.
+    fn of(agent: &Agent, room: &str) -> Self {
+        Self {
+            participants: agent.participant_roles(room).unwrap_or_default(),
+            names: agent.roles(room).unwrap_or_default(),
+        }
+    }
+}
 
 /// What one [`AgentChat::sync`] did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -241,7 +260,8 @@ impl AgentChat {
     async fn make_chat(&self, agent: &mut Agent, room: &str) -> Result<Id, SyncError> {
         let name = agent.room_name(room).ok().flatten().unwrap_or_default();
         let participants = agent.participants(room).unwrap_or_default();
-        let members = self.members_of(&participants, &[]).await?;
+        let roles = RoomRoles::of(agent, room);
+        let members = self.members_of(&roles, &participants, &[]).await?;
         let created = now();
         let room_uri = room.to_owned();
         let (id, _) = self
@@ -259,25 +279,49 @@ impl AgentChat {
         Ok(id)
     }
 
-    /// ChatMembers for `participants`, keeping the entries of `existing`
-    /// for those already members. The owner is the accountId; everyone
-    /// else is a ChatContact. New entries are `member` (roles are not
-    /// mapped) and joined now.
+    /// ChatMembers for `participants` of `room`, keeping the entries of
+    /// `existing` for those already members. The owner is the accountId;
+    /// everyone else is a ChatContact. New entries are joined now. Each
+    /// one's role is the room's (decision mimid-1wgh.62 item 9): `admin`
+    /// for a participant whose role is named "admin", `member` otherwise;
+    /// a banned participant (role 1, "banned") is not a member.
     async fn members_of(
         &self,
+        roles: &RoomRoles,
         participants: &[String],
         existing: &[ChatMember],
     ) -> Result<Vec<ChatMember>, SyncError> {
+        let name_of = |user: &str| {
+            let index = roles
+                .participants
+                .iter()
+                .find(|(u, _)| u == user)
+                .map(|(_, r)| *r)?;
+            roles
+                .names
+                .iter()
+                .find(|(i, _)| *i == index)
+                .map(|(i, name)| (*i, name.as_str()))
+        };
         let mut members = Vec::with_capacity(participants.len());
         for user in participants {
+            let role = match name_of(user) {
+                Some((BANNED_ROLE_INDEX, "banned")) => continue,
+                Some((_, "admin")) => ChatMemberRole::Admin,
+                _ => ChatMemberRole::Member,
+            };
             let id = if *user == self.user {
                 self.account.clone()
             } else {
                 self.contact_for(user).await?
             };
             members.push(match existing.iter().find(|m| m.id == id) {
-                Some(m) => m.clone(),
-                None => ChatMember::new(id, ChatMemberRole::Member, now()),
+                Some(m) => {
+                    let mut m = m.clone();
+                    m.role = role;
+                    m
+                }
+                None => ChatMember::new(id, role, now()),
             });
         }
         Ok(members)
@@ -543,7 +587,8 @@ impl AgentChat {
             .await?
             .and_then(|c| c.members)
             .unwrap_or_default();
-        let members = self.members_of(participants, &existing).await?;
+        let roles = RoomRoles::of(agent, room);
+        let members = self.members_of(&roles, participants, &existing).await?;
         if members == existing {
             return Ok(());
         }
