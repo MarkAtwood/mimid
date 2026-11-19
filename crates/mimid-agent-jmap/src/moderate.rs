@@ -65,7 +65,7 @@
 //! - An expired ban the hub refuses to lift (the owner lost `canUnban`)
 //!   stays, and each sync reports it in [`crate::SyncReport::problems`].
 
-use jmap_chat_server::ChatBackend;
+use jmap_chat_server::ChatStore;
 use jmap_chat_server::memory::MemoryError;
 use jmap_chat_types::{Chat, ChatBan, ChatMember};
 use jmap_server::{BackendSetError, Id, JmapBackend, SetError, SetErrorType};

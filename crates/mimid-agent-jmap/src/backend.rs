@@ -1,17 +1,17 @@
 //! [`AgentChat`]: a JMAP Chat backend whose store is crate-jmap's
 //! `MemoryBackend` and whose writes go to MIMI rooms through an [`Agent`].
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 
 use jmap_chat_server::memory::{MemoryBackend, MemoryError};
 use jmap_chat_server::{
-    AttachmentBlob, ChatBackend, ChatLimits, EmojiSetOp, InviteJoinRefusal, OpResult,
-    OutboundEvent, SlowModeError, SpacePatchOp,
+    AttachmentBlob, ChatEvents, ChatLimits, ChatModeration, ChatResolvers, ChatRestrictions,
+    ChatSettings, ChatStore, DelegateChatAccessPolicy, DelegateChatMessageLifecycle,
+    DelegateChatSpaces, DelegateSpacePolicy,
 };
 use jmap_chat_types::{
-    BodyType, Chat, ChatBan, ChatContact, ChatMember, ChatMemberRole, ChatPermission,
-    DeliveryState, Message,
+    BodyType, Chat, ChatBan, ChatContact, ChatMember, ChatMemberRole, DeliveryState, Message,
 };
 use jmap_server::{
     BackendChangesError, BackendQueryError, BackendSetError, ChangesParams, ChangesResult,
@@ -788,7 +788,7 @@ impl JmapBackend for AgentChat {
     }
 }
 
-impl ChatBackend for AgentChat {
+impl ChatStore for AgentChat {
     async fn create_object<O, F>(
         &self,
         caller: &(),
@@ -915,20 +915,17 @@ impl ChatBackend for AgentChat {
     fn supports_type<O: JmapObject>(&self, _caller: &(), account_id: &Id) -> bool {
         *account_id == self.account && served(O::TYPE_NAME)
     }
+}
 
-    /// Every write that reaches other members already went to the agent
-    /// in the write hooks; typing, receipts, reactions and presence are
-    /// not sent (crate Limitations).
-    async fn on_outbound_event(&self, _caller: &(), _account_id: &Id, _event: &OutboundEvent) {}
+/// Every write that reaches other members already went to the agent in
+/// the write hooks; typing, receipts, reactions and presence are not sent
+/// (crate Limitations), so `on_outbound_event` is the trait's no-op.
+/// MemoryBackend's on_chat_destroyed, on_space_destroyed and
+/// on_space_ban_created only record events for its tests, without bound,
+/// so they are left at the trait defaults too.
+impl ChatEvents for AgentChat {}
 
-    async fn owner_user_id(
-        &self,
-        _caller: &(),
-        account_id: &Id,
-    ) -> Result<Option<String>, MemoryError> {
-        Ok((*account_id == self.account).then(|| self.user.clone()))
-    }
-
+impl ChatRestrictions for AgentChat {
     /// draft-atwood-jmap-chat-mimi-00 §Chat.roomId: a room's name,
     /// description and avatar are MLS group state that the agent does not
     /// change, so a client may not set them on a room-bound Chat. Member
@@ -991,7 +988,9 @@ impl ChatBackend for AgentChat {
             None => Ok(()),
         })
     }
+}
 
+impl ChatModeration for AgentChat {
     /// [`crate::moderate`]: the ban is `Agent::ban`, one Commit that also
     /// removes the user's clients, in place of the default's
     /// `removeMembers` update.
@@ -1059,31 +1058,9 @@ impl ChatBackend for AgentChat {
         }
         self.kick(chat, user_ids).await
     }
+}
 
-    // The rest is MemoryBackend's. Its on_chat_destroyed,
-    // on_space_destroyed and on_space_ban_created only record events for
-    // its tests, without bound, so they are left at the trait defaults.
-
-    async fn generate_invite_code(
-        &self,
-        caller: &(),
-        account_id: &Id,
-    ) -> Result<String, MemoryError> {
-        self.inner.generate_invite_code(caller, account_id).await
-    }
-
-    async fn join_space_with_invite(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        invite_id: &Id,
-        joined_at: &jmap_types::UTCDate,
-    ) -> Result<Result<(), InviteJoinRefusal>, MemoryError> {
-        self.inner
-            .join_space_with_invite(caller, account_id, invite_id, joined_at)
-            .await
-    }
-
+impl ChatSettings for AgentChat {
     /// What this backend accepts, not `MemoryBackend`'s defaults: one
     /// `text/plain` body of at most [`MAX_TEXT_LEN`] octets (what
     /// `Agent::send_message` takes) and no threads (see the crate
@@ -1108,6 +1085,26 @@ impl ChatBackend for AgentChat {
             .with_supports_threads(false)
     }
 
+    /// Edits keep the old bodies, at most
+    /// [`crate::edits::MAX_EDIT_HISTORY`] (decision mimid-1wgh.65).
+    fn retains_edit_history(&self) -> bool {
+        true
+    }
+
+    fn maintains_unread_count(&self) -> bool {
+        self.inner.maintains_unread_count()
+    }
+
+    async fn owner_user_id(
+        &self,
+        _caller: &(),
+        account_id: &Id,
+    ) -> Result<Option<String>, MemoryError> {
+        Ok((*account_id == self.account).then(|| self.user.clone()))
+    }
+}
+
+impl ChatResolvers for AgentChat {
     /// The size and digest of a blob in the store, which crate-jmap
     /// compares with the Attachment; a blob the store does not have is
     /// `invalidProperties` on `attachments`.
@@ -1131,189 +1128,38 @@ impl ChatBackend for AgentChat {
             Err(e) => Err(MemoryError::new(e.to_string())),
         }
     }
+}
 
-    fn protect_last_admin(&self, caller: &(), account_id: &Id) -> bool {
-        self.inner.protect_last_admin(caller, account_id)
+// The rest is MemoryBackend's.
+
+impl DelegateChatSpaces for AgentChat {
+    type Target = MemoryBackend;
+
+    fn chat_spaces(&self) -> &MemoryBackend {
+        &self.inner
     }
+}
 
-    fn space_extension_properties(&self, caller: &(), account_id: &Id) -> &'static [&'static str] {
-        self.inner.space_extension_properties(caller, account_id)
+impl DelegateSpacePolicy for AgentChat {
+    type Target = MemoryBackend;
+
+    fn space_policy(&self) -> &MemoryBackend {
+        &self.inner
     }
+}
 
-    async fn apply_space_patch(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        space_id: &Id,
-        ops: Vec<SpacePatchOp>,
-    ) -> Result<Vec<OpResult>, BackendSetError<MemoryError>> {
-        self.inner
-            .apply_space_patch(caller, account_id, space_id, ops)
-            .await
+impl DelegateChatAccessPolicy for AgentChat {
+    type Target = MemoryBackend;
+
+    fn chat_access_policy(&self) -> &MemoryBackend {
+        &self.inner
     }
+}
 
-    async fn apply_space_metadata_patch(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        space_id: &Id,
-        patch: jmap_chat_types::SpaceMetadataPatch,
-    ) -> Result<Option<jmap_chat_types::Space>, BackendSetError<MemoryError>> {
-        self.inner
-            .apply_space_metadata_patch(caller, account_id, space_id, patch)
-            .await
-    }
+impl DelegateChatMessageLifecycle for AgentChat {
+    type Target = MemoryBackend;
 
-    /// Edits keep the old bodies, at most
-    /// [`crate::edits::MAX_EDIT_HISTORY`] (decision mimid-1wgh.65).
-    fn retains_edit_history(&self) -> bool {
-        true
-    }
-
-    fn maintains_unread_count(&self) -> bool {
-        self.inner.maintains_unread_count()
-    }
-
-    async fn everyone_permissions(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        space: &jmap_chat_types::Space,
-    ) -> Result<HashSet<ChatPermission>, MemoryError> {
-        self.inner
-            .everyone_permissions(caller, account_id, space)
-            .await
-    }
-
-    async fn may_set_custom_emoji(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        target_space_id: Option<&Id>,
-        op: EmojiSetOp,
-    ) -> Result<Result<(), SetError>, MemoryError> {
-        self.inner
-            .may_set_custom_emoji(caller, account_id, target_space_id, op)
-            .await
-    }
-
-    async fn may_broadcast_mention(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        space_id: &Id,
-        chat_id: &Id,
-    ) -> Result<Result<(), SetError>, MemoryError> {
-        self.inner
-            .may_broadcast_mention(caller, account_id, space_id, chat_id)
-            .await
-    }
-
-    async fn may_send_message(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        chat_id: &Id,
-    ) -> Result<Result<(), SetError>, MemoryError> {
-        self.inner
-            .may_send_message(caller, account_id, chat_id)
-            .await
-    }
-
-    async fn may_view_chat(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        chat_id: &Id,
-    ) -> Result<bool, MemoryError> {
-        self.inner.may_view_chat(caller, account_id, chat_id).await
-    }
-
-    async fn may_set_pinned_messages(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        chat_id: &Id,
-    ) -> Result<Result<(), SetError>, MemoryError> {
-        self.inner
-            .may_set_pinned_messages(caller, account_id, chat_id)
-            .await
-    }
-
-    async fn may_set_space_ban(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        space_id: &Id,
-    ) -> Result<Result<(), SetError>, MemoryError> {
-        self.inner
-            .may_set_space_ban(caller, account_id, space_id)
-            .await
-    }
-
-    async fn may_set_space_invite(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        space_id: &Id,
-        created_by: Option<&Id>,
-    ) -> Result<Result<(), SetError>, MemoryError> {
-        self.inner
-            .may_set_space_invite(caller, account_id, space_id, created_by)
-            .await
-    }
-
-    async fn may_get_space_invite(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        invite: &jmap_chat_types::SpaceInvite,
-    ) -> Result<bool, MemoryError> {
-        self.inner
-            .may_get_space_invite(caller, account_id, invite)
-            .await
-    }
-
-    async fn may_get_space_ban(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        ban: &jmap_chat_types::SpaceBan,
-    ) -> Result<bool, MemoryError> {
-        self.inner.may_get_space_ban(caller, account_id, ban).await
-    }
-
-    async fn slow_mode_check(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        chat_id: &Id,
-    ) -> Result<(), SlowModeError> {
-        self.inner
-            .slow_mode_check(caller, account_id, chat_id)
-            .await
-    }
-
-    async fn expire_message(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        message_id: &Id,
-    ) -> Result<(), MemoryError> {
-        self.inner
-            .expire_message(caller, account_id, message_id)
-            .await
-    }
-
-    async fn read_and_burn_message(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        message_id: &Id,
-        patch: jmap_types::PatchObject,
-    ) -> Result<(), BackendSetError<MemoryError>> {
-        self.inner
-            .read_and_burn_message(caller, account_id, message_id, patch)
-            .await
+    fn chat_message_lifecycle(&self) -> &MemoryBackend {
+        &self.inner
     }
 }

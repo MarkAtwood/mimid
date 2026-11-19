@@ -1,6 +1,6 @@
 //! [`AgentChat::sync`]: what the agent received, stored as JMAP objects.
 
-use jmap_chat_server::ChatBackend;
+use jmap_chat_server::ChatStore;
 use jmap_chat_server::memory::MemoryError;
 use jmap_chat_types::{
     Attachment, BodyType, Chat, ChatContact, ChatKind, ChatMember, ChatMemberRole, DeliveryState,

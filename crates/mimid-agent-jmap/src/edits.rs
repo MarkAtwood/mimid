@@ -38,7 +38,7 @@ use serde_json::{Value, json};
 use crate::backend::{AgentChat, agent_failure, forbidden, serde_failure};
 use crate::convert::{MessageRef, message_ref, utc_date};
 use crate::sync::{SyncError, SyncReport, body_type};
-use jmap_chat_server::ChatBackend;
+use jmap_chat_server::ChatStore;
 use jmap_chat_server::memory::MemoryError;
 
 /// The most revisions a Message's `editHistory` keeps; past it the oldest

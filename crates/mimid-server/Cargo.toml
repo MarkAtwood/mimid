@@ -16,13 +16,13 @@ axum.workspace = true
 base64 = "=0.22.1"
 # JMAP request parsing and method dispatch (RFC 8620), and the JMAP Chat
 # capability types; exact rev pin (decision mimid-1wgh.12.21).
-jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "fe13c651c41d94c2d3a99a7d7d4af64cc8ed46c1" }
-jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "fe13c651c41d94c2d3a99a7d7d4af64cc8ed46c1" }
+jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
+jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
 # draft-ietf-jmap-metadata-05 helpers for Chat.privateMetadata (decision
 # mimid-1wgh.63); same rev.
-jmap-metadata-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "fe13c651c41d94c2d3a99a7d7d4af64cc8ed46c1" }
-jmap-metadata-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "fe13c651c41d94c2d3a99a7d7d4af64cc8ed46c1" }
-jmap-chat-mimi-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "fe13c651c41d94c2d3a99a7d7d4af64cc8ed46c1" }
+jmap-metadata-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
+jmap-metadata-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
+jmap-chat-mimi-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
 # RFC 9421 Ed25519 request signatures (bead mimid-75nk.2); already in
 # the lockfile through OpenMLS.
 ed25519-dalek = "=2.2.0"
