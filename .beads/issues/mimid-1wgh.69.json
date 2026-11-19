@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.69",
+  "title": "Blob2 (blobext-03) on mimid-server: destroy without blobHasReference, fixed-lifetime touch, no lookup/convert",
+  "description": "Bead mimid-1wgh.14.7: serving draft-ietf-jmap-blobext-03 (urn:ietf:params:jmap:blob2) over mimid-server's blob store with crate-jmap's jmap-blob-server (rev b85dfc85), mainly for Blob/set destroy. mimid-server's blobs are sealed attachments referenced only from MLS ciphertext it cannot read (decision mimid-1wgh.67).\n\nQuestions and readings:\n\n1. Destroy and blobHasReference (§4: \"The server MUST reject any blob that is still referenced by another object\"). (a) never destroy, since a reference may exist in ciphertext; (b) destroy always: no object the server can see references a blob, so the MUST has nothing to apply to. Chosen (b): it is the point of the bead (a sender deletes an attachment early), and the same reasoning as mimid-1wgh.67. A sender that destroys an attachment breaks the messages still pointing at it; that is its choice. Another account's blob is notFound (backend rule: invisible = missing).\n\n2. Update (\"touch\", §4: the server \"can honour the requested expires ... or return a different expires value\"). (a) reset the lifetime from now; (b) keep the fixed lifetime from creation and answer with the expires in force. Chosen (b): mimid-1wgh.67 is a fixed lifetime from upload, and assetLifetime promises recipients exactly that; extending it would need its own decision.\n\n3. Which methods. blob2 names Blob/set, get, lookup, convert. Chosen: all four registered; lookup with supportedTypeNames [] (§2.1: \"If the array is empty, the server does not support Blob/lookup\", so every call is unknownDataType); convert with every conversion list null (every entry invalidProperties from the handler). RFC 9404 (urn:ietf:params:jmap:blob, Blob/upload) not advertised, Blob/upload not registered; RFC 8620 §6.3 Blob/copy not registered (a token reaches one account only).\n\n4. Methods called without blob2 in using (§4-§8: each \"requires that capability in the request's using array\"; no error named). Chosen: unknownMethod (RFC 8620 §3.6.2), as the method is not one the request enabled. The handlers alone would run them in blobext mode.\n\n5. Capability values (all INVENTED, NOT FROM SPEC where a number): maxSizeBlobSet = BlobQuota.max_len (MAX_BLOB_LEN, as maxSizeUpload); maxDataSources 64 (the §2.1 minimum); supportedDigestAlgorithms [\"sha-256\"] (computed on read; §2.1 SHOULD list only efficient ones, none stored, sha-256 is the cheapest safe one); uploadUrl, chunkSize, conversion lists and limits null.\n\n6. Create. Supported: sources concatenated, stored as an upload under the same quota (tooLarge / overQuota SetErrors), type hint stored as given, application/octet-stream when null. noPersist blobs are persisted like any other (§4: the server \"is not required to persist it\", so persisting is allowed). Blob/get imageData always null; chunks the one-chunk default.\n\nFor Mark to judge.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-19T21:24:08.010748631Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-19T21:24:08.010748631Z",
+  "labels": [
+    "jmap",
+    "attachments",
+    "server"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.69",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-19T21:24:08.361469655Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
