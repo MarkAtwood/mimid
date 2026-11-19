@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.66",
+  "title": "AgentChat store limits: change log kept per type, events not recorded",
+  "description": "Bead mimid-s2qc; crate-jmap 9953eea1 (MemoryBackend::with_change_log_limit, with_event_limit). AgentChat's MemoryBackend grew without bound: a change-log entry per change, and outbound and lifecycle event lists only tests drained.\n\n1. Change log: readings (a) no limit (grows forever); (b) a fixed limit per data type and account, after which a client's /changes from an older state is cannotCalculateChanges (RFC 8620 §5.2) and it resyncs with /get; (c) a time window. Chosen (b), 4096 entries (agent-jmap CHANGE_LOG_LIMIT; INVENTED VALUE, NOT FROM SPEC): one user's device, so a client away for fewer than ~4000 changes of a type catches up by /changes, anything longer resyncs, which a JMAP client must handle anyway (state strings already restart after a restart, see persist). Settable with Options::with_change_log_limit for embedders and tests.\n2. Events: readings (a) record and drain them in sync; (b) record none (with_event_limit(0)). Chosen (b): AgentChat sends every outbound change to the agent in its write hooks and its on_outbound_event is a no-op, and it does not forward lifecycle hooks to MemoryBackend, so nothing reads the lists.\n3. Ids: objects the agent must act on before storing (a Chat that hosts a room, a sent Message, received Messages, notices, ChatBans) are built under MemoryBackend::mint_id() and stored with insert_object, replacing the placeholder id and serde rebuild. insert_object rather than insert_message for Messages: insert_message records a NewMessage outbound event, which (2) makes moot but which nothing would read. ChatContact ids stay minted, not hash-derived: decision mimid-1wgh.13.1 (re-decided) makes ChatContact.id a server-assigned Id local to each server and asks nothing more; hash-derived ids would keep them stable across store loss and devices, left for a later decision if wanted.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-19T17:48:36.189729784Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-19T17:48:36.189729784Z",
+  "labels": [
+    "agent",
+    "jmap"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.66",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-19T17:48:36.24004506Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
