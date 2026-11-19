@@ -1,40 +1,22 @@
-// jmap-chat-js's protocol layer (src/lib/jmap/session.ts, client.ts),
-// unmodified, against two mimid-agent daemons (bead mimid-1wgh.13.11).
+// jmap-chat-js's protocol layer (src/lib/jmap/session.ts, client.ts and
+// src/lib/push/eventsource.ts), unmodified, against two mimid-agent
+// daemons (bead mimid-1wgh.13.11).
 //
-// What jmap-chat-js has today is fetchSession and the JMAPClient request
-// batcher; there is no UI for chats and no EventSource code yet. This
-// drives exactly those, the way an app built on them would.
-//
-// fetchSession sends no Authorization header (session.ts:91), and the
-// daemon requires its token on every path, the Session included, so the
-// first test records that refusal. The rest wrap globalThis.fetch to add
-// the bearer token to requests for a daemon's origin, which is the one
-// thing an app would have to do around the library; the library code
-// itself is as committed.
+// jmap-chat-js has fetchSession, the JMAPClient request batcher and
+// startPush; there is no UI for chats yet. This drives exactly those, the
+// way an app built on them would.
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { fetchSession, SessionFetchError, type JMAPSession } from '../src/lib/jmap/session.js'
 import { createClient, type JMAPClient } from '../src/lib/jmap/client.js'
+import { startPush } from '../src/lib/push/eventsource.js'
 import { eventually, fixture, type Daemon } from './fixture.js'
 
 const CHAT = 'urn:ietf:params:jmap:chat'
 const { alice, bob } = fixture()
-const realFetch = globalThis.fetch
 
-afterEach(() => {
-  globalThis.fetch = realFetch
-})
-
-/** Adds each daemon's bearer token to requests for its origin. */
-function withTokens(...daemons: Daemon[]) {
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(input instanceof Request ? input.url : input.toString())
-    const daemon = daemons.find(d => new URL(d.url).origin === url.origin)
-    if (!daemon) return realFetch(input, init)
-    const headers = new Headers(init?.headers)
-    headers.set('Authorization', `Bearer ${daemon.token}`)
-    return realFetch(input, { ...init, headers })
-  }
+function tokenOf(daemon: Daemon) {
+  return () => Promise.resolve(daemon.token)
 }
 
 interface User {
@@ -44,10 +26,10 @@ interface User {
 }
 
 async function connect(daemon: Daemon): Promise<User> {
-  const session = await fetchSession(daemon.url)
+  const session = await fetchSession(daemon.url, tokenOf(daemon))
   return {
     session,
-    client: createClient(session, () => Promise.resolve(daemon.token)),
+    client: createClient(session, tokenOf(daemon)),
     account: session.primaryAccounts[CHAT],
   }
 }
@@ -87,17 +69,19 @@ async function messages(u: User, chatId: string): Promise<Obj[]> {
   return get(u, 'Message', query.ids)
 }
 
-describe('fetchSession as committed', () => {
-  it('is refused with 401: it sends no Authorization header', async () => {
+describe('fetchSession', () => {
+  it('is refused with 401 without a token and accepted with one', async () => {
     const err = await fetchSession(alice.url).catch((e: unknown) => e)
     expect(err).toBeInstanceOf(SessionFetchError)
     expect((err as SessionFetchError).status).toBe(401)
+
+    const session = await fetchSession(alice.url, tokenOf(alice))
+    expect(session.username).toBe(alice.user)
   })
 })
 
 describe('session.ts and client.ts against two daemons', () => {
   it('accepts the daemon Session', async () => {
-    withTokens(alice)
     const { session, account } = await connect(alice)
     expect(session.username).toBe(alice.user)
     expect(Object.keys(session.capabilities).sort()).toEqual([
@@ -108,7 +92,6 @@ describe('session.ts and client.ts against two daemons', () => {
   })
 
   it('creates a group Chat and exchanges Messages both ways', async () => {
-    withTokens(alice, bob)
     const a = await connect(alice)
     const b = await connect(bob)
 
@@ -120,7 +103,7 @@ describe('session.ts and client.ts against two daemons', () => {
     })
     expect(String(chatA.roomId)).toMatch(/^mimi:\/\/a\.example\/r\//)
 
-    // No EventSource in jmap-chat-js: poll.
+    // The push test below covers StateChange; here, poll.
     const chatB = await eventually(async () => {
       const chats = await get(b, 'Chat', null)
       return chats.find(c => c.roomId === chatA.roomId)
@@ -152,5 +135,41 @@ describe('session.ts and client.ts against two daemons', () => {
       return list.find(m => m.body === 'hi alice')
     })
     expect(reply.senderId).toBe(bobContact.id)
+  })
+})
+
+describe('startPush against two daemons', () => {
+  it('delivers Chat StateChanges to both users, and close() ends it', async () => {
+    const a = await connect(alice)
+    const b = await connect(bob)
+    const seen = { alice: [] as string[], bob: [] as string[] }
+    const errors: unknown[] = []
+    const push = (u: User, d: Daemon, log: string[]) =>
+      startPush({
+        session: u.session,
+        getToken: tokenOf(d),
+        ping: 0,
+        onError: e => errors.push(e),
+        refreshers: {
+          Chat: accountId => { log.push(`Chat ${accountId}`) },
+          Message: accountId => { log.push(`Message ${accountId}`) },
+        },
+      })
+    const pa = push(a, alice, seen.alice)
+    const pb = push(b, bob, seen.bob)
+    try {
+      // The streams open asynchronously; a change made before a stream is
+      // open would not be announced on it.
+      await new Promise(r => setTimeout(r, 500))
+      const bobContact = await create(a, 'ChatContact', { identity: bob.user })
+      await create(a, 'Chat', { kind: 'group', name: 'push', memberIds: [bobContact.id] })
+      await eventually(async () => (seen.alice.includes(`Chat ${a.account}`) ? true : undefined))
+      await eventually(async () => (seen.bob.includes(`Chat ${b.account}`) ? true : undefined))
+    } finally {
+      pa.close()
+      pb.close()
+    }
+    await Promise.all([pa.done, pb.done])
+    expect(errors).toEqual([])
   })
 })

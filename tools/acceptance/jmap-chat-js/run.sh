@@ -5,8 +5,8 @@
 # its locked dependencies there, starts one in-process mimid server with
 # alice's and bob's daemons (mimid-agent's acceptance_fixture example),
 # and runs:
-#   1. agent.test.ts under the app's own Vitest, in Node: session.ts and
-#      client.ts against the daemons;
+#   1. agent.test.ts under the app's own Vitest, in Node: session.ts,
+#      client.ts and push/eventsource.ts against the daemons;
 #   2. browser.spec.ts under the app's own Playwright, in Chromium, the
 #      same code served by the app's Vite dev server, cross-origin; only
 #      when a Chromium for that Playwright is installed (see below).
@@ -15,7 +15,7 @@
 # Usage: tools/acceptance/jmap-chat-js/run.sh
 # Environment:
 #   JMAP_CHAT_JS  the jmap-chat-js checkout   (/data/PROJECT/jmap-chat-js)
-#   REV           its revision to test        (HEAD)
+#   REV           its revision to test        (7789c2b)
 #   WORK          scratch directory           (a new mktemp -d, removed)
 #   APP_PORT      the Vite dev server's port  (5173)
 #   PLAYWRIGHT_BROWSERS_PATH  where Playwright's Chromium is; to install
@@ -25,7 +25,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 JMAP_CHAT_JS=${JMAP_CHAT_JS:-/data/PROJECT/jmap-chat-js}
-REV=${REV:-HEAD}
+REV=${REV:-7789c2b}
 APP_PORT=${APP_PORT:-5173}
 export APP_PORT
 if [ -z "${WORK:-}" ]; then

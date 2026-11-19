@@ -13,18 +13,21 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/')
 })
 
-test('fetchSession is refused with 401, readable cross-origin', async ({ page }) => {
-  const outcome = await page.evaluate(async url => {
+test('fetchSession: 401 without a token, readable cross-origin; accepted with one', async ({ page }) => {
+  const outcome = await page.evaluate(async d => {
     const { fetchSession } = await import('/src/lib/jmap/session.ts')
+    let without: string
     try {
-      await fetchSession(url)
-      return 'accepted'
+      await fetchSession(d.url)
+      without = 'accepted'
     } catch (e) {
       const err = e as { name: string; status?: number; message: string }
-      return `${err.name}:${err.status ?? err.message}`
+      without = `${err.name}:${err.status ?? err.message}`
     }
-  }, alice.url)
-  expect(outcome).toBe('SessionFetchError:401')
+    const session = await fetchSession(d.url, () => Promise.resolve(d.token))
+    return { without, username: session.username }
+  }, alice)
+  expect(outcome).toEqual({ without: 'SessionFetchError:401', username: alice.user })
 })
 
 test('a group Chat and Messages both ways, cross-origin', async ({ page }) => {
@@ -33,19 +36,10 @@ test('a group Chat and Messages both ways, cross-origin', async ({ page }) => {
       type Obj = Record<string, unknown> & { id: string }
       const { fetchSession } = await import('/src/lib/jmap/session.ts')
       const { createClient } = await import('/src/lib/jmap/client.ts')
-      // The one thing around the library: fetchSession sends no token.
-      const realFetch = window.fetch.bind(window)
-      window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = new URL(input instanceof Request ? input.url : input.toString())
-        const d = [alice, bob].find(x => new URL(x.url).origin === url.origin)
-        if (!d) return realFetch(input, init)
-        const headers = new Headers(init?.headers)
-        headers.set('Authorization', `Bearer ${d.token}`)
-        return realFetch(input, { ...init, headers })
-      }
       const connect = async (d: typeof alice) => {
-        const session = await fetchSession(d.url)
-        const client = createClient(session, () => Promise.resolve(d.token))
+        const getToken = () => Promise.resolve(d.token)
+        const session = await fetchSession(d.url, getToken)
+        const client = createClient(session, getToken)
         const accountId = session.primaryAccounts['urn:ietf:params:jmap:chat']
         const call = <T,>(m: string, args: Record<string, unknown>) =>
           client.call(m, { accountId, ...args }) as Promise<T>
@@ -108,36 +102,54 @@ test('a group Chat and Messages both ways, cross-origin', async ({ page }) => {
   })
 })
 
-test('push: EventSource cannot authenticate, a fetch stream can', async ({ page }) => {
-  const outcome = await page.evaluate(async d => {
-    const sessionRes = await fetch(`${d.url}/.well-known/jmap`, {
-      headers: { Authorization: `Bearer ${d.token}` },
-    })
-    const session = (await sessionRes.json()) as { eventSourceUrl: string; apiUrl: string; primaryAccounts: Record<string, string> }
-    const url = session.eventSourceUrl
-      .replace('{types}', '*').replace('{closeafter}', 'state').replace('{ping}', '0')
-
-    // The browser EventSource API sends no Authorization header.
-    const viaEventSource = await new Promise<string>(resolve => {
-      const es = new EventSource(url)
-      es.onopen = () => { es.close(); resolve('open') }
-      es.onerror = () => { const s = es.readyState; es.close(); resolve(`error readyState=${s}`) }
-    })
-
-    // A fetch with the header works; closeafter=state ends after one event.
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${d.token}` } })
-    const pending = res.text()
-    const accountId = session.primaryAccounts['urn:ietf:params:jmap:chat']
-    await fetch(session.apiUrl, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${d.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:chat'],
-        methodCalls: [['ChatContact/set', { accountId, create: { k: { identity: 'mimi://a.example/u/carol' } } }, 'c0']],
-      }),
-    })
-    const text = await pending
-    return { viaEventSource, status: res.status, stateEvent: /event: ?state/.test(text) }
-  }, alice)
-  expect(outcome).toEqual({ viaEventSource: 'error readyState=2', status: 200, stateEvent: true })
+test('push: startPush delivers Chat StateChanges to both users, cross-origin', async ({ page }) => {
+  const outcome = await page.evaluate(
+    async ({ alice, bob }) => {
+      const { fetchSession } = await import('/src/lib/jmap/session.ts')
+      const { createClient } = await import('/src/lib/jmap/client.ts')
+      const { startPush } = await import('/src/lib/push/eventsource.ts')
+      const errors: string[] = []
+      const start = async (d: typeof alice) => {
+        const getToken = () => Promise.resolve(d.token)
+        const session = await fetchSession(d.url, getToken)
+        const accountId = session.primaryAccounts['urn:ietf:params:jmap:chat']
+        const seen: string[] = []
+        const push = startPush({
+          session, getToken, ping: 0,
+          onError: e => errors.push(String(e)),
+          refreshers: { Chat: acct => { seen.push(acct) } },
+        })
+        return { client: createClient(session, getToken), accountId, seen, push }
+      }
+      const waitFor = async (pred: () => boolean) => {
+        const deadline = Date.now() + 20_000
+        while (!pred()) {
+          if (Date.now() > deadline) throw new Error('timed out')
+          await new Promise(r => setTimeout(r, 100))
+        }
+      }
+      const a = await start(alice)
+      const b = await start(bob)
+      try {
+        await new Promise(r => setTimeout(r, 500))
+        type SetResult = { created?: Record<string, { id: string }>; notCreated?: Record<string, { type: string; existingId?: string }> }
+        const c = await a.client.call<SetResult>('ChatContact/set',
+          { accountId: a.accountId, create: { k: { identity: bob.user } } })
+        const contactId = c.created?.k.id ?? c.notCreated?.k.existingId
+        await a.client.call('Chat/set', {
+          accountId: a.accountId,
+          create: { k: { kind: 'group', name: 'browser push', memberIds: [contactId] } },
+        })
+        await waitFor(() => a.seen.includes(a.accountId))
+        await waitFor(() => b.seen.includes(b.accountId))
+      } finally {
+        a.push.close()
+        b.push.close()
+      }
+      await Promise.all([a.push.done, b.push.done])
+      return { errors }
+    },
+    { alice, bob },
+  )
+  expect(outcome).toEqual({ errors: [] })
 })
