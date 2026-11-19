@@ -68,7 +68,7 @@
 use jmap_chat_server::ChatStore;
 use jmap_chat_server::memory::MemoryError;
 use jmap_chat_types::{Chat, ChatBan, ChatMember};
-use jmap_server::{BackendSetError, Id, JmapBackend, SetError, SetErrorType};
+use jmap_server::{BackendSetError, Id, JmapReads, SetError, SetErrorType};
 use std::collections::BTreeMap;
 
 use mimid_agent_core::{Agent, RoomStatus};

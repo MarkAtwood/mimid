@@ -98,8 +98,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use jmap_chat_types::{Chat, ChatContact, Message, ReadPosition};
 use jmap_server::{
-    CallContext, Dispatcher, HandlerFuture, HandlerOutput, Id, JmapBackend, JmapError, JmapHandler,
-    JmapObject, check_known_capabilities, parse_request, request_error,
+    CallContext, Dispatcher, HandlerFuture, HandlerOutput, Id, JmapError, JmapHandler, JmapObject,
+    JmapReads, check_known_capabilities, parse_request, request_error,
 };
 use mimid_agent_core::MAX_TEXT_LEN;
 use mimid_agent_jmap::{

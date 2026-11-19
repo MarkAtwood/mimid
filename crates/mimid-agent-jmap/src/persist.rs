@@ -30,7 +30,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use jmap_chat_types::{Chat, ChatBan, ChatContact, Message, ReadPosition};
-use jmap_server::{GetObject, Id, JmapBackend, JmapObject};
+use jmap_server::{GetObject, Id, JmapObject, JmapReads};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

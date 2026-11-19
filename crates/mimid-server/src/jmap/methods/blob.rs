@@ -51,9 +51,9 @@ use jmap_blob_server::{
 use jmap_blob_types::{BlobAccountCapability, JMAP_BLOB2_URI};
 use jmap_server::{
     BackendChangesError, BackendQueryError, BackendSetError, CallContext, ChangesParams,
-    ChangesResult, GetObject, HandlerFuture, Id, JmapBackend, JmapError, JmapHandler, JmapObject,
-    QueryChangesParams, QueryChangesResult, QueryObject, QueryParams, QueryResult, SetError,
-    SetErrorType, State, UTCDate,
+    ChangesResult, GetObject, HandlerFuture, Id, JmapAccounts, JmapError, JmapHandler, JmapObject,
+    JmapReads, QueryChangesParams, QueryChangesResult, QueryObject, QueryParams, QueryResult,
+    SetError, SetErrorType, State, UTCDate,
 };
 
 use super::Services;
@@ -138,7 +138,7 @@ fn not_found() -> BackendSetError<BlobMethodError> {
     set_error(SetErrorType::NotFound, "no such blob")
 }
 
-impl JmapBackend for Blobs {
+impl JmapAccounts for Blobs {
     type Error = BlobMethodError;
     type CallerCtx = Account;
 
@@ -146,6 +146,18 @@ impl JmapBackend for Blobs {
         Ok(caller.check_account_id(account_id.as_ref()).is_ok())
     }
 
+    /// The advertised `maxObjectsInGet`, enforced once by `api.rs`.
+    fn max_objects_in_get(&self, _caller: &Account, _account_id: &Id) -> u64 {
+        MAX_OBJECTS_IN_GET as u64
+    }
+
+    /// The advertised `maxObjectsInSet`, enforced once by `api.rs`.
+    fn max_objects_in_set(&self, _caller: &Account, _account_id: &Id) -> u64 {
+        MAX_OBJECTS_IN_SET as u64
+    }
+}
+
+impl JmapReads for Blobs {
     async fn get_objects<O: GetObject + Send + Sync>(
         &self,
         _caller: &Account,
@@ -189,16 +201,6 @@ impl JmapBackend for Blobs {
         _params: QueryChangesParams<'_, O>,
     ) -> Result<QueryChangesResult, BackendChangesError<Self::Error>> {
         Err(BackendChangesError::Other(BlobMethodError::Unsupported))
-    }
-
-    /// The advertised `maxObjectsInGet`, enforced once by `api.rs`.
-    fn max_objects_in_get(&self, _caller: &Account, _account_id: &Id) -> u64 {
-        MAX_OBJECTS_IN_GET as u64
-    }
-
-    /// The advertised `maxObjectsInSet`, enforced once by `api.rs`.
-    fn max_objects_in_set(&self, _caller: &Account, _account_id: &Id) -> u64 {
-        MAX_OBJECTS_IN_SET as u64
     }
 }
 

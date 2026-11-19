@@ -14,9 +14,8 @@ use jmap_chat_types::{
     BodyType, Chat, ChatBan, ChatContact, ChatMember, ChatMemberRole, DeliveryState, Message,
 };
 use jmap_server::{
-    BackendChangesError, BackendQueryError, BackendSetError, ChangesParams, ChangesResult,
-    Dispatcher, GetObject, Id, JmapBackend, JmapObject, QueryChangesParams, QueryChangesResult,
-    QueryObject, QueryParams, QueryResult, SetError, SetErrorType, SetObject, State,
+    BackendSetError, DelegateJmapReads, Dispatcher, GetObject, Id, JmapAccounts, JmapObject,
+    JmapReads, SetError, SetErrorType, SetObject,
 };
 use mimid_agent_core::{
     Agent, AgentError, HostOptions, MAX_TEXT_LEN, OutgoingAttachment, RoomStatus,
@@ -730,61 +729,20 @@ fn room_bound(chat: &Chat) -> bool {
     chat.extra.contains_key(ROOM_ID)
 }
 
-impl JmapBackend for AgentChat {
+impl JmapAccounts for AgentChat {
     type Error = MemoryError;
     type CallerCtx = ();
 
     async fn account_exists(&self, caller: &(), account_id: &Id) -> Result<bool, MemoryError> {
         Ok(*account_id == self.account && self.inner.account_exists(caller, account_id).await?)
     }
+}
 
-    async fn get_objects<O: GetObject + Send + Sync>(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        ids: Option<&[Id]>,
-        properties: Option<&[String]>,
-    ) -> Result<(Vec<O>, Vec<Id>), MemoryError> {
-        self.inner
-            .get_objects(caller, account_id, ids, properties)
-            .await
-    }
+impl DelegateJmapReads for AgentChat {
+    type Target = MemoryBackend;
 
-    async fn get_state<O: JmapObject + Send + Sync>(
-        &self,
-        caller: &(),
-        account_id: &Id,
-    ) -> Result<State, MemoryError> {
-        self.inner.get_state::<O>(caller, account_id).await
-    }
-
-    async fn get_changes<O: JmapObject + Send + Sync>(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        params: ChangesParams<'_>,
-    ) -> Result<ChangesResult, BackendChangesError<MemoryError>> {
-        self.inner
-            .get_changes::<O>(caller, account_id, params)
-            .await
-    }
-
-    async fn query_objects<O: QueryObject + Send + Sync>(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        params: QueryParams<'_, O>,
-    ) -> Result<QueryResult, BackendQueryError<MemoryError>> {
-        self.inner.query_objects(caller, account_id, params).await
-    }
-
-    async fn query_changes<O: QueryObject + Send + Sync>(
-        &self,
-        caller: &(),
-        account_id: &Id,
-        params: QueryChangesParams<'_, O>,
-    ) -> Result<QueryChangesResult, BackendChangesError<MemoryError>> {
-        self.inner.query_changes(caller, account_id, params).await
+    fn jmap_reads(&self) -> &MemoryBackend {
+        &self.inner
     }
 }
 

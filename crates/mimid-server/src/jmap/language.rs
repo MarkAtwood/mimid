@@ -23,16 +23,8 @@
 use std::collections::BTreeMap;
 
 use jmap_server::I18nProjection;
-use jmap_types::i18n::{LanguageTag, LocalizableProperty};
+use jmap_types::i18n::LanguageTag;
 use serde_json::{Map, Value, json};
-
-/// The localizable properties of Chat (the JMAP Chat applicability
-/// table, jmap-chat-spec bead qb21): `name` is a `String`, `description`
-/// a `String|null`.
-pub const CHAT_LOCALIZABLE: &[LocalizableProperty] = &[
-    LocalizableProperty::new("name", false),
-    LocalizableProperty::new("description", true),
-];
 
 /// A Chat's localizable display text.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

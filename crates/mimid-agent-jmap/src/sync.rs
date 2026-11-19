@@ -6,7 +6,7 @@ use jmap_chat_types::{
     Attachment, BodyType, Chat, ChatContact, ChatKind, ChatMember, ChatMemberRole, DeliveryState,
     Message,
 };
-use jmap_server::{BackendSetError, Id, JmapBackend, now_utc_string};
+use jmap_server::{BackendSetError, Id, JmapReads, now_utc_string};
 use mimi_content::{ExternalPart, MimiContent, Part};
 use mimid_agent_core::{Agent, AgentError, Event, ReceivedMessage, RoomStatus};
 use serde_json::json;

@@ -68,11 +68,11 @@ use jmap_chat_types::{Chat, ChatContact, Message};
 use jmap_metadata_server::{MetadataCondition, MetadataFilterError};
 use jmap_server::{
     BackendChangesError, BackendQueryError, CallContext, ChangesParams, ChangesResult, GetObject,
-    HandlerFuture, HandlerOutput, I18nInfo, I18nProjection, Id, JmapBackend, JmapError,
-    JmapHandler, JmapObject, QueryChangesParams, QueryChangesResult, QueryObject, QueryParams,
-    QueryResult, SetError, SetErrorType, State, handle_changes, handle_query, handle_query_changes,
-    handle_query_changes_with_i18n, handle_query_with_i18n, resolve_query_start,
-    server_fail_from_backend,
+    HandlerFuture, HandlerOutput, I18nInfo, I18nProjection, Id, JmapAccounts, JmapError,
+    JmapHandler, JmapObject, JmapReads, QueryChangesParams, QueryChangesResult, QueryObject,
+    QueryParams, QueryResult, SetError, SetErrorType, State, handle_changes, handle_query,
+    handle_query_changes, handle_query_changes_with_i18n, handle_query_with_i18n,
+    resolve_query_start, server_fail_from_backend,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -81,7 +81,7 @@ use ulid::Ulid;
 
 use super::api::{MAX_OBJECTS_IN_GET, MAX_OBJECTS_IN_SET, Methods};
 use super::auth::Account;
-use super::language::{CHAT_LOCALIZABLE, Localized};
+use super::language::Localized;
 use super::metadata;
 use crate::hub::{Hub, RoomTexts};
 use crate::store::{ChatRow, HubRow, MessageRow, ProjectionCursor, Store, StoreError};
@@ -248,7 +248,7 @@ macro_rules! record {
     };
 }
 
-record!(ChatRecord, "Chat", CHAT_LOCALIZABLE);
+record!(ChatRecord, "Chat", <Chat as JmapObject>::LOCALIZABLE);
 record!(MessageRecord, "Message");
 record!(ContactRecord, "ChatContact");
 
@@ -1049,7 +1049,7 @@ fn absent_last(a: Option<u64>, b: Option<u64>) -> Compared {
     }
 }
 
-impl JmapBackend for Projection {
+impl JmapAccounts for Projection {
     type Error = ProjectionError;
     type CallerCtx = Account;
 
@@ -1057,6 +1057,27 @@ impl JmapBackend for Projection {
         Ok(caller.check_account_id(account_id.as_ref()).is_ok())
     }
 
+    /// The advertised `maxObjectsInGet`. The limit itself is enforced once,
+    /// for every method, by `api.rs`; this keeps crate-jmap's handlers in
+    /// step with it.
+    fn max_objects_in_get(&self, _caller: &Account, _account_id: &Id) -> u64 {
+        MAX_OBJECTS_IN_GET as u64
+    }
+
+    /// The advertised `maxObjectsInSet`, enforced once by `api.rs`.
+    fn max_objects_in_set(&self, _caller: &Account, _account_id: &Id) -> u64 {
+        MAX_OBJECTS_IN_SET as u64
+    }
+
+    /// Every account supports localizations: the Session advertises
+    /// `urn:ietf:params:jmap:i18n` on each (draft-atwood-jmap-updates-00
+    /// §2), and whether a request uses it is crate-jmap's check of `using`.
+    fn i18n_info(&self, _caller: &Account, _account_id: &Id) -> Option<I18nInfo> {
+        Some(I18nInfo::new())
+    }
+}
+
+impl JmapReads for Projection {
     /// Unused by this module's handlers, which read the state with the
     /// objects (see [`get`]); errors here can only be `serverFail`.
     async fn get_objects<O: GetObject + Send + Sync>(
@@ -1180,25 +1201,6 @@ impl JmapBackend for Projection {
         // Decision mimid-1wgh.12.22.
         Err(BackendChangesError::CannotCalculate)
     }
-
-    /// The advertised `maxObjectsInGet`. The limit itself is enforced once,
-    /// for every method, by `api.rs`; this keeps crate-jmap's handlers in
-    /// step with it.
-    fn max_objects_in_get(&self, _caller: &Account, _account_id: &Id) -> u64 {
-        MAX_OBJECTS_IN_GET as u64
-    }
-
-    /// The advertised `maxObjectsInSet`, enforced once by `api.rs`.
-    fn max_objects_in_set(&self, _caller: &Account, _account_id: &Id) -> u64 {
-        MAX_OBJECTS_IN_SET as u64
-    }
-
-    /// Every account supports localizations: the Session advertises
-    /// `urn:ietf:params:jmap:i18n` on each (draft-atwood-jmap-updates-00
-    /// §2), and whether a request uses it is crate-jmap's check of `using`.
-    fn i18n_info(&self, _caller: &Account, _account_id: &Id) -> Option<I18nInfo> {
-        Some(I18nInfo::new())
-    }
 }
 
 /// Chat display text as stored, for a read with no `language` argument:
@@ -1210,9 +1212,7 @@ fn stored(account: &Account) -> I18nProjection {
     } else {
         Vec::new()
     };
-    // Without a `language` argument this cannot fail.
-    I18nProjection::from_args::<ChatRecord>(&mut Map::new(), &using, Some(&I18nInfo::new()))
-        .unwrap_or_default()
+    I18nProjection::without_language::<ChatRecord>(&using, Some(&I18nInfo::new()))
 }
 
 /// RFC 8620 §5.1 `/get`, reading the state in the same transaction as the
