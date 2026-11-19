@@ -19,7 +19,10 @@ mod common_notify;
 #[path = "common/key_packages.rs"]
 mod key_packages;
 
+use std::io::{BufRead, BufReader};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use common::problem_kind;
@@ -31,18 +34,153 @@ const CAROL: &str = "mimi://b.example/u/carol";
 const CAROL_ENCODED: &str = "mimi%3A%2F%2Fb.example%2Fu%2Fcarol";
 const ALICE: &str = "mimi://a.example/u/alice";
 
-/// Kills the server if the test fails before stopping it.
-struct Server(Child);
+/// Lines a stream of the server wrote.
+type Lines = Arc<Mutex<Vec<String>>>;
+
+/// The `mimid` process, with what it wrote to standard output and
+/// standard error. Kills the server if the test fails before stopping it.
+struct Server {
+    child: Child,
+    stdout: Lines,
+    stderr: Lines,
+    readers: Vec<std::thread::JoinHandle<()>>,
+}
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The loopback addresses of one start of the server: its listener and
+/// its local control listener.
+struct Addrs {
+    listen: String,
+    local: String,
+}
+
+impl Addrs {
+    fn new() -> Self {
+        Self {
+            listen: format!("127.0.0.1:{}", free_port()),
+            local: format!("127.0.0.1:{}", free_port()),
+        }
+    }
+
+    fn base(&self) -> String {
+        format!("http://{}", self.listen)
+    }
+}
+
+/// Copies `stream` into `lines`, one line at a time, until it closes.
+fn read_lines(
+    stream: impl std::io::Read + Send + 'static,
+    lines: &Lines,
+) -> std::thread::JoinHandle<()> {
+    let lines = Arc::clone(lines);
+    std::thread::spawn(move || {
+        for line in BufReader::new(stream).lines() {
+            let Ok(line) = line else { break };
+            lines.lock().unwrap().push(line);
+        }
+    })
+}
+
+impl Server {
+    /// Writes `config` of fresh [`Addrs`] to `mimid.toml` in `dir`, starts
+    /// the binary on it with `env`, and waits until it serves (see
+    /// [`Server::wait_listening`]). If another process took one of the
+    /// ports first ([`free_port`]), starts again on new ones, up to five
+    /// times. `env` must let the binary log `mimid listening` (INFO, target
+    /// `mimid`).
+    async fn start(
+        dir: &Path,
+        env: &[(&str, &str)],
+        config: impl Fn(&Addrs) -> String,
+    ) -> (Self, Addrs) {
+        for _ in 0..5 {
+            let addrs = Addrs::new();
+            let path = dir.join("mimid.toml");
+            std::fs::write(&path, config(&addrs)).unwrap();
+            let mut child = Command::new(env!("CARGO_BIN_EXE_mimid"))
+                .arg(&path)
+                .envs(env.iter().copied())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let stdout = Lines::default();
+            let stderr = Lines::default();
+            let readers = vec![
+                read_lines(child.stdout.take().unwrap(), &stdout),
+                read_lines(child.stderr.take().unwrap(), &stderr),
+            ];
+            let mut server = Self {
+                child,
+                stdout,
+                stderr,
+                readers,
+            };
+            match server.wait_listening(&addrs).await {
+                Ok(()) => return (server, addrs),
+                Err(logs) if logs.contains("Address already in use") => {}
+                Err(logs) => panic!("the server exited at startup:\n{logs}"),
+            }
+        }
+        panic!("five starts found a port taken");
+    }
+
+    /// Waits up to 30 seconds for the binary's `mimid listening` line, which
+    /// it logs after binding its listener and, before that, its local
+    /// control listener, then for an answer to one request. Waiting for one
+    /// listener to answer says nothing of the other, since the binary binds
+    /// them one after another with other startup work between them
+    /// (`main.rs`; bead mimid-fchx); and only this process's own line shows
+    /// that the port is not another process's. An error holds what the
+    /// server wrote, if it exited first.
+    async fn wait_listening(&mut self, addrs: &Addrs) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !self.logs().contains("mimid listening") {
+            if self.child.try_wait().unwrap().is_some() {
+                for reader in self.readers.drain(..) {
+                    reader.join().unwrap();
+                }
+                return Err(self.logs());
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the server did not start:\n{}",
+                self.logs()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // Served, so the binary is in its serving loop, which installs its
+        // SIGINT handler.
+        let directory = format!("{}/.well-known/mimi-protocol-directory", addrs.base());
+        reqwest::get(&directory).await.unwrap();
+        Ok(())
+    }
+
+    /// Everything the server wrote so far: standard output, then standard
+    /// error.
+    fn logs(&self) -> String {
+        let stdout = self.stdout.lock().unwrap().join("\n");
+        let stderr = self.stderr.lock().unwrap().join("\n");
+        format!("{stdout}\n{stderr}")
+    }
+
+    /// Standard output once the server has exited: all of it.
+    fn exited_stdout(&mut self) -> Vec<String> {
+        for reader in self.readers.drain(..) {
+            reader.join().unwrap();
+        }
+        self.stdout.lock().unwrap().clone()
     }
 }
 
 /// A free loopback port. Another process could take it before the server
-/// binds it; that would fail the test, not pass it wrongly.
+/// binds it; [`Server::start`] then starts again.
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -78,10 +216,10 @@ async fn post(
 async fn binary_serves_with_two_peers_and_stops_on_sigint() {
     let dir = tempfile::tempdir().unwrap();
     let database = dir.path().join("mimid.sqlite");
-    let base = format!("http://127.0.0.1:{}", free_port());
     // Neither peer is contacted: nothing here makes the server send.
-    let config = format!(
-        "domain = \"b.example\"\n\
+    let config = |addrs: &Addrs| {
+        format!(
+            "domain = \"b.example\"\n\
          listen = \"{listen}\"\n\
          base_url = \"{base}\"\n\
          database = \"{database}\"\n\
@@ -95,34 +233,19 @@ async fn binary_serves_with_two_peers_and_stops_on_sigint() {
          [provider_auth]\n\
          mode = \"observe\"\n\
          dns_keys = false\ndane = false\n",
-        listen = base.trim_start_matches("http://"),
-        database = database.display(),
-    );
-    let config_path = dir.path().join("mimid.toml");
-    std::fs::write(&config_path, config).unwrap();
-
-    let mut server = Server(
-        Command::new(env!("CARGO_BIN_EXE_mimid"))
-            .arg(&config_path)
-            .env("RUST_LOG", "warn")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
+            listen = addrs.listen,
+            base = addrs.base(),
+            database = database.display(),
+        )
+    };
+    let (mut server, addrs) =
+        Server::start(dir.path(), &[("RUST_LOG", "warn,mimid=info")], config).await;
+    let base = addrs.base();
 
     let http = reqwest::Client::new();
     let directory = format!("{base}/.well-known/mimi-protocol-directory");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Ok(response) = http.get(&directory).send().await {
-            assert_eq!(response.status(), StatusCode::OK);
-            break;
-        }
-        assert!(server.0.try_wait().unwrap().is_none(), "server exited");
-        assert!(Instant::now() < deadline, "server did not start");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let response = http.get(&directory).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     // The follower has its peers (decision mimid-1wgh.7.4): the room's hub
     // is accepted, twice, and stored once (decision mimid-1wgh.7.3).
@@ -155,12 +278,12 @@ async fn binary_serves_with_two_peers_and_stops_on_sigint() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, no_consent(CAROL));
 
-    let pid = server.0.id().to_string();
+    let pid = server.child.id().to_string();
     let killed = Command::new("kill").args(["-INT", &pid]).status().unwrap();
     assert!(killed.success());
     let deadline = Instant::now() + Duration::from_secs(30);
     let exit = loop {
-        if let Some(exit) = server.0.try_wait().unwrap() {
+        if let Some(exit) = server.child.try_wait().unwrap() {
             break exit;
         }
         assert!(Instant::now() < deadline, "server did not stop");
@@ -190,9 +313,9 @@ async fn binary_serves_with_two_peers_and_stops_on_sigint() {
 #[tokio::test]
 async fn json_log_format_writes_named_events() {
     let dir = tempfile::tempdir().unwrap();
-    let base = format!("http://127.0.0.1:{}", free_port());
-    let config = format!(
-        "domain = \"b.example\"\n\
+    let config = |addrs: &Addrs| {
+        format!(
+            "domain = \"b.example\"\n\
          listen = \"{listen}\"\n\
          base_url = \"{base}\"\n\
          database = \"{database}\"\n\
@@ -201,30 +324,18 @@ async fn json_log_format_writes_named_events() {
          # an event of its own, whenever the network answers.\n\
          [provider_auth]\n\
          dns_keys = false\ndane = false\n",
-        listen = base.trim_start_matches("http://"),
-        database = dir.path().join("mimid.sqlite").display(),
-    );
-    let config_path = dir.path().join("mimid.toml");
-    std::fs::write(&config_path, config).unwrap();
-    let mut server = Server(
-        Command::new(env!("CARGO_BIN_EXE_mimid"))
-            .arg(&config_path)
-            .env("RUST_LOG", "info")
-            .env("MIMID_LOG_FORMAT", "json")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
-    let http = reqwest::Client::new();
-    let directory = format!("{base}/.well-known/mimi-protocol-directory");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while http.get(&directory).send().await.is_err() {
-        assert!(server.0.try_wait().unwrap().is_none(), "server exited");
-        assert!(Instant::now() < deadline, "server did not start");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let pid = server.0.id().to_string();
+            listen = addrs.listen,
+            base = addrs.base(),
+            database = dir.path().join("mimid.sqlite").display(),
+        )
+    };
+    let (mut server, _) = Server::start(
+        dir.path(),
+        &[("RUST_LOG", "info"), ("MIMID_LOG_FORMAT", "json")],
+        config,
+    )
+    .await;
+    let pid = server.child.id().to_string();
     assert!(
         Command::new("kill")
             .args(["-INT", &pid])
@@ -232,16 +343,15 @@ async fn json_log_format_writes_named_events() {
             .unwrap()
             .success()
     );
-    // Standard output closes when the process exits.
-    let mut stdout = server.0.stdout.take().unwrap();
-    let text = tokio::task::spawn_blocking(move || {
-        let mut text = String::new();
-        std::io::Read::read_to_string(&mut stdout, &mut text).unwrap();
-        text
+    let status = tokio::task::spawn_blocking(move || {
+        let status = server.child.wait().unwrap();
+        (status, server.exited_stdout())
     })
     .await
     .unwrap();
-    assert!(server.0.wait().unwrap().success());
+    let (status, stdout) = status;
+    assert!(status.success());
+    let text = stdout.join("\n");
 
     let lines: Vec<serde_json::Value> = text
         .lines()
@@ -309,9 +419,9 @@ async fn telemetry_exports_to_the_collector() {
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
         let dir = tempfile::tempdir().unwrap();
-        let base = format!("http://127.0.0.1:{}", free_port());
-        let config = format!(
-            "domain = \"b.example\"\n\
+        let config = |addrs: &Addrs| {
+            format!(
+                "domain = \"b.example\"\n\
              listen = \"{listen}\"\n\
              base_url = \"{base}\"\n\
              database = \"{database}\"\n\
@@ -322,33 +432,20 @@ async fn telemetry_exports_to_the_collector() {
              [telemetry]\n\
              endpoint = \"{collector}\"\n\
              metrics_interval_secs = 1\n",
-            listen = base.trim_start_matches("http://"),
-            database = dir.path().join("mimid.sqlite").display(),
-        );
-        let config_path = dir.path().join("mimid.toml");
-        std::fs::write(&config_path, config).unwrap();
-        let mut server = Server(
-            Command::new(env!("CARGO_BIN_EXE_mimid"))
-                .arg(&config_path)
-                .env("RUST_LOG", "debug")
-                .env("MIMID_LOG_FORMAT", format)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap(),
-        );
-        let http = reqwest::Client::new();
-        let directory = format!("{base}/.well-known/mimi-protocol-directory");
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while http.get(&directory).send().await.is_err() {
-            assert!(
-                server.0.try_wait().unwrap().is_none(),
-                "{format}: server exited"
-            );
-            assert!(Instant::now() < deadline, "{format}: server did not start");
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        let pid = server.0.id().to_string();
+                listen = addrs.listen,
+                base = addrs.base(),
+                database = dir.path().join("mimid.sqlite").display(),
+            )
+        };
+        // Starting makes one request, so there are request metrics and a
+        // trace to export.
+        let (mut server, _) = Server::start(
+            dir.path(),
+            &[("RUST_LOG", "debug"), ("MIMID_LOG_FORMAT", format)],
+            config,
+        )
+        .await;
+        let pid = server.child.id().to_string();
         assert!(
             Command::new("kill")
                 .args(["-INT", &pid])
@@ -356,7 +453,7 @@ async fn telemetry_exports_to_the_collector() {
                 .unwrap()
                 .success()
         );
-        let status = tokio::task::spawn_blocking(move || server.0.wait().unwrap())
+        let status = tokio::task::spawn_blocking(move || server.child.wait().unwrap())
             .await
             .unwrap();
         assert!(status.success(), "{format}: {status}");
@@ -382,46 +479,35 @@ async fn telemetry_exports_to_the_collector() {
 #[tokio::test]
 async fn an_open_eventsource_stream_does_not_block_shutdown() {
     let dir = tempfile::tempdir().unwrap();
-    let base = format!("http://127.0.0.1:{}", free_port());
-    let local = format!("127.0.0.1:{}", free_port());
-    let config = format!(
-        "domain = \"a.example\"\n\
+    let config = |addrs: &Addrs| {
+        format!(
+            "domain = \"a.example\"\n\
          listen = \"{listen}\"\n\
          base_url = \"{base}\"\n\
          database = \"{database}\"\n\
          local_listen = \"{local}\"\n",
-        listen = base.trim_start_matches("http://"),
-        database = dir.path().join("mimid.sqlite").display(),
-    );
-    let config_path = dir.path().join("mimid.toml");
-    std::fs::write(&config_path, config).unwrap();
-    let mut server = Server(
-        Command::new(env!("CARGO_BIN_EXE_mimid"))
-            .arg(&config_path)
-            .env("RUST_LOG", "warn")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
+            listen = addrs.listen,
+            base = addrs.base(),
+            local = addrs.local,
+            database = dir.path().join("mimid.sqlite").display(),
+        )
+    };
+    // The local listener is bound before the other one: waiting for the
+    // local one only raced the eventsource request below (bead
+    // mimid-fchx). Server::start waits for both.
+    let (mut server, addrs) =
+        Server::start(dir.path(), &[("RUST_LOG", "warn,mimid=info")], config).await;
+    let (base, local) = (addrs.base(), addrs.local.clone());
     let http = reqwest::Client::new();
     let local_base = format!("http://{local}/local/v1");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Ok(response) = http
-            .post(format!("{local_base}/users"))
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(serde_json::json!({"user": ALICE}).to_string())
-            .send()
-            .await
-        {
-            assert_eq!(response.status(), StatusCode::CREATED);
-            break;
-        }
-        assert!(server.0.try_wait().unwrap().is_none(), "server exited");
-        assert!(Instant::now() < deadline, "server did not start");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let response = http
+        .post(format!("{local_base}/users"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(serde_json::json!({"user": ALICE}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
     let token = http
         .post(format!(
             "{local_base}/users/{}/tokens",
@@ -448,7 +534,7 @@ async fn an_open_eventsource_stream_does_not_block_shutdown() {
     // change, and this test makes none.
     assert_eq!(stream.status(), StatusCode::OK);
 
-    let pid = server.0.id().to_string();
+    let pid = server.child.id().to_string();
     assert!(
         Command::new("kill")
             .args(["-INT", &pid])
@@ -458,7 +544,7 @@ async fn an_open_eventsource_stream_does_not_block_shutdown() {
     );
     let deadline = Instant::now() + Duration::from_secs(10);
     let exit = loop {
-        if let Some(exit) = server.0.try_wait().unwrap() {
+        if let Some(exit) = server.child.try_wait().unwrap() {
             break exit;
         }
         assert!(

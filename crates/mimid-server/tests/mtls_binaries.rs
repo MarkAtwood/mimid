@@ -298,7 +298,14 @@ impl Mimid {
             assert!(Instant::now() < deadline, "{domain} did not start");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        // The protocol listener is bound before the local one is served.
+        // The local listener is bound first, the protocol listener after
+        // other startup work (`main.rs`), so the local one answering says
+        // nothing of the other (bead mimid-fchx). Its log line comes
+        // right after its bind.
+        assert!(
+            !mimid.await_events("mimid listening", 1).await.is_empty(),
+            "{domain}: the protocol listener did not start"
+        );
         mimid
     }
 
