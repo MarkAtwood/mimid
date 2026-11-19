@@ -68,6 +68,44 @@ authorizes these Removes without a room-policy capability
 | `adding_a_new_did_webvh_user_removes_an_mls_rs_member_without_app_data_update` | Adding Carol removes Bob in the same Commit; device 1, device 2 and Carol agree. Bob is then added again with a fresh KeyPackage, a Commit that changes no record, and his secrets agree with mimid's. |
 | `a_commit_without_a_record_change_removes_nobody` | An empty Commit removes no one and mls-rs processes it; a Commit that removes Bob on purpose without a record change does not report him as removed for lacking AppDataUpdate, and mls-rs processes its own removal (`CommitEffect::Removed`). |
 
+## Through a real hub (test)
+
+`a_revocation_removes_an_mls_rs_client_through_a_hub_and_posts_one_notice`
+in `crates/mimid-agent-jmap/tests/removal_notice.rs` (bead mimid-64xc)
+runs the same removal through an in-process a.example stack: bob (mimid
+agent and JMAP account) hosts a room with alice's two `did_webvh` devices
+and erin's mimid device. erin's second client is stock mls-rs with the
+`IdentityProvider` below. It fetches the GroupInfo and tree with JMAP
+`GroupInfo/fetch`, builds an external Commit
+(`Client::external_commit_builder`) whose leaf lists the GroupContext's
+`app_components` and `safe_aad` entries, and sends it with its own
+GroupInfo through `Room/update`. The hub accepts it, the hub's own view
+shows two erin leaves, and mls-rs agrees with bob's and alice's agents on
+the epoch authenticator. alice's controller then revokes her second
+device. Her first device's Commit removes that device and the mls-rs
+client. The hub keeps one erin leaf and erin in `participant_list`, the
+committing agent reports `RemovedWithoutAppDataUpdate` for erin, and bob's
+JMAP Chat holds exactly one notice. The mls-rs client gets the Commit from
+erin's MIMI account and cannot decode it
+(`SerializationError(InvalidVarIntPrefix(3))`, as below). It stays in the
+old epoch and never sees its removal.
+
+Two things the external join needed that the Welcome join does not:
+
+- **SafeAAD framing.** The room's GroupContext lists `safe_aad`, so every
+  message's `authenticated_data` must be a SafeAAD struct
+  (mls-extensions-11 §4.9). mls-rs sends an empty `authenticated_data`,
+  and the hub refuses the Commit (`notAllowed`; mimi-mls's SafeAAD check
+  fails with `EndOfStream`). The application passes the empty SafeAAD,
+  one byte 0x00, to `with_authenticated_data`. mls-rs does not know
+  SafeAAD, so the application must frame every message it sends this way.
+- **A per-leaf BasicCredential identity.** mimid lets a user have several
+  clients with one BasicCredential identifier. With the identity keyed by
+  the identifier alone, as `BasicIdentityProvider` does, mls-rs refuses to
+  build the external Commit (`DuplicateLeafData`), because erin's mimid
+  device already has that identifier. The test's provider appends the
+  signature key, as it does for `did_webvh` leaves.
+
 ## What fails, and why (tests)
 
 | Test | Result |
@@ -97,27 +135,32 @@ log is already recorded, and Removes.
      crate has no OpenMLS dependency, so an mls-rs application can use it
      too.
    - `identity()` returns a per-device value: the SCID plus the
-     `signature_key`. The SCID alone fails (above).
+     `signature_key`. The SCID alone fails (above). The same holds for a
+     BasicCredential when the user has another client in the room
+     (above, through a real hub).
    - `validate_external_sender()` refuses `did_webvh` (§Binding to the
      LeafNode).
    - The trait takes `MemberValidationContext`, which mls-rs does not
      re-export, so the application also depends on `mls-rs-core`.
-2. **Client configuration**: `extension_type(0x0006)` (app_data_dictionary),
+2. **SafeAAD**: when the GroupContext lists `safe_aad`, as a MIMI room's
+   does, the application frames `authenticated_data` as a SafeAAD
+   (an empty one is 0x00) on everything it sends.
+3. **Client configuration**: `extension_type(0x0006)` (app_data_dictionary),
    or mls-rs refuses the GroupContext (`UnsupportedGroupExtension`) and a
    leaf carrying the extension.
-3. **Its leaf's `app_data_dictionary`** with an `app_components` entry that
+4. **Its leaf's `app_data_dictionary`** with an `app_components` entry that
    names the record component (mimid's default 0xF013). The GroupContext's
    list names it, so mls-extensions-11 §5 and mimid require every leaf to
    list it. Per the draft (§The Heads Component), listing it means the
    client implements the group rules.
-4. **The group rules** (§Group Consistency Rules). The test does not
+5. **The group rules** (§Group Consistency Rules). The test does not
    implement them. mls-rs offers `IdentityProvider::validate_member` (one
    leaf, with the new GroupContext extensions) and `MlsRules::
    filter_proposals` (the current roster, GroupContext and the proposals).
    Neither shows the resulting tree, so the application would have to
    recompute it. Without the rules, the mls-rs member authenticates each
    device but does not enforce revocation.
-5. **AppDataUpdate**, which an application cannot add from outside. mls-rs's
+6. **AppDataUpdate**, which an application cannot add from outside. mls-rs's
    custom-proposal API encodes and decodes a proposal it does not know as
    one `opaque<V>` (`CustomDecoder` in `mls-rs/src/group/proposal.rs`; only
    the `gsma_rcs_e2ee_feature` build changes that), so the application can
@@ -158,15 +201,14 @@ log is already recorded, and Removes.
 
 ## Not tested
 
-- An mls-rs member removed through a real hub. The agent's notice of the
-  removal (bead mimid-4lp4.4) is tested end to end with a plain OpenMLS
-  client lacking AppDataUpdate in its place
-  (`crates/mimid-agent-jmap/tests/removal_notice.rs`).
 - An mls-rs client creating a `did_webvh` group: it could set the record and
   `app_components` in the initial GroupContext without any proposal.
 - mls-rs and mimid both using a `did_webvh` credential for the mls-rs member
   (the tests give Bob a BasicCredential).
-- External Commits by the mls-rs member.
+- Application messages between the mls-rs member and mimid agents in a
+  hub-hosted room (the hub test compares epoch authenticators only).
+- An mls-rs member that is the only client of its user: the hub test's
+  erin is already in `participant_list` through her mimid device.
 - A device rotating its `signature_key`: with the per-device identity, that
   changes the device's mls-rs identity, which mls-rs allows on an Update
   (it removes the old index entry and inserts the new one).

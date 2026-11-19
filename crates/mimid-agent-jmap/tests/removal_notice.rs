@@ -11,6 +11,18 @@
 //! the event again after a crash and a restart, and the hub still lists
 //! erin as a participant.
 //!
+//! The second test puts stock mls-rs (pinned rev, decision
+//! mimid-1wgh.4.13) in the plain client's place, with the
+//! IdentityProvider an mls-rs application needs for this room
+//! (docs/didwebvh-mls-rs.md). mls-rs builds the external Commit from the
+//! hub's GroupInfo and tree, the hub accepts it, and mls-rs agrees with
+//! bob and alice on the epoch authenticator. The revocation removes it
+//! as above, and bob's Chat holds one notice. mls-rs cannot decode the
+//! revocation Commit (it has no AppDataUpdate), so it stays in the old
+//! epoch and never sees its own removal. Keyed by the BasicCredential
+//! identifier alone, as mls-rs's BasicIdentityProvider is, mls-rs refuses
+//! to join at all, since erin's mimid device has that identifier too.
+//!
 //! Why the plain client joins by external Commit: no mimid agent can add
 //! it. The agent's KeyMaterial/fetch asks for AppDataUpdate in
 //! `required_capabilities` (`mimid-agent-core` `didwebvh.rs`), and each of
@@ -19,7 +31,9 @@
 //! Oracles:
 //!
 //! - The plain client is OpenMLS used directly, with its own capabilities
-//!   (no proposal types at all), not mimi-mls.
+//!   (no proposal types at all), not mimi-mls; the mls-rs client is
+//!   mls-rs, whose verdicts (join refused, Commit undecodable) are its
+//!   own, and whose epoch authenticator is compared with the agents'.
 //! - The did:webvh log comes from `mls_didwebvh::controller`, whose output
 //!   the mls-didwebvh tests check against an independent did:webvh
 //!   verifier; which device keys it lists is set by this test.
@@ -49,8 +63,8 @@ use mimi_mls::wire::{
     SignaturePublicKey,
 };
 use mimi_protocol::{
-    GroupInfoOption, GroupInfoRequestTbs, GroupInfoResponse, HandshakeBundle, Protocol,
-    UpdateRequest,
+    FanoutEvent, FanoutMessage, GroupInfoOption, GroupInfoRequestTbs, GroupInfoResponse,
+    HandshakeBundle, Protocol, UpdateRequest,
 };
 use mimid_agent_core::mls_didwebvh::controller::{DidLog, Parameters, UpdateKey};
 use mimid_agent_core::mls_didwebvh::{CodePoints, PublicKey};
@@ -88,6 +102,9 @@ const GROUP_INFO_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x04];
 /// IDs.
 const APP_COMPONENTS: u16 = 0x0001;
 const SAFE_AAD: u16 = 0x0002;
+/// mls-extensions-11 §4.9: a SafeAAD with no `aad_items`, a zero-length
+/// `SafeAADItem aad_items<V>`.
+const EMPTY_SAFE_AAD: [u8; 1] = [0x00];
 const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 
 struct Server {
@@ -399,52 +416,7 @@ impl PlainClient {
     /// the components the room's GroupContext requires (mls-extensions-11
     /// §5), copied from the GroupInfo. Returns the hub's `responseCode`.
     async fn join(&self, jmap: &Jmap, room: &str) -> Value {
-        // The GroupInfoRequest, signed with a key of its own.
-        let (hpke_key, hpke_public) = HpkePrivateKey::generate().unwrap();
-        let request_key = RequestKey::generate().unwrap();
-        let credential = [&[0x00, 0x01][..], &vl(ERIN.as_bytes())].concat();
-        let request = GroupInfoRequestTbs {
-            protocol: Protocol::Mls10,
-            cipher_suite: CipherSuite::from(0x0001),
-            requesting_signature_key: SignaturePublicKey::tls_deserialize_exact(vl(
-                request_key.verification_key()
-            ))
-            .unwrap(),
-            requesting_credential: Credential::tls_deserialize_exact(credential).unwrap(),
-            group_info_public_key: HPKEPublicKey::tls_deserialize_exact(vl(&hpke_public)).unwrap(),
-            joining_code: None,
-        }
-        .sign(&request_key)
-        .unwrap()
-        .tls_serialize_detached()
-        .unwrap();
-        let answer = jmap
-            .call(
-                "GroupInfo/fetch",
-                json!({"roomId": room, "request": URL_SAFE_NO_PAD.encode(request)}),
-            )
-            .await;
-        let response = URL_SAFE_NO_PAD
-            .decode(answer["response"].as_str().unwrap())
-            .unwrap();
-        let GroupInfoResponse::Success(success) =
-            GroupInfoResponse::tls_deserialize_exact(&response[..]).unwrap()
-        else {
-            panic!("GroupInfo/fetch refused: {answer}");
-        };
-        success.verify().unwrap();
-        let tbe = mimi_protocol::decrypt_group_info(
-            &hpke_key,
-            room.as_bytes(),
-            &success.tbs().encrypted_groupinfo_and_tree,
-        )
-        .unwrap();
-        assert!(tbe.pending_proposals.is_empty());
-        let group_info = [
-            GROUP_INFO_HEADER.as_slice(),
-            &tbe.group_info.tls_serialize_detached().unwrap(),
-        ]
-        .concat();
+        let (group_info, tree) = fetch_group_info(jmap, room).await;
         let MlsMessageBodyIn::GroupInfo(group_info) =
             MlsMessageIn::tls_deserialize_exact(&group_info[..])
                 .unwrap()
@@ -483,9 +455,9 @@ impl PlainClient {
             )
             // As mimi-mls does (RFC 9420 §7.3; decision mimid-1wgh.4.56).
             .skip_lifetime_validation();
-        if let Some(tree) = tbe.ratchet_tree_option.ratchet_tree() {
+        if let Some(tree) = tree {
             builder =
-                builder.with_ratchet_tree(RatchetTreeIn::tls_deserialize_exact(tree).unwrap());
+                builder.with_ratchet_tree(RatchetTreeIn::tls_deserialize_exact(&tree[..]).unwrap());
         }
         let (_group, bundle) = builder
             .build_group(
@@ -512,34 +484,102 @@ impl PlainClient {
             .finalize(&self.provider)
             .unwrap();
         let (commit, _, group_info) = bundle.into_messages();
-        let group_info = group_info.unwrap().tls_serialize_detached().unwrap();
-        let request = UpdateRequest {
-            bundle: HandshakeBundle::Commit {
-                proposal_or_commit: MLSMessage::tls_deserialize_exact(
-                    commit.tls_serialize_detached().unwrap(),
+        submit_external_commit(
+            jmap,
+            room,
+            &commit.tls_serialize_detached().unwrap(),
+            &group_info.unwrap().tls_serialize_detached().unwrap(),
+        )
+        .await
+    }
+}
+
+/// GroupInfo/fetch (protocol-07 §5.6) for `room` through erin's JMAP
+/// account, with a GroupInfoRequest signed by a key of its own. Returns
+/// the GroupInfo as an MLSMessage and the ratchet tree, if the hub sent
+/// one.
+async fn fetch_group_info(jmap: &Jmap, room: &str) -> (Vec<u8>, Option<Vec<u8>>) {
+    let (hpke_key, hpke_public) = HpkePrivateKey::generate().unwrap();
+    let request_key = RequestKey::generate().unwrap();
+    let credential = [&[0x00, 0x01][..], &vl(ERIN.as_bytes())].concat();
+    let request = GroupInfoRequestTbs {
+        protocol: Protocol::Mls10,
+        cipher_suite: CipherSuite::from(0x0001),
+        requesting_signature_key: SignaturePublicKey::tls_deserialize_exact(vl(
+            request_key.verification_key()
+        ))
+        .unwrap(),
+        requesting_credential: Credential::tls_deserialize_exact(credential).unwrap(),
+        group_info_public_key: HPKEPublicKey::tls_deserialize_exact(vl(&hpke_public)).unwrap(),
+        joining_code: None,
+    }
+    .sign(&request_key)
+    .unwrap()
+    .tls_serialize_detached()
+    .unwrap();
+    let answer = jmap
+        .call(
+            "GroupInfo/fetch",
+            json!({"roomId": room, "request": URL_SAFE_NO_PAD.encode(request)}),
+        )
+        .await;
+    let response = URL_SAFE_NO_PAD
+        .decode(answer["response"].as_str().unwrap())
+        .unwrap();
+    let GroupInfoResponse::Success(success) =
+        GroupInfoResponse::tls_deserialize_exact(&response[..]).unwrap()
+    else {
+        panic!("GroupInfo/fetch refused: {answer}");
+    };
+    success.verify().unwrap();
+    let tbe = mimi_protocol::decrypt_group_info(
+        &hpke_key,
+        room.as_bytes(),
+        &success.tbs().encrypted_groupinfo_and_tree,
+    )
+    .unwrap();
+    assert!(tbe.pending_proposals.is_empty());
+    let group_info = [
+        GROUP_INFO_HEADER.as_slice(),
+        &tbe.group_info.tls_serialize_detached().unwrap(),
+    ]
+    .concat();
+    let tree = tbe.ratchet_tree_option.ratchet_tree().map(<[u8]>::to_vec);
+    (group_info, tree)
+}
+
+/// Room/update through erin's JMAP account with an external `commit` and
+/// the joiner's `group_info`, both MLSMessages. Returns the hub's
+/// `responseCode`.
+async fn submit_external_commit(
+    jmap: &Jmap,
+    room: &str,
+    commit: &[u8],
+    group_info: &[u8],
+) -> Value {
+    let request = UpdateRequest {
+        bundle: HandshakeBundle::Commit {
+            proposal_or_commit: MLSMessage::tls_deserialize_exact(commit).unwrap(),
+            welcome: None,
+            group_info_option: GroupInfoOption::Full {
+                group_info: GroupInfo::tls_deserialize_exact(
+                    group_info.strip_prefix(&GROUP_INFO_HEADER).unwrap(),
                 )
                 .unwrap(),
-                welcome: None,
-                group_info_option: GroupInfoOption::Full {
-                    group_info: GroupInfo::tls_deserialize_exact(
-                        group_info.strip_prefix(&GROUP_INFO_HEADER).unwrap(),
-                    )
-                    .unwrap(),
-                },
-                ratchet_tree_option: RatchetTreeOption::distribution_service(),
             },
-        };
-        let answer = jmap
-            .call(
-                "Room/update",
-                json!({
-                    "roomId": room,
-                    "request": URL_SAFE_NO_PAD.encode(request.tls_serialize_detached().unwrap()),
-                }),
-            )
-            .await;
-        answer["responseCode"].clone()
-    }
+            ratchet_tree_option: RatchetTreeOption::distribution_service(),
+        },
+    };
+    let answer = jmap
+        .call(
+            "Room/update",
+            json!({
+                "roomId": room,
+                "request": URL_SAFE_NO_PAD.encode(request.tls_serialize_detached().unwrap()),
+            }),
+        )
+        .await;
+    answer["responseCode"].clone()
 }
 
 /// How many of the hub's leaves in `room` are erin's BasicCredential
@@ -588,16 +628,25 @@ fn removals(events: &[Event]) -> Vec<(String, String, u64)> {
         .collect()
 }
 
-#[tokio::test]
-async fn a_revocation_that_removes_a_client_without_app_data_update_posts_one_notice() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = server(dir.path(), &[ALICE, BOB, ERIN]).await;
+/// a.example with alice's two devices under one controller (a1, a2),
+/// erin's mimid device, and bob, whose room they have all joined.
+struct Hosted {
+    server: Server,
+    a1: Agent,
+    bob: Bob,
+    room: String,
+    log: DidLog,
+    signer: UpdateKey,
+}
+
+async fn hosted(dir: &Path) -> Hosted {
+    let server = server(dir, &[ALICE, BOB, ERIN]).await;
 
     // alice's two devices under one controller.
-    let mut a1 = agent(&server, ALICE, dir.path(), "a1").await;
-    let mut a2 = agent(&server, ALICE, dir.path(), "a2").await;
+    let mut a1 = agent(&server, ALICE, dir, "a1").await;
+    let mut a2 = agent(&server, ALICE, dir, "a2").await;
     let signer = UpdateKey::from_seed(&[0x5a; 32]);
-    let mut log = DidLog::create_also_known_as(
+    let log = DidLog::create_also_known_as(
         "a.example",
         "alice",
         &time(1),
@@ -617,12 +666,12 @@ async fn a_revocation_that_removes_a_client_without_app_data_update_posts_one_no
             .unwrap();
         device.publish_key_packages(1).await.unwrap();
     }
-    let mut e1 = agent(&server, ERIN, dir.path(), "e1").await;
+    let mut e1 = agent(&server, ERIN, dir, "e1").await;
     e1.publish_key_packages(1).await.unwrap();
 
     // bob hosts the room and adds alice (one KeyPackage per device; the
     // Commit sets the did_webvh record) and erin's mimid device.
-    let bob = Bob::open(&server, dir.path()).await;
+    let bob = Bob::open(&server, dir).await;
     let room = {
         let mut agent = bob.chat.agent().lock().await;
         agent.publish_key_packages(1).await.unwrap();
@@ -644,6 +693,37 @@ async fn a_revocation_that_removes_a_client_without_app_data_update_posts_one_no
         assert_eq!(device.join(number).unwrap(), room);
     }
     assert_eq!(hub_view(&server.hub, &room).await, (1, true));
+    Hosted {
+        server,
+        a1,
+        bob,
+        room,
+        log,
+        signer,
+    }
+}
+
+/// How many of `agent`'s clients in `room` are erin's.
+fn erin_clients(agent: &Agent, room: &str) -> usize {
+    agent
+        .clients(room)
+        .unwrap()
+        .into_iter()
+        .filter(|c| c.user == ERIN)
+        .count()
+}
+
+#[tokio::test]
+async fn a_revocation_that_removes_a_client_without_app_data_update_posts_one_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    let Hosted {
+        server,
+        mut a1,
+        bob,
+        room,
+        mut log,
+        signer,
+    } = hosted(dir.path()).await;
 
     // erin's plain client joins by external Commit; the hub accepts it.
     let epoch = server.hub.public_state(&room).await.unwrap().epoch;
@@ -657,15 +737,7 @@ async fn a_revocation_that_removes_a_client_without_app_data_update_posts_one_no
     assert_eq!(hub_view(&server.hub, &room).await, (2, true));
     // The mimid agents take the external Commit.
     bob.sync_to_epoch(&room, epoch + 1).await;
-    let erin_clients = |agent: &Agent| {
-        agent
-            .clients(&room)
-            .unwrap()
-            .into_iter()
-            .filter(|c| c.user == ERIN)
-            .count()
-    };
-    assert_eq!(erin_clients(&*bob.chat.agent().lock().await), 2);
+    assert_eq!(erin_clients(&*bob.chat.agent().lock().await, &room), 2);
     poll_to_epoch(&mut a1, &room, epoch + 1).await;
     assert!(
         bob.messages(&room).await.is_empty(),
@@ -708,7 +780,7 @@ async fn a_revocation_that_removes_a_client_without_app_data_update_posts_one_no
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        assert_eq!(erin_clients(&agent), 1);
+        assert_eq!(erin_clients(&agent, &room), 1);
         found
     };
     assert_eq!(found, [(room.clone(), ERIN.to_owned(), revoked)]);
@@ -753,4 +825,403 @@ async fn a_revocation_that_removes_a_client_without_app_data_update_posts_one_no
     assert_eq!(notice(&bob.messages(&room).await), body, "still one notice");
     assert_eq!(bob.chat.agent().lock().await.epoch(&room).unwrap(), revoked);
     assert_eq!(hub_view(&server.hub, &room).await, (1, true));
+}
+
+// ---- erin's mls-rs client ----
+
+/// erin's second client as stock mls-rs at the pinned rev (decision
+/// mimid-1wgh.4.13), with what an mls-rs application needs to share a
+/// `did_webvh` room (docs/didwebvh-mls-rs.md): an `IdentityProvider` for
+/// credential type 0x0008 and `app_data_dictionary` (0x0006) accepted as
+/// an extension type. mls-rs has no AppDataUpdate, so its leaf lists no
+/// proposal type beyond the RFC 9420 defaults.
+mod erin_mls_rs {
+    use mimid_agent_core::mls_didwebvh::{CodePoints, DidWebvhCredential, verify_credential};
+    use mls_rs::client_builder::MlsConfig;
+    use mls_rs::error::IntoAnyError;
+    use mls_rs::extension::ExtensionType;
+    use mls_rs::identity::basic::BasicCredential;
+    use mls_rs::identity::{Credential, CredentialType, SigningIdentity};
+    use mls_rs::time::MlsTime;
+    use mls_rs::{CipherSuite, CipherSuiteProvider, Client, CryptoProvider, ExtensionList};
+    use mls_rs_crypto_rustcrypto::RustCryptoProvider;
+
+    /// mls-extensions-11 §7.1.1: the app_data_dictionary extension type.
+    pub const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
+
+    /// Why the provider refuses a credential.
+    #[derive(Debug)]
+    pub struct Refused(String);
+
+    impl std::fmt::Display for Refused {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl std::error::Error for Refused {}
+
+    impl IntoAnyError for Refused {
+        fn into_dyn_error(self) -> Result<Box<dyn std::error::Error + Send + Sync>, Self> {
+            Ok(self.into())
+        }
+    }
+
+    /// BasicCredential as mls-rs's `BasicIdentityProvider` checks it, and
+    /// the `did_webvh` credential with its log verified and the leaf's
+    /// `signature_key` authorized by the head (§Log Verification, §Binding
+    /// to the LeafNode), as in `crates/mimi-mls/tests/didwebvh_mls_rs.rs`.
+    ///
+    /// mls-rs indexes leaves by `identity()` and refuses two leaves with
+    /// one identity (`DuplicateLeafData`). A `did_webvh` leaf's identity is
+    /// its SCID plus its signature key. A BasicCredential leaf's is its
+    /// identifier, plus its signature key with `per_leaf`: erin's mimid
+    /// device and this client both carry the BasicCredential
+    /// `mimi://a.example/u/erin`, and mimid lets one user have several
+    /// clients.
+    #[derive(Clone, Copy, Debug)]
+    pub struct Identities {
+        pub per_leaf: bool,
+    }
+
+    impl Identities {
+        fn did_webvh_scid(signing_identity: &SigningIdentity) -> Result<String, Refused> {
+            let Credential::Custom(custom) = &signing_identity.credential else {
+                return Err(Refused("not a custom credential".into()));
+            };
+            if custom.credential_type.raw_value() != CodePoints::DEFAULT.credential_type() {
+                return Err(Refused(format!(
+                    "credential type {:#06x}",
+                    custom.credential_type.raw_value()
+                )));
+            }
+            let credential = DidWebvhCredential::decode(&custom.data)
+                .map_err(|e| Refused(format!("DIDWebVHCredential: {e}")))?;
+            let log = verify_credential(&credential).map_err(|e| Refused(format!("log: {e}")))?;
+            if !log.authorizes(signing_identity.signature_key.as_bytes()) {
+                return Err(Refused("signature_key not authorized by the head".into()));
+            }
+            Ok(log.scid().to_owned())
+        }
+    }
+
+    impl mls_rs::IdentityProvider for Identities {
+        type Error = Refused;
+
+        fn validate_member(
+            &self,
+            signing_identity: &SigningIdentity,
+            _timestamp: Option<MlsTime>,
+            _context: mls_rs_core::identity::MemberValidationContext<'_>,
+        ) -> Result<(), Self::Error> {
+            match &signing_identity.credential {
+                Credential::Basic(_) => Ok(()),
+                _ => Self::did_webvh_scid(signing_identity).map(|_| ()),
+            }
+        }
+
+        fn validate_external_sender(
+            &self,
+            signing_identity: &SigningIdentity,
+            _timestamp: Option<MlsTime>,
+            _extensions: Option<&ExtensionList>,
+        ) -> Result<(), Self::Error> {
+            // §Binding to the LeafNode: no did_webvh external sender.
+            match &signing_identity.credential {
+                Credential::Basic(_) => Ok(()),
+                _ => Err(Refused("external sender must be basic".into())),
+            }
+        }
+
+        fn identity(
+            &self,
+            signing_identity: &SigningIdentity,
+            _extensions: &ExtensionList,
+        ) -> Result<Vec<u8>, Self::Error> {
+            let mut id = match &signing_identity.credential {
+                Credential::Basic(basic) => {
+                    let mut id = b"basic:".to_vec();
+                    id.extend_from_slice(&basic.identifier);
+                    if !self.per_leaf {
+                        return Ok(id);
+                    }
+                    id
+                }
+                _ => {
+                    let mut id = b"did_webvh:".to_vec();
+                    id.extend_from_slice(Self::did_webvh_scid(signing_identity)?.as_bytes());
+                    id
+                }
+            };
+            id.push(b'/');
+            id.extend_from_slice(signing_identity.signature_key.as_bytes());
+            Ok(id)
+        }
+
+        fn valid_successor(
+            &self,
+            predecessor: &SigningIdentity,
+            successor: &SigningIdentity,
+            extensions: &ExtensionList,
+        ) -> Result<bool, Self::Error> {
+            Ok(self.identity(predecessor, extensions)? == self.identity(successor, extensions)?)
+        }
+
+        fn supported_types(&self) -> Vec<CredentialType> {
+            vec![
+                CredentialType::BASIC,
+                CredentialType::new(CodePoints::DEFAULT.credential_type()),
+            ]
+        }
+    }
+
+    /// An mls-rs client for erin with a BasicCredential, suite 1 and the
+    /// provider above.
+    pub fn client(identities: Identities) -> Client<impl MlsConfig + use<>> {
+        let crypto = RustCryptoProvider::default();
+        let suite = crypto
+            .cipher_suite_provider(CipherSuite::CURVE25519_AES128)
+            .unwrap();
+        let (secret, public) = suite.signature_key_generate().unwrap();
+        let signing_identity = SigningIdentity::new(
+            BasicCredential::new(super::ERIN.as_bytes().to_vec()).into_credential(),
+            public,
+        );
+        Client::builder()
+            .identity_provider(identities)
+            .crypto_provider(crypto)
+            .extension_type(APP_DATA_DICTIONARY)
+            .signing_identity(signing_identity, secret, CipherSuite::CURVE25519_AES128)
+            .build()
+    }
+}
+
+/// The `app_components` and `safe_aad` entries of the GroupContext's
+/// `app_data_dictionary` in `group_info` (an MLSMessage), which a joiner's
+/// leaf must list (mls-extensions-11 §5). Read with OpenMLS.
+fn required_components(group_info: &[u8]) -> Vec<(u16, Vec<u8>)> {
+    let MlsMessageBodyIn::GroupInfo(group_info) = MlsMessageIn::tls_deserialize_exact(group_info)
+        .unwrap()
+        .extract()
+    else {
+        panic!("not a GroupInfo");
+    };
+    let dictionary = group_info
+        .group_context()
+        .extensions()
+        .app_data_dictionary()
+        .unwrap()
+        .dictionary();
+    [APP_COMPONENTS, SAFE_AAD]
+        .into_iter()
+        .map(|id| (id, dictionary.get(&id).unwrap().to_vec()))
+        .collect()
+}
+
+/// An AppDataDictionary (mls-extensions-11 §4.6), encoded here:
+/// `ComponentData component_data<V>`, each a `uint16 component_id` and
+/// `opaque data<V>`, in increasing component_id order.
+fn encode_dictionary(entries: &[(u16, Vec<u8>)]) -> Vec<u8> {
+    let mut components = Vec::new();
+    for (id, data) in entries {
+        components.extend_from_slice(&id.to_be_bytes());
+        components.extend_from_slice(&vl(data));
+    }
+    vl(&components)
+}
+
+/// Every stored Message of erin's MIMI account, as (id, body).
+async fn stored_messages(jmap: &Jmap) -> Vec<(String, Vec<u8>)> {
+    let answer = jmap
+        .call(
+            "Message/get",
+            json!({"ids": Value::Null, "properties": ["body"]}),
+        )
+        .await;
+    answer["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|message| {
+            (
+                message["id"].as_str().unwrap().to_owned(),
+                URL_SAFE_NO_PAD
+                    .decode(message["body"].as_str().unwrap())
+                    .unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// The Commits (MLSMessages) of the FanoutMessages stored in erin's
+/// account whose ids are not in `seen`; adds their ids to `seen`.
+async fn new_commits(jmap: &Jmap, seen: &mut Vec<String>) -> Vec<Vec<u8>> {
+    let mut commits = Vec::new();
+    for (id, body) in stored_messages(jmap).await {
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        for fanout in FanoutMessage::decode_all(&body).unwrap() {
+            if let FanoutEvent::Commit { message, .. } = fanout.event {
+                commits.push(message.tls_serialize_detached().unwrap());
+            }
+        }
+    }
+    commits
+}
+
+#[tokio::test]
+async fn a_revocation_removes_an_mls_rs_client_through_a_hub_and_posts_one_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    let Hosted {
+        server,
+        mut a1,
+        bob,
+        room,
+        mut log,
+        signer,
+    } = hosted(dir.path()).await;
+    let epoch = server.hub.public_state(&room).await.unwrap().epoch;
+    let erin_jmap = Jmap::open(&server, ERIN).await;
+    let mut seen: Vec<String> = stored_messages(&erin_jmap)
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+
+    // mls-rs reads the GroupInfo and tree from the hub. Its leaf lists
+    // the components the GroupContext requires.
+    let (group_info, tree) = fetch_group_info(&erin_jmap, &room).await;
+    let mut leaf = mls_rs::ExtensionList::new();
+    leaf.set(mls_rs::Extension::new(
+        erin_mls_rs::APP_DATA_DICTIONARY,
+        encode_dictionary(&required_components(&group_info)),
+    ));
+    let external_commit = |client: &mls_rs::Client<_>| {
+        let mut builder = client
+            .external_commit_builder()
+            .unwrap()
+            .with_leaf_node_extensions(leaf.clone())
+            // The GroupContext lists safe_aad, so authenticated_data must
+            // be a SafeAAD (mls-extensions-11 §4.9); mls-rs leaves it
+            // empty, which the hub refuses.
+            .with_authenticated_data(EMPTY_SAFE_AAD.to_vec());
+        if let Some(tree) = &tree {
+            builder =
+                builder.with_tree_data(mls_rs::group::ExportedTree::from_bytes(tree).unwrap());
+        }
+        builder.build(mls_rs::MlsMessage::from_bytes(&group_info).unwrap())
+    };
+
+    // Keyed by the BasicCredential identifier alone, as mls-rs's
+    // BasicIdentityProvider is, mls-rs refuses to join: erin's mimid
+    // device already has that identity.
+    let by_identifier = erin_mls_rs::client(erin_mls_rs::Identities { per_leaf: false });
+    let result = external_commit(&by_identifier);
+    assert!(
+        matches!(result, Err(mls_rs::error::MlsError::DuplicateLeafData(_))),
+        "{:?}",
+        result.err()
+    );
+
+    // Keyed per leaf, mls-rs builds the external Commit and the hub
+    // accepts it.
+    let client = erin_mls_rs::client(erin_mls_rs::Identities { per_leaf: true });
+    let (group, commit) = external_commit(&client).unwrap();
+    let commit = commit.to_bytes().unwrap();
+    let joiner_group_info = group
+        .group_info_message_allowing_ext_commit(false)
+        .unwrap()
+        .to_bytes()
+        .unwrap();
+    assert_eq!(
+        submit_external_commit(&erin_jmap, &room, &commit, &joiner_group_info).await,
+        "success"
+    );
+    assert_eq!(group.current_epoch(), epoch + 1);
+    assert_eq!(
+        server.hub.public_state(&room).await.unwrap().epoch,
+        epoch + 1
+    );
+    assert_eq!(hub_view(&server.hub, &room).await, (2, true));
+    // The mimid agents take the external Commit and agree with mls-rs.
+    bob.sync_to_epoch(&room, epoch + 1).await;
+    {
+        let agent = bob.chat.agent().lock().await;
+        assert_eq!(erin_clients(&agent, &room), 2);
+        assert_eq!(
+            agent.epoch_authenticator(&room).unwrap(),
+            group.epoch_authenticator().unwrap().as_bytes(),
+            "bob and mls-rs disagree"
+        );
+    }
+    poll_to_epoch(&mut a1, &room, epoch + 1).await;
+    assert_eq!(
+        a1.epoch_authenticator(&room).unwrap(),
+        group.epoch_authenticator().unwrap().as_bytes(),
+        "a1 and mls-rs disagree"
+    );
+    assert!(
+        bob.messages(&room).await.is_empty(),
+        "no notice before the revocation"
+    );
+
+    // alice's controller revokes a2. a1's Commit changes the record and
+    // removes a2 (the rules) and the mls-rs client (no AppDataUpdate).
+    log.append(&time(2), &Parameters::default(), &signer, &[key(&a1)])
+        .unwrap();
+    a1.use_did_webvh_credential(log.credential().unwrap())
+        .await
+        .unwrap();
+    let a1_events = a1.poll().await.unwrap();
+    let revoked = epoch + 2;
+    assert_eq!(a1.epoch(&room).unwrap(), revoked);
+    assert_eq!(server.hub.public_state(&room).await.unwrap().epoch, revoked);
+    // The hub dropped the client, not the user.
+    assert_eq!(hub_view(&server.hub, &room).await, (1, true));
+    assert_eq!(
+        removals(&a1_events),
+        [(room.clone(), ERIN.to_owned(), revoked)]
+    );
+
+    // bob's JMAP Chat holds exactly one notice naming erin.
+    bob.sync_to_epoch(&room, revoked).await;
+    assert_eq!(erin_clients(&*bob.chat.agent().lock().await, &room), 1);
+    let notice = |messages: &[Value]| {
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        let body = messages[0]["body"].as_str().unwrap().to_owned();
+        assert_eq!(messages[0]["senderId"], "bob", "from the account");
+        assert!(body.contains(ERIN), "{body}");
+        assert!(body.contains("removed"), "{body}");
+        assert!(body.contains("AppDataUpdate"), "{body}");
+        body
+    };
+    let body = notice(&bob.messages(&room).await);
+    bob.sync().await;
+    assert_eq!(notice(&bob.messages(&room).await), body, "still one notice");
+
+    // The mls-rs client gets the Commit through erin's account (besides
+    // its own external Commit) and cannot decode it: mls-rs reads the
+    // AppDataUpdate, a proposal type it does not know, as one opaque<V>,
+    // and the component ID 0xF013's first byte has the varint prefix
+    // RFC 9420 §2.1.2 reserves. It stays in the old epoch and never sees
+    // its removal.
+    let mut commits = Vec::new();
+    for _ in 0..100 {
+        commits.extend(new_commits(&erin_jmap, &mut seen).await);
+        commits.retain(|c| *c != commit);
+        if !commits.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(commits.len(), 1, "the revocation Commit");
+    let result = mls_rs::MlsMessage::from_bytes(&commits[0]);
+    assert!(
+        matches!(&result, Err(mls_rs::error::MlsError::SerializationError(e))
+            if format!("{e:?}").contains("InvalidVarIntPrefix(3)")),
+        "{result:?}"
+    );
+    assert_eq!(group.current_epoch(), epoch + 1);
 }
