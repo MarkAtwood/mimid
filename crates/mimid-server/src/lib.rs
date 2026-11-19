@@ -94,8 +94,10 @@
 //!   - A non-empty `room_uri` in `room_metadata` cannot be changed by
 //!     anyone, in any room: room-policy-04 §8.2 gives it no capability
 //!     (decision mimid-1wgh.64). Where it is empty or the room has no
-//!     `room_metadata`, any participant may set it, and the hub does not
-//!     check that the value is the room's ID (bead mimid-bjt5). AppDataUpdates to the room-policy §6 and §7
+//!     `room_metadata`, any participant may set it, but only to the
+//!     room's ID, compared byte for byte without normalization (bead
+//!     mimid-bjt5; wg question mimi-protocol#225). AppDataUpdates to the
+//!     room-policy §6 and §7
 //!     components are refused as unknown to the hub (decision
 //!     mimid-1wgh.6.53).
 //!   - The room-policy-04 §5 rule that ordinary users of a fixed-membership

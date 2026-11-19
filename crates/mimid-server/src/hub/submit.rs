@@ -214,7 +214,7 @@ fn check(
     // A malformed policy component is refused at creation, so this is
     // defence in depth (decision mimid-1wgh.6.51); a missing one makes an
     // open room (decision mimid-1wgh.52).
-    let state = match room_state(observer) {
+    let state = match room_state(observer, room_id) {
         Ok(state) => state,
         Err(error) => {
             tracing::warn!(

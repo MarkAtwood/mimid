@@ -209,8 +209,9 @@ pub(super) enum StateError {
 /// participant list, role list or preauthorization list is empty. An
 /// absent `base_room_policy` makes an open room ([`RoomState::open`]) with
 /// [`open_base_policy`] (decision mimid-1wgh.52, superseding
-/// mimid-1wgh.6.51); a malformed one is an error.
-pub(super) fn room_state(observer: &Observer) -> Result<RoomState, StateError> {
+/// mimid-1wgh.6.51); a malformed one is an error. `room_id` is the room's
+/// ID ([`RoomState::room_id`]).
+pub(super) fn room_state(observer: &Observer, room_id: &str) -> Result<RoomState, StateError> {
     fn component_or_default<T: Deserialize + Default>(
         observer: &Observer,
         component_id: ComponentID,
@@ -224,6 +225,7 @@ pub(super) fn room_state(observer: &Observer) -> Result<RoomState, StateError> {
         None => (open_base_policy(), true),
     };
     Ok(RoomState {
+        room_id: room_id.to_owned(),
         roles: component_or_default(observer, ROLES_LIST)?,
         preauth: component_or_default(observer, PREAUTH_LIST)?,
         base,

@@ -386,7 +386,7 @@ fn stage_commit(
     // A malformed policy component is refused at creation, so this is
     // defence in depth (decision mimid-1wgh.6.51); a missing one makes an
     // open room (decision mimid-1wgh.52).
-    let state = match room_state(&room.observer) {
+    let state = match room_state(&room.observer, room_id) {
         Ok(state) => state,
         Err(error) => {
             tracing::warn!(
@@ -626,7 +626,7 @@ fn stage_proposals(
     // A malformed policy component is refused at creation, so this is
     // defence in depth (decision mimid-1wgh.6.51); a missing one makes an
     // open room (decision mimid-1wgh.52).
-    let state = match room_state(&room.observer) {
+    let state = match room_state(&room.observer, room_id) {
         Ok(state) => state,
         Err(error) => {
             tracing::warn!(

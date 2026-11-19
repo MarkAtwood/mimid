@@ -107,7 +107,7 @@ pub(super) async fn report_abuse(
         } else {
             None
         };
-        (franking_agent, room_state(&room.observer))
+        (franking_agent, room_state(&room.observer, room_id))
     };
     let report = AbuseReport::tls_deserialize_exact(request).map_err(HubError::InvalidRequest)?;
     // Bead mimid-1wgh.52.2.

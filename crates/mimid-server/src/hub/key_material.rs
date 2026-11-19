@@ -117,7 +117,7 @@ pub(super) async fn key_material(
         let room = rooms
             .get(tbs.room_id.as_str())
             .ok_or(HubError::NoSuchRoom)?;
-        let state = match room_state(&room.observer) {
+        let state = match room_state(&room.observer, tbs.room_id.as_str()) {
             Ok(state) => state,
             Err(error) => {
                 tracing::warn!(

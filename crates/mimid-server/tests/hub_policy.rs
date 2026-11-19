@@ -92,6 +92,7 @@ fn list(entries: &[(&[u8], u32)]) -> ParticipantListData {
 
 fn room(roles: RoleData, entries: &[(&[u8], u32)], members: &[(u32, &[u8])]) -> RoomState {
     RoomState {
+        room_id: ROOM.to_owned(),
         roles,
         preauth: PreAuthData::default(),
         base: base(),
@@ -2045,6 +2046,38 @@ fn metadata_rows() -> Vec<MetadataRow> {
             L_BOB,
             set_metadata(&lunch()),
             OK,
+        ),
+        (
+            "bead mimid-bjt5: setting an empty room_uri to another room's URI is refused",
+            with_metadata(a1_metadata(), Some(&metadata("", "Lunch", "Where we eat"))),
+            L_SAM,
+            set_metadata(&metadata(
+                "mimi://a.example/r/dinner",
+                "Lunch",
+                "Where we eat",
+            )),
+            Err(Denied::RoomUriNotRoomId),
+        ),
+        (
+            "bead mimid-bjt5: setting room_uri on absent data to another room's URI is refused",
+            with_metadata(a1_metadata(), None),
+            L_SAM,
+            set_metadata(&metadata("mimi://b.example/r/lunch", "", "")),
+            Err(Denied::RoomUriNotRoomId),
+        ),
+        (
+            "bead mimid-bjt5: setting room_uri on absent data to the room's ID needs no capability",
+            with_metadata(a1(), None),
+            L_BOB,
+            set_metadata(&metadata(ROOM, "", "")),
+            OK,
+        ),
+        (
+            "bead mimid-bjt5: the room's ID differing only in case is another URI",
+            with_metadata(a1_metadata(), None),
+            L_SAM,
+            set_metadata(&metadata("mimi://a.example/r/LUNCH", "", "")),
+            Err(Denied::RoomUriNotRoomId),
         ),
         (
             "item 2: clearing a set room_uri is a change",

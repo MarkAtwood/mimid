@@ -72,8 +72,9 @@
 //!   `canChangeRoomAvatar`, `room_subject` `canChangeRoomSubject`,
 //!   `room_mood` `canChangeRoomMood`. An unchanged field needs nothing. A
 //!   change of a non-empty `room_uri`, which has no capability, is refused
-//!   in every room; setting an empty one needs nothing. A `remove` is
-//!   judged as an update to the all-empty data (decision mimid-1wgh.64).
+//!   in every room; setting an empty one needs nothing, but only to the
+//!   room's ID (bead mimid-bjt5). A `remove` is judged as an update to the
+//!   all-empty data (decision mimid-1wgh.64).
 //! - After the commit, the role list passes its structural checks, the §5
 //!   `max_clients`, `max_users` and `multi_device` limits hold, and every
 //!   role's §3 participant constraints hold, checked once on the state
@@ -98,6 +99,10 @@ use mimi_protocol::components::{
 /// The policy-relevant state of a room before a commit or proposal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomState {
+    /// The room's ID (protocol-07 §2.1), the room URI it was created with.
+    /// A `room_metadata` `room_uri` may be set only to it (decision
+    /// mimid-1wgh.64 item 2; bead mimid-bjt5).
+    pub room_id: String,
     /// The `roles_list` component (room-policy-04 §3).
     pub roles: RoleData,
     /// The `preauth_list` component, empty if absent (room-policy-04 §4).
@@ -312,6 +317,11 @@ pub enum Denied {
     /// A proposal type the hub does not know.
     #[error("proposal type {0:#06x} is not supported")]
     UnsupportedProposal(u16),
+    /// A `room_metadata` update sets an empty or absent `room_uri` to a
+    /// URI that is not the room's ID (decision mimid-1wgh.64 item 2; bead
+    /// mimid-bjt5).
+    #[error("room_uri is not the room's ID")]
+    RoomUriNotRoomId,
     /// A `room_metadata` update or remove changes a non-empty `room_uri`,
     /// the room's identifier, for which room-policy-04 §8.2 defines no
     /// capability (decision mimid-1wgh.64).
@@ -584,8 +594,11 @@ fn decode_policy(component_id: ComponentID, bytes: &[u8]) -> Result<(), Denied> 
 /// # Errors
 ///
 /// [`Denied::Component`] if `current` or the update does not decode, and
-/// [`Denied::RoomUriChange`] if a non-empty `room_uri` changes.
+/// [`Denied::RoomUriChange`] if a non-empty `room_uri` changes, and
+/// [`Denied::RoomUriNotRoomId`] if an empty one is set to anything but
+/// `room_id`.
 fn metadata_capabilities(
+    room_id: &str,
     current: Option<&[u8]>,
     op: &AppDataOp,
 ) -> Result<Vec<Capability>, Denied> {
@@ -605,6 +618,14 @@ fn metadata_capabilities(
     // mimid-1wgh.64 item 2).
     if !old.room_uri.as_str().is_empty() && old.room_uri != new.room_uri {
         return Err(Denied::RoomUriChange);
+    }
+    // The value set must be the room's own ID, byte for byte, as Room/create
+    // checks it (bead mimid-bjt5): agents take it as the room's identity.
+    if old.room_uri.as_str().is_empty()
+        && !new.room_uri.as_str().is_empty()
+        && new.room_uri.as_str() != room_id
+    {
+        return Err(Denied::RoomUriNotRoomId);
     }
     Ok([
         (
@@ -637,7 +658,7 @@ impl RoomState {
     /// Authorizes a `room_metadata` operation for an actor with
     /// `actor_role` (room-policy-04 §8.2; decision mimid-1wgh.64).
     fn authorize_metadata(&self, actor_role: u32, op: &AppDataOp) -> Result<(), Denied> {
-        for capability in metadata_capabilities(self.room_metadata.as_deref(), op)? {
+        for capability in metadata_capabilities(&self.room_id, self.room_metadata.as_deref(), op)? {
             self.capability(actor_role, capability)?;
         }
         Ok(())

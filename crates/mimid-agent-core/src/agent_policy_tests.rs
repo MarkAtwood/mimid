@@ -68,6 +68,7 @@ fn hosted_room() -> RoomState {
         });
     }
     RoomState {
+        room_id: ROOM.to_owned(),
         roles,
         preauth: PreAuthData::default(),
         base,
