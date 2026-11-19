@@ -3,13 +3,15 @@
   "title": "SafeAAD: mls-rs sends empty authenticated_data in a safe_aad room; hub refuses (EndOfStream). Accept empty as no items?",
   "description": "From mimid-64xc (bfa6a2b): mls-rs has no notion of SafeAAD (mls-extensions-11 §4.9) and sends empty authenticated_data; mimi-mls decodes it as SafeAAD and fails, so the hub answers notAllowed. Encoded empty SafeAAD is 0x00. Question: should mimid treat zero-length authenticated_data as a SafeAAD with no items (lenient), or keep strict? Check §4.9 wording; possibly a WG/extensions-draft clarification.",
   "notes": "DRAFT, NOT POSTED. To: mls@ietf.org, cc the draft-ietf-mls-extensions editor. Needs Mark's OK before sending.\n\nSubject: mls-extensions-11 §4.9: zero-length authenticated_data in a safe_aad group\n\nInterop table note from the IETF 127 hackathon.\n\nSetup: mimid (OpenMLS with mls-extensions-11) hosts a MIMI room whose GroupContext lists safe_aad. A stock mls-rs client joins by external Commit. mls-rs has no SafeAAD support, so unless the application sets it, authenticated_data is zero-length.\n\nResult: mimid refuses the Commit. Its SafeAAD decode reaches end of input before the aad_items\u003cV\u003e length. With the application passing the single byte 0x00 (a SafeAAD with no items), the join works.\n\n| Sender | authenticated_data | mimid (receiver) |\n|---|---|---|\n| mls-rs, default | zero-length | refused |\n| mls-rs, app passes 0x00 | 00 | accepted |\n| OpenMLS + extensions-11 | 00 | accepted |\n\nThe text we read this from:\n\n§4.9: \"If the safe_aad component in the app_data_dictionary extension is present in the GroupContext (see Section 5), the entire authenticated_data field is framed as a SafeAAD struct ...\" and \"If safe_aad is present, but none of the \"safe\" AAD components have data to send in a particular message, the aad_items is a zero-length vector.\"\n\n§5: \"If the safe_aad component is present, even with an empty list, ... in the GroupContext, then the authenticated_data field is a SafeAAD struct as defined in Section 4.9.\"\n\nWe read this as: the empty SafeAAD is 0x00, and zero-length authenticated_data is not a SafeAAD. The draft does not say what a receiver does with one. Two stacks can differ here, and one of them will refuse the other's messages.\n\nSuggested text, either one, after the zero-length vector sentence in §4.9:\n\n  Option 1: \"A SafeAAD with no items is encoded as the single byte 0x00. A receiver MAY reject a message whose authenticated_data is not a SafeAAD struct.\"\n\n  Option 2: \"A receiver MAY treat a zero-length authenticated_data as a SafeAAD with no items.\"\n\nOption 1 keeps one encoding per value. Option 2 lets clients without SafeAAD support send messages that carry no safe items. We implement Option 1's reading today and can switch.\n\nMark Atwood",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-19T21:41:57.917634477Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-19T22:46:13.370668848Z",
+  "updated_at": "2026-11-19T22:54:44.317444489Z",
+  "closed_at": "2026-11-19T22:54:44.317444489Z",
+  "close_reason": "d192f7f (branch core-safeaad): kept strict per mls-extensions-11 §4.9 (decision mimid-1wgh.71, for Mark to judge); tests pin refusal in Member and Observer; docs note; WG clarification drafted in notes, not posted.",
   "labels": [
     "interop",
     "mls"
