@@ -2,13 +2,14 @@
   "id": "mimid-1t3p",
   "title": "Switch mimid's Chat/kick|ban|unban to ChatBan objects and the kickMembers patch key",
   "description": "jmap-chat-spec 516c61b adds ChatBan (base draft) and kickMembers (jmap-chat-mimi §Moderation). Waiting on the crate-jmap session for the ChatBan type, handlers, MemoryBackend support and ChatBackend hooks (requested 2026-11-19, Mark's choice). Then mimid-agent-jmap maps ChatBan create/destroy to Agent::ban/unban and kickMembers to Agent::kick, and drops the invented methods (decision mimid-1wgh.62); bump the crate-jmap pin.",
+  "notes": "crate-jmap session accepted 2026-11-19: epic JMAP-it7g (.1 ChatBan + hook, .2 kickMembers hook); hashes to follow.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-19T15:25:52.998351812Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-19T15:25:52.998351812Z",
+  "updated_at": "2026-11-19T15:34:20.066565787Z",
   "labels": [
     "agent",
     "jmap"
