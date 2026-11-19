@@ -419,3 +419,42 @@ fn member_marks_commit_with_trailing_aad_out_of_sync() {
     );
     assert_eq!(group.out_of_sync().map(|o| o.epoch), Some(1));
 }
+
+/// mls-extensions-11 §4.9: with `safe_aad` in the GroupContext "the entire
+/// authenticated_data field is framed as a SafeAAD struct", and with no
+/// items "the aad_items is a zero-length vector", encoded as the one byte
+/// 0x00 (RFC 9420 §2.1.2). A zero-length `authenticated_data`, which mls-rs
+/// sends unless told otherwise, is not a SafeAAD and is refused (decision
+/// mimid-1wgh.71).
+#[test]
+fn member_refuses_application_message_with_empty_authenticated_data() {
+    let (alice, mut group, mut bob, _, _) = safe_aad_group();
+    let message = bob
+        .encrypt_application_message(b"no aad", Vec::new())
+        .expect("mls-rs encrypts")
+        .to_bytes()
+        .expect("encode");
+    let result = group.process(&alice, &message, no_components);
+    assert!(result.is_err(), "{result:?}");
+}
+
+/// As above, for the hub's Observer (decision mimid-1wgh.71).
+#[test]
+fn observer_refuses_proposal_with_empty_authenticated_data() {
+    let (_, _, mut bob, group_info, tree) = safe_aad_group();
+    let store = Store::open_in_memory().expect("store");
+    let ObserverStart { mut observer, .. } =
+        Observer::from_group_info(&store, &group_info, Some(&tree)).expect("from_group_info");
+    let before = observer.group_context().expect("context");
+
+    let proposal = bob
+        .propose_update(Vec::new())
+        .expect("mls-rs proposes")
+        .to_bytes()
+        .expect("encode");
+    let result = observer.process_proposal(&store, &proposal);
+    assert!(result.is_err(), "{result:?}");
+    let result = observer.process(&store, &proposal, no_components);
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(observer.group_context().expect("context"), before);
+}

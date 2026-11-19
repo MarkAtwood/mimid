@@ -132,7 +132,8 @@ where
 /// Checks that the `authenticated_data` of a TLS-encoded PublicMessage or
 /// PrivateMessage `MLSMessage` starts with one canonical SafeAAD struct
 /// (mls-extensions-11 §4.9), using only the Read-based decoders. Other wire
-/// formats pass.
+/// formats pass. A zero-length `authenticated_data` is not a SafeAAD (the
+/// empty one is the byte 0x00) and fails (decision mimid-1wgh.71).
 ///
 /// OpenMLS parses the SafeAAD itself with `DeserializeBytes`, which in
 /// tls_codec 0.5.0 panics in debug builds on a truncated item (bug

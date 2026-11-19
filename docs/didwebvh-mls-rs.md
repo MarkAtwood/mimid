@@ -99,6 +99,12 @@ Two things the external join needed that the Welcome join does not:
   fails with `EndOfStream`). The application passes the empty SafeAAD,
   one byte 0x00, to `with_authenticated_data`. mls-rs does not know
   SafeAAD, so the application must frame every message it sends this way.
+  mimid keeps this strict on purpose (decision mimid-1wgh.71): §4.9 says
+  "the entire authenticated_data field is framed as a SafeAAD struct", and
+  with no items "the aad_items is a zero-length vector", which encodes as
+  0x00. Zero-length `authenticated_data` is not that encoding. The draft
+  has no explicit receiver rule for it, so a clarification for the WG is
+  drafted in bead mimid-orjg.
 - **A per-leaf BasicCredential identity.** mimid lets a user have several
   clients with one BasicCredential identifier. With the identity keyed by
   the identifier alone, as `BasicIdentityProvider` does, mls-rs refuses to
