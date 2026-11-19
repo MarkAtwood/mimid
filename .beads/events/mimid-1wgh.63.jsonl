@@ -1,3 +1,4 @@
 {"id":"01a1f469-b2a0-72b0-82c4-2ddb6be9eb36","issue_id":"mimid-1wgh.63","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-19T15:25:30.1441776Z"}
 {"id":"01a1f469-b2b9-7107-8da9-e7bf8a912889","issue_id":"mimid-1wgh.63","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-19T15:25:30.169069Z"}
 {"id":"01a1f469-b2c4-7e45-b818-723ec4cb4e26","issue_id":"mimid-1wgh.63","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: jmap","created_at":"2026-11-19T15:25:30.180936708Z"}
+{"id":"01a1f4a5-bb47-7a0d-944c-04dcaf2ed625","issue_id":"mimid-1wgh.63","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Chosen by agent 2026-11-19 for mimid-f2rn; 3ad8f17 (agent-followups)","created_at":"2026-11-19T16:31:04.519659949Z"}
