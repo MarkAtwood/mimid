@@ -54,7 +54,9 @@
 //! the reason. In `observe` mode each failure is a DEBUG event, and the
 //! first failure of each provider since start an INFO event, so an
 //! operator sees which peers do not authenticate without one event per
-//! request. A success is a DEBUG event.
+//! request. A success is a DEBUG event. Each of these events names the
+//! peer, the protocol endpoint (`endpoint`, the path segment after `/v1/`)
+//! and the mechanism or the reason.
 //!
 //! # Limitations
 //!
@@ -701,6 +703,14 @@ fn from_domain(headers: &HeaderMap) -> Option<Domain> {
     Domain::try_from(domain.to_owned()).ok()
 }
 
+/// The protocol endpoint of a `/v1/` path, for logs: the segment after
+/// `/v1/` (`keyMaterial`, `notify`, ...). The rest of the path names
+/// rooms and users, which these events leave out.
+fn endpoint_name(path: &str) -> &str {
+    let rest = path.strip_prefix("/v1/").unwrap_or(path);
+    rest.split('/').next().unwrap_or(rest)
+}
+
 /// The middleware: authenticates the source of every `/v1/` request
 /// (see the module documentation). A request without a well-formed `From`
 /// header goes through untouched, for its handler to refuse with `400`.
@@ -729,6 +739,7 @@ pub async fn check(
         .path_and_query()
         .map_or("/", |p| p.as_str())
         .to_owned();
+    let endpoint = endpoint_name(parts.uri.path());
     let Ok(uri) = format!("{}{path}", auth.base_url).parse::<Uri>() else {
         return crate::http::problem(StatusCode::BAD_REQUEST, "bad-target");
     };
@@ -755,6 +766,7 @@ pub async fn check(
             );
             tracing::debug!(
                 peer = provider.domain.as_str(),
+                endpoint,
                 mechanism = provider.mechanism.name(),
                 key_id = provider.key_id,
                 dnssec = provider.dnssec.map(DnssecStatus::name),
@@ -769,6 +781,7 @@ pub async fn check(
                     .add(1, &[opentelemetry::KeyValue::new("outcome", "refused")]);
                 tracing::debug!(
                     peer = from.as_str(),
+                    endpoint,
                     reason = %refusal,
                     status = StatusCode::FORBIDDEN.as_u16(),
                     "request refused: provider not authenticated"
@@ -783,12 +796,14 @@ pub async fn check(
                     tracing::info!(
                         name: "provider_auth_observed",
                         peer = from.as_str(),
+                        endpoint,
                         reason = %refusal,
                         "provider not authenticated; accepted in observe mode"
                     );
                 } else {
                     tracing::debug!(
                         peer = from.as_str(),
+                        endpoint,
                         reason = %refusal,
                         "provider not authenticated; accepted in observe mode"
                     );

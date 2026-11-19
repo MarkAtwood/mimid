@@ -628,3 +628,21 @@ fn a_bad_signature_does_not_record_its_nonce() {
     assert!(check_with(&auth, &headers, b"other", "b.example").is_err());
     assert!(check_with(&auth, &headers, b"entry", "b.example").is_ok());
 }
+
+/// The logged endpoint is the protocol-07 §5 endpoint name, never the room
+/// or user the rest of the path names.
+#[test]
+fn the_logged_endpoint_is_the_path_segment_after_v1() {
+    for (path, endpoint) in [
+        (
+            "/v1/keyMaterial/mimi%3A%2F%2Fb.example%2Fu%2Fbob",
+            "keyMaterial",
+        ),
+        ("/v1/notify/mimi%3A%2F%2Fa.example%2Fr%2Fone", "notify"),
+        ("/v1/requestConsent/b.example", "requestConsent"),
+        ("/v1/update", "update"),
+        ("/v1/", ""),
+    ] {
+        assert_eq!(endpoint_name(path), endpoint, "{path}");
+    }
+}
