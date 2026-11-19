@@ -2,13 +2,15 @@
   "id": "mimid-pv2k",
   "title": "Agent::leave with several devices of the user in the room",
   "description": "Agent::leave proposes this device's SelfRemove and the removal of the user from the participant list (protocol-07 §3.5). With several devices of the user in the group (decision mimid-1wgh.61) that is a participant removal whose other clients stay, which room-policy-04 §8.1.2 (canRemoveSelf: 'MUST simultaneously propose to remove all of its remaining clients') and the hub forbid. Either propose Removes of all the user's leaves with it (leave the room on every device), or, for leaving on this device only, a SelfRemove alone (canRemoveOwnClient, participant list unchanged). The JMAP bridge maps removeMembers [accountId] to leave. Found while doing mimid-d464.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-19T05:05:33.729340995Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-19T05:05:33.729340995Z",
+  "updated_at": "2026-11-19T16:51:54.259736941Z",
+  "closed_at": "2026-11-19T16:51:54.259736941Z",
+  "close_reason": "Leave proposes Removes of every leaf of the user; committer is another user's lowest leaf; 8ba2973 (agent-followups)",
   "labels": [
     "agent"
   ],

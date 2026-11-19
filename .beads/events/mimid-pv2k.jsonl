@@ -1,2 +1,3 @@
 {"id":"01a1f232-2026-798d-be54-87e28c3ed22d","issue_id":"mimid-pv2k","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-19T05:05:33.734627172Z"}
 {"id":"01a1f232-202a-7d29-bba2-bc49c377e978","issue_id":"mimid-pv2k","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-19T05:05:33.738863215Z"}
+{"id":"01a1f4b8-cd1b-724a-ac9d-8fb271593919","issue_id":"mimid-pv2k","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Leave proposes Removes of every leaf of the user; committer is another user's lowest leaf; 8ba2973 (agent-followups)","created_at":"2026-11-19T16:51:54.267152317Z"}
