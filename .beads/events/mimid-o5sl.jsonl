@@ -1,2 +1,3 @@
 {"id":"01a1f5b3-ca8f-70b2-87e7-786dfd908d40","issue_id":"mimid-o5sl","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-19T21:26:03.151047397Z"}
 {"id":"01a1f5b3-cb37-7a51-88ae-387f6cf63a44","issue_id":"mimid-o5sl","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-19T21:26:03.319678946Z"}
+{"id":"01a1f5fb-1212-727f-97e0-81810d98a5c8","issue_id":"mimid-o5sl","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"2a1b507 (branch core-safeaad): agent-core apply_commit_op refuses two room_metadata updates (RepeatedUpdate), tests with the hub's oracle bytes. Sharing the implementation filed as mimid-mxm5.","created_at":"2026-11-19T22:43:54.514164224Z"}
