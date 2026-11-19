@@ -1,3 +1,4 @@
 {"id":"01a1ef7d-314f-7c97-8b93-ab9e458f88d3","issue_id":"mimid-1wgh.4.81.35","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-18T16:28:41.67982651Z"}
 {"id":"01a1ef7d-3178-7ce2-a781-413cf3f75f35","issue_id":"mimid-1wgh.4.81.35","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: didwebvh","created_at":"2026-11-18T16:28:41.720845577Z"}
 {"id":"01a1ef7d-31c3-7db3-9988-95bf43ed44c9","issue_id":"mimid-1wgh.4.81.35","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: feature","created_at":"2026-11-18T16:28:41.795898831Z"}
+{"id":"01a1f46f-4a0e-7ec4-bf22-69dde059a2db","issue_id":"mimid-1wgh.4.81.35","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Mark 2026-11-19: keep 0xF013; -01 suggests it (mls-didwebvh-credential 3f976d6).","created_at":"2026-11-19T15:31:36.590969614Z"}

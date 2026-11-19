@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.4.81.35",
   "title": "Decision: the did_webvh record's component ID defaults to private-use 0xF013 and stays a setting",
   "description": "With the record carried only as an app_data_dictionary component (mimid-1wgh.4.81.34, Mark 2026-11-18), it needs an MLS Component Types value (mls-extensions-11 §7.5). draft-atwood-mls-didwebvh-credential-00 §IANA Considerations names only TBD2 (suggested 0x0013) in the MLS Extension Types registry, and no component value.\n\nReadings: (a) reuse 0x0013 as the component ID: it is in the Specification Required range (0x0000-0x7FFF), unassigned now, so squatting it could collide with a later IANA assignment, and a peer reading the -00 draft would take 0x0013 as an extension type, not a component; (b) a private-use value (0x8000-0xFFFF), which cannot collide with an assignment; (c) no default, require configuration.\n\nChosen: (b), 0xF013, the spike's test value (decision mimid-1wgh.4.81.33), as CodePoints::DEFAULT, still configurable: CodePoints::new(credential_type, heads_component), [did_webvh] heads_component in the server and agent TOML (replacing heads_extension_type). INVENTED, NOT FROM SPEC. new() now also refuses 0x0003-0x0005 (content_media_types, last_resort_key_package, app_ack, assigned by §7.5), which the spike accepted. The credential type keeps the draft's suggested 0x0008. If -01 suggests a component value, the default follows it.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-18T16:28:41.630204098Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-18T16:28:41.630204098Z",
+  "updated_at": "2026-11-19T15:31:36.545413153Z",
+  "closed_at": "2026-11-19T15:31:36.545413153Z",
+  "close_reason": "Mark 2026-11-19: keep 0xF013; -01 suggests it (mls-didwebvh-credential 3f976d6).",
   "labels": [
     "didwebvh",
     "feature"
