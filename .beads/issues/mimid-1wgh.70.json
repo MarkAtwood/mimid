@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.70",
   "title": "Chat i18n follows crate-jmap's jmap-server handling (language view, queryState, tag checks)",
   "description": "Context: bead mimid-nb5n moved mimid-server's i18n handling (src/jmap/language.rs) onto crate-jmap's jmap-server i18n at the pinned rev b85dfc85 (I18nProjection, handle_query_with_i18n, handle_query_changes_with_i18n, jmap_types::i18n::LanguageTag). mimid keeps only the RoomMetaData -\u003e Chat name/description mapping (Localized) and declares Chat's localizable properties on its own ChatRecord JmapObject (name: String, description: String|null, per the JMAP Chat applicability table, jmap-chat-spec bead qb21), because jmap_chat_types::Chat does not declare JmapObject::LOCALIZABLE.\n\nSpec: draft-atwood-jmap-updates-00 §3.1, §3.2.1-§3.2.3 (~/PROJECT/IETF/specs/draft-atwood-jmap-updates-00.txt).\n\nDecision: take crate-jmap's behaviour as is. Observable differences from the old mimid code:\n\n1. Chat/get with a non-null language returns localizations: null (§3.2.1 step 5). Old mimid returned the full localizations map in the view, contrary to the draft.\n2. Chat/query with a language returns a queryState that records it (crate-jmap wraps it as \u003cstate\u003e|lang=\u003cranges\u003e, §3.2.3). Old mimid dropped the language and returned the plain queryState. Chat/queryChanges still always answers cannotCalculateChanges (decision mimid-1wgh.12.22) after checking language.\n3. language: null without urn:ietf:params:jmap:i18n in using is accepted as the default. Old mimid refused any language argument, null included, without the capability.\n4. Message/get and ChatContact/get with a non-null language are invalidArguments (no localizable property; same as Message/query and ChatContact/query already were through crate-jmap). Old mimid ignored language on those two /get methods.\n5. localizations keys must be well-formed RFC 5646 language tags (LanguageTag::parse), not just RFC 4647 basic ranges: a RoomMetaData description tagged e.g. \"de-1\" is no longer a localization (its text can still be the base description). Keys and the view's locale are in RFC 5646 §2.1.1 canonical case (\"en-us\" -\u003e \"en-US\"), which §3.1 says servers SHOULD store; old mimid kept the tag as sent.\n6. invalidArguments description texts are crate-jmap's.\n\nWhy: one implementation of Lookup and the view, shared with every other crate-jmap type; items 1, 2 and 5 bring mimid in line with the draft as written.\n",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-19T21:27:50.382541359Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-19T21:27:50.382541359Z",
+  "updated_at": "2026-11-19T21:35:54.664995285Z",
+  "closed_at": "2026-11-19T21:35:54.664995285Z",
+  "close_reason": "Decided: take crate-jmap's jmap-server i18n behaviour as is (commit 082a491 on js-lang).",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.70",

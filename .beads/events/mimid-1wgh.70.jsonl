@@ -1,1 +1,2 @@
 {"id":"01a1f5b5-6df7-78e4-a8d0-56ec69b03b76","issue_id":"mimid-1wgh.70","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-19T21:27:50.519584505Z"}
+{"id":"01a1f5bc-d164-7378-b441-da501a035122","issue_id":"mimid-1wgh.70","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Decided: take crate-jmap's jmap-server i18n behaviour as is (commit 082a491 on js-lang).","created_at":"2026-11-19T21:35:54.724229232Z"}
