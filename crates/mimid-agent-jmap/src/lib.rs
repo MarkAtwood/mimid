@@ -32,10 +32,12 @@
 //!   when first seen (§Senders). A participant whose room role is named
 //!   "admin" is `admin`, any other `member`, and a banned one (role 1,
 //!   "banned") is not listed.
-//! - **Moderation** ([`moderate`]; decision mimid-1wgh.62): `Chat/kick`,
-//!   `Chat/ban` and `Chat/unban` (INVENTED, NOT FROM SPEC: JMAP Chat has
-//!   no kick or ban for a group Chat) act on a member of a room-bound
-//!   Chat through the agent.
+//! - **Moderation** ([`moderate`]; draft-atwood-jmap-chat-mimi-00
+//!   §Moderation, decision mimid-1wgh.62): `ChatBan/set` create and
+//!   destroy ban and unban a member of a room-bound Chat through the
+//!   agent, and the `Chat/set` patch key `kickMembers` kicks one. Each
+//!   participant a room holds in its "banned" role has a ChatBan, made at
+//!   `sync` when the ban was made elsewhere.
 //! - **Message**: `Message/set` create sends `body` as one `text/plain`
 //!   part. Received messages with a `text/*` single part are stored with
 //!   `bodyType` `text/markdown` for `text/markdown` and `text/plain`
@@ -121,6 +123,8 @@
 //!
 //! - Space, SpaceInvite, SpaceBan, CustomEmoji and PresenceStatus writes
 //!   are `forbidden`, and `supports_type` is false for them.
+//! - See [`moderate`] for the limits of bans and kicks; a ChatBan
+//!   mirrored from a room names the accountId as `bannedBy`.
 //! - Direct Chats are `forbidden` (only group Chats map to rooms).
 //! - On a room-bound Chat, `name`, `description` and `avatarBlobId` are
 //!   `forbidden` (§Chat.roomId). Roles map only to "admin" (the room's

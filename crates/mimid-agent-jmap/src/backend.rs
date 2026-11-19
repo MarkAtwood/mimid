@@ -10,7 +10,8 @@ use jmap_chat_server::{
     OutboundEvent, SlowModeError, SpacePatchOp,
 };
 use jmap_chat_types::{
-    BodyType, Chat, ChatContact, ChatMember, ChatMemberRole, ChatPermission, DeliveryState, Message,
+    BodyType, Chat, ChatBan, ChatContact, ChatMember, ChatMemberRole, ChatPermission,
+    DeliveryState, Message,
 };
 use jmap_server::{
     BackendChangesError, BackendQueryError, BackendSetError, ChangesParams, ChangesResult,
@@ -172,15 +173,12 @@ impl AgentChat {
     }
 
     /// Registers the JMAP Chat methods (`Chat/*`, `Message/*`,
-    /// `ChatContact/*` and the rest of crate-jmap's set) and
-    /// `Message/reportAbuse` ([`crate::report`]) and `Chat/kick`,
-    /// `Chat/ban` and `Chat/unban` ([`crate::moderate`]) on `dispatcher`,
-    /// served by
-    /// `this`.
+    /// `ChatContact/*`, `ChatBan/*` and the rest of crate-jmap's set) and
+    /// `Message/reportAbuse` ([`crate::report`]) on `dispatcher`, served
+    /// by `this`.
     pub fn register(this: &Arc<Self>, dispatcher: &mut Dispatcher<()>) {
         jmap_chat_server::register_chat_handlers(dispatcher, Arc::clone(this));
         crate::report::register(this, dispatcher);
-        crate::moderate::register(this, dispatcher);
     }
 
     /// The JMAP account id.
@@ -249,7 +247,11 @@ impl AgentChat {
 
     /// The MIMI user URIs of the ChatContacts `ids`, or `invalidProperties`
     /// on `property` if one is not a ChatContact.
-    async fn users_of(&self, ids: &[Id], property: &str) -> Result<Vec<String>, SetFailure> {
+    pub(crate) async fn users_of(
+        &self,
+        ids: &[Id],
+        property: &str,
+    ) -> Result<Vec<String>, SetFailure> {
         let mut users = Vec::with_capacity(ids.len());
         for id in ids {
             match self.contact_identity(id).await.map_err(SetFailure::Other)? {
@@ -565,7 +567,7 @@ fn unsupported_message_property(message: &Message) -> Option<&'static str> {
 }
 
 /// A failure of a write hook before the store is touched.
-enum SetFailure {
+pub(crate) enum SetFailure {
     Set(Box<SetError>),
     Other(MemoryError),
 }
@@ -583,7 +585,7 @@ impl SetFailure {
     }
 }
 
-fn set_error(kind: SetErrorType, description: impl Into<String>) -> SetError {
+pub(crate) fn set_error(kind: SetErrorType, description: impl Into<String>) -> SetError {
     SetError::new(kind).with_description(description)
 }
 
@@ -600,7 +602,7 @@ pub(crate) fn serde_failure(e: serde_json::Error) -> BackendSetError<MemoryError
 /// agent refuses is `invalidProperties`, each with the agent's
 /// description (the client is the user's own); anything else (network,
 /// storage, MLS) is the handler's `serverFail`.
-fn agent_set_failure(e: AgentError) -> SetFailure {
+pub(crate) fn agent_set_failure(e: AgentError) -> SetFailure {
     let kind = match &e {
         AgentError::Refused { .. } | AgentError::NoKeyMaterial { .. } => SetErrorType::Forbidden,
         AgentError::NoSuchRoom(_) => SetErrorType::NotFound,
@@ -616,11 +618,12 @@ pub(crate) fn agent_failure(e: AgentError) -> BackendSetError<MemoryError> {
 
 /// The JMAP types this backend serves; the rest of crate-jmap's set
 /// (Space, SpaceInvite, SpaceBan, CustomEmoji, PresenceStatus) has no MIMI
-/// meaning here.
+/// meaning here. ChatBan writes go through the ChatBan hooks
+/// ([`crate::moderate`]), not the generic ones.
 fn served(type_name: &str) -> bool {
     matches!(
         type_name,
-        "Chat" | "Message" | "ChatContact" | "ReadPosition"
+        "Chat" | "Message" | "ChatContact" | "ReadPosition" | "ChatBan"
     )
 }
 
@@ -901,6 +904,74 @@ impl ChatBackend for AgentChat {
             .with_properties([key])),
             None => Ok(()),
         })
+    }
+
+    /// [`crate::moderate`]: the ban is `Agent::ban`, one Commit that also
+    /// removes the user's clients, in place of the default's
+    /// `removeMembers` update.
+    async fn create_chat_ban<F>(
+        &self,
+        _caller: &(),
+        account_id: &Id,
+        _create_id: &str,
+        build: F,
+    ) -> Result<(Id, ChatBan), BackendSetError<MemoryError>>
+    where
+        F: FnOnce(&Id) -> ChatBan + Send,
+    {
+        self.check_account(account_id)
+            .map_err(SetFailure::into_backend)?;
+        let result = self.create_ban(build).await;
+        self.saved(result).await
+    }
+
+    /// `reason` and `expiresAt` are this account's only
+    /// ([`crate::moderate`]).
+    async fn update_chat_ban(
+        &self,
+        caller: &(),
+        account_id: &Id,
+        id: &Id,
+        patch: jmap_types::PatchObject,
+    ) -> Result<Option<ChatBan>, BackendSetError<MemoryError>> {
+        self.check_account(account_id)
+            .map_err(SetFailure::into_backend)?;
+        let result = self
+            .inner
+            .update_object::<ChatBan>(caller, account_id, id, patch)
+            .await;
+        self.saved(result).await
+    }
+
+    /// `Agent::unban`, never adding a client ([`crate::moderate`]).
+    async fn destroy_chat_ban(
+        &self,
+        _caller: &(),
+        account_id: &Id,
+        id: &Id,
+    ) -> Result<(), BackendSetError<MemoryError>> {
+        self.check_account(account_id)
+            .map_err(SetFailure::into_backend)?;
+        let result = self.destroy_ban(id).await;
+        self.saved(result).await
+    }
+
+    /// draft-atwood-jmap-chat-mimi-00 §Moderation `kickMembers`:
+    /// `Agent::kick` of each user ([`crate::moderate`]).
+    async fn kick_chat_members(
+        &self,
+        _caller: &(),
+        account_id: &Id,
+        chat: &Chat,
+        user_ids: &[Id],
+    ) -> Result<Result<(), SetError>, MemoryError> {
+        if let Err(failure) = self.check_account(account_id) {
+            return match failure {
+                SetFailure::Set(e) => Ok(Err(*e)),
+                SetFailure::Other(e) => Err(e),
+            };
+        }
+        self.kick(chat, user_ids).await
     }
 
     // The rest is MemoryBackend's. Its on_chat_destroyed,

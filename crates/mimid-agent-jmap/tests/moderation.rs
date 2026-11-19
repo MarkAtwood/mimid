@@ -1,18 +1,20 @@
-//! Moderation from a JMAP Chat client (bead mimid-90cd; decision
-//! mimid-1wgh.62): alice creates a group Chat with bob and carol over an
-//! in-process mimid server, so her room makes her its admin. Through JMAP
-//! method calls she promotes bob (`updateMemberRoles`), bans and unbans
-//! carol (`Chat/ban`, `Chat/unban`, INVENTED) and removes bob
-//! (`removeMembers`); carol, a member, tries `Chat/kick` and the hub
-//! refuses it.
+//! Moderation from a JMAP Chat client (beads mimid-90cd, mimid-1t3p;
+//! decision mimid-1wgh.62; draft-atwood-jmap-chat-mimi-00 §Moderation):
+//! alice creates a group Chat with bob and carol over an in-process mimid
+//! server, so her room makes her its admin. Through JMAP method calls she
+//! promotes bob (`updateMemberRoles`), bans and unbans carol (`ChatBan/set`
+//! create and destroy), bans her again with an `expiresAt` that has passed,
+//! kicks bob (`Chat/set` `kickMembers`) and removes him (`removeMembers`).
+//! carol, a member, tries a kick, which the hub refuses, and a ban, which
+//! crate-jmap refuses before the hub.
 //!
 //! Oracles:
 //!
-//! - The hub's participant list and roles after each step
-//!   (`Hub::room_summaries`), and the Chat `members` and roles each client
-//!   reads after a sync.
-//! - The hub's refusal reaches the client as the method error `forbidden`
-//!   and changes nothing.
+//! - The hub's participant list and roles, and the group's members, after
+//!   each step (`Hub::room_summaries`), and the Chat `members` and roles
+//!   and the ChatBans each client reads after a sync.
+//! - A refusal reaches the client as the SetError `forbidden` and changes
+//!   nothing at the hub.
 
 #![forbid(unsafe_code)]
 
@@ -171,6 +173,46 @@ impl Client {
         );
     }
 
+    /// A `/set` call; its `created`, `updated` or `destroyed` entry, or its
+    /// `notCreated`, `notUpdated` or `notDestroyed` entry, for `key`.
+    async fn set_one(&self, method: &str, args: Value, key: &str) -> Result<Value, Value> {
+        let (name, answer) = self.call(method, args).await;
+        assert_eq!(name, method, "{answer}");
+        for ok in ["created", "updated"] {
+            if let Some(v) = answer[ok].get(key) {
+                return Ok(v.clone());
+            }
+        }
+        if answer["destroyed"]
+            .as_array()
+            .is_some_and(|d| d.contains(&json!(key)))
+        {
+            return Ok(Value::Null);
+        }
+        for not in ["notCreated", "notUpdated", "notDestroyed"] {
+            if let Some(v) = answer[not].get(key) {
+                return Err(v.clone());
+            }
+        }
+        panic!("{key} not answered: {answer}");
+    }
+
+    /// The ChatBans the client sees, as (chatId, userId, bannedBy).
+    async fn bans(&self) -> Vec<(String, String, String)> {
+        let (_, answer) = self.call("ChatBan/get", json!({"ids": null})).await;
+        let mut bans: Vec<_> = answer["list"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{answer}"))
+            .iter()
+            .map(|b| {
+                let text = |k: &str| b[k].as_str().unwrap().to_owned();
+                (text("chatId"), text("userId"), text("bannedBy"))
+            })
+            .collect();
+        bans.sort();
+        bans
+    }
+
     /// The Chat bound to `room`, read after a sync.
     async fn chat_of(&self, room: &str) -> Value {
         self.chat.sync().await.unwrap();
@@ -242,6 +284,22 @@ async fn hub_list(server: &Server, room: &str) -> Vec<(String, u32)> {
         .collect()
 }
 
+/// The users with a client in the room's group, per the hub.
+async fn hub_clients(server: &Server, room: &str) -> Vec<String> {
+    let mut users: Vec<String> = server
+        .hub
+        .room_summaries(Some(room))
+        .await
+        .remove(0)
+        .members
+        .into_iter()
+        .map(|(_, user)| String::from_utf8(user).unwrap())
+        .collect();
+    users.sort();
+    users.dedup();
+    users
+}
+
 fn list(entries: &[(&str, u32)]) -> Vec<(String, u32)> {
     entries.iter().map(|(u, r)| ((*u).to_owned(), *r)).collect()
 }
@@ -287,27 +345,42 @@ async fn an_admin_moderates_through_jmap_and_a_member_is_refused() {
             &[("alice", "admin"), (bob_id, "member"), (carol_id, "member")],
         )
         .await;
-    bob.chat_of(&room).await;
-    carol.chat_of(&room).await;
+    let chat_b = bob.chat_of(&room).await["id"].as_str().unwrap().to_owned();
+    let chat_c = carol.chat_of(&room).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let alice_at_carol = carol.contact(ALICE).await;
     let bob_at_carol = carol.contact(BOB).await;
+    let carol_at_bob = bob.contact(CAROL).await;
+    let everyone = vec![ALICE.to_owned(), BOB.to_owned(), CAROL.to_owned()];
+    assert_eq!(hub_clients(&server, &room).await, everyone);
 
     // carol, a member, tries to kick bob: the hub refuses.
-    let (name, answer) = carol
-        .call(
-            "Chat/kick",
-            json!({"chatId": carol.chat_of(&room).await["id"], "memberId": bob_at_carol}),
+    let refused = carol
+        .set_one(
+            "Chat/set",
+            json!({"update": {&chat_c: {"kickMembers": [bob_at_carol]}}}),
+            &chat_c,
         )
-        .await;
-    assert_eq!(
-        (name.as_str(), &answer["type"]),
-        ("error", &json!("forbidden")),
-        "{answer}"
-    );
+        .await
+        .unwrap_err();
+    assert_eq!(refused["type"], "forbidden", "{refused}");
+    // and to ban him: she is not an admin of the Chat.
+    let refused = carol
+        .set_one(
+            "ChatBan/set",
+            json!({"create": {"b": {"chatId": chat_c, "userId": bob_at_carol}}}),
+            "b",
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused["type"], "forbidden", "{refused}");
     assert_eq!(
         hub_list(&server, &room).await,
         list(&[(ALICE, 3), (BOB, 2), (CAROL, 2)])
     );
+    assert_eq!(hub_clients(&server, &room).await, everyone);
 
     // alice makes bob an admin.
     alice
@@ -330,20 +403,64 @@ async fn an_admin_moderates_through_jmap_and_a_member_is_refused() {
             ],
         )
         .await;
+    bob.members_become(
+        &room,
+        &[
+            (&bob.contact(ALICE).await, "admin"),
+            ("bob", "admin"),
+            (&carol_at_bob, "member"),
+        ],
+    )
+    .await;
 
-    // alice bans carol: carol leaves the Chat's members everywhere and her
-    // agent is out of the room.
-    let (name, answer) = alice
-        .call("Chat/ban", json!({"chatId": chat_a, "memberId": carol_id}))
-        .await;
-    assert_eq!(name, "Chat/ban", "{answer}");
+    // alice bans carol: carol gets the banned role and her clients leave,
+    // she is out of alice's members at once and out of the room on her
+    // own device.
+    let ban = alice
+        .set_one(
+            "ChatBan/set",
+            json!({"create": {"b": {"chatId": chat_a, "userId": carol_id, "reason": "spam"}}}),
+            "b",
+        )
+        .await
+        .unwrap();
+    let ban_id = ban["id"].as_str().unwrap().to_owned();
     assert_eq!(
         hub_list(&server, &room).await,
         list(&[(ALICE, 3), (BOB, 3), (CAROL, 1)])
     );
+    assert_eq!(
+        hub_clients(&server, &room).await,
+        vec![ALICE.to_owned(), BOB.to_owned()]
+    );
+    let (_, answer) = alice.call("Chat/get", json!({"ids": [chat_a]})).await;
+    let members: Vec<&str> = answer["list"][0]["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(members, ["alice", bob_id], "{answer}");
+    assert_eq!(
+        alice.bans().await,
+        vec![(chat_a.clone(), carol_id.to_owned(), "alice".to_owned())]
+    );
     alice
         .members_become(&room, &[("alice", "admin"), (bob_id, "admin")])
         .await;
+    // Sync keeps alice's own ChatBan rather than mirroring a second one.
+    assert_eq!(alice.bans().await.len(), 1);
+    // bob, the other admin, sees the ban mirrored from the room, issued by
+    // his own accountId (decision mimid-1wgh.62 item 13).
+    bob.members_become(
+        &room,
+        &[(&bob.contact(ALICE).await, "admin"), ("bob", "admin")],
+    )
+    .await;
+    assert_eq!(
+        bob.bans().await,
+        vec![(chat_b.clone(), carol_at_bob.clone(), "bob".to_owned())]
+    );
     for _ in 0..100 {
         carol.chat.sync().await.unwrap();
         let left = carol
@@ -360,14 +477,94 @@ async fn an_admin_moderates_through_jmap_and_a_member_is_refused() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    // Unbanned, carol is a member again (without clients).
-    let (name, answer) = alice
-        .call(
-            "Chat/unban",
-            json!({"chatId": chat_a, "memberId": carol_id}),
+    // While the ban lasts carol cannot be added; its reason changes only
+    // here.
+    let refused = alice
+        .set_one(
+            "Chat/set",
+            json!({"update": {&chat_a: {"addMembers": [{"id": carol_id}]}}}),
+            &chat_a,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused["type"], "forbidden", "{refused}");
+    alice
+        .set_one(
+            "ChatBan/set",
+            json!({"update": {&ban_id: {"reason": "spam, twice"}}}),
+            &ban_id,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        hub_list(&server, &room).await,
+        list(&[(ALICE, 3), (BOB, 3), (CAROL, 1)])
+    );
+
+    // Unbanned, carol is a member again (without clients), and the ban is
+    // gone on both admins' devices.
+    alice
+        .set_one("ChatBan/set", json!({"destroy": [ban_id]}), &ban_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        hub_list(&server, &room).await,
+        list(&[(ALICE, 3), (BOB, 3), (CAROL, 2)])
+    );
+    assert_eq!(
+        hub_clients(&server, &room).await,
+        vec![ALICE.to_owned(), BOB.to_owned()]
+    );
+    alice
+        .members_become(
+            &room,
+            &[("alice", "admin"), (bob_id, "admin"), (carol_id, "member")],
         )
         .await;
-    assert_eq!(name, "Chat/unban", "{answer}");
+    assert_eq!(alice.bans().await, vec![]);
+    bob.members_become(
+        &room,
+        &[
+            (&bob.contact(ALICE).await, "admin"),
+            ("bob", "admin"),
+            (&carol_at_bob, "member"),
+        ],
+    )
+    .await;
+    assert_eq!(bob.bans().await, vec![]);
+
+    // A ban whose expiresAt has passed is lifted at the next sync.
+    alice
+        .set_one(
+            "ChatBan/set",
+            json!({"create": {"b": {
+                "chatId": chat_a, "userId": carol_id, "expiresAt": "2000-01-01T00:00:00Z",
+            }}}),
+            "b",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        hub_list(&server, &room).await,
+        list(&[(ALICE, 3), (BOB, 3), (CAROL, 1)])
+    );
+    alice.chat.sync().await.unwrap();
+    assert_eq!(
+        hub_list(&server, &room).await,
+        list(&[(ALICE, 3), (BOB, 3), (CAROL, 2)])
+    );
+    assert_eq!(alice.bans().await, vec![]);
+
+    // alice kicks bob: his clients leave, he stays a participant and a
+    // member of the Chat.
+    alice
+        .update(&chat_a, json!({"kickMembers": [bob_id]}))
+        .await;
+    assert_eq!(
+        hub_list(&server, &room).await,
+        list(&[(ALICE, 3), (BOB, 3), (CAROL, 2)])
+    );
+    assert_eq!(hub_clients(&server, &room).await, vec![ALICE.to_owned()]);
     alice
         .members_become(
             &room,
@@ -386,15 +583,40 @@ async fn an_admin_moderates_through_jmap_and_a_member_is_refused() {
     alice
         .members_become(&room, &[("alice", "admin"), (carol_id, "member")])
         .await;
-    // The owner's own id and an unknown contact are invalidArguments.
+
+    // The owner's own id and an unknown contact are invalidProperties, for
+    // a kick and a ban alike.
     for member in ["alice", "nobody"] {
-        let (name, answer) = alice
-            .call("Chat/kick", json!({"chatId": chat_a, "memberId": member}))
-            .await;
-        assert_eq!(
-            (name.as_str(), &answer["type"]),
-            ("error", &json!("invalidArguments")),
-            "{answer}"
-        );
+        let refused = alice
+            .set_one(
+                "Chat/set",
+                json!({"update": {&chat_a: {"kickMembers": [member]}}}),
+                &chat_a,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(refused["type"], "invalidProperties", "{refused}");
     }
+    let refused = alice
+        .set_one(
+            "ChatBan/set",
+            json!({"create": {"b": {"chatId": chat_a, "userId": "nobody"}}}),
+            "b",
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused["type"], "invalidProperties", "{refused}");
+    assert_eq!(
+        hub_list(&server, &room).await,
+        list(&[(ALICE, 3), (CAROL, 2)])
+    );
+    // The invented methods are gone.
+    let (name, answer) = alice
+        .call("Chat/ban", json!({"chatId": chat_a, "memberId": carol_id}))
+        .await;
+    assert_eq!(
+        (name.as_str(), &answer["type"]),
+        ("error", &json!("unknownMethod")),
+        "{answer}"
+    );
 }

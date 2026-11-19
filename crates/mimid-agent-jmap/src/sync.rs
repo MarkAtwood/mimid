@@ -127,6 +127,7 @@ impl AgentChat {
     pub async fn sync(&self) -> Result<SyncReport, SyncError> {
         let mut agent = self.agent.lock().await;
         let mut report = SyncReport::default();
+        self.expire_bans(&mut agent, &mut report.problems).await?;
         // A join's held messages come with the next poll, so a round that
         // joins is followed by one more.
         for _ in 0..2 {
@@ -154,6 +155,7 @@ impl AgentChat {
             for event in events {
                 self.apply(&mut agent, event, &mut report).await?;
             }
+            self.mirror_bans(&mut agent).await?;
             // A Commit or a join may bring or change a contact's did_webvh
             // leaves (their ChatContact `did`).
             let epochs: std::collections::BTreeMap<String, u64> = agent
@@ -334,7 +336,7 @@ impl AgentChat {
 
     /// The ChatContact whose `identity` is user URI `user`, made if there
     /// is none (draft-atwood-jmap-chat-mimi-00 §Senders).
-    async fn contact_for(&self, user: &str) -> Result<Id, SyncError> {
+    pub(crate) async fn contact_for(&self, user: &str) -> Result<Id, SyncError> {
         if let Some(id) = self.links().contact_of_user.get(user) {
             return Ok(id.clone());
         }

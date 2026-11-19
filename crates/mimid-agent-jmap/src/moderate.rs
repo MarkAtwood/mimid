@@ -1,170 +1,302 @@
-//! Kicking, banning and unbanning from a JMAP Chat client (bead
-//! mimid-90cd; decision mimid-1wgh.62). INVENTED, NOT FROM SPEC:
-//! draft-atwood-jmap-chat-00 has no kick or ban for a group Chat (its
-//! SpaceBan and `manage_members` are for Spaces), and
-//! draft-atwood-jmap-chat-mimi-00 none at all. Removing a member and
-//! changing its role are `Chat/set` `removeMembers` and
-//! `updateMemberRoles`, as the draft has them.
+//! Kicking, banning and unbanning from a JMAP Chat client
+//! (draft-atwood-jmap-chat-mimi-00 §Moderation at jmap-chat-spec 516c61b;
+//! beads mimid-90cd, mimid-1t3p; decision mimid-1wgh.62). Removing a
+//! member and changing its role are `Chat/set` `removeMembers` and
+//! `updateMemberRoles` (see the crate documentation).
 //!
-//! [`KICK`], [`BAN`] and [`UNBAN`] each take:
+//! - **`ChatBan/set` create** (draft-atwood-jmap-chat-00 §ChatBan) on a
+//!   Chat bound to a room is `Agent::ban`: one Commit that gives the user
+//!   the room's "banned" role and removes all its clients (room-policy-04
+//!   §8.1.3 `canBan`). Once the hub accepts it, the ChatBan is stored and
+//!   the user leaves the Chat's `members`.
+//! - **`ChatBan/set` destroy** is `Agent::unban`: the user gets the member
+//!   role again and no client is added (`canUnban`). The user's devices
+//!   do not come back by themselves (see `Agent::unban`). Since `members`
+//!   mirrors the participant list, the user shows in `members` again at
+//!   the next sync, as a member without clients.
+//! - **`ChatBan/set` update** of `reason` or `expiresAt` changes only this
+//!   account: MIMI has no field for either.
+//! - **`expiresAt`**: [`AgentChat::sync`] lifts a ban whose `expiresAt` has
+//!   passed, as a destroy does (draft-atwood-jmap-chat-00 §ChatBan: "the
+//!   server MUST lift it").
+//! - **`Chat/set` `kickMembers`** (draft-atwood-jmap-chat-mimi-00
+//!   §Moderation) is `Agent::kick` for each listed user: their clients
+//!   leave the group and they stay in the participant list (`canKick`).
+//!   `members` does not change.
+//! - **Bans made elsewhere**: at each sync, every participant that an
+//!   active room holds in its "banned" role (role 1) has one ChatBan in
+//!   the room's Chat, and a ChatBan whose user no longer holds that role
+//!   is destroyed. A ban made by another admin, or before this device
+//!   joined, is created with `bannedBy` the accountId and no `reason`:
+//!   the participant list does not say who banned the user. INVENTED,
+//!   NOT FROM SPEC (decision mimid-1wgh.62 item 13).
 //!
-//! - `accountId`;
-//! - `chatId`: a Chat bound to a MIMI room;
-//! - `memberId`: the ChatContact id of the user to act on, not the
-//!   accountId.
-//!
-//! and answer `{accountId}` once the hub has accepted the Commit
-//! (`Agent::kick`, `Agent::ban`, `Agent::unban`): a kick removes the
-//! user's clients and leaves the participant list alone, a ban gives the
-//! user the room's "banned" role and removes its clients, an unban gives
-//! it the member role back without adding clients (room-policy-04 §8.1.2,
-//! §8.1.3). The Chat's `members` change at the next sync.
-//!
-//! A Chat not bound to a room, an unknown ChatContact, the accountId, or a
-//! request the agent refuses before sending (the user is not a
-//! participant, has no client to kick, is banned already or not banned)
-//! is `invalidArguments`. The hub's refusal (the room policy: the caller's
-//! role lacks `canKick`, `canBan` or `canUnban`) is the method error
-//! `forbidden` with the hub's answer. A server or hub that cannot be
-//! reached is `serverUnavailable`.
+//! crate-jmap checks first that the caller holds the `"admin"` role in the
+//! Chat's `members` (the mirror of the room's "admin" role), so a member's
+//! `ChatBan/set` create, update or destroy is `forbidden` without reaching
+//! the hub. A kick is checked only by the hub. A ChatBan whose `userId` is
+//! not a ChatContact, or a `kickMembers` naming one or the accountId, is
+//! `invalidProperties`; a user the agent refuses before sending (not a
+//! participant, already banned, no client to kick) is
+//! `invalidProperties` with the agent's reason; the hub's refusal is
+//! `forbidden` with its answer.
 //!
 //! # Limitations
 //!
-//! - The methods are served under the JMAP Chat capability, which does
-//!   not define them.
 //! - A ban takes only a current participant; banning a user who is not in
 //!   the room is not offered.
-//! - Unbanned and kicked users' devices do not come back by themselves;
-//!   see `Agent::unban`.
+//! - A `kickMembers` of several users is one Commit per user; if one is
+//!   refused, the kicks before it stay applied.
+//! - A ban this account issued keeps its `bannedBy`, `reason` and
+//!   `expiresAt` only on this device; another device of the user, or
+//!   this one after losing the store, sees it as made elsewhere.
+//! - An expired ban the hub refuses to lift (the owner lost `canUnban`)
+//!   stays, and each sync reports it in [`crate::SyncReport::problems`].
 
-use std::sync::Arc;
+use jmap_chat_server::ChatBackend;
+use jmap_chat_server::memory::MemoryError;
+use jmap_chat_types::{Chat, ChatBan, ChatMember};
+use jmap_server::{BackendSetError, Id, JmapBackend, SetError, SetErrorType};
+use mimid_agent_core::{Agent, RoomStatus};
+use serde_json::json;
 
-use jmap_server::{
-    CallContext, Dispatcher, HandlerFuture, HandlerOutput, Id, JmapError, JmapHandler,
+use crate::backend::{
+    AgentChat, BANNED_ROLE_INDEX, SetFailure, agent_failure, agent_set_failure, forbidden,
+    serde_failure, set_error,
 };
-use mimid_agent_core::AgentError;
-use serde_json::{Value, json};
+use crate::sync::SyncError;
 
-use crate::backend::AgentChat;
-
-/// `Chat/kick`.
-pub const KICK: &str = "Chat/kick";
-/// `Chat/ban`.
-pub const BAN: &str = "Chat/ban";
-/// `Chat/unban`.
-pub const UNBAN: &str = "Chat/unban";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Action {
-    Kick,
-    Ban,
-    Unban,
-}
-
-impl Action {
-    fn method(self) -> &'static str {
-        match self {
-            Self::Kick => KICK,
-            Self::Ban => BAN,
-            Self::Unban => UNBAN,
-        }
+/// The users that `room` holds in its "banned" role, or `None` when the
+/// agent cannot read the room's participant list.
+pub(crate) fn banned_users(agent: &Agent, room: &str) -> Option<Vec<String>> {
+    let participants = agent.participant_roles(room).ok()?;
+    let banned_named = agent
+        .roles(room)
+        .ok()?
+        .iter()
+        .any(|(index, name)| *index == BANNED_ROLE_INDEX && name == "banned");
+    if !banned_named {
+        return Some(Vec::new());
     }
+    Some(
+        participants
+            .into_iter()
+            .filter(|(_, role)| *role == BANNED_ROLE_INDEX)
+            .map(|(user, _)| user)
+            .collect(),
+    )
 }
 
-/// Registers [`KICK`], [`BAN`] and [`UNBAN`] on `dispatcher`, served by
-/// `chat`.
-pub(crate) fn register(chat: &Arc<AgentChat>, dispatcher: &mut Dispatcher<()>) {
-    for action in [Action::Kick, Action::Ban, Action::Unban] {
-        dispatcher.register(
-            action.method(),
-            Arc::new(Handler {
-                chat: Arc::clone(chat),
-                action,
-            }),
-        );
-    }
-}
-
-struct Handler {
-    chat: Arc<AgentChat>,
-    action: Action,
-}
-
-impl JmapHandler<()> for Handler {
-    fn call(&self, cx: CallContext<()>) -> HandlerFuture {
-        let chat = Arc::clone(&self.chat);
-        let action = self.action;
-        Box::pin(async move { chat.moderate(action, cx.args).await.map(HandlerOutput::new) })
-    }
-}
-
-fn invalid(method: &str, why: impl Into<String>) -> JmapError {
-    let why = why.into();
-    tracing::debug!(method, why, "moderation request refused");
-    JmapError::invalid_arguments(why)
+fn invalid_property(property: &str, description: impl Into<String>) -> SetError {
+    set_error(SetErrorType::InvalidProperties, description).with_properties([property])
 }
 
 impl AgentChat {
-    async fn moderate(&self, action: Action, args: Value) -> Result<Value, JmapError> {
-        let method = action.method();
-        let Value::Object(args) = args else {
-            return Err(invalid(method, "arguments must be an object"));
-        };
-        match args.get("accountId") {
-            Some(Value::String(id)) if id == self.account.as_ref() => {}
-            Some(Value::String(_)) => return Err(JmapError::account_not_found()),
-            _ => return Err(invalid(method, "accountId is required")),
-        }
-        let id = |key: &str| match args.get(key) {
-            Some(Value::String(id)) => Ok(Id::from(id.as_str())),
-            _ => Err(invalid(method, format!("{key} is required"))),
-        };
-        let chat = id("chatId")?;
-        let member = id("memberId")?;
+    /// `ChatBan/set` create: bans the user in the Chat's room, then stores
+    /// the ban under an id minted first and drops the user from `members`.
+    pub(crate) async fn create_ban<F>(
+        &self,
+        build: F,
+    ) -> Result<(Id, ChatBan), BackendSetError<MemoryError>>
+    where
+        F: FnOnce(&Id) -> ChatBan + Send,
+    {
+        let id = self.inner.mint_id();
+        let ban = build(&id);
         let room = self
-            .room_of_chat(&chat)
-            .ok_or_else(|| invalid(method, "chatId is not a Chat bound to a MIMI room"))?;
-        if member == self.account {
-            return Err(invalid(method, "memberId is this account"));
-        }
+            .room_of_chat(&ban.chat_id)
+            .ok_or_else(|| forbidden("the Chat is not bound to a MIMI room"))?;
         let user = self
-            .contact_identity(&member)
+            .contact_identity(&ban.user_id)
             .await
-            .map_err(|e| JmapError::server_fail(e.to_string()))?
-            .ok_or_else(|| invalid(method, "memberId is not a ChatContact"))?;
+            .map_err(BackendSetError::Other)?
+            .ok_or_else(|| {
+                BackendSetError::SetError(Box::new(invalid_property(
+                    "userId",
+                    "userId is not a ChatContact",
+                )))
+            })?;
+        // Held until the ban is stored, so a sync cannot mirror the room's
+        // new ban first and store it twice.
         let mut agent = self.agent.lock().await;
-        let done = match action {
-            Action::Kick => agent.kick(&room, &user).await,
-            Action::Ban => agent.ban(&room, &user).await,
-            Action::Unban => agent.unban(&room, &user).await,
-        };
-        done.map_err(|e| agent_error(method, e))?;
-        Ok(json!({ "accountId": self.account }))
+        agent.ban(&room, &user).await.map_err(agent_failure)?;
+        let ban = self.inner.insert_object(&self.account, ban).await?;
+        self.drop_member(&ban.chat_id, &ban.user_id).await?;
+        drop(agent);
+        Ok((id, ban))
     }
-}
 
-fn agent_error(method: &str, error: AgentError) -> JmapError {
-    match error {
-        AgentError::Invalid(why) => invalid(method, why),
-        AgentError::NoSuchRoom(_) => invalid(method, "the Chat's room is not known to the agent"),
-        AgentError::Refused { reason, .. } => {
-            let mut error = JmapError::forbidden();
-            error.description = Some(reason);
-            error
+    /// Removes `user` from the stored `members` of `chat`, if there.
+    async fn drop_member(&self, chat: &Id, user: &Id) -> Result<(), BackendSetError<MemoryError>> {
+        let Some(members) = self
+            .stored::<Chat>(chat)
+            .await
+            .map_err(BackendSetError::Other)?
+            .and_then(|c| c.members)
+        else {
+            return Ok(());
+        };
+        if members.iter().all(|m| m.id != *user) {
+            return Ok(());
         }
-        AgentError::Http { .. } => JmapError::server_unavailable(),
-        AgentError::Status { status, .. } if status >= 500 => JmapError::server_unavailable(),
-        AgentError::Method { ref kind, .. } if kind == "serverUnavailable" => {
-            JmapError::server_unavailable()
+        let after: Vec<ChatMember> = members.into_iter().filter(|m| m.id != *user).collect();
+        let patch = serde_json::from_value(json!({ "members": after })).map_err(serde_failure)?;
+        self.inner
+            .update_object::<Chat>(&(), &self.account, chat, patch)
+            .await?;
+        Ok(())
+    }
+
+    /// `ChatBan/set` destroy: [`AgentChat::lift_ban`].
+    pub(crate) async fn destroy_ban(&self, id: &Id) -> Result<(), BackendSetError<MemoryError>> {
+        let Some(ban) = self
+            .stored::<ChatBan>(id)
+            .await
+            .map_err(BackendSetError::Other)?
+        else {
+            // The store's notFound.
+            return self
+                .inner
+                .destroy_object::<ChatBan>(&(), &self.account, id)
+                .await;
+        };
+        let mut agent = self.agent.lock().await;
+        self.lift_ban(&mut agent, &ban).await
+    }
+
+    /// Unbans the user of `ban` in the Chat's room if the room still holds
+    /// it banned, then destroys the ban. A ban the room no longer holds
+    /// (the room left, the user unbanned or removed elsewhere) is only
+    /// destroyed.
+    pub(crate) async fn lift_ban(
+        &self,
+        agent: &mut Agent,
+        ban: &ChatBan,
+    ) -> Result<(), BackendSetError<MemoryError>> {
+        let user = self
+            .contact_identity(&ban.user_id)
+            .await
+            .map_err(BackendSetError::Other)?;
+        if let (Some(room), Some(user)) = (self.room_of_chat(&ban.chat_id), user)
+            && banned_users(agent, &room).is_some_and(|banned| banned.contains(&user))
+        {
+            agent.unban(&room, &user).await.map_err(agent_failure)?;
         }
-        error => {
-            tracing::error!(
-                name: "moderation_failed",
-                method,
-                error = &error as &dyn std::error::Error,
-                "moderation failed"
-            );
-            JmapError::server_fail("internal error")
+        self.inner
+            .destroy_object::<ChatBan>(&(), &self.account, &ban.id)
+            .await
+    }
+
+    /// `Chat/set` `kickMembers` of `chat`: `Agent::kick` of each user.
+    pub(crate) async fn kick(
+        &self,
+        chat: &Chat,
+        user_ids: &[Id],
+    ) -> Result<Result<(), SetError>, MemoryError> {
+        let refused = |failure: SetFailure| match failure {
+            SetFailure::Set(e) => Ok(Err(*e)),
+            SetFailure::Other(e) => Err(e),
+        };
+        let Some(room) = self.room_of_chat(&chat.id) else {
+            return Ok(Err(invalid_property(
+                "kickMembers",
+                "the Chat is not bound to a MIMI room",
+            )));
+        };
+        if user_ids.contains(&self.account) {
+            return Ok(Err(invalid_property(
+                "kickMembers",
+                "kickMembers names the accountId",
+            )));
         }
+        let users = match self.users_of(user_ids, "kickMembers").await {
+            Ok(users) => users,
+            Err(failure) => return refused(failure),
+        };
+        let mut agent = self.agent.lock().await;
+        for user in &users {
+            if let Err(e) = agent.kick(&room, user).await {
+                return refused(agent_set_failure(e));
+            }
+        }
+        Ok(Ok(()))
+    }
+
+    /// Sync: each participant an active room holds banned has one ChatBan
+    /// in the room's Chat, and no one else has one (decision
+    /// mimid-1wgh.62 item 13).
+    pub(crate) async fn mirror_bans(&self, agent: &mut Agent) -> Result<(), SyncError> {
+        let (bans, _) = self
+            .inner
+            .get_objects::<ChatBan>(&(), &self.account, None, None)
+            .await?;
+        for room in agent.rooms() {
+            if room.status != RoomStatus::Active {
+                continue;
+            }
+            let Some(chat) = self.chat_of_room(&room.uri) else {
+                continue;
+            };
+            let Some(banned) = banned_users(agent, &room.uri) else {
+                continue;
+            };
+            let mut banned_ids = Vec::with_capacity(banned.len());
+            for user in &banned {
+                banned_ids.push(self.contact_for(user).await?);
+            }
+            for ban in bans.iter().filter(|b| b.chat_id == chat) {
+                if !banned_ids.contains(&ban.user_id) {
+                    self.inner
+                        .destroy_object::<ChatBan>(&(), &self.account, &ban.id)
+                        .await?;
+                }
+            }
+            for user in banned_ids {
+                if bans.iter().any(|b| b.chat_id == chat && b.user_id == user) {
+                    continue;
+                }
+                let ban = ChatBan::new(
+                    self.inner.mint_id(),
+                    chat.clone(),
+                    user,
+                    self.account.clone(),
+                    jmap_server::now_utc_string(),
+                );
+                self.inner.insert_object(&self.account, ban).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Sync: lifts every ban whose `expiresAt` has passed (draft-atwood-
+    /// jmap-chat-00 §ChatBan `expiresAt`: "the server MUST lift it"); a
+    /// ban that cannot be lifted is reported in `problems` and kept.
+    pub(crate) async fn expire_bans(
+        &self,
+        agent: &mut Agent,
+        problems: &mut Vec<String>,
+    ) -> Result<(), SyncError> {
+        let now = i64::try_from(crate::retry::now_secs()).unwrap_or(i64::MAX);
+        let (bans, _) = self
+            .inner
+            .get_objects::<ChatBan>(&(), &self.account, None, None)
+            .await?;
+        for ban in bans {
+            let expired = ban
+                .expires_at
+                .as_ref()
+                .is_some_and(|t| t.to_epoch_seconds().is_ok_and(|t| t <= now));
+            if !expired {
+                continue;
+            }
+            if let Err(e) = self.lift_ban(agent, &ban).await {
+                problems.push(format!(
+                    "lifting the expired ChatBan {}: {}",
+                    ban.id,
+                    SyncError::from(e)
+                ));
+            }
+        }
+        Ok(())
     }
 }

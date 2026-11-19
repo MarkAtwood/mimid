@@ -1,5 +1,5 @@
 //! The plaintext store (bead mimid-1wgh.13.12): the account's Chats,
-//! Messages, ChatContacts and ReadPositions in one JSON file, so they
+//! ChatBans, Messages, ChatContacts and ReadPositions in one JSON file, so they
 //! survive a restart, with what received Messages keep for reports
 //! ([`crate::report`]) and each Message's MIMI message IDs
 //! ([`crate::edits`]), dropped with their Message. They must: the agent cannot decrypt a message again,
@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use jmap_chat_types::{Chat, ChatContact, Message, ReadPosition};
+use jmap_chat_types::{Chat, ChatBan, ChatContact, Message, ReadPosition};
 use jmap_server::{GetObject, Id, JmapBackend, JmapObject};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -89,9 +89,10 @@ struct Snapshot {
 }
 
 /// The stored types, in the order they are restored.
-const TYPES: [&str; 4] = [
+const TYPES: [&str; 5] = [
     ChatContact::TYPE_NAME,
     Chat::TYPE_NAME,
+    ChatBan::TYPE_NAME,
     Message::TYPE_NAME,
     ReadPosition::TYPE_NAME,
 ];
@@ -248,6 +249,7 @@ impl AgentChat {
             self.all::<ChatContact>().await?,
         );
         objects.insert(Chat::TYPE_NAME.to_owned(), self.all::<Chat>().await?);
+        objects.insert(ChatBan::TYPE_NAME.to_owned(), self.all::<ChatBan>().await?);
         let messages = self.all::<Message>().await?;
         // A frank is kept only while its Message is: one the client
         // destroyed is dropped here.
