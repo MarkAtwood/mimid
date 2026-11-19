@@ -3,13 +3,15 @@
   "title": "jmap-chat-js: fetchSession sends no Authorization; no push; plain http only for localhost/127.0.0.1",
   "description": "From A4 (2026-11-16) against jmap-chat-js 9934223: (1) src/lib/jmap/session.ts:71,91 fetchSession takes no credentials, so an authenticated Session (RFC 8620 §2) answers 401; client.ts itself works. (2) Nothing reads eventSourceUrl; browser EventSource cannot send Authorization, so push needs a fetch-based stream. (3) session.ts:84-86,113-115 allow plain http only for localhost and 127.0.0.1, refusing [::1]. jmap-chat-js is Mark's repo; raise with its session/owner. mimid's acceptance harness wraps fetch to add the token (tools/acceptance/jmap-chat-js).",
   "notes": "Mark 2026-11-19: fix all three in jmap-chat-js (his repo), push to MarkAtwood/project-jmap-chat-js.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T07:05:34.064221786Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-19T21:14:35.089708595Z",
+  "updated_at": "2026-11-19T23:02:29.02188508Z",
+  "closed_at": "2026-11-19T23:02:29.02188508Z",
+  "close_reason": "Fixed in jmap-chat-js 7789c2b (pushed 2026-11-19, Mark's OK); harness updated in c41fd62.",
   "labels": [
     "upstream"
   ]
