@@ -159,8 +159,10 @@
 //!   store. A received attachment's media type is not
 //!   checked against its content, and an invalid one becomes
 //!   `application/octet-stream`.
-//! - Blobs are never deleted (see [`BlobStore`]), and attachments are
-//!   fetched one at a time while `sync` holds the agent. Updating a
+//! - Unreferenced blobs are deleted only when an upload needs room, and
+//!   referenced ones have no quota (see [`BlobStore`]; decision
+//!   mimid-1wgh.68). Attachments are fetched one at a time while `sync`
+//!   holds the agent. Updating a
 //!   Message's `mentions`, `broadcastMentions`, `readDisposition` or
 //!   `reactions` is `forbidden`. See [`edits`] for the limits of edits
 //!   and retractions.
@@ -203,6 +205,9 @@ mod sync;
 pub use backend::{
     AgentChat, CHANGE_LOG_LIMIT, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, Options,
 };
-pub use blobs::{BlobError, BlobInfo, BlobStore, MAX_ATTACHMENT_LEN, is_media_type};
+pub use blobs::{
+    BlobError, BlobInfo, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN, MAX_UNREFERENCED_BLOB_BYTES,
+    MAX_UNREFERENCED_BLOBS, MIN_UNREFERENCED_AGE, is_media_type,
+};
 pub use persist::PersistError;
 pub use sync::{SyncError, SyncReport};

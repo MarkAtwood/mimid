@@ -66,7 +66,11 @@
 //! the API's do (RFC 8620 §3.6.1). The answer is `201` with `accountId`,
 //! `blobId`, `type` (the request's `Content-Type` if it is a valid media
 //! type, else `application/octet-stream`) and `size`. Identical content
-//! gets the same `blobId` (§6.1 allows it).
+//! gets the same `blobId` (§6.1 allows it). An upload that would take the
+//! unreferenced blobs over their quota deletes the oldest of them older
+//! than an hour first, and is `403` with type
+//! `urn:ietf:params:jmap:error:overQuota` if that is not enough (RFC 8620
+//! §6; decision mimid-1wgh.68; mimid-agent-jmap's `BlobStore`).
 //!
 //! A download of a blob the account's store has answers its octets with
 //! `Content-Type` from `accept` if that is a valid media type, else
@@ -98,7 +102,9 @@ use jmap_server::{
     JmapObject, check_known_capabilities, parse_request, request_error,
 };
 use mimid_agent_core::MAX_TEXT_LEN;
-use mimid_agent_jmap::{AgentChat, MAX_ATTACHMENT_LEN, MAX_ATTACHMENTS_PER_MESSAGE, is_media_type};
+use mimid_agent_jmap::{
+    AgentChat, BlobError, MAX_ATTACHMENT_LEN, MAX_ATTACHMENTS_PER_MESSAGE, is_media_type,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -501,6 +507,12 @@ fn limit_response(status: StatusCode, limit: &str) -> Response {
         .into_response()
 }
 
+/// The body of an upload refused for the unreferenced-blob quota (RFC
+/// 8620 §6; decision mimid-1wgh.68). `overQuota` is an RFC 8620 §5.3
+/// SetError type; using it as a request-level problem type is INVENTED,
+/// NOT FROM SPEC, as mimid-server does: RFC 8620 defines none.
+const OVER_QUOTA_BODY: &str = r#"{"type":"urn:ietf:params:jmap:error:overQuota","status":403,"detail":"unreferenced blobs are over quota"}"#;
+
 /// `500` with an RFC 7807 body, after logging `error`.
 fn blob_store_failed(error: &(dyn std::error::Error + 'static)) -> Response {
     tracing::error!(
@@ -556,8 +568,21 @@ async fn upload(
         .filter(|t| is_media_type(t))
         .unwrap_or(OCTET_STREAM)
         .to_owned();
-    let info = match tokio::task::spawn_blocking(move || blobs.put(&content)).await {
+    // Decision mimid-1wgh.68: room for an unreferenced blob is made from
+    // blobs no stored object names.
+    let referenced = match endpoint.chat.referenced_blobs().await {
+        Ok(referenced) => referenced,
+        Err(error) => return blob_store_failed(&error),
+    };
+    let now = std::time::SystemTime::now();
+    let stored =
+        tokio::task::spawn_blocking(move || blobs.put_upload(&content, &referenced, now)).await;
+    let info = match stored {
         Ok(Ok(info)) => info,
+        Ok(Err(BlobError::OverQuota)) => {
+            tracing::debug!("agent upload refused: unreferenced blobs over quota");
+            return problem_response(StatusCode::FORBIDDEN, OVER_QUOTA_BODY);
+        }
         Ok(Err(error)) => return blob_store_failed(&error),
         Err(error) => return blob_store_failed(&error),
     };

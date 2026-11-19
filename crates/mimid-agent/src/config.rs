@@ -11,6 +11,8 @@
 //! invites = "from-allowed"                # optional: "any", "never"
 //! allowed_origins = ["http://localhost:5173"]  # optional CORS origins
 //! full_tree_hubs = ["mimi.hub.example"]   # optional; see below
+//! blob_quota_bytes = 268435456            # optional; unreferenced uploads kept
+//! blob_quota_count = 256                  # optional
 //!
 //! [did_webvh]                             # optional; see below
 //! support = true                          # the default
@@ -39,6 +41,13 @@
 //! full ratchet tree with every Commit, for a hub that does not rebuild the
 //! tree from the Commits it sees. Others get `distributionService`, the
 //! default (`mimid_agent_core::AgentConfig::full_tree_hubs`).
+//!
+//! `blob_quota_bytes` and `blob_quota_count` bound the uploads no stored
+//! Message names yet (RFC 8620 §6's quota of unreferenced blobs; decision
+//! mimid-1wgh.68): an upload past either deletes the oldest of them older
+//! than an hour first, or is refused. They default to
+//! `mimid_agent_jmap::MAX_UNREFERENCED_BLOB_BYTES` and
+//! `MAX_UNREFERENCED_BLOBS`.
 //!
 //! `token_file` holds the user's bearer token at `server_url`, as issued by
 //! the server (`mimid admin ... token`); surrounding whitespace is ignored.
@@ -110,6 +119,13 @@ pub struct Config {
     /// draft-atwood-mls-didwebvh-credential (bead mimid-1wgh.4.81.18).
     #[serde(default)]
     pub did_webvh: DidWebvhSetting,
+    /// The most octets of unreferenced blobs kept (decision
+    /// mimid-1wgh.68).
+    #[serde(default = "default_blob_quota_bytes")]
+    pub blob_quota_bytes: u64,
+    /// The most unreferenced blobs kept (decision mimid-1wgh.68).
+    #[serde(default = "default_blob_quota_count")]
+    pub blob_quota_count: u64,
 }
 
 /// The `[did_webvh]` table.
@@ -214,6 +230,14 @@ fn default_key_packages() -> u32 {
     DEFAULT_KEY_PACKAGES
 }
 
+fn default_blob_quota_bytes() -> u64 {
+    mimid_agent_jmap::MAX_UNREFERENCED_BLOB_BYTES
+}
+
+fn default_blob_quota_count() -> u64 {
+    mimid_agent_jmap::MAX_UNREFERENCED_BLOBS
+}
+
 impl Config {
     /// Reads and parses the configuration file at `path`.
     ///
@@ -276,6 +300,11 @@ impl Config {
     /// [`Config::sync_interval_ms`] as a duration.
     pub fn sync_interval(&self) -> Duration {
         Duration::from_millis(self.sync_interval_ms)
+    }
+
+    /// The quota of unreferenced blobs.
+    pub fn blob_quota(&self) -> mimid_agent_jmap::BlobQuota {
+        mimid_agent_jmap::BlobQuota::new(self.blob_quota_bytes, self.blob_quota_count)
     }
 }
 
@@ -390,6 +419,25 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(config.full_tree_hubs, ["mimi.hub.example"]);
+    }
+
+    #[test]
+    fn blob_quota_defaults_and_parses() {
+        let base = config_with_listen("127.0.0.1:0");
+        let config = Config::parse(&base).unwrap();
+        assert_eq!(
+            config.blob_quota(),
+            mimid_agent_jmap::BlobQuota::new(256 * 1024 * 1024, 256)
+        );
+        let config = Config::parse(&format!(
+            "{base}\nblob_quota_bytes = 1000\nblob_quota_count = 3"
+        ))
+        .unwrap();
+        assert_eq!(
+            config.blob_quota(),
+            mimid_agent_jmap::BlobQuota::new(1000, 3)
+        );
+        assert!(Config::parse(&format!("{base}\nblob_quota_bytes = -1")).is_err());
     }
 
     #[test]

@@ -111,8 +111,10 @@
 //! - `maxSizeUpload` ([`MAX_SIZE_UPLOAD`]) is under RFC 8620 §2's suggested
 //!   minimum of 50,000,000, so that a sealed attachment fits what
 //!   mimid-server stores.
-//! - Blobs are never deleted and have no quota; uploads not used in a
-//!   Message stay on disk.
+//! - Uploads no stored object names are held to a quota
+//!   (`blob_quota_bytes`, `blob_quota_count`; decision mimid-1wgh.68) and
+//!   deleted, oldest first and never within an hour of upload, only when
+//!   an upload needs room; blobs Messages name have no quota.
 //! - Sending a file needs a mimid server that stores attachments; a
 //!   received attachment whose fetch fails is retried on later syncs and
 //!   left out only when it fails for good (see mimid-agent-jmap's

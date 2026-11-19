@@ -13,21 +13,42 @@
 //! crash leaves a whole blob or none. A blob is at most
 //! [`MAX_ATTACHMENT_LEN`] octets.
 //!
+//! Unreferenced blobs have a quota of their own (RFC 8620 §6; decision
+//! mimid-1wgh.68): [`BlobQuota`], by default
+//! [`MAX_UNREFERENCED_BLOB_BYTES`] and [`MAX_UNREFERENCED_BLOBS`]. The
+//! caller says which blobs are referenced (`AgentChat::referenced_blobs`:
+//! any blob id a stored object names). When an upload
+//! ([`BlobStore::put_upload`]) would take the unreferenced blobs over the
+//! quota, the oldest are deleted first, by file modification time, until
+//! there is room; none younger than [`MIN_UNREFERENCED_AGE`] is ever
+//! deleted, and if deleting every older one would not make room, nothing
+//! is deleted and the upload is refused ([`BlobError::OverQuota`]). A
+//! blob's time is reset whenever it is stored again
+//! ([`BlobStore::put`], [`BlobStore::put_upload`]) or read to be sent
+//! ([`BlobStore::touch`]). One lock serializes every write and deletion.
+//!
 //! # Limitations
 //!
-//! - Blobs are never deleted: unreferenced uploads (RFC 8620 §6) and the
-//!   blobs of destroyed Messages stay on disk. There is no quota.
+//! - Unreferenced blobs are deleted only when an upload needs room: there
+//!   is no sweep, so they stay on disk up to the quota.
+//! - Referenced blobs (received attachments and those of kept Messages)
+//!   have no quota.
+//! - Each upload lists the directory, and the caller reads every stored
+//!   object to find the references: fine for one user's device.
 //! - The whole blob is read into memory, and file I/O blocks the calling
 //!   thread.
 //! - A blob read back is checked against its id; a file changed on disk is
 //!   an error, not repaired.
 
+use std::collections::BTreeSet;
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::{ErrorKind, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 use jmap_server::Id;
 use sha2::{Digest, Sha256};
@@ -36,6 +57,22 @@ use sha2::{Digest, Sha256};
 /// so a sealed attachment fits the 16 MiB mimid-server stores and
 /// mimid-agent-core fetches (`MAX_ASSET_LEN`). INVENTED, NOT FROM SPEC.
 pub const MAX_ATTACHMENT_LEN: usize = 16 * 1024 * 1024 - 16;
+
+/// The most octets of unreferenced blobs kept: twice the most one Message
+/// references (`MAX_ATTACHMENTS_PER_MESSAGE` × [`MAX_ATTACHMENT_LEN`]),
+/// so RFC 8620 §6's "at least the maximum total size that a single object
+/// can reference" holds. INVENTED VALUE, NOT FROM SPEC (decision
+/// mimid-1wgh.68).
+pub const MAX_UNREFERENCED_BLOB_BYTES: u64 = 256 * 1024 * 1024;
+
+/// The most unreferenced blobs kept. INVENTED VALUE, NOT FROM SPEC
+/// (decision mimid-1wgh.68).
+pub const MAX_UNREFERENCED_BLOBS: u64 = 256;
+
+/// How long an unreferenced blob is kept at least, from its upload: RFC
+/// 8620 §6's one hour, which mimid keeps even under quota pressure
+/// (decision mimid-1wgh.68).
+pub const MIN_UNREFERENCED_AGE: Duration = Duration::from_secs(3600);
 
 /// The prefix of a blob id, before the hex digest.
 const ID_PREFIX: char = 's';
@@ -64,6 +101,11 @@ pub enum BlobError {
         #[source]
         source: std::io::Error,
     },
+    /// Unreferenced blobs would exceed the [`BlobQuota`] even after every
+    /// one older than [`MIN_UNREFERENCED_AGE`] was deleted. Nothing was
+    /// deleted or written.
+    #[error("the unreferenced blobs are over quota")]
+    OverQuota,
     /// The directory or a file can be reached by group or others, or a
     /// stored blob does not match its id.
     #[error("the blob store {path}: {reason}")]
@@ -86,10 +128,50 @@ pub struct BlobInfo {
     pub sha256: [u8; 32],
 }
 
+/// The quota of unreferenced blobs (RFC 8620 §6; see the module
+/// documentation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BlobQuota {
+    /// The most octets of unreferenced blobs.
+    pub max_bytes: u64,
+    /// The most unreferenced blobs.
+    pub max_count: u64,
+}
+
+impl BlobQuota {
+    /// A quota of `max_bytes` octets and `max_count` blobs.
+    #[must_use]
+    pub fn new(max_bytes: u64, max_count: u64) -> Self {
+        Self {
+            max_bytes,
+            max_count,
+        }
+    }
+}
+
+impl Default for BlobQuota {
+    /// [`MAX_UNREFERENCED_BLOB_BYTES`] and [`MAX_UNREFERENCED_BLOBS`].
+    fn default() -> Self {
+        Self::new(MAX_UNREFERENCED_BLOB_BYTES, MAX_UNREFERENCED_BLOBS)
+    }
+}
+
 /// Plaintext blobs under one directory. See the module documentation.
 #[derive(Debug, Clone)]
 pub struct BlobStore {
     dir: PathBuf,
+    quota: BlobQuota,
+    /// Held across every write and deletion, so an eviction cannot remove
+    /// a blob another thread is storing or touching.
+    writing: Arc<Mutex<()>>,
+}
+
+/// A stored blob no one references, for eviction.
+struct Unreferenced {
+    path: PathBuf,
+    size: u64,
+    modified: SystemTime,
 }
 
 fn io<'a>(path: &'a Path, what: &'static str) -> impl FnOnce(std::io::Error) -> BlobError + 'a {
@@ -131,7 +213,23 @@ impl BlobStore {
                 });
             }
         }
-        Ok(Self { dir })
+        Ok(Self {
+            dir,
+            quota: BlobQuota::default(),
+            writing: Arc::new(Mutex::new(())),
+        })
+    }
+
+    /// This store with unreferenced blobs held to `quota`.
+    #[must_use]
+    pub fn with_quota(mut self, quota: BlobQuota) -> Self {
+        self.quota = quota;
+        self
+    }
+
+    /// The quota of unreferenced blobs.
+    pub fn quota(&self) -> BlobQuota {
+        self.quota
     }
 
     /// The directory.
@@ -139,14 +237,168 @@ impl BlobStore {
         &self.dir
     }
 
-    /// Stores `content` and returns its id, size and digest. Storing
-    /// content the store already has changes nothing.
+    /// Stores `content`, with no quota, and returns its id, size and
+    /// digest: for content a Message references as soon as it is stored (a
+    /// received attachment). Storing content the store already has
+    /// rewrites nothing but resets its time to now.
     ///
     /// # Errors
     ///
     /// [`BlobError::TooLarge`] for content over [`MAX_ATTACHMENT_LEN`], and
     /// [`BlobError::Io`] if the file cannot be written.
     pub fn put(&self, content: &[u8]) -> Result<BlobInfo, BlobError> {
+        let _writing = self.lock();
+        self.write(content, SystemTime::now())
+    }
+
+    /// Stores `content` uploaded at `now` as an unreferenced blob, and
+    /// returns its id, size and digest. `referenced` is every blob id a
+    /// stored object names. If the unreferenced blobs would then exceed
+    /// the quota, the oldest not in `referenced` and older than
+    /// [`MIN_UNREFERENCED_AGE`] at `now` are deleted first, until there is
+    /// room. Uploading content the store already has deletes nothing and
+    /// resets its time to `now` (RFC 8620 §6: "this SHOULD reset the
+    /// expiry time").
+    ///
+    /// # Errors
+    ///
+    /// [`BlobError::TooLarge`] for content over [`MAX_ATTACHMENT_LEN`],
+    /// [`BlobError::OverQuota`] if deleting every blob it may would not
+    /// make room (nothing is deleted then), and [`BlobError::Io`] if the
+    /// directory cannot be listed or a file written or deleted.
+    pub fn put_upload(
+        &self,
+        content: &[u8],
+        referenced: &BTreeSet<String>,
+        now: SystemTime,
+    ) -> Result<BlobInfo, BlobError> {
+        if content.len() > MAX_ATTACHMENT_LEN {
+            return Err(BlobError::TooLarge { len: content.len() });
+        }
+        let _writing = self.lock();
+        let id = blob_id(&Sha256::digest(content).into());
+        if !self.dir.join(&id).is_file() {
+            self.make_room(content.len() as u64, referenced, now)?;
+        }
+        self.write(content, now)
+    }
+
+    /// Resets blob `id`'s time to `now`, so it is not evicted for another
+    /// [`MIN_UNREFERENCED_AGE`]: a Message/set create calls it for each
+    /// blob it sends, before the Message that references it is stored.
+    /// Returns whether the store has the blob.
+    ///
+    /// # Errors
+    ///
+    /// [`BlobError::Io`] if the file exists but its time cannot be set.
+    pub fn touch(&self, id: &str, now: SystemTime) -> Result<bool, BlobError> {
+        if digest_of(id).is_none() {
+            return Ok(false);
+        }
+        let _writing = self.lock();
+        let path = self.dir.join(id);
+        match set_modified(&path, now) {
+            Ok(()) => Ok(true),
+            Err(BlobError::Io { source, .. }) if source.kind() == ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.writing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Deletes the oldest unreferenced blobs older than
+    /// [`MIN_UNREFERENCED_AGE`] at `now` until one more of `len` octets
+    /// fits the quota, or deletes none and refuses if that is not enough.
+    /// The caller holds the lock.
+    fn make_room(
+        &self,
+        len: u64,
+        referenced: &BTreeSet<String>,
+        now: SystemTime,
+    ) -> Result<(), BlobError> {
+        let mut unreferenced = self.unreferenced(referenced)?;
+        let mut bytes: u64 = unreferenced.iter().map(|b| b.size).sum();
+        let mut count = unreferenced.len() as u64;
+        let fits = |bytes: u64, count: u64| {
+            bytes.saturating_add(len) <= self.quota.max_bytes && count < self.quota.max_count
+        };
+        if fits(bytes, count) {
+            return Ok(());
+        }
+        // Oldest first; ties by path, so the order is fixed.
+        unreferenced.sort_by(|a, b| a.modified.cmp(&b.modified).then(a.path.cmp(&b.path)));
+        let mut evict = 0;
+        for blob in &unreferenced {
+            let old_enough = now
+                .duration_since(blob.modified)
+                .is_ok_and(|age| age >= MIN_UNREFERENCED_AGE);
+            if !old_enough {
+                // The rest are younger still.
+                break;
+            }
+            bytes -= blob.size;
+            count -= 1;
+            evict += 1;
+            if fits(bytes, count) {
+                break;
+            }
+        }
+        if !fits(bytes, count) {
+            return Err(BlobError::OverQuota);
+        }
+        for blob in &unreferenced[..evict] {
+            match std::fs::remove_file(&blob.path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => return Err(io(&blob.path, "delete")(e)),
+            }
+        }
+        tracing::debug!(
+            evicted = evict,
+            "unreferenced blobs deleted to make room for an upload"
+        );
+        Ok(())
+    }
+
+    /// The stored blobs whose ids are not in `referenced`. Temporary files
+    /// and anything else that is not named by a blob id are left out.
+    fn unreferenced(&self, referenced: &BTreeSet<String>) -> Result<Vec<Unreferenced>, BlobError> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(&self.dir).map_err(io(&self.dir, "list"))? {
+            let entry = entry.map_err(io(&self.dir, "list"))?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if digest_of(name).is_none() || referenced.contains(name) {
+                continue;
+            }
+            let path = entry.path();
+            let meta = match entry.metadata() {
+                Ok(meta) => meta,
+                Err(e) if e.kind() == ErrorKind::NotFound => continue,
+                Err(e) => return Err(io(&path, "inspect")(e)),
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            let modified = meta.modified().map_err(io(&path, "inspect"))?;
+            found.push(Unreferenced {
+                path,
+                size: meta.len(),
+                modified,
+            });
+        }
+        Ok(found)
+    }
+
+    /// Writes `content` (or finds it already written) and sets its time
+    /// to `now`. The caller holds the lock.
+    fn write(&self, content: &[u8], now: SystemTime) -> Result<BlobInfo, BlobError> {
         if content.len() > MAX_ATTACHMENT_LEN {
             return Err(BlobError::TooLarge { len: content.len() });
         }
@@ -159,6 +411,7 @@ impl BlobStore {
         };
         let path = self.dir.join(&id);
         if path.is_file() {
+            set_modified(&path, now)?;
             return Ok(info);
         }
         let temporary = self.dir.join(format!(
@@ -175,6 +428,7 @@ impl BlobStore {
             .map_err(io(&temporary, "create"))
             .and_then(|mut file| {
                 file.write_all(content)
+                    .and_then(|()| file.set_modified(now))
                     .and_then(|()| file.sync_all())
                     .map_err(io(&temporary, "write"))
             })
@@ -233,6 +487,15 @@ impl BlobStore {
         }
         Ok(Some(content))
     }
+}
+
+/// Sets the modification time of the file at `path` to `when`.
+fn set_modified(path: &Path, when: SystemTime) -> Result<(), BlobError> {
+    OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|file| file.set_modified(when))
+        .map_err(io(path, "set the time of"))
 }
 
 /// The blob id of content with digest `sha256`.
@@ -439,6 +702,145 @@ mod tests {
             store.get(info.id.as_ref()),
             Err(BlobError::Unsafe { .. })
         ));
+    }
+
+    /// A fixed start, so ages are exact.
+    fn t0() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000)
+    }
+
+    fn mins(m: u64) -> Duration {
+        Duration::from_secs(60 * m)
+    }
+
+    fn quota_store(quota: BlobQuota) -> (tempfile::TempDir, BlobStore) {
+        let (dir, store) = store();
+        (dir, store.with_quota(quota))
+    }
+
+    fn has(store: &BlobStore, blob: &BlobInfo) -> bool {
+        store.info(blob.id.as_ref()).unwrap().is_some()
+    }
+
+    #[test]
+    fn an_upload_over_the_count_quota_evicts_the_oldest_old_enough_blob() {
+        let (_dir, store) = quota_store(BlobQuota::new(1000, 2));
+        let none = BTreeSet::new();
+        let a = store.put_upload(b"a", &none, t0()).unwrap();
+        let b = store.put_upload(b"b", &none, t0() + mins(1)).unwrap();
+        // Two hours on, both are old enough; only the oldest goes.
+        let c = store.put_upload(b"c", &none, t0() + mins(120)).unwrap();
+        assert!(!has(&store, &a));
+        assert!(has(&store, &b));
+        assert!(has(&store, &c));
+    }
+
+    #[test]
+    fn a_referenced_blob_is_never_evicted() {
+        let (_dir, store) = quota_store(BlobQuota::new(1000, 1));
+        let none = BTreeSet::new();
+        let a = store.put_upload(b"a", &none, t0()).unwrap();
+        let referenced = BTreeSet::from([a.id.as_ref().to_owned()]);
+        let b = store.put_upload(b"b", &referenced, t0() + mins(1)).unwrap();
+        // B is the one unreferenced blob: C evicts it, not the older A.
+        let c = store
+            .put_upload(b"c", &referenced, t0() + mins(120))
+            .unwrap();
+        assert!(has(&store, &a));
+        assert!(!has(&store, &b));
+        assert!(has(&store, &c));
+    }
+
+    #[test]
+    fn no_blob_younger_than_an_hour_is_evicted_and_the_upload_is_refused() {
+        let (dir, store) = quota_store(BlobQuota::new(1000, 1));
+        let none = BTreeSet::new();
+        let a = store.put_upload(b"a", &none, t0()).unwrap();
+        // One second short of an hour: refused, nothing deleted or written.
+        let before = t0() + mins(60) - Duration::from_secs(1);
+        assert!(matches!(
+            store.put_upload(b"b", &none, before),
+            Err(BlobError::OverQuota)
+        ));
+        assert!(has(&store, &a));
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("blobs")).unwrap().count(),
+            1
+        );
+        // At the hour it may go.
+        let b = store.put_upload(b"b", &none, t0() + mins(60)).unwrap();
+        assert!(!has(&store, &a));
+        assert!(has(&store, &b));
+    }
+
+    #[test]
+    fn the_byte_quota_evicts_only_what_makes_room() {
+        let (_dir, store) = quota_store(BlobQuota::new(10, 100));
+        let none = BTreeSet::new();
+        let a = store.put_upload(&[1; 6], &none, t0()).unwrap();
+        let b = store.put_upload(&[2; 4], &none, t0() + mins(1)).unwrap();
+        // 5 more: evicting A (6) leaves 4 + 5 = 9, which fits.
+        let c = store.put_upload(&[3; 5], &none, t0() + mins(120)).unwrap();
+        assert!(!has(&store, &a));
+        assert!(has(&store, &b));
+        assert!(has(&store, &c));
+    }
+
+    #[test]
+    fn a_refused_upload_deletes_nothing_even_when_some_could_go() {
+        let (_dir, store) = quota_store(BlobQuota::new(10, 100));
+        let none = BTreeSet::new();
+        let old = store.put_upload(&[1; 6], &none, t0()).unwrap();
+        let young = store.put_upload(&[2; 4], &none, t0() + mins(90)).unwrap();
+        // 8 more needs both gone, and the younger may not go yet.
+        assert!(matches!(
+            store.put_upload(&[3; 8], &none, t0() + mins(120)),
+            Err(BlobError::OverQuota)
+        ));
+        assert!(has(&store, &old));
+        assert!(has(&store, &young));
+    }
+
+    #[test]
+    fn uploading_again_or_touching_resets_the_time() {
+        let (_dir, store) = quota_store(BlobQuota::new(1000, 2));
+        let none = BTreeSet::new();
+        let a = store.put_upload(b"a", &none, t0()).unwrap();
+        let b = store.put_upload(b"b", &none, t0() + mins(1)).unwrap();
+        // A again at 90 minutes: the same id, nothing evicted, and A is
+        // now the younger.
+        assert_eq!(store.put_upload(b"a", &none, t0() + mins(90)).unwrap(), a);
+        assert!(has(&store, &b));
+        let c = store.put_upload(b"c", &none, t0() + mins(121)).unwrap();
+        assert!(has(&store, &a));
+        assert!(!has(&store, &b));
+        // Touching C keeps it: at 3 hours A goes instead.
+        assert!(store.touch(c.id.as_ref(), t0() + mins(170)).unwrap());
+        let d = store.put_upload(b"d", &none, t0() + mins(180)).unwrap();
+        assert!(!has(&store, &a));
+        assert!(has(&store, &c));
+        assert!(has(&store, &d));
+        // Touching what is not there says so.
+        assert!(!store.touch(b.id.as_ref(), t0()).unwrap());
+        assert!(!store.touch("../x", t0()).unwrap());
+    }
+
+    #[test]
+    fn put_has_no_quota_and_temporary_files_are_not_blobs() {
+        let (dir, store) = quota_store(BlobQuota::new(1, 1));
+        store.put(b"received").unwrap();
+        store.put(b"received too").unwrap();
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("blobs")).unwrap().count(),
+            2
+        );
+        // A stray temporary file is neither counted nor deleted.
+        let stray = dir.path().join("blobs").join(".stray.tmp");
+        std::fs::write(&stray, b"half a blob").unwrap();
+        let referenced = BTreeSet::new();
+        let far = SystemTime::now() + mins(24 * 60);
+        store.put_upload(b"", &referenced, far).unwrap();
+        assert!(stray.exists());
     }
 
     #[cfg(unix)]

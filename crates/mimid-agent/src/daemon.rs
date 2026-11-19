@@ -133,7 +133,9 @@ impl Daemon {
             AgentChat::new(
                 agent,
                 account,
-                Options::default().with_invites(config.invites.into()),
+                Options::default()
+                    .with_invites(config.invites.into())
+                    .with_blob_quota(config.blob_quota()),
             )
             .persisted_at(config.state_dir.join(CHAT_STORE_FILE))?
             // Attachments (bead mimid-1wgh.14).

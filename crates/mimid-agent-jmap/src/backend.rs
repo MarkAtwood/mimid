@@ -24,7 +24,7 @@ use mimid_agent_core::{
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-use crate::blobs::{BlobError, BlobStore, MAX_ATTACHMENT_LEN};
+use crate::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
 use crate::convert::{MessageRef, message_ref, sender_msg_id, utc_date};
 
 /// The Chat property that names its MIMI room
@@ -73,6 +73,9 @@ pub struct Options {
     /// The change-log entries kept per data type ([`CHANGE_LOG_LIMIT`]
     /// by default; at least one is kept).
     pub change_log_limit: usize,
+    /// The quota of unreferenced blobs ([`BlobQuota::default`] by
+    /// default; decision mimid-1wgh.68).
+    pub blob_quota: BlobQuota,
 }
 
 impl Default for Options {
@@ -80,6 +83,7 @@ impl Default for Options {
         Self {
             invites: InvitePolicy::default(),
             change_log_limit: CHANGE_LOG_LIMIT,
+            blob_quota: BlobQuota::default(),
         }
     }
 }
@@ -94,6 +98,12 @@ impl Options {
     /// Options keeping `limit` change-log entries per data type.
     pub fn with_change_log_limit(mut self, limit: usize) -> Self {
         self.change_log_limit = limit;
+        self
+    }
+
+    /// Options holding unreferenced blobs to `quota`.
+    pub fn with_blob_quota(mut self, quota: BlobQuota) -> Self {
+        self.blob_quota = quota;
         self
     }
 }
@@ -179,16 +189,45 @@ impl AgentChat {
 
     /// Keeps attachments in a [`BlobStore`] in `dir` (created 0700 if
     /// missing): uploads, the attachments of Messages sent, and those
-    /// fetched for Messages received. Without it Messages carry no
-    /// attachments: the account's limits allow none and received ones are
-    /// left out.
+    /// fetched for Messages received, with unreferenced blobs held to
+    /// [`Options::blob_quota`]. Without it Messages carry no attachments:
+    /// the account's limits allow none and received ones are left out.
     ///
     /// # Errors
     ///
     /// The [`BlobError`] of [`BlobStore::open`].
     pub fn with_blobs(mut self, dir: impl Into<std::path::PathBuf>) -> Result<Self, BlobError> {
-        self.blobs = Some(BlobStore::open(dir)?);
+        self.blobs = Some(BlobStore::open(dir)?.with_quota(self.options.blob_quota));
         Ok(self)
+    }
+
+    /// Every blob id a stored object names, for the blob store's quota
+    /// (decision mimid-1wgh.68): the value of any property named `blobId`
+    /// or ending in `BlobId`, at any depth, of every Chat, ChatBan,
+    /// ChatContact, Message and ReadPosition. A Message's attachments and
+    /// their thumbnails, its edit history and a Chat's avatar all count;
+    /// a destroyed Message is no longer stored and a retracted one has no
+    /// attachments, so theirs do not. Attachments waiting for another
+    /// fetch ([`crate::retry`]) name a URL, not a blob here, so they add
+    /// nothing; a blob a retry stores is named by its Message in the same
+    /// sync and is younger than [`crate::MIN_UNREFERENCED_AGE`] meanwhile.
+    ///
+    /// # Errors
+    ///
+    /// The [`crate::PersistError`] of reading the objects.
+    pub async fn referenced_blobs(
+        &self,
+    ) -> Result<std::collections::BTreeSet<String>, crate::PersistError> {
+        let mut objects = self.all::<Message>().await?;
+        objects.extend(self.all::<Chat>().await?);
+        objects.extend(self.all::<ChatContact>().await?);
+        objects.extend(self.all::<ChatBan>().await?);
+        objects.extend(self.all::<jmap_chat_types::ReadPosition>().await?);
+        let mut ids = std::collections::BTreeSet::new();
+        for object in &objects {
+            collect_blob_ids(object, &mut ids);
+        }
+        Ok(ids)
     }
 
     /// The blob store, if there is one: the daemon serves uploads and
@@ -526,10 +565,16 @@ impl AgentChat {
         let Some(blobs) = &self.blobs else {
             return Err(no_blob(None));
         };
+        let now = std::time::SystemTime::now();
         message
             .attachments
             .iter()
             .map(|attachment| {
+                // Decision mimid-1wgh.68: not evicted while it is sent,
+                // before the Message that names it is stored.
+                blobs
+                    .touch(attachment.blob_id.as_ref(), now)
+                    .map_err(|e| BackendSetError::Other(MemoryError::new(e.to_string())))?;
                 let content = blobs
                     .get(attachment.blob_id.as_ref())
                     .map_err(|e| BackendSetError::Other(MemoryError::new(e.to_string())))?
@@ -541,6 +586,29 @@ impl AgentChat {
                 })
             })
             .collect()
+    }
+}
+
+/// Adds to `ids` the string value of every property of `value`, at any
+/// depth, named `blobId` or ending in `BlobId`.
+fn collect_blob_ids(value: &Value, ids: &mut std::collections::BTreeSet<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                if (key == "blobId" || key.ends_with("BlobId"))
+                    && let Value::String(id) = value
+                {
+                    ids.insert(id.clone());
+                }
+                collect_blob_ids(value, ids);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_blob_ids(value, ids);
+            }
+        }
+        _ => {}
     }
 }
 

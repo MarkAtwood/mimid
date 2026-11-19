@@ -218,7 +218,7 @@ impl AgentChat {
         }
     }
 
-    async fn all<O: GetObject + Serialize + Send + Sync>(
+    pub(crate) async fn all<O: GetObject + Serialize + Send + Sync>(
         &self,
     ) -> Result<Vec<Value>, PersistError> {
         let (objects, _) = self
