@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.67",
+  "title": "Server blob retention: age-based expiry, 30 days by default",
+  "description": "Bead mimid-1wgh.14.2. RFC 8620 §6: a blob no JMAP object references MAY be deleted; uploads start unreferenced; except where quota forces early deletion, an unreferenced blob MUST NOT be deleted within 1 hour of upload; when an upload would exceed the unreferenced quota the server MUST delete unreferenced blobs oldest first. mimid-server's uploads are sealed attachments (mimi-content-10 §4.5 ExternalPart) referenced only from MLS ciphertext the server cannot read, and served at /assets/{blobId} to any provider that fetches them, perhaps days later (a member offline, a proxyDownload through a hub). So the server cannot tell referenced from unreferenced.\n\nReadings:\n(a) keep forever (stage 1): an account that reaches MAX_ACCOUNT_BLOB_BYTES / MAX_ACCOUNT_BLOBS stays full.\n(b) RFC 8620 §6 quota eviction, oldest first, on upload: every blob counts as unreferenced, so a busy sender's upload deletes the attachment of a message its recipients have not fetched yet, at a time nobody can predict.\n(c) age-based expiry: every blob is deleted a fixed lifetime after upload, by a periodic sweep; the quota is unchanged and frees up as blobs expire.\n(d) client-driven deletion with draft-ietf-jmap-blobext-03 Blob/set destroy: crate-jmap at the pinned rev fe13c651 has it (jmap-blob-server, BlobBackend::destroy_blob, blobHasReference), but wiring it needs the whole BlobBackend (urn:ietf:params:jmap:blob2 capability, Blob/get, lookup, convert, upload) and a client that knows when every recipient has fetched, which none does. RFC 8620 itself defines no Blob/destroy.\n\nChosen (c). Every blob is deleted DEFAULT_BLOB_LIFETIME_SECS = 30 days after upload (INVENTED VALUE, NOT FROM SPEC), settable with blob_lifetime_secs in the server config, which refuses anything under 3600 s (RFC 8620 §6's one hour, so the rule also holds for blobs that really are unreferenced). Expiry is predictable for senders and recipients alike, needs no knowledge of references, and bounds storage at quota per account per lifetime. A sweep every BLOB_SWEEP_INTERVAL_SECS = 600 s (INVENTED VALUE) deletes expired blobs in one statement, logging one event per sweep with the count and octets, never per blob; between sweeps an expired blob may still be served for up to the interval. A migration adds an index on blob(created_at) so the sweep does not read every blob's octets.\n\nNot done, follow-up beads: (d) Blob/set destroy through jmap-blob-server; the sending agent sets ExternalPart.expires (mimi-content-10 §4.5) to upload time plus the lifetime, which needs the server to advertise the lifetime (no JMAP field exists: INVENTED if added). Until then mimid-agent-core's Sealed::part says the part never expires while the server deletes it after 30 days.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-19T18:29:22.151108931Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-19T18:29:22.151108931Z",
+  "labels": [
+    "server",
+    "jmap",
+    "attachments"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.67",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-19T18:29:22.25124054Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
