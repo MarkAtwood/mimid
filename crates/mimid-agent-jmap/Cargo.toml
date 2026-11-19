@@ -13,10 +13,10 @@ description = "JMAP Chat over mimid-agent-core: a user's MIMI rooms as Chats and
 mimid-agent-core = { path = "../mimid-agent-core" }
 mimi-content = { path = "../mimi-content" }
 # The crate-jmap revision mimid-server uses.
-jmap-chat-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c", features = ["memory"] }
-jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
-jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
-jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
+jmap-chat-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "f35cb6dfeffbed12baae2379de3c04011abd7e6f", features = ["memory"] }
+jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "f35cb6dfeffbed12baae2379de3c04011abd7e6f" }
+jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "f35cb6dfeffbed12baae2379de3c04011abd7e6f" }
+jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "f35cb6dfeffbed12baae2379de3c04011abd7e6f" }
 # The kept franks in the plaintext store.
 hex = "0.4.3"
 serde.workspace = true
