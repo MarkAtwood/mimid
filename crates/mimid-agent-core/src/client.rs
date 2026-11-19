@@ -37,6 +37,14 @@ const USING: [&str; 3] = [
 ];
 const MIMI: &str = "urn:ietf:params:jmap:chat:mimi";
 
+/// draft-ietf-jmap-metadata-05 §1.2.1.
+const METADATA: &str = "urn:ietf:params:jmap:metadata";
+
+/// The `privateMetadata` namespace in which a device records that the
+/// user accepted a room (decision mimid-1wgh.63 item 5). INVENTED, NOT
+/// FROM SPEC.
+pub const ACCEPTED_NAMESPACE: &str = "mimid.reviewcommit.com";
+
 /// How many sent-message digests are kept.
 pub(crate) const MAX_SENT: usize = 1024;
 
@@ -67,6 +75,19 @@ fn digest(bytes: &[u8]) -> u64 {
 pub(crate) struct HubSender {
     pub signature_key: [u8; 32],
     pub identity: String,
+}
+
+/// One Chat of the account with a `roomId` (draft-atwood-jmap-chat-mimi-00
+/// §Chat.roomId), and whether a device of the user recorded the room as
+/// accepted (decision mimid-1wgh.63).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OwnChat {
+    /// The Chat's id.
+    pub id: String,
+    /// The room.
+    pub room: String,
+    /// `{"accepted": true}` in [`ACCEPTED_NAMESPACE`].
+    pub accepted: bool,
 }
 
 /// One JMAP Consent record (draft-atwood-jmap-chat-mimi-00 §Consent).
@@ -101,6 +122,10 @@ pub(crate) struct Jmap {
     /// The mimi capability's `assetUrl` template, if the server stores
     /// attachments.
     asset_url: Option<String>,
+    /// Whether the account keeps Chat `privateMetadata` in vendor
+    /// namespaces (draft-ietf-jmap-metadata-05 §1.2.1), where accepted
+    /// rooms are recorded (decision mimid-1wgh.63).
+    pub chat_metadata: bool,
     http: reqwest::Client,
 }
 
@@ -152,6 +177,11 @@ impl Jmap {
             )
             .replace("{accountId}", &account_id);
         let asset_url = mimi["assetUrl"].as_str().map(str::to_owned);
+        let chat_info =
+            &session["accounts"][&account_id]["accountCapabilities"][METADATA]["dataTypes"]["Chat"];
+        let chat_metadata = session["capabilities"].get(METADATA).is_some()
+            && chat_info["supportsPrivate"] == true
+            && chat_info["supportsVendorNamespaces"] == true;
         Ok(Self {
             sent: Mutex::default(),
             api_url,
@@ -162,6 +192,7 @@ impl Jmap {
             base: base.to_owned(),
             upload_url,
             asset_url,
+            chat_metadata,
             http,
         })
     }
@@ -169,7 +200,11 @@ impl Jmap {
     /// One method call; its response arguments, or the method error.
     async fn call(&self, method: &str, mut args: Value) -> Result<Value, AgentError> {
         args["accountId"] = json!(self.account_id);
-        let body = json!({"using": USING, "methodCalls": [[method, args, "c"]]});
+        let mut using = USING.to_vec();
+        if self.chat_metadata {
+            using.push(METADATA);
+        }
+        let body = json!({"using": using, "methodCalls": [[method, args, "c"]]});
         let response = self
             .http
             .post(&self.api_url)
@@ -345,23 +380,55 @@ impl Jmap {
             .ok_or_else(|| AgentError::malformed("Room/create", "no roomId"))
     }
 
-    /// The `roomId` of every Chat of the account that has one
+    /// Every Chat of the account that has a `roomId`
     /// (draft-atwood-jmap-chat-mimi-00 §Chat.roomId), bound or not: the
-    /// rooms the user is or was in, whichever client joined them.
-    pub async fn room_ids(&self) -> Result<Vec<String>, AgentError> {
+    /// rooms the user is or was in, whichever client joined them, with
+    /// whether a device recorded the room as accepted (always `false`
+    /// without [`Jmap::chat_metadata`]). By room.
+    pub async fn own_chats(&self) -> Result<Vec<OwnChat>, AgentError> {
         const WHAT: &str = "Chat/get";
+        let selector = format!("privateMetadata/{ACCEPTED_NAMESPACE}");
+        let properties = if self.chat_metadata {
+            json!(["roomId", selector])
+        } else {
+            json!(["roomId"])
+        };
         let answer = self
-            .call(WHAT, json!({"ids": null, "properties": ["roomId"]}))
+            .call(WHAT, json!({"ids": null, "properties": properties}))
             .await?;
-        let mut rooms: Vec<String> = answer["list"]
+        let mut chats: Vec<OwnChat> = answer["list"]
             .as_array()
             .ok_or_else(|| AgentError::malformed(WHAT, "no list"))?
             .iter()
-            .filter_map(|chat| chat["roomId"].as_str().map(str::to_owned))
+            .filter_map(|chat| {
+                Some(OwnChat {
+                    id: chat["id"].as_str()?.to_owned(),
+                    room: chat["roomId"].as_str()?.to_owned(),
+                    accepted: chat["privateMetadata"][ACCEPTED_NAMESPACE]["accepted"] == true,
+                })
+            })
             .collect();
-        rooms.sort();
-        rooms.dedup();
-        Ok(rooms)
+        chats.sort_by(|a, b| a.room.cmp(&b.room).then(b.accepted.cmp(&a.accepted)));
+        chats.dedup_by(|later, first| later.room == first.room);
+        Ok(chats)
+    }
+
+    /// Records in Chat `chat_id`'s `privateMetadata` that the user accepted
+    /// its room, or (`accepted` false) removes the record (decision
+    /// mimid-1wgh.63; draft-ietf-jmap-metadata-05 §3.2).
+    pub async fn set_accepted(&self, chat_id: &str, accepted: bool) -> Result<(), AgentError> {
+        let value = if accepted {
+            json!({"accepted": true})
+        } else {
+            Value::Null
+        };
+        let mut patch = serde_json::Map::new();
+        patch.insert(format!("privateMetadata/{ACCEPTED_NAMESPACE}"), value);
+        let mut update = serde_json::Map::new();
+        update.insert(chat_id.to_owned(), Value::Object(patch));
+        self.set("Chat/set", json!({"update": update}))
+            .await
+            .map(drop)
     }
 
     /// GroupInfo/fetch of `room` with the TLS-encoded GroupInfoRequest

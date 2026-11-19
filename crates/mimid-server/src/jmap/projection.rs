@@ -10,7 +10,10 @@
 //!   the user is not or the room is followed (decisions mimid-1wgh.12.25,
 //!   mimid-1wgh.11.9). `unreadCount` counts every visible Message and
 //!   `lastMessageAt` is the latest visible `receivedAt` (decision
-//!   mimid-1wgh.12.32). Unbinding is invisible on the Chat.
+//!   mimid-1wgh.12.32). Unbinding is invisible on the Chat. `metadata` is
+//!   `{}` and `privateMetadata` the account's own (draft-ietf-jmap-metadata-05;
+//!   [`super::metadata`]): default properties only for a request using
+//!   `urn:ietf:params:jmap:metadata`, which can also filter on them.
 //! - **Message**: one per visible follower event (decision mimid-1wgh.7.7),
 //!   with a stored ULID id (decision mimid-1wgh.12.31), `bodyType`
 //!   `application/mimi-fanout` and the base64url FanoutMessage as `body`.
@@ -25,8 +28,11 @@
 //!
 //! - Message: `s.m`. `/changes` returns the Messages visible above s, plus
 //!   every visible Message of a membership above m.
-//! - Chat: `s.m.d`, where d is 16 hex digits of SHA-256 over the `name`s
-//!   of the account's hosted-room Chats, so it changes whenever one does.
+//! - Chat: `s.m.d.p`, where d is 16 hex digits of SHA-256 over the `name`s
+//!   of the account's hosted-room Chats, so it changes whenever one does,
+//!   and p the latest `privateMetadata` write of the account's Chats
+//!   (decision mimid-1wgh.63). A three-part state from before p existed
+//!   gets `cannotCalculateChanges`.
 //! - ChatContact: `m`.
 //!
 //! Messages are never updated or destroyed. `/queryChanges` always answers
@@ -59,6 +65,7 @@ use std::sync::Arc;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jmap_chat_types::{Chat, ChatContact, Message};
+use jmap_metadata_server::{MetadataCondition, MetadataFilterError};
 use jmap_server::{
     BackendChangesError, BackendQueryError, CallContext, ChangesParams, ChangesResult, GetObject,
     HandlerFuture, HandlerOutput, Id, JmapBackend, JmapError, JmapHandler, JmapObject,
@@ -74,6 +81,7 @@ use ulid::Ulid;
 use super::api::{MAX_OBJECTS_IN_GET, MAX_OBJECTS_IN_SET, Methods};
 use super::auth::Account;
 use super::language::{Localized, language_argument};
+use super::metadata;
 use crate::hub::{Hub, RoomTexts};
 use crate::store::{ChatRow, HubRow, MessageRow, ProjectionCursor, Store, StoreError};
 
@@ -111,6 +119,8 @@ const CHAT_PROPERTIES: &[&str] = &[
     "roomId",
     "locale",
     "localizations",
+    "metadata",
+    "privateMetadata",
 ];
 
 /// The Chat properties that exist only when the request names
@@ -267,6 +277,18 @@ struct ChatView {
     row: ChatRow,
     text: Localized,
     hosted: bool,
+    /// The Chat's `privateMetadata` (decision mimid-1wgh.63).
+    private: Map<String, Value>,
+}
+
+/// The highest privateMetadata write of `chats`: the fourth part of the
+/// Chat state (decision mimid-1wgh.63 item 4).
+fn metadata_seq(chats: &[ChatView]) -> u64 {
+    chats
+        .iter()
+        .map(|chat| chat.row.metadata_modseq)
+        .max()
+        .unwrap_or(0)
 }
 
 impl Projection {
@@ -297,7 +319,7 @@ impl Projection {
         let mut digest = Sha256::new();
         let views: Vec<ChatView> = rows
             .into_iter()
-            .map(|row| {
+            .map(|row| -> Result<ChatView, ProjectionError> {
                 let hosted = row.hub_domain == own;
                 // Decision mimid-1wgh.11.9: "" while the user has no current
                 // membership, so the digest moves on leaving and rejoining,
@@ -321,10 +343,32 @@ impl Projection {
                     }
                 }
                 let text = Localized::new(room.name, &room.descriptions);
-                ChatView { row, text, hosted }
+                let private = match row.private_metadata.as_deref() {
+                    None => Map::new(),
+                    Some(stored) => serde_json::from_str(stored)?,
+                };
+                Ok(ChatView {
+                    row,
+                    text,
+                    hosted,
+                    private,
+                })
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         Ok((cursor, views, hex(&digest.finalize()[..8])))
+    }
+
+    /// The account's Chat state and the ids of its Chats.
+    pub(crate) async fn chat_ids(
+        &self,
+        account: &Account,
+    ) -> Result<(String, BTreeSet<String>), ProjectionError> {
+        let (cursor, chats, digest) = self.chats(account).await?;
+        let state = chat_state(cursor, &digest, metadata_seq(&chats));
+        Ok((
+            state,
+            chats.into_iter().map(|chat| chat.row.chat_id).collect(),
+        ))
     }
 
     /// The account's current state string for `kind`.
@@ -336,8 +380,8 @@ impl Projection {
         let user = account.user().as_str();
         Ok(match kind {
             Kind::Chat => {
-                let (cursor, _, digest) = self.chats(account).await?;
-                chat_state(cursor, &digest)
+                let (cursor, chats, digest) = self.chats(account).await?;
+                chat_state(cursor, &digest, metadata_seq(&chats))
             }
             Kind::Message => message_state(self.store.projection_cursor(user).await?),
             Kind::ChatContact => self.store.projection_hubs(user).await?.0.to_string(),
@@ -374,7 +418,7 @@ impl Projection {
                     .map(|chat| chat_object(chat, account.i18n(), language))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|error| fail(error.into()))?;
-                (chat_state(cursor, &digest), objects)
+                (chat_state(cursor, &digest, metadata_seq(&chats)), objects)
             }
             Kind::Message => {
                 let unique: Option<Vec<String>> = wanted
@@ -415,14 +459,28 @@ impl Projection {
             return Err(JmapError::request_too_large());
         }
         let objects = match properties {
+            // draft-ietf-jmap-metadata-05 §3: without the capability in
+            // `using` the two are not default properties.
+            None if kind == Kind::Chat && !account.metadata() => objects
+                .into_iter()
+                .map(|mut object| {
+                    object.remove(metadata::METADATA);
+                    object.remove(metadata::PRIVATE_METADATA);
+                    object
+                })
+                .collect(),
             None => objects,
             Some(properties) => objects
                 .into_iter()
                 .map(|object| {
-                    object
+                    let mut object: Map<String, Value> = object
                         .into_iter()
-                        .filter(|(key, _)| key == "id" || properties.contains(key))
-                        .collect()
+                        .filter(|(key, _)| {
+                            key == "id" || properties.contains(key) || metadata::root(key).is_some()
+                        })
+                        .collect();
+                    metadata::select(&mut object, properties);
+                    object
                 })
                 .collect(),
         };
@@ -442,13 +500,34 @@ impl Projection {
         let comparators = comparators(kind, sort)?;
         match kind {
             Kind::Chat => {
+                let mut condition = condition;
+                // draft-ietf-jmap-metadata-05 §3.6, for a request using the
+                // capability; otherwise the six are unknown properties.
+                let meta = if account.metadata() {
+                    MetadataCondition::take_from(&mut condition, &metadata::chat_info()).map_err(
+                        |error| {
+                            BackendQueryError::Method(match error {
+                                MetadataFilterError::UnsupportedFilter(_) => {
+                                    JmapError::unsupported_filter()
+                                }
+                                other => JmapError::invalid_arguments(other.to_string()),
+                            })
+                        },
+                    )?
+                } else {
+                    MetadataCondition::default()
+                };
                 check_filter(&condition, &[("kind", Type::String), ("muted", Type::Bool)])?;
                 let (cursor, chats, digest) = self.chats(account).await?;
+                let seq = metadata_seq(&chats);
+                // Shared metadata is always {} (decision mimid-1wgh.63).
+                let shared = Map::new();
                 let mut chats: Vec<&ChatView> = chats
                     .iter()
-                    .filter(|_| {
+                    .filter(|chat| {
                         condition.get("kind").is_none_or(|kind| kind == "group")
                             && condition.get("muted").is_none_or(|muted| muted == false)
+                            && meta.matches(Some(&shared), Some(&chat.private))
                     })
                     .collect();
                 let comparators = if comparators.is_empty() {
@@ -464,7 +543,7 @@ impl Projection {
                     .then_with(|| a.row.chat_id.cmp(&b.row.chat_id))
                 });
                 let ids = chats.iter().map(|chat| chat.row.chat_id.clone()).collect();
-                Ok((chat_state(cursor, &digest), ids))
+                Ok((chat_state(cursor, &digest, seq), ids))
             }
             Kind::Message => {
                 check_filter(
@@ -550,27 +629,33 @@ impl Projection {
         }
     }
 
+    /// Chat `/changes`. `ignore_metadata` is draft-ietf-jmap-metadata-05
+    /// §3.3 `ignoreMetadataOnlyChanges`.
     async fn chat_changes(
         &self,
         account: &Account,
         since: &str,
         max_changes: Option<u64>,
+        ignore_metadata: bool,
     ) -> Result<ChangesResult, BackendChangesError<ProjectionError>> {
         let (cursor, chats, digest) = self.chats(account).await?;
-        let mut parts = since.splitn(3, '.');
-        let (Some(seq), Some(member), Some(since_digest)) = (
+        let current_metadata = metadata_seq(&chats);
+        let mut parts = since.splitn(4, '.');
+        let (Some(seq), Some(member), Some(since_digest), Some(since_metadata)) = (
             parts.next().and_then(parse_counter),
             parts.next().and_then(parse_counter),
             parts.next(),
+            parts.next().and_then(parse_counter),
         ) else {
             return Err(BackendChangesError::CannotCalculate);
         };
-        if seq > cursor.seq || member > cursor.member {
+        if seq > cursor.seq || member > cursor.member || since_metadata > current_metadata {
             return Err(BackendChangesError::CannotCalculate);
         }
         let renamed = since_digest != digest;
         let mut created = Vec::new();
         let mut updated = Vec::new();
+        let mut only_metadata = true;
         for chat in &chats {
             let row = &chat.row;
             if row.first_member > member {
@@ -580,9 +665,20 @@ impl Projection {
                 || (renamed && chat.hosted)
             {
                 updated.push(Id::from(row.chat_id.as_str()));
+                only_metadata = false;
+            } else if row.metadata_modseq > since_metadata && !ignore_metadata {
+                updated.push(Id::from(row.chat_id.as_str()));
             }
         }
-        changes(created, updated, chat_state(cursor, &digest), max_changes)
+        // -05 §3.3 `updatedProperties`.
+        let properties = only_metadata.then(|| vec![metadata::PRIVATE_METADATA.to_owned()]);
+        changes(
+            created,
+            updated,
+            chat_state(cursor, &digest, current_metadata),
+            max_changes,
+        )
+        .map(|result| result.with_updated_properties(properties))
     }
 
     async fn message_changes(
@@ -661,8 +757,9 @@ fn changes(
     ))
 }
 
-fn chat_state(cursor: ProjectionCursor, digest: &str) -> String {
-    format!("{}.{}.{digest}", cursor.seq, cursor.member)
+/// The Chat state `s.m.d.p` (module docs; decision mimid-1wgh.63 item 4).
+fn chat_state(cursor: ProjectionCursor, digest: &str, metadata: u64) -> String {
+    format!("{}.{}.{digest}.{metadata}", cursor.seq, cursor.member)
 }
 
 fn message_state(cursor: ProjectionCursor) -> String {
@@ -774,6 +871,9 @@ fn chat_object(
         "muted": false,
         "receiveTypingIndicators": true,
         "roomId": row.room_id,
+        // draft-ietf-jmap-metadata-05 §2; decision mimid-1wgh.63.
+        "metadata": {},
+        "privateMetadata": chat.private,
     });
     if let Some(last) = row.last_received_at {
         object["lastMessageAt"] = json!(utc_date(last));
@@ -1005,7 +1105,15 @@ impl JmapBackend for Projection {
         let since = params.since_state.as_ref();
         let max_changes = params.max_changes;
         match Kind::of::<O>()? {
-            Kind::Chat => self.chat_changes(caller, since, max_changes).await,
+            Kind::Chat => {
+                self.chat_changes(
+                    caller,
+                    since,
+                    max_changes,
+                    params.ignore_metadata_only_changes,
+                )
+                .await
+            }
             Kind::Message => self.message_changes(caller, since, max_changes).await,
             Kind::ChatContact => self.contact_changes(caller, since, max_changes).await,
         }
@@ -1119,8 +1227,17 @@ async fn get(
         Kind::Message | Kind::ChatContact => None,
     };
     if let Some(unknown) = properties.iter().flatten().find(|property| {
-        !kind.properties().contains(&property.as_str())
-            || (!account.i18n() && I18N_PROPERTIES.contains(&property.as_str()))
+        let selector = (kind == Kind::Chat)
+            .then(|| metadata::valid_selector(property))
+            .flatten();
+        match selector {
+            // draft-ietf-jmap-metadata-05 §3.1.
+            Some(valid) => !valid,
+            None => {
+                !kind.properties().contains(&property.as_str())
+                    || (!account.i18n() && I18N_PROPERTIES.contains(&property.as_str()))
+            }
+        }
     }) {
         return Err(JmapError::invalid_arguments(format!(
             "unknown property {unknown}"
@@ -1428,22 +1545,6 @@ impl JmapHandler<Account> for SetHandler {
                 .map(HandlerOutput::new)
         })
     }
-}
-
-/// Registers `Chat/set` with `rules`.
-pub(crate) fn register_chat_set(
-    methods: &mut Methods,
-    projection: &Arc<Projection>,
-    rules: RefusingSet,
-) {
-    methods.add(
-        "Chat/set",
-        Arc::new(SetHandler {
-            projection: Arc::clone(projection),
-            kind: Kind::Chat,
-            rules,
-        }),
-    );
 }
 
 /// Registers `Message/set` with `rules`.

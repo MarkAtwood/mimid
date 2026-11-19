@@ -2626,6 +2626,8 @@ dependencies = [
  "hyper-util",
  "jmap-chat-mimi-types",
  "jmap-chat-types",
+ "jmap-metadata-server",
+ "jmap-metadata-types",
  "jmap-server",
  "mimi-content",
  "mimi-mls",

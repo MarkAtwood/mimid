@@ -253,6 +253,15 @@ impl Fixture {
         response
     }
 
+    /// As [`Fixture::alice`], using `urn:ietf:params:jmap:metadata` too.
+    async fn meta(&self, method: &str, args: Value) -> Value {
+        let (name, response) = self
+            .call_using(&self.alice_token, &WITH_METADATA, method, args)
+            .await;
+        assert_eq!(name, method, "{response}");
+        response
+    }
+
     /// As [`Fixture::call`] as alice; the call must fail with `error`.
     async fn alice_error(&self, method: &str, args: Value, error: &str) {
         let (name, response) = self.call(&self.alice_token, method, args.clone()).await;
@@ -290,7 +299,7 @@ async fn objects_match_the_drafts() {
         chats,
         json!({
             "accountId": account,
-            "state": format!("1.1.{NO_NAMES}"),
+            "state": format!("1.1.{NO_NAMES}.0"),
             "list": [{
                 "id": chat_id,
                 "kind": "group",
@@ -372,7 +381,7 @@ async fn objects_match_the_drafts() {
         .await;
     assert_eq!(bob_chats["list"], json!([]));
     assert_eq!(bob_chats["notFound"], json!([chat_id]));
-    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}"));
+    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}.0"));
     let (_, bob_messages) = f
         .call(
             &f.bob_token,
@@ -428,7 +437,7 @@ async fn a_join_below_the_state_is_reported() {
     let changes = f
         .alice(
             "Chat/changes",
-            json!({"accountId": f.alice_id, "sinceState": format!("{later}.1.{NO_NAMES}")}),
+            json!({"accountId": f.alice_id, "sinceState": format!("{later}.1.{NO_NAMES}.0")}),
         )
         .await;
     assert_eq!(
@@ -587,7 +596,7 @@ async fn changes_report_new_chats_messages_and_contacts() {
     let chats = f
         .alice(
             "Chat/changes",
-            json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}")}),
+            json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}.0")}),
         )
         .await;
     assert_eq!(changed(&chats), (vec![chat_id.clone()], vec![]));
@@ -605,7 +614,7 @@ async fn changes_report_new_chats_messages_and_contacts() {
     f.join(LOFT, ALICE, 1, JOINED).await;
     f.alice_error(
         "Chat/changes",
-        json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}"), "maxChanges": 1}),
+        json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}.0"), "maxChanges": 1}),
         "cannotCalculateChanges",
     )
     .await;
@@ -1164,6 +1173,334 @@ async fn sets_refuse_everything() {
     ] {
         f.alice_error("Message/set", args, "invalidArguments").await;
     }
+    f.close().await;
+}
+
+const WITH_METADATA: [&str; 4] = [
+    "urn:ietf:params:jmap:core",
+    "urn:ietf:params:jmap:chat",
+    "urn:ietf:params:jmap:chat:mimi",
+    "urn:ietf:params:jmap:metadata",
+];
+
+/// Chat `privateMetadata` (draft-ietf-jmap-metadata-05; decision
+/// mimid-1wgh.63). The expected objects, errors and state behaviour are
+/// written out by hand from -05 §1.2.1, §2, §3.1, §3.2, §3.3 and §3.6.
+#[tokio::test]
+async fn chat_private_metadata_follows_draft_ietf_jmap_metadata_05() {
+    let f = fixture().await;
+    f.join(DEN, ALICE, 1, JOINED).await;
+    f.append(DEN, RECEIVED, b"fanout one").await;
+    let chat_id = f.chat_id(ALICE, DEN).await;
+    let account = f.alice_id.clone();
+
+    // §3: without the capability they are not default properties, but
+    // are returned when named; a write is invalidProperties.
+    let plain = f
+        .alice("Chat/get", json!({"accountId": account, "ids": [chat_id]}))
+        .await;
+    assert!(plain["list"][0].get("privateMetadata").is_none(), "{plain}");
+    let named = f
+        .alice(
+            "Chat/get",
+            json!({"accountId": account, "ids": [chat_id], "properties": ["privateMetadata"]}),
+        )
+        .await;
+    assert_eq!(
+        named["list"],
+        json!([{"id": chat_id, "privateMetadata": {}}])
+    );
+    let refused = f
+        .alice(
+            "Chat/set",
+            json!({"accountId": account, "update": {
+                chat_id.clone(): {"privateMetadata/acme.example": {"accepted": true}},
+            }}),
+        )
+        .await;
+    assert_eq!(
+        refused["notUpdated"][&chat_id]["type"], "invalidProperties",
+        "{refused}"
+    );
+
+    // §3.1: with it, both are default properties; metadata is {}.
+    let before = f
+        .meta("Chat/get", json!({"accountId": account, "ids": [chat_id]}))
+        .await;
+    assert_eq!(before["list"][0]["metadata"], json!({}));
+    assert_eq!(before["list"][0]["privateMetadata"], json!({}));
+    let state = before["state"].as_str().unwrap().to_owned();
+    assert_eq!(state, format!("1.1.{NO_NAMES}.0"));
+
+    // §3.2: a namespace patch.
+    let set = f.meta(
+        "Chat/set",
+        json!({"accountId": account, "ifInState": state, "update": {
+            chat_id.clone(): {"privateMetadata/acme.example": {"accepted": true, "n": {"k": "v"}}},
+        }}),
+    )
+    .await;
+    assert_eq!(set["updated"], json!({chat_id.clone(): null}), "{set}");
+    assert_eq!(set["notUpdated"], Value::Null);
+    assert_eq!(set["oldState"], state);
+    let after = set["newState"].as_str().unwrap().to_owned();
+    assert_eq!(after, format!("1.1.{NO_NAMES}.1"));
+
+    // A deeper path, and a second namespace.
+    let set = f
+        .meta(
+            "Chat/set",
+            json!({"accountId": account, "update": {chat_id.clone(): {
+                "privateMetadata/acme.example/n/k": null,
+                "privateMetadata/acme.example/n/j~1x": 1,
+                "privateMetadata/other.example": {},
+            }}}),
+        )
+        .await;
+    assert_eq!(set["updated"], json!({chat_id.clone(): null}), "{set}");
+    let latest = set["newState"].as_str().unwrap().to_owned();
+    let got = f
+        .meta("Chat/get", json!({"accountId": account, "ids": [chat_id]}))
+        .await;
+    assert_eq!(
+        got["list"][0]["privateMetadata"],
+        json!({"acme.example": {"accepted": true, "n": {"j/x": 1}}, "other.example": {}})
+    );
+    // A write that changes nothing succeeds and keeps the state.
+    let same = f
+        .meta(
+            "Chat/set",
+            json!({"accountId": account, "update": {chat_id.clone(): {
+                "privateMetadata/other.example": {},
+            }}}),
+        )
+        .await;
+    assert_eq!(same["updated"], json!({chat_id.clone(): null}));
+    assert_eq!(same["newState"], latest);
+
+    // §3.1 subselectors.
+    let sub = f.meta(
+        "Chat/get",
+        json!({"accountId": account, "ids": [chat_id],
+               "properties": ["roomId", "privateMetadata/acme.example", "privateMetadata/none.example"]}),
+    )
+    .await;
+    assert_eq!(
+        sub["list"],
+        json!([{"id": chat_id, "roomId": DEN,
+                "privateMetadata": {"acme.example": {"accepted": true, "n": {"j/x": 1}}}}])
+    );
+    for bad in [
+        "privateMetadata/",
+        "privateMetadata/a.example/x",
+        "metadata/A.example",
+    ] {
+        let (name, response) = f
+            .call_using(
+                &f.alice_token,
+                &WITH_METADATA,
+                "Chat/get",
+                json!({"accountId": account, "properties": [bad]}),
+            )
+            .await;
+        assert_eq!(name, "error", "{bad}");
+        assert_eq!(response["type"], "invalidArguments", "{bad}");
+    }
+
+    // §3.3: a metadata-only change, reported or ignored.
+    let changes = f
+        .meta(
+            "Chat/changes",
+            json!({"accountId": account, "sinceState": state}),
+        )
+        .await;
+    assert_eq!(changes["updated"], json!([chat_id.clone()]));
+    assert_eq!(changes["updatedProperties"], json!(["privateMetadata"]));
+    assert_eq!(changes["newState"], latest);
+    let ignored = f
+        .meta(
+            "Chat/changes",
+            json!({"accountId": account, "sinceState": state, "ignoreMetadataOnlyChanges": true}),
+        )
+        .await;
+    assert_eq!(ignored["updated"], json!([]));
+    assert_eq!(ignored["updatedProperties"], Value::Null);
+    assert_eq!(ignored["newState"], latest);
+    // §3: a request without the capability ignores them too.
+    let plain = f
+        .alice(
+            "Chat/changes",
+            json!({"accountId": account, "sinceState": state}),
+        )
+        .await;
+    assert_eq!(plain["updated"], json!([]));
+    // A new message is not a metadata-only change.
+    f.append(DEN, RECEIVED, b"fanout two").await;
+    let mixed = f
+        .meta(
+            "Chat/changes",
+            json!({"accountId": account, "sinceState": state}),
+        )
+        .await;
+    assert_eq!(mixed["updated"], json!([chat_id.clone()]));
+    assert_eq!(mixed["updatedProperties"], Value::Null);
+    // A three-part state from before privateMetadata cannot be followed.
+    f.alice_error(
+        "Chat/changes",
+        json!({"accountId": account, "sinceState": format!("1.1.{NO_NAMES}")}),
+        "cannotCalculateChanges",
+    )
+    .await;
+
+    // §3.6 filter conditions.
+    for (filter, expected) in [
+        (
+            json!({"privateMetadataExists": "acme.example"}),
+            json!([chat_id.clone()]),
+        ),
+        (
+            json!({"privateMetadataExists": "acme.example/accepted"}),
+            json!([chat_id.clone()]),
+        ),
+        // A namespace-only path does not match {}.
+        (json!({"privateMetadataExists": "other.example"}), json!([])),
+        (
+            json!({"privateMetadataExists": "absent.example"}),
+            json!([]),
+        ),
+        (json!({"metadataExists": "acme.example"}), json!([])),
+        (
+            json!({"privateMetadataTextEquals": {"path": "acme.example/n/j~1x", "value": "1"}}),
+            json!([]),
+        ),
+    ] {
+        let query = f
+            .meta(
+                "Chat/query",
+                json!({"accountId": account, "filter": filter.clone()}),
+            )
+            .await;
+        assert_eq!(query["ids"], expected, "{filter}");
+    }
+    let (name, response) = f
+        .call_using(
+            &f.alice_token,
+            &WITH_METADATA,
+            "Chat/query",
+            json!({"accountId": account, "filter": {"privateMetadataExists": "a.example/~2"}}),
+        )
+        .await;
+    assert_eq!(
+        (name.as_str(), &response["type"]),
+        ("error", &json!("invalidArguments"))
+    );
+    // Without the capability the condition is unknown.
+    f.alice_error(
+        "Chat/query",
+        json!({"accountId": account, "filter": {"privateMetadataExists": "acme.example"}}),
+        "unsupportedFilter",
+    )
+    .await;
+
+    // §3.2 errors, each in its own entry.
+    let deep = json!({"a": {"b": {"c": {"d": {}}}}});
+    let big = "x".repeat(16_384);
+    let cases = [
+        (
+            json!({"privateMetadata/acme.example": {}, "privateMetadata/acme.example/k": 1}),
+            "invalidPatch",
+        ),
+        (
+            json!({"privateMetadata/acme.example/~2": 1}),
+            "invalidPatch",
+        ),
+        (json!({"metadata/acme.example": {"x": 1}}), "forbidden"),
+        (
+            json!({"privateMetadata/Acme.Example": {}}),
+            "invalidProperties",
+        ),
+        // A registered name: none is supported (-05 §8.2.6).
+        (
+            json!({"privateMetadata/photography": {}}),
+            "invalidProperties",
+        ),
+        (
+            json!({"privateMetadata/missing.example/k": 1}),
+            "invalidPatch",
+        ),
+        (
+            json!({"privateMetadata/acme.example/accepted/x": 1}),
+            "invalidPatch",
+        ),
+        (
+            json!({"privateMetadata/acme.example": deep}),
+            "invalidProperties",
+        ),
+        (
+            json!({"privateMetadata/acme.example": {"big": big}}),
+            "overQuota",
+        ),
+        (
+            json!({"privateMetadata/acme.example": {"x": 1}, "muted": true}),
+            "forbidden",
+        ),
+    ];
+    for (patch, error) in cases {
+        let response = f
+            .meta(
+                "Chat/set",
+                json!({"accountId": account, "update": {chat_id.clone(): patch.clone()}}),
+            )
+            .await;
+        assert_eq!(
+            response["notUpdated"][&chat_id]["type"], error,
+            "{patch}: {response}"
+        );
+        assert_eq!(response["newState"], response["oldState"], "{patch}");
+    }
+    let unknown = f
+        .meta(
+            "Chat/set",
+            json!({"accountId": account, "update": {
+                "01ARYZ6S41TSV4RRFFQ69G5FAV": {"privateMetadata/acme.example": {}},
+            }}),
+        )
+        .await;
+    assert_eq!(
+        unknown["notUpdated"]["01ARYZ6S41TSV4RRFFQ69G5FAV"]["type"],
+        "notFound"
+    );
+    // Nothing failed above changed the value.
+    let got = f
+        .meta("Chat/get", json!({"accountId": account, "ids": [chat_id]}))
+        .await;
+    assert_eq!(
+        got["list"][0]["privateMetadata"]["acme.example"],
+        json!({"accepted": true, "n": {"j/x": 1}})
+    );
+
+    // §3.2: null replaces the whole property with {}.
+    let cleared = f
+        .meta(
+            "Chat/set",
+            json!({"accountId": account, "update": {chat_id.clone(): {"privateMetadata": null}}}),
+        )
+        .await;
+    assert_eq!(cleared["updated"], json!({chat_id.clone(): null}));
+    let got = f
+        .meta("Chat/get", json!({"accountId": account, "ids": [chat_id]}))
+        .await;
+    assert_eq!(got["list"][0]["privateMetadata"], json!({}));
+
+    // bob's state does not move with alice's private writes (§2.2).
+    let (_, bob_chats) = f
+        .call(
+            &f.bob_token,
+            "Chat/get",
+            json!({"accountId": f.bob_id, "ids": []}),
+        )
+        .await;
+    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}.0"));
     f.close().await;
 }
 

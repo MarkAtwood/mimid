@@ -87,6 +87,7 @@ impl Authenticator {
             account_id: owner.account_id,
             user,
             i18n: false,
+            metadata: false,
         })
     }
 }
@@ -118,6 +119,9 @@ pub struct Account {
     /// Whether the current request names `urn:ietf:params:jmap:i18n` in
     /// `using` (draft-atwood-jmap-updates-00 §3).
     i18n: bool,
+    /// Whether the current request names `urn:ietf:params:jmap:metadata`
+    /// in `using` (draft-ietf-jmap-metadata-05 §3).
+    metadata: bool,
 }
 
 impl Account {
@@ -142,6 +146,21 @@ impl Account {
     #[must_use]
     pub(crate) fn with_i18n(mut self, i18n: bool) -> Self {
         self.i18n = i18n;
+        self
+    }
+
+    /// Whether the request uses the metadata extension
+    /// (`urn:ietf:params:jmap:metadata` in `using`; draft-ietf-jmap-metadata-05
+    /// §3).
+    pub fn metadata(&self) -> bool {
+        self.metadata
+    }
+
+    /// This account for a request whose `using` does (`true`) or does not
+    /// name `urn:ietf:params:jmap:metadata`.
+    #[must_use]
+    pub(crate) fn with_metadata(mut self, metadata: bool) -> Self {
+        self.metadata = metadata;
         self
     }
 

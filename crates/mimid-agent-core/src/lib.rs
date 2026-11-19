@@ -57,15 +57,21 @@
 //!   but mls-rs refuses two leaves with the same identity (the
 //!   multi-device limit H1), so such a room cannot have an mls-rs member.
 //!   With a `did_webvh` credential ([`didwebvh`]) the leaves differ.
-//! - [`Agent::join_own_rooms`] joins every room of the account whose group
-//!   holds a client of the user, including one whose invite no device of
-//!   the user accepted (bead mimid-f2rn), and never a room this device
-//!   knows, left ones included. Rooms hosted before the default roles
-//!   held `canAddOwnClient` refuse new devices. Messages from before the
-//!   join are not readable on the new device. [`Agent::leave`] proposes
-//!   only this device's removal with the user's removal from the
-//!   participant list, while room-policy-04 §8.1.2 wants all the user's
-//!   clients removed with it (bead mimid-pv2k).
+//! - [`Agent::join_own_rooms`] joins only rooms a device of the user
+//!   accepted, recorded in the Chat's `privateMetadata` on the user's
+//!   server (draft-ietf-jmap-metadata-05; decision mimid-1wgh.63), and
+//!   joins nothing on a server without it. A device records acceptance
+//!   of the rooms it is in at its next [`Agent::join_own_rooms`], so a
+//!   room accepted on a device that has not synced since is not joined
+//!   yet. A device removed alone withdraws the record until another
+//!   device of the user syncs and sets it again. It never joins a room
+//!   this device knows, left ones included. Rooms hosted before the
+//!   default roles held `canAddOwnClient` refuse new devices. Messages
+//!   from before the join are not readable on the new device.
+//!   [`Agent::leave`] proposes only this device's removal with the
+//!   user's removal from the participant list, while room-policy-04
+//!   §8.1.2 wants all the user's clients removed with it (bead
+//!   mimid-pv2k).
 //! - draft-atwood-mls-didwebvh-credential-01: see [`didwebvh`]. A
 //!   BasicCredential agent supports `did_webvh` rooms by default (decision
 //!   mimid-1wgh.4.81.23). Contacts are pinned by SCID per agent; a change
@@ -127,7 +133,7 @@ pub use agent::{
     MAX_TEXT_LEN, OutgoingAttachment, OwnRoomsJoined, PendingInvite, ReceivedMessage,
     ReportOutcome, ReportedMessage, RoomInfo, Sent,
 };
-pub use client::ConsentRecord;
+pub use client::{ACCEPTED_NAMESPACE, ConsentRecord};
 pub use didwebvh::{DidWebvhConfig, RoomClient};
 pub use error::{AgentError, Source};
 pub use journal::Receipt;

@@ -90,6 +90,11 @@ async fn room_of_three(server: &Server, dir: &std::path::Path) -> (String, Agent
         hub_list(server, &room).await,
         list(&[(ALICE, 3), (BOB, 2), (CAROL, 2)])
     );
+    // Each records the room as accepted (decision mimid-1wgh.63), so a
+    // new device is held back by the group and the hub, not by that.
+    for agent in [&mut alice, &mut bob, &mut carol] {
+        assert_eq!(agent.join_own_rooms().await.unwrap(), Default::default());
+    }
     (room, alice, bob, carol)
 }
 

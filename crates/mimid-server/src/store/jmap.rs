@@ -347,6 +347,25 @@ pub struct ChatRow {
     pub last_member: u64,
     /// Whether the user is a member of the room now.
     pub bound: bool,
+    /// The Chat's privateMetadata as stored JSON text, if it was ever
+    /// written (draft-ietf-jmap-metadata-05 §2; decision mimid-1wgh.63).
+    pub private_metadata: Option<String>,
+    /// The sequence number of the latest privateMetadata write, or 0.
+    pub metadata_modseq: u64,
+}
+
+/// What [`Store::update_chat_private_metadata`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MetadataUpdate<E> {
+    /// The user has no Chat with that id.
+    NotFound,
+    /// The change refused the write; nothing was stored.
+    Refused(E),
+    /// The change left the value as it was.
+    Unchanged,
+    /// The new value was stored.
+    Written,
 }
 
 /// One event of the follower log as a user sees it.
@@ -476,6 +495,8 @@ impl Store {
             i64,
             i64,
             bool,
+            Option<String>,
+            Option<i64>,
         );
         let mut tx = self.reader.begin().await?;
         let at = cursor(&mut tx, user_uri).await?;
@@ -492,8 +513,10 @@ impl Store {
                (SELECT MAX(n.id) FROM follower_member n \
                  WHERE n.user_uri = ?1 AND n.room_id = c.room_id), \
                EXISTS (SELECT 1 FROM follower_member n \
-                 WHERE n.user_uri = ?1 AND n.room_id = c.room_id AND n.left_at IS NULL) \
+                 WHERE n.user_uri = ?1 AND n.room_id = c.room_id AND n.left_at IS NULL), \
+               m.value, m.modseq \
              FROM follower_chat c JOIN follower_room r ON r.room_id = c.room_id \
+             LEFT JOIN chat_private_metadata m ON m.chat_id = c.chat_id \
              WHERE c.user_uri = ?1 ORDER BY c.chat_id"
         ))
         .bind(user_uri)
@@ -514,6 +537,8 @@ impl Store {
                     first,
                     last,
                     bound,
+                    private_metadata,
+                    modseq,
                 )| {
                     Ok(ChatRow {
                         chat_id,
@@ -526,11 +551,63 @@ impl Store {
                         first_member: from_sql_int(first)?,
                         last_member: from_sql_int(last)?,
                         bound,
+                        private_metadata,
+                        metadata_modseq: modseq.map(from_sql_int).transpose()?.unwrap_or(0),
                     })
                 },
             )
             .collect::<Result<_, StoreError>>()?;
         Ok((at, chats))
+    }
+
+    /// Changes the privateMetadata of `user_uri`'s Chat `chat_id`
+    /// (draft-ietf-jmap-metadata-05 §2; decision mimid-1wgh.63) in one
+    /// write transaction: `change` gets the stored JSON text (`None` for a
+    /// Chat never written) and returns the new text, or `None` to leave it
+    /// as it is. Each write takes the next sequence number over every
+    /// Chat, which [`ChatRow::metadata_modseq`] reports.
+    ///
+    /// The caller checks that the new text is a JSON object; the schema
+    /// refuses anything else.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlx`] if a query fails.
+    pub async fn update_chat_private_metadata<E>(
+        &self,
+        user_uri: &str,
+        chat_id: &str,
+        change: impl FnOnce(Option<&str>) -> Result<Option<String>, E>,
+    ) -> Result<MetadataUpdate<E>, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let found: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT c.chat_id, m.value FROM follower_chat c \
+             LEFT JOIN chat_private_metadata m ON m.chat_id = c.chat_id \
+             WHERE c.user_uri = ? AND c.chat_id = ?",
+        )
+        .bind(user_uri)
+        .bind(chat_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((_, stored)) = found else {
+            return Ok(MetadataUpdate::NotFound);
+        };
+        let value = match change(stored.as_deref()) {
+            Err(error) => return Ok(MetadataUpdate::Refused(error)),
+            Ok(None) => return Ok(MetadataUpdate::Unchanged),
+            Ok(Some(value)) => value,
+        };
+        sqlx::query(
+            "INSERT INTO chat_private_metadata (chat_id, value, modseq) \
+             VALUES (?1, ?2, (SELECT COALESCE(MAX(modseq), 0) + 1 FROM chat_private_metadata)) \
+             ON CONFLICT (chat_id) DO UPDATE SET value = excluded.value, modseq = excluded.modseq",
+        )
+        .bind(chat_id)
+        .bind(value)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(MetadataUpdate::Written)
     }
 
     /// `user_uri`'s cursor and the Messages the user may see among `ids`,

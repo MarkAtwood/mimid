@@ -26,8 +26,9 @@
 //! - Blobs are never deleted ([`blobs`]).
 //! - Push is EventSource only: there is no PushSubscription (decision
 //!   mimid-1wgh.12.30).
-//! - Besides `Core/echo`, the read projection ([`projection`]), the
-//!   refusing `Chat/set` and `Message/set`, `KeyPackage/get`,
+//! - Besides `Core/echo`, the read projection ([`projection`]),
+//!   `Chat/set` of `privateMetadata` only ([`metadata`]; decision
+//!   mimid-1wgh.63), the refusing `Message/set`, `KeyPackage/get`,
 //!   `KeyPackage/set`, `KeyMaterial/fetch`, `Room/create`, `Room/update`,
 //!   `Room/send`, `Room/unbind` and `GroupInfo/fetch` are implemented; every other method answers
 //!   `unknownMethod` until its bead lands.
@@ -38,6 +39,7 @@ pub mod blobs;
 pub mod bus;
 mod eventsource;
 pub mod language;
+pub mod metadata;
 mod methods;
 pub mod projection;
 pub mod session;

@@ -129,6 +129,11 @@ pub(crate) struct State {
     /// Identifiers; decision mimid-1wgh.4.81.21).
     #[serde(default)]
     pub pinned_scids: BTreeMap<String, String>,
+    /// Rooms this device left or was removed from, whose record of the
+    /// user's acceptance the next [`crate::Agent::join_own_rooms`] removes
+    /// (decision mimid-1wgh.63 item 6).
+    #[serde(default)]
+    pub withdrawn: Vec<String>,
 }
 
 fn one() -> u64 {
@@ -265,6 +270,7 @@ impl StateDir {
             next_invite: 1,
             did_webvh_credential: None,
             pinned_scids: BTreeMap::new(),
+            withdrawn: Vec::new(),
         };
         self.save(&state)?;
         Ok((identity, state))

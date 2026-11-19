@@ -46,6 +46,7 @@ These are deliberate in the current version:
 Not deliberate; each is being fixed:
 
 - Two devices of one user can't share a group with stock mls-rs, which refuses two leaves with the same BasicCredential. Epic mimid-4lp4.
+- A user's new device joins only rooms another device of the user accepted, and only after that device has synced once since accepting; the record is the Chat's `privateMetadata` on the user's server (decision mimid-1wgh.63).
 
 Each crate documents its own limitations in the `# Limitations` section of its rustdoc.
 

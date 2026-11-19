@@ -41,7 +41,7 @@ pub use consent_record::{ConsentChanges, ConsentPatch, ConsentRecord};
 pub use follower_log::{AppendedFanout, FanoutKind, FollowerEvent, NewFanout, RoomAccess};
 pub use jmap::{
     BearerToken, ChatRow, HubRow, JmapStoreError, MalformedToken, MessageChanges, MessageRow,
-    ProjectionCursor, TOKEN_LEN, TokenOwner,
+    MetadataUpdate, ProjectionCursor, TOKEN_LEN, TokenOwner,
 };
 pub use key_packages::{
     ClaimCandidate, InsertOptions, KeyPackageClaim, KeyPackageInsert, NewKeyPackage,
@@ -245,7 +245,7 @@ mod tests {
                 .fetch_all(&store.pool)
                 .await
                 .unwrap();
-        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
         let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, domain FROM provider")
             .fetch_all(&store.pool)

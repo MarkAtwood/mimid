@@ -51,12 +51,17 @@ pub const MIMI_CAPABILITY: &str = "urn:ietf:params:jmap:chat:mimi";
 
 /// Every capability the server supports: the keys of the Session's
 /// `capabilities`, and the only URIs a request may name in `using`.
-pub const CAPABILITIES: [&str; 4] = [
+pub const CAPABILITIES: [&str; 5] = [
     CORE_CAPABILITY,
     JMAP_CHAT_URI,
     MIMI_CAPABILITY,
     I18N_CAPABILITY,
+    METADATA_CAPABILITY,
 ];
+
+/// draft-ietf-jmap-metadata-05 §1.2.1: Chat `privateMetadata` (decision
+/// mimid-1wgh.63).
+pub const METADATA_CAPABILITY: &str = jmap_metadata_types::JMAP_METADATA_URI;
 
 /// `maxSizeUpload`: [`MAX_BLOB_LEN`].
 pub const MAX_SIZE_UPLOAD: u64 = MAX_BLOB_LEN as u64;
@@ -173,6 +178,9 @@ impl SessionTemplate {
                     "assetUrl": format!("{base}{ASSET_URL_TEMPLATE}"),
                 }))?,
                 i18n: Empty {},
+                metadata: AccountMetadata {
+                    data_types: BTreeMap::from([("Chat", super::metadata::chat_info())]),
+                },
             },
         };
         Ok(SessionBody {
@@ -190,6 +198,7 @@ impl SessionTemplate {
                 chat: Empty {},
                 mimi: Empty {},
                 i18n: Empty {},
+                metadata: Empty {},
             },
             primary_accounts: BTreeMap::from([
                 (JMAP_CHAT_URI, account_id.clone()),
@@ -281,10 +290,21 @@ struct SessionCapabilities {
     /// draft-atwood-jmap-updates-00 §3.
     #[serde(rename = "urn:ietf:params:jmap:i18n")]
     i18n: Empty,
+    /// draft-ietf-jmap-metadata-05 §1.2.1: an empty object.
+    #[serde(rename = "urn:ietf:params:jmap:metadata")]
+    metadata: Empty,
 }
 
 #[derive(Debug, Serialize)]
 struct Empty {}
+
+/// draft-ietf-jmap-metadata-05 §1.2.1: the account's
+/// `urn:ietf:params:jmap:metadata` capability.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountMetadata {
+    data_types: BTreeMap<&'static str, jmap_metadata_types::DataTypeMetadataInfo>,
+}
 
 /// RFC 8620 §2: `capabilities["urn:ietf:params:jmap:core"]`.
 #[derive(Debug, Serialize)]
@@ -320,6 +340,8 @@ struct AccountCapabilities {
     /// Session (the draft dropped `preferredLanguages`, 2026-11-15).
     #[serde(rename = "urn:ietf:params:jmap:i18n")]
     i18n: Empty,
+    #[serde(rename = "urn:ietf:params:jmap:metadata")]
+    metadata: AccountMetadata,
 }
 
 /// `GET /.well-known/jmap`: the Session for the authenticated account.

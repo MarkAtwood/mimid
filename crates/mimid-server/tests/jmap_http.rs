@@ -195,7 +195,9 @@ fn expected_session(
             // draft-atwood-jmap-chat-mimi-00 L148.
             "urn:ietf:params:jmap:chat:mimi": {},
             // draft-atwood-jmap-updates-00 §3.
-            "urn:ietf:params:jmap:i18n": {}
+            "urn:ietf:params:jmap:i18n": {},
+            // draft-ietf-jmap-metadata-05 §1.2.1: an empty object.
+            "urn:ietf:params:jmap:metadata": {}
         },
         "accounts": {
             account_id: {
@@ -225,7 +227,19 @@ fn expected_session(
                         "assetUrl": "https://mimi.a.example/assets/{blobId}"
                     },
                     // draft-atwood-jmap-updates-00 §3: an empty object.
-                    "urn:ietf:params:jmap:i18n": {}
+                    "urn:ietf:params:jmap:i18n": {},
+                    // draft-ietf-jmap-metadata-05 §1.2.1; decision
+                    // mimid-1wgh.63.
+                    "urn:ietf:params:jmap:metadata": {
+                        "dataTypes": {
+                            "Chat": {
+                                "namespaces": [],
+                                "supportsVendorNamespaces": true,
+                                "supportsPrivate": true,
+                                "maxDepth": 4
+                            }
+                        }
+                    }
                 }
             }
         },

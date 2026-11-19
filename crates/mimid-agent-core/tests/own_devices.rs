@@ -19,6 +19,11 @@
 //!   a pending invite to.
 //! - did_webvh: a device the user's controller adds to the log joins a
 //!   did_webvh room, and bob sees its leaf under alice's SCID.
+//! - Acceptance (bead mimid-f2rn; decision mimid-1wgh.63): a new device
+//!   does not join a room another device left the invite to pending, and
+//!   joins it once a device accepted it; it does not join a room its user
+//!   left. The record is the Chat's `privateMetadata` on the real server,
+//!   read back with a plain JMAP request.
 
 #![forbid(unsafe_code)]
 
@@ -66,11 +71,13 @@ async fn a_new_device_joins_its_users_room_and_talks() {
     .await;
 
     // bob invites alice to a second room and a1 leaves the invite pending:
-    // a1 does not join it by external Commit either.
+    // a1 does not join it by external Commit either. This call also
+    // records the room a1 made as accepted.
     let pending = bob.host_room(&HostOptions::named("pending")).await.unwrap();
     bob.invite(&pending, ALICE).await.unwrap();
-    poll_until(&mut a1, |e| {
-        matches!(e, Event::InviteArrived { .. }).then_some(())
+    let invite = poll_until(&mut a1, |e| match e {
+        Event::InviteArrived { number } => Some(*number),
+        _ => None,
     })
     .await;
     let own = a1.join_own_rooms().await.unwrap();
@@ -80,7 +87,11 @@ async fn a_new_device_joins_its_users_room_and_talks() {
         panic!("{own:?}");
     };
     assert_eq!(skipped, &pending);
-    assert!(why.contains("pending invite"), "{why}");
+    assert!(why.contains("accepted"), "{why}");
+    assert_eq!(
+        accepted_rooms(&server, ALICE).await,
+        std::slice::from_ref(&room)
+    );
 
     // alice's second device: a fresh identity on the same account.
     let mut a2 = device(&server, ALICE, dir.path(), "a2").await;
@@ -94,17 +105,25 @@ async fn a_new_device_joins_its_users_room_and_talks() {
     );
     let epoch = a1.epoch(&room).unwrap();
     let outcome = a2.join_own_rooms().await.unwrap();
-    // a2 cannot tell that a1 left the second room's invite pending (the
-    // Add put a1's leaf in the group), so it joins both (bead mimid-f2rn).
-    let mut expected = vec![room.clone(), pending.clone()];
-    expected.sort();
-    assert_eq!(outcome.joined, expected, "{:?}", outcome.failed);
+    // The Add put a1's leaf in the second room's group, but no device of
+    // alice accepted it (bead mimid-f2rn): a2 joins only the first.
+    assert_eq!(
+        outcome.joined,
+        std::slice::from_ref(&room),
+        "{:?}",
+        outcome.failed
+    );
     assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
+    let [(skipped, why)] = outcome.skipped.as_slice() else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(skipped, &pending);
+    assert!(why.contains("accepted"), "{why}");
     assert_eq!(a2.epoch(&room).unwrap(), epoch + 1);
     assert!(
         a2.rooms()
             .iter()
-            .all(|r| expected.contains(&r.uri) && r.status == RoomStatus::Active)
+            .all(|r| r.uri == room && r.status == RoomStatus::Active)
     );
     // a2 reports the room it joined; nothing it held is a problem.
     poll_until(&mut a2, |e| match e {
@@ -143,6 +162,39 @@ async fn a_new_device_joins_its_users_room_and_talks() {
         "from the old device",
         ALICE,
         &mut [&mut bob, &mut a2],
+    )
+    .await;
+
+    // Still nothing more to join.
+    let again = a2.join_own_rooms().await.unwrap();
+    assert!(
+        again.joined.is_empty() && again.failed.is_empty(),
+        "{again:?}"
+    );
+
+    // a1 accepts the second room; its next call records it, and a2 joins.
+    assert_eq!(a1.join(invite).unwrap(), pending);
+    catch_up(&mut bob, &a1, &pending).await;
+    let own = a1.join_own_rooms().await.unwrap();
+    assert!(own.skipped.is_empty() && own.joined.is_empty(), "{own:?}");
+    let mut both = vec![room.clone(), pending.clone()];
+    both.sort();
+    assert_eq!(accepted_rooms(&server, ALICE).await, both);
+    let outcome = a2.join_own_rooms().await.unwrap();
+    assert_eq!(
+        outcome.joined,
+        std::slice::from_ref(&pending),
+        "{:?}",
+        outcome.failed
+    );
+    catch_up(&mut bob, &a2, &pending).await;
+    catch_up(&mut a1, &a2, &pending).await;
+    sends(
+        &mut bob,
+        &pending,
+        "now both of you",
+        BOB,
+        &mut [&mut a1, &mut a2],
     )
     .await;
 
@@ -211,6 +263,8 @@ async fn the_hub_refuses_a_new_device_without_can_add_own_client() {
     };
     let room = a1.host_room(&options).await.unwrap();
     let epoch = a1.epoch(&room).unwrap();
+    // Records the room as accepted.
+    assert_eq!(a1.join_own_rooms().await.unwrap(), Default::default());
 
     let mut a2 = device(&server, ALICE, dir.path(), "a2").await;
     let outcome = a2.join_own_rooms().await.unwrap();
@@ -225,6 +279,60 @@ async fn the_hub_refuses_a_new_device_without_can_add_own_client() {
     // The room did not change.
     assert!(a1.poll().await.unwrap().is_empty());
     assert_eq!(a1.epoch(&room).unwrap(), epoch);
+}
+
+/// The rooms whose Chat records alice's acceptance, as the server
+/// returns them to a plain JMAP Chat/get (draft-ietf-jmap-metadata-05
+/// §3.1): the oracle for what the devices wrote.
+async fn accepted_rooms(server: &common::Server, user: &str) -> Vec<String> {
+    let http = reqwest::Client::new();
+    let session: serde_json::Value = serde_json::from_slice(
+        &http
+            .get(format!("{}/.well-known/jmap", server.base))
+            .bearer_auth(&server.tokens[user])
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let account = session["primaryAccounts"]["urn:ietf:params:jmap:chat"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let body = serde_json::json!({
+        "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat",
+                  "urn:ietf:params:jmap:chat:mimi", "urn:ietf:params:jmap:metadata"],
+        "methodCalls": [["Chat/get", {"accountId": account, "ids": null}, "c"]],
+    });
+    let answer: serde_json::Value = serde_json::from_slice(
+        &http
+            .post(format!("{}/jmap/api", server.base))
+            .bearer_auth(&server.tokens[user])
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let mut rooms: Vec<String> = answer["methodResponses"][0][1]["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|chat| {
+            chat["privateMetadata"]["mimid.reviewcommit.com"]
+                == serde_json::json!({"accepted": true})
+        })
+        .map(|chat| chat["roomId"].as_str().unwrap().to_owned())
+        .collect();
+    rooms.sort();
+    rooms
 }
 
 fn key(agent: &Agent) -> PublicKey {
@@ -269,6 +377,8 @@ async fn a_device_the_log_adds_joins_a_did_webvh_room() {
     bob.invite(&room, ALICE).await.unwrap();
     accept(&mut a1, &room).await;
     assert_agreement(&room, &a1, &bob);
+    // Records the accepted room.
+    assert_eq!(a1.join_own_rooms().await.unwrap(), Default::default());
 
     // The controller adds a3 to the log; a3 takes it and joins.
     let mut a3 = device_with(&server, ALICE, dir.path(), "a3", none()).await;

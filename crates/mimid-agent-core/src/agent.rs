@@ -363,10 +363,12 @@ pub struct OwnRoomsJoined {
     pub joined: Vec<String>,
     /// The rooms not joined because of an error, with why.
     pub failed: Vec<(String, String)>,
-    /// The rooms not this device's to join, with why: the hub does not
-    /// let the user in, the group holds no client of the user, or this
-    /// device has a pending invite to the room. Not tried again until the
-    /// agent is opened again.
+    /// The rooms not this device's to join, with why: no device of the
+    /// user accepted the room's invite, the server keeps no record of
+    /// accepted rooms, the hub does not let the user in, the group holds
+    /// no client of the user, or this device has a pending invite to the
+    /// room. A room not accepted is looked at again at the next call; the
+    /// others not until the agent is opened again.
     pub skipped: Vec<(String, String)>,
 }
 
@@ -1314,11 +1316,24 @@ impl Agent {
     /// `roomId`s of the account's Chats (draft-atwood-jmap-chat-mimi-00
     /// §Chat.roomId); each one this device does not know gets
     /// GroupInfo/fetch (protocol-07 §5.6) and an external Commit through
-    /// Room/update. A room joins only if the group already holds a client
-    /// of this user, so a participant whose clients were all kicked does
-    /// not come back this way, and never if this device has a pending
-    /// invite to it ([`Agent::join`] decides that). The hub's room policy
-    /// decides (room-policy-04 §8.1.1 `canAddOwnClient`).
+    /// Room/update. A room joins only if a device of the user accepted it
+    /// (bead mimid-f2rn; decision mimid-1wgh.63): its Chat's
+    /// `privateMetadata` holds `{"accepted": true}` in
+    /// [`crate::ACCEPTED_NAMESPACE`]. Being added by another
+    /// user's Add is not acceptance: the invite policy, or the user, of a
+    /// device that got the Welcome decides that ([`Agent::join`]). A room
+    /// also joins only if the group already holds a client of this user,
+    /// so a participant whose clients were all kicked does not come back
+    /// this way, and never if this device has a pending invite to it. The
+    /// hub's room policy decides (room-policy-04 §8.1.1 `canAddOwnClient`).
+    ///
+    /// First, it records each room this device is an active member of as
+    /// accepted (so a Welcome joined with [`Agent::join`], a room made
+    /// with [`Agent::host_room`] and a room joined this way are all
+    /// accepted, and so are rooms joined before acceptance was recorded),
+    /// and removes the record of each room this device left or was
+    /// removed from since the last call. Another device still in such a
+    /// room records it again.
     ///
     /// A room whose GroupInfo the hub refuses, or that fails the checks,
     /// is not tried again until the agent is opened again, and the group
@@ -1335,15 +1350,31 @@ impl Agent {
     /// [`OwnRoomsJoined::skipped`], not an error.
     pub async fn join_own_rooms(&mut self) -> Result<OwnRoomsJoined, AgentError> {
         let mut outcome = OwnRoomsJoined::default();
-        let rooms: Vec<String> = self
-            .jmap
-            .room_ids()
-            .await?
-            .into_iter()
-            .filter(|room| {
-                !self.state.rooms.contains_key(room) && !self.not_joinable.contains(room)
-            })
-            .collect();
+        let chats = self.jmap.own_chats().await?;
+        self.record_acceptance(&chats).await?;
+        let mut rooms = Vec::new();
+        for chat in chats {
+            if self.state.rooms.contains_key(&chat.room) || self.not_joinable.contains(&chat.room) {
+                continue;
+            }
+            // Decision mimid-1wgh.63; bead mimid-f2rn.
+            if !self.jmap.chat_metadata {
+                self.not_joinable.insert(chat.room.clone());
+                outcome.skipped.push((
+                    chat.room,
+                    "the server keeps no record of the rooms this user accepted \
+                     (Chat privateMetadata, draft-ietf-jmap-metadata-05)"
+                        .to_owned(),
+                ));
+            } else if !chat.accepted {
+                outcome.skipped.push((
+                    chat.room,
+                    "no device of this user has accepted the room's invite".to_owned(),
+                ));
+            } else {
+                rooms.push(chat.room);
+            }
+        }
         if rooms.is_empty() {
             return Ok(outcome);
         }
@@ -1388,6 +1419,75 @@ impl Agent {
             }
         }
         Ok(outcome)
+    }
+
+    /// Records in the account's Chats (decision mimid-1wgh.63 item 6) that
+    /// the user accepted each room this device is an active member of,
+    /// and removes the record of each room in `withdrawn` this device is
+    /// no longer in. A write the server refuses is logged and tried again
+    /// at the next call.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::State`] if the state cannot be saved.
+    async fn record_acceptance(
+        &mut self,
+        chats: &[crate::client::OwnChat],
+    ) -> Result<(), AgentError> {
+        if !self.jmap.chat_metadata {
+            return Ok(());
+        }
+        let withdrawn = std::mem::take(&mut self.state.withdrawn);
+        let mut keep = Vec::new();
+        for chat in chats {
+            let active = self
+                .state
+                .rooms
+                .get(&chat.room)
+                .is_some_and(|r| r.status == RoomStatus::Active);
+            let accepted = if active && !chat.accepted {
+                true
+            } else if !active && chat.accepted && withdrawn.contains(&chat.room) {
+                false
+            } else {
+                continue;
+            };
+            match self.jmap.set_accepted(&chat.id, accepted).await {
+                Ok(()) => tracing::info!(
+                    name: "room_acceptance_recorded",
+                    room = chat.room.as_str(),
+                    accepted,
+                    "recorded whether this user accepted a room"
+                ),
+                Err(error) => {
+                    tracing::warn!(
+                        name: "room_acceptance_not_recorded",
+                        room = chat.room.as_str(),
+                        accepted,
+                        error = &error as &dyn std::error::Error,
+                        "could not record whether this user accepted a room; trying again later"
+                    );
+                    if !accepted {
+                        keep.push(chat.room.clone());
+                    }
+                }
+            }
+        }
+        // A withdrawn room this device is back in, or whose Chat is
+        // already unmarked, needs nothing more.
+        if !withdrawn.is_empty() || !keep.is_empty() {
+            self.state.withdrawn = keep;
+            self.save()?;
+        }
+        Ok(())
+    }
+
+    /// Queues `room`'s record of the user's acceptance for removal by the
+    /// next [`Agent::join_own_rooms`] (decision mimid-1wgh.63 item 6).
+    fn withdraw(&mut self, room: &str) {
+        if !self.state.withdrawn.iter().any(|r| r == room) {
+            self.state.withdrawn.push(room.to_owned());
+        }
     }
 
     /// One room of [`Agent::join_own_rooms`]. The error comes with what
@@ -2522,6 +2622,7 @@ impl Agent {
         if let Some(r) = self.state.rooms.get_mut(room) {
             r.status = RoomStatus::Left;
         }
+        self.withdraw(room);
     }
 
     async fn incoming(&mut self, item: &[u8], events: &mut Vec<Event>) {

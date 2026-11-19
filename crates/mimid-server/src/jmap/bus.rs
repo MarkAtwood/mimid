@@ -55,6 +55,12 @@ pub enum Change {
         /// The user's URI.
         user_uri: String,
     },
+    /// The local user `user_uri` wrote a Chat's `privateMetadata`
+    /// (decision mimid-1wgh.63).
+    ChatMetadata {
+        /// The user's URI.
+        user_uri: String,
+    },
     /// Changes were lost before reaching the bus; every state may have
     /// moved.
     Lagged,
