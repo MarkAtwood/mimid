@@ -47,6 +47,9 @@
 //! - The hub, follower, relay and fanout worker each have their own
 //!   [`PeerClient`], so each fetches and caches peer directories
 //!   separately.
+//! - SIGINT and SIGTERM stop it gracefully, once logging is set up; one
+//!   that arrives during startup stops it as soon as it serves. A signal
+//!   before that (while the configuration loads) kills it. Unix only.
 //! - On shutdown the fanout worker is abandoned mid-request; the row is
 //!   sent again on the next start.
 //! - The hub's signing and franking keys are stored unencrypted in the
@@ -83,6 +86,7 @@ use mimid_server::provider_auth::{
 use mimid_server::store::Store;
 use mimid_server::telemetry::Telemetry;
 use mimid_server::tls::ProxyPolicy;
+use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -127,6 +131,9 @@ async fn main() -> anyhow::Result<()> {
             .with(telemetry.layers())
             .init(),
     }
+    // Before any other startup work, so a signal from here on shuts down
+    // cleanly (bead mimid-8jsy).
+    let signals = shutdown_signal();
     if let Some(telemetry_config) = &config.telemetry {
         tracing::info!(
             name: "telemetry_configured",
@@ -230,7 +237,7 @@ async fn main() -> anyhow::Result<()> {
     let (stop_streams, streams_stopped) = tokio::sync::watch::channel(false);
     jmap_options.stop = Some(streams_stopped);
     let shutdown = async move {
-        shutdown_signal().await;
+        signals.await;
         let _ = stop_streams.send(true);
     };
     jmap_options.clock = Arc::clone(&clock);
@@ -401,22 +408,43 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Resolves when ctrl-c is received. If the signal handler cannot be
-/// installed, logs the failure and never resolves, so the server keeps
-/// running rather than exiting at once.
-async fn shutdown_signal() {
-    match tokio::signal::ctrl_c().await {
-        Ok(()) => tracing::info!(
-            name: "shutdown_requested",
-            "ctrl-c received, shutting down"
-        ),
+/// Installs the SIGINT and SIGTERM handlers now and returns a future that
+/// resolves on the first of them, including one that arrived before it was
+/// first polled. Installing them at the start of `main` rather than when
+/// the serving loop first polls the future closes the window in which a
+/// signal took the default action and killed the process (bead
+/// mimid-8jsy). A signal during startup is kept and stops the server as
+/// soon as it serves. If a handler cannot be installed, logs the failure
+/// and waits for the other signal only; if neither can be, never resolves,
+/// so the server keeps running rather than exiting at once.
+fn shutdown_signal() -> impl Future<Output = ()> {
+    let install = |kind: SignalKind, name: &'static str| match signal(kind) {
+        Ok(signal) => Some(signal),
         Err(error) => {
             tracing::error!(
                 name: "shutdown_signal_unavailable",
                 error = &error as &dyn std::error::Error,
-                "cannot listen for ctrl-c; graceful shutdown disabled"
+                signal = name,
+                "cannot listen for the signal; graceful shutdown on it disabled"
             );
-            std::future::pending::<()>().await;
+            None
         }
+    };
+    let interrupt = install(SignalKind::interrupt(), "SIGINT");
+    let terminate = install(SignalKind::terminate(), "SIGTERM");
+    async move {
+        let wait = |signal: Option<Signal>| async move {
+            match signal {
+                Some(mut signal) => {
+                    signal.recv().await;
+                }
+                None => std::future::pending::<()>().await,
+            }
+        };
+        let signal = tokio::select! {
+            () = wait(interrupt) => "SIGINT",
+            () = wait(terminate) => "SIGTERM",
+        };
+        tracing::info!(name: "shutdown_requested", signal, "shutting down");
     }
 }

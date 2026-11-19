@@ -90,7 +90,7 @@ fn read_lines(
 impl Server {
     /// Writes `config` of fresh [`Addrs`] to `mimid.toml` in `dir`, starts
     /// the binary on it with `env`, and waits until it serves (see
-    /// [`Server::wait_listening`]). If another process took one of the
+    /// [`Server::wait_for`]). If another process took one of the
     /// ports first ([`free_port`]), starts again on new ones, up to five
     /// times. `env` must let the binary log `mimid listening` (INFO, target
     /// `mimid`).
@@ -98,6 +98,19 @@ impl Server {
         dir: &Path,
         env: &[(&str, &str)],
         config: impl Fn(&Addrs) -> String,
+    ) -> (Self, Addrs) {
+        Self::start_until(dir, env, config, "mimid listening", true).await
+    }
+
+    /// [`Server::start`], but returning as soon as the binary has written a
+    /// line containing `line`, and without the request when `serve_check`
+    /// is false, so a test can act at that point of startup.
+    async fn start_until(
+        dir: &Path,
+        env: &[(&str, &str)],
+        config: impl Fn(&Addrs) -> String,
+        line: &str,
+        serve_check: bool,
     ) -> (Self, Addrs) {
         for _ in 0..5 {
             let addrs = Addrs::new();
@@ -122,8 +135,14 @@ impl Server {
                 stderr,
                 readers,
             };
-            match server.wait_listening(&addrs).await {
-                Ok(()) => return (server, addrs),
+            match server.wait_for(line).await {
+                Ok(()) if !serve_check => return (server, addrs),
+                // Served, so the binary is in its serving loop.
+                Ok(()) => {
+                    let directory = format!("{}/.well-known/mimi-protocol-directory", addrs.base());
+                    reqwest::get(&directory).await.unwrap();
+                    return (server, addrs);
+                }
                 Err(logs) if logs.contains("Address already in use") => {}
                 Err(logs) => panic!("the server exited at startup:\n{logs}"),
             }
@@ -131,17 +150,18 @@ impl Server {
         panic!("five starts found a port taken");
     }
 
-    /// Waits up to 30 seconds for the binary's `mimid listening` line, which
-    /// it logs after binding its listener and, before that, its local
-    /// control listener, then for an answer to one request. Waiting for one
-    /// listener to answer says nothing of the other, since the binary binds
-    /// them one after another with other startup work between them
-    /// (`main.rs`; bead mimid-fchx); and only this process's own line shows
-    /// that the port is not another process's. An error holds what the
-    /// server wrote, if it exited first.
-    async fn wait_listening(&mut self, addrs: &Addrs) -> Result<(), String> {
+    /// Waits up to 30 seconds for a line containing `line` from the
+    /// binary, checking every millisecond. For `mimid listening`, which it
+    /// logs after binding its listener and, before that, its local control
+    /// listener, [`Server::start`] then waits for an answer to one request:
+    /// waiting for one listener to answer says nothing of the other, since
+    /// the binary binds them one after another with other startup work
+    /// between them (`main.rs`; bead mimid-fchx); and only this process's
+    /// own line shows that the port is not another process's. An error
+    /// holds what the server wrote, if it exited first.
+    async fn wait_for(&mut self, line: &str) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(30);
-        while !self.logs().contains("mimid listening") {
+        while !self.logs().contains(line) {
             if self.child.try_wait().unwrap().is_some() {
                 for reader in self.readers.drain(..) {
                     reader.join().unwrap();
@@ -153,13 +173,24 @@ impl Server {
                 "the server did not start:\n{}",
                 self.logs()
             );
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        // Served, so the binary is in its serving loop, which installs its
-        // SIGINT handler.
-        let directory = format!("{}/.well-known/mimi-protocol-directory", addrs.base());
-        reqwest::get(&directory).await.unwrap();
         Ok(())
+    }
+
+    /// Sends SIGINT and waits up to `limit` for the process to exit.
+    async fn interrupt(&mut self, limit: Duration) -> std::process::ExitStatus {
+        let pid = self.child.id().to_string();
+        let killed = Command::new("kill").args(["-INT", &pid]).status().unwrap();
+        assert!(killed.success());
+        let deadline = Instant::now() + limit;
+        loop {
+            if let Some(exit) = self.child.try_wait().unwrap() {
+                return exit;
+            }
+            assert!(Instant::now() < deadline, "server did not stop");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     /// Everything the server wrote so far: standard output, then standard
@@ -624,4 +655,59 @@ async fn the_session_advertises_the_configured_blob_lifetime() {
         &session["accounts"][account]["accountCapabilities"]["urn:ietf:params:jmap:chat:mimi"];
     assert_eq!(mimi["assetLifetime"], serde_json::json!(7201), "{mimi}");
     assert!(mimi["assetUrl"].is_string(), "{mimi}");
+}
+
+/// SIGINT at any point once startup has logged something stops the binary
+/// cleanly: exit status 0 and the `mimid stopped` line (bead mimid-8jsy).
+/// Before the fix the handler was installed only when the serving loop
+/// first polled it, after `mimid listening`, so a SIGINT during startup
+/// took the default action and killed the process. Each run sends it the
+/// moment the binary writes one of two lines: `local control listener
+/// on`, the middle of startup, and `mimid listening`, the last line before
+/// the serving loop, with no request in between.
+///
+/// Oracle: the exit status and the binary's own shutdown line.
+#[tokio::test]
+async fn sigint_during_startup_stops_cleanly() {
+    const RUNS: usize = 25;
+    for line in ["local control listener on", "mimid listening"] {
+        for run in 0..RUNS {
+            let dir = tempfile::tempdir().unwrap();
+            let config = |addrs: &Addrs| {
+                format!(
+                    "domain = \"a.example\"\n\
+                 listen = \"{listen}\"\n\
+                 base_url = \"{base}\"\n\
+                 database = \"{database}\"\n\
+                 local_listen = \"{local}\"\n",
+                    listen = addrs.listen,
+                    base = addrs.base(),
+                    local = addrs.local,
+                    database = dir.path().join("mimid.sqlite").display(),
+                )
+            };
+            let (mut server, _addrs) = Server::start_until(
+                dir.path(),
+                &[("RUST_LOG", "warn,mimid=info")],
+                config,
+                line,
+                false,
+            )
+            .await;
+            let exit = server.interrupt(Duration::from_secs(30)).await;
+            let stdout = server.exited_stdout().join("\n");
+            // Another process took the second port after the first line.
+            if server.logs().contains("Address already in use") {
+                continue;
+            }
+            assert!(
+                exit.success(),
+                "SIGINT at {line:?}, run {run}: {exit:?}\n{stdout}"
+            );
+            assert!(
+                stdout.contains("mimid stopped"),
+                "SIGINT at {line:?}, run {run}: no shutdown line\n{stdout}"
+            );
+        }
+    }
 }
