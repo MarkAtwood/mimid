@@ -2,14 +2,14 @@
   "id": "mimid-s2qc",
   "title": "crate-jmap (rev 573c573): MemoryBackend grows without bound outside tests; no chosen-id insert; ChatBackend can't pass calls through",
   "description": "Found by A2 (mimid-agent-jmap, 2026-11-16). (1) MemoryBackend event lists are drained only by test-only methods, so a real embedder leaks: create_message pushes an entry per Message (crate-jmap-chat-server/src/memory.rs:1310), outbound events (memory.rs:1623), lifecycle events (memory.rs:594). A2 avoids all three (create_object for Messages, ignores outbound events, no lifecycle hooks). (2) create_object calls the build closure once with the minted id (backend.rs:559, :680): a wrapper that must act before storing builds with a placeholder id and rebuilds via serde. (3) seed_object (memory.rs:482) bypasses the change log; the only alternative is test-only, so a backend cannot store an object under an id it chose (blocks hash-derived ChatContact ids in the agent, as mimid-server uses). (4) ChatBackend (backend.rs:535) has no passthrough/default delegation, so wrapping MemoryBackend hand-forwards ~30 methods. Raise with the crate-jmap session/owner; A5 (persistence) will want (1) and (3) fixed.",
-  "notes": "crate-jmap session accepted 2026-11-19: JMAP-it7g.3-.6 (bounded event lists, id-first create, chosen-id store with change log, delegating ChatBackend).",
+  "notes": "crate-jmap session accepted 2026-11-19: JMAP-it7g.3-.6 (bounded event lists, id-first create, chosen-id store with change log, delegating ChatBackend).\ncrate-jmap 9953eea1 (JMAP-it7g.3-.5): with_change_log_limit(n); with_event_limit(n) + public drain_outbound_events/drain_lifecycle_events; mint_id() then insert_object/insert_message (logged create under the object's own id, uniqueness checks, alreadyExists if taken) — covers hash-derived ChatContact ids. it7g.6 (delegating ChatBackend wrapper) waits on Mark's design call in the crate-jmap session. mimid to adopt in the same crate-jmap bump as mimid-1t3p/mimid-sqxc: set event and change-log limits in AgentChat, drop the placeholder-id rebuild.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T05:27:40.032489787Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-19T15:34:21.106336551Z",
+  "updated_at": "2026-11-19T17:05:43.207187497Z",
   "labels": [
     "upstream"
   ]
