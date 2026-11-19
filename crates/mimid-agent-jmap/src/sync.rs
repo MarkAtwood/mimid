@@ -7,7 +7,7 @@ use jmap_chat_types::{
     Message,
 };
 use jmap_server::{BackendSetError, Id, JmapBackend, now_utc_string};
-use mimi_content::{ExternalPart, Part};
+use mimi_content::{ExternalPart, MimiContent, Part};
 use mimid_agent_core::{Agent, AgentError, Event, ReceivedMessage, RoomStatus};
 use serde_json::json;
 
@@ -58,12 +58,17 @@ pub struct SyncReport {
     pub joined: Vec<String>,
     /// Invites left pending by the invite policy, by number.
     pub pending_invites: Vec<u64>,
+    /// Edits and retractions applied to stored Messages
+    /// ([`crate::edits`]).
+    pub edits: usize,
     /// Received messages not stored, with why: neither text nor
-    /// attachments, or an edit.
+    /// attachments, or an edit or retraction of a message not stored
+    /// here or already retracted.
     pub skipped: Vec<String>,
-    /// The agent's problems ([`Event::Problem`]), and received
-    /// attachments left out or waiting for a retry because they could not
-    /// be fetched, opened or stored, as text.
+    /// The agent's problems ([`Event::Problem`]), received attachments
+    /// left out or waiting for a retry because they could not be fetched,
+    /// opened or stored, and edits and retractions refused (not by the
+    /// original sender), as text.
     pub problems: Vec<String>,
     /// Attachments fetched on a retry and added to their Messages
     /// ([`crate::retry`]).
@@ -618,11 +623,10 @@ impl AgentChat {
             return Ok(());
         }
         let content = &received.content;
-        if content.replaces.is_some() {
-            report
-                .skipped
-                .push(format!("{}: an edit or retraction", received.room));
-            return Ok(());
+        if let Some(replaces) = &content.replaces {
+            return self
+                .apply_replacement(&chat, replaces, &received, report)
+                .await;
         }
         let parts = received.attachments();
         let text = match received.text.clone() {
@@ -638,16 +642,7 @@ impl AgentChat {
         let (attachments, retry) = self
             .fetch_attachments(agent, &received.room, &parts, report)
             .await;
-        let body_type = match &content.nested_part.part {
-            Part::Single { content_type, .. }
-                if content_type
-                    .to_ascii_lowercase()
-                    .starts_with("text/markdown") =>
-            {
-                BodyType::Markdown
-            }
-            _ => BodyType::Plain,
-        };
+        let body_type = body_type(content);
         let sender = if received.sender == self.user {
             self.account.clone()
         } else {
@@ -681,6 +676,7 @@ impl AgentChat {
             })
             .await?;
         self.link_message(&chat, reference, &id);
+        self.keep_first_id(&id, &received.message_id);
         self.keep_reportable(&id, &received, report);
         self.keep_for_retry(&id, &received.room, retry, report);
         report.messages += 1;
@@ -878,6 +874,21 @@ impl AgentChat {
             }
         }
         Ok(true)
+    }
+}
+
+/// The `bodyType` of received `content`: `text/markdown` for a
+/// `text/markdown` single part, `text/plain` otherwise.
+pub(crate) fn body_type(content: &MimiContent) -> BodyType {
+    match &content.nested_part.part {
+        Part::Single { content_type, .. }
+            if content_type
+                .to_ascii_lowercase()
+                .starts_with("text/markdown") =>
+        {
+            BodyType::Markdown
+        }
+        _ => BodyType::Plain,
     }
 }
 

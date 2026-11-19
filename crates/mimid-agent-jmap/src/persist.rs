@@ -1,7 +1,8 @@
 //! The plaintext store (bead mimid-1wgh.13.12): the account's Chats,
 //! Messages, ChatContacts and ReadPositions in one JSON file, so they
 //! survive a restart, with what received Messages keep for reports
-//! ([`crate::report`]), dropped with their Message. They must: the agent cannot decrypt a message again,
+//! ([`crate::report`]) and each Message's MIMI message IDs
+//! ([`crate::edits`]), dropped with their Message. They must: the agent cannot decrypt a message again,
 //! since MLS consumes the keys (RFC 9420 §9.2).
 //!
 //! The file is rewritten whole after every change that succeeds, to a
@@ -80,6 +81,11 @@ struct Snapshot {
     /// which reads as none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     franks: BTreeMap<String, crate::report::KeptFrank>,
+    /// Each Message's MIMI message IDs: the first version's and its
+    /// aliases ([`crate::edits`]). Absent in a file written before edits,
+    /// which reads as none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    mimi_ids: BTreeMap<String, crate::edits::MimiIds>,
 }
 
 /// The stored types, in the order they are restored.
@@ -145,6 +151,10 @@ impl AgentChat {
             .franks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = snapshot.franks.clone();
+        *self
+            .mimi_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = snapshot.mimi_ids.clone();
         for (name, values) in &snapshot.objects {
             let Some(&type_name) = TYPES.iter().find(|t| **t == name.as_str()) else {
                 return Err(malformed(path, format!("unknown type {name}")));
@@ -190,8 +200,17 @@ impl AgentChat {
                         out.copy_from_slice(&random[6..]);
                         out
                     });
-                if let (Some(chat), Some(reference)) = (chat, reference) {
-                    self.link_message(&Id::from(chat.to_owned()), reference, id);
+                let Some(chat) = chat.map(|c| Id::from(c.to_owned())) else {
+                    return;
+                };
+                if let Some(reference) = reference {
+                    self.link_message(&chat, reference, id);
+                }
+                // Its later versions resolve to it too (§Edits).
+                if let Some(ids) = self.kept_ids(id.as_ref()) {
+                    for alias in ids.aliases() {
+                        self.link_message(&chat, alias, id);
+                    }
                 }
             }
             _ => {}
@@ -244,6 +263,19 @@ impl AgentChat {
             franks.retain(|id, _| ids.contains(id.as_str()));
             franks.clone()
         };
+        // Likewise the MIMI IDs.
+        let mimi_ids = {
+            let mut mimi_ids = self
+                .mimi_ids
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let ids: std::collections::BTreeSet<&str> = messages
+                .iter()
+                .filter_map(|m| m.get("id").and_then(Value::as_str))
+                .collect();
+            mimi_ids.retain(|id, _| ids.contains(id.as_str()));
+            mimi_ids.clone()
+        };
         objects.insert(Message::TYPE_NAME.to_owned(), messages);
         objects.insert(
             ReadPosition::TYPE_NAME.to_owned(),
@@ -259,6 +291,7 @@ impl AgentChat {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone(),
             franks,
+            mimi_ids,
         };
         let bytes =
             serde_json::to_vec(&snapshot).map_err(|e| PersistError::Store(e.to_string()))?;

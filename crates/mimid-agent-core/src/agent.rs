@@ -1596,6 +1596,77 @@ impl Agent {
         self.send_content(room, &content).await
     }
 
+    /// Sends an edit of this user's message `replaces` in `room`: a
+    /// message whose `replaces` is `replaces` and whose body is `text` as
+    /// one `text/plain` part (mimi-content-10 §5.5). `replaces` names the
+    /// first version of the message, however often it was edited. The
+    /// edit has no `inReplyTo` or `topicId` (§9.3: an edit changes only
+    /// the NestedPart; the caller edits only messages sent without them).
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Invalid`] for text over [`MAX_TEXT_LEN`] octets, and
+    /// the errors of [`Agent::send_content`].
+    pub async fn send_edit(
+        &mut self,
+        room: &str,
+        replaces: &MessageId,
+        text: &str,
+    ) -> Result<Sent, AgentError> {
+        if text.len() > MAX_TEXT_LEN {
+            return Err(AgentError::Invalid("message too long".to_owned()));
+        }
+        let part = Part::Single {
+            content_type: TEXT_PLAIN.to_owned(),
+            content: text.as_bytes().to_vec(),
+        };
+        let content = self.replacement(room, replaces, part)?;
+        self.send_content(room, &content).await
+    }
+
+    /// Sends a retraction of this user's message `replaces` in `room`: a
+    /// message whose `replaces` is `replaces` and whose body is a NullPart
+    /// (mimi-content-10 §5.6). `replaces` names the first version.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Agent::send_content`].
+    pub async fn send_retraction(
+        &mut self,
+        room: &str,
+        replaces: &MessageId,
+    ) -> Result<Sent, AgentError> {
+        let content = self.replacement(room, replaces, Part::Null)?;
+        self.send_content(room, &content).await
+    }
+
+    /// The content replacing `replaces` in `room` with body `part`, with
+    /// disposition `render`.
+    fn replacement(
+        &self,
+        room: &str,
+        replaces: &MessageId,
+        part: Part,
+    ) -> Result<MimiContent, AgentError> {
+        Ok(MimiContent {
+            salt: random()?,
+            replaces: Some(*replaces),
+            topic_id: vec![],
+            expires: None,
+            in_reply_to: None,
+            mimi_extensions: Extensions {
+                sender_uri: Some(self.me.clone()),
+                room_uri: Some(room.to_owned()),
+                other: BTreeMap::new(),
+            },
+            nested_part: NestedPart {
+                disposition: Disposition::RENDER,
+                language: String::new(),
+                part,
+            },
+        })
+    }
+
     /// Sends `text` with `attachments` to `room`. Each attachment is
     /// encrypted under its own key ([`crate::asset::seal`]), uploaded to
     /// this user's server, and sent as an ExternalPart with disposition

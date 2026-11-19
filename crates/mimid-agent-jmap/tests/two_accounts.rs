@@ -508,13 +508,12 @@ async fn two_accounts_chat_through_jmap() {
         json!("forbidden"),
         "{answer}"
     );
+    // An edit of bob's Message (crate-jmap's sender check; edits of her
+    // own are tests/edits.rs).
+    let id = reply["id"].as_str().unwrap();
     let answer = alice
-        .call(
-            "Message/set",
-            json!({"update": {mine[0]["id"].as_str().unwrap(): {"body": "edited"}}}),
-        )
+        .call("Message/set", json!({"update": {id: {"body": "edited"}}}))
         .await;
-    let id = mine[0]["id"].as_str().unwrap();
     assert_eq!(
         answer["notUpdated"][id]["type"],
         json!("forbidden"),

@@ -40,6 +40,17 @@
 //!   part. Received messages with a `text/*` single part are stored with
 //!   `bodyType` `text/markdown` for `text/markdown` and `text/plain`
 //!   otherwise.
+//! - **Edits and retractions** ([`edits`]; §Edits, decision
+//!   mimid-1wgh.65): a received message with `replaces` from the original
+//!   message's sender edits that Message (`body`, `bodyType`, `editedAt`,
+//!   the old body kept in `editHistory`) or, with a NullPart body,
+//!   retracts it (`deletedAt`, `deletedForAll`, `body` emptied), and its
+//!   own ID becomes an alias, so a reply to any version resolves to the
+//!   Message. One from anyone else is refused and reported in
+//!   [`SyncReport::problems`]. The owner's `Message/set` update of `body`
+//!   on their own Message sends an edit, and `deletedForAll: true` a
+//!   retraction, each naming the first version; `deletedAt` alone is a
+//!   local deletion.
 //! - **Attachments** (bead mimid-1wgh.14), with a blob store
 //!   ([`AgentChat::with_blobs`], a [`BlobStore`] of plaintext files): a
 //!   created Message's attachments are read from the store, and
@@ -128,14 +139,16 @@
 //!   checked against its content, and an invalid one becomes
 //!   `application/octet-stream`.
 //! - Blobs are never deleted (see [`BlobStore`]), and attachments are
-//!   fetched one at a time while `sync` holds the agent. Updating a Message other than its
-//!   `readAt` or `privateMetadata` (edits, `deletedForAll`, reactions) is
-//!   `forbidden`.
+//!   fetched one at a time while `sync` holds the agent. Updating a
+//!   Message's `mentions`, `broadcastMentions`, `readDisposition` or
+//!   `reactions` is `forbidden`. See [`edits`] for the limits of edits
+//!   and retractions.
 //! - Received messages from rooms without franking are reported
 //!   unverified, in a component only a mimid hub reads; see [`report`]
 //!   for its limits.
-//! - Received edits and retractions (`replaces`, §Edits) and messages with
-//!   neither text nor attachments are not stored; [`SyncReport::skipped`] lists them. Message
+//! - Received messages with neither text nor attachments, and edits and
+//!   retractions of messages not stored here, are not stored;
+//!   [`SyncReport::skipped`] lists them. Message
 //!   status reports (§Message Status) are neither sent nor read, and typing
 //!   is not sent.
 //! - Invites the policy refuses stay pending in the agent; JMAP Chat has
@@ -159,6 +172,7 @@
 mod backend;
 mod blobs;
 mod convert;
+pub mod edits;
 pub mod moderate;
 mod persist;
 pub mod report;

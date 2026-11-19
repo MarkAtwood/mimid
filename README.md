@@ -46,7 +46,6 @@ These are deliberate in the current version:
 Not deliberate; each is being fixed:
 
 - Two devices of one user can't share a group with stock mls-rs, which refuses two leaves with the same BasicCredential. Epic mimid-4lp4.
-- Received edits and retractions are skipped. Bead mimid-kmhd.
 
 Each crate documents its own limitations in the `# Limitations` section of its rustdoc.
 

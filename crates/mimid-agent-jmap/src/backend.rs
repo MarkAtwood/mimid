@@ -115,6 +115,8 @@ pub struct AgentChat {
     /// content unverified), by Message id, for `Message/reportAbuse`
     /// ([`crate::report`]).
     pub(crate) franks: StdMutex<BTreeMap<String, crate::report::KeptFrank>>,
+    /// Each Message's MIMI message IDs, by Message id ([`crate::edits`]).
+    pub(crate) mimi_ids: StdMutex<BTreeMap<String, crate::edits::MimiIds>>,
 }
 
 impl std::fmt::Debug for AgentChat {
@@ -145,6 +147,7 @@ impl AgentChat {
             pending: StdMutex::new(Vec::new()),
             did_epochs: StdMutex::new(BTreeMap::new()),
             franks: StdMutex::new(BTreeMap::new()),
+            mimi_ids: StdMutex::new(BTreeMap::new()),
         }
     }
 
@@ -485,6 +488,7 @@ impl AgentChat {
             })
             .await?;
         self.link_message(&chat_id, message_ref(&sent.message_id), &id);
+        self.keep_first_id(&id, &sent.message_id);
         Ok((id, stored))
     }
 
@@ -583,11 +587,11 @@ fn set_error(kind: SetErrorType, description: impl Into<String>) -> SetError {
     SetError::new(kind).with_description(description)
 }
 
-fn forbidden(description: &str) -> BackendSetError<MemoryError> {
+pub(crate) fn forbidden(description: &str) -> BackendSetError<MemoryError> {
     BackendSetError::SetError(Box::new(set_error(SetErrorType::Forbidden, description)))
 }
 
-fn serde_failure(e: serde_json::Error) -> BackendSetError<MemoryError> {
+pub(crate) fn serde_failure(e: serde_json::Error) -> BackendSetError<MemoryError> {
     BackendSetError::Other(MemoryError::new(format!("converting an object: {e}")))
 }
 
@@ -606,7 +610,7 @@ fn agent_set_failure(e: AgentError) -> SetFailure {
     SetFailure::set(set_error(kind, e.to_string()))
 }
 
-fn agent_failure(e: AgentError) -> BackendSetError<MemoryError> {
+pub(crate) fn agent_failure(e: AgentError) -> BackendSetError<MemoryError> {
     agent_set_failure(e).into_backend()
 }
 
@@ -746,6 +750,7 @@ impl ChatBackend for AgentChat {
     ) -> Result<Option<O>, BackendSetError<MemoryError>> {
         self.check_account(account_id)
             .map_err(SetFailure::into_backend)?;
+        let mut patch = patch;
         match O::TYPE_NAME {
             "Chat" => {
                 if let Some(room) = self.room_of_chat(id) {
@@ -755,8 +760,15 @@ impl ChatBackend for AgentChat {
                         .map_err(SetFailure::into_backend)?;
                 }
             }
-            // may_update_message admits only local Message properties.
-            "Message" => {}
+            // may_update_message admits local Message properties, edits
+            // and deletions; edits and deletions for all go to the room
+            // first (crate::edits).
+            "Message" => {
+                let value = serde_json::to_value(&patch).map_err(serde_failure)?;
+                if let Some(changed) = self.send_change(id, &value).await? {
+                    patch = serde_json::from_value(changed).map_err(serde_failure)?;
+                }
+            }
             name if local(name) => {}
             name => return Err(unsupported_type(name)),
         }
@@ -854,8 +866,13 @@ impl ChatBackend for AgentChat {
         })
     }
 
-    /// Only the owner's own read state of a Message is writable: edits,
-    /// retractions and reactions are not sent over MIMI here.
+    /// The owner's read state and `privateMetadata` of a Message are
+    /// local; `body` and `bodyType` (an edit) and `deletedForAll` (a
+    /// retraction) go to the room as MIMI content with `replaces`, and
+    /// `deletedAt` alone is a local deletion (crate::edits; decision
+    /// mimid-1wgh.65). crate-jmap checks that only the owner's Messages are
+    /// edited or deleted for all. Mentions and reactions are not sent over
+    /// MIMI here.
     async fn may_update_message(
         &self,
         _caller: &(),
@@ -864,11 +881,18 @@ impl ChatBackend for AgentChat {
         _message: &Message,
         patch_keys: &[&str],
     ) -> Result<Result<(), SetError>, MemoryError> {
-        const LOCAL: &[&str] = &["readAt", "privateMetadata"];
+        const ALLOWED: &[&str] = &[
+            "readAt",
+            "privateMetadata",
+            "body",
+            "bodyType",
+            "deletedAt",
+            "deletedForAll",
+        ];
         let refused = patch_keys
             .iter()
             .map(|k| k.split('/').next().unwrap_or(k))
-            .find(|k| !LOCAL.contains(k));
+            .find(|k| !ALLOWED.contains(k));
         Ok(match refused {
             Some(key) => Err(set_error(
                 SetErrorType::Forbidden,
@@ -983,8 +1007,10 @@ impl ChatBackend for AgentChat {
             .await
     }
 
+    /// Edits keep the old bodies, at most
+    /// [`crate::edits::MAX_EDIT_HISTORY`] (decision mimid-1wgh.65).
     fn retains_edit_history(&self) -> bool {
-        self.inner.retains_edit_history()
+        true
     }
 
     fn maintains_unread_count(&self) -> bool {
