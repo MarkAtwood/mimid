@@ -1,0 +1,16 @@
+{
+  "id": "mimid-orjg",
+  "title": "SafeAAD: mls-rs sends empty authenticated_data in a safe_aad room; hub refuses (EndOfStream). Accept empty as no items?",
+  "description": "From mimid-64xc (bfa6a2b): mls-rs has no notion of SafeAAD (mls-extensions-11 §4.9) and sends empty authenticated_data; mimi-mls decodes it as SafeAAD and fails, so the hub answers notAllowed. Encoded empty SafeAAD is 0x00. Question: should mimid treat zero-length authenticated_data as a SafeAAD with no items (lenient), or keep strict? Check §4.9 wording; possibly a WG/extensions-draft clarification.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-19T21:41:57.917634477Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-19T21:41:57.917634477Z",
+  "labels": [
+    "interop",
+    "mls"
+  ]
+}
