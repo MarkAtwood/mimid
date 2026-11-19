@@ -11,6 +11,15 @@
 //! and the bytes and count an account holds in all. The check and the
 //! insert are one transaction on the single writer, so concurrent uploads
 //! cannot overshoot the quota.
+//!
+//! Blobs expire (decision mimid-1wgh.67): the server cannot read the
+//! encrypted messages that reference a blob, so it cannot tell a
+//! referenced blob from an unreferenced one (RFC 8620 §6), and instead
+//! deletes every blob a fixed lifetime after upload
+//! ([`Store::delete_blobs_created_before`], run by
+//! `crate::jmap::blobs::BlobSweeper`). The lifetime defaults to
+//! [`DEFAULT_BLOB_LIFETIME_SECS`] and is never under
+//! [`MIN_BLOB_LIFETIME_SECS`].
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -28,6 +37,16 @@ pub const MAX_ACCOUNT_BLOB_BYTES: u64 = 512 * 1024 * 1024;
 /// The most blobs one account may hold. INVENTED, NOT FROM SPEC (bead
 /// mimid-1wgh.14).
 pub const MAX_ACCOUNT_BLOBS: u64 = 4096;
+
+/// How long a blob is kept after upload, in seconds: 30 days. INVENTED,
+/// NOT FROM SPEC (decision mimid-1wgh.67): long enough for a member who
+/// is offline for weeks to fetch an attachment.
+pub const DEFAULT_BLOB_LIFETIME_SECS: u64 = 30 * 24 * 3600;
+
+/// The shortest lifetime a server may be set to, in seconds: RFC 8620
+/// §6's "an unreferenced blob MUST NOT be deleted for at least 1 hour from
+/// the time of upload".
+pub const MIN_BLOB_LIFETIME_SECS: u64 = 3600;
 
 /// The longest media type stored with a blob, in octets. INVENTED, NOT
 /// FROM SPEC: RFC 6838 §4.2 caps a type and a subtype at 127 characters
@@ -166,6 +185,16 @@ pub enum BlobError {
     Store(#[from] StoreError),
 }
 
+/// What one [`Store::delete_blobs_created_before`] deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct ExpiredBlobs {
+    /// The blobs deleted.
+    pub count: u64,
+    /// Their octets in all.
+    pub octets: u64,
+}
+
 impl From<sqlx::Error> for BlobError {
     fn from(error: sqlx::Error) -> Self {
         Self::Store(error.into())
@@ -280,6 +309,42 @@ impl Store {
                 .fetch_optional(&self.reader)
                 .await?,
         )
+    }
+}
+
+impl Store {
+    /// Deletes every blob, of any account, uploaded before `cutoff_ms`
+    /// (milliseconds since the UNIX epoch), and says how many and how many
+    /// octets. Afterwards neither [`Store::blob`] nor [`Store::asset`]
+    /// finds them, and they no longer count against their accounts'
+    /// quotas.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::OutOfRange`] if `cutoff_ms` does not fit an
+    /// SQLite integer, and [`StoreError::Sqlx`] if a query fails; nothing
+    /// is deleted then.
+    pub async fn delete_blobs_created_before(
+        &self,
+        cutoff_ms: u64,
+    ) -> Result<ExpiredBlobs, StoreError> {
+        let cutoff_ms = to_sql_int(cutoff_ms)?;
+        let mut tx = self.pool.begin().await?;
+        let (count, octets): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COALESCE(SUM(length(bytes)), 0) FROM blob WHERE created_at < ?",
+        )
+        .bind(cutoff_ms)
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM blob WHERE created_at < ?")
+            .bind(cutoff_ms)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(ExpiredBlobs {
+            count: from_sql_int(count)?,
+            octets: from_sql_int(octets)?,
+        })
     }
 }
 
@@ -440,6 +505,56 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 4, "a refused upload writes nothing");
+    }
+
+    #[tokio::test]
+    async fn expired_blobs_are_deleted_and_free_the_quota() {
+        let (_dir, store, alice, bob) = open().await;
+        let quota = BlobQuota::new(10, 10, 100);
+        let old = store
+            .insert_blob(&alice, "a/b", &[1; 6], 1000, quota)
+            .await
+            .unwrap();
+        let at_cutoff = store
+            .insert_blob(&alice, "a/b", &[2; 4], 2000, quota)
+            .await
+            .unwrap();
+        let bobs = store
+            .insert_blob(&bob, "a/b", &[3; 3], 1999, quota)
+            .await
+            .unwrap();
+        // Alice is full.
+        assert!(matches!(
+            store.insert_blob(&alice, "a/b", &[0; 1], 2500, quota).await,
+            Err(BlobError::OverQuota)
+        ));
+
+        // Strictly before the cutoff: alice's 6 octets and bob's 3.
+        assert_eq!(
+            store.delete_blobs_created_before(2000).await.unwrap(),
+            ExpiredBlobs {
+                count: 2,
+                octets: 9
+            }
+        );
+        assert_eq!(store.blob(&alice, &old).await.unwrap(), None);
+        assert_eq!(store.asset(&old).await.unwrap(), None);
+        assert_eq!(store.asset(&bobs).await.unwrap(), None);
+        assert_eq!(
+            store.asset(&at_cutoff).await.unwrap(),
+            Some(vec![2; 4]),
+            "a blob uploaded at the cutoff is kept"
+        );
+        // Alice's quota has room for 6 octets again.
+        store
+            .insert_blob(&alice, "a/b", &[0; 6], 2500, quota)
+            .await
+            .unwrap();
+        // Nothing left to delete.
+        assert_eq!(
+            store.delete_blobs_created_before(2000).await.unwrap(),
+            ExpiredBlobs::default()
+        );
     }
 
     #[tokio::test]

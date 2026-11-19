@@ -39,8 +39,11 @@
 //! - Attachments (bead mimid-1wgh.14): the server stores encrypted blobs
 //!   and serves them at an unauthenticated asset URL, and fetches a
 //!   room's attachments for its members through the room's hub
-//!   ([`jmap::blobs`]). Blobs are never deleted, and room-policy-04's
-//!   `asset_policy` is not consulted ([`hub::assets`]).
+//!   ([`jmap::blobs`]). Every blob is deleted a fixed lifetime after
+//!   upload (30 days by default, `blob_lifetime_secs`; decision
+//!   mimid-1wgh.67), whether or not a message still names it, and the
+//!   ExternalPart does not say so. room-policy-04's `asset_policy` is not
+//!   consulted ([`hub::assets`]).
 //! - The follower runs no MLS Observer: it checks decoding and envelope
 //!   consistency only (decision mimid-1wgh.7.2). Its other limitations are
 //!   listed in [`follower`].

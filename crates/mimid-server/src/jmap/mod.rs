@@ -24,7 +24,9 @@
 //!
 //! # Limitations
 //!
-//! - Blobs are never deleted ([`blobs`]).
+//! - A blob is deleted a fixed lifetime after upload, whether or not a
+//!   message still names it: the server cannot read messages
+//!   ([`blobs::BlobSweeper`]; decision mimid-1wgh.67).
 //! - Push is EventSource only: there is no PushSubscription (decision
 //!   mimid-1wgh.12.30).
 //! - Besides `Core/echo`, the read projection ([`projection`]),
@@ -54,8 +56,8 @@ use jmap_server::Dispatcher;
 
 use crate::config::BaseUrl;
 use crate::follower::Follower;
-use crate::hub::{Hub, HubError};
-use crate::store::Store;
+use crate::hub::{Clock, Hub, HubError, SystemClock};
+use crate::store::{BlobQuota, Store};
 use api::{InFlight, Methods};
 use auth::{Account, Authenticator};
 use bus::ChangeBus;
@@ -63,7 +65,7 @@ use methods::Services;
 use session::{DEFAULT_MAX_KEY_PACKAGES, SessionTemplate};
 
 /// Settings of the JMAP endpoint.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct JmapOptions {
     /// `maxKeyPackages` (draft-atwood-jmap-chat-mimi-00 L166).
@@ -72,6 +74,22 @@ pub struct JmapOptions {
     /// EventSource streams then end, so a graceful shutdown does not wait
     /// on them forever. `None`: they end only when their clients leave.
     pub stop: Option<tokio::sync::watch::Receiver<bool>>,
+    /// The clock that stamps uploads with their time (and so their
+    /// expiry, [`blobs::BlobSweeper`]). The system clock by default.
+    pub clock: Arc<dyn Clock>,
+    /// The limits every upload is checked against;
+    /// [`BlobQuota::default`] by default.
+    pub blob_quota: BlobQuota,
+}
+
+impl std::fmt::Debug for JmapOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JmapOptions")
+            .field("max_key_packages", &self.max_key_packages)
+            .field("stop", &self.stop)
+            .field("blob_quota", &self.blob_quota)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for JmapOptions {
@@ -79,6 +97,8 @@ impl Default for JmapOptions {
         Self {
             max_key_packages: DEFAULT_MAX_KEY_PACKAGES,
             stop: None,
+            clock: Arc::new(SystemClock),
+            blob_quota: BlobQuota::default(),
         }
     }
 }
@@ -103,6 +123,10 @@ struct Inner {
     hub: Arc<Hub>,
     /// Uploads in flight per account ([`blobs::MAX_CONCURRENT_UPLOAD`]).
     uploads: InFlight,
+    /// Stamps uploads.
+    clock: Arc<dyn Clock>,
+    /// Limits uploads.
+    blob_quota: BlobQuota,
 }
 
 impl FromRef<JmapState> for Authenticator {
@@ -172,6 +196,8 @@ pub fn router(
         base_url: base_url.clone(),
         hub: Arc::clone(&hub),
         uploads: InFlight::with_limit(blobs::MAX_CONCURRENT_UPLOAD),
+        clock: options.clock,
+        blob_quota: options.blob_quota,
     }));
     Ok(Router::new()
         .route("/.well-known/jmap", get(session::get_session))

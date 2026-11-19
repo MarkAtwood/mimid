@@ -33,8 +33,9 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use crate::config::Domain;
 
 pub use blobs::{
-    Blob, BlobError, BlobId, BlobQuota, MAX_ACCOUNT_BLOB_BYTES, MAX_ACCOUNT_BLOBS, MAX_BLOB_LEN,
-    MAX_MEDIA_TYPE_LEN, MalformedBlobId,
+    Blob, BlobError, BlobId, BlobQuota, DEFAULT_BLOB_LIFETIME_SECS, ExpiredBlobs,
+    MAX_ACCOUNT_BLOB_BYTES, MAX_ACCOUNT_BLOBS, MAX_BLOB_LEN, MAX_MEDIA_TYPE_LEN,
+    MIN_BLOB_LIFETIME_SECS, MalformedBlobId,
 };
 pub use consent::{ConsentDecision, ConsentKey, ConsentRow, ReceivedConsent};
 pub use consent_record::{ConsentChanges, ConsentPatch, ConsentRecord};
@@ -245,7 +246,7 @@ mod tests {
                 .fetch_all(&store.pool)
                 .await
                 .unwrap();
-        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 
         let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, domain FROM provider")
             .fetch_all(&store.pool)

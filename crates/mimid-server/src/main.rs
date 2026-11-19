@@ -71,6 +71,7 @@ use mimid_server::httpsig::SigningKey;
 use mimid_server::hub::HubRequirements;
 use mimid_server::hub::fanout::Fanout;
 use mimid_server::hub::{Clock, Hub, SystemClock};
+use mimid_server::jmap::blobs::BlobSweeper;
 use mimid_server::jmap::{self, JmapOptions};
 use mimid_server::logging::{LogFormat, json_subscriber};
 use mimid_server::peer::PeerClient;
@@ -232,6 +233,14 @@ async fn main() -> anyhow::Result<()> {
         shutdown_signal().await;
         let _ = stop_streams.send(true);
     };
+    jmap_options.clock = Arc::clone(&clock);
+    // Uploads expire (decision mimid-1wgh.67); the sweep runs until exit.
+    let _blob_sweep = BlobSweeper::new(
+        store.clone(),
+        Arc::clone(&clock),
+        Duration::from_secs(config.blob_lifetime_secs),
+    )
+    .spawn();
     let jmap = jmap::router(
         &config.base_url,
         store.clone(),

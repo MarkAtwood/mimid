@@ -40,13 +40,18 @@
 //! does not exist. Another account's blob is `404` too: an unreferenced
 //! blob is the uploader's only (RFC 8620 §6.1).
 //!
+//! [`BlobSweeper`] deletes every blob a lifetime after its upload
+//! (decision mimid-1wgh.67), every [`BLOB_SWEEP_INTERVAL`]; then
+//! download, `/assets` and `/jmap/asset` answer `404` for it, as for an id
+//! never issued.
+//!
 //! Every error carries an RFC 7807 problem body (RFC 8620 §6.1, §6.2):
 //!
 //! | Refusal | Status | `type` |
 //! |---|---|---|
 //! | body over [`MAX_BLOB_LEN`] | `413` | `urn:ietf:params:jmap:error:limit`, `limit` `maxSizeUpload` |
 //! | more than [`MAX_CONCURRENT_UPLOAD`] uploads in flight | `400` | `urn:ietf:params:jmap:error:limit`, `limit` `maxConcurrentUpload` |
-//! | account quota ([`crate::store::BlobQuota`]) | `403` | `urn:ietf:params:jmap:error:overQuota` |
+//! | account quota ([`crate::store::BlobQuota`], `JmapOptions::blob_quota`) | `403` | `urn:ietf:params:jmap:error:overQuota` |
 //! | malformed `Content-Type` or `accept` | `400` | `about:blank` |
 //! | unknown account, blob or asset | `404` | `about:blank` |
 //!
@@ -56,8 +61,17 @@
 //!
 //! # Limitations
 //!
-//! - Blobs are never deleted: there is no expiry and no Blob/destroy, so an
-//!   account that reaches its quota stays full.
+//! - A blob is deleted a fixed lifetime after upload ([`BlobSweeper`];
+//!   decision mimid-1wgh.67), whether or not a message still names it, and
+//!   only by the sweep: an expired blob may be served for up to
+//!   [`BLOB_SWEEP_INTERVAL`] longer, and counts against the quota until
+//!   then. A full account frees up only as its blobs expire.
+//! - There is no `Blob/set` destroy (draft-ietf-jmap-blobext-03 §4; RFC
+//!   8620 defines no blob deletion): crate-jmap's `jmap-blob-server` has
+//!   it, but needs a whole blob2 backend (decision mimid-1wgh.67).
+//! - The sending agent does not set the ExternalPart's `expires`
+//!   (mimi-content-10 §4.5) to the server's lifetime, so a recipient is
+//!   not told when an attachment will be gone.
 //! - A whole upload is held in memory before it is stored, at most
 //!   [`MAX_CONCURRENT_UPLOAD`] per account at once.
 //! - `/assets` sets no caching headers and has no rate limit; anyone who
@@ -65,6 +79,9 @@
 //! - `/jmap/asset` checks room membership from the follower's records
 //!   only, not the room's participant list, and caches nothing. A peer
 //!   hub's `Content-Type` is not passed on.
+
+use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Json;
 use axum::body::Bytes;
@@ -77,15 +94,19 @@ use super::JmapState;
 use super::auth::Account;
 use crate::config::Domain;
 use crate::hub::assets::local_asset_id;
-use crate::hub::{Clock, HubError, SystemClock};
+use crate::hub::{Clock, HubError};
 use crate::peer::{PeerError, RejectionFields};
-use crate::store::{BlobError, BlobId, BlobQuota};
+use crate::store::{BlobError, BlobId};
 
 pub use crate::store::MAX_BLOB_LEN;
 
 /// `maxConcurrentUpload`: RFC 8620 §2's suggested minimum, counted per
 /// account.
 pub const MAX_CONCURRENT_UPLOAD: usize = 4;
+
+/// How often [`BlobSweeper::spawn`] deletes expired blobs. INVENTED,
+/// NOT FROM SPEC (decision mimid-1wgh.67).
+pub const BLOB_SWEEP_INTERVAL: Duration = Duration::from_secs(600);
 
 /// The type an upload without `Content-Type` is stored as, and the type
 /// the asset server serves everything as.
@@ -226,8 +247,8 @@ pub(super) async fn upload(
             account.account_id(),
             &media_type,
             &body,
-            SystemClock.now_ms(),
-            BlobQuota::default(),
+            state.0.clock.now_ms(),
+            state.0.blob_quota,
         )
         .await;
     let blob_id = match stored {
@@ -501,6 +522,94 @@ fn peer_failed(hub: &Domain, error: &PeerError) -> Response {
         "proxyDownload at the room's hub refused"
     );
     crate::http::problem(status, kind)
+}
+
+/// Deletes blobs a lifetime after their upload (decision mimid-1wgh.67;
+/// see the module documentation).
+pub struct BlobSweeper {
+    store: crate::store::Store,
+    clock: Arc<dyn Clock>,
+    lifetime: Duration,
+}
+
+impl std::fmt::Debug for BlobSweeper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlobSweeper")
+            .field("lifetime", &self.lifetime)
+            .finish_non_exhaustive()
+    }
+}
+
+impl BlobSweeper {
+    /// A sweeper of `store`'s blobs, which deletes each `lifetime` after
+    /// its upload by `clock`.
+    #[must_use]
+    pub fn new(store: crate::store::Store, clock: Arc<dyn Clock>, lifetime: Duration) -> Self {
+        Self {
+            store,
+            clock,
+            lifetime,
+        }
+    }
+
+    /// Deletes every blob uploaded `lifetime` or longer ago, and logs how
+    /// many: one event per sweep, never one per blob.
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's error, already logged; nothing is deleted then,
+    /// and the next sweep tries again.
+    pub async fn sweep(&self) -> Result<crate::store::ExpiredBlobs, crate::store::StoreError> {
+        let lifetime_ms = u64::try_from(self.lifetime.as_millis()).unwrap_or(u64::MAX);
+        // Uploaded at or before now - lifetime: expired. A lifetime longer
+        // than the clock's reading expires nothing.
+        let cutoff_ms = self
+            .clock
+            .now_ms()
+            .checked_sub(lifetime_ms)
+            .map_or(0, |oldest_kept| oldest_kept.saturating_add(1));
+        match self.store.delete_blobs_created_before(cutoff_ms).await {
+            Ok(expired) if expired.count > 0 => {
+                tracing::info!(
+                    name: "blob_sweep",
+                    count = expired.count,
+                    octets = expired.octets,
+                    "expired blobs deleted"
+                );
+                Ok(expired)
+            }
+            Ok(expired) => {
+                tracing::debug!(name: "blob_sweep", count = 0, "no expired blobs");
+                Ok(expired)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    name: "blob_sweep_failed",
+                    error = &error as &dyn std::error::Error,
+                    "expired blobs not deleted; the next sweep retries"
+                );
+                Err(error)
+            }
+        }
+    }
+
+    /// Sweeps now and then every [`BLOB_SWEEP_INTERVAL`], until the task
+    /// is aborted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called outside a Tokio runtime.
+    pub fn spawn(self) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut ticks = tokio::time::interval(BLOB_SWEEP_INTERVAL);
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticks.tick().await;
+                // A failure is logged in sweep and retried next tick.
+                let _ = self.sweep().await;
+            }
+        })
+    }
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@
 //! database = "/var/lib/mimid/mimid.sqlite"
 //! max_key_packages = 97   # optional
 //! reuse_last_resort_key_packages = false  # optional; true serves a last-resort KeyPackage again
+//! blob_lifetime_secs = 2592000  # optional; uploads are deleted this long after upload (at least 3600)
 //!
 //! [peers]
 //! "b.example" = "http://127.0.0.1:9080"
@@ -178,6 +179,13 @@ pub struct Config {
     /// RFC 9420 or mls-extensions-11 already uses is refused.
     #[serde(default, deserialize_with = "did_webvh_code_points")]
     pub did_webvh: mimi_mls::mls_didwebvh::CodePoints,
+    /// How long an uploaded blob is kept, in seconds, before the sweep
+    /// deletes it (decision mimid-1wgh.67;
+    /// [`crate::jmap::blobs::BlobSweeper`]). Defaults to
+    /// [`crate::store::DEFAULT_BLOB_LIFETIME_SECS`]; under
+    /// [`crate::store::MIN_BLOB_LIFETIME_SECS`] is refused.
+    #[serde(default = "default_blob_lifetime_secs")]
+    pub blob_lifetime_secs: u64,
 }
 
 /// The `[did_webvh]` table.
@@ -228,6 +236,10 @@ fn default_require_room_policy() -> bool {
     true
 }
 
+fn default_blob_lifetime_secs() -> u64 {
+    crate::store::DEFAULT_BLOB_LIFETIME_SECS
+}
+
 fn default_peer_clock_tolerance_secs() -> u64 {
     crate::peer_clock::DEFAULT_TOLERANCE_SECS
 }
@@ -254,9 +266,15 @@ impl Config {
     /// Returns [`ConfigError::Parse`] for malformed TOML, unknown or missing
     /// keys, or an invalid domain, address or base URL, and
     /// [`ConfigError::OwnDomainInPeers`] if the peer map lists this
-    /// provider's own domain.
+    /// provider's own domain, [`ConfigError::WireProfileForUnknownPeer`]
+    /// if `[wire_profiles]` names a domain not in `peers`, and
+    /// [`ConfigError::BlobLifetimeTooShort`] for a `blob_lifetime_secs`
+    /// under [`crate::store::MIN_BLOB_LIFETIME_SECS`].
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let config: Self = toml::from_str(text)?;
+        if config.blob_lifetime_secs < crate::store::MIN_BLOB_LIFETIME_SECS {
+            return Err(ConfigError::BlobLifetimeTooShort(config.blob_lifetime_secs));
+        }
         if config.peers.contains_key(&config.domain) {
             return Err(ConfigError::OwnDomainInPeers(config.domain));
         }
@@ -316,6 +334,12 @@ pub enum ConfigError {
     /// `[wire_profiles]` names a domain that is not in `peers`.
     #[error("wire_profiles names {0}, which is not a configured peer")]
     WireProfileForUnknownPeer(Domain),
+    /// `blob_lifetime_secs` is under RFC 8620 §6's one hour.
+    #[error(
+        "blob_lifetime_secs = {0} is under {min}: RFC 8620 §6 keeps a blob at least an hour",
+        min = crate::store::MIN_BLOB_LIFETIME_SECS
+    )]
+    BlobLifetimeTooShort(u64),
 }
 
 /// A lowercase DNS domain name.
@@ -460,6 +484,7 @@ mod tests {
             wire_profiles: BTreeMap::new(),
             telemetry: None,
             did_webvh: mimi_mls::mls_didwebvh::CodePoints::DEFAULT,
+            blob_lifetime_secs: 30 * 24 * 3600,
         };
         assert_eq!(config, expected);
     }
@@ -559,6 +584,30 @@ mod tests {
         assert!(matches!(
             Config::parse(&own),
             Err(ConfigError::OwnDomainInPeers(d)) if d.as_str() == "a.example"
+        ));
+    }
+
+    #[test]
+    fn blob_lifetime_defaults_parses_and_has_a_floor() {
+        let with =
+            |line: &str| Config::parse(&VALID.replace("[peers]", &format!("{line}\n[peers]")));
+        assert_eq!(
+            Config::parse(VALID).unwrap().blob_lifetime_secs,
+            30 * 24 * 3600
+        );
+        assert_eq!(
+            with("blob_lifetime_secs = 3600")
+                .unwrap()
+                .blob_lifetime_secs,
+            3600
+        );
+        assert!(matches!(
+            with("blob_lifetime_secs = 3599"),
+            Err(ConfigError::BlobLifetimeTooShort(3599))
+        ));
+        assert!(matches!(
+            with("blob_lifetime_secs = 0"),
+            Err(ConfigError::BlobLifetimeTooShort(0))
         ));
     }
 
