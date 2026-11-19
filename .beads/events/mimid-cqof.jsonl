@@ -1,3 +1,4 @@
 {"id":"01a1f505-91d9-70e7-a1c6-de9f6def91fe","issue_id":"mimid-cqof","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-19T18:15:45.36906021Z"}
 {"id":"01a1f505-91dc-79f7-bc66-e2745771530e","issue_id":"mimid-cqof","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-19T18:15:45.372654059Z"}
 {"id":"01a1f505-91df-79e3-8f5d-e39e72895502","issue_id":"mimid-cqof","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: jmap","created_at":"2026-11-19T18:15:45.375649638Z"}
+{"id":"01a1f51b-b7a8-7ea5-acde-bfbff72f57cf","issue_id":"mimid-cqof","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"e0f03d4 (banned-by branch): MembersChanged.committer, journal field, mirrored ChatBan bannedBy from the committer","created_at":"2026-11-19T18:39:56.840960852Z"}
