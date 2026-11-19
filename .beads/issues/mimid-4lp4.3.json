@@ -14,7 +14,8 @@
     "human",
     "didwebvh",
     "interop",
-    "credential"
+    "credential",
+    "decided"
   ],
   "dependencies": [
     {
