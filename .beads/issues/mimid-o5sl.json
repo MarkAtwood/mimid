@@ -1,0 +1,15 @@
+{
+  "id": "mimid-o5sl",
+  "title": "Agent-core apply_commit_op: refuse two room_metadata updates in one Commit (protocol-07 §7.6), as the hub now does",
+  "description": "mimid-nfze (5815630) made the hub refuse a Commit with two room_metadata updates (ComponentError::RepeatedUpdate). mimid-agent-core's components.rs has its own apply_commit_op copy without that check. Better: share one implementation.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-19T21:26:03.016288436Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-19T21:26:03.016288436Z",
+  "labels": [
+    "agent"
+  ]
+}
