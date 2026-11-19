@@ -22,8 +22,8 @@ base64 = "=0.22.1"
 # lockfile.
 getrandom = "=0.3.4"
 # The crate-jmap revision mimid-agent-jmap uses.
-jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "83a08405c641138ffe9e8e99094ab602e9a26256" }
-jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "83a08405c641138ffe9e8e99094ab602e9a26256" }
+jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "fe13c651c41d94c2d3a99a7d7d4af64cc8ed46c1" }
+jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "fe13c651c41d94c2d3a99a7d7d4af64cc8ed46c1" }
 mimid-agent-core = { path = "../mimid-agent-core" }
 mimid-agent-jmap = { path = "../mimid-agent-jmap" }
 serde.workspace = true
@@ -45,9 +45,9 @@ tracing-subscriber.workspace = true
 # with (bead mimid-1wgh.13.11), at the crate-jmap revision above; it
 # brings its own reqwest 0.12.
 futures = "0.3.34"
-jmap-base-client = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "83a08405c641138ffe9e8e99094ab602e9a26256" }
-jmap-chat-client = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "83a08405c641138ffe9e8e99094ab602e9a26256" }
-jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "83a08405c641138ffe9e8e99094ab602e9a26256" }
+jmap-base-client = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "fe13c651c41d94c2d3a99a7d7d4af64cc8ed46c1" }
+jmap-chat-client = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "fe13c651c41d94c2d3a99a7d7d4af64cc8ed46c1" }
+jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "fe13c651c41d94c2d3a99a7d7d4af64cc8ed46c1" }
 mimid-server = { path = "../mimid-server" }
 # The version and features mimid-agent-core uses.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
