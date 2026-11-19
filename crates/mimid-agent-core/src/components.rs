@@ -16,7 +16,9 @@
 //!   dropped and additions appended in commit order;
 //! - `roles_list`, `preauth_list`, `base_room_policy`, `room_metadata` and
 //!   `franking_agent` updates replace the data entirely (decision
-//!   mimid-1wgh.3.20) once every update decodes strictly.
+//!   mimid-1wgh.3.20) once every update decodes strictly;
+//! - a Commit with more than one `room_metadata` update is invalid
+//!   (protocol-07 §7.6; decision mimid-1wgh.64).
 
 use std::collections::HashSet;
 
@@ -73,6 +75,11 @@ pub enum ComponentError {
     /// calls the application with one or more.
     #[error("no updates to apply")]
     NoUpdates,
+    /// A Commit updates `room_metadata` more than once: "Only a single
+    /// Room metadata update is valid per commit" (protocol-07 §7.6;
+    /// decision mimid-1wgh.64).
+    #[error("component {0:#06x} is updated more than once in the commit")]
+    RepeatedUpdate(ComponentID),
     /// The component is not one the hub tracks.
     #[error("component {0:#06x} is not tracked by the hub")]
     NotHubTracked(ComponentID),
@@ -326,9 +333,10 @@ pub fn apply_updates(
 ///
 /// - the four hub-tracked components go through [`apply_updates`];
 /// - `room_metadata` (protocol-07 §7.6) and `franking_agent` (§5.4.1)
-///   updates are decoded strictly, and the last one replaces the data. Room
-///   policy still refuses any `franking_agent` change (decision
-///   mimid-1wgh.6.42);
+///   updates are decoded strictly, and the last one replaces the data. A
+///   Commit may update `room_metadata` only once (protocol-07 §7.6;
+///   decision mimid-1wgh.64). Room policy still refuses any
+///   `franking_agent` change (decision mimid-1wgh.6.42);
 /// - a `remove` of any of these components passes through; room policy
 ///   refuses it for the hub-tracked ones;
 /// - every other component is unknown to the hub, and its AppDataUpdate is
@@ -350,6 +358,8 @@ pub fn apply_commit_op(
         return Ok(None);
     };
     match component_id {
+        // protocol-07 §7.6; decision mimid-1wgh.64
+        ROOM_METADATA if updates.len() > 1 => Err(ComponentError::RepeatedUpdate(component_id)),
         ROOM_METADATA => replace::<RoomMetaUpdate>(component_id, updates),
         FRANKING_AGENT => replace::<FrankingAgentUpdate>(component_id, updates),
         _ => apply_updates(component_id, current, updates),
@@ -370,4 +380,47 @@ fn replace<T: Deserialize>(
         .last()
         .map(|last| last.to_vec())
         .ok_or(ComponentError::NoUpdates)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Oracle: the same hand-encoded bytes as mimid-server's
+    //! `tests/hub_policy_components.rs`, from the protocol-07 §7.6
+    //! `RoomMetaData` struct with MLS variable-length vector lengths
+    //! (RFC 9420 §2.1.2). A member must reach the same verdict as the hub.
+
+    use super::*;
+
+    /// protocol-07 §7.6 `RoomMetaData` with every field empty: six
+    /// zero-length vectors (room_uri, room_name, room_descriptions,
+    /// room_avatar, room_subject, room_mood).
+    const EMPTY_ROOM_METADATA: &[u8] = &[0x00; 6];
+    /// The same with room_name "x": length 1, then 0x78.
+    const NAMED_ROOM_METADATA: &[u8] = &[0x00, 0x01, 0x78, 0x00, 0x00, 0x00, 0x00];
+
+    #[test]
+    fn one_room_metadata_update_replaces_the_data() {
+        assert_eq!(
+            apply_commit_op(
+                ROOM_METADATA,
+                Some(EMPTY_ROOM_METADATA),
+                ComponentOp::Update(&[NAMED_ROOM_METADATA]),
+            ),
+            Ok(Some(NAMED_ROOM_METADATA.to_vec()))
+        );
+    }
+
+    #[test]
+    fn two_room_metadata_updates_in_one_commit_are_invalid() {
+        // protocol-07 §7.6: "Only a single Room metadata update is valid
+        // per commit"; decision mimid-1wgh.64 item 5.
+        assert_eq!(
+            apply_commit_op(
+                ROOM_METADATA,
+                Some(EMPTY_ROOM_METADATA),
+                ComponentOp::Update(&[NAMED_ROOM_METADATA, EMPTY_ROOM_METADATA]),
+            ),
+            Err(ComponentError::RepeatedUpdate(ROOM_METADATA))
+        );
+    }
 }
