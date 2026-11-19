@@ -2,13 +2,15 @@
   "id": "mimid-8jsy",
   "title": "Binary SIGINT gap: handler installed only once the serving loop starts, after the 'mimid listening' line",
   "description": "Found by the tests-notice-flaky agent 2026-11-19: a SIGINT between logging 'mimid listening' and starting the serving loop kills mimid-server with the default action instead of a clean shutdown. Install the signal handler before binding/logging.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-19T19:18:16.272969964Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-19T19:18:16.272969964Z",
+  "updated_at": "2026-11-19T21:33:24.004335441Z",
+  "closed_at": "2026-11-19T21:33:24.004335441Z",
+  "close_reason": "Fixed in srv-blob-sigint 16f373b: SIGINT/SIGTERM listeners installed at the start of main; binary_smoke sigint_during_startup_stops_cleanly (failed before the fix)",
   "labels": [
     "server"
   ]
