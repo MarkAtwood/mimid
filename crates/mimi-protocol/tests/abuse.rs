@@ -10,10 +10,12 @@
 //! from this crate's encoder.
 
 use mimi_mls::wire::{AppDataDictionary, CipherSuite, SignaturePublicKey};
+use mimi_protocol::component_id::UNVERIFIED_ABUSIVE_MESSAGES;
 use mimi_protocol::tls_codec::{self, Deserialize, Serialize, Size};
 use mimi_protocol::{
-    AbuseReport, AbuseType, AbusiveMessage, Frank, HubKey, IdentifierUri, ServerFrankingContext,
-    franking_tag, verify_server_frank,
+    AbuseReport, AbuseType, AbusiveMessage, Frank, HubKey, IdentifierUri,
+    MAX_UNVERIFIED_ABUSIVE_MESSAGES, ServerFrankingContext, UnverifiedAbusiveMessage,
+    UnverifiedAbusiveMessages, franking_tag, verify_server_frank,
 };
 
 fn h(hex: &str) -> Vec<u8> {
@@ -289,4 +291,117 @@ fn hub_validates_reported_message() {
     };
     assert!(verify_server_frank(&hub_key, &tag, &altered, &message.frank.server_frank).is_err());
     assert!(message.frank.verify_integrity(&key, &altered).is_err());
+}
+
+// --- UnverifiedAbusiveMessages (INVENTED, NOT FROM SPEC; decision
+// mimid-1wgh.60) ---
+
+/// The component data: one UnverifiedAbusiveMessage holding the
+/// spec-example content, 86 bytes.
+fn unverified_wire() -> Vec<u8> {
+    cat(&[
+        &[0x40, 0x54],         // messages<V>: 84 bytes
+        &[0x40, 0x4a],         //   message_content<V>: 74 bytes
+        &h(SPEC_EXAMPLE_DATA), //     CBOR {1: ALICE, 2: ROOM}
+        &TIMESTAMP,            //   accepted_timestamp: 1700000000000
+    ])
+}
+
+fn unverified() -> UnverifiedAbusiveMessages {
+    UnverifiedAbusiveMessages {
+        messages: vec![UnverifiedAbusiveMessage {
+            message_content: h(SPEC_EXAMPLE_DATA),
+            accepted_timestamp: 1_700_000_000_000,
+        }],
+    }
+}
+
+#[test]
+fn unverified_messages_fixture() {
+    let wire = unverified_wire();
+    assert_eq!(wire.len(), 2 + 2 + 74 + 8);
+    check_fixture(&wire, &unverified());
+    check_truncation_and_trailing::<UnverifiedAbusiveMessages>(&wire);
+}
+
+/// A report whose abuse_extensions hold the component (0xf020) and an
+/// unknown one (0xff00): both round-trip, the component is found, and a
+/// reader that knows neither still has the franked message.
+#[test]
+fn abuse_report_with_unverified_messages_fixture() {
+    let data = unverified_wire();
+    let extensions = cat(&[
+        &[0x40, 0x5f], // component_data<V>: 95 bytes
+        &[0xf0, 0x20], //   component_id: 0xf020 unverified_abusive_messages
+        &[0x40, 0x56], //   data<V>: 86 bytes
+        &data,
+        &[0xff, 0x00], //   component_id: 0xff00, unknown
+        &[0x02],       //   data<V>: 2 bytes
+        &[0x01, 0x02],
+    ]);
+    let wire = cat(&[
+        &report_wire()[..report_wire().len() - EXTENSIONS_WIRE.len()],
+        &extensions,
+    ]);
+    let mut expected = report();
+    expected.abuse_extensions =
+        AppDataDictionary::new(&[(0xf020, &data), (0xff00, &[0x01, 0x02])]).expect("dict");
+    check_fixture(&wire, &expected);
+    let decoded = AbuseReport::tls_deserialize_exact(&wire).expect("decodes");
+    assert_eq!(decoded.messages, [abusive_message()]);
+    assert_eq!(
+        decoded.unverified_messages().expect("decodes"),
+        Some(unverified())
+    );
+    // The encoder's dictionary holds the component data byte for byte.
+    assert_eq!(
+        unverified()
+            .to_extensions()
+            .expect("encodes")
+            .get(UNVERIFIED_ABUSIVE_MESSAGES),
+        Some(&data[..])
+    );
+    // Without the component there is nothing to find.
+    assert_eq!(report().unverified_messages().expect("absent"), None);
+}
+
+#[test]
+fn unverified_messages_reject_hostile_input() {
+    // An empty list.
+    assert!(UnverifiedAbusiveMessages::tls_deserialize_exact([0x00]).is_err());
+    assert!(
+        UnverifiedAbusiveMessages {
+            messages: Vec::new()
+        }
+        .to_extensions()
+        .is_err()
+    );
+    // At the limit and one past it: entries of 9 bytes (empty content,
+    // timestamp 0).
+    let entry = [0u8; 9];
+    for (count, ok) in [
+        (MAX_UNVERIFIED_ABUSIVE_MESSAGES, true),
+        (MAX_UNVERIFIED_ABUSIVE_MESSAGES + 1, false),
+    ] {
+        let body = entry.repeat(count);
+        // A 2-byte prefix covers up to 16383 bytes.
+        let len = u16::try_from(body.len()).expect("small") | 0x4000;
+        let wire = cat(&[&len.to_be_bytes(), &body]);
+        assert_eq!(
+            UnverifiedAbusiveMessages::tls_deserialize_exact(&wire).is_ok(),
+            ok,
+            "{count}"
+        );
+    }
+    // A non-minimal length prefix.
+    let wire = unverified_wire();
+    let w = cat(&[&[0x80, 0x00, 0x00, 0x54], &wire[2..]]);
+    assert!(UnverifiedAbusiveMessages::tls_deserialize_exact(&w).is_err());
+    // A malformed component makes unverified_messages an error, not the
+    // report: the report itself still decodes.
+    let mut report = report();
+    report.abuse_extensions = AppDataDictionary::new(&[(0xf020, &[0x00])]).expect("dict");
+    let wire = report.tls_serialize_detached().expect("encodes");
+    let decoded = AbuseReport::tls_deserialize_exact(&wire).expect("decodes");
+    assert!(decoded.unverified_messages().is_err());
 }

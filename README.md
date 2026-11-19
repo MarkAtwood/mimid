@@ -26,6 +26,13 @@ These are values the drafts suggest or request but IANA has not assigned, becaus
 | components 0x0001–0x0005 | `app_components`, `safe_aad`, `content_media_types`, `last_resort_key_package`, `app_ack` | mls-extensions-11 §7.5, initial contents of a registry not yet created |
 | components 0x0020–0x0023 | `frank_aad`, `franking_agent`, `participant_list`, `room_metadata` | protocol-07 §10, requested in that registry |
 
+mimid also uses values of its own from the private-use range of the MLS Component Types registry (0x8000–0xFFFF, mls-extensions-11 §7.5). No draft defines them, and other implementations ignore them:
+
+| Value | What | Decision |
+|---|---|---|
+| component 0xF013 | the did:webvh heads record (configurable as `heads_component`) | mimid-1wgh.4.81.35 |
+| component 0xF020 | `unverified_abusive_messages`: unfranked messages in an AbuseReport's `abuse_extensions`, which only a mimid hub reads and records as unverified | mimid-1wgh.60 |
+
 ## Known weaknesses
 
 These are deliberate in the current version:

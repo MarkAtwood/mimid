@@ -63,6 +63,11 @@
 //!   (decision mimid-1wgh.5.59). [`AbuseReport::note`] is opaque bytes, not
 //!   checked to be UTF-8 (decision mimid-1wgh.5.60), and any [`AbuseType`]
 //!   value is accepted (decision mimid-1wgh.5.32).
+//! - [`UnverifiedAbusiveMessages`], under component 0xF020
+//!   ([`component_id::UNVERIFIED_ABUSIVE_MESSAGES`]), is INVENTED, NOT FROM
+//!   SPEC (decision mimid-1wgh.60): unfranked messages in a report's
+//!   `abuse_extensions`. Only a mimid hub reads it; nothing in it can be
+//!   verified.
 //! - MLS structures come from [`mimi_mls::wire`], which cannot decode a
 //!   SemiPrivateMessage. A [`HandshakeBundle`] or [`FanoutMessage`] whose
 //!   handshake is a SemiPrivateMessage, which §5.3 and §5.5 allow, is
@@ -175,7 +180,10 @@ mod uri_template;
 mod utf8_string;
 mod wire_profile;
 
-pub use abuse::{AbuseReport, AbuseType, AbusiveMessage};
+pub use abuse::{
+    AbuseReport, AbuseType, AbusiveMessage, MAX_UNVERIFIED_ABUSIVE_MESSAGES,
+    UnverifiedAbusiveMessage, UnverifiedAbusiveMessages,
+};
 pub use component::{
     ParticipantListData, ParticipantListUpdate, RichDescription, RoomMetaData, RoomMetaUpdate, Uri,
     UserRolePair, UserindexRolePair,
@@ -235,6 +243,14 @@ pub mod component_id {
     /// `room_metadata` (§10.4), a GroupContext component carrying
     /// [`RoomMetaData`](crate::RoomMetaData).
     pub const ROOM_METADATA: u16 = 0x0023;
+    /// `unverified_abusive_messages`, an `abuse_extensions` component of an
+    /// [`AbuseReport`](crate::AbuseReport) carrying
+    /// [`UnverifiedAbusiveMessages`](crate::UnverifiedAbusiveMessages).
+    ///
+    /// INVENTED, NOT FROM SPEC (decision mimid-1wgh.60): mimid's own, in
+    /// the private-use range 0x8000 to 0xFFFF of mls-extensions-11 §7.5;
+    /// protocol-07 §10 does not register it.
+    pub const UNVERIFIED_ABUSIVE_MESSAGES: u16 = 0xf020;
 }
 
 /// End-to-end protocol selector (protocol-07 §5).
