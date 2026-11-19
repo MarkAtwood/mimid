@@ -1,113 +1,38 @@
-//! Localized display text (draft-atwood-jmap-updates-00 §4, the
-//! `urn:ietf:params:jmap:i18n` capability): the `language` argument and
-//! its RFC 4647 §3.4 Lookup.
+//! A Chat's localized display text (draft-atwood-jmap-updates-00 §3, the
+//! `urn:ietf:params:jmap:i18n` capability).
 //!
 //! A Chat's `name` and `description` are its localizable properties (the
 //! JMAP Chat applicability table, jmap-chat-spec bead qb21). They come
 //! from the room's MIMI `RoomMetaData` (protocol-07 §7.6): `room_name` has
 //! no language, and each `room_descriptions` entry has a language tag.
-//! [`Localized`] maps them: the base values are the name and the first
-//! description, `locale` is null because the name's language is unknown,
-//! and each tagged description is a localization of `description`.
+//! [`Localized`] maps them to the stored object: the base values are the
+//! name and the first description, `locale` is null because the name's
+//! language is unknown, and each tagged description is a localization of
+//! `description`.
+//!
+//! Everything else is crate-jmap's (decision mimid-1wgh.70): the `language`
+//! argument, its gating on `using`, RFC 4647 §3.4 Lookup and the
+//! single-language view are [`I18nProjection`], and `/query` and
+//! `/queryChanges` use `handle_query_with_i18n` and
+//! `handle_query_changes_with_i18n`.
+//!
+//! # Limitations
+//!
+//! Chat `name` is never localized: `RoomMetaData` has one untagged name.
 
 use std::collections::BTreeMap;
 
+use jmap_server::I18nProjection;
+use jmap_types::i18n::{LanguageTag, LocalizableProperty};
 use serde_json::{Map, Value, json};
 
-/// draft-atwood-jmap-updates-00 §3.
-pub const I18N_CAPABILITY: &str = "urn:ietf:params:jmap:i18n";
-
-/// Why a `language` argument was refused.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum LanguageError {
-    /// The request did not name [`I18N_CAPABILITY`] in `using`.
-    #[error("language needs urn:ietf:params:jmap:i18n in using")]
-    NotUsing,
-    /// Not null and not an array of language ranges.
-    #[error("language must be null or an array of language ranges")]
-    Malformed,
-}
-
-/// Reads a method call's `language` argument: `None` when absent or null.
-///
-/// # Errors
-///
-/// [`LanguageError::NotUsing`] for a `language` argument when `i18n` is
-/// false (draft-atwood-jmap-updates-00 §3: an unknown argument), and
-/// [`LanguageError::Malformed`] for anything but null or an array of RFC
-/// 4647 §2.1 basic language ranges.
-pub fn language_argument(
-    args: &Map<String, Value>,
-    i18n: bool,
-) -> Result<Option<Vec<String>>, LanguageError> {
-    let Some(value) = args.get("language") else {
-        return Ok(None);
-    };
-    if !i18n {
-        return Err(LanguageError::NotUsing);
-    }
-    if value.is_null() {
-        return Ok(None);
-    }
-    let ranges: Vec<String> =
-        serde_json::from_value(value.clone()).map_err(|_| LanguageError::Malformed)?;
-    if ranges.iter().all(|range| is_basic_range(range)) {
-        Ok(Some(ranges))
-    } else {
-        Err(LanguageError::Malformed)
-    }
-}
-
-/// RFC 4647 §2.1: `language-range = (1*8ALPHA *("-" 1*8alphanum)) / "*"`.
-fn is_basic_range(range: &str) -> bool {
-    if range == "*" {
-        return true;
-    }
-    let mut subtags = range.split('-');
-    let first_ok = subtags
-        .next()
-        .is_some_and(|s| (1..=8).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphabetic()));
-    first_ok
-        && subtags
-            .all(|s| (1..=8).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric()))
-}
-
-/// RFC 4647 §3.4 Lookup of `ranges` among `tags`, compared without regard
-/// to case: the first tag that a range, or a range with subtags removed
-/// from its end, equals. A `*` followed by other ranges is skipped; a
-/// final `*`, or no match, gives `None`, the default.
-pub fn lookup<'a>(
-    ranges: &[String],
-    tags: impl IntoIterator<Item = &'a str> + Clone,
-) -> Option<&'a str> {
-    for range in ranges {
-        if range == "*" {
-            continue;
-        }
-        let mut candidate = range.as_str();
-        loop {
-            if let Some(tag) = tags
-                .clone()
-                .into_iter()
-                .find(|tag| tag.eq_ignore_ascii_case(candidate))
-            {
-                return Some(tag);
-            }
-            let Some(cut) = candidate.rfind('-') else {
-                break;
-            };
-            candidate = &candidate[..cut];
-            // RFC 4647 §3.4: a single-character subtag left at the end
-            // (an extension or private-use singleton) goes with the cut.
-            if let Some(cut) = candidate.rfind('-')
-                && candidate.len() - cut == 2
-            {
-                candidate = &candidate[..cut];
-            }
-        }
-    }
-    None
-}
+/// The localizable properties of Chat (the JMAP Chat applicability
+/// table, jmap-chat-spec bead qb21): `name` is a `String`, `description`
+/// a `String|null`.
+pub const CHAT_LOCALIZABLE: &[LocalizableProperty] = &[
+    LocalizableProperty::new("name", false),
+    LocalizableProperty::new("description", true),
+];
 
 /// A Chat's localizable display text.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -116,31 +41,24 @@ pub struct Localized {
     pub name: String,
     /// The base `description`: the first plain-text room description.
     pub description: Option<String>,
-    /// Language tag to `description` in that language. RFC 5646 §2.1.1:
-    /// tags are compared without regard to case; the first one of each
-    /// case-insensitive spelling is kept.
-    pub descriptions: BTreeMap<String, String>,
+    /// Language tag to `description` in that language, tags in RFC 5646
+    /// §2.1.1 canonical case; the first description of each tag (compared
+    /// without regard to case) is kept.
+    pub descriptions: BTreeMap<LanguageTag, String>,
 }
 
 impl Localized {
     /// The display text of a room's (language tag, text) descriptions.
-    /// A description whose tag is empty or not well formed (RFC 5646 §2.1
-    /// syntax, as RFC 4647 §2.1 basic ranges check it) is of unknown
-    /// language: it can be the base value but not a localization.
+    /// A description whose tag is not a well-formed RFC 5646 language tag
+    /// (as another provider may send) is of unknown language: it can be
+    /// the base value but not a `localizations` key
+    /// (draft-atwood-jmap-updates-00 §3.1).
     pub fn new(name: String, descriptions: &[(String, String)]) -> Self {
         let mut by_tag = BTreeMap::new();
         for (tag, text) in descriptions {
-            // A tag that is not a well-formed language tag (as another
-            // provider may send) cannot be a `localizations` key
-            // (draft-atwood-jmap-updates-00 §4.1); its text can still be the
-            // base description.
-            if tag == "*"
-                || !is_basic_range(tag)
-                || by_tag.keys().any(|k: &String| k.eq_ignore_ascii_case(tag))
-            {
-                continue;
+            if let Ok(tag) = LanguageTag::parse(tag) {
+                by_tag.entry(tag).or_insert_with(|| text.clone());
             }
-            by_tag.insert(tag.clone(), text.clone());
         }
         Self {
             name,
@@ -149,32 +67,23 @@ impl Localized {
         }
     }
 
-    /// Writes `name` and `description` into `object`, and with `i18n`
-    /// also `locale` and `localizations`
-    /// (draft-atwood-jmap-updates-00 §4.1). With a `language` argument the
-    /// object is the view in the language Lookup chooses, its `locale` that
-    /// language (§4.2.1).
-    pub fn write(&self, object: &mut Map<String, Value>, i18n: bool, language: Option<&[String]>) {
+    /// Writes the stored `name`, `description`, `locale` and
+    /// `localizations` into `object`, then lets `i18n` shape them for the
+    /// request: removed without the capability, as stored with a null
+    /// `language`, the single-language view otherwise
+    /// (draft-atwood-jmap-updates-00 §3.2.1).
+    pub fn write(&self, object: &mut Map<String, Value>, i18n: &I18nProjection) {
         object.insert("name".into(), json!(self.name));
-        let chosen = language
-            .and_then(|ranges| lookup(ranges, self.descriptions.keys().map(String::as_str)));
-        let description = match chosen {
-            Some(tag) => self.descriptions.get(tag).cloned(),
-            None => self.description.clone(),
-        };
         // The Chat type leaves an absent description out rather than null.
-        match description {
+        match &self.description {
             Some(description) => object.insert("description".into(), json!(description)),
             None => object.remove("description"),
         };
-        if !i18n {
-            return;
-        }
-        object.insert("locale".into(), json!(chosen));
+        object.insert("locale".into(), Value::Null);
         let localizations: Map<String, Value> = self
             .descriptions
             .iter()
-            .map(|(tag, text)| (tag.clone(), json!({ "description": text })))
+            .map(|(tag, text)| (tag.as_str().to_owned(), json!({ "description": text })))
             .collect();
         object.insert(
             "localizations".into(),
@@ -184,59 +93,25 @@ impl Localized {
                 Value::Object(localizations)
             },
         );
+        i18n.apply(object);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::projection::ChatRecord;
     use super::*;
+    use jmap_server::I18nInfo;
+    use jmap_types::i18n::JMAP_I18N_URI;
 
-    fn ranges(list: &[&str]) -> Vec<String> {
-        list.iter().map(|s| (*s).to_owned()).collect()
-    }
-
-    #[test]
-    fn lookup_truncates_ranges_and_never_extends_them() {
-        let tags = ["de", "fr-CH", "zh-Hant"];
-        let tags = tags.iter().copied();
-        assert_eq!(lookup(&ranges(&["de-CH"]), tags.clone()), Some("de"));
-        assert_eq!(lookup(&ranges(&["fr"]), tags.clone()), None);
-        assert_eq!(lookup(&ranges(&["FR-ch"]), tags.clone()), Some("fr-CH"));
-        assert_eq!(
-            lookup(&ranges(&["zh-Hant-CN-x-private1"]), tags.clone()),
-            Some("zh-Hant")
-        );
-        assert_eq!(lookup(&ranges(&["it", "de"]), tags.clone()), Some("de"));
-        assert_eq!(lookup(&ranges(&["*", "de"]), tags.clone()), Some("de"));
-        assert_eq!(lookup(&ranges(&["it", "*"]), tags), None);
-    }
-
-    #[test]
-    fn the_language_argument_needs_the_capability_and_basic_ranges() {
-        let args = |v: Value| json!({ "language": v }).as_object().unwrap().clone();
-        assert_eq!(language_argument(&Map::new(), false), Ok(None));
-        assert_eq!(
-            language_argument(&args(json!(["de"])), false),
-            Err(LanguageError::NotUsing)
-        );
-        assert_eq!(language_argument(&args(Value::Null), true), Ok(None));
-        assert_eq!(
-            language_argument(&args(json!(["de-CH", "*"])), true),
-            Ok(Some(ranges(&["de-CH", "*"])))
-        );
-        for bad in [
-            json!("de"),
-            json!([1]),
-            json!(["de_CH"]),
-            json!(["toolongtag"]),
-            json!([""]),
-        ] {
-            assert_eq!(
-                language_argument(&args(bad.clone()), true),
-                Err(LanguageError::Malformed),
-                "{bad}"
-            );
-        }
+    fn projection(i18n: bool, language: Value) -> I18nProjection {
+        let mut args = json!({ "language": language }).as_object().unwrap().clone();
+        let using = if i18n {
+            vec![JMAP_I18N_URI.to_owned()]
+        } else {
+            Vec::new()
+        };
+        I18nProjection::from_args::<ChatRecord>(&mut args, &using, Some(&I18nInfo::new())).unwrap()
     }
 
     #[test]
@@ -247,36 +122,63 @@ mod tests {
                 ("en".into(), "Where we eat".into()),
                 ("de".into(), "Wo wir essen".into()),
                 ("DE".into(), "ignored: same tag".into()),
+                ("en-us".into(), "Where we chow down".into()),
                 (String::new(), "no tag".into()),
+                ("de-1".into(), "ill-formed tag".into()),
             ],
         );
         let mut plain = Map::new();
-        text.write(&mut plain, false, None);
+        text.write(&mut plain, &projection(false, Value::Null));
         assert_eq!(
             Value::Object(plain),
             json!({"name": "Lunch", "description": "Where we eat"})
         );
 
         let mut stored = Map::new();
-        text.write(&mut stored, true, None);
+        text.write(&mut stored, &projection(true, Value::Null));
         assert_eq!(
             Value::Object(stored),
             json!({
                 "name": "Lunch",
                 "description": "Where we eat",
                 "locale": null,
-                "localizations": {"de": {"description": "Wo wir essen"}, "en": {"description": "Where we eat"}},
+                "localizations": {
+                    "de": {"description": "Wo wir essen"},
+                    "en": {"description": "Where we eat"},
+                    "en-US": {"description": "Where we chow down"},
+                },
             })
         );
 
+        // §3.2.1: the view's locale is the chosen tag and its
+        // localizations null.
         let mut german = Map::new();
-        text.write(&mut german, true, Some(&ranges(&["de-AT", "en"])));
-        assert_eq!(german["description"], json!("Wo wir essen"));
-        assert_eq!(german["locale"], json!("de"));
+        text.write(&mut german, &projection(true, json!(["de-AT", "en"])));
+        assert_eq!(
+            Value::Object(german),
+            json!({
+                "name": "Lunch",
+                "description": "Wo wir essen",
+                "locale": "de",
+                "localizations": null,
+            })
+        );
 
+        // No range matches: the base values and the null locale.
         let mut nothing = Map::new();
-        text.write(&mut nothing, true, Some(&ranges(&["ja"])));
+        text.write(&mut nothing, &projection(true, json!(["ja", "*"])));
         assert_eq!(nothing["description"], json!("Where we eat"));
         assert_eq!(nothing["locale"], Value::Null);
+    }
+
+    #[test]
+    fn a_room_without_descriptions_has_no_description() {
+        let text = Localized::new("Lunch".into(), &[]);
+        let mut view = Map::new();
+        text.write(&mut view, &projection(true, json!(["de"])));
+        assert_eq!(
+            Value::Object(view),
+            json!({"name": "Lunch", "locale": null, "localizations": null})
+        );
     }
 }

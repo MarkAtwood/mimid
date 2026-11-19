@@ -45,7 +45,6 @@ use serde_json::Value;
 
 use super::JmapState;
 use super::auth::Account;
-use super::language::I18N_CAPABILITY;
 use super::session::{CAPABILITIES, METADATA_CAPABILITY};
 use crate::http::MAX_BODY_LEN;
 
@@ -310,7 +309,7 @@ pub(super) async fn post_api(
         return problem(error);
     }
     let account = account
-        .with_i18n(request.using.iter().any(|uri| uri == I18N_CAPABILITY))
+        .with_i18n(jmap_server::uses_i18n(&request.using))
         .with_metadata(request.using.iter().any(|uri| uri == METADATA_CAPABILITY));
     let session_state = match state.0.session.state(&account) {
         Ok(session_state) => session_state,

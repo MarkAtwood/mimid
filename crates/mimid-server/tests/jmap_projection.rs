@@ -218,17 +218,34 @@ impl Fixture {
         method: &str,
         args: Value,
     ) -> (String, Value) {
+        self.call_accepting(token, using, None, method, args).await
+    }
+
+    /// As [`Fixture::call_using`], with an `Accept-Language` header field
+    /// when `accept_language` is set.
+    async fn call_accepting(
+        &self,
+        token: &BearerToken,
+        using: &[&str],
+        accept_language: Option<&str>,
+        method: &str,
+        args: Value,
+    ) -> (String, Value) {
         let request = json!({"using": using, "methodCalls": [[method, args, "c"]]});
+        let mut builder = Request::post("/jmap/api")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", token.expose_secret()),
+            );
+        if let Some(value) = accept_language {
+            builder = builder.header(header::ACCEPT_LANGUAGE, value);
+        }
         let response = self
             .app
             .clone()
             .oneshot(
-                Request::post("/jmap/api")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header(
-                        header::AUTHORIZATION,
-                        format!("Bearer {}", token.expose_secret()),
-                    )
+                builder
                     .body(Body::from(serde_json::to_vec(&request).unwrap()))
                     .unwrap(),
             )
@@ -1670,8 +1687,11 @@ fn described(descriptions: &[(&str, &str)]) -> Vec<u8> {
 /// mimid-1wgh.51: a hosted room's descriptions become the Chat's
 /// `description` and, with `urn:ietf:params:jmap:i18n` in `using`, its
 /// `localizations`; `language` chooses one by RFC 4647 Lookup
-/// (draft-atwood-jmap-updates-00 §4). Without the capability the Chat is
-/// as before and `language`, `locale` and `localizations` are refused.
+/// (draft-atwood-jmap-updates-00 §3.2.1, through crate-jmap's
+/// `I18nProjection` since bead mimid-nb5n). Without the capability the
+/// Chat is as before and `language`, `locale` and `localizations` are
+/// refused. Accept-Language never picks the language (§3.2.1), and a
+/// language with no localization falls back to the base values.
 #[tokio::test]
 async fn room_descriptions_are_the_chats_localized_description() {
     let f = fixture().await;
@@ -1736,8 +1756,41 @@ async fn room_descriptions_are_the_chats_localized_description() {
     assert_eq!(chat["name"], "Clubhouse");
     assert_eq!(chat["description"], "Wo wir uns treffen");
     assert_eq!(chat["locale"], "de");
-    // §4.2.1: the view keeps the stored object's state.
+    // §3.2.1 step 5: the view holds one language.
+    assert_eq!(chat["localizations"], Value::Null);
+    // §3.2.1: the view keeps the stored object's state.
     assert_eq!(german["state"], stored["state"]);
+
+    // A language the room has no description in: Lookup finds nothing,
+    // so the base values and the null locale (§3.2.1 step 2).
+    let mut japanese = get.clone();
+    japanese["language"] = json!(["ja-JP", "*"]);
+    let (_, fallback) = i18n("Chat/get", japanese).await;
+    let chat = &fallback["list"][0];
+    assert_eq!(chat["name"], "Clubhouse");
+    assert_eq!(chat["description"], "Where we meet");
+    assert_eq!(chat["locale"], Value::Null);
+    assert_eq!(chat["localizations"], Value::Null);
+
+    // Accept-Language does not change /get with the capability in use
+    // (§3.2.1), nor without it.
+    for using in [&I18N_USING[..], &USING[..]] {
+        let (name, accepted) = f
+            .call_accepting(
+                &f.alice_token,
+                using,
+                Some("de-CH, de;q=0.9"),
+                "Chat/get",
+                get.clone(),
+            )
+            .await;
+        assert_eq!(name, "Chat/get", "{accepted}");
+        assert_eq!(accepted["list"][0]["description"], "Where we meet");
+    }
+
+    // §3.2.3: the queryState records the language. Chat/queryChanges
+    // always answers cannotCalculateChanges (decision mimid-1wgh.12.22),
+    // but checks its `language` argument first.
     let (name, query) = i18n(
         "Chat/query",
         json!({"accountId": account, "language": ["de"]}),
@@ -1745,6 +1798,35 @@ async fn room_descriptions_are_the_chats_localized_description() {
     .await;
     assert_eq!(name, "Chat/query", "{query}");
     assert_eq!(query["ids"], json!([hosted]));
+    let (_, unlocalized) = i18n("Chat/query", json!({"accountId": account})).await;
+    assert_ne!(query["queryState"], unlocalized["queryState"]);
+    for (language, error) in [
+        (json!(["de"]), "cannotCalculateChanges"),
+        (json!(["de_CH"]), "invalidArguments"),
+    ] {
+        let (name, response) = i18n(
+            "Chat/queryChanges",
+            json!({"accountId": account, "language": language,
+                   "sinceQueryState": query["queryState"]}),
+        )
+        .await;
+        assert_eq!(
+            (name.as_str(), &response["type"]),
+            ("error", &json!(error)),
+            "{language}"
+        );
+    }
+
+    // Message has no localizable property: `language` is unknown there.
+    let (name, error) = i18n(
+        "Message/get",
+        json!({"accountId": account, "ids": [], "language": ["de"]}),
+    )
+    .await;
+    assert_eq!(
+        (name.as_str(), &error["type"]),
+        ("error", &json!("invalidArguments"))
+    );
     let (name, error) = i18n("Chat/get", {
         let mut bad = get.clone();
         bad["language"] = json!("de");

@@ -42,10 +42,10 @@ use super::api::{
     MAX_SIZE_REQUEST,
 };
 use super::auth::Account;
-use super::language::I18N_CAPABILITY;
 use crate::config::{BaseUrl, Domain};
 use crate::http::MAX_BODY_LEN;
 use crate::store::MAX_BLOB_LEN;
+use jmap_types::i18n::JMAP_I18N_URI;
 
 /// RFC 8620 §2: the core capability.
 pub const CORE_CAPABILITY: &str = "urn:ietf:params:jmap:core";
@@ -59,7 +59,7 @@ pub const CAPABILITIES: [&str; 5] = [
     CORE_CAPABILITY,
     JMAP_CHAT_URI,
     MIMI_CAPABILITY,
-    I18N_CAPABILITY,
+    JMAP_I18N_URI,
     METADATA_CAPABILITY,
 ];
 

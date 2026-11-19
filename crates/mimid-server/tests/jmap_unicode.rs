@@ -15,11 +15,13 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use jmap_server::{I18nInfo, I18nProjection};
 use mimi_protocol::tls_codec::{Deserialize, Serialize};
 use mimi_protocol::{IdentifierUri, RichDescription, RoomMetaData, Utf8String};
 use mimid_server::hub::RoomTexts;
 use mimid_server::jmap::language::Localized;
-use serde_json::{Map, Value};
+use mimid_server::jmap::projection::ChatRecord;
+use serde_json::{Map, Value, json};
 use unicode_normalization::UnicodeNormalization;
 
 const BLNS: &str = include_str!("../../mimi-content/tests/fixtures/blns/blns.base64.txt");
@@ -87,8 +89,17 @@ fn metadata(name: &str, descriptions: &[(&str, &str)]) -> RoomMetaData {
 
 /// The Chat text a client receives: written, serialized, parsed back.
 fn received(texts: &RoomTexts, i18n: bool, language: Option<&[String]>) -> Map<String, Value> {
+    let using = if i18n {
+        vec!["urn:ietf:params:jmap:i18n".to_owned()]
+    } else {
+        Vec::new()
+    };
+    let mut args = Map::new();
+    args.insert("language".into(), json!(language));
+    let view = I18nProjection::from_args::<ChatRecord>(&mut args, &using, Some(&I18nInfo::new()))
+        .expect("a valid language argument");
     let mut object = Map::new();
-    Localized::new(texts.name.clone(), &texts.descriptions).write(&mut object, i18n, language);
+    Localized::new(texts.name.clone(), &texts.descriptions).write(&mut object, &view);
     let json = serde_json::to_string(&Value::Object(object)).unwrap();
     match serde_json::from_str(&json).unwrap() {
         Value::Object(object) => object,
@@ -157,7 +168,7 @@ fn a_hostile_language_tag_is_never_chosen_by_lookup() {
     let stored = received(&texts, true, None);
     assert_eq!(
         stored["localizations"],
-        serde_json::json!({"en": {"description": "plain"}})
+        json!({"en": {"description": "plain"}})
     );
     let view = received(&texts, true, Some(&["de".to_owned()]));
     assert_eq!(view["description"], "plain");

@@ -18,6 +18,9 @@ base64 = "=0.22.1"
 # capability types; exact rev pin (decision mimid-1wgh.12.21).
 jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
 jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
+# draft-atwood-jmap-updates-00 language tags and localizations (bead
+# mimid-nb5n); same rev.
+jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }
 # draft-ietf-jmap-metadata-05 helpers for Chat.privateMetadata (decision
 # mimid-1wgh.63); same rev.
 jmap-metadata-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "b85dfc856dbc26398aef5dc92d0da8ec1973c01c" }

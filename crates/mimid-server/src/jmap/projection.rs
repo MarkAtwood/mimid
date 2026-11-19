@@ -68,9 +68,10 @@ use jmap_chat_types::{Chat, ChatContact, Message};
 use jmap_metadata_server::{MetadataCondition, MetadataFilterError};
 use jmap_server::{
     BackendChangesError, BackendQueryError, CallContext, ChangesParams, ChangesResult, GetObject,
-    HandlerFuture, HandlerOutput, Id, JmapBackend, JmapError, JmapHandler, JmapObject,
-    QueryChangesParams, QueryChangesResult, QueryObject, QueryParams, QueryResult, SetError,
-    SetErrorType, State, handle_changes, handle_query, handle_query_changes, resolve_query_start,
+    HandlerFuture, HandlerOutput, I18nInfo, I18nProjection, Id, JmapBackend, JmapError,
+    JmapHandler, JmapObject, QueryChangesParams, QueryChangesResult, QueryObject, QueryParams,
+    QueryResult, SetError, SetErrorType, State, handle_changes, handle_query, handle_query_changes,
+    handle_query_changes_with_i18n, handle_query_with_i18n, resolve_query_start,
     server_fail_from_backend,
 };
 use serde::{Deserialize, Serialize};
@@ -80,7 +81,7 @@ use ulid::Ulid;
 
 use super::api::{MAX_OBJECTS_IN_GET, MAX_OBJECTS_IN_SET, Methods};
 use super::auth::Account;
-use super::language::{Localized, language_argument};
+use super::language::{CHAT_LOCALIZABLE, Localized};
 use super::metadata;
 use crate::hub::{Hub, RoomTexts};
 use crate::store::{ChatRow, HubRow, MessageRow, ProjectionCursor, Store, StoreError};
@@ -224,6 +225,9 @@ impl Kind {
 /// [`Chat`], [`Message`] or [`ChatContact`], through serde (AGENTS.md).
 macro_rules! record {
     ($name:ident, $type_name:literal) => {
+        record!($name, $type_name, &[]);
+    };
+    ($name:ident, $type_name:literal, $localizable:expr) => {
         #[doc = concat!("A projected ", $type_name, " as JSON.")]
         #[derive(Debug, Clone, Serialize, Deserialize)]
         #[serde(transparent)]
@@ -231,6 +235,7 @@ macro_rules! record {
 
         impl JmapObject for $name {
             const TYPE_NAME: &'static str = $type_name;
+            const LOCALIZABLE: &'static [jmap_types::i18n::LocalizableProperty] = $localizable;
             type Property = String;
         }
 
@@ -243,7 +248,7 @@ macro_rules! record {
     };
 }
 
-record!(ChatRecord, "Chat");
+record!(ChatRecord, "Chat", CHAT_LOCALIZABLE);
 record!(MessageRecord, "Message");
 record!(ContactRecord, "ChatContact");
 
@@ -403,7 +408,7 @@ impl Projection {
         account: &Account,
         ids: Option<&[String]>,
         properties: Option<&[String]>,
-        language: Option<&[String]>,
+        i18n: &I18nProjection,
     ) -> Result<(String, Vec<Map<String, Value>>), JmapError> {
         let fail = |error: ProjectionError| server_fail_from_backend(&error);
         let wanted: Option<BTreeSet<&str>> =
@@ -415,7 +420,7 @@ impl Projection {
                 let objects = chats
                     .iter()
                     .filter(|chat| keep(&chat.row.chat_id))
-                    .map(|chat| chat_object(chat, account.i18n(), language))
+                    .map(|chat| chat_object(chat, i18n))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|error| fail(error.into()))?;
                 (chat_state(cursor, &digest, metadata_seq(&chats)), objects)
@@ -856,8 +861,7 @@ fn into_map(value: Value) -> Result<Map<String, Value>, serde_json::Error> {
 
 fn chat_object(
     chat: &ChatView,
-    i18n: bool,
-    language: Option<&[String]>,
+    i18n: &I18nProjection,
 ) -> Result<Map<String, Value>, serde_json::Error> {
     let row = &chat.row;
     let mut object = json!({
@@ -885,7 +889,7 @@ fn chat_object(
     // the VTC capability, which mimid does not offer (CHAT_PROPERTIES).
     object.remove("activeCallId");
     object.remove("activeCallAccountId");
-    chat.text.write(&mut object, i18n, language);
+    chat.text.write(&mut object, i18n);
     Ok(object)
 }
 
@@ -1066,7 +1070,7 @@ impl JmapBackend for Projection {
         let ids: Option<Vec<String>> =
             ids.map(|ids| ids.iter().map(|id| id.as_ref().to_owned()).collect());
         let (_, objects) = self
-            .records(kind, caller, ids.as_deref(), properties, None)
+            .records(kind, caller, ids.as_deref(), properties, &stored(caller))
             .await
             .map_err(|_| ProjectionError::Request)?;
         let found: BTreeSet<String> = objects
@@ -1188,6 +1192,27 @@ impl JmapBackend for Projection {
     fn max_objects_in_set(&self, _caller: &Account, _account_id: &Id) -> u64 {
         MAX_OBJECTS_IN_SET as u64
     }
+
+    /// Every account supports localizations: the Session advertises
+    /// `urn:ietf:params:jmap:i18n` on each (draft-atwood-jmap-updates-00
+    /// §2), and whether a request uses it is crate-jmap's check of `using`.
+    fn i18n_info(&self, _caller: &Account, _account_id: &Id) -> Option<I18nInfo> {
+        Some(I18nInfo::new())
+    }
+}
+
+/// Chat display text as stored, for a read with no `language` argument:
+/// with `locale` and `localizations` when the request uses
+/// `urn:ietf:params:jmap:i18n`, without them otherwise.
+fn stored(account: &Account) -> I18nProjection {
+    let using = if account.i18n() {
+        vec![jmap_types::i18n::JMAP_I18N_URI.to_owned()]
+    } else {
+        Vec::new()
+    };
+    // Without a `language` argument this cannot fail.
+    I18nProjection::from_args::<ChatRecord>(&mut Map::new(), &using, Some(&I18nInfo::new()))
+        .unwrap_or_default()
 }
 
 /// RFC 8620 §5.1 `/get`, reading the state in the same transaction as the
@@ -1198,17 +1223,31 @@ async fn get(
     kind: Kind,
     args: Value,
     account: &Account,
+    using: &[String],
 ) -> Result<Value, JmapError> {
-    let Value::Object(args) = args else {
+    let Value::Object(mut args) = args else {
         return Err(JmapError::invalid_arguments("arguments must be an object"));
     };
     let account_id = match args.get("accountId") {
-        Some(Value::String(account_id)) => account_id,
+        Some(Value::String(account_id)) => account_id.clone(),
         _ => return Err(JmapError::invalid_arguments("accountId is required")),
     };
     account
-        .check_account_id(account_id)
+        .check_account_id(&account_id)
         .map_err(|_| JmapError::account_not_found())?;
+    // draft-atwood-jmap-updates-00 §3.2: only Chat has localizable
+    // properties here, so a non-null `language` on Message/get or
+    // ChatContact/get is invalidArguments (decision mimid-1wgh.70).
+    let info = projection.i18n_info(account, &Id::from(account_id.as_str()));
+    let i18n = match kind {
+        Kind::Chat => I18nProjection::from_args::<ChatRecord>(&mut args, using, info.as_ref()),
+        Kind::Message => {
+            I18nProjection::from_args::<MessageRecord>(&mut args, using, info.as_ref())
+        }
+        Kind::ChatContact => {
+            I18nProjection::from_args::<ContactRecord>(&mut args, using, info.as_ref())
+        }
+    }?;
     let strings = |key: &str| -> Result<Option<Vec<String>>, JmapError> {
         match args.get(key) {
             None | Some(Value::Null) => Ok(None),
@@ -1219,13 +1258,6 @@ async fn get(
     };
     let ids = strings("ids")?;
     let properties = strings("properties")?;
-    // draft-atwood-jmap-updates-00 §4.2: only Chat has localizable
-    // properties here, so only Chat/get takes `language`.
-    let language = match kind {
-        Kind::Chat => language_argument(&args, account.i18n())
-            .map_err(|error| JmapError::invalid_arguments(error.to_string()))?,
-        Kind::Message | Kind::ChatContact => None,
-    };
     if let Some(unknown) = properties.iter().flatten().find(|property| {
         let selector = (kind == Kind::Chat)
             .then(|| metadata::valid_selector(property))
@@ -1244,13 +1276,7 @@ async fn get(
         )));
     }
     let (state, list) = projection
-        .records(
-            kind,
-            account,
-            ids.as_deref(),
-            properties.as_deref(),
-            language.as_deref(),
-        )
+        .records(kind, account, ids.as_deref(), properties.as_deref(), &i18n)
         .await?;
     let found: BTreeSet<&str> = list
         .iter()
@@ -1269,20 +1295,6 @@ async fn get(
         "list": list,
         "notFound": not_found,
     }))
-}
-
-/// Checks and removes the `language` argument of Chat/query and
-/// Chat/queryChanges (draft-atwood-jmap-updates-00 §4.2.2, §4.2.3). Chat
-/// queries sort only on `lastMessageAt` and filter on no localizable
-/// property, so the language never changes their result or `queryState`.
-fn without_language(args: Value, caller: &Account) -> Result<Value, JmapError> {
-    let Value::Object(mut args) = args else {
-        return Ok(args);
-    };
-    language_argument(&args, caller.i18n())
-        .map_err(|error| JmapError::invalid_arguments(error.to_string()))?;
-    args.remove("language");
-    Ok(Value::Object(args))
 }
 
 /// What a projection handler does.
@@ -1316,7 +1328,7 @@ impl JmapHandler<Account> for Handler {
             let caller = &caller;
             match (kind, operation) {
                 (_, Operation::Get) => {
-                    return get(projection, kind, args, caller)
+                    return get(projection, kind, args, caller, &using)
                         .await
                         .map(HandlerOutput::new);
                 }
@@ -1330,8 +1342,10 @@ impl JmapHandler<Account> for Handler {
                     handle_changes::<ContactRecord, _>(projection, caller, args, &using).await
                 }
                 (Kind::Chat, Operation::Query) => {
-                    let args = without_language(args, caller)?;
-                    handle_query::<ChatRecord, _>(projection, caller, args).await
+                    // draft-atwood-jmap-updates-00 §3.2.2: Chat queries
+                    // sort and filter on no localizable property, so the
+                    // language changes only the queryState (§3.2.3).
+                    handle_query_with_i18n::<ChatRecord, _>(projection, caller, args, &using).await
                 }
                 (Kind::Message, Operation::Query) => {
                     handle_query::<MessageRecord, _>(projection, caller, args).await
@@ -1340,8 +1354,10 @@ impl JmapHandler<Account> for Handler {
                     handle_query::<ContactRecord, _>(projection, caller, args).await
                 }
                 (Kind::Chat, Operation::QueryChanges) => {
-                    let args = without_language(args, caller)?;
-                    handle_query_changes::<ChatRecord, _>(projection, caller, args).await
+                    handle_query_changes_with_i18n::<ChatRecord, _>(
+                        projection, caller, args, &using,
+                    )
+                    .await
                 }
                 (Kind::Message, Operation::QueryChanges) => {
                     handle_query_changes::<MessageRecord, _>(projection, caller, args).await
@@ -1467,7 +1483,7 @@ async fn refuse_set(
         .chain(destroy.iter().cloned())
         .collect();
     let (state, found) = projection
-        .records(kind, account, Some(&named), Some(&[][..]), None)
+        .records(kind, account, Some(&named), Some(&[][..]), &stored(account))
         .await?;
     let found: BTreeSet<String> = found
         .iter()

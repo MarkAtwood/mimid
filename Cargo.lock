@@ -2661,6 +2661,7 @@ dependencies = [
  "jmap-metadata-server",
  "jmap-metadata-types",
  "jmap-server",
+ "jmap-types",
  "mimi-content",
  "mimi-mls",
  "mimi-protocol",
