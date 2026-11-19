@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use mimi_mls::observer::Observer;
 use mimi_mls::tls_codec::Deserialize;
-use mimi_protocol::component_id::PARTICIPANT_LIST;
+use mimi_protocol::component_id::{PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_room_policy::BaseRoomPolicy;
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ComponentID, PREAUTH_LIST, ROLES_LIST};
 
@@ -229,6 +229,7 @@ pub(super) fn room_state(observer: &Observer) -> Result<RoomState, StateError> {
         base,
         participants: component_or_default(observer, PARTICIPANT_LIST)?,
         members: observer.members().into_iter().collect(),
+        room_metadata: observer.component(ROOM_METADATA).map(<[u8]>::to_vec),
         open,
     })
 }

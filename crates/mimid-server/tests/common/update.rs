@@ -39,7 +39,8 @@ use crate::common::{
 /// created.
 pub const CAROL: &[u8] = b"mimi://c.example/u/carol";
 
-/// Role 2: may add role-2 participants and its own clients.
+/// Role 2: may add role-2 participants and its own clients, and rename
+/// the room.
 pub const ROLE_MEMBER: u32 = 2;
 
 /// RFC 9420 §6: the MLSMessage header of a GroupInfo (mls10, 0x0004) and
@@ -54,7 +55,8 @@ pub const EMPTY_SAFE_AAD: [u8; 1] = [0x00];
 const APP_DATA_DICTIONARY: ExtensionType = ExtensionType::new(0x0006);
 
 /// Roles: 1 `banned` with no capabilities; 2 `member`, which may add
-/// role-2 participants and its own clients.
+/// role-2 participants and its own clients and change the room's name,
+/// description and avatar (room-policy-04 §8.2).
 pub fn roles_list() -> Vec<u8> {
     let role = |role_index, role_name: &str, role_capabilities, authorized_role_changes| Role {
         role_index,
@@ -77,6 +79,9 @@ pub fn roles_list() -> Vec<u8> {
                     Capability::CAN_ADD_PARTICIPANT,
                     Capability::CAN_ADD_OWN_CLIENT,
                     Capability::CAN_SEND_MESSAGE,
+                    Capability::CAN_CHANGE_ROOM_NAME,
+                    Capability::CAN_CHANGE_ROOM_DESCRIPTION,
+                    Capability::CAN_CHANGE_ROOM_AVATAR,
                 ],
                 vec![SingleSourceRoleChangeTargets {
                     from_role_index: 0,

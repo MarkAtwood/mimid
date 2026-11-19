@@ -17,7 +17,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use appendix_a::{a1, a2, a3, banned, role};
 use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_protocol::tls_codec::Serialize;
-use mimi_protocol::{ParticipantListData, ParticipantListUpdate, UserRolePair, UserindexRolePair};
+use mimi_protocol::{
+    IdentifierUri, ParticipantListData, ParticipantListUpdate, RichDescription, RoomMetaData,
+    UserRolePair, UserindexRolePair, Utf8String,
+};
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, PREAUTH_LIST, ROLES_LIST};
 use mimi_room_policy::{
     BaseRoomPolicy, Capability as C, Denied as R, MembershipAction as A, PolicyError, PreAuthData,
@@ -97,6 +100,7 @@ fn room(roles: RoleData, entries: &[(&[u8], u32)], members: &[(u32, &[u8])]) -> 
             .iter()
             .map(|&(leaf, user)| (leaf, user.to_vec()))
             .collect::<BTreeMap<_, _>>(),
+        room_metadata: None,
         open: false,
     }
 }
@@ -984,10 +988,13 @@ fn refused_proposals() {
             Err(Denied::ComponentRemoval(PARTICIPANT_LIST)),
         ),
         (
-            "decision .6.2: §8.2 room_metadata is not enforced",
+            "decision .64: a room_metadata update that does not decode",
             standard(a1()),
             commit(L_BOB, vec![inline(app_data(ROOM_METADATA, vec![0x00]))]),
-            OK,
+            Err(Denied::Component(ComponentError::Decode {
+                component_id: ROOM_METADATA,
+                source: mimi_protocol::tls_codec::Error::EndOfStream,
+            })),
         ),
         (
             // Decision mimid-1wgh.6.46 as amended 2026-11-15: the hub's
@@ -1837,4 +1844,322 @@ fn the_same_room_with_a_policy_and_no_roles_refuses_sending() {
     let mut state = open_room();
     state.open = false;
     assert!(authorize_send(&state, b"alice").is_err());
+}
+
+// ---- room_metadata and the §8.2 capabilities (decision mimid-1wgh.64) ----
+//
+// Oracle: room-policy-04 Appendix A.1 as written, which the shared
+// `appendix_a` transcription leaves out for §8.2: ordinary_user (role 2)
+// holds canChangeRoomName, canChangeRoomAvatar, canChangeRoomSubject and
+// canChangeRoomMood but not canChangeRoomDescription; group_admin (role 3)
+// includes all of ordinary_user's and adds canChangeRoomDescription;
+// super_admin (role 4) includes all of group_admin's. Each row's outcome is
+// worked by hand from §8.2 ("changing the relevant field") and the
+// decision's items.
+
+const ORDINARY_METADATA_A1: [C; 4] = [
+    C::CAN_CHANGE_ROOM_NAME,
+    C::CAN_CHANGE_ROOM_AVATAR,
+    C::CAN_CHANGE_ROOM_SUBJECT,
+    C::CAN_CHANGE_ROOM_MOOD,
+];
+
+/// A.1 with its §8.2 capabilities.
+fn a1_metadata() -> RoleData {
+    let mut roles = a1();
+    for entry in &mut roles.roles {
+        if matches!(entry.role_index, 2..=4) {
+            entry
+                .role_capabilities
+                .extend_from_slice(&ORDINARY_METADATA_A1);
+        }
+        if matches!(entry.role_index, 3 | 4) {
+            entry.role_capabilities.push(C::CAN_CHANGE_ROOM_DESCRIPTION);
+        }
+    }
+    roles
+}
+
+/// A.1 with its §8.2 capabilities, except that ordinary_user lacks
+/// canChangeRoomName.
+fn a1_member_cannot_rename() -> RoleData {
+    let mut roles = a1_metadata();
+    roles.roles[2]
+        .role_capabilities
+        .retain(|&capability| capability != C::CAN_CHANGE_ROOM_NAME);
+    roles
+}
+
+const ROOM: &str = "mimi://a.example/r/lunch";
+
+fn metadata(room_uri: &str, name: &str, description: &str) -> RoomMetaData {
+    let utf8 = |text: &str| Utf8String::new(text.to_owned()).unwrap();
+    RoomMetaData {
+        room_uri: IdentifierUri::new(room_uri).unwrap(),
+        room_name: utf8(name),
+        room_descriptions: if description.is_empty() {
+            vec![]
+        } else {
+            vec![RichDescription {
+                media_type: vec![],
+                language_tag: b"en".to_vec(),
+                description_content: description.as_bytes().to_vec(),
+            }]
+        },
+        room_avatar: IdentifierUri::new("").unwrap(),
+        room_subject: utf8(""),
+        room_mood: utf8(""),
+    }
+}
+
+/// The current metadata of every room below.
+fn lunch() -> RoomMetaData {
+    metadata(ROOM, "Lunch", "Where we eat")
+}
+
+/// The standard room with `roles`, whose room_metadata is `current`.
+fn with_metadata(roles: RoleData, current: Option<&RoomMetaData>) -> RoomState {
+    let mut state = standard(roles);
+    state.room_metadata = current.map(encode);
+    state
+}
+
+fn set_metadata(value: &RoomMetaData) -> K {
+    app_data(ROOM_METADATA, encode(value))
+}
+
+fn remove_metadata() -> K {
+    K::AppDataUpdate {
+        component_id: ROOM_METADATA,
+        op: AppDataOp::Remove,
+    }
+}
+
+/// Every field but room_uri changed from [`lunch`].
+fn all_changed() -> RoomMetaData {
+    RoomMetaData {
+        room_avatar: IdentifierUri::new("https://a.example/avatar.png").unwrap(),
+        room_subject: Utf8String::new("Fridays".to_owned()).unwrap(),
+        room_mood: Utf8String::new("hungry".to_owned()).unwrap(),
+        ..metadata(ROOM, "Dinner", "Where we dine")
+    }
+}
+
+/// A row: why, the room, the actor's leaf, the operation, the outcome.
+type MetadataRow = (&'static str, RoomState, u32, K, Result<(), Denied>);
+
+/// The rows, each checked in the commit arm (inline, from the committer)
+/// and in the proposal arm (sent on its own by the same member).
+fn metadata_rows() -> Vec<MetadataRow> {
+    let current = lunch();
+    vec![
+        (
+            "a member without canChangeRoomName renames the room",
+            with_metadata(a1_member_cannot_rename(), Some(&current)),
+            L_BOB,
+            set_metadata(&metadata(ROOM, "Dinner", "Where we eat")),
+            capability(2, C::CAN_CHANGE_ROOM_NAME),
+        ),
+        (
+            "the group_admin renames the same room",
+            with_metadata(a1_member_cannot_rename(), Some(&current)),
+            L_ALICE,
+            set_metadata(&metadata(ROOM, "Dinner", "Where we eat")),
+            OK,
+        ),
+        (
+            "A.1 ordinary_user holds canChangeRoomName",
+            with_metadata(a1_metadata(), Some(&current)),
+            L_BOB,
+            set_metadata(&metadata(ROOM, "Dinner", "Where we eat")),
+            OK,
+        ),
+        (
+            "a description change needs canChangeRoomDescription, which A.1 ordinary_user lacks",
+            with_metadata(a1_metadata(), Some(&current)),
+            L_BOB,
+            set_metadata(&metadata(ROOM, "Lunch", "Where we dine")),
+            capability(2, C::CAN_CHANGE_ROOM_DESCRIPTION),
+        ),
+        (
+            "a description change needs only canChangeRoomDescription",
+            // role 3 with canChangeRoomDescription as its only §8.2
+            // capability
+            {
+                let mut roles = a1();
+                roles.roles[3]
+                    .role_capabilities
+                    .push(C::CAN_CHANGE_ROOM_DESCRIPTION);
+                with_metadata(roles, Some(&current))
+            },
+            L_ALICE,
+            set_metadata(&metadata(ROOM, "Lunch", "Where we dine")),
+            OK,
+        ),
+        (
+            "an unchanged rewrite needs no capability",
+            with_metadata(a1(), Some(&current)),
+            L_BOB,
+            set_metadata(&current),
+            OK,
+        ),
+        (
+            "every field changed: the group_admin holds all five",
+            with_metadata(a1_metadata(), Some(&current)),
+            L_ALICE,
+            set_metadata(&all_changed()),
+            OK,
+        ),
+        (
+            "every field changed: ordinary_user lacks the description capability",
+            with_metadata(a1_metadata(), Some(&current)),
+            L_BOB,
+            set_metadata(&all_changed()),
+            capability(2, C::CAN_CHANGE_ROOM_DESCRIPTION),
+        ),
+        (
+            "avatar, subject and mood alone, by ordinary_user",
+            with_metadata(a1_metadata(), Some(&current)),
+            L_BOB,
+            set_metadata(&RoomMetaData {
+                room_descriptions: current.room_descriptions.clone(),
+                room_name: current.room_name.clone(),
+                ..all_changed()
+            }),
+            OK,
+        ),
+        (
+            "item 2: a room_uri change is refused, even for super_admin",
+            with_metadata(a1_metadata(), Some(&current)),
+            L_SAM,
+            set_metadata(&metadata(
+                "mimi://a.example/r/dinner",
+                "Lunch",
+                "Where we eat",
+            )),
+            Err(Denied::RoomUriChange),
+        ),
+        (
+            "item 2: setting room_uri where it is empty needs no capability",
+            with_metadata(a1(), Some(&metadata("", "Lunch", "Where we eat"))),
+            L_BOB,
+            set_metadata(&lunch()),
+            OK,
+        ),
+        (
+            "item 2: clearing a set room_uri is a change",
+            with_metadata(a1_metadata(), Some(&current)),
+            L_SAM,
+            set_metadata(&metadata("", "Lunch", "Where we eat")),
+            Err(Denied::RoomUriChange),
+        ),
+        (
+            "item 3: absent data is all-empty, so setting a name needs canChangeRoomName",
+            with_metadata(a1_member_cannot_rename(), None),
+            L_BOB,
+            set_metadata(&metadata("", "Lunch", "")),
+            capability(2, C::CAN_CHANGE_ROOM_NAME),
+        ),
+        (
+            "item 3: an all-empty update of absent data changes nothing",
+            with_metadata(a1(), None),
+            L_BOB,
+            set_metadata(&RoomMetaData::default()),
+            OK,
+        ),
+        (
+            "item 3: malformed current data refuses any update",
+            {
+                let mut state = with_metadata(a1_metadata(), None);
+                state.room_metadata = Some(vec![0x00]);
+                state
+            },
+            L_ALICE,
+            set_metadata(&current),
+            Err(Denied::Component(ComponentError::Decode {
+                component_id: ROOM_METADATA,
+                source: mimi_protocol::tls_codec::Error::EndOfStream,
+            })),
+        ),
+        (
+            "item 4: a remove clears room_uri",
+            with_metadata(a1_metadata(), Some(&current)),
+            L_SAM,
+            remove_metadata(),
+            Err(Denied::RoomUriChange),
+        ),
+        (
+            "item 4: a remove clears the name and description",
+            with_metadata(a1_metadata(), Some(&metadata("", "Lunch", "Where we eat"))),
+            L_BOB,
+            remove_metadata(),
+            capability(2, C::CAN_CHANGE_ROOM_DESCRIPTION),
+        ),
+        (
+            "item 4: the group_admin's remove of the same data",
+            with_metadata(a1_metadata(), Some(&metadata("", "Lunch", "Where we eat"))),
+            L_ALICE,
+            remove_metadata(),
+            OK,
+        ),
+    ]
+}
+
+#[test]
+fn metadata_capabilities_commit_arm() {
+    for (why, state, leaf, kind, expected) in metadata_rows() {
+        assert_eq!(
+            authorize_commit(&state, &commit(leaf, vec![inline(kind)])).map(drop),
+            expected,
+            "{why}"
+        );
+    }
+}
+
+#[test]
+fn metadata_capabilities_proposal_arm() {
+    for (why, state, leaf, kind, expected) in metadata_rows() {
+        assert_eq!(
+            authorize_proposal(&state, &kind, &member(leaf)),
+            expected,
+            "{why}"
+        );
+    }
+}
+
+#[test]
+fn metadata_proposal_by_reference_was_authorized_when_it_arrived() {
+    // bob's rename, refused for him as a proposal (row 1), is not
+    // authorized again when alice commits it by reference (decision
+    // mimid-1wgh.6.2, as for every capability).
+    let state = with_metadata(a1_member_cannot_rename(), Some(&lunch()));
+    let rename = set_metadata(&metadata(ROOM, "Dinner", "Where we eat"));
+    assert_eq!(
+        authorize_commit(&state, &commit(L_ALICE, vec![by_ref(L_BOB, rename)])).map(drop),
+        OK
+    );
+}
+
+#[test]
+fn open_room_grants_metadata_changes_but_not_room_uri() {
+    // Decision mimid-1wgh.52: every capability for a listed participant;
+    // decision mimid-1wgh.64 item 7: room_uri stays fixed.
+    let mut state = open_room();
+    state.room_metadata = Some(encode(&lunch()));
+    assert_eq!(
+        authorize_proposal(&state, &set_metadata(&all_changed()), &member(1)),
+        OK
+    );
+    assert_eq!(
+        authorize_proposal(
+            &state,
+            &set_metadata(&metadata(
+                "mimi://a.example/r/dinner",
+                "Lunch",
+                "Where we eat"
+            )),
+            &member(1)
+        ),
+        Err(Denied::RoomUriChange)
+    );
 }

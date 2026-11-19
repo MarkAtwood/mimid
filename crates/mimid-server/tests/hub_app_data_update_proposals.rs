@@ -294,6 +294,35 @@ async fn remove_and_update_in_one_batch_are_refused() {
     close_hub(store, hub).await;
 }
 
+#[tokio::test]
+async fn second_room_metadata_update_in_an_epoch_is_refused() {
+    // protocol-07 §7.6: "Only a single Room metadata update is valid per
+    // commit", and every cached proposal goes into the next Commit
+    // (decision mimid-1wgh.64 item 5). The second update comes from alice:
+    // dave's would be byte-identical to his first, a retry (decision
+    // mimid-1wgh.6.50).
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mimid.sqlite");
+    let (store, hub) = open_hub(&path).await;
+    let mut room = room(&hub, b"group-update-update", true).await;
+    let first = room
+        .dave
+        .propose(&update(ROOM_METADATA, &EMPTY_ROOM_METADATA));
+    assert_accepted(&hub, &proposal_request(&first, &[])).await;
+    let second = room
+        .alice_group
+        .propose_app_data_update(
+            &room.alice,
+            &AppDataUpdate::Update {
+                component_id: ROOM_METADATA,
+                update: EMPTY_ROOM_METADATA.to_vec(),
+            },
+        )
+        .unwrap();
+    assert_refused(&hub, &path, &proposal_request(&second, &[]), CONFLICT).await;
+    close_hub(store, hub).await;
+}
+
 /// `apply` for alice's Commit: the room_metadata update replaces the data.
 fn metadata_apply(
     component_id: u16,

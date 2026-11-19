@@ -10,7 +10,7 @@
 //! Oracle: each expected outcome is worked by hand from the room-policy-04
 //! section named in the test, not computed from the code under test: who
 //! holds which capability is read off decision mimid-1wgh.56, and the
-//! denial is the one §8.1 or §8.6 gives for a role without it.
+//! denial is the one §8.1, §8.2 or §8.6 gives for a role without it.
 //!
 //! [`Agent::host_room`]: super::Agent::host_room
 //! [`Agent::invite`]: super::Agent::invite
@@ -18,8 +18,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use mimi_mls::tls_codec::{Deserialize, Serialize};
-use mimi_protocol::component_id::PARTICIPANT_LIST;
-use mimi_protocol::{ParticipantListData, ParticipantListUpdate, UserRolePair};
+use mimi_protocol::component_id::{PARTICIPANT_LIST, ROOM_METADATA};
+use mimi_protocol::{
+    ParticipantListData, ParticipantListUpdate, RoomMetaData, UserRolePair, Utf8String,
+};
 use mimi_room_policy::component_id::ROLES_LIST;
 use mimi_room_policy::{
     BaseRoomPolicy, Capability, Denied as RoomDenied, MembershipAction, PreAuthData, RoleData,
@@ -29,7 +31,9 @@ use mimid_server::hub::policy::{
     RoomState, authorize_commit, authorize_proposal,
 };
 
-use super::{ADMIN_ROLE, ROLE, default_base_policy, default_roles, participant_list};
+use super::{
+    ADMIN_ROLE, ROLE, default_base_policy, default_roles, participant_list, room_metadata,
+};
 
 const ALICE: &[u8] = b"mimi://a.example/u/alice";
 const BOB: &[u8] = b"mimi://b.example/u/bob";
@@ -42,8 +46,10 @@ const L_BOB: u32 = 1;
 const L_CAROL: u32 = 2;
 const I_ALICE: u32 = 0;
 const I_BOB: u32 = 1;
+const ROOM: &str = "mimi://a.example/r/lunch";
 
-/// The room `host_room` makes, after alice invited bob and carol.
+/// The room `host_room` makes, named "Lunch", after alice invited bob and
+/// carol.
 fn hosted_room() -> RoomState {
     let roles =
         RoleData::tls_deserialize_exact(default_roles().tls_serialize_detached().unwrap()).unwrap();
@@ -71,6 +77,7 @@ fn hosted_room() -> RoomState {
             (L_BOB, BOB.to_vec()),
             (L_CAROL, CAROL.to_vec()),
         ]),
+        room_metadata: Some(room_metadata(ROOM, "Lunch").unwrap()),
         open: false,
     }
 }
@@ -340,4 +347,50 @@ fn member_gets_kick() -> ProposalKind {
         component_id: ROLES_LIST,
         op: AppDataOp::Update(roles.tls_serialize_detached().unwrap()),
     }
+}
+
+/// A `room_metadata` update to the hosted room's metadata, renamed to
+/// `name`.
+fn rename(room: &RoomState, name: &str) -> ProposalKind {
+    let mut metadata =
+        RoomMetaData::tls_deserialize_exact(room.room_metadata.as_deref().unwrap()).unwrap();
+    metadata.room_name = Utf8String::new(name.to_owned()).unwrap();
+    ProposalKind::AppDataUpdate {
+        component_id: ROOM_METADATA,
+        op: AppDataOp::Update(metadata.tls_serialize_detached().unwrap()),
+    }
+}
+
+/// room-policy-04 §8.2 canChangeRoomName: the admin holds it and a member
+/// does not (decision mimid-1wgh.56 items 2 and 3), so the admin's rename
+/// is accepted and a member's refused, in a Commit or a standalone
+/// proposal. Rewriting the name it already has changes no field and needs
+/// no capability (decision mimid-1wgh.64).
+#[test]
+fn the_creator_can_rename_the_room_and_a_member_cannot() {
+    let room = hosted_room();
+    let dinner = rename(&room, "Dinner");
+    authorize_commit(&room, &commit_by(L_ALICE, vec![dinner.clone()])).unwrap();
+    authorize_proposal(
+        &room,
+        &dinner,
+        &ProposalSender::Member {
+            leaf_index: L_ALICE,
+        },
+    )
+    .unwrap();
+    let denied = Denied::Capability(missing(2, Capability::CAN_CHANGE_ROOM_NAME));
+    assert_eq!(
+        authorize_commit(&room, &commit_by(L_BOB, vec![dinner.clone()])),
+        Err(denied.clone())
+    );
+    assert_eq!(
+        authorize_proposal(
+            &room,
+            &dinner,
+            &ProposalSender::Member { leaf_index: L_BOB }
+        ),
+        Err(denied)
+    );
+    authorize_commit(&room, &commit_by(L_BOB, vec![rename(&room, "Lunch")])).unwrap();
 }

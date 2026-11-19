@@ -91,9 +91,11 @@
 //!   - Join codes are not supported: `canUseJoinCode` never authorizes
 //!     anything, and a GroupInfo request with a joining code is refused
 //!     (decision mimid-1wgh.6.13).
-//!   - The §8.2 metadata capabilities are not enforced (decision
-//!     mimid-1wgh.6.2); updates to `room_metadata` are carried without a
-//!     capability check. AppDataUpdates to the room-policy §6 and §7
+//!   - A non-empty `room_uri` in `room_metadata` cannot be changed by
+//!     anyone, in any room: room-policy-04 §8.2 gives it no capability
+//!     (decision mimid-1wgh.64). Where it is empty or the room has no
+//!     `room_metadata`, any participant may set it, and the hub does not
+//!     check that the value is the room's ID (bead mimid-bjt5). AppDataUpdates to the room-policy §6 and §7
 //!     components are refused as unknown to the hub (decision
 //!     mimid-1wgh.6.53).
 //!   - The room-policy-04 §5 rule that ordinary users of a fixed-membership
