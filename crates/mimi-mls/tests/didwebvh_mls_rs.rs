@@ -21,7 +21,10 @@
 //! the `did_webvh_heads` record as an `app_data_dictionary` component
 //! changed only by AppDataUpdate (decisions mimid-1wgh.4.81.33,
 //! mimid-1wgh.4.81.34). The last tests measure what happens when a Commit
-//! has to change the record.
+//! has to change the record: mimid removes, in the same Commit, every
+//! member whose leaf does not list AppDataUpdate (decision
+//! mimid-1wgh.4.81.37), which mls-extensions-11 §4.7 allows, and mls-rs
+//! cannot parse that Commit.
 //!
 //! Oracles: both stacks must derive the same `epoch_authenticator` and
 //! exporter secret; mls-rs must accept or refuse as its own code decides;
@@ -42,7 +45,7 @@ use mls_rs::error::{IntoAnyError, MlsError};
 use mls_rs::extension::ExtensionType;
 use mls_rs::extension::built_in::RequiredCapabilitiesExt;
 use mls_rs::group::proposal::{Proposal, ProposalType};
-use mls_rs::group::{ExportedTree, ReceivedMessage};
+use mls_rs::group::{CommitEffect, ExportedTree, ReceivedMessage};
 use mls_rs::identity::basic::BasicCredential;
 use mls_rs::identity::{Credential, CredentialType, SigningIdentity};
 use mls_rs::mls_rs_codec::MlsDecode;
@@ -674,49 +677,372 @@ fn an_identity_provider_keyed_by_scid_alone_refuses_the_second_device() {
     }
 }
 
-/// A Commit that changes the record carries an AppDataUpdate proposal. An
-/// mls-rs member that, truthfully, does not list the AppDataUpdate proposal
-/// type blocks every such Commit: OpenMLS refuses to build one (RFC 9420
-/// §12.2: a Commit's proposal types must be supported by every member;
-/// mls-extensions-11 §4.7: except members the Commit removes). Device 1
-/// cannot add Carol, a new `did_webvh` user, nor revoke device 2, unless
-/// the same Commit removes Bob.
+/// Device 1 revokes device 2 while Bob, whose mls-rs leaf does not list
+/// the AppDataUpdate proposal type, is in the group. RFC 9420 §12.2
+/// requires every member to support every proposal type in a Commit, and
+/// mls-extensions-11 §4.7 exempts members the Commit removes, so the
+/// revocation Commit also removes Bob (decision mimid-1wgh.4.81.37). Dave,
+/// a mimid member, follows the Commit; Bob cannot parse it.
 #[test]
-fn an_mls_rs_member_without_app_data_update_blocks_record_changes() {
+fn a_revocation_removes_an_mls_rs_member_without_app_data_update() {
     let mut alice = alice();
     let (mut a1, mut a2, _, bob) =
         room(&alice, DidWebvhIdentityProvider { per_device: true }, false);
-    let bob = bob.expect("bob joins");
-    let refused = |result: Result<_, MemberError>| match result {
-        Err(MemberError::Commit(error)) => {
-            assert!(
-                format!("{error:?}").contains("UnsupportedProposalType"),
-                "{error:?}"
-            );
-        }
-        other => panic!("expected a refused Commit, got {other:?}"),
-    };
+    let mut bob = bob.expect("bob joins");
 
-    // Adding Carol.
+    // Dave, a BasicCredential mimid member that applies the did_webvh
+    // rules: adding him changes no record,
+    // and Bob processes the Commit.
+    let mut dave =
+        Identity::generate(b"dave", Store::open_in_memory().expect("store")).expect("dave");
+    dave.support_did_webvh(CP);
+    let bundle = a1
+        .commit(
+            &alice.d1,
+            &[&dave.key_package(KeyPackageKind::OneTime).expect("kp")],
+            &[],
+            &[],
+            no_components,
+        )
+        .expect("d1 adds dave");
+    assert!(bundle.removed_without_app_data_update.is_empty());
+    a1.merge_pending_commit(&alice.d1).expect("merge");
+    a2.process(&alice.d2, &bundle.commit, no_components)
+        .expect("d2 processes");
+    mls_rs_receive(&mut bob, &bundle.commit);
+    let mut dave_member = Member::join_welcome(
+        &dave,
+        &bundle.welcome.expect("Welcome"),
+        Some(&a1.ratchet_tree().expect("tree")),
+    )
+    .expect("dave joins")
+    .member;
+    assert_same_secrets(&a1, &alice.d1, &bob);
+
+    // Revoking device 2: Alice's log gains an entry listing device 1 only,
+    // and device 1 takes it (§Revoking a Device). The caller asks for no
+    // Remove; Member::commit adds device 2 (the rules) and Bob (no
+    // AppDataUpdate).
+    revoke_d2(&mut alice);
+    let bob_epoch = bob.current_epoch();
+    let bundle = a1
+        .commit(&alice.d1, &[], &[], &[], no_components)
+        .expect("revocation");
+    assert_eq!(bundle.removed_without_app_data_update, vec![1]);
+    a1.merge_pending_commit(&alice.d1).expect("merge");
+
+    // Dave follows the Commit and learns why Bob left.
+    let Incoming::Commit(summary) = dave_member
+        .process(&dave, &bundle.commit, no_components)
+        .expect("dave processes")
+    else {
+        panic!("not a Commit");
+    };
+    let mut removed = summary.removed.clone();
+    removed.sort_unstable();
+    assert_eq!(removed, vec![1, 2]);
+    assert_eq!(summary.removed_without_app_data_update, vec![1]);
+    assert!(!summary.self_removed);
+    assert_eq!(a1.epoch(), dave_member.epoch());
+    assert_eq!(a1.epoch_authenticator(), dave_member.epoch_authenticator());
+    assert_eq!(
+        a1.export_secret(&alice.d1, EXPORTER_LABEL, EXPORTER_CONTEXT, 32)
+            .expect("export"),
+        dave_member
+            .export_secret(&dave, EXPORTER_LABEL, EXPORTER_CONTEXT, 32)
+            .expect("export")
+    );
+    assert_eq!(
+        dave_member.ratchet_tree().expect("tree"),
+        a1.ratchet_tree().expect("tree")
+    );
+    let heads = a1
+        .did_webvh_heads(&alice.d1)
+        .expect("heads")
+        .expect("record");
+    let head = heads.get(alice.log.verified().scid()).expect("alice");
+    assert!(head.authorizes(&key(&alice.d1)));
+    assert!(!head.authorizes(&key(&alice.d2)));
+
+    // Device 2 sees its own removal.
+    let Incoming::Commit(summary) = a2
+        .process(&alice.d2, &bundle.commit, no_components)
+        .expect("d2 sees the Commit")
+    else {
+        panic!("not a Commit");
+    };
+    assert!(summary.self_removed);
+    assert_eq!(summary.removed_without_app_data_update, vec![1]);
+
+    // Bob cannot parse the Commit that removes him: it carries the
+    // AppDataUpdate of component 0xF013, which mls-rs decodes as one
+    // opaque<V> whose length prefix 0b11 RFC 9420 §2.1.2 reserves (see
+    // mls_rs_cannot_process_a_commit_that_changes_the_record). He stays in
+    // the old epoch and learns of his removal only from what follows.
+    let result = MlsMessage::from_bytes(&bundle.commit);
+    assert!(
+        matches!(result, Err(MlsError::SerializationError(_))),
+        "{result:?}"
+    );
+    assert_eq!(bob.current_epoch(), bob_epoch);
+    let message = a1
+        .send(&alice.d1, b"after the revocation", &[])
+        .expect("send");
+    let result = bob.process_incoming_message(MlsMessage::from_bytes(&message).expect("decode"));
+    assert!(matches!(result, Err(MlsError::EpochNotFound)), "{result:?}");
+    let (_, data) = mimi_data(
+        dave_member
+            .process(&dave, &message, no_components)
+            .expect("dave decrypts"),
+    );
+    assert_eq!(data, b"after the revocation");
+}
+
+/// The Update-proposal fallback (decision mimid-1wgh.4.81.31): Alice's
+/// log revokes device 1, so device 2 hands the new log over in an Update
+/// proposal and Dave, another mimid member, commits it. Dave's Commit sets
+/// the record, removes device 1 (the rules) and Bob (no AppDataUpdate).
+#[test]
+fn another_members_commit_of_a_revocation_removes_an_mls_rs_member() {
+    let mut alice = alice();
+    let (mut a1, mut a2, _, bob) =
+        room(&alice, DidWebvhIdentityProvider { per_device: true }, false);
+    let mut bob = bob.expect("bob joins");
+    let mut dave =
+        Identity::generate(b"dave", Store::open_in_memory().expect("store")).expect("dave");
+    dave.support_did_webvh(CP);
+    let bundle = a1
+        .commit(
+            &alice.d1,
+            &[&dave.key_package(KeyPackageKind::OneTime).expect("kp")],
+            &[],
+            &[],
+            no_components,
+        )
+        .expect("d1 adds dave");
+    a1.merge_pending_commit(&alice.d1).expect("merge");
+    a2.process(&alice.d2, &bundle.commit, no_components)
+        .expect("d2 processes");
+    mls_rs_receive(&mut bob, &bundle.commit);
+    let mut dave_member = Member::join_welcome(
+        &dave,
+        &bundle.welcome.expect("Welcome"),
+        Some(&a1.ratchet_tree().expect("tree")),
+    )
+    .expect("dave joins")
+    .member;
+
+    // Alice's log gains an entry listing device 2 only; device 2 takes it.
+    let update = UpdateKey::from_seed(&[3; 32]);
+    alice
+        .log
+        .append(
+            "2026-11-20T11:00:01Z",
+            &Parameters {
+                update_keys: Some(vec![update.multikey()]),
+                next_key_hashes: None,
+            },
+            &update,
+            &[key(&alice.d2)],
+        )
+        .expect("append");
+    alice
+        .d2
+        .set_did_webvh_credential(CP, alice.log.credential().expect("credential"))
+        .expect("d2 takes v2");
+    let proposal = a2
+        .propose_credential_update(&alice.d2)
+        .expect("Update proposal");
+    dave_member
+        .process(&dave, &proposal, no_components)
+        .expect("dave stores the Update");
+    a1.process(&alice.d1, &proposal, no_components)
+        .expect("d1 stores the Update");
+    let bundle = dave_member
+        .commit(&dave, &[], &[], &[], no_components)
+        .expect("dave commits the revocation");
+    assert_eq!(bundle.removed_without_app_data_update, vec![1]);
+    dave_member.merge_pending_commit(&dave).expect("merge");
+
+    let Incoming::Commit(summary) = a2
+        .process(&alice.d2, &bundle.commit, no_components)
+        .expect("d2 processes")
+    else {
+        panic!("not a Commit");
+    };
+    let mut removed = summary.removed.clone();
+    removed.sort_unstable();
+    assert_eq!(removed, vec![0, 1]);
+    assert_eq!(summary.removed_without_app_data_update, vec![1]);
+    assert!(!summary.self_removed);
+    assert_eq!(a2.epoch(), dave_member.epoch());
+    assert_eq!(a2.epoch_authenticator(), dave_member.epoch_authenticator());
+    assert_eq!(
+        a2.export_secret(&alice.d2, EXPORTER_LABEL, EXPORTER_CONTEXT, 32)
+            .expect("export"),
+        dave_member
+            .export_secret(&dave, EXPORTER_LABEL, EXPORTER_CONTEXT, 32)
+            .expect("export")
+    );
+    let Incoming::Commit(summary) = a1
+        .process(&alice.d1, &bundle.commit, no_components)
+        .expect("d1 sees the Commit")
+    else {
+        panic!("not a Commit");
+    };
+    assert!(summary.self_removed);
+    let result = MlsMessage::from_bytes(&bundle.commit);
+    assert!(
+        matches!(result, Err(MlsError::SerializationError(_))),
+        "{result:?}"
+    );
+}
+
+/// Device 1 adds Carol, a new `did_webvh` user, while Bob (no
+/// AppDataUpdate) is in the group: the Commit that adds Carol's entry to
+/// the record also removes Bob. Bob rejoins afterwards with a fresh
+/// KeyPackage, which changes no record.
+#[test]
+fn adding_a_new_did_webvh_user_removes_an_mls_rs_member_without_app_data_update() {
+    let alice = alice();
+    let (mut a1, mut a2, bob_client, bob) =
+        room(&alice, DidWebvhIdentityProvider { per_device: true }, false);
+    let bob = bob.expect("bob joins");
+    let bob_epoch = bob.current_epoch();
+
     let (carol_log, carol) = carol();
-    refused(a1.commit(
-        &alice.d1,
-        &[&carol.key_package(KeyPackageKind::OneTime).expect("kp")],
-        &[],
-        &[],
-        no_components,
-    ));
-    assert_eq!(a1.epoch(), bob.current_epoch());
+    let bundle = a1
+        .commit(
+            &alice.d1,
+            &[&carol.key_package(KeyPackageKind::OneTime).expect("kp")],
+            &[],
+            &[],
+            no_components,
+        )
+        .expect("d1 adds carol");
+    assert_eq!(bundle.removed_without_app_data_update, vec![1]);
+    a1.merge_pending_commit(&alice.d1).expect("merge");
+    let Incoming::Commit(summary) = a2
+        .process(&alice.d2, &bundle.commit, no_components)
+        .expect("d2 processes")
+    else {
+        panic!("not a Commit");
+    };
+    assert_eq!(summary.removed, vec![1]);
+    assert_eq!(summary.removed_without_app_data_update, vec![1]);
+    assert!(!summary.self_removed);
+    let carol_member = Member::join_welcome(
+        &carol,
+        &bundle.welcome.expect("Welcome"),
+        Some(&a1.ratchet_tree().expect("tree")),
+    )
+    .expect("carol joins")
+    .member;
+    for (member, identity) in [(&a2, &alice.d2), (&carol_member, &carol)] {
+        assert_eq!(member.epoch(), a1.epoch());
+        assert_eq!(member.epoch_authenticator(), a1.epoch_authenticator());
+        assert_eq!(
+            member
+                .export_secret(identity, EXPORTER_LABEL, EXPORTER_CONTEXT, 32)
+                .expect("export"),
+            a1.export_secret(&alice.d1, EXPORTER_LABEL, EXPORTER_CONTEXT, 32)
+                .expect("export")
+        );
+    }
     assert!(
         a1.did_webvh_heads(&alice.d1)
             .expect("heads")
             .expect("record")
             .get(carol_log.verified().scid())
-            .is_none()
+            .is_some()
     );
+    // Bob cannot parse the Commit (as in the revocation test).
+    let result = MlsMessage::from_bytes(&bundle.commit);
+    assert!(
+        matches!(result, Err(MlsError::SerializationError(_))),
+        "{result:?}"
+    );
+    assert_eq!(bob.current_epoch(), bob_epoch);
 
-    // Revoking device 2: Alice's log gains an entry listing device 1 only,
-    // and device 1 takes it (§Revoking a Device).
+    // Bob rejoins: an Add of a fresh KeyPackage changes no record.
+    let bundle = a1
+        .commit(
+            &alice.d1,
+            &[&mls_rs_key_package(&bob_client)],
+            &[],
+            &[],
+            no_components,
+        )
+        .expect("re-add bob");
+    assert!(bundle.removed_without_app_data_update.is_empty());
+    a1.merge_pending_commit(&alice.d1).expect("merge");
+    a2.process(&alice.d2, &bundle.commit, no_components)
+        .expect("d2 processes");
+    let (bob, _) = bob_client
+        .join_group(
+            Some(ExportedTree::from_bytes(&a1.ratchet_tree().expect("tree")).expect("tree")),
+            &MlsMessage::from_bytes(&bundle.welcome.expect("Welcome")).expect("Welcome"),
+            None,
+        )
+        .expect("bob joins again");
+    assert_same_secrets(&a1, &alice.d1, &bob);
+    assert_same_secrets(&a2, &alice.d2, &bob);
+}
+
+/// A Commit that changes no record removes nobody, Bob included, and mls-rs
+/// processes it; a Commit that removes Bob on purpose but changes no record
+/// does not report him as removed for lacking AppDataUpdate.
+#[test]
+fn a_commit_without_a_record_change_removes_nobody() {
+    let alice = alice();
+    let (mut a1, mut a2, _, bob) =
+        room(&alice, DidWebvhIdentityProvider { per_device: true }, false);
+    let mut bob = bob.expect("bob joins");
+
+    let bundle = a2
+        .commit(&alice.d2, &[], &[], &[], no_components)
+        .expect("d2 commits");
+    assert!(bundle.removed_without_app_data_update.is_empty());
+    a2.merge_pending_commit(&alice.d2).expect("merge");
+    let Incoming::Commit(summary) = a1
+        .process(&alice.d1, &bundle.commit, no_components)
+        .expect("d1 processes")
+    else {
+        panic!("not a Commit");
+    };
+    assert!(summary.removed.is_empty());
+    mls_rs_receive(&mut bob, &bundle.commit);
+    assert_same_secrets(&a1, &alice.d1, &bob);
+    assert_same_secrets(&a2, &alice.d2, &bob);
+
+    let bundle = a1
+        .commit(&alice.d1, &[], &[1], &[], no_components)
+        .expect("d1 removes bob");
+    assert!(bundle.removed_without_app_data_update.is_empty());
+    a1.merge_pending_commit(&alice.d1).expect("merge");
+    let Incoming::Commit(summary) = a2
+        .process(&alice.d2, &bundle.commit, no_components)
+        .expect("d2 processes")
+    else {
+        panic!("not a Commit");
+    };
+    assert_eq!(summary.removed, vec![1]);
+    assert!(summary.removed_without_app_data_update.is_empty());
+    // mls-rs processes its own removal.
+    let received = mls_rs_receive(&mut bob, &bundle.commit);
+    let ReceivedMessage::Commit(description) = received else {
+        panic!("expected a Commit, got {received:?}");
+    };
+    assert!(
+        matches!(description.effect, CommitEffect::Removed { .. }),
+        "{:?}",
+        description.effect
+    );
+}
+
+/// Alice's log gains an entry listing device 1 only, and device 1 takes it
+/// (§Revoking a Device).
+fn revoke_d2(alice: &mut Alice) {
     let update = UpdateKey::from_seed(&[3; 32]);
     alice
         .log
@@ -734,33 +1060,6 @@ fn an_mls_rs_member_without_app_data_update_blocks_record_changes() {
         .d1
         .set_did_webvh_credential(CP, alice.log.credential().expect("credential"))
         .expect("d1 takes v2");
-    refused(a1.commit(&alice.d1, &[], &[], &[], no_components));
-    assert_eq!(a1.epoch(), bob.current_epoch());
-
-    // A Commit without a record change still works.
-    let bundle = a2
-        .commit(&alice.d2, &[], &[], &[], no_components)
-        .expect("d2 commits");
-    a2.merge_pending_commit(&alice.d2).expect("merge");
-    a1.process(&alice.d1, &bundle.commit, no_components)
-        .expect("d1 processes");
-
-    // The revocation goes through when it also removes Bob.
-    let bundle = a1
-        .commit(&alice.d1, &[], &[1], &[], no_components)
-        .expect("revocation that removes bob");
-    a1.merge_pending_commit(&alice.d1).expect("merge");
-    let Incoming::Commit(summary) = a2
-        .process(&alice.d2, &bundle.commit, no_components)
-        .expect("d2 sees the Commit")
-    else {
-        panic!("not a Commit");
-    };
-    // Bob, and device 2 (added by the rules); in no particular order.
-    let mut removed = summary.removed.clone();
-    removed.sort_unstable();
-    assert_eq!(removed, vec![1, 2]);
-    assert!(summary.self_removed);
 }
 
 /// If the mls-rs application lists the AppDataUpdate proposal type anyway,
@@ -784,6 +1083,8 @@ fn mls_rs_cannot_process_a_commit_that_changes_the_record() {
             no_components,
         )
         .expect("d1 adds carol");
+    // Bob claims AppDataUpdate, so the Commit does not remove him.
+    assert!(bundle.removed_without_app_data_update.is_empty());
     a1.merge_pending_commit(&alice.d1).expect("merge");
     a2.process(&alice.d2, &bundle.commit, no_components)
         .expect("d2 processes");

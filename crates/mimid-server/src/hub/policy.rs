@@ -227,12 +227,15 @@ pub struct Commit {
     /// Its proposals, in the order they are applied.
     pub proposals: Vec<Proposal>,
     /// The leaf indices of its Remove proposals that the `did_webvh` group
-    /// rules require, as the Observer reports them
-    /// (`CommitDetail::did_webvh_required_removes`): a leaf with the
+    /// rules require, as the Observer reports them:
+    /// `CommitDetail::did_webvh_required_removes`, a leaf with the
     /// committer's SCID, or the SCID of an Update proposal in the same
-    /// Commit, whose key the record the Commit sets no longer authorizes.
-    /// Authorized without a room-policy capability (decisions
-    /// mimid-1wgh.4.81.26 and .31).
+    /// Commit, whose key the record the Commit sets no longer authorizes
+    /// (decisions mimid-1wgh.4.81.26 and .31); and
+    /// `CommitDetail::did_webvh_removes_without_app_data_update`, a leaf
+    /// whose capabilities lack the AppDataUpdate proposal type, in a Commit
+    /// that changes the record (decision mimid-1wgh.4.81.37). Authorized
+    /// without a room-policy capability.
     pub did_webvh_required_removes: BTreeSet<u32>,
 }
 
@@ -939,6 +942,10 @@ pub fn authorize_commit(state: &RoomState, commit: &Commit) -> Result<PolicyOutc
         // refuse that Remove: the revoked device would stay. Only those
         // Removes skip the capability check; the rest of the Commit,
         // including every other Remove, goes through room policy below.
+        // Decision mimid-1wgh.4.81.37 (Mark 2026-11-19, bead mimid-4lp4.3)
+        // adds the Removes of members lacking AppDataUpdate in a Commit
+        // that changes the record (mls-extensions-11 §4.7). The user stays
+        // in participant_list, as after a kick of one client.
         if commit
             .did_webvh_required_removes
             .contains(&removal.leaf_index)

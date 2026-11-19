@@ -240,6 +240,18 @@ pub struct CommitDetail {
     /// an Update proposal the Commit includes, when another member commits
     /// a user's own revocation (decision mimid-1wgh.4.81.31).
     pub did_webvh_required_removes: Vec<u32>,
+    /// The leaf indices (in the current epoch) of the Commit's Remove
+    /// proposals of leaves whose `capabilities.proposals` lack the
+    /// AppDataUpdate proposal type, when the Commit carries an
+    /// AppDataUpdate of the `did_webvh` record component: a Commit that
+    /// changes the record must remove such members (mls-extensions-11
+    /// §4.7; decision mimid-1wgh.4.81.37). Empty under the same conditions
+    /// as `did_webvh_required_removes`, and for a Commit that does not
+    /// change the record.
+    ///
+    /// A hub may authorize these Removes without a room-policy capability
+    /// too. INVENTED, NOT FROM SPEC.
+    pub did_webvh_removes_without_app_data_update: Vec<u32>,
 }
 
 /// The result of [`Observer::from_group_info`].
@@ -626,7 +638,7 @@ impl Observer {
                         return Err(ObserverError::UnexpectedMessage);
                     }
                 };
-                let summary = summarize(sender, &staged, false, self.did_webvh);
+                let summary = summarize(sender, &staged, &self.group, false, self.did_webvh);
                 self.pending_commit = Some((*staged, sender, committer));
                 Ok(Observed::Commit(summary))
             }
@@ -926,8 +938,15 @@ impl Observer {
             ),
             _ => Vec::new(),
         };
+        let did_webvh_removes_without_app_data_update = match (self.did_webvh, committer) {
+            (Some(code_points), Sender::Member(_)) => {
+                crate::didwebvh::removes_without_app_data_update(code_points, staged, &self.group)
+            }
+            _ => Vec::new(),
+        };
         Ok(CommitDetail {
             did_webvh_required_removes,
+            did_webvh_removes_without_app_data_update,
             committer: *committer,
             committer_leaf: committer_leaf.u32(),
             committer_identity,

@@ -798,8 +798,15 @@ fn commit_summary(detail: &CommitDetail) -> Result<Commit, &'static str> {
             .as_ref()
             .is_some_and(|path| path.identity_changed),
         proposals,
-        // Decision mimid-1wgh.4.81.26.
-        did_webvh_required_removes: detail.did_webvh_required_removes.iter().copied().collect(),
+        // Decisions mimid-1wgh.4.81.26 (revoked devices) and
+        // mimid-1wgh.4.81.37 (members lacking AppDataUpdate in a Commit
+        // that changes the record): both are Removes the rules require.
+        did_webvh_required_removes: detail
+            .did_webvh_required_removes
+            .iter()
+            .chain(&detail.did_webvh_removes_without_app_data_update)
+            .copied()
+            .collect(),
     })
 }
 

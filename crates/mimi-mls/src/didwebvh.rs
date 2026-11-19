@@ -43,7 +43,10 @@
 //! [`Member::commit`](crate::member::Member::commit) computes the record a
 //! Commit must set (§Expected Heads) and the leaves it must remove, and adds
 //! the AppDataUpdate proposals and the Removes itself (decision
-//! mimid-1wgh.4.81.17). Creating a group with a `did_webvh` identity puts
+//! mimid-1wgh.4.81.17). A Commit that changes the record also removes the
+//! members whose leaves do not list the AppDataUpdate proposal type, which
+//! mls-extensions-11 §4.7 exempts only when the Commit removes them
+//! (decision mimid-1wgh.4.81.37). Creating a group with a `did_webvh` identity puts
 //! its record, and `app_components` naming it, in the first GroupContext.
 //!
 //! # Limitations
@@ -61,6 +64,11 @@
 //!   that covers it fails (decision mimid-1wgh.4.65).
 //! - Verified logs are cached in memory by credential bytes, up to 4,096,
 //!   and the cache starts over when full.
+//! - A member without AppDataUpdate (stock mls-rs) is dropped by every
+//!   record change, and cannot parse the Commit that drops it. Only the
+//!   record triggers this: an AppDataUpdate of another component, or an
+//!   external Commit that changes the record, still fails while such a
+//!   member is in the group (RFC 9420 §12.2).
 //!
 //! [`Member`]: crate::member::Member
 //! [`Observer`]: crate::observer::Observer
@@ -74,8 +82,8 @@ use mls_didwebvh::{
     verify_credential,
 };
 use openmls::component::ComponentsList;
-use openmls::group::StagedCommit;
-use openmls::messages::proposals::{AppDataUpdateOperation, Proposal};
+use openmls::group::{QueuedProposal, StagedCommit};
+use openmls::messages::proposals::{AppDataUpdateOperation, Proposal, ProposalType};
 use openmls::prelude::{
     Credential, CredentialType, Extensions, GroupContext, LeafNode, LeafNodeIndex, PublicGroup,
 };
@@ -560,11 +568,10 @@ pub(crate) fn required_removes(
     if vouching.is_empty() {
         return Vec::new();
     }
-    let sets_record = staged.queued_proposals().any(|queued| {
-        matches!(queued.proposal(), Proposal::AppDataUpdate(update)
-            if update.component_id() == code_points.heads_component())
-    });
-    if !sets_record {
+    if !changes_record(
+        code_points,
+        staged.queued_proposals().map(QueuedProposal::proposal),
+    ) {
         return Vec::new();
     }
     let Ok(Some(record)) = heads(code_points, staged.group_context().extensions()) else {
@@ -585,6 +592,102 @@ pub(crate) fn required_removes(
                             .is_some_and(|head| !head.authorizes(leaf.signature_key().as_slice()))
                 })
             })
+        })
+        .map(|removed| removed.u32())
+        .collect()
+}
+
+/// Whether `leaf`'s `capabilities.proposals` lists the AppDataUpdate
+/// proposal type (mls-extensions-11 §7.2.1, 0x0008), the list RFC 9420
+/// §12.2 and OpenMLS check (decision mimid-1wgh.4.81.37).
+pub(crate) fn supports_app_data_update(leaf: &LeafNode) -> bool {
+    leaf.capabilities()
+        .proposals()
+        .contains(&ProposalType::AppDataUpdate)
+}
+
+/// Whether `proposals` hold an AppDataUpdate of the record component.
+fn changes_record<'a>(
+    code_points: CodePoints,
+    mut proposals: impl Iterator<Item = &'a Proposal>,
+) -> bool {
+    proposals.any(|proposal| {
+        matches!(proposal, Proposal::AppDataUpdate(update)
+            if update.component_id() == code_points.heads_component())
+    })
+}
+
+/// Whether the stored proposals of a group, which a Commit built now
+/// covers, hold an AppDataUpdate of the record component.
+pub(crate) fn stored_proposals_change_record<'a>(
+    code_points: CodePoints,
+    stored: impl Iterator<Item = &'a QueuedProposal>,
+) -> bool {
+    changes_record(code_points, stored.map(QueuedProposal::proposal))
+}
+
+/// The members of `current` whose leaves lack AppDataUpdate
+/// ([`supports_app_data_update`]), except `committer`. A Commit that
+/// changes the record must remove them: mls-extensions-11 §4.7 requires
+/// every member that processes such a Commit to support AppDataUpdate,
+/// "except members removed by that Commit" (decision mimid-1wgh.4.81.37,
+/// Mark 2026-11-19 in bead mimid-4lp4.3).
+pub(crate) fn members_without_app_data_update(
+    current: &PublicGroup,
+    committer: LeafNodeIndex,
+) -> Vec<LeafNodeIndex> {
+    current
+        .members()
+        .map(|member| member.index)
+        .filter(|&index| index != committer)
+        .filter(|&index| {
+            current
+                .leaf(index)
+                .is_some_and(|leaf| !supports_app_data_update(leaf))
+        })
+        .collect()
+}
+
+/// The Removes of `staged` of leaves that lack AppDataUpdate, when
+/// `staged` carries an AppDataUpdate of the record component and the
+/// record it leads to differs from the current one: the Removes
+/// [`members_without_app_data_update`] makes a committer add, as leaf
+/// indices before the Commit. Empty for a Commit that does not change the
+/// record, so that an AppDataUpdate that rewrites the same record cannot
+/// be used to drop such members without a room-policy capability. A
+/// Remove the caller asked for counts too: the Commit would have had to
+/// remove that leaf anyway.
+///
+/// A hub uses this to authorize those Removes without a room-policy
+/// capability, and a member to tell its user why someone left (decision
+/// mimid-1wgh.4.81.37).
+pub(crate) fn removes_without_app_data_update(
+    code_points: CodePoints,
+    staged: &StagedCommit,
+    current: &PublicGroup,
+) -> Vec<u32> {
+    if !changes_record(
+        code_points,
+        staged.queued_proposals().map(QueuedProposal::proposal),
+    ) {
+        return Vec::new();
+    }
+    let previous = heads(code_points, current.group_context().extensions());
+    let resulting = heads(code_points, staged.group_context().extensions());
+    match (previous, resulting) {
+        (Ok(previous), Ok(resulting)) if previous != resulting => {}
+        _ => return Vec::new(),
+    }
+    staged
+        .queued_proposals()
+        .filter_map(|queued| match queued.proposal() {
+            Proposal::Remove(remove) => Some(remove.removed()),
+            _ => None,
+        })
+        .filter(|&removed| {
+            current
+                .leaf(removed)
+                .is_some_and(|leaf| !supports_app_data_update(leaf))
         })
         .map(|removed| removed.u32())
         .collect()

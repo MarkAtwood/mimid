@@ -216,6 +216,13 @@ impl AppDataUpdate {
             Self::Remove { component_id } => AppDataUpdateProposal::remove(*component_id),
         }
     }
+
+    /// The component whose data it changes.
+    pub(crate) fn component_id(&self) -> ComponentId {
+        match self {
+            Self::Update { component_id, .. } | Self::Remove { component_id } => *component_id,
+        }
+    }
 }
 
 /// The operation the `apply` function of [`Member::commit`] and
@@ -267,6 +274,12 @@ pub struct CommitSummary {
     pub self_removed: bool,
     /// Components whose data an AppDataUpdate proposal changed, ascending.
     pub components: Vec<ComponentId>,
+    /// The subset of `removed` whose leaves lack the AppDataUpdate proposal
+    /// type, in a Commit that changes the `did_webvh` record: removed so
+    /// the record could change (mls-extensions-11 §4.7; decision
+    /// mimid-1wgh.4.81.37), not by anyone's choice. Empty unless the
+    /// identity uses `did_webvh`. INVENTED, NOT FROM SPEC.
+    pub removed_without_app_data_update: Vec<u32>,
 }
 
 /// The result of [`Member::process`].
@@ -312,6 +325,13 @@ pub struct CommitBundle {
     /// separately. A PartialGroupInfo (ratchet-tree-options-02 §4) is this
     /// GroupInfo's extensions and signature.
     pub group_info: Vec<u8>,
+    /// Leaf indices, before the Commit, of the members it removes because
+    /// their leaves lack the AppDataUpdate proposal type and the Commit
+    /// changes the `did_webvh` record (mls-extensions-11 §4.7; decision
+    /// mimid-1wgh.4.81.37), whether [`Member::commit`] added the Remove or
+    /// the caller asked for it. They can rejoin. Empty for a Commit that
+    /// does not change the record. INVENTED, NOT FROM SPEC.
+    pub removed_without_app_data_update: Vec<u32>,
 }
 
 /// The result of [`Member::join_welcome`].
@@ -1103,6 +1123,9 @@ impl Member {
             commit: encode(&commit)?,
             welcome: welcome.as_ref().map(encode).transpose()?,
             group_info: encode(&group_info)?,
+            // An external Commit removes no one for lacking AppDataUpdate
+            // (decision mimid-1wgh.4.81.37; see `# Limitations`).
+            removed_without_app_data_update: Vec::new(),
         };
         Ok(ExternalJoin {
             member: Self::from_group(group, identity),
@@ -1121,6 +1144,13 @@ impl Member {
     /// component are given to `apply` in the order OpenMLS puts them in the
     /// Commit: stored proposals, then `app_updates` in order (decision
     /// mimid-1wgh.4.34).
+    ///
+    /// With a `did_webvh` identity, the Commit also carries the record
+    /// change and the Removes the group rules require, and, when it
+    /// changes the record, a Remove of every other member whose leaf does
+    /// not list the AppDataUpdate proposal type (decision
+    /// mimid-1wgh.4.81.37), reported in
+    /// [`CommitBundle::removed_without_app_data_update`].
     ///
     /// The returned [`CommitBundle`] always carries the new epoch's signed
     /// GroupInfo, for the hub (protocol-07 §5.3).
@@ -1191,6 +1221,21 @@ impl Member {
         // The record change is AppDataUpdates after the caller's (decision
         // mimid-1wgh.4.81.33).
         let mut record_updates: Vec<AppDataUpdate> = Vec::new();
+        // A Commit that changes the record also removes the members whose
+        // leaves lack AppDataUpdate, which mls-extensions-11 §4.7 exempts
+        // only when removed (decision mimid-1wgh.4.81.37). The caller's or a
+        // stored proposal may already change it.
+        if let Some(code_points) = code_points
+            && (app_updates
+                .iter()
+                .any(|update| update.component_id() == code_points.heads_component())
+                || didwebvh::stored_proposals_change_record(
+                    code_points,
+                    self.group.pending_proposals(),
+                ))
+        {
+            self.remove_members_without_app_data_update(&mut removes);
+        }
         for _round in 0..3 {
             let all_updates: Vec<AppDataUpdate> =
                 app_updates.iter().chain(&record_updates).cloned().collect();
@@ -1269,19 +1314,42 @@ impl Member {
                         record_updates =
                             didwebvh::record_updates(code_points, self.group.extensions(), heads)
                                 .map_err(MemberError::DidWebvh)?;
+                        self.remove_members_without_app_data_update(&mut removes);
                     }
                     continue;
                 }
+            };
+            let removed_without_app_data_update = match (code_points, self.group.pending_commit()) {
+                (Some(code_points), Some(staged)) => didwebvh::removes_without_app_data_update(
+                    code_points,
+                    staged,
+                    self.group.public_group(),
+                ),
+                _ => Vec::new(),
             };
             return Ok(CommitBundle {
                 commit: encode(&commit)?,
                 welcome: welcome.as_ref().map(encode).transpose()?,
                 group_info: encode(&group_info)?,
+                removed_without_app_data_update,
             });
         }
         Err(MemberError::Commit(
             "the did_webvh rules did not settle in three rounds".into(),
         ))
+    }
+
+    /// Adds to `removes` every other member whose leaf lacks AppDataUpdate,
+    /// for a Commit that changes the `did_webvh` record (decision
+    /// mimid-1wgh.4.81.37).
+    fn remove_members_without_app_data_update(&self, removes: &mut Vec<u32>) {
+        let own_index = self.group.own_leaf_index();
+        for index in didwebvh::members_without_app_data_update(self.group.public_group(), own_index)
+        {
+            if !removes.contains(&index.u32()) {
+                removes.push(index.u32());
+            }
+        }
     }
 
     /// Builds and stages one Commit for [`Member::commit`] and returns its
@@ -1668,7 +1736,13 @@ impl Member {
                     )
                     .map_err(MemberError::DidWebvh)?;
                 }
-                let summary = summarize(sender, &staged, staged.self_removed(), code_points);
+                let summary = summarize(
+                    sender,
+                    &staged,
+                    self.group.public_group(),
+                    staged.self_removed(),
+                    code_points,
+                );
                 self.group
                     .merge_staged_commit(provider, *staged)
                     .map_err(|e| MemberError::Merge(e.into()))?;
@@ -1678,7 +1752,15 @@ impl Member {
                 let summary = self
                     .group
                     .pending_commit()
-                    .map(|staged| summarize(sender, staged, staged.self_removed(), code_points))
+                    .map(|staged| {
+                        summarize(
+                            sender,
+                            staged,
+                            self.group.public_group(),
+                            staged.self_removed(),
+                            code_points,
+                        )
+                    })
                     .ok_or(MemberError::UnexpectedMessage)?;
                 self.group
                     .merge_pending_commit(provider)
@@ -2113,9 +2195,13 @@ impl std::fmt::Debug for Member {
 pub(crate) fn summarize(
     committer: Sender,
     staged: &StagedCommit,
+    current: &PublicGroup,
     self_removed: bool,
     code_points: Option<mls_didwebvh::CodePoints>,
 ) -> CommitSummary {
+    let removed_without_app_data_update = code_points
+        .map(|code_points| didwebvh::removes_without_app_data_update(code_points, staged, current))
+        .unwrap_or_default();
     let added = staged
         .add_proposals()
         .map(|add| {
@@ -2142,6 +2228,7 @@ pub(crate) fn summarize(
         removed,
         self_removed,
         components,
+        removed_without_app_data_update,
     }
 }
 

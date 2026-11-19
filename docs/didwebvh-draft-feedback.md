@@ -609,15 +609,25 @@ to list the component and implement the rules, but they do not mention the
 proposal type. A BasicCredential member must also list the component, so
 the same applies to it.
 
-**mimid:** adds such a member today; what to do about it is bead
-mimid-4lp4.3.
+**mimid:** allows such a member, and a Commit that changes the record
+also removes every member whose leaf does not list AppDataUpdate (Mark,
+bead mimid-4lp4.3; details in decision mimid-1wgh.4.81.37). §4.7 exempts
+members the Commit removes, and OpenMLS accepts it. The user stays in
+`participant_list`, as after a kick of one client, and can rejoin. The hub
+authorizes those Removes without a room-policy capability, but only for
+leaves that lack the proposal type, in a Commit that carries an
+AppDataUpdate of the record. The removed mls-rs member cannot parse the
+Commit that removes it (it carries the AppDataUpdate), so it learns of the
+removal only when later messages fail (`EpochNotFound`). A revocation is
+never blocked this way, but every record change drops these members.
 
 **For -01:** say in §The Heads Component that a client listing the
 component also lists the AppDataUpdate proposal type, and in
 §Negotiation that a group carrying the record MAY list AppDataUpdate in
 `required_capabilities` so that a member without it cannot be added. Say
 in Security Considerations that a member that cannot process AppDataUpdate
-delays a revocation until it is removed. The extension form (GCE) would let
+delays a revocation until it is removed, and that a Commit changing the
+record may remove such members (what mimid does). The extension form (GCE) would let
 RFC 9420-only stacks change the record, but it brings back items 18, 24 and
 28. The better fix is AppDataUpdate in the MLS libraries.
 

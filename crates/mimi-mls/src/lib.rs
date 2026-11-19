@@ -45,7 +45,14 @@
 //!   does not interoperate, and its default component ID is a private-use
 //!   value (decision mimid-1wgh.4.81.35). [`member::Member::commit`] adds
 //!   the record change and the Removes the rules require by itself
-//!   (decision mimid-1wgh.4.81.17). An [`observer::Observer`] enforces the
+//!   (decision mimid-1wgh.4.81.17), and a Commit that changes the record
+//!   also removes every member whose leaf does not list the AppDataUpdate
+//!   proposal type (decision mimid-1wgh.4.81.37), such as a stock mls-rs
+//!   member, which cannot parse that Commit and learns of its removal only
+//!   when later messages fail. An external Commit removes no such member,
+//!   so an external join that changes the record fails while one is in the
+//!   group, and so does any other AppDataUpdate (participant_list, room
+//!   policy). An [`observer::Observer`] enforces the
 //!   rules only after [`observer::Observer::enforce_did_webvh`]; without
 //!   it, the record component is handed to `apply` like any other. Update
 //!   and UpdatePath leaves
