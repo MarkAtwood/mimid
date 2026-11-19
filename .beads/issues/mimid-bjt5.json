@@ -1,0 +1,27 @@
+{
+  "id": "mimid-bjt5",
+  "title": "Hub does not check that a newly set room_metadata room_uri is the room's ID",
+  "description": "Decision mimid-1wgh.64 item 2: the hub refuses any change of a non-empty room_uri but lets any participant set one where it is empty or room_metadata is absent (as jmap_projection's rename tests do, adding room_metadata to a room created without it). It does not check the value is the room's own ID, which JMAP Room/create checks at creation (room_create.rs) and which agents take as the room's identity from a Welcome. Fix: carry the room ID into policy::RoomState (room_state has only the Observer) and refuse any other value.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-19T16:05:45.244165423Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-19T16:05:45.244165423Z",
+  "labels": [
+    "room-policy",
+    "security",
+    "server"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-bjt5",
+      "depends_on_id": "mimid-nfze",
+      "type": "discovered-from",
+      "created_at": "2026-11-19T16:05:45.296836553Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
