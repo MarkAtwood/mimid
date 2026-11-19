@@ -391,6 +391,9 @@ impl AgentChat {
                 self.refresh_contact_dids(agent, Some((&user, presented.as_deref())))
                     .await
             }
+            Event::RemovedWithoutAppDataUpdate { room, user, epoch } => {
+                self.store_removal_notice(agent, &room, &user, epoch).await
+            }
             Event::Message(message) => self.store_message(agent, *message, report).await,
             Event::MembersChanged {
                 room, participants, ..
@@ -452,8 +455,43 @@ impl AgentChat {
         pinned: &str,
         presented: Option<&str>,
     ) -> Result<(), SyncError> {
-        let chat = self.chat_for(agent, room).await?;
         let reference = notice_ref(room, user, pinned, presented);
+        self.store_notice(agent, room, user, reference, |name| {
+            identity_notice(name, pinned, presented)
+        })
+        .await
+    }
+
+    /// Bead mimid-4lp4.4: stores, in the Chat of `room`, a plain-text
+    /// notice that a client of `user` was removed at `epoch` because its
+    /// app lacks AppDataUpdate and could not take part in a security update
+    /// (the `did_webvh` record; decision mimid-1wgh.4.81.37), and that it
+    /// can rejoin. Like [`AgentChat::store_identity_notice`]: sent by the
+    /// account, keyed by [`removal_notice_ref`], idempotent across replays.
+    async fn store_removal_notice(
+        &self,
+        agent: &mut Agent,
+        room: &str,
+        user: &str,
+        epoch: u64,
+    ) -> Result<(), SyncError> {
+        let reference = removal_notice_ref(room, user, epoch);
+        self.store_notice(agent, room, user, reference, removal_notice)
+            .await
+    }
+
+    /// Stores the notice `body` makes of `user`'s display name in the Chat
+    /// of `room` under `reference`, unless one is there already. The
+    /// sender is the accountId (see [`AgentChat::store_identity_notice`]).
+    async fn store_notice(
+        &self,
+        agent: &mut Agent,
+        room: &str,
+        user: &str,
+        reference: MessageRef,
+        body: impl FnOnce(&str) -> String,
+    ) -> Result<(), SyncError> {
+        let chat = self.chat_for(agent, room).await?;
         if self
             .links()
             .messages
@@ -461,14 +499,17 @@ impl AgentChat {
         {
             return Ok(());
         }
-        let contact = self.contact_for(user).await?;
-        let name = self
-            .stored::<ChatContact>(&contact)
-            .await?
-            .and_then(|c| c.display_name)
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or_else(|| user.to_owned());
-        let body = identity_notice(&name, pinned, presented);
+        let name = if user.is_empty() {
+            "a member".to_owned()
+        } else {
+            let contact = self.contact_for(user).await?;
+            self.stored::<ChatContact>(&contact)
+                .await?
+                .and_then(|c| c.display_name)
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| user.to_owned())
+        };
+        let body = body(&name);
         let at = crate::retry::now_secs().saturating_mul(1000);
         let mut random = [0u8; 16];
         random[6..].copy_from_slice(&reference);
@@ -924,6 +965,37 @@ pub(crate) fn notice_ref(
     out
 }
 
+/// The [`MessageRef`] of the removal notice for a client of `user` removed
+/// in `room` at `epoch` (bead mimid-4lp4.4): the first 10 octets of
+/// SHA-256 over the parts, each ended by a NUL.
+pub(crate) fn removal_notice_ref(room: &str, user: &str, epoch: u64) -> MessageRef {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for part in [
+        "mimid removed-without-app-data-update notice",
+        room,
+        user,
+        &epoch.to_string(),
+    ] {
+        hash.update(part.as_bytes());
+        hash.update([0]);
+    }
+    let digest = hash.finalize();
+    let mut out = [0u8; 10];
+    out.copy_from_slice(&digest[..10]);
+    out
+}
+
+/// The text of a removal notice for `name` (bead mimid-4lp4.4).
+pub(crate) fn removal_notice(name: &str) -> String {
+    format!(
+        "Notice from your mimid agent: a device of {name} was removed from this chat. Its app \
+         could not take part in a security update of the chat (it does not support MLS \
+         AppDataUpdate). {name} is still a participant and can rejoin from an app that \
+         supports it."
+    )
+}
+
 /// The text of an identity notice for contact `name`. Only public values:
 /// the name and the SCIDs.
 pub(crate) fn identity_notice(name: &str, pinned: &str, presented: Option<&str>) -> String {
@@ -972,6 +1044,34 @@ mod tests {
     /// A daemon runs `sync` in a spawned task, which needs a `Send` future:
     /// holding `&Agent` across an await does not give one, since `Agent`
     /// (its SQLite connection) is not `Sync`. A compile-time check.
+    // Oracle: Python, hashlib.sha256(b"mimid removed-without-app-data-update
+    // notice\0mimi://a.example/r/one\0mimi://b.example/u/erin\05\0")
+    // .digest()[:10].hex().
+    const REMOVAL_KEY: &str = "571a45c0fb47ce2bb9b1";
+
+    #[test]
+    fn removal_notices_are_keyed_by_room_user_and_epoch() {
+        let key = removal_notice_ref("mimi://a.example/r/one", "mimi://b.example/u/erin", 5);
+        assert_eq!(hex::encode(key), REMOVAL_KEY);
+        assert_ne!(
+            key,
+            removal_notice_ref("mimi://a.example/r/one", "mimi://b.example/u/erin", 6)
+        );
+        assert_ne!(
+            key,
+            notice_ref(
+                "mimi://a.example/r/one",
+                "mimi://b.example/u/erin",
+                "5",
+                None
+            )
+        );
+        let text = removal_notice("Erin");
+        assert!(text.contains("a device of Erin was removed"), "{text}");
+        assert!(text.contains("AppDataUpdate"), "{text}");
+        assert!(text.contains("can rejoin"), "{text}");
+    }
+
     #[test]
     fn received_file_names_are_made_safe() {
         assert_eq!(safe_filename("report.pdf"), "report.pdf");

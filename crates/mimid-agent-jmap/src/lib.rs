@@ -87,6 +87,15 @@
 //!   system sender; see `sync::store_identity_notice`), and it is stored
 //!   once per room and change, however often the agent reports it.
 //!   INVENTED, NOT FROM SPEC: the notice and its text.
+//! - **Removed for lacking AppDataUpdate** (bead mimid-4lp4.4): when a
+//!   Commit that changes the `did_webvh` record removes a client whose
+//!   app lacks AppDataUpdate (`Event::RemovedWithoutAppDataUpdate`;
+//!   decision mimid-1wgh.4.81.37), `sync` stores one plain-text notice in
+//!   that room's Chat, sent by the accountId like the identity notice,
+//!   saying the member's app could not take part in a security update
+//!   and was removed, and that the member can rejoin. One per room, user
+//!   and epoch, however often it is replayed. INVENTED, NOT FROM SPEC:
+//!   the notice and its text.
 //!
 //!   Decision note (bead mimid-1wgh.4.81.27): the Session does not
 //!   advertise `urn:ietf:params:jmap:chat:did`. draft-atwood-jmap-chat-did-00

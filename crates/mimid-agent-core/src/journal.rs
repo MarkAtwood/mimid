@@ -65,6 +65,11 @@ pub(crate) enum Journaled {
         pinned: String,
         presented: Option<String>,
     },
+    RemovedWithoutAppDataUpdate {
+        room: String,
+        user: String,
+        epoch: u64,
+    },
     Problem {
         room: Option<String>,
         description: String,
@@ -107,6 +112,9 @@ impl Journaled {
                 pinned,
                 presented,
             },
+            Event::RemovedWithoutAppDataUpdate { room, user, epoch } => {
+                Self::RemovedWithoutAppDataUpdate { room, user, epoch }
+            }
             Event::Problem { room, description } => Self::Problem { room, description },
         }
     }
@@ -145,6 +153,9 @@ impl Journaled {
                 pinned,
                 presented,
             },
+            Self::RemovedWithoutAppDataUpdate { room, user, epoch } => {
+                Event::RemovedWithoutAppDataUpdate { room, user, epoch }
+            }
             Self::Problem { room, description } => Event::Problem { room, description },
         }
     }

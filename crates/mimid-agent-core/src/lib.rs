@@ -76,6 +76,11 @@
 //!   room whose only other members are the user's own devices is left at
 //!   once on this device and its other devices stay. The same rule makes
 //!   another user's client commit a member's credential Update proposal.
+//! - [`Event::RemovedWithoutAppDataUpdate`] names the removed client's
+//!   user from the tree before the Commit; it is not tested end to end
+//!   through a hub with a client lacking AppDataUpdate, only below the
+//!   agent (mimi-mls) and at the event and notice level (bead
+//!   mimid-4lp4.4).
 //! - draft-atwood-mls-didwebvh-credential-01: see [`didwebvh`]. A
 //!   BasicCredential agent supports `did_webvh` rooms by default (decision
 //!   mimid-1wgh.4.81.23). Contacts are pinned by SCID per agent; a change

@@ -13,7 +13,7 @@ use mimi_mls::member::{
 };
 use mimi_mls::tls_codec::{Deserialize, Serialize, VLBytes};
 use mimi_mls::wire::{
-    AppDataDictionary, CipherSuite, Credential, GroupInfo, HPKEPublicKey, MLSMessage,
+    AppDataDictionary, CipherSuite, ContentType, Credential, GroupInfo, HPKEPublicKey, MLSMessage,
     RatchetTreeOption, RequiredCapabilities, SignaturePublicKey, Welcome,
 };
 use mimi_mls::{Identity, KeyPackageKind};
@@ -432,6 +432,20 @@ pub enum Event {
         /// The SCID the leaf presents, or `None` for a BasicCredential.
         presented: Option<String>,
     },
+    /// A Commit that changed the `did_webvh` record removed a client of
+    /// `user` because its leaf lacks the AppDataUpdate proposal type
+    /// (mls-extensions-11 §4.7; decision mimid-1wgh.4.81.37; bead
+    /// mimid-4lp4.4): its app could not take part in the update, and it
+    /// can rejoin. Reported for Commits of other members and of this
+    /// device, once per removed client.
+    RemovedWithoutAppDataUpdate {
+        /// The room URI.
+        room: String,
+        /// The removed client's user URI, empty if its leaf names none.
+        user: String,
+        /// The epoch the Commit made.
+        epoch: u64,
+    },
     /// An item could not be handled; it is dropped. Polling goes on.
     Problem {
         /// The room, when known.
@@ -455,6 +469,10 @@ pub struct Agent {
     /// The room and leaf of a member whose leave proposals are stored and
     /// not yet committed.
     deferred_leaver: Option<(String, u32)>,
+    /// The users of the clients the pending Commit of a room removes for
+    /// lacking AppDataUpdate ([`Event::RemovedWithoutAppDataUpdate`]),
+    /// reported once the hub accepts it.
+    pending_removed: Option<(String, Vec<String>)>,
     /// [`AgentConfig::did_webvh`].
     did_webvh: DidWebvhConfig,
     /// Rooms [`Agent::join_own_rooms`] does not try again until a restart
@@ -509,6 +527,7 @@ impl Agent {
                 .map(|d| d.to_ascii_lowercase())
                 .collect(),
             deferred_leaver: None,
+            pending_removed: None,
             did_webvh: config.did_webvh.clone(),
             not_joinable: std::collections::BTreeSet::new(),
             #[cfg(test)]
@@ -2591,9 +2610,14 @@ impl Agent {
             .members
             .get_mut(room)
             .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
+        let before = room_clients(member, &self.identity);
         let bundle = member
             .commit(&self.identity, adds, removes, updates, apply_commit_op)
             .map_err(|e| AgentError::mls(format!("building the {what} Commit"), e))?;
+        self.pending_removed = Some((
+            room.to_owned(),
+            users_of(&before, &bundle.removed_without_app_data_update),
+        ));
         let tree = if wants_full_tree(&self.full_tree_hubs, room) {
             match member.pending_ratchet_tree(&self.identity) {
                 Ok(tree) => Some(tree),
@@ -2622,17 +2646,32 @@ impl Agent {
         request: &UpdateRequest,
         what: &str,
     ) -> Result<(), AgentError> {
+        let removed = self
+            .pending_removed
+            .take()
+            .filter(|(r, _)| r == room)
+            .map(|(_, users)| users)
+            .unwrap_or_default();
         if let Err(e) = self.update_ok(room, request, what).await {
             if let Some(member) = self.members.get_mut(room) {
                 let _ = member.clear_pending_commit(&self.identity);
             }
             return Err(e);
         }
-        self.members
+        let member = self
+            .members
             .get_mut(room)
-            .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?
+            .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
+        member
             .merge_pending_commit(&self.identity)
-            .map_err(|e| AgentError::mls(format!("merging the {what} Commit"), e))
+            .map_err(|e| AgentError::mls(format!("merging the {what} Commit"), e))?;
+        let epoch = member.epoch();
+        let events = removed_events(room, removed, epoch);
+        if !events.is_empty() {
+            self.deliver(events);
+            self.save()?;
+        }
+        Ok(())
     }
 
     fn finish_leaving(&mut self, room: &str) {
@@ -2799,6 +2838,13 @@ impl Agent {
         let Some(member) = self.members.get_mut(&room) else {
             return;
         };
+        // The leaves before a Commit, to name the clients it removes.
+        let before = if message.content_type() == Some(ContentType::Commit) {
+            room_clients(member, &self.identity)
+        } else {
+            Vec::new()
+        };
+        let own_leaf = member.own_leaf_index();
         let result = member.process(&self.identity, &bytes, apply_commit_op);
         let out_of_sync = member.out_of_sync().map(|o| (o.epoch, o.reason.clone()));
         if let Some(r) = self.state.rooms.get_mut(&room) {
@@ -2854,6 +2900,19 @@ impl Agent {
                 }
             }
             Ok(Incoming::Commit(summary)) => {
+                // Bead mimid-4lp4.4: other clients removed for lacking
+                // AppDataUpdate; this device's own removal is Event::Left.
+                let removed: Vec<u32> = summary
+                    .removed_without_app_data_update
+                    .iter()
+                    .copied()
+                    .filter(|leaf| *leaf != own_leaf)
+                    .collect();
+                events.extend(removed_events(
+                    &room,
+                    users_of(&before, &removed),
+                    summary.epoch,
+                ));
                 if summary.self_removed {
                     self.finish_leaving(&room);
                     events.push(Event::Left { room });
@@ -2946,6 +3005,40 @@ impl Agent {
             }),
         }
     }
+}
+
+/// The user of each leaf in `leaves`, from `clients` (the leaves before
+/// the Commit that removed them); empty for a leaf not among them.
+fn users_of(clients: &[RoomClient], leaves: &[u32]) -> Vec<String> {
+    leaves
+        .iter()
+        .map(|leaf| {
+            clients
+                .iter()
+                .find(|c| c.leaf == *leaf)
+                .map(|c| c.user.clone())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// An [`Event::RemovedWithoutAppDataUpdate`] per user in `users`.
+fn removed_events(room: &str, users: Vec<String>, epoch: u64) -> Vec<Event> {
+    users
+        .into_iter()
+        .map(|user| {
+            tracing::info!(
+                name: "member_removed_without_app_data_update",
+                epoch,
+                "a client lacking AppDataUpdate was removed by a did_webvh record update"
+            );
+            Event::RemovedWithoutAppDataUpdate {
+                room: room.to_owned(),
+                user,
+                epoch,
+            }
+        })
+        .collect()
 }
 
 /// A received application message: decoded, its `senderUri` and `roomUri`
@@ -3457,6 +3550,45 @@ fn random<const N: usize>() -> Result<[u8; N], AgentError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Bead mimid-4lp4.4: the removed leaves are named from the leaves
+    // before the Commit, and each becomes one event that survives the
+    // journal (a replay delivers the same event, so the JMAP notice key is
+    // the same).
+    #[test]
+    fn removed_leaves_are_named_from_the_tree_before_the_commit() {
+        let client = |leaf: u32, user: &str| RoomClient {
+            leaf,
+            user: user.to_owned(),
+            scid: None,
+            did: None,
+        };
+        let before = [
+            client(0, "mimi://a.example/u/alice"),
+            client(1, "mimi://b.example/u/erin"),
+            client(3, "mimi://a.example/u/dave"),
+        ];
+        assert_eq!(
+            users_of(&before, &[3, 1, 7]),
+            ["mimi://a.example/u/dave", "mimi://b.example/u/erin", ""]
+        );
+        let events = removed_events("mimi://a.example/r/one", users_of(&before, &[1]), 5);
+        assert_eq!(
+            events,
+            [Event::RemovedWithoutAppDataUpdate {
+                room: "mimi://a.example/r/one".to_owned(),
+                user: "mimi://b.example/u/erin".to_owned(),
+                epoch: 5,
+            }]
+        );
+        let replayed: Vec<Event> = events
+            .iter()
+            .cloned()
+            .map(|e| Journaled::of(e).event())
+            .collect();
+        assert_eq!(replayed, events);
+        assert!(removed_events("r", Vec::new(), 5).is_empty());
+    }
 
     /// A daemon drives an agent from spawned tasks, which need `Send`
     /// futures; `Agent` is not `Sync`, so a future that holds `&Agent`
