@@ -2,13 +2,14 @@
   "id": "mimid-mxm5",
   "title": "Share one components.rs between hub and agent-core (move apply_commit_op \u0026 co. into mimi-protocol?)",
   "description": "mimid-agent-core/src/components.rs and mimid-server/src/hub/components.rs are line-for-line copies (bead mimid-1wgh.13.8); mimid-o5sl had to mirror the protocol-07 §7.6 RepeatedUpdate check by hand. Not merged in mimid-o5sl because no existing shared crate fits without a layering change: mimi-mls cannot see the mimi-protocol / mimi-room-policy codecs; mimi-protocol could hold it but would need a new dependency on mimi-room-policy (crate-map change in AGENTS.md) and would carry hub wording (NotHubTracked, is_hub_tracked). Options: (a) mimi-protocol::components plus mimi-room-policy dep, error variants renamed neutrally, hub and agent re-export; (b) a new small pure crate (e.g. mimi-components) depending on mimi-mls, mimi-protocol, mimi-room-policy. Needs Mark's call on the layering.",
+  "notes": "Mark 2026-11-19: move into mimi-protocol (it gains a mimi-room-policy dependency); update the AGENTS.md crate map.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-19T22:43:44.889370315Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-19T22:43:44.889370315Z",
+  "updated_at": "2026-11-19T23:03:06.885664672Z",
   "labels": [
     "agent",
     "human"
