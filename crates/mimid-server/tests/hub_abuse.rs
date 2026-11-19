@@ -30,7 +30,8 @@ use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::wire::AppDataDictionary;
 use mimi_protocol::{
     AbuseReport, AbuseType, AbusiveMessage, Frank, FrankingIntegrityTbs, HubKey, IdentifierUri,
-    ServerFrankingContext, SubmitMessageResponse, SubmitResult, franking_tag, server_frank,
+    ServerFrankingContext, SubmitMessageResponse, SubmitResult, UnverifiedAbusiveMessage,
+    UnverifiedAbusiveMessages, franking_tag, server_frank,
 };
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::directory;
@@ -508,4 +509,125 @@ async fn log_canary() {
     assert_secret_absent(&text, &data, "message_content");
     assert!(!text.contains(BODY_CANARY), "message body logged");
     assert!(!text.contains(NOTE_CANARY), "note logged");
+}
+
+/// An AbuseReport from bob about `alleged_abuser` carrying `messages` and
+/// `abuse_extensions`.
+fn encode_with(
+    alleged_abuser: &str,
+    messages: Vec<AbusiveMessage>,
+    abuse_extensions: AppDataDictionary,
+) -> Vec<u8> {
+    AbuseReport {
+        reporting_user: IdentifierUri::new(std::str::from_utf8(BOB).unwrap()).unwrap(),
+        alleged_abuser_uri: IdentifierUri::new(alleged_abuser).unwrap(),
+        reason_code: AbuseType::RESERVED,
+        note: NOTE_CANARY.as_bytes().to_vec(),
+        messages,
+        abuse_extensions,
+    }
+    .tls_serialize_detached()
+    .unwrap()
+}
+
+/// Unfranked messages travel in mimid's `abuse_extensions` component 0xF020
+/// (INVENTED, NOT FROM SPEC; decision mimid-1wgh.60). The hub verifies the
+/// franked messages as before and counts the others as unverified: a mixed
+/// report is accepted with one of each, a report of only unfranked
+/// messages is accepted unverified, a bad frank still refuses the whole
+/// report, and an unknown or malformed component changes nothing. Each
+/// report names its own alleged abuser so its log line can be found among
+/// those of the binary's other tests.
+#[tokio::test]
+async fn unfranked_messages_are_recorded_unverified() {
+    let logs = capture_logs();
+    let mut f = fixture().await;
+    let salt = [8; 16];
+    let franked = f.send(&content(salt, "franked"), salt).await;
+    // alice's content, sent without going through the hub's franking.
+    let unfranked = UnverifiedAbusiveMessages {
+        messages: vec![UnverifiedAbusiveMessage {
+            message_content: content([9; 16], "unfranked-body-canary-91c2"),
+            accepted_timestamp: START_MS,
+        }],
+    };
+    let with_unfranked = unfranked.to_extensions().unwrap();
+    assert_eq!(
+        with_unfranked
+            .entries()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>(),
+        [0xf020],
+        "the component id of decision mimid-1wgh.60"
+    );
+    let abuser = |case: &str| format!("mimi://a.example/u/{case}");
+    let report = |case: &str, messages, extensions| {
+        let hub = Arc::clone(&f.hub);
+        let body = encode_with(&abuser(case), messages, extensions);
+        async move { hub.report_abuse(ROOM_ID, &from("b.example"), &body).await }
+    };
+    let mut flipped = franked.clone();
+    flipped.frank.server_frank[0] ^= 0x01;
+    let accepted = [
+        ("mixed", vec![franked.clone()], with_unfranked.clone()),
+        ("only-unfranked", vec![], with_unfranked.clone()),
+        (
+            "unknown-component",
+            vec![franked.clone()],
+            AppDataDictionary::new(&[(0x8001, b"not ours")]).unwrap(),
+        ),
+        (
+            "malformed-component",
+            vec![franked.clone()],
+            AppDataDictionary::new(&[(0xf020, &[0x00])]).unwrap(),
+        ),
+    ];
+    for (case, messages, extensions) in accepted {
+        assert_eq!(
+            report(case, messages, extensions).await.unwrap(),
+            b"",
+            "{case}"
+        );
+    }
+    assert_refused(
+        report("tampered", vec![flipped], with_unfranked.clone()).await,
+        0,
+        "a bad frank beside an unfranked message",
+    );
+
+    let text = logs.contents();
+    let line = |case: &str| {
+        let field = format!("alleged_abuser=\"{}\"", abuser(case));
+        text.lines()
+            .find(|line| line.contains(&field))
+            .unwrap_or_else(|| panic!("{case} logged"))
+            .to_owned()
+    };
+    for (case, verified, unverified) in [
+        ("mixed", 1, 1),
+        ("only-unfranked", 0, 1),
+        ("unknown-component", 1, 0),
+        ("malformed-component", 1, 0),
+    ] {
+        let line = line(case);
+        assert!(line.contains("abuse report accepted"), "{case}: {line}");
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        assert!(
+            fields.contains(&format!("verified={verified}").as_str()),
+            "{case}: {line}"
+        );
+        assert!(
+            fields.contains(&format!("unverified={unverified}").as_str()),
+            "{case}: {line}"
+        );
+    }
+    assert!(line("tampered").contains("abuse report refused"));
+    assert!(
+        text.contains("unverified_abusive_messages component malformed; dropped"),
+        "the malformed component is noted"
+    );
+    assert!(
+        !text.contains("unfranked-body-canary-91c2"),
+        "no message content logged"
+    );
 }

@@ -21,8 +21,9 @@ use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST, R
 use mimi_protocol::{
     AbuseReport, AbuseType, AbusiveMessage, ClientKeyMaterial, FanoutEvent, FanoutMessage, Frank,
     FrankingAgentData, GroupInfoOption, HandshakeBundle, IdentifierUri, KeyMaterialRequestTbs,
-    KeyMaterialUserCode, ParticipantListData, ParticipantListUpdate, Protocol, RoomMetaData,
-    UpdateRequest, UpdateResult, UserRolePair, Utf8String, franking_tag,
+    KeyMaterialUserCode, MAX_UNVERIFIED_ABUSIVE_MESSAGES, ParticipantListData,
+    ParticipantListUpdate, Protocol, RoomMetaData, UnverifiedAbusiveMessage,
+    UnverifiedAbusiveMessages, UpdateRequest, UpdateResult, UserRolePair, Utf8String, franking_tag,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{
@@ -138,6 +139,10 @@ pub struct RoomInfo {
 /// INVENTED, NOT FROM SPEC.
 pub const MAX_REPORTED_MESSAGES: usize = 16;
 
+// Every report's unfranked messages fit the component (decision
+// mimid-1wgh.60).
+const _: () = assert!(MAX_REPORTED_MESSAGES <= MAX_UNVERIFIED_ABUSIVE_MESSAGES);
+
 /// The longest `note` [`Agent::report_abuse`] sends, in octets: mimid-server's
 /// default description limit. INVENTED, NOT FROM SPEC.
 pub const MAX_NOTE_LEN: usize = 4096;
@@ -215,14 +220,53 @@ impl ReceivedMessage {
 
     /// The protocol-07 §5.9 `AbusiveMessage` for reporting this message
     /// with [`Agent::report_abuse`]: its `application_data`, its frank and
-    /// the hub's acceptance time. `None` for an unfranked message, which
-    /// cannot be reported.
+    /// the hub's acceptance time. `None` for an unfranked message; report
+    /// that with [`ReceivedMessage::reported_message`].
     pub fn abusive_message(&self) -> Option<AbusiveMessage> {
         self.frank.as_ref().map(|verified| AbusiveMessage {
             message_content: self.application_data.clone(),
             frank: verified.frank.clone(),
             accepted_timestamp: verified.context.accepted_timestamp,
         })
+    }
+
+    /// The message as [`Agent::report_abuse`] takes it: its
+    /// [`ReceivedMessage::abusive_message`] if it is franked, otherwise its
+    /// `application_data` and acceptance time, unverified (decision
+    /// mimid-1wgh.60).
+    pub fn reported_message(&self) -> ReportedMessage {
+        self.abusive_message().map_or_else(
+            || {
+                ReportedMessage::Unfranked(UnverifiedAbusiveMessage {
+                    message_content: self.application_data.clone(),
+                    accepted_timestamp: self.accepted_at,
+                })
+            },
+            ReportedMessage::Franked,
+        )
+    }
+}
+
+/// A message for [`Agent::report_abuse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ReportedMessage {
+    /// A franked message: a protocol-07 §5.9 `AbusiveMessage`, which the
+    /// hub verifies.
+    Franked(AbusiveMessage),
+    /// A message without a frank, sent unverified in the report's
+    /// `abuse_extensions` (INVENTED, NOT FROM SPEC; decision
+    /// mimid-1wgh.60). Only a mimid hub reads it.
+    Unfranked(UnverifiedAbusiveMessage),
+}
+
+impl ReportedMessage {
+    /// The message's `application_data` as received.
+    pub fn message_content(&self) -> &[u8] {
+        match self {
+            Self::Franked(message) => &message.message_content,
+            Self::Unfranked(message) => &message.message_content,
+        }
     }
 }
 
@@ -1507,16 +1551,20 @@ impl Agent {
     /// Reports `messages`, received in `room`, as abusive to the room's hub
     /// (protocol-07 §5.9) through the user's server (`Room/reportAbuse`,
     /// INVENTED, NOT FROM SPEC; decisions mimid-1wgh.58, mimid-1wgh.59).
-    /// Take each message from [`ReceivedMessage::abusive_message`], now or
+    /// Take each message from [`ReceivedMessage::reported_message`], now or
     /// from where the caller kept it.
     ///
     /// The AbuseReport has this user as `reportingUser`, the one sender of
     /// the messages (their content's `senderUri`) as `allegedAbuserUri`,
-    /// `reason` as `reasonCode`, `note` as `note` and no
-    /// `abuse_extensions`. The franks are not checked again: the agent
-    /// verified them on receipt (protocol-07 §5.4.1.3) and the hub verifies
-    /// them now. The hub's room policy decides whether this user may report
-    /// (room-policy-04 §8.3 `canReportAbuse`).
+    /// `reason` as `reasonCode` and `note` as `note`. Franked messages go
+    /// in `messages`; unfranked ones in `abuse_extensions`, under mimid's
+    /// component 0xF020, unverified (INVENTED, NOT FROM SPEC; decision
+    /// mimid-1wgh.60), and the component is left out when there are none.
+    /// The order between the two kinds is not kept. The franks are not
+    /// checked again: the agent verified them on receipt (protocol-07
+    /// §5.4.1.3) and the hub verifies them now. The hub's room policy
+    /// decides whether this user may report (room-policy-04 §8.3
+    /// `canReportAbuse`).
     ///
     /// The future borrows only the JMAP client, as [`Agent::consents`]
     /// does, so it is `Send`.
@@ -1533,7 +1581,7 @@ impl Agent {
     pub fn report_abuse<'a>(
         &'a self,
         room: &str,
-        messages: &[AbusiveMessage],
+        messages: &[ReportedMessage],
         reason: AbuseType,
         note: &str,
     ) -> impl Future<Output = Result<ReportOutcome, AgentError>> + Send + 'a {
@@ -1550,7 +1598,7 @@ impl Agent {
     fn abuse_report(
         &self,
         room: &str,
-        messages: &[AbusiveMessage],
+        messages: &[ReportedMessage],
         reason: AbuseType,
         note: &str,
     ) -> Result<Vec<u8>, AgentError> {
@@ -1570,7 +1618,7 @@ impl Agent {
         }
         let mut alleged_abuser: Option<String> = None;
         for (index, message) in messages.iter().enumerate() {
-            let content = MimiContent::decode(&message.message_content).map_err(|e| {
+            let content = MimiContent::decode(message.message_content()).map_err(|e| {
                 AgentError::Invalid(format!("reported message {index} is not mimi-content: {e}"))
             })?;
             let extensions = content.mimi_extensions;
@@ -1598,15 +1646,32 @@ impl Agent {
                 .map_err(|e| AgentError::Invalid(format!("{what} is not a MIMI URI: {e}")))
         };
         let alleged_abuser = alleged_abuser.unwrap_or_default();
+        let mut franked = Vec::new();
+        let mut unfranked = Vec::new();
+        for message in messages {
+            match message {
+                ReportedMessage::Franked(message) => franked.push(message.clone()),
+                ReportedMessage::Unfranked(message) => unfranked.push(message.clone()),
+            }
+        }
+        // Decision mimid-1wgh.60; MAX_REPORTED_MESSAGES is below
+        // MAX_UNVERIFIED_ABUSIVE_MESSAGES, so the list always encodes.
+        let abuse_extensions = if unfranked.is_empty() {
+            AppDataDictionary::default()
+        } else {
+            UnverifiedAbusiveMessages {
+                messages: unfranked,
+            }
+            .to_extensions()
+            .map_err(|e| AgentError::tls("the unverified messages", e))?
+        };
         encode(&AbuseReport {
             reporting_user: uri(&self.me, "this user")?,
             alleged_abuser_uri: uri(&alleged_abuser, "the senderUri")?,
             reason_code: reason,
             note: note.as_bytes().to_vec(),
-            messages: messages.to_vec(),
-            // mls-extensions-11 §4.6: an empty ComponentData list.
-            abuse_extensions: AppDataDictionary::tls_deserialize_exact(&[0x00][..])
-                .map_err(|e| AgentError::tls("an empty AppDataDictionary", e))?,
+            messages: franked,
+            abuse_extensions,
         })
     }
 

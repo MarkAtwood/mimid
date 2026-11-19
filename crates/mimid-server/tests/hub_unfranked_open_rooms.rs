@@ -129,7 +129,9 @@ async fn an_abuse_report_is_accepted_with_its_messages_unverified() {
     let text = logs.contents();
     assert!(
         text.lines()
-            .any(|line| line.contains("abuse report accepted") && line.contains("verified=false")),
+            .any(|line| line.contains("abuse report accepted")
+                && line.split_whitespace().any(|field| field == "verified=0")
+                && line.split_whitespace().any(|field| field == "unverified=1")),
         "accepted and logged as unverified"
     );
     close_hub(store, hub).await;

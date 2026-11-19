@@ -901,8 +901,10 @@ impl Hub {
     /// protocol-07 §5.9 `POST /reportAbuse/{roomId}`: authorizes the
     /// reporter by room policy (room-policy-04 §8.3 `canReportAbuse`;
     /// decision mimid-1wgh.57), validates the frank of every message in the
-    /// TLS-encoded `AbuseReport` `request` and logs the outcome. No action
-    /// is taken (decision mimid-1wgh.21). `from` is the domain of the
+    /// TLS-encoded `AbuseReport` `request`, counts the unfranked messages
+    /// of the INVENTED `abuse_extensions` component 0xF020 as unverified
+    /// (decision mimid-1wgh.60) and logs the outcome. No action is taken
+    /// (decision mimid-1wgh.21). `from` is the domain of the
     /// request's `From` header, which a non-empty `reportingUser` must
     /// belong to.
     ///
@@ -915,7 +917,7 @@ impl Hub {
     /// [`HubError::InvalidRequest`] if `request` does not decode,
     /// [`HubError::ReportNotAllowed`] if room policy does not let the
     /// reporter report, [`HubError::UnverifiedAbusiveMessage`] if a reported
-    /// message's frank does not verify, and
+    /// franked message's frank does not verify, and
     /// [`HubError::MissingFrankingAgent`] or
     /// [`HubError::WrongFrankingAgent`] if the room's `franking_agent`
     /// cannot be read.

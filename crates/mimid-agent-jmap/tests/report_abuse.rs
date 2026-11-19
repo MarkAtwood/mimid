@@ -15,12 +15,18 @@
 //! - The hub's own frank verification: a.example answers the relayed POST
 //!   with 200 only after recomputing `server_frank` with its secret
 //!   `hub_key` and checking its signature (protocol-07 §5.9), and logs
-//!   `abuse report accepted` with `verified=true` and bob as reporter.
+//!   `abuse report accepted` with `verified=1` and bob as reporter.
 //! - Independently of mimid's code, the report a.example received carries
 //!   exactly the bytes alice's agent encrypted (her message's MIMI content
 //!   decodes to her text, sender and room), and its frank's
 //!   `franking_integrity_signature` verifies under the hub's public key
 //!   for the context alice's content asserts.
+//! - Unfranked messages (decision mimid-1wgh.60): alice's message reported
+//!   once franked and once as unfranked reaches a.example in `messages`
+//!   and in component 0xF020, and a.example logs `verified=1
+//!   unverified=1`; a tampered frank beside an unfranked message is still
+//!   refused 422. `unfranked_reports_reach_the_hub_unverified` covers a
+//!   room without franking.
 //! - Room policy: the report in "denied" is refused 403
 //!   `report-not-allowed` by a.example, and bob sees `notAllowed`.
 //! - Tampering: the accepted report's message with one bit of
@@ -50,11 +56,14 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jmap_server::{Dispatcher, Id, JmapRequest, State};
 use mimi_content::MimiContent;
 use mimi_mls::tls_codec::{Deserialize, Serialize};
-use mimi_protocol::{AbuseReport, IdentifierUri, ServerFrankingContext};
+use mimi_protocol::{
+    AbuseReport, IdentifierUri, ServerFrankingContext, UnverifiedAbusiveMessage,
+    UnverifiedAbusiveMessages,
+};
 use mimi_room_policy::{Capability, Role, RoleData, SingleSourceRoleChangeTargets};
 use mimid_agent_core::{
     AbuseType, AbusiveMessage, Agent, AgentConfig, AgentError, HostOptions, MAX_NOTE_LEN,
-    MAX_REPORTED_MESSAGES, ReportOutcome,
+    MAX_REPORTED_MESSAGES, MessageId, ReportOutcome, ReportedMessage,
 };
 use mimid_agent_jmap::{AgentChat, Options};
 use mimid_server::config::{BaseUrl, Domain};
@@ -64,7 +73,7 @@ use mimid_server::follower::key_packages::KeyPackages;
 use mimid_server::follower::relay::Relay;
 use mimid_server::http::router;
 use mimid_server::hub::fanout::Fanout;
-use mimid_server::hub::{Clock, Hub, SystemClock};
+use mimid_server::hub::{Clock, Hub, HubRequirements, SystemClock};
 use mimid_server::jmap::{self, JmapOptions};
 use mimid_server::peer::PeerClient;
 use mimid_server::store::Store;
@@ -130,12 +139,13 @@ struct Server {
 }
 
 /// Starts `bound`'s stack as `main.rs` wires it, with `peers` as its peer
-/// map and accounts for `users`.
+/// map, accounts for `users` and its hub's `requirements`.
 async fn serve(
     bound: Bound,
     peers: &BTreeMap<Domain, BaseUrl>,
     dir: &Path,
     users: &[&'static str],
+    requirements: HubRequirements,
 ) -> Server {
     let Bound {
         domain,
@@ -170,6 +180,7 @@ async fn serve(
         Hub::open(store.clone(), domain.clone(), Arc::clone(&clock))
             .await
             .unwrap()
+            .with_requirements(requirements)
             .with_fanout(fanout)
             .with_peers(peer_client())
             .with_base_url(base.clone())
@@ -408,6 +419,25 @@ fn uri(text: &str) -> IdentifierUri {
     IdentifierUri::new(text).unwrap()
 }
 
+/// The last `abuse report accepted` line logged for `room`.
+fn last_accepted(room: &str) -> String {
+    let field = format!("room_id=\"{room}\"");
+    log_text()
+        .lines()
+        .rev()
+        .find(|line| line.contains("abuse report accepted") && line.contains(&field))
+        .unwrap_or_else(|| panic!("no accepted report logged for {room}"))
+        .to_owned()
+}
+
+/// Asserts that `line` has each of `fields` as a whole `name=value` field.
+fn assert_fields(line: &str, fields: &[&str]) {
+    let have: Vec<&str> = line.split_whitespace().collect();
+    for field in fields {
+        assert!(have.contains(field), "{field}: {line}");
+    }
+}
+
 #[tokio::test]
 async fn reports_reach_the_hub_through_the_reporters_provider() {
     logs();
@@ -415,8 +445,22 @@ async fn reports_reach_the_hub_through_the_reporters_provider() {
     let (a, b) = (bind("a.example").await, bind("b.example").await);
     let peers_of_a = BTreeMap::from([(b.domain.clone(), b.base.clone())]);
     let peers_of_b = BTreeMap::from([(a.domain.clone(), a.base.clone())]);
-    let a = serve(a, &peers_of_a, dir.path(), &[ALICE]).await;
-    let b = serve(b, &peers_of_b, dir.path(), &[BOB]).await;
+    let a = serve(
+        a,
+        &peers_of_a,
+        dir.path(),
+        &[ALICE],
+        HubRequirements::default(),
+    )
+    .await;
+    let b = serve(
+        b,
+        &peers_of_b,
+        dir.path(),
+        &[BOB],
+        HubRequirements::default(),
+    )
+    .await;
 
     // Both publish KeyPackages (a provider knows a user with a client,
     // decision mimid-1wgh.7.36); alice asks bob's consent across providers
@@ -501,20 +545,52 @@ async fn reports_reach_the_hub_through_the_reporters_provider() {
         )
         .expect("the frank is the hub's signature over alice's context");
     let text_log = log_text();
-    let accepted_line = text_log
-        .lines()
-        .find(|line| line.contains("abuse report accepted"))
-        .expect("the hub records the report");
-    for field in [
-        format!("reporting_user=\"{BOB}\""),
-        format!("alleged_abuser=\"{ALICE}\""),
-        format!("room_id=\"{allowed}\""),
-        "verified=true".to_owned(),
-        "messages=1".to_owned(),
-    ] {
-        assert!(accepted_line.contains(&field), "{field}: {accepted_line}");
-    }
+    assert_fields(
+        &last_accepted(&allowed),
+        &[
+            &format!("reporting_user=\"{BOB}\""),
+            &format!("alleged_abuser=\"{ALICE}\""),
+            &format!("room_id=\"{allowed}\""),
+            "verified=1",
+            "unverified=0",
+        ],
+    );
     assert!(!text_log.contains(NOTE), "the note is not logged");
+
+    // 1b. The same message twice through bob's agent, once franked and
+    // once as if unfranked (decision mimid-1wgh.60): a.example verifies the
+    // first and records the second unverified.
+    let unfranked = UnverifiedAbusiveMessage {
+        message_content: message.message_content.clone(),
+        accepted_timestamp: message.accepted_timestamp,
+    };
+    let outcome = bob
+        .chat
+        .agent()
+        .lock()
+        .await
+        .report_abuse(
+            &allowed,
+            &[
+                ReportedMessage::Franked(message.clone()),
+                ReportedMessage::Unfranked(unfranked.clone()),
+            ],
+            AbuseType::RESERVED,
+            "",
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome, ReportOutcome::Accepted);
+    let (mixed, status) = last_seen(&a);
+    assert_eq!(status, 200);
+    assert_eq!(mixed.messages, std::slice::from_ref(message));
+    assert_eq!(
+        mixed.unverified_messages().unwrap(),
+        Some(UnverifiedAbusiveMessages {
+            messages: vec![unfranked.clone()]
+        })
+    );
+    assert_fields(&last_accepted(&allowed), &["verified=1", "unverified=1"]);
 
     // 2. In "denied" bob's role lacks canReportAbuse: a.example refuses.
     let answer = bob.report(&[&in_denied]).await;
@@ -536,21 +612,31 @@ async fn reports_reach_the_hub_through_the_reporters_provider() {
     for tamper in [&flip_frank as &dyn Fn(&mut AbusiveMessage), &change_content] {
         let mut tampered = message.clone();
         tamper(&mut tampered);
-        let outcome = bob
-            .chat
-            .agent()
-            .lock()
-            .await
-            .report_abuse(&allowed, &[tampered], AbuseType::RESERVED, "")
-            .await
-            .unwrap();
-        assert_eq!(outcome, ReportOutcome::UnverifiedMessage);
-        let (_, status) = last_seen(&a);
-        assert_eq!(status, 422);
+        // Alone, and beside an unfranked message: the report is refused
+        // whole either way.
+        for messages in [
+            vec![ReportedMessage::Franked(tampered.clone())],
+            vec![
+                ReportedMessage::Franked(tampered.clone()),
+                ReportedMessage::Unfranked(unfranked.clone()),
+            ],
+        ] {
+            let outcome = bob
+                .chat
+                .agent()
+                .lock()
+                .await
+                .report_abuse(&allowed, &messages, AbuseType::RESERVED, "")
+                .await
+                .unwrap();
+            assert_eq!(outcome, ReportOutcome::UnverifiedMessage);
+            let (_, status) = last_seen(&a);
+            assert_eq!(status, 422);
+        }
     }
 
-    // 4. Messages bob never received with a frank: his own, and an id
-    // naming nothing. Nothing reaches a.example.
+    // 4. Messages bob never received: his own, and an id naming nothing.
+    // Nothing reaches a.example.
     let seen_before = a.seen.lock().unwrap().len();
     let (_, created) = bob
         .call(
@@ -583,14 +669,18 @@ async fn reports_reach_the_hub_through_the_reporters_provider() {
     }
     {
         let agent = bob.chat.agent().lock().await;
-        let at_limit = vec![message.clone(); MAX_REPORTED_MESSAGES + 1];
+        let franked = ReportedMessage::Franked(message.clone());
+        let at_limit = vec![franked.clone(); MAX_REPORTED_MESSAGES + 1];
+        let unfranked_at_limit =
+            vec![ReportedMessage::Unfranked(unfranked.clone()); MAX_REPORTED_MESSAGES + 1];
         for (room, messages, note) in [
-            (&denied, std::slice::from_ref(message), ""),
+            (&denied, std::slice::from_ref(&franked), ""),
             (&allowed, &at_limit[..], ""),
+            (&allowed, &unfranked_at_limit[..], ""),
             (&allowed, &[][..], ""),
             (
                 &allowed,
-                std::slice::from_ref(message),
+                std::slice::from_ref(&franked),
                 &*"n".repeat(MAX_NOTE_LEN + 1),
             ),
         ] {
@@ -602,7 +692,7 @@ async fn reports_reach_the_hub_through_the_reporters_provider() {
         let result = agent
             .report_abuse(
                 "mimi://a.example/r/none",
-                std::slice::from_ref(message),
+                std::slice::from_ref(&franked),
                 AbuseType::RESERVED,
                 "",
             )
@@ -668,4 +758,104 @@ async fn reports_reach_the_hub_through_the_reporters_provider() {
     let (again, status) = last_seen(&a);
     assert_eq!(status, 200);
     assert_eq!(again.messages, report.messages);
+}
+
+/// A room without franking (decision mimid-1wgh.52; a.example's operator
+/// allows open rooms): bob reports alice's unfranked message from his
+/// JMAP Chat account through b.example, and a.example records it as
+/// unverified (decision mimid-1wgh.60).
+///
+/// Oracles: a.example's own log (`verified=0 unverified=1`); the relayed
+/// report carries, in component 0xF020, bytes whose mimi-content-10 §3.3
+/// MessageId is the one alice's agent computed when it sent them, so they
+/// are exactly what alice encrypted; and the acceptance time is the one
+/// a.example gave alice.
+#[tokio::test]
+async fn unfranked_reports_reach_the_hub_unverified() {
+    logs();
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (bind("a.example").await, bind("b.example").await);
+    let peers_of_a = BTreeMap::from([(b.domain.clone(), b.base.clone())]);
+    let peers_of_b = BTreeMap::from([(a.domain.clone(), a.base.clone())]);
+    let a = serve(
+        a,
+        &peers_of_a,
+        dir.path(),
+        &[ALICE],
+        HubRequirements::new(false, false),
+    )
+    .await;
+    let b = serve(
+        b,
+        &peers_of_b,
+        dir.path(),
+        &[BOB],
+        HubRequirements::default(),
+    )
+    .await;
+
+    let mut alice = agent(&a, ALICE, dir.path()).await;
+    alice.publish_key_packages(1).await.unwrap();
+    let bob = Client::open(&b, dir.path()).await;
+    bob.chat
+        .agent()
+        .lock()
+        .await
+        .publish_key_packages(2)
+        .await
+        .unwrap();
+    alice.request_consent(BOB).await.unwrap();
+    bob.chat.agent().lock().await.allow(ALICE).await.unwrap();
+
+    let mut open = HostOptions::named("open");
+    open.open = true;
+    let room = alice.host_room(&open).await.unwrap();
+    alice.invite(&room, BOB).await.unwrap();
+    let chat = bob.chat_of(&room).await;
+    let text = "an unfranked abusive message";
+    let sent = alice.send_text(&room, text).await.unwrap();
+    let reported = bob.message(&chat, text).await;
+
+    let check = |bob_report: Value| {
+        assert_eq!(
+            bob_report["responseCode"],
+            json!("accepted"),
+            "{bob_report}"
+        );
+        let (report, status) = last_seen(&a);
+        assert_eq!(status, 200);
+        assert_eq!(report.reporting_user, uri(BOB));
+        assert_eq!(report.alleged_abuser_uri, uri(ALICE));
+        assert!(report.messages.is_empty(), "no franked message");
+        let unverified = report
+            .unverified_messages()
+            .unwrap()
+            .expect("component 0xF020");
+        let [message] = &unverified.messages[..] else {
+            panic!("one unverified message: {unverified:?}");
+        };
+        let content = MimiContent::decode(&message.message_content).unwrap();
+        assert_eq!(
+            MessageId::compute(ALICE, &room, &message.message_content, &content.salt).unwrap(),
+            sent.message_id,
+            "the bytes alice sent"
+        );
+        assert!(String::from_utf8_lossy(&message.message_content).contains(text));
+        assert_eq!(message.accepted_timestamp, sent.accepted_at);
+        assert_fields(
+            &last_accepted(&room),
+            &[
+                &format!("reporting_user=\"{BOB}\""),
+                "verified=0",
+                "unverified=1",
+            ],
+        );
+        message.clone()
+    };
+    let first = check(bob.report(&[&reported]).await);
+
+    // After a restart the kept content still reports, unverified.
+    drop(bob);
+    let bob = Client::open(&b, dir.path()).await;
+    assert_eq!(check(bob.report(&[&reported]).await), first);
 }

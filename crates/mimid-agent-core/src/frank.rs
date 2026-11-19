@@ -28,7 +28,7 @@ use mimi_mls::wire::CipherSuite;
 use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT};
 use mimi_protocol::{
     AbusiveMessage, Frank, FrankAad, FrankingAgentData, IdentifierUri, ReceivedFrank,
-    ServerFrankingContext,
+    ServerFrankingContext, UnverifiedAbusiveMessage,
 };
 
 use crate::AgentError;
@@ -75,6 +75,33 @@ pub fn encode_abusive_message(message: &AbusiveMessage) -> Result<Vec<u8>, Agent
 pub fn decode_abusive_message(bytes: &[u8]) -> Result<AbusiveMessage, AgentError> {
     AbusiveMessage::tls_deserialize_exact(bytes)
         .map_err(|e| AgentError::tls("a kept AbusiveMessage", e))
+}
+
+/// The TLS encoding of `message` (decision mimid-1wgh.60), for a caller
+/// that keeps an unfranked [`crate::ReceivedMessage::reported_message`]
+/// until the user reports it.
+///
+/// # Errors
+///
+/// [`AgentError::Encoding`] if it does not encode (a field over the
+/// codec's length limit).
+pub fn encode_unverified_message(
+    message: &UnverifiedAbusiveMessage,
+) -> Result<Vec<u8>, AgentError> {
+    message
+        .tls_serialize_detached()
+        .map_err(|e| AgentError::tls("an UnverifiedAbusiveMessage", e))
+}
+
+/// An UnverifiedAbusiveMessage back from [`encode_unverified_message`]'s
+/// bytes, decoded strictly.
+///
+/// # Errors
+///
+/// [`AgentError::Encoding`] if `bytes` are not one UnverifiedAbusiveMessage.
+pub fn decode_unverified_message(bytes: &[u8]) -> Result<UnverifiedAbusiveMessage, AgentError> {
+    UnverifiedAbusiveMessage::tls_deserialize_exact(bytes)
+        .map_err(|e| AgentError::tls("a kept UnverifiedAbusiveMessage", e))
 }
 
 /// Whether `member`'s room requires `frank_aad` in the Safe AAD.

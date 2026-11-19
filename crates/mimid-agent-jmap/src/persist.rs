@@ -1,6 +1,6 @@
 //! The plaintext store (bead mimid-1wgh.13.12): the account's Chats,
 //! Messages, ChatContacts and ReadPositions in one JSON file, so they
-//! survive a restart, with the kept franks of received Messages
+//! survive a restart, with what received Messages keep for reports
 //! ([`crate::report`]), dropped with their Message. They must: the agent cannot decrypt a message again,
 //! since MLS consumes the keys (RFC 9420 §9.2).
 //!
@@ -75,8 +75,9 @@ struct Snapshot {
     /// a file written before retries, which reads as none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pending_attachments: Vec<crate::retry::PendingAttachment>,
-    /// The kept franks, by Message id ([`crate::report`]). Absent in a
-    /// file written before abuse reports, which reads as none.
+    /// What received Messages keep for reports, by Message id
+    /// ([`crate::report`]). Absent in a file written before abuse reports,
+    /// which reads as none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     franks: BTreeMap<String, crate::report::KeptFrank>,
 }

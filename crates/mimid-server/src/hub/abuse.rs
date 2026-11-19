@@ -21,19 +21,26 @@
 //!    `server_frank` with the hub's `hub_key` ([`verify_server_frank`]),
 //!    and verify `franking_integrity_signature` under the room's
 //!    `franking_agent` key ([`mimi_protocol::Frank::verify_integrity`]).
-//! 4. If every message passes, the report is accepted and the response has
-//!    no body; otherwise it is refused with
-//!    [`HubError::UnverifiedAbusiveMessage`] (decision mimid-1wgh.6.65).
+//! 4. Read the unfranked messages from the INVENTED `abuse_extensions`
+//!    component
+//!    [`UNVERIFIED_ABUSIVE_MESSAGES`](mimi_protocol::component_id::UNVERIFIED_ABUSIVE_MESSAGES)
+//!    (0xF020, decision mimid-1wgh.60). They cannot be verified and are
+//!    counted as unverified. A malformed component is dropped (logged as
+//!    `abuse_report_extension_dropped`), not refused.
+//! 5. If every franked message passes, the report is accepted and the
+//!    response has no body; otherwise it is refused with
+//!    [`HubError::UnverifiedAbusiveMessage`] (decision mimid-1wgh.6.65). A
+//!    report with only unverified messages, or none, is accepted.
 //!
 //! In a room without franking (one whose Safe AAD does not require
-//! `frank_aad`) there is nothing to verify: the report is accepted and
-//! logged with `verified = false`, so a moderator knows its messages are
-//! the reporter's word, not proof (decision mimid-1wgh.52, bead
+//! `frank_aad`) there is nothing to verify: the report is accepted and its
+//! `messages` counted as unverified too, so a moderator knows they are the
+//! reporter's word, not proof (decision mimid-1wgh.52, bead
 //! mimid-1wgh.53).
 //!
 //! The log records the room, the outcome, the reason code, the number of
-//! messages and the two user URIs; never `message_content`, `note`, the
-//! franks or any key.
+//! `verified` and `unverified` messages and the two user URIs; never
+//! `message_content`, `note`, the franks or any key.
 //!
 //! # Limitations
 //!
@@ -45,7 +52,14 @@
 //!   `franking_tag` covers (decisions mimid-1wgh.5.29, mimid-1wgh.6.66),
 //!   so a message sent
 //!   with content advertisement framing does not verify.
-//! - A report is refused whole if any of its messages does not verify.
+//! - A report is refused whole if any of its franked messages does not
+//!   verify.
+//! - Unverified messages are only counted: their content is not decoded or
+//!   compared with `allegedAbuserUri`, and their `accepted_timestamp` is
+//!   not checked against the room's history (the hub keeps none). The
+//!   component is mimid's own; another implementation's hub ignores it,
+//!   and a report of only unfranked messages reaches it as a report with
+//!   no messages.
 //! - `reportingUser` is compared with `From` only by domain: with
 //!   BasicCredential the hub cannot tell which of a provider's users sent a
 //!   report, so a provider can report as any of its own users (decision
@@ -143,32 +157,52 @@ pub(super) async fn report_abuse(
         );
         return Err(HubError::ReportNotAllowed);
     }
-    for (index, message) in report.messages.iter().enumerate() {
-        let Some(franking_agent) = &franking_agent else {
-            break;
-        };
-        if let Err(reason) = verify(hub, franking_agent, message) {
+    // Decision mimid-1wgh.60: the INVENTED component of unfranked
+    // messages, unverified. A malformed one is dropped, not refused.
+    let unfranked = match report.unverified_messages() {
+        Ok(messages) => messages.map_or(0, |list| list.messages.len()),
+        Err(error) => {
             tracing::info!(
-                name: "abuse_report_refused",
+                name: "abuse_report_extension_dropped",
                 room_id,
-                reporting_user,
-                alleged_abuser,
-                index,
-                reason,
-                "abuse report refused: a reported message does not verify"
+                error = &error as &dyn std::error::Error,
+                "unverified_abusive_messages component malformed; dropped"
             );
-            // The report is refused whole (decision mimid-1wgh.6.65).
-            return Err(HubError::UnverifiedAbusiveMessage { index });
+            0
+        }
+    };
+    if let Some(franking_agent) = &franking_agent {
+        for (index, message) in report.messages.iter().enumerate() {
+            if let Err(reason) = verify(hub, franking_agent, message) {
+                tracing::info!(
+                    name: "abuse_report_refused",
+                    room_id,
+                    reporting_user,
+                    alleged_abuser,
+                    index,
+                    reason,
+                    "abuse report refused: a reported message does not verify"
+                );
+                // The report is refused whole (decision mimid-1wgh.6.65).
+                return Err(HubError::UnverifiedAbusiveMessage { index });
+            }
         }
     }
+    // In a room without franking the franks cannot be checked, so those
+    // messages count as unverified too (bead mimid-1wgh.53).
+    let (verified, unverified) = if franking_agent.is_some() {
+        (report.messages.len(), unfranked)
+    } else {
+        (0, report.messages.len() + unfranked)
+    };
     tracing::info!(
         name: "abuse_report_accepted",
         room_id,
         reporting_user,
         alleged_abuser,
         reason_code = report.reason_code.0,
-        messages = report.messages.len(),
-        verified = franking_agent.is_some(),
+        verified,
+        unverified,
         "abuse report accepted; no action taken (decision mimid-1wgh.21)"
     );
     // §5.9: no response body (decision mimid-1wgh.6.65).

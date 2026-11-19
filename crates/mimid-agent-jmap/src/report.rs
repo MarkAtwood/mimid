@@ -1,14 +1,17 @@
-//! Abuse reports from a JMAP Chat client (bead mimid-oon0; decision
-//! mimid-1wgh.59). INVENTED, NOT FROM SPEC: neither draft-atwood-jmap-chat-00
-//! nor draft-atwood-jmap-chat-mimi-00 defines a report method.
+//! Abuse reports from a JMAP Chat client (bead mimid-oon0; decisions
+//! mimid-1wgh.59, mimid-1wgh.60). INVENTED, NOT FROM SPEC: neither
+//! draft-atwood-jmap-chat-00 nor draft-atwood-jmap-chat-mimi-00 defines a
+//! report method.
 //!
-//! When [`AgentChat::sync`] stores a received franked message, it keeps the
-//! message's protocol-07 §5.9 `AbusiveMessage` (its `application_data` as
-//! received, the hub's frank and the acceptance time) with the room, keyed
-//! by the Message id. The plaintext store saves them beside
-//! the Messages, so a report works after a restart; a frank is dropped when
-//! its Message is destroyed. Received messages without a frank (from a room
-//! without franking) and the user's own messages keep none.
+//! When [`AgentChat::sync`] stores a received message, it keeps what a
+//! report needs with the room, keyed by the Message id: for a franked
+//! message its protocol-07 §5.9 `AbusiveMessage` (its `application_data`
+//! as received, the hub's frank and the acceptance time), for an
+//! unfranked one its `application_data` as received and the acceptance
+//! time (an `UnverifiedAbusiveMessage`, decision mimid-1wgh.60). The
+//! plaintext store saves them beside the Messages, so a report works after
+//! a restart; what was kept is dropped when its Message is destroyed. The
+//! user's own messages keep nothing.
 //!
 //! `Message/reportAbuse` takes:
 //!
@@ -19,22 +22,27 @@
 //!   (the draft defines no codes yet, decision mimid-1wgh.5.32);
 //! - `note` (optional, default empty): at most [`MAX_NOTE_LEN`] octets.
 //!
-//! A Message with no kept frank (not found, the user's own, unfranked) is
+//! A Message with nothing kept (not found, the user's own) is
 //! `invalidArguments` naming it, and nothing is sent. Otherwise the agent
 //! sends the report through the user's server to the room's hub
-//! ([`Agent::report_abuse`](mimid_agent_core::Agent::report_abuse)) and the
-//! answer is `{accountId, responseCode}` with `responseCode` `accepted`,
-//! `notAllowed` (the hub's room policy refused this user), `unverifiedMessage`
-//! (a frank did not verify at the hub), or `refused` with the hub's `status`.
-//! A server or hub that cannot be reached is `serverUnavailable`.
+//! ([`Agent::report_abuse`](mimid_agent_core::Agent::report_abuse)): the
+//! franked messages as `AbusiveMessage`s, the unfranked ones unverified in
+//! mimid's `abuse_extensions` component 0xF020. The answer is
+//! `{accountId, responseCode}` with `responseCode` `accepted`,
+//! `notAllowed` (the hub's room policy refused this user),
+//! `unverifiedMessage` (a frank did not verify at the hub), or `refused`
+//! with the hub's `status`. A server or hub that cannot be reached is
+//! `serverUnavailable`.
 //!
 //! # Limitations
 //!
-//! - A message from a room without franking cannot be reported: an
-//!   `AbusiveMessage` needs a frank. Neither can a report without messages
-//!   or an anonymous one be sent.
-//! - Franks of messages stored before this version were not kept; those
-//!   messages cannot be reported.
+//! - Unfranked messages are the reporter's word: a mimid hub records them
+//!   as unverified, and a hub of another implementation does not read the
+//!   component, so it sees a report without them. `accepted` does not say
+//!   which of the two happened.
+//! - Neither can a report without messages or an anonymous one be sent.
+//! - Messages stored before this version kept nothing if unfranked, and
+//!   their franks only if franked; those without cannot be reported.
 //! - The method is served under the JMAP Chat capability, which does not
 //!   define it.
 
@@ -44,9 +52,13 @@ use jmap_chat_types::Message;
 use jmap_server::{
     CallContext, Dispatcher, HandlerFuture, HandlerOutput, Id, JmapError, JmapHandler,
 };
-use mimid_agent_core::frank::{decode_abusive_message, encode_abusive_message};
+use mimid_agent_core::frank::{
+    decode_abusive_message, decode_unverified_message, encode_abusive_message,
+    encode_unverified_message,
+};
 use mimid_agent_core::{
     AbuseType, AgentError, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES, ReceivedMessage, ReportOutcome,
+    ReportedMessage,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -57,13 +69,19 @@ use crate::sync::SyncReport;
 /// The method's name.
 pub const METHOD: &str = "Message/reportAbuse";
 
-/// What a received franked Message keeps for a report.
+/// What a received Message keeps for a report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct KeptFrank {
     /// The room URI.
     room: String,
-    /// The hex of the TLS-encoded `AbusiveMessage`.
+    /// The hex of the TLS-encoded `AbusiveMessage`, or of the
+    /// `UnverifiedAbusiveMessage` if `unverified`.
     message: String,
+    /// The message has no frank (decision mimid-1wgh.60). Absent in a file
+    /// written before unfranked messages were kept, which kept only
+    /// franked ones.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    unverified: bool,
 }
 
 /// Registers [`METHOD`] on `dispatcher`, served by `chat`.
@@ -87,12 +105,21 @@ fn invalid(why: impl Into<String>) -> JmapError {
 }
 
 impl AgentChat {
-    /// Keeps `received`'s frank for Message `id`, if it has one.
-    pub(crate) fn keep_frank(&self, id: &Id, received: &ReceivedMessage, report: &mut SyncReport) {
-        let Some(message) = received.abusive_message() else {
-            return;
+    /// Keeps what a report of Message `id` needs: `received`'s frank and
+    /// content, or its content alone if it has no frank.
+    pub(crate) fn keep_reportable(
+        &self,
+        id: &Id,
+        received: &ReceivedMessage,
+        report: &mut SyncReport,
+    ) {
+        let (encoded, unverified) = match received.reported_message() {
+            ReportedMessage::Franked(message) => (encode_abusive_message(&message), false),
+            ReportedMessage::Unfranked(message) => (encode_unverified_message(&message), true),
+            // ReportedMessage is #[non_exhaustive]; nothing else exists.
+            _ => return,
         };
-        match encode_abusive_message(&message) {
+        match encoded {
             Ok(bytes) => {
                 self.franks
                     .lock()
@@ -102,13 +129,14 @@ impl AgentChat {
                         KeptFrank {
                             room: received.room.clone(),
                             message: hex::encode(bytes),
+                            unverified,
                         },
                     );
             }
             // Not for a message that was decoded; kept as a problem, not
             // an error, since the Message itself is stored.
             Err(e) => report.problems.push(format!(
-                "{}: a message's frank was not kept, so it cannot be reported: {e}",
+                "{}: a message was not kept for reports, so it cannot be reported: {e}",
                 received.room
             )),
         }
@@ -170,12 +198,9 @@ impl AgentChat {
         Ok(json!({ "accountId": self.account, "responseCode": code }))
     }
 
-    /// The room and the kept AbusiveMessages of the Messages `ids`, which
-    /// must still exist, each with a kept frank, all in one room.
-    async fn kept(
-        &self,
-        ids: &[Id],
-    ) -> Result<(String, Vec<mimid_agent_core::AbusiveMessage>), JmapError> {
+    /// The room and the kept messages of the Messages `ids`, which must
+    /// still exist, each with something kept, all in one room.
+    async fn kept(&self, ids: &[Id]) -> Result<(String, Vec<ReportedMessage>), JmapError> {
         let mut room: Option<String> = None;
         let mut messages = Vec::with_capacity(ids.len());
         for id in ids {
@@ -203,8 +228,7 @@ impl AgentChat {
                 .flatten()
                 .ok_or_else(|| {
                     invalid(format!(
-                        "Message {id} has no frank to report: it is not a received \
-                         message from a franked room"
+                        "Message {id} cannot be reported: it is not a received message"
                     ))
                 })?;
             match &room {
@@ -214,7 +238,13 @@ impl AgentChat {
             }
             let message = hex::decode(&kept.message)
                 .map_err(|_| AgentError::Invalid("not hex".to_owned()))
-                .and_then(|bytes| decode_abusive_message(&bytes))
+                .and_then(|bytes| {
+                    if kept.unverified {
+                        decode_unverified_message(&bytes).map(ReportedMessage::Unfranked)
+                    } else {
+                        decode_abusive_message(&bytes).map(ReportedMessage::Franked)
+                    }
+                })
                 .map_err(|e| {
                     tracing::error!(
                         name: "kept_frank_unreadable",

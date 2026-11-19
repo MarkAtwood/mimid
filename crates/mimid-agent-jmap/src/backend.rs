@@ -104,8 +104,9 @@ pub struct AgentChat {
     /// Each active room's epoch when ChatContact `did`s were last set
     /// from its leaves; a change of any sets them again.
     pub(crate) did_epochs: StdMutex<BTreeMap<String, u64>>,
-    /// The frank of every received franked Message, by Message id, for
-    /// `Message/reportAbuse` ([`crate::report`]).
+    /// What a report of each received Message needs (its frank, or its
+    /// content unverified), by Message id, for `Message/reportAbuse`
+    /// ([`crate::report`]).
     pub(crate) franks: StdMutex<BTreeMap<String, crate::report::KeptFrank>>,
 }
 

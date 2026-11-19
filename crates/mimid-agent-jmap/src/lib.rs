@@ -78,10 +78,11 @@
 //! - **Invites**: [`Options::invites`] decides which Welcomes `sync`
 //!   joins; by default only those sent by a user this user allowed
 //!   (`Agent::allow`).
-//! - **Abuse reports** ([`report`]; decision mimid-1wgh.59): the frank of
-//!   each received franked Message is kept with it, and
-//!   `Message/reportAbuse` (INVENTED, NOT FROM SPEC) reports Messages to
-//!   the room's hub through the agent.
+//! - **Abuse reports** ([`report`]; decisions mimid-1wgh.59,
+//!   mimid-1wgh.60): each received Message keeps its content as received
+//!   and its frank, if any, and `Message/reportAbuse` (INVENTED, NOT FROM
+//!   SPEC) reports Messages to the room's hub through the agent, unfranked
+//!   ones as unverified.
 //! - **Local objects**: ChatContact and ReadPosition writes, `readAt` and
 //!   `privateMetadata` on a Message, and destroying a Message change only
 //!   this account.
@@ -120,8 +121,9 @@
 //!   fetched one at a time while `sync` holds the agent. Updating a Message other than its
 //!   `readAt` or `privateMetadata` (edits, `deletedForAll`, reactions) is
 //!   `forbidden`.
-//! - Only received messages from franked rooms can be reported; see
-//!   [`report`] for its limits.
+//! - Received messages from rooms without franking are reported
+//!   unverified, in a component only a mimid hub reads; see [`report`]
+//!   for its limits.
 //! - Received edits and retractions (`replaces`, §Edits) and messages with
 //!   neither text nor attachments are not stored; [`SyncReport::skipped`] lists them. Message
 //!   status reports (§Message Status) are neither sent nor read, and typing
