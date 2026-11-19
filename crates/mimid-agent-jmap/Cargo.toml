@@ -37,6 +37,11 @@ mimi-mls = { path = "../mimi-mls" }
 mimi-protocol = { path = "../mimi-protocol" }
 mimi-room-policy = { path = "../mimi-room-policy" }
 mimid-server = { path = "../mimid-server" }
+# A plain OpenMLS client whose leaf lacks AppDataUpdate, which no mimid
+# agent can add (tests/removal_notice.rs). Same versions as mimi-mls.
+openmls.workspace = true
+openmls_basic_credential = "=0.6.0"
+openmls_rust_crypto.workspace = true
 # The version and features mimid-agent-core uses.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 tempfile = "=3.23.0"

@@ -158,8 +158,10 @@ log is already recorded, and Removes.
 
 ## Not tested
 
-- The agent and JMAP layer do not yet use
-  `removed_without_app_data_update` to tell users why someone left.
+- An mls-rs member removed through a real hub. The agent's notice of the
+  removal (bead mimid-4lp4.4) is tested end to end with a plain OpenMLS
+  client lacking AppDataUpdate in its place
+  (`crates/mimid-agent-jmap/tests/removal_notice.rs`).
 - An mls-rs client creating a `did_webvh` group: it could set the record and
   `app_components` in the initial GroupContext without any proposal.
 - mls-rs and mimid both using a `did_webvh` credential for the mls-rs member
