@@ -82,3 +82,74 @@ fn welcome_sender_names_the_committer_and_leaves_the_key_package() {
     // stages.
     assert!(Member::welcome_sender(&bob, &welcome, Some(&tree)).is_err());
 }
+
+/// `Member::welcome_group_id`: the group ID the creator chose, read
+/// before joining, and the KeyPackage stays usable for the join.
+#[test]
+fn welcome_group_id_is_the_groups_and_leaves_the_key_package() {
+    let alice = identity(b"alice");
+    let carol = identity(b"carol");
+    let mut group = Member::create(&alice, b"room-welcome-group-id", &[], &[]).expect("create");
+    let carol_kp = carol
+        .key_package(KeyPackageKind::OneTime)
+        .expect("KeyPackage");
+    let bundle = group
+        .commit(&alice, &[&carol_kp], &[], &[], no_components)
+        .expect("add carol");
+    group.merge_pending_commit(&alice).expect("merge");
+    let welcome = bundle.welcome.expect("Welcome");
+    let tree = group.ratchet_tree().expect("tree");
+    assert_eq!(
+        Member::welcome_group_id(&carol, &welcome, Some(&tree)).expect("group ID"),
+        b"room-welcome-group-id"
+    );
+    let joined = Member::join_welcome(&carol, &welcome, Some(&tree)).expect("carol joins");
+    assert_eq!(joined.member.group_id(), b"room-welcome-group-id");
+}
+
+/// `Member::delete`: carol builds an external Commit into alice's group
+/// that is never sent. While her state for the group is kept, OpenMLS
+/// refuses a Welcome to the same group; once deleted, she joins from the
+/// Welcome and agrees with alice.
+#[test]
+fn a_deleted_external_join_leaves_room_for_a_welcome() {
+    let alice = identity(b"alice");
+    let mut group = Member::create(&alice, b"room-delete", &[], &[]).expect("create");
+    let group_info = group
+        .commit(&alice, &[], &[], &[], no_components)
+        .expect("refresh")
+        .group_info;
+    group.merge_pending_commit(&alice).expect("merge");
+    let tree = group.ratchet_tree().expect("tree");
+
+    let carol = identity(b"carol");
+    let unsent = Member::join_external(&carol, &group_info, Some(&tree))
+        .expect("external join")
+        .member;
+    let add = |group: &mut Member| {
+        let carol_kp = carol
+            .key_package(KeyPackageKind::OneTime)
+            .expect("KeyPackage");
+        let bundle = group
+            .commit(&alice, &[&carol_kp], &[], &[], no_components)
+            .expect("add carol");
+        group.merge_pending_commit(&alice).expect("merge");
+        (
+            bundle.welcome.expect("Welcome"),
+            group.ratchet_tree().expect("tree"),
+        )
+    };
+    let (welcome, tree) = add(&mut group);
+    assert!(
+        Member::join_welcome(&carol, &welcome, Some(&tree)).is_err(),
+        "a Welcome to a group carol holds is refused"
+    );
+
+    unsent.delete(&carol).expect("delete");
+    assert!(Member::load(&carol, b"room-delete").is_err());
+    let joined = Member::join_welcome(&carol, &welcome, Some(&tree)).expect("carol joins");
+    assert_eq!(
+        joined.member.epoch_authenticator(),
+        group.epoch_authenticator()
+    );
+}

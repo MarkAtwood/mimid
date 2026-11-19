@@ -89,7 +89,9 @@ fn now() -> jmap_server::UTCDate {
 impl AgentChat {
     /// Polls the agent and stores what came: joined rooms as Chats,
     /// received text as Messages, membership changes as Chat `members`.
-    /// Pending invites are joined as [`crate::Options::invites`] allows.
+    /// Pending invites are joined as [`crate::Options::invites`] allows,
+    /// then the user's rooms this device is not in are joined by external
+    /// Commit (`Agent::join_own_rooms`).
     /// Call it whenever the client should see new state; the store's
     /// `/changes` then report it.
     ///
@@ -105,7 +107,25 @@ impl AgentChat {
         // joins is followed by one more.
         for _ in 0..2 {
             let (events, receipt) = agent.receive().await?;
-            let joined = self.accept_invites(&mut agent, &mut report).await?;
+            let mut joined = self.accept_invites(&mut agent, &mut report).await?;
+            // This user's rooms that this device is not in yet: a new
+            // device joins them by external Commit (decision
+            // mimid-1wgh.61). After the invites, so a room this device
+            // was invited to is joined from its Welcome.
+            match agent.join_own_rooms().await {
+                Ok(own) => {
+                    joined += own.joined.len();
+                    report.joined.extend(own.joined);
+                    report.problems.extend(
+                        own.failed
+                            .into_iter()
+                            .map(|(room, why)| format!("joining {room} from this device: {why}")),
+                    );
+                }
+                Err(e) => report
+                    .problems
+                    .push(format!("listing this user's rooms: {e}")),
+            }
             self.reconcile_rooms(&mut agent).await?;
             for event in events {
                 self.apply(&mut agent, event, &mut report).await?;

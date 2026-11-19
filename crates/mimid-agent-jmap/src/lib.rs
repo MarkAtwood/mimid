@@ -20,7 +20,10 @@
 //!   named by the Chat's `name` and invites the members of `memberIds`; if
 //!   an invite fails the room is left and the create fails. `addMembers`
 //!   invites. The owner's own removal, and destroying the Chat, leave the
-//!   room. Rooms the agent joins become Chats at the next `sync`.
+//!   room. Rooms the agent joins become Chats at the next `sync`,
+//!   including the user's rooms that a new device joins by external
+//!   Commit at each `sync` (`Agent::join_own_rooms`; decision
+//!   mimid-1wgh.61).
 //! - **members**: the room's participant list, mirrored at each `sync`.
 //!   The owner's entry is the accountId; every other participant is a
 //!   ChatContact whose `identity` and `login` are its MIMI user URI, made

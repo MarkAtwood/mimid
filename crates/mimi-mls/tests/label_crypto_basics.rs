@@ -378,3 +378,37 @@ fn hpke_private_key_debug_shows_no_key() {
         assert!(!debug.contains(&rendering), "Debug leaks the key: {debug}");
     }
 }
+
+/// `HpkePrivateKey::generate`: mls-rs, an independent HPKE implementation,
+/// seals to the generated public key with the RFC 9420 §5.1.3
+/// `EncryptContext` built by hand, and the generated private key opens it.
+/// Two calls give two different pairs.
+#[test]
+fn generated_hpke_key_opens_what_mls_rs_seals_to_its_public_key() {
+    use mls_rs::CipherSuiteProvider;
+    use mls_rs::CryptoProvider;
+    let suite = mls_rs_crypto_rustcrypto::RustCryptoProvider::default()
+        .cipher_suite_provider(mls_rs::CipherSuite::CURVE25519_AES128)
+        .unwrap();
+    let (private, public) = HpkePrivateKey::generate().unwrap();
+    assert_eq!(public.len(), 32, "an X25519 public key");
+    let (label, context, plaintext) = ("GroupInfo and ratchet_tree encryption", b"room", b"hi");
+    // EncryptContext: opaque label<V> = "MLS 1.0 " + label, opaque context<V>.
+    let full_label = format!("MLS 1.0 {label}");
+    let info = [
+        &[u8::try_from(full_label.len()).unwrap()][..],
+        full_label.as_bytes(),
+        &[u8::try_from(context.len()).unwrap()],
+        context,
+    ]
+    .concat();
+    let sealed = suite
+        .hpke_seal(&public.clone().into(), &info, None, plaintext)
+        .unwrap();
+    let opened = private
+        .decrypt_with_label(label, context, &sealed.kem_output, &sealed.ciphertext)
+        .unwrap();
+    assert_eq!(opened, plaintext);
+    let (_, other) = HpkePrivateKey::generate().unwrap();
+    assert_ne!(public, other);
+}

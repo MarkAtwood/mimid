@@ -14,6 +14,9 @@
 //! - [`Agent::invite`]: KeyMaterial/fetch for another user (any provider),
 //!   then a Commit adding them (Room/update);
 //! - [`Agent::join`]: accept a Welcome that [`Agent::poll`] reported;
+//! - [`Agent::join_own_rooms`]: a new device of the user joins the user's
+//!   rooms by external Commit (protocol-07 §3.6, §5.6; GroupInfo/fetch,
+//!   then Room/update; decision mimid-1wgh.61);
 //! - [`Agent::send_text`] / [`Agent::send_content`]: an application
 //!   message (Room/send), with a `frank_aad` item when the room requires
 //!   franking;
@@ -45,11 +48,20 @@
 //!
 //! # Limitations
 //!
-//! - One client per user with a BasicCredential: the identity is the user
-//!   URI, so a second device of the same user cannot join the same room
-//!   (mls-rs refuses two leaves with the same identity; the multi-device
-//!   limit H1). With a `did_webvh` credential ([`didwebvh`]) several
-//!   devices of one user can share a room with mimid members.
+//! - With a BasicCredential the identity is the user URI, so the devices
+//!   of one user present the same identity: mimid members accept that,
+//!   but mls-rs refuses two leaves with the same identity (the
+//!   multi-device limit H1), so such a room cannot have an mls-rs member.
+//!   With a `did_webvh` credential ([`didwebvh`]) the leaves differ.
+//! - [`Agent::join_own_rooms`] joins every room of the account whose group
+//!   holds a client of the user, including one whose invite no device of
+//!   the user accepted (bead mimid-f2rn), and never a room this device
+//!   knows, left ones included. Rooms hosted before the default roles
+//!   held `canAddOwnClient` refuse new devices. Messages from before the
+//!   join are not readable on the new device. [`Agent::leave`] proposes
+//!   only this device's removal with the user's removal from the
+//!   participant list, while room-policy-04 §8.1.2 wants all the user's
+//!   clients removed with it (bead mimid-pv2k).
 //! - draft-atwood-mls-didwebvh-credential-01: see [`didwebvh`]. A
 //!   BasicCredential agent supports `did_webvh` rooms by default (decision
 //!   mimid-1wgh.4.81.23). Contacts are pinned by SCID per agent; a change
@@ -59,7 +71,8 @@
 //!   protocol-07 §3.5 leave, and the remaining member with the lowest leaf
 //!   index commits it. No other proposals are sent by this crate.
 //! - No room-policy actions beyond the defaults: no role changes, bans or
-//!   policy edits; no external joins (GroupInfo/fetch); no attachments.
+//!   policy edits; no external joins other than
+//!   [`Agent::join_own_rooms`] (no open rooms, join links or codes).
 //!   A hosted room's creator gets the "admin" role, which holds `canKick`,
 //!   bans and role changes, but this crate has no operation that uses
 //!   them; another client of the creator, or the operator (`mimid admin
@@ -105,8 +118,8 @@ pub mod uri;
 
 pub use agent::{
     Agent, AgentConfig, DidWebvhApplied, Event, HostOptions, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES,
-    MAX_TEXT_LEN, OutgoingAttachment, PendingInvite, ReceivedMessage, ReportOutcome,
-    ReportedMessage, RoomInfo, Sent,
+    MAX_TEXT_LEN, OutgoingAttachment, OwnRoomsJoined, PendingInvite, ReceivedMessage,
+    ReportOutcome, ReportedMessage, RoomInfo, Sent,
 };
 pub use client::ConsentRecord;
 pub use didwebvh::{DidWebvhConfig, RoomClient};

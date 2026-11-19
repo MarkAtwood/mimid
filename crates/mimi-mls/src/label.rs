@@ -64,8 +64,8 @@ pub enum Error {
     /// key or KEM output, or tampered ciphertext.
     #[error("decryption failed")]
     Decrypt,
-    /// A signature key pair could not be generated.
-    #[error("cannot generate a signature key pair")]
+    /// A signature or HPKE key pair could not be generated.
+    #[error("cannot generate a key pair")]
     KeyGeneration(#[source] ErrorSource),
     /// The random number generator failed.
     #[error("cannot generate random bytes")]
@@ -177,6 +177,25 @@ pub struct HpkePrivateKey {
 }
 
 impl HpkePrivateKey {
+    /// Generates a fresh X25519 key pair with OpenMLS's crypto provider
+    /// (RFC 9180 `DeriveKeyPair` from 32 random octets), and returns the
+    /// private key and the 32-byte public key: for example a client's
+    /// `groupInfoPublicKey` (protocol-07 §5.6).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Random`] if the random number generator fails, and
+    /// [`Error::KeyGeneration`] if the key pair cannot be derived.
+    pub fn generate() -> Result<(Self, Vec<u8>), Error> {
+        let crypto = RustCrypto::default();
+        let ikm: Zeroizing<[u8; 32]> =
+            Zeroizing::new(crypto.random_array().map_err(|e| Error::Random(e.into()))?);
+        let pair = crypto
+            .derive_hpke_keypair(CIPHERSUITE.hpke_config(), ikm.as_slice())
+            .map_err(|e| Error::KeyGeneration(e.into()))?;
+        Ok((Self::from_raw(&pair.private), pair.public))
+    }
+
     /// The 32-byte X25519 private key `private_key`. It is not checked
     /// here: a malformed key fails at decryption.
     pub fn from_raw(private_key: &[u8]) -> Self {

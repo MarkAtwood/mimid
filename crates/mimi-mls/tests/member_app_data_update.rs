@@ -1629,3 +1629,38 @@ fn a_built_in_update_that_does_not_decode_is_invalid() {
         assert_eq!(alice_group.epoch(), 1);
     }
 }
+
+/// `Member::external_senders` gives the `external_senders` entries
+/// (RFC 9420 §12.1.8.1) of a group, hand-encoded here, and none for a
+/// group without the extension. The key is mls-rs's.
+#[test]
+fn external_senders_are_the_entries_as_encoded() {
+    let alice = identity(b"alice");
+    let hub_key = {
+        let crypto = RustCryptoProvider::default();
+        let suite = crypto.cipher_suite_provider(SUITE_1).expect("suite 1");
+        let (_secret, public) = suite.signature_key_generate().expect("key");
+        public.as_bytes().to_vec()
+    };
+    let member = Member::create(
+        &alice,
+        b"room-senders",
+        &[ExternalSender {
+            signature_key: hub_key.clone(),
+            identity: b"hub".to_vec(),
+        }],
+        &[],
+    )
+    .expect("create");
+    let expected = [
+        &[0x20][..],   // signature_key<V>: 32 octets
+        &hub_key,      // the Ed25519 key
+        &[0x00, 0x01], // credential_type: basic
+        &[0x03],       // identity<V>: 3 octets
+        b"hub",
+    ]
+    .concat();
+    assert_eq!(member.external_senders().expect("senders"), vec![expected]);
+    let without = Member::create(&identity(b"bob"), b"room-none", &[], &[]).expect("create");
+    assert!(without.external_senders().expect("senders").is_empty());
+}

@@ -37,6 +37,11 @@ pub(crate) struct Room {
     /// A saved `OutOfSync` mark (decision mimid-1wgh.4.61): epoch, reason.
     #[serde(default)]
     pub out_of_sync: Option<(u64, String)>,
+    /// For a room this device joined by external Commit, the epoch it
+    /// joined in: earlier messages cannot be decrypted by it and are
+    /// skipped (decision mimid-1wgh.61).
+    #[serde(default)]
+    pub joined_epoch: Option<u64>,
 }
 
 /// A Welcome waiting for [`crate::Agent::join`].

@@ -13,16 +13,16 @@ use mimi_mls::member::{
 };
 use mimi_mls::tls_codec::{Deserialize, Serialize, VLBytes};
 use mimi_mls::wire::{
-    AppDataDictionary, CipherSuite, Credential, GroupInfo, MLSMessage, RatchetTreeOption,
-    RequiredCapabilities, SignaturePublicKey, Welcome,
+    AppDataDictionary, CipherSuite, Credential, GroupInfo, HPKEPublicKey, MLSMessage,
+    RatchetTreeOption, RequiredCapabilities, SignaturePublicKey, Welcome,
 };
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
 use mimi_protocol::{
     AbuseReport, AbuseType, AbusiveMessage, ClientKeyMaterial, FanoutEvent, FanoutMessage, Frank,
-    FrankingAgentData, GroupInfoOption, HandshakeBundle, IdentifierUri, KeyMaterialRequestTbs,
-    KeyMaterialUserCode, MAX_UNVERIFIED_ABUSIVE_MESSAGES, ParticipantListData,
-    ParticipantListUpdate, Protocol, RoomMetaData, UnverifiedAbusiveMessage,
+    FrankingAgentData, GroupInfoOption, GroupInfoRequestTbs, GroupInfoResponse, HandshakeBundle,
+    IdentifierUri, KeyMaterialRequestTbs, KeyMaterialUserCode, MAX_UNVERIFIED_ABUSIVE_MESSAGES,
+    ParticipantListData, ParticipantListUpdate, Protocol, RoomMetaData, UnverifiedAbusiveMessage,
     UnverifiedAbusiveMessages, UpdateRequest, UpdateResult, UserRolePair, Utf8String, franking_tag,
 };
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
@@ -341,6 +341,32 @@ enum Offered {
     Proposed,
 }
 
+/// What [`Agent::join_own_rooms`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct OwnRoomsJoined {
+    /// The rooms joined by external Commit.
+    pub joined: Vec<String>,
+    /// The rooms not joined because of an error, with why.
+    pub failed: Vec<(String, String)>,
+    /// The rooms not this device's to join, with why: the hub does not
+    /// let the user in, the group holds no client of the user, or this
+    /// device has a pending invite to the room. Not tried again until the
+    /// agent is opened again.
+    pub skipped: Vec<(String, String)>,
+}
+
+/// Why a room of [`Agent::join_own_rooms`] was not joined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NotJoined {
+    /// It may work later: tried again at the next call.
+    Later,
+    /// An error that will not pass.
+    Never,
+    /// Not this device's to join.
+    Skip,
+}
+
 /// What [`Agent::poll`] (and [`Agent::join`]'s replay of held messages)
 /// found, for the caller to turn into its own objects.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -415,6 +441,9 @@ pub struct Agent {
     deferred_leaver: Option<(String, u32)>,
     /// [`AgentConfig::did_webvh`].
     did_webvh: DidWebvhConfig,
+    /// Rooms [`Agent::join_own_rooms`] does not try again until a restart
+    /// (decision mimid-1wgh.61 item 5).
+    not_joinable: std::collections::BTreeSet<String>,
     /// Test only: building a credential-update Commit fails, to exercise
     /// the fallback of [`Agent::use_did_webvh_credential`] through a real
     /// hub.
@@ -465,6 +494,7 @@ impl Agent {
                 .collect(),
             deferred_leaver: None,
             did_webvh: config.did_webvh.clone(),
+            not_joinable: std::collections::BTreeSet::new(),
             #[cfg(test)]
             fail_credential_commits: false,
         };
@@ -986,6 +1016,7 @@ impl Agent {
             Room {
                 status: RoomStatus::Active,
                 out_of_sync: None,
+                joined_epoch: None,
             },
         );
         self.save()?;
@@ -1207,6 +1238,7 @@ impl Agent {
             Room {
                 status: RoomStatus::Active,
                 out_of_sync: None,
+                joined_epoch: None,
             },
         );
         self.state.key_packages_outstanding = self.state.key_packages_outstanding.saturating_sub(1);
@@ -1216,7 +1248,16 @@ impl Agent {
         self.state.held = keep;
         self.save()?;
         let mut events = self.check_contacts(&room);
-        for held in replay {
+        self.replay(&room, replay, &mut events);
+        self.deliver(events);
+        self.save()?;
+        Ok(room)
+    }
+
+    /// Processes `held`, messages stored for `room` before this device
+    /// joined it, in order.
+    fn replay(&mut self, room: &str, held: Vec<Held>, events: &mut Vec<Event>) {
+        for held in held {
             let frank = match held.frank.as_deref().map(|f| {
                 hex::decode(f)
                     .ok()
@@ -1226,7 +1267,7 @@ impl Agent {
                 Some(Some(frank)) => Some(frank),
                 Some(None) => {
                     events.push(Event::Problem {
-                        room: Some(room.clone()),
+                        room: Some(room.to_owned()),
                         description: "a held message's frank no longer decodes".to_owned(),
                     });
                     continue;
@@ -1234,17 +1275,274 @@ impl Agent {
             };
             match hex::decode(&held.message).map(|b| MLSMessage::tls_deserialize_exact(&b[..])) {
                 Ok(Ok(message)) => {
-                    self.incoming_mls(&message, held.accepted_at, frank.as_ref(), &mut events)
+                    self.incoming_mls(&message, held.accepted_at, frank.as_ref(), events)
                 }
                 _ => events.push(Event::Problem {
-                    room: Some(room.clone()),
+                    room: Some(room.to_owned()),
                     description: "a held message no longer decodes".to_owned(),
                 }),
             }
         }
+    }
+
+    /// Joins, by external Commit, every room of this user that this
+    /// device is not in (decision mimid-1wgh.61): a new device of a user
+    /// ends up in the user's rooms (protocol-07 §3.6). The rooms are the
+    /// `roomId`s of the account's Chats (draft-atwood-jmap-chat-mimi-00
+    /// §Chat.roomId); each one this device does not know gets
+    /// GroupInfo/fetch (protocol-07 §5.6) and an external Commit through
+    /// Room/update. A room joins only if the group already holds a client
+    /// of this user, so a participant whose clients were all kicked does
+    /// not come back this way, and never if this device has a pending
+    /// invite to it ([`Agent::join`] decides that). The hub's room policy
+    /// decides (room-policy-04 §8.1.1 `canAddOwnClient`).
+    ///
+    /// A room whose GroupInfo the hub refuses, or that fails the checks,
+    /// is not tried again until the agent is opened again, and the group
+    /// state of a room not joined is deleted. A room with
+    /// pending proposals is tried again at the next call. Each joined room
+    /// gets an [`Event::MembersChanged`] at the next [`Agent::poll`];
+    /// messages from before the join are skipped.
+    ///
+    /// # Errors
+    ///
+    /// The errors of reading the account's Chats, and
+    /// [`AgentError::State`] if the state cannot be saved. A room that
+    /// is not joined is in [`OwnRoomsJoined::failed`] or
+    /// [`OwnRoomsJoined::skipped`], not an error.
+    pub async fn join_own_rooms(&mut self) -> Result<OwnRoomsJoined, AgentError> {
+        let mut outcome = OwnRoomsJoined::default();
+        let rooms: Vec<String> = self
+            .jmap
+            .room_ids()
+            .await?
+            .into_iter()
+            .filter(|room| {
+                !self.state.rooms.contains_key(room) && !self.not_joinable.contains(room)
+            })
+            .collect();
+        if rooms.is_empty() {
+            return Ok(outcome);
+        }
+        // The groups of this device's own pending invites: joining one of
+        // them is the invite's business (Agent::join), not this.
+        let invited: std::collections::BTreeSet<Vec<u8>> = self
+            .state
+            .invites
+            .iter()
+            .filter_map(|invite| {
+                let (welcome, tree) = self.invite_material(invite.number).ok()?;
+                Member::welcome_group_id(&self.identity, &welcome, tree.as_deref()).ok()
+            })
+            .collect();
+        for room in rooms {
+            match self.join_external(&room, &invited).await {
+                Ok(()) => {
+                    tracing::info!(
+                        name: "own_room_joined",
+                        room = room.as_str(),
+                        "joined a room of this user by external Commit"
+                    );
+                    outcome.joined.push(room);
+                }
+                Err((error, why)) => {
+                    tracing::info!(
+                        name: "own_room_not_joined",
+                        room = room.as_str(),
+                        error = &error as &dyn std::error::Error,
+                        why = ?why,
+                        "a room of this user not joined by external Commit"
+                    );
+                    if why != NotJoined::Later {
+                        self.not_joinable.insert(room.clone());
+                    }
+                    if why == NotJoined::Skip {
+                        outcome.skipped.push((room, error.to_string()));
+                    } else {
+                        outcome.failed.push((room, error.to_string()));
+                    }
+                }
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// One room of [`Agent::join_own_rooms`]. The error comes with what
+    /// it means for the room.
+    async fn join_external(
+        &mut self,
+        room: &str,
+        invited: &std::collections::BTreeSet<Vec<u8>>,
+    ) -> Result<(), (AgentError, NotJoined)> {
+        let later = |e: AgentError| (e, NotJoined::Later);
+        let never = |e: AgentError| (e, NotJoined::Never);
+        let skip = |e: AgentError| (e, NotJoined::Skip);
+        let (hpke_key, hpke_public) = mimi_mls::label::HpkePrivateKey::generate()
+            .map_err(|e| later(AgentError::mls("the groupInfoPublicKey", e)))?;
+        let request = group_info_request(&self.me, &hpke_public).map_err(later)?;
+        let response = self.jmap.group_info(room, &request).await.map_err(later)?;
+        let success = match GroupInfoResponse::tls_deserialize_exact(&response[..]) {
+            Ok(GroupInfoResponse::Success(success)) => success,
+            Ok(other) => {
+                return Err(skip(AgentError::Refused {
+                    what: format!("GroupInfo/fetch for {room}"),
+                    reason: format!("{:?}", other.status()),
+                }));
+            }
+            Err(e) => return Err(later(AgentError::tls("a GroupInfoResponse", e))),
+        };
+        // protocol-07 §5.6; draft-atwood-jmap-chat-mimi-00 §GroupInfo/fetch.
+        success
+            .verify()
+            .map_err(|e| never(AgentError::encoding("the GroupInfoResponse signature", e)))?;
+        if success.tbs().room_id != room.as_bytes() {
+            return Err(never(AgentError::malformed(
+                "GroupInfo/fetch",
+                "the response is for another room",
+            )));
+        }
+        let tbe = mimi_protocol::decrypt_group_info(
+            &hpke_key,
+            room.as_bytes(),
+            &success.tbs().encrypted_groupinfo_and_tree,
+        )
+        .map_err(|e| never(AgentError::encoding("opening the GroupInfo", e)))?;
+        // The hub refuses an external Commit while proposals are pending.
+        if !tbe.pending_proposals.is_empty() {
+            return Err(later(AgentError::Invalid(format!(
+                "{room} has pending proposals; joining later"
+            ))));
+        }
+        let group_info = encode(&tbe.group_info).map_err(never)?;
+        // Checked before joining, so a pending invite's group gets no
+        // state from this.
+        if invited.contains(&group_info_group_id(&group_info).map_err(never)?) {
+            return Err(skip(AgentError::Invalid(format!(
+                "this device has a pending invite to {room}"
+            ))));
+        }
+        let group_info = [GROUP_INFO_HEADER.as_slice(), &group_info].concat();
+        let joined = Member::join_external(
+            &self.identity,
+            &group_info,
+            tbe.ratchet_tree_option.ratchet_tree(),
+        )
+        .map_err(|e| never(AgentError::mls("joining by external Commit", e)))?;
+        let member = joined.member;
+        let sent = match self.check_external_join(room, &member, &success.tbs().hub_sender) {
+            Ok(tree) => match commit_request(&joined.commit_bundle, tree.as_deref()) {
+                Ok(request) => self
+                    .update_ok(room, &request, "external join")
+                    .await
+                    .map_err(later),
+                Err(e) => Err(never(e)),
+            },
+            Err(e) => Err(e),
+        };
+        if let Err(e) = sent {
+            // Nothing of the group is kept, so a later join (a Welcome, or
+            // this again) can be made.
+            if let Err(error) = member.delete(&self.identity) {
+                tracing::warn!(
+                    name: "external_join_state_not_deleted",
+                    error = &error as &dyn std::error::Error,
+                    "the state of a group not joined cannot be deleted"
+                );
+            }
+            return Err(e);
+        }
+        let epoch = member.epoch();
+        let group_id = member.group_id().to_vec();
+        self.state
+            .group_rooms
+            .insert(hex::encode(&group_id), room.to_owned());
+        self.members.insert(room.to_owned(), member);
+        self.state.rooms.insert(
+            room.to_owned(),
+            Room {
+                status: RoomStatus::Active,
+                out_of_sync: None,
+                joined_epoch: Some(epoch),
+            },
+        );
+        let held_key = format!("group:{}", hex::encode(&group_id));
+        let (replay, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.state.held)
+            .into_iter()
+            .partition(|held| held.room == room || held.room == held_key);
+        self.state.held = keep;
+        self.save().map_err(later)?;
+        let mut events = self.check_contacts(room);
+        events.push(Event::MembersChanged {
+            room: room.to_owned(),
+            epoch,
+            participants: self
+                .members
+                .get(room)
+                .map(participants)
+                .transpose()
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
+        });
+        self.replay(room, replay, &mut events);
         self.deliver(events);
-        self.save()?;
-        Ok(room)
+        self.save().map_err(later)
+    }
+
+    /// The checks of decision mimid-1wgh.61 item 3 on a group joined by
+    /// external Commit, before the Commit is sent; the tree to send with
+    /// it, if the hub wants it.
+    fn check_external_join(
+        &self,
+        room: &str,
+        member: &Member,
+        hub_sender: &mimi_mls::wire::ExternalSender,
+    ) -> Result<Option<Vec<u8>>, (AgentError, NotJoined)> {
+        let never = |e: AgentError| (e, NotJoined::Never);
+        let skip = |e: AgentError| (e, NotJoined::Skip);
+        let hub_sender = encode(hub_sender).map_err(never)?;
+        if !member
+            .external_senders()
+            .map_err(|e| never(AgentError::mls("the external senders", e)))?
+            .contains(&hub_sender)
+        {
+            return Err(never(AgentError::malformed(
+                "GroupInfo/fetch",
+                "the hub that answered is not the room's external sender",
+            )));
+        }
+        if let Some(metadata) = member
+            .component(ROOM_METADATA)
+            .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
+            && metadata.room_uri.as_str() != room
+        {
+            return Err(never(AgentError::malformed(
+                "GroupInfo/fetch",
+                "the group's room_uri is another room",
+            )));
+        }
+        // Decision mimid-1wgh.61 item 3: another client of this user is
+        // in the group.
+        let me = normalized_uri(&self.me);
+        let own_leaf = member.own_leaf_index();
+        if !member.members().iter().any(|(leaf, user)| {
+            *leaf != own_leaf && normalized_uri(&String::from_utf8_lossy(user)) == me
+        }) {
+            return Err(skip(AgentError::Invalid(format!(
+                "no client of {} is in {room}",
+                self.me
+            ))));
+        }
+        let tree = if wants_full_tree(&self.full_tree_hubs, room) {
+            Some(
+                member
+                    .ratchet_tree()
+                    .map_err(|e| never(AgentError::mls("the external Commit's tree", e)))?,
+            )
+        } else {
+            None
+        };
+        Ok(tree)
     }
 
     /// Sends `text` as a one-part `text/plain` message to `room`, and
@@ -2042,6 +2340,20 @@ impl Agent {
             Some(RoomStatus::Left) => return,
             Some(_) => {}
         }
+        // Decision mimid-1wgh.61 item 6: from before this device joined.
+        if let (Some(joined), Some(epoch)) = (
+            self.state.rooms.get(&room).and_then(|r| r.joined_epoch),
+            message.epoch(),
+        ) && epoch < joined
+        {
+            tracing::debug!(
+                name: "message_before_join_skipped",
+                epoch,
+                joined,
+                "skipping a message from before this device joined the room"
+            );
+            return;
+        }
         let Some(member) = self.members.get_mut(&room) else {
             return;
         };
@@ -2331,8 +2643,9 @@ fn participants(member: &Member) -> Result<Vec<String>, AgentError> {
 ///
 /// - 1 "banned" (room-policy-04 §8.1.3), no capabilities;
 /// - 2 "member", which every added participant gets: send, receive,
-///   reply, react and report abuse (§8.3), add participants (§8.1.1),
-///   leave and remove an own client (§8.1.2); nothing of §8.2 or §8.6
+///   reply, react and report abuse (§8.3), add participants and own
+///   clients (§8.1.1; decision mimid-1wgh.61), leave and remove an own
+///   client (§8.1.2); nothing of §8.2 or §8.6
 ///   (bug mimid-y2hi);
 /// - 3 "admin", which the room's creator gets: everything a member holds,
 ///   and kick, remove, ban, unban and change other users' roles (§8.1.2,
@@ -2366,6 +2679,9 @@ fn default_roles() -> RoleData {
     };
     let ordinary = [
         Capability::CAN_ADD_PARTICIPANT,
+        // A new device of a participant joins by external Commit
+        // (§8.1.1; decision mimid-1wgh.61 item 8).
+        Capability::CAN_ADD_OWN_CLIENT,
         Capability::CAN_REMOVE_SELF,
         // A revoked did_webvh device is removed by another
         // device of its user (decision mimid-1wgh.4.81.25).
@@ -2532,6 +2848,53 @@ fn key_material_request(
     .sign(&pair)
     .map_err(|e| AgentError::encoding("signing the keyMaterial request", e))?;
     encode(&request)
+}
+
+/// A signed protocol-07 §5.6 GroupInfoRequest from `requester` asking
+/// for the answer to be encrypted to `group_info_public_key`, with a fresh
+/// Ed25519 key, as [`key_material_request`] (decision mimid-1wgh.61 item
+/// 2), and no joining code.
+fn group_info_request(
+    requester: &str,
+    group_info_public_key: &[u8],
+) -> Result<Vec<u8>, AgentError> {
+    let pair = mimi_mls::label::SignatureKeyPair::generate()
+        .map_err(|e| AgentError::mls("the request key", e))?;
+    let key = encode(&VLBytes::new(pair.verification_key().to_vec()))?;
+    let credential = [
+        vec![0x00, 0x01], // CredentialType basic
+        encode(&VLBytes::new(requester.as_bytes().to_vec()))?,
+    ]
+    .concat();
+    let hpke = encode(&VLBytes::new(group_info_public_key.to_vec()))?;
+    let request = GroupInfoRequestTbs {
+        protocol: Protocol::Mls10,
+        cipher_suite: CipherSuite::tls_deserialize_exact([0x00, 0x01])
+            .map_err(|e| AgentError::tls("cipher suite", e))?,
+        requesting_signature_key: SignaturePublicKey::tls_deserialize_exact(&key)
+            .map_err(|e| AgentError::tls("the request key", e))?,
+        requesting_credential: Credential::tls_deserialize_exact(&credential)
+            .map_err(|e| AgentError::tls("the request credential", e))?,
+        group_info_public_key: HPKEPublicKey::tls_deserialize_exact(&hpke)
+            .map_err(|e| AgentError::tls("the groupInfoPublicKey", e))?,
+        joining_code: None,
+    }
+    .sign(&pair)
+    .map_err(|e| AgentError::encoding("signing the GroupInfo request", e))?;
+    encode(&request)
+}
+
+/// The group ID of a TLS-encoded GroupInfo: RFC 9420 §12.4.3 GroupInfo
+/// starts with its GroupContext (§8.1): `ProtocolVersion version`
+/// (uint16), `CipherSuite cipher_suite` (uint16), `opaque group_id<V>`.
+/// The GroupInfo decoded already, so this only reads the field.
+fn group_info_group_id(group_info: &[u8]) -> Result<Vec<u8>, AgentError> {
+    let mut rest = group_info
+        .get(4..)
+        .ok_or_else(|| AgentError::malformed("GroupInfo/fetch", "a GroupInfo too short"))?;
+    VLBytes::tls_deserialize(&mut rest)
+        .map(|id| id.as_slice().to_vec())
+        .map_err(|e| AgentError::tls("the GroupInfo's group_id", e))
 }
 
 /// Unpadded lowercase RFC 4648 §6 base32.

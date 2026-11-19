@@ -345,6 +345,44 @@ impl Jmap {
             .ok_or_else(|| AgentError::malformed("Room/create", "no roomId"))
     }
 
+    /// The `roomId` of every Chat of the account that has one
+    /// (draft-atwood-jmap-chat-mimi-00 §Chat.roomId), bound or not: the
+    /// rooms the user is or was in, whichever client joined them.
+    pub async fn room_ids(&self) -> Result<Vec<String>, AgentError> {
+        const WHAT: &str = "Chat/get";
+        let answer = self
+            .call(WHAT, json!({"ids": null, "properties": ["roomId"]}))
+            .await?;
+        let mut rooms: Vec<String> = answer["list"]
+            .as_array()
+            .ok_or_else(|| AgentError::malformed(WHAT, "no list"))?
+            .iter()
+            .filter_map(|chat| chat["roomId"].as_str().map(str::to_owned))
+            .collect();
+        rooms.sort();
+        rooms.dedup();
+        Ok(rooms)
+    }
+
+    /// GroupInfo/fetch of `room` with the TLS-encoded GroupInfoRequest
+    /// `request` (draft-atwood-jmap-chat-mimi-00 §GroupInfo/fetch): the
+    /// whole GroupInfoResponse, unchanged.
+    pub async fn group_info(&self, room: &str, request: &[u8]) -> Result<Vec<u8>, AgentError> {
+        const WHAT: &str = "GroupInfo/fetch";
+        let answer = self
+            .call(
+                WHAT,
+                json!({"roomId": room, "request": URL_SAFE_NO_PAD.encode(request)}),
+            )
+            .await?;
+        let response = answer["response"]
+            .as_str()
+            .ok_or_else(|| AgentError::malformed(WHAT, "no response"))?;
+        URL_SAFE_NO_PAD
+            .decode(response)
+            .map_err(|e| AgentError::malformed(WHAT, format!("response is not base64url: {e}")))
+    }
+
     /// KeyMaterial/fetch for the KeyMaterialRequest `request`, answered as
     /// the KeyMaterialResponse it describes.
     pub async fn key_material(&self, request: &[u8]) -> Result<KeyMaterialResponse, AgentError> {

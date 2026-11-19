@@ -791,6 +791,22 @@ impl Member {
         let (staged, _) = stage_welcome(identity, welcome, ratchet_tree)?;
         welcome_signer(identity, &staged)
     }
+
+    /// The group ID of the group a Welcome is for, found by staging it as
+    /// [`Member::welcome_sender`] does, without joining. Lets a client
+    /// tell which group a pending invite is for.
+    ///
+    /// # Errors
+    ///
+    /// As [`Member::welcome_sender`].
+    pub fn welcome_group_id(
+        identity: &Identity,
+        welcome: &[u8],
+        ratchet_tree: Option<&[u8]>,
+    ) -> Result<Vec<u8>, MemberError> {
+        let (staged, _) = stage_welcome(identity, welcome, ratchet_tree)?;
+        Ok(staged.group_context().group_id().as_slice().to_vec())
+    }
 }
 
 /// The member identity ([`member_identity`]) of the leaf that signed a
@@ -1739,6 +1755,46 @@ impl Member {
             .extensions()
             .app_data_dictionary()
             .and_then(|extension| extension.dictionary().get(&component_id))
+    }
+
+    /// Deletes this member's group state from the store: for a group joined
+    /// by [`Member::join_external`] whose Commit is not sent or not
+    /// accepted, so that a later join of the same group (a Welcome, which
+    /// OpenMLS refuses for a group it holds) can still be made. The
+    /// identity's keys stay.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Merge`] if the store fails; part of the state
+    /// may then remain.
+    pub fn delete(mut self, identity: &Identity) -> Result<(), MemberError> {
+        self.group
+            .delete(identity.provider().storage())
+            .map_err(|e| MemberError::Merge(e.into()))
+    }
+
+    /// The TLS-encoded entries of the GroupContext's `external_senders`
+    /// extension (RFC 9420 §12.1.8.1), in the order it lists them; empty
+    /// if the group has none. A joiner compares them with the hub's
+    /// `hub_sender` (draft-atwood-jmap-chat-mimi-00 §GroupInfo/fetch).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Encode`] if an entry cannot be encoded.
+    pub fn external_senders(&self) -> Result<Vec<Vec<u8>>, MemberError> {
+        self.group.extensions().external_senders().map_or_else(
+            || Ok(Vec::new()),
+            |senders| {
+                senders
+                    .iter()
+                    .map(|sender| {
+                        sender
+                            .tls_serialize_detached()
+                            .map_err(|e| MemberError::Encode(e.into()))
+                    })
+                    .collect()
+            },
+        )
     }
 
     /// The group ID.
