@@ -520,8 +520,8 @@ impl AgentChat {
                 .to_string()
                 .as_str(),
         );
-        let mut message = Message::new(
-            Id::from("pending"),
+        let message = Message::new(
+            self.inner.mint_id(),
             sender_msg_id,
             self.account.clone(),
             chat.clone(),
@@ -531,13 +531,7 @@ impl AgentChat {
             now(),
             DeliveryState::Delivered,
         );
-        let (id, _) = self
-            .inner
-            .create_object::<Message, _>(&(), &self.account, SYNC_CREATE_ID, move |id| {
-                message.id = id.clone();
-                message
-            })
-            .await?;
+        let id = self.inner.insert_object(&self.account, message).await?.id;
         self.link_message(&chat, reference, &id);
         Ok(())
     }
@@ -698,7 +692,7 @@ impl AgentChat {
                 .cloned()
         });
         let mut message = Message::new(
-            Id::from("pending"),
+            self.inner.mint_id(),
             sender_msg_id(received.accepted_at, &received.message_id),
             sender,
             chat.clone(),
@@ -711,13 +705,7 @@ impl AgentChat {
         message.reply_to = reply_to;
         message.topic_id = topic_id(&content.topic_id);
         message.attachments = attachments;
-        let (id, _) = self
-            .inner
-            .create_object::<Message, _>(&(), &self.account, SYNC_CREATE_ID, move |id| {
-                message.id = id.clone();
-                message
-            })
-            .await?;
+        let id = self.inner.insert_object(&self.account, message).await?.id;
         self.link_message(&chat, reference, &id);
         self.keep_first_id(&id, &received.message_id);
         self.keep_reportable(&id, &received, report);

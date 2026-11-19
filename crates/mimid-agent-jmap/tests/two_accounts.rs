@@ -241,6 +241,28 @@ impl Client {
         persisted: bool,
         blobs: bool,
     ) -> Self {
+        Self::open_with(
+            server,
+            user,
+            account,
+            dir,
+            persisted,
+            blobs,
+            Options::default(),
+        )
+        .await
+    }
+
+    /// As [`Client::open`], with `options`.
+    async fn open_with(
+        server: &Server,
+        user: &'static str,
+        account: &str,
+        dir: &Path,
+        persisted: bool,
+        blobs: bool,
+        options: Options,
+    ) -> Self {
         let mut agent = Agent::open(AgentConfig {
             server_url: server.base.clone(),
             token: server.tokens[user].clone(),
@@ -253,7 +275,7 @@ impl Client {
         .unwrap();
         agent.publish_key_packages(2).await.unwrap();
         let name = user.rsplit('/').next().unwrap();
-        let mut chat = AgentChat::new(agent, Id::from(account), Options::default());
+        let mut chat = AgentChat::new(agent, Id::from(account), options);
         if persisted {
             chat = chat
                 .persisted_at(dir.join(format!("{name}-chat.json")))
@@ -274,7 +296,14 @@ impl Client {
 
     /// One method call; returns its response arguments, or panics on a
     /// method-level error.
-    async fn call(&self, method: &str, mut args: Value) -> Value {
+    async fn call(&self, method: &str, args: Value) -> Value {
+        let (name, args) = self.raw_call(method, args).await;
+        assert_eq!(name, method, "{args}");
+        args
+    }
+
+    /// One method call; its response's name and arguments.
+    async fn raw_call(&self, method: &str, mut args: Value) -> (String, Value) {
         args["accountId"] = json!(self.account());
         let request: JmapRequest = serde_json::from_value(json!({
             "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat"],
@@ -289,8 +318,12 @@ impl Client {
         let [name, args, _] = &response["methodResponses"][0].as_array().unwrap()[..] else {
             panic!("{response}");
         };
-        assert_eq!(name, method, "{args}");
-        args.clone()
+        (name.as_str().unwrap().to_owned(), args.clone())
+    }
+
+    /// The account's Message state.
+    async fn message_state(&self) -> Value {
+        self.call("Message/get", json!({"ids": []})).await["state"].clone()
     }
 
     /// The single created object of a `/set` create of `object`.
@@ -1060,4 +1093,82 @@ async fn sync_to(client: &Client, chat: &str, n: usize) -> Vec<SyncReport> {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     panic!("{n} messages never arrived");
+}
+
+/// Decision mimid-1wgh.66 (bead mimid-s2qc): the store records no outbound
+/// or lifecycle events however many Messages pass, and keeps a bounded
+/// change log, so a `/changes` from before more changes than it keeps is
+/// `cannotCalculateChanges` (RFC 8620 §5.2) while one within it lists the
+/// changes.
+///
+/// Oracles: the store's recorded-event counts; the method error `type`
+/// RFC 8620 §5.2 names; the created ids of a `/changes` within the limit
+/// are exactly the Messages sent after its state.
+#[tokio::test]
+async fn the_store_keeps_a_bounded_change_log_and_records_no_events() {
+    const LIMIT: usize = 4;
+    const SENT: usize = 12;
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let options = || Options::default().with_change_log_limit(LIMIT);
+    let alice =
+        Client::open_with(&server, ALICE, "alice", dir.path(), false, false, options()).await;
+    let bob = Client::open_with(&server, BOB, "bob", dir.path(), false, false, options()).await;
+    bob.chat.agent().lock().await.allow(ALICE).await.unwrap();
+    let bob_contact = alice.create("ChatContact", json!({"identity": BOB})).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let chat_a = alice
+        .create(
+            "Chat",
+            json!({"kind": "group", "name": "long", "memberIds": [bob_contact]}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    bob.sync_until(|r| async move { (!r.joined.is_empty()).then_some(r) })
+        .await;
+    let chat_b = bob.get("Chat", None).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (start_a, start_b) = (alice.message_state().await, bob.message_state().await);
+    let mut late_state = Value::Null;
+    let mut late_ids = Vec::new();
+    for i in 0..SENT {
+        if i == SENT - 2 {
+            late_state = alice.message_state().await;
+        }
+        let sent = alice
+            .create(
+                "Message",
+                json!({"chatId": chat_a, "body": format!("message {i}"), "sentAt": SENT_AT}),
+            )
+            .await;
+        if i >= SENT - 2 {
+            late_ids.push(sent["id"].clone());
+        }
+    }
+    assert_eq!(bob.sync_until_messages(&chat_b, SENT).await.len(), SENT);
+
+    for client in [&alice, &bob] {
+        assert_eq!(client.chat.drain_store_events_for_test(), (0, 0));
+    }
+    for (client, start) in [(&alice, start_a), (&bob, start_b)] {
+        let (name, answer) = client
+            .raw_call("Message/changes", json!({"sinceState": start}))
+            .await;
+        assert_eq!(
+            (name.as_str(), &answer["type"]),
+            ("error", &json!("cannotCalculateChanges")),
+            "{answer}"
+        );
+    }
+    let answer = alice
+        .call("Message/changes", json!({"sinceState": late_state}))
+        .await;
+    assert_eq!(answer["created"], json!(late_ids), "{answer}");
 }

@@ -38,9 +38,11 @@ pub(crate) const BANNED_ROLE_INDEX: u32 = 1;
 /// default role list (decision mimid-1wgh.56).
 const MEMBER_ROLE_INDEX: u32 = 2;
 
-/// The id passed to a handler's `build` closure before the store mints the
-/// real one; the object is rebuilt under the real id before it is stored.
-const PLACEHOLDER_ID: &str = "pending";
+/// The change-log entries the store keeps per data type, by default: a
+/// client's `/changes` from an older state is `cannotCalculateChanges`
+/// (RFC 8620 §5.2) and it resyncs. INVENTED VALUE, NOT FROM SPEC
+/// (decision mimid-1wgh.66).
+pub const CHANGE_LOG_LIMIT: usize = 4096;
 
 /// The most attachments one Message carries, sent or received; the
 /// account's `maxAttachmentsPerMessage` when it has a blob store.
@@ -63,17 +65,35 @@ pub enum InvitePolicy {
 }
 
 /// Settings of an [`AgentChat`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Options {
     /// Which invites to join.
     pub invites: InvitePolicy,
+    /// The change-log entries kept per data type ([`CHANGE_LOG_LIMIT`]
+    /// by default; at least one is kept).
+    pub change_log_limit: usize,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            invites: InvitePolicy::default(),
+            change_log_limit: CHANGE_LOG_LIMIT,
+        }
+    }
 }
 
 impl Options {
     /// Options with invite policy `invites`.
     pub fn with_invites(mut self, invites: InvitePolicy) -> Self {
         self.invites = invites;
+        self
+    }
+
+    /// Options keeping `limit` change-log entries per data type.
+    pub fn with_change_log_limit(mut self, limit: usize) -> Self {
+        self.change_log_limit = limit;
         self
     }
 }
@@ -133,7 +153,12 @@ impl AgentChat {
     /// An account `account_id` over `agent`, empty until the first
     /// [`AgentChat::sync`].
     pub fn new(agent: Agent, account_id: Id, options: Options) -> Self {
-        let inner = MemoryBackend::new();
+        // Decision mimid-1wgh.66: a bounded change log, and no outbound or
+        // lifecycle events recorded, since nothing here reads them (every
+        // outbound change goes to the agent in the write hooks).
+        let inner = MemoryBackend::new()
+            .with_change_log_limit(options.change_log_limit)
+            .with_event_limit(0);
         inner.register_account(&account_id);
         Self {
             inner,
@@ -170,6 +195,17 @@ impl AgentChat {
     /// downloads from it.
     pub fn blobs(&self) -> Option<&BlobStore> {
         self.blobs.as_ref()
+    }
+
+    /// Test-only: drains the store's recorded outbound and lifecycle
+    /// events and returns how many there were (decision mimid-1wgh.66:
+    /// none are recorded).
+    #[doc(hidden)]
+    pub fn drain_store_events_for_test(&self) -> (usize, usize) {
+        (
+            self.inner.drain_outbound_events().len(),
+            self.inner.drain_lifecycle_events().len(),
+        )
     }
 
     /// Registers the JMAP Chat methods (`Chat/*`, `Message/*`,
@@ -283,17 +319,13 @@ impl AgentChat {
 
     /// `Chat/set` create: a group Chat hosts a new MIMI room named after
     /// the Chat and invites its other members.
-    async fn create_chat<O, F>(
-        &self,
-        create_id: &str,
-        build: F,
-    ) -> Result<(Id, O), BackendSetError<MemoryError>>
+    async fn create_chat<O, F>(&self, build: F) -> Result<(Id, O), BackendSetError<MemoryError>>
     where
         O: SetObject + Send + Sync,
         F: FnOnce(&Id) -> O + Send,
     {
-        let mut value =
-            serde_json::to_value(build(&Id::from(PLACEHOLDER_ID))).map_err(serde_failure)?;
+        let id = self.inner.mint_id();
+        let mut value = serde_json::to_value(build(&id)).map_err(serde_failure)?;
         if value["kind"] != "group" {
             return Err(forbidden(
                 "only a group Chat maps to a MIMI room; direct Chats are not supported",
@@ -330,16 +362,8 @@ impl AgentChat {
             room
         };
         value[ROOM_ID] = json!(room);
-        // Checked here so the store's build closure cannot fail: the value
-        // differs from this one only in its `id`, a minted ULID.
-        serde_json::from_value::<O>(value.clone()).map_err(serde_failure)?;
-        let (id, chat) = self
-            .inner
-            .create_object::<O, _>(&(), &self.account, create_id, move |id| {
-                value["id"] = json!(id);
-                serde_json::from_value(value).expect("the same value decoded a moment ago")
-            })
-            .await?;
+        let chat = serde_json::from_value::<O>(value).map_err(serde_failure)?;
+        let chat = self.inner.insert_object(&self.account, chat).await?;
         self.link_room(&room, &id);
         Ok((id, chat))
     }
@@ -451,13 +475,13 @@ impl AgentChat {
     /// `senderMsgId` its recipients derive.
     async fn create_message_in_room<F>(
         &self,
-        create_id: &str,
         build: F,
     ) -> Result<(Id, Message), BackendSetError<MemoryError>>
     where
         F: FnOnce(&Id) -> Message + Send,
     {
-        let mut message = build(&Id::from(PLACEHOLDER_ID));
+        let id = self.inner.mint_id();
+        let mut message = build(&id);
         let Some(room) = self.room_of_chat(&message.chat_id) else {
             return Err(forbidden("the Chat is not bound to a MIMI room"));
         };
@@ -482,13 +506,7 @@ impl AgentChat {
         message.delivery_state = DeliveryState::Delivered;
         message.delivered_at = Some(utc_date(sent.accepted_at));
         let chat_id = message.chat_id.clone();
-        let (id, stored) = self
-            .inner
-            .create_object::<Message, _>(&(), &self.account, create_id, move |id| {
-                message.id = id.clone();
-                message
-            })
-            .await?;
+        let stored = self.inner.insert_object(&self.account, message).await?;
         self.link_message(&chat_id, message_ref(&sent.message_id), &id);
         self.keep_first_id(&id, &sent.message_id);
         Ok((id, stored))
@@ -717,7 +735,7 @@ impl ChatBackend for AgentChat {
         self.check_account(account_id)
             .map_err(SetFailure::into_backend)?;
         let result = match O::TYPE_NAME {
-            "Chat" => self.create_chat(create_id, build).await,
+            "Chat" => self.create_chat(build).await,
             name if local(name) => {
                 self.inner
                     .create_object(caller, account_id, create_id, build)
@@ -732,7 +750,7 @@ impl ChatBackend for AgentChat {
         &self,
         _caller: &(),
         account_id: &Id,
-        create_id: &str,
+        _create_id: &str,
         build: F,
     ) -> Result<(Id, Message), BackendSetError<MemoryError>>
     where
@@ -740,7 +758,7 @@ impl ChatBackend for AgentChat {
     {
         self.check_account(account_id)
             .map_err(SetFailure::into_backend)?;
-        let result = self.create_message_in_room(create_id, build).await;
+        let result = self.create_message_in_room(build).await;
         self.saved(result).await
     }
 

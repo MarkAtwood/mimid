@@ -125,6 +125,10 @@
 //!   are `forbidden`, and `supports_type` is false for them.
 //! - See [`moderate`] for the limits of bans and kicks; a ChatBan
 //!   mirrored from a room names the accountId as `bannedBy`.
+//! - The store keeps [`CHANGE_LOG_LIMIT`] change-log entries per data
+//!   type ([`Options::with_change_log_limit`]); a `/changes` from an older
+//!   state is `cannotCalculateChanges` and the client resyncs (decision
+//!   mimid-1wgh.66).
 //! - Direct Chats are `forbidden` (only group Chats map to rooms).
 //! - On a room-bound Chat, `name`, `description` and `avatarBlobId` are
 //!   `forbidden` (§Chat.roomId). Roles map only to "admin" (the room's
@@ -195,7 +199,9 @@ pub mod report;
 pub mod retry;
 mod sync;
 
-pub use backend::{AgentChat, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, Options};
+pub use backend::{
+    AgentChat, CHANGE_LOG_LIMIT, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, Options,
+};
 pub use blobs::{BlobError, BlobInfo, BlobStore, MAX_ATTACHMENT_LEN, is_media_type};
 pub use persist::PersistError;
 pub use sync::{SyncError, SyncReport};
