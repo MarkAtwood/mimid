@@ -1,0 +1,38 @@
+All files here except this one: made by make.sh in this directory with
+OpenSSL 3.0.22, 2026-11-19, issued by ../tls/ca.pem (the TLS test CA)
+except b-untrusted.pem, issued by untrusted-ca.pem, whose key was deleted.
+
+- b-client.pem: SAN DNS:b.example, EKU clientAuth, valid 100 years.
+- b-untrusted.pem: the same names, from untrusted-ca.pem.
+- b-expired.pem: the same names, from the test CA, valid
+  2020-01-01T00:00:00Z to 2021-01-01T00:00:00Z.
+
+TLSA association data, computed with openssl outside mimid (the DANE
+oracles of tests/mtls_binaries.rs):
+
+- 3 1 1 (DANE-EE, SPKI, SHA-256) for b-client.pem:
+  `openssl x509 -in b-client.pem -pubkey -noout | openssl pkey -pubin -outform der | sha256sum`
+  2d371a122bedf8c01e856e304588ed26f2606bbfb1fe775529415eee1a58f34a
+- 3 1 1 for b-untrusted.pem, the same way:
+  7f7b540ce0b61be168014237d6f5231fa27b7c2fe74665693fa92d3e02ec1f23
+- 2 0 1 (DANE-TA, full certificate, SHA-256) for ../tls/ca.pem:
+  `openssl x509 -in ../tls/ca.pem -outform der | sha256sum`
+  bb95af8387a45662ae338174ef803406bbf75d29e7475143016ea3e3fbfba9c2
+
+Certificate key ids as mimid logs them (`sha256:` and the SHA-256 of the
+leaf's DER), computed with `openssl x509 -in <file> -outform der | sha256sum`:
+
+- ../tls/client.pem (a.example):
+  b25e4c0d7f17277edae982750eedb3a6c7a459b1a517b28adde03faf89888dad
+- b-client.pem (b.example):
+  49fc05cb362c5a414a68e335d22d82ca5ab385fc6f52a45fb1908a02b5439c7b
+
+SHA-256 of the files:
+
+e42aaad5aec0e12b624fc6feeaa6e33f1c0203aa2724134e893ed9afa77cfcf2  b-client.pem
+33797d9a380bc752722f9f9cf5a2ce7e1f12467efee0ecdebd4b946e88cda014  b-client.key
+b290a8c76c0994594a05bdeb2aa04bb2ce4b76d9f24e36cf3127ebc520b7f299  b-expired.pem
+b604955eff26d89762be6da1215e1c4dda53c8266b974c6bca4779332607d951  b-expired.key
+098c1782ff676c461e90836f2f98eb9b8965313cda05995cbdbaf7291c761f6b  b-untrusted.pem
+93d26262e45fd653c999ac8f815bc69174a9c429b21c80494096b54b6fdaf0fd  b-untrusted.key
+4427a925724c6cb3f52e11640db4bda8059972e8619ac46fc8f3716eab690910  untrusted-ca.pem
