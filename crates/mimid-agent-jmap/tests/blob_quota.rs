@@ -104,6 +104,7 @@ impl Client {
         let (server_url, token) = server(dir).await;
         let agent = Agent::open(AgentConfig {
             server_url,
+            binding: mimid_agent_core::Binding::Jmap,
             token,
             user_uri: ALICE.to_owned(),
             state_dir: dir.join("alice"),

@@ -19,6 +19,13 @@ mimi-content = { path = "../mimi-content" }
 mimi-mls = { path = "../mimi-mls" }
 mimi-protocol = { path = "../mimi-protocol" }
 mimi-room-policy = { path = "../mimi-room-policy" }
+mimid-live = { path = "../mimid-live" }
+# The live stream binding (docs/design/binary-live-stream.md): a WebSocket
+# client with the features crate-jmap already pulls in, and the tasks and
+# channels around it, on the caller's runtime.
+tokio-tungstenite = { version = "=0.29.0", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+tokio = { workspace = true }
 # The version and features mimid-server uses, so one HTTP and TLS stack.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 # The agent's database: the rusqlite openmls_sqlite_storage (mimi-mls's MLS

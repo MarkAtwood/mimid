@@ -2612,11 +2612,13 @@ dependencies = [
  "aes-gcm",
  "axum",
  "base64 0.22.1",
+ "futures-util",
  "hex",
  "mimi-content",
  "mimi-mls",
  "mimi-protocol",
  "mimi-room-policy",
+ "mimid-live",
  "mimid-server",
  "reqwest 0.13.5",
  "rusqlite",
@@ -2626,6 +2628,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
 ]
 

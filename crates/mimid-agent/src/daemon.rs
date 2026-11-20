@@ -37,6 +37,9 @@ pub struct Daemon {
     /// The server's EventSource, which wakes the sync loop; `None` if its
     /// Session has none.
     push: Option<PushSource>,
+    /// The live stream's wake-up, with `binding = "stream"`: it wakes the
+    /// sync loop as the EventSource does on JMAP.
+    stream_wake: Option<Arc<tokio::sync::Notify>>,
     key_packages: u32,
     user_uri: String,
     server_url: String,
@@ -133,6 +136,7 @@ impl Daemon {
         let token = LocalToken::load_or_create(&config.state_dir)?;
         let mut agent = Agent::open(AgentConfig {
             server_url: config.server_url.clone(),
+            binding: config.binding.into(),
             token: server_token,
             user_uri: config.user_uri.clone(),
             state_dir: config.state_dir.clone(),
@@ -145,6 +149,7 @@ impl Daemon {
         .await?;
         top_up_key_packages(&mut agent, config.key_packages).await;
         let push = agent.push_source()?;
+        let stream_wake = agent.stream_wake();
         let listener = match config.listen {
             Some(addr) => {
                 let bind = |source| StartError::Bind { addr, source };
@@ -233,6 +238,7 @@ impl Daemon {
             stop,
             sync_interval: config.sync_interval(),
             push,
+            stream_wake,
             key_packages: config.key_packages,
             user_uri: config.user_uri.clone(),
             server_url: config.server_url.clone(),
@@ -315,13 +321,21 @@ impl Daemon {
         ));
         // The server's EventSource wakes the sync loop; the interval is
         // the fallback.
-        let push = match self.push {
-            Some(source) => Some(tokio::spawn(crate::push::follow(
+        let push = match (self.push, self.stream_wake) {
+            (Some(source), _) => Some(tokio::spawn(crate::push::follow(
                 Arc::clone(&self.store),
                 source,
                 stop.subscribe(),
             ))),
-            None => {
+            // The live stream: each Deliver, Position, Changed or lost
+            // connection wakes the sync loop, which alone receives
+            // (Store::sync).
+            (None, Some(wake)) => Some(tokio::spawn(follow_stream(
+                Arc::clone(&self.store),
+                wake,
+                stop.subscribe(),
+            ))),
+            (None, None) => {
                 tracing::warn!(
                     name: "agent_push_unavailable",
                     "the server's Session has no eventSourceUrl; polling only"
@@ -377,6 +391,21 @@ impl Daemon {
         }
         tracing::info!(name: "agent_stopped", "mimid-agent stopped");
         served
+    }
+}
+
+/// Wakes the sync loop each time the live stream has something, until
+/// stopped.
+async fn follow_stream(
+    store: Arc<Store>,
+    wake: Arc<tokio::sync::Notify>,
+    mut stop: watch::Receiver<bool>,
+) {
+    loop {
+        tokio::select! {
+            () = wake.notified() => store.sync_wanted().notify_one(),
+            () = stopped(&mut stop) => return,
+        }
     }
 }
 

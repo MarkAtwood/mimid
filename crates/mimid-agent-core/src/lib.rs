@@ -148,8 +148,10 @@ pub mod didwebvh;
 mod error;
 pub mod frank;
 mod journal;
+mod provider;
 pub mod push;
 mod state;
+mod stream;
 pub mod uri;
 
 #[cfg(feature = "fail-points")]
@@ -167,5 +169,6 @@ pub use journal::Receipt;
 pub use mimi_content::{ExternalPart, MessageId, MimiContent};
 pub use mimi_mls::mls_didwebvh;
 pub use mimi_protocol::{AbuseType, AbusiveMessage, UnverifiedAbusiveMessage};
+pub use provider::Binding;
 pub use state::RoomStatus;
 pub use state::{DATABASE_FILE, SCHEMA_VERSION};

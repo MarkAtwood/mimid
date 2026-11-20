@@ -126,6 +126,7 @@ impl Bob {
     async fn open(server: &Server, dir: &Path) -> Self {
         let agent = Agent::open(AgentConfig {
             server_url: server.base.clone(),
+            binding: mimid_agent_core::Binding::Jmap,
             token: server.tokens[BOB].clone(),
             user_uri: BOB.to_owned(),
             state_dir: dir.join("bob"),

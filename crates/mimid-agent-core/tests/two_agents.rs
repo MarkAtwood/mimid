@@ -158,6 +158,7 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
 async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
     Agent::open(AgentConfig {
         server_url: server.base.clone(),
+        binding: mimid_agent_core::Binding::Jmap,
         token: server.tokens[user].clone(),
         user_uri: user.to_owned(),
         state_dir: dir.join(user.rsplit('/').next().unwrap()),
@@ -443,6 +444,7 @@ async fn bad_input_is_refused_before_any_request() {
     assert!(matches!(
         Agent::open(AgentConfig {
             server_url: server.base.clone(),
+            binding: mimid_agent_core::Binding::Jmap,
             token: server.tokens[ALICE].clone(),
             user_uri: "mimi://a.example/alice".to_owned(),
             state_dir: dir.path().join("x"),
@@ -456,6 +458,7 @@ async fn bad_input_is_refused_before_any_request() {
     assert!(matches!(
         Agent::open(AgentConfig {
             server_url: server.base.clone(),
+            binding: mimid_agent_core::Binding::Jmap,
             token: "wrong".to_owned(),
             user_uri: ALICE.to_owned(),
             state_dir: dir.path().join("y"),
@@ -520,6 +523,7 @@ async fn full_tree_hubs_get_the_next_epochs_tree_with_each_commit() {
     let server = server(dir.path(), &[ALICE, BOB]).await;
     let mut alice = Agent::open(AgentConfig {
         server_url: server.base.clone(),
+        binding: mimid_agent_core::Binding::Jmap,
         token: server.tokens[ALICE].clone(),
         user_uri: ALICE.to_owned(),
         state_dir: dir.path().join("alice"),

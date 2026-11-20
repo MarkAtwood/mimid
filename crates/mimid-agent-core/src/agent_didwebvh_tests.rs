@@ -111,6 +111,7 @@ async fn agent(
 ) -> Agent {
     Agent::open(AgentConfig {
         server_url: base.clone(),
+        binding: crate::Binding::Jmap,
         token: tokens[user].clone(),
         user_uri: user.to_owned(),
         state_dir: dir.join(name),

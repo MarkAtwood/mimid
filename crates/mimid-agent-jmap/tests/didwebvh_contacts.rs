@@ -116,6 +116,7 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
 async fn agent(server: &Server, user: &'static str, dir: &Path, name: &str) -> Agent {
     Agent::open(AgentConfig {
         server_url: server.base.clone(),
+        binding: mimid_agent_core::Binding::Jmap,
         token: server.tokens[user].clone(),
         user_uri: user.to_owned(),
         state_dir: dir.join(name),

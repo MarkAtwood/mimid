@@ -132,6 +132,7 @@ impl Client {
         let name = user.rsplit('/').next().unwrap();
         let mut agent = Agent::open(AgentConfig {
             server_url: server.base.clone(),
+            binding: mimid_agent_core::Binding::Jmap,
             token: server.tokens[user].clone(),
             user_uri: user.to_owned(),
             state_dir: dir.join(name),

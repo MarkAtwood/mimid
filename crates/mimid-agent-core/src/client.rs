@@ -61,7 +61,7 @@ const MAX_ERROR_BODY: usize = 512;
 /// A deterministic 64-bit digest of an MLSMessage's bytes: SipHash with
 /// fixed keys, the same in every run. Enough to recognise one's own
 /// messages among a room's.
-fn digest(bytes: &[u8]) -> u64 {
+pub(crate) fn digest(bytes: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
     #[allow(deprecated, reason = "SipHasher's fixed keys are what is wanted")]
     let mut hasher = std::hash::SipHasher::new();
@@ -852,7 +852,13 @@ fn parse_hub_sender(text: &str) -> Result<HubSender, String> {
     let bytes = URL_SAFE_NO_PAD
         .decode(text)
         .map_err(|_| "hubSender is not base64url".to_owned())?;
-    let mut reader = &bytes[..];
+    parse_hub_sender_bytes(&bytes)
+}
+
+/// The hub's ExternalSender from its TLS encoding, as the live stream's
+/// `ProviderHello` carries it.
+pub(crate) fn parse_hub_sender_bytes(bytes: &[u8]) -> Result<HubSender, String> {
+    let mut reader = bytes;
     let key = VLBytes::tls_deserialize(&mut reader)
         .map_err(|e| format!("hubSender signature key: {e:?}"))?;
     let signature_key = <[u8; 32]>::try_from(key.as_slice())

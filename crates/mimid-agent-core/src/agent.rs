@@ -31,13 +31,13 @@ use mimi_room_policy::{
     BANNED_ROLE_INDEX, BaseRoomPolicy, Bool, Capability, Role, RoleData,
     SingleSourceRoleChangeTargets,
 };
-use serde_json::json;
 
 use crate::AgentError;
-use crate::client::{ConsentRecord, Jmap};
+use crate::client::ConsentRecord;
 use crate::didwebvh::{DidWebvhConfig, Pin, RoomClient, check_pin, required_capabilities};
 use crate::frank::{self, VerifiedFrank};
 use crate::journal::{self, Journaled, Receipt};
+use crate::provider::{Binding, Provider};
 use crate::state::{Held, Room, RoomStatus, State, StateDir};
 use crate::uri::{normalized_uri, user_uri_domain};
 use mimi_protocol::components::apply_commit_op;
@@ -93,6 +93,10 @@ pub struct AgentConfig {
     /// optional log file from the user's controller that switches this
     /// device to a `did_webvh` credential (bead mimid-1wgh.4.81.18).
     pub did_webvh: DidWebvhConfig,
+    /// The binding to the server: JMAP (the default) or mimid's live
+    /// stream, which the server must have switched on
+    /// (docs/design/binary-live-stream.md; decision mimid-1wgh.80).
+    pub binding: Binding,
 }
 
 /// How [`Agent::host_room`] makes a room.
@@ -472,7 +476,8 @@ pub struct Agent {
     identity: Identity,
     state: State,
     dir: StateDir,
-    jmap: Jmap,
+    /// The provider client, on the configured binding.
+    provider: Provider,
     members: BTreeMap<String, Member>,
     /// [`AgentConfig::full_tree_hubs`], lowercase.
     full_tree_hubs: std::collections::BTreeSet<String>,
@@ -546,14 +551,14 @@ impl Agent {
         }
         let dir = StateDir::open(&config.state_dir)?;
         let (identity, state) = dir.load_or_create(&config.user_uri, &config.did_webvh)?;
-        let jmap = Jmap::open(&config.server_url, &config.token).await?;
-        jmap.restore_sent(&state.sent);
+        let provider = Provider::open(config.binding, &config.server_url, &config.token).await?;
+        provider.restore_sent(&state.sent);
         let mut agent = Self {
             me: config.user_uri,
             identity,
             state,
             dir,
-            jmap,
+            provider,
             members: BTreeMap::new(),
             full_tree_hubs: config
                 .full_tree_hubs
@@ -988,7 +993,7 @@ impl Agent {
                 .identity
                 .key_package(KeyPackageKind::OneTime)
                 .map_err(|e| AgentError::mls("minting a KeyPackage", e))?;
-            self.jmap.publish_key_package(&bytes).await?;
+            self.provider.publish_key_package(&bytes).await?;
             self.state.key_packages_outstanding += 1;
             self.state.signature_key_bound = true;
             self.save()?;
@@ -1017,9 +1022,13 @@ impl Agent {
         if !self.state.signature_key_bound {
             self.publish_key_packages(1).await?;
         }
-        let room = format!("{}{}", self.jmap.room_id_prefix, base32(&random::<16>()?));
+        let room = format!(
+            "{}{}",
+            self.provider.room_id_prefix(),
+            base32(&random::<16>()?)
+        );
         let group_id = random::<16>()?.to_vec();
-        let sender = self.jmap.hub_sender.clone();
+        let sender = self.provider.hub_sender().clone();
         let mut components: Vec<(u16, Vec<u8>)> = if options.open {
             vec![
                 (APP_COMPONENTS, vec![0x02, 0x00, 0x22]),
@@ -1089,7 +1098,7 @@ impl Agent {
             .ratchet_tree()
             .map_err(|e| AgentError::mls("the ratchet tree", e))?;
         let hosted = self
-            .jmap
+            .provider
             .create_room(&room, &bundle.group_info, &tree)
             .await?;
         if hosted != room {
@@ -1147,7 +1156,7 @@ impl Agent {
         let request_required = RequiredCapabilities::tls_deserialize_exact(&required)
             .map_err(|e| AgentError::tls("own RequiredCapabilities", e))?;
         let request = key_material_request(&self.me, user, room, &required)?;
-        let response = self.jmap.key_material(&request).await?;
+        let response = self.provider.key_material(&request).await?;
         match response.user_status {
             KeyMaterialUserCode::Success | KeyMaterialUserCode::PartialSuccess => {}
             code => {
@@ -1431,7 +1440,7 @@ impl Agent {
     /// [`OwnRoomsJoined::skipped`], not an error.
     pub async fn join_own_rooms(&mut self) -> Result<OwnRoomsJoined, AgentError> {
         let mut outcome = OwnRoomsJoined::default();
-        let chats = self.jmap.own_chats().await?;
+        let chats = self.provider.own_chats().await?;
         self.record_acceptance(&chats).await?;
         let mut rooms = Vec::new();
         for chat in chats {
@@ -1439,7 +1448,7 @@ impl Agent {
                 continue;
             }
             // Decision mimid-1wgh.63; bead mimid-f2rn.
-            if !self.jmap.chat_metadata {
+            if !self.provider.chat_metadata() {
                 self.not_joinable.insert(chat.room.clone());
                 outcome.skipped.push((
                     chat.room,
@@ -1515,7 +1524,7 @@ impl Agent {
         &mut self,
         chats: &[crate::client::OwnChat],
     ) -> Result<(), AgentError> {
-        if !self.jmap.chat_metadata {
+        if !self.provider.chat_metadata() {
             return Ok(());
         }
         let withdrawn = std::mem::take(&mut self.state.withdrawn);
@@ -1533,7 +1542,7 @@ impl Agent {
             } else {
                 continue;
             };
-            match self.jmap.set_accepted(&chat.id, accepted).await {
+            match self.provider.set_accepted(&chat.id, accepted).await {
                 Ok(()) => tracing::info!(
                     name: "room_acceptance_recorded",
                     room = chat.room.as_str(),
@@ -1584,7 +1593,11 @@ impl Agent {
         let (hpke_key, hpke_public) = mimi_mls::label::HpkePrivateKey::generate()
             .map_err(|e| later(AgentError::mls("the groupInfoPublicKey", e)))?;
         let request = group_info_request(&self.me, &hpke_public).map_err(later)?;
-        let response = self.jmap.group_info(room, &request).await.map_err(later)?;
+        let response = self
+            .provider
+            .group_info(room, &request)
+            .await
+            .map_err(later)?;
         let success = match GroupInfoResponse::tls_deserialize_exact(&response[..]) {
             Ok(GroupInfoResponse::Success(success)) => success,
             Ok(other) => {
@@ -1895,7 +1908,7 @@ impl Agent {
             let uploaded_at = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs());
-            let url = self.jmap.upload(sealed.stored.clone()).await?;
+            let url = self.provider.upload(sealed.stored.clone()).await?;
             parts.push(NestedPart {
                 disposition: Disposition::ATTACHMENT,
                 language: String::new(),
@@ -1904,7 +1917,7 @@ impl Agent {
                     attachment.content_type.clone(),
                     attachment.filename.clone(),
                     String::new(),
-                    crate::asset::expiry(uploaded_at, self.jmap.asset_lifetime),
+                    crate::asset::expiry(uploaded_at, self.provider.asset_lifetime()),
                 )),
             });
         }
@@ -1953,7 +1966,7 @@ impl Agent {
     ) -> impl Future<Output = Result<Vec<u8>, AgentError>> + Send + 'a {
         // Only the JMAP client is held across the await, so the future is
         // Send (see Agent::consents).
-        let jmap = &self.jmap;
+        let jmap = &self.provider;
         async move {
             let now = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
@@ -1996,7 +2009,7 @@ impl Agent {
             .map_err(|e| AgentError::mls("encrypting", e))?;
         let message = MLSMessage::tls_deserialize_exact(&ciphertext[..])
             .map_err(|e| AgentError::tls("own message", e))?;
-        let accepted_at = self.jmap.send(room, &message).await?;
+        let accepted_at = self.provider.send(room, &message).await?;
         self.remember_sent()?;
         Ok(Sent {
             message_id,
@@ -2337,11 +2350,10 @@ impl Agent {
     ///
     /// The server's refusal.
     pub async fn request_consent(&mut self, target: &str) -> Result<(), AgentError> {
-        let args = match Self::consent_id(&self.jmap, &self.me, target).await? {
-            Some(id) => json!({"update": {id: {"requested": true}}}),
-            None => json!({"create": {"c": {"requesterUri": self.me, "targetUri": target}}}),
-        };
-        self.jmap.consent_set(args).await
+        match Self::consent_id(&self.provider, &self.me, target).await? {
+            Some(id) => self.provider.update_consent(&id, Some(true), None).await,
+            None => self.provider.create_consent(&self.me, target, None).await,
+        }
     }
 
     /// Withdraws a consent request to `target`.
@@ -2350,12 +2362,10 @@ impl Agent {
     ///
     /// [`AgentError::Invalid`] if there is none, and the server's refusal.
     pub async fn cancel_consent(&mut self, target: &str) -> Result<(), AgentError> {
-        let id = Self::consent_id(&self.jmap, &self.me, target)
+        let id = Self::consent_id(&self.provider, &self.me, target)
             .await?
             .ok_or_else(|| AgentError::Invalid(format!("no consent request to {target}")))?;
-        self.jmap
-            .consent_set(json!({"update": {id: {"requested": false}}}))
-            .await
+        self.provider.update_consent(&id, Some(false), None).await
     }
 
     /// The server's push channel (RFC 8620 §7.3 EventSource), to learn
@@ -2367,7 +2377,15 @@ impl Agent {
     ///
     /// [`AgentError::Http`] if its HTTP client cannot be built.
     pub fn push_source(&self) -> Result<Option<crate::push::PushSource>, AgentError> {
-        self.jmap.push_source()
+        self.provider.push_source()
+    }
+
+    /// The live stream's wake-up: notified when the stream has received
+    /// something for [`Agent::receive`], or lost its connection; `None`
+    /// on JMAP, whose push is [`Agent::push_source`]. A caller wakes its
+    /// sync with it; it never receives by itself.
+    pub fn stream_wake(&self) -> Option<std::sync::Arc<tokio::sync::Notify>> {
+        self.provider.wake()
     }
 
     /// The account's Consent records.
@@ -2382,7 +2400,7 @@ impl Agent {
     pub fn consents(
         &self,
     ) -> impl Future<Output = Result<Vec<ConsentRecord>, AgentError>> + Send + '_ {
-        let jmap = &self.jmap;
+        let jmap = &self.provider;
         async move { jmap.consents().await }
     }
 
@@ -2425,7 +2443,7 @@ impl Agent {
     ) -> impl Future<Output = Result<ReportOutcome, AgentError>> + Send + 'a {
         let report = self.abuse_report(room, messages, reason, note);
         let room = room.to_owned();
-        let jmap = &self.jmap;
+        let jmap = &self.provider;
         async move {
             let report = report?;
             jmap.report_abuse(&room, &report).await
@@ -2538,7 +2556,7 @@ impl Agent {
     /// [`Event::Problem`], not an error.
     pub async fn receive(&mut self) -> Result<(Vec<Event>, Receipt), AgentError> {
         let since = self.state.message_state.clone();
-        let (state, messages) = self.jmap.messages_since(since.as_deref()).await?;
+        let (state, messages) = self.provider.messages_since(since.as_deref()).await?;
         for (id, body) in &messages {
             if self.state.handled.contains(id) {
                 continue;
@@ -2585,7 +2603,7 @@ impl Agent {
         from: usize,
     ) -> Result<Option<(String, u32, usize)>, AgentError> {
         let mut events = Vec::new();
-        if !self.jmap.is_own(body) {
+        if !self.provider.is_own(body) {
             match FanoutMessage::decode_all(body) {
                 Ok(fanouts) if !fanouts.is_empty() => {
                     for (i, fanout) in fanouts.into_iter().enumerate().skip(from) {
@@ -2769,7 +2787,7 @@ impl Agent {
 
     /// Saves the sent-message digests with the state.
     fn remember_sent(&mut self) -> Result<(), AgentError> {
-        self.state.sent = self.jmap.sent_digests();
+        self.state.sent = self.provider.sent_digests();
         self.save()
     }
 
@@ -2777,7 +2795,7 @@ impl Agent {
     /// It takes the JMAP client, not `&self`, so the futures of its callers
     /// stay `Send` (see [`Agent::consents`]).
     async fn consent_id(
-        jmap: &Jmap,
+        jmap: &Provider,
         requester: &str,
         target: &str,
     ) -> Result<Option<String>, AgentError> {
@@ -2790,12 +2808,18 @@ impl Agent {
     }
 
     async fn decide(&mut self, requester: &str, decision: &str) -> Result<(), AgentError> {
-        let args = match Self::consent_id(&self.jmap, requester, &self.me).await? {
-            Some(id) => json!({"update": {id: {"decision": decision}}}),
-            None => json!({"create": {"c": {"requesterUri": requester, "targetUri": self.me,
-                                            "decision": decision}}}),
-        };
-        self.jmap.consent_set(args).await
+        match Self::consent_id(&self.provider, requester, &self.me).await? {
+            Some(id) => {
+                self.provider
+                    .update_consent(&id, None, Some(decision))
+                    .await
+            }
+            None => {
+                self.provider
+                    .create_consent(requester, &self.me, Some(decision))
+                    .await
+            }
+        }
     }
 
     /// Room/update with `request`; anything but success is
@@ -2806,7 +2830,7 @@ impl Agent {
         request: &UpdateRequest,
         what: &str,
     ) -> Result<(), AgentError> {
-        let response = self.jmap.update(room, request).await?;
+        let response = self.provider.update(room, request).await?;
         self.remember_sent()?;
         match response.result {
             UpdateResult::Success { .. } => Ok(()),

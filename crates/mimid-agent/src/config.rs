@@ -2,6 +2,7 @@
 //!
 //! ```toml
 //! server_url = "https://mimi.a.example"   # the user's mimid server
+//! binding = "jmap"                        # optional: "stream" for mimid's live stream
 //! user_uri = "mimi://a.example/u/alice"
 //! token_file = "/home/alice/.config/mimid-agent/server-token"
 //! state_dir = "/home/alice/.local/state/mimid-agent"
@@ -140,6 +141,26 @@ pub const DEFAULT_IRC_SERVER_NAME: &str = "mimid.invalid";
 /// limit on a server's name.
 pub const MAX_IRC_SERVER_NAME_LEN: usize = 63;
 
+/// [`Config::binding`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BindingSetting {
+    /// JMAP, draft-atwood-jmap-chat-mimi-00.
+    #[default]
+    Jmap,
+    /// mimid's live stream. INVENTED, NOT FROM SPEC.
+    Stream,
+}
+
+impl From<BindingSetting> for mimid_agent_core::Binding {
+    fn from(setting: BindingSetting) -> Self {
+        match setting {
+            BindingSetting::Jmap => Self::Jmap,
+            BindingSetting::Stream => Self::Stream,
+        }
+    }
+}
+
 /// A parsed configuration file.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -147,6 +168,12 @@ pub struct Config {
     /// The base URL of the user's mimid server; its Session is at
     /// `<server_url>/.well-known/jmap`.
     pub server_url: String,
+    /// How the agent talks to the server: `jmap` (the default) or `stream`,
+    /// mimid's live stream at `<server_url>/mimid/live`, which the server
+    /// must have switched on (docs/design/binary-live-stream.md; decision
+    /// mimid-1wgh.80).
+    #[serde(default)]
+    pub binding: BindingSetting,
     /// The user's URI, `mimi://<domain>/u/<id>`.
     pub user_uri: String,
     /// The file holding the user's bearer token at `server_url`.

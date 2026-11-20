@@ -40,6 +40,15 @@ pub enum AgentError {
         /// The error `description`, or empty.
         description: String,
     },
+    /// The live stream to the server failed: it could not be opened, or
+    /// it closed, or a request timed out (docs/design/binary-live-stream.md).
+    #[error("{what}: the live stream failed: {detail}")]
+    Stream {
+        /// The request.
+        what: String,
+        /// What went wrong.
+        detail: String,
+    },
     /// The server's answer is not what the draft says it is.
     #[error("{what}: the server's answer is malformed: {detail}")]
     Malformed {

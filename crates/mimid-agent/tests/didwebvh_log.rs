@@ -57,6 +57,7 @@ fn config(server: &Server, user: &'static str, dir: &Path, name: &str, extra: &s
 async fn device_key(server: &Server, user: &'static str, dir: &Path, name: &str) -> PublicKey {
     let agent = Agent::open(AgentConfig {
         server_url: server.base.clone(),
+        binding: mimid_agent_core::Binding::Jmap,
         token: server.tokens[user].clone(),
         user_uri: user.to_owned(),
         state_dir: dir.join(format!("{name}-state")),
