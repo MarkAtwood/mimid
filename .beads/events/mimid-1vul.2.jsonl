@@ -3,3 +3,4 @@
 {"id":"01a1f669-0c7f-7412-b366-2f8592554780","issue_id":"mimid-1vul.2","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: irc","created_at":"2026-11-20T00:44:02.047267773Z"}
 {"id":"01a1f669-0c82-768a-b3b7-1fd219e69a0a","issue_id":"mimid-1vul.2","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: adapter","created_at":"2026-11-20T00:44:02.050429495Z"}
 {"id":"01a1f669-0c85-7674-941f-ddf82426728d","issue_id":"mimid-1vul.2","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: client","created_at":"2026-11-20T00:44:02.053423683Z"}
+{"id":"01a1f6ac-77ac-73a2-83ab-cb9fc17f947e","issue_id":"mimid-1vul.2","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Done in 7743316 (branch store-1-2): records, State/Store, format-2 file, format-1 reader, fixtures with PROVENANCE; design note updated","created_at":"2026-11-20T01:57:40.396240041Z"}
