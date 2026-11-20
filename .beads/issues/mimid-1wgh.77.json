@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.77",
+  "title": "Live stream: endpoint /mimid/live, version 1 messages, identifiers (INVENTED)",
+  "description": "Epic mimid-e64f; docs/design/binary-live-stream.md §5.1, §5.7, §5.11 and the CDDL there.\n\nChosen by the agent for mimid-e64f, unattended (INVENTED, NOT FROM SPEC):\n- Endpoint: WebSocket at \u003cserver\u003e/mimid/live, where \u003cserver\u003e is the agent's server_url with http turned into ws and https into wss. Not advertised in the JMAP Session, so a client of the stream never reads JMAP: the stream must stand on its own (the ProviderHello carries what the mimi capability says).\n- Version 1 (v = 1). Message names (t) and member names as in the note's CDDL; the codec crate is mimid-live.\n- Identifiers: a KeyPackage by its KeyPackageRef (exact bytes); a room by its room ID; a Message by messageId (the JMAP id); a Chat by chatId and a Consent record by consentId (the JMAP ids), because the draft defines no other name for them.\n- SetChatAccepted and ListChats \"accepted\" restate decision mimid-1wgh.63's privateMetadata record; ListChats also gives \"bound\" (findings F4, F6).\n- Changed (Chat, KeyPackage, Consent) is sent only after a Subscribe, computed as the EventSource computes StateChange.\n- Times are uint milliseconds since the epoch, as protocol-07, not RFC 3339 text.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T19:36:27.550926023Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T19:36:27.550926023Z",
+  "labels": [
+    "live-stream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.77",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-20T19:36:27.587043392Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
