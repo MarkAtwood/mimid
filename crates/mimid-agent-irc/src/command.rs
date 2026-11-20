@@ -8,7 +8,8 @@
 //!
 //! - `JOIN #name`: a room the user is in is shown; any other name hosts a
 //!   new room named `name` (§7.1). `JOIN &invite-<n>` accepts pending
-//!   invite `n` (§7.5). `JOIN 0` is refused.
+//!   invite `n` (§7.5). `JOIN 0` leaves every room shown, each as `PART`
+//!   does (§7.12).
 //! - `PART #c`: leaves the room for good (§7.1).
 //! - `PRIVMSG #c`: sends the text; `/me` as ACTION text. To a nick:
 //!   refused with 404, since v1 has no private queries (§7.2); to
@@ -115,9 +116,12 @@ impl Session {
             return;
         };
         if targets == "0" {
-            self.server_notice(
-                "mimid: JOIN 0 is refused: PART leaves a room for good, so leave each room by name",
-            );
+            // §7.12: leave every room this connection shows, each as PART
+            // does (§7.1).
+            let keys: Vec<Key> = self.channels.keys().cloned().collect();
+            for key in keys {
+                self.part_room(&key, "left every room").await;
+            }
             return;
         }
         for target in targets.split(',').filter(|t| !t.is_empty()) {
@@ -193,17 +197,28 @@ impl Session {
                 self.numeric("442", &[target, "You're not on that channel"]);
                 continue;
             };
-            let store = self.store();
-            match store.leave(&key).await {
-                Ok(()) => {
-                    if let Some(view) = self.channels.remove(&key) {
-                        self.part_own(&view.name, &reason);
-                    }
-                    self.save().await;
+            self.part_room(&key, &reason).await;
+        }
+    }
+
+    /// Leaves room `key`, shown by this connection, for good (§7.1): PART
+    /// from the user's own hostmask with `reason`, or a NOTICE if leaving
+    /// fails.
+    async fn part_room(&mut self, key: &str, reason: &str) {
+        let store = self.store();
+        match store.leave(key).await {
+            Ok(()) => {
+                if let Some(view) = self.channels.remove(key) {
+                    self.part_own(&view.name, reason);
                 }
-                Err(error) => {
-                    self.server_notice(&format!("mimid: leaving {target} failed: {error}"))
-                }
+                self.save().await;
+            }
+            Err(error) => {
+                let channel = self
+                    .channels
+                    .get(key)
+                    .map_or_else(|| key.to_owned(), |view| view.name.clone());
+                self.server_notice(&format!("mimid: leaving {channel} failed: {error}"));
             }
         }
     }

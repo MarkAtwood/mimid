@@ -44,8 +44,8 @@
 //!   from IRC (§4 "Sending", §7).
 //! - `KICK` removes the user's devices from the room (`Store::kick`); they
 //!   stay a participant, so the nick stays in the channel.
-//! - `JOIN 0` (leave every channel) is refused: PART leaves a room for
-//!   good, and no client sends `JOIN 0` by accident of a window closing.
+//! - `JOIN 0` leaves every room for good, as IRC defines it (§7.12): each
+//!   is a `PART` (§7.1), and only a new invite brings the user back.
 //! - A connection waits while the store's sync holds the agent; a client
 //!   with a short ping timeout may give up during a long sync.
 //! - A connection that falls behind the change feed's log

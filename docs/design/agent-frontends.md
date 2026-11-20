@@ -705,8 +705,10 @@ step runs the full check list in AGENTS.md before its commit.
      nick in memory until the record is made. A room no longer active
      gives its channel name up, so JOIN after PART of `#lobby` hosts a new
      room shown as `#lobby` (§7.1) rather than `#lobby-xxxx`.
-   - `JOIN 0` is refused with a NOTICE: with §7.1 it would leave every
-     room for good.
+   - `JOIN 0` leaves every room the connection shows, each as PART does
+     (§7.1): a PART line per channel from the user's own mask, reason
+     `left every room`, and each room's record leaving, then left
+     (§7.12). It was refused at first.
    - PRIVMSG to a nick is 404 naming the nick ("JOIN a new channel and
      INVITE them", §7.2); to an unknown nick 401.
    - The service has `help`, `allow`, `deny` and `invites`. JOIN and PART
@@ -1176,3 +1178,17 @@ Added on 2026-11-20:
       before the start, and `receivedAt` equals `sentAt` (with JMAP on it
       is the time of the sync). A second start shows every object as the
       first did, and `/changes` names only a new Message.
+
+12. **JOIN 0 leaves every room (Mark, 2026-11-20).** `JOIN 0` is honoured
+    as IRC defines it: the user leaves every room, for real, as §7.1 makes
+    PART leave. The first v1 front end refused it with a NOTICE; bead
+    mimid-1vul.13 changed that:
+
+    - `JOIN 0` (the whole parameter; a `0` inside a list is a channel name
+      and refused as one) leaves each room the connection shows through
+      `Store::leave`, the same path as PART: every device of the user
+      leaves, and only a new invite brings them back.
+    - Each room gives a PART line from the user's own mask with the reason
+      `left every room`; the record goes leaving at once and left when the
+      hub has removed the user. With no channel shown it says nothing.
+    - Test: mimid-agent `tests/irc.rs` `join_0_leaves_every_room`.

@@ -359,11 +359,6 @@ async fn registration_queries_and_refusals() {
             &format!("0 {ALICE}")
         ]
     );
-    // JOIN 0 is refused, not a PART of every room.
-    irc.send("JOIN 0").await;
-    let answers = irc.sync().await;
-    assert_eq!(answers.len(), 1);
-    assert_eq!(answers[0].command, "NOTICE");
     // The service answers from its own nick.
     irc.send("PRIVMSG mimid :help").await;
     let answers = irc.sync().await;
@@ -913,6 +908,84 @@ async fn a_room_left_and_joined_again_is_shown_again() {
     assert_eq!(got.params, ["#lobby", "glad to be back"]);
 
     drop((a, b));
+    bob.stop().await;
+    alice.stop().await;
+}
+
+/// Oracle: §7.12: `JOIN 0` leaves every room, each as PART does (§7.1):
+/// a PART line per channel from the user's own mask, every room's record
+/// leaving and then left, the other participant sees the user go, and
+/// nothing is shown on a new connection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn join_0_leaves_every_room() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Served::start(&irc_only(&server, ALICE, dir.path(), "any")).await;
+    let bob = Served::start(&irc_only(&server, BOB, dir.path(), "any")).await;
+    let (mut a, _) = Irc::register(alice.irc, &alice.token, "alice", &[]).await;
+    let (mut b, _) = Irc::register(bob.irc, &bob.token, "bob", &[]).await;
+
+    for channel in ["#one", "#two"] {
+        a.send(&format!("JOIN {channel}")).await;
+        joined(&mut a, ALICE_MASK, channel).await;
+    }
+    a.send(&format!("INVITE {BOB} #one")).await;
+    a.until_command("341").await;
+    joined(&mut b, BOB_MASK, "#one").await;
+    a.until("bob's JOIN", |m| {
+        m.command == "JOIN" && m.source == BOB_MASK
+    })
+    .await;
+    let uris: Vec<String> = alice
+        .store
+        .state()
+        .rooms
+        .values()
+        .map(|r| r.uri.clone())
+        .collect();
+    assert_eq!(uris.len(), 2);
+
+    a.send("JOIN 0").await;
+    let answers = a.sync().await;
+    let mut parted: Vec<&str> = answers
+        .iter()
+        .map(|m| {
+            assert_eq!(m.command, "PART", "only PART lines: {answers:#?}");
+            assert_eq!(m.source, ALICE_MASK);
+            assert_eq!(m.text(), "left every room");
+            m.params[0].as_str()
+        })
+        .collect();
+    parted.sort_unstable();
+    assert_eq!(parted, ["#one", "#two"]);
+    for uri in &uris {
+        let (status, _) = room_record(&alice.store, uri).unwrap();
+        assert_ne!(status, RoomStatus::Active, "{uri}");
+    }
+    // For real: bob sees alice go, and her records end left.
+    b.until("alice's PART", |m| {
+        m.command == "PART" && m.source == ALICE_MASK && m.params[0] == "#one"
+    })
+    .await;
+    for uri in &uris {
+        until_record(&alice.store, uri, "alice is out", |(status, _)| {
+            *status == RoomStatus::Left
+        })
+        .await;
+    }
+    // A second JOIN 0 has nothing to leave.
+    a.send("JOIN 0").await;
+    let answers = a.sync().await;
+    assert!(answers.is_empty(), "{answers:#?}");
+    // A new connection shows no channel.
+    let (mut again, burst) = Irc::register(alice.irc, &alice.token, "x", &[]).await;
+    let later = again.sync().await;
+    assert!(
+        !burst.iter().chain(&later).any(|m| m.command == "JOIN"),
+        "{burst:#?} {later:#?}"
+    );
+
+    drop((a, b, again));
     bob.stop().await;
     alice.stop().await;
 }
