@@ -618,3 +618,27 @@ code, not with this note.
    up to 200 unseen messages per channel on connect, with server-time and
    msgid. Add chathistory in a second step, keyed by room and account,
    not by nick.
+
+## 7. Mark's decisions (2026-11-20)
+
+These answer §6 and override the recommendations there and anything in
+§4 that disagrees.
+
+1. **PART and JOIN.** PART leaves the room for real: every device of the
+   user leaves, and only a new invite brings them back. JOIN of a channel
+   name that is not one of the user's rooms hosts a new room with that
+   name. The IRC front end does what IRC users expect; closing a window in
+   a client that sends PART has the same effect.
+2. **No queries in v1.** v1 has channels only. A PRIVMSG to a nick
+   answers with an error that tells the user to make a room and invite
+   them. No `direct` flag.
+3. **Every nick carries its provider.** `<local>-<label>` for everyone,
+   the user's own provider included. A nick never moves between people.
+4. **No attachments in v1.** Neither links nor a placeholder line are
+   required; no `/irc/blob` route and no new authorization at the agent
+   boundary. A message's text is shown; its attachments are not.
+5. **Invites and consent from IRC: yes.** A pending invite shows as an
+   INVITE line and JOIN accepts it; `/msg mimid allow <nick>` and
+   `/msg mimid deny <nick>` set consent.
+6. **No history in v1.** No replay on connect and no chathistory; the IRC
+   client sees what arrives while it is connected.
