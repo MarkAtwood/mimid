@@ -2,13 +2,15 @@
   "id": "mimid-e64f.11",
   "title": "Server: KeyPackage/changes with a real change log (F9)",
   "description": "KeyPackage/changes; handed-out KeyPackages in destroyed. KeyPackage state becomes a change-log counter.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "feature",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-20T22:56:21.618562377Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-20T22:56:21.618562377Z",
+  "updated_at": "2026-11-20T23:54:44.601880975Z",
+  "closed_at": "2026-11-20T23:54:44.601880975Z",
+  "close_reason": "Done in 48f5e33 (branch findings-impl); server items share one commit since they touch the same files",
   "dependencies": [
     {
       "issue_id": "mimid-e64f.11",
