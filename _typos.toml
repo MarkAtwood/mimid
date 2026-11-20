@@ -11,6 +11,8 @@ edn = "edn"
 tbe = "tbe"
 # "café" written with an escape for its é in the Unicode stress tests.
 caf = "caf"
+# CBOR Object Signing and Encryption (RFC 9052).
+cose = "cose"
 
 [files]
 # Vendored mimi-content WG examples: EDN and diagnostic dumps are full of hex.
