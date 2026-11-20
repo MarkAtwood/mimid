@@ -1,0 +1,7 @@
+{
+  "id": "1795147966253013632-1",
+  "issue_id": "mimid-1vul.4",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-20: keep /get ids:null order by key after restart (RFC 8620 §5.1 leaves it undefined).",
+  "created_at": "2026-11-20T04:12:46.253013632Z"
+}
