@@ -12,6 +12,8 @@ the CBOR live stream:
 - **Stream:** how the live stream handles it.
 - **Proposed text:** for the draft. Nothing here has gone to
   jmap-chat-spec; each change needs Mark's OK.
+- **Decision:** Mark's answer to the proposed text, and what mimid
+  does about it (branch findings-impl).
 
 File references are to the live-stream branch.
 
@@ -76,6 +78,8 @@ And, as a question for the base draft: whether `/changes` for chat
 types promises anything about the order of `created`, which RFC 8620
 §5.2 does not (see F2).
 
+**Decision.** Take as proposed. (Mark, 2026-11-20.)
+
 ## F2. Nothing promises the order in which a client sees a room's Messages
 
 **Gap.** An MLS client must process a room's handshake messages in the
@@ -111,6 +115,8 @@ before one stored earlier for the same room (§5.5).
 > that order. A server MAY also return Messages in that order from
 > `Message/get` and `Message/changes`.
 
+**Decision.** Take as proposed. (Mark, 2026-11-20.)
+
 ## F3. Room/send drops the hub's frank
 
 **Gap.** The hub's SubmitMessageResponse carries the frank of an
@@ -135,6 +141,8 @@ gave one, `frank` (Mark's answer, §9 question 3).
 > `frank` (String, optional):
 > : When `responseCode` is `"accepted"` and the hub franked the
 > message: the hub's Frank ({{MIMI-PROTOCOL, Section 5.4}}).
+
+**Decision.** Take as proposed; mimid-server returns `frank`. (Mark, 2026-11-20.)
 
 ## F4. A client cannot tell whether its Chat is still bound
 
@@ -161,6 +169,8 @@ use it yet.
 > `roomBound` (Boolean, server-set, optional):
 > : `true` while the Chat is bound to its room, `false` once it is
 > unbound. Present exactly when `roomId` is.
+
+**Decision.** Take as proposed; mimid-server exposes `roomBound`. (Mark, 2026-11-20.)
 
 ## F5. KeyMaterial/fetch takes the KeyMaterialResponse apart
 
@@ -189,6 +199,8 @@ draft.
 > `response` (String):
 > : The whole KeyMaterialResponse, unchanged.
 
+**Decision.** Take: add `response`, the KeyMaterialResponse bytes, and keep the split fields. (Mark, 2026-11-20.)
+
 ## F6. The user's devices have nowhere to agree that a room was accepted
 
 **Gap.** A Welcome puts the user in a room on every device at once. A
@@ -213,6 +225,8 @@ message, INVENTED, NOT FROM SPEC.
 > A client MAY record per-user state about the room, such as whether
 > the user accepted it, in the Chat's `privateMetadata`
 > ({{JMAP-METADATA}}), so that the user's other clients see it.
+
+**Decision.** Take: the `privateMetadata` MAY text. (Mark, 2026-11-20.)
 
 ## F7. Attachment upload and fetch have no error vocabulary
 
@@ -246,6 +260,8 @@ function (`fetch_asset_core`).
 > asset's provider refuses with 403; and a provider that cannot be
 > reached with 502. It MAY add an RFC 9457 problem body.
 
+**Decision.** Take as proposed. (Mark, 2026-11-20.)
+
 ## F8. Room/reportAbuse's "refused" says nothing
 
 **Gap.** "refused" covers every refusal but two, with no field for the
@@ -270,6 +286,8 @@ that leaves it out, and the agent against one that follows the draft.
 > `status` (UnsignedInt, optional):
 > : When `responseCode` is `"refused"` and the hub is another provider:
 > the HTTP status of its answer ({{MIMI-PROTOCOL, Section 5.9}}).
+
+**Decision.** Take; the agent treats `status` as optional. (Mark, 2026-11-20.)
 
 ## F9. KeyPackage changes cannot be followed
 
@@ -298,6 +316,8 @@ went.
 >
 > Standard JMAP `/changes` ({{RFC8620, Section 5.2}}). A KeyPackage
 > handed out appears in `destroyed`.
+
+**Decision.** Take; mimid-server implements `KeyPackage/changes` and the agent uses it. (Mark, 2026-11-20.)
 
 ## F10. Nothing bounds the size of the MLS objects a client sends
 
@@ -331,6 +351,8 @@ but not one JMAP request with another argument beside it.
 > tree option ({{?MLS-RATCHET-TREE-OPTIONS}}) that keeps the tree out
 > of the message.
 
+**Decision.** Take; mimid-server advertises 4 MiB, and both bindings use that one limit. (Mark, 2026-11-20.)
+
 ## F11. A lost answer to Room/send or Room/update cannot be retried safely
 
 **Gap.** If the connection drops after the hub accepted a message or
@@ -361,6 +383,8 @@ because the server stores the owner's own messages.
 
 and the same for `request` in §Room/update.
 
+**Decision.** Take, with SHOULD; mimid-server answers a repeated `message` (Room/send) or `request` (Room/update) with the earlier response. (Mark, 2026-11-20.)
+
 ## F12. Recovering from cannotCalculateChanges is undefined for an MLS client
 
 **Gap.** The base draft tells a client that cannot get changes to
@@ -389,6 +413,8 @@ replay of everything (note §5.5).
 
 (This needs F2's order and a `Message/query` that accepts an id
 anchor, which RFC 8620 §5.5 provides.)
+
+**Decision.** Take; mimid-server sorts `Message/query` by `id` with an `anchor`, and the agent uses it on `cannotCalculateChanges`. (Mark, 2026-11-20.)
 
 ## Push semantics (F13 to F17)
 
@@ -435,6 +461,8 @@ both because it pushes the objects, not states.
 > 5.1}}), so a client that watches both types in `StateChange` events
 > learns of every FanoutMessage stored for it, its own included.
 
+**Decision.** Take as proposed. (Mark, 2026-11-20.)
+
 ### F14. Nothing on resuming after a lost push connection
 
 **Gap.** A client whose EventSource connection drops misses the events
@@ -462,6 +490,8 @@ lost because the provider reads the store, not a buffer.
 > state before it relies on events again. A server MAY set an event id
 > on each `state` event; a client that has one sends it in
 > `Last-Event-ID`.
+
+**Decision.** Take as proposed. (Mark, 2026-11-20.)
 
 ### F15. Only KeyPackage and Consent are tied to StateChange
 
@@ -493,6 +523,8 @@ visible there either (see F4).
 
 (With F4's `roomBound`, unbinding becomes a property change.)
 
+**Decision.** Take; mimid-server moves the Chat state on unbinding. (Mark, 2026-11-20.)
+
 ### F16. No promise that a pushed change is visible
 
 **Gap.** Nothing says that when a client receives a `StateChange` for
@@ -517,6 +549,8 @@ and the connection subscribes to the bus before its replay.
 > The server sends a `StateChange` for a stored Message only once
 > `Message/changes` returns it.
 
+**Decision.** Take, as the plain sentence. (Mark, 2026-11-20.)
+
 ### F17. Which types a pure MLS client watches
 
 **Gap.** An MLS client (one that never converts content) needs Message
@@ -539,6 +573,8 @@ and `Changed` for Chat, KeyPackage and Consent.
 > A client of this capability that does not convert content needs
 > `StateChange` events for the Message, Chat, Consent and KeyPackage
 > types; it MAY ask for only these in the event source's `types`.
+
+**Decision.** Take; the agent watches KeyPackage once F9 is in. (Mark, 2026-11-20.)
 
 ## F18. A client cannot tell its own stored message from the answer
 
@@ -572,3 +608,5 @@ arguments:
 > : The ids of the Messages the server stored in this account for the
 > accepted message, so that the sending client can recognise them when
 > it reads its Messages.
+
+**Decision.** Take; mimid-server returns `messageIds`, and the agent skips its own copies by id, with the digests as fallback. (Mark, 2026-11-20.)
