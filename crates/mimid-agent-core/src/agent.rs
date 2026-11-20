@@ -2358,6 +2358,18 @@ impl Agent {
             .await
     }
 
+    /// The server's push channel (RFC 8620 §7.3 EventSource), to learn
+    /// when to call [`Agent::receive`] instead of waiting for a poll; `None`
+    /// if the Session has no `eventSourceUrl`. The source holds no agent
+    /// state, so it can be followed while the agent is in use.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Http`] if its HTTP client cannot be built.
+    pub fn push_source(&self) -> Result<Option<crate::push::PushSource>, AgentError> {
+        self.jmap.push_source()
+    }
+
     /// The account's Consent records.
     ///
     /// The future borrows only the JMAP client, not the whole agent, so it

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use mimid_agent_core::push::PushSource;
 use mimid_agent_core::{Agent, AgentConfig, AgentError};
 use mimid_agent_irc::{IrcFrontEnd, IrcOptions};
 use mimid_agent_jmap::{AgentChat, BlobStore, Options};
@@ -33,6 +34,9 @@ pub struct Daemon {
     store: Arc<Store>,
     stop: watch::Sender<bool>,
     sync_interval: Duration,
+    /// The server's EventSource, which wakes the sync loop; `None` if its
+    /// Session has none.
+    push: Option<PushSource>,
     key_packages: u32,
     user_uri: String,
     server_url: String,
@@ -140,6 +144,7 @@ impl Daemon {
         })
         .await?;
         top_up_key_packages(&mut agent, config.key_packages).await;
+        let push = agent.push_source()?;
         let listener = match config.listen {
             Some(addr) => {
                 let bind = |source| StartError::Bind { addr, source };
@@ -227,6 +232,7 @@ impl Daemon {
             store,
             stop,
             sync_interval: config.sync_interval(),
+            push,
             key_packages: config.key_packages,
             user_uri: config.user_uri.clone(),
             server_url: config.server_url.clone(),
@@ -263,7 +269,10 @@ impl Daemon {
     /// EventSource streams and IRC connections (each IRC client gets
     /// `ERROR`), lets requests in flight and a running sync finish, and
     /// returns. With JMAP on, each save the store publishes tells the
-    /// EventSource streams to look.
+    /// EventSource streams to look. The sync loop runs at once, whenever
+    /// the server's EventSource names a type it reads (see the `push`
+    /// module), whenever a front end writes, and every `sync_interval_ms`
+    /// as a fallback.
     ///
     /// # Errors
     ///
@@ -304,6 +313,22 @@ impl Daemon {
             self.key_packages,
             self.log_watch,
         ));
+        // The server's EventSource wakes the sync loop; the interval is
+        // the fallback.
+        let push = match self.push {
+            Some(source) => Some(tokio::spawn(crate::push::follow(
+                Arc::clone(&self.store),
+                source,
+                stop.subscribe(),
+            ))),
+            None => {
+                tracing::warn!(
+                    name: "agent_push_unavailable",
+                    "the server's Session has no eventSourceUrl; polling only"
+                );
+                None
+            }
+        };
         // Only the EventSource streams, which are JMAP's, read the ticks.
         let feed = self
             .http
@@ -335,6 +360,7 @@ impl Daemon {
         signal.abort();
         for (name, task) in [
             ("sync loop", Some(sync)),
+            ("push", push),
             ("feed", feed),
             ("IRC front end", irc),
         ] {
@@ -393,8 +419,9 @@ async fn top_up_key_packages(agent: &mut Agent, target: u32) {
 }
 
 /// Syncs the store at once ([`Store::sync`], the agent's only journal
-/// consumer), then every `interval` or when woken (a write of a front
-/// end, [`Store::sync_wanted`]), until `stop` is true; before each sync,
+/// consumer), then when woken ([`Store::sync_wanted`]: a write of a front
+/// end, or a StateChange on the server's EventSource) or after `interval`
+/// without one, until `stop` is true; before each sync,
 /// takes a changed did:webvh log file (`log_watch`); after it, tops the
 /// KeyPackages up.
 async fn sync_loop(

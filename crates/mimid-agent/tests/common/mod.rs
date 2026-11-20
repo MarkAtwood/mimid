@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use mimid_agent::{Config, Daemon};
@@ -25,7 +26,7 @@ use mimid_server::jmap::{self, JmapOptions};
 use mimid_server::peer::PeerClient;
 use mimid_server::store::Store;
 use serde_json::{Value, json};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
 pub const ALICE: &str = "mimi://a.example/u/alice";
@@ -34,10 +35,96 @@ pub const BOB: &str = "mimi://a.example/u/bob";
 /// How long a test waits for something that should happen.
 pub const PATIENCE: Duration = Duration::from_secs(15);
 
-/// A running mimid server: its base URL and a bearer token per user.
+/// A running mimid server: its base URL, a bearer token per user, and
+/// the switch on its EventSource.
 pub struct Server {
     pub base: String,
     pub tokens: BTreeMap<&'static str, String>,
+    pub push: PushControl,
+}
+
+/// What a test does to the server's EventSource (`/jmap/eventsource`),
+/// through a layer in front of mimid-server's router: refuse it, cut the
+/// open streams, and count both.
+#[derive(Clone)]
+pub struct PushControl {
+    refuse: Arc<AtomicBool>,
+    opened: Arc<AtomicUsize>,
+    refused: Arc<AtomicUsize>,
+    cut: Arc<watch::Sender<u64>>,
+}
+
+impl Default for PushControl {
+    fn default() -> Self {
+        Self {
+            refuse: Arc::default(),
+            opened: Arc::default(),
+            refused: Arc::default(),
+            cut: Arc::new(watch::channel(0).0),
+        }
+    }
+}
+
+impl PushControl {
+    /// From now on, answer `503` instead of opening a stream.
+    pub fn refuse(&self, refuse: bool) {
+        self.refuse.store(refuse, Ordering::SeqCst);
+    }
+
+    /// Ends every open stream, as a server going away does.
+    pub fn cut(&self) {
+        self.cut.send_modify(|n| *n += 1);
+    }
+
+    /// How many streams were opened.
+    pub fn opened(&self) -> usize {
+        self.opened.load(Ordering::SeqCst)
+    }
+
+    /// How many were refused.
+    pub fn refused(&self) -> usize {
+        self.refused.load(Ordering::SeqCst)
+    }
+
+    /// Waits until `count` returns at least `n`; panics after
+    /// [`PATIENCE`].
+    pub async fn until(&self, what: &str, n: usize, count: impl Fn(&Self) -> usize) {
+        tokio::time::timeout(PATIENCE, async {
+            while count(self) < n {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{what}: {} is not {n}", count(self)));
+    }
+
+    async fn layer(
+        axum::extract::State(control): axum::extract::State<Self>,
+        request: axum::extract::Request,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        use futures::StreamExt;
+        if request.uri().path() != "/jmap/eventsource" {
+            return next.run(request).await;
+        }
+        if control.refuse.load(Ordering::SeqCst) {
+            control.refused.fetch_add(1, Ordering::SeqCst);
+            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        let mut cut = control.cut.subscribe();
+        cut.borrow_and_update();
+        let response = next.run(request).await;
+        if !response.status().is_success() {
+            return response;
+        }
+        control.opened.fetch_add(1, Ordering::SeqCst);
+        let (parts, body) = response.into_parts();
+        let body = body.into_data_stream().take_until(async move {
+            let _ = cut.changed().await;
+        });
+        axum::response::Response::from_parts(parts, axum::body::Body::from_stream(body))
+    }
 }
 
 /// Starts a.example's stack as mimid-server's `main.rs` wires it (as
@@ -95,11 +182,15 @@ pub async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
-    let app = router(directory(&base), hub, follower).merge(jmap);
+    let push = PushControl::default();
+    let app = router(directory(&base), hub, follower).merge(jmap).layer(
+        axum::middleware::from_fn_with_state(push.clone(), PushControl::layer),
+    );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        push,
     }
 }
 

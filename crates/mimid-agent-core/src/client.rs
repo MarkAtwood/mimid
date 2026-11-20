@@ -132,6 +132,8 @@ pub(crate) struct Jmap {
     /// namespaces (draft-ietf-jmap-metadata-05 §1.2.1), where accepted
     /// rooms are recorded (decision mimid-1wgh.63).
     pub chat_metadata: bool,
+    /// The Session's `eventSourceUrl` (RFC 8620 §7.3), if it has one.
+    event_source_url: Option<String>,
     http: reqwest::Client,
 }
 
@@ -186,6 +188,7 @@ impl Jmap {
         let asset_lifetime =
             parse_asset_lifetime(mimi).map_err(|detail| AgentError::malformed(what, detail))?;
         let asset_download_url = mimi["assetDownloadUrl"].as_str().map(str::to_owned);
+        let event_source_url = session["eventSourceUrl"].as_str().map(str::to_owned);
         let chat_info =
             &session["accounts"][&account_id]["accountCapabilities"][METADATA]["dataTypes"]["Chat"];
         let chat_metadata = session["capabilities"].get(METADATA).is_some()
@@ -203,8 +206,18 @@ impl Jmap {
             asset_lifetime,
             asset_download_url,
             chat_metadata,
+            event_source_url,
             http,
         })
+    }
+
+    /// What following the Session's `eventSourceUrl` needs, or `None` if
+    /// the Session has none.
+    pub fn push_source(&self) -> Result<Option<crate::push::PushSource>, AgentError> {
+        self.event_source_url
+            .as_deref()
+            .map(|url| crate::push::PushSource::new(url, &self.account_id, &self.token))
+            .transpose()
     }
 
     /// One method call; its response arguments, or the method error.

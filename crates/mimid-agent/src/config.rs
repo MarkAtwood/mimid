@@ -6,7 +6,7 @@
 //! token_file = "/home/alice/.config/mimid-agent/server-token"
 //! state_dir = "/home/alice/.local/state/mimid-agent"
 //! listen = "127.0.0.1:8484"               # loopback only; optional with [irc]
-//! sync_interval_ms = 2000                 # optional
+//! sync_interval_ms = 30000                # optional; the fallback poll
 //! key_packages = 10                       # optional
 //! invites = "from-allowed"                # optional: "any", "never"
 //! allowed_origins = ["http://localhost:5173"]  # optional CORS origins
@@ -56,6 +56,16 @@
 //! `mimid_agent_jmap::MAX_UNREFERENCED_BLOB_BYTES` and
 //! `MAX_UNREFERENCED_BLOBS`.
 //!
+//! The agent follows its server's EventSource (RFC 8620 §7.3, the
+//! Session's `eventSourceUrl`) and syncs as soon as a StateChange names a
+//! type its sync reads (`Message`, `Chat`, `Consent`), and when a stream
+//! opens. `sync_interval_ms` is only the fallback: the agent also syncs
+//! after that many milliseconds without a sync, which is how messages
+//! arrive while the stream is down (refused, or the server restarting).
+//! A stream that cannot be opened or ends is tried again after 1 s,
+//! doubling to at most 60 s. The default, [`DEFAULT_SYNC_INTERVAL_MS`],
+//! is 30 s; at least [`MIN_SYNC_INTERVAL_MS`] is accepted.
+//!
 //! `token_file` holds the user's bearer token at `server_url`, as issued by
 //! the server (`mimid admin ... token`); surrounding whitespace is ignored.
 //!
@@ -96,8 +106,9 @@ use std::time::Duration;
 use mimid_agent_jmap::InvitePolicy;
 use serde::Deserialize;
 
-/// The default [`Config::sync_interval_ms`]. INVENTED, NOT FROM SPEC.
-pub const DEFAULT_SYNC_INTERVAL_MS: u64 = 2_000;
+/// The default [`Config::sync_interval_ms`]: the fallback poll, for
+/// while the server's EventSource is down. INVENTED, NOT FROM SPEC.
+pub const DEFAULT_SYNC_INTERVAL_MS: u64 = 30_000;
 
 /// The shortest [`Config::sync_interval_ms`] accepted, so a typo cannot
 /// make the daemon hammer its server. INVENTED, NOT FROM SPEC.
@@ -147,7 +158,9 @@ pub struct Config {
     /// HTTP listener.
     #[serde(default)]
     pub listen: Option<SocketAddr>,
-    /// Milliseconds between syncs with the server.
+    /// Milliseconds after which the agent syncs with the server if nothing
+    /// woke it sooner (the server's EventSource, a front end's write): the
+    /// fallback poll.
     #[serde(default = "default_sync_interval_ms")]
     pub sync_interval_ms: u64,
     /// How many one-time KeyPackages the agent keeps published (an

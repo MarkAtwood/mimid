@@ -1,7 +1,8 @@
 //! The canary of AGENTS.md's "secrets never reach logs": a daemon's whole
 //! `tracing` output, at TRACE for the agent crates, through start, served
 //! and refused requests, IRC connections with a right and a wrong `PASS`,
-//! sync and shutdown, contains neither the local token nor the user's
+//! sync, the server's EventSource opened, lost, refused and opened again,
+//! and shutdown, contains neither the local token nor the user's
 //! token at the server, and has the start event with both listen
 //! addresses.
 
@@ -77,6 +78,20 @@ async fn no_token_reaches_the_log() {
     wrong.send("NICK alice").await;
     wrong.send("USER alice 0 * :x").await;
     assert_eq!(wrong.line().await.command, "464");
+    // The server's EventSource, which the agent opens with the server
+    // token: opened, cut, refused, then opened again.
+    server.push.until("stream opened", 1, |p| p.opened()).await;
+    server.push.refuse(true);
+    server.push.cut();
+    server
+        .push
+        .until("reopening refused", 2, |p| p.refused())
+        .await;
+    server.push.refuse(false);
+    server
+        .push
+        .until("stream reopened", 2, |p| p.opened())
+        .await;
     // Let the sync loop run a few rounds.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let addr = alice.addr;
@@ -87,6 +102,8 @@ async fn no_token_reaches_the_log() {
     assert!(log.contains(&addr.to_string()), "{log}");
     assert!(log.contains(&irc_addr.to_string()), "{log}");
     assert!(log.contains("mimid-agent stopped"), "{log}");
+    assert!(log.contains("following the server's EventSource"), "{log}");
+    assert!(log.contains("the server's EventSource is"), "{log}");
     assert!(!log.contains(&token), "the local token is in the log");
     assert!(
         !log.contains(&server.tokens[ALICE]),

@@ -27,9 +27,13 @@
 //! `[irc].listen`: its clients give the local token as the server password
 //! (`PASS`), checked in constant time like the bearer token. A
 //! background loop calls [`mimid_agent_store::Store::sync`], the agent's
-//! only journal consumer, every `sync_interval_ms`, and at once after a
-//! client's `Chat/set` or `Message/set` and after any write the agent acts
-//! on ([`mimid_agent_store::Store::sync_wanted`]); EventSource clients get
+//! only journal consumer, at once after a client's `Chat/set` or
+//! `Message/set` and after any write the agent acts on
+//! ([`mimid_agent_store::Store::sync_wanted`]), whenever the server's
+//! EventSource (the Session's `eventSourceUrl`, RFC 8620 §7.3) reports a
+//! change to `Message`, `Chat` or `Consent` or opens again, and after
+//! `sync_interval_ms` without a sync, the fallback for while that stream
+//! is down (see [`config`]). The agent's EventSource clients get
 //! a StateChange whenever the store publishes changes (each save that has
 //! some) or a request moves the state of `Chat`, `Message`, `ChatContact`
 //! or `ReadPosition`.
@@ -111,9 +115,12 @@
 //!   clients resync after a restart). A `chat.json`, or a state directory
 //!   of the layout before (`state.json`, `mls.sqlite`, `chat.sqlite`), is
 //!   not read.
-//! - The daemon polls its server on an interval; it does not listen to
-//!   the server's EventSource, so incoming messages wait for the next
-//!   sync.
+//! - The server's EventSource only says when to sync; each wake-up is
+//!   still `Message/changes` and `Message/get` (two round trips). The
+//!   stream is not resumed from an event ID unless the server sets one
+//!   (mimid-server does not), so each reconnection syncs once in case
+//!   something changed meanwhile. While the stream is down, incoming
+//!   messages wait for the fallback poll.
 //! - The endpoint serves `Message/reportAbuse` (mimid-agent-jmap's
 //!   `report` module), a method no JMAP Chat draft defines (INVENTED, NOT
 //!   FROM SPEC), under the JMAP Chat capability.
@@ -163,6 +170,7 @@ pub mod config;
 mod daemon;
 pub mod didwebvh;
 mod http;
+mod push;
 pub mod token;
 
 pub use config::{Config, ConfigError, Invites, IrcSetting, JmapSetting};

@@ -1067,7 +1067,8 @@ server_name = "mimid.invalid" # optional
 - Every address is checked for loopback, and unknown keys are refused, as
   now (config.rs:60-63, config.rs:87-129).
 - The sync loop (daemon.rs:273-301) calls `Store::sync`. A send from
-  either front end wakes it.
+  either front end wakes it, and so does the provider's EventSource
+  (§8); the interval is only a fallback.
 
 The crate docs and AGENTS.md change with this: mimid-agent stops being
 only "the JMAP Chat ↔ MIMI bridge" in the crate map, and the crate map
@@ -1292,3 +1293,73 @@ Added on 2026-11-20:
       `left every room`; the record goes leaving at once and left when the
       hub has removed the user. With no channel shown it says nothing.
     - Test: mimid-agent `tests/irc.rs` `join_0_leaves_every_room`.
+
+## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
+
+Mark decided on 2026-11-20 that JMAP (draft-atwood-jmap-chat-mimi) is
+the standard client-provider protocol and the agent's default, so the
+agent's live delivery comes from JMAP push. Until then the daemon polled
+every 2 s and never listened to the EventSource mimid-server serves
+(crates/mimid-server/src/jmap/eventsource.rs).
+
+- **What wakes the sync.** `Store::sync_wanted()` stays the one trigger.
+  A task of the daemon (crates/mimid-agent/src/push.rs) follows the
+  Session's `eventSourceUrl` and notifies it for each StateChange that
+  names `Message`, `Chat` or `Consent` for the account
+  (`mimid_agent_core::push::SYNC_TYPES`: what `Agent::receive`,
+  `Agent::join_own_rooms` and `Agent::consents` read), and once each time
+  a stream opens. The stream says only when; `Store::sync` alone reads
+  what, so it is still the only caller of `Agent::receive` and
+  `Agent::acknowledge`.
+- **The client.** `mimid_agent_core::push`: `Agent::push_source()` hands
+  out a `PushSource` (template, account, token, its own reqwest client)
+  that holds no agent state, so the task never takes the agent lock.
+  `PushSource::open` asks for `types=Message,Chat,Consent`,
+  `closeafter=no`, `ping=30` and sends `Last-Event-ID` when the last
+  stream set an ID. The client has no overall timeout but a 75 s read
+  timeout, two pings and slack, so a silent dead connection is dropped.
+  The parser follows the WHATWG event-stream rules (CRLF, LF and CR line
+  ends, comments, a leading BOM), caps an event at 64 KiB, skips events
+  other than `state` and `ping`, and refuses a `state` event that is not
+  a StateChange, which drops the stream. The bearer token travels only in
+  the `Authorization` header; `PushSource`'s `Debug` redacts it.
+- **crate-jmap.** jmap-base-client at the pinned revision has
+  `subscribe_events` and `subscribe_events_reconnecting`. They are not
+  used: they bring reqwest 0.12 into the agent beside mimid-agent-core's
+  0.13 (two HTTP and TLS stacks in the shipped binary, where the core
+  insists on one), and the reconnecting stream hides reconnections, which
+  the agent must see to sync after each one.
+- **Reconnection.** A stream that cannot be opened or ends is opened
+  again after a delay that doubles from 1 s to 60 s, with equal jitter,
+  and goes back to 1 s once a stream has delivered an event. mimid-server
+  sets no event IDs, so nothing is replayed; the sync at each opening
+  covers what changed while the stream was down. Logs: INFO
+  `agent_push_connected`, INFO `agent_push_closed`, WARN
+  `agent_push_failed` on the first failure after a stream was up or at
+  start (later ones at DEBUG), WARN `agent_push_unavailable` once if the
+  Session has no `eventSourceUrl`.
+- **Fallback.** `sync_interval_ms` stays and now means "sync after this
+  long without one". Its default went from 2000 to 30000 (INVENTED, NOT
+  FROM SPEC), documented in the config module. While the stream is down,
+  delivery waits up to that long. There is no switch to turn the push
+  off.
+- **Server change.** mimid-server's EventSource subscribed to its change
+  bus and read the baseline states in the spawned stream task, after the
+  answer had gone out. A change between the client's next read and that
+  subscription was never announced. The handler now subscribes and reads
+  the baseline before it answers, and answers 500 if it cannot read
+  them.
+- **Later.** The binary live stream (docs/design/binary-live-stream.md)
+  would add a second path that delivers the FanoutMessages themselves.
+  This change touches only the trigger, so that path can replace or sit
+  beside the push task.
+- Tests: mimid-agent-core `push` unit tests (line ends, chunk splits, the
+  BOM, `id`, the size cap, StateChange parsing, the URL); mimid-agent
+  `tests/push.rs` with the provider behind a layer that refuses or cuts
+  its EventSource: with an hour's poll interval a Welcome and messages
+  both ways still arrive; streams the server ends are opened again and
+  carry the next message; a message sent while the EventSource is
+  refused arrives (not before) once it opens again; with the EventSource
+  refused, a 100 ms poll carries messages and no stream opens.
+  `tests/no_token_in_logs.rs` now opens, loses, is refused and reopens
+  the stream, and neither token appears in the log.

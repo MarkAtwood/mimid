@@ -36,7 +36,9 @@
 //! - [`Agent::poll`]: everything the server stored since the last poll
 //!   (Message/changes), with each received message's frank checked
 //!   ([`frank`], protocol-07 §5.4.1.3), as [`Event`]s for the caller (the future inward
-//!   JMAP layer, bead mimid-1wgh.13.9) to turn into its own objects.
+//!   JMAP layer, bead mimid-1wgh.13.9) to turn into its own objects;
+//! - [`Agent::push_source`]: the server's EventSource ([`push`]), which
+//!   tells the caller when to poll; it reads nothing itself.
 //!
 //! The crate has no UI, no HTTP server and no runtime of its own: its
 //! async fns run on the caller's runtime, so a desktop daemon or a mobile
@@ -146,6 +148,7 @@ pub mod didwebvh;
 mod error;
 pub mod frank;
 mod journal;
+pub mod push;
 mod state;
 pub mod uri;
 
