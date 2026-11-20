@@ -8,7 +8,9 @@
 //! changed records to the front end ([`Commit`]), which shows and saves
 //! them, and only then acknowledges what the agent delivered: a message
 //! cannot be decrypted again, and an event not acknowledged comes again
-//! after a crash (a message already stored is skipped).
+//! after a crash (a message already stored is skipped, and so is one
+//! deleted here since: [`State::delete_message`] keeps a tombstone until
+//! the next acknowledgement).
 //!
 //! - **Rooms**: every room the agent is in, and is not out of, has a
 //!   record, with its participants, their role indexes and the room's
@@ -33,8 +35,9 @@
 //!
 //! - The sync holds the agent for its whole run, attachment fetches and
 //!   the front end's commit included.
-//! - The front end's commit is the only save: the store does not write
-//!   its own file yet (step 4 of the migration).
+//! - The store does not save by itself: the front end's commit calls
+//!   [`Store::save`] once it has shown the changes, so what the front end
+//!   keeps in the records (`ext`) is saved with them.
 
 use std::collections::BTreeMap;
 
@@ -120,9 +123,10 @@ pub trait Commit {
     /// Why it failed.
     type Error;
 
-    /// Shows and saves `changes` ([`Change`]); the records are read from
-    /// [`Store::state`]. An error stops the sync before the round is
-    /// acknowledged, so the agent delivers it again.
+    /// Shows `changes` ([`Change`]) and saves the store
+    /// ([`Store::save`]); the records are read from [`Store::state`]. An
+    /// error stops the sync before the round is acknowledged, so the agent
+    /// delivers it again.
     fn commit(
         &self,
         changes: Vec<Change>,
@@ -273,6 +277,10 @@ impl Store {
                 .await
                 .map_err(SyncError::Commit)?;
             agent.acknowledge(receipt)?;
+            // Every event that stored a message deleted since is
+            // acknowledged now (receive returned all those not yet
+            // acknowledged), so none of them comes again.
+            self.state().clear_message_tombstones();
             if joined == 0 {
                 break;
             }
@@ -349,8 +357,7 @@ impl Store {
     }
 
     /// Sets the participants, role indexes and role names of every room
-    /// the agent is in whose record lacks them: a room read from format 1
-    /// (which kept no role indexes), or one a front end made. Not a
+    /// the agent is in whose record lacks them: one a front end made. Not a
     /// [`Change`]: the front end shows the same members.
     fn fill_roles(&self, agent: &Agent) {
         let active: Vec<String> = agent
@@ -565,7 +572,8 @@ impl Store {
     ) {
         let room = self.room_for(agent, uri, changes);
         let mut state = self.state();
-        if state.message_of_ref(&room, &reference).is_some() {
+        if state.message_of_ref(&room, &reference).is_some() || state.is_deleted(&room, &reference)
+        {
             return;
         }
         let name = if user.is_empty() {
@@ -687,8 +695,13 @@ impl Store {
     ) {
         let room = self.room_for(agent, &received.room, changes);
         let reference = message_ref(&received.message_id);
-        if self.state().message_of_ref(&room, &reference).is_some() {
-            return;
+        {
+            let state = self.state();
+            if state.message_of_ref(&room, &reference).is_some()
+                || state.is_deleted(&room, &reference)
+            {
+                return;
+            }
         }
         if let Some(replaces) = &received.content.replaces {
             self.apply_replacement(&room, replaces, &received, report, changes);

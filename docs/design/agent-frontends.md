@@ -1,7 +1,7 @@
 # Agent front ends: one plaintext store, JMAP and IRC over it
 
 Design note for epic mimid-1vul. Written 2026-11-19 against main at
-e4e91cd. Status: steps 1 to 3 of §3 are built (2026-11-20). Each step
+e4e91cd. Status: steps 1 to 4 of §3 are built (2026-11-20). Each step
 notes the changes it made to this design.
 
 Mark decided on 2026-11-19 that the IRC front end is native. It is built
@@ -123,8 +123,8 @@ ends never call `Agent::receive`.
 ### Data model
 
 All keys are store keys: ULIDs minted by the store, the same form as
-`MemoryBackend`'s ids, so they are valid RFC 8620 Ids. A record migrated
-from chat.json keeps its JMAP id as its key.
+`MemoryBackend`'s ids, so they are valid RFC 8620 Ids. A record a JMAP
+write made keeps its JMAP id as its key.
 
 - **Room**: key; room URI; `room_name`; status (active, leaving, left);
   participants with role index; role names; `direct` (local flag, see
@@ -174,13 +174,9 @@ replay would restore it.
 
 ### Storage
 
-Keep one 0600 JSON file, rewritten whole through a temporary file and a
-rename, with the same write order as now: store, save, then acknowledge
-(sync.rs:187-192). The file becomes format 2 of `chat.json`, in neutral
-records. The store reads format 1 (today's file) once, converts it, keeps
-every JMAP id as the record key, and writes format 2. It renames the old
-file to `chat.json.v1` before the first write, so a failed conversion
-loses nothing.
+Superseded by §7.10 (step 4): the store is an SQLite database, not a JSON
+file, and nothing reads the old `chat.json`. The write order stays: store,
+save, then acknowledge (sync.rs:187-192).
 
 The blob store moves unchanged (blobs.rs). The referenced set comes from
 the store's attachment records, not from JMAP JSON.
@@ -412,14 +408,68 @@ step runs the full check list in AGENTS.md before its commit.
    - The unit test `kept_ids_read_back_and_damaged_ones_are_ignored`
      went with the code it tested: the MIMI IDs are read by step 2's
      reader, which refuses damaged ones as malformed.
-4. **The store owns the file.** Switch to format 2, with the one-time
-   format-1 conversion and the `chat.json.v1` copy. JMAP-only properties
-   go into `ext["jmap"]`. The referenced blob set comes from the store.
-   Add the tombstone and a regression test for a replayed message after a
-   local delete (it fails before the change). Oracle:
+4. **The store owns the file.** As rewritten by §7.10: the records live
+   in the store's SQLite database, which starts empty; there is no
+   conversion from `chat.json`. JMAP-only properties go into
+   `ext["jmap"]`. The referenced blob set comes from the store. Add the
+   tombstone and a regression test for a replayed message after a local
+   delete (it fails before the change). Oracle:
    `a_restart_keeps_chats_and_messages`, both `blob_quota.rs` tests, both
-   `report_abuse.rs` tests (franks across a restart), step 2's fixture
-   test.
+   `report_abuse.rs` tests (franks across a restart).
+
+   Built (2026-11-20):
+
+   - `mimid-agent-store::db`: one table per record type (`meta`, `rooms`,
+     `people`, `messages`, `bans`, `read_positions`,
+     `pending_attachments`, `tombstones`), each row a record by key, the
+     record as JSON in `record`, and beside it the column naming its room
+     (or URI, or user). The store holds every record in memory with its
+     own lookups, so the database is read whole at start and written by
+     key: no index beyond the primary keys. `PRAGMA user_version` is the
+     schema version (1); another version is refused. The file is created
+     0600 before SQLite opens it. rusqlite =0.37.0, the version
+     openmls_sqlite_storage brings for mimi-mls.
+   - A save encodes every record, compares it with what was last read or
+     written, and writes only the rows that differ, in one transaction.
+     `Store::save` is called by the front end's `Commit::commit` after it
+     has shown the changes, as before; the JMAP front end's own writes
+     save the same way.
+   - The JSON format 2, its fixture, the format-1 reader, its fixtures
+     and their tests are gone. `AgentChat::persisted_at(path)` opens the
+     database at `path`; the daemon passes `<state_dir>/chat.sqlite`.
+   - `ext["jmap"]` is rebuilt from the backend's objects at each save,
+     not kept current: the backend changes JMAP-only properties itself
+     (`unreadCount`, `members`), and the save is the one place that sees
+     every object. It holds every property of the object that the
+     record's rendering as JMAP (`mimid-agent-jmap`'s `render`) does not
+     give exactly, null for one the object lacks. At start the backend is
+     seeded from the records: rendering plus `ext["jmap"]` gives each
+     object back as it was. This keeps date texts too (`.000Z`, a
+     client's six digits), so a restart changes no date a client reads;
+     within one run dates never changed, since the backend keeps its own
+     objects. A record without `ext["jmap"]` has no JMAP object.
+   - The tombstone: `State::delete_message` (a JMAP Message destroy)
+     keeps a `Tombstone::Message {room, reference}` per version, and
+     `Store::sync` skips a received message or notice whose reference has
+     one. Tombstones are saved, and message tombstones are dropped after
+     each acknowledgement: `Agent::receive` returns every event not yet
+     acknowledged, so after an acknowledgement no event that stored a
+     deleted message comes again. `Tombstone::Room {key, uri}` exists in
+     the format for mimid-1vul.9 (§7.9); nothing makes one yet. A
+     notice destroyed by a client is not made again by the same event
+     either.
+   - `merge_object` and `forget_object` (`mimid-agent-store::merge`) stay
+     until step 5: they write the JMAP front end's own writes into the
+     records. They keep one rule of §7.7 and §7.8 at run time: a JMAP
+     object naming a ChatContact or Chat a client destroyed is written
+     with the user unknown (`Sender::Unknown`, `None`) or the Chat's id as
+     its room key, since crate-jmap keeps such objects.
+   - The records and the MLS state are in two databases, so they do not
+     commit together. openmls_sqlite_storage runs its statements on any
+     `Borrow<rusqlite::Connection>` without transactions of its own, so
+     one transaction is possible, but needs the agent to own one
+     connection, the journal to move from `state.json` into it, and new
+     APIs in mimi-mls and mimid-agent-core: bead mimid-1vul.10.
 5. **Outbound through the store.** Move room create, member and role
    changes, leave, send with attachments, edit, retraction, ban, unban,
    kick and report into `Store` methods. The JMAP hooks translate JMAP
@@ -755,7 +805,10 @@ These answer §6 and override the recommendations there and anything in
 
 Added on 2026-11-20:
 
-7. **A ChatContact that is gone.** When the format-1 reader meets a
+7. **A ChatContact that is gone.** Superseded by §7.10: there is no
+   format-1 reader; what remains is the run-time rule in §3 step 4.
+
+   When the format-1 reader meets a
    Message, a Chat member or a ChatBan naming a ChatContact that is not
    in the file (JMAP clients may destroy ChatContacts), it keeps the item
    with the user marked unknown and logs a warning, instead of refusing
@@ -763,8 +816,29 @@ Added on 2026-11-20:
    count, not one per item. In the records an unknown user is
    `Sender::Unknown`, or `None` as a participant, a banned user or a
    banner; the JMAP id the item named stays in its `ext["jmap"]`.
-8. **A Chat that is gone.** The same rule for Chats. crate-jmap's
+8. **A Chat that is gone.** Superseded by §7.10: there is no format-1
+   reader or format-2 file; what remains is the run-time rule in §3
+   step 4.
+
+   The same rule for Chats. crate-jmap's
    Chat/set destroy keeps the Chat's Messages and ChatBans, so the
    format-1 reader keeps a Message, ChatBan or ReadPosition naming a Chat
    not in the file, with its room marked unknown, and logs one warning per
    file with the count. Format 2 must keep them the same way (step 4).
+
+§7.9 is reserved for mimid-1vul.9 (deleting a Chat deletes its local
+records).
+
+10. **Store in SQLite, no migration from chat.json (Mark, 2026-11-20).**
+    The store's on-disk form is an SQLite database in the agent's state
+    directory (`chat.sqlite`, 0600), with a table per record type, a
+    schema version, and saves that write only what changed, in one
+    transaction. JSON rewrote the whole history on every save, could not
+    shrink, had no index, and could not share a transaction with the MLS
+    state. Nothing runs in production, so there are no old files: the
+    store starts from an empty database, and the agent neither reads nor
+    writes `chat.json`. There is no format-1 reader and no conversion; a
+    later schema change refuses an older database clearly rather than
+    converting it. The SQLite crate is the one mimi-mls already uses.
+    Whether the records can share `mls.sqlite` and one transaction with
+    the MLS state is bead mimid-1vul.10.

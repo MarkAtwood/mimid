@@ -203,6 +203,7 @@ pub mod edits;
 pub mod moderate;
 mod persist;
 mod project;
+mod render;
 pub mod report;
 pub mod retry;
 mod sync;

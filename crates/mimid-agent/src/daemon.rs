@@ -42,8 +42,9 @@ impl std::fmt::Debug for Daemon {
     }
 }
 
-/// The plaintext store's file name in the state directory.
-pub const CHAT_STORE_FILE: &str = "chat.json";
+/// The plaintext store's SQLite database in the state directory
+/// (mimid-agent-store's `db`).
+pub const CHAT_STORE_FILE: &str = "chat.sqlite";
 
 /// The blob store's directory in the state directory: attachments in
 /// plaintext.
@@ -80,7 +81,7 @@ pub enum StartError {
     /// The Session does not build (a crate-jmap type changed).
     #[error("building the Session")]
     Session(#[from] serde_json::Error),
-    /// The plaintext store (`<state_dir>/chat.json`) could not be read.
+    /// The plaintext store (`<state_dir>/chat.sqlite`) could not be read.
     #[error("opening the plaintext store")]
     Store(#[from] mimid_agent_jmap::PersistError),
     /// The blob store (`<state_dir>/blobs`) could not be opened.

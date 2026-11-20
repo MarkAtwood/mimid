@@ -11,6 +11,9 @@ description = "The plaintext layer of mimid-agent, shared by its front ends: blo
 [dependencies]
 mimid-agent-core = { path = "../mimid-agent-core" }
 mimi-content = { path = "../mimi-content" }
+# The store's database: the rusqlite openmls_sqlite_storage (mimi-mls's
+# MLS store) uses, so the workspace has one SQLite.
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
 serde.workspace = true
 # The store file, and the front ends' extensions in it.
 serde_json.workspace = true
@@ -26,5 +29,3 @@ ulid = "=3.0.0"
 [dev-dependencies]
 hex = "0.4.3"
 tempfile = "=3.23.0"
-# Captures the format-1 reader's warning in tests/chat_file.rs.
-tracing-subscriber.workspace = true

@@ -25,7 +25,7 @@ use tokio::sync::Mutex;
 use crate::convert::{sender_msg_id, utc_date};
 use mimid_agent_store::Store;
 use mimid_agent_store::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
-use mimid_agent_store::file::{forget_object, merge_object};
+use mimid_agent_store::merge::{forget_object, merge_object};
 
 pub use mimid_agent_store::InvitePolicy;
 pub use mimid_agent_store::sync::MAX_ATTACHMENTS_PER_MESSAGE;
@@ -104,8 +104,6 @@ pub struct AgentChat {
     /// The agent, the records and the blob store.
     pub(crate) store: Store,
     pub(crate) options: Options,
-    /// The plaintext store file ([`AgentChat::persisted_at`]).
-    pub(crate) store_path: Option<std::path::PathBuf>,
     /// One [`AgentChat::save`] at a time.
     pub(crate) save_lock: Mutex<()>,
 }
@@ -136,7 +134,6 @@ impl AgentChat {
             user: agent.user().to_owned(),
             store: Store::new(agent, options.invites.clone()),
             options,
-            store_path: None,
             save_lock: Mutex::new(()),
         }
     }
@@ -156,31 +153,40 @@ impl AgentChat {
         Ok(self)
     }
 
-    /// Every blob id a stored object names, for the blob store's quota
-    /// (decision mimid-1wgh.68): the value of any property named `blobId`
-    /// or ending in `BlobId`, at any depth, of every Chat, ChatBan,
-    /// ChatContact, Message and ReadPosition. A Message's attachments and
-    /// their thumbnails, its edit history and a Chat's avatar all count;
-    /// a destroyed Message is no longer stored and a retracted one has no
-    /// attachments, so theirs do not. Attachments waiting for another
-    /// fetch ([`crate::retry`]) name a URL, not a blob here, so they add
-    /// nothing; a blob a retry stores is named by its Message in the same
-    /// sync and is younger than [`crate::MIN_UNREFERENCED_AGE`] meanwhile.
+    /// Every blob id the store names, for the blob store's quota
+    /// (decision mimid-1wgh.68): each message's attachments
+    /// ([`Store::referenced_blobs`]), and the value of any property named
+    /// `blobId` or ending in `BlobId`, at any depth, of what the records
+    /// keep for JMAP alone (`ext["jmap"]`: an attachment's thumbnail, a
+    /// Chat's avatar). A destroyed Message is no longer stored and a
+    /// retracted one has no attachments, so theirs do not count.
+    /// Attachments waiting for another fetch ([`crate::retry`]) name a
+    /// URL, not a blob here, so they add nothing; a blob a retry stores is
+    /// named by its Message in the same sync and is younger than
+    /// [`crate::MIN_UNREFERENCED_AGE`] meanwhile.
     ///
     /// # Errors
     ///
-    /// The [`crate::PersistError`] of reading the objects.
+    /// None now; the [`crate::PersistError`] is kept for callers.
     pub async fn referenced_blobs(
         &self,
     ) -> Result<std::collections::BTreeSet<String>, crate::PersistError> {
-        let mut objects = self.all::<Message>().await?;
-        objects.extend(self.all::<Chat>().await?);
-        objects.extend(self.all::<ChatContact>().await?);
-        objects.extend(self.all::<ChatBan>().await?);
-        objects.extend(self.all::<jmap_chat_types::ReadPosition>().await?);
-        let mut ids = std::collections::BTreeSet::new();
-        for object in &objects {
-            collect_blob_ids(object, &mut ids);
+        let mut ids = self.store.referenced_blobs();
+        let state = self.store.state();
+        let jmap = crate::render::JMAP;
+        let exts = state
+            .people
+            .values()
+            .map(|r| &r.ext)
+            .chain(state.rooms.values().map(|r| &r.ext))
+            .chain(state.bans.values().map(|r| &r.ext))
+            .chain(state.messages.values().map(|r| &r.ext))
+            .chain(state.read_positions.values().map(|r| &r.ext))
+            .chain(std::iter::once(&state.ext));
+        for ext in exts {
+            if let Some(value) = ext.get(jmap) {
+                collect_blob_ids(value, &mut ids);
+            }
         }
         Ok(ids)
     }

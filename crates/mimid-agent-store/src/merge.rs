@@ -1,96 +1,44 @@
-//! The format-1 reader: `chat.json` as mimid-agent-jmap's `persist`
-//! writes it, converted to records.
+//! The JMAP front end's own writes, written into the records until they
+//! go through the store (step 5 of docs/design/agent-frontends.md §3):
+//! [`merge_object`] takes a JMAP object as the front end holds it after a
+//! write and writes it into its record, and [`forget_object`] removes the
+//! record of an object the front end destroyed.
 //!
-//! Format 1 is `{format: 1, account, objects, pending_attachments?,
-//! franks?, mimi_ids?}`, where `objects` maps each JMAP type name
-//! (ChatContact, Chat, ChatBan, Message, ReadPosition) to its objects as
-//! JSON, and the side tables are keyed by Message id. The conversion:
-//!
-//! - every JMAP id becomes the record's key, and the JMAP accountId goes
-//!   into the state's `ext["jmap"]["account"]`;
-//! - a JMAP id naming the account (a member, a sender, a banner) becomes
-//!   the user's own URI, and one naming a ChatContact becomes that
-//!   contact's `identity`;
-//! - every property of an object that its record does not hold goes into
-//!   the record's `ext["jmap"]` unchanged ([`JMAP`]); Chat `members` goes
-//!   there as well as into the participants, since its roles and times
-//!   are JMAP's;
-//! - a Message's acceptance time is its `senderMsgId`'s ULID time, and
-//!   messages get sequence numbers in (acceptance time, key) order;
-//! - a Message sent by the account with no kept MIMI message ID whose text
-//!   begins as a notice of the agent's does ([`crate::notice`]) is a
-//!   notice, sent by [`Sender::Agent`], with no [`NoticeKind`]: format 1
-//!   kept only its text.
+//! The conversion of an object: its JMAP id is the record's key; a JMAP
+//! id naming the account (a member, a sender, a banner) is the user's own
+//! URI, and one naming a ChatContact is that contact's `identity`; every
+//! property the record does not hold goes into the record's `ext["jmap"]`
+//! unchanged ([`JMAP`]); a Message's acceptance time is its
+//! `senderMsgId`'s ULID time.
 //!
 //! # Limitations
 //!
-//! - A Message, Chat member or ChatBan naming a ChatContact that is not
-//!   in the file (a JMAP client may destroy ChatContacts) is kept, with
-//!   that user unknown: [`Sender::Unknown`], or `None` for a participant,
-//!   a banned user or a banner. The JMAP id it named stays in the
-//!   record's `ext["jmap"]` under the same property. One warning per
-//!   file gives the count (Mark's decision, docs/design/agent-frontends.md
-//!   §7.7).
-//! - A Message, ChatBan or ReadPosition naming a Chat that is not in the
-//!   file (a JMAP client may destroy a Chat, and crate-jmap keeps its
-//!   Messages and ChatBans) is kept, its room key naming a room that is
-//!   not in the state. One warning per file gives the count. This extends
-//!   Mark's decision on ChatContacts (§7.7) to Chats; see §3 step 3.
-//! - A notice read from format 1 has no kind, only its text.
-//! - A reply to a message not stored was not kept by format 1, so
-//!   [`Reply::Reference`] never comes from it.
-//!
-//! [`NoticeKind`]: crate::record::NoticeKind
+//! - An object naming a ChatContact the records do not hold (a client may
+//!   destroy a ChatContact, and Chat members, ChatBans and Messages keep
+//!   naming it) gives that user as unknown: [`Sender::Unknown`], or `None`
+//!   for a participant, a banned user or a banner, with the JMAP id kept
+//!   in `ext["jmap"]` under the same property. An object naming a Chat the
+//!   records do not hold (a client may destroy a Chat, and crate-jmap
+//!   keeps its Messages and ChatBans) keeps the Chat's id as its room key.
+//!   Both happen in a running agent, so the records allow them.
+//! - Temporary: step 5 replaces it with `Store` methods.
 
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::FileError;
 use crate::content::BodyType;
 use crate::convert::parse_utc_date;
+use crate::db::FileError;
 use crate::record::{
-    Attachment, Ban, Deletion, Ext, Message, Octets, Participant, Person, ReadPosition, Reply,
-    Revision, Room, RoomStatus, Sender,
+    Attachment, Ban, Deletion, Ext, Message, Participant, Person, ReadPosition, Reply, Revision,
+    Room, RoomStatus, Sender,
 };
-use crate::report::KeptFrank;
-use crate::retry::PendingAttachment;
 use crate::state::{State, accepted_at_of};
 
-/// The front-end name format-1 properties are kept under in `ext`.
+/// The front-end name JMAP properties are kept under in `ext`.
 pub const JMAP: &str = "jmap";
-
-/// The beginnings of the agent's notice texts ([`crate::notice`]).
-const NOTICE_PREFIXES: [&str; 2] = [
-    "Security notice from your mimid agent",
-    "Notice from your mimid agent:",
-];
-
-/// Format 1 as written.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Format1 {
-    format: u32,
-    account: String,
-    objects: BTreeMap<String, Vec<Map<String, Value>>>,
-    #[serde(default, rename = "pending_attachments")]
-    pending_attachments: Vec<PendingAttachment>,
-    #[serde(default)]
-    franks: BTreeMap<String, KeptFrank>,
-    #[serde(default, rename = "mimi_ids")]
-    mimi_ids: BTreeMap<String, MimiIds>,
-}
-
-/// A Message's MIMI message IDs in format 1.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MimiIds {
-    #[serde(default)]
-    first: Option<String>,
-    #[serde(default)]
-    aliases: Vec<String>,
-}
 
 fn malformed(why: impl Into<String>) -> FileError {
     FileError::Malformed(why.into())
@@ -182,168 +130,21 @@ fn body_type(object: &Object, text: Option<&str>) -> Result<BodyType, FileError>
     }
 }
 
-/// The state in format-1 `bytes`, which must be `user`'s. See the module
-/// documentation for the conversion.
-///
-/// # Errors
-///
-/// [`FileError::Malformed`] if `bytes` is not format 1, holds an unknown
-/// type, an object without an id, a property of the wrong type, a date
-/// that is not a UTCDate, a `senderMsgId` that is not a ULID, or malformed
-/// side tables. A reference to a ChatContact or a Chat not in the file is
-/// kept (see the module documentation).
-pub fn read_format_1(bytes: &[u8], user: &str) -> Result<State, FileError> {
-    let mut file: Format1 = serde_json::from_slice(bytes).map_err(|e| malformed(e.to_string()))?;
-    if file.format != 1 {
-        return Err(malformed(format!("format {}", file.format)));
-    }
-    if let Some(name) = file.objects.keys().find(|name| {
-        !matches!(
-            name.as_str(),
-            "ChatContact" | "Chat" | "ChatBan" | "Message" | "ReadPosition"
-        )
-    }) {
-        return Err(malformed(format!("unknown type {name}")));
-    }
-    let mut take = |name: &str| file.objects.remove(name).unwrap_or_default();
-    let (contacts, chats, bans, messages, positions) = (
-        take("ChatContact"),
-        take("Chat"),
-        take("ChatBan"),
-        take("Message"),
-        take("ReadPosition"),
-    );
-    let mut state = State::new(user);
-    state.ext.insert(
-        JMAP.to_owned(),
-        serde_json::json!({ "account": file.account }),
-    );
-
-    for value in contacts {
-        let person = person(Object::new("ChatContact", value)?)?;
-        insert(&mut state.people, person.key.clone(), person, "ChatContact")?;
-    }
-    let users = Users {
-        account: &file.account,
-        user,
-        people: &state.people,
-        unknown: std::cell::Cell::new(0),
-        unknown_chats: std::cell::Cell::new(0),
-    };
-    let mut rooms = BTreeMap::new();
-    for value in chats {
-        let room = room(Object::new("Chat", value)?, &users)?;
-        insert(&mut rooms, room.key.clone(), room, "Chat")?;
-    }
-    let mut ban_records = BTreeMap::new();
-    for value in bans {
-        let ban = ban(Object::new("ChatBan", value)?, &users, &rooms)?;
-        insert(&mut ban_records, ban.key.clone(), ban, "ChatBan")?;
-    }
-    let mut message_records = BTreeMap::new();
-    for value in messages {
-        let object = Object::new("Message", value)?;
-        let ids = file.mimi_ids.remove(&object.id);
-        let frank = file.franks.remove(&object.id);
-        let message = message(object, &users, &rooms, ids, frank, true)?;
-        insert(
-            &mut message_records,
-            message.key.clone(),
-            message,
-            "Message",
-        )?;
-    }
-    let mut position_records = BTreeMap::new();
-    for value in positions {
-        let position = read_position(Object::new("ReadPosition", value)?, &users, &rooms)?;
-        insert(
-            &mut position_records,
-            position.key.clone(),
-            position,
-            "ReadPosition",
-        )?;
-    }
-
-    let unknown = users.unknown.get();
-    if unknown > 0 {
-        tracing::warn!(
-            name: "chat_v1_unknown_contacts",
-            unknown,
-            "format-1 store: Messages, Chat members or ChatBans name ChatContacts \
-             that are not in the file; they are kept with the user unknown"
-        );
-    }
-
-    let unknown_chats = users.unknown_chats.get();
-    if unknown_chats > 0 {
-        tracing::warn!(
-            name: "chat_v1_unknown_chats",
-            unknown = unknown_chats,
-            "format-1 store: Messages, ChatBans or ReadPositions name Chats that are \
-             not in the file; they are kept, naming a room that is not there"
-        );
-    }
-
-    // Sequence numbers in history order.
-    let mut order: Vec<(u64, String)> = message_records
-        .values()
-        .map(|m: &Message| (m.accepted_at, m.key.clone()))
-        .collect();
-    order.sort();
-    for (seq, (_, key)) in (1u64..).zip(&order) {
-        if let Some(message) = message_records.get_mut(key) {
-            message.seq = seq;
-        }
-    }
-    state.next_seq = u64::try_from(order.len())
-        .unwrap_or(u64::MAX)
-        .saturating_add(1);
-    state.rooms = rooms;
-    state.bans = ban_records;
-    state.messages = message_records;
-    state.read_positions = position_records;
-    state.pending_attachments = file.pending_attachments;
-    state.reindex();
-    Ok(state)
-}
-
-fn insert<R>(
-    map: &mut BTreeMap<String, R>,
-    key: String,
-    record: R,
-    what: &str,
-) -> Result<(), FileError> {
-    if map.contains_key(&key) {
-        return Err(malformed(format!("{what} {key} twice")));
-    }
-    map.insert(key, record);
-    Ok(())
-}
-
 /// Resolves the JMAP ids that name users.
 struct Users<'a> {
     account: &'a str,
     user: &'a str,
     people: &'a BTreeMap<String, Person>,
-    /// How many items named a ChatContact not in the file.
-    unknown: std::cell::Cell<usize>,
-    /// How many items named a Chat not in the file.
-    unknown_chats: std::cell::Cell<usize>,
 }
 
 impl Users<'_> {
-    /// The user URI JMAP id `id` names, or `None` for a ChatContact that
-    /// is not in the file.
+    /// The user URI JMAP id `id` names, or `None` for a ChatContact the
+    /// records do not hold.
     fn uri(&self, id: &str) -> Option<String> {
         if id == self.account {
             return Some(self.user.to_owned());
         }
         self.people.get(id).map(|p| p.user.clone())
-    }
-
-    /// Counts one more item naming an unknown user.
-    fn count_unknown(&self) {
-        self.unknown.set(self.unknown.get() + 1);
     }
 
     /// The user URI JMAP id `id`, taken from `property` of `object`,
@@ -383,11 +184,10 @@ fn room(mut o: Object, users: &Users<'_>) -> Result<Room, FileError> {
             .get("id")
             .and_then(Value::as_str)
             .ok_or_else(|| o.bad("members", "has a member without an id"))?;
-        let user = users.uri(id);
-        if user.is_none() {
-            users.count_unknown();
-        }
-        participants.push(Participant { user, role: None });
+        participants.push(Participant {
+            user: users.uri(id),
+            role: None,
+        });
     }
     Ok(Room {
         key: o.id.clone(),
@@ -400,25 +200,12 @@ fn room(mut o: Object, users: &Users<'_>) -> Result<Room, FileError> {
     })
 }
 
-/// The room key of Chat id `chat`: the id itself, also when the Chat is
-/// not in the file (counted).
-fn room_key(users: &Users<'_>, rooms: &BTreeMap<String, Room>, chat: String) -> String {
-    if !rooms.contains_key(&chat) {
-        users.unknown_chats.set(users.unknown_chats.get() + 1);
-    }
-    chat
-}
-
-fn ban(mut o: Object, users: &Users<'_>, rooms: &BTreeMap<String, Room>) -> Result<Ban, FileError> {
-    let chat = o.required("chatId")?;
-    let room = room_key(users, rooms, chat);
+fn ban(mut o: Object, users: &Users<'_>) -> Result<Ban, FileError> {
+    let room = o.required("chatId")?;
     let user = o.required("userId")?;
     let user = users.take(&mut o, "userId", user);
     let banned_by = o.required("bannedBy")?;
     let banned_by = users.take(&mut o, "bannedBy", banned_by);
-    if user.is_none() || banned_by.is_none() {
-        users.count_unknown();
-    }
     Ok(Ban {
         key: o.id.clone(),
         room,
@@ -472,16 +259,8 @@ fn revision(o: &Object, value: Value) -> Result<Revision, FileError> {
     })
 }
 
-fn message(
-    mut o: Object,
-    users: &Users<'_>,
-    rooms: &BTreeMap<String, Room>,
-    ids: Option<MimiIds>,
-    kept_frank: Option<KeptFrank>,
-    detect_notice: bool,
-) -> Result<Message, FileError> {
-    let chat = o.required("chatId")?;
-    let room = room_key(users, rooms, chat);
+fn message(mut o: Object, users: &Users<'_>) -> Result<Message, FileError> {
+    let room = o.required("chatId")?;
     let sender_msg_id = o.required("senderMsgId")?;
     let accepted_at =
         accepted_at_of(&sender_msg_id).ok_or_else(|| o.bad("senderMsgId", "is not a ULID"))?;
@@ -489,39 +268,9 @@ fn message(
     let body = o.string("body")?.unwrap_or_default();
     let kind = o.string("bodyType")?;
     let body_type = body_type(&o, kind.as_deref())?;
-    let (mimi_id, aliases) = match ids {
-        None => (None, Vec::new()),
-        Some(ids) => {
-            let first = match ids.first {
-                None => None,
-                Some(hex) => Some(
-                    Octets::from_hex(&hex)
-                        .ok_or_else(|| o.bad("mimiIds.first", "is not 32 octets of hex"))?,
-                ),
-            };
-            let aliases = ids
-                .aliases
-                .iter()
-                .map(|a| Octets::from_hex(a))
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| o.bad("mimiIds.aliases", "has one that is not 10 octets of hex"))?;
-            (first, aliases)
-        }
-    };
-    let sender = if detect_notice
-        && sender_id == users.account
-        && mimi_id.is_none()
-        && NOTICE_PREFIXES.iter().any(|p| body.starts_with(p))
-    {
-        Sender::Agent
-    } else {
-        match users.take(&mut o, "senderId", sender_id) {
-            Some(uri) => Sender::User(uri),
-            None => {
-                users.count_unknown();
-                Sender::Unknown
-            }
-        }
+    let sender = match users.take(&mut o, "senderId", sender_id) {
+        Some(uri) => Sender::User(uri),
+        None => Sender::Unknown,
     };
     let in_reply_to = o.string("replyTo")?.map(Reply::Message);
     let topic_id = o.string("topicId")?;
@@ -548,8 +297,8 @@ fn message(
         room,
         seq: 0,
         sender,
-        mimi_id,
-        aliases,
+        mimi_id: None,
+        aliases: Vec::new(),
         accepted_at,
         sender_msg_id,
         body,
@@ -560,19 +309,14 @@ fn message(
         edit_history,
         edited_at,
         deleted,
-        kept_frank,
+        kept_frank: None,
         notice: None,
         ext: o.ext(),
     })
 }
 
-fn read_position(
-    mut o: Object,
-    users: &Users<'_>,
-    rooms: &BTreeMap<String, Room>,
-) -> Result<ReadPosition, FileError> {
-    let chat = o.required("chatId")?;
-    let room = room_key(users, rooms, chat);
+fn read_position(mut o: Object) -> Result<ReadPosition, FileError> {
+    let room = o.required("chatId")?;
     Ok(ReadPosition {
         key: o.id.clone(),
         room,
@@ -584,9 +328,8 @@ fn read_position(
 
 /// Writes one JMAP object of type `type_name`, as a JMAP front end holds
 /// it after a write of its own, into `state`; `account` is its accountId.
-/// A new key gets a record made from the object as [`read_format_1`]
-/// makes it (a new message also gets the next sequence number, and is
-/// never taken for a notice). For a record that exists, only what the
+/// A new key gets a record made from the object (see the module
+/// documentation; a new message also gets the next sequence number). For a record that exists, only what the
 /// front end may change is taken, and what the store owns is kept:
 ///
 /// - Person: the display name;
@@ -604,8 +347,9 @@ fn read_position(
 ///
 /// # Errors
 ///
-/// [`FileError::Malformed`] as [`read_format_1`] says for one object, or
-/// for a type that is not one of the five.
+/// [`FileError::Malformed`] for an object without an id, with a property
+/// of the wrong type, a date that is not a UTCDate or a `senderMsgId`
+/// that is not a ULID, or of a type that is not one of the five.
 pub fn merge_object(
     state: &mut State,
     account: &str,
@@ -634,11 +378,7 @@ pub fn merge_object(
             }
         }
         "ChatBan" => {
-            let new = ban(
-                Object::new("ChatBan", object)?,
-                &users(&state.people),
-                &state.rooms,
-            )?;
+            let new = ban(Object::new("ChatBan", object)?, &users(&state.people))?;
             match state.bans.get_mut(&new.key) {
                 Some(old) => {
                     old.reason = new.reason;
@@ -651,14 +391,7 @@ pub fn merge_object(
             }
         }
         "Message" => {
-            let mut new = message(
-                Object::new("Message", object)?,
-                &users(&state.people),
-                &state.rooms,
-                None,
-                None,
-                false,
-            )?;
+            let mut new = message(Object::new("Message", object)?, &users(&state.people))?;
             match state.messages.get_mut(&new.key) {
                 Some(old) => {
                     old.ext = new.ext;
@@ -680,11 +413,7 @@ pub fn merge_object(
             }
         }
         "ReadPosition" => {
-            let new = read_position(
-                Object::new("ReadPosition", object)?,
-                &users(&state.people),
-                &state.rooms,
-            )?;
+            let new = read_position(Object::new("ReadPosition", object)?)?;
             state.read_positions.insert(new.key.clone(), new);
         }
         other => return Err(malformed(format!("unknown type {other}"))),
@@ -695,7 +424,8 @@ pub fn merge_object(
 /// Removes the record of the JMAP object `id` of type `type_name`, which
 /// the JMAP front end destroyed: for a Chat, its room record and its read
 /// positions (crate-jmap destroys a Chat's ReadPositions with it), but
-/// not its messages or bans, which crate-jmap keeps.
+/// not its messages or bans, which crate-jmap keeps; for a Message, with
+/// a tombstone ([`State::delete_message`]).
 pub fn forget_object(state: &mut State, type_name: &str, id: &str) {
     match type_name {
         "ChatContact" => {
@@ -709,7 +439,7 @@ pub fn forget_object(state: &mut State, type_name: &str, id: &str) {
             state.bans.remove(id);
         }
         "Message" => {
-            state.messages.remove(id);
+            state.delete_message(id);
         }
         "ReadPosition" => {
             state.read_positions.remove(id);
@@ -729,7 +459,5 @@ fn users_of<'a>(
         account,
         user,
         people,
-        unknown: std::cell::Cell::new(0),
-        unknown_chats: std::cell::Cell::new(0),
     }
 }

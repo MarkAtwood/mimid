@@ -6,10 +6,12 @@
 //! - [`State::reindex`] walks every record; the `insert_*` methods keep
 //!   the indexes without it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::convert::MessageRef;
-use crate::record::{Ban, Ext, Invite, Key, Message, Person, ReadPosition, Room};
+use crate::record::{
+    Ban, Ext, Invite, Key, Message, Octets, Person, ReadPosition, Room, Tombstone,
+};
 use crate::retry::PendingAttachment;
 
 /// Every record of one user's store.
@@ -34,6 +36,10 @@ pub struct State {
     pub pending_attachments: Vec<PendingAttachment>,
     /// The next message sequence number.
     pub next_seq: u64,
+    /// What was deleted here: the versions of messages deleted since the
+    /// agent's delivery was last acknowledged ([`State::delete_message`]),
+    /// and rooms.
+    pub tombstones: BTreeSet<Tombstone>,
     /// Pending invites, read from the agent; not saved.
     pub invites: Vec<Invite>,
     /// The indexes over the records.
@@ -126,6 +132,46 @@ impl State {
             .message_of_ref
             .insert((message.room.clone(), alias), key.to_owned());
         true
+    }
+
+    /// Deletes message `key` here (a front end's local delete) and keeps
+    /// a [`Tombstone`] for its first version and each alias, so that the
+    /// journal delivering it again, after a crash or a failed save, does
+    /// not store it again ([`State::is_deleted`]). Returns the message, or
+    /// `None` if there is none.
+    pub fn delete_message(&mut self, key: &str) -> Option<Message> {
+        let message = self.messages.remove(key)?;
+        let references = reference_of(&message.sender_msg_id)
+            .into_iter()
+            .chain(message.aliases.iter().map(|alias| alias.0));
+        for reference in references {
+            self.indexes
+                .message_of_ref
+                .remove(&(message.room.clone(), reference));
+            self.tombstones.insert(Tombstone::Message {
+                room: message.room.clone(),
+                reference: Octets(reference),
+            });
+        }
+        Some(message)
+    }
+
+    /// Whether the message in room `room` that `reference` names was
+    /// deleted here since the last acknowledgement.
+    #[must_use]
+    pub fn is_deleted(&self, room: &str, reference: &MessageRef) -> bool {
+        self.tombstones.contains(&Tombstone::Message {
+            room: room.to_owned(),
+            reference: Octets(*reference),
+        })
+    }
+
+    /// Forgets the tombstones of messages: the agent's delivery has been
+    /// acknowledged, so no event that stored one of them comes again.
+    /// Room tombstones stay.
+    pub fn clear_message_tombstones(&mut self) {
+        self.tombstones
+            .retain(|t| !matches!(t, Tombstone::Message { .. }));
     }
 
     /// The next message sequence number, taken.

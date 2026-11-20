@@ -172,7 +172,7 @@ fn body_type_json(body_type: mimid_agent_store::content::BodyType) -> Value {
 
 /// The content properties ([`MESSAGE_CONTENT`]) of `message` as JMAP
 /// shows them: a retraction as [`retraction_patch`] makes it.
-fn message_content(message: &record::Message) -> Map<String, Value> {
+pub(crate) fn message_content(message: &record::Message) -> Map<String, Value> {
     let date = |ms: Option<u64>| ms.map_or(Value::Null, |ms| json!(utc_date(ms)));
     let mut fields = Map::new();
     fields.insert("body".to_owned(), json!(message.body));

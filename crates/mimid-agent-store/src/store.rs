@@ -1,19 +1,23 @@
-//! [`Store`]: the agent, its records and its blob store.
+//! [`Store`]: the agent, its records, their file and the blob store.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use mimid_agent_core::Agent;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::blobs::BlobStore;
+use crate::db::{Database, FileError};
 use crate::record::Key;
 use crate::state::State;
 use crate::sync::InvitePolicy;
 
 /// One user's plaintext store: the agent it consumes, the records of what
-/// the agent received ([`State`]), and the blob store of attachment
-/// content. [`Store::sync`] is the agent's only journal consumer.
+/// the agent received ([`State`]), the database they are kept in
+/// ([`Store::open_database`], [`crate::db`]), and the blob store of
+/// attachment content. [`Store::sync`] is the agent's only journal
+/// consumer.
 ///
 /// Lock order: the agent lock first, then the state lock. The state lock
 /// is a `std::sync::Mutex`, never held across an await
@@ -28,6 +32,9 @@ pub struct Store {
     /// its leaves; a change of any sets them again.
     pub(crate) did_epochs: Mutex<BTreeMap<String, u64>>,
     keys: Mutex<ulid::Generator>,
+    /// The database, once opened; locked through each save, so saves are
+    /// one at a time.
+    file: Mutex<Option<Database>>,
 }
 
 impl std::fmt::Debug for Store {
@@ -51,7 +58,66 @@ impl Store {
             blobs: None,
             did_epochs: Mutex::new(BTreeMap::new()),
             keys: Mutex::new(ulid::Generator::new()),
+            file: Mutex::new(None),
         }
+    }
+
+    /// Keeps the records in the SQLite database `path` from now on
+    /// ([`crate::db`]), first reading them from it; a new database starts
+    /// empty. The store must be this user's. Without a database the
+    /// records live only in memory.
+    ///
+    /// # Errors
+    ///
+    /// The [`FileError`] of [`Database::open`] and [`Database::load`]. The
+    /// database is then not used, and nothing is written.
+    pub fn open_database(&mut self, path: impl AsRef<Path>) -> Result<(), FileError> {
+        let mut database = Database::open(path.as_ref())?;
+        if let Some(state) = database.load(&self.user)? {
+            self.restore(state);
+        }
+        *self.file.get_mut().unwrap_or_else(PoisonError::into_inner) = Some(database);
+        Ok(())
+    }
+
+    /// Whether the records are kept in a database.
+    #[must_use]
+    pub fn has_database(&self) -> bool {
+        self.file
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+
+    /// Writes what changed in the records to the database, if there is
+    /// one, in one transaction ([`Database::save`]). One save at a time;
+    /// the records are locked only while they are copied.
+    ///
+    /// # Errors
+    ///
+    /// The [`FileError`] of [`Database::save`]; nothing is then written.
+    pub fn save(&self) -> Result<(), FileError> {
+        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(file) = file.as_mut() else {
+            return Ok(());
+        };
+        let state = self.state().clone();
+        file.save(&state)?;
+        Ok(())
+    }
+
+    /// Every blob id a message's attachments name: the referenced blobs
+    /// of the blob store's quota (decision mimid-1wgh.68). A deleted
+    /// message names none, nor does a retracted one, whose attachments
+    /// are emptied. Attachments waiting for a retry name a URL, not a
+    /// blob. A front end adds what its own `ext` names.
+    #[must_use]
+    pub fn referenced_blobs(&self) -> BTreeSet<String> {
+        self.state()
+            .messages
+            .values()
+            .flat_map(|m| m.attachments.iter().map(|a| a.blob_id.clone()))
+            .collect()
     }
 
     /// Keeps received attachments in `blobs`. Without a blob store they
@@ -62,7 +128,7 @@ impl Store {
         self
     }
 
-    /// Replaces the records with `state`, read from a store file. Its
+    /// Replaces the records with `state`, read from a database. Its
     /// user should be this store's.
     pub fn restore(&self, state: State) {
         *self.state() = state;

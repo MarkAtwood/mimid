@@ -16,15 +16,14 @@
 //! journal consumer ([`mod@sync`]): it writes what the agent received into
 //! the records and hands each round's [`Change`]s to the front end that
 //! called it ([`Commit`]) before acknowledging. The records are kept in
-//! one file ([`mod@file`]), read in the format mimid-agent-jmap writes
-//! (format 1) or in the store's own (format 2).
+//! an SQLite database ([`db`], [`Store::open_database`]).
 //!
 //! # Limitations
 //!
-//! - This is step 3 of the migration in docs/design/agent-frontends.md §3:
-//!   inbound goes through the store, while the JMAP front end still sends
-//!   for the user itself and writes its own changes into the records
-//!   ([`file::merge_object`]), and still saves the file in format 1.
+//! - This is step 4 of the migration in docs/design/agent-frontends.md §3:
+//!   inbound goes through the store and the store owns its file, while the
+//!   JMAP front end still sends for the user itself and writes its own
+//!   changes into the records ([`merge::merge_object`]).
 //! - See each module for its own limits.
 
 #![forbid(unsafe_code)]
@@ -33,7 +32,8 @@ pub mod blobs;
 mod change;
 pub mod content;
 pub mod convert;
-pub mod file;
+pub mod db;
+pub mod merge;
 pub mod notice;
 pub mod record;
 pub mod report;
@@ -43,7 +43,7 @@ mod store;
 pub mod sync;
 
 pub use change::Change;
-pub use file::FileError;
+pub use db::FileError;
 pub use state::{State, accepted_at_of, reference_of};
 pub use store::Store;
 pub use sync::{Commit, InvitePolicy, SyncError, SyncReport};

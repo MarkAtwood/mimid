@@ -3,8 +3,8 @@
 //!
 //! Every record is named by a store key ([`Key`]): a ULID minted by the
 //! store, the same form as crate-jmap's `MemoryBackend` ids, so a key is
-//! a valid RFC 8620 Id. A record read from a format-1 file keeps its JMAP
-//! id as its key. Users are named by their MIMI user URI everywhere,
+//! a valid RFC 8620 Id. A record a JMAP write made keeps the JMAP id
+//! as its key ([`crate::merge`]). Users are named by their MIMI user URI everywhere,
 //! never by a key, so a record never needs another to say who it means.
 //!
 //! Room, Message, Person, Ban and ReadPosition records carry an
@@ -13,14 +13,18 @@
 //!
 //! # Limitations
 //!
-//! - Times are milliseconds since the UNIX epoch; a finer time read from
-//!   a format-1 file is cut to the millisecond.
-//! - A room's participants read from a format-1 file have no role index
-//!   ([`Participant::role`] is `None`): format 1 kept only JMAP's
-//!   "admin" or "member". The first sync sets them from the room.
-//! - A user named in a format-1 file by a ChatContact that is not in it
-//!   is unknown ([`Sender::Unknown`], or `None` as a participant, a banned
-//!   user or a banner): format 1 kept no other record of who it was.
+//! - Times are milliseconds since the UNIX epoch; a finer time in a JMAP
+//!   object is cut to the millisecond (the JMAP front end keeps its text,
+//!   in `ext["jmap"]`).
+//! - A room a JMAP Chat/set create made has participants with no role
+//!   index ([`Participant::role`] is `None`) until the next sync sets
+//!   them from the room.
+//! - A user a JMAP write names by a ChatContact the records do not hold
+//!   (a client destroyed it) is unknown ([`Sender::Unknown`], or `None` as
+//!   a participant, a banned user or a banner).
+//! - A message, ban or read position may name a room the store does not
+//!   hold: one whose JMAP Chat a client destroyed, which keeps the Chat's
+//!   Messages and ChatBans.
 
 use std::collections::BTreeMap;
 
@@ -95,12 +99,12 @@ pub enum RoomStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Participant {
-    /// The user URI, or `None` when not known (a format-1 member whose
-    /// ChatContact is gone).
+    /// The user URI, or `None` when not known (a Chat member whose
+    /// ChatContact a client destroyed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
-    /// The room-policy-04 role index, or `None` when not known (a room
-    /// read from format 1).
+    /// The room-policy-04 role index, or `None` until a sync sets it (a
+    /// room a JMAP Chat/set create made).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<u32>,
 }
@@ -139,8 +143,8 @@ pub enum Sender {
     User(String),
     /// The agent itself: a notice ([`Message::notice`]).
     Agent,
-    /// A user who is not known: read from a format-1 file whose
-    /// ChatContact for the sender is gone.
+    /// A user who is not known: a JMAP write named a ChatContact a client
+    /// destroyed.
     Unknown,
 }
 
@@ -273,8 +277,7 @@ pub struct Message {
     /// What a report of it needs, for a received message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_frank: Option<KeptFrank>,
-    /// What a notice says, when known; a notice read from format 1 has
-    /// only its text.
+    /// What a notice says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<NoticeKind>,
     /// Front-end extensions.
@@ -314,13 +317,13 @@ pub struct Ban {
     pub key: Key,
     /// The room's key.
     pub room: Key,
-    /// The banned user's URI, or `None` when not known (a format-1 ban
-    /// whose ChatContact is gone).
+    /// The banned user's URI, or `None` when not known (a ChatBan naming
+    /// a ChatContact a client destroyed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
     /// The URI of the user who banned them (the user's own for a ban made
     /// here or by an unknown committer), or `None` when not known (a
-    /// format-1 ban whose ChatContact for the banner is gone).
+    /// ChatBan naming a ChatContact a client destroyed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub banned_by: Option<String>,
     /// The reason, local.
@@ -351,6 +354,33 @@ pub struct ReadPosition {
     /// Front-end extensions.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Ext,
+}
+
+/// What is left of something deleted here, so that the journal
+/// delivering it again does not store it again
+/// (docs/design/agent-frontends.md §2).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub enum Tombstone {
+    /// One version of a message deleted here.
+    #[serde(rename_all = "camelCase")]
+    Message {
+        /// The room's key.
+        room: Key,
+        /// The reference octets of the message's first version or of a
+        /// later one.
+        reference: Octets<10>,
+    },
+    /// A room deleted here with everything in it. Nothing makes one yet:
+    /// it is for deleting a Chat with its messages (bead mimid-1vul.9).
+    #[serde(rename_all = "camelCase")]
+    Room {
+        /// The room's key.
+        key: Key,
+        /// The room URI, which a record made for it again would share.
+        uri: String,
+    },
 }
 
 /// A pending invite, as the agent holds it. Not saved: it is read from

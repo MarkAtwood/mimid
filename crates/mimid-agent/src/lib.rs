@@ -84,10 +84,11 @@
 //!
 //! # Limitations
 //!
-//! - The decrypted Chats and Messages are kept in `<state_dir>/chat.json`
-//!   ([`CHAT_STORE_FILE`], mode 0600), rewritten whole after each change;
-//!   see mimid-agent-jmap's `persist` limits (state strings restart, so
-//!   clients resync after a restart).
+//! - The decrypted Chats and Messages are kept in the SQLite database
+//!   `<state_dir>/chat.sqlite` ([`CHAT_STORE_FILE`], mode 0600), what
+//!   changed written after each change; see mimid-agent-jmap's `persist`
+//!   limits (state strings restart, so clients resync after a restart). A
+//!   `chat.json` from before is not read.
 //! - The daemon polls its server on an interval; it does not listen to
 //!   the server's EventSource, so incoming messages wait for the next
 //!   sync.

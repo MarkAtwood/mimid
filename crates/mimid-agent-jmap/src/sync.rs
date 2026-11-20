@@ -22,7 +22,7 @@ pub enum SyncError {
     /// The store refused a write.
     #[error("storing: {0}")]
     Store(String),
-    /// The plaintext store file could not be written.
+    /// The plaintext store could not be written.
     #[error(transparent)]
     Persist(#[from] crate::PersistError),
 }
@@ -44,7 +44,7 @@ impl From<BackendSetError<MemoryError>> for SyncError {
 }
 
 /// Each round of a sync: the changed records become JMAP objects, then
-/// the plaintext store is saved (format 1, see [`AgentChat::persisted_at`]).
+/// the plaintext store is saved (see [`AgentChat::persisted_at`]).
 impl Commit for AgentChat {
     type Error = SyncError;
 
@@ -68,7 +68,7 @@ impl AgentChat {
     ///
     /// [`SyncError::Agent`] if polling fails (nothing is lost: the agent
     /// keeps what it has not delivered), [`SyncError::Store`] if the
-    /// store refuses a write, and [`SyncError::Persist`] if the store file
+    /// store refuses a write, and [`SyncError::Persist`] if the store
     /// cannot be written.
     pub async fn sync(&self) -> Result<SyncReport, SyncError> {
         let store: &Store = &self.store;

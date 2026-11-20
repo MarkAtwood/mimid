@@ -2666,6 +2666,7 @@ dependencies = [
  "hex",
  "mimi-content",
  "mimid-agent-core",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -2673,7 +2674,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "ulid 3.0.0",
 ]
 

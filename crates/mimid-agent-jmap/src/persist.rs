@@ -1,48 +1,50 @@
 //! The plaintext store (bead mimid-1wgh.13.12): the account's Chats,
-//! ChatBans, Messages, ChatContacts and ReadPositions in one JSON file, so they
-//! survive a restart, with what received Messages keep for reports
-//! ([`crate::report`]) and each Message's MIMI message IDs
-//! ([`crate::edits`]), dropped with their Message. They must: the agent cannot decrypt a message again,
-//! since MLS consumes the keys (RFC 9420 §9.2).
+//! ChatBans, Messages, ChatContacts and ReadPositions kept in the store's
+//! file, so they survive a restart, with what received Messages keep for
+//! reports ([`crate::report`]) and each Message's MIMI message IDs
+//! ([`crate::edits`]). They must: the agent cannot decrypt a message
+//! again, since MLS consumes the keys (RFC 9420 §9.2).
 //!
-//! The file is rewritten whole after every change that succeeds, to a
-//! temporary file first (created mode 0600), flushed, then renamed over
-//! the old one, so a crash leaves the old or the new file, never a mix.
-//! At start the objects go back into the `MemoryBackend` under their ids
-//! (`seed_object`), and the store's records are read from the same file
-//! ([`mimid_agent_store::file::read_format_1`], keeping every JMAP id as
-//! the record's key). The side tables are written from the records.
-//! This is format 1; the store's own format 2 replaces it in step 4 of
-//! docs/design/agent-frontends.md §3.
+//! The store owns its database ([`mimid_agent_store::Store::open_database`],
+//! SQLite at the path given to [`AgentChat::persisted_at`];
+//! docs/design/agent-frontends.md §3 step 4, §7.10). It holds the records,
+//! and in each record's `ext["jmap"]` what the JMAP object has beyond what
+//! the record renders to ([`crate::render`]); the accountId is in the
+//! store's own `ext["jmap"]`. At each save `ext["jmap"]` is rebuilt from
+//! the backend's objects, then the store writes what changed in one
+//! transaction. At start each record with a JMAP object goes back into
+//! the `MemoryBackend` under its key (`seed_object`), as the object it
+//! was. There is no reading of the `chat.json` this crate wrote before the
+//! store (§7.10).
 //!
 //! # Limitations
 //!
-//! - Every change rewrites the whole file: fine for one user's history on
-//!   one device, slow for a very large one.
+//! - Each save rebuilds every record's `ext["jmap"]` and encodes every
+//!   record to find what changed, though it writes only that.
 //! - State strings start again after a restart, so a client's `/changes`
 //!   from before the restart is `cannotCalculateChanges` and it resyncs.
 //! - [`AgentChat::sync`] acknowledges what the agent delivered only after
 //!   this file is written, so a crash between the two delivers it again
-//!   (bead mimid-s4b1). The agent's own window remains: OpenMLS writes the
-//!   consumed secrets to `mls.sqlite` before the agent writes the
+//!   (bead mimid-s4b1); a Message destroyed meanwhile stays destroyed (the
+//!   store's tombstones). The agent's own window remains: OpenMLS writes
+//!   the consumed secrets to `mls.sqlite` before the agent writes the
 //!   decrypted event to its journal, so a crash in that one write loses
 //!   the message.
 
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use jmap_chat_types::{Chat, ChatBan, ChatContact, Message, ReadPosition};
 use jmap_server::{GetObject, Id, JmapObject, JmapReads};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{Map, Value};
 
-use mimid_agent_store::FileError;
+use mimid_agent_store::merge::merge_object;
+use mimid_agent_store::record::Ext;
+use mimid_agent_store::{FileError, State};
 
 use crate::backend::AgentChat;
-
-/// The file format's version.
-const FORMAT: u32 = 1;
+use crate::render::{JMAP, Render, laid_over, not_rendered};
 
 /// Why the plaintext store could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -70,58 +72,8 @@ pub enum PersistError {
     Store(String),
 }
 
-/// The file's contents.
-#[derive(Serialize, Deserialize)]
-struct Snapshot {
-    format: u32,
-    account: String,
-    /// `TYPE_NAME` to the objects of that type, as JSON.
-    objects: BTreeMap<String, Vec<Value>>,
-    /// Received attachments to fetch again ([`crate::retry`]). Absent in
-    /// a file written before retries, which reads as none.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pending_attachments: Vec<mimid_agent_store::retry::PendingAttachment>,
-    /// What received Messages keep for reports, by Message id
-    /// ([`crate::report`]). Absent in a file written before abuse reports,
-    /// which reads as none.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    franks: BTreeMap<String, mimid_agent_store::report::KeptFrank>,
-    /// Each Message's MIMI message IDs: the first version's and its
-    /// aliases ([`crate::edits`]). Absent in a file written before edits,
-    /// which reads as none.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    mimi_ids: BTreeMap<String, MimiIds>,
-}
-
-/// The MIMI message IDs of one Message, as format 1 keeps them.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct MimiIds {
-    /// The hex of the first version's message ID. Absent for a Message
-    /// that does not come from a MIMI message of its own (a notice) but
-    /// was edited anyway.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    first: Option<String>,
-    /// The hex of the reference octets of each later version, oldest
-    /// first.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    aliases: Vec<String>,
-}
-
-/// The stored types, in the order they are restored.
-const TYPES: [&str; 5] = [
-    ChatContact::TYPE_NAME,
-    Chat::TYPE_NAME,
-    ChatBan::TYPE_NAME,
-    Message::TYPE_NAME,
-    ReadPosition::TYPE_NAME,
-];
-
-fn io(path: &Path) -> impl FnOnce(std::io::Error) -> PersistError + '_ {
-    move |source| PersistError::Io {
-        path: path.to_owned(),
-        source,
-    }
-}
+/// The backend's objects by type name and id.
+type Objects = BTreeMap<&'static str, BTreeMap<String, Map<String, Value>>>;
 
 fn malformed(path: &Path, reason: impl Into<String>) -> PersistError {
     PersistError::Malformed {
@@ -130,58 +82,155 @@ fn malformed(path: &Path, reason: impl Into<String>) -> PersistError {
     }
 }
 
+fn file_error(path: &Path, error: FileError) -> PersistError {
+    match error {
+        FileError::Io { path, source } => PersistError::Io { path, source },
+        FileError::Database { path, source } => PersistError::Io {
+            path,
+            source: std::io::Error::other(source),
+        },
+        FileError::Malformed(reason) => malformed(path, reason),
+        e => malformed(path, e.to_string()),
+    }
+}
+
+/// The accountId the store's own `ext["jmap"]` names.
+fn account_of(state: &State) -> Option<String> {
+    state
+        .ext
+        .get(JMAP)?
+        .get("account")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// A record's `ext["jmap"]`, if it has a JMAP object.
+fn jmap_ext(ext: &Ext) -> Option<&Map<String, Value>> {
+    ext.get(JMAP).and_then(Value::as_object)
+}
+
+/// The object a record with `ext` renders back to, if it has one.
+fn seed<T: DeserializeOwned + Serialize>(
+    ext: &Ext,
+    rendered: impl FnOnce() -> Result<Map<String, Value>, String>,
+) -> Option<Result<Map<String, Value>, String>> {
+    let ext = jmap_ext(ext)?;
+    Some(rendered().and_then(|r| laid_over::<T>(r, ext)))
+}
+
+/// The JMAP object of every record of `state` that has one: (type name,
+/// key, object).
+type Seeds = Vec<(&'static str, String, Result<Map<String, Value>, String>)>;
+
+fn seeds(render: &Render<'_>) -> Seeds {
+    let state = render.state;
+    let mut out = Seeds::new();
+    let mut add = |name, key: &String, object| {
+        if let Some(object) = object {
+            out.push((name, key.clone(), object));
+        }
+    };
+    for p in state.people.values() {
+        let object = seed::<ChatContact>(&p.ext, || render.person(p));
+        add(ChatContact::TYPE_NAME, &p.key, object);
+    }
+    for r in state.rooms.values() {
+        add(
+            Chat::TYPE_NAME,
+            &r.key,
+            seed::<Chat>(&r.ext, || render.room(r)),
+        );
+    }
+    for b in state.bans.values() {
+        let object = seed::<ChatBan>(&b.ext, || render.ban(b));
+        add(ChatBan::TYPE_NAME, &b.key, object);
+    }
+    for m in state.messages.values() {
+        let object = seed::<Message>(&m.ext, || render.message(m));
+        add(Message::TYPE_NAME, &m.key, object);
+    }
+    for r in state.read_positions.values() {
+        let object = seed::<ReadPosition>(&r.ext, || render.read_position(r));
+        add(ReadPosition::TYPE_NAME, &r.key, object);
+    }
+    out
+}
+
+/// The `ext["jmap"]` of a record whose JMAP object is `object` (none
+/// without one) and whose rendering is `rendered`; counts in `inexact`
+/// an object it does not give back exactly.
+fn kept<T: DeserializeOwned + Serialize>(
+    object: Option<&Map<String, Value>>,
+    rendered: Result<Map<String, Value>, String>,
+    inexact: &mut usize,
+) -> Option<Value> {
+    let object = object?;
+    let rendered = rendered.unwrap_or_default();
+    let ext = not_rendered(object, &rendered);
+    if laid_over::<T>(rendered, &ext).as_ref() != Ok(object) {
+        *inexact += 1;
+    }
+    Some(Value::Object(ext))
+}
+
+fn set_ext(ext: &mut Ext, jmap: Option<Value>) {
+    match jmap {
+        Some(jmap) => {
+            ext.insert(JMAP.to_owned(), jmap);
+        }
+        None => {
+            ext.remove(JMAP);
+        }
+    }
+}
+
 impl AgentChat {
-    /// Keeps this account's objects in `path` (see the module
-    /// documentation), first loading what it holds, if it exists.
+    /// Keeps this account's objects in the store's SQLite database at
+    /// `path` (created 0600 if missing), first loading what it holds (see
+    /// the module documentation).
     ///
     /// # Errors
     ///
-    /// [`PersistError::Io`] if the file exists and cannot be read, and
-    /// [`PersistError::Malformed`] if it is not a store of this format
-    /// for this account. A store that cannot be read is never replaced.
+    /// [`PersistError::Io`] if a file exists and cannot be read or the
+    /// database fails, and [`PersistError::Malformed`] if it is not a
+    /// store this version reads for this account. A store that cannot be
+    /// read is never replaced.
     pub fn persisted_at(mut self, path: impl Into<PathBuf>) -> Result<Self, PersistError> {
         let path = path.into();
-        match std::fs::read(&path) {
-            Ok(bytes) => self.restore(&path, &bytes)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(io(&path)(e)),
+        self.store
+            .open_database(&path)
+            .map_err(|e| file_error(&path, e))?;
+        if let Some(account) = account_of(&self.store.state())
+            && account != self.account.as_ref()
+        {
+            return Err(malformed(
+                &path,
+                format!("account {account} is not this one"),
+            ));
         }
-        self.store_path = Some(path);
+        self.seed_records(&path)?;
         Ok(self)
     }
 
-    fn restore(&self, path: &Path, bytes: &[u8]) -> Result<(), PersistError> {
-        let snapshot: Snapshot =
-            serde_json::from_slice(bytes).map_err(|e| malformed(path, e.to_string()))?;
-        if snapshot.format != FORMAT {
-            return Err(malformed(path, format!("format {}", snapshot.format)));
+    /// Seeds the JMAP object of every record that has one.
+    fn seed_records(&self, path: &Path) -> Result<(), PersistError> {
+        let seeds = {
+            let state = self.store.state();
+            seeds(&Render {
+                state: &state,
+                account: &self.account,
+                user: &self.user,
+            })
+        };
+        for (type_name, key, object) in seeds {
+            let object = object.map_err(|e| malformed(path, format!("{type_name} {key}: {e}")))?;
+            self.inner.seed_object(
+                &self.account,
+                type_name,
+                &Id::from(key.as_str()),
+                Value::Object(object),
+            );
         }
-        if snapshot.account != self.account.as_ref() {
-            return Err(malformed(
-                path,
-                format!("account {} is not this one", snapshot.account),
-            ));
-        }
-        let state =
-            mimid_agent_store::file::read_format_1(bytes, &self.user).map_err(|e| match e {
-                FileError::Malformed(reason) => malformed(path, reason),
-                e => malformed(path, e.to_string()),
-            })?;
-        for (name, values) in &snapshot.objects {
-            let Some(&type_name) = TYPES.iter().find(|t| **t == name.as_str()) else {
-                return Err(malformed(path, format!("unknown type {name}")));
-            };
-            for value in values {
-                let id = value
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| malformed(path, format!("a {name} without an id")))?;
-                let id = Id::from(id.to_owned());
-                self.inner
-                    .seed_object(&self.account, type_name, &id, value.clone());
-            }
-        }
-        self.store.restore(state);
         Ok(())
     }
 
@@ -199,69 +248,178 @@ impl AgentChat {
             .collect()
     }
 
-    /// Writes every stored object to the store file, if there is one.
+    /// Writes what changed in the records to the store's database, if there
+    /// is one, with `ext["jmap"]` rebuilt from the objects the backend
+    /// holds now (see the module documentation).
     ///
     /// # Errors
     ///
     /// [`PersistError`] if reading the objects or writing the file fails;
     /// the old file is then still in place.
     pub async fn save(&self) -> Result<(), PersistError> {
-        let Some(path) = &self.store_path else {
+        if !self.store.has_database() {
             return Ok(());
-        };
+        }
         let _one_at_a_time = self.save_lock.lock().await;
-        let mut objects = BTreeMap::new();
-        objects.insert(
-            ChatContact::TYPE_NAME.to_owned(),
-            self.all::<ChatContact>().await?,
-        );
-        objects.insert(Chat::TYPE_NAME.to_owned(), self.all::<Chat>().await?);
-        objects.insert(ChatBan::TYPE_NAME.to_owned(), self.all::<ChatBan>().await?);
-        let messages = self.all::<Message>().await?;
-        // A frank and the MIMI IDs are kept only while their Message is.
-        let ids: std::collections::BTreeSet<&str> = messages
-            .iter()
-            .filter_map(|m| m.get("id").and_then(Value::as_str))
-            .collect();
-        let (pending_attachments, franks, mimi_ids) = {
-            let state = self.store.state();
-            let kept = || {
-                state
-                    .messages
-                    .values()
-                    .filter(|m| ids.contains(m.key.as_str()))
+        let mut objects = Objects::new();
+        for (type_name, values) in [
+            (ChatContact::TYPE_NAME, self.all::<ChatContact>().await?),
+            (Chat::TYPE_NAME, self.all::<Chat>().await?),
+            (ChatBan::TYPE_NAME, self.all::<ChatBan>().await?),
+            (Message::TYPE_NAME, self.all::<Message>().await?),
+            (ReadPosition::TYPE_NAME, self.all::<ReadPosition>().await?),
+        ] {
+            let by_id = objects.entry(type_name).or_default();
+            for value in values {
+                if let Value::Object(object) = value
+                    && let Some(Value::String(id)) = object.get("id")
+                {
+                    by_id.insert(id.clone(), object);
+                }
+            }
+        }
+        self.keep_objects(&objects);
+        self.store
+            .save()
+            .map_err(|e| file_error(Path::new("the plaintext store"), e))
+    }
+
+    /// Rebuilds every record's `ext["jmap"]` from `objects`: what the
+    /// object has beyond the record's rendering, or none for a record
+    /// without an object. An object without a record (every JMAP write is
+    /// written into the records, so none should be) gets one first
+    /// ([`merge_object`]).
+    fn keep_objects(&self, objects: &Objects) {
+        let mut state = self.store.state();
+        let account = self.account.as_ref();
+        state
+            .ext
+            .insert(JMAP.to_owned(), serde_json::json!({ "account": account }));
+        for (&type_name, by_id) in objects {
+            for (id, object) in by_id {
+                let held = match type_name {
+                    "ChatContact" => state.people.contains_key(id),
+                    "Chat" => state.rooms.contains_key(id),
+                    "ChatBan" => state.bans.contains_key(id),
+                    "Message" => state.messages.contains_key(id),
+                    _ => state.read_positions.contains_key(id),
+                };
+                if held {
+                    continue;
+                }
+                tracing::warn!(
+                    name: "agent_chat_object_without_record",
+                    type_name,
+                    "a JMAP object had no record in the store; one is made from it"
+                );
+                if let Err(error) =
+                    merge_object(&mut state, account, type_name, object.clone(), false)
+                {
+                    tracing::error!(
+                        name: "agent_chat_object_not_kept",
+                        type_name,
+                        error = &error as &dyn std::error::Error,
+                        "a JMAP object without a record could not be kept"
+                    );
+                }
+            }
+        }
+        let empty = BTreeMap::new();
+        let of = |type_name: &str, key: &str| objects.get(type_name).unwrap_or(&empty).get(key);
+        let mut inexact = 0;
+        let (people, rooms, bans, messages, positions) = {
+            let render = Render {
+                state: &state,
+                account: &self.account,
+                user: &self.user,
             };
-            let franks: BTreeMap<String, mimid_agent_store::report::KeptFrank> = kept()
-                .filter_map(|m| Some((m.key.clone(), m.kept_frank.clone()?)))
-                .collect();
-            let mimi_ids: BTreeMap<String, MimiIds> = kept()
-                .filter(|m| m.mimi_id.is_some() || !m.aliases.is_empty())
-                .map(|m| {
-                    let ids = MimiIds {
-                        first: m.mimi_id.map(|id| hex::encode(id.0)),
-                        aliases: m.aliases.iter().map(|a| hex::encode(a.0)).collect(),
-                    };
-                    (m.key.clone(), ids)
+            let people: Vec<_> = state
+                .people
+                .values()
+                .map(|p| {
+                    let o = of(ChatContact::TYPE_NAME, &p.key);
+                    (
+                        p.key.clone(),
+                        kept::<ChatContact>(o, render.person(p), &mut inexact),
+                    )
                 })
                 .collect();
-            (state.pending_attachments.clone(), franks, mimi_ids)
+            let rooms: Vec<_> = state
+                .rooms
+                .values()
+                .map(|r| {
+                    let o = of(Chat::TYPE_NAME, &r.key);
+                    (r.key.clone(), kept::<Chat>(o, render.room(r), &mut inexact))
+                })
+                .collect();
+            let bans: Vec<_> = state
+                .bans
+                .values()
+                .map(|b| {
+                    let o = of(ChatBan::TYPE_NAME, &b.key);
+                    (
+                        b.key.clone(),
+                        kept::<ChatBan>(o, render.ban(b), &mut inexact),
+                    )
+                })
+                .collect();
+            let messages: Vec<_> = state
+                .messages
+                .values()
+                .map(|m| {
+                    let o = of(Message::TYPE_NAME, &m.key);
+                    (
+                        m.key.clone(),
+                        kept::<Message>(o, render.message(m), &mut inexact),
+                    )
+                })
+                .collect();
+            let positions: Vec<_> = state
+                .read_positions
+                .values()
+                .map(|r| {
+                    let o = of(ReadPosition::TYPE_NAME, &r.key);
+                    let rendered = render.read_position(r);
+                    (
+                        r.key.clone(),
+                        kept::<ReadPosition>(o, rendered, &mut inexact),
+                    )
+                })
+                .collect();
+            (people, rooms, bans, messages, positions)
         };
-        objects.insert(Message::TYPE_NAME.to_owned(), messages);
-        objects.insert(
-            ReadPosition::TYPE_NAME.to_owned(),
-            self.all::<ReadPosition>().await?,
-        );
-        let snapshot = Snapshot {
-            format: FORMAT,
-            account: self.account.as_ref().to_owned(),
-            objects,
-            pending_attachments,
-            franks,
-            mimi_ids,
-        };
-        let bytes =
-            serde_json::to_vec(&snapshot).map_err(|e| PersistError::Store(e.to_string()))?;
-        write_atomically(path, &bytes)
+        if inexact > 0 {
+            tracing::warn!(
+                name: "agent_chat_objects_inexact",
+                inexact,
+                "the store cannot give back these JMAP objects exactly"
+            );
+        }
+        for (key, ext) in people {
+            if let Some(r) = state.people.get_mut(&key) {
+                set_ext(&mut r.ext, ext);
+            }
+        }
+        for (key, ext) in rooms {
+            if let Some(r) = state.rooms.get_mut(&key) {
+                set_ext(&mut r.ext, ext);
+            }
+        }
+        for (key, ext) in bans {
+            if let Some(r) = state.bans.get_mut(&key) {
+                set_ext(&mut r.ext, ext);
+            }
+        }
+        for (key, ext) in messages {
+            if let Some(r) = state.messages.get_mut(&key) {
+                set_ext(&mut r.ext, ext);
+            }
+        }
+        for (key, ext) in positions {
+            if let Some(r) = state.read_positions.get_mut(&key) {
+                set_ext(&mut r.ext, ext);
+            }
+        }
     }
 
     /// [`AgentChat::save`] after a JMAP write, which has succeeded in
@@ -276,25 +434,4 @@ impl AgentChat {
             );
         }
     }
-}
-
-/// Writes `bytes` to a 0600 temporary file beside `path`, flushes it and
-/// renames it over `path`.
-fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), PersistError> {
-    let mut name = path.file_name().map(|n| n.to_owned()).unwrap_or_default();
-    name.push(".tmp");
-    let tmp = path.with_file_name(name);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&tmp).map_err(io(&tmp))?;
-    file.write_all(bytes).map_err(io(&tmp))?;
-    file.sync_all().map_err(io(&tmp))?;
-    drop(file);
-    std::fs::rename(&tmp, path).map_err(io(path))?;
-    Ok(())
 }
