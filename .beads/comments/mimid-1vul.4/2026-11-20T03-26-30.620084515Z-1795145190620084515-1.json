@@ -1,0 +1,7 @@
+{
+  "id": "1795145190620084515-1",
+  "issue_id": "mimid-1vul.4",
+  "author": "Mark Atwood",
+  "text": "Mark decided 2026-11-20: the store's on-disk format is SQLite, not JSON format 2 (whole-file rewrites, no shrink on delete, no index, no shared transaction with MLS state). Investigate sharing mls.sqlite for one transaction.",
+  "created_at": "2026-11-20T03:26:30.620084515Z"
+}
