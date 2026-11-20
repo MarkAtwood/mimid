@@ -1,1 +1,2 @@
 {"id":"01a1fa6c-096e-7631-a3c7-3e3ad014ce8f","issue_id":"mimid-ak29","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-20T19:25:46.734406453Z"}
+{"id":"01a1fa80-017c-7d21-919c-f38eb12bf25b","issue_id":"mimid-ak29","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Built on branch agent-eventsource: 2ad3188 (server subscribes before answering), 47a6495 (agent follows the provider's EventSource)","created_at":"2026-11-20T19:47:35.420862243Z"}
