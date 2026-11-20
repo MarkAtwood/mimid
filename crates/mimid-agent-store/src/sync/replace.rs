@@ -28,7 +28,7 @@ use super::{SyncReport, alias_of, keep_reportable};
 use crate::change::Change;
 use crate::content::BodyType;
 use crate::convert::message_ref;
-use crate::record::{Deletion, Revision, Sender};
+use crate::record::Sender;
 use crate::store::Store;
 
 /// The most revisions a message's edit history keeps; past it the oldest
@@ -126,16 +126,7 @@ impl Store {
         let key = stored.key.clone();
         match replacement {
             Replacement::Retraction => {
-                // The content goes with the deletion: the kept report
-                // record and any attachment still to fetch.
-                state.pending_attachments.retain(|p| p.message != key);
-                if let Some(message) = state.messages.get_mut(&key) {
-                    message.deleted = Some(Deletion { at, for_all: true });
-                    message.body = String::new();
-                    message.attachments.clear();
-                    message.edit_history.clear();
-                    message.kept_frank = None;
-                }
+                state.retract_message(&key, at);
             }
             Replacement::Edit(text, body_type, attachments) => {
                 if attachments > 0 {
@@ -146,21 +137,11 @@ impl Store {
                 }
                 // What is reported is what is shown: the latest version.
                 let kept = keep_reportable(received, report);
-                if let Some(message) = state.messages.get_mut(&key) {
-                    let old = Revision {
-                        body: std::mem::take(&mut message.body),
-                        body_type: message.body_type,
-                        edited_at: at,
-                    };
-                    message.edit_history.push(old);
-                    let excess = message.edit_history.len().saturating_sub(MAX_EDIT_HISTORY);
-                    message.edit_history.drain(..excess);
-                    message.body = text;
-                    message.body_type = body_type;
-                    message.edited_at = Some(at);
-                    if kept.is_some() {
-                        message.kept_frank = kept;
-                    }
+                state.edit_message(&key, text, body_type, at);
+                if let Some(message) = state.messages.get_mut(&key)
+                    && kept.is_some()
+                {
+                    message.kept_frank = kept;
                 }
             }
         }

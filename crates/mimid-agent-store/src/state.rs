@@ -8,11 +8,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::content::BodyType;
 use crate::convert::MessageRef;
 use crate::record::{
-    Ban, Ext, Invite, Key, Message, Octets, Person, ReadPosition, Room, Tombstone,
+    Ban, Deletion, Ext, Invite, Key, Message, Octets, Person, ReadPosition, Revision, Room,
+    Tombstone,
 };
 use crate::retry::PendingAttachment;
+use crate::sync::MAX_EDIT_HISTORY;
 
 /// Every record of one user's store.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -156,6 +159,62 @@ impl State {
         Some(message)
     }
 
+    /// Edits message `key` to `body` of `body_type` at `at`, in
+    /// milliseconds: its old body becomes the last of at most
+    /// [`MAX_EDIT_HISTORY`] revisions (draft-atwood-jmap-chat-00 §Editing a
+    /// Message). The edit's alias is the caller's to add. False if there
+    /// is no such message.
+    pub fn edit_message(&mut self, key: &str, body: String, body_type: BodyType, at: u64) -> bool {
+        let Some(message) = self.messages.get_mut(key) else {
+            return false;
+        };
+        let old = Revision {
+            body: std::mem::replace(&mut message.body, body),
+            body_type: message.body_type,
+            edited_at: at,
+        };
+        message.edit_history.push(old);
+        let excess = message.edit_history.len().saturating_sub(MAX_EDIT_HISTORY);
+        message.edit_history.drain(..excess);
+        message.body_type = body_type;
+        message.edited_at = Some(at);
+        true
+    }
+
+    /// Retracts message `key` for everyone at `at`, in milliseconds
+    /// (mimi-content-10 §5.6): its content goes, with the kept report
+    /// record and any attachment still to fetch. The retraction's alias
+    /// is the caller's to add. False if there is no such message.
+    pub fn retract_message(&mut self, key: &str, at: u64) -> bool {
+        let Some(message) = self.messages.get_mut(key) else {
+            return false;
+        };
+        message.deleted = Some(Deletion { at, for_all: true });
+        message.body = String::new();
+        message.attachments.clear();
+        message.edit_history.clear();
+        message.kept_frank = None;
+        self.pending_attachments.retain(|p| p.message != key);
+        true
+    }
+
+    /// Removes person `key`; the user gets a new record when next seen.
+    pub fn remove_person(&mut self, key: &str) -> Option<Person> {
+        let person = self.people.remove(key)?;
+        self.reindex();
+        Some(person)
+    }
+
+    /// Removes room `key` and its read positions. Its messages and bans
+    /// stay, naming a room the store does not hold (bead mimid-1vul.9 is
+    /// to delete them as well).
+    pub fn remove_room(&mut self, key: &str) -> Option<Room> {
+        let room = self.rooms.remove(key)?;
+        self.read_positions.retain(|_, r| r.room != key);
+        self.reindex();
+        Some(room)
+    }
+
     /// Whether the message in room `room` that `reference` names was
     /// deleted here since the last acknowledgement.
     #[must_use]
@@ -219,4 +278,145 @@ pub fn reference_of(sender_msg_id: &str) -> Option<MessageRef> {
 #[must_use]
 pub fn accepted_at_of(sender_msg_id: &str) -> Option<u64> {
     Some(ulid::Ulid::from_string(sender_msg_id).ok()?.timestamp_ms())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::record::{Participant, RoomStatus, Sender};
+    use crate::report::KeptFrank;
+
+    const ALICE: &str = "mimi://a.example/u/alice";
+
+    fn message(key: &str, room: &str, body: &str) -> Message {
+        Message {
+            key: key.into(),
+            room: room.into(),
+            seq: 1,
+            sender: Sender::User(ALICE.into()),
+            mimi_id: None,
+            aliases: Vec::new(),
+            accepted_at: 1_000,
+            sender_msg_id: "01M7VA1QTK2Y4V6ER4Z3A3V6QN".into(),
+            body: body.into(),
+            body_type: BodyType::Plain,
+            in_reply_to: None,
+            topic_id: None,
+            attachments: vec![crate::record::Attachment {
+                blob_id: "s00".into(),
+                file_name: "a.txt".into(),
+                media_type: "text/plain".into(),
+                size: 1,
+                sha256: "00".into(),
+            }],
+            edit_history: Vec::new(),
+            edited_at: None,
+            deleted: None,
+            kept_frank: Some(KeptFrank {
+                room: "mimi://a.example/r/one".into(),
+                message: "00".into(),
+                unverified: true,
+            }),
+            notice: None,
+            ext: Ext::new(),
+        }
+    }
+
+    /// Oracle: draft-atwood-jmap-chat-00 §Editing a Message: the old body
+    /// becomes the last revision, edited at the edit's time, and at most
+    /// MAX_EDIT_HISTORY are kept, oldest dropped first.
+    #[test]
+    fn an_edit_keeps_the_old_body_and_caps_the_history() {
+        let mut state = State::new(ALICE);
+        state.insert_message(message("M1", "R1", "v0"));
+        for n in 1..=MAX_EDIT_HISTORY + 1 {
+            let body = format!("v{n}");
+            assert!(state.edit_message("M1", body, BodyType::Markdown, 2_000 + n as u64));
+        }
+        let m = &state.messages["M1"];
+        let last = MAX_EDIT_HISTORY as u64 + 1;
+        assert_eq!(m.body, format!("v{last}"));
+        assert_eq!(m.body_type, BodyType::Markdown);
+        assert_eq!(m.edited_at, Some(2_000 + last));
+        assert_eq!(m.edit_history.len(), MAX_EDIT_HISTORY);
+        // v0 was dropped; v1 (edited away at 2_002) is the oldest kept.
+        assert_eq!(m.edit_history[0].body, "v1");
+        assert_eq!(m.edit_history[0].edited_at, 2_002);
+        assert_eq!(m.edit_history[0].body_type, BodyType::Markdown);
+        assert!(!state.edit_message("M2", String::new(), BodyType::Plain, 0));
+    }
+
+    /// Oracle: mimi-content-10 §5.6 and draft-atwood-jmap-chat-00
+    /// §Message `deletedAt`: a retracted message has no body, no
+    /// attachments and no history; it keeps nothing to report either.
+    #[test]
+    fn a_retraction_empties_the_message() {
+        let mut state = State::new(ALICE);
+        state.insert_message(message("M1", "R1", "hello"));
+        state.edit_message("M1", "hi".into(), BodyType::Plain, 2_000);
+        assert!(state.retract_message("M1", 3_000));
+        let m = &state.messages["M1"];
+        assert_eq!(
+            m.deleted,
+            Some(Deletion {
+                at: 3_000,
+                for_all: true
+            })
+        );
+        assert!(m.body.is_empty() && m.attachments.is_empty() && m.edit_history.is_empty());
+        assert_eq!(m.kept_frank, None);
+        assert!(!state.retract_message("M2", 3_000));
+    }
+
+    #[test]
+    fn a_removed_room_takes_its_read_positions_but_not_its_messages() {
+        let mut state = State::new(ALICE);
+        state.insert_room(Room {
+            key: "R1".into(),
+            uri: "mimi://a.example/r/one".into(),
+            name: None,
+            status: RoomStatus::Active,
+            participants: vec![Participant {
+                user: Some(ALICE.into()),
+                role: Some(2),
+            }],
+            role_names: BTreeMap::new(),
+            ext: Ext::new(),
+        });
+        state.insert_message(message("M1", "R1", "hello"));
+        for (key, room) in [("C1", "R1"), ("C2", "R2")] {
+            state.read_positions.insert(
+                key.into(),
+                ReadPosition {
+                    key: key.into(),
+                    room: room.into(),
+                    message: None,
+                    at: None,
+                    ext: Ext::new(),
+                },
+            );
+        }
+        assert!(state.remove_room("R1").is_some());
+        assert_eq!(state.room_of_uri("mimi://a.example/r/one"), None);
+        assert!(state.messages.contains_key("M1"));
+        assert_eq!(state.read_positions.keys().collect::<Vec<_>>(), vec!["C2"]);
+        assert!(state.remove_room("R1").is_none());
+    }
+
+    #[test]
+    fn a_removed_person_is_no_longer_found_by_user() {
+        let mut state = State::new(ALICE);
+        state.insert_person(Person {
+            key: "P1".into(),
+            user: "mimi://a.example/u/bob".into(),
+            display_name: None,
+            did: None,
+            did_changed_at: None,
+            first_seen: 0,
+            ext: Ext::new(),
+        });
+        assert!(state.remove_person("P1").is_some());
+        assert_eq!(state.person_of_user("mimi://a.example/u/bob"), None);
+        assert!(state.remove_person("P1").is_none());
+    }
 }

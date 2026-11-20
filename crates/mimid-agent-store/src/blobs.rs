@@ -546,6 +546,21 @@ pub fn hex(octets: &[u8]) -> String {
     octets.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The octets `text` spells in hex, either case, or `None` if it is not
+/// an even number of hex digits.
+#[must_use]
+pub fn unhex(text: &str) -> Option<Vec<u8>> {
+    let (pairs, rest) = text.as_bytes().as_chunks::<2>();
+    if !rest.is_empty() {
+        return None;
+    }
+    let value = |c: u8| (c as char).to_digit(16).and_then(|d| u8::try_from(d).ok());
+    pairs
+        .iter()
+        .map(|[high, low]| Some(value(*high)? << 4 | value(*low)?))
+        .collect()
+}
+
 /// The digest a blob id names, or `None` if `id` is not `s` and 64
 /// lowercase hex digits. Anything else (a path, `..`) never reaches the
 /// file system.
@@ -613,6 +628,17 @@ pub fn is_media_type(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unhex_reads_either_case_and_refuses_the_rest() {
+        assert_eq!(unhex("00ff7Fa0"), Some(vec![0x00, 0xff, 0x7f, 0xa0]));
+        assert_eq!(unhex(""), Some(vec![]));
+        assert_eq!(unhex("abc"), None);
+        assert_eq!(unhex("0g"), None);
+        assert_eq!(unhex("+1"), None);
+        // Two octets of UTF-8 that are not hex.
+        assert_eq!(unhex("\u{e9}"), None);
+    }
 
     /// SHA-256("abc"), FIPS 180-2 Appendix B.1.
     const SHA256_ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
