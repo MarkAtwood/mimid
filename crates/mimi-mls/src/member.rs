@@ -592,7 +592,7 @@ impl Member {
         external_senders: &[ExternalSender],
         components: &[(ComponentId, Vec<u8>)],
     ) -> Result<Self, MemberError> {
-        let provider = identity.provider();
+        let provider = &identity.provider();
         let rand = provider.rand();
 
         // required_capabilities is left to the protocol layer (decision
@@ -748,7 +748,7 @@ impl Member {
         ratchet_tree: Option<&[u8]>,
     ) -> Result<WelcomeJoin, MemberError> {
         let (staged, tree) = stage_welcome(identity, welcome, ratchet_tree)?;
-        let provider = identity.provider();
+        let provider = &identity.provider();
         let inviter = welcome_signer(identity, &staged)?;
         // Decoded before into_group stores the group; fails closed
         // (decisions mimid-1wgh.4.57, mimid-1wgh.4.59).
@@ -875,7 +875,7 @@ fn stage_welcome(
     let config = MlsGroupJoinConfig::builder()
         .wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
         .build();
-    let provider = identity.provider();
+    let provider = &identity.provider();
     let mut builder = StagedWelcome::build_from_welcome(provider, &config, welcome)
         .map_err(|e| MemberError::Join(e.into()))?
         // RFC 9420 §7.3; decision mimid-1wgh.4.56.
@@ -1022,7 +1022,7 @@ impl Member {
             .or_else(|| ratchet_tree.clone())
             .map(|tree| (tree, group_info.clone()));
 
-        let provider = identity.provider();
+        let provider = &identity.provider();
         let rand = provider.rand();
         let config = MlsGroupJoinConfig::builder()
             .wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
@@ -1193,7 +1193,7 @@ impl Member {
     {
         self.check_identity(identity)?;
         self.check_in_sync()?;
-        let provider = identity.provider();
+        let provider = &identity.provider();
 
         let key_packages = adds
             .iter()
@@ -1381,7 +1381,7 @@ impl Member {
         ),
         MemberError,
     > {
-        let provider = identity.provider();
+        let provider = &identity.provider();
         let proposals = app_updates
             .iter()
             .map(|update| Proposal::AppDataUpdate(Box::new(update.to_proposal())));
@@ -1470,7 +1470,7 @@ impl Member {
         let (message, _) = self
             .group
             .propose_app_data_update(
-                identity.provider(),
+                &identity.provider(),
                 identity.signer(),
                 component_id,
                 proposal.operation().clone(),
@@ -1509,7 +1509,7 @@ impl Member {
             .build();
         let (message, _) = self
             .group
-            .propose_self_update(identity.provider(), identity.signer(), leaf)
+            .propose_self_update(&identity.provider(), identity.signer(), leaf)
             .map_err(|e| MemberError::Propose(e.into()))?;
         encode(&message)
     }
@@ -1535,7 +1535,7 @@ impl Member {
         self.check_in_sync()?;
         let message = self
             .group
-            .leave_group(identity.provider(), identity.signer())
+            .leave_group(&identity.provider(), identity.signer())
             .map_err(|e| MemberError::Propose(e.into()))?;
         encode(&message)
     }
@@ -1564,7 +1564,7 @@ impl Member {
         let (message, _) = self
             .group
             .propose_remove_member(
-                identity.provider(),
+                &identity.provider(),
                 identity.signer(),
                 LeafNodeIndex::new(leaf_index),
             )
@@ -1583,7 +1583,7 @@ impl Member {
         self.check_identity(identity)?;
         self.check_in_sync()?;
         self.group
-            .merge_pending_commit(identity.provider())
+            .merge_pending_commit(&identity.provider())
             .map_err(|e| MemberError::Merge(e.into()))
     }
 
@@ -1641,7 +1641,7 @@ impl Member {
     {
         self.check_identity(identity)?;
         self.check_in_sync()?;
-        let provider = identity.provider();
+        let provider = &identity.provider();
         let bytes = message;
         let message = MlsMessageIn::tls_deserialize_exact(bytes)
             .map_err(|e| MemberError::Decode(e.into()))?
@@ -1853,7 +1853,7 @@ impl Member {
         // struct is all of it (decision mimid-1wgh.4.17).
         let result = self
             .group
-            .create_message(identity.provider(), identity.signer(), data);
+            .create_message(&identity.provider(), identity.signer(), data);
         match result {
             Ok(message) => encode(&message),
             Err(e) => {

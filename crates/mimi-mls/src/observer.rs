@@ -480,7 +480,7 @@ impl Observer {
         // mimid-1wgh.4.57, mimid-1wgh.4.59). Used only after the GroupInfo signature, which
         // covers the GroupContext, has been verified below.
         let required = required_lists(group_info.group_context().extensions())?;
-        let provider = store.provider();
+        let provider = &store.provider();
         // RFC 9420 §7.3; decision mimid-1wgh.4.38. The policy stays on the
         // group, covering later Add, Update and UpdatePath leaves too. It is
         // not persisted: a future reload must set Skip again.
@@ -587,7 +587,7 @@ impl Observer {
         E: Into<ErrorSource>,
     {
         let processed = self.validate(store, message)?;
-        let provider = store.provider();
+        let provider = &store.provider();
         let sender = convert_sender(processed.sender())?;
 
         let processed = if let ProcessedMessageContent::UnresolvedAppDataCommit(unresolved) =

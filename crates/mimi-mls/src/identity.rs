@@ -394,7 +394,15 @@ impl Identity {
         self.signer.public()
     }
 
-    pub(crate) fn provider(&self) -> &Provider {
+    /// The [`Store`] this identity keeps its private MLS state in; its
+    /// [`Store::connection`] is where a caller wraps OpenMLS's writes in
+    /// its own transactions.
+    #[must_use]
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
+    pub(crate) fn provider(&self) -> Provider<'_> {
         self.store.provider()
     }
 
@@ -436,7 +444,7 @@ impl Identity {
     /// Returns [`Error::Encode`] if the KeyPackage cannot be serialized, and
     /// [`Error::KeyPackage`] if it cannot be built or stored.
     pub fn key_package(&self, kind: KeyPackageKind) -> Result<Vec<u8>, Error> {
-        let provider = self.store.provider();
+        let provider = &self.store.provider();
         let rand = provider.rand();
 
         // RFC 9420 §10: every extension in the KeyPackage or its LeafNode

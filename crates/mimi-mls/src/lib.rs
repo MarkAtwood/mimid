@@ -12,7 +12,10 @@
 //! joins enforce the draft's rules ([`didwebvh`]). An
 //! [`Identity`] publishes KeyPackages through [`Identity::key_package`]. The
 //! private halves of each KeyPackage are kept in a [`Store`], an SQLite
-//! database, so that a later Welcome can be processed.
+//! database, so that a later Welcome can be processed. OpenMLS writes
+//! through the store's one connection with no transaction of its own, so
+//! a caller that keeps its own tables in the same database can make its
+//! writes and OpenMLS's commit together ([`Store::connection`]).
 //!
 //! A client joins groups as a [`member::Member`]. The hub, which is not a
 //! member, tracks each hosted group's public state as an
