@@ -187,7 +187,7 @@ impl RoomRoles {
         participants
             .iter()
             .map(|user| Participant {
-                user: Some(user.clone()),
+                user: user.clone(),
                 role: self.role_of(user),
             })
             .collect()
@@ -568,9 +568,7 @@ impl Store {
                 };
                 if let Some(record) = state.rooms.get_mut(&key) {
                     record.status = Status::Left;
-                    record
-                        .participants
-                        .retain(|p| p.user.as_deref() != Some(self.user.as_str()));
+                    record.participants.retain(|p| p.user != self.user);
                 }
                 changes.push(Change::RoomLeft(key));
             }

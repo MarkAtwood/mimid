@@ -615,8 +615,8 @@ impl Store {
         let ban = Ban {
             key: ban_key,
             room: key.to_owned(),
-            user: Some(user.to_owned()),
-            banned_by: Some(self.user.clone()),
+            user: user.to_owned(),
+            banned_by: self.user.clone(),
             reason,
             expires_at,
             ext: BTreeMap::new(),

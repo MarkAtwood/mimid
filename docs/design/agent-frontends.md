@@ -524,7 +524,10 @@ step runs the full check list in AGENTS.md before its commit.
      (until §7.9, which deletes them).
      Records name users by URI and no longer come from JMAP objects, so
      an unknown user (`Sender::Unknown`, `None` as a participant, banned
-     user or banner) is no longer made; the record types keep the forms.
+     user or banner) is no longer made. Bead mimid-1vul.11 then removed
+     the forms: every participant, sender, banned user and banner is a
+     URI, and the database's schema version is 2 (a version-1 database
+     is refused, §7.10).
      A JMAP object naming a ChatContact a client destroyed renders the
      user as `UNKNOWN_ID`, and `ext["jmap"]` keeps the object's id, as in
      step 4.

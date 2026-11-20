@@ -2655,7 +2655,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "ulid 3.0.0",
 ]
 
 [[package]]

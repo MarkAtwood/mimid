@@ -74,10 +74,12 @@ pub enum FileError {
 }
 
 /// The schema this version reads and writes. A database of another
-/// version is refused (§7.10: no conversions).
-pub const SCHEMA_VERSION: i64 = 1;
+/// version is refused (§7.10: no conversions). Version 2 (bead
+/// mimid-1vul.11) names every participant, sender, banned user and banner
+/// by URI; version 1 also allowed an unknown one.
+pub const SCHEMA_VERSION: i64 = 2;
 
-/// The schema, version 1.
+/// The schema's tables; only the records' JSON changed from version 1.
 const SCHEMA: &str = "
 CREATE TABLE meta (key TEXT PRIMARY KEY NOT NULL, record TEXT NOT NULL);
 CREATE TABLE rooms (key TEXT PRIMARY KEY NOT NULL, uri TEXT NOT NULL, record TEXT NOT NULL);
@@ -241,7 +243,8 @@ impl Database {
             SCHEMA_VERSION => {}
             other => {
                 return Err(malformed(format!(
-                    "schema version {other}, not {SCHEMA_VERSION}"
+                    "schema version {other}; this agent reads only version \
+                     {SCHEMA_VERSION} and does not convert a store"
                 )));
             }
         }

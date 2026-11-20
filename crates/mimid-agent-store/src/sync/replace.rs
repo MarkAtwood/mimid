@@ -74,15 +74,14 @@ impl Store {
         // A notice is the account's own message to a JMAP client, as it
         // was before the store.
         let original_sender = match &stored.sender {
-            Sender::User(user) => Some(user.as_str()),
-            Sender::Agent => Some(self.user.as_str()),
-            _ => None,
+            Sender::User(user) => user.as_str(),
+            Sender::Agent => self.user.as_str(),
         };
         // content-10 §9.3: "Receiving clients MUST NOT allow parties other
         // than the original sender of a message to edit or delete that
         // message"; jmap-chat-mimi-00 §Security: verify before recording
         // the alias.
-        if original_sender != Some(received.sender.as_str()) {
+        if original_sender != received.sender {
             report.problems.push(format!(
                 "{uri}: refused an edit or retraction by {} of a message it did not send",
                 received.sender

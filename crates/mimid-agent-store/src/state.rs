@@ -467,7 +467,7 @@ mod tests {
             name: None,
             status: RoomStatus::Active,
             participants: vec![Participant {
-                user: Some(ALICE.into()),
+                user: ALICE.into(),
                 role: Some(2),
             }],
             role_names: BTreeMap::new(),
@@ -509,8 +509,8 @@ mod tests {
         Ban {
             key: key.into(),
             room: room.into(),
-            user: Some(BOB.into()),
-            banned_by: Some(ALICE.into()),
+            user: BOB.into(),
+            banned_by: ALICE.into(),
             reason: None,
             expires_at: None,
             ext: Ext::new(),

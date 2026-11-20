@@ -107,7 +107,7 @@ impl Store {
                 .bans
                 .values()
                 .filter(|b| b.room == key)
-                .filter(|b| !b.user.as_ref().is_some_and(|u| banned.contains(u)))
+                .filter(|b| !banned.contains(&b.user))
                 .map(|b| b.key.clone())
                 .collect();
             for ban in lifted {
@@ -120,7 +120,7 @@ impl Store {
                     !state
                         .bans
                         .values()
-                        .any(|b| b.room == key && b.user.as_ref() == Some(*user))
+                        .any(|b| b.room == key && b.user == **user)
                 })
                 .collect();
             if new.is_empty() {
@@ -140,8 +140,8 @@ impl Store {
                     Ban {
                         key: ban.clone(),
                         room: key.clone(),
-                        user: Some(user.clone()),
-                        banned_by: Some(banned_by.clone()),
+                        user: user.clone(),
+                        banned_by: banned_by.clone(),
                         reason: None,
                         expires_at: None,
                         ext: BTreeMap::new(),
@@ -192,10 +192,10 @@ impl Store {
         ban: &Ban,
     ) -> Result<(), mimid_agent_core::AgentError> {
         let room = self.state().rooms.get(&ban.room).map(|r| r.uri.clone());
-        if let (Some(room), Some(user)) = (room, &ban.user)
-            && banned_users(agent, &room).is_some_and(|banned| banned.contains(user))
+        if let Some(room) = room
+            && banned_users(agent, &room).is_some_and(|banned| banned.contains(&ban.user))
         {
-            agent.unban(&room, user).await?;
+            agent.unban(&room, &ban.user).await?;
         }
         Ok(())
     }

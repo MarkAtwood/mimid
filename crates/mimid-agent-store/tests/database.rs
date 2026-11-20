@@ -22,6 +22,7 @@ use serde_json::json;
 
 const BOB: &str = "mimi://a.example/u/bob";
 const ALICE: &str = "mimi://a.example/u/alice";
+const CAROL: &str = "mimi://a.example/u/carol";
 
 /// A ULID `senderMsgId` whose reference octets are all `n`.
 fn sender_msg_id(n: u8) -> String {
@@ -59,9 +60,9 @@ fn message(key: &str, room: &str, seq: u64, sender: Sender, n: u8) -> Message {
 }
 
 /// A store with a record of every kind, and the cases a running agent
-/// makes: a user who is not known (a ChatContact a client destroyed), a
-/// message and a ban naming a room that is not held (a Chat a client
-/// destroyed), a notice, a reply to a message not stored, a retraction,
+/// makes: a sender without a person record (a ChatContact a client
+/// destroyed), a participant whose role is not read yet, a message and a
+/// ban naming a room that is not held, a notice, a reply to a message not stored, a retraction,
 /// tombstones of both kinds, and front-end extensions.
 fn state() -> State {
     let mut state = State::new(BOB);
@@ -76,11 +77,11 @@ fn state() -> State {
         status: RoomStatus::Active,
         participants: vec![
             Participant {
-                user: Some(BOB.to_owned()),
+                user: BOB.to_owned(),
                 role: Some(2),
             },
             Participant {
-                user: None,
+                user: ALICE.to_owned(),
                 role: None,
             },
         ],
@@ -115,7 +116,7 @@ fn state() -> State {
                                       "unverified": true}))
         .unwrap(),
     );
-    let mut unknown = message("M2", "R1", 2, Sender::Unknown, 2);
+    let mut unknown = message("M2", "R1", 2, Sender::User(CAROL.to_owned()), 2);
     unknown.in_reply_to = Some(Reply::Reference(Octets([9; 10])));
     unknown
         .ext
@@ -140,8 +141,8 @@ fn state() -> State {
         Ban {
             key: "B1".to_owned(),
             room: "GONE".to_owned(),
-            user: None,
-            banned_by: Some(BOB.to_owned()),
+            user: CAROL.to_owned(),
+            banned_by: BOB.to_owned(),
             reason: Some("spam".to_owned()),
             expires_at: Some(1_800_000_000_000),
             ext: BTreeMap::new(),
@@ -257,13 +258,20 @@ fn another_users_store_and_another_schema_are_refused() {
             .unwrap(),
         SCHEMA_VERSION
     );
-    connection
-        .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
-        .unwrap();
     drop(connection);
-    match Database::open(&path) {
-        Err(FileError::Malformed(why)) => assert!(why.contains("schema version 2"), "{why}"),
-        other => panic!("not refused: {other:?}"),
+    // An older store (§7.10: none is converted) and a newer one.
+    for version in [SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .pragma_update(None, "user_version", version)
+            .unwrap();
+        drop(connection);
+        match Database::open(&path) {
+            Err(FileError::Malformed(why)) => {
+                assert!(why.contains(&format!("schema version {version}")), "{why}");
+            }
+            other => panic!("not refused: {other:?}"),
+        }
     }
 }
 

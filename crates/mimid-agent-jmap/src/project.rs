@@ -329,14 +329,11 @@ impl AgentChat {
     /// everyone else is their person's ChatContact. New entries are joined
     /// now. Each one's role is the room's (decision mimid-1wgh.62 item 9):
     /// `admin` for a participant whose role is named "admin", `member`
-    /// otherwise; a banned participant (role 1, "banned") is not a member,
-    /// nor is one whose user is not known.
+    /// otherwise; a banned participant (role 1, "banned") is not a member.
     fn members_of(&self, room: &record::Room, existing: &[ChatMember]) -> Vec<ChatMember> {
         let mut members = Vec::with_capacity(room.participants.len());
         for participant in &room.participants {
-            let Some(user) = &participant.user else {
-                continue;
-            };
+            let user = &participant.user;
             let name = participant
                 .role
                 .and_then(|index| room.role_names.get(&index).map(|n| (index, n.as_str())));
@@ -484,8 +481,8 @@ impl AgentChat {
         let existing = self.stored::<ChatBan>(&id).await?;
         match (ban, existing) {
             (Some(ban), None) => {
-                let user = ban.user.as_deref().and_then(|u| self.id_of_user(u));
-                let banned_by = ban.banned_by.as_deref().and_then(|u| self.id_of_user(u));
+                let user = self.id_of_user(&ban.user);
+                let banned_by = self.id_of_user(&ban.banned_by);
                 let (Some(user), Some(banned_by)) = (user, banned_by) else {
                     return Err(SyncError::Store(format!(
                         "ban {key} names a user with no ChatContact"

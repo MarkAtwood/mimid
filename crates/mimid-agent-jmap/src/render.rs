@@ -16,8 +16,8 @@
 //! What a rendering cannot know comes from `ext["jmap"]`: a Chat's
 //! `members`, `createdAt` and the other JMAP-only properties, a
 //! Message's `receivedAt`, the date texts a client wrote with more or
-//! fewer digits than the store keeps, and the JMAP id of a user who is
-//! not known (§7.7). A rendering fills those deterministically
+//! fewer digits than the store keeps, and the JMAP id of a user who has
+//! no ChatContact (one a client destroyed). A rendering fills those deterministically
 //! ([`EPOCH`], [`UNKNOWN_ID`], `sentAt` for `receivedAt`), so the same
 //! record always renders the same.
 //!
@@ -48,8 +48,8 @@ pub(crate) const JMAP: &str = "jmap";
 /// ChatBan's `createdAt`); the object's own is in `ext["jmap"]`.
 pub(crate) const EPOCH: &str = "1970-01-01T00:00:00Z";
 
-/// The JMAP id a rendering gives a user who is not known, or who has no
-/// ChatContact; the object's own is in `ext["jmap"]`.
+/// The JMAP id a rendering gives a user who has no ChatContact; the
+/// object's own is in `ext["jmap"]`.
 pub(crate) const UNKNOWN_ID: &str = "unknown";
 
 /// `value` through the JMAP type `T`, as the backend serializes it.
@@ -80,15 +80,13 @@ pub(crate) struct Render<'a> {
 }
 
 impl Render<'_> {
-    fn id_of(&self, user: Option<&str>) -> Id {
-        match user {
-            Some(user) if user == self.user => self.account.clone(),
-            Some(user) => self
-                .state
-                .person_of_user(user)
-                .map_or_else(|| Id::from(UNKNOWN_ID), |key| Id::from(key.as_str())),
-            None => Id::from(UNKNOWN_ID),
+    fn id_of(&self, user: &str) -> Id {
+        if user == self.user {
+            return self.account.clone();
         }
+        self.state
+            .person_of_user(user)
+            .map_or_else(|| Id::from(UNKNOWN_ID), |key| Id::from(key.as_str()))
     }
 
     /// A person as a ChatContact.
@@ -134,9 +132,10 @@ impl Render<'_> {
     /// time; a notice is the account's.
     pub(crate) fn message(&self, message: &record::Message) -> Result<Map<String, Value>, String> {
         let sender = match &message.sender {
-            Sender::User(user) => self.id_of(Some(user)),
-            Sender::Agent => self.account.clone(),
-            _ => self.id_of(None),
+            Sender::User(user) => self.id_of(user),
+            // Sender is #[non_exhaustive]; a notice and anything else is
+            // the account's.
+            _ => self.account.clone(),
         };
         let at = date(message.accepted_at);
         let mut jmap = Message::new(
@@ -165,8 +164,8 @@ impl Render<'_> {
         let mut chat_ban = ChatBan::new(
             Id::from(ban.key.as_str()),
             Id::from(ban.room.as_str()),
-            self.id_of(ban.user.as_deref()),
-            self.id_of(ban.banned_by.as_deref()),
+            self.id_of(&ban.user),
+            self.id_of(&ban.banned_by),
             UTCDate::from(EPOCH),
         );
         chat_ban.reason.clone_from(&ban.reason);
@@ -337,7 +336,7 @@ mod tests {
             status: RoomStatus::Active,
             participants: [ALICE, BOB]
                 .map(|user| Participant {
-                    user: Some(user.into()),
+                    user: user.into(),
                     role: None,
                 })
                 .into(),
@@ -384,8 +383,8 @@ mod tests {
             Ban {
                 key: "B1".into(),
                 room: "GONE".into(),
-                user: Some(ALICE.into()),
-                banned_by: Some(BOB.into()),
+                user: ALICE.into(),
+                banned_by: BOB.into(),
                 reason: Some("spam".into()),
                 expires_at: Some(ms("2030-01-01T00:00:00.000Z")),
                 ext: Default::default(),

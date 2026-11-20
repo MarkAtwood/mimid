@@ -19,12 +19,6 @@
 //!   in `ext["jmap"]`).
 //! - A participant whose role the agent could not read has no role index
 //!   ([`Participant::role`] is `None`) until the next sync sets it.
-//! - An unknown user ([`Sender::Unknown`], or `None` as a participant, a
-//!   banned user or a banner) is no longer made: it stood for a JMAP
-//!   object naming a ChatContact a client destroyed, when JMAP objects
-//!   were written into the records (steps 3 and 4 of
-//!   docs/design/agent-frontends.md §3). Records name users by URI, so a
-//!   forgotten person leaves them whole.
 //! - A read position may name a room the store does not hold: one a
 //!   client named. A room deleted here ([`crate::Store::forget_room`])
 //!   takes its messages, bans and read positions with it.
@@ -102,10 +96,8 @@ pub enum RoomStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Participant {
-    /// The user URI, or `None` when not known (a Chat member whose
-    /// ChatContact a client destroyed).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub user: Option<String>,
+    /// The user URI.
+    pub user: String,
     /// The room-policy-04 role index, or `None` until a sync sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<u32>,
@@ -145,9 +137,6 @@ pub enum Sender {
     User(String),
     /// The agent itself: a notice ([`Message::notice`]).
     Agent,
-    /// A user who is not known (no longer made; see the module
-    /// documentation).
-    Unknown,
 }
 
 /// What a message replies to.
@@ -319,15 +308,11 @@ pub struct Ban {
     pub key: Key,
     /// The room's key.
     pub room: Key,
-    /// The banned user's URI, or `None` when not known (a ChatBan naming
-    /// a ChatContact a client destroyed).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub user: Option<String>,
-    /// The URI of the user who banned them (the user's own for a ban made
-    /// here or by an unknown committer), or `None` when not known (a
-    /// ChatBan naming a ChatContact a client destroyed).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub banned_by: Option<String>,
+    /// The banned user's URI.
+    pub user: String,
+    /// The URI of the user who banned them: the user's own for a ban made
+    /// here or by a committer not known ([`crate::sync::bans`]).
+    pub banned_by: String,
     /// The reason, local.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
