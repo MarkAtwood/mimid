@@ -1,0 +1,22 @@
+{
+  "id": "mimid-e64f.7",
+  "title": "Findings log: record Mark's decisions on F1-F18",
+  "description": "Add a Decision line to each F entry of docs/design/binary-live-stream-findings.md from Mark's 2026-11-20 decisions. Branch findings-impl.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T22:56:19.69975107Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T22:56:19.69975107Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-e64f.7",
+      "depends_on_id": "mimid-e64f",
+      "type": "parent-child",
+      "created_at": "2026-11-20T22:56:19.759312589Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
