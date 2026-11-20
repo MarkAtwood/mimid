@@ -12,8 +12,9 @@
 //!
 //! - Every write rewrites the whole file: fine for one user's history on
 //!   one device, slow for a very large one.
-//! - Nothing reads or writes this file yet (step 2 of the migration):
-//!   mimid-agent-jmap still owns `chat.json` in format 1.
+//! - The agent does not write format 2 yet (step 3 of the migration):
+//!   mimid-agent-jmap still writes `chat.json` in format 1, and reads it
+//!   into the store with [`read_format_1`].
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -26,7 +27,7 @@ use crate::state::State;
 
 pub mod format_1;
 
-pub use format_1::read_format_1;
+pub use format_1::{forget_object, merge_object, read_format_1};
 
 /// The format this version writes.
 pub const FORMAT: u32 = 2;
@@ -210,4 +211,34 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), FileError> {
     drop(file);
     std::fs::rename(&tmp, path).map_err(io(path))?;
     Ok(())
+}
+
+/// `user`'s state in the store file `path`, in format 1 or 2, or an empty
+/// state if there is no file.
+///
+/// # Errors
+///
+/// [`FileError::Io`] if the file exists and cannot be read, and
+/// [`FileError::Malformed`] as [`read`] says.
+pub fn load(path: &Path, user: &str) -> Result<State, FileError> {
+    match std::fs::read(path) {
+        Ok(bytes) => read(&bytes, user),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::new(user)),
+        Err(source) => Err(FileError::Io {
+            path: path.to_owned(),
+            source,
+        }),
+    }
+}
+
+/// Writes `state` to `path` in format 2 ([`write_atomically`]). Nothing
+/// calls it yet: the store owns its file from step 4 of the migration,
+/// which first keeps the format-1 file as `chat.json.v1`.
+///
+/// # Errors
+///
+/// [`FileError`] if encoding or writing fails; the old file is then
+/// still in place.
+pub fn save(path: &Path, state: &State) -> Result<(), FileError> {
+    write_atomically(path, &write_format_2(state)?)
 }

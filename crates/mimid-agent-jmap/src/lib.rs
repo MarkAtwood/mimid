@@ -5,9 +5,13 @@
 //! §Message Identifiers through §Message Status describe a party that
 //! converts MIMI messages.
 //!
-//! [`AgentChat`] is a crate-jmap `ChatBackend`. Objects are kept in
-//! crate-jmap's `MemoryBackend`; client writes with MIMI meaning go to the
-//! agent first, and [`AgentChat::sync`] stores what the agent received. It
+//! [`AgentChat`] is a crate-jmap `ChatBackend` over a
+//! [`mimid_agent_store::Store`], the agent's plaintext records. Objects are
+//! kept in crate-jmap's `MemoryBackend`, a projection of the records
+//! under their keys; client writes with MIMI meaning go to the agent
+//! first, and [`AgentChat::sync`] runs the store's sync, which writes what
+//! the agent received into the records, then shows the changed records
+//! as JMAP objects and saves. It
 //! has no transport and no runtime of its own: a daemon or an app builds a
 //! `jmap_server::Dispatcher<()>`, calls [`AgentChat::register`], serves it,
 //! and calls `sync` (decision mimid-1wgh.39).
@@ -86,7 +90,8 @@
 //!   changed and should be verified; `did` changes to the new DID at the
 //!   same time, and `didChangedAt` is set (draft-atwood-jmap-chat-did-00
 //!   §DID changes; a first binding does not set it). The notice's `senderId` is the accountId (JMAP Chat has no
-//!   system sender; see `sync::store_identity_notice`), and it is stored
+//!   system sender; the store keeps it as a notice of the agent's,
+//!   `mimid_agent_store::record::Sender::Agent`), and it is stored
 //!   once per room and change, however often the agent reports it.
 //!   INVENTED, NOT FROM SPEC: the notice and its text.
 //! - **Removed for lacking AppDataUpdate** (bead mimid-4lp4.4): when a
@@ -197,6 +202,7 @@ mod convert;
 pub mod edits;
 pub mod moderate;
 mod persist;
+mod project;
 pub mod report;
 pub mod retry;
 mod sync;

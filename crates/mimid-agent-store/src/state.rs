@@ -3,9 +3,8 @@
 //!
 //! # Limitations
 //!
-//! - Nothing here talks to the agent yet: this is step 2 of the migration
-//!   in docs/design/agent-frontends.md §3, the model and the file, not
-//!   wired in.
+//! - [`State::reindex`] walks every record; the `insert_*` methods keep
+//!   the indexes without it.
 
 use std::collections::BTreeMap;
 
@@ -84,6 +83,56 @@ impl State {
             }
         }
         self.indexes = indexes;
+    }
+
+    /// Stores `room` under its key, indexed by its URI.
+    pub fn insert_room(&mut self, room: Room) {
+        self.indexes
+            .room_of_uri
+            .insert(room.uri.clone(), room.key.clone());
+        self.rooms.insert(room.key.clone(), room);
+    }
+
+    /// Stores `person` under its key, indexed by its user URI.
+    pub fn insert_person(&mut self, person: Person) {
+        self.indexes
+            .person_of_user
+            .insert(person.user.clone(), person.key.clone());
+        self.people.insert(person.key.clone(), person);
+    }
+
+    /// Stores `message` under its key, indexed in its room by the
+    /// reference octets of its `senderMsgId` and of its aliases.
+    pub fn insert_message(&mut self, message: Message) {
+        let references = reference_of(&message.sender_msg_id)
+            .into_iter()
+            .chain(message.aliases.iter().map(|alias| alias.0));
+        for reference in references {
+            self.indexes
+                .message_of_ref
+                .insert((message.room.clone(), reference), message.key.clone());
+        }
+        self.messages.insert(message.key.clone(), message);
+    }
+
+    /// Adds `alias`, the reference octets of a later version, to message
+    /// `key`, and indexes it; false if there is no such message.
+    pub fn add_alias(&mut self, key: &str, alias: MessageRef) -> bool {
+        let Some(message) = self.messages.get_mut(key) else {
+            return false;
+        };
+        message.aliases.push(crate::record::Octets(alias));
+        self.indexes
+            .message_of_ref
+            .insert((message.room.clone(), alias), key.to_owned());
+        true
+    }
+
+    /// The next message sequence number, taken.
+    pub fn take_seq(&mut self) -> u64 {
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.saturating_add(1);
+        seq
     }
 
     /// The key of the room with URI `uri`.

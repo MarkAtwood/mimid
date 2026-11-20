@@ -1,7 +1,7 @@
 # Agent front ends: one plaintext store, JMAP and IRC over it
 
 Design note for epic mimid-1vul. Written 2026-11-19 against main at
-e4e91cd. Status: steps 1 and 2 of §3 are built (2026-11-20). Each step
+e4e91cd. Status: steps 1 to 3 of §3 are built (2026-11-20). Each step
 notes the changes it made to this design.
 
 Mark decided on 2026-11-19 that the IRC front end is native. It is built
@@ -368,6 +368,51 @@ step runs the full check list in AGENTS.md before its commit.
      otherwise. Format 2's reader still refuses a record naming a room it
      does not hold: step 4 must decide what its conversion does with
      these.
+   - The front end saves, so `Store::sync` takes a `Commit`: each round
+     hands the front end its list of `Change`s (person, room, message
+     and ban, added or changed; room left; ban lifted), the front end
+     projects and saves, and only then does the store acknowledge. The
+     change log and the broadcast are still step 6. The projection writes
+     only the properties the store owns, and only where they differ, over
+     the object the backend holds, so `unreadCount`, `readAt` and the
+     other JMAP-only properties stay the backend's. A
+     `MembersChanged` is always a `RoomChanged`, and the projection
+     recomputes `members` against the backend's, exactly as before.
+   - At load the `MemoryBackend` is seeded from the format-1 file's own
+     objects, and the store's records are read from the same bytes. They
+     are not rebuilt from the records: the records keep dates in
+     milliseconds, and format 1 holds date texts that `utc_date` does
+     not reproduce (crate-jmap's `now_utc_string` writes `.000Z`; a
+     client's `deletedAt`, `expiresAt` or `lastReadAt` can carry any
+     number of digits). Rebuilding would change what clients read after a
+     restart. Step 4, which seeds from the records, must keep such a text
+     in `ext["jmap"]` when `utc_date` would not write it, or accept the
+     change.
+   - The JMAP front end's own writes still go straight to the agent and
+     the backend (step 5 moves them). After each one, it writes the
+     object into the records (`file::merge_object`, built on the
+     format-1 reader; `file::forget_object` for a destroy). For a record
+     that exists it takes only what a client may change: a ChatContact's
+     `displayName`, a ChatBan's `reason` and `expiresAt`, a Message's
+     local deletion, or its content after an own edit or retraction, and
+     every ReadPosition; the rest stays the store's. The indexes are
+     rebuilt after a destroy, a whole pass, as `save` already is.
+   - A ChatContact a client destroys loses its person record, so the
+     user gets a new ChatContact when next seen. Before, the link to the
+     destroyed id stayed until a restart: new Messages and members named
+     the destroyed id, and for a user with did:webvh leaves the next DID
+     refresh failed the sync.
+   - A room record that lacks role indexes or role names (read from
+     format 1, or made by a JMAP Chat/set create) gets them from the
+     agent at the next sync, as no change: the members shown are the
+     same.
+   - Received replies to a message not stored keep its reference octets
+     (`Reply::Reference`), and notices keep their kind. A notice is
+     edited only by the user, as before, when it was the account's
+     Message.
+   - The unit test `kept_ids_read_back_and_damaged_ones_are_ignored`
+     went with the code it tested: the MIMI IDs are read by step 2's
+     reader, which refuses damaged ones as malformed.
 4. **The store owns the file.** Switch to format 2, with the one-time
    format-1 conversion and the `chat.json.v1` copy. JMAP-only properties
    go into `ext["jmap"]`. The referenced blob set comes from the store.

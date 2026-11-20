@@ -1,8 +1,7 @@
 //! [`AgentChat`]: a JMAP Chat backend whose store is crate-jmap's
 //! `MemoryBackend` and whose writes go to MIMI rooms through an [`Agent`].
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex as StdMutex, PoisonError};
+use std::sync::Arc;
 
 use jmap_chat_server::memory::{MemoryBackend, MemoryError};
 use jmap_chat_server::{
@@ -23,15 +22,17 @@ use mimid_agent_core::{
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-use crate::convert::{MessageRef, message_ref, sender_msg_id, utc_date};
+use crate::convert::{sender_msg_id, utc_date};
+use mimid_agent_store::Store;
 use mimid_agent_store::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
+use mimid_agent_store::file::{forget_object, merge_object};
+
+pub use mimid_agent_store::InvitePolicy;
+pub use mimid_agent_store::sync::MAX_ATTACHMENTS_PER_MESSAGE;
 
 /// The Chat property that names its MIMI room
 /// (draft-atwood-jmap-chat-mimi-00 §Chat.roomId).
 pub(crate) const ROOM_ID: &str = "roomId";
-
-/// room-policy-04 §8.1.3: the "banned" role's index.
-pub(crate) const BANNED_ROLE_INDEX: u32 = 1;
 
 /// The role the agent gives the participants it adds: "member" in its
 /// default role list (decision mimid-1wgh.56).
@@ -42,26 +43,6 @@ const MEMBER_ROLE_INDEX: u32 = 2;
 /// (RFC 8620 §5.2) and it resyncs. INVENTED VALUE, NOT FROM SPEC
 /// (decision mimid-1wgh.66).
 pub const CHANGE_LOG_LIMIT: usize = 4096;
-
-/// The most attachments one Message carries, sent or received; the
-/// account's `maxAttachmentsPerMessage` when it has a blob store.
-/// INVENTED, NOT FROM SPEC.
-pub const MAX_ATTACHMENTS_PER_MESSAGE: usize = 8;
-
-/// Which pending invites [`AgentChat::sync`] joins.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum InvitePolicy {
-    /// Join when the Welcome's sender ([`Agent::inviter`]) is a user this
-    /// user has allowed (`Agent::allow`, a granted consent record). The
-    /// default.
-    #[default]
-    FromAllowed,
-    /// Join every invite.
-    Any,
-    /// Join none; invites stay pending in the agent.
-    Never,
-}
 
 /// Settings of an [`AgentChat`].
 #[derive(Debug, Clone)]
@@ -107,46 +88,26 @@ impl Options {
     }
 }
 
-/// The links between JMAP ids and MIMI names, kept beside the store.
-#[derive(Debug, Default)]
-pub(crate) struct Links {
-    pub(crate) chat_of_room: BTreeMap<String, Id>,
-    pub(crate) room_of_chat: BTreeMap<String, String>,
-    pub(crate) contact_of_user: BTreeMap<String, Id>,
-    /// (Chat id, reference octets of a MIMI message ID) to Message id.
-    pub(crate) messages: BTreeMap<(String, MessageRef), Id>,
-}
-
 /// One user's MIMI rooms as a JMAP Chat account.
 ///
-/// Objects live in a crate-jmap `MemoryBackend`; client writes that mean
-/// something in MIMI go to the [`Agent`] before they are stored, and
-/// [`AgentChat::sync`] stores what the agent received. See the crate
-/// documentation for what maps and what does not.
+/// The records live in a [`Store`], which is the agent's journal
+/// consumer; the JMAP objects live in a crate-jmap `MemoryBackend`, a
+/// projection of the records under their keys.
+/// Client writes that mean something in MIMI go to the [`Agent`] before
+/// they are stored, and each JMAP write is written into the records too
+/// (`reflect`). See the crate documentation for what maps
+/// and what does not.
 pub struct AgentChat {
     pub(crate) inner: MemoryBackend,
     pub(crate) account: Id,
     pub(crate) user: String,
-    pub(crate) agent: Arc<Mutex<Agent>>,
-    pub(crate) links: StdMutex<Links>,
+    /// The agent, the records and the blob store.
+    pub(crate) store: Store,
     pub(crate) options: Options,
     /// The plaintext store file ([`AgentChat::persisted_at`]).
     pub(crate) store_path: Option<std::path::PathBuf>,
     /// One [`AgentChat::save`] at a time.
     pub(crate) save_lock: Mutex<()>,
-    /// The attachments' content ([`AgentChat::with_blobs`]).
-    pub(crate) blobs: Option<BlobStore>,
-    /// Received attachments to fetch again ([`crate::retry`]).
-    pub(crate) pending: StdMutex<Vec<crate::retry::PendingAttachment>>,
-    /// Each active room's epoch when ChatContact `did`s were last set
-    /// from its leaves; a change of any sets them again.
-    pub(crate) did_epochs: StdMutex<BTreeMap<String, u64>>,
-    /// What a report of each received Message needs (its frank, or its
-    /// content unverified), by Message id, for `Message/reportAbuse`
-    /// ([`crate::report`]).
-    pub(crate) franks: StdMutex<BTreeMap<String, mimid_agent_store::report::KeptFrank>>,
-    /// Each Message's MIMI message IDs, by Message id ([`crate::edits`]).
-    pub(crate) mimi_ids: StdMutex<BTreeMap<String, crate::edits::MimiIds>>,
 }
 
 impl std::fmt::Debug for AgentChat {
@@ -173,16 +134,10 @@ impl AgentChat {
             inner,
             account: account_id,
             user: agent.user().to_owned(),
-            agent: Arc::new(Mutex::new(agent)),
-            links: StdMutex::new(Links::default()),
+            store: Store::new(agent, options.invites.clone()),
             options,
             store_path: None,
             save_lock: Mutex::new(()),
-            blobs: None,
-            pending: StdMutex::new(Vec::new()),
-            did_epochs: StdMutex::new(BTreeMap::new()),
-            franks: StdMutex::new(BTreeMap::new()),
-            mimi_ids: StdMutex::new(BTreeMap::new()),
         }
     }
 
@@ -196,7 +151,8 @@ impl AgentChat {
     ///
     /// The [`BlobError`] of [`BlobStore::open`].
     pub fn with_blobs(mut self, dir: impl Into<std::path::PathBuf>) -> Result<Self, BlobError> {
-        self.blobs = Some(BlobStore::open(dir)?.with_quota(self.options.blob_quota));
+        let blobs = BlobStore::open(dir)?.with_quota(self.options.blob_quota);
+        self.store = self.store.with_blobs(blobs);
         Ok(self)
     }
 
@@ -232,7 +188,7 @@ impl AgentChat {
     /// The blob store, if there is one: the daemon serves uploads and
     /// downloads from it.
     pub fn blobs(&self) -> Option<&BlobStore> {
-        self.blobs.as_ref()
+        self.store.blobs()
     }
 
     /// Test-only: drains the store's recorded outbound and lifecycle
@@ -263,21 +219,79 @@ impl AgentChat {
     /// The agent, for what JMAP Chat has no method for: publishing
     /// KeyPackages and consent decisions.
     pub fn agent(&self) -> &Arc<Mutex<Agent>> {
-        &self.agent
+        self.store.agent()
     }
 
-    /// The Chat bound to MIMI room `room`.
+    /// The Chat bound to MIMI room `room`: the key of its room record.
     pub fn chat_of_room(&self, room: &str) -> Option<Id> {
-        self.links().chat_of_room.get(room).cloned()
+        self.store
+            .state()
+            .room_of_uri(room)
+            .map(|key| Id::from(key.as_str()))
     }
 
     /// The MIMI room of Chat `chat`.
     pub fn room_of_chat(&self, chat: &Id) -> Option<String> {
-        self.links().room_of_chat.get(chat.as_ref()).cloned()
+        self.store
+            .state()
+            .rooms
+            .get(chat.as_ref())
+            .map(|room| room.uri.clone())
     }
 
-    pub(crate) fn links(&self) -> std::sync::MutexGuard<'_, Links> {
-        self.links.lock().unwrap_or_else(PoisonError::into_inner)
+    /// Writes the JMAP object `id` of type `type_name`, as the backend
+    /// holds it after a write of this front end's own, into the store's
+    /// records, or removes its record when the object is gone
+    /// ([`merge_object`], [`forget_object`]); with `content`, an own edit
+    /// or retraction, its content too. Until the writes go through the
+    /// store (step 5 of docs/design/agent-frontends.md §3), this is how
+    /// the store learns of them. A failure is logged: the write has
+    /// already answered the client.
+    pub(crate) async fn reflect(&self, type_name: &str, id: &Id, content: bool) {
+        async fn json<O: GetObject + serde::Serialize + Send + Sync>(
+            chat: &AgentChat,
+            id: &Id,
+        ) -> Result<Option<Value>, String> {
+            match chat.stored::<O>(id).await {
+                Ok(Some(object)) => serde_json::to_value(object)
+                    .map(Some)
+                    .map_err(|e| e.to_string()),
+                Ok(None) => Ok(None),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        let object = match type_name {
+            "Chat" => json::<Chat>(self, id).await,
+            "Message" => json::<Message>(self, id).await,
+            "ChatContact" => json::<ChatContact>(self, id).await,
+            "ChatBan" => json::<ChatBan>(self, id).await,
+            "ReadPosition" => json::<jmap_chat_types::ReadPosition>(self, id).await,
+            _ => return,
+        };
+        let result = match object {
+            Ok(Some(Value::Object(object))) => merge_object(
+                &mut self.store.state(),
+                self.account.as_ref(),
+                type_name,
+                object,
+                content,
+            )
+            .map_err(|e| e.to_string()),
+            Ok(Some(_)) => Err("not an object".to_owned()),
+            Ok(None) => {
+                forget_object(&mut self.store.state(), type_name, id.as_ref());
+                Ok(())
+            }
+            Err(e) => Err(e),
+        };
+        if let Err(error) = result {
+            tracing::error!(
+                name: "agent_chat_reflect_failed",
+                type_name,
+                error,
+                "a JMAP write was not written into the store's records"
+            );
+        }
     }
 
     /// `result`, after saving the store when it is a success.
@@ -286,20 +300,6 @@ impl AgentChat {
             self.save_or_log().await;
         }
         result
-    }
-
-    pub(crate) fn link_room(&self, room: &str, chat: &Id) {
-        let mut links = self.links();
-        links.chat_of_room.insert(room.to_owned(), chat.clone());
-        links
-            .room_of_chat
-            .insert(chat.as_ref().to_owned(), room.to_owned());
-    }
-
-    pub(crate) fn link_message(&self, chat: &Id, reference: MessageRef, message: &Id) {
-        self.links()
-            .messages
-            .insert((chat.as_ref().to_owned(), reference), message.clone());
     }
 
     /// The stored object `id` of type `O`.
@@ -383,7 +383,7 @@ impl AgentChat {
             .map_err(SetFailure::into_backend)?;
 
         let room = {
-            let mut agent = self.agent.lock().await;
+            let mut agent = self.agent().lock().await;
             let room = agent
                 .host_room(&HostOptions::named(name))
                 .await
@@ -402,7 +402,7 @@ impl AgentChat {
         value[ROOM_ID] = json!(room);
         let chat = serde_json::from_value::<O>(value).map_err(serde_failure)?;
         let chat = self.inner.insert_object(&self.account, chat).await?;
-        self.link_room(&room, &id);
+        self.reflect(Chat::TYPE_NAME, &id, false).await;
         Ok((id, chat))
     }
 
@@ -471,7 +471,7 @@ impl AgentChat {
         let removed = self.users_of(&others, "removeMembers").await?;
         let changed_ids: Vec<Id> = changed.iter().map(|(id, _)| id.clone()).collect();
         let changed_users = self.users_of(&changed_ids, "updateMemberRoles").await?;
-        let mut agent = self.agent.lock().await;
+        let mut agent = self.agent().lock().await;
         for user in &added {
             agent.invite(room, user).await.map_err(agent_set_failure)?;
         }
@@ -534,7 +534,7 @@ impl AgentChat {
         }
         let attachments = self.outgoing_attachments(&message)?;
         let sent = self
-            .agent
+            .agent()
             .lock()
             .await
             .send_message(&room, &message.body, &attachments)
@@ -543,10 +543,11 @@ impl AgentChat {
         message.sender_msg_id = sender_msg_id(sent.accepted_at, &sent.message_id);
         message.delivery_state = DeliveryState::Delivered;
         message.delivered_at = Some(utc_date(sent.accepted_at));
-        let chat_id = message.chat_id.clone();
         let stored = self.inner.insert_object(&self.account, message).await?;
-        self.link_message(&chat_id, message_ref(&sent.message_id), &id);
-        self.keep_first_id(&id, &sent.message_id);
+        self.reflect(Message::TYPE_NAME, &id, false).await;
+        if let Some(record) = self.store.state().messages.get_mut(id.as_ref()) {
+            record.mimi_id = Some(mimid_agent_store::record::Octets(sent.message_id.0));
+        }
         Ok((id, stored))
     }
 
@@ -561,7 +562,7 @@ impl AgentChat {
         if message.attachments.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(blobs) = &self.blobs else {
+        let Some(blobs) = self.store.blobs() else {
             return Err(no_blob(None));
         };
         let now = std::time::SystemTime::now();
@@ -763,9 +764,14 @@ impl ChatStore for AgentChat {
         let result = match O::TYPE_NAME {
             "Chat" => self.create_chat(build).await,
             name if local(name) => {
-                self.inner
+                let created = self
+                    .inner
                     .create_object(caller, account_id, create_id, build)
-                    .await
+                    .await;
+                if let Ok((id, _)) = &created {
+                    self.reflect(name, id, false).await;
+                }
+                created
             }
             name => Err(unsupported_type(name)),
         };
@@ -798,6 +804,7 @@ impl ChatStore for AgentChat {
         self.check_account(account_id)
             .map_err(SetFailure::into_backend)?;
         let mut patch = patch;
+        let mut content = false;
         match O::TYPE_NAME {
             "Chat" => {
                 if let Some(room) = self.room_of_chat(id) {
@@ -814,6 +821,7 @@ impl ChatStore for AgentChat {
                 let value = serde_json::to_value(&patch).map_err(serde_failure)?;
                 if let Some(changed) = self.send_change(id, &value).await? {
                     patch = serde_json::from_value(changed).map_err(serde_failure)?;
+                    content = true;
                 }
             }
             name if local(name) => {}
@@ -823,6 +831,9 @@ impl ChatStore for AgentChat {
             .inner
             .update_object::<O>(caller, account_id, id, patch)
             .await;
+        if result.is_ok() {
+            self.reflect(O::TYPE_NAME, id, content).await;
+        }
         self.saved(result).await
     }
 
@@ -837,7 +848,7 @@ impl ChatStore for AgentChat {
         let result = match O::TYPE_NAME {
             "Chat" => {
                 if let Some(room) = self.room_of_chat(id) {
-                    let mut agent = self.agent.lock().await;
+                    let mut agent = self.agent().lock().await;
                     let active = agent
                         .rooms()
                         .iter()
@@ -849,22 +860,17 @@ impl ChatStore for AgentChat {
                 self.inner
                     .destroy_object::<O>(caller, account_id, id)
                     .await?;
-                let mut links = self.links();
-                if let Some(room) = links.room_of_chat.remove(id.as_ref()) {
-                    links.chat_of_room.remove(&room);
-                }
-                links.messages.retain(|(chat, _), _| chat != id.as_ref());
+                self.reflect(O::TYPE_NAME, id, false).await;
                 Ok(())
             }
             // Destroying a Message or a local object is local.
-            "Message" => {
+            name if name == "Message" || local(name) => {
                 self.inner
                     .destroy_object::<O>(caller, account_id, id)
                     .await?;
-                self.links().messages.retain(|_, message| message != id);
+                self.reflect(name, id, false).await;
                 Ok(())
             }
-            name if local(name) => self.inner.destroy_object::<O>(caller, account_id, id).await,
             name => Err(unsupported_type(name)),
         };
         self.saved(result).await
@@ -983,6 +989,9 @@ impl ChatModeration for AgentChat {
             .inner
             .update_object::<ChatBan>(caller, account_id, id, patch)
             .await;
+        if result.is_ok() {
+            self.reflect(ChatBan::TYPE_NAME, id, false).await;
+        }
         self.saved(result).await
     }
 
@@ -1027,7 +1036,7 @@ impl ChatSettings for AgentChat {
     /// [`MAX_ATTACHMENT_LEN`] octets each; without one, none. The JMAP
     /// layer checks a create against these before it reaches the agent.
     fn limits(&self, caller: &(), account_id: &Id) -> ChatLimits {
-        let (count, bytes) = match self.blobs {
+        let (count, bytes) = match self.store.blobs() {
             Some(_) => (
                 MAX_ATTACHMENTS_PER_MESSAGE as u64,
                 MAX_ATTACHMENT_LEN as u64,
@@ -1077,7 +1086,7 @@ impl ChatResolvers for AgentChat {
             BackendSetError::Other(e) => Err(e),
             e => Err(MemoryError::new(e.to_string())),
         };
-        let Some(blobs) = self.blobs.as_ref().filter(|_| *account_id == self.account) else {
+        let Some(blobs) = self.store.blobs().filter(|_| *account_id == self.account) else {
             return refused(no_blob(None));
         };
         match blobs.info(blob_id.as_ref()) {

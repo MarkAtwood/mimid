@@ -245,7 +245,7 @@ pub fn read_format_1(bytes: &[u8], user: &str) -> Result<State, FileError> {
         let object = Object::new("Message", value)?;
         let ids = file.mimi_ids.remove(&object.id);
         let frank = file.franks.remove(&object.id);
-        let message = message(object, &users, &rooms, ids, frank)?;
+        let message = message(object, &users, &rooms, ids, frank, true)?;
         insert(
             &mut message_records,
             message.key.clone(),
@@ -478,6 +478,7 @@ fn message(
     rooms: &BTreeMap<String, Room>,
     ids: Option<MimiIds>,
     kept_frank: Option<KeptFrank>,
+    detect_notice: bool,
 ) -> Result<Message, FileError> {
     let chat = o.required("chatId")?;
     let room = room_key(users, rooms, chat);
@@ -507,7 +508,8 @@ fn message(
             (first, aliases)
         }
     };
-    let sender = if sender_id == users.account
+    let sender = if detect_notice
+        && sender_id == users.account
         && mimi_id.is_none()
         && NOTICE_PREFIXES.iter().any(|p| body.starts_with(p))
     {
@@ -578,4 +580,156 @@ fn read_position(
         at: o.date("lastReadAt")?,
         ext: o.ext(),
     })
+}
+
+/// Writes one JMAP object of type `type_name`, as a JMAP front end holds
+/// it after a write of its own, into `state`; `account` is its accountId.
+/// A new key gets a record made from the object as [`read_format_1`]
+/// makes it (a new message also gets the next sequence number, and is
+/// never taken for a notice). For a record that exists, only what the
+/// front end may change is taken, and what the store owns is kept:
+///
+/// - Person: the display name;
+/// - Room: nothing but `ext`;
+/// - Ban: the reason and expiry;
+/// - Message: a local deletion, or with `content` (the front end sent an
+///   edit or retraction of the user's own message) the body, body type,
+///   attachments, edit history and deletion;
+/// - Read position: everything.
+///
+/// Every record keeps the object's other properties in `ext["jmap"]`.
+/// This is how the JMAP front end's own writes reach the records until
+/// they go through the store (step 5 of docs/design/agent-frontends.md
+/// §3).
+///
+/// # Errors
+///
+/// [`FileError::Malformed`] as [`read_format_1`] says for one object, or
+/// for a type that is not one of the five.
+pub fn merge_object(
+    state: &mut State,
+    account: &str,
+    type_name: &str,
+    object: Map<String, Value>,
+    content: bool,
+) -> Result<(), FileError> {
+    let user = state.user.clone();
+    let users = |people| users_of(account, &user, people);
+    match type_name {
+        "ChatContact" => {
+            let new = person(Object::new("ChatContact", object)?)?;
+            match state.people.get_mut(&new.key) {
+                Some(old) => {
+                    old.display_name = new.display_name;
+                    old.ext = new.ext;
+                }
+                None => state.insert_person(new),
+            }
+        }
+        "Chat" => {
+            let new = room(Object::new("Chat", object)?, &users(&state.people))?;
+            match state.rooms.get_mut(&new.key) {
+                Some(old) => old.ext = new.ext,
+                None => state.insert_room(new),
+            }
+        }
+        "ChatBan" => {
+            let new = ban(
+                Object::new("ChatBan", object)?,
+                &users(&state.people),
+                &state.rooms,
+            )?;
+            match state.bans.get_mut(&new.key) {
+                Some(old) => {
+                    old.reason = new.reason;
+                    old.expires_at = new.expires_at;
+                    old.ext = new.ext;
+                }
+                None => {
+                    state.bans.insert(new.key.clone(), new);
+                }
+            }
+        }
+        "Message" => {
+            let mut new = message(
+                Object::new("Message", object)?,
+                &users(&state.people),
+                &state.rooms,
+                None,
+                None,
+                false,
+            )?;
+            match state.messages.get_mut(&new.key) {
+                Some(old) => {
+                    old.ext = new.ext;
+                    if content {
+                        old.body = new.body;
+                        old.body_type = new.body_type;
+                        old.attachments = new.attachments;
+                        old.edit_history = new.edit_history;
+                        old.edited_at = new.edited_at;
+                        old.deleted = new.deleted;
+                    } else if old.deleted.is_none() {
+                        old.deleted = new.deleted;
+                    }
+                }
+                None => {
+                    new.seq = state.take_seq();
+                    state.insert_message(new);
+                }
+            }
+        }
+        "ReadPosition" => {
+            let new = read_position(
+                Object::new("ReadPosition", object)?,
+                &users(&state.people),
+                &state.rooms,
+            )?;
+            state.read_positions.insert(new.key.clone(), new);
+        }
+        other => return Err(malformed(format!("unknown type {other}"))),
+    }
+    Ok(())
+}
+
+/// Removes the record of the JMAP object `id` of type `type_name`, which
+/// the JMAP front end destroyed: for a Chat, its room record and its read
+/// positions (crate-jmap destroys a Chat's ReadPositions with it), but
+/// not its messages or bans, which crate-jmap keeps.
+pub fn forget_object(state: &mut State, type_name: &str, id: &str) {
+    match type_name {
+        "ChatContact" => {
+            state.people.remove(id);
+        }
+        "Chat" => {
+            state.rooms.remove(id);
+            state.read_positions.retain(|_, r| r.room != id);
+        }
+        "ChatBan" => {
+            state.bans.remove(id);
+        }
+        "Message" => {
+            state.messages.remove(id);
+        }
+        "ReadPosition" => {
+            state.read_positions.remove(id);
+        }
+        _ => return,
+    }
+    state.reindex();
+}
+
+/// A [`Users`] for one object.
+fn users_of<'a>(
+    account: &'a str,
+    user: &'a str,
+    people: &'a BTreeMap<String, Person>,
+) -> Users<'a> {
+    Users {
+        account,
+        user,
+        people,
+        unknown: std::cell::Cell::new(0),
+        unknown_chats: std::cell::Cell::new(0),
+    }
 }

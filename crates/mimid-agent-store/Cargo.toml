@@ -17,6 +17,8 @@ serde_json.workspace = true
 # Blob ids and notice keys are SHA-256 digests.
 sha2.workspace = true
 thiserror.workspace = true
+# Only the async Mutex around the Agent.
+tokio = { version = "1.53.3", default-features = false, features = ["sync"] }
 tracing.workspace = true
 # The version mimid-server and mimid-agent-jmap use.
 ulid = "=3.0.0"

@@ -32,28 +32,17 @@
 pub use mimid_agent_store::retry::{
     FIRST_DELAY_SECS, MAX_ATTEMPTS, MAX_DELAY_SECS, MAX_PENDING, MAX_RETRIES_PER_SYNC,
 };
-pub(crate) use mimid_agent_store::retry::{PendingAttachment, delay_after, may_pass, now_secs};
 
 impl crate::AgentChat {
     /// Makes every attachment waiting for a retry due, so the next
     /// [`crate::AgentChat::sync`] fetches them again; for when the network
     /// is back. Each retry still counts towards [`MAX_ATTEMPTS`].
     pub fn retry_attachments_now(&self) {
-        for entry in self
-            .pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter_mut()
-        {
-            entry.next_try = 0;
-        }
+        self.store.retry_attachments_now();
     }
 
     /// How many received attachments wait for a retry.
     pub fn pending_attachments(&self) -> usize {
-        self.pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .len()
+        self.store.pending_attachments()
     }
 }

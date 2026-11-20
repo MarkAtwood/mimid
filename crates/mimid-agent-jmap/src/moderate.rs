@@ -23,7 +23,8 @@
 //!   §Moderation) is `Agent::kick` for each listed user: their clients
 //!   leave the group and they stay in the participant list (`canKick`).
 //!   `members` does not change.
-//! - **Bans made elsewhere**: at each sync, every participant that an
+//! - **Bans made elsewhere** ([`mimid_agent_store::sync::bans`], shown
+//!   here as ChatBans): at each sync, every participant that an
 //!   active room holds in its "banned" role (role 1) has one ChatBan in
 //!   the room's Chat, and a ChatBan whose user no longer holds that role
 //!   is destroyed. The participant list does not say who banned a user,
@@ -68,64 +69,15 @@
 use jmap_chat_server::ChatStore;
 use jmap_chat_server::memory::MemoryError;
 use jmap_chat_types::{Chat, ChatBan, ChatMember};
-use jmap_server::{BackendSetError, Id, JmapReads, SetError, SetErrorType};
-use std::collections::BTreeMap;
+use jmap_server::{BackendSetError, Id, JmapObject, SetError, SetErrorType};
 
-use mimid_agent_core::{Agent, RoomStatus};
+use mimid_agent_core::Agent;
+use mimid_agent_store::sync::bans::banned_users;
 use serde_json::json;
 
 use crate::backend::{
-    AgentChat, BANNED_ROLE_INDEX, SetFailure, agent_failure, agent_set_failure, forbidden,
-    serde_failure, set_error,
+    AgentChat, SetFailure, agent_failure, agent_set_failure, forbidden, serde_failure, set_error,
 };
-use crate::sync::SyncError;
-
-/// The users that `room` holds in its "banned" role, or `None` when the
-/// agent cannot read the room's participant list.
-pub(crate) fn banned_users(agent: &Agent, room: &str) -> Option<Vec<String>> {
-    let participants = agent.participant_roles(room).ok()?;
-    let banned_named = agent
-        .roles(room)
-        .ok()?
-        .iter()
-        .any(|(index, name)| *index == BANNED_ROLE_INDEX && name == "banned");
-    if !banned_named {
-        return Some(Vec::new());
-    }
-    Some(
-        participants
-            .into_iter()
-            .filter(|(_, role)| *role == BANNED_ROLE_INDEX)
-            .map(|(user, _)| user)
-            .collect(),
-    )
-}
-
-/// The committers of the Commits one sync read, per room: a room's entry
-/// is its committer when every Commit read for it had the same known one,
-/// and `None` otherwise (bead mimid-cqof).
-#[derive(Debug, Default)]
-pub(crate) struct Committers(BTreeMap<String, Option<String>>);
-
-impl Committers {
-    /// Records a Commit to `room` by `committer` (`None`: not known).
-    pub(crate) fn saw(&mut self, room: &str, committer: Option<&str>) {
-        let committer = committer.map(str::to_owned);
-        self.0
-            .entry(room.to_owned())
-            .and_modify(|seen| {
-                if *seen != committer {
-                    *seen = None;
-                }
-            })
-            .or_insert(committer);
-    }
-
-    /// The one committer of every Commit read for `room`, if known.
-    fn of(&self, room: &str) -> Option<&str> {
-        self.0.get(room).and_then(Option::as_deref)
-    }
-}
 
 fn invalid_property(property: &str, description: impl Into<String>) -> SetError {
     set_error(SetErrorType::InvalidProperties, description).with_properties([property])
@@ -158,10 +110,11 @@ impl AgentChat {
             })?;
         // Held until the ban is stored, so a sync cannot mirror the room's
         // new ban first and store it twice.
-        let mut agent = self.agent.lock().await;
+        let mut agent = self.agent().lock().await;
         agent.ban(&room, &user).await.map_err(agent_failure)?;
         let ban = self.inner.insert_object(&self.account, ban).await?;
         self.drop_member(&ban.chat_id, &ban.user_id).await?;
+        self.reflect(ChatBan::TYPE_NAME, &id, false).await;
         drop(agent);
         Ok((id, ban))
     }
@@ -200,7 +153,7 @@ impl AgentChat {
                 .destroy_object::<ChatBan>(&(), &self.account, id)
                 .await;
         };
-        let mut agent = self.agent.lock().await;
+        let mut agent = self.agent().lock().await;
         self.lift_ban(&mut agent, &ban).await
     }
 
@@ -224,7 +177,9 @@ impl AgentChat {
         }
         self.inner
             .destroy_object::<ChatBan>(&(), &self.account, &ban.id)
-            .await
+            .await?;
+        self.reflect(ChatBan::TYPE_NAME, &ban.id, false).await;
+        Ok(())
     }
 
     /// `Chat/set` `kickMembers` of `chat`: `Agent::kick` of each user.
@@ -253,104 +208,12 @@ impl AgentChat {
             Ok(users) => users,
             Err(failure) => return refused(failure),
         };
-        let mut agent = self.agent.lock().await;
+        let mut agent = self.agent().lock().await;
         for user in &users {
             if let Err(e) = agent.kick(&room, user).await {
                 return refused(agent_set_failure(e));
             }
         }
         Ok(Ok(()))
-    }
-
-    /// Sync: each participant an active room holds banned has one ChatBan
-    /// in the room's Chat, and no one else has one (decision
-    /// mimid-1wgh.62 item 13). A new ChatBan's `bannedBy` is the room's
-    /// one committer in `committers`, else the accountId (bead
-    /// mimid-cqof).
-    pub(crate) async fn mirror_bans(
-        &self,
-        agent: &mut Agent,
-        committers: &Committers,
-    ) -> Result<(), SyncError> {
-        let (bans, _) = self
-            .inner
-            .get_objects::<ChatBan>(&(), &self.account, None, None)
-            .await?;
-        for room in agent.rooms() {
-            if room.status != RoomStatus::Active {
-                continue;
-            }
-            let Some(chat) = self.chat_of_room(&room.uri) else {
-                continue;
-            };
-            let Some(banned) = banned_users(agent, &room.uri) else {
-                continue;
-            };
-            let mut banned_ids = Vec::with_capacity(banned.len());
-            for user in &banned {
-                banned_ids.push(self.contact_for(user).await?);
-            }
-            for ban in bans.iter().filter(|b| b.chat_id == chat) {
-                if !banned_ids.contains(&ban.user_id) {
-                    self.inner
-                        .destroy_object::<ChatBan>(&(), &self.account, &ban.id)
-                        .await?;
-                }
-            }
-            let new: Vec<Id> = banned_ids
-                .into_iter()
-                .filter(|user| !bans.iter().any(|b| b.chat_id == chat && b.user_id == *user))
-                .collect();
-            if new.is_empty() {
-                continue;
-            }
-            let banned_by = match committers.of(&room.uri) {
-                Some(committer) if committer != self.user => self.contact_for(committer).await?,
-                _ => self.account.clone(),
-            };
-            for user in new {
-                let ban = ChatBan::new(
-                    self.inner.mint_id(),
-                    chat.clone(),
-                    user,
-                    banned_by.clone(),
-                    jmap_server::now_utc_string(),
-                );
-                self.inner.insert_object(&self.account, ban).await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Sync: lifts every ban whose `expiresAt` has passed (draft-atwood-
-    /// jmap-chat-00 §ChatBan `expiresAt`: "the server MUST lift it"); a
-    /// ban that cannot be lifted is reported in `problems` and kept.
-    pub(crate) async fn expire_bans(
-        &self,
-        agent: &mut Agent,
-        problems: &mut Vec<String>,
-    ) -> Result<(), SyncError> {
-        let now = i64::try_from(crate::retry::now_secs()).unwrap_or(i64::MAX);
-        let (bans, _) = self
-            .inner
-            .get_objects::<ChatBan>(&(), &self.account, None, None)
-            .await?;
-        for ban in bans {
-            let expired = ban
-                .expires_at
-                .as_ref()
-                .is_some_and(|t| t.to_epoch_seconds().is_ok_and(|t| t <= now));
-            if !expired {
-                continue;
-            }
-            if let Err(e) = self.lift_ban(agent, &ban).await {
-                problems.push(format!(
-                    "lifting the expired ChatBan {}: {}",
-                    ban.id,
-                    SyncError::from(e)
-                ));
-            }
-        }
-        Ok(())
     }
 }

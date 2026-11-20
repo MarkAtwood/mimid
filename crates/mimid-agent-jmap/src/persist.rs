@@ -9,8 +9,11 @@
 //! temporary file first (created mode 0600), flushed, then renamed over
 //! the old one, so a crash leaves the old or the new file, never a mix.
 //! At start the objects go back into the `MemoryBackend` under their ids
-//! (`seed_object`), and the room, contact and message links are rebuilt
-//! from them.
+//! (`seed_object`), and the store's records are read from the same file
+//! ([`mimid_agent_store::file::read_format_1`], keeping every JMAP id as
+//! the record's key). The side tables are written from the records.
+//! This is format 1; the store's own format 2 replaces it in step 4 of
+//! docs/design/agent-frontends.md §3.
 //!
 //! # Limitations
 //!
@@ -34,7 +37,9 @@ use jmap_server::{GetObject, Id, JmapObject, JmapReads};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::backend::{AgentChat, ROOM_ID};
+use mimid_agent_store::FileError;
+
+use crate::backend::AgentChat;
 
 /// The file format's version.
 const FORMAT: u32 = 1;
@@ -75,7 +80,7 @@ struct Snapshot {
     /// Received attachments to fetch again ([`crate::retry`]). Absent in
     /// a file written before retries, which reads as none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pending_attachments: Vec<crate::retry::PendingAttachment>,
+    pending_attachments: Vec<mimid_agent_store::retry::PendingAttachment>,
     /// What received Messages keep for reports, by Message id
     /// ([`crate::report`]). Absent in a file written before abuse reports,
     /// which reads as none.
@@ -85,7 +90,21 @@ struct Snapshot {
     /// aliases ([`crate::edits`]). Absent in a file written before edits,
     /// which reads as none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    mimi_ids: BTreeMap<String, crate::edits::MimiIds>,
+    mimi_ids: BTreeMap<String, MimiIds>,
+}
+
+/// The MIMI message IDs of one Message, as format 1 keeps them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct MimiIds {
+    /// The hex of the first version's message ID. Absent for a Message
+    /// that does not come from a MIMI message of its own (a notice) but
+    /// was edited anyway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    first: Option<String>,
+    /// The hex of the reference octets of each later version, oldest
+    /// first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    aliases: Vec<String>,
 }
 
 /// The stored types, in the order they are restored.
@@ -143,19 +162,11 @@ impl AgentChat {
                 format!("account {} is not this one", snapshot.account),
             ));
         }
-        *self
-            .pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            snapshot.pending_attachments.clone();
-        *self
-            .franks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = snapshot.franks.clone();
-        *self
-            .mimi_ids
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = snapshot.mimi_ids.clone();
+        let state =
+            mimid_agent_store::file::read_format_1(bytes, &self.user).map_err(|e| match e {
+                FileError::Malformed(reason) => malformed(path, reason),
+                e => malformed(path, e.to_string()),
+            })?;
         for (name, values) in &snapshot.objects {
             let Some(&type_name) = TYPES.iter().find(|t| **t == name.as_str()) else {
                 return Err(malformed(path, format!("unknown type {name}")));
@@ -166,56 +177,12 @@ impl AgentChat {
                     .and_then(Value::as_str)
                     .ok_or_else(|| malformed(path, format!("a {name} without an id")))?;
                 let id = Id::from(id.to_owned());
-                self.relink(type_name, &id, value);
                 self.inner
                     .seed_object(&self.account, type_name, &id, value.clone());
             }
         }
+        self.store.restore(state);
         Ok(())
-    }
-
-    /// Rebuilds the links of one restored object.
-    fn relink(&self, type_name: &str, id: &Id, value: &Value) {
-        match type_name {
-            "Chat" => {
-                if let Some(room) = value.get(ROOM_ID).and_then(Value::as_str) {
-                    self.link_room(room, id);
-                }
-            }
-            "ChatContact" => {
-                if let Some(user) = value.get("identity").and_then(Value::as_str) {
-                    self.links()
-                        .contact_of_user
-                        .insert(user.to_owned(), id.clone());
-                }
-            }
-            "Message" => {
-                let chat = value.get("chatId").and_then(Value::as_str);
-                let reference = value
-                    .get("senderMsgId")
-                    .and_then(Value::as_str)
-                    .and_then(|s| ulid::Ulid::from_string(s).ok())
-                    .map(|u| {
-                        let random = u.random().to_be_bytes();
-                        let mut out = [0u8; 10];
-                        out.copy_from_slice(&random[6..]);
-                        out
-                    });
-                let Some(chat) = chat.map(|c| Id::from(c.to_owned())) else {
-                    return;
-                };
-                if let Some(reference) = reference {
-                    self.link_message(&chat, reference, id);
-                }
-                // Its later versions resolve to it too (§Edits).
-                if let Some(ids) = self.kept_ids(id.as_ref()) {
-                    for alias in ids.aliases() {
-                        self.link_message(&chat, alias, id);
-                    }
-                }
-            }
-            _ => {}
-        }
     }
 
     pub(crate) async fn all<O: GetObject + Serialize + Send + Sync>(
@@ -251,32 +218,33 @@ impl AgentChat {
         objects.insert(Chat::TYPE_NAME.to_owned(), self.all::<Chat>().await?);
         objects.insert(ChatBan::TYPE_NAME.to_owned(), self.all::<ChatBan>().await?);
         let messages = self.all::<Message>().await?;
-        // A frank is kept only while its Message is: one the client
-        // destroyed is dropped here.
-        let franks = {
-            let mut franks = self
-                .franks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let ids: std::collections::BTreeSet<&str> = messages
-                .iter()
-                .filter_map(|m| m.get("id").and_then(Value::as_str))
+        // A frank and the MIMI IDs are kept only while their Message is.
+        let ids: std::collections::BTreeSet<&str> = messages
+            .iter()
+            .filter_map(|m| m.get("id").and_then(Value::as_str))
+            .collect();
+        let (pending_attachments, franks, mimi_ids) = {
+            let state = self.store.state();
+            let kept = || {
+                state
+                    .messages
+                    .values()
+                    .filter(|m| ids.contains(m.key.as_str()))
+            };
+            let franks: BTreeMap<String, mimid_agent_store::report::KeptFrank> = kept()
+                .filter_map(|m| Some((m.key.clone(), m.kept_frank.clone()?)))
                 .collect();
-            franks.retain(|id, _| ids.contains(id.as_str()));
-            franks.clone()
-        };
-        // Likewise the MIMI IDs.
-        let mimi_ids = {
-            let mut mimi_ids = self
-                .mimi_ids
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let ids: std::collections::BTreeSet<&str> = messages
-                .iter()
-                .filter_map(|m| m.get("id").and_then(Value::as_str))
+            let mimi_ids: BTreeMap<String, MimiIds> = kept()
+                .filter(|m| m.mimi_id.is_some() || !m.aliases.is_empty())
+                .map(|m| {
+                    let ids = MimiIds {
+                        first: m.mimi_id.map(|id| hex::encode(id.0)),
+                        aliases: m.aliases.iter().map(|a| hex::encode(a.0)).collect(),
+                    };
+                    (m.key.clone(), ids)
+                })
                 .collect();
-            mimi_ids.retain(|id, _| ids.contains(id.as_str()));
-            mimi_ids.clone()
+            (state.pending_attachments.clone(), franks, mimi_ids)
         };
         objects.insert(Message::TYPE_NAME.to_owned(), messages);
         objects.insert(
@@ -287,11 +255,7 @@ impl AgentChat {
             format: FORMAT,
             account: self.account.as_ref().to_owned(),
             objects,
-            pending_attachments: self
-                .pending
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone(),
+            pending_attachments,
             franks,
             mimi_ids,
         };

@@ -3,8 +3,9 @@
 //! draft-atwood-jmap-chat-00 nor draft-atwood-jmap-chat-mimi-00 defines a
 //! report method.
 //!
-//! When [`AgentChat::sync`] stores a received message, it keeps what a
-//! report needs with the room, keyed by the Message id: for a franked
+//! When [`AgentChat::sync`] stores a received message, the store keeps
+//! what a report needs with the room, in the message's record
+//! ([`mimid_agent_store::report::KeptFrank`]): for a franked
 //! message its protocol-07 §5.9 `AbusiveMessage` (its `application_data`
 //! as received, the hub's frank and the acceptance time), for an
 //! unfranked one its `application_data` as received and the acceptance
@@ -46,25 +47,19 @@
 //! - The method is served under the JMAP Chat capability, which does not
 //!   define it.
 
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 
 use jmap_chat_types::Message;
 use jmap_server::{
     CallContext, Dispatcher, HandlerFuture, HandlerOutput, Id, JmapError, JmapHandler,
 };
-use mimid_agent_core::frank::{
-    decode_abusive_message, decode_unverified_message, encode_abusive_message,
-    encode_unverified_message,
-};
+use mimid_agent_core::frank::{decode_abusive_message, decode_unverified_message};
 use mimid_agent_core::{
-    AbuseType, AgentError, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES, ReceivedMessage, ReportOutcome,
-    ReportedMessage,
+    AbuseType, AgentError, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES, ReportOutcome, ReportedMessage,
 };
-use mimid_agent_store::report::KeptFrank;
 use serde_json::{Map, Value, json};
 
 use crate::backend::AgentChat;
-use crate::sync::SyncReport;
 
 /// The method's name.
 pub const METHOD: &str = "Message/reportAbuse";
@@ -90,43 +85,6 @@ fn invalid(why: impl Into<String>) -> JmapError {
 }
 
 impl AgentChat {
-    /// Keeps what a report of Message `id` needs: `received`'s frank and
-    /// content, or its content alone if it has no frank.
-    pub(crate) fn keep_reportable(
-        &self,
-        id: &Id,
-        received: &ReceivedMessage,
-        report: &mut SyncReport,
-    ) {
-        let (encoded, unverified) = match received.reported_message() {
-            ReportedMessage::Franked(message) => (encode_abusive_message(&message), false),
-            ReportedMessage::Unfranked(message) => (encode_unverified_message(&message), true),
-            // ReportedMessage is #[non_exhaustive]; nothing else exists.
-            _ => return,
-        };
-        match encoded {
-            Ok(bytes) => {
-                self.franks
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .insert(
-                        id.as_ref().to_owned(),
-                        KeptFrank {
-                            room: received.room.clone(),
-                            message: hex::encode(bytes),
-                            unverified,
-                        },
-                    );
-            }
-            // Not for a message that was decoded; kept as a problem, not
-            // an error, since the Message itself is stored.
-            Err(e) => report.problems.push(format!(
-                "{}: a message was not kept for reports, so it cannot be reported: {e}",
-                received.room
-            )),
-        }
-    }
-
     async fn report_abuse(&self, args: Value) -> Result<Value, JmapError> {
         let Value::Object(args) = args else {
             return Err(invalid("arguments must be an object"));
@@ -154,7 +112,7 @@ impl AgentChat {
             Some(_) => return Err(invalid("note is a string")),
         };
         let (room, messages) = self.kept(&ids).await?;
-        let agent = self.agent.lock().await;
+        let agent = self.agent().lock().await;
         let outcome = agent
             .report_abuse(&room, &messages, reason, note)
             .await
@@ -204,11 +162,11 @@ impl AgentChat {
                 .is_some();
             let kept = exists
                 .then(|| {
-                    self.franks
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
+                    self.store
+                        .state()
+                        .messages
                         .get(id.as_ref())
-                        .cloned()
+                        .and_then(|m| m.kept_frank.clone())
                 })
                 .flatten()
                 .ok_or_else(|| {

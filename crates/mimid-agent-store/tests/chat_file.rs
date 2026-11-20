@@ -20,10 +20,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use mimid_agent_store::State;
 use mimid_agent_store::content::BodyType;
-use mimid_agent_store::file::{FileError, read, read_format_1, read_format_2, write_format_2};
+use mimid_agent_store::file::{
+    FileError, forget_object, load, merge_object, read, read_format_1, read_format_2, save,
+    write_format_2,
+};
 use mimid_agent_store::record::{Reply, Sender};
-use mimid_agent_store::{State, Store};
 use serde_json::{Map, Value, json};
 
 const ALICE: &str = "mimi://a.example/u/alice";
@@ -543,9 +546,9 @@ fn a_store_saves_format_2_and_opens_it_again() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("chat.json");
     std::fs::write(&path, V1).unwrap();
-    let store = Store::open(&path, BOB).unwrap();
-    assert_eq!(*store.state(), v1());
-    store.save().unwrap();
+    let state = load(&path, BOB).unwrap();
+    assert_eq!(state, v1());
+    save(&path, &state).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), V2);
     #[cfg(unix)]
     {
@@ -553,11 +556,10 @@ fn a_store_saves_format_2_and_opens_it_again() {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
-    assert_eq!(*Store::open(&path, BOB).unwrap().state(), v1());
+    assert_eq!(load(&path, BOB).unwrap(), v1());
     assert!(
-        Store::open(dir.path().join("none.json"), BOB)
+        load(&dir.path().join("none.json"), BOB)
             .unwrap()
-            .state()
             .messages
             .is_empty()
     );
@@ -686,6 +688,74 @@ fn malformed_format_2_files_are_refused() {
         ),
         "twice",
     );
+}
+
+/// The JMAP front end's own writes reach the records through
+/// `merge_object` until step 5 (docs/design/agent-frontends.md §3 step 3):
+/// a new object makes a record, and for one that exists only what a
+/// client may change is taken.
+#[test]
+fn merged_objects_keep_what_the_store_owns() {
+    let mut state = v1();
+    let alice = state.person_of_user(ALICE).unwrap().clone();
+    state.people.get_mut(&alice).unwrap().did = Some("did:webvh:x:a.example".to_owned());
+    let mut contact = objects("ChatContact")[&alice].clone();
+    contact.insert("displayName".to_owned(), json!("Alice B."));
+    contact.insert("did".to_owned(), json!("did:webvh:y:evil.example"));
+    merge_object(&mut state, "bob", "ChatContact", contact, false).unwrap();
+    let person = &state.people[&alice];
+    assert_eq!(person.display_name.as_deref(), Some("Alice B."));
+    assert_eq!(person.did.as_deref(), Some("did:webvh:x:a.example"));
+
+    // A received message: a client's local deletion is taken, its body
+    // is not unless the write was an own edit (`content`).
+    let after = state
+        .messages
+        .values()
+        .find(|m| m.body == "after")
+        .unwrap()
+        .key
+        .clone();
+    let mut message = objects("Message")[&after].clone();
+    message.insert("body".to_owned(), json!("changed"));
+    message.insert("deletedAt".to_owned(), json!("2026-11-20T02:00:00Z"));
+    merge_object(&mut state, "bob", "Message", message.clone(), false).unwrap();
+    assert_eq!(state.messages[&after].body, "after");
+    assert_eq!(
+        state.messages[&after].deleted.map(|d| d.for_all),
+        Some(false)
+    );
+    merge_object(&mut state, "bob", "Message", message, true).unwrap();
+    assert_eq!(state.messages[&after].body, "changed");
+
+    // A new own Message whose text reads like a notice is the user's, and
+    // takes the next sequence number.
+    let mut own = objects("Message")[&after].clone();
+    own.insert("id".to_owned(), json!("01M7VA2ZZZZZZZZZZZZZZZZZZZ"));
+    own.insert("senderId".to_owned(), json!("bob"));
+    own.insert(
+        "senderMsgId".to_owned(),
+        json!("01M7VA2ZZZZZZZZZZZZZZZZZZY"),
+    );
+    own.insert(
+        "body".to_owned(),
+        json!("Notice from your mimid agent: not really"),
+    );
+    let next = state.next_seq;
+    merge_object(&mut state, "bob", "Message", own, false).unwrap();
+    let own = &state.messages["01M7VA2ZZZZZZZZZZZZZZZZZZZ"];
+    assert_eq!(own.sender, Sender::User(BOB.to_owned()));
+    assert_eq!(own.seq, next);
+    let reference = mimid_agent_store::reference_of(&own.sender_msg_id).unwrap();
+    assert_eq!(state.message_of_ref(&own.room, &reference), Some(&own.key));
+
+    // A destroyed Chat takes its room and read positions, not its
+    // Messages or ChatBans (crate-jmap keeps those).
+    let room = state.rooms.keys().next().unwrap().clone();
+    forget_object(&mut state, "Chat", &room);
+    assert!(state.rooms.is_empty() && state.read_positions.is_empty());
+    assert!(!state.messages.is_empty() && !state.bans.is_empty());
+    assert!(merge_object(&mut state, "bob", "Space", Map::new(), false).is_err());
 }
 
 /// Writes `fixtures/chat-v2/chat.json` from the format-1 fixture; see its
