@@ -438,12 +438,49 @@ impl Store {
     }
 
     /// Makes a record for every room the agent is in, and is not out of,
-    /// that has none, unless it was deleted here.
+    /// that has none, unless it was deleted here. A record that is leaving
+    /// or left, of a room the agent is active in, was joined again (a new
+    /// invite): it becomes active, with the room's participants and roles
+    /// as they are now (bead mimid-bmtk).
     fn reconcile_rooms(&self, agent: &Agent, changes: &mut Vec<Change>) {
         for room in agent.rooms() {
-            if room.status != RoomStatus::Left {
-                self.room_for(agent, &room.uri, changes);
+            if room.status == RoomStatus::Left {
+                continue;
             }
+            let Some(key) = self.room_for(agent, &room.uri, changes) else {
+                continue;
+            };
+            if room.status == RoomStatus::Active {
+                self.rejoined(agent, &key, &room.uri, changes);
+            }
+        }
+    }
+
+    /// Makes record `key` of room `uri`, which the agent is active in,
+    /// active again if it is not, with its participants and roles, a person made for each participant who
+    /// is not the user and not banned, and a [`Change::RoomChanged`].
+    fn rejoined(&self, agent: &Agent, key: &str, uri: &str, changes: &mut Vec<Change>) {
+        let inactive = self
+            .state()
+            .rooms
+            .get(key)
+            .is_some_and(|room| room.status != Status::Active);
+        if !inactive {
+            return;
+        }
+        let participants = agent.participants(uri).unwrap_or_default();
+        let roles = RoomRoles::of(agent, uri);
+        let mut state = self.state();
+        for user in &participants {
+            if *user != self.user && !roles.is_banned(user) {
+                self.person_for(&mut state, user, changes);
+            }
+        }
+        if let Some(room) = state.rooms.get_mut(key) {
+            room.status = Status::Active;
+            room.participants = roles.participants(&participants);
+            room.role_names = roles.names();
+            changes.push(Change::RoomChanged(key.to_owned()));
         }
     }
 
@@ -562,6 +599,15 @@ impl Store {
                 room, participants, ..
             } => self.set_participants(agent, &room, &participants, changes),
             Event::Left { room } => {
+                // A room the agent is active in again was joined again
+                // after this event (bead mimid-bmtk).
+                let active = agent
+                    .rooms()
+                    .iter()
+                    .any(|r| r.uri == room && r.status == RoomStatus::Active);
+                if active {
+                    return;
+                }
                 let mut state = self.state();
                 let Some(key) = state.room_of_uri(&room).cloned() else {
                     return;

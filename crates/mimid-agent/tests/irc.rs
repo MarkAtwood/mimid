@@ -19,7 +19,7 @@ use common::{ALICE, BOB, PATIENCE, Running, Server, config, server};
 use mimid_agent::config::IrcSetting;
 use mimid_agent::{Config, Daemon};
 use mimid_agent_store::Store;
-use mimid_agent_store::record::Room;
+use mimid_agent_store::record::{Room, RoomStatus};
 use serde_json::json;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -49,6 +49,8 @@ fn with_irc(mut config: Config) -> Config {
 /// A daemon serving in a task, possibly without HTTP.
 struct Served {
     irc: SocketAddr,
+    /// The HTTP address, with JMAP on.
+    http: Option<SocketAddr>,
     store: Arc<Store>,
     token: String,
     stop: oneshot::Sender<()>,
@@ -60,6 +62,7 @@ impl Served {
         let daemon = Daemon::start(config).await.unwrap();
         let irc = daemon.irc_addr().expect("[irc] listens");
         assert!(irc.ip().is_loopback());
+        let http = daemon.local_addr();
         let store = Arc::clone(daemon.store());
         let (stop, stopped) = oneshot::channel::<()>();
         let task = tokio::spawn(daemon.serve(async move {
@@ -69,6 +72,7 @@ impl Served {
             std::fs::read_to_string(config.state_dir.join(mimid_agent::token::TOKEN_FILE)).unwrap();
         Self {
             irc,
+            http,
             store,
             token,
             stop,
@@ -771,5 +775,144 @@ async fn a_connection_behind_the_feed_resyncs_from_the_records() {
         .count();
     assert_eq!(lobby_joins, 1);
 
+    alice.stop().await;
+}
+
+/// The status and participants of the record of room `uri` in `store`.
+fn room_record(store: &Store, uri: &str) -> Option<(RoomStatus, Vec<String>)> {
+    store
+        .state()
+        .rooms
+        .values()
+        .find(|r| r.uri == uri)
+        .map(|r| {
+            (
+                r.status,
+                r.participants.iter().map(|p| p.user.clone()).collect(),
+            )
+        })
+}
+
+/// Waits until `ready` holds of the record of room `uri` in `store`;
+/// panics after [`PATIENCE`] with the record as it is.
+async fn until_record(
+    store: &Store,
+    uri: &str,
+    what: &str,
+    ready: impl Fn(&(RoomStatus, Vec<String>)) -> bool,
+) -> (RoomStatus, Vec<String>) {
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    loop {
+        let record = room_record(store, uri);
+        if let Some(record) = record.filter(&ready) {
+            return record;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{what}: the record of {uri} is {:?}",
+            room_record(store, uri)
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// Oracle: §7.1: PART leaves the room and only a new invite brings the
+/// user back; then the room is the user's again, so its record is active
+/// and both front ends show it and its new messages (bead mimid-bmtk).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_room_left_and_joined_again_is_shown_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Served::start(&irc_only(&server, ALICE, dir.path(), "any")).await;
+    let bob = Served::start(&with_irc(config(&server, BOB, dir.path(), "any"))).await;
+    let (mut a, _) = Irc::register(alice.irc, &alice.token, "alice", &[]).await;
+    let (mut b, _) = Irc::register(bob.irc, &bob.token, "bob", &[]).await;
+    let jmap = common::Client::connect(
+        &format!("http://{}", bob.http.expect("bob serves JMAP")),
+        &bob.token,
+    )
+    .await;
+
+    a.send("JOIN #lobby").await;
+    joined(&mut a, ALICE_MASK, "#lobby").await;
+    a.send(&format!("INVITE {BOB} #lobby")).await;
+    a.until_command("341").await;
+    joined(&mut b, BOB_MASK, "#lobby").await;
+    a.until("bob's JOIN", |m| {
+        m.command == "JOIN" && m.source == BOB_MASK
+    })
+    .await;
+    let uri = {
+        let state = bob.store.state();
+        let rooms: Vec<&Room> = state.rooms.values().collect();
+        assert_eq!(rooms.len(), 1, "{rooms:#?}");
+        rooms[0].uri.clone()
+    };
+
+    b.send("PART #lobby").await;
+    b.until_command("PART").await;
+    a.until("bob's PART", |m| {
+        m.command == "PART" && m.source == BOB_MASK
+    })
+    .await;
+    until_record(&bob.store, &uri, "bob is out", |(status, _)| {
+        *status == RoomStatus::Left
+    })
+    .await;
+
+    // alice invites bob again; his daemon joins (invites = "any").
+    a.send(&format!("INVITE {BOB_NICK} #lobby")).await;
+    let inviting = a.until_command("341").await;
+    assert_eq!(inviting.params, [ALICE_NICK, BOB_NICK, "#lobby"]);
+    let (status, participants) =
+        until_record(&bob.store, &uri, "bob is back", |(_, participants)| {
+            participants.iter().any(|p| p == BOB)
+        })
+        .await;
+    assert_eq!(status, RoomStatus::Active, "{participants:?}");
+    assert_eq!(bob.store.state().rooms.len(), 1, "the same record");
+    let names = joined(&mut b, BOB_MASK, "#lobby").await;
+    assert!(names.contains(&format!("@{ALICE_NICK}")), "{names:?}");
+    assert!(names.contains(&BOB_NICK.to_owned()), "{names:?}");
+
+    // New messages reach bob over IRC and JMAP.
+    a.send("PRIVMSG #lobby :welcome back").await;
+    let got = b
+        .until("alice's message", |m| {
+            m.command == "PRIVMSG" && m.source == ALICE_MASK
+        })
+        .await;
+    assert_eq!(got.params, ["#lobby", "welcome back"]);
+    let chats = jmap.get("Chat", None).await;
+    let chat = chats
+        .iter()
+        .find(|c| c["roomId"] == json!(uri))
+        .unwrap_or_else(|| panic!("a Chat for {uri} in {chats:#?}"));
+    assert_eq!(
+        chat["members"].as_array().map(Vec::len),
+        Some(2),
+        "bob is a member again: {chat:#?}"
+    );
+    let chat = chat["id"].as_str().unwrap().to_owned();
+    let messages = jmap.messages(&chat).await;
+    assert!(
+        messages.iter().any(|m| m["body"] == json!("welcome back")),
+        "{messages:#?}"
+    );
+    // bob can write in it again, from JMAP.
+    jmap.create(
+        "Message",
+        json!({"chatId": chat, "body": "glad to be back", "sentAt": "2026-11-20T12:00:00Z"}),
+    )
+    .await;
+    let got = a
+        .until("bob's message", |m| {
+            m.command == "PRIVMSG" && m.source == BOB_MASK
+        })
+        .await;
+    assert_eq!(got.params, ["#lobby", "glad to be back"]);
+
+    drop((a, b));
+    bob.stop().await;
     alice.stop().await;
 }
