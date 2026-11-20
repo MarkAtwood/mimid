@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.79",
   "title": "Live stream: error codes are camelCase, reusing RFC 8620 and draft names (INVENTED)",
   "description": "Epic mimid-e64f; docs/design/binary-live-stream.md §5.4.\n\nReadings: Agora's kebab-case codes (bad-message, ...), or the camelCase names of RFC 8620 and draft-atwood-jmap-chat-mimi-00.\n\nChosen by the agent for mimid-e64f, unattended (INVENTED, NOT FROM SPEC): camelCase. A code with the same meaning as an RFC 8620 or draft code has that name (invalidArguments, serverUnavailable, forbidden, notFound, overQuota, invalidProperties, alreadyExists, consentNotSent, notAllowed, epochTooOld, wrongEpoch, invalidProposal, unverifiedMessage, refused, requestTooLarge). The stream's own: badMessage, unsupportedVersion, unauthorized, cannotResume, tooLarge, rateLimited, serverFail. Since both bindings call the same server functions, a JmapError's type becomes the stream code of the same name, and a client maps both to one error without a table.\n",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-20T19:36:27.894859275Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-20T19:36:27.894859275Z",
+  "updated_at": "2026-11-20T19:36:42.393941607Z",
+  "closed_at": "2026-11-20T19:36:42.393941607Z",
+  "close_reason": "Chosen by agent 2026-11-20 for mimid-e64f, unattended; INVENTED, NOT FROM SPEC; flag to Mark",
   "labels": [
     "live-stream"
   ],
