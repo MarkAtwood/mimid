@@ -364,10 +364,9 @@ step runs the full check list in AGENTS.md before its commit.
      (it destroys only its ReadPositions), and chat.json keeps them too.
      Step 2's reader refused such a file, so once load uses it the agent
      would not start after a client destroyed a Chat. This applies §7.7
-     to Chats; Mark decided it for ChatContacts only, and may want it
-     otherwise. Format 2's reader still refuses a record naming a room it
-     does not hold: step 4 must decide what its conversion does with
-     these.
+     to Chats, which Mark confirmed on 2026-11-20 (§7.8). Format 2's
+     reader still refuses a record naming a room it does not hold; step 4
+     makes it keep them the same way.
    - The front end saves, so `Store::sync` takes a `Commit`: each round
      hands the front end its list of `Change`s (person, room, message
      and ban, added or changed; room left; ban lifted), the front end
@@ -764,3 +763,8 @@ Added on 2026-11-20:
    count, not one per item. In the records an unknown user is
    `Sender::Unknown`, or `None` as a participant, a banned user or a
    banner; the JMAP id the item named stays in its `ext["jmap"]`.
+8. **A Chat that is gone.** The same rule for Chats. crate-jmap's
+   Chat/set destroy keeps the Chat's Messages and ChatBans, so the
+   format-1 reader keeps a Message, ChatBan or ReadPosition naming a Chat
+   not in the file, with its room marked unknown, and logs one warning per
+   file with the count. Format 2 must keep them the same way (step 4).
