@@ -1,6 +1,6 @@
 {
   "id": "mimid-1vul",
-  "title": "IRC adapter: a local IRC server (ircd) over mimid-agent's JMAP Chat",
+  "title": "IRC front end: a local IRC server over mimid-agent's shared store",
   "description": "Lets any IRC client (irssi, WeeChat, HexChat, Textual, Adium's IRC) use MIMI rooms. Native front end (Mark 2026-11-19): a loopback-only IRC server built into mimid-agent, over a shared plaintext layer (mimid-agent-store) that the JMAP front end also uses, so one agent serves both. Design: docs/design/agent-frontends.md. Lessons from meshIRCd/tailircd: docs/irc-lessons.md. Never serve plaintext beyond the local machine (AGENTS.md).",
   "notes": "Per decision mimid-gad8 (Mark 2026-11-17): this adapter may talk to mimid-agent over JMAP Chat or over its own binary client/server protocol, local only, still authenticated; the agent keeps the keys.\nMark 2026-11-19: native, not stacked on JMAP. Split the plaintext layer (event consumption/acknowledge, message history, contacts/nick identities, blobs and attachment retry, notices, consent/invite state) out of mimid-agent-jmap into a shared crate; JMAP and IRC become thin front ends over it, and one agent can serve both at once. Research of meshIRCd/tailircd lessons in progress.\nMark 2026-11-20 on docs/design/agent-frontends.md §6: PART leaves for real, JOIN of an unknown name hosts a room; no queries in v1; every nick \u003clocal\u003e-\u003clabel\u003e; no attachments in v1; invites/consent from IRC yes; no history in v1. Recorded in §7.",
   "status": "open",
@@ -9,7 +9,7 @@
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-17T16:36:45.136663285Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-20T00:43:49.190977958Z",
+  "updated_at": "2026-11-20T17:45:48.311413108Z",
   "labels": [
     "adapter",
     "client"
