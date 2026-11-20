@@ -95,7 +95,7 @@ argument parsing, UTCDate rendering (convert.rs:44) and the delegation to
 | Attachments waiting for retry, with their keys | `pending` (backend.rs:140) | In chat.json (persist.rs:75-78) |
 | Epochs at the last DID refresh | `did_epochs` (backend.rs:143) | No |
 | Attachment plaintext | `<state_dir>/blobs`, content-addressed, 0700/0600 (crates/mimid-agent-jmap/src/blobs.rs:1-41) | Yes |
-| MLS keys, groups, rooms, invites, the delivery journal | mimid-agent-core: `mls.sqlite`, `state.json` (crates/mimid-agent-core/src/lib.rs:45-51) | Yes |
+| MLS keys, groups, rooms, invites, the delivery journal | mimid-agent-core: `mls.sqlite`, `state.json` (crates/mimid-agent-core/src/lib.rs:45-51); since §3 step 9 one file, `agent.sqlite`, with the store's records | Yes |
 | The local token | `<state_dir>/agent-token`, 0600 (crates/mimid-agent/src/token.rs:1-7) | Yes |
 
 chat.json is rewritten whole, 0600, through a temporary file and a rename
@@ -473,7 +473,9 @@ step runs the full check list in AGENTS.md before its commit.
      `Borrow<rusqlite::Connection>` without transactions of its own, so
      one transaction is possible, but needs the agent to own one
      connection, the journal to move from `state.json` into it, and new
-     APIs in mimi-mls and mimid-agent-core: bead mimid-1vul.10.
+     APIs in mimi-mls and mimid-agent-core: bead mimid-1vul.10, built as
+     step 9 (one file, `agent.sqlite`; `persisted_at(path)` became
+     `persisted()`; `schema_version` replaces `user_version`).
 5. **Outbound through the store.** Move room create, member and role
    changes, leave, send with attachments, edit, retraction, ban, unban,
    kick and report into `Store` methods. The JMAP hooks translate JMAP
@@ -746,6 +748,102 @@ step runs the full check list in AGENTS.md before its commit.
      casemapping, nicks, channels and CAP LS splitting. Not tested: the
      server's own PING and the ping timeout (the daemon has no knob for
      them).
+
+9. **One database for the agent and the store** (bead mimid-1vul.10).
+   The records, the agent's state, the delivery journal and OpenMLS's
+   state share one SQLite file, so that receiving a message cannot lose
+   it and storing it cannot repeat it.
+
+   Built (2026-11-20):
+
+   - One file, `<state_dir>/agent.sqlite` (0600, in the 0700 state
+     directory; `mimid_agent_core::DATABASE_FILE`), replaces `mls.sqlite`,
+     `state.json` and `chat.sqlite`. It holds OpenMLS's tables, the
+     agent's state (`agent_state`, one row: what `state.json` held, as
+     JSON), the journal (`journal`, one row per undelivered event, by
+     sequence number) and the store's tables of step 4. A
+     `schema_version (part, version)` table replaces `PRAGMA
+     user_version`, which is one per file: the agent's tables are part
+     `agent` version 1, the store's part `store` version 3 (2 was
+     `chat.sqlite`). Another version is refused; nothing is converted. A
+     state directory that holds `state.json`, `mls.sqlite` or
+     `chat.sqlite` and no `agent.sqlite` is refused with a message naming
+     the file, rather than minting a second identity beside it; nothing
+     runs in production, so there is no migration.
+   - Connections. `mimi_mls::Store` owns its `rusqlite::Connection` by
+     value and builds the OpenMLS provider for each call around
+     `&Connection` (`SqliteStorageProvider<_, &Connection>`), and
+     `Store::connection` lends it out. openmls_sqlite_storage opens no
+     transaction of its own, so OpenMLS's writes join whatever
+     transaction the agent has open on that connection. No `Rc`, `Arc`,
+     `Mutex` or unsafe: the connection is `Send` and lives inside the
+     `Agent`, which the store already keeps behind its async mutex; the
+     borrowed provider is not `Send`, but never outlives the synchronous
+     mimi-mls call that made it. The store reaches the same file through
+     a second connection of its own (`Store::open_database`, which takes
+     no path now: the agent names it, `Agent::database_path`). One shared
+     connection would have made every save wait for the agent's lock,
+     which a sync holds through network calls and attachment fetches;
+     with two, SQLite keeps writers one at a time (both connections wait
+     up to 10 s for the other's lock), and no transaction is ever open
+     across an await, so the wait is short.
+   - Two transactions per delivery. (a) `Agent::receive` handles each
+     server Message in one transaction on the agent's connection: the
+     secrets OpenMLS consumes, the group state, the agent state with the
+     Message marked handled, and its events appended to the journal
+     commit together, or none of them does and the Message is handled
+     again. On an error the agent rolls back and rereads its state and
+     groups, since what is in memory went past the database. `Agent::join`
+     is one transaction too, since it decrypts held messages. (b)
+     `Store::sync` writes the round's records and removes the delivered
+     events from the journal in one transaction on the store's connection
+     (`Agent::acknowledge_in`, which checks that the transaction is on the
+     agent's database). A crash before (a) commits decrypts again; between
+     (a) and (b) the journal delivers again; before (b) commits both roll
+     back and the journal delivers again; after it nothing comes again.
+     Receive, store and acknowledge in a single transaction was not done:
+     the store's part runs front ends' `before_save`, attachment fetches
+     and joins, all async, and front ends save on their own, so it would
+     hold a write transaction across awaits and mix front-end saves into
+     the agent's commit. The journal stays, as the hand-off between the
+     two transactions.
+   - A leave this agent commits from inside a Message (the lowest
+     remaining leaf commits a member's leave proposals) is sent between
+     two transactions: the first ends with the Message's position
+     (`in_progress`: the Message and how many of its FanoutMessages are
+     handled), the Commit goes to the server and merges, and a restart
+     goes on from the position. A crash after the merge and before the
+     next transaction loses that Commit's own `MembersChanged` event; the
+     membership the agent reports is still right (journal.rs
+     Limitations).
+   - API: `mimi_mls::Store::connection`, `Identity::store`;
+     `Agent::database_path`, `Agent::acknowledge_in`,
+     `AgentError::Database`, `mimid_agent_core::{DATABASE_FILE,
+     SCHEMA_VERSION}`; `Receipt` names a journal sequence number, not a
+     count. `Store::open_database()` (no path), `Store::database_path`,
+     `Database::save_with`, `FileError::Acknowledge`;
+     `AgentChat::persisted()` replaces `persisted_at(path)`;
+     mimid-agent's `CHAT_STORE_FILE` is gone and it re-exports
+     `DATABASE_FILE`. The feature `fail-points` (tests only) adds
+     `Agent::fail_next`.
+   - Tests: mimid-agent-store `tests/crash.rs` fails each boundary once
+     (inside (a) after decrypting, between (a) and (b), inside (b) before
+     the acknowledgement, after (b)), with a restart and in the same run,
+     and checks every message is stored once and the journal holds what
+     the failed step committed; replacing the rollback with a commit makes
+     it fail. mimi-mls `store::tests` shows a caller's rollback undoes
+     OpenMLS's writes; agent-core's state tests refuse another schema
+     version and the older layout. Changed: mimid-agent-jmap
+     `store_file.rs` and `chat_delete.rs` failed a save by making the
+     store's directory unwritable, which would now stop the agent's
+     writes too; a front end whose `before_save` fails does it instead.
+     `chat_delete.rs` no longer requires the room URI to be absent from
+     the whole file, since the agent's own state (formerly `state.json`)
+     names the rooms it left; it checks the store's tables for it. The
+     tests that passed `persisted_at(path)` or `open_database(path)` call
+     `persisted()` and `open_database()`; mimid-agent-store
+     `tests/database.rs` reads the version from `schema_version`, and
+     mimid-agent `tests/jmap_off.rs` looks for `DATABASE_FILE`.
 
 Steps 3 and 5 are the large ones. Step 3 cannot be cut much smaller: the
 store has to be the only copy of inbound state before it can save it.
@@ -1130,7 +1228,9 @@ Added on 2026-11-20:
     later schema change refuses an older database clearly rather than
     converting it. The SQLite crate is the one mimi-mls already uses.
     Whether the records can share `mls.sqlite` and one transaction with
-    the MLS state is bead mimid-1vul.10.
+    the MLS state is bead mimid-1vul.10. They can: §3 step 9 puts them, the
+    MLS state, the agent's state and the journal in one file,
+    `agent.sqlite`, which replaces `chat.sqlite`.
 
 11. **JMAP built from the store (Mark, 2026-11-20).** When the JMAP front
     end starts over a store, a record without `ext["jmap"]` (made while
