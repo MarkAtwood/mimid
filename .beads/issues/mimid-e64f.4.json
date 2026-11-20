@@ -1,0 +1,25 @@
+{
+  "id": "mimid-e64f.4",
+  "title": "Live stream step 4: agent provider interface with JMAP and stream implementations",
+  "description": "mimid-agent-core provider client as one interface, JMAP default, stream by configuration; mimid-agent config; only Store::sync calls Agent::receive/acknowledge.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T19:36:43.26324008Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T19:36:43.26324008Z",
+  "labels": [
+    "live-stream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-e64f.4",
+      "depends_on_id": "mimid-e64f",
+      "type": "parent-child",
+      "created_at": "2026-11-20T19:36:43.311899873Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
