@@ -1,0 +1,25 @@
+{
+  "id": "mimid-e64f.2",
+  "title": "Live stream step 2: mimid-live codec crate, CDDL, external fixtures",
+  "description": "Pure crate: types and strict CBOR codec, limits as constants; CDDL in the note; hand-encoded fixtures cross-checked with python3 -I cbor2, PROVENANCE; decode/compare/re-encode; hostile input.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T19:36:42.898222145Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T19:36:42.898222145Z",
+  "labels": [
+    "live-stream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-e64f.2",
+      "depends_on_id": "mimid-e64f",
+      "type": "parent-child",
+      "created_at": "2026-11-20T19:36:42.935494304Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
