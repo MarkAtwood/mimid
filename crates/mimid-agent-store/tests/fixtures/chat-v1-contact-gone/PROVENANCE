@@ -1,0 +1,24 @@
+chat.json: ../chat-v1/chat.json with one ChatContact removed, as a JMAP
+client's ChatContact/set destroy leaves a format-1 store (the agent keeps
+the Messages, Chat members and ChatBans that name it). The removed contact
+is alice's (mimi://a.example/u/alice, id 01M7VA1QDQMKF3HFDAMYGBRSRG). Her
+id is then named, but not defined, six times: one Chat member, the
+ChatBan's bannedBy, and the senderId of four Messages. Nothing else
+differs from the source.
+
+Source:    ../chat-v1/chat.json (SHA-256
+           3a19e91c36c62f7d43216482022afed0f654413e8572927843947dab4f660303),
+           written by mimid-agent-jmap itself; see its PROVENANCE.
+Generator: derive.py in this directory (SHA-256
+           69e0fa0d28888bde7d4978294150eb0a4a73f4adfd1afcb7e712dadb98dfc1af).
+           It checks that the source re-encodes to its own octets in
+           serde_json's compact form, removes the one ChatContact whose
+           identity is alice's, and writes the rest in the same form.
+Command:   python3 -I derive.py ../chat-v1/chat.json chat.json
+           Run on 2026-11-20, Linux, Python 3.
+SHA-256:   chat.json 3c2d31e9d7cc801b25cdab11da456a527f406aff4eb01d6462e055e406fc3ed9
+
+Oracle for the test format_1_keeps_items_naming_a_contact_that_is_gone
+(crates/mimid-agent-store/tests/chat_file.rs): the source decodes to known
+records; this file must decode to the same records, with alice unknown
+wherever she was named, and one warning giving the count.

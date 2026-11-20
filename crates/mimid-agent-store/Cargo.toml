@@ -24,3 +24,5 @@ ulid = "=3.0.0"
 [dev-dependencies]
 hex = "0.4.3"
 tempfile = "=3.23.0"
+# Captures the format-1 reader's warning in tests/chat_file.rs.
+tracing-subscriber.workspace = true

@@ -12,6 +12,9 @@
 //! - `fixtures/chat-v2/chat.json`: format 2 of the same store (PROVENANCE
 //!   there). It must decode to the same state as the format-1 fixture and
 //!   re-encode to the same octets.
+//! - `fixtures/chat-v1-contact-gone/chat.json`: the format-1 fixture with
+//!   alice's ChatContact removed (PROVENANCE there). It must decode to the
+//!   format-1 fixture's state with alice unknown wherever she was named.
 
 #![forbid(unsafe_code)]
 
@@ -29,6 +32,32 @@ const CAROL: &str = "mimi://a.example/u/carol";
 
 const V1: &[u8] = include_bytes!("fixtures/chat-v1/chat.json");
 const V2: &[u8] = include_bytes!("fixtures/chat-v2/chat.json");
+const V1_CONTACT_GONE: &[u8] = include_bytes!("fixtures/chat-v1-contact-gone/chat.json");
+
+/// Runs `f` with a `tracing` subscriber that writes to a buffer; returns
+/// its result and what was logged.
+fn logged<T>(f: impl FnOnce() -> T) -> (T, String) {
+    #[derive(Clone, Default)]
+    struct Buffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Buffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let buffer = Buffer::default();
+    let writer = buffer.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let out = tracing::subscriber::with_default(subscriber, f);
+    let text = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+    (out, text)
+}
 
 /// The fixture's objects of JMAP type `name`, by id.
 fn objects(name: &str) -> BTreeMap<String, Map<String, Value>> {
@@ -166,7 +195,11 @@ fn format_1_people_and_rooms_hold_their_objects() {
             .iter()
             .map(|m| uri_of(m["id"].as_str().unwrap()))
             .collect();
-        let participants: Vec<&str> = room.participants.iter().map(|p| p.user.as_str()).collect();
+        let participants: Vec<&str> = room
+            .participants
+            .iter()
+            .map(|p| p.user.as_deref().unwrap())
+            .collect();
         assert_eq!(participants, users);
         assert!(room.participants.iter().all(|p| p.role.is_none()));
         assert_eq!(state.room_of_uri(&room.uri), Some(&id));
@@ -183,7 +216,11 @@ fn format_1_people_and_rooms_hold_their_objects() {
         panic!("one room");
     };
     assert_eq!(room.name.as_deref(), Some("kept"));
-    let mut users: Vec<&str> = room.participants.iter().map(|p| p.user.as_str()).collect();
+    let mut users: Vec<&str> = room
+        .participants
+        .iter()
+        .map(|p| p.user.as_deref().unwrap())
+        .collect();
     users.sort_unstable();
     assert_eq!(users, [ALICE, BOB]);
 }
@@ -355,8 +392,8 @@ fn format_1_bans_and_read_positions_hold_their_objects() {
     for (id, o) in objects("ChatBan") {
         let ban = &state.bans[&id];
         assert_eq!(ban.room, o["chatId"].as_str().unwrap());
-        assert_eq!(ban.user, uri_of(o["userId"].as_str().unwrap()));
-        assert_eq!(ban.banned_by, uri_of(o["bannedBy"].as_str().unwrap()));
+        assert_eq!(ban.user, Some(uri_of(o["userId"].as_str().unwrap())));
+        assert_eq!(ban.banned_by, Some(uri_of(o["bannedBy"].as_str().unwrap())));
         assert_eq!(
             ban.reason.as_deref(),
             o.get("reason").and_then(Value::as_str)
@@ -393,12 +430,73 @@ fn format_1_bans_and_read_positions_hold_their_objects() {
     let [ban] = state.bans.values().collect::<Vec<_>>()[..] else {
         panic!("one ban");
     };
-    assert_eq!((ban.user.as_str(), ban.banned_by.as_str()), (CAROL, ALICE));
+    assert_eq!(
+        (ban.user.as_deref(), ban.banned_by.as_deref()),
+        (Some(CAROL), Some(ALICE))
+    );
     let [position] = state.read_positions.values().collect::<Vec<_>>()[..] else {
         panic!("one read position");
     };
     let read = &state.messages[position.message.as_ref().unwrap()];
     assert_eq!(read.body, "from bob");
+}
+
+/// Mark's decision (docs/design/agent-frontends.md §7.7): a Message,
+/// Chat member or ChatBan naming a ChatContact that is gone is kept with
+/// the user unknown, and one warning gives the count.
+#[test]
+fn format_1_keeps_items_naming_a_contact_that_is_gone() {
+    let (state, log) = logged(|| read_format_1(V1_CONTACT_GONE, BOB).unwrap());
+
+    // The oracle: the source fixture's state, with alice unknown wherever
+    // she was named and her JMAP id kept in ext["jmap"].
+    let mut expected = v1();
+    let alice = expected.person_of_user(ALICE).unwrap().clone();
+    expected.people.remove(&alice);
+    let keep_id = |ext: &mut BTreeMap<String, Value>, property: &str| {
+        ext.entry("jmap".to_owned())
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .unwrap()
+            .insert(property.to_owned(), json!(alice));
+    };
+    let mut senders = 0;
+    for m in expected.messages.values_mut() {
+        if m.sender == Sender::User(ALICE.to_owned()) {
+            m.sender = Sender::Unknown;
+            keep_id(&mut m.ext, "senderId");
+            senders += 1;
+        }
+    }
+    let mut members = 0;
+    for room in expected.rooms.values_mut() {
+        for p in &mut room.participants {
+            if p.user.as_deref() == Some(ALICE) {
+                p.user = None;
+                members += 1;
+            }
+        }
+    }
+    let mut bans = 0;
+    for ban in expected.bans.values_mut() {
+        if ban.banned_by.as_deref() == Some(ALICE) {
+            ban.banned_by = None;
+            keep_id(&mut ban.ext, "bannedBy");
+            bans += 1;
+        }
+    }
+    // What the generator did: alice sent four messages, was a member of
+    // the one room and banned carol (PROVENANCE).
+    assert_eq!((senders, members, bans), (4, 1, 1));
+    expected.reindex();
+    assert_eq!(state, expected);
+
+    let warnings: Vec<&str> = log.lines().filter(|l| l.contains("WARN")).collect();
+    assert_eq!(warnings.len(), 1, "{log}");
+    assert!(warnings[0].contains("unknown=6"), "{log}");
+    // The source fixture names no one unknown and warns of nothing.
+    let (_, log) = logged(v1);
+    assert!(!log.contains("WARN"), "{log}");
 }
 
 #[test]
@@ -464,14 +562,6 @@ fn malformed_format_1_files_are_refused() {
     refused(
         read_format_1(&altered(V1, |v| v["extra"] = json!(1)), BOB),
         "unknown field",
-    );
-    // A Message whose sender's ChatContact is gone.
-    refused(
-        read_format_1(
-            &altered(V1, |v| v["objects"]["ChatContact"] = json!([])),
-            BOB,
-        ),
-        "names no ChatContact",
     );
     refused(
         read_format_1(

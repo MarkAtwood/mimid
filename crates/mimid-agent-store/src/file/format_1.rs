@@ -25,8 +25,12 @@
 //! # Limitations
 //!
 //! - A Message, Chat member or ChatBan naming a ChatContact that is not
-//!   in the file is refused as malformed: format 1 has no other record of
-//!   who that user was.
+//!   in the file (a JMAP client may destroy ChatContacts) is kept, with
+//!   that user unknown: [`Sender::Unknown`], or `None` for a participant,
+//!   a banned user or a banner. The JMAP id it named stays in the
+//!   record's `ext["jmap"]` under the same property. One warning per
+//!   file gives the count (Mark's decision, docs/design/agent-frontends.md
+//!   §7.7).
 //! - A notice read from format 1 has no kind, only its text.
 //! - A reply to a message not stored was not kept by format 1, so
 //!   [`Reply::Reference`] never comes from it.
@@ -181,7 +185,9 @@ fn body_type(object: &Object, text: Option<&str>) -> Result<BodyType, FileError>
 /// [`FileError::Malformed`] if `bytes` is not format 1, holds an unknown
 /// type, an object without an id, a property of the wrong type, a date
 /// that is not a UTCDate, a `senderMsgId` that is not a ULID, a reference
-/// to a Chat or ChatContact not in the file, or malformed side tables.
+/// to a Chat not in the file, or malformed side tables. A reference to a
+/// ChatContact not in the file is kept as an unknown user (see the module
+/// documentation).
 pub fn read_format_1(bytes: &[u8], user: &str) -> Result<State, FileError> {
     let mut file: Format1 = serde_json::from_slice(bytes).map_err(|e| malformed(e.to_string()))?;
     if file.format != 1 {
@@ -217,6 +223,7 @@ pub fn read_format_1(bytes: &[u8], user: &str) -> Result<State, FileError> {
         account: &file.account,
         user,
         people: &state.people,
+        unknown: std::cell::Cell::new(0),
     };
     let mut rooms = BTreeMap::new();
     for value in chats {
@@ -250,6 +257,16 @@ pub fn read_format_1(bytes: &[u8], user: &str) -> Result<State, FileError> {
             position,
             "ReadPosition",
         )?;
+    }
+
+    let unknown = users.unknown.get();
+    if unknown > 0 {
+        tracing::warn!(
+            name: "chat_v1_unknown_contacts",
+            unknown,
+            "format-1 store: Messages, Chat members or ChatBans name ChatContacts \
+             that are not in the file; they are kept with the user unknown"
+        );
     }
 
     // Sequence numbers in history order.
@@ -293,18 +310,34 @@ struct Users<'a> {
     account: &'a str,
     user: &'a str,
     people: &'a BTreeMap<String, Person>,
+    /// How many items named a ChatContact not in the file.
+    unknown: std::cell::Cell<usize>,
 }
 
 impl Users<'_> {
-    /// The user URI JMAP id `id` names.
-    fn uri(&self, object: &Object, property: &str, id: &str) -> Result<String, FileError> {
+    /// The user URI JMAP id `id` names, or `None` for a ChatContact that
+    /// is not in the file.
+    fn uri(&self, id: &str) -> Option<String> {
         if id == self.account {
-            return Ok(self.user.to_owned());
+            return Some(self.user.to_owned());
         }
-        self.people
-            .get(id)
-            .map(|p| p.user.clone())
-            .ok_or_else(|| object.bad(property, &format!("names no ChatContact ({id})")))
+        self.people.get(id).map(|p| p.user.clone())
+    }
+
+    /// Counts one more item naming an unknown user.
+    fn count_unknown(&self) {
+        self.unknown.set(self.unknown.get() + 1);
+    }
+
+    /// The user URI JMAP id `id`, taken from `property` of `object`,
+    /// names; for an unknown one, `id` goes back into `object`'s rest, so
+    /// it lands in `ext["jmap"]`.
+    fn take(&self, object: &mut Object, property: &str, id: String) -> Option<String> {
+        let uri = self.uri(&id);
+        if uri.is_none() {
+            object.rest.insert(property.to_owned(), Value::String(id));
+        }
+        uri
     }
 }
 
@@ -333,10 +366,11 @@ fn room(mut o: Object, users: &Users<'_>) -> Result<Room, FileError> {
             .get("id")
             .and_then(Value::as_str)
             .ok_or_else(|| o.bad("members", "has a member without an id"))?;
-        participants.push(Participant {
-            user: users.uri(&o, "members", id)?,
-            role: None,
-        });
+        let user = users.uri(id);
+        if user.is_none() {
+            users.count_unknown();
+        }
+        participants.push(Participant { user, role: None });
     }
     Ok(Room {
         key: o.id.clone(),
@@ -361,9 +395,12 @@ fn ban(mut o: Object, users: &Users<'_>, rooms: &BTreeMap<String, Room>) -> Resu
     let chat = o.required("chatId")?;
     let room = room_key(&o, rooms, chat)?;
     let user = o.required("userId")?;
-    let user = users.uri(&o, "userId", &user)?;
+    let user = users.take(&mut o, "userId", user);
     let banned_by = o.required("bannedBy")?;
-    let banned_by = users.uri(&o, "bannedBy", &banned_by)?;
+    let banned_by = users.take(&mut o, "bannedBy", banned_by);
+    if user.is_none() || banned_by.is_none() {
+        users.count_unknown();
+    }
     Ok(Ban {
         key: o.id.clone(),
         room,
@@ -458,7 +495,13 @@ fn message(
     {
         Sender::Agent
     } else {
-        Sender::User(users.uri(&o, "senderId", &sender_id)?)
+        match users.take(&mut o, "senderId", sender_id) {
+            Some(uri) => Sender::User(uri),
+            None => {
+                users.count_unknown();
+                Sender::Unknown
+            }
+        }
     };
     let in_reply_to = o.string("replyTo")?.map(Reply::Message);
     let topic_id = o.string("topicId")?;

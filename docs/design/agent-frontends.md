@@ -337,9 +337,10 @@ step runs the full check list in AGENTS.md before its commit.
      bans, readPositions, pendingAttachments}`, records in key order,
      camelCase. Decoding is strict: unknown members are refused.
    - A ChatContact that a Message, member or ChatBan names but that is
-     not in the file makes the file malformed. Step 4 must decide whether
-     that should stop the agent: format 1 lets a client destroy a
-     ChatContact (a local write), and the record would then name nobody.
+     not in the file made the file malformed. Format 1 lets a client
+     destroy a ChatContact (a local write), and the record would then
+     name nobody. Mark decided this on 2026-11-20 (§7.7): the item is
+     kept with the user unknown.
 3. **Inbound through the store.** Move `sync`, `apply`, `store_message`,
    the notices, `refresh_contact_dids`, `apply_replacement`,
    `mirror_bans`, `expire_bans`, `accept_invites` and the retries into
@@ -693,3 +694,14 @@ These answer §6 and override the recommendations there and anything in
    `/msg mimid deny <nick>` set consent.
 6. **No history in v1.** No replay on connect and no chathistory; the IRC
    client sees what arrives while it is connected.
+
+Added on 2026-11-20:
+
+7. **A ChatContact that is gone.** When the format-1 reader meets a
+   Message, a Chat member or a ChatBan naming a ChatContact that is not
+   in the file (JMAP clients may destroy ChatContacts), it keeps the item
+   with the user marked unknown and logs a warning, instead of refusing
+   the whole file. The warning is one per file conversion and gives the
+   count, not one per item. In the records an unknown user is
+   `Sender::Unknown`, or `None` as a participant, a banned user or a
+   banner; the JMAP id the item named stays in its `ext["jmap"]`.

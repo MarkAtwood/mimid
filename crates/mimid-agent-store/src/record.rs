@@ -18,6 +18,9 @@
 //! - A room's participants read from a format-1 file have no role index
 //!   ([`Participant::role`] is `None`): format 1 kept only JMAP's
 //!   "admin" or "member". The first sync sets them from the room.
+//! - A user named in a format-1 file by a ChatContact that is not in it
+//!   is unknown ([`Sender::Unknown`], or `None` as a participant, a banned
+//!   user or a banner): format 1 kept no other record of who it was.
 
 use std::collections::BTreeMap;
 
@@ -92,8 +95,10 @@ pub enum RoomStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Participant {
-    /// The user URI.
-    pub user: String,
+    /// The user URI, or `None` when not known (a format-1 member whose
+    /// ChatContact is gone).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
     /// The room-policy-04 role index, or `None` when not known (a room
     /// read from format 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,6 +139,9 @@ pub enum Sender {
     User(String),
     /// The agent itself: a notice ([`Message::notice`]).
     Agent,
+    /// A user who is not known: read from a format-1 file whose
+    /// ChatContact for the sender is gone.
+    Unknown,
 }
 
 /// What a message replies to.
@@ -306,11 +314,15 @@ pub struct Ban {
     pub key: Key,
     /// The room's key.
     pub room: Key,
-    /// The banned user's URI.
-    pub user: String,
+    /// The banned user's URI, or `None` when not known (a format-1 ban
+    /// whose ChatContact is gone).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
     /// The URI of the user who banned them (the user's own for a ban made
-    /// here or by an unknown committer).
-    pub banned_by: String,
+    /// here or by an unknown committer), or `None` when not known (a
+    /// format-1 ban whose ChatContact for the banner is gone).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banned_by: Option<String>,
     /// The reason, local.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
