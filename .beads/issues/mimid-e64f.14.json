@@ -1,0 +1,22 @@
+{
+  "id": "mimid-e64f.14",
+  "title": "Server: Message/query sorted by id with anchor on a Chat (F12, F2 test, F16 test)",
+  "description": "Message/query filter inChat, sort id, anchor; tests that ids sort in storage order (F2) and that StateChange follows visibility (F16).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T22:56:23.102024256Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T22:56:23.102024256Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-e64f.14",
+      "depends_on_id": "mimid-e64f",
+      "type": "parent-child",
+      "created_at": "2026-11-20T22:56:23.152337442Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
