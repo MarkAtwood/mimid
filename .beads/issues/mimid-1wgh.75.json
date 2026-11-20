@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.75",
+  "title": "Live stream: a position is the JMAP Message state string; Subscribe replays Message/changes",
+  "description": "Epic mimid-e64f; docs/design/binary-live-stream.md §5.5, §9 question 4; findings log F1.\n\nChosen (Mark, 2026-11-20): a stream position is the JMAP Message state string. The agent keeps no new kind of state; JMAP catch-up and the stream meet at one value.\n\nSubscribe semantics, chosen by the agent for mimid-e64f (INVENTED, NOT FROM SPEC):\n- Subscribe with since: the provider sends a Deliver for each Message that Message/changes from since and Message/get of the ids return, in that order, then answers the Subscribe with an Ack whose state covers them.\n- Subscribe without since: every stored Message, as Message/get with ids null.\n- Live: on each change-bus event the provider runs the same Message/changes and Message/get from the last state it sent, sends the Delivers, then Position with the new state. A lagging bus loses nothing; changes come from the store.\n- cannotResume only when since does not parse or is ahead of the current state; the agent then subscribes without since, as it falls back on cannotCalculateChanges.\n- One Subscribe per connection; a second is badMessage.\n- Position exists because the state s.m is not one counter (F1): positions are sparse and the agent keeps its handled list between them, as on JMAP.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T19:36:27.188807403Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T19:36:27.188807403Z",
+  "labels": [
+    "live-stream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.75",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-20T19:36:27.223886004Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
