@@ -14,3 +14,9 @@ mimid-agent-store = { path = "../mimid-agent-store" }
 serde_json.workspace = true
 # The 4-character suffix of a colliding nick or channel name.
 sha2.workspace = true
+thiserror.workspace = true
+tokio = { version = "1.53.3", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tracing.workspace = true
+# The msgid of an edit: a ULID like the store's senderMsgId; the version
+# mimid-agent-store uses.
+ulid = "=3.0.0"
