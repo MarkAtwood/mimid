@@ -21,11 +21,20 @@ mimi-protocol = { path = "../mimi-protocol" }
 mimi-room-policy = { path = "../mimi-room-policy" }
 # The version and features mimid-server uses, so one HTTP and TLS stack.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
+# The agent's database: the rusqlite openmls_sqlite_storage (mimi-mls's MLS
+# store) uses, since the agent's tables share its connection.
+rusqlite = "=0.37.0"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[features]
+# Tests only: Agent::fail_next, which makes one step of receiving or
+# acknowledging fail, for the crash tests of the agent and its store
+# (bead mimid-1vul.10). Never enabled by a build that ships.
+fail-points = []
 
 [dev-dependencies]
 axum.workspace = true

@@ -44,11 +44,21 @@
 //!
 //! # State
 //!
-//! The state directory (mode 0700) holds `mls.sqlite`, the MLS store with
-//! the identity's private keys and the groups, and `state.json`: rooms,
-//! pending invites, held messages, the JMAP Message state, the digests
-//! of sent messages, the device's `did_webvh` credential if it has one and
-//! the SCIDs pinned for contacts. Both files are 0600.
+//! The state directory (mode 0700) holds one SQLite database,
+//! `agent.sqlite` ([`DATABASE_FILE`], mode 0600): OpenMLS's store with the
+//! identity's private keys and the groups, the agent's state (rooms,
+//! pending invites, held messages, the JMAP Message state, the digests of
+//! sent messages, the device's `did_webvh` credential if it has one and
+//! the SCIDs pinned for contacts), and the delivery journal. OpenMLS
+//! writes through the agent's connection with no transaction of its own,
+//! so [`Agent::receive`] handles each server Message in one transaction:
+//! the secrets it consumes and its events in the journal commit together
+//! (bead mimid-1vul.10). A caller may keep its own tables in the same
+//! database ([`Agent::database_path`]) and acknowledge in the transaction
+//! that stores the events ([`Agent::acknowledge_in`]). The schema version
+//! is a row of the `schema_version` table ([`SCHEMA_VERSION`]); another
+//! version is refused, and so is a directory of the layout before
+//! (`state.json`, `mls.sqlite`): nothing is converted.
 //!
 //! # Limitations
 //!
@@ -139,6 +149,9 @@ mod journal;
 mod state;
 pub mod uri;
 
+#[cfg(feature = "fail-points")]
+#[doc(hidden)]
+pub use agent::FailPoint;
 pub use agent::{
     Agent, AgentConfig, DidWebvhApplied, Event, HostOptions, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES,
     MAX_TEXT_LEN, OutgoingAttachment, OwnRoomsJoined, PendingInvite, ReceivedMessage,
@@ -152,3 +165,4 @@ pub use mimi_content::{ExternalPart, MessageId, MimiContent};
 pub use mimi_mls::mls_didwebvh;
 pub use mimi_protocol::{AbuseType, AbusiveMessage, UnverifiedAbusiveMessage};
 pub use state::RoomStatus;
+pub use state::{DATABASE_FILE, SCHEMA_VERSION};

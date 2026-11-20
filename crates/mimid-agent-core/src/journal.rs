@@ -1,25 +1,42 @@
 //! The delivery journal (bead mimid-s4b1): the events [`crate::Agent`]
-//! found and its caller has not acknowledged, kept in `state.json`.
+//! found and its caller has not acknowledged, kept in the `journal` table
+//! of the agent's database (`agent.sqlite`, [`crate::DATABASE_FILE`]).
 //!
 //! Receiving consumes MLS secrets (RFC 9420 §9.2): a message decrypted once
 //! cannot be decrypted again. So an event is written to the journal, with
 //! the server position it came from, before [`crate::Agent::receive`]
 //! returns it, and leaves the journal only at
-//! [`crate::Agent::acknowledge`], after the caller has stored it. A crash in
-//! between delivers it again at the next start.
+//! [`crate::Agent::acknowledge`] or [`crate::Agent::acknowledge_in`], after
+//! the caller has stored it. A crash in between delivers it again at the
+//! next start.
+//!
+//! OpenMLS writes the consumed secrets through the same connection as the
+//! journal, and [`crate::Agent::receive`] handles each server Message in
+//! one transaction (bead mimid-1vul.10): the secrets it consumes, the
+//! group state, its events in the journal and that it was handled commit
+//! together, or none of them does and the Message is handled again. A
+//! caller that keeps its records in the same database removes the
+//! events it stored in the transaction that stores them
+//! ([`crate::Agent::acknowledge_in`]), so storing and acknowledging
+//! commit together too.
 //!
 //! # Limitations
 //!
-//! - OpenMLS writes the consumed secrets to `mls.sqlite` while it
-//!   decrypts, and the journal is written after each server Message is
-//!   handled: a crash inside that window still loses the Message's events.
-//!   Closing it needs both in one transaction.
-//! - A caller sees an event again after a crash, so it must tolerate one
-//!   it has already stored.
+//! - A Message whose proposals this agent commits as a leave
+//!   (`Agent::receive`) is handled in two transactions, since the Commit
+//!   goes to the server between them: the first ends with how far into
+//!   the Message it got, and the leave Commit's own writes commit as it
+//!   is merged. A crash after the merge and before the second
+//!   transaction loses the leave's `MembersChanged` event (the
+//!   membership the agent reports afterwards still shows it).
+//! - A caller that acknowledges with [`crate::Agent::acknowledge`] after
+//!   storing elsewhere sees an event again after a crash between the two,
+//!   so it must tolerate one it has already stored.
 
 use mimi_content::{MessageId, MimiContent};
 use mimi_mls::tls_codec::{Deserialize as _, Serialize as _};
 use mimi_protocol::{Frank, ServerFrankingContext};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{Event, ReceivedMessage};
@@ -126,7 +143,7 @@ impl Journaled {
     }
 
     /// The event back. An entry that no longer decodes (a hand-edited
-    /// file) is an [`Event::Problem`].
+    /// database) is an [`Event::Problem`].
     pub fn event(&self) -> Event {
         match self.clone() {
             Self::InviteArrived { number } => Event::InviteArrived { number },
@@ -245,18 +262,65 @@ fn unhex(text: &str, what: &str) -> Result<Vec<u8>, String> {
 }
 
 /// What [`crate::Agent::receive`] delivered, for
-/// [`crate::Agent::acknowledge`]: the first `count` journal entries.
+/// [`crate::Agent::acknowledge`] or [`crate::Agent::acknowledge_in`]: the
+/// journal entries up to sequence number `through` (0: none).
 #[derive(Debug, PartialEq, Eq)]
 #[must_use = "events stay in the journal and come again until acknowledged"]
 pub struct Receipt {
-    pub(crate) count: usize,
+    pub(crate) through: i64,
+}
+
+/// Appends `entries` to the journal, in order.
+pub(crate) fn append(connection: &Connection, entries: &[Journaled]) -> rusqlite::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut insert = connection.prepare_cached("INSERT INTO journal (entry) VALUES (?1)")?;
+    for entry in entries {
+        let text = serde_json::to_string(entry)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
+        insert.execute([text])?;
+    }
+    Ok(())
+}
+
+/// Every event in the journal, oldest first, and the receipt for them. An
+/// entry that no longer parses (a hand-edited database) is an
+/// [`Event::Problem`].
+pub(crate) fn read(connection: &Connection) -> rusqlite::Result<(Vec<Event>, Receipt)> {
+    let mut select = connection.prepare("SELECT seq, entry FROM journal ORDER BY seq")?;
+    let rows = select.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut events = Vec::new();
+    let mut through = 0;
+    for row in rows {
+        let (seq, entry) = row?;
+        through = seq;
+        events.push(match serde_json::from_str::<Journaled>(&entry) {
+            Ok(journaled) => journaled.event(),
+            Err(e) => Event::Problem {
+                room: None,
+                description: format!("journal entry {seq} does not parse: {e}"),
+            },
+        });
+    }
+    Ok((events, Receipt { through }))
+}
+
+/// Removes the entries `receipt` names.
+pub(crate) fn remove(connection: &Connection, receipt: &Receipt) -> rusqlite::Result<()> {
+    if receipt.through > 0 {
+        connection.execute("DELETE FROM journal WHERE seq <= ?1", [receipt.through])?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A `membersChanged` entry as `state.json` holds it, decoded to the
+    /// A `membersChanged` entry as the `journal` table holds it, decoded to the
     /// expected event and encoded back to the same bytes: one written
     /// before bead mimid-cqof, without `committer`, reads as an unknown
     /// committer; one with it keeps it. The entries are written by hand,

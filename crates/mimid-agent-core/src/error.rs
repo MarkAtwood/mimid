@@ -94,6 +94,17 @@ pub enum AgentError {
         #[source]
         source: Source,
     },
+    /// The agent's database failed.
+    #[error("{}: {what}", .path.display())]
+    Database {
+        /// The database file.
+        path: PathBuf,
+        /// What was being done.
+        what: String,
+        /// SQLite's error.
+        #[source]
+        source: Source,
+    },
     /// The state directory cannot be used.
     #[error("{}: {detail}", .path.display())]
     State {

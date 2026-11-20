@@ -2,7 +2,7 @@
 //! server's JMAP API.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use mimi_content::{
@@ -37,7 +37,7 @@ use crate::AgentError;
 use crate::client::{ConsentRecord, Jmap};
 use crate::didwebvh::{DidWebvhConfig, Pin, RoomClient, check_pin, required_capabilities};
 use crate::frank::{self, VerifiedFrank};
-use crate::journal::{Journaled, Receipt};
+use crate::journal::{self, Journaled, Receipt};
 use crate::state::{Held, Room, RoomStatus, State, StateDir};
 use crate::uri::{normalized_uri, user_uri_domain};
 use mimi_protocol::components::apply_commit_op;
@@ -488,11 +488,33 @@ pub struct Agent {
     /// Rooms [`Agent::join_own_rooms`] does not try again until a restart
     /// (decision mimid-1wgh.61 item 5).
     not_joinable: std::collections::BTreeSet<String>,
+    /// Events delivered since the last save, which the next save appends
+    /// to the journal with the state.
+    undelivered: Vec<Journaled>,
+    /// [`Agent::fail_next`].
+    #[cfg(feature = "fail-points")]
+    fail_point: Option<FailPoint>,
     /// Test only: building a credential-update Commit fails, to exercise
     /// the fallback of [`Agent::use_did_webvh_credential`] through a real
     /// hub.
     #[cfg(test)]
     fail_credential_commits: bool,
+}
+
+/// Test only: a step of [`Agent::receive`] or [`Agent::acknowledge_in`]
+/// that [`Agent::fail_next`] makes fail (feature `fail-points`).
+#[cfg(feature = "fail-points")]
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FailPoint {
+    /// After a server Message is handled (its MLS secrets consumed),
+    /// before its events are written to the journal and the transaction
+    /// commits.
+    BeforeJournal,
+    /// In [`Agent::acknowledge_in`], before the journal entries are
+    /// removed in the caller's transaction.
+    Acknowledge,
 }
 
 impl std::fmt::Debug for Agent {
@@ -511,8 +533,10 @@ impl Agent {
     /// # Errors
     ///
     /// [`AgentError::Invalid`] if `user_uri` is not a user URI,
-    /// [`AgentError::State`] if the state directory cannot be used or is
-    /// another user's, and the errors of reading the Session.
+    /// [`AgentError::State`] if the state directory cannot be used, is
+    /// another user's, holds a database of another schema version or the
+    /// files of the older layout, [`AgentError::Database`] if its database
+    /// fails, and the errors of reading the Session.
     pub async fn open(config: AgentConfig) -> Result<Self, AgentError> {
         if user_uri_domain(&config.user_uri).is_none() {
             return Err(AgentError::Invalid(format!(
@@ -540,37 +564,13 @@ impl Agent {
             pending_removed: None,
             did_webvh: config.did_webvh.clone(),
             not_joinable: std::collections::BTreeSet::new(),
+            undelivered: Vec::new(),
+            #[cfg(feature = "fail-points")]
+            fail_point: None,
             #[cfg(test)]
             fail_credential_commits: false,
         };
-        let rooms: Vec<(String, Room)> = agent
-            .state
-            .rooms
-            .iter()
-            .filter(|(_, room)| room.status != RoomStatus::Left)
-            .map(|(uri, room)| (uri.clone(), room.clone()))
-            .collect();
-        for (uri, room) in rooms {
-            let group_id = agent
-                .state
-                .group_rooms
-                .iter()
-                .find(|(_, r)| **r == uri)
-                .and_then(|(hex_id, _)| hex::decode(hex_id).ok())
-                .unwrap_or_else(|| uri.as_bytes().to_vec());
-            match Member::load(&agent.identity, &group_id) {
-                Ok(mut member) => {
-                    if let Some((epoch, reason)) = room.out_of_sync {
-                        member.restore_out_of_sync(OutOfSync::new(epoch, reason));
-                    }
-                    agent.members.insert(uri, member);
-                }
-                Err(e) => agent.deliver(vec![Event::Problem {
-                    room: Some(uri.clone()),
-                    description: format!("cannot reload the MLS group: {e}"),
-                }]),
-            }
-        }
+        agent.load_members();
         if let Some(path) = config.did_webvh.log_file.as_deref() {
             let credential = read_did_webvh_files(path, config.did_webvh.witness_file.as_deref())?;
             // A file older than the log the agent holds (one handed to the
@@ -596,6 +596,51 @@ impl Agent {
             }
         }
         Ok(agent)
+    }
+
+    /// Loads the MLS group of every room the state names and this user
+    /// has not left; a group that cannot be loaded is an
+    /// [`Event::Problem`].
+    fn load_members(&mut self) {
+        self.members.clear();
+        let rooms: Vec<(String, Room)> = self
+            .state
+            .rooms
+            .iter()
+            .filter(|(_, room)| room.status != RoomStatus::Left)
+            .map(|(uri, room)| (uri.clone(), room.clone()))
+            .collect();
+        for (uri, room) in rooms {
+            let group_id = self
+                .state
+                .group_rooms
+                .iter()
+                .find(|(_, r)| **r == uri)
+                .and_then(|(hex_id, _)| hex::decode(hex_id).ok())
+                .unwrap_or_else(|| uri.as_bytes().to_vec());
+            match Member::load(&self.identity, &group_id) {
+                Ok(mut member) => {
+                    if let Some((epoch, reason)) = room.out_of_sync {
+                        member.restore_out_of_sync(OutOfSync::new(epoch, reason));
+                    }
+                    self.members.insert(uri, member);
+                }
+                Err(e) => self.deliver(vec![Event::Problem {
+                    room: Some(uri.clone()),
+                    description: format!("cannot reload the MLS group: {e}"),
+                }]),
+            }
+        }
+    }
+
+    /// The agent's database, `agent.sqlite` in the state directory
+    /// ([`crate::DATABASE_FILE`]): OpenMLS's state, the agent's state and
+    /// the delivery journal. A caller may keep its own tables there, on a
+    /// connection of its own, and acknowledge in the transaction that
+    /// stores what it received ([`Agent::acknowledge_in`]).
+    #[must_use]
+    pub fn database_path(&self) -> &Path {
+        self.dir.path()
     }
 
     /// This device's Ed25519 signature public key: what the user's
@@ -1221,7 +1266,7 @@ impl Agent {
             .find(|i| i.number == number)
             .ok_or(AgentError::NoSuchInvite(number))?;
         let bad_hex = |what: &str| AgentError::State {
-            path: PathBuf::from("state.json"),
+            path: self.dir.path().to_owned(),
             detail: format!("{what} of invite {number} is not hex"),
             source: None,
         };
@@ -1244,6 +1289,12 @@ impl Agent {
     ///
     /// [`AgentError::NoSuchInvite`], or the MLS error of joining.
     pub fn join(&mut self, number: u64) -> Result<String, AgentError> {
+        // One transaction: the held messages the join decrypts leave the
+        // state as their events enter the journal.
+        self.in_transaction(|agent| agent.join_now(number))
+    }
+
+    fn join_now(&mut self, number: u64) -> Result<String, AgentError> {
         let index = self
             .state
             .invites
@@ -2457,16 +2508,21 @@ impl Agent {
     ///
     /// Returns every event not yet acknowledged, oldest first: those of
     /// earlier calls (and of [`Agent::join`] and [`Agent::leave`]) and the
-    /// new ones. They are saved in the state directory before they are
-    /// returned and stay there until [`Agent::acknowledge`] with the
-    /// [`Receipt`], so a caller that crashes before storing them gets them
-    /// again (the module `journal`); the caller must tolerate an event it
-    /// has seen. [`Agent::poll`] acknowledges at once.
+    /// new ones. They are in the journal of the agent's database before
+    /// they are returned and stay there until [`Agent::acknowledge`] or
+    /// [`Agent::acknowledge_in`] with the [`Receipt`], so a caller that
+    /// crashes before storing them gets them again (the module
+    /// `journal`). Each server Message is handled in one transaction: the
+    /// MLS secrets it consumes, its events in the journal and that it was
+    /// handled commit together, or none of them does and it is handled
+    /// again. [`Agent::poll`] acknowledges at once.
     ///
     /// # Errors
     ///
-    /// The errors of reaching the server, and [`AgentError::State`] if the
-    /// state cannot be saved. An item that cannot be handled is an
+    /// The errors of reaching the server, and [`AgentError::Database`] if
+    /// the database cannot be written; what the failed transaction did is
+    /// rolled back, and the agent reads its state and groups again from
+    /// the database. An item that cannot be handled is an
     /// [`Event::Problem`], not an error.
     pub async fn receive(&mut self) -> Result<(Vec<Event>, Receipt), AgentError> {
         let since = self.state.message_state.clone();
@@ -2475,14 +2531,21 @@ impl Agent {
             if self.state.handled.contains(id) {
                 continue;
             }
-            let mut events = Vec::new();
-            if !self.jmap.is_own(body) {
-                self.incoming(body, &mut events).await;
+            let mut from = match &self.state.in_progress {
+                Some((message, handled)) if message == id => *handled,
+                _ => 0,
+            };
+            // A leave Commit goes to the server between two transactions,
+            // never inside one.
+            while let Some((room, leaf, handled)) =
+                self.in_transaction(|agent| agent.handle_message(id, body, from))?
+            {
+                let mut events = Vec::new();
+                self.maybe_commit_leave(&room, leaf, &mut events).await;
+                self.deliver(events);
+                self.save()?;
+                from = handled;
             }
-            // One save per Message: its events and that it was handled.
-            self.deliver(events);
-            self.state.handled.push(id.clone());
-            self.save()?;
         }
         // A leave stored outside a proposal bundle (a join's replay).
         if let Some((room, leaf)) = self.deferred_leaver.take() {
@@ -2493,13 +2556,57 @@ impl Agent {
         self.state.message_state = Some(state);
         self.state.handled.clear();
         self.remember_sent()?;
-        let events = self.state.journal.iter().map(Journaled::event).collect();
-        Ok((
-            events,
-            Receipt {
-                count: self.state.journal.len(),
-            },
-        ))
+        journal::read(self.connection())
+            .map_err(|e| self.dir.database_error("reading the journal", e))
+    }
+
+    /// Handles server Message `id` (`body`) from its FanoutMessage number
+    /// `from` on, inside the caller's transaction: its events go to the
+    /// journal and it is marked handled. When a proposal makes this agent
+    /// commit a leave, it stops there: the events so far are journaled,
+    /// the position is kept in the state, and it returns the room and leaf
+    /// of the leave and how many FanoutMessages are handled.
+    fn handle_message(
+        &mut self,
+        id: &str,
+        body: &[u8],
+        from: usize,
+    ) -> Result<Option<(String, u32, usize)>, AgentError> {
+        let mut events = Vec::new();
+        if !self.jmap.is_own(body) {
+            match FanoutMessage::decode_all(body) {
+                Ok(fanouts) if !fanouts.is_empty() => {
+                    for (i, fanout) in fanouts.into_iter().enumerate().skip(from) {
+                        if let Some((room, leaf)) = self.incoming(fanout, &mut events) {
+                            self.deliver(events);
+                            self.state.in_progress = Some((id.to_owned(), i + 1));
+                            self.save()?;
+                            return Ok(Some((room, leaf, i + 1)));
+                        }
+                    }
+                }
+                _ => events.push(Event::Problem {
+                    room: None,
+                    description: format!(
+                        "a stored Message of {} octets is not a FanoutMessage",
+                        body.len()
+                    ),
+                }),
+            }
+        }
+        #[cfg(feature = "fail-points")]
+        if self.fail_point == Some(FailPoint::BeforeJournal) {
+            self.fail_point = None;
+            return Err(AgentError::Invalid(
+                "fail point: after handling a Message, before its journal entries".to_owned(),
+            ));
+        }
+        // Its events and that it was handled.
+        self.deliver(events);
+        self.state.handled.push(id.to_owned());
+        self.state.in_progress = None;
+        self.save()?;
+        Ok(None)
     }
 
     /// Drops the events `receipt` delivered from the journal: the caller
@@ -2507,15 +2614,43 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// [`AgentError::State`] if the state cannot be saved; the events then
-    /// come again.
+    /// [`AgentError::Database`] if the journal cannot be written; the
+    /// events then come again.
     pub fn acknowledge(&mut self, receipt: Receipt) -> Result<(), AgentError> {
-        if receipt.count == 0 {
-            return Ok(());
+        journal::remove(self.connection(), &receipt)
+            .map_err(|e| self.dir.database_error("acknowledging", e))
+    }
+
+    /// [`Agent::acknowledge`] inside `transaction`, which the caller has
+    /// open on a connection of its own to the agent's database
+    /// ([`Agent::database_path`]): the events leave the journal in the
+    /// commit that stores them, and stay to come again if it rolls back.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Invalid`] if `transaction` is not on the agent's
+    /// database, and [`AgentError::Database`] if the journal cannot be
+    /// written.
+    pub fn acknowledge_in(
+        &mut self,
+        receipt: Receipt,
+        transaction: &rusqlite::Transaction<'_>,
+    ) -> Result<(), AgentError> {
+        if transaction.path().is_none() || transaction.path() != self.connection().path() {
+            return Err(AgentError::Invalid(format!(
+                "acknowledging in a transaction on {:?}, not on the agent's database",
+                transaction.path()
+            )));
         }
-        let count = receipt.count.min(self.state.journal.len());
-        self.state.journal.drain(..count);
-        self.save()
+        #[cfg(feature = "fail-points")]
+        if self.fail_point == Some(FailPoint::Acknowledge) {
+            self.fail_point = None;
+            return Err(AgentError::Invalid(
+                "fail point: acknowledging in the caller's transaction".to_owned(),
+            ));
+        }
+        journal::remove(transaction, &receipt)
+            .map_err(|e| self.dir.database_error("acknowledging", e))
     }
 
     /// [`Agent::receive`] and [`Agent::acknowledge`] together, for a
@@ -2531,6 +2666,15 @@ impl Agent {
         Ok(events)
     }
 
+    /// Test only: makes the next pass through `point` fail with
+    /// [`AgentError::Invalid`], for the crash tests of the agent and its
+    /// callers (feature `fail-points`).
+    #[cfg(feature = "fail-points")]
+    #[doc(hidden)]
+    pub fn fail_next(&mut self, point: FailPoint) {
+        self.fail_point = Some(point);
+    }
+
     // ---- internals ----
 
     fn member(&self, room: &str) -> Result<&Member, AgentError> {
@@ -2539,14 +2683,75 @@ impl Agent {
             .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))
     }
 
-    fn save(&self) -> Result<(), AgentError> {
-        self.dir.save(&self.state)
+    /// The connection to the agent's database, OpenMLS's own.
+    fn connection(&self) -> &rusqlite::Connection {
+        self.identity.store().connection()
     }
 
-    /// Adds `events` to the journal; the next save keeps them.
+    /// Writes the state, and appends the events delivered since the last
+    /// save to the journal: both, or neither and the events wait for the
+    /// next save. Inside [`Agent::in_transaction`] they commit with it.
+    fn save(&mut self) -> Result<(), AgentError> {
+        crate::state::save(self.connection(), &self.state, &self.undelivered)
+            .map_err(|e| self.dir.database_error("writing the state", e))?;
+        self.undelivered.clear();
+        Ok(())
+    }
+
+    /// Runs `step` in one transaction of the agent's database, with a
+    /// save after it: OpenMLS's writes, the state and the journal commit
+    /// together. On an error the transaction is rolled back and the state
+    /// and groups are read again from the database, since what is in
+    /// memory went past it. `step` is synchronous, so no transaction is
+    /// open across an await: another connection to the database (the
+    /// store's) waits for it.
+    fn in_transaction<R>(
+        &mut self,
+        step: impl FnOnce(&mut Self) -> Result<R, AgentError>,
+    ) -> Result<R, AgentError> {
+        // What was delivered before is saved on its own first.
+        self.save()?;
+        if !self.connection().is_autocommit() {
+            // Left open by a step that panicked.
+            self.roll_back();
+        }
+        self.connection()
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|e| self.dir.database_error("beginning a transaction", e))?;
+        let done = step(self).and_then(|value| {
+            self.save()?;
+            self.connection()
+                .execute_batch("COMMIT")
+                .map_err(|e| self.dir.database_error("committing", e))?;
+            Ok(value)
+        });
+        if done.is_err() {
+            self.roll_back();
+        }
+        done
+    }
+
+    /// Rolls back the open transaction and reads the state and groups
+    /// again from the database.
+    fn roll_back(&mut self) {
+        let _ = self.connection().execute_batch("ROLLBACK");
+        self.undelivered.clear();
+        self.deferred_leaver = None;
+        self.pending_removed = None;
+        match crate::state::read(self.connection(), &self.me) {
+            Ok(state) => self.state = state,
+            Err(why) => tracing::error!(
+                name: "agent_state_not_reread",
+                why,
+                "after a rollback the agent state could not be read again"
+            ),
+        }
+        self.load_members();
+    }
+
+    /// Keeps `events` for the journal; the next save appends them.
     fn deliver(&mut self, events: Vec<Event>) {
-        self.state
-            .journal
+        self.undelivered
             .extend(events.into_iter().map(Journaled::of));
     }
 
@@ -2707,56 +2912,48 @@ impl Agent {
         self.withdraw(room);
     }
 
-    async fn incoming(&mut self, item: &[u8], events: &mut Vec<Event>) {
-        let fanouts = match FanoutMessage::decode_all(item) {
-            Ok(fanouts) if !fanouts.is_empty() => fanouts,
-            _ => {
-                events.push(Event::Problem {
+    /// Handles one FanoutMessage. Returns the room and leaf of a leave
+    /// this agent is to commit, when the proposals of a Proposal fanout
+    /// call for one ([`Agent::maybe_commit_leave`]): the caller sends that
+    /// Commit outside its transaction.
+    fn incoming(
+        &mut self,
+        fanout: FanoutMessage,
+        events: &mut Vec<Event>,
+    ) -> Option<(String, u32)> {
+        match fanout.event {
+            FanoutEvent::Application { message, frank } => {
+                self.incoming_mls(&message, fanout.timestamp, frank.as_ref(), events);
+            }
+            FanoutEvent::Commit { message, .. } => {
+                self.incoming_mls(&message, fanout.timestamp, None, events);
+            }
+            FanoutEvent::Proposal {
+                message,
+                more_proposals,
+            } => {
+                self.incoming_mls(&message, fanout.timestamp, None, events);
+                for proposal in &more_proposals {
+                    self.incoming_mls(proposal, fanout.timestamp, None, events);
+                }
+                return self.deferred_leaver.take();
+            }
+            FanoutEvent::Welcome {
+                message,
+                ratchet_tree_option,
+            } => match encode(&message) {
+                Ok(welcome) => self.add_invite(
+                    welcome,
+                    ratchet_tree_option.ratchet_tree().map(<[u8]>::to_vec),
+                    events,
+                ),
+                Err(e) => events.push(Event::Problem {
                     room: None,
-                    description: format!(
-                        "a stored Message of {} octets is not a FanoutMessage",
-                        item.len()
-                    ),
-                });
-                return;
-            }
-        };
-        for fanout in fanouts {
-            match fanout.event {
-                FanoutEvent::Application { message, frank } => {
-                    self.incoming_mls(&message, fanout.timestamp, frank.as_ref(), events);
-                }
-                FanoutEvent::Commit { message, .. } => {
-                    self.incoming_mls(&message, fanout.timestamp, None, events);
-                }
-                FanoutEvent::Proposal {
-                    message,
-                    more_proposals,
-                } => {
-                    self.incoming_mls(&message, fanout.timestamp, None, events);
-                    for proposal in &more_proposals {
-                        self.incoming_mls(proposal, fanout.timestamp, None, events);
-                    }
-                    if let Some((room, leaf)) = self.deferred_leaver.take() {
-                        self.maybe_commit_leave(&room, leaf, events).await;
-                    }
-                }
-                FanoutEvent::Welcome {
-                    message,
-                    ratchet_tree_option,
-                } => match encode(&message) {
-                    Ok(welcome) => self.add_invite(
-                        welcome,
-                        ratchet_tree_option.ratchet_tree().map(<[u8]>::to_vec),
-                        events,
-                    ),
-                    Err(e) => events.push(Event::Problem {
-                        room: None,
-                        description: format!("a Welcome: {e}"),
-                    }),
-                },
-            }
+                    description: format!("a Welcome: {e}"),
+                }),
+            },
         }
+        None
     }
 
     fn add_invite(&mut self, welcome: Vec<u8>, tree: Option<Vec<u8>>, events: &mut Vec<Event>) {
