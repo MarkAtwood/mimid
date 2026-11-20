@@ -2,13 +2,15 @@
   "id": "mimid-bmtk",
   "title": "Store: a room record never becomes active again after leaving",
   "description": "Found while building the IRC front end (mimid-1vul.8). Store::leave marks a room record Leaving and Event::Left marks it Left (crates/mimid-agent-store/src/action.rs, sync.rs apply). If the user is later invited to the same room URI again and joins, Store::room_for returns the existing record by URI without touching its status (sync.rs room_for, reconcile_rooms), so the record stays Leaving/Left. The IRC front end shows only Active rooms, so a rejoined room never appears as a channel. Unverified by a test; nothing else sets status back to Active. Fix: in reconcile_rooms/room_for, set status Active (and record RoomChanged) when the agent reports the room Active and the record is not.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-20T07:44:09.530026438Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-20T07:44:09.530026438Z",
+  "updated_at": "2026-11-20T17:39:30.147553723Z",
+  "closed_at": "2026-11-20T17:39:30.147553723Z",
+  "close_reason": "Real bug, confirmed by a failing test (record stayed Left after rejoin). Fixed in 8d072a6 on branch irc-fixes: reconcile_rooms reactivates the record; stale Event::Left dropped. Test: crates/mimid-agent/tests/irc.rs a_room_left_and_joined_again_is_shown_again.",
   "labels": [
     "agent",
     "store"
