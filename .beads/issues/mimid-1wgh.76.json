@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.76",
   "title": "Live stream: strict CBOR decoding, deterministic encoding",
   "description": "Epic mimid-e64f; docs/design/binary-live-stream.md §3, §9 question 5; AGENTS.md \"Decode strictly\".\n\nChosen (Mark, 2026-11-20): strict decoding. Reject duplicate keys, indefinite-length items, non-shortest integers and trailing bytes; accept any key order.\n\nDetails chosen by the agent for mimid-e64f (INVENTED, NOT FROM SPEC):\n- Lengths must be shortest too (they are integers in RFC 8949 §3).\n- Text must be valid UTF-8 (RFC 8949 §3.1 major type 3).\n- Floats, tags, undefined and simple values other than false, true and null are refused: the protocol uses none. Unknown map members are kept and round-trip unchanged (AGENTS.md).\n- Nesting deeper than a named constant is refused.\n- Encoding uses the RFC 8949 §4.2.1 core deterministic order (keys sorted by their encoded bytes), so one value has one encoding and fixtures can be cross-checked with Python cbor2 canonical=True.\n",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-20T19:36:27.370685067Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-20T19:36:27.370685067Z",
+  "updated_at": "2026-11-20T19:36:39.422787742Z",
+  "closed_at": "2026-11-20T19:36:39.422787742Z",
+  "close_reason": "Decided by Mark 2026-11-20 (mimid-e64f); details marked INVENTED chosen by agent, unattended",
   "labels": [
     "live-stream"
   ],
