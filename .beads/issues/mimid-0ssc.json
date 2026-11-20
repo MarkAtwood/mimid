@@ -1,0 +1,15 @@
+{
+  "id": "mimid-0ssc",
+  "title": "tools/interop/chat does not resolve: icu_collections conflict via jmap-metadata-server",
+  "description": "Found during mimid-1vul.10 (2026-11-20). On main 26720d5 as well, 'cargo check --offline' in tools/interop/chat fails before compiling: icu_casemap 2.2.0 (required by jmap-metadata-server at crate-jmap e4d206ea, through mimid-server) wants icu_collections ~2.2.0, but the tool's Cargo.lock pins icu_collections 2.3.0 via icu_normalizer 2.3.0. Not caused by mimid-1vul.10; tools/interop/seed checks, but cargo refreshes its stale Cargo.lock on the way (not committed).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T18:47:55.998184587Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T18:47:55.998184587Z",
+  "labels": [
+    "tools"
+  ]
+}
