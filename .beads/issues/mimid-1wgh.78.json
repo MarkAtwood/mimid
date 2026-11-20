@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.78",
   "title": "Live stream: frame and request size limits, 16 outstanding requests (INVENTED)",
   "description": "Epic mimid-e64f; docs/design/binary-live-stream.md §5.4, §5.8.\n\nChosen by the agent for mimid-e64f, unattended (INVENTED, NOT FROM SPEC):\n- maxMessageBytes = 16 MiB + 64 KiB: no frame in either direction is larger; fits an Upload or FetchAsset answer of the largest blob mimid stores (MAX_BLOB_LEN, 16 MiB).\n- maxRequestBytes = 4 MiB + 64 KiB: no client request other than Upload is larger; fits the largest MLS object mimid takes on any other route (MAX_BODY_LEN, 4 MiB), as JMAP maxSizeRequest does after base64url.\n- A frame over either: Error tooLarge without id, connection closed. A text frame closes the connection.\n- At most 16 outstanding requests per connection; one more is answered rateLimited.\nBoth limits are stated in ProviderHello.\n",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-20T19:36:27.728857622Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-20T19:36:27.728857622Z",
+  "updated_at": "2026-11-20T19:36:41.417309245Z",
+  "closed_at": "2026-11-20T19:36:41.417309245Z",
+  "close_reason": "Chosen by agent 2026-11-20 for mimid-e64f, unattended; INVENTED, NOT FROM SPEC; flag to Mark",
   "labels": [
     "live-stream"
   ],
