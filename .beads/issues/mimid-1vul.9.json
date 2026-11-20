@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1vul.9",
+  "title": "Deleting a Chat deletes its local messages, bans and attachments",
+  "description": "Mark decided 2026-11-20. JMAP Chat/set destroy (draft-atwood-jmap-chat-00 'Destroying a Chat') removes the Chat from the caller's view and MUST NOT delete history for other participants; it does not require keeping the caller's own copy. Today crate-jmap keeps a destroyed Chat's Messages and ChatBans, so they stay as plaintext in chat.json, unreachable and forever.\n\nDo: when a front end deletes a chat, the store deletes that room's Message, Ban and ReadPosition records and drops its blobs from the referenced set (so blob retention frees them), plus tombstones so a journal replay does not bring messages back. Also purge items kept with an unknown room by the format-1 conversion (§7.8) on the next save. Lives in mimid-agent-store, not crate-jmap. Record as §7.9 in docs/design/agent-frontends.md. Test: destroy a Chat with messages, a ban and an attachment; after restart nothing of it is in the file or blob dir, and other rooms are untouched. After mimid-1vul.5 (outbound through the store).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T03:22:51.870438954Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T03:22:51.870438954Z",
+  "labels": [
+    "adapter",
+    "client"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1vul.9",
+      "depends_on_id": "mimid-1vul",
+      "type": "parent-child",
+      "created_at": "2026-11-20T03:22:52.289808207Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
