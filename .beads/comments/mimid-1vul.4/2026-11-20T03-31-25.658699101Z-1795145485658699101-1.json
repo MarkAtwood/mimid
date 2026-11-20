@@ -1,0 +1,7 @@
+{
+  "id": "1795145485658699101-1",
+  "issue_id": "mimid-1vul.4",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-20: no migration code, nothing runs in prod. Start from an empty database; drop the format-1 reader and chat.json.",
+  "created_at": "2026-11-20T03:31:25.658699101Z"
+}
