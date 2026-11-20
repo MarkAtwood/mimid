@@ -1,4 +1,5 @@
-//! [`Daemon`]: the agent, its JMAP endpoint and its sync loop.
+//! [`Daemon`]: the agent, its plaintext store, the JMAP endpoint over it
+//! and the sync loop.
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -7,9 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mimid_agent_core::{Agent, AgentConfig, AgentError};
-use mimid_agent_jmap::{AgentChat, Options, SyncReport};
+use mimid_agent_jmap::{AgentChat, BlobStore, Options};
+use mimid_agent_store::{Store, SyncReport};
 use tokio::net::TcpListener;
-use tokio::sync::{Notify, Semaphore, broadcast, watch};
+use tokio::sync::{Semaphore, broadcast, watch};
 
 use crate::config::Config;
 use crate::didwebvh::LogWatch;
@@ -24,6 +26,8 @@ pub struct Daemon {
     listener: TcpListener,
     local_addr: SocketAddr,
     endpoint: Arc<Endpoint>,
+    /// The plaintext store the front ends share; its sync is the loop's.
+    store: Arc<Store>,
     stop: watch::Sender<bool>,
     sync_interval: Duration,
     key_packages: u32,
@@ -83,6 +87,9 @@ pub enum StartError {
     Session(#[from] serde_json::Error),
     /// The plaintext store (`<state_dir>/chat.sqlite`) could not be read.
     #[error("opening the plaintext store")]
+    Records(#[from] mimid_agent_store::FileError),
+    /// The plaintext store does not make this account's JMAP objects.
+    #[error("opening the plaintext store")]
     Store(#[from] mimid_agent_jmap::PersistError),
     /// The blob store (`<state_dir>/blobs`) could not be opened.
     #[error("opening the blob store")]
@@ -128,20 +135,20 @@ impl Daemon {
         let account = http::account_id(&config.user_uri);
         let (session, session_state) =
             http::session(&format!("http://{local_addr}"), &config.user_uri, &account)?;
-        // The decrypted Chats and Messages, kept across restarts (bead
-        // mimid-1wgh.13.12).
-        let chat = Arc::new(
-            AgentChat::new(
-                agent,
-                account,
-                Options::default()
-                    .with_invites(config.invites.into())
-                    .with_blob_quota(config.blob_quota()),
-            )
-            .persisted_at(config.state_dir.join(CHAT_STORE_FILE))?
-            // Attachments (bead mimid-1wgh.14).
-            .with_blobs(config.state_dir.join(BLOBS_DIR))?,
-        );
+        // The store first, the front ends over it (docs/design/
+        // agent-frontends.md §3 step 6): the decrypted records, kept across
+        // restarts (bead mimid-1wgh.13.12), with the attachments (bead
+        // mimid-1wgh.14).
+        let blobs =
+            BlobStore::open(config.state_dir.join(BLOBS_DIR))?.with_quota(config.blob_quota());
+        let store = Store::new(agent, config.invites.into()).with_blobs(blobs);
+        store.open_database(config.state_dir.join(CHAT_STORE_FILE))?;
+        let store = Arc::new(store);
+        let chat = Arc::new(AgentChat::over(
+            Arc::clone(&store),
+            account,
+            Options::default(),
+        )?);
         let (stop, stop_receiver) = watch::channel(false);
         let (changes, _) = broadcast::channel(CHANGE_BUFFER);
         let endpoint = Arc::new(Endpoint {
@@ -153,7 +160,8 @@ impl Daemon {
             in_flight: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
             uploads: Arc::new(Semaphore::new(MAX_CONCURRENT_UPLOAD)),
             changes,
-            sync_now: Arc::new(Notify::new()),
+            // The store's own: its write methods wake the loop too.
+            sync_now: Arc::clone(store.sync_wanted()),
             stop: stop_receiver,
             allowed_origins: config.allowed_origins.clone(),
             port: local_addr.port(),
@@ -162,6 +170,7 @@ impl Daemon {
             listener,
             local_addr,
             endpoint,
+            store,
             stop,
             sync_interval: config.sync_interval(),
             key_packages: config.key_packages,
@@ -186,7 +195,8 @@ impl Daemon {
     /// Serves the endpoint and runs the sync loop until `shutdown`
     /// resolves, then stops accepting connections, ends the open
     /// EventSource streams, lets requests in flight and a running sync
-    /// finish, and returns.
+    /// finish, and returns. Each save the store publishes tells the
+    /// EventSource streams to look.
     ///
     /// # Errors
     ///
@@ -203,10 +213,15 @@ impl Daemon {
             "mimid-agent listening"
         );
         let sync = tokio::spawn(sync_loop(
+            Arc::clone(&self.store),
             Arc::clone(&self.endpoint),
             self.sync_interval,
             self.key_packages,
             self.log_watch,
+        ));
+        let feed = tokio::spawn(forward_feed(
+            Arc::clone(&self.store),
+            Arc::clone(&self.endpoint),
         ));
         let stop = self.stop;
         let served = axum::serve(self.listener, http::router(self.endpoint))
@@ -222,6 +237,13 @@ impl Daemon {
                 name: "agent_sync_loop_panicked",
                 error = &error as &dyn std::error::Error,
                 "the sync loop ended abnormally"
+            );
+        }
+        if let Err(error) = feed.await {
+            tracing::error!(
+                name: "agent_feed_panicked",
+                error = &error as &dyn std::error::Error,
+                "the change feed's forwarding ended abnormally"
             );
         }
         tracing::info!(name: "agent_stopped", "mimid-agent stopped");
@@ -267,11 +289,13 @@ async fn top_up_key_packages(agent: &mut Agent, target: u32) {
     }
 }
 
-/// Syncs at once, then every `interval` or when woken, until the daemon
-/// stops; before each sync, takes a changed did:webvh log file
-/// (`log_watch`); after it, tells the EventSource streams to look and tops
-/// the KeyPackages up.
+/// Syncs the store at once ([`Store::sync`], the agent's only journal
+/// consumer), then every `interval` or when woken (a write of a front
+/// end, [`Store::sync_wanted`]), until the daemon stops; before each sync,
+/// takes a changed did:webvh log file (`log_watch`); after it, tops the
+/// KeyPackages up.
 async fn sync_loop(
+    store: Arc<Store>,
     endpoint: Arc<Endpoint>,
     interval: Duration,
     key_packages: u32,
@@ -282,7 +306,7 @@ async fn sync_loop(
         if let Some(watch) = log_watch.as_mut() {
             watch.check(&endpoint).await;
         }
-        match endpoint.chat.sync().await {
+        match store.sync().await {
             Ok(report) => log_report(&report),
             Err(error) => tracing::warn!(
                 name: "agent_sync_failed",
@@ -290,13 +314,31 @@ async fn sync_loop(
                 "sync with the server failed"
             ),
         }
-        // No receiver only means no stream is open.
-        let _ = endpoint.changes.send(());
-        top_up_key_packages(&mut *endpoint.chat.agent().lock().await, key_packages).await;
+        top_up_key_packages(&mut *store.agent().lock().await, key_packages).await;
         tokio::select! {
             () = stopped(&mut stop) => return,
             () = tokio::time::sleep(interval) => {}
             () = endpoint.sync_now.notified() => {}
+        }
+    }
+}
+
+/// Tells the EventSource streams to look whenever the store publishes
+/// changes (each save that has some), until the daemon stops: the JMAP
+/// front end has shown them by then ([`mimid_agent_store::Frontend`]).
+async fn forward_feed(store: Arc<Store>, endpoint: Arc<Endpoint>) {
+    let mut stop = endpoint.stop.clone();
+    let mut published = store.subscribe();
+    loop {
+        tokio::select! {
+            () = stopped(&mut stop) => return,
+            received = published.recv() => match received {
+                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                    // No receiver only means no stream is open.
+                    let _ = endpoint.changes.send(());
+                }
+                Err(broadcast::error::RecvError::Closed) => return,
+            },
         }
     }
 }

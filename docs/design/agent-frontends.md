@@ -1,7 +1,7 @@
 # Agent front ends: one plaintext store, JMAP and IRC over it
 
 Design note for epic mimid-1vul. Written 2026-11-19 against main at
-e4e91cd. Status: steps 1 to 5 of §3 are built, and step 6 in part (2026-11-20). Each step
+e4e91cd. Status: steps 1 to 6 of §3 are built (2026-11-20). Each step
 notes the changes it made to this design.
 
 Mark decided on 2026-11-19 that the IRC front end is native. It is built
@@ -616,6 +616,15 @@ step runs the full check list in AGENTS.md before its commit.
      path. `Store::open_database` and `Store::set_blobs` take `&self`
      (the blob store is a `OnceLock`). `AgentChat::store()` exposes the
      store.
+   - The daemon opens the blob store, builds the `Store`, opens its
+     database, then calls `AgentChat::over`. Its sync loop calls
+     `Store::sync`, and KeyPackage top-up takes `Store::agent`. A task
+     forwards the store's broadcast to the EventSource `changes`
+     broadcast, replacing the sync loop's tick after each sync.
+     `StartError::Records` carries a `FileError` from opening the
+     database. Nothing but `Store::sync` calls `Agent::receive` or
+     `Agent::acknowledge`; the tombstones depend on that, and
+     `Store::agent` says so.
    - The unit test `the_sync_future_is_send` in mimid-agent-store lost
      its `Commit` argument. New tests: `feed`'s unit test of numbering,
      the bounded log and `TooOld`; mimid-agent-jmap `tests/feed.rs`

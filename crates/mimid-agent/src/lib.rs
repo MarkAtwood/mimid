@@ -10,11 +10,19 @@
 //! push at `GET /jmap/eventsource`, and upload and download at
 //! `POST /jmap/upload/{accountId}/` and
 //! `GET /jmap/download/{accountId}/{blobId}/{name}` (RFC 8620 §2, §3,
-//! §7.3, §6.1, §6.2; see the `http` module for the request checks). A background loop calls
-//! [`mimid_agent_jmap::AgentChat::sync`] every `sync_interval_ms`, and at
-//! once after a client's `Chat/set` or `Message/set`; EventSource clients
-//! get a StateChange whenever a sync or a request moves the state of
-//! `Chat`, `Message`, `ChatContact` or `ReadPosition`.
+//! §7.3, §6.1, §6.2; see the `http` module for the request checks).
+//!
+//! The daemon builds the plaintext store first
+//! ([`mimid_agent_store::Store`]: the agent, the records in
+//! `<state_dir>/chat.sqlite`, the blob store, the change feed), then puts
+//! the JMAP front end over it ([`mimid_agent_jmap::AgentChat::over`]). A
+//! background loop calls [`mimid_agent_store::Store::sync`], the agent's
+//! only journal consumer, every `sync_interval_ms`, and at once after a
+//! client's `Chat/set` or `Message/set` and after any write the agent acts
+//! on ([`mimid_agent_store::Store::sync_wanted`]); EventSource clients get
+//! a StateChange whenever the store publishes changes (each save that has
+//! some) or a request moves the state of `Chat`, `Message`, `ChatContact`
+//! or `ReadPosition`.
 //!
 //! The Session has one account, the user's, with the capabilities
 //! `urn:ietf:params:jmap:core` and `urn:ietf:params:jmap:chat`, the URNs
