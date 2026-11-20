@@ -1,7 +1,7 @@
 # Agent front ends: one plaintext store, JMAP and IRC over it
 
 Design note for epic mimid-1vul. Written 2026-11-19 against main at
-e4e91cd. Status: steps 1 to 6 of §3 are built (2026-11-20). Each step
+e4e91cd. Status: steps 1 to 7 of §3 are built (2026-11-20). Each step
 notes the changes it made to this design.
 
 Mark decided on 2026-11-19 that the IRC front end is native. It is built
@@ -634,6 +634,53 @@ step runs the full check list in AGENTS.md before its commit.
 7. **Configuration.** Parse `[jmap]` and `[irc]` (section 5) with no IRC
    listener yet. Oracle: the config unit tests, plus new ones for the new
    keys and for refusing a non-loopback IRC address.
+
+   Built (2026-11-20):
+
+   - `Config` gains `jmap: JmapSetting {enabled}` (default true) and
+     `irc: Option<IrcSetting {listen, server_name}>`, both
+     `deny_unknown_fields`. `[irc].listen` defaults to `127.0.0.1:6667`
+     (`DEFAULT_IRC_LISTEN`) and must be loopback
+     (`ConfigError::IrcNotLoopback`); `server_name` defaults to
+     `mimid.invalid` and must be 1 to 63 (RFC 2812 §1.1) letters, digits,
+     `-` and `.` with a dot and no empty label
+     (`ConfigError::IrcServerName`). JMAP off with no `[irc]` is
+     `ConfigError::NothingServed`. There is no token key: the IRC client's
+     PASS is the local token in `<state_dir>/agent-token`, as §4 says.
+   - `listen` stays required. §5 lets it be left out when `[irc]` is set,
+     but until step 8 a daemon without it would serve nothing; step 8
+     makes it optional with the IRC listener (and `Daemon::local_addr`
+     then becomes optional).
+   - `[irc]` does not stop the daemon: `Daemon::start` logs
+     `agent_irc_not_built` (WARN) and goes on without IRC. Refusing to
+     start would leave no way to run with JMAP off, which needs `[irc]`.
+   - `Daemon::start` runs the config checks again (`StartError::Config`),
+     since `Config`'s fields are public and tests change them in code.
+   - With JMAP off the daemon makes no `AgentChat`, so no `JmapExt` is
+     registered on the store; the sync loop and KeyPackage top-up need
+     only the store. `Endpoint` holds the store and `jmap:
+     Option<Jmap {chat, dispatcher, session, session_state}>`; the
+     did:webvh log is applied through `Store::agent`. Every JMAP route
+     stays registered and answers `404` with an RFC 7807 body when `jmap`
+     is `None`, after the Host check and the token, as an unknown path
+     does. The store's broadcast is forwarded to the EventSource ticks
+     only with JMAP on.
+   - §5 said the HTTP listener still serves attachment links with JMAP
+     off. The only attachment route is JMAP's download, and §7.4 drops
+     IRC attachment links, so with JMAP off it serves the did:webvh log
+     endpoint alone.
+   - `Daemon::store()` exposes the `Arc<Store>`; the new test reads the
+     records through it.
+   - Found: records stored while JMAP is off carry no `ext["jmap"]`, so
+     turning JMAP on again shows none of them (step 4's load rule). This
+     is in mimid-agent's Limitations, and bead mimid-1vul.12 asks which
+     fix to take.
+   - Tests: config unit tests for the defaults, every new key, refusing a
+     non-loopback `[irc].listen`, bad server names, unknown keys in both
+     tables and JMAP off without `[irc]`; `tests/jmap_off.rs`, a daemon
+     with JMAP off that syncs alice's room and message into its store and
+     answers 401 then 404 on each JMAP path and still serves the
+     did:webvh log endpoint.
 8. **The IRC front end** (section 4), off unless configured. New tests
    drive it over raw TCP. One of them runs a JMAP client and an IRC
    client on one daemon and checks that each sees the other's messages
@@ -850,8 +897,10 @@ listen = "127.0.0.1:6667"     # loopback only
 server_name = "mimid.invalid" # optional
 ```
 
-- With `[jmap] enabled = false` the HTTP listener still serves attachment
-  links and the did:webvh log endpoint, and answers 404 on the JMAP paths.
+- With `[jmap] enabled = false` the HTTP listener still serves the
+  did:webvh log endpoint, and answers 404 on the JMAP paths (step 7: with
+  no IRC attachment links, §7.4, there are no attachment links outside
+  JMAP).
 - `listen` may be left out when `[irc]` is set. IRC then has no
   attachment links.
 - With JMAP off and no `[irc]`, the daemon refuses to start: it would

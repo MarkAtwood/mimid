@@ -125,7 +125,7 @@ pub(crate) async fn apply_log(
     source: Source,
 ) -> Result<DidWebvhApplied, AgentError> {
     let applied = endpoint
-        .chat
+        .store
         .agent()
         .lock()
         .await

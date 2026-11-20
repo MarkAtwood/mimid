@@ -14,6 +14,13 @@
 //! blob_quota_bytes = 268435456            # optional; unreferenced uploads kept
 //! blob_quota_count = 256                  # optional
 //!
+//! [jmap]                                  # optional
+//! enabled = true                          # the default
+//!
+//! [irc]                                   # optional; absent means no IRC
+//! listen = "127.0.0.1:6667"               # the default; loopback only
+//! server_name = "mimid.invalid"           # the default
+//!
 //! [did_webvh]                             # optional; see below
 //! support = true                          # the default
 //! credential_type = 0x0008                # the default
@@ -57,12 +64,32 @@
 //! call the endpoint from a browser (CORS); it defaults to none. `*` and
 //! `null` are refused.
 //!
-//! Parsing is strict: unknown keys are rejected rather than ignored, and a
-//! `listen` address that is not loopback is refused, since the endpoint
-//! serves plaintext (AGENTS.md: the agent serves plaintext nowhere except
-//! its local endpoint).
+//! `[jmap]` turns the JMAP Chat front end on or off (docs/design/
+//! agent-frontends.md §5). It is on by default. With `enabled = false` the
+//! daemon builds no JMAP Chat account: the HTTP listener at `listen` still
+//! serves the did:webvh log endpoint, and answers `404` on the JMAP paths
+//! (the Session, the API, EventSource, upload and download) once the
+//! request has passed the Host check and the local token.
+//!
+//! `[irc]` configures the IRC front end: a local IRC server on `listen`
+//! (loopback only, default `127.0.0.1:6667`, a port browsers refuse to
+//! connect to) whose clients give the agent's local token
+//! (`<state_dir>/agent-token`) as the server password (`PASS`).
+//! `server_name` is the name the server gives itself, at most
+//! [`MAX_IRC_SERVER_NAME_LEN`] letters, digits, `-` and `.`, with at least
+//! one dot so that clients do not read it as a nick. The IRC front end is
+//! not built yet: the section is parsed and checked, and the daemon logs a
+//! warning (`agent_irc_not_built`) and does not listen for IRC.
+//!
+//! With `[jmap] enabled = false` and no `[irc]`, the daemon would serve
+//! nothing, and the configuration is refused.
+//!
+//! Parsing is strict: unknown keys are rejected rather than ignored, in
+//! every table, and a `listen` address that is not loopback is refused,
+//! `[irc]`'s included, since the agent serves plaintext (AGENTS.md: the
+//! agent serves plaintext nowhere except its local endpoint).
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -82,6 +109,25 @@ pub const DEFAULT_KEY_PACKAGES: u32 = 10;
 /// The most [`Config::key_packages`] accepted. INVENTED, NOT FROM SPEC:
 /// below mimid-server's default `maxKeyPackages` of 97.
 pub const MAX_KEY_PACKAGES: u32 = 64;
+
+/// The default port of [`IrcSetting::listen`]: IRC's usual port, on the
+/// Fetch standard's list of ports browsers refuse, which shuts out
+/// HTTP-to-IRC cross-protocol requests from web pages
+/// (docs/design/agent-frontends.md §4).
+pub const DEFAULT_IRC_PORT: u16 = 6667;
+
+/// The default [`IrcSetting::listen`]: [`DEFAULT_IRC_PORT`] on 127.0.0.1.
+pub const DEFAULT_IRC_LISTEN: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DEFAULT_IRC_PORT);
+
+/// The default [`IrcSetting::server_name`]. INVENTED, NOT FROM SPEC: a
+/// name under `.invalid` (RFC 6761 §6.4) with a dot, so clients do not
+/// read the prefix as a nick.
+pub const DEFAULT_IRC_SERVER_NAME: &str = "mimid.invalid";
+
+/// The longest [`IrcSetting::server_name`] accepted: RFC 2812 §1.1's
+/// limit on a server's name.
+pub const MAX_IRC_SERVER_NAME_LEN: usize = 63;
 
 /// A parsed configuration file.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -126,6 +172,70 @@ pub struct Config {
     /// The most unreferenced blobs kept (decision mimid-1wgh.68).
     #[serde(default = "default_blob_quota_count")]
     pub blob_quota_count: u64,
+    /// The JMAP Chat front end (docs/design/agent-frontends.md §5).
+    #[serde(default)]
+    pub jmap: JmapSetting,
+    /// The IRC front end; `None`, the default, for no IRC.
+    #[serde(default)]
+    pub irc: Option<IrcSetting>,
+}
+
+/// The `[jmap]` table.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JmapSetting {
+    /// Whether the daemon serves JMAP Chat at `listen`; the default.
+    #[serde(default = "yes")]
+    pub enabled: bool,
+}
+
+impl Default for JmapSetting {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// The `[irc]` table.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IrcSetting {
+    /// The loopback address the IRC server listens on.
+    #[serde(default = "default_irc_listen")]
+    pub listen: SocketAddr,
+    /// The name the IRC server gives itself.
+    #[serde(default = "default_irc_server_name")]
+    pub server_name: String,
+}
+
+impl Default for IrcSetting {
+    fn default() -> Self {
+        Self {
+            listen: DEFAULT_IRC_LISTEN,
+            server_name: DEFAULT_IRC_SERVER_NAME.to_owned(),
+        }
+    }
+}
+
+fn default_irc_listen() -> SocketAddr {
+    DEFAULT_IRC_LISTEN
+}
+
+fn default_irc_server_name() -> String {
+    DEFAULT_IRC_SERVER_NAME.to_owned()
+}
+
+/// Whether `name` can be the IRC server's name: 1 to
+/// [`MAX_IRC_SERVER_NAME_LEN`] ASCII letters, digits, `-` and `.`, with a
+/// dot, and no empty label (RFC 2812 §2.3.1 `servername = hostname`).
+fn is_irc_server_name(name: &str) -> bool {
+    name.len() <= MAX_IRC_SERVER_NAME_LEN
+        && name.contains('.')
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
 }
 
 /// The `[did_webvh]` table.
@@ -259,17 +369,22 @@ impl Config {
     ///
     /// [`ConfigError::Parse`] for malformed TOML or unknown or missing
     /// keys, [`ConfigError::NotLoopback`] if `listen` is not a loopback
-    /// address, [`ConfigError::ServerUrl`] if `server_url` is not an
-    /// `http` or `https` URL, and [`ConfigError::OutOfRange`] for a
-    /// `sync_interval_ms` or `key_packages` outside its bounds.
+    /// address, [`ConfigError::IrcNotLoopback`] if `[irc].listen` is not,
+    /// [`ConfigError::ServerUrl`] if `server_url` is not an `http` or
+    /// `https` URL, [`ConfigError::OutOfRange`] for a `sync_interval_ms` or
+    /// `key_packages` outside its bounds, [`ConfigError::Origin`] for a bad
+    /// `allowed_origins` entry, [`ConfigError::IrcServerName`] for a bad
+    /// `[irc].server_name`, and [`ConfigError::NothingServed`] with JMAP
+    /// off and no `[irc]`.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let config: Self = toml::from_str(text)?;
         config.check()?;
         Ok(config)
     }
 
-    /// Checks what serde cannot.
-    fn check(&self) -> Result<(), ConfigError> {
+    /// Checks what serde cannot. [`crate::Daemon::start`] checks again, for
+    /// a configuration built or changed in code.
+    pub(crate) fn check(&self) -> Result<(), ConfigError> {
         if !self.listen.ip().is_loopback() {
             return Err(ConfigError::NotLoopback(self.listen));
         }
@@ -293,6 +408,16 @@ impl Config {
         }
         if self.did_webvh.to_agent().is_err() {
             return Err(ConfigError::OutOfRange("did_webvh"));
+        }
+        if let Some(irc) = &self.irc {
+            if !irc.listen.ip().is_loopback() {
+                return Err(ConfigError::IrcNotLoopback(irc.listen));
+            }
+            if !is_irc_server_name(&irc.server_name) {
+                return Err(ConfigError::IrcServerName(irc.server_name.clone()));
+            }
+        } else if !self.jmap.enabled {
+            return Err(ConfigError::NothingServed);
         }
         Ok(())
     }
@@ -382,6 +507,19 @@ pub enum ConfigError {
     /// origin.
     #[error("allowed_origins entry {0:?} is not an http or https origin")]
     Origin(String),
+    /// `[irc].listen` is not a loopback address.
+    #[error(
+        "[irc] listen address {0} is not loopback; the agent serves plaintext only on loopback"
+    )]
+    IrcNotLoopback(SocketAddr),
+    /// `[irc].server_name` is not a usable IRC server name.
+    #[error(
+        "[irc] server_name {0:?} must be letters, digits, '-' and '.', with a dot, at most 63 characters"
+    )]
+    IrcServerName(String),
+    /// JMAP is off and there is no `[irc]`: the daemon would serve nothing.
+    #[error("[jmap] enabled = false with no [irc]: the agent would serve nothing")]
+    NothingServed,
 }
 
 #[cfg(test)]
@@ -483,6 +621,139 @@ mod tests {
             config_with_listen("127.0.0.1:0")
         ));
         assert!(refused.is_err(), "{refused:?}");
+    }
+
+    #[test]
+    fn jmap_is_on_and_irc_off_by_default() {
+        let config = Config::parse(&config_with_listen("127.0.0.1:0")).unwrap();
+        assert!(config.jmap.enabled);
+        assert_eq!(config.irc, None);
+        let config = Config::parse(&format!(
+            "{}\n[jmap]\nenabled = true\n",
+            config_with_listen("127.0.0.1:0")
+        ))
+        .unwrap();
+        assert!(config.jmap.enabled);
+        assert_eq!(config.irc, None);
+    }
+
+    #[test]
+    fn an_empty_irc_table_takes_the_defaults() {
+        let config =
+            Config::parse(&format!("{}\n[irc]\n", config_with_listen("127.0.0.1:0"))).unwrap();
+        let irc = config.irc.unwrap();
+        assert_eq!(irc.listen, "127.0.0.1:6667".parse().unwrap());
+        assert_eq!(irc.server_name, "mimid.invalid");
+        assert_eq!(irc, IrcSetting::default());
+        assert!(config.jmap.enabled, "[irc] leaves JMAP on");
+    }
+
+    #[test]
+    fn every_irc_and_jmap_key_parses() {
+        let config = Config::parse(&format!(
+            "{}\n[jmap]\nenabled = false\n[irc]\nlisten = \"[::1]:6697\"\n\
+             server_name = \"irc.alice.example\"\n",
+            config_with_listen("127.0.0.1:0")
+        ))
+        .unwrap();
+        assert!(!config.jmap.enabled);
+        assert_eq!(
+            config.irc,
+            Some(IrcSetting {
+                listen: "[::1]:6697".parse().unwrap(),
+                server_name: "irc.alice.example".to_owned(),
+            })
+        );
+        for name in [
+            "a.b",
+            "mimid.invalid",
+            "x-1.y-2.z",
+            &format!("{}.b", "a".repeat(61)),
+        ] {
+            let config = Config::parse(&format!(
+                "{}\n[irc]\nserver_name = \"{name}\"\n",
+                config_with_listen("127.0.0.1:0")
+            ))
+            .unwrap();
+            assert_eq!(config.irc.unwrap().server_name, name);
+        }
+    }
+
+    #[test]
+    fn jmap_off_without_irc_is_refused() {
+        let refused = Config::parse(&format!(
+            "{}\n[jmap]\nenabled = false\n",
+            config_with_listen("127.0.0.1:0")
+        ));
+        assert!(
+            matches!(refused, Err(ConfigError::NothingServed)),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_non_loopback_irc_listen_address_is_refused() {
+        for listen in [
+            "0.0.0.0:6667",
+            "[::]:6667",
+            "192.168.1.10:6667",
+            "[2001:db8::1]:6667",
+            "[::ffff:127.0.0.1]:6667",
+        ] {
+            match Config::parse(&format!(
+                "{}\n[irc]\nlisten = \"{listen}\"\n",
+                config_with_listen("127.0.0.1:0")
+            )) {
+                Err(ConfigError::IrcNotLoopback(addr)) => {
+                    assert_eq!(addr, listen.parse().unwrap());
+                }
+                other => panic!("{listen}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn bad_irc_server_names_are_refused() {
+        for name in [
+            "",
+            "mimid",
+            ".invalid",
+            "mimid.",
+            "mimid..invalid",
+            "mimid invalid.x",
+            "nick!user@host.x",
+            "m\u{00ed}mid.invalid",
+            &format!("{}.b", "a".repeat(62)),
+        ] {
+            let refused = Config::parse(&format!(
+                "{}\n[irc]\nserver_name = \"{name}\"\n",
+                config_with_listen("127.0.0.1:0")
+            ));
+            assert!(
+                matches!(&refused, Err(ConfigError::IrcServerName(n)) if n == name),
+                "{name:?}: {refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_keys_in_jmap_and_irc_are_refused() {
+        let base = config_with_listen("127.0.0.1:0");
+        for table in [
+            "[jmap]\nport = 1",
+            "[jmap]\nenabled = \"no\"",
+            "[irc]\npassword = \"x\"",
+            "[irc]\nlisten = \"127.0.0.1\"",
+            "[irc]\nlisten = 6667",
+            "irc = true",
+            "jmap = false",
+        ] {
+            let refused = Config::parse(&format!("{base}\n{table}\n"));
+            assert!(
+                matches!(refused, Err(ConfigError::Parse(_))),
+                "{table}: {refused:?}"
+            );
+        }
     }
 
     #[test]

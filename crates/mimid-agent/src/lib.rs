@@ -15,7 +15,11 @@
 //! The daemon builds the plaintext store first
 //! ([`mimid_agent_store::Store`]: the agent, the records in
 //! `<state_dir>/chat.sqlite`, the blob store, the change feed), then puts
-//! the JMAP front end over it ([`mimid_agent_jmap::AgentChat::over`]). A
+//! the JMAP front end over it ([`mimid_agent_jmap::AgentChat::over`]),
+//! unless the configuration has `[jmap] enabled = false`: then the store
+//! syncs as ever, the HTTP listener serves only the did:webvh log endpoint
+//! below, and the JMAP paths answer `404`. `[irc]` is parsed and checked,
+//! but the IRC front end is not built yet. A
 //! background loop calls [`mimid_agent_store::Store::sync`], the agent's
 //! only journal consumer, every `sync_interval_ms`, and at once after a
 //! client's `Chat/set` or `Message/set` and after any write the agent acts
@@ -136,6 +140,12 @@
 //!   `maxConcurrentRequests`.
 //! - The log is text only: mimid-server's `MIMID_LOG_FORMAT=json` output
 //!   lives in that crate, which this one does not depend on.
+//! - With `[jmap] enabled = false` the JMAP front end saves nothing of what
+//!   the store records, so the rooms and messages of such a run have no
+//!   JMAP objects when JMAP is turned on again (mimid-agent-jmap seeds only
+//!   the records that carry `ext["jmap"]`).
+//! - `[irc]` starts no IRC server yet: the daemon logs
+//!   `agent_irc_not_built` and goes on without it.
 //! - The KeyPackage count is the agent's estimate: it learns that one was
 //!   used only when it joins with it, so others may find none left.
 
@@ -147,7 +157,7 @@ pub mod didwebvh;
 mod http;
 pub mod token;
 
-pub use config::{Config, ConfigError, Invites};
+pub use config::{Config, ConfigError, Invites, IrcSetting, JmapSetting};
 pub use daemon::{BLOBS_DIR, CHAT_STORE_FILE, Daemon, StartError};
 pub use http::{
     CAPABILITIES, CHAT_CAPABILITY, CORE_CAPABILITY, MAX_CONCURRENT_UPLOAD, MAX_SIZE_UPLOAD,

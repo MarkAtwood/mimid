@@ -10,6 +10,10 @@
 //! - `POST /mimid/did-webvh/log`: a newer did:webvh log for the agent
 //!   (INVENTED, NOT FROM SPEC; see the `didwebvh` module).
 //!
+//! With `[jmap] enabled = false` there is no JMAP account: every route but
+//! the did:webvh log answers `404` with an RFC 7807 body, after the checks
+//! below (docs/design/agent-frontends.md §5).
+//!
 //! Every request goes through [`guard`], in this order:
 //!
 //! 1. **Host.** Against DNS rebinding (a web page on another origin whose
@@ -105,6 +109,7 @@ use mimid_agent_core::MAX_TEXT_LEN;
 use mimid_agent_jmap::{
     AgentChat, BlobError, MAX_ATTACHMENT_LEN, MAX_ATTACHMENTS_PER_MESSAGE, is_media_type,
 };
+use mimid_agent_store::Store;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -217,11 +222,10 @@ const NOT_FOUND_BODY: &str = r#"{"type":"about:blank","title":"Not Found","statu
 /// What the routes share.
 pub(crate) struct Endpoint {
     pub(crate) token: LocalToken,
-    pub(crate) chat: Arc<AgentChat>,
-    pub(crate) dispatcher: Dispatcher<()>,
-    /// The Session, `state` included.
-    pub(crate) session: Value,
-    pub(crate) session_state: String,
+    /// The plaintext store the front ends share.
+    pub(crate) store: Arc<Store>,
+    /// The JMAP Chat front end; `None` with `[jmap] enabled = false`.
+    pub(crate) jmap: Option<Jmap>,
     pub(crate) in_flight: Arc<Semaphore>,
     /// Uploads in flight, at most [`MAX_CONCURRENT_UPLOAD`].
     pub(crate) uploads: Arc<Semaphore>,
@@ -235,6 +239,21 @@ pub(crate) struct Endpoint {
     pub(crate) allowed_origins: Vec<String>,
     /// The listening port, for the Host check.
     pub(crate) port: u16,
+}
+
+/// The JMAP Chat front end's part of the endpoint.
+pub(crate) struct Jmap {
+    pub(crate) chat: Arc<AgentChat>,
+    pub(crate) dispatcher: Dispatcher<()>,
+    /// The Session, `state` included.
+    pub(crate) session: Value,
+    pub(crate) session_state: String,
+}
+
+/// The answer on a JMAP path with JMAP off.
+fn jmap_off() -> Response {
+    tracing::debug!("agent request refused: JMAP is off");
+    problem_response(StatusCode::NOT_FOUND, NOT_FOUND_BODY)
 }
 
 /// A dispatcher with `Core/echo` and mimid-agent-jmap's methods over
@@ -480,7 +499,10 @@ fn bearer_token(headers: &HeaderMap) -> Option<&[u8]> {
 
 /// `GET /.well-known/jmap`.
 async fn get_session(State(endpoint): State<Arc<Endpoint>>) -> Response {
-    let mut response = Json(&endpoint.session).into_response();
+    let Some(jmap) = &endpoint.jmap else {
+        return jmap_off();
+    };
+    let mut response = Json(&jmap.session).into_response();
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_CACHE));
@@ -534,10 +556,13 @@ async fn upload(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
-    let Some(blobs) = endpoint.chat.blobs().cloned() else {
+    let Some(jmap) = &endpoint.jmap else {
+        return jmap_off();
+    };
+    let Some(blobs) = jmap.chat.blobs().cloned() else {
         return problem_response(StatusCode::NOT_FOUND, NOT_FOUND_BODY);
     };
-    if account != endpoint.chat.account_id().as_ref() {
+    if account != jmap.chat.account_id().as_ref() {
         tracing::debug!("agent upload refused: not this agent's account");
         return problem_response(StatusCode::NOT_FOUND, NOT_FOUND_BODY);
     }
@@ -570,7 +595,7 @@ async fn upload(
         .to_owned();
     // Decision mimid-1wgh.68: room for an unreferenced blob is made from
     // blobs no stored object names.
-    let referenced = match endpoint.chat.referenced_blobs().await {
+    let referenced = match jmap.chat.referenced_blobs().await {
         Ok(referenced) => referenced,
         Err(error) => return blob_store_failed(&error),
     };
@@ -639,8 +664,11 @@ async fn download(
     Path((account, blob_id, name)): Path<(String, String, String)>,
     Query(query): Query<BTreeMap<String, String>>,
 ) -> Response {
-    let blobs = match endpoint.chat.blobs() {
-        Some(blobs) if account == endpoint.chat.account_id().as_ref() => blobs.clone(),
+    let Some(jmap) = &endpoint.jmap else {
+        return jmap_off();
+    };
+    let blobs = match jmap.chat.blobs() {
+        Some(blobs) if account == jmap.chat.account_id().as_ref() => blobs.clone(),
         _ => return problem_response(StatusCode::NOT_FOUND, NOT_FOUND_BODY),
     };
     let content = match tokio::task::spawn_blocking(move || blobs.get(&blob_id)).await {
@@ -715,6 +743,9 @@ async fn post_api(
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Response {
+    let Some(jmap) = &endpoint.jmap else {
+        return jmap_off();
+    };
     let body = match body {
         Ok(body) => body,
         Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
@@ -745,9 +776,9 @@ async fn post_api(
         .method_calls
         .iter()
         .any(|call| call.name == "Chat/set" || call.name == "Message/set");
-    let response = endpoint
+    let response = jmap
         .dispatcher
-        .dispatch(request, (), endpoint.session_state.as_str().into())
+        .dispatch(request, (), jmap.session_state.as_str().into())
         .await;
     // No receiver only means no stream is open.
     let _ = endpoint.changes.send(());
@@ -851,6 +882,10 @@ async fn get_eventsource(
     State(endpoint): State<Arc<Endpoint>>,
     Query(query): Query<BTreeMap<String, String>>,
 ) -> Response {
+    let Some(jmap) = &endpoint.jmap else {
+        return jmap_off();
+    };
+    let chat = Arc::clone(&jmap.chat);
     let Some(params) = Params::parse(&query) else {
         tracing::debug!(?query, "agent eventsource request refused");
         return (
@@ -864,7 +899,7 @@ async fn get_eventsource(
             .into_response();
     };
     let (sender, receiver) = mpsc::channel(EVENT_BUFFER);
-    tokio::spawn(stream(endpoint, params, sender));
+    tokio::spawn(stream(endpoint, chat, params, sender));
     Sse::new(ReceiverStream::new(receiver)).into_response()
 }
 
@@ -889,18 +924,19 @@ async fn states(
     Ok(states)
 }
 
-/// Sends events until the client goes away, the daemon stops, or, with
-/// `closeafter=state`, the first `state` event is sent. No state is sent at
-/// connection: the client reads the current states itself.
+/// Sends events about `chat` until the client goes away, the daemon stops,
+/// or, with `closeafter=state`, the first `state` event is sent. No state
+/// is sent at connection: the client reads the current states itself.
 async fn stream(
     endpoint: Arc<Endpoint>,
+    chat: Arc<AgentChat>,
     params: Params,
     sender: mpsc::Sender<Result<Event, Infallible>>,
 ) {
     // Subscribe before reading the states, so no change falls between.
     let mut changes = endpoint.changes.subscribe();
     let mut stop = endpoint.stop.clone();
-    let mut last = match states(&endpoint.chat, &params.types).await {
+    let mut last = match states(&chat, &params.types).await {
         Ok(states) => states,
         Err(error) => {
             tracing::error!(
@@ -939,7 +975,7 @@ async fn stream(
                 // Coalesce what has already arrived; a lag only means the
                 // states must be recomputed, which they are.
                 while matches!(changes.try_recv(), Ok(()) | Err(TryRecvError::Lagged(_))) {}
-                let now = match states(&endpoint.chat, &params.types).await {
+                let now = match states(&chat, &params.types).await {
                     Ok(states) => states,
                     Err(error) => {
                         tracing::error!(
@@ -961,7 +997,7 @@ async fn stream(
                 // RFC 8620 §7.1.
                 let data = json!({
                     "@type": "StateChange",
-                    "changed": { endpoint.chat.account_id().as_ref(): changed },
+                    "changed": { chat.account_id().as_ref(): changed },
                 });
                 let event = Event::default().event("state").data(data.to_string());
                 if sender.send(Ok(event)).await.is_err() || params.close_after_state {
