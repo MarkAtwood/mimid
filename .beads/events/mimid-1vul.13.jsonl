@@ -1,3 +1,4 @@
 {"id":"01a1f9f8-c188-762e-82db-f4f6bc511b1d","issue_id":"mimid-1vul.13","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-20T17:19:51.688406289Z"}
 {"id":"01a1f9f8-c18d-7c37-8bfb-7e706360d5b8","issue_id":"mimid-1vul.13","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: adapter","created_at":"2026-11-20T17:19:51.693801396Z"}
 {"id":"01a1f9f8-c191-7268-9f97-e04b28a94065","issue_id":"mimid-1vul.13","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: client","created_at":"2026-11-20T17:19:51.697158768Z"}
+{"id":"01a1fa0a-bfd7-7f0d-a247-f42d8598ecec","issue_id":"mimid-1vul.13","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Done in f9d4b67 on branch irc-fixes: JOIN 0 parts every shown channel via Store::leave; §7.12 added, step 8 Built updated. Test: crates/mimid-agent/tests/irc.rs join_0_leaves_every_room.","created_at":"2026-11-20T17:39:30.903987303Z"}
