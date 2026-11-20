@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.72",
+  "title": "Live stream is a second binding of the whole client-provider draft, to find its gaps",
+  "description": "Epic mimid-e64f; docs/design/binary-live-stream.md §1, §9 questions 1 and 6.\n\nContext: the first version of the note proposed the CBOR live stream as a transport that only replaces polling, and recommended waiting.\n\nChosen (Mark, 2026-11-20): build the stream now, as a second binding of the same client-provider operations as draft-atwood-jmap-chat-mimi-00. Its purpose is to find gaps in that draft by restating every operation without JMAP's conventions. It is not a transport upgrade.\n\n- Scope is the whole draft: sending and the hub's answer, KeyPackage publish and claim, room create/update/membership, consent, assets/blobs, catch-up/history, and every other method the agent uses or a client would need. The \"later\" items of the first note move into version 1.\n- JMAP stays the standard and the agent's default; the stream sits behind a configuration switch on agent and server.\n- Integration tests run the same scenarios over both bindings side by side, and the results must agree.\n- Main output: docs/design/binary-live-stream-findings.md, one entry per gap (what, where in the draft with a quote, JMAP binding, stream, proposed text preferring MAY over SHOULD over MUST).\n- No edits to jmap-chat-spec: proposed text lives only in the findings log.\n- Not an Internet-Draft now (§9 question 6): mimid's own protocol until a second implementation wants it.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T19:36:26.527475816Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T19:36:26.527475816Z",
+  "labels": [
+    "live-stream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.72",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-20T19:36:26.563674751Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
