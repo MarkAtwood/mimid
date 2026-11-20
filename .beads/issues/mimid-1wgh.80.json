@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.80",
   "title": "Live stream: configuration switch, live_stream on the server and binding on the agent",
   "description": "Epic mimid-e64f; docs/design/binary-live-stream.md §5.2.\n\nChosen (Mark, 2026-11-20): JMAP stays the default; the stream sits behind a configuration switch on agent and server.\n\nNames chosen by the agent for mimid-e64f (INVENTED, NOT FROM SPEC):\n- mimid-server: live_stream = true serves /mimid/live; false (default) leaves the route out (404).\n- mimid-agent: binding = \"jmap\" (default) or \"stream\"; AgentConfig::binding (Binding::Jmap, Binding::Stream) in mimid-agent-core.\n- No fallback from one binding to the other: nothing runs in production, so an agent set to the stream fails if the server does not serve it.\n",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-20T19:36:28.089374301Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-20T19:36:28.089374301Z",
+  "updated_at": "2026-11-20T19:36:39.978990256Z",
+  "closed_at": "2026-11-20T19:36:39.978990256Z",
+  "close_reason": "Decided by Mark 2026-11-20 (mimid-e64f); details marked INVENTED chosen by agent, unattended",
   "labels": [
     "live-stream"
   ],
