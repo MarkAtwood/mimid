@@ -51,10 +51,11 @@ How the agent hears of new messages now:
   `Message/changes` from the saved state, then `Message/get` of the new
   ids with `properties: ["body"]`. Each body is one FanoutMessage in
   base64url.
-- The daemon calls it every `sync_interval_ms`, 2000 by default
-  (crates/mimid-agent/src/config.rs:100), and at once after a local
-  write. Bead mimid-ak29 makes it follow the server's EventSource
-  (crates/mimid-server/src/jmap/eventsource.rs).
+- The daemon calls it on each StateChange from the server's EventSource
+  (bead mimid-ak29: crates/mimid-agent-core/src/push.rs,
+  crates/mimid-agent/src/push.rs; crates/mimid-server/src/jmap/eventsource.rs),
+  at once after a local write, and every `sync_interval_ms` as a
+  fallback, 30 s by default (crates/mimid-agent/src/config.rs).
 - The agent keeps `message_state` (the JMAP Message state string) and
   `handled` (Message ids after that state already processed) in its
   state (crates/mimid-agent-core/src/state.rs:155-161).

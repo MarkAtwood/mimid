@@ -213,3 +213,329 @@ message, INVENTED, NOT FROM SPEC.
 > A client MAY record per-user state about the room, such as whether
 > the user accepted it, in the Chat's `privateMetadata`
 > ({{JMAP-METADATA}}), so that the user's other clients see it.
+
+## F7. Attachment upload and fetch have no error vocabulary
+
+**Gap.** Every method of the draft says which error a client gets.
+Uploading an attachment and fetching one through `assetDownloadUrl`
+are plain HTTP, and the draft names no status or problem type for any
+refusal, so a client cannot tell "not a member of that room" from "no
+such asset" from "the other provider failed".
+
+**Draft.** §Account-Level Capability Object, `assetDownloadUrl`: "The
+server MUST refuse a `roomId` that no Chat of the account has." It does
+not say how. Uploads follow RFC 8620 §6.1, whose errors are about size
+and quota, not about MIMI.
+
+**JMAP binding.** mimid answers with its own RFC 9457 problem types
+(`no-such-room` 404, `no-such-asset` 404, `asset-refused` 403,
+`asset-provider-failed` and `peer-provider-failed` 502;
+crates/mimid-server/src/jmap/blobs.rs:456-580).
+
+**Stream.** The same refusals, each with a stream code chosen for its
+status (`notFound`, `forbidden`, `serverUnavailable`, `serverFail`;
+`code_of`, blobs.rs:525). Writing the stream showed that the HTTP route
+was the only place the reasons lived; the two now come from one
+function (`fetch_asset_core`).
+
+**Proposed text.** In §Account-Level Capability Object, after
+`assetDownloadUrl`:
+
+> The server answers a `roomId` that no Chat of the account has, and a
+> `url` it cannot find, with status 404; a `url` the room's hub or the
+> asset's provider refuses with 403; and a provider that cannot be
+> reached with 502. It MAY add an RFC 9457 problem body.
+
+## F8. Room/reportAbuse's "refused" says nothing
+
+**Gap.** "refused" covers every refusal but two, with no field for the
+reason, so a client cannot tell a report the hub found malformed from
+one it will never take.
+
+**Draft.** §Room/reportAbuse: "`"refused"` for any other refusal. A hub
+that reports a refusal reason the server cannot tell apart from others
+is answered as `"refused"`."
+
+**JMAP binding.** mimid adds `status`, the other provider's HTTP status
+(INVENTED, decision mimid-1wgh.58;
+crates/mimid-server/src/jmap/methods/room_report_abuse.rs:88-93), and
+the agent requires it (crates/mimid-agent-core/src/client.rs:746-751),
+so a strict client of the draft alone would fail against a server
+that leaves it out, and the agent against one that follows the draft.
+
+**Stream.** `Error` `refused` with `status` (crates/mimid-server/src/jmap/live.rs:750).
+
+**Proposed text.** In §Room/reportAbuse, after `responseCode`:
+
+> `status` (UnsignedInt, optional):
+> : When `responseCode` is `"refused"` and the hub is another provider:
+> the HTTP status of its answer ({{MIMI-PROTOCOL, Section 5.9}}).
+
+## F9. KeyPackage changes cannot be followed
+
+**Gap.** The draft tells a client to watch the KeyPackage state to learn
+that a KeyPackage was handed out, and registers KeyPackage for state
+change, but defines no `KeyPackage/changes`, so the client must read
+every record again and compare.
+
+**Draft.** §Handing Out KeyPackages: "A destroyed record appears in a
+new state for the KeyPackage type, so a client that receives the
+`StateChange` can replenish its KeyPackages." §KeyPackages defines only
+`KeyPackage/get` and `KeyPackage/set`. §IANA: "Can Use for State
+Change: Yes".
+
+**JMAP binding.** No `KeyPackage/changes`
+(crates/mimid-server/src/jmap/methods/key_package.rs:29-31); the state
+is a digest of the stored KeyPackageRefs.
+
+**Stream.** `Changed` `KeyPackage`, then `ListKeyPackages`, the same
+read-all-and-compare. Neither binding can say which client's KeyPackage
+went.
+
+**Proposed text.** In §KeyPackages:
+
+> ## KeyPackage/changes
+>
+> Standard JMAP `/changes` ({{RFC8620, Section 5.2}}). A KeyPackage
+> handed out appears in `destroyed`.
+
+## F10. Nothing bounds the size of the MLS objects a client sends
+
+**Gap.** A Commit with a ratchet tree, a Welcome, or the `groupInfo` and
+`ratchetTree` of `Room/create` grow with the group. The draft gives no
+limit and no other path for a large one, so the only bound is the JMAP
+request size after base64url, which no client can see per argument.
+
+**Draft.** §Conventions: "Every byte-string property ... is the
+unpadded base64url encoding". §Room/create takes `groupInfo` and
+`ratchetTree` in one call; §Room/update takes the whole `request`. No
+section mentions a size.
+
+**JMAP binding.** `maxSizeRequest` is sized so that a 4 MiB MLS object
+fits after base64url (crates/mimid-server/src/jmap/api.rs:59), the
+largest body mimid takes on the protocol routes
+(crates/mimid-server/src/http.rs:90).
+
+**Stream.** `maxRequestBytes`, stated in `ProviderHello`, 4 MiB + 64 KiB
+of raw bytes (decision mimid-1wgh.78). The stream had to pick the
+number again, and got a different effective limit for the same object
+(raw, not base64url): an object a little over 3 MiB fits the stream
+but not one JMAP request with another argument beside it.
+
+**Proposed text.** In §capability, Account-Level Capability Object:
+
+> `maxMlsObjectSize` (UnsignedInt, optional):
+> : The largest MLS or MIMI structure, in octets before base64url
+> encoding, that the server accepts in any argument of this document's
+> methods. A client that would send a larger one MAY choose a ratchet
+> tree option ({{?MLS-RATCHET-TREE-OPTIONS}}) that keeps the tree out
+> of the message.
+
+## F11. A lost answer to Room/send or Room/update cannot be retried safely
+
+**Gap.** If the connection drops after the hub accepted a message or
+Commit but before the client got the answer, the client cannot ask
+what happened. Sending again submits the same MLSMessage twice; for a
+Commit it may meet `wrongEpoch` against its own Commit.
+
+**Draft.** §Room/send: "returns `serverUnavailable` if the hub cannot be
+reached". §application/mimi-fanout: "The server MUST NOT store a
+FanoutMessage whose `message` is byte-identical to the `message` of a
+FanoutMessage already stored in the Chat", which protects the store,
+not the client's view of the outcome.
+
+**JMAP binding.** No idempotency: each call relays again. The agent
+treats an HTTP error as a failed send.
+
+**Stream.** The same: a dropped connection loses the outstanding
+`Ack`s. The client can see its own message come back as a `Deliver`,
+which tells it the hub accepted it, but only after the fact and only
+because the server stores the owner's own messages.
+
+**Proposed text.** In §Room/send:
+
+> A client that did not receive the response MAY submit the same
+> `message` again. The server SHOULD answer a `message` byte-identical
+> to one the hub already accepted for the room with the earlier
+> response, without submitting it again.
+
+and the same for `request` in §Room/update.
+
+## F12. Recovering from cannotCalculateChanges is undefined for an MLS client
+
+**Gap.** The base draft tells a client that cannot get changes to
+fall back to `/get`, which for Messages means every Message. An MLS
+client cannot process old handshake messages again, and has no way to
+ask for "the Messages after the last one I handled".
+
+**Draft.** Base draft §Push: "Clients SHOULD call the corresponding
+`/changes` method upon receipt. On `cannotCalculateChanges`, fall back
+to `/get`." The mimi draft adds nothing for `application/mimi-fanout`.
+
+**JMAP binding.** mimid answers `cannotCalculateChanges` only for a state
+it never gave (crates/mimid-server/src/jmap/projection.rs, `message_changes_since`).
+The agent then reads every Message (crates/mimid-agent-core/src/client.rs:616-620)
+and hands each to MLS again, which yields Problems for the old ones.
+
+**Stream.** `cannotResume`, then `Subscribe` without `since`: the same
+replay of everything (note §5.5).
+
+**Proposed text.** In §application/mimi-fanout:
+
+> A client that cannot calculate Message changes from its state MAY use
+> `Message/query` on each Chat, sorted by `id`, with `anchor` set to
+> the last Message it processed, to fetch only the later Messages
+> ({{message-order}}).
+
+(This needs F2's order and a `Message/query` that accepts an id
+anchor, which RFC 8620 §5.5 provides.)
+
+## Push semantics (F13 to F17)
+
+Found by the EventSource work of bead mimid-ak29 (the agent following
+the provider's EventSource, crates/mimid-agent-core/src/push.rs and
+crates/mimid-agent/src/push.rs) and recorded here at the coordinator's
+request. Each is about what draft-atwood-jmap-chat-mimi-00 promises a
+client that waits for `StateChange` events (RFC 8620 §7.1, §7.3; base
+draft §Push Notifications) instead of polling. The stream answers all
+five by construction, which is itself the finding: a binding that
+pushes the Messages has to decide each of these, and JMAP leaves them
+open.
+
+### F13. What moves the Message and Chat states
+
+**Gap.** The draft never says that each FanoutMessage stored for the
+account moves the account's Message state: a Welcome, the owner's own
+handshake echoed by `Room/update`, the owner's own message stored by
+`Room/send`, a Commit that removes the owner's clients. Nor that a
+Welcome or external Commit that creates or binds a Chat again moves the
+Chat state.
+
+**Draft.** §application/mimi-fanout: "The server stores each
+FanoutMessage it receives or originates for a room as one Message ...
+if that account has no Chat bound to the room, the server first binds
+the account's unbound Chat for the room again or, if it has none,
+creates a Chat bound to the room." §Room/update and §Room/send: "the
+server MUST store, in every Chat of a local account bound to the room,
+a Message". None of these mention state.
+
+**JMAP binding.** mimid moves both: every stored event is published on
+the change bus (crates/mimid-server/src/jmap/bus.rs, `Change::RoomEvent`,
+`Change::Membership`), and the Chat state includes the membership
+counter (crates/mimid-server/src/jmap/projection.rs:26-35).
+
+**Stream.** Every stored Message reaches the client as a `Deliver`;
+a binding change reaches it as `Changed` `Chat`. The stream had to name
+both because it pushes the objects, not states.
+
+**Proposed text.** In §application/mimi-fanout:
+
+> Storing a Message changes the account's Message state, and creating
+> or binding a Chat again changes its Chat state ({{RFC8620, Section
+> 5.1}}), so a client that watches both types in `StateChange` events
+> learns of every FanoutMessage stored for it, its own included.
+
+### F14. Nothing on resuming after a lost push connection
+
+**Gap.** A client whose EventSource connection drops misses the events
+sent meanwhile. The draft gives no guidance: neither whether the server
+sends event ids that a client returns in `Last-Event-ID`, nor that a
+client calls `/changes` from its saved states after reconnecting.
+
+**Draft.** The draft says nothing on push beyond the two sentences of
+§Handing Out KeyPackages and §Consent/changes. The base draft §Push
+Notifications requires EventSource (RFC 8620 §7.3), where the event id
+is a SHOULD and resuming is left to the client.
+
+**JMAP binding.** mimid-server sends no event id; the agent sends
+`Last-Event-ID` when a server set one, syncs each time a stream opens,
+and keeps a fallback poll (bead mimid-ak29).
+
+**Stream.** Resume is part of the protocol: `Subscribe` carries the
+saved state and the provider replays from it (note §5.5). Nothing is
+lost because the provider reads the store, not a buffer.
+
+**Proposed text.** In §mls-messages:
+
+> Push events carry no Messages. A client that reconnects its event
+> source, or starts, calls `Message/changes` from its saved Message
+> state before it relies on events again. A server MAY set an event id
+> on each `state` event; a client that has one sends it in
+> `Last-Event-ID`.
+
+### F15. Only KeyPackage and Consent are tied to StateChange
+
+**Gap.** The draft names `StateChange` for KeyPackage (a destroyed or
+handed-out record) and for Consent (a request received), and nothing
+else. Chat changes from binding and unbinding (§Chat.roomId,
+§Room/unbind) are not tied to any event.
+
+**Draft.** §Handing Out KeyPackages: "A destroyed record appears in a
+new state for the KeyPackage type, so a client that receives the
+`StateChange` can replenish its KeyPackages." §Consent/changes: "A
+client that watches the Consent type in `StateChange` events learns of
+requests the owner receives." §Chat.roomId says when a Chat is bound or
+unbound, but not that its state changes.
+
+**JMAP binding.** Unbinding is invisible on the Chat
+(crates/mimid-server/src/jmap/projection.rs:13), so it moves no Chat
+state; binding moves it through the membership counter.
+
+**Stream.** `Changed` names `Chat`, `KeyPackage` and `Consent` alike,
+computed as the EventSource computes its `StateChange`
+(crates/mimid-server/src/jmap/live.rs, `notices`). An unbinding is not
+visible there either (see F4).
+
+**Proposed text.** In §Chat.roomId, after the paragraph on binding:
+
+> Binding and unbinding a Chat change its Chat state ({{RFC8620,
+> Section 5.1}}).
+
+(With F4's `roomBound`, unbinding becomes a property change.)
+
+### F16. No promise that a pushed change is visible
+
+**Gap.** Nothing says that when a client receives a `StateChange` for
+Message, `Message/changes` from its old state already returns the new
+Message. A server that announces before it commits makes the client
+see "no change" and wait for the next event.
+
+**Draft.** Silent. RFC 8620 §7.1 defines the event but not its timing
+against `/changes`.
+
+**JMAP binding.** mimid-server announces a stored event only after the
+transaction that stores it commits, and the EventSource subscribes to
+the change bus before it answers (server fix 2ad3188, bead mimid-ak29),
+so no change falls between.
+
+**Stream.** The same rule is built in: a `Deliver` is sent from the
+store after the change (crates/mimid-server/src/jmap/live.rs, `follow`),
+and the connection subscribes to the bus before its replay.
+
+**Proposed text.** In §application/mimi-fanout:
+
+> The server sends a `StateChange` for a stored Message only once
+> `Message/changes` returns it.
+
+### F17. Which types a pure MLS client watches
+
+**Gap.** An MLS client (one that never converts content) needs Message
+(new FanoutMessages, Welcomes), Chat (binding), Consent (requests to
+answer) and KeyPackage (to top up). The draft does not list them, so
+each client finds out by reading every section.
+
+**Draft.** The only mentions are the two in F15. The base draft §Push
+Notifications lists the base types and "any type defined by a companion
+capability".
+
+**JMAP binding.** The agent asks for `types=Message,Chat,Consent` and
+tops KeyPackages up on its own schedule (bead mimid-ak29).
+
+**Stream.** One `Subscribe` covers all of it: Messages as `Deliver`s,
+and `Changed` for Chat, KeyPackage and Consent.
+
+**Proposed text.** In §capability, after the account-level object:
+
+> A client of this capability that does not convert content needs
+> `StateChange` events for the Message, Chat, Consent and KeyPackage
+> types; it MAY ask for only these in the event source's `types`.
