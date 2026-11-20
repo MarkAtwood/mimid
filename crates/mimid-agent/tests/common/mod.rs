@@ -174,12 +174,15 @@ pub async fn server(dir: &Path, users: &[&'static str]) -> Server {
         let token = store.issue_token(&account, 2).await.unwrap();
         tokens.insert(*user, token.expose_secret());
     }
+    // The live stream on too, for daemons with binding = "stream".
+    let mut options = JmapOptions::default();
+    options.live_stream = true;
     let jmap = jmap::router(
         &base,
         store,
         Arc::clone(&hub),
         Arc::clone(&follower),
-        JmapOptions::default(),
+        options,
     )
     .unwrap();
     let push = PushControl::default();

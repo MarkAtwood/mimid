@@ -11,6 +11,10 @@
 //! - While the server refuses the EventSource, the poll interval carries
 //!   the messages.
 //!
+//! - With `binding = "stream"` (docs/design/binary-live-stream.md) and
+//!   the poll interval an hour, the live stream wakes the sync loop the
+//!   same way, and no EventSource is opened.
+//!
 //! The server sits behind a test layer ([`common::PushControl`]) that
 //! refuses or cuts `/jmap/eventsource` and counts both.
 
@@ -172,6 +176,31 @@ async fn polling_carries_messages_while_the_eventsource_is_refused() {
     post(&b, &chat_b, "polled back").await;
     arrives(&a, &chat_a, "polled back").await;
     assert_eq!(server.push.opened(), 0);
+    alice.stop().await;
+    bob.stop().await;
+}
+
+/// Both daemons on the live stream: the stream's wake-up, not the poll
+/// and not the EventSource, carries the Welcome and the messages.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn messages_arrive_over_the_live_stream_without_polling() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut alice = config(&server, ALICE, dir.path(), "from-allowed");
+    alice.sync_interval_ms = HOUR_MS;
+    alice.binding = mimid_agent::config::BindingSetting::Stream;
+    let mut bob = config(&server, BOB, dir.path(), "any");
+    bob.sync_interval_ms = HOUR_MS;
+    bob.binding = mimid_agent::config::BindingSetting::Stream;
+    let (alice, bob) = (Running::start(&alice).await, Running::start(&bob).await);
+    let (a, b) = (alice.client().await, bob.client().await);
+
+    let (chat_a, chat_b) = chat(&a, &b).await;
+    post(&a, &chat_a, "hello bob").await;
+    arrives(&b, &chat_b, "hello bob").await;
+    post(&b, &chat_b, "hi alice").await;
+    arrives(&a, &chat_a, "hi alice").await;
+    assert_eq!(server.push.opened(), 0, "no EventSource on the stream");
     alice.stop().await;
     bob.stop().await;
 }
