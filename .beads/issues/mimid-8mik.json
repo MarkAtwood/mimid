@@ -1,0 +1,12 @@
+{
+  "id": "mimid-8mik",
+  "title": "crates.io names for the mimid crates (claimed 0.0.1)",
+  "description": "Claimed 2026-11-20 UTC by the crate-jmap session at Mark's request, as 0.0.1 no_std placeholders (Apache-2.0, repository github.com/MarkAtwood/mimid); sources in /home/mark/PROJECT/mimid-name-claims/. Verified owner MarkAtwood via the crates.io owners API: mimid, mimi-content, mimi-protocol, mimi-mls, mimi-room-policy, mls-didwebvh, mimid-server, mimid-agent, mimid-agent-core, mimid-agent-jmap, mimid-agent-store, mimid-agent-irc. Plain 'mimi' belongs to someone else. Open until the real crates are published (needs Mark's go).",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T06:23:03.377075585Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T06:23:03.377075585Z"
+}
