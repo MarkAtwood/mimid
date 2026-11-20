@@ -23,6 +23,14 @@
       "created_at": "2026-11-20T00:44:08.555244472Z",
       "created_by": "Mark Atwood",
       "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1vul.8",
+      "depends_on_id": "mimid-1vul.7",
+      "type": "blocks",
+      "created_at": "2026-11-20T00:44:09.058988873Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
     }
   ]
 }
