@@ -1,7 +1,8 @@
 //! The `mimid-agent` daemon (bead mimid-1wgh.13.10): one user's MIMI rooms
 //! as a JMAP Chat endpoint on the loopback interface, so a standard JMAP
 //! Chat client can be a MIMI client (decision mimid-1wgh.38: mimid ships
-//! no UI of its own).
+//! no UI of its own), and with `[irc]` as a loopback IRC server, so a
+//! stock IRC client can be one too (mimid-agent-irc).
 //!
 //! The daemon opens a [`mimid_agent_core::Agent`] for the user against
 //! their mimid server, keeps one-time KeyPackages published, and serves
@@ -20,8 +21,11 @@
 //! syncs as ever, the HTTP listener serves only the did:webvh log endpoint
 //! below, and the JMAP paths answer `404`; once JMAP is on again, what the
 //! store recorded meanwhile is shown as JMAP objects made new from the
-//! records (docs/design/agent-frontends.md §7.11). `[irc]` is parsed and checked,
-//! but the IRC front end is not built yet. A
+//! records (docs/design/agent-frontends.md §7.11). Without `listen` there
+//! is no HTTP listener. With `[irc]` the IRC front end
+//! ([`mimid_agent_irc::IrcFrontEnd`]) serves the same store on
+//! `[irc].listen`: its clients give the local token as the server password
+//! (`PASS`), checked in constant time like the bearer token. A
 //! background loop calls [`mimid_agent_store::Store::sync`], the agent's
 //! only journal consumer, every `sync_interval_ms`, and at once after a
 //! client's `Chat/set` or `Message/set` and after any write the agent acts
@@ -92,9 +96,11 @@
 //!
 //! `mimid-agent <config.toml>`. `RUST_LOG` filters the log and defaults to
 //! `info`. SIGINT or SIGTERM stops it gracefully: no new connections, open
-//! EventSource streams end, requests in flight and a running sync finish.
-//! INFO, WARN and ERROR events have stable names (`agent_listening`,
-//! `agent_sync_failed`, ...), as in mimid-server; no token is ever logged.
+//! EventSource streams end, IRC clients get `ERROR` and are closed,
+//! requests in flight and a running sync finish.
+//! INFO, WARN and ERROR events have stable names (`agent_listening`, with
+//! `jmap` and `irc` saying which front ends serve, `agent_sync_failed`,
+//! ...), as in mimid-server; no token is ever logged, and no IRC line.
 //!
 //! # Limitations
 //!
@@ -110,9 +116,10 @@
 //!   `report` module), a method no JMAP Chat draft defines (INVENTED, NOT
 //!   FROM SPEC), under the JMAP Chat capability.
 //! - Consent decisions (`Agent::allow`, `Agent::deny`) have no JMAP Chat
-//!   method, so a client cannot make them here. Which invites are joined
-//!   is fixed by the `invites` setting: `from-allowed` (the default) joins
-//!   only invites from users allowed by other means.
+//!   method, so a JMAP client cannot make them; an IRC client can
+//!   (`/msg mimid allow <nick>`). Which invites are joined is set by the
+//!   `invites` setting: `from-allowed` (the default) joins only invites
+//!   from users allowed.
 //! - The client is authenticated by the local token alone, not by peer
 //!   credentials on a Unix socket (the AGENTS.md crate map's "agent
 //!   socket" check): any process that can read the token file can act as
@@ -142,8 +149,9 @@
 //!   `maxConcurrentRequests`.
 //! - The log is text only: mimid-server's `MIMID_LOG_FORMAT=json` output
 //!   lives in that crate, which this one does not depend on.
-//! - `[irc]` starts no IRC server yet: the daemon logs
-//!   `agent_irc_not_built` and goes on without it.
+//! - The IRC front end has its own limits (mimid-agent-irc): channels
+//!   only, no attachments and no history (docs/design/agent-frontends.md
+//!   §7).
 //! - The KeyPackage count is the agent's estimate: it learns that one was
 //!   used only when it joins with it, so others may find none left.
 

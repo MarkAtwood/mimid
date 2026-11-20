@@ -1,6 +1,6 @@
-//! [`Daemon`]: the agent, its plaintext store, the HTTP endpoint with the
-//! JMAP front end over the store (unless `[jmap] enabled = false`), and the
-//! sync loop.
+//! [`Daemon`]: the agent, its plaintext store, its front ends over the
+//! store (JMAP Chat on the HTTP endpoint unless `[jmap] enabled = false`,
+//! IRC with `[irc]`), and the sync loop.
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mimid_agent_core::{Agent, AgentConfig, AgentError};
+use mimid_agent_irc::{IrcFrontEnd, IrcOptions};
 use mimid_agent_jmap::{AgentChat, BlobStore, Options};
 use mimid_agent_store::{Store, SyncReport};
 use tokio::net::TcpListener;
@@ -22,11 +23,12 @@ use crate::http::{
 use crate::token::{LocalToken, TokenError};
 
 /// A started daemon: the agent is open, its KeyPackages published and the
-/// listener bound. [`Daemon::serve`] runs it.
+/// listeners bound. [`Daemon::serve`] runs it.
 pub struct Daemon {
-    listener: TcpListener,
-    local_addr: SocketAddr,
-    endpoint: Arc<Endpoint>,
+    /// The HTTP endpoint, unless `listen` is left out.
+    http: Option<Http>,
+    /// The IRC front end, with `[irc]`.
+    irc: Option<IrcFrontEnd>,
     /// The plaintext store the front ends share; its sync is the loop's.
     store: Arc<Store>,
     stop: watch::Sender<bool>,
@@ -38,10 +40,18 @@ pub struct Daemon {
     log_watch: Option<LogWatch>,
 }
 
+/// The HTTP endpoint: its listener and what its routes share.
+struct Http {
+    listener: TcpListener,
+    local_addr: SocketAddr,
+    endpoint: Arc<Endpoint>,
+}
+
 impl std::fmt::Debug for Daemon {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Daemon")
-            .field("local_addr", &self.local_addr)
+            .field("local_addr", &self.local_addr())
+            .field("irc_addr", &self.irc_addr())
             .field("user_uri", &self.user_uri)
             .finish_non_exhaustive()
     }
@@ -87,6 +97,9 @@ pub enum StartError {
         #[source]
         source: std::io::Error,
     },
+    /// The IRC front end could not start (`[irc].listen`).
+    #[error("starting the IRC front end")]
+    Irc(#[from] mimid_agent_irc::IrcError),
     /// The Session does not build (a crate-jmap type changed).
     #[error("building the Session")]
     Session(#[from] serde_json::Error),
@@ -104,25 +117,17 @@ pub enum StartError {
 impl Daemon {
     /// Opens the agent for `config`'s user against its server, tops its
     /// KeyPackages up to `config.key_packages`, makes or reads the local
-    /// token, binds the listener, builds the store and, unless `[jmap]
-    /// enabled = false`, the JMAP front end over it. Failing to publish
-    /// KeyPackages is logged, not fatal: the sync loop tries again. An
-    /// `[irc]` table is logged as not built yet (`agent_irc_not_built`) and
-    /// otherwise ignored.
+    /// token, binds the HTTP listener (if `listen` is set), builds the
+    /// store and the front ends over it: JMAP unless `[jmap] enabled =
+    /// false`, and IRC on `[irc].listen` with `[irc]`, its clients' `PASS`
+    /// checked against the local token. Failing to publish KeyPackages is
+    /// logged, not fatal: the sync loop tries again.
     ///
     /// # Errors
     ///
     /// See [`StartError`].
     pub async fn start(config: &Config) -> Result<Self, StartError> {
         config.check()?;
-        if let Some(irc) = &config.irc {
-            // docs/design/agent-frontends.md §3 step 8 builds it.
-            tracing::warn!(
-                name: "agent_irc_not_built",
-                listen = %irc.listen,
-                "[irc] is configured, but the IRC front end is not built yet; not listening for IRC"
-            );
-        }
         let server_token = read_server_token(&config.token_file)?;
         let token = LocalToken::load_or_create(&config.state_dir)?;
         let mut agent = Agent::open(AgentConfig {
@@ -138,17 +143,15 @@ impl Daemon {
         })
         .await?;
         top_up_key_packages(&mut agent, config.key_packages).await;
-        let listener =
-            TcpListener::bind(config.listen)
-                .await
-                .map_err(|source| StartError::Bind {
-                    addr: config.listen,
-                    source,
-                })?;
-        let local_addr = listener.local_addr().map_err(|source| StartError::Bind {
-            addr: config.listen,
-            source,
-        })?;
+        let listener = match config.listen {
+            Some(addr) => {
+                let bind = |source| StartError::Bind { addr, source };
+                let listener = TcpListener::bind(addr).await.map_err(bind)?;
+                let local_addr = listener.local_addr().map_err(bind)?;
+                Some((listener, local_addr))
+            }
+            None => None,
+        };
         // The store first, the front ends over it (docs/design/
         // agent-frontends.md §3 step 6): the decrypted records, kept across
         // restarts (bead mimid-1wgh.13.12), with the attachments (bead
@@ -158,43 +161,70 @@ impl Daemon {
         let store = Store::new(agent, config.invites.into()).with_blobs(blobs);
         store.open_database(config.state_dir.join(CHAT_STORE_FILE))?;
         let store = Arc::new(store);
-        let jmap = if config.jmap.enabled {
-            let account = http::account_id(&config.user_uri);
-            let (session, session_state) =
-                http::session(&format!("http://{local_addr}"), &config.user_uri, &account)?;
-            let chat = Arc::new(AgentChat::over(
-                Arc::clone(&store),
-                account,
-                Options::default(),
-            )?);
-            Some(Jmap {
-                dispatcher: http::dispatcher(&chat),
-                chat,
-                session,
-                session_state,
-            })
-        } else {
-            None
-        };
         let (stop, stop_receiver) = watch::channel(false);
-        let (changes, _) = broadcast::channel(CHANGE_BUFFER);
-        let endpoint = Arc::new(Endpoint {
-            token,
-            store: Arc::clone(&store),
-            jmap,
-            in_flight: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
-            uploads: Arc::new(Semaphore::new(MAX_CONCURRENT_UPLOAD)),
-            changes,
-            // The store's own: its write methods wake the loop too.
-            sync_now: Arc::clone(store.sync_wanted()),
-            stop: stop_receiver,
-            allowed_origins: config.allowed_origins.clone(),
-            port: local_addr.port(),
-        });
+        let http = match listener {
+            Some((listener, local_addr)) => {
+                let jmap = if config.jmap.enabled {
+                    let account = http::account_id(&config.user_uri);
+                    let (session, session_state) =
+                        http::session(&format!("http://{local_addr}"), &config.user_uri, &account)?;
+                    let chat = Arc::new(AgentChat::over(
+                        Arc::clone(&store),
+                        account,
+                        Options::default(),
+                    )?);
+                    Some(Jmap {
+                        dispatcher: http::dispatcher(&chat),
+                        chat,
+                        session,
+                        session_state,
+                    })
+                } else {
+                    None
+                };
+                let (changes, _) = broadcast::channel(CHANGE_BUFFER);
+                let endpoint = Arc::new(Endpoint {
+                    token: token.clone(),
+                    store: Arc::clone(&store),
+                    jmap,
+                    in_flight: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
+                    uploads: Arc::new(Semaphore::new(MAX_CONCURRENT_UPLOAD)),
+                    changes,
+                    // The store's own: its write methods wake the loop too.
+                    sync_now: Arc::clone(store.sync_wanted()),
+                    stop: stop_receiver,
+                    allowed_origins: config.allowed_origins.clone(),
+                    port: local_addr.port(),
+                });
+                Some(Http {
+                    listener,
+                    local_addr,
+                    endpoint,
+                })
+            }
+            // Config::check refuses JMAP on without listen.
+            None => None,
+        };
+        let irc = match &config.irc {
+            Some(setting) => {
+                // docs/design/agent-frontends.md §4: the IRC client's PASS
+                // is the local token, compared in constant time; the one
+                // check at the IRC boundary (AGENTS.md).
+                let token = token.clone();
+                Some(
+                    IrcFrontEnd::bind(
+                        Arc::clone(&store),
+                        IrcOptions::new(setting.listen, setting.server_name.clone()),
+                        Arc::new(move |presented: &[u8]| token.matches(presented)),
+                    )
+                    .await?,
+                )
+            }
+            None => None,
+        };
         Ok(Self {
-            listener,
-            local_addr,
-            endpoint,
+            http,
+            irc,
             store,
             stop,
             sync_interval: config.sync_interval(),
@@ -211,10 +241,15 @@ impl Daemon {
         })
     }
 
-    /// The address the endpoint listens on (the configured one, with the
-    /// port filled in if it was 0).
-    pub fn local_addr(&self) -> SocketAddr {
-        self.local_addr
+    /// The address the HTTP endpoint listens on (the configured one, with
+    /// the port filled in if it was 0); `None` without `listen`.
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.http.as_ref().map(|http| http.local_addr)
+    }
+
+    /// The address the IRC front end listens on; `None` without `[irc]`.
+    pub fn irc_addr(&self) -> Option<SocketAddr> {
+        self.irc.as_ref().map(IrcFrontEnd::local_addr)
     }
 
     /// The plaintext store the front ends share. Its sync is the daemon's
@@ -224,65 +259,96 @@ impl Daemon {
         &self.store
     }
 
-    /// Serves the endpoint and runs the sync loop until `shutdown`
+    /// Serves the front ends and runs the sync loop until `shutdown`
     /// resolves, then stops accepting connections, ends the open
-    /// EventSource streams, lets requests in flight and a running sync
-    /// finish, and returns. With JMAP on, each save the store publishes
-    /// tells the EventSource streams to look.
+    /// EventSource streams and IRC connections (each IRC client gets
+    /// `ERROR`), lets requests in flight and a running sync finish, and
+    /// returns. With JMAP on, each save the store publishes tells the
+    /// EventSource streams to look.
     ///
     /// # Errors
     ///
-    /// The listener's I/O error.
+    /// The HTTP listener's I/O error.
     pub async fn serve(
         self,
         shutdown: impl Future<Output = ()> + Send + 'static,
     ) -> std::io::Result<()> {
+        let jmap = self
+            .http
+            .as_ref()
+            .is_some_and(|http| http.endpoint.jmap.is_some());
         tracing::info!(
             name: "agent_listening",
-            listen = %self.local_addr,
-            jmap = self.endpoint.jmap.is_some(),
+            listen = %self.local_addr().map_or_else(|| "none".to_owned(), |a| a.to_string()),
+            jmap,
+            irc = self.irc.is_some(),
+            irc_listen = %self.irc_addr().map_or_else(|| "none".to_owned(), |a| a.to_string()),
             user = %self.user_uri,
             server_url = %self.server_url,
             "mimid-agent listening"
         );
+        let stop = self.stop;
+        // The one place the stop signal is raised: it ends the sync loop,
+        // the HTTP server, every EventSource stream and every IRC
+        // connection.
+        let signal = tokio::spawn({
+            let stop = stop.clone();
+            async move {
+                shutdown.await;
+                stop.send_replace(true);
+            }
+        });
         let sync = tokio::spawn(sync_loop(
             Arc::clone(&self.store),
-            Arc::clone(&self.endpoint),
+            stop.subscribe(),
             self.sync_interval,
             self.key_packages,
             self.log_watch,
         ));
         // Only the EventSource streams, which are JMAP's, read the ticks.
-        let feed = self.endpoint.jmap.is_some().then(|| {
-            tokio::spawn(forward_feed(
-                Arc::clone(&self.store),
-                Arc::clone(&self.endpoint),
-            ))
-        });
-        let stop = self.stop;
-        let served = axum::serve(self.listener, http::router(self.endpoint))
-            .with_graceful_shutdown(async move {
-                shutdown.await;
-                // Ends the sync loop and every EventSource stream, which
-                // graceful shutdown would otherwise wait for forever.
-                stop.send_replace(true);
-            })
-            .await;
-        if let Err(error) = sync.await {
-            tracing::error!(
-                name: "agent_sync_loop_panicked",
-                error = &error as &dyn std::error::Error,
-                "the sync loop ended abnormally"
-            );
-        }
-        if let Some(feed) = feed
-            && let Err(error) = feed.await
-        {
-            tracing::error!(
-                name: "agent_feed_panicked",
-                error = &error as &dyn std::error::Error,
-                "the change feed's forwarding ended abnormally"
-            );
+        let feed = self
+            .http
+            .as_ref()
+            .filter(|http| http.endpoint.jmap.is_some())
+            .map(|http| {
+                tokio::spawn(forward_feed(
+                    Arc::clone(&self.store),
+                    Arc::clone(&http.endpoint),
+                ))
+            });
+        let irc = self
+            .irc
+            .map(|irc| tokio::spawn(irc.serve(stop.subscribe())));
+        let served = match self.http {
+            Some(http) => {
+                let mut stopping = stop.subscribe();
+                axum::serve(http.listener, http::router(http.endpoint))
+                    .with_graceful_shutdown(async move { stopped(&mut stopping).await })
+                    .await
+            }
+            None => {
+                stopped(&mut stop.subscribe()).await;
+                Ok(())
+            }
+        };
+        // The HTTP server ends only once stopped, or on an error.
+        stop.send_replace(true);
+        signal.abort();
+        for (name, task) in [
+            ("sync loop", Some(sync)),
+            ("feed", feed),
+            ("IRC front end", irc),
+        ] {
+            if let Some(task) = task
+                && let Err(error) = task.await
+            {
+                tracing::error!(
+                    name: "agent_task_panicked",
+                    task = name,
+                    error = &error as &dyn std::error::Error,
+                    "a task of the daemon ended abnormally"
+                );
+            }
         }
         tracing::info!(name: "agent_stopped", "mimid-agent stopped");
         served
@@ -329,20 +395,20 @@ async fn top_up_key_packages(agent: &mut Agent, target: u32) {
 
 /// Syncs the store at once ([`Store::sync`], the agent's only journal
 /// consumer), then every `interval` or when woken (a write of a front
-/// end, [`Store::sync_wanted`]), until the daemon stops; before each sync,
+/// end, [`Store::sync_wanted`]), until `stop` is true; before each sync,
 /// takes a changed did:webvh log file (`log_watch`); after it, tops the
 /// KeyPackages up.
 async fn sync_loop(
     store: Arc<Store>,
-    endpoint: Arc<Endpoint>,
+    mut stop: watch::Receiver<bool>,
     interval: Duration,
     key_packages: u32,
     mut log_watch: Option<LogWatch>,
 ) {
-    let mut stop = endpoint.stop.clone();
+    let sync_now = Arc::clone(store.sync_wanted());
     loop {
         if let Some(watch) = log_watch.as_mut() {
-            watch.check(&endpoint).await;
+            watch.check(&store).await;
         }
         match store.sync().await {
             Ok(report) => log_report(&report),
@@ -356,7 +422,7 @@ async fn sync_loop(
         tokio::select! {
             () = stopped(&mut stop) => return,
             () = tokio::time::sleep(interval) => {}
-            () = endpoint.sync_now.notified() => {}
+            () = sync_now.notified() => {}
         }
     }
 }

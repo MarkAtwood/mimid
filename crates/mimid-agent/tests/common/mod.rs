@@ -4,6 +4,8 @@
 // Each test binary uses part of this module.
 #![allow(dead_code)]
 
+pub mod irc;
+
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -129,6 +131,8 @@ pub fn config(server: &Server, user: &'static str, dir: &Path, invites: &str) ->
 /// A daemon serving in a task.
 pub struct Running {
     pub addr: SocketAddr,
+    /// The IRC front end's address, with `[irc]`.
+    pub irc: Option<SocketAddr>,
     pub state_dir: PathBuf,
     stop: oneshot::Sender<()>,
     task: JoinHandle<std::io::Result<()>>,
@@ -138,13 +142,15 @@ impl Running {
     /// Starts a daemon for `config` and serves it until [`Running::stop`].
     pub async fn start(config: &Config) -> Self {
         let daemon = Daemon::start(config).await.unwrap();
-        let addr = daemon.local_addr();
+        let addr = daemon.local_addr().expect("the daemon listens for HTTP");
+        let irc = daemon.irc_addr();
         let (stop, stopped) = oneshot::channel::<()>();
         let task = tokio::spawn(daemon.serve(async move {
             let _ = stopped.await;
         }));
         Self {
             addr,
+            irc,
             state_dir: config.state_dir.clone(),
             stop,
             task,

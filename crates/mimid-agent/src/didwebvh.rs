@@ -71,6 +71,7 @@ use mimid_agent_core::mls_didwebvh::{
     DidWebvhCredential, MAX_DID_LOG_LENGTH, MAX_WITNESS_FILE_LENGTH,
 };
 use mimid_agent_core::{AgentError, DidWebvhApplied};
+use mimid_agent_store::Store;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -120,12 +121,11 @@ impl Source {
 ///
 /// The agent's refusal; nothing changed then.
 pub(crate) async fn apply_log(
-    endpoint: &Endpoint,
+    store: &Store,
     credential: DidWebvhCredential,
     source: Source,
 ) -> Result<DidWebvhApplied, AgentError> {
-    let applied = endpoint
-        .store
+    let applied = store
         .agent()
         .lock()
         .await
@@ -145,7 +145,7 @@ pub(crate) async fn apply_log(
                 failed = applied.failed.len(),
                 "a newer did:webvh log was taken"
             );
-            endpoint.sync_now.notify_one();
+            store.sync_wanted().notify_one();
         }
         Err(error) => tracing::warn!(
             name: "agent_did_webvh_log_refused",
@@ -226,7 +226,7 @@ pub(crate) async fn post_log(
         Ok(credential) => credential,
         Err(error) => return refused(StatusCode::UNPROCESSABLE_ENTITY, &reason(&error)),
     };
-    match apply_log(&endpoint, credential, Source::Endpoint).await {
+    match apply_log(&endpoint.store, credential, Source::Endpoint).await {
         Ok(applied) => (StatusCode::OK, Json(applied_body(&applied))).into_response(),
         Err(error) => refused(StatusCode::UNPROCESSABLE_ENTITY, &reason(&error)),
     }
@@ -292,7 +292,7 @@ impl LogWatch {
     }
 
     /// Takes the files' log if they changed since the last look.
-    pub(crate) async fn check(&mut self, endpoint: &Endpoint) {
+    pub(crate) async fn check(&mut self, store: &Store) {
         let stamps = self.stamps();
         if stamps == self.stamps {
             return;
@@ -315,6 +315,6 @@ impl LogWatch {
         self.digest = Some(digest);
         // Refusals are logged by apply_log; the file is not tried again
         // until it changes.
-        let _ = apply_log(endpoint, credential, Source::File).await;
+        let _ = apply_log(store, credential, Source::File).await;
     }
 }

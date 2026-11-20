@@ -2,8 +2,8 @@
 //! §3 step 7, §5): it still syncs into its plaintext store, its HTTP
 //! listener answers `404` on every JMAP path once the Host check and the
 //! local token pass (and `401` before), and the did:webvh log endpoint is
-//! still served. Its `[irc]` table, which JMAP off requires, is not built
-//! yet and is only logged.
+//! still served. Its `[irc]` table, which JMAP off requires, serves IRC on
+//! a port of its own (tests/irc.rs drives it).
 //!
 //! alice's daemon (JMAP on) hosts a room with bob and posts; bob's daemon
 //! (JMAP off, `invites = "any"`) joins at its sync.
@@ -57,9 +57,13 @@ async fn with_jmap_off_the_store_still_syncs_and_jmap_paths_are_404() {
     let alice = Running::start(&config(&server, ALICE, dir.path(), "from-allowed")).await;
     let mut bob_config = config(&server, BOB, dir.path(), "any");
     bob_config.jmap.enabled = false;
-    bob_config.irc = Some(mimid_agent::config::IrcSetting::default());
+    bob_config.irc = Some(mimid_agent::config::IrcSetting {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        ..mimid_agent::config::IrcSetting::default()
+    });
     let bob_daemon = Daemon::start(&bob_config).await.unwrap();
-    let bob_addr = bob_daemon.local_addr();
+    let bob_addr = bob_daemon.local_addr().unwrap();
+    assert!(bob_daemon.irc_addr().unwrap().ip().is_loopback());
     let bob_store = Arc::clone(bob_daemon.store());
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let bob_task = tokio::spawn(bob_daemon.serve(async move {

@@ -58,7 +58,8 @@ Dependencies point down this table, never up.
 | `mimi-protocol` | protocol wire types and franking; `components`, the mls-extensions-11 §4.7 application logic for the room components (protocol-07 and room-policy-04) that the hub and agents share. Depends on `mimi-room-policy` | Use openmls directly (MLS types come only through `mimi_mls::wire` and `mimi_mls::member::ComponentOp`); do I/O |
 | `mimid-server` | Hub and follower roles, the provider's JMAP Chat endpoint, admin CLI | Parse or decrypt application ciphertext; put SQL outside its store module |
 | `mimid-agent-store` | The agent's plaintext layer that its front ends share (docs/design/agent-frontends.md): the agent's only journal consumer (`Store::sync`), every action of the user's as a `Store` method (`action`), the change feed every front end follows (`feed`), the neutral records and their SQLite database, the blob store, the attachment retry policy, `senderMsgId` and message references, the agent's notices, what a message keeps for a report | Depend on crate-jmap or IRC code; hold front-end types, except as JSON in a record's per-front-end `ext` map |
-| `mimid-agent` | MLS keys and plaintext. It is the only component that sees either. The daemon: it builds the store and runs its front ends on loopback, today the JMAP Chat ↔ MIMI bridge (`[jmap]`, on by default): users run a standard JMAP Chat client against its local endpoint | Serve plaintext anywhere except its local endpoint |
+| `mimid-agent-irc` | The IRC front end (docs/design/agent-frontends.md §4, §7): a loopback IRC server over the store, its line parser and casemapping, nicks and channel names kept in `ext["irc"]`, the `mimid` service nick | Use an IRC library; depend on crate-jmap or `mimid-agent-jmap`; check the `PASS` itself (the daemon hands it the local token check) |
+| `mimid-agent` | MLS keys and plaintext. It is the only component that sees either. The daemon: it builds the store and runs its front ends on loopback: the JMAP Chat ↔ MIMI bridge (`[jmap]`, on by default), with which users run a standard JMAP Chat client against its local endpoint, and the IRC front end (`[irc]`, off by default), with which they run a stock IRC client | Serve plaintext anywhere except its local endpoints |
 
 mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat client talks plaintext JMAP Chat to the local agent.
 
@@ -115,6 +116,7 @@ mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat cl
   | Boundary | Check |
   |---|---|
   | Agent (loopback HTTP) | Host is a loopback name for the port, then the local bearer token in a 0600 file (Mark 2026-11-16: loopback HTTP + token, not a socket) |
+  | Agent (loopback IRC) | The same local token as the IRC server password (`PASS`), compared in constant time before registration ends (docs/design/agent-frontends.md §4); no SASL |
   | JMAP | Bearer token |
   | Hub | Room policy |
 

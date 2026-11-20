@@ -64,7 +64,7 @@ struct Bob {
 impl Bob {
     async fn start(config: &Config) -> Self {
         let daemon = Daemon::start(config).await.unwrap();
-        let addr = daemon.local_addr();
+        let addr = daemon.local_addr().expect("the daemon listens for HTTP");
         let store = Arc::clone(daemon.store());
         let (stop, stopped) = oneshot::channel::<()>();
         let task = tokio::spawn(daemon.serve(async move {
@@ -293,7 +293,10 @@ async fn records_kept_with_jmap_off_are_shown_when_jmap_is_on_again() {
     let carol = Running::start(&config(&server, CAROL, dir.path(), "any")).await;
     let mut bob_config = config(&server, BOB, dir.path(), "any");
     bob_config.jmap.enabled = false;
-    bob_config.irc = Some(mimid_agent::config::IrcSetting::default());
+    bob_config.irc = Some(mimid_agent::config::IrcSetting {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        ..mimid_agent::config::IrcSetting::default()
+    });
     let bob = Bob::start(&bob_config).await;
     let alice = alice_acts(&server, dir.path(), &bob.store).await;
     {

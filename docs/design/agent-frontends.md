@@ -1,7 +1,7 @@
 # Agent front ends: one plaintext store, JMAP and IRC over it
 
 Design note for epic mimid-1vul. Written 2026-11-19 against main at
-e4e91cd. Status: steps 1 to 7 of §3 are built (2026-11-20). Each step
+e4e91cd. Status: steps 1 to 8 of §3 are built (2026-11-20). Each step
 notes the changes it made to this design.
 
 Mark decided on 2026-11-19 that the IRC front end is native. It is built
@@ -688,6 +688,62 @@ step runs the full check list in AGENTS.md before its commit.
    drive it over raw TCP. One of them runs a JMAP client and an IRC
    client on one daemon and checks that each sees the other's messages
    with the same `senderMsgId` and msgid.
+
+   Built (2026-11-20), with §7's decisions:
+
+   - `crates/mimid-agent-irc`: `IrcFrontEnd::bind(store, IrcOptions,
+     PasswordCheck)` and `serve(stop)`. The crate cannot depend on
+     mimid-agent, so the daemon hands it the `PASS` check as a closure
+     over `LocalToken::matches`; the check stays the daemon's. Modules as
+     in §4, except that `names.rs` holds the casemapping and `conn.rs`
+     the keepalive.
+   - Names: the front end registers a `Frontend` whose `before_save`
+     gives each person a nick and each active room a channel, kept in
+     `ext["irc"]` (`{"nick"}`, `{"channel"}`). The user's own nick is not
+     stored: it is reserved first and comes out the same every time. A
+     user with no person record (an inviter, a user invited by URI) has a
+     nick in memory until the record is made. A room no longer active
+     gives its channel name up, so JOIN after PART of `#lobby` hosts a new
+     room shown as `#lobby` (§7.1) rather than `#lobby-xxxx`.
+   - `JOIN 0` is refused with a NOTICE: with §7.1 it would leave every
+     room for good.
+   - PRIVMSG to a nick is 404 naming the nick ("JOIN a new channel and
+     INVITE them", §7.2); to an unknown nick 401.
+   - The service has `help`, `allow`, `deny` and `invites`. JOIN and PART
+     make and leave rooms (§7.1), and `JOIN &invite-<n>` accepts, so
+     `create`, `leave` and `join` are gone; `remove` and `report` are not
+     in v1. `deny` revokes the consent record, so the inviter can no
+     longer fetch the user's KeyPackages: their INVITE fails at their own
+     agent (`NoConsent`), and no invite reaches the user at all.
+   - Every line written is at most 512 octets with its tags, the stricter
+     reading of irc-lessons.md. The topic is `<name> | <room URI>`. 329
+     and 333 give the time in the room record's key (when this store
+     made the record), since the store keeps no room creation time. 004
+     lists user mode `i`; `MODE <own nick>` answers 221 `+i`.
+   - An edit's msgid is the ULID of its `edited_at` and its reference
+     octets, the way `senderMsgId` is made. Edits and retractions of
+     messages from before the connection are shown only if made after it
+     registered.
+   - `TooOld`: the connection tells the user with a NOTICE that messages
+     in between are not shown, then brings every channel up to date from
+     the records: JOIN for new rooms, PART for rooms gone, JOIN, PART and
+     MODE for member changes. Channels still shown are not joined again.
+   - KICK removes the user's devices and tells the sender so in a NOTICE;
+     the nick stays in the channel, since the user stays a participant.
+   - The daemon: `listen` is optional (`ConfigError::NoListen` with JMAP
+     on), `Daemon::local_addr()` is an `Option`, `Daemon::irc_addr()` is
+     new, the sync loop and the did:webvh log watch take the store, and
+     one watch signal stops the HTTP server, the sync loop and every IRC
+     connection (each gets `ERROR`). `agent_listening` gains `irc` and
+     `irc_listen`. `agent_irc_not_built` is gone.
+   - Tests: crates/mimid-agent/tests/irc.rs (registration burst, PASS,
+     CAP, PING, 417, NOTICE, queries, two daemons over IRC and JMAP with
+     the same msgid and `senderMsgId`, edits and retractions, MODE,
+     invites and consent, `TooOld` and split 353), and an IRC connection
+     in `no_token_in_logs.rs`; unit tests for the parser, tag escaping,
+     casemapping, nicks, channels and CAP LS splitting. Not tested: the
+     server's own PING and the ping timeout (the daemon has no knob for
+     them).
 
 Steps 3 and 5 are the large ones. Step 3 cannot be cut much smaller: the
 store has to be the only copy of inbound state before it can save it.

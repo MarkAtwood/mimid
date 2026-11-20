@@ -8,8 +8,8 @@
 //! front end shows a message under ([`convert`]), the agent's own notices
 //! ([`notice`]), body types and safe file names ([`content`]), and what a
 //! message keeps for an abuse report ([`report`]). mimid-agent-jmap's JMAP
-//! Chat front end is built on it; it depends on neither crate-jmap nor any
-//! IRC code.
+//! Chat front end and mimid-agent-irc's IRC front end are built on it; it
+//! depends on neither crate-jmap nor any IRC code.
 //!
 //! The store itself is [`Store`]: the agent, the records of [`record`] in
 //! a [`State`], the blob store, and the change feed ([`feed`]).
@@ -27,9 +27,8 @@
 //!
 //! # Limitations
 //!
-//! - This is step 6 of the migration in docs/design/agent-frontends.md §3:
-//!   one store, a change feed, and the JMAP front end over it; the IRC
-//!   front end is step 8.
+//! - The change log is in memory and bounded ([`feed`]); a front end that
+//!   falls behind it shows its state again from the records.
 //! - See each module for its own limits.
 
 #![forbid(unsafe_code)]

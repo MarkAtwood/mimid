@@ -5,7 +5,7 @@
 //! user_uri = "mimi://a.example/u/alice"
 //! token_file = "/home/alice/.config/mimid-agent/server-token"
 //! state_dir = "/home/alice/.local/state/mimid-agent"
-//! listen = "127.0.0.1:8484"               # loopback only
+//! listen = "127.0.0.1:8484"               # loopback only; optional with [irc]
 //! sync_interval_ms = 2000                 # optional
 //! key_packages = 10                       # optional
 //! invites = "from-allowed"                # optional: "any", "never"
@@ -69,7 +69,9 @@
 //! daemon builds no JMAP Chat account: the HTTP listener at `listen` still
 //! serves the did:webvh log endpoint, and answers `404` on the JMAP paths
 //! (the Session, the API, EventSource, upload and download) once the
-//! request has passed the Host check and the local token.
+//! request has passed the Host check and the local token. `listen` may be
+//! left out with JMAP off: then there is no HTTP listener at all, and no
+//! did:webvh log endpoint (the log file is still watched).
 //!
 //! `[irc]` configures the IRC front end: a local IRC server on `listen`
 //! (loopback only, default `127.0.0.1:6667`, a port browsers refuse to
@@ -77,9 +79,7 @@
 //! (`<state_dir>/agent-token`) as the server password (`PASS`).
 //! `server_name` is the name the server gives itself, at most
 //! [`MAX_IRC_SERVER_NAME_LEN`] letters, digits, `-` and `.`, with at least
-//! one dot so that clients do not read it as a nick. The IRC front end is
-//! not built yet: the section is parsed and checked, and the daemon logs a
-//! warning (`agent_irc_not_built`) and does not listen for IRC.
+//! one dot so that clients do not read it as a nick (mimid-agent-irc).
 //!
 //! With `[jmap] enabled = false` and no `[irc]`, the daemon would serve
 //! nothing, and the configuration is refused.
@@ -142,8 +142,11 @@ pub struct Config {
     pub token_file: PathBuf,
     /// The agent's state directory (MLS keys, rooms, the local token).
     pub state_dir: PathBuf,
-    /// The loopback address the JMAP endpoint listens on.
-    pub listen: SocketAddr,
+    /// The loopback address the HTTP endpoint (JMAP, the did:webvh log
+    /// endpoint) listens on; required with JMAP on, and `None` for no
+    /// HTTP listener.
+    #[serde(default)]
+    pub listen: Option<SocketAddr>,
     /// Milliseconds between syncs with the server.
     #[serde(default = "default_sync_interval_ms")]
     pub sync_interval_ms: u64,
@@ -369,7 +372,8 @@ impl Config {
     ///
     /// [`ConfigError::Parse`] for malformed TOML or unknown or missing
     /// keys, [`ConfigError::NotLoopback`] if `listen` is not a loopback
-    /// address, [`ConfigError::IrcNotLoopback`] if `[irc].listen` is not,
+    /// address, [`ConfigError::NoListen`] with JMAP on and no `listen`,
+    /// [`ConfigError::IrcNotLoopback`] if `[irc].listen` is not,
     /// [`ConfigError::ServerUrl`] if `server_url` is not an `http` or
     /// `https` URL, [`ConfigError::OutOfRange`] for a `sync_interval_ms` or
     /// `key_packages` outside its bounds, [`ConfigError::Origin`] for a bad
@@ -385,8 +389,12 @@ impl Config {
     /// Checks what serde cannot. [`crate::Daemon::start`] checks again, for
     /// a configuration built or changed in code.
     pub(crate) fn check(&self) -> Result<(), ConfigError> {
-        if !self.listen.ip().is_loopback() {
-            return Err(ConfigError::NotLoopback(self.listen));
+        match self.listen {
+            Some(listen) if !listen.ip().is_loopback() => {
+                return Err(ConfigError::NotLoopback(listen));
+            }
+            None if self.jmap.enabled => return Err(ConfigError::NoListen),
+            _ => {}
         }
         let scheme_ok = ["http://", "https://"].iter().any(|scheme| {
             self.server_url
@@ -517,6 +525,9 @@ pub enum ConfigError {
         "[irc] server_name {0:?} must be letters, digits, '-' and '.', with a dot, at most 63 characters"
     )]
     IrcServerName(String),
+    /// JMAP is on and there is no `listen`.
+    #[error("listen is required unless [jmap] enabled = false")]
+    NoListen,
     /// JMAP is off and there is no `[irc]`: the daemon would serve nothing.
     #[error("[jmap] enabled = false with no [irc]: the agent would serve nothing")]
     NothingServed,
@@ -542,7 +553,7 @@ mod tests {
     fn loopback_listen_addresses_are_accepted() {
         for listen in ["127.0.0.1:0", "127.0.0.1:8484", "[::1]:8484"] {
             let config = Config::parse(&config_with_listen(listen)).unwrap();
-            assert_eq!(config.listen, listen.parse().unwrap());
+            assert_eq!(config.listen, Some(listen.parse().unwrap()));
             assert_eq!(config.sync_interval_ms, DEFAULT_SYNC_INTERVAL_MS);
             assert_eq!(config.key_packages, DEFAULT_KEY_PACKAGES);
             assert_eq!(config.invites, Invites::FromAllowed);
@@ -677,6 +688,35 @@ mod tests {
             .unwrap();
             assert_eq!(config.irc.unwrap().server_name, name);
         }
+    }
+
+    /// Oracle: docs/design/agent-frontends.md §5: `listen` may be left
+    /// out when `[irc]` is set and JMAP is off; JMAP needs it.
+    #[test]
+    fn listen_is_optional_only_with_jmap_off() {
+        let without = r#"
+            server_url = "http://127.0.0.1:8080"
+            user_uri = "mimi://a.example/u/alice"
+            token_file = "/tmp/token"
+            state_dir = "/tmp/state"
+        "#;
+        let config =
+            Config::parse(&format!("{without}\n[jmap]\nenabled = false\n[irc]\n")).unwrap();
+        assert_eq!(config.listen, None);
+        assert!(config.irc.is_some());
+        for text in [
+            format!("{without}\n[irc]\n"),
+            without.to_owned(),
+            format!("{without}\n[jmap]\nenabled = true\n"),
+        ] {
+            let refused = Config::parse(&text);
+            assert!(matches!(refused, Err(ConfigError::NoListen)), "{refused:?}");
+        }
+        let refused = Config::parse(&format!("{without}\n[jmap]\nenabled = false\n"));
+        assert!(
+            matches!(refused, Err(ConfigError::NothingServed)),
+            "{refused:?}"
+        );
     }
 
     #[test]

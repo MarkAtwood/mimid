@@ -2584,6 +2584,7 @@ dependencies = [
  "jmap-server",
  "jmap-types",
  "mimid-agent-core",
+ "mimid-agent-irc",
  "mimid-agent-jmap",
  "mimid-agent-store",
  "mimid-server",
