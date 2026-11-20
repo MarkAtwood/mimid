@@ -1,0 +1,22 @@
+{
+  "id": "mimid-e64f.15",
+  "title": "Agent: reportAbuse status optional, skip own by messageIds, anchored recovery, KeyPackage/changes (F8, F18, F12, F9, F17)",
+  "description": "Agent side of the findings.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T22:56:23.658165242Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T22:56:23.658165242Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-e64f.15",
+      "depends_on_id": "mimid-e64f",
+      "type": "parent-child",
+      "created_at": "2026-11-20T22:56:23.706519866Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
