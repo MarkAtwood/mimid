@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.74",
+  "title": "Live stream: a request that goes to a hub is answered when the hub answers; a refusal is an Error",
+  "description": "Epic mimid-e64f; docs/design/binary-live-stream.md §5.4, §9 question 3.\n\nChosen (Mark, 2026-11-20): a Send is answered once the hub answers, with one Ack carrying acceptedAt and frank, or one Error carrying the refusal; other traffic flows meanwhile.\n\nExtended by the agent for mimid-e64f to every request that goes to a hub (INVENTED, NOT FROM SPEC): Update, CreateRoom, ReportAbuse, FetchGroupInfo, FetchKeyMaterial. Ack means the operation was done; Error means it was not. A hub's refusal is an Error whose code is the refusal's name in draft-atwood-jmap-chat-mimi-00 (notAllowed, epochTooOld, wrongEpoch, invalidProposal, unverifiedMessage, refused), with the hub's fields (currentEpoch, invalidProposals, errorDescription, status). JMAP instead answers a hub refusal as a successful method response with responseCode. FetchGroupInfo is the exception: its Ack carries the whole GroupInfoResponse with its status, as JMAP does, because the client verifies the hub's signature over it.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T19:36:27.016107564Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T19:36:27.016107564Z",
+  "labels": [
+    "live-stream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.74",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-20T19:36:27.052153216Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
