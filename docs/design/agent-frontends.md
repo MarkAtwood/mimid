@@ -354,6 +354,20 @@ step runs the full check list in AGENTS.md before its commit.
    `a_contact_s_did_is_shown_and_a_changed_scid_posts_one_notice`, both
    removal-notice tests and the moderation test (mirrored bans and
    `bannedBy`).
+
+   Changed while doing it (2026-11-20):
+
+   - The format-1 reader keeps a Message, ChatBan or ReadPosition that
+     names a Chat not in the file, with its room key naming a room the
+     state does not hold, and logs one warning per file with the count.
+     crate-jmap's Chat/set destroy keeps the Chat's Messages and ChatBans
+     (it destroys only its ReadPositions), and chat.json keeps them too.
+     Step 2's reader refused such a file, so once load uses it the agent
+     would not start after a client destroyed a Chat. This applies §7.7
+     to Chats; Mark decided it for ChatContacts only, and may want it
+     otherwise. Format 2's reader still refuses a record naming a room it
+     does not hold: step 4 must decide what its conversion does with
+     these.
 4. **The store owns the file.** Switch to format 2, with the one-time
    format-1 conversion and the `chat.json.v1` copy. JMAP-only properties
    go into `ext["jmap"]`. The referenced blob set comes from the store.

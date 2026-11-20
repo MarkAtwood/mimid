@@ -499,6 +499,35 @@ fn format_1_keeps_items_naming_a_contact_that_is_gone() {
     assert!(!log.contains("WARN"), "{log}");
 }
 
+/// The same rule for a Chat that is gone (docs/design/agent-frontends.md
+/// §3 step 3): crate-jmap's Chat/set destroy keeps the Chat's Messages and
+/// ChatBans and destroys its ReadPositions, and the reader keeps what is
+/// left, naming the room that is not there, with one warning.
+#[test]
+fn format_1_keeps_items_naming_a_chat_that_is_gone() {
+    let destroyed = altered(V1, |v| {
+        let objects = v["objects"].as_object_mut().unwrap();
+        objects.remove("Chat");
+        objects.remove("ReadPosition");
+    });
+    let (state, log) = logged(|| read_format_1(&destroyed, BOB).unwrap());
+    let mut expected = v1();
+    let rooms: Vec<String> = expected.rooms.keys().cloned().collect();
+    let [room] = &rooms[..] else {
+        panic!("one room");
+    };
+    expected.rooms.clear();
+    expected.read_positions.clear();
+    expected.reindex();
+    assert_eq!(state, expected);
+    assert!(state.messages.values().all(|m| m.room == *room));
+    assert!(state.bans.values().all(|b| b.room == *room));
+    let warnings: Vec<&str> = log.lines().filter(|l| l.contains("WARN")).collect();
+    assert_eq!(warnings.len(), 1, "{log}");
+    // Five Messages and one ChatBan.
+    assert!(warnings[0].contains("unknown=6"), "{log}");
+}
+
 #[test]
 fn format_2_round_trips_byte_for_byte() {
     let state = read_format_2(V2, BOB).unwrap();
@@ -571,15 +600,6 @@ fn malformed_format_1_files_are_refused() {
             BOB,
         ),
         "is not a ULID",
-    );
-    refused(
-        read_format_1(
-            &altered(V1, |v| {
-                v["objects"]["Message"][0]["chatId"] = json!("nowhere")
-            }),
-            BOB,
-        ),
-        "names no Chat",
     );
     refused(
         read_format_1(

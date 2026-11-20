@@ -31,6 +31,11 @@
 //!   record's `ext["jmap"]` under the same property. One warning per
 //!   file gives the count (Mark's decision, docs/design/agent-frontends.md
 //!   §7.7).
+//! - A Message, ChatBan or ReadPosition naming a Chat that is not in the
+//!   file (a JMAP client may destroy a Chat, and crate-jmap keeps its
+//!   Messages and ChatBans) is kept, its room key naming a room that is
+//!   not in the state. One warning per file gives the count. This extends
+//!   Mark's decision on ChatContacts (§7.7) to Chats; see §3 step 3.
 //! - A notice read from format 1 has no kind, only its text.
 //! - A reply to a message not stored was not kept by format 1, so
 //!   [`Reply::Reference`] never comes from it.
@@ -184,10 +189,9 @@ fn body_type(object: &Object, text: Option<&str>) -> Result<BodyType, FileError>
 ///
 /// [`FileError::Malformed`] if `bytes` is not format 1, holds an unknown
 /// type, an object without an id, a property of the wrong type, a date
-/// that is not a UTCDate, a `senderMsgId` that is not a ULID, a reference
-/// to a Chat not in the file, or malformed side tables. A reference to a
-/// ChatContact not in the file is kept as an unknown user (see the module
-/// documentation).
+/// that is not a UTCDate, a `senderMsgId` that is not a ULID, or malformed
+/// side tables. A reference to a ChatContact or a Chat not in the file is
+/// kept (see the module documentation).
 pub fn read_format_1(bytes: &[u8], user: &str) -> Result<State, FileError> {
     let mut file: Format1 = serde_json::from_slice(bytes).map_err(|e| malformed(e.to_string()))?;
     if file.format != 1 {
@@ -224,6 +228,7 @@ pub fn read_format_1(bytes: &[u8], user: &str) -> Result<State, FileError> {
         user,
         people: &state.people,
         unknown: std::cell::Cell::new(0),
+        unknown_chats: std::cell::Cell::new(0),
     };
     let mut rooms = BTreeMap::new();
     for value in chats {
@@ -250,7 +255,7 @@ pub fn read_format_1(bytes: &[u8], user: &str) -> Result<State, FileError> {
     }
     let mut position_records = BTreeMap::new();
     for value in positions {
-        let position = read_position(Object::new("ReadPosition", value)?, &rooms)?;
+        let position = read_position(Object::new("ReadPosition", value)?, &users, &rooms)?;
         insert(
             &mut position_records,
             position.key.clone(),
@@ -266,6 +271,16 @@ pub fn read_format_1(bytes: &[u8], user: &str) -> Result<State, FileError> {
             unknown,
             "format-1 store: Messages, Chat members or ChatBans name ChatContacts \
              that are not in the file; they are kept with the user unknown"
+        );
+    }
+
+    let unknown_chats = users.unknown_chats.get();
+    if unknown_chats > 0 {
+        tracing::warn!(
+            name: "chat_v1_unknown_chats",
+            unknown = unknown_chats,
+            "format-1 store: Messages, ChatBans or ReadPositions name Chats that are \
+             not in the file; they are kept, naming a room that is not there"
         );
     }
 
@@ -312,6 +327,8 @@ struct Users<'a> {
     people: &'a BTreeMap<String, Person>,
     /// How many items named a ChatContact not in the file.
     unknown: std::cell::Cell<usize>,
+    /// How many items named a Chat not in the file.
+    unknown_chats: std::cell::Cell<usize>,
 }
 
 impl Users<'_> {
@@ -383,17 +400,18 @@ fn room(mut o: Object, users: &Users<'_>) -> Result<Room, FileError> {
     })
 }
 
-fn room_key(o: &Object, rooms: &BTreeMap<String, Room>, chat: String) -> Result<String, FileError> {
-    if rooms.contains_key(&chat) {
-        Ok(chat)
-    } else {
-        Err(o.bad("chatId", &format!("names no Chat ({chat})")))
+/// The room key of Chat id `chat`: the id itself, also when the Chat is
+/// not in the file (counted).
+fn room_key(users: &Users<'_>, rooms: &BTreeMap<String, Room>, chat: String) -> String {
+    if !rooms.contains_key(&chat) {
+        users.unknown_chats.set(users.unknown_chats.get() + 1);
     }
+    chat
 }
 
 fn ban(mut o: Object, users: &Users<'_>, rooms: &BTreeMap<String, Room>) -> Result<Ban, FileError> {
     let chat = o.required("chatId")?;
-    let room = room_key(&o, rooms, chat)?;
+    let room = room_key(users, rooms, chat);
     let user = o.required("userId")?;
     let user = users.take(&mut o, "userId", user);
     let banned_by = o.required("bannedBy")?;
@@ -462,7 +480,7 @@ fn message(
     kept_frank: Option<KeptFrank>,
 ) -> Result<Message, FileError> {
     let chat = o.required("chatId")?;
-    let room = room_key(&o, rooms, chat)?;
+    let room = room_key(users, rooms, chat);
     let sender_msg_id = o.required("senderMsgId")?;
     let accepted_at =
         accepted_at_of(&sender_msg_id).ok_or_else(|| o.bad("senderMsgId", "is not a ULID"))?;
@@ -546,9 +564,13 @@ fn message(
     })
 }
 
-fn read_position(mut o: Object, rooms: &BTreeMap<String, Room>) -> Result<ReadPosition, FileError> {
+fn read_position(
+    mut o: Object,
+    users: &Users<'_>,
+    rooms: &BTreeMap<String, Room>,
+) -> Result<ReadPosition, FileError> {
     let chat = o.required("chatId")?;
-    let room = room_key(&o, rooms, chat)?;
+    let room = room_key(users, rooms, chat);
     Ok(ReadPosition {
         key: o.id.clone(),
         room,
