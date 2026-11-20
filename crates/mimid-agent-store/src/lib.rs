@@ -50,6 +50,6 @@ pub mod sync;
 pub use action::ActionError;
 pub use change::Change;
 pub use db::FileError;
-pub use state::{State, accepted_at_of, reference_of};
+pub use state::{RemovedRoom, State, accepted_at_of, reference_of};
 pub use store::{Frontend, Store};
 pub use sync::{Commit, InvitePolicy, SyncError, SyncReport};

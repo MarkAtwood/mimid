@@ -30,11 +30,19 @@
 //!   ([`crate::notice`]).
 //! - **Bans** ([`bans`]): every participant a room holds in its "banned"
 //!   role has one ban record, and an expired ban is lifted.
+//! - **Rooms deleted here** ([`Store::forget_room`]; docs/design/agent-frontends.md
+//!   §7.9): while a room's tombstone is kept, no record is made for it
+//!   and its events are dropped, messages and notices included. The
+//!   tombstone goes once a round that found the agent out of the room is
+//!   acknowledged, or at once when the agent is in the room again.
 //!
 //! # Limitations
 //!
 //! - The sync holds the agent for its whole run, attachment fetches and
 //!   the front end's commit included.
+//! - Events of a room deleted here and joined again before an earlier
+//!   delivery of it was acknowledged (a failed save, then a new invite
+//!   accepted) are stored in the new record.
 //! - The save comes after the front end's commit has shown the changes,
 //!   and brings every front end's `ext` up to date first
 //!   ([`crate::Frontend`]), so what a front end keeps in the records is
@@ -223,6 +231,7 @@ impl Store {
             .await;
         for _ in 0..2 {
             let (events, receipt) = agent.receive().await?;
+            let settled = self.settle_forgotten_rooms(&agent);
             let mut joined = self.accept_invites(&mut agent, &mut report).await?;
             // This user's rooms that this device is not in yet: a new
             // device joins them by external Commit (decision
@@ -286,7 +295,11 @@ impl Store {
             // Every event that stored a message deleted since is
             // acknowledged now (receive returned all those not yet
             // acknowledged), so none of them comes again.
-            self.state().clear_message_tombstones();
+            {
+                let mut state = self.state();
+                state.clear_message_tombstones();
+                state.clear_room_tombstones(&settled);
+            }
             if joined == 0 {
                 break;
             }
@@ -396,8 +409,36 @@ impl Store {
         }
     }
 
+    /// Settles the tombstones of rooms deleted here
+    /// (docs/design/agent-frontends.md §7.9), right after the agent's
+    /// delivery was read. A room the agent is active in again was joined
+    /// again (a new invite, or [`Store::forget_room`] without leaving): its
+    /// tombstone goes now, so the round stores its events. A room the
+    /// agent is out of, or does not know, can send nothing more: every
+    /// event of it is in this delivery or acknowledged before, so its
+    /// tombstone may go once this round is acknowledged; those are
+    /// returned. A room still being left keeps its tombstone.
+    fn settle_forgotten_rooms(&self, agent: &Agent) -> Vec<String> {
+        let forgotten = self.state().forgotten_rooms();
+        if forgotten.is_empty() {
+            return forgotten;
+        }
+        let rooms = agent.rooms();
+        let status = |uri: &str| rooms.iter().find(|r| r.uri == uri).map(|r| r.status);
+        let (mut rejoined, mut settled) = (Vec::new(), Vec::new());
+        for uri in forgotten {
+            match status(&uri) {
+                Some(RoomStatus::Active) => rejoined.push(uri),
+                Some(RoomStatus::Leaving) => {}
+                _ => settled.push(uri),
+            }
+        }
+        self.state().clear_room_tombstones(&rejoined);
+        settled
+    }
+
     /// Makes a record for every room the agent is in, and is not out of,
-    /// that has none.
+    /// that has none, unless it was deleted here.
     fn reconcile_rooms(&self, agent: &Agent, changes: &mut Vec<Change>) {
         for room in agent.rooms() {
             if room.status != RoomStatus::Left {
@@ -409,10 +450,22 @@ impl Store {
     /// The key of the record of room `uri`, made if there is none: named
     /// by the room's `room_name`, with its participants and roles. A
     /// person is made for each participant who is not the user and not
-    /// banned.
-    pub(crate) fn room_for(&self, agent: &Agent, uri: &str, changes: &mut Vec<Change>) -> Key {
-        if let Some(key) = self.state().room_of_uri(uri) {
-            return key.clone();
+    /// banned. `None` for a room deleted here ([`State::is_forgotten`]),
+    /// whose events are dropped.
+    pub(crate) fn room_for(
+        &self,
+        agent: &Agent,
+        uri: &str,
+        changes: &mut Vec<Change>,
+    ) -> Option<Key> {
+        {
+            let state = self.state();
+            if let Some(key) = state.room_of_uri(uri) {
+                return Some(key.clone());
+            }
+            if state.is_forgotten(uri) {
+                return None;
+            }
         }
         let name = agent.room_name(uri).ok().flatten();
         let participants = agent.participants(uri).unwrap_or_default();
@@ -434,7 +487,7 @@ impl Store {
             ext: BTreeMap::new(),
         });
         changes.push(Change::RoomAdded(key.clone()));
-        key
+        Some(key)
     }
 
     /// The key of the person record of `user`, made if there is none.
@@ -542,7 +595,9 @@ impl Store {
         participants: &[String],
         changes: &mut Vec<Change>,
     ) {
-        let key = self.room_for(agent, uri, changes);
+        let Some(key) = self.room_for(agent, uri, changes) else {
+            return;
+        };
         let roles = RoomRoles::of(agent, uri);
         let mut state = self.state();
         for user in participants {
@@ -577,7 +632,9 @@ impl Store {
         changes: &mut Vec<Change>,
         body: impl FnOnce(&str) -> String,
     ) {
-        let room = self.room_for(agent, uri, changes);
+        let Some(room) = self.room_for(agent, uri, changes) else {
+            return;
+        };
         let mut state = self.state();
         if state.message_of_ref(&room, &reference).is_some() || state.is_deleted(&room, &reference)
         {
@@ -644,7 +701,7 @@ impl Store {
         // to an empty list.
         let mut seen: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
         for room in agent.rooms() {
-            if room.status == RoomStatus::Left {
+            if room.status == RoomStatus::Left || self.state().is_forgotten(&room.uri) {
                 continue;
             }
             let Ok(clients) = agent.clients(&room.uri) else {
@@ -700,7 +757,9 @@ impl Store {
         report: &mut SyncReport,
         changes: &mut Vec<Change>,
     ) {
-        let room = self.room_for(agent, &received.room, changes);
+        let Some(room) = self.room_for(agent, &received.room, changes) else {
+            return;
+        };
         let reference = message_ref(&received.message_id);
         {
             let state = self.state();

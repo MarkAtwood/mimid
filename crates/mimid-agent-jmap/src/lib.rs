@@ -27,7 +27,10 @@
 //!   invites, `removeMembers` of another member removes that user from
 //!   the room, and `updateMemberRoles` changes its role in the room; the
 //!   hub's room policy decides (decision mimid-1wgh.62). The owner's own
-//!   removal, and destroying the Chat, leave the room. Rooms the agent joins become Chats at the next `sync`,
+//!   removal, and destroying the Chat, leave the room. Destroying the Chat
+//!   also deletes its Messages, ChatBans and attachments here
+//!   (docs/design/agent-frontends.md §7.9); the other members keep their
+//!   history. Rooms the agent joins become Chats at the next `sync`,
 //!   including the user's rooms that a new device joins by external
 //!   Commit at each `sync` (`Agent::join_own_rooms`; decision
 //!   mimid-1wgh.61).
@@ -136,6 +139,11 @@
 //!   type ([`Options::with_change_log_limit`]); a `/changes` from an older
 //!   state is `cannotCalculateChanges` and the client resyncs (decision
 //!   mimid-1wgh.66).
+//!   Destroying a Chat writes one Message change per Message it held,
+//!   so a long history can push a client's state out of the log.
+//! - A destroyed Chat's attachments that are the user's own uploads from
+//!   the last hour stay in the blob store until its quota deletes them
+//!   (RFC 8620 §6); if the save after the destroy fails, all of them stay.
 //! - Direct Chats are `forbidden` (only group Chats map to rooms).
 //! - On a room-bound Chat, `name`, `description` and `avatarBlobId` are
 //!   `forbidden` (§Chat.roomId). Roles map only to "admin" (the room's

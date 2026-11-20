@@ -25,10 +25,9 @@
 //!   were written into the records (steps 3 and 4 of
 //!   docs/design/agent-frontends.md §3). Records name users by URI, so a
 //!   forgotten person leaves them whole.
-//! - A message, ban or read position may name a room the store does not
-//!   hold: one forgotten here ([`crate::Store::forget_room`]; a client
-//!   destroyed its JMAP Chat, which keeps the Chat's Messages and
-//!   ChatBans), or, for a read position, one a client named.
+//! - A read position may name a room the store does not hold: one a
+//!   client named. A room deleted here ([`crate::Store::forget_room`])
+//!   takes its messages, bans and read positions with it.
 
 use std::collections::BTreeMap;
 
@@ -375,8 +374,9 @@ pub enum Tombstone {
         /// later one.
         reference: Octets<10>,
     },
-    /// A room deleted here with everything in it. Nothing makes one yet:
-    /// it is for deleting a Chat with its messages (bead mimid-1vul.9).
+    /// A room deleted here with everything in it
+    /// ([`crate::State::remove_room`]; docs/design/agent-frontends.md
+    /// §7.9), kept while the agent may still deliver its events.
     #[serde(rename_all = "camelCase")]
     Room {
         /// The room's key.

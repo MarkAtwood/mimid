@@ -21,8 +21,12 @@
 //! - Each save serializes every record to find what changed: no disk work
 //!   for what did not, but CPU in proportion to the history.
 //! - A row holds its record as JSON, so the database is not meant to be
-//!   queried by field; the columns beside it are for deleting a room's
-//!   records (bead mimid-1vul.9) and for reading the file by hand.
+//!   queried by field; the columns beside it are for reading the file by
+//!   hand.
+//! - Deleted rows are overwritten in the file (`PRAGMA secure_delete`), but
+//!   SQLite's rollback journal, deleted after each commit, held them
+//!   while it lasted; what the file system keeps of a deleted file is out
+//!   of reach here.
 //! - The records and OpenMLS's state (`mls.sqlite`) are separate
 //!   databases, so they do not commit together (bead mimid-1vul.10).
 
@@ -218,6 +222,11 @@ impl Database {
             source,
         };
         let mut connection = Connection::open(path).map_err(database)?;
+        // A deleted record's text is overwritten, not left in a free page
+        // of the file (a deleted chat, §7.9).
+        connection
+            .pragma_update(None, "secure_delete", true)
+            .map_err(database)?;
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(database)?;

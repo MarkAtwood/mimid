@@ -474,6 +474,80 @@ impl AgentChat {
         Ok((id, stored))
     }
 
+    /// `Chat/set` destroy (draft-atwood-jmap-chat-00 §Destroying a Chat;
+    /// docs/design/agent-frontends.md §7.9): the room is left if the agent
+    /// is in it ([`Store::leave`]), the Chat is destroyed (crate-jmap
+    /// destroys its ReadPositions), and the store deletes the room with its
+    /// records ([`Store::forget_room`]). Its Messages and ChatBans are
+    /// destroyed too, each a change of its type, so a client's `/changes`
+    /// sees them go. After the save, the blobs of its attachments that
+    /// nothing names any more are deleted ([`Store::delete_blobs`]). The
+    /// history of the room's other members is theirs: nothing is sent but
+    /// the leave.
+    async fn destroy_chat<O: SetObject + Send + Sync>(
+        &self,
+        caller: &(),
+        account_id: &Id,
+        id: &Id,
+    ) -> Result<(), BackendSetError<MemoryError>> {
+        if self.room_of_chat(id).is_some() {
+            self.store
+                .leave(id.as_ref())
+                .await
+                .map_err(action_failure)?;
+        }
+        self.inner
+            .destroy_object::<O>(caller, account_id, id)
+            .await?;
+        let Some(forgotten) = self.store.forget_room(id.as_ref()).await else {
+            self.save_or_log().await;
+            return Ok(());
+        };
+        for message in &forgotten.removed.messages {
+            self.destroy_part::<Message>(message).await;
+        }
+        for ban in &forgotten.removed.bans {
+            self.destroy_part::<ChatBan>(ban).await;
+        }
+        if let Err(error) = self.save().await {
+            // The blobs stay: the database still names them.
+            tracing::error!(
+                name: "agent_chat_store_failed",
+                error = &error as &dyn std::error::Error,
+                "the plaintext store was not written; the deleted Chat's attachments are kept"
+            );
+            return Ok(());
+        }
+        let referenced = self.referenced_blobs().await.unwrap_or_default();
+        if let Err(error) = self.store.delete_blobs(&forgotten, &referenced) {
+            tracing::error!(
+                name: "agent_chat_blobs_not_deleted",
+                error = &error as &dyn std::error::Error,
+                "a deleted Chat's attachments were not all deleted"
+            );
+        }
+        Ok(())
+    }
+
+    /// Destroys object `key` of type `O` of a deleted Chat in the backend,
+    /// if it has one; a failure is logged, since the Chat is gone already.
+    async fn destroy_part<O: SetObject + Send + Sync>(&self, key: &str) {
+        match self
+            .inner
+            .destroy_object::<O>(&(), &self.account, &Id::from(key))
+            .await
+        {
+            Ok(()) => {}
+            Err(BackendSetError::SetError(e)) if e.error_type == SetErrorType::NotFound => {}
+            Err(error) => tracing::error!(
+                name: "agent_chat_destroy_failed",
+                type_name = O::TYPE_NAME,
+                error = ?error,
+                "an object of a deleted Chat was not destroyed"
+            ),
+        }
+    }
+
     /// Writes into the records what a client changed of a local object
     /// `id` of type `type_name` (a ChatContact's `displayName`, a
     /// ReadPosition, a Message's local deletion), as the backend holds it
@@ -848,19 +922,8 @@ impl ChatStore for AgentChat {
         self.check_account(account_id)
             .map_err(SetFailure::into_backend)?;
         let result = match O::TYPE_NAME {
-            "Chat" => {
-                if self.room_of_chat(id).is_some() {
-                    self.store
-                        .leave(id.as_ref())
-                        .await
-                        .map_err(action_failure)?;
-                }
-                self.inner
-                    .destroy_object::<O>(caller, account_id, id)
-                    .await?;
-                self.store.forget_room(id.as_ref());
-                Ok(())
-            }
+            // It saves by itself.
+            "Chat" => return self.destroy_chat::<O>(caller, account_id, id).await,
             // Destroying a Message or a local object is local.
             name if name == "Message" || local(name) => {
                 self.inner

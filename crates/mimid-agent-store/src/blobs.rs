@@ -27,10 +27,15 @@
 //! ([`BlobStore::put`], [`BlobStore::put_upload`]) or read to be sent
 //! ([`BlobStore::touch`]). One lock serializes every write and deletion.
 //!
+//! The attachments of a chat deleted here are deleted at once
+//! ([`BlobStore::delete_if_unreferenced`], through
+//! [`crate::Store::delete_blobs`]), except the user's own uploads younger
+//! than [`MIN_UNREFERENCED_AGE`] (docs/design/agent-frontends.md §7.9).
+//!
 //! # Limitations
 //!
-//! - Unreferenced blobs are deleted only when an upload needs room: there
-//!   is no sweep, so they stay on disk up to the quota.
+//! - Other unreferenced blobs are deleted only when an upload needs room:
+//!   there is no sweep, so they stay on disk up to the quota.
 //! - Referenced blobs (received attachments and those of kept Messages)
 //!   have no quota.
 //! - Each upload lists the directory, and the caller reads every stored
@@ -473,6 +478,41 @@ impl BlobStore {
         written.map(|()| info)
     }
 
+    /// Deletes blob `id` now unless it is in `referenced` or its time is
+    /// later than `stored_by`: it was stored, uploaded or touched since
+    /// (for a deleted chat's attachments, docs/design/agent-frontends.md
+    /// §7.9). Returns whether it was deleted; a blob the store does not
+    /// have is not.
+    ///
+    /// # Errors
+    ///
+    /// [`BlobError::Io`] if the file cannot be inspected or deleted.
+    pub fn delete_if_unreferenced(
+        &self,
+        id: &str,
+        referenced: &BTreeSet<String>,
+        stored_by: SystemTime,
+    ) -> Result<bool, BlobError> {
+        if digest_of(id).is_none() || referenced.contains(id) {
+            return Ok(false);
+        }
+        let _writing = self.lock();
+        let path = self.dir.join(id);
+        let modified = match std::fs::metadata(&path).and_then(|meta| meta.modified()) {
+            Ok(modified) => modified,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(io(&path, "inspect")(e)),
+        };
+        if modified > stored_by {
+            return Ok(false);
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(io(&path, "delete")(e)),
+        }
+    }
+
     /// The id, size and digest of blob `id`, or `None` if the store has no
     /// such blob (or `id` is not a blob id). The content is not read.
     ///
@@ -902,6 +942,51 @@ mod tests {
         let far = SystemTime::now() + mins(24 * 60);
         store.put_upload(b"", &referenced, far).unwrap();
         assert!(stray.exists());
+    }
+
+    /// Oracle: docs/design/agent-frontends.md §7.9 and RFC 8620 §6: a
+    /// deleted chat's blob goes unless something still names it or it was
+    /// stored again after the cut-off.
+    #[test]
+    fn a_blob_is_deleted_only_when_unreferenced_and_not_stored_since() {
+        let (_dir, store) = store();
+        let none = BTreeSet::new();
+        let a = store.put_upload(b"a", &none, t0()).unwrap();
+        let b = store.put_upload(b"b", &none, t0() + mins(2)).unwrap();
+        let referenced = BTreeSet::from([a.id.as_ref().to_owned()]);
+        let cut_off = t0() + mins(1);
+        // Named still: kept.
+        assert!(
+            !store
+                .delete_if_unreferenced(a.id.as_ref(), &referenced, cut_off)
+                .unwrap()
+        );
+        assert!(has(&store, &a));
+        // Stored after the cut-off: kept.
+        assert!(
+            !store
+                .delete_if_unreferenced(b.id.as_ref(), &none, cut_off)
+                .unwrap()
+        );
+        assert!(has(&store, &b));
+        // Neither: deleted, and a second time there is nothing to delete.
+        assert!(
+            store
+                .delete_if_unreferenced(a.id.as_ref(), &none, cut_off)
+                .unwrap()
+        );
+        assert!(!has(&store, &a));
+        assert!(
+            !store
+                .delete_if_unreferenced(a.id.as_ref(), &none, cut_off)
+                .unwrap()
+        );
+        // Not a blob id: nothing.
+        assert!(
+            !store
+                .delete_if_unreferenced("../x", &none, cut_off)
+                .unwrap()
+        );
     }
 
     #[cfg(unix)]

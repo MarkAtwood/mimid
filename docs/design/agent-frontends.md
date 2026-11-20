@@ -457,10 +457,9 @@ step runs the full check list in AGENTS.md before its commit.
      one. Tombstones are saved, and message tombstones are dropped after
      each acknowledgement: `Agent::receive` returns every event not yet
      acknowledged, so after an acknowledgement no event that stored a
-     deleted message comes again. `Tombstone::Room {key, uri}` exists in
-     the format for mimid-1vul.9 (§7.9); nothing makes one yet. A
-     notice destroyed by a client is not made again by the same event
-     either.
+     deleted message comes again. `Tombstone::Room {key, uri}` is for
+     a deleted chat (§7.9). A notice destroyed by a client is not made
+     again by the same event either.
    - `merge_object` and `forget_object` (`mimid-agent-store::merge`) stay
      until step 5: they write the JMAP front end's own writes into the
      records. They keep one rule of §7.7 and §7.8 at run time: a JMAP
@@ -521,7 +520,8 @@ step runs the full check list in AGENTS.md before its commit.
      suite makes none.
    - The run-time rule of §7.7 and §7.8 keeps only what is still
      reachable: a ReadPosition may name a Chat the store does not hold,
-     and a Message or ChatBan of a destroyed Chat keeps its room key.
+     and a Message or ChatBan of a destroyed Chat keeps its room key
+     (until §7.9, which deletes them).
      Records name users by URI and no longer come from JMAP objects, so
      an unknown user (`Sender::Unknown`, `None` as a participant, banned
      user or banner) is no longer made; the record types keep the forms.
@@ -889,8 +889,44 @@ Added on 2026-11-20:
    not in the file, with its room marked unknown, and logs one warning per
    file with the count. Format 2 must keep them the same way (step 4).
 
-§7.9 is reserved for mimid-1vul.9 (deleting a Chat deletes its local
-records).
+9. **Deleting a chat deletes its local data (Mark, 2026-11-20).** When a
+   front end deletes a chat, the store deletes everything it keeps of
+   the room, not only the room record: its messages, bans and read
+   positions, the attachments of its messages waiting for a retry, and
+   the blobs of its attachments. draft-atwood-jmap-chat-00 "Destroying a
+   Chat" removes the Chat from the caller's view and forbids deleting
+   the other participants' history; it does not ask the caller's own
+   copy to be kept, and crate-jmap kept a destroyed Chat's Messages and
+   ChatBans, plaintext no client could reach. Bead mimid-1vul.9 built it:
+
+   - `State::remove_room` (through `Store::forget_room`) takes every
+     record of the room and leaves a `Tombstone::Room {key, uri}`. It
+     returns what it took: the message and ban keys, and the blob ids no
+     remaining message names, marking those of the user's own messages.
+   - While the tombstone is kept, `Store::sync` makes no record for the
+     room and drops its events, so the agent delivering them again (an
+     unacknowledged round, a restart) brings nothing back. The tombstone
+     is settled right after each `Agent::receive`: if the agent is out of
+     the room, or does not know it, no event of it can come after this
+     delivery, so the tombstone goes once the round is acknowledged; if
+     the agent is in the room again (a new invite was joined, or a room
+     was forgotten without leaving), it goes at once, and the room gets a
+     new record with a new key; while the agent is still leaving it
+     stays. Rejoining the same room URI thus starts an empty chat.
+   - The JMAP front end's `Chat/set` destroy leaves the room, destroys
+     the Chat (crate-jmap destroys its ReadPositions), forgets the room,
+     then destroys its Messages and ChatBans in the backend, each a
+     change of its type, and saves. After a successful save it deletes
+     the blobs that nothing names any more (`Store::delete_blobs`): at
+     once for received attachments; for the user's own, which were
+     uploads, only if stored or sent at least an hour before (RFC 8620
+     §6 keeps an unreferenced upload for an hour), else the quota takes
+     them later. A blob stored again after the deletion is kept.
+   - The database sets `PRAGMA secure_delete`, so a deleted row's text is
+     overwritten in the file instead of staying in a free page.
+   - People are not the room's: a person first seen in a deleted room
+     keeps their record (a ChatContact), as before.
+
 
 10. **Store in SQLite, no migration from chat.json (Mark, 2026-11-20).**
     The store's on-disk form is an SQLite database in the agent's state

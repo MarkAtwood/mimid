@@ -13,7 +13,7 @@
 //! | Host a room and invite | [`Store::create_room`] | `host_room`, `invite` |
 //! | Invite, remove, change roles, leave | [`Store::change_members`] | `invite`, `remove`, `change_role`, `leave` |
 //! | Leave a room | [`Store::leave`] | `leave` |
-//! | Forget a room here | [`Store::forget_room`] | none |
+//! | Delete a room here, with its messages | [`Store::forget_room`], [`Store::delete_blobs`] | none |
 //! | Send | [`Store::send`] | `send_message` |
 //! | Edit, retract | [`Store::edit`], [`Store::retract`] | `send_edit`, `send_retraction` |
 //! | Delete here | [`Store::mark_deleted`], [`Store::delete_message`] | none |
@@ -41,7 +41,7 @@
 //!   needs several in a row ([`Store::change_members`]) gets them under
 //!   one lock.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use mimid_agent_core::frank::{decode_abusive_message, decode_unverified_message};
 use mimid_agent_core::{
@@ -50,13 +50,14 @@ use mimid_agent_core::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::blobs::{BlobError, hex};
+use crate::blobs::{BlobError, MIN_UNREFERENCED_AGE, hex};
 use crate::content::BodyType;
 use crate::convert::{message_ref, sender_msg_id};
 use crate::record::{
     Attachment, Ban, Deletion, Key, Message, Octets, Person, ReadPosition, Room,
     RoomStatus as Status, Sender,
 };
+use crate::state::RemovedRoom;
 use crate::store::Store;
 use crate::sync::{MAX_ALIASES, RoomRoles, now_ms};
 
@@ -155,6 +156,16 @@ pub struct Reported {
     pub room: String,
     /// The hub's answer.
     pub outcome: ReportOutcome,
+}
+
+/// A room [`Store::forget_room`] deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ForgottenRoom {
+    /// What was deleted.
+    pub removed: RemovedRoom,
+    /// When.
+    pub at: std::time::SystemTime,
 }
 
 /// An attachment to send, by blob.
@@ -322,11 +333,66 @@ impl Store {
         Ok(())
     }
 
-    /// Forgets room `key` here: its record and its read positions go. Its
-    /// messages and bans stay (bead mimid-1vul.9). The agent is not told;
-    /// [`Store::leave`] first to leave the room too.
-    pub fn forget_room(&self, key: &str) -> Option<Room> {
-        self.state().remove_room(key)
+    /// Deletes room `key` here with everything the store keeps of it
+    /// (docs/design/agent-frontends.md §7.9; [`crate::State::remove_room`]):
+    /// its record, messages, bans, read positions and attachments waiting
+    /// for a retry. A tombstone keeps [`Store::sync`] from storing the
+    /// room's events again while the agent can still deliver them. The
+    /// agent is not told: [`Store::leave`] first to leave the room too. A
+    /// room the agent is still in is not kept out: the next sync makes a
+    /// new record for it.
+    ///
+    /// The blobs of its attachments stay in the blob store until the
+    /// caller has shown the deletion and saved, then calls
+    /// [`Store::delete_blobs`] with the result. Takes the agent lock, so it
+    /// waits for a sync that is running. `None` if there is no such room.
+    pub async fn forget_room(&self, key: &str) -> Option<ForgottenRoom> {
+        let _agent = self.agent.lock().await;
+        let removed = self.state().remove_room(key)?;
+        Some(ForgottenRoom {
+            removed,
+            at: std::time::SystemTime::now(),
+        })
+    }
+
+    /// Deletes from the blob store the blobs of the attachments of a room
+    /// [`Store::forget_room`] deleted, except those in `referenced` (every
+    /// blob id that a record or a front end still names) and those stored
+    /// again since. A blob of the user's own message is the user's upload:
+    /// it is deleted only if it was last stored or sent at least
+    /// [`crate::blobs::MIN_UNREFERENCED_AGE`] before the room was
+    /// forgotten, since RFC 8620 §6 keeps an unreferenced upload that long;
+    /// otherwise the blob store's quota deletes it later. Returns how many
+    /// it deleted; 0 without a blob store.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Blob`] for the first blob that cannot be deleted;
+    /// the rest are then left.
+    pub fn delete_blobs(
+        &self,
+        forgotten: &ForgottenRoom,
+        referenced: &BTreeSet<String>,
+    ) -> Result<usize, ActionError> {
+        let Some(blobs) = &self.blobs else {
+            return Ok(0);
+        };
+        let uploads_by = forgotten
+            .at
+            .checked_sub(MIN_UNREFERENCED_AGE)
+            .unwrap_or(std::time::UNIX_EPOCH);
+        let mut deleted = 0;
+        for id in &forgotten.removed.blobs {
+            let stored_by = if forgotten.removed.sent.contains(id) {
+                uploads_by
+            } else {
+                forgotten.at
+            };
+            if blobs.delete_if_unreferenced(id, referenced, stored_by)? {
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
     }
 
     /// Sends `text` and the attachments `files` to room `key` as one

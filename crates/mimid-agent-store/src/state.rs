@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::content::BodyType;
 use crate::convert::MessageRef;
 use crate::record::{
-    Ban, Deletion, Ext, Invite, Key, Message, Octets, Person, ReadPosition, Revision, Room,
+    Ban, Deletion, Ext, Invite, Key, Message, Octets, Person, ReadPosition, Revision, Room, Sender,
     Tombstone,
 };
 use crate::retry::PendingAttachment;
@@ -41,7 +41,8 @@ pub struct State {
     pub next_seq: u64,
     /// What was deleted here: the versions of messages deleted since the
     /// agent's delivery was last acknowledged ([`State::delete_message`]),
-    /// and rooms.
+    /// and the rooms whose events the agent may still deliver
+    /// ([`State::remove_room`]).
     pub tombstones: BTreeSet<Tombstone>,
     /// Pending invites, read from the agent; not saved.
     pub invites: Vec<Invite>,
@@ -205,14 +206,86 @@ impl State {
         Some(person)
     }
 
-    /// Removes room `key` and its read positions. Its messages and bans
-    /// stay, naming a room the store does not hold (bead mimid-1vul.9 is
-    /// to delete them as well).
-    pub fn remove_room(&mut self, key: &str) -> Option<Room> {
+    /// Deletes room `key` with everything the store keeps of it
+    /// (docs/design/agent-frontends.md §7.9): the room record, its
+    /// messages, bans and read positions, the attachments of its messages
+    /// waiting for a retry, and the tombstones of its deleted messages. A
+    /// [`Tombstone::Room`] takes their place, so that the journal
+    /// delivering the room's events again does not store them again
+    /// ([`State::is_forgotten`]). Returns what was deleted, or `None` if
+    /// there is no such room.
+    pub fn remove_room(&mut self, key: &str) -> Option<RemovedRoom> {
         let room = self.rooms.remove(key)?;
+        let messages: BTreeMap<Key, Message> =
+            self.messages.extract_if(.., |_, m| m.room == key).collect();
+        let bans: Vec<Key> = self
+            .bans
+            .extract_if(.., |_, b| b.room == key)
+            .map(|(k, _)| k)
+            .collect();
         self.read_positions.retain(|_, r| r.room != key);
+        self.pending_attachments
+            .retain(|p| p.room != room.uri && !messages.contains_key(&p.message));
+        self.tombstones
+            .retain(|t| !matches!(t, Tombstone::Message { room, .. } if room == key));
+        self.tombstones.insert(Tombstone::Room {
+            key: key.to_owned(),
+            uri: room.uri.clone(),
+        });
         self.reindex();
-        Some(room)
+        // Blobs are content-addressed: one another message names stays.
+        let named: BTreeSet<&str> = self
+            .messages
+            .values()
+            .flat_map(|m| m.attachments.iter().map(|a| a.blob_id.as_str()))
+            .collect();
+        let own = Sender::User(self.user.clone());
+        let (mut blobs, mut sent) = (BTreeSet::new(), BTreeSet::new());
+        for message in messages.values() {
+            for attachment in &message.attachments {
+                if !named.contains(attachment.blob_id.as_str()) {
+                    blobs.insert(attachment.blob_id.clone());
+                    if message.sender == own {
+                        sent.insert(attachment.blob_id.clone());
+                    }
+                }
+            }
+        }
+        Some(RemovedRoom {
+            room,
+            messages: messages.into_keys().collect(),
+            bans,
+            blobs,
+            sent,
+        })
+    }
+
+    /// Whether room `uri` was deleted here ([`State::remove_room`]) and
+    /// its tombstone is still kept.
+    #[must_use]
+    pub fn is_forgotten(&self, uri: &str) -> bool {
+        self.tombstones
+            .iter()
+            .any(|t| matches!(t, Tombstone::Room { uri: u, .. } if u == uri))
+    }
+
+    /// The URIs of the rooms deleted here whose tombstones are kept.
+    #[must_use]
+    pub fn forgotten_rooms(&self) -> Vec<String> {
+        self.tombstones
+            .iter()
+            .filter_map(|t| match t {
+                Tombstone::Room { uri, .. } => Some(uri.clone()),
+                Tombstone::Message { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Forgets the tombstones of the rooms `uris`: records for them may be
+    /// made again.
+    pub fn clear_room_tombstones(&mut self, uris: &[String]) {
+        self.tombstones
+            .retain(|t| !matches!(t, Tombstone::Room { uri, .. } if uris.contains(uri)));
     }
 
     /// Whether the message in room `room` that `reference` names was
@@ -262,6 +335,24 @@ impl State {
     }
 }
 
+/// What [`State::remove_room`] deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RemovedRoom {
+    /// The room record.
+    pub room: Room,
+    /// The keys of its messages.
+    pub messages: Vec<Key>,
+    /// The keys of its bans.
+    pub bans: Vec<Key>,
+    /// The blob ids its messages' attachments named that no message left
+    /// names.
+    pub blobs: BTreeSet<String>,
+    /// Those of [`RemovedRoom::blobs`] that a message of the user's own
+    /// named: the user's uploads.
+    pub sent: BTreeSet<String>,
+}
+
 /// The reference octets of a `senderMsgId`: the last 10 octets of the
 /// ULID's random part, or `None` if it is not a ULID.
 #[must_use]
@@ -283,10 +374,11 @@ pub fn accepted_at_of(sender_msg_id: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::record::{Participant, RoomStatus, Sender};
+    use crate::record::{Participant, RoomStatus};
     use crate::report::KeptFrank;
 
     const ALICE: &str = "mimi://a.example/u/alice";
+    const BOB: &str = "mimi://a.example/u/bob";
 
     fn message(key: &str, room: &str, body: &str) -> Message {
         Message {
@@ -368,12 +460,10 @@ mod tests {
         assert!(!state.retract_message("M2", 3_000));
     }
 
-    #[test]
-    fn a_removed_room_takes_its_read_positions_but_not_its_messages() {
-        let mut state = State::new(ALICE);
-        state.insert_room(Room {
-            key: "R1".into(),
-            uri: "mimi://a.example/r/one".into(),
+    fn room(key: &str, uri: &str) -> Room {
+        Room {
+            key: key.into(),
+            uri: uri.into(),
             name: None,
             status: RoomStatus::Active,
             participants: vec![Participant {
@@ -382,8 +472,70 @@ mod tests {
             }],
             role_names: BTreeMap::new(),
             ext: Ext::new(),
-        });
-        state.insert_message(message("M1", "R1", "hello"));
+        }
+    }
+
+    /// `message` with its sender `sender`, a `senderMsgId` whose
+    /// reference octets are all `n`, and one attachment of blob `blob`.
+    fn message_with(key: &str, room: &str, sender: &str, n: u8, blob: &str) -> Message {
+        let mut random = [n; 16];
+        random[..6].fill(0);
+        let mut m = message(key, room, "text");
+        m.sender = Sender::User(sender.into());
+        m.sender_msg_id = ulid::Ulid::from_parts(1_000, u128::from_be_bytes(random)).to_string();
+        m.attachments[0].blob_id = blob.into();
+        m
+    }
+
+    fn pending(message: &str, room: &str) -> PendingAttachment {
+        let part = mimi_content::ExternalPart {
+            content_type: String::new(),
+            url: String::new(),
+            expires: 0,
+            size: 0,
+            enc_alg: 1,
+            key: vec![0; 16],
+            nonce: vec![],
+            aad: vec![],
+            hash_alg: 0,
+            content_hash: vec![],
+            description: String::new(),
+            filename: String::new(),
+        };
+        PendingAttachment::new(message.into(), room.into(), 1, &part)
+    }
+
+    fn ban(key: &str, room: &str) -> Ban {
+        Ban {
+            key: key.into(),
+            room: room.into(),
+            user: Some(BOB.into()),
+            banned_by: Some(ALICE.into()),
+            reason: None,
+            expires_at: None,
+            ext: Ext::new(),
+        }
+    }
+
+    /// Oracle: docs/design/agent-frontends.md §7.9, "Deleting a chat
+    /// deletes its local data": every record of the room goes, with what
+    /// waits for a retry and its message tombstones; a room tombstone is
+    /// kept; the other room keeps everything, the blob its message shares
+    /// included; the user's own attachments are told apart.
+    #[test]
+    fn a_removed_room_takes_everything_of_it_and_nothing_else() {
+        const ONE: &str = "mimi://a.example/r/one";
+        const TWO: &str = "mimi://a.example/r/two";
+        let mut state = State::new(ALICE);
+        state.insert_room(room("R1", ONE));
+        state.insert_room(room("R2", TWO));
+        state.insert_message(message_with("M1", "R1", ALICE, 1, "sown"));
+        state.insert_message(message_with("M2", "R1", BOB, 2, "sshared"));
+        state.insert_message(message_with("M3", "R1", BOB, 3, "sbob"));
+        state.insert_message(message_with("M4", "R2", BOB, 4, "sshared"));
+        for (key, room) in [("B1", "R1"), ("B2", "R2")] {
+            state.bans.insert(key.into(), ban(key, room));
+        }
         for (key, room) in [("C1", "R1"), ("C2", "R2")] {
             state.read_positions.insert(
                 key.into(),
@@ -396,11 +548,63 @@ mod tests {
                 },
             );
         }
-        assert!(state.remove_room("R1").is_some());
-        assert_eq!(state.room_of_uri("mimi://a.example/r/one"), None);
-        assert!(state.messages.contains_key("M1"));
-        assert_eq!(state.read_positions.keys().collect::<Vec<_>>(), vec!["C2"]);
+        state.pending_attachments = vec![pending("M3", ONE), pending("M4", TWO)];
+        for room in ["R1", "R2"] {
+            state.tombstones.insert(Tombstone::Message {
+                room: room.into(),
+                reference: Octets([9; 10]),
+            });
+        }
+
+        let removed = state.remove_room("R1").unwrap();
+        assert_eq!(removed.room.uri, ONE);
+        assert_eq!(removed.messages, ["M1", "M2", "M3"]);
+        assert_eq!(removed.bans, ["B1"]);
+        let set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
+        assert_eq!(removed.blobs, set(&["sbob", "sown"]));
+        assert_eq!(removed.sent, set(&["sown"]));
+
+        assert_eq!(state.rooms.keys().collect::<Vec<_>>(), ["R2"]);
+        assert_eq!(state.messages.keys().collect::<Vec<_>>(), ["M4"]);
+        assert_eq!(state.bans.keys().collect::<Vec<_>>(), ["B2"]);
+        assert_eq!(state.read_positions.keys().collect::<Vec<_>>(), ["C2"]);
+        let waiting: Vec<&str> = state
+            .pending_attachments
+            .iter()
+            .map(|p| p.message.as_str())
+            .collect();
+        assert_eq!(waiting, ["M4"]);
+        assert_eq!(
+            state.tombstones,
+            BTreeSet::from([
+                Tombstone::Message {
+                    room: "R2".into(),
+                    reference: Octets([9; 10]),
+                },
+                Tombstone::Room {
+                    key: "R1".into(),
+                    uri: ONE.into(),
+                },
+            ])
+        );
+        assert_eq!(state.room_of_uri(ONE), None);
+        assert_eq!(state.message_of_ref("R1", &[2; 10]), None);
+        assert_eq!(state.message_of_ref("R2", &[4; 10]), Some(&"M4".into()));
+        assert!(state.is_forgotten(ONE) && !state.is_forgotten(TWO));
+        assert_eq!(state.forgotten_rooms(), [ONE]);
         assert!(state.remove_room("R1").is_none());
+
+        // A message acknowledgement leaves the room tombstone; clearing it
+        // by URI does not touch the message tombstones.
+        state.clear_message_tombstones();
+        assert!(state.is_forgotten(ONE));
+        state.tombstones.insert(Tombstone::Message {
+            room: "R2".into(),
+            reference: Octets([9; 10]),
+        });
+        state.clear_room_tombstones(&[ONE.to_owned()]);
+        assert!(!state.is_forgotten(ONE));
+        assert!(state.is_deleted("R2", &[9; 10]));
     }
 
     #[test]
