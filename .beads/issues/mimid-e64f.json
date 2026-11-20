@@ -1,0 +1,12 @@
+{
+  "id": "mimid-e64f",
+  "title": "Binary live stream between agent and provider",
+  "description": "Design note: docs/design/binary-live-stream.md on branch live-stream-note (worktree /data/PROJECT/mimid-worktrees/live-stream-note, commit e47b189). A CBOR-over-WebSocket stream from the agent to its provider, reusing the session and framing layer of Agora spec §11.4/§11.6. v1 replaces polling only. No code until Mark has reviewed the note and answered its open questions (§8).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T19:09:09.011951802Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T19:09:09.011951802Z"
+}
