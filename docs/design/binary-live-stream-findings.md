@@ -539,3 +539,36 @@ and `Changed` for Chat, KeyPackage and Consent.
 > A client of this capability that does not convert content needs
 > `StateChange` events for the Message, Chat, Consent and KeyPackage
 > types; it MAY ask for only these in the event source's `types`.
+
+## F18. A client cannot tell its own stored message from the answer
+
+**Gap.** The server stores the owner's own message and handshake in the
+owner's Chat, so every one of the owner's clients reads it back,
+including the client that sent it. Neither `Room/send` nor
+`Room/update` returns the id of the Message it stored, so the sending
+client can recognise its own copy only by comparing content.
+
+**Draft.** §Room/send: "When the hub accepts the message, the server
+MUST store, in every Chat of a local account bound to the room, a
+Message ... The hub does not forward the owner's own message to the
+owner's provider ... so this is how the owner's clients and the room's
+other local participants receive it." The response arguments are
+`accountId`, `responseCode`, `acceptedAt`, `currentEpoch`. §Room/update
+is the same.
+
+**JMAP binding.** The agent keeps a digest of every MLSMessage it sent
+and skips stored Messages that carry one
+(crates/mimid-agent-core/src/client.rs, `Jmap::is_own`), and must keep
+those digests across restarts (`State::sent`).
+
+**Stream.** The same digests (crates/mimid-agent-core/src/provider.rs,
+`Sent`); the `Send` `Ack` has no `messageId` either, since the stored
+copy is made after the hub answers and the bindings share that code.
+
+**Proposed text.** In §Room/send and §Room/update, among the response
+arguments:
+
+> `messageIds` (Id\[], optional):
+> : The ids of the Messages the server stored in this account for the
+> accepted message, so that the sending client can recognise them when
+> it reads its Messages.

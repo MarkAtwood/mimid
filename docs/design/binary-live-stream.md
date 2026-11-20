@@ -527,26 +527,37 @@ Each item waits for a concrete need, and each gets a version bump or new
 
 ## 7. Tests: the two bindings side by side
 
-- **Same scenarios, same results.** The existing two-agent scenarios
-  (crates/mimid-agent-core/tests/two_agents.rs and the shared helpers in
-  tests/common) run once over JMAP and once over the stream, against one
-  server that serves both. Each run records what the agents report
-  (events, message text, members, epochs, refusals) in a form without
-  ids or times, and the test requires the two records to be equal.
-- **Mixed.** One agent on JMAP and one on the stream in the same room.
+- **Same scenarios, same results.** crates/mimid-agent-core/tests/bindings.rs
+  runs the two-agent scenario of tests/two_agents.rs (publish, host,
+  refused and allowed consent, invite, join, both send, restart, a
+  message received but not acknowledged comes again, leave) three
+  times against one server that serves both bindings: both agents on
+  JMAP, both on the stream, and one on each. Each run records what the
+  agents report (events, message text, members, epochs, refusals) in a
+  form without ids, room URIs or times, and the test requires the three
+  records to be equal.
+- **The daemon.** crates/mimid-agent/tests/push.rs: two daemons with
+  `binding = "stream"` and an hour's poll interval exchange a Welcome
+  and messages, woken by the stream alone.
 - **Stream only:**
-  - no gap and no duplicate across reconnects, including a reconnect
-    between a `Deliver` and its `Position`;
-  - a membership change while subscribed: the Messages it makes visible
-    arrive, and the next `Position` is a state `Message/changes`
-    accepts;
-  - a frame over each limit (`tooLarge`, closed) and one at it;
-  - a wrong, revoked or missing token (`unauthorized`, closed), as the
-    JMAP boundary test does for HTTP (AGENTS.md "Each check has a test
-    showing a wrong identity is rejected");
-  - hostile frames: text frames, duplicate keys, indefinite lengths,
-    non-shortest integers, trailing bytes, unknown `t`, unknown `v`,
-    deep nesting.
+  - no gap and no duplicate across reconnects, including a crash after
+    a `Deliver` was handled but before its position was saved
+    (bindings.rs);
+  - a membership change while subscribed: the Welcome and the Messages
+    it makes visible arrive, and JMAP's `Message/changes` from the
+    stream's first position lists exactly the delivered ids in the same
+    order and ends at the stream's last position (bindings.rs);
+  - a frame over each limit (`tooLarge`, closed) and one at it
+    (crates/mimid-server/tests/live_stream.rs);
+  - a wrong, malformed or revoked token (`unauthorized`, closed), also
+    while connected, as the JMAP boundary test does for HTTP (AGENTS.md
+    "Each check has a test showing a wrong identity is rejected";
+    live_stream.rs, and bindings.rs through the agent);
+  - hostile frames: text frames, duplicate keys, a second hello, an
+    unknown `t` (answered with its `id`), unknown versions
+    (live_stream.rs), and in the codec indefinite lengths,
+    non-shortest integers, trailing bytes, deep nesting, invalid UTF-8
+    and every one-byte corruption of a frame (crates/mimid-live/tests).
 - **Codec** fixtures from outside the code (§8 step 2).
 
 ## 8. Implementation plan
