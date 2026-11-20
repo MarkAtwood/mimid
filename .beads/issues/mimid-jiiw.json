@@ -1,0 +1,16 @@
+{
+  "id": "mimid-jiiw",
+  "title": "mimid-server storage for packaging: robust single replica, Postgres on demand",
+  "description": "Decided with Mark 2026-11-20.\n\nAgent side: keep SQLite. agent.sqlite (mimid-1vul.10) holds MLS secrets, the delivery journal and the chat records in one database, so decrypt-and-store is atomic. Not in scope here.\n\nServer side, in order:\n1. At packaging: a robust single replica. Continuous backup (Litestream or similar) of the sqlx SQLite database, fast restart, documented restore and failover. Do this first.\n2. When a shop asks for Postgres: a storage abstraction in crates/mimid-server/src/store/ with SQLite the default and Postgres an option, still one active replica. Facts as of 2026-11-20: sqlx 0.9 SqlitePool, 123 sqlx::query calls, 10 migrations (STRICT tables, BLOB columns), about 13 SQLite-specific constructs (pragmas, ON CONFLICT, RETURNING). Postgres needs its own migrations, $1 placeholders and BYTEA. The hub keeps no OpenMLS storage: each room's Observer is an in-memory PublicGroup rebuilt from the room table's GroupInfo and ratchet tree, so no OpenMLS Postgres provider is needed.\n3. Several replicas, only on real demand: shard rooms across replicas (each room owned by one replica, which keeps the per-room Commit order single-writer) rather than row locks, plus a shared change bus for EventSource fanout (Postgres LISTEN/NOTIFY or a broker).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T20:12:07.93524222Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T20:12:07.93524222Z",
+  "labels": [
+    "server",
+    "packaging"
+  ]
+}
