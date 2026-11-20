@@ -14,8 +14,8 @@
 //! §7.3, §6.1, §6.2; see the `http` module for the request checks).
 //!
 //! The daemon builds the plaintext store first
-//! ([`mimid_agent_store::Store`]: the agent, the records in
-//! `<state_dir>/chat.sqlite`, the blob store, the change feed), then puts
+//! ([`mimid_agent_store::Store`]: the agent, the records in the agent's
+//! database `<state_dir>/agent.sqlite`, the blob store, the change feed), then puts
 //! the JMAP front end over it ([`mimid_agent_jmap::AgentChat::over`]),
 //! unless the configuration has `[jmap] enabled = false`: then the store
 //! syncs as ever, the HTTP listener serves only the did:webvh log endpoint
@@ -104,11 +104,13 @@
 //!
 //! # Limitations
 //!
-//! - The decrypted Chats and Messages are kept in the SQLite database
-//!   `<state_dir>/chat.sqlite` ([`CHAT_STORE_FILE`], mode 0600), what
-//!   changed written after each change; see mimid-agent-jmap's `persist`
-//!   limits (state strings restart, so clients resync after a restart). A
-//!   `chat.json` from before is not read.
+//! - The decrypted Chats and Messages are kept in the agent's SQLite
+//!   database `<state_dir>/agent.sqlite` ([`DATABASE_FILE`], mode 0600),
+//!   beside the MLS state, what changed written after each change; see
+//!   mimid-agent-jmap's `persist` limits (state strings restart, so
+//!   clients resync after a restart). A `chat.json`, or a state directory
+//!   of the layout before (`state.json`, `mls.sqlite`, `chat.sqlite`), is
+//!   not read.
 //! - The daemon polls its server on an interval; it does not listen to
 //!   the server's EventSource, so incoming messages wait for the next
 //!   sync.
@@ -164,8 +166,9 @@ mod http;
 pub mod token;
 
 pub use config::{Config, ConfigError, Invites, IrcSetting, JmapSetting};
-pub use daemon::{BLOBS_DIR, CHAT_STORE_FILE, Daemon, StartError};
+pub use daemon::{BLOBS_DIR, Daemon, StartError};
 pub use http::{
     CAPABILITIES, CHAT_CAPABILITY, CORE_CAPABILITY, MAX_CONCURRENT_UPLOAD, MAX_SIZE_UPLOAD,
 };
+pub use mimid_agent_core::DATABASE_FILE;
 pub use token::{LocalToken, TokenError};

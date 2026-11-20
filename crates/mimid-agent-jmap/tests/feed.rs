@@ -135,7 +135,7 @@ impl Bob {
         .await
         .unwrap();
         let store = Store::new(agent, InvitePolicy::Any);
-        store.open_database(dir.join("bob.sqlite")).unwrap();
+        store.open_database().unwrap();
         let store = Arc::new(store);
         let chat = Arc::new(
             AgentChat::over(Arc::clone(&store), Id::from("bob"), Options::default()).unwrap(),

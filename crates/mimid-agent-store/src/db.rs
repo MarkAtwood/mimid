@@ -1,20 +1,30 @@
-//! The store's database (docs/design/agent-frontends.md §7.10): one SQLite
-//! file, `chat.sqlite` in the agent's state directory, 0600.
+//! The store's database (docs/design/agent-frontends.md §7.10, §3 step 9): the
+//! store's tables in the agent's own SQLite database, `agent.sqlite` in its
+//! state directory (0600; [`mimid_agent_core::DATABASE_FILE`]), beside
+//! OpenMLS's state, the agent's state and its delivery journal. The store
+//! reaches it through a connection of its own, so its saves do not wait for
+//! the agent's lock; SQLite keeps writers one at a time.
 //!
 //! One table per record type, each row a record by its key: the record as
 //! JSON (the serde form of [`crate::record`]) in `record`, and beside it
 //! the columns that name its room or user. The store holds every record in
 //! memory ([`State`], with its own lookup indexes), so the database is read
 //! whole once at start and otherwise only written by key: it has no index
-//! beyond the primary keys. The schema version is SQLite's `user_version`
-//! ([`SCHEMA_VERSION`]).
+//! beyond the primary keys. The schema version is the `store` row of the
+//! database's `schema_version` table ([`SCHEMA_VERSION`]), which the agent's
+//! tables share (`agent` row), not SQLite's `user_version`, which is one per
+//! database.
 //!
 //! [`Database::save`] writes what changed since the last save or load, and
 //! nothing else, in one transaction, so a crash leaves the database as
-//! the last save left it. A store starts from an empty database; there is
-//! no conversion from the `chat.json` mimid-agent-jmap kept before the
-//! store (Mark, §7.10), and a database of another schema version is
-//! refused, not converted.
+//! the last save left it. [`Database::save_with`] runs more in that
+//! transaction: [`crate::Store::sync`] acknowledges there what the agent
+//! delivered (`Agent::acknowledge_in`), so the records of a delivery and
+//! its acknowledgement commit together. A store starts from an empty
+//! database; there is no conversion from the `chat.json` mimid-agent-jmap
+//! kept before the store (Mark, §7.10) or from the `chat.sqlite` of schema
+//! version 2, and a database of another schema version is refused, not
+//! converted.
 //!
 //! # Limitations
 //!
@@ -27,13 +37,16 @@
 //!   SQLite's rollback journal, deleted after each commit, held them
 //!   while it lasted; what the file system keeps of a deleted file is out
 //!   of reach here.
-//! - The records and OpenMLS's state (`mls.sqlite`) are separate
-//!   databases, so they do not commit together (bead mimid-1vul.10).
+//! - Two connections write the file, the agent's and the store's; one
+//!   waits for the other's transaction up to [`BUSY_TIMEOUT`], then the
+//!   save fails and the next one writes what it would have.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, OptionalExtension, params};
+use std::time::Duration;
+
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -71,13 +84,32 @@ pub enum FileError {
     /// before a save ([`crate::Frontend`]).
     #[error("a front end's part of the plaintext store: {0}")]
     Frontend(String),
+    /// The agent could not acknowledge what the save stored; nothing was
+    /// written, and the agent delivers it again.
+    #[error("acknowledging what the agent delivered")]
+    Acknowledge(#[source] mimid_agent_core::AgentError),
 }
 
 /// The schema this version reads and writes. A database of another
-/// version is refused (§7.10: no conversions). Version 2 (bead
-/// mimid-1vul.11) names every participant, sender, banned user and banner
-/// by URI; version 1 also allowed an unknown one.
-pub const SCHEMA_VERSION: i64 = 2;
+/// version is refused (§7.10: no conversions). Version 3 (bead
+/// mimid-1vul.10) keeps the tables in the agent's database, with the
+/// version in its `schema_version` table; version 2 (bead mimid-1vul.11),
+/// in `chat.sqlite` under `user_version`, names every participant, sender,
+/// banned user and banner by URI; version 1 also allowed an unknown one.
+pub const SCHEMA_VERSION: i64 = 3;
+
+/// The store's row in `schema_version`.
+const SCHEMA_PART: &str = "store";
+
+/// How long a statement waits for the agent's write lock.
+pub const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The table of schema versions the agent's tables share; made only if
+/// missing, as mimid-agent-core makes it.
+const SCHEMA_VERSIONS: &str = "
+CREATE TABLE IF NOT EXISTS schema_version (part TEXT PRIMARY KEY NOT NULL,
+                                           version INTEGER NOT NULL);
+";
 
 /// The schema's tables; only the records' JSON changed from version 1.
 const SCHEMA: &str = "
@@ -197,8 +229,9 @@ impl std::fmt::Debug for Database {
 }
 
 impl Database {
-    /// Opens the database at `path`, creating it 0600 with the schema if
-    /// it does not exist.
+    /// Opens the database at `path`, creating it 0600 if it does not exist,
+    /// and the store's tables in it if it has none: the agent's database
+    /// ([`crate::Store::open_database`]), or any file of its own.
     ///
     /// # Errors
     ///
@@ -229,19 +262,31 @@ impl Database {
         connection
             .pragma_update(None, "secure_delete", true)
             .map_err(database)?;
-        let version: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
+        connection.busy_timeout(BUSY_TIMEOUT).map_err(database)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database)?;
+        tx.execute_batch(SCHEMA_VERSIONS).map_err(database)?;
+        let version: Option<i64> = tx
+            .query_row(
+                "SELECT version FROM schema_version WHERE part = ?1",
+                [SCHEMA_PART],
+                |row| row.get(0),
+            )
+            .optional()
             .map_err(database)?;
         match version {
-            0 => {
-                let tx = connection.transaction().map_err(database)?;
+            None => {
                 tx.execute_batch(SCHEMA).map_err(database)?;
-                tx.pragma_update(None, "user_version", SCHEMA_VERSION)
-                    .map_err(database)?;
+                tx.execute(
+                    "INSERT INTO schema_version (part, version) VALUES (?1, ?2)",
+                    params![SCHEMA_PART, SCHEMA_VERSION],
+                )
+                .map_err(database)?;
                 tx.commit().map_err(database)?;
             }
-            SCHEMA_VERSION => {}
-            other => {
+            Some(SCHEMA_VERSION) => drop(tx),
+            Some(other) => {
                 return Err(malformed(format!(
                     "schema version {other}; this agent reads only version \
                      {SCHEMA_VERSION} and does not convert a store"
@@ -358,6 +403,22 @@ impl Database {
     /// [`FileError::Malformed`] if a record cannot be encoded. Nothing is
     /// then written.
     pub fn save(&mut self, state: &State) -> Result<usize, FileError> {
+        self.save_with(state, |_| Ok(()))
+    }
+
+    /// [`Database::save`], with `also` run in the same transaction after
+    /// the rows are written and before the commit (the agent's
+    /// acknowledgement, `Agent::acknowledge_in`).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Database::save`], and the error of `also`. Nothing is
+    /// then written.
+    pub fn save_with(
+        &mut self,
+        state: &State,
+        also: impl FnOnce(&Transaction<'_>) -> Result<(), FileError>,
+    ) -> Result<usize, FileError> {
         let rows = rows_of(state)?;
         let empty = BTreeMap::new();
         let path = self.path.clone();
@@ -365,7 +426,10 @@ impl Database {
             path: path.clone(),
             source,
         };
-        let tx = self.connection.transaction().map_err(database)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database)?;
         let mut written = 0;
         for (table, columns) in TABLES {
             let now = rows.get(table).unwrap_or(&empty);
@@ -398,6 +462,7 @@ impl Database {
                 }
             }
         }
+        also(&tx)?;
         tx.commit().map_err(database)?;
         self.saved = rows;
         Ok(written)

@@ -46,6 +46,9 @@ mls-rs-core = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c
 mls-rs-crypto-rustcrypto = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
 # The version and features mimid-agent-core uses.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
+# Reading the store's tables in the agent's database (tests/chat_delete.rs);
+# the version mimid-agent-store uses.
+rusqlite = "=0.37.0"
 # The digests of attachments in tests/two_accounts.rs.
 sha2.workspace = true
 tempfile = "=3.23.0"

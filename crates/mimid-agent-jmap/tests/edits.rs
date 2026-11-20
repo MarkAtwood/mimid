@@ -134,7 +134,7 @@ async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
     agent
 }
 
-/// One user's JMAP Chat account, kept in `<dir>/<user>-chat.json`.
+/// One user's JMAP Chat account, kept in its agent's database.
 struct Client {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<()>,
@@ -142,13 +142,12 @@ struct Client {
 
 impl Client {
     async fn open(server: &Server, user: &'static str, account: &str, dir: &Path) -> Self {
-        let name = user.rsplit('/').next().unwrap();
         let chat = AgentChat::new(
             agent(server, user, dir).await,
             Id::from(account),
             Options::default(),
         )
-        .persisted_at(dir.join(format!("{name}-chat.json")))
+        .persisted()
         .unwrap();
         let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();

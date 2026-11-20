@@ -3,11 +3,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
-use mimid_agent_core::Agent;
+use mimid_agent_core::{Agent, Receipt};
 use tokio::sync::{Mutex as AsyncMutex, Notify, broadcast};
 
 use crate::action::ForgottenRoom;
@@ -62,8 +62,13 @@ pub trait Frontend: Send + Sync {
 /// attachment content, and the change feed ([`crate::feed`]).
 /// [`Store::sync`] is the agent's only journal consumer: no front end,
 /// and nothing else that holds the agent ([`Store::agent`]), calls
-/// `Agent::receive` or `Agent::acknowledge`, since the tombstones of
+/// `Agent::receive`, `Agent::acknowledge` or `Agent::acknowledge_in`,
+/// since the tombstones of
 /// deleted messages and rooms count on it.
+///
+/// The records and the agent's state share one database: what a round
+/// of [`Store::sync`] stores and the agent's acknowledgement of it commit
+/// in one transaction ([`crate::db`]).
 ///
 /// Several front ends share one store (`Arc<Store>`): each registers
 /// itself ([`Store::add_frontend`]), calls the write methods
@@ -79,6 +84,9 @@ pub struct Store {
     pub(crate) user: String,
     pub(crate) invites: InvitePolicy,
     pub(crate) blobs: OnceLock<BlobStore>,
+    /// The agent's database ([`Agent::database_path`]), where
+    /// [`Store::open_database`] keeps the records.
+    database: PathBuf,
     state: Mutex<State>,
     /// Each active room's epoch when the people's DIDs were last set from
     /// its leaves; a change of any sets them again.
@@ -113,7 +121,9 @@ impl Store {
     #[must_use]
     pub fn new(agent: Agent, invites: InvitePolicy) -> Self {
         let user = agent.user().to_owned();
+        let database = agent.database_path().to_owned();
         Self {
+            database,
             agent: Arc::new(AsyncMutex::new(agent)),
             state: Mutex::new(State::new(user.clone())),
             user,
@@ -140,22 +150,30 @@ impl Store {
             .push(frontend);
     }
 
-    /// Keeps the records in the SQLite database `path` from now on
-    /// ([`crate::db`]), first reading them from it; a new database starts
-    /// empty. The store must be this user's. Without a database the
-    /// records live only in memory.
+    /// Keeps the records in the agent's database from now on
+    /// ([`crate::db`], [`Store::database_path`]), first reading them from
+    /// it; a database without the store's tables starts empty. The store
+    /// must be this user's. Without a database the records live only in
+    /// memory.
     ///
     /// # Errors
     ///
     /// The [`FileError`] of [`Database::open`] and [`Database::load`]. The
     /// database is then not used, and nothing is written.
-    pub fn open_database(&self, path: impl AsRef<Path>) -> Result<(), FileError> {
-        let mut database = Database::open(path.as_ref())?;
+    pub fn open_database(&self) -> Result<(), FileError> {
+        let mut database = Database::open(&self.database)?;
         if let Some(state) = database.load(&self.user)? {
             self.restore(state);
         }
         *self.file.lock().unwrap_or_else(PoisonError::into_inner) = Some(database);
         Ok(())
+    }
+
+    /// The agent's database, where [`Store::open_database`] keeps the
+    /// records.
+    #[must_use]
+    pub fn database_path(&self) -> &Path {
+        &self.database
     }
 
     /// Whether the records are kept in a database.
@@ -193,6 +211,22 @@ impl Store {
     /// [`FileError::Frontend`] if a front end fails, and the
     /// [`FileError`] of [`Database::save`]; nothing is then written.
     pub async fn save(&self) -> Result<(), FileError> {
+        self.save_acknowledging(None).await
+    }
+
+    /// [`Store::save`], acknowledging what `delivered` names to the agent
+    /// in the transaction that writes the records
+    /// (`Agent::acknowledge_in`), or, without a database, after the save.
+    /// Only [`Store::sync`] passes a delivery.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Store::save`], and [`FileError::Acknowledge`]; nothing is
+    /// then written or acknowledged.
+    pub(crate) async fn save_acknowledging(
+        &self,
+        delivered: Option<(&mut Agent, Receipt)>,
+    ) -> Result<(), FileError> {
         let _one_at_a_time = self.save_lock.lock().await;
         let changes = self.feed().take();
         let frontends = self
@@ -209,12 +243,23 @@ impl Store {
                 result = Err(FileError::Frontend(e));
             }
         }
-        if result.is_ok() && self.has_database() {
-            let state = self.state().clone();
+        if result.is_ok() {
+            let state = self.has_database().then(|| self.state().clone());
             let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-            if let Some(file) = file.as_mut() {
-                result = file.save(&state).map(|_| ());
-            }
+            result = match (file.as_mut(), state, delivered) {
+                (Some(file), Some(state), Some((agent, receipt))) => file
+                    .save_with(&state, |tx| {
+                        agent
+                            .acknowledge_in(receipt, tx)
+                            .map_err(FileError::Acknowledge)
+                    })
+                    .map(|_| ()),
+                (Some(file), Some(state), None) => file.save(&state).map(|_| ()),
+                (_, _, Some((agent, receipt))) => {
+                    agent.acknowledge(receipt).map_err(FileError::Acknowledge)
+                }
+                _ => Ok(()),
+            };
         }
         if let Some(last) = self.feed().publish(changes) {
             // No receiver only means no subscriber.
@@ -370,9 +415,9 @@ impl Store {
     }
 
     /// The agent, for what the store has no method for (publishing
-    /// KeyPackages, taking a did:webvh log). Never call `Agent::receive` or
-    /// `Agent::acknowledge` through it: [`Store::sync`] is the journal's
-    /// only consumer.
+    /// KeyPackages, taking a did:webvh log). Never call `Agent::receive`,
+    /// `Agent::acknowledge` or `Agent::acknowledge_in` through it:
+    /// [`Store::sync`] is the journal's only consumer.
     #[must_use]
     pub fn agent(&self) -> &Arc<AsyncMutex<Agent>> {
         &self.agent

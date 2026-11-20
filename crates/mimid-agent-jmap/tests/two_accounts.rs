@@ -231,7 +231,7 @@ impl Client {
     }
 
     /// As [`Client::new`]; with `persisted`, the account's objects are kept
-    /// in `<dir>/<user>-chat.json` (bead mimid-1wgh.13.12), and with
+    /// in the agent's database (bead mimid-1wgh.13.12), and with
     /// `blobs`, attachments in `<dir>/<user>-blobs` (bead mimid-1wgh.14).
     async fn open(
         server: &Server,
@@ -277,9 +277,7 @@ impl Client {
         let name = user.rsplit('/').next().unwrap();
         let mut chat = AgentChat::new(agent, Id::from(account), options);
         if persisted {
-            chat = chat
-                .persisted_at(dir.join(format!("{name}-chat.json")))
-                .unwrap();
+            chat = chat.persisted().unwrap();
         }
         if blobs {
             chat = chat.with_blobs(dir.join(format!("{name}-blobs"))).unwrap();
@@ -674,11 +672,11 @@ async fn a_restart_keeps_chats_and_messages() {
     assert_eq!(bob.get("Chat", None).await.len(), 1);
     let new = got.iter().find(|m| m["body"] == json!("after")).unwrap();
     assert_eq!(new["senderId"], before[0]["senderId"]);
-    let file = dir.path().join("bob-chat.json");
+    let file = bob.chat.store().database_path();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        let mode = std::fs::metadata(file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
 }

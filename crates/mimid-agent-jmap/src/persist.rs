@@ -5,9 +5,10 @@
 //! ([`crate::edits`]). They must: the agent cannot decrypt a message
 //! again, since MLS consumes the keys (RFC 9420 §9.2).
 //!
-//! The store owns its database ([`mimid_agent_store::Store::open_database`],
-//! SQLite at the path given to [`AgentChat::persisted_at`];
-//! docs/design/agent-frontends.md §3 step 4, §7.10). It holds the records,
+//! The store owns its database ([`mimid_agent_store::Store::open_database`]:
+//! its tables in the agent's SQLite database, opened by
+//! [`AgentChat::persisted`]; docs/design/agent-frontends.md §3 steps 4
+//! and 9, §7.10). It holds the records,
 //! and in each record's `ext["jmap"]` what the JMAP object has beyond what
 //! the record renders to ([`crate::render`]); the accountId is in the
 //! store's own `ext["jmap"]`. At each save, whoever asks for it, the
@@ -31,13 +32,12 @@
 //!   record to find what changed, though it writes only that.
 //! - State strings start again after a restart, so a client's `/changes`
 //!   from before the restart is `cannotCalculateChanges` and it resyncs.
-//! - [`AgentChat::sync`] acknowledges what the agent delivered only after
-//!   this file is written, so a crash between the two delivers it again
-//!   (bead mimid-s4b1); a Message destroyed meanwhile stays destroyed (the
-//!   store's tombstones). The agent's own window remains: OpenMLS writes
-//!   the consumed secrets to `mls.sqlite` before the agent writes the
-//!   decrypted event to its journal, so a crash in that one write loses
-//!   the message.
+//! - [`AgentChat::sync`] acknowledges what the agent delivered in the
+//!   transaction that writes the records (bead mimid-1vul.10), so a crash
+//!   before it commits delivers it again (bead mimid-s4b1); a Message
+//!   destroyed meanwhile stays destroyed (the store's tombstones). The
+//!   agent journals what it decrypts in the transaction that consumes the
+//!   MLS secrets, so no crash loses a message there either.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -236,9 +236,9 @@ fn set_ext(ext: &mut Ext, jmap: Option<Value>) {
 }
 
 impl AgentChat {
-    /// Keeps this account's objects in the store's SQLite database at
-    /// `path` (created 0600 if missing), first loading what it holds (see
-    /// the module documentation).
+    /// Keeps this account's objects in the store's tables of the agent's
+    /// SQLite database ([`mimid_agent_store::Store::open_database`]),
+    /// first loading what they hold (see the module documentation).
     ///
     /// # Errors
     ///
@@ -246,10 +246,10 @@ impl AgentChat {
     /// database fails, and [`PersistError::Malformed`] if it is not a
     /// store this version reads for this account. A store that cannot be
     /// read is never replaced.
-    pub fn persisted_at(self, path: impl Into<PathBuf>) -> Result<Self, PersistError> {
-        let path = path.into();
+    pub fn persisted(self) -> Result<Self, PersistError> {
+        let path = self.store.database_path().to_owned();
         self.store
-            .open_database(&path)
+            .open_database()
             .map_err(|e| file_error(&path, e))?;
         self.load_records(&path)?;
         Ok(self)

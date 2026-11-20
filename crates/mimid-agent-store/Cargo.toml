@@ -27,5 +27,12 @@ tracing.workspace = true
 ulid = "=3.0.0"
 
 [dev-dependencies]
+axum.workspace = true
 hex = "0.4.3"
+# The crash tests (tests/crash.rs) make one step of receiving or
+# acknowledging fail (Agent::fail_next).
+mimid-agent-core = { path = "../mimid-agent-core", features = ["fail-points"] }
+# The hub the crash tests' agents talk to.
+mimid-server = { path = "../mimid-server" }
 tempfile = "=3.23.0"
+tokio.workspace = true

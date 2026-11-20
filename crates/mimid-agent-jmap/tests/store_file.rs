@@ -10,20 +10,24 @@
 //!   (compared by id: the order of a `/get` of all objects is not
 //!   defined, RFC 8620 §5.1).
 //! - A Message destroyed here stays destroyed when the agent delivers it
-//!   again: a save failed (here, its directory could not be written), so
+//!   again: a save failed (here, a front end's part in it failed), so
 //!   the delivery was not acknowledged (bead mimid-s4b1), and the next
 //!   sync, in the same run or after a restart, receives it again.
 
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::future::Future;
+use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use jmap_server::{Dispatcher, Id, JmapRequest, State};
 use mimid_agent_core::{Agent, AgentConfig};
 use mimid_agent_jmap::{AgentChat, Options, SyncError};
+use mimid_agent_store::{Change, Frontend};
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
@@ -117,12 +121,14 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
 struct Client {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<()>,
+    /// Set, every save fails.
+    saves: Arc<FailingSaves>,
 }
 
 impl Client {
     /// `user`'s account, its agent's state in `dir/<name>`, its records in
-    /// the database `store` if given.
-    async fn open(server: &Server, user: &'static str, dir: &Path, store: Option<&Path>) -> Self {
+    /// the agent's database if `persisted`.
+    async fn open(server: &Server, user: &'static str, dir: &Path, persisted: bool) -> Self {
         let name = user.rsplit('/').next().unwrap();
         let mut agent = Agent::open(AgentConfig {
             server_url: server.base.clone(),
@@ -136,13 +142,20 @@ impl Client {
         .unwrap();
         agent.publish_key_packages(2).await.unwrap();
         let mut chat = AgentChat::new(agent, Id::from(name), Options::default());
-        if let Some(store) = store {
-            chat = chat.persisted_at(store).unwrap();
+        if persisted {
+            chat = chat.persisted().unwrap();
         }
+        let saves = Arc::new(FailingSaves::default());
+        chat.store()
+            .add_frontend(Arc::clone(&saves) as Arc<dyn Frontend>);
         let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();
         AgentChat::register(&chat, &mut dispatcher);
-        Self { chat, dispatcher }
+        Self {
+            chat,
+            dispatcher,
+            saves,
+        }
     }
 
     async fn call(&self, method: &str, mut args: Value) -> Value {
@@ -243,11 +256,11 @@ impl Client {
     }
 }
 
-/// alice, and bob with his records in `store`, in one Chat: alice's id
-/// of it.
-async fn chat_of_two(server: &Server, dir: &Path, store: &Path) -> (Client, Client, String) {
-    let alice = Client::open(server, ALICE, dir, None).await;
-    let bob = Client::open(server, BOB, dir, Some(store)).await;
+/// alice, and bob with his records in his agent's database, in one Chat:
+/// alice's id of it.
+async fn chat_of_two(server: &Server, dir: &Path) -> (Client, Client, String) {
+    let alice = Client::open(server, ALICE, dir, false).await;
+    let bob = Client::open(server, BOB, dir, true).await;
     bob.chat.agent().lock().await.allow(ALICE).await.unwrap();
     let contact = alice.create("ChatContact", json!({"identity": BOB})).await;
     let chat = alice
@@ -275,28 +288,36 @@ async fn send(alice: &Client, chat: &str, body: &str) -> String {
         .await
 }
 
-/// Makes directory `dir` writable or not; SQLite then cannot make the
-/// journal a write needs.
-fn writable(dir: &Path, yes: bool) {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = if yes { 0o700 } else { 0o500 };
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
-}
+/// A front end whose part in every save fails while it is set, so the
+/// save writes nothing and the delivery it would acknowledge is not:
+/// the failed save the test needs, now that the records share the
+/// agent's database (bead mimid-1vul.10) and an unwritable directory
+/// would stop the agent too.
+#[derive(Default)]
+struct FailingSaves(AtomicBool);
 
-/// bob's store directory and database in `dir`.
-fn store_of(dir: &Path) -> (PathBuf, PathBuf) {
-    let store_dir = dir.join("store");
-    std::fs::create_dir(&store_dir).unwrap();
-    let path = store_dir.join("bob-chat.sqlite");
-    (store_dir, path)
+impl Frontend for FailingSaves {
+    fn before_save<'a>(
+        &'a self,
+        _store: &'a mimid_agent_store::Store,
+        _changes: &'a [Change],
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        let failing = self.0.load(Ordering::SeqCst);
+        Box::pin(async move {
+            if failing {
+                Err("this test fails the save".to_owned())
+            } else {
+                Ok(())
+            }
+        })
+    }
 }
 
 #[tokio::test]
 async fn a_restart_shows_every_object_as_it_was() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
-    let (_store_dir, store) = store_of(dir.path());
-    let (alice, bob, chat) = chat_of_two(&server, dir.path(), &store).await;
+    let (alice, bob, chat) = chat_of_two(&server, dir.path()).await;
     let edited = send(&alice, &chat, "before").await;
     let retracted = send(&alice, &chat, "gone soon").await;
     send(&alice, &chat, "kept").await;
@@ -356,12 +377,13 @@ async fn a_restart_shows_every_object_as_it_was() {
     assert_eq!(before["Message"].len(), 3, "{before:?}");
 
     drop(bob);
-    let bob = Client::open(&server, BOB, dir.path(), Some(&store)).await;
+    let bob = Client::open(&server, BOB, dir.path(), true).await;
     assert_eq!(bob.everything().await, before);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&store).unwrap().permissions().mode() & 0o777;
+        let store = bob.chat.store().database_path();
+        let mode = std::fs::metadata(store).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
 }
@@ -370,15 +392,14 @@ async fn a_restart_shows_every_object_as_it_was() {
 async fn a_message_destroyed_here_stays_destroyed_when_delivered_again() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
-    let (store_dir, store) = store_of(dir.path());
-    let (alice, bob, chat) = chat_of_two(&server, dir.path(), &store).await;
+    let (alice, bob, chat) = chat_of_two(&server, dir.path()).await;
 
     // In one run: the save fails, so the delivery is not acknowledged;
     // the client destroys the Message; the next sync receives it again.
-    writable(&store_dir, false);
+    bob.saves.0.store(true, Ordering::SeqCst);
     send(&alice, &chat, "first").await;
     let failed = bob.sync_until_body("first").await;
-    writable(&store_dir, true);
+    bob.saves.0.store(false, Ordering::SeqCst);
     assert!(matches!(failed, Err(SyncError::Persist(_))), "{failed:?}");
     let first = bob.all("Message").await[0]["id"]
         .as_str()
@@ -390,10 +411,10 @@ async fn a_message_destroyed_here_stays_destroyed_when_delivered_again() {
     assert!(bob.bodies().await.is_empty());
 
     // Across a restart: the same, with the restart before the next sync.
-    writable(&store_dir, false);
+    bob.saves.0.store(true, Ordering::SeqCst);
     send(&alice, &chat, "second").await;
     let failed = bob.sync_until_body("second").await;
-    writable(&store_dir, true);
+    bob.saves.0.store(false, Ordering::SeqCst);
     assert!(failed.is_err(), "{failed:?}");
     let second = bob.all("Message").await[0]["id"]
         .as_str()
@@ -401,7 +422,7 @@ async fn a_message_destroyed_here_stays_destroyed_when_delivered_again() {
         .to_owned();
     bob.destroy("Message", &second).await;
     drop(bob);
-    let bob = Client::open(&server, BOB, dir.path(), Some(&store)).await;
+    let bob = Client::open(&server, BOB, dir.path(), true).await;
     let report = bob.chat.sync().await.unwrap();
     assert_eq!(report.messages, 0, "{report:?}");
     assert!(bob.bodies().await.is_empty());

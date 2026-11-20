@@ -1,11 +1,11 @@
 //! Deleting a Chat deletes its local data (docs/design/agent-frontends.md
 //! §7.9, bead mimid-1vul.9): alice and carol, and bob with his records in
-//! an SQLite database and his attachments in a blob store, on one
+//! his agent's SQLite database and his attachments in a blob store, on one
 //! in-process mimid server. bob hosts a Chat "gone" with alice and carol,
 //! bans carol in it, sends to it and receives a Message and an attachment
 //! from alice; alice and bob also share a Chat "kept". bob destroys
 //! "gone" while its last delivery is still not acknowledged (a save
-//! failed: its directory could not be written).
+//! failed: a front end's part in it failed).
 //!
 //! Oracles:
 //!
@@ -14,8 +14,10 @@
 //! - §7.9: its Messages and ChatBan are destroyed with it, as changes a
 //!   client's `/changes` reports; after a restart the agent's redelivery
 //!   brings none of them back; once bob is out of the room, the database
-//!   file holds none of its text, its key, its URI or its blob id, and the
-//!   blob store no longer has the attachment.
+//!   file holds none of its text, its key or its blob id, none of the
+//!   store's tables holds its URI (the agent's own state, in the same
+//!   file, names the rooms it left), and the blob store no longer has the
+//!   attachment.
 //! - "kept" and its Message are untouched, and the next Message to it
 //!   arrives.
 //! - Invited to the room again, bob gets a new, empty Chat for it.
@@ -23,13 +25,17 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::future::Future;
+use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use jmap_server::{Dispatcher, Id, JmapRequest, State};
 use mimid_agent_core::{Agent, AgentConfig, RoomStatus};
 use mimid_agent_jmap::{AgentChat, Options};
+use mimid_agent_store::{Change, Frontend};
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
@@ -124,12 +130,15 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
 struct Client {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<()>,
+    /// Set, every save fails.
+    saves: Arc<FailingSaves>,
 }
 
 impl Client {
     /// `user`'s account, its agent's state in `dir/<name>`, its blobs in
-    /// `dir/<name>-blobs`, its records in the database `store` if given.
-    async fn open(server: &Server, user: &'static str, dir: &Path, store: Option<&Path>) -> Self {
+    /// `dir/<name>-blobs`, its records in the agent's database if
+    /// `persisted`.
+    async fn open(server: &Server, user: &'static str, dir: &Path, persisted: bool) -> Self {
         let name = user.rsplit('/').next().unwrap();
         let mut agent = Agent::open(AgentConfig {
             server_url: server.base.clone(),
@@ -145,13 +154,20 @@ impl Client {
         let mut chat = AgentChat::new(agent, Id::from(name), Options::default())
             .with_blobs(dir.join(format!("{name}-blobs")))
             .unwrap();
-        if let Some(store) = store {
-            chat = chat.persisted_at(store).unwrap();
+        if persisted {
+            chat = chat.persisted().unwrap();
         }
+        let saves = Arc::new(FailingSaves::default());
+        chat.store()
+            .add_frontend(Arc::clone(&saves) as Arc<dyn Frontend>);
         let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();
         AgentChat::register(&chat, &mut dispatcher);
-        Self { chat, dispatcher }
+        Self {
+            chat,
+            dispatcher,
+            saves,
+        }
     }
 
     async fn call(&self, method: &str, mut args: Value) -> Value {
@@ -269,12 +285,29 @@ impl Client {
     }
 }
 
-/// Makes directory `dir` writable or not; SQLite then cannot make the
-/// journal a write needs.
-fn writable(dir: &Path, yes: bool) {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = if yes { 0o700 } else { 0o500 };
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+/// A front end whose part in every save fails while it is set, so the
+/// save writes nothing and the delivery it would acknowledge is not:
+/// the failed save the test needs, now that the records share the
+/// agent's database (bead mimid-1vul.10) and an unwritable directory
+/// would stop the agent too.
+#[derive(Default)]
+struct FailingSaves(AtomicBool);
+
+impl Frontend for FailingSaves {
+    fn before_save<'a>(
+        &'a self,
+        _store: &'a mimid_agent_store::Store,
+        _changes: &'a [Change],
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        let failing = self.0.load(Ordering::SeqCst);
+        Box::pin(async move {
+            if failing {
+                Err("this test fails the save".to_owned())
+            } else {
+                Ok(())
+            }
+        })
+    }
 }
 
 /// Whether `haystack` holds `needle`.
@@ -288,13 +321,10 @@ fn holds(haystack: &[u8], needle: &str) -> bool {
 async fn a_destroyed_chat_takes_its_messages_bans_and_attachments() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB, CAROL]).await;
-    let store_dir: PathBuf = dir.path().join("store");
-    std::fs::create_dir(&store_dir).unwrap();
-    let store = store_dir.join("bob-chat.sqlite");
-    let alice = Client::open(&server, ALICE, dir.path(), None).await;
-    let bob = Client::open(&server, BOB, dir.path(), Some(&store)).await;
+    let alice = Client::open(&server, ALICE, dir.path(), false).await;
+    let bob = Client::open(&server, BOB, dir.path(), true).await;
     // carol's agent only publishes KeyPackages, so she can be invited.
-    let _carol = Client::open(&server, CAROL, dir.path(), None).await;
+    let _carol = Client::open(&server, CAROL, dir.path(), false).await;
     bob.chat.agent().lock().await.allow(ALICE).await.unwrap();
     alice.chat.agent().lock().await.allow(BOB).await.unwrap();
 
@@ -399,12 +429,12 @@ async fn a_destroyed_chat_takes_its_messages_bans_and_attachments() {
             }]}),
         )
         .await;
-    writable(&store_dir, false);
+    bob.saves.0.store(true, Ordering::SeqCst);
     bob.sync_until(true, async |c| {
         c.bodies().await.contains(&"gone text".to_owned())
     })
     .await;
-    writable(&store_dir, true);
+    bob.saves.0.store(false, Ordering::SeqCst);
     let bob_blob = dir.path().join("bob-blobs").join(&blob_id);
     assert!(bob_blob.is_file(), "bob fetched the attachment");
     let gone_messages: Vec<String> = {
@@ -441,7 +471,7 @@ async fn a_destroyed_chat_takes_its_messages_bans_and_attachments() {
     // A restart before any sync: the agent delivers "gone"'s last events
     // again, and none comes back.
     drop(bob);
-    let bob = Client::open(&server, BOB, dir.path(), Some(&store)).await;
+    let bob = Client::open(&server, BOB, dir.path(), true).await;
     let report = bob.chat.sync().await.unwrap();
     assert_eq!(report.messages, 0, "{report:?}");
     assert_eq!(bob.ids("Chat").await, [kept.as_str()]);
@@ -470,19 +500,49 @@ async fn a_destroyed_chat_takes_its_messages_bans_and_attachments() {
     // The round that saw it out acknowledged; the next one saves.
     bob.chat.sync().await.unwrap();
     assert_eq!(bob.ids("Chat").await, [kept.as_str()]);
-    let file = std::fs::read(&store).unwrap();
+    let file = std::fs::read(bob.chat.store().database_path()).unwrap();
     for gone_text in [
         "gone text",
         "bob's own text",
         "gone.txt",
         gone.as_str(),
-        gone_room.as_str(),
         blob_id.as_str(),
         ban.as_str(),
     ] {
         assert!(!holds(&file, gone_text), "the database holds {gone_text:?}");
     }
     assert!(holds(&file, "kept text"));
+    // The file is the agent's database too (bead mimid-1vul.10), and the
+    // agent's own state names the rooms it left, as its state.json did;
+    // none of the store's tables names the room.
+    let database = rusqlite::Connection::open(bob.chat.store().database_path()).unwrap();
+    for table in [
+        "meta",
+        "rooms",
+        "people",
+        "messages",
+        "bans",
+        "read_positions",
+        "pending_attachments",
+        "tombstones",
+    ] {
+        let naming: i64 = database
+            .query_row(
+                &format!("SELECT count(*) FROM {table} WHERE instr(record, ?1) > 0"),
+                [gone_room.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(naming, 0, "{table} names {gone_room}");
+    }
+    let agent_naming: i64 = database
+        .query_row(
+            "SELECT count(*) FROM agent_state WHERE instr(record, ?1) > 0",
+            [gone_room.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(agent_naming, 1, "the agent's state names the room it left");
 
     // alice keeps her history of "gone"; "kept" goes on.
     assert!(

@@ -7,12 +7,13 @@
 //! records, mirrors the rooms' bans and the people's DIDs, records what
 //! changed ([`Change`]), saves ([`Store::save`]: every front end is handed
 //! the changes and shows them, then the records are written and the
-//! changes published), and only then acknowledges what the agent
-//! delivered: a message
-//! cannot be decrypted again, and an event not acknowledged comes again
-//! after a crash (a message already stored is skipped, and so is one
-//! deleted here since: [`State::delete_message`] keeps a tombstone until
-//! the next acknowledgement).
+//! changes published), acknowledging what the agent delivered in the
+//! transaction that writes the records (`Agent::acknowledge_in`; bead
+//! mimid-1vul.10): a message cannot be decrypted again, so the records of
+//! a delivery and its acknowledgement commit together, or neither does
+//! and the delivery comes again (a message already stored is skipped, and
+//! so is one deleted here since: [`State::delete_message`] keeps a
+//! tombstone until the next acknowledgement).
 //!
 //! - **Rooms**: every room the agent is in, and is not out of, has a
 //!   record, with its participants, their role indexes and the room's
@@ -49,7 +50,7 @@
 //!   to date first ([`crate::Frontend`]), so what a front end keeps in the
 //!   records is saved with them.
 //! - The tombstones count on this being the only caller of
-//!   `Agent::receive` and `Agent::acknowledge`.
+//!   `Agent::receive`, `Agent::acknowledge` and `Agent::acknowledge_in`.
 
 use std::collections::BTreeMap;
 
@@ -268,10 +269,11 @@ impl Store {
             if moved {
                 self.refresh_dids(&agent, None, &mut changes);
             }
-            // Shown and saved first, then acknowledged.
+            // Shown, then saved and acknowledged in one transaction.
             self.record(std::mem::take(&mut changes));
-            self.save().await.map_err(SyncError::Save)?;
-            agent.acknowledge(receipt)?;
+            self.save_acknowledging(Some((&mut agent, receipt)))
+                .await
+                .map_err(SyncError::Save)?;
             // Every event that stored a message deleted since is
             // acknowledged now (receive returned all those not yet
             // acknowledged), so none of them comes again.

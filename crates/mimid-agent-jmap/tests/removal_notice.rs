@@ -231,8 +231,8 @@ async fn poll_to_epoch(agent: &mut Agent, room: &str, epoch: u64) {
     panic!("{}: never reached epoch {epoch}", agent.user());
 }
 
-/// bob's JMAP account over his agent, with its plaintext store in
-/// `dir/bob-chat.json` and the agent's state in `dir/bob`.
+/// bob's JMAP account over his agent, with the agent's state and its
+/// plaintext store in the agent's database in `dir/bob`.
 struct Bob {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<()>,
@@ -246,7 +246,7 @@ impl Bob {
             Id::from("bob"),
             Options::default().with_invites(InvitePolicy::Any),
         )
-        .persisted_at(dir.join("bob-chat.json"))
+        .persisted()
         .unwrap();
         let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();

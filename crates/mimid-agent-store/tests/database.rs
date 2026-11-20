@@ -251,24 +251,31 @@ fn another_users_store_and_another_schema_are_refused() {
     }
 
     let path = dir.path().join("chat.sqlite");
-    let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(
+    let version = |connection: &rusqlite::Connection| -> i64 {
         connection
-            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-            .unwrap(),
-        SCHEMA_VERSION
-    );
+            .query_row(
+                "SELECT version FROM schema_version WHERE part = 'store'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(version(&connection), SCHEMA_VERSION);
     drop(connection);
     // An older store (§7.10: none is converted) and a newer one.
-    for version in [SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
+    for other in [SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
         let connection = rusqlite::Connection::open(&path).unwrap();
         connection
-            .pragma_update(None, "user_version", version)
+            .execute(
+                "UPDATE schema_version SET version = ?1 WHERE part = 'store'",
+                [other],
+            )
             .unwrap();
         drop(connection);
         match Database::open(&path) {
             Err(FileError::Malformed(why)) => {
-                assert!(why.contains(&format!("schema version {version}")), "{why}");
+                assert!(why.contains(&format!("schema version {other}")), "{why}");
             }
             other => panic!("not refused: {other:?}"),
         }

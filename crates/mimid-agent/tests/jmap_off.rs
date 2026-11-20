@@ -143,7 +143,7 @@ async fn with_jmap_off_the_store_still_syncs_and_jmap_paths_are_404() {
     assert!(
         bob_config
             .state_dir
-            .join(mimid_agent::CHAT_STORE_FILE)
+            .join(mimid_agent::DATABASE_FILE)
             .exists()
     );
 

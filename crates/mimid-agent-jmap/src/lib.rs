@@ -192,7 +192,7 @@
 //!   is not sent.
 //! - Invites the policy refuses stay pending in the agent; JMAP Chat has
 //!   no object for them.
-//! - Without [`AgentChat::persisted_at`] the store is in memory: after a
+//! - Without [`AgentChat::persisted`] the store is in memory: after a
 //!   restart, `sync` makes new Chats (with new ids) for the rooms the
 //!   agent is in, without earlier Messages. With it, objects come back
 //!   under their ids (see `persist` for its limits).

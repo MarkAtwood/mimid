@@ -57,10 +57,6 @@ impl std::fmt::Debug for Daemon {
     }
 }
 
-/// The plaintext store's SQLite database in the state directory
-/// (mimid-agent-store's `db`).
-pub const CHAT_STORE_FILE: &str = "chat.sqlite";
-
 /// The blob store's directory in the state directory: attachments in
 /// plaintext.
 pub const BLOBS_DIR: &str = "blobs";
@@ -103,7 +99,8 @@ pub enum StartError {
     /// The Session does not build (a crate-jmap type changed).
     #[error("building the Session")]
     Session(#[from] serde_json::Error),
-    /// The plaintext store (`<state_dir>/chat.sqlite`) could not be read.
+    /// The plaintext store (its tables in `<state_dir>/agent.sqlite`) could
+    /// not be read.
     #[error("opening the plaintext store")]
     Records(#[from] mimid_agent_store::FileError),
     /// The plaintext store does not make this account's JMAP objects.
@@ -159,7 +156,9 @@ impl Daemon {
         let blobs =
             BlobStore::open(config.state_dir.join(BLOBS_DIR))?.with_quota(config.blob_quota());
         let store = Store::new(agent, config.invites.into()).with_blobs(blobs);
-        store.open_database(config.state_dir.join(CHAT_STORE_FILE))?;
+        // The records in the agent's own database, so a sync's records and
+        // its acknowledgement commit together (bead mimid-1vul.10).
+        store.open_database()?;
         let store = Arc::new(store);
         let (stop, stop_receiver) = watch::channel(false);
         let http = match listener {

@@ -19,8 +19,10 @@
 //! and writes the result into the records. Both record what they changed
 //! ([`Change`]), and the next save publishes it: every registered front
 //! end ([`Frontend`]) is handed the changes, shows them and brings what it
-//! keeps in the records up to date, then the records are written to an
-//! SQLite database ([`db`], [`Store::open_database`]), and the changes
+//! keeps in the records up to date, then the records are written to the
+//! agent's own SQLite database ([`db`], [`Store::open_database`]), where a
+//! sync's records and the agent's acknowledgement of them commit
+//! together, and the changes
 //! are logged under sequence numbers for any number of subscribers
 //! ([`Store::subscribe`], [`Store::changes_since`]). So several front ends
 //! can serve one store, each seeing what the others did.

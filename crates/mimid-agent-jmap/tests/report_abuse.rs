@@ -232,7 +232,7 @@ async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
     .unwrap()
 }
 
-/// bob's JMAP Chat account over his agent, kept in `<dir>/bob-chat.json`.
+/// bob's JMAP Chat account over his agent, kept in his agent's database.
 struct Client {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<()>,
@@ -245,7 +245,7 @@ impl Client {
             Id::from("bob"),
             Options::default(),
         )
-        .persisted_at(dir.join("bob-chat.json"))
+        .persisted()
         .unwrap();
         let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();
