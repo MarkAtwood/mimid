@@ -128,8 +128,10 @@ impl AgentChat {
     /// An account `account_id` over `store`, which the caller has opened
     /// ([`Store::open_database`]) and given its blob store
     /// ([`Store::with_blobs`]), and which other front ends may share:
-    /// each record of it that has a JMAP object is shown, under its key,
-    /// as the object it was saved as. From now on every save of the store,
+    /// each record of it is shown, under its key, as the object it was
+    /// saved as, and a record saved with no JMAP object (stored while
+    /// JMAP was off) as an object made new from the record, as a sync
+    /// would have made it (docs/design/agent-frontends.md §7.11). From now on every save of the store,
     /// whoever asks for it, shows the changes it publishes as JMAP objects
     /// and keeps them in `ext["jmap"]` (see `persist`). The store's
     /// invite policy and blob quota are its own: [`Options::invites`] and
@@ -138,8 +140,8 @@ impl AgentChat {
     /// # Errors
     ///
     /// [`crate::PersistError::Malformed`] if the records are another
-    /// account's, or a record and what `ext["jmap"]` keeps of it do not
-    /// make a JMAP object.
+    /// account's, or a record, with what `ext["jmap"]` keeps of it, does
+    /// not make a JMAP object.
     pub fn over(
         store: Arc<Store>,
         account_id: Id,

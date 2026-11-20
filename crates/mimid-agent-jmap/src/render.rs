@@ -10,8 +10,15 @@
 //! `ext["jmap"]` is rebuilt from the backend's objects at each save
 //! (`AgentChat::save`), not kept current between saves: the backend
 //! changes JMAP-only properties itself (`unreadCount`, a Chat's
-//! `members`), and the save is the one place that sees every object. A
-//! record without `ext["jmap"]` has no JMAP object.
+//! `members`), and the save is the one place that sees every object.
+//!
+//! A record without `ext["jmap"]` was made while no JMAP front end was
+//! registered on the store (JMAP off, an IRC-only run). It is shown as a
+//! new object, made as the projection makes one when a sync brings the
+//! record ([`Render::new_chat`], [`Render::new_message`],
+//! [`Render::new_ban`]; a person and a read position as they render),
+//! and the next save keeps it in `ext["jmap"]`
+//! (docs/design/agent-frontends.md §7.11).
 //!
 //! What a rendering cannot know comes from `ext["jmap"]`: a Chat's
 //! `members`, `createdAt` and the other JMAP-only properties, a
@@ -29,16 +36,18 @@
 //!   warns of any object it could not keep exactly.
 
 use jmap_chat_types::{
-    BodyType, Chat, ChatBan, ChatContact, ChatKind, DeliveryState, Message, ReadPosition,
+    BodyType, Chat, ChatBan, ChatContact, ChatKind, ChatMember, ChatMemberRole, DeliveryState,
+    Message, ReadPosition,
 };
 use jmap_server::{Id, UTCDate};
 use mimid_agent_store::State;
 use mimid_agent_store::convert::utc_date;
-use mimid_agent_store::record::{self, Reply, Sender};
+use mimid_agent_store::record::{self, Reply, RoomStatus, Sender};
+use mimid_agent_store::sync::bans::BANNED_ROLE_INDEX;
 use serde_json::{Map, Value, json};
 
 use crate::backend::ROOM_ID;
-use crate::project::message_content;
+use crate::project::{message_content, shown_content};
 
 /// The front-end name the JMAP front end keeps its properties under in a
 /// record's `ext`.
@@ -80,13 +89,136 @@ pub(crate) struct Render<'a> {
 }
 
 impl Render<'_> {
-    fn id_of(&self, user: &str) -> Id {
+    /// The JMAP id that names `user`: the accountId for the user, else the
+    /// ChatContact of their person record, if they have one.
+    pub(crate) fn known_id(&self, user: &str) -> Option<Id> {
         if user == self.user {
-            return self.account.clone();
+            return Some(self.account.clone());
         }
         self.state
             .person_of_user(user)
-            .map_or_else(|| Id::from(UNKNOWN_ID), |key| Id::from(key.as_str()))
+            .map(|key| Id::from(key.as_str()))
+    }
+
+    fn id_of(&self, user: &str) -> Id {
+        self.known_id(user).unwrap_or_else(|| Id::from(UNKNOWN_ID))
+    }
+
+    /// The ChatMembers of `room`, keeping the entries of `existing` for
+    /// those already members; new entries are joined at `joined_at`. Each
+    /// one's role is the room's (decision mimid-1wgh.62 item 9): `admin`
+    /// for a participant whose role is named "admin", `member` otherwise;
+    /// a banned participant (role 1, "banned") is not a member, and
+    /// neither is a user with no ChatContact.
+    pub(crate) fn members(
+        &self,
+        room: &record::Room,
+        existing: &[ChatMember],
+        joined_at: &UTCDate,
+    ) -> Vec<ChatMember> {
+        let mut members = Vec::with_capacity(room.participants.len());
+        for participant in &room.participants {
+            let name = participant
+                .role
+                .and_then(|index| room.role_names.get(&index).map(|n| (index, n.as_str())));
+            let role = match name {
+                Some((BANNED_ROLE_INDEX, "banned")) => continue,
+                Some((_, "admin")) => ChatMemberRole::Admin,
+                _ => ChatMemberRole::Member,
+            };
+            let Some(id) = self.known_id(&participant.user) else {
+                continue;
+            };
+            members.push(match existing.iter().find(|m| m.id == id) {
+                Some(m) => {
+                    let mut m = m.clone();
+                    m.role = role;
+                    m
+                }
+                None => ChatMember::new(id, role, joined_at.clone()),
+            });
+        }
+        members
+    }
+
+    /// A room as the group Chat made for it when first shown, created and
+    /// its members joined at `created_at`: named by the room's name (empty
+    /// without one), `unreadCount` 0 (crate-jmap computes it at each
+    /// `Chat/get`), no pins, not muted. The user is not a member of a room
+    /// they are leaving or have left.
+    pub(crate) fn new_chat(&self, room: &record::Room, created_at: UTCDate) -> Chat {
+        let mut members = self.members(room, &[], &created_at);
+        if room.status != RoomStatus::Active {
+            members.retain(|m| m.id != *self.account);
+        }
+        let mut chat = Chat::new(
+            Id::from(room.key.as_str()),
+            ChatKind::Group,
+            created_at,
+            0,
+            vec![],
+            false,
+            true,
+        );
+        chat.name = Some(room.name.clone().unwrap_or_default());
+        chat.members = Some(members);
+        chat.extra.insert(ROOM_ID.to_owned(), json!(room.uri));
+        chat
+    }
+
+    /// A message as the Message made for it when first shown, received at
+    /// `received_at`: `sentAt` its acceptance time, delivered, its content
+    /// as shown (a message deleted here alone emptied); a notice is the
+    /// account's.
+    ///
+    /// # Errors
+    ///
+    /// The JMAP type refuses the object it makes.
+    pub(crate) fn new_message(
+        &self,
+        message: &record::Message,
+        received_at: UTCDate,
+    ) -> Result<Message, String> {
+        let sender = match &message.sender {
+            Sender::User(user) => self.id_of(user),
+            // A notice is the account's (bead mimid-1wgh.4.81.27); Sender
+            // is #[non_exhaustive].
+            _ => self.account.clone(),
+        };
+        let mut jmap = Message::new(
+            Id::from(message.key.as_str()),
+            Id::from(message.sender_msg_id.as_str()),
+            sender,
+            Id::from(message.room.as_str()),
+            String::new(),
+            BodyType::Plain,
+            date(message.accepted_at),
+            received_at,
+            DeliveryState::Delivered,
+        );
+        jmap.reply_to = match &message.in_reply_to {
+            Some(Reply::Message(target)) => Some(Id::from(target.as_str())),
+            _ => None,
+        };
+        jmap.topic_id.clone_from(&message.topic_id);
+        let mut value = object(serde_json::to_value(jmap).map_err(|e| e.to_string())?);
+        value.extend(shown_content(message));
+        serde_json::from_value(Value::Object(value)).map_err(|e| e.to_string())
+    }
+
+    /// A ban as the ChatBan made for it when first shown, created at
+    /// `created_at`, with the record's reason and expiry.
+    pub(crate) fn new_ban(&self, ban: &record::Ban, created_at: UTCDate) -> ChatBan {
+        let mut chat_ban = ChatBan::new(
+            Id::from(ban.key.as_str()),
+            Id::from(ban.room.as_str()),
+            self.id_of(&ban.user),
+            self.id_of(&ban.banned_by),
+            created_at,
+        );
+        chat_ban.reason.clone_from(&ban.reason);
+        chat_ban.expires_at = ban.expires_at.map(date);
+        chat_ban
     }
 
     /// A person as a ChatContact.
@@ -161,15 +293,7 @@ impl Render<'_> {
 
     /// A ban as a ChatBan.
     pub(crate) fn ban(&self, ban: &record::Ban) -> Result<Map<String, Value>, String> {
-        let mut chat_ban = ChatBan::new(
-            Id::from(ban.key.as_str()),
-            Id::from(ban.room.as_str()),
-            self.id_of(&ban.user),
-            self.id_of(&ban.banned_by),
-            UTCDate::from(EPOCH),
-        );
-        chat_ban.reason.clone_from(&ban.reason);
-        chat_ban.expires_at = ban.expires_at.map(date);
+        let chat_ban = self.new_ban(ban, UTCDate::from(EPOCH));
         Ok(object(normal::<ChatBan>(
             serde_json::to_value(chat_ban).map_err(|e| e.to_string())?,
         )?))
@@ -235,7 +359,7 @@ mod tests {
     use mimid_agent_store::convert::parse_utc_date;
     use mimid_agent_store::record::{
         Ban, Deletion, Message as MessageRecord, Participant, Person, ReadPosition as Position,
-        Revision, Room, RoomStatus,
+        Revision, Room,
     };
     use mimid_agent_store::{State, accepted_at_of};
 
@@ -465,6 +589,67 @@ mod tests {
                 .get("editHistory")
                 .is_none()
         );
+    }
+
+    /// A record with no `ext["jmap"]` is made as the projection makes a
+    /// new object: members from the participants (the user out of a room
+    /// left), a locally deleted message emptied, a ban with its terms, and
+    /// the dates given.
+    #[test]
+    fn records_without_ext_are_made_as_new_objects() {
+        let mut state = records();
+        let account = Id::from("bob");
+        let at = UTCDate::from("2026-11-21T00:00:00.000Z");
+        let render = Render {
+            state: &state,
+            account: &account,
+            user: BOB,
+        };
+        let chat = serde_json::to_value(render.new_chat(&state.rooms["R1"], at.clone())).unwrap();
+        assert_eq!(
+            chat,
+            json!({"id": "R1", "kind": "group", "createdAt": at, "unreadCount": 0,
+                   "pinnedMessageIds": [], "muted": false, "receiveTypingIndicators": true,
+                   "name": "kept", "roomId": "mimi://a.example/r/one",
+                   "activeCallId": null, "activeCallAccountId": null,
+                   "members": [{"id": "P1", "role": "member", "joinedAt": at},
+                               {"id": "bob", "role": "member", "joinedAt": at}]})
+        );
+        let m1 = serde_json::to_value(
+            render
+                .new_message(&state.messages["M1"], at.clone())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(m1["senderId"], json!(UNKNOWN_ID));
+        assert_eq!(m1["body"], json!(""));
+        assert_eq!(m1["deletedAt"], json!("2026-11-20T01:48:00Z"));
+        assert_eq!(m1["sentAt"], json!("2026-11-20T01:45:00.499Z"));
+        assert_eq!(m1["receivedAt"], json!(at));
+        let m2 = serde_json::to_value(
+            render
+                .new_message(&state.messages["M2"], at.clone())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(m2["senderId"], json!("bob"));
+        assert_eq!(m2["body"], json!("after"));
+        assert_eq!(m2["editHistory"][0]["body"], json!("before"));
+        let ban = serde_json::to_value(render.new_ban(&state.bans["B1"], at.clone())).unwrap();
+        assert_eq!(
+            ban,
+            json!({"id": "B1", "chatId": "GONE", "userId": "P1", "bannedBy": "bob",
+                   "createdAt": at, "reason": "spam", "expiresAt": "2030-01-01T00:00:00Z"})
+        );
+        state.rooms.get_mut("R1").unwrap().status = RoomStatus::Leaving;
+        let render = Render {
+            state: &state,
+            account: &account,
+            user: BOB,
+        };
+        let left = render.new_chat(&state.rooms["R1"], at);
+        let ids: Vec<_> = left.members.unwrap().into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, [Id::from("P1")]);
     }
 
     #[test]

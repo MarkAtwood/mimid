@@ -13,10 +13,12 @@
 //! store's own `ext["jmap"]`. At each save, whoever asks for it, the
 //! store has this front end rebuild `ext["jmap"]` from the backend's
 //! objects ([`JmapExt`], a [`Frontend`]), then writes what changed in one
-//! transaction. At start each record with a JMAP object goes back into
-//! the `MemoryBackend` under its key (`seed_object`), as the object it
-//! was. There is no reading of the `chat.json` this crate wrote before the
-//! store (§7.10).
+//! transaction. At start each record goes back into the
+//! `MemoryBackend` under its key (`seed_object`), as the object it was;
+//! a record without `ext["jmap"]`, stored while JMAP was off, gets an
+//! object made new from the record alone, and the next save keeps it
+//! (docs/design/agent-frontends.md §7.11). There is no reading of the
+//! `chat.json` this crate wrote before the store (§7.10).
 //!
 //! The same save first has this front end show the changes it publishes
 //! ([`crate::project`]), so every record saved, whoever made it (a sync,
@@ -44,10 +46,11 @@ use std::pin::Pin;
 
 use jmap_chat_server::memory::MemoryBackend;
 use jmap_chat_types::{Chat, ChatBan, ChatContact, Message, ReadPosition};
-use jmap_server::{GetObject, Id, JmapObject, JmapReads};
+use jmap_server::{GetObject, Id, JmapObject, JmapReads, UTCDate, now_utc_string};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 
+use mimid_agent_store::convert::utc_date;
 use mimid_agent_store::record::Ext;
 use mimid_agent_store::{Change, FileError, Frontend, State, Store};
 
@@ -123,49 +126,83 @@ fn jmap_ext(ext: &Ext) -> Option<&Map<String, Value>> {
     ext.get(JMAP).and_then(Value::as_object)
 }
 
-/// The object a record with `ext` renders back to, if it has one.
+/// The object a record with `ext` renders back to, if `ext` keeps one;
+/// else the object made for it new (`fresh`; §7.11).
 fn seed<T: DeserializeOwned + Serialize>(
     ext: &Ext,
     rendered: impl FnOnce() -> Result<Map<String, Value>, String>,
-) -> Option<Result<Map<String, Value>, String>> {
-    let ext = jmap_ext(ext)?;
-    Some(rendered().and_then(|r| laid_over::<T>(r, ext)))
+    fresh: impl FnOnce() -> Result<Value, String>,
+) -> Seed {
+    match jmap_ext(ext) {
+        Some(ext) => Seed::Kept(rendered().and_then(|r| laid_over::<T>(r, ext))),
+        None => Seed::Fresh(fresh().and_then(|v| {
+            serde_json::from_value::<T>(v)
+                .and_then(|t| serde_json::to_value(t))
+                .map_err(|e| e.to_string())
+                .map(object_of)
+        })),
+    }
 }
 
-/// The JMAP object of every record of `state` that has one: (type name,
-/// key, object).
-type Seeds = Vec<(&'static str, String, Result<Map<String, Value>, String>)>;
+/// The JMAP object of a record: as it was saved, or made new.
+enum Seed {
+    /// Rendered back with what `ext["jmap"]` keeps.
+    Kept(Result<Map<String, Value>, String>),
+    /// Made from the record alone, which has no `ext["jmap"]`.
+    Fresh(Result<Map<String, Value>, String>),
+}
 
-fn seeds(render: &Render<'_>) -> Seeds {
+fn object_of(value: Value) -> Map<String, Value> {
+    match value {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    }
+}
+
+fn json_of<T: Serialize>(value: &T) -> Result<Value, String> {
+    serde_json::to_value(value).map_err(|e| e.to_string())
+}
+
+/// The JMAP object of every record of `state`: (type name, key, object).
+/// A record that has no `ext["jmap"]` was made while no JMAP front end
+/// was registered (JMAP off, docs/design/agent-frontends.md §7.11) and
+/// gets an object made new, as the projection makes one when a sync
+/// brings the record, created (a Chat, its members, a ChatBan) at `now`.
+/// A Message's `receivedAt` is its `sentAt`, the hub's acceptance time:
+/// the store keeps no time of receipt, and `now` would date every old
+/// Message at this start.
+fn seeds(render: &Render<'_>, now: &UTCDate) -> Vec<(&'static str, String, Seed)> {
     let state = render.state;
-    let mut out = Seeds::new();
-    let mut add = |name, key: &String, object| {
-        if let Some(object) = object {
-            out.push((name, key.clone(), object));
-        }
-    };
+    let mut out = Vec::new();
     for p in state.people.values() {
-        let object = seed::<ChatContact>(&p.ext, || render.person(p));
-        add(ChatContact::TYPE_NAME, &p.key, object);
+        let person = || render.person(p);
+        let fresh = || render.person(p).map(Value::Object);
+        let object = seed::<ChatContact>(&p.ext, person, fresh);
+        out.push((ChatContact::TYPE_NAME, p.key.clone(), object));
     }
     for r in state.rooms.values() {
-        add(
-            Chat::TYPE_NAME,
-            &r.key,
-            seed::<Chat>(&r.ext, || render.room(r)),
-        );
+        let fresh = || json_of(&render.new_chat(r, now.clone()));
+        let object = seed::<Chat>(&r.ext, || render.room(r), fresh);
+        out.push((Chat::TYPE_NAME, r.key.clone(), object));
     }
     for b in state.bans.values() {
-        let object = seed::<ChatBan>(&b.ext, || render.ban(b));
-        add(ChatBan::TYPE_NAME, &b.key, object);
+        let fresh = || json_of(&render.new_ban(b, now.clone()));
+        let object = seed::<ChatBan>(&b.ext, || render.ban(b), fresh);
+        out.push((ChatBan::TYPE_NAME, b.key.clone(), object));
     }
     for m in state.messages.values() {
-        let object = seed::<Message>(&m.ext, || render.message(m));
-        add(Message::TYPE_NAME, &m.key, object);
+        let fresh = || {
+            let sent = UTCDate::from(utc_date(m.accepted_at).as_str());
+            json_of(&render.new_message(m, sent)?)
+        };
+        let object = seed::<Message>(&m.ext, || render.message(m), fresh);
+        out.push((Message::TYPE_NAME, m.key.clone(), object));
     }
     for r in state.read_positions.values() {
-        let object = seed::<ReadPosition>(&r.ext, || render.read_position(r));
-        add(ReadPosition::TYPE_NAME, &r.key, object);
+        let position = || render.read_position(r);
+        let fresh = || render.read_position(r).map(Value::Object);
+        let object = seed::<ReadPosition>(&r.ext, position, fresh);
+        out.push((ReadPosition::TYPE_NAME, r.key.clone(), object));
     }
     out
 }
@@ -233,23 +270,40 @@ impl AgentChat {
         self.seed_records(path)
     }
 
-    /// Seeds the JMAP object of every record that has one.
+    /// Seeds the JMAP object of every record: as it was saved, or, for a
+    /// record without `ext["jmap"]`, made new (§7.11).
     fn seed_records(&self, path: &Path) -> Result<(), PersistError> {
         let seeds = {
             let state = self.store.state();
-            seeds(&Render {
+            let render = Render {
                 state: &state,
                 account: &self.account,
                 user: &self.user,
-            })
+            };
+            seeds(&render, &now_utc_string())
         };
+        let mut fresh = 0usize;
         for (type_name, key, object) in seeds {
+            let object = match object {
+                Seed::Kept(object) => object,
+                Seed::Fresh(object) => {
+                    fresh += 1;
+                    object
+                }
+            };
             let object = object.map_err(|e| malformed(path, format!("{type_name} {key}: {e}")))?;
             self.inner.seed_object(
                 &self.account,
                 type_name,
                 &Id::from(key.as_str()),
                 Value::Object(object),
+            );
+        }
+        if fresh > 0 {
+            tracing::info!(
+                name: "agent_chat_objects_made_from_records",
+                fresh,
+                "records stored while JMAP was off are shown as new JMAP objects"
             );
         }
         Ok(())

@@ -451,7 +451,8 @@ step runs the full check list in AGENTS.md before its commit.
      object back as it was. This keeps date texts too (`.000Z`, a
      client's six digits), so a restart changes no date a client reads;
      within one run dates never changed, since the backend keeps its own
-     objects. A record without `ext["jmap"]` has no JMAP object.
+     objects. A record without `ext["jmap"]` had no JMAP object; §7.11
+     (bead mimid-1vul.12) makes one for it from the record.
    - The tombstone: `State::delete_message` (a JMAP Message destroy)
      keeps a `Tombstone::Message {room, reference}` per version, and
      `Store::sync` skips a received message or notice whose reference has
@@ -582,7 +583,9 @@ step runs the full check list in AGENTS.md before its commit.
      saved with its JMAP object, so step 4's load rule (no `ext["jmap"]`
      means no object) loses nothing. Rendering records without `ext` at
      load was the other choice. It cannot give a Chat's `members` or
-     other JMAP-only properties, so it was not taken. The projector does
+     other JMAP-only properties exactly, so it was not taken here; §7.11
+     takes it for records made while JMAP was off, with those properties
+     made as a first sync makes them. The projector does
      not use the bounded log, so a large sync round never makes it
      `TooOld`. `Commit` is gone, and `Store::sync()` takes no argument.
    - JMAP's own writes reach the feed too, so other front ends learn of
@@ -672,9 +675,9 @@ step runs the full check list in AGENTS.md before its commit.
    - `Daemon::store()` exposes the `Arc<Store>`; the new test reads the
      records through it.
    - Found: records stored while JMAP is off carry no `ext["jmap"]`, so
-     turning JMAP on again shows none of them (step 4's load rule). This
-     is in mimid-agent's Limitations, and bead mimid-1vul.12 asks which
-     fix to take.
+     turning JMAP on again showed none of them (step 4's load rule).
+     Mark chose to render them from the records (§7.11, bead
+     mimid-1vul.12).
    - Tests: config unit tests for the defaults, every new key, refusing a
      non-loopback `[irc].listen`, bad server names, unknown keys in both
      tables and JMAP off without `[irc]`; `tests/jmap_off.rs`, a daemon
@@ -1070,3 +1073,50 @@ Added on 2026-11-20:
     converting it. The SQLite crate is the one mimi-mls already uses.
     Whether the records can share `mls.sqlite` and one transaction with
     the MLS state is bead mimid-1vul.10.
+
+11. **JMAP built from the store (Mark, 2026-11-20).** When the JMAP front
+    end starts over a store, a record without `ext["jmap"]` (made while
+    JMAP was off, for example in an IRC-only run) is shown as a JMAP
+    object made new from the record alone, so a JMAP client sees every
+    room, message, person and ban the store holds. Records with
+    `ext["jmap"]` keep their exact rendering. The store stays the only
+    source of truth: nothing of JMAP's is kept while JMAP is off. Bead
+    mimid-1vul.12 built it:
+
+    - The new object is the one the projection makes when a sync brings
+      the record, built by the same functions (`Render::new_chat`,
+      `new_message`, `new_ban` in mimid-agent-jmap's `render`; a person
+      and a read position as they render): a group Chat named by the
+      room's name, `members` from the room's participants and roles (the
+      user left out of a room they are leaving or have left; a banned
+      participant and a user with no person are not members),
+      `unreadCount` 0 (crate-jmap computes it from the Messages and
+      ReadPositions at each `Chat/get`, so clients read the real count),
+      no pins, not muted; a Message delivered, with its content as the
+      projection shows it (one deleted here alone emptied); a ChatBan
+      with the record's reason and expiry; a ChatContact's `firstSeenAt`
+      and `lastSeenAt` the person's first sight.
+    - The dates the record does not hold: a Chat's `createdAt`, its
+      members' `joinedAt` and a ChatBan's `createdAt` are the start, as
+      they are the time of the sync that makes them when JMAP is on. A
+      Message's `receivedAt` is its `sentAt` (the hub's acceptance time),
+      not the start: the store keeps no time of receipt, and the start
+      would date every old Message alike.
+    - The objects are seeded like the others, so they are no change: a
+      client's `/changes` from the states read after the start names only
+      what comes after. State strings restart at each start anyway. The
+      next save keeps the objects in `ext["jmap"]`, so a later start shows
+      them exactly; a crash before that save makes them again, with the
+      next start's dates. An INFO event,
+      `agent_chat_objects_made_from_records`, counts them.
+    - Nothing on disk changes: no migration, and the schema version
+      stays 2.
+    - Test: mimid-agent `tests/jmap_seed.rs` runs one scenario (a room
+      with bob an admin, two messages, an edit, a ban) twice, once with
+      bob's JMAP on and once with it off and then on, and compares what
+      bob's client reads property by property, ids and dates named
+      alike. They agree. Ids are minted per run and dates are each run's
+      own, so the test checks what the dates say: the ones above are not
+      before the start, and `receivedAt` equals `sentAt` (with JMAP on it
+      is the time of the sync). A second start shows every object as the
+      first did, and `/changes` names only a new Message.

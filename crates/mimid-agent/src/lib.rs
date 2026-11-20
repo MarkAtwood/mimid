@@ -18,7 +18,9 @@
 //! the JMAP front end over it ([`mimid_agent_jmap::AgentChat::over`]),
 //! unless the configuration has `[jmap] enabled = false`: then the store
 //! syncs as ever, the HTTP listener serves only the did:webvh log endpoint
-//! below, and the JMAP paths answer `404`. `[irc]` is parsed and checked,
+//! below, and the JMAP paths answer `404`; once JMAP is on again, what the
+//! store recorded meanwhile is shown as JMAP objects made new from the
+//! records (docs/design/agent-frontends.md §7.11). `[irc]` is parsed and checked,
 //! but the IRC front end is not built yet. A
 //! background loop calls [`mimid_agent_store::Store::sync`], the agent's
 //! only journal consumer, every `sync_interval_ms`, and at once after a
@@ -140,10 +142,6 @@
 //!   `maxConcurrentRequests`.
 //! - The log is text only: mimid-server's `MIMID_LOG_FORMAT=json` output
 //!   lives in that crate, which this one does not depend on.
-//! - With `[jmap] enabled = false` the JMAP front end saves nothing of what
-//!   the store records, so the rooms and messages of such a run have no
-//!   JMAP objects when JMAP is turned on again (mimid-agent-jmap seeds only
-//!   the records that carry `ext["jmap"]`).
 //! - `[irc]` starts no IRC server yet: the daemon logs
 //!   `agent_irc_not_built` and goes on without it.
 //! - The KeyPackage count is the agent's estimate: it learns that one was

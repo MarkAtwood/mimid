@@ -48,22 +48,18 @@
 //!   `cannotCalculateChanges` and it resyncs.
 
 use jmap_chat_server::ChatStore;
-use jmap_chat_types::{
-    BodyType, Chat, ChatBan, ChatContact, ChatKind, ChatMember, ChatMemberRole, DeliveryState,
-    Message,
-};
+use jmap_chat_types::{BodyType, Chat, ChatBan, ChatContact, Message};
 use jmap_server::{
     BackendSetError, GetObject, Id, JmapObject, JmapReads, SetErrorType, SetObject, now_utc_string,
 };
 use mimid_agent_store::convert::{parse_utc_date, utc_date};
-use mimid_agent_store::record::{self, Reply, Sender};
-use mimid_agent_store::sync::bans::BANNED_ROLE_INDEX;
-use mimid_agent_store::{Change, Store};
+use mimid_agent_store::record::{self, Sender};
+use mimid_agent_store::{Change, State, Store};
 use serde_json::{Map, Value, json};
 
-use crate::backend::ROOM_ID;
 use crate::edits::retraction_patch;
 use crate::persist::JmapExt;
+use crate::render::Render;
 use crate::sync::SyncError;
 
 /// The records one commit names, each once, in the order first named.
@@ -248,7 +244,7 @@ pub(crate) fn message_content(message: &record::Message) -> Map<String, Value> {
 /// emptied as crate-jmap empties it (draft-atwood-jmap-chat-00 §Message
 /// `deletedAt`: empty `body` and `attachments`, no `editHistory`), while
 /// the record keeps its content for reports.
-fn shown_content(message: &record::Message) -> Map<String, Value> {
+pub(crate) fn shown_content(message: &record::Message) -> Map<String, Value> {
     let mut content = message_content(message);
     if matches!(
         message.deleted,
@@ -360,16 +356,19 @@ impl JmapExt {
         }
     }
 
-    /// The JMAP id that names user `user`: the accountId for the user,
-    /// else the ChatContact of their person record.
-    fn id_of_user(&self, store: &Store, user: &str) -> Option<Id> {
-        if user == self.user {
-            return Some(self.account.clone());
+    /// The records of `state` rendered as this front end names users.
+    fn render<'a>(&'a self, state: &'a State) -> Render<'a> {
+        Render {
+            state,
+            account: &self.account,
+            user: &self.user,
         }
-        store
-            .state()
-            .person_of_user(user)
-            .map(|key| Id::from(key.as_str()))
+    }
+
+    /// Whether `user` has a JMAP id: the user, or a person with a
+    /// ChatContact.
+    fn names(&self, store: &Store, user: &str) -> bool {
+        self.render(&store.state()).known_id(user).is_some()
     }
 
     /// A person record as its ChatContact: made when `added` and absent,
@@ -386,21 +385,15 @@ impl JmapExt {
         });
         match existing {
             None if added => {
-                let seen = jmap_server::UTCDate::from(utc_date(person.first_seen).as_str());
-                let contact = ChatContact::new(
-                    id,
-                    person.user.clone(),
-                    person.user.clone(),
-                    seen.clone(),
-                    seen,
-                    false,
-                );
-                let mut value = to_json(&contact)?;
-                if let (Value::Object(value), Value::Object(did)) = (&mut value, did) {
-                    value.extend(did.into_iter().filter(|(_, v)| !v.is_null()));
-                }
+                let contact = self
+                    .render(&store.state())
+                    .person(&person)
+                    .map_err(SyncError::Store)?;
                 self.inner
-                    .insert_object(&self.account, from_json::<ChatContact>(value)?)
+                    .insert_object(
+                        &self.account,
+                        from_json::<ChatContact>(Value::Object(contact))?,
+                    )
                     .await?;
             }
             None => {}
@@ -419,44 +412,6 @@ impl JmapExt {
             }
         }
         Ok(())
-    }
-
-    /// The ChatMembers of room record `room`, keeping the entries of
-    /// `existing` for those already members. The user is the accountId;
-    /// everyone else is their person's ChatContact. New entries are joined
-    /// now. Each one's role is the room's (decision mimid-1wgh.62 item 9):
-    /// `admin` for a participant whose role is named "admin", `member`
-    /// otherwise; a banned participant (role 1, "banned") is not a member.
-    fn members_of(
-        &self,
-        store: &Store,
-        room: &record::Room,
-        existing: &[ChatMember],
-    ) -> Vec<ChatMember> {
-        let mut members = Vec::with_capacity(room.participants.len());
-        for participant in &room.participants {
-            let user = &participant.user;
-            let name = participant
-                .role
-                .and_then(|index| room.role_names.get(&index).map(|n| (index, n.as_str())));
-            let role = match name {
-                Some((BANNED_ROLE_INDEX, "banned")) => continue,
-                Some((_, "admin")) => ChatMemberRole::Admin,
-                _ => ChatMemberRole::Member,
-            };
-            let Some(id) = self.id_of_user(store, user) else {
-                continue;
-            };
-            members.push(match existing.iter().find(|m| m.id == id) {
-                Some(m) => {
-                    let mut m = m.clone();
-                    m.role = role;
-                    m
-                }
-                None => ChatMember::new(id, role, now()),
-            });
-        }
-        members
     }
 
     /// A room record as its Chat: made when `added` and absent, named by
@@ -479,14 +434,10 @@ impl JmapExt {
         let existing = self.stored::<Chat>(&id).await?;
         let members = match existing {
             None if added => {
-                let mut members = self.members_of(store, &room, &[]);
-                if left {
+                let mut chat = self.render(&store.state()).new_chat(&room, now());
+                if left && let Some(members) = &mut chat.members {
                     members.retain(|m| m.id != self.account);
                 }
-                let mut chat = Chat::new(id, ChatKind::Group, now(), 0, vec![], false, true);
-                chat.name = Some(room.name.clone().unwrap_or_default());
-                chat.members = Some(members);
-                chat.extra.insert(ROOM_ID.to_owned(), json!(room.uri));
                 self.inner.insert_object(&self.account, chat).await?;
                 return Ok(());
             }
@@ -495,7 +446,7 @@ impl JmapExt {
             Some(chat) => chat.members.unwrap_or_default(),
         };
         let mut after = if changed {
-            self.members_of(store, &room, &members)
+            self.render(&store.state()).members(&room, &members, &now())
         } else {
             members.clone()
         };
@@ -528,43 +479,20 @@ impl JmapExt {
             return Ok(());
         };
         let id = Id::from(key);
-        let content = Value::Object(shown_content(&message));
         match self.stored::<Message>(&id).await? {
             None if added => {
-                let sender = match &message.sender {
-                    Sender::User(user) => self.id_of_user(store, user),
-                    // A notice is the account's (sync::store_notice before
-                    // the store; bead mimid-1wgh.4.81.27).
-                    _ => Some(self.account.clone()),
-                };
-                let Some(sender) = sender else {
+                if let Sender::User(user) = &message.sender
+                    && !self.names(store, user)
+                {
                     return Err(SyncError::Store(format!(
                         "message {key} names a sender with no ChatContact"
                     )));
-                };
-                let mut jmap = Message::new(
-                    id,
-                    Id::from(message.sender_msg_id.as_str()),
-                    sender,
-                    Id::from(message.room.as_str()),
-                    String::new(),
-                    BodyType::Plain,
-                    jmap_server::UTCDate::from(utc_date(message.accepted_at).as_str()),
-                    now(),
-                    DeliveryState::Delivered,
-                );
-                jmap.reply_to = match &message.in_reply_to {
-                    Some(Reply::Message(target)) => Some(Id::from(target.as_str())),
-                    _ => None,
-                };
-                jmap.topic_id = message.topic_id.clone();
-                let mut value = to_json(&jmap)?;
-                if let (Value::Object(value), Value::Object(content)) = (&mut value, content) {
-                    value.extend(content);
                 }
-                self.inner
-                    .insert_object(&self.account, from_json::<Message>(value)?)
-                    .await?;
+                let jmap = self
+                    .render(&store.state())
+                    .new_message(&message, now())
+                    .map_err(SyncError::Store)?;
+                self.inner.insert_object(&self.account, jmap).await?;
             }
             // A Message a client is destroying.
             None => {}
@@ -574,8 +502,8 @@ impl JmapExt {
                 // The content as the type writes it, merged over the
                 // object, so only what really differs is written.
                 let mut desired = existing.clone();
-                if let (Value::Object(desired), Value::Object(content)) = (&mut desired, content) {
-                    desired.extend(content);
+                if let Value::Object(desired) = &mut desired {
+                    desired.extend(shown_content(&message));
                 }
                 let desired = to_json(&from_json::<Message>(desired)?)?;
                 let patch = patch_of(&existing, &desired, &MESSAGE_CONTENT);
@@ -602,15 +530,12 @@ impl JmapExt {
         let existing = self.stored::<ChatBan>(&id).await?;
         match (ban, existing) {
             (Some(ban), None) => {
-                let user = self.id_of_user(store, &ban.user);
-                let banned_by = self.id_of_user(store, &ban.banned_by);
-                let (Some(user), Some(banned_by)) = (user, banned_by) else {
+                if !(self.names(store, &ban.user) && self.names(store, &ban.banned_by)) {
                     return Err(SyncError::Store(format!(
                         "ban {key} names a user with no ChatContact"
                     )));
-                };
-                let chat_ban =
-                    ChatBan::new(id, Id::from(ban.room.as_str()), user, banned_by, now());
+                }
+                let chat_ban = self.render(&store.state()).new_ban(&ban, now());
                 self.inner.insert_object(&self.account, chat_ban).await?;
             }
             (None, Some(_)) => {
