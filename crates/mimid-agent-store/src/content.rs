@@ -17,13 +17,15 @@ pub const MAX_FILENAME_CHARS: usize = 255;
 /// The file name of a received attachment that has none.
 pub const FALLBACK_FILENAME: &str = "attachment";
 
-/// The body type of a stored message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// The body type of a stored message, saved as its media type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub enum BodyType {
     /// `text/plain`.
+    #[serde(rename = "text/plain")]
     Plain,
     /// `text/markdown`.
+    #[serde(rename = "text/markdown")]
     Markdown,
 }
 

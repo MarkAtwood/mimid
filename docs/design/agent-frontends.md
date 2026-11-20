@@ -1,7 +1,8 @@
 # Agent front ends: one plaintext store, JMAP and IRC over it
 
 Design note for epic mimid-1vul. Written 2026-11-19 against main at
-e4e91cd. Status: proposal; nothing here is built.
+e4e91cd. Status: steps 1 and 2 of §3 are built (2026-11-20). Each step
+notes the changes it made to this design.
 
 Mark decided on 2026-11-19 that the IRC front end is native. It is built
 into the agent and calls mimid-agent-core directly. It is not a JMAP
@@ -300,6 +301,45 @@ step runs the full check list in AGENTS.md before its commit.
    tests: format 1 decodes to the expected records with the same keys;
    format 2 round-trips byte for byte. Oracle: the new tests; nothing
    else is touched.
+
+   Changed while doing it (2026-11-20), against the data model above:
+
+   - The fixture was written at eaebf92 (step 1), not e4e91cd. Step 1
+     changed only an import path in persist.rs, so the writer is the
+     same. Its generator is committed beside it
+     (crates/mimid-agent-store/tests/fixtures/chat-v1). It also promotes
+     bob to admin before the ban, because crate-jmap shows ChatBans only
+     to a Chat's admins.
+   - Room has no `direct` flag: §7.2 drops 1:1 rooms. Nothing keeps an
+     IRC playback mark: §7.6 drops playback.
+   - Users are named by user URI everywhere in the records: a
+     participant, a sender, a banned user, and `banned_by` (the user's
+     own URI for a ban made here). There are no person keys in other
+     records, so a record never needs another record to say who it means.
+   - A participant's role index is optional. Format 1 kept only JMAP's
+     "admin" or "member", so rooms read from it have no index until the
+     first sync sets them.
+   - A notice keeps its text in `body` as well as its kind. A notice read
+     from format 1 has no kind, because format 1 kept only the text. It is
+     told apart from the user's own message by the three things a notice
+     has: the accountId as sender, no kept MIMI ID, and a notice text.
+   - "Locally deleted" and "retracted" are one field,
+     `deleted: {at, for_all}`, as JMAP's `deletedAt` and `deletedForAll`
+     are.
+   - Invites are held in memory and not saved, because the agent holds
+     them.
+   - In the format-1 reader, every JMAP property that a record does not
+     hold goes unchanged into that record's `ext["jmap"]`. The accountId
+     goes into the state's own `ext["jmap"]`. Chat `members` is kept
+     there in full, because its roles and times are JMAP's. Step 4 does
+     not need to recover anything from elsewhere.
+   - Format 2 is `{format: 2, user, ext, nextSeq, rooms, people, messages,
+     bans, readPositions, pendingAttachments}`, records in key order,
+     camelCase. Decoding is strict: unknown members are refused.
+   - A ChatContact that a Message, member or ChatBan names but that is
+     not in the file makes the file malformed. Step 4 must decide whether
+     that should stop the agent: format 1 lets a client destroy a
+     ChatContact (a local write), and the record would then name nobody.
 3. **Inbound through the store.** Move `sync`, `apply`, `store_message`,
    the notices, `refresh_contact_dids`, `apply_replacement`,
    `mirror_bans`, `expire_bans`, `accept_invites` and the retries into

@@ -12,6 +12,8 @@ description = "The plaintext layer of mimid-agent, shared by its front ends: blo
 mimid-agent-core = { path = "../mimid-agent-core" }
 mimi-content = { path = "../mimi-content" }
 serde.workspace = true
+# The store file, and the front ends' extensions in it.
+serde_json.workspace = true
 # Blob ids and notice keys are SHA-256 digests.
 sha2.workspace = true
 thiserror.workspace = true
@@ -21,5 +23,4 @@ ulid = "=3.0.0"
 
 [dev-dependencies]
 hex = "0.4.3"
-serde_json.workspace = true
 tempfile = "=3.23.0"

@@ -63,7 +63,7 @@ Each crate documents its own limitations in the `# Limitations` section of its r
 | `mimi-protocol` | protocol wire types and franking, and the room component update logic the hub and agents share |
 | `mimid-server` | The `mimid` provider server: hub and follower roles, and a JMAP Chat endpoint (partial) |
 | `mimid-agent-core` | The client engine: one user's MLS keys and rooms, through their mimid server's JMAP API |
-| `mimid-agent-store` | The agent's plaintext layer that its front ends share: attachment blobs and retries, message identifiers, notices |
+| `mimid-agent-store` | The agent's plaintext layer that its front ends share: the message, room and contact records and their file, attachment blobs and retries, message identifiers, notices |
 | `mimid-agent-jmap` | JMAP Chat over `mimid-agent-core`: the user's rooms as Chats and Messages |
 | `mimid-agent` | The `mimid-agent` daemon: serves `mimid-agent-jmap` as a local JMAP Chat endpoint on loopback |
 

@@ -16,4 +16,5 @@ caf = "caf"
 # Vendored mimi-content WG examples: EDN and diagnostic dumps are full of hex.
 # The Big List of Naughty Strings, base64: random letter runs.
 # did:webvh logs and the did_webvh vectors: base58btc keys, hashes and signatures.
-extend-exclude = ["*.edn", "*.pretty", "crates/mimi-content/tests/fixtures/blns/blns.base64.txt", "crates/mls-didwebvh/tests/fixtures/", "crates/mls-didwebvh/tests/vectors/vectors.json"]
+# Plaintext store fixtures: generated ULIDs, hex message IDs and keys.
+extend-exclude = ["crates/mimid-agent-store/tests/fixtures/*/chat.json", "*.edn", "*.pretty", "crates/mimi-content/tests/fixtures/blns/blns.base64.txt", "crates/mls-didwebvh/tests/fixtures/", "crates/mls-didwebvh/tests/vectors/vectors.json"]
