@@ -1,0 +1,25 @@
+{
+  "id": "mimid-e64f.1",
+  "title": "Live stream step 1: note for the second-binding purpose, decision beads, findings log",
+  "description": "docs/design/binary-live-stream.md rewritten for Mark's 2026-11-20 direction; decisions mimid-1wgh.72-.80; docs/design/binary-live-stream-findings.md seeded.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T19:36:42.715001766Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T19:36:42.715001766Z",
+  "labels": [
+    "live-stream"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-e64f.1",
+      "depends_on_id": "mimid-e64f",
+      "type": "parent-child",
+      "created_at": "2026-11-20T19:36:42.754029272Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
