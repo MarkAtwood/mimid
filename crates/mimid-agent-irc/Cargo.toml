@@ -1,0 +1,16 @@
+[package]
+name = "mimid-agent-irc"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The IRC front end of mimid-agent: a loopback IRC server over the plaintext store"
+
+# No IRC library (docs/design/agent-frontends.md §4): the parser is small,
+# and docs/irc-lessons.md lists exact behaviour a library would hide.
+[dependencies]
+mimid-agent-store = { path = "../mimid-agent-store" }
+# Names kept in a record's ext["irc"].
+serde_json.workspace = true
+# The 4-character suffix of a colliding nick or channel name.
+sha2.workspace = true
