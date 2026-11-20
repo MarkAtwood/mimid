@@ -1,1 +1,2 @@
 {"id":"01a1fb2c-d841-7c6f-9901-6cacc5c85706","issue_id":"mimid-e64f.13","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-20T22:56:22.593815904Z"}
+{"id":"01a1fb62-5c2a-73ac-830e-be5ace2c7703","issue_id":"mimid-e64f.13","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Done in 48f5e33 (branch findings-impl); server items share one commit since they touch the same files","created_at":"2026-11-20T23:54:49.770242401Z"}
