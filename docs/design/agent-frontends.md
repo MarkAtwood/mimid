@@ -1,7 +1,7 @@
 # Agent front ends: one plaintext store, JMAP and IRC over it
 
 Design note for epic mimid-1vul. Written 2026-11-19 against main at
-e4e91cd. Status: steps 1 to 4 of §3 are built (2026-11-20). Each step
+e4e91cd. Status: steps 1 to 5 of §3 are built (2026-11-20). Each step
 notes the changes it made to this design.
 
 Mark decided on 2026-11-19 that the IRC front end is native. It is built
@@ -242,7 +242,10 @@ a trait, so this needs no write to crate-jmap.
   agent, sends, records the result, saves, and publishes a change. The
   caller gets the record back. Other front ends learn of it from the
   feed. The method also wakes the sync loop, as `sync_now` does now
-  (crates/mimid-agent/src/http.rs:744-756).
+  (crates/mimid-agent/src/http.rs:744-756). Changed by step 5: the
+  method does not save; the caller shows the record, then calls
+  `Store::save`, and every save runs each registered front end's
+  `before_save` first (§3 step 5).
 - Lock order: the agent lock first, then the store's state lock. The state
   lock is a `std::sync::Mutex` and is never held across an await.
 
@@ -479,6 +482,66 @@ step runs the full check list in AGENTS.md before its commit.
    `attachments_are_checked_against_the_blob_store_and_limits`,
    `attachments_travel_sealed_and_arrive_whole`, the edits, moderation
    and report tests.
+   Built (2026-11-20):
+
+   - `mimid-agent-store::action`: one `Store` method per action of the
+     user's: `create_room`, `change_members` (invites, removals, role
+     changes and leaving, in that order, under one agent lock), `leave`,
+     `forget_room`, `send` (it reads the attachments from the blob store
+     and touches them), `edit`, `retract`, `mark_deleted` (a local
+     deletion), `delete_message` (with the tombstone), `ban`,
+     `set_ban_terms`, `unban`, `kick`, `report`, `add_person`,
+     `rename_person`, `forget_person`, `set_read_position`,
+     `forget_read_position`, and for the IRC front end `allow`, `deny`
+     and `accept_invite`. They take store keys and user URIs and fail
+     with `ActionError`; mimid-agent-jmap maps that to SetErrors with the
+     same types and texts as before. A method that makes a record takes
+     its key (`Store::new_key`, or a JMAP id, which a JMAP write keeps).
+     Reactions are no action: the agent sends none.
+   - The JMAP hooks translate ids, call the method, then write the JMAP
+     object as before (the client's object, with `senderMsgId`,
+     `deliveredAt`, the edit or retraction patch), so what a client reads
+     is unchanged. Local objects (ChatContact, ReadPosition, a Message's
+     `deletedAt`) are written by crate-jmap first and then into the
+     records from the object.
+   - The methods do not save. The front end that called one shows the
+     result and then calls `Store::save`, so the record and what that
+     front end shows of it are saved together. `Store::save` runs every
+     registered `Frontend`'s `before_save` before it copies the records:
+     the JMAP front end registers one (`JmapExt`, holding a clone of the
+     `MemoryBackend`, which shares its state) that rebuilds `ext["jmap"]`
+     from the backend's objects. Every save, whoever asks for it, thus
+     carries every front end's current `ext`. `Store::sync` saves after
+     each round's `Commit`, which now only shows the changes; a failed
+     save is `SyncError::Save` and the round is not acknowledged. Saves
+     are one at a time (an async lock in the store).
+   - `merge_object`, `forget_object` and `reflect` are gone. A JMAP
+     object without a record is no longer made into one at save; it is
+     not saved, and logged (`agent_chat_object_without_record`). The test
+     suite makes none.
+   - The run-time rule of §7.7 and §7.8 keeps only what is still
+     reachable: a ReadPosition may name a Chat the store does not hold,
+     and a Message or ChatBan of a destroyed Chat keeps its room key.
+     Records name users by URI and no longer come from JMAP objects, so
+     an unknown user (`Sender::Unknown`, `None` as a participant, banned
+     user or banner) is no longer made; the record types keep the forms.
+     A JMAP object naming a ChatContact a client destroyed renders the
+     user as `UNKNOWN_ID`, and `ext["jmap"]` keeps the object's id, as in
+     step 4.
+   - A write makes no person record; the next sync makes one for each
+     participant it sees, as before. A room `create_room` records gets
+     its participants and roles from the agent at once, not at the next
+     sync. `leave` marks the room record leaving; nothing reads that yet.
+   - A local deletion (`deletedAt` alone) keeps the record's content and
+     kept report record, as `merge_object` did; the JMAP object is
+     emptied by crate-jmap and `ext["jmap"]` keeps that.
+   - `Message/reportAbuse` reads only the records, not the backend, to
+     find what each Message kept: a Message has a record exactly when it
+     has an object, so the answers are the same.
+   - The unit test `every_object_renders_back_exactly` built its records
+     with `merge_object`; it now writes them out by hand, with the same
+     objects, and M1's sender is a user without a person record instead
+     of `Sender::Unknown`.
 6. **The feed.** The store publishes changes. The projector applies them
    from the feed instead of inline. The daemon builds the `Store` first,
    then `AgentChat::over(store)`; its sync loop calls `Store::sync`

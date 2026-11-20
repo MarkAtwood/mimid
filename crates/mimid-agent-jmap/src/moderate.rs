@@ -69,14 +69,14 @@
 use jmap_chat_server::ChatStore;
 use jmap_chat_server::memory::MemoryError;
 use jmap_chat_types::{Chat, ChatBan, ChatMember};
-use jmap_server::{BackendSetError, Id, JmapObject, SetError, SetErrorType};
+use jmap_server::{BackendSetError, Id, SetError, SetErrorType};
 
-use mimid_agent_core::Agent;
-use mimid_agent_store::sync::bans::banned_users;
+use mimid_agent_store::convert::parse_utc_date;
 use serde_json::json;
 
 use crate::backend::{
-    AgentChat, SetFailure, agent_failure, agent_set_failure, forbidden, serde_failure, set_error,
+    AgentChat, SetFailure, action_failure, action_set_failure, forbidden, key, serde_failure,
+    set_error,
 };
 
 fn invalid_property(property: &str, description: impl Into<String>) -> SetError {
@@ -84,8 +84,11 @@ fn invalid_property(property: &str, description: impl Into<String>) -> SetError 
 }
 
 impl AgentChat {
-    /// `ChatBan/set` create: bans the user in the Chat's room, then stores
-    /// the ban under an id minted first and drops the user from `members`.
+    /// `ChatBan/set` create: bans the user in the Chat's room and records
+    /// the ban ([`mimid_agent_store::Store::ban`]) under an id minted
+    /// first, then stores the ChatBan and drops the user from `members`.
+    /// The store records the ban before it lets the agent go, so a sync
+    /// cannot mirror the room's new ban first and store it twice.
     pub(crate) async fn create_ban<F>(
         &self,
         build: F,
@@ -95,9 +98,9 @@ impl AgentChat {
     {
         let id = self.inner.mint_id();
         let ban = build(&id);
-        let room = self
-            .room_of_chat(&ban.chat_id)
-            .ok_or_else(|| forbidden("the Chat is not bound to a MIMI room"))?;
+        if self.room_of_chat(&ban.chat_id).is_none() {
+            return Err(forbidden("the Chat is not bound to a MIMI room"));
+        }
         let user = self
             .contact_identity(&ban.user_id)
             .await
@@ -108,14 +111,22 @@ impl AgentChat {
                     "userId is not a ChatContact",
                 )))
             })?;
-        // Held until the ban is stored, so a sync cannot mirror the room's
-        // new ban first and store it twice.
-        let mut agent = self.agent().lock().await;
-        agent.ban(&room, &user).await.map_err(agent_failure)?;
+        let expires_at = ban
+            .expires_at
+            .as_ref()
+            .and_then(|d| parse_utc_date(d.as_ref()));
+        self.store
+            .ban(
+                key(&id),
+                ban.chat_id.as_ref(),
+                &user,
+                ban.reason.clone(),
+                expires_at,
+            )
+            .await
+            .map_err(action_failure)?;
         let ban = self.inner.insert_object(&self.account, ban).await?;
         self.drop_member(&ban.chat_id, &ban.user_id).await?;
-        self.reflect(ChatBan::TYPE_NAME, &id, false).await;
-        drop(agent);
         Ok((id, ban))
     }
 
@@ -140,49 +151,30 @@ impl AgentChat {
         Ok(())
     }
 
-    /// `ChatBan/set` destroy: [`AgentChat::lift_ban`].
+    /// `ChatBan/set` destroy: lifts the ban
+    /// ([`mimid_agent_store::Store::unban`]: the user is unbanned in the
+    /// Chat's room if the room still holds them banned, and the record
+    /// goes), then destroys the ChatBan.
     pub(crate) async fn destroy_ban(&self, id: &Id) -> Result<(), BackendSetError<MemoryError>> {
-        let Some(ban) = self
+        if self
             .stored::<ChatBan>(id)
             .await
             .map_err(BackendSetError::Other)?
-        else {
-            // The store's notFound.
-            return self
-                .inner
-                .destroy_object::<ChatBan>(&(), &self.account, id)
-                .await;
-        };
-        let mut agent = self.agent().lock().await;
-        self.lift_ban(&mut agent, &ban).await
-    }
-
-    /// Unbans the user of `ban` in the Chat's room if the room still holds
-    /// it banned, then destroys the ban. A ban the room no longer holds
-    /// (the room left, the user unbanned or removed elsewhere) is only
-    /// destroyed.
-    pub(crate) async fn lift_ban(
-        &self,
-        agent: &mut Agent,
-        ban: &ChatBan,
-    ) -> Result<(), BackendSetError<MemoryError>> {
-        let user = self
-            .contact_identity(&ban.user_id)
-            .await
-            .map_err(BackendSetError::Other)?;
-        if let (Some(room), Some(user)) = (self.room_of_chat(&ban.chat_id), user)
-            && banned_users(agent, &room).is_some_and(|banned| banned.contains(&user))
+            .is_some()
         {
-            agent.unban(&room, &user).await.map_err(agent_failure)?;
+            self.store
+                .unban(id.as_ref())
+                .await
+                .map_err(action_failure)?;
         }
+        // The store's notFound when there is no ChatBan.
         self.inner
-            .destroy_object::<ChatBan>(&(), &self.account, &ban.id)
-            .await?;
-        self.reflect(ChatBan::TYPE_NAME, &ban.id, false).await;
-        Ok(())
+            .destroy_object::<ChatBan>(&(), &self.account, id)
+            .await
     }
 
-    /// `Chat/set` `kickMembers` of `chat`: `Agent::kick` of each user.
+    /// `Chat/set` `kickMembers` of `chat`: `Agent::kick` of each user
+    /// ([`mimid_agent_store::Store::kick`]).
     pub(crate) async fn kick(
         &self,
         chat: &Chat,
@@ -192,12 +184,12 @@ impl AgentChat {
             SetFailure::Set(e) => Ok(Err(*e)),
             SetFailure::Other(e) => Err(e),
         };
-        let Some(room) = self.room_of_chat(&chat.id) else {
+        if self.room_of_chat(&chat.id).is_none() {
             return Ok(Err(invalid_property(
                 "kickMembers",
                 "the Chat is not bound to a MIMI room",
             )));
-        };
+        }
         if user_ids.contains(&self.account) {
             return Ok(Err(invalid_property(
                 "kickMembers",
@@ -208,12 +200,9 @@ impl AgentChat {
             Ok(users) => users,
             Err(failure) => return refused(failure),
         };
-        let mut agent = self.agent().lock().await;
-        for user in &users {
-            if let Err(e) = agent.kick(&room, user).await {
-                return refused(agent_set_failure(e));
-            }
+        match self.store.kick(chat.id.as_ref(), &users).await {
+            Ok(()) => Ok(Ok(())),
+            Err(e) => refused(action_set_failure(e)),
         }
-        Ok(Ok(()))
     }
 }

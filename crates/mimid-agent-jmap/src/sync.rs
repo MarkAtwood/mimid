@@ -43,15 +43,13 @@ impl From<BackendSetError<MemoryError>> for SyncError {
     }
 }
 
-/// Each round of a sync: the changed records become JMAP objects, then
-/// the plaintext store is saved (see [`AgentChat::persisted_at`]).
+/// Each round of a sync: the changed records become JMAP objects; the
+/// store then saves (see [`AgentChat::persisted_at`]).
 impl Commit for AgentChat {
     type Error = SyncError;
 
     async fn commit(&self, changes: Vec<Change>) -> Result<(), SyncError> {
-        self.project(changes).await?;
-        self.save().await?;
-        Ok(())
+        self.project(changes).await
     }
 }
 
@@ -75,6 +73,9 @@ impl AgentChat {
         store.sync(self).await.map_err(|e| match e {
             mimid_agent_store::SyncError::Agent(e) => SyncError::Agent(e),
             mimid_agent_store::SyncError::Commit(e) => e,
+            mimid_agent_store::SyncError::Save(e) => {
+                SyncError::Persist(crate::persist::save_error(e))
+            }
             e => SyncError::Store(e.to_string()),
         })
     }

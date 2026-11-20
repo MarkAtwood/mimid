@@ -1,7 +1,9 @@
 //! [`Store`]: the agent, its records, their file and the blob store.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use mimid_agent_core::Agent;
@@ -12,6 +14,26 @@ use crate::db::{Database, FileError};
 use crate::record::Key;
 use crate::state::State;
 use crate::sync::InvitePolicy;
+
+/// A front end's part in [`Store::save`]: what it keeps in the records
+/// (its `ext`) may lag behind what it shows, so it brings that up to date
+/// just before the records are written. Every save runs every registered
+/// front end's [`Frontend::before_save`] ([`Store::add_frontend`]),
+/// whoever asked for the save, so the records saved always carry each
+/// front end's current `ext`.
+pub trait Frontend: Send + Sync {
+    /// Brings this front end's `ext` in `store`'s records up to date. It
+    /// runs with no lock of the store held but the one that keeps saves
+    /// one at a time; it must not call [`Store::save`].
+    ///
+    /// # Errors
+    ///
+    /// Why it could not, as text; the save then writes nothing.
+    fn before_save<'a>(
+        &'a self,
+        store: &'a Store,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+}
 
 /// One user's plaintext store: the agent it consumes, the records of what
 /// the agent received ([`State`]), the database they are kept in
@@ -32,9 +54,12 @@ pub struct Store {
     /// its leaves; a change of any sets them again.
     pub(crate) did_epochs: Mutex<BTreeMap<String, u64>>,
     keys: Mutex<ulid::Generator>,
-    /// The database, once opened; locked through each save, so saves are
-    /// one at a time.
+    /// The database, once opened.
     file: Mutex<Option<Database>>,
+    /// Held through each save, so saves are one at a time.
+    save_lock: AsyncMutex<()>,
+    /// The front ends whose `ext` each save brings up to date.
+    frontends: Mutex<Vec<Arc<dyn Frontend>>>,
 }
 
 impl std::fmt::Debug for Store {
@@ -59,7 +84,18 @@ impl Store {
             did_epochs: Mutex::new(BTreeMap::new()),
             keys: Mutex::new(ulid::Generator::new()),
             file: Mutex::new(None),
+            save_lock: AsyncMutex::new(()),
+            frontends: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Registers `frontend`, so every [`Store::save`] first brings its
+    /// `ext` up to date.
+    pub fn add_frontend(&self, frontend: Arc<dyn Frontend>) {
+        self.frontends
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(frontend);
     }
 
     /// Keeps the records in the SQLite database `path` from now on
@@ -90,19 +126,39 @@ impl Store {
     }
 
     /// Writes what changed in the records to the database, if there is
-    /// one, in one transaction ([`Database::save`]). One save at a time;
-    /// the records are locked only while they are copied.
+    /// one, in one transaction ([`Database::save`]), after every
+    /// registered [`Frontend`] has brought its `ext` up to date. One save
+    /// at a time; the records are locked only while they are copied.
+    ///
+    /// The store's write methods ([`crate::action`]) do not save: the
+    /// front end that called one shows the result, then saves.
+    /// [`Store::sync`] saves after each round's [`crate::Commit`].
     ///
     /// # Errors
     ///
-    /// The [`FileError`] of [`Database::save`]; nothing is then written.
-    pub fn save(&self) -> Result<(), FileError> {
-        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(file) = file.as_mut() else {
+    /// [`FileError::Frontend`] if a front end fails, and the
+    /// [`FileError`] of [`Database::save`]; nothing is then written.
+    pub async fn save(&self) -> Result<(), FileError> {
+        if !self.has_database() {
             return Ok(());
-        };
+        }
+        let _one_at_a_time = self.save_lock.lock().await;
+        let frontends = self
+            .frontends
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        for frontend in &frontends {
+            frontend
+                .before_save(self)
+                .await
+                .map_err(FileError::Frontend)?;
+        }
         let state = self.state().clone();
-        file.save(&state)?;
+        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(file) = file.as_mut() {
+            file.save(&state)?;
+        }
         Ok(())
     }
 
@@ -158,7 +214,14 @@ impl Store {
     }
 
     /// A new store key: a ULID, later than every key minted before it
-    /// here.
+    /// here. The write methods take the key of the record they make, so
+    /// a front end may pass its own id of the same form instead.
+    #[must_use]
+    pub fn new_key(&self) -> Key {
+        self.mint()
+    }
+
+    /// A new store key ([`Store::new_key`]).
     pub(crate) fn mint(&self) -> Key {
         let mut keys = self.keys.lock().unwrap_or_else(PoisonError::into_inner);
         // generate() fails only past 2^80 keys in one millisecond.

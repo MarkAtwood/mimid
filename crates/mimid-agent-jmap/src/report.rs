@@ -49,14 +49,11 @@
 
 use std::sync::Arc;
 
-use jmap_chat_types::Message;
 use jmap_server::{
     CallContext, Dispatcher, HandlerFuture, HandlerOutput, Id, JmapError, JmapHandler,
 };
-use mimid_agent_core::frank::{decode_abusive_message, decode_unverified_message};
-use mimid_agent_core::{
-    AbuseType, AgentError, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES, ReportOutcome, ReportedMessage,
-};
+use mimid_agent_core::{AbuseType, AgentError, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES, ReportOutcome};
+use mimid_agent_store::ActionError;
 use serde_json::{Map, Value, json};
 
 use crate::backend::AgentChat;
@@ -111,13 +108,13 @@ impl AgentChat {
             }
             Some(_) => return Err(invalid("note is a string")),
         };
-        let (room, messages) = self.kept(&ids).await?;
-        let agent = self.agent().lock().await;
-        let outcome = agent
-            .report_abuse(&room, &messages, reason, note)
+        let keys: Vec<String> = ids.iter().map(crate::backend::key).collect();
+        let reported = self
+            .store
+            .report(&keys, reason, note)
             .await
-            .map_err(agent_error)?;
-        let code = match outcome {
+            .map_err(action_error)?;
+        let code = match reported.outcome {
             ReportOutcome::Accepted => "accepted",
             ReportOutcome::NotAllowed => "notAllowed",
             ReportOutcome::UnverifiedMessage => "unverifiedMessage",
@@ -133,75 +130,12 @@ impl AgentChat {
         };
         tracing::info!(
             name: "abuse_report_sent",
-            room,
-            messages = messages.len(),
+            room = reported.room,
+            messages = keys.len(),
             outcome = code,
             "abuse report sent"
         );
         Ok(json!({ "accountId": self.account, "responseCode": code }))
-    }
-
-    /// The room and the kept messages of the Messages `ids`, which must
-    /// still exist, each with something kept, all in one room.
-    async fn kept(&self, ids: &[Id]) -> Result<(String, Vec<ReportedMessage>), JmapError> {
-        let mut room: Option<String> = None;
-        let mut messages = Vec::with_capacity(ids.len());
-        for id in ids {
-            let exists = self
-                .stored::<Message>(id)
-                .await
-                .map_err(|e| {
-                    tracing::error!(
-                        name: "agent_chat_store_read_failed",
-                        method = METHOD,
-                        error = &e as &dyn std::error::Error,
-                        "reading a Message failed"
-                    );
-                    JmapError::server_fail("internal error")
-                })?
-                .is_some();
-            let kept = exists
-                .then(|| {
-                    self.store
-                        .state()
-                        .messages
-                        .get(id.as_ref())
-                        .and_then(|m| m.kept_frank.clone())
-                })
-                .flatten()
-                .ok_or_else(|| {
-                    invalid(format!(
-                        "Message {id} cannot be reported: it is not a received message"
-                    ))
-                })?;
-            match &room {
-                None => room = Some(kept.room.clone()),
-                Some(first) if *first == kept.room => {}
-                Some(_) => return Err(invalid("messageIds are not all in one Chat")),
-            }
-            let message = hex::decode(&kept.message)
-                .map_err(|_| AgentError::Invalid("not hex".to_owned()))
-                .and_then(|bytes| {
-                    if kept.unverified {
-                        decode_unverified_message(&bytes).map(ReportedMessage::Unfranked)
-                    } else {
-                        decode_abusive_message(&bytes).map(ReportedMessage::Franked)
-                    }
-                })
-                .map_err(|e| {
-                    tracing::error!(
-                        name: "kept_frank_unreadable",
-                        method = METHOD,
-                        error = &e as &dyn std::error::Error,
-                        "a kept frank does not decode"
-                    );
-                    JmapError::server_fail("internal error")
-                })?;
-            messages.push(message);
-        }
-        // message_ids gave at least one.
-        let room = room.ok_or_else(|| invalid("messageIds is empty"))?;
-        Ok((room, messages))
     }
 }
 
@@ -227,6 +161,38 @@ fn message_ids(args: &Map<String, Value>) -> Result<Vec<Id>, JmapError> {
         ids.push(id);
     }
     Ok(ids)
+}
+
+/// A refusal of [`mimid_agent_store::Store::report`] as a JMAP error: a
+/// Message with nothing kept (not found, the user's own) or Messages of
+/// several Chats are `invalidArguments`, a kept record that does not
+/// decode `serverFail`, and the agent's failures as [`agent_error`].
+fn action_error(error: ActionError) -> JmapError {
+    match error {
+        ActionError::NotReportable(id) => invalid(format!(
+            "Message {id} cannot be reported: it is not a received message"
+        )),
+        ActionError::NotOneRoom => invalid("messageIds are not all in one Chat"),
+        ActionError::Agent(error) => agent_error(error),
+        ActionError::Unreadable(error) => {
+            tracing::error!(
+                name: "kept_frank_unreadable",
+                method = METHOD,
+                error = &error as &dyn std::error::Error,
+                "a kept frank does not decode"
+            );
+            JmapError::server_fail("internal error")
+        }
+        error => {
+            tracing::error!(
+                name: "abuse_report_failed",
+                method = METHOD,
+                error = &error as &dyn std::error::Error,
+                "abuse report failed"
+            );
+            JmapError::server_fail("internal error")
+        }
+    }
 }
 
 /// An agent failure as a JMAP error: the server or hub out of reach is

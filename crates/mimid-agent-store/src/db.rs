@@ -63,6 +63,10 @@ pub enum FileError {
     /// user's, or a record cannot be encoded.
     #[error("the plaintext store is malformed: {0}")]
     Malformed(String),
+    /// A front end could not bring its part of the records up to date
+    /// before a save ([`crate::Frontend`]).
+    #[error("a front end's part of the plaintext store: {0}")]
+    Frontend(String),
 }
 
 /// The schema this version reads and writes. A database of another

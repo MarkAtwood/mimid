@@ -2629,7 +2629,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
- "hex",
  "jmap-chat-server",
  "jmap-chat-types",
  "jmap-server",

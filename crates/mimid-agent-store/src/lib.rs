@@ -15,25 +15,30 @@
 //! a [`State`], and the blob store. [`Store::sync`] is the agent's only
 //! journal consumer ([`mod@sync`]): it writes what the agent received into
 //! the records and hands each round's [`Change`]s to the front end that
-//! called it ([`Commit`]) before acknowledging. The records are kept in
-//! an SQLite database ([`db`], [`Store::open_database`]).
+//! called it ([`Commit`]) before saving and acknowledging. Every action of
+//! the user's is a `Store` method too ([`action`]): it makes the agent
+//! call and writes the result into the records. The records are kept in
+//! an SQLite database ([`db`], [`Store::open_database`]); each save first
+//! has every registered front end bring what it keeps in the records up
+//! to date ([`Frontend`]).
 //!
 //! # Limitations
 //!
-//! - This is step 4 of the migration in docs/design/agent-frontends.md §3:
-//!   inbound goes through the store and the store owns its file, while the
-//!   JMAP front end still sends for the user itself and writes its own
-//!   changes into the records ([`merge::merge_object`]).
+//! - This is step 5 of the migration in docs/design/agent-frontends.md §3:
+//!   inbound and outbound go through the store, and the store owns its
+//!   file. There is no change feed yet (step 6): a sync's changes go to
+//!   the front end that called it, and a write is shown by the front end
+//!   that made it.
 //! - See each module for its own limits.
 
 #![forbid(unsafe_code)]
 
+pub mod action;
 pub mod blobs;
 mod change;
 pub mod content;
 pub mod convert;
 pub mod db;
-pub mod merge;
 pub mod notice;
 pub mod record;
 pub mod report;
@@ -42,8 +47,9 @@ mod state;
 mod store;
 pub mod sync;
 
+pub use action::ActionError;
 pub use change::Change;
 pub use db::FileError;
 pub use state::{State, accepted_at_of, reference_of};
-pub use store::Store;
+pub use store::{Frontend, Store};
 pub use sync::{Commit, InvitePolicy, SyncError, SyncReport};

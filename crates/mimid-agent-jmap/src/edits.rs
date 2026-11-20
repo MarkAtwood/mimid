@@ -9,8 +9,8 @@
 //! (its aliases, §Edits), are kept in its record in the store
 //! ([`mimid_agent_store::record::Message`]), and saved beside it in the
 //! plaintext store (`persist`). Received edits and retractions are the
-//! store's ([`mimid_agent_store::sync::replace`]); this module sends the
-//! owner's and shows both.
+//! store's ([`mimid_agent_store::sync::replace`]), and so is sending the
+//! owner's ([`mimid_agent_store::action`]); this module shows both.
 //!
 //! # Limitations
 //!
@@ -32,11 +32,10 @@
 
 use jmap_chat_types::{BodyType, Message};
 use jmap_server::{BackendSetError, Id, UTCDate};
-use mimi_content::MessageId;
 use serde_json::{Value, json};
 
-use crate::backend::{AgentChat, agent_failure, forbidden, serde_failure};
-use crate::convert::{message_ref, utc_date};
+use crate::backend::{AgentChat, action_failure, serde_failure};
+use crate::convert::utc_date;
 use jmap_chat_server::memory::MemoryError;
 
 pub use mimid_agent_store::sync::{MAX_ALIASES, MAX_EDIT_HISTORY};
@@ -44,8 +43,10 @@ pub use mimid_agent_store::sync::{MAX_ALIASES, MAX_EDIT_HISTORY};
 impl AgentChat {
     /// The owner's `Message/set` update `patch` of Message `id`, as the
     /// handler passes it: an edit (`body`, `bodyType`) or a retraction
-    /// (`deletedForAll: true`) is sent to the room first (decision
-    /// mimid-1wgh.65), and the patch to store is returned, with the hub's
+    /// (`deletedForAll: true`) is sent to the room and written into the
+    /// records first ([`mimid_agent_store::Store::edit`],
+    /// [`mimid_agent_store::Store::retract`]; decision mimid-1wgh.65), and
+    /// the patch to store is returned, with the hub's
     /// acceptance time as `editedAt` or `deletedAt` and, for an edit, the
     /// old body in `editHistory`. `None` for any other update, and for a
     /// local deletion (`deletedAt` alone), which stay local. crate-jmap has
@@ -69,36 +70,21 @@ impl AgentChat {
         else {
             return Ok(None);
         };
-        let Some(room) = self.room_of_chat(&stored.chat_id) else {
+        // A Message of a Chat no longer bound to a room is changed here
+        // only, as before the store.
+        if self.room_of_chat(&stored.chat_id).is_none() {
             return Ok(None);
-        };
-        let (first, aliases) = self
-            .store
-            .state()
-            .messages
-            .get(id.as_ref())
-            .map_or((None, 0), |m| (m.mimi_id, m.aliases.len()));
-        let Some(first) = first.map(|first| MessageId(first.0)) else {
-            return Err(forbidden(
-                "no MIMI message ID is kept for this Message, so it cannot be edited or retracted",
-            ));
-        };
-        if aliases >= MAX_ALIASES {
-            return Err(forbidden("the Message has too many versions"));
         }
         let mut patch = patch.clone();
-        let mut agent = self.agent().lock().await;
         if retracts {
-            let sent = agent
-                .send_retraction(&room, &first)
+            let record = self
+                .store
+                .retract(id.as_ref())
                 .await
-                .map_err(agent_failure)?;
-            drop(agent);
-            self.store
-                .state()
-                .add_alias(id.as_ref(), message_ref(&sent.message_id));
+                .map_err(action_failure)?;
+            let at = record.deleted.map_or(0, |d| d.at);
             if let Some(obj) = patch.as_object_mut() {
-                obj.insert("deletedAt".to_owned(), json!(utc_date(sent.accepted_at)));
+                obj.insert("deletedAt".to_owned(), json!(utc_date(at)));
             }
         } else {
             let text = patch
@@ -106,25 +92,31 @@ impl AgentChat {
                 .and_then(Value::as_str)
                 .unwrap_or(&stored.body)
                 .to_owned();
-            let sent = agent
-                .send_edit(&room, &first, &text)
-                .await
-                .map_err(agent_failure)?;
-            drop(agent);
-            self.store
-                .state()
-                .add_alias(id.as_ref(), message_ref(&sent.message_id));
-            let body_type = match patch.get("bodyType") {
+            let body_type: BodyType = match patch.get("bodyType") {
                 Some(v) => serde_json::from_value(v.clone()).map_err(serde_failure)?,
                 None => stored.body_type.clone(),
             };
-            let edit = edit_patch(&stored, &text, &body_type, &utc_date(sent.accepted_at))
-                .map_err(serde_failure)?;
+            let record = self
+                .store
+                .edit(id.as_ref(), &text, store_body_type(&body_type))
+                .await
+                .map_err(action_failure)?;
+            let at = utc_date(record.edited_at.unwrap_or(record.accepted_at));
+            let edit = edit_patch(&stored, &text, &body_type, &at).map_err(serde_failure)?;
             if let (Some(obj), Value::Object(edit)) = (patch.as_object_mut(), edit) {
                 obj.extend(edit);
             }
         }
         Ok(Some(patch))
+    }
+}
+
+/// The store's body type of a JMAP one: markdown, else plain. The JMAP
+/// object keeps any other type itself (`ext["jmap"]`).
+fn store_body_type(body_type: &BodyType) -> mimid_agent_store::content::BodyType {
+    match body_type {
+        BodyType::Markdown => mimid_agent_store::content::BodyType::Markdown,
+        _ => mimid_agent_store::content::BodyType::Plain,
     }
 }
 

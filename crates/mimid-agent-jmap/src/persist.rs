@@ -10,8 +10,9 @@
 //! docs/design/agent-frontends.md §3 step 4, §7.10). It holds the records,
 //! and in each record's `ext["jmap"]` what the JMAP object has beyond what
 //! the record renders to ([`crate::render`]); the accountId is in the
-//! store's own `ext["jmap"]`. At each save `ext["jmap"]` is rebuilt from
-//! the backend's objects, then the store writes what changed in one
+//! store's own `ext["jmap"]`. At each save, whoever asks for it, the
+//! store has this front end rebuild `ext["jmap"]` from the backend's
+//! objects ([`JmapExt`], a [`Frontend`]), then writes what changed in one
 //! transaction. At start each record with a JMAP object goes back into
 //! the `MemoryBackend` under its key (`seed_object`), as the object it
 //! was. There is no reading of the `chat.json` this crate wrote before the
@@ -32,16 +33,18 @@
 //!   the message.
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 
+use jmap_chat_server::memory::MemoryBackend;
 use jmap_chat_types::{Chat, ChatBan, ChatContact, Message, ReadPosition};
 use jmap_server::{GetObject, Id, JmapObject, JmapReads};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 
-use mimid_agent_store::merge::merge_object;
 use mimid_agent_store::record::Ext;
-use mimid_agent_store::{FileError, State};
+use mimid_agent_store::{FileError, Frontend, State, Store};
 
 use crate::backend::AgentChat;
 use crate::render::{JMAP, Render, laid_over, not_rendered};
@@ -90,8 +93,14 @@ fn file_error(path: &Path, error: FileError) -> PersistError {
             source: std::io::Error::other(source),
         },
         FileError::Malformed(reason) => malformed(path, reason),
+        FileError::Frontend(reason) => PersistError::Store(reason),
         e => malformed(path, e.to_string()),
     }
+}
+
+/// A failure of [`mimid_agent_store::Store::save`].
+pub(crate) fn save_error(error: FileError) -> PersistError {
+    file_error(Path::new("the plaintext store"), error)
 }
 
 /// The accountId the store's own `ext["jmap"]` names.
@@ -234,94 +243,115 @@ impl AgentChat {
         Ok(())
     }
 
-    pub(crate) async fn all<O: GetObject + Serialize + Send + Sync>(
-        &self,
-    ) -> Result<Vec<Value>, PersistError> {
-        let (objects, _) = self
-            .inner
-            .get_objects::<O>(&(), &self.account, None, None)
-            .await
-            .map_err(|e| PersistError::Store(e.to_string()))?;
-        objects
-            .iter()
-            .map(|o| serde_json::to_value(o).map_err(|e| PersistError::Store(e.to_string())))
-            .collect()
-    }
-
     /// Writes what changed in the records to the store's database, if there
-    /// is one, with `ext["jmap"]` rebuilt from the objects the backend
-    /// holds now (see the module documentation).
+    /// is one ([`Store::save`]), which first has the JMAP front end rebuild
+    /// `ext["jmap"]` from the objects the backend holds now (see the module
+    /// documentation).
     ///
     /// # Errors
     ///
     /// [`PersistError`] if reading the objects or writing the file fails;
     /// the old file is then still in place.
     pub async fn save(&self) -> Result<(), PersistError> {
-        if !self.store.has_database() {
-            return Ok(());
+        self.store.save().await.map_err(save_error)
+    }
+
+    /// [`AgentChat::save`] after a JMAP write, which has succeeded in
+    /// memory whatever happens here: a failure is logged, since the write
+    /// already answered the client.
+    pub(crate) async fn save_or_log(&self) {
+        if let Err(error) = self.save().await {
+            tracing::error!(
+                name: "agent_chat_store_failed",
+                error = &error as &dyn std::error::Error,
+                "the plaintext store was not written"
+            );
         }
-        let _one_at_a_time = self.save_lock.lock().await;
-        let mut objects = Objects::new();
-        for (type_name, values) in [
-            (ChatContact::TYPE_NAME, self.all::<ChatContact>().await?),
-            (Chat::TYPE_NAME, self.all::<Chat>().await?),
-            (ChatBan::TYPE_NAME, self.all::<ChatBan>().await?),
-            (Message::TYPE_NAME, self.all::<Message>().await?),
-            (ReadPosition::TYPE_NAME, self.all::<ReadPosition>().await?),
-        ] {
-            let by_id = objects.entry(type_name).or_default();
-            for value in values {
-                if let Value::Object(object) = value
-                    && let Some(Value::String(id)) = object.get("id")
-                {
-                    by_id.insert(id.clone(), object);
+    }
+}
+
+/// The JMAP front end's part in every save ([`Frontend`]): it rebuilds
+/// each record's `ext["jmap"]` from the objects the backend holds (see the
+/// module documentation). It holds the backend itself (a `MemoryBackend`
+/// clone shares its state), so the store can run it for any save.
+pub(crate) struct JmapExt {
+    pub(crate) inner: MemoryBackend,
+    pub(crate) account: Id,
+    pub(crate) user: String,
+}
+
+impl Frontend for JmapExt {
+    fn before_save<'a>(
+        &'a self,
+        store: &'a Store,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut objects = Objects::new();
+            for (type_name, values) in [
+                (ChatContact::TYPE_NAME, self.all::<ChatContact>().await?),
+                (Chat::TYPE_NAME, self.all::<Chat>().await?),
+                (ChatBan::TYPE_NAME, self.all::<ChatBan>().await?),
+                (Message::TYPE_NAME, self.all::<Message>().await?),
+                (ReadPosition::TYPE_NAME, self.all::<ReadPosition>().await?),
+            ] {
+                let by_id = objects.entry(type_name).or_default();
+                for value in values {
+                    if let Value::Object(object) = value
+                        && let Some(Value::String(id)) = object.get("id")
+                    {
+                        by_id.insert(id.clone(), object);
+                    }
                 }
             }
-        }
-        self.keep_objects(&objects);
-        self.store
-            .save()
-            .map_err(|e| file_error(Path::new("the plaintext store"), e))
+            self.keep_objects(store, &objects);
+            Ok(())
+        })
+    }
+}
+
+impl JmapExt {
+    async fn all<O: GetObject + Serialize + Send + Sync>(&self) -> Result<Vec<Value>, String> {
+        let failed = |e: &dyn std::fmt::Display| format!("reading the objects to store: {e}");
+        let (objects, _) = self
+            .inner
+            .get_objects::<O>(&(), &self.account, None, None)
+            .await
+            .map_err(|e| failed(&e))?;
+        objects
+            .iter()
+            .map(|o| serde_json::to_value(o).map_err(|e| failed(&e)))
+            .collect()
     }
 
     /// Rebuilds every record's `ext["jmap"]` from `objects`: what the
     /// object has beyond the record's rendering, or none for a record
-    /// without an object. An object without a record (every JMAP write is
-    /// written into the records, so none should be) gets one first
-    /// ([`merge_object`]).
-    fn keep_objects(&self, objects: &Objects) {
-        let mut state = self.store.state();
+    /// without an object. An object without a record is not kept: every
+    /// JMAP write makes its record through the store, so there should be
+    /// none, and one is logged.
+    fn keep_objects(&self, store: &Store, objects: &Objects) {
+        let mut state = store.state();
         let account = self.account.as_ref();
         state
             .ext
             .insert(JMAP.to_owned(), serde_json::json!({ "account": account }));
         for (&type_name, by_id) in objects {
-            for (id, object) in by_id {
-                let held = match type_name {
-                    "ChatContact" => state.people.contains_key(id),
-                    "Chat" => state.rooms.contains_key(id),
-                    "ChatBan" => state.bans.contains_key(id),
-                    "Message" => state.messages.contains_key(id),
-                    _ => state.read_positions.contains_key(id),
-                };
-                if held {
-                    continue;
-                }
+            let unheld = by_id
+                .keys()
+                .filter(|id| match type_name {
+                    "ChatContact" => !state.people.contains_key(*id),
+                    "Chat" => !state.rooms.contains_key(*id),
+                    "ChatBan" => !state.bans.contains_key(*id),
+                    "Message" => !state.messages.contains_key(*id),
+                    _ => !state.read_positions.contains_key(*id),
+                })
+                .count();
+            if unheld > 0 {
                 tracing::warn!(
                     name: "agent_chat_object_without_record",
                     type_name,
-                    "a JMAP object had no record in the store; one is made from it"
+                    unheld,
+                    "JMAP objects without a record in the store are not saved"
                 );
-                if let Err(error) =
-                    merge_object(&mut state, account, type_name, object.clone(), false)
-                {
-                    tracing::error!(
-                        name: "agent_chat_object_not_kept",
-                        type_name,
-                        error = &error as &dyn std::error::Error,
-                        "a JMAP object without a record could not be kept"
-                    );
-                }
             }
         }
         let empty = BTreeMap::new();
@@ -419,19 +449,6 @@ impl AgentChat {
             if let Some(r) = state.read_positions.get_mut(&key) {
                 set_ext(&mut r.ext, ext);
             }
-        }
-    }
-
-    /// [`AgentChat::save`] after a JMAP write, which has succeeded in
-    /// memory whatever happens here: a failure is logged, since the write
-    /// already answered the client.
-    pub(crate) async fn save_or_log(&self) {
-        if let Err(error) = self.save().await {
-            tracing::error!(
-                name: "agent_chat_store_failed",
-                error = &error as &dyn std::error::Error,
-                "the plaintext store was not written"
-            );
         }
     }
 }

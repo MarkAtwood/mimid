@@ -3,8 +3,9 @@
 //!
 //! Every record is named by a store key ([`Key`]): a ULID minted by the
 //! store, the same form as crate-jmap's `MemoryBackend` ids, so a key is
-//! a valid RFC 8620 Id. A record a JMAP write made keeps the JMAP id
-//! as its key ([`crate::merge`]). Users are named by their MIMI user URI everywhere,
+//! a valid RFC 8620 Id. A record a front end's write made may have that
+//! front end's id as its key instead (a JMAP write keeps its JMAP id;
+//! [`crate::action`]). Users are named by their MIMI user URI everywhere,
 //! never by a key, so a record never needs another to say who it means.
 //!
 //! Room, Message, Person, Ban and ReadPosition records carry an
@@ -16,15 +17,18 @@
 //! - Times are milliseconds since the UNIX epoch; a finer time in a JMAP
 //!   object is cut to the millisecond (the JMAP front end keeps its text,
 //!   in `ext["jmap"]`).
-//! - A room a JMAP Chat/set create made has participants with no role
-//!   index ([`Participant::role`] is `None`) until the next sync sets
-//!   them from the room.
-//! - A user a JMAP write names by a ChatContact the records do not hold
-//!   (a client destroyed it) is unknown ([`Sender::Unknown`], or `None` as
-//!   a participant, a banned user or a banner).
+//! - A participant whose role the agent could not read has no role index
+//!   ([`Participant::role`] is `None`) until the next sync sets it.
+//! - An unknown user ([`Sender::Unknown`], or `None` as a participant, a
+//!   banned user or a banner) is no longer made: it stood for a JMAP
+//!   object naming a ChatContact a client destroyed, when JMAP objects
+//!   were written into the records (steps 3 and 4 of
+//!   docs/design/agent-frontends.md §3). Records name users by URI, so a
+//!   forgotten person leaves them whole.
 //! - A message, ban or read position may name a room the store does not
-//!   hold: one whose JMAP Chat a client destroyed, which keeps the Chat's
-//!   Messages and ChatBans.
+//!   hold: one forgotten here ([`crate::Store::forget_room`]; a client
+//!   destroyed its JMAP Chat, which keeps the Chat's Messages and
+//!   ChatBans), or, for a read position, one a client named.
 
 use std::collections::BTreeMap;
 
@@ -103,8 +107,7 @@ pub struct Participant {
     /// ChatContact a client destroyed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
-    /// The room-policy-04 role index, or `None` until a sync sets it (a
-    /// room a JMAP Chat/set create made).
+    /// The room-policy-04 role index, or `None` until a sync sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<u32>,
 }
@@ -143,8 +146,8 @@ pub enum Sender {
     User(String),
     /// The agent itself: a notice ([`Message::notice`]).
     Agent,
-    /// A user who is not known: a JMAP write named a ChatContact a client
-    /// destroyed.
+    /// A user who is not known (no longer made; see the module
+    /// documentation).
     Unknown,
 }
 

@@ -5,8 +5,8 @@
 //! polls the agent, joins the invites [`InvitePolicy`] allows and the
 //! user's rooms this device is not in, writes every event into the
 //! records, mirrors the rooms' bans and the people's DIDs, hands the
-//! changed records to the front end ([`Commit`]), which shows and saves
-//! them, and only then acknowledges what the agent delivered: a message
+//! changed records to the front end ([`Commit`]), which shows them, saves
+//! ([`Store::save`]), and only then acknowledges what the agent delivered: a message
 //! cannot be decrypted again, and an event not acknowledged comes again
 //! after a crash (a message already stored is skipped, and so is one
 //! deleted here since: [`State::delete_message`] keeps a tombstone until
@@ -35,9 +35,10 @@
 //!
 //! - The sync holds the agent for its whole run, attachment fetches and
 //!   the front end's commit included.
-//! - The store does not save by itself: the front end's commit calls
-//!   [`Store::save`] once it has shown the changes, so what the front end
-//!   keeps in the records (`ext`) is saved with them.
+//! - The save comes after the front end's commit has shown the changes,
+//!   and brings every front end's `ext` up to date first
+//!   ([`crate::Frontend`]), so what a front end keeps in the records is
+//!   saved with them.
 
 use std::collections::BTreeMap;
 
@@ -115,18 +116,22 @@ pub enum SyncError<E> {
     /// not acknowledged.
     #[error(transparent)]
     Commit(E),
+    /// The records could not be saved; what the round delivered was not
+    /// acknowledged.
+    #[error(transparent)]
+    Save(crate::db::FileError),
 }
 
 /// What a front end does with the records a sync round changed, before
-/// the agent's delivery is acknowledged: show them, and save the store.
+/// they are saved and the agent's delivery is acknowledged: show them.
 pub trait Commit {
     /// Why it failed.
     type Error;
 
-    /// Shows `changes` ([`Change`]) and saves the store
-    /// ([`Store::save`]); the records are read from [`Store::state`]. An
-    /// error stops the sync before the round is acknowledged, so the agent
-    /// delivers it again.
+    /// Shows `changes` ([`Change`]); the records are read from
+    /// [`Store::state`]. The store saves after it ([`Store::save`]). An
+    /// error stops the sync before the round is saved and acknowledged, so
+    /// the agent delivers it again.
     fn commit(
         &self,
         changes: Vec<Change>,
@@ -170,7 +175,7 @@ impl RoomRoles {
     }
 
     /// `participants` as records, with their role indexes.
-    fn participants(&self, participants: &[String]) -> Vec<Participant> {
+    pub(crate) fn participants(&self, participants: &[String]) -> Vec<Participant> {
         participants
             .iter()
             .map(|user| Participant {
@@ -180,7 +185,7 @@ impl RoomRoles {
             .collect()
     }
 
-    fn names(&self) -> BTreeMap<u32, String> {
+    pub(crate) fn names(&self) -> BTreeMap<u32, String> {
         self.names.iter().cloned().collect()
     }
 }
@@ -204,9 +209,9 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// [`SyncError::Agent`] if polling fails, and [`SyncError::Commit`]
-    /// if `commit` does. Either way nothing is lost: the agent keeps what
-    /// it has not had acknowledged.
+    /// [`SyncError::Agent`] if polling fails, [`SyncError::Commit`] if
+    /// `commit` does, and [`SyncError::Save`] if the save does. Either way
+    /// nothing is lost: the agent keeps what it has not had acknowledged.
     pub async fn sync<C: Commit + Sync>(
         &self,
         commit: &C,
@@ -271,11 +276,12 @@ impl Store {
             if moved {
                 self.refresh_dids(&agent, None, &mut changes);
             }
-            // Committed first, then acknowledged.
+            // Shown and saved first, then acknowledged.
             commit
                 .commit(std::mem::take(&mut changes))
                 .await
                 .map_err(SyncError::Commit)?;
+            self.save().await.map_err(SyncError::Save)?;
             agent.acknowledge(receipt)?;
             // Every event that stored a message deleted since is
             // acknowledged now (receive returned all those not yet
@@ -290,6 +296,7 @@ impl Store {
             .await
         {
             commit.commit(changes).await.map_err(SyncError::Commit)?;
+            self.save().await.map_err(SyncError::Save)?;
         }
         Ok(report)
     }

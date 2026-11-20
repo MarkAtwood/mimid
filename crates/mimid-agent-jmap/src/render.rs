@@ -40,7 +40,9 @@ use serde_json::{Map, Value, json};
 use crate::backend::ROOM_ID;
 use crate::project::message_content;
 
-pub(crate) use mimid_agent_store::merge::JMAP;
+/// The front-end name the JMAP front end keeps its properties under in a
+/// record's `ext`.
+pub(crate) const JMAP: &str = "jmap";
 
 /// A date a rendering needs and the record does not hold (a Chat's or a
 /// ChatBan's `createdAt`); the object's own is in `ext["jmap"]`.
@@ -230,7 +232,13 @@ pub(crate) fn laid_over<T: serde::de::DeserializeOwned + serde::Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mimid_agent_store::merge::merge_object;
+    use mimid_agent_store::content::BodyType as Body;
+    use mimid_agent_store::convert::parse_utc_date;
+    use mimid_agent_store::record::{
+        Ban, Deletion, Message as MessageRecord, Participant, Person, ReadPosition as Position,
+        Revision, Room, RoomStatus,
+    };
+    use mimid_agent_store::{State, accepted_at_of};
 
     const BOB: &str = "mimi://a.example/u/bob";
 
@@ -302,19 +310,110 @@ mod tests {
         )
     }
 
-    /// Each object, written into the records as a JMAP write is, renders
-    /// back to itself with what `ext["jmap"]` keeps, and the rest of what
-    /// it says is the record's, not kept twice.
+    fn ms(date: &str) -> u64 {
+        parse_utc_date(date).unwrap()
+    }
+
+    /// The records of [`objects`], written out by hand: what the store
+    /// holds of each, with users by URI. The sender of M1 ("gone") is a
+    /// user whose person record a client destroyed.
+    fn records() -> State {
+        const ALICE: &str = "mimi://a.example/u/alice";
+        const CAROL: &str = "mimi://a.example/u/carol";
+        let mut state = State::new(BOB);
+        state.insert_person(Person {
+            key: "P1".into(),
+            user: ALICE.into(),
+            display_name: Some("Alice A.".into()),
+            did: None,
+            did_changed_at: None,
+            first_seen: ms("2026-11-20T01:45:00.000Z"),
+            ext: Default::default(),
+        });
+        state.insert_room(Room {
+            key: "R1".into(),
+            uri: "mimi://a.example/r/one".into(),
+            name: Some("kept".into()),
+            status: RoomStatus::Active,
+            participants: [ALICE, BOB]
+                .map(|user| Participant {
+                    user: Some(user.into()),
+                    role: None,
+                })
+                .into(),
+            role_names: Default::default(),
+            ext: Default::default(),
+        });
+        let message = |key: &str, seq, sender: &str, id: &str, body: &str| MessageRecord {
+            key: key.into(),
+            room: "R1".into(),
+            seq,
+            sender: Sender::User(sender.into()),
+            mimi_id: None,
+            aliases: Vec::new(),
+            accepted_at: accepted_at_of(id).unwrap(),
+            sender_msg_id: id.into(),
+            body: body.into(),
+            body_type: Body::Plain,
+            in_reply_to: None,
+            topic_id: None,
+            attachments: Vec::new(),
+            edit_history: Vec::new(),
+            edited_at: None,
+            deleted: None,
+            kept_frank: None,
+            notice: None,
+            ext: Default::default(),
+        };
+        let mut m1 = message("M1", 1, CAROL, "01M7VA1QTK2Y4V6ER4Z3A3V6QN", "hello");
+        m1.deleted = Some(Deletion {
+            at: ms("2026-11-20T01:48:00.000Z"),
+            for_all: false,
+        });
+        state.insert_message(m1);
+        let mut m2 = message("M2", 2, BOB, "01M7VA1SH7BF44J3XAZZRD6RXZ", "after");
+        m2.edited_at = Some(ms("2026-11-20T01:45:03.069Z"));
+        m2.edit_history = vec![Revision {
+            body: "before".into(),
+            body_type: Body::Plain,
+            edited_at: ms("2026-11-20T01:45:03.069Z"),
+        }];
+        state.insert_message(m2);
+        state.bans.insert(
+            "B1".into(),
+            Ban {
+                key: "B1".into(),
+                room: "GONE".into(),
+                user: Some(ALICE.into()),
+                banned_by: Some(BOB.into()),
+                reason: Some("spam".into()),
+                expires_at: Some(ms("2030-01-01T00:00:00.000Z")),
+                ext: Default::default(),
+            },
+        );
+        state.read_positions.insert(
+            "C1".into(),
+            Position {
+                key: "C1".into(),
+                room: "R1".into(),
+                message: Some("M2".into()),
+                at: Some(ms("2026-11-20T01:47:00.1Z")),
+                ext: Default::default(),
+            },
+        );
+        state
+    }
+
+    /// Each object renders back to itself from its record with what
+    /// `ext["jmap"]` keeps, and the rest of what it says is the record's,
+    /// not kept twice.
     #[test]
     fn every_object_renders_back_exactly() {
-        let mut state = State::new(BOB);
+        let state = records();
         let objects: Vec<_> = objects()
             .into_iter()
             .map(|(t, v)| (t, typed(t, v)))
             .collect();
-        for (type_name, object) in &objects {
-            merge_object(&mut state, "bob", type_name, object.clone(), false).unwrap();
-        }
         let account = Id::from("bob");
         let render = Render {
             state: &state,
@@ -354,12 +453,13 @@ mod tests {
                 );
             }
         }
-        // What the store knows: the sender is unknown; the dates it holds
-        // are the same millisecond as the text kept beside them.
-        assert_eq!(
-            state.messages["M1"].sender,
-            mimid_agent_store::record::Sender::Unknown
-        );
+        // What the store knows: the sender has no ChatContact, so the
+        // rendering names none and ext["jmap"] keeps the object's; the
+        // dates it holds are the same millisecond as the text kept beside
+        // them.
+        let m1 = render.message(&state.messages["M1"]).unwrap();
+        assert_eq!(m1["senderId"], json!(UNKNOWN_ID));
+        assert_eq!(not_rendered(&objects[2].1, &m1)["senderId"], json!("gone"));
         let m2 = render.message(&state.messages["M2"]).unwrap();
         assert!(
             not_rendered(&objects[3].1, &m2)

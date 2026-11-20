@@ -11,21 +11,21 @@ use jmap_chat_server::{
 };
 use jmap_chat_types::{
     BodyType, Chat, ChatBan, ChatContact, ChatMember, ChatMemberRole, DeliveryState, Message,
+    ReadPosition,
 };
 use jmap_server::{
     BackendSetError, DelegateJmapReads, Dispatcher, GetObject, Id, JmapAccounts, JmapObject,
-    JmapReads, SetError, SetErrorType, SetObject,
+    JmapReads, SetError, SetErrorType, SetObject, UTCDate,
 };
-use mimid_agent_core::{
-    Agent, AgentError, HostOptions, MAX_TEXT_LEN, OutgoingAttachment, RoomStatus,
-};
+use mimid_agent_core::{Agent, AgentError, MAX_TEXT_LEN};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-use crate::convert::{sender_msg_id, utc_date};
-use mimid_agent_store::Store;
+use crate::convert::utc_date;
+use mimid_agent_store::action::{MemberChanges, OutgoingFile, Role};
 use mimid_agent_store::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
-use mimid_agent_store::merge::{forget_object, merge_object};
+use mimid_agent_store::convert::parse_utc_date;
+use mimid_agent_store::{ActionError, Store};
 
 pub use mimid_agent_store::InvitePolicy;
 pub use mimid_agent_store::sync::MAX_ATTACHMENTS_PER_MESSAGE;
@@ -33,10 +33,6 @@ pub use mimid_agent_store::sync::MAX_ATTACHMENTS_PER_MESSAGE;
 /// The Chat property that names its MIMI room
 /// (draft-atwood-jmap-chat-mimi-00 §Chat.roomId).
 pub(crate) const ROOM_ID: &str = "roomId";
-
-/// The role the agent gives the participants it adds: "member" in its
-/// default role list (decision mimid-1wgh.56).
-const MEMBER_ROLE_INDEX: u32 = 2;
 
 /// The change-log entries the store keeps per data type, by default: a
 /// client's `/changes` from an older state is `cannotCalculateChanges`
@@ -92,11 +88,13 @@ impl Options {
 ///
 /// The records live in a [`Store`], which is the agent's journal
 /// consumer; the JMAP objects live in a crate-jmap `MemoryBackend`, a
-/// projection of the records under their keys.
-/// Client writes that mean something in MIMI go to the [`Agent`] before
-/// they are stored, and each JMAP write is written into the records too
-/// (`reflect`). See the crate documentation for what maps
-/// and what does not.
+/// projection of the records under their keys. Each client write is a
+/// call of the store's method for it ([`mimid_agent_store::action`]),
+/// which sends what means something in MIMI through the [`Agent`] and
+/// writes the records; the write hook translates JMAP ids to store keys
+/// and user URIs, and the store's errors to SetErrors, then writes the
+/// JMAP object and saves. See the crate documentation for what maps and
+/// what does not.
 pub struct AgentChat {
     pub(crate) inner: MemoryBackend,
     pub(crate) account: Id,
@@ -104,8 +102,6 @@ pub struct AgentChat {
     /// The agent, the records and the blob store.
     pub(crate) store: Store,
     pub(crate) options: Options,
-    /// One [`AgentChat::save`] at a time.
-    pub(crate) save_lock: Mutex<()>,
 }
 
 impl std::fmt::Debug for AgentChat {
@@ -128,13 +124,20 @@ impl AgentChat {
             .with_change_log_limit(options.change_log_limit)
             .with_event_limit(0);
         inner.register_account(&account_id);
+        let user = agent.user().to_owned();
+        let store = Store::new(agent, options.invites.clone());
+        // Every save, whoever asks for it, rebuilds ext["jmap"] first.
+        store.add_frontend(Arc::new(crate::persist::JmapExt {
+            inner: inner.clone(),
+            account: account_id.clone(),
+            user: user.clone(),
+        }));
         Self {
             inner,
             account: account_id,
-            user: agent.user().to_owned(),
-            store: Store::new(agent, options.invites.clone()),
+            user,
+            store,
             options,
-            save_lock: Mutex::new(()),
         }
     }
 
@@ -245,61 +248,6 @@ impl AgentChat {
             .map(|room| room.uri.clone())
     }
 
-    /// Writes the JMAP object `id` of type `type_name`, as the backend
-    /// holds it after a write of this front end's own, into the store's
-    /// records, or removes its record when the object is gone
-    /// ([`merge_object`], [`forget_object`]); with `content`, an own edit
-    /// or retraction, its content too. Until the writes go through the
-    /// store (step 5 of docs/design/agent-frontends.md §3), this is how
-    /// the store learns of them. A failure is logged: the write has
-    /// already answered the client.
-    pub(crate) async fn reflect(&self, type_name: &str, id: &Id, content: bool) {
-        async fn json<O: GetObject + serde::Serialize + Send + Sync>(
-            chat: &AgentChat,
-            id: &Id,
-        ) -> Result<Option<Value>, String> {
-            match chat.stored::<O>(id).await {
-                Ok(Some(object)) => serde_json::to_value(object)
-                    .map(Some)
-                    .map_err(|e| e.to_string()),
-                Ok(None) => Ok(None),
-                Err(e) => Err(e.to_string()),
-            }
-        }
-        let object = match type_name {
-            "Chat" => json::<Chat>(self, id).await,
-            "Message" => json::<Message>(self, id).await,
-            "ChatContact" => json::<ChatContact>(self, id).await,
-            "ChatBan" => json::<ChatBan>(self, id).await,
-            "ReadPosition" => json::<jmap_chat_types::ReadPosition>(self, id).await,
-            _ => return,
-        };
-        let result = match object {
-            Ok(Some(Value::Object(object))) => merge_object(
-                &mut self.store.state(),
-                self.account.as_ref(),
-                type_name,
-                object,
-                content,
-            )
-            .map_err(|e| e.to_string()),
-            Ok(Some(_)) => Err("not an object".to_owned()),
-            Ok(None) => {
-                forget_object(&mut self.store.state(), type_name, id.as_ref());
-                Ok(())
-            }
-            Err(e) => Err(e),
-        };
-        if let Err(error) = result {
-            tracing::error!(
-                name: "agent_chat_reflect_failed",
-                type_name,
-                error,
-                "a JMAP write was not written into the store's records"
-            );
-        }
-    }
-
     /// `result`, after saving the store when it is a success.
     async fn saved<T, E>(&self, result: Result<T, E>) -> Result<T, E> {
         if result.is_ok() {
@@ -388,43 +336,25 @@ impl AgentChat {
             .await
             .map_err(SetFailure::into_backend)?;
 
-        let room = {
-            let mut agent = self.agent().lock().await;
-            let room = agent
-                .host_room(&HostOptions::named(name))
-                .await
-                .map_err(agent_failure)?;
-            for user in &users {
-                if let Err(e) = agent.invite(&room, user).await {
-                    // Do not keep a room the client was told was not made.
-                    if let Err(leave) = agent.leave(&room).await {
-                        tracing::warn!(%room, error = %leave, "leaving a half-made room");
-                    }
-                    return Err(agent_failure(e));
-                }
-            }
-            room
-        };
-        value[ROOM_ID] = json!(room);
+        let room = self
+            .store
+            .create_room(key(&id), &name, &users)
+            .await
+            .map_err(action_failure)?;
+        value[ROOM_ID] = json!(room.uri);
         let chat = serde_json::from_value::<O>(value).map_err(serde_failure)?;
         let chat = self.inner.insert_object(&self.account, chat).await?;
-        self.reflect(Chat::TYPE_NAME, &id, false).await;
         Ok((id, chat))
     }
 
-    /// `Chat/set` update of a Chat bound to `room`: added members are
-    /// invited, removed members are removed from the room
-    /// (`Agent::remove`), a changed role is a role change
-    /// (`Agent::change_role`: "admin" is the room's role named "admin",
-    /// "member" role 2), and the owner's own removal leaves the room
-    /// (decision mimid-1wgh.62 items 7, 8). The owner's own role cannot be
-    /// changed.
-    async fn update_room_chat(
-        &self,
-        room: &str,
-        chat_id: &Id,
-        patch: &Value,
-    ) -> Result<(), SetFailure> {
+    /// `Chat/set` update of a Chat bound to a room
+    /// ([`Store::change_members`]): added members are invited, removed
+    /// members are removed from the room (`Agent::remove`), a changed role
+    /// is a role change (`Agent::change_role`: "admin" is the room's role
+    /// named "admin", "member" role 2), and the owner's own removal leaves
+    /// the room (decision mimid-1wgh.62 items 7, 8). The owner's own role
+    /// cannot be changed.
+    async fn update_room_chat(&self, chat_id: &Id, patch: &Value) -> Result<(), SetFailure> {
         let Some(after) = patch.get("members") else {
             return Ok(());
         };
@@ -477,46 +407,35 @@ impl AgentChat {
         let removed = self.users_of(&others, "removeMembers").await?;
         let changed_ids: Vec<Id> = changed.iter().map(|(id, _)| id.clone()).collect();
         let changed_users = self.users_of(&changed_ids, "updateMemberRoles").await?;
-        let mut agent = self.agent().lock().await;
-        for user in &added {
-            agent.invite(room, user).await.map_err(agent_set_failure)?;
-        }
-        for user in &removed {
-            agent.remove(room, user).await.map_err(agent_set_failure)?;
-        }
-        for (user, (_, role)) in changed_users.iter().zip(&changed) {
-            let index = if *role == ChatMemberRole::Admin {
-                agent
-                    .roles(room)
-                    .map_err(agent_set_failure)?
-                    .into_iter()
-                    .find(|(_, name)| name == "admin")
-                    .map(|(index, _)| index)
-                    .ok_or_else(|| {
-                        SetFailure::set(
-                            set_error(SetErrorType::Forbidden, "the room has no admin role")
-                                .with_properties(["members"]),
-                        )
-                    })?
-            } else {
-                MEMBER_ROLE_INDEX
-            };
-            agent
-                .change_role(room, user, index)
-                .await
-                .map_err(agent_set_failure)?;
-        }
-        if leaving {
-            agent.leave(room).await.map_err(agent_set_failure)?;
-        }
-        Ok(())
+        let mut changes = MemberChanges::new();
+        changes.invite = added;
+        changes.remove = removed;
+        changes.roles = changed_users
+            .into_iter()
+            .zip(&changed)
+            .map(|(user, (_, role))| {
+                let role = if *role == ChatMemberRole::Admin {
+                    Role::Admin
+                } else {
+                    Role::Member
+                };
+                (user, role)
+            })
+            .collect();
+        changes.leave = leaving;
+        self.store
+            .change_members(chat_id.as_ref(), &changes)
+            .await
+            .map_err(action_set_failure)
     }
 
-    /// `Message/set` create: the body goes to the Chat's room as a
-    /// `text/plain` MIMI message, with each attachment's blob encrypted,
-    /// uploaded and sent as an ExternalPart (`Agent::send_message`), and
-    /// the stored Message, the client's attachments included, carries the
-    /// `senderMsgId` its recipients derive.
+    /// `Message/set` create ([`Store::send`]): the body goes to the Chat's
+    /// room as a `text/plain` MIMI message, with each attachment's blob
+    /// encrypted, uploaded and sent as an ExternalPart
+    /// (`Agent::send_message`), and the stored Message, the client's
+    /// attachments included, carries the `senderMsgId` its recipients
+    /// derive. crate-jmap has already checked each blob's size and digest
+    /// (`attachment_blob`); a blob gone since is `invalidProperties`.
     async fn create_message_in_room<F>(
         &self,
         build: F,
@@ -526,9 +445,9 @@ impl AgentChat {
     {
         let id = self.inner.mint_id();
         let mut message = build(&id);
-        let Some(room) = self.room_of_chat(&message.chat_id) else {
+        if self.room_of_chat(&message.chat_id).is_none() {
             return Err(forbidden("the Chat is not bound to a MIMI room"));
-        };
+        }
         if let Some(property) = unsupported_message_property(&message) {
             return Err(BackendSetError::SetError(Box::new(
                 set_error(
@@ -538,61 +457,101 @@ impl AgentChat {
                 .with_properties([property]),
             )));
         }
-        let attachments = self.outgoing_attachments(&message)?;
+        let files: Vec<OutgoingFile> = message
+            .attachments
+            .iter()
+            .map(|a| OutgoingFile::new(a.blob_id.as_ref(), &a.content_type, &a.filename))
+            .collect();
         let sent = self
-            .agent()
-            .lock()
+            .store
+            .send(key(&id), message.chat_id.as_ref(), &message.body, &files)
             .await
-            .send_message(&room, &message.body, &attachments)
-            .await
-            .map_err(agent_failure)?;
-        message.sender_msg_id = sender_msg_id(sent.accepted_at, &sent.message_id);
+            .map_err(action_failure)?;
+        message.sender_msg_id = Id::from(sent.sender_msg_id.as_str());
         message.delivery_state = DeliveryState::Delivered;
         message.delivered_at = Some(utc_date(sent.accepted_at));
         let stored = self.inner.insert_object(&self.account, message).await?;
-        self.reflect(Message::TYPE_NAME, &id, false).await;
-        if let Some(record) = self.store.state().messages.get_mut(id.as_ref()) {
-            record.mimi_id = Some(mimid_agent_store::record::Octets(sent.message_id.0));
-        }
         Ok((id, stored))
     }
 
-    /// The content of `message`'s attachments, read from the blob store,
-    /// with the media type and file name the client gave. crate-jmap has
-    /// already checked each blob's size and digest (`attachment_blob`); a
-    /// blob gone since is `invalidProperties`.
-    fn outgoing_attachments(
-        &self,
-        message: &Message,
-    ) -> Result<Vec<OutgoingAttachment>, BackendSetError<MemoryError>> {
-        if message.attachments.is_empty() {
-            return Ok(Vec::new());
+    /// Writes into the records what a client changed of a local object
+    /// `id` of type `type_name` (a ChatContact's `displayName`, a
+    /// ReadPosition, a Message's local deletion), as the backend holds it
+    /// after the write, through the store's method for it. A failure to
+    /// read the object is logged: the write has already succeeded.
+    async fn record_local(&self, type_name: &str, id: &Id) {
+        if let Err(error) = self.try_record_local(type_name, id).await {
+            tracing::error!(
+                name: "agent_chat_record_failed",
+                type_name,
+                error = &error as &dyn std::error::Error,
+                "a JMAP write was not written into the store's records"
+            );
         }
-        let Some(blobs) = self.store.blobs() else {
-            return Err(no_blob(None));
-        };
-        let now = std::time::SystemTime::now();
-        message
-            .attachments
-            .iter()
-            .map(|attachment| {
-                // Decision mimid-1wgh.68: not evicted while it is sent,
-                // before the Message that names it is stored.
-                blobs
-                    .touch(attachment.blob_id.as_ref(), now)
-                    .map_err(|e| BackendSetError::Other(MemoryError::new(e.to_string())))?;
-                let content = blobs
-                    .get(attachment.blob_id.as_ref())
-                    .map_err(|e| BackendSetError::Other(MemoryError::new(e.to_string())))?
-                    .ok_or_else(|| no_blob(Some(&attachment.blob_id)))?;
-                Ok(OutgoingAttachment {
-                    content,
-                    content_type: attachment.content_type.clone(),
-                    filename: attachment.filename.clone(),
-                })
-            })
-            .collect()
     }
+
+    async fn try_record_local(&self, type_name: &str, id: &Id) -> Result<(), MemoryError> {
+        let date = |d: &UTCDate| parse_utc_date(d.as_ref());
+        match type_name {
+            "ChatContact" => {
+                if let Some(contact) = self.stored::<ChatContact>(id).await? {
+                    let held = self
+                        .store
+                        .rename_person(id.as_ref(), contact.display_name.clone());
+                    if !held {
+                        self.store
+                            .add_person(key(id), &contact.identity, contact.display_name);
+                    }
+                }
+            }
+            "ReadPosition" => {
+                if let Some(position) = self.stored::<ReadPosition>(id).await? {
+                    self.store.set_read_position(
+                        key(id),
+                        key(&position.chat_id),
+                        position.last_read_message_id.as_ref().map(key),
+                        position.last_read_at.as_ref().and_then(date),
+                    );
+                }
+            }
+            "Message" => {
+                if let Some(at) = self
+                    .stored::<Message>(id)
+                    .await?
+                    .and_then(|m| m.deleted_at)
+                    .as_ref()
+                    .and_then(date)
+                {
+                    self.store.mark_deleted(id.as_ref(), at);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Forgets in the records the local object `id` of type `type_name`
+    /// that a client destroyed: a Message (with a tombstone), a
+    /// ChatContact or a ReadPosition.
+    fn forget_local(&self, type_name: &str, id: &Id) {
+        match type_name {
+            "Message" => {
+                self.store.delete_message(id.as_ref());
+            }
+            "ChatContact" => {
+                self.store.forget_person(id.as_ref());
+            }
+            "ReadPosition" => {
+                self.store.forget_read_position(id.as_ref());
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The store key of the record JMAP id `id` names: the same text.
+pub(crate) fn key(id: &Id) -> String {
+    id.as_ref().to_owned()
 }
 
 /// Adds to `ids` the string value of every property of `value`, at any
@@ -620,7 +579,7 @@ fn collect_blob_ids(value: &Value, ids: &mut std::collections::BTreeSet<String>)
 
 /// `invalidProperties` on `attachments`: blob `id` is not in the store, or
 /// there is no store.
-fn no_blob(id: Option<&Id>) -> BackendSetError<MemoryError> {
+fn no_blob(id: Option<&str>) -> BackendSetError<MemoryError> {
     let description = match id {
         Some(id) => format!("no blob {id}"),
         None => "this account stores no attachments".to_owned(),
@@ -704,8 +663,44 @@ pub(crate) fn agent_set_failure(e: AgentError) -> SetFailure {
     SetFailure::set(set_error(kind, e.to_string()))
 }
 
-pub(crate) fn agent_failure(e: AgentError) -> BackendSetError<MemoryError> {
-    agent_set_failure(e).into_backend()
+/// The failure for a refusal of the store's write methods: the agent's
+/// as [`agent_set_failure`]; a room the store does not hold, a role
+/// change the room does not allow and a message that cannot be edited
+/// `forbidden`; an attachment not in the blob store `invalidProperties`;
+/// anything else `serverFail`.
+pub(crate) fn action_set_failure(e: ActionError) -> SetFailure {
+    let members = |description: &str| {
+        SetFailure::set(
+            set_error(SetErrorType::Forbidden, description).with_properties(["members"]),
+        )
+    };
+    let forbidden =
+        |description: &str| SetFailure::set(set_error(SetErrorType::Forbidden, description));
+    match e {
+        ActionError::Agent(e) => agent_set_failure(e),
+        ActionError::NoSuchRoom(_) => forbidden("the Chat is not bound to a MIMI room"),
+        ActionError::NoAdminRole => members("the room has no admin role"),
+        ActionError::OwnRole => members("the owner's own role in a MIMI room cannot be changed"),
+        // Only edits and retractions name a message, and a Message whose
+        // record is gone has no MIMI message ID either.
+        ActionError::NoSuchMessage(_) | ActionError::NotEditable(_) => forbidden(
+            "no MIMI message ID is kept for this Message, so it cannot be edited or retracted",
+        ),
+        ActionError::TooManyVersions => forbidden("the Message has too many versions"),
+        ActionError::NoBlobStore => match no_blob(None) {
+            BackendSetError::SetError(e) => SetFailure::Set(e),
+            _ => SetFailure::Other(MemoryError::new("no blob store")),
+        },
+        ActionError::NoSuchBlob(id) => match no_blob(Some(&id)) {
+            BackendSetError::SetError(e) => SetFailure::Set(e),
+            _ => SetFailure::Other(MemoryError::new(format!("no blob {id}"))),
+        },
+        e => SetFailure::Other(MemoryError::new(e.to_string())),
+    }
+}
+
+pub(crate) fn action_failure(e: ActionError) -> BackendSetError<MemoryError> {
+    action_set_failure(e).into_backend()
 }
 
 /// The JMAP types this backend serves; the rest of crate-jmap's set
@@ -775,7 +770,7 @@ impl ChatStore for AgentChat {
                     .create_object(caller, account_id, create_id, build)
                     .await;
                 if let Ok((id, _)) = &created {
-                    self.reflect(name, id, false).await;
+                    self.record_local(name, id).await;
                 }
                 created
             }
@@ -813,9 +808,9 @@ impl ChatStore for AgentChat {
         let mut content = false;
         match O::TYPE_NAME {
             "Chat" => {
-                if let Some(room) = self.room_of_chat(id) {
+                if self.room_of_chat(id).is_some() {
                     let value = serde_json::to_value(&patch).map_err(serde_failure)?;
-                    self.update_room_chat(&room, id, &value)
+                    self.update_room_chat(id, &value)
                         .await
                         .map_err(SetFailure::into_backend)?;
                 }
@@ -837,8 +832,9 @@ impl ChatStore for AgentChat {
             .inner
             .update_object::<O>(caller, account_id, id, patch)
             .await;
-        if result.is_ok() {
-            self.reflect(O::TYPE_NAME, id, content).await;
+        // An edit or retraction is in the records already.
+        if result.is_ok() && !content {
+            self.record_local(O::TYPE_NAME, id).await;
         }
         self.saved(result).await
     }
@@ -853,20 +849,16 @@ impl ChatStore for AgentChat {
             .map_err(SetFailure::into_backend)?;
         let result = match O::TYPE_NAME {
             "Chat" => {
-                if let Some(room) = self.room_of_chat(id) {
-                    let mut agent = self.agent().lock().await;
-                    let active = agent
-                        .rooms()
-                        .iter()
-                        .any(|r| r.uri == room && r.status == RoomStatus::Active);
-                    if active {
-                        agent.leave(&room).await.map_err(agent_failure)?;
-                    }
+                if self.room_of_chat(id).is_some() {
+                    self.store
+                        .leave(id.as_ref())
+                        .await
+                        .map_err(action_failure)?;
                 }
                 self.inner
                     .destroy_object::<O>(caller, account_id, id)
                     .await?;
-                self.reflect(O::TYPE_NAME, id, false).await;
+                self.store.forget_room(id.as_ref());
                 Ok(())
             }
             // Destroying a Message or a local object is local.
@@ -874,7 +866,7 @@ impl ChatStore for AgentChat {
                 self.inner
                     .destroy_object::<O>(caller, account_id, id)
                     .await?;
-                self.reflect(name, id, false).await;
+                self.forget_local(name, id);
                 Ok(())
             }
             name => Err(unsupported_type(name)),
@@ -995,8 +987,18 @@ impl ChatModeration for AgentChat {
             .inner
             .update_object::<ChatBan>(caller, account_id, id, patch)
             .await;
-        if result.is_ok() {
-            self.reflect(ChatBan::TYPE_NAME, id, false).await;
+        if result.is_ok()
+            && let Some(ban) = self
+                .stored::<ChatBan>(id)
+                .await
+                .map_err(BackendSetError::Other)?
+        {
+            let expires_at = ban
+                .expires_at
+                .as_ref()
+                .and_then(|d| parse_utc_date(d.as_ref()));
+            self.store
+                .set_ban_terms(id.as_ref(), ban.reason, expires_at);
         }
         self.saved(result).await
     }
@@ -1097,7 +1099,7 @@ impl ChatResolvers for AgentChat {
         };
         match blobs.info(blob_id.as_ref()) {
             Ok(Some(info)) => Ok(Ok(Some(AttachmentBlob::new(info.size, info.sha256)))),
-            Ok(None) => refused(no_blob(Some(blob_id))),
+            Ok(None) => refused(no_blob(Some(blob_id.as_ref()))),
             Err(e) => Err(MemoryError::new(e.to_string())),
         }
     }

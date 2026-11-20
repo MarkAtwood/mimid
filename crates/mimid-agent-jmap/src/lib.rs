@@ -8,10 +8,11 @@
 //! [`AgentChat`] is a crate-jmap `ChatBackend` over a
 //! [`mimid_agent_store::Store`], the agent's plaintext records. Objects are
 //! kept in crate-jmap's `MemoryBackend`, a projection of the records
-//! under their keys; client writes with MIMI meaning go to the agent
-//! first, and [`AgentChat::sync`] runs the store's sync, which writes what
-//! the agent received into the records, then shows the changed records
-//! as JMAP objects and saves. It
+//! under their keys; each client write is the store's method for it
+//! ([`mimid_agent_store::action`]), which sends what has MIMI meaning
+//! through the agent and writes the records, and [`AgentChat::sync`]
+//! runs the store's sync, which writes what the agent received into the
+//! records, then shows the changed records as JMAP objects and saves. It
 //! has no transport and no runtime of its own: a daemon or an app builds a
 //! `jmap_server::Dispatcher<()>`, calls [`AgentChat::register`], serves it,
 //! and calls `sync` (decision mimid-1wgh.39).
