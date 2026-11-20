@@ -129,8 +129,38 @@ pub(super) async fn get_eventsource(
         tracing::debug!(?query, "eventsource request refused");
         return problem(StatusCode::BAD_REQUEST, "eventsource-query");
     };
+    // Subscribe and read the states the first event is measured against
+    // before answering, so that a change made after the client has its
+    // answer (and reads the current states itself) is always sent.
+    let changes = state.0.bus.subscribe();
+    let last = match states(
+        &state.0.projection,
+        state.0.key_packages.as_deref(),
+        &state.0.store,
+        &account,
+        &params,
+    )
+    .await
+    {
+        Ok(states) => states,
+        Err(error) => {
+            tracing::error!(
+                name: "jmap_eventsource_state_failed",
+                error = &error as &dyn std::error::Error,
+                "eventsource could not read the account's states"
+            );
+            return problem(StatusCode::INTERNAL_SERVER_ERROR, "eventsource-state");
+        }
+    };
     let (sender, receiver) = mpsc::channel(EVENT_BUFFER);
-    tokio::spawn(stream(state.clone(), account, params, sender));
+    tokio::spawn(stream(
+        state.clone(),
+        account,
+        params,
+        changes,
+        last,
+        sender,
+    ));
     Sse::new(ReceiverStream::new(receiver)).into_response()
 }
 
@@ -177,39 +207,20 @@ async fn states(
 }
 
 /// Sends events until the client goes away, the bus closes, or, with
-/// `closeafter=state`, the first `state` event is sent.
+/// `closeafter=state`, the first `state` event is sent. `changes` was
+/// subscribed before `last` was read, so no change falls between.
 async fn stream(
     state: JmapState,
     account: Account,
     params: Params,
+    mut changes: tokio::sync::broadcast::Receiver<super::bus::Change>,
+    mut last: BTreeMap<&'static str, String>,
     sender: mpsc::Sender<Result<Event, Infallible>>,
 ) {
     let projection = Arc::clone(&state.0.projection);
     let key_packages = state.0.key_packages.clone();
     let store = state.0.store.clone();
-    let bus = state.0.bus.clone();
     let mut stop = state.0.stop.clone();
-    // Subscribe before reading the states, so no change falls between.
-    let mut changes = bus.subscribe();
-    let mut last = match states(
-        &projection,
-        key_packages.as_deref(),
-        &store,
-        &account,
-        &params,
-    )
-    .await
-    {
-        Ok(states) => states,
-        Err(error) => {
-            tracing::error!(
-                name: "jmap_eventsource_state_failed",
-                error = &error as &dyn std::error::Error,
-                "eventsource could not read the account's states"
-            );
-            return;
-        }
-    };
     // The next ping is due one interval after the last event sent.
     let mut ping_due = params
         .ping
