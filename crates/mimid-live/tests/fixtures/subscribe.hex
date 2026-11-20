@@ -1,0 +1,11 @@
+; Subscribe = {"v": 1, "t": "Subscribe", "id": 7, "since": "12.3"}
+; Keys: t, v, id, since.
+a4                                  ; map, 4 pairs
+61 74                               ; "t"
+69 53 75 62 73 63 72 69 62 65       ; "Subscribe" (9)
+61 76                               ; "v"
+01                                  ; 1
+62 69 64                            ; "id"
+07                                  ; 7
+65 73 69 6e 63 65                   ; "since"
+64 31 32 2e 33                      ; "12.3"

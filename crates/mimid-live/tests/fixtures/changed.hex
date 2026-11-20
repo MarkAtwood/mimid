@@ -1,0 +1,11 @@
+; Changed = {"v": 1, "t": "Changed", "types": ["Consent", "KeyPackage"]}
+; Keys: t, v, types.
+a3                                  ; map, 3 pairs
+61 74                               ; "t"
+67 43 68 61 6e 67 65 64             ; "Changed"
+61 76                               ; "v"
+01                                  ; 1
+65 74 79 70 65 73                   ; "types"
+82                                  ; array, 2 items
+67 43 6f 6e 73 65 6e 74             ; "Consent"
+6a 4b 65 79 50 61 63 6b 61 67 65    ; "KeyPackage"

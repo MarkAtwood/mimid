@@ -56,6 +56,7 @@ Dependencies point down this table, never up.
 | `mimi-content` | mimi-content-10 CBOR and MessageId | Depend on openmls or tokio; contain encryption (attachments are `.14`) |
 | `mimi-room-policy` | room-policy-04 codecs and policy evaluation | Depend on `mimi-mls` |
 | `mimi-protocol` | protocol wire types and franking; `components`, the mls-extensions-11 §4.7 application logic for the room components (protocol-07 and room-policy-04) that the hub and agents share. Depends on `mimi-room-policy` | Use openmls directly (MLS types come only through `mimi_mls::wire` and `mimi_mls::member::ComponentOp`); do I/O |
+| `mimid-live` | The live stream's messages and strict CBOR codec (docs/design/binary-live-stream.md): mimid's own second binding of draft-atwood-jmap-chat-mimi-00 between agent and provider, behind a configuration switch, JMAP being the default | Do I/O; depend on any other mimid crate |
 | `mimid-server` | Hub and follower roles, the provider's JMAP Chat endpoint, admin CLI | Parse or decrypt application ciphertext; put SQL outside its store module |
 | `mimid-agent-store` | The agent's plaintext layer that its front ends share (docs/design/agent-frontends.md): the agent's only journal consumer (`Store::sync`), every action of the user's as a `Store` method (`action`), the change feed every front end follows (`feed`), the neutral records and their tables in the agent's SQLite database (`agent.sqlite`, beside the MLS state and the journal, so a sync's records and its acknowledgement commit together), the blob store, the attachment retry policy, `senderMsgId` and message references, the agent's notices, what a message keeps for a report | Depend on crate-jmap or IRC code; hold front-end types, except as JSON in a record's per-front-end `ext` map |
 | `mimid-agent-irc` | The IRC front end (docs/design/agent-frontends.md §4, §7): a loopback IRC server over the store, its line parser and casemapping, nicks and channel names kept in `ext["irc"]`, the `mimid` service nick | Use an IRC library; depend on crate-jmap or `mimid-agent-jmap`; check the `PASS` itself (the daemon hands it the local token check) |
@@ -63,7 +64,7 @@ Dependencies point down this table, never up.
 
 mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat client talks plaintext JMAP Chat to the local agent.
 
-- The spec crates (`mimi-*`, `mls-didwebvh`) are synchronous and pure. Only the server and agent are async.
+- The spec crates (`mimi-*`, `mls-didwebvh`) and `mimid-live` are synchronous and pure. Only the server and agent are async.
 - JMAP Chat types come from `~/PROJECT/crate-jmap`. Build its `#[non_exhaustive]` types through serde, not new constructors.
 - Before any write to `~/PROJECT/crate-jmap`, `~/PROJECT/jmap-chat-spec` or the openmls patch branch, ask Mark. Each write needs its own approval.
 

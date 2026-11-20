@@ -1,0 +1,14 @@
+; Ack of a Send = {"v": 1, "t": "Ack", "id": 300, "acceptedAt": 1700000100123,
+;                  "frank": h'aabb'}
+; Keys: t, v, id, frank, acceptedAt.
+a5                                  ; map, 5 pairs
+61 74                               ; "t"
+63 41 63 6b                         ; "Ack"
+61 76                               ; "v"
+01                                  ; 1
+62 69 64                            ; "id"
+19 01 2c                            ; 300
+65 66 72 61 6e 6b                   ; "frank"
+42 aa bb                            ; bytes, 2
+6a 61 63 63 65 70 74 65 64 41 74    ; "acceptedAt"
+1b 00 00 01 8b cf e6 ef 1b          ; 1700000100123 (0x18bcfe6ef1b), 8-byte argument

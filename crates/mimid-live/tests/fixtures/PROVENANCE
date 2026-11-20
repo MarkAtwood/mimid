@@ -1,0 +1,36 @@
+# PROVENANCE: mimid live stream v1 fixtures (bead mimid-e64f.2)
+#
+# Source: hand-encoded on 2026-11-20 from the CDDL of
+# docs/design/binary-live-stream.md §5.11, byte by byte, with a comment on
+# each line. Nothing here was produced by the code under test
+# (crates/mimid-live). Integers above 2^32 were converted to hex with
+# Python's hex() before being written by hand.
+#
+# Format: hex digits, whitespace ignored, ';' starts a comment.
+#
+# Cross-check: ../oracle/cbor2_check.py decodes each file with Python
+# cbor2 6.3.0 (https://pypi.org/project/cbor2/) and requires that
+# cbor2.dumps(value, canonical=True) gives the same bytes, i.e. that each
+# fixture is in RFC 8949 §4.2.1 core deterministic encoding.
+# ../oracle/cbor2_check.out is its unmodified output, every file "ok".
+# Regenerate: python3 -I ../oracle/cbor2_check.py > ../oracle/cbor2_check.out
+# with an interpreter that has cbor2 (here a venv outside the repository).
+#
+# fixtures.rs decodes each file, compares it to the value written out in
+# the test, encodes it again and requires the same bytes.
+#
+# SHA-256:
+#   524bf9ce6d4fa7b95f2232a7c3ab19e411d55e24793250d07c3dfcf4bca97280  ack-create-consent.hex
+#   3a900cbb860b356b77ffb14a282eb238c137f5f0ed84e0bc002b5c47c5ec6a91  ack-list-chats.hex
+#   0332d9730ff9c136b7a22e6ac3ee984104b82653be50828aff656439d41f3bc7  ack-send.hex
+#   4448603244533eaeeb8fab9f398b95123952a414398402de2a2b41b66bdcac4d  changed.hex
+#   9df82e52bee56e89af8db01e7f544a592d069d0a4ff8e0dfd3cd65e0bfa307e5  client-hello.hex
+#   3b6ae4f2fe27cad6532aea42360a07a5060dfe6978ea61f5e0d63c3db2c4d52d  deliver.hex
+#   2d7e9beb80f4efa1fb5814a42543a81f08c1e07d763a90ae7c7b84177c373a32  error-epoch-too-old.hex
+#   6abc6478184f90b1449c3d54acb43e5d5b82cf0a7ce21a7e201df248a4f8d966  position-unknown-member.hex
+#   12eae7287aa0b802731320434c6020f4516ec51e4374fc70486bc587bbbab3af  provider-hello.hex
+#   ff60363aa1b6173cd384a4affa94a775f5c8b1f29eaf32d45869b83bcfe52c46  send.hex
+#   226ac5ca7a09d81db7f808c0da2d0aae586b7dd98ecb52927177cc9c060bde21  subscribe.hex
+#   238142743658b9ad51d79d3b5bcffcec0a5c8a14968669a7d9715fc45e381c4d  update-consent.hex
+#   03c559c084749c2f31a9c584e740fc646fd0e94e450a683b58c91edade53b125  oracle/cbor2_check.py
+#   851f189ee1aee1efdb3df375aaebe6ccc42e2dd85cce0e8b0ae513b672e00ffa  oracle/cbor2_check.out

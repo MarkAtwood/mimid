@@ -1,0 +1,12 @@
+; ClientHello = {"v": 1, "t": "ClientHello", "versions": [1], "token": "tok"}
+; Keys in RFC 8949 §4.2.1 order: t, v, token, versions.
+a4                                  ; map, 4 pairs
+61 74                               ; "t"
+6b 43 6c 69 65 6e 74 48 65 6c 6c 6f ; "ClientHello" (11)
+61 76                               ; "v"
+01                                  ; 1
+65 74 6f 6b 65 6e                   ; "token"
+63 74 6f 6b                         ; "tok"
+68 76 65 72 73 69 6f 6e 73          ; "versions"
+81                                  ; array, 1 item
+01                                  ; 1

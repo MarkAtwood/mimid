@@ -1,0 +1,15 @@
+; UpdateConsent = {"v": 1, "t": "UpdateConsent", "id": 2, "consentId": "c1",
+;                  "decision": null}
+; decision null: go back to the server's policy (draft §Consent/set).
+; Keys: t, v, id, decision, consentId.
+a5                                  ; map, 5 pairs
+61 74                               ; "t"
+6d 55 70 64 61 74 65 43 6f 6e 73 65 6e 74 ; "UpdateConsent" (13)
+61 76                               ; "v"
+01                                  ; 1
+62 69 64                            ; "id"
+02                                  ; 2
+68 64 65 63 69 73 69 6f 6e          ; "decision"
+f6                                  ; null
+69 63 6f 6e 73 65 6e 74 49 64       ; "consentId"
+62 63 31                            ; "c1"

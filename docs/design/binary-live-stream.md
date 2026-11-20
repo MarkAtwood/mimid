@@ -379,15 +379,131 @@ check, listed in §5.8 and §5.3.
 
 ### 5.11 Messages
 
-The full CDDL comes with the codec crate (§8 step 2). In short:
+The CDDL (RFC 8610) of version 1. The codec is crates/mimid-live; its
+fixtures (crates/mimid-live/tests/fixtures) are encoded by hand from
+this text. Every map may carry members not named here; a receiver
+ignores them, and the codec keeps them so they round-trip.
 
-- client: `ClientHello`, `Subscribe`, `Send`, `Update`, `CreateRoom`,
-  `Unbind`, `ReportAbuse`, `FetchGroupInfo`, `FetchKeyMaterial`,
-  `PublishKeyPackage`, `ListKeyPackages`, `DestroyKeyPackage`,
-  `ListConsent`, `CreateConsent`, `UpdateConsent`, `DestroyConsent`,
-  `ListChats`, `SetChatAccepted`, `Upload`, `FetchAsset`;
-- provider: `ProviderHello`, `Ack`, `Error`, `Deliver`, `Position`,
-  `Changed`.
+```cddl
+message      = client-msg / provider-msg
+client-msg   = ClientHello / request
+provider-msg = ProviderHello / Ack / Error / Deliver / Position / Changed
+
+req-id     = uint
+room-id    = tstr          ; MIMI room ID
+jmap-state = tstr          ; a JMAP state string, opaque to the client
+ms         = uint          ; milliseconds since the UNIX epoch
+tls        = bstr          ; exact TLS-presentation octets (RFC 9420,
+                           ; protocol-07), never re-encoded
+
+common = ( "v": uint, "t": tstr )
+
+; ---- hello: the same form in every version ----
+
+ClientHello = {
+  "v": 1, "t": "ClientHello",
+  "versions": [+ uint],
+  "token": tstr            ; the bearer token (mimid-1wgh.73)
+}
+
+ProviderHello = {
+  "v": 1, "t": "ProviderHello",
+  "version": uint,         ; negotiated
+  "userUri": tstr,         ; as the mimi capability's
+  "roomIdPrefix": tstr,
+  "hubSender": tls,        ; ExternalSender
+  "cipherSuites": [* uint],
+  "maxKeyPackages": uint,
+  "maxMessageBytes": uint, ; no frame is larger (mimid-1wgh.78)
+  "maxRequestBytes": uint, ; no request but Upload is larger
+  "storesAssets": bool,    ; assetUrl present
+  ? "assetLifetime": uint, ; seconds
+  "fetchesAssets": bool,   ; assetDownloadUrl present
+  "acceptedRooms": bool    ; SetChatAccepted works (mimid-1wgh.63)
+}
+
+; ---- requests: each answered by one Ack or one Error with its id ----
+
+request = { common, "id": req-id, op }
+
+op = (
+    "t": "Subscribe", ? "since": jmap-state )                 ; absent: every Message
+  // ( "t": "Send", "room": room-id, "message": tls )          ; MLSMessage
+  // ( "t": "Update", "room": room-id, "request": tls )        ; UpdateRequest
+  // ( "t": "CreateRoom", "room": room-id,
+       "groupInfo": tls, "ratchetTree": tls )
+  // ( "t": "Unbind", "room": room-id )
+  // ( "t": "ReportAbuse", "room": room-id, "report": tls )    ; AbuseReport
+  // ( "t": "FetchGroupInfo", "room": room-id, "request": tls )   ; GroupInfoRequest
+  // ( "t": "FetchKeyMaterial", "room": room-id, "request": tls ) ; KeyMaterialRequest
+  // ( "t": "PublishKeyPackage", "keyPackage": tls, ? "lastResort": bool )
+  // ( "t": "ListKeyPackages" )
+  // ( "t": "DestroyKeyPackage", "keyPackageRef": tls )
+  // ( "t": "ListConsent" )
+  // ( "t": "CreateConsent", "requesterUri": tstr, "targetUri": tstr,
+       ? "room": room-id, ? "requested": bool, ? "decision": decision )
+  // ( "t": "UpdateConsent", "consentId": tstr,
+       ? "requested": bool, ? "decision": decision / null )
+  // ( "t": "DestroyConsent", "consentId": tstr )
+  // ( "t": "ListChats" )
+  // ( "t": "SetChatAccepted", "chatId": tstr, "accepted": bool )
+  // ( "t": "Upload", "data": bstr, ? "type": tstr )
+  // ( "t": "FetchAsset", "room": room-id, "url": tstr )
+
+decision = "grant" / "revoke"
+
+; ---- answers ----
+
+Ack = { common, "id": req-id, ack-result }   ; "t": "Ack"
+
+ack-result = (
+    "state": jmap-state )                               ; Subscribe
+  // ( "acceptedAt": ms, ? "frank": tls )               ; Send
+  // ( "acceptedAt": ms, ? "errorDescription": tstr )   ; Update
+  // ( "chatId": tstr )                                 ; CreateRoom
+  // ( )                     ; Unbind, ReportAbuse, DestroyKeyPackage,
+                             ; UpdateConsent, DestroyConsent, SetChatAccepted
+  // ( "status": tstr, "response": tls )                ; FetchGroupInfo
+  // ( "response": tls )                                ; FetchKeyMaterial
+  // ( "keyPackageRef": tls, "lastResort": bool )       ; PublishKeyPackage
+  // ( "state": tstr, "keyPackages": [* key-package] )  ; ListKeyPackages
+  // ( "state": tstr, "records": [* consent] )          ; ListConsent
+  // ( "record": consent )                              ; CreateConsent
+  // ( "state": tstr, "chats": [* chat] )               ; ListChats
+  // ( "blobId": tstr, "url": tstr, "size": uint )      ; Upload
+  // ( "data": bstr )                                   ; FetchAsset
+
+key-package = { "keyPackageRef": tls, "keyPackage": tls, "lastResort": bool }
+consent = {
+  "consentId": tstr, "requesterUri": tstr, "targetUri": tstr,
+  "room": room-id / null, "requested": bool,
+  "decision": decision / null, "updated": ms
+}
+chat = { "chatId": tstr, "room": room-id, "bound": bool, "accepted": bool }
+
+Error = {
+  common,                  ; "t": "Error"
+  ? "id": req-id,          ; absent: the connection
+  "code": tstr,            ; §5.4 (mimid-1wgh.79)
+  ? "detail": tstr,        ; diagnostic, not for display
+  ? "currentEpoch": uint,  ; epochTooOld, wrongEpoch
+  ? "invalidProposals": [* tls],  ; invalidProposal: ProposalRefs
+  ? "errorDescription": tstr,     ; a refused Update: the hub's text
+  ? "status": uint,        ; refused: another provider's HTTP status
+  ? "properties": [* tstr],       ; invalidProperties
+  ? "existingId": tstr     ; alreadyExists
+}
+
+; ---- unsolicited, after a Subscribe ----
+
+Deliver  = { common, "messageId": tstr, "chatId": tstr, "fanout": tls }
+Position = { common, "state": jmap-state }
+Changed  = { common, "types": [+ ("Chat" / "KeyPackage" / "Consent")] }
+```
+
+The `Ack` has no member naming its request's type: the client knows it
+from the `id`. A `Deliver` names no room; the FanoutMessage and the
+Chat do.
 
 `Deliver` carries a whole FanoutMessage, so Welcomes arrive the same way
 as on JMAP (draft-atwood-jmap-chat-mimi-00 §application/mimi-fanout,

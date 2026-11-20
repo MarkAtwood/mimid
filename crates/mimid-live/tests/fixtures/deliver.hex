@@ -1,0 +1,14 @@
+; Deliver = {"v": 1, "t": "Deliver", "messageId": "M1", "chatId": "C1",
+;            "fanout": h'0001'}
+; Keys: t, v, chatId, fanout, messageId.
+a5                                  ; map, 5 pairs
+61 74                               ; "t"
+67 44 65 6c 69 76 65 72             ; "Deliver"
+61 76                               ; "v"
+01                                  ; 1
+66 63 68 61 74 49 64                ; "chatId"
+62 43 31                            ; "C1"
+66 66 61 6e 6f 75 74                ; "fanout"
+42 00 01                            ; bytes, 2
+69 6d 65 73 73 61 67 65 49 64       ; "messageId"
+62 4d 31                            ; "M1"

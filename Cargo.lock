@@ -2695,6 +2695,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mimid-live"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "mimid-server"
 version = "0.1.0"
 dependencies = [

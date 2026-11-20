@@ -1,0 +1,26 @@
+; Ack of a ListChats = {"v": 1, "t": "Ack", "id": 5, "state": "s1",
+;   "chats": [{"chatId": "C1", "room": "mimi://a.example/r/x",
+;              "bound": true, "accepted": false}]}
+; Keys: t, v, id, chats, state; inside: room, bound, chatId, accepted.
+a5                                  ; map, 5 pairs
+61 74                               ; "t"
+63 41 63 6b                         ; "Ack"
+61 76                               ; "v"
+01                                  ; 1
+62 69 64                            ; "id"
+05                                  ; 5
+65 63 68 61 74 73                   ; "chats"
+81                                  ; array, 1 item
+a4                                  ; map, 4 pairs
+64 72 6f 6f 6d                      ; "room"
+74                                  ; text, 20 bytes
+6d 69 6d 69 3a 2f 2f 61 2e 65       ; "mimi://a.e"
+78 61 6d 70 6c 65 2f 72 2f 78       ; "xample/r/x"
+65 62 6f 75 6e 64                   ; "bound"
+f5                                  ; true
+66 63 68 61 74 49 64                ; "chatId"
+62 43 31                            ; "C1"
+68 61 63 63 65 70 74 65 64          ; "accepted"
+f4                                  ; false
+65 73 74 61 74 65                   ; "state"
+62 73 31                            ; "s1"

@@ -1,0 +1,25 @@
+ack-create-consent.hex: ok
+  {"t": "Ack", "v": 1, "id": 3, "record": {"room": null, "updated": 1700000000000, "decision": null, "consentId": "cs7", "requested": true, "targetUri": "mimi://e.example/u/erin", "requesterUri": "mimi://a.example/u/alice"}}
+ack-list-chats.hex: ok
+  {"t": "Ack", "v": 1, "id": 5, "chats": [{"room": "mimi://a.example/r/x", "bound": true, "chatId": "C1", "accepted": false}], "state": "s1"}
+ack-send.hex: ok
+  {"t": "Ack", "v": 1, "id": 300, "frank": h'aabb', "acceptedAt": 1700000100123}
+changed.hex: ok
+  {"t": "Changed", "v": 1, "types": ["Consent", "KeyPackage"]}
+client-hello.hex: ok
+  {"t": "ClientHello", "v": 1, "token": "tok", "versions": [1]}
+deliver.hex: ok
+  {"t": "Deliver", "v": 1, "chatId": "C1", "fanout": h'0001', "messageId": "M1"}
+error-epoch-too-old.hex: ok
+  {"t": "Error", "v": 1, "id": 9, "code": "epochTooOld", "currentEpoch": 4}
+position-unknown-member.hex: ok
+  {"t": "Position", "v": 1, "zz": 0, "state": "12.3"}
+provider-hello.hex: ok
+  {"t": "ProviderHello", "v": 1, "userUri": "mimi://a.example/u/alice", "version": 1, "hubSender": h'01', "cipherSuites": [1], "roomIdPrefix": "mimi://a.example/r/", "storesAssets": true, "acceptedRooms": true, "assetLifetime": 3600, "fetchesAssets": true, "maxKeyPackages": 100, "maxMessageBytes": 16842752, "maxRequestBytes": 4259840}
+send.hex: ok
+  {"t": "Send", "v": 1, "id": 300, "room": "mimi://a.example/r/x", "message": h'000102'}
+subscribe.hex: ok
+  {"t": "Subscribe", "v": 1, "id": 7, "since": "12.3"}
+update-consent.hex: ok
+  {"t": "UpdateConsent", "v": 1, "id": 2, "decision": null, "consentId": "c1"}
+cbor2 6.3.0
