@@ -1,43 +1,69 @@
-//! [`Change`]: what a [`crate::Store::sync`] changed in the records, for a
-//! front end to show (docs/design/agent-frontends.md §2, "The change
-//! feed").
+//! [`Change`]: what moved in the records, for the front ends to show
+//! (docs/design/agent-frontends.md §2, "The change feed").
 //!
-//! # Limitations
-//!
-//! - There is no change log or feed yet (step 6 of the migration): a sync
-//!   hands its changes to the front end that called it
-//!   ([`crate::Commit`]), once per round, before the agent's delivery is
-//!   acknowledged.
-//! - Writes a front end makes itself are not changes: that front end
-//!   already shows them.
+//! [`crate::Store::sync`] and every write method ([`crate::action`])
+//! record the changes they make; the next [`crate::Store::save`] publishes
+//! them ([`crate::feed`]), so each front end learns of what the agent
+//! received and of what the other front ends did.
 
 use crate::record::Key;
 
-/// One record a sync added, changed or removed. A change names the
-/// record, not what moved in it: the front end reads the record as it is
-/// now. A record named more than once in one list is shown once, as it
-/// is now.
+/// One record added, changed or removed. A change names the record, not
+/// what moved in it: the front end reads the record as it is now, and a
+/// record named more than once in one batch is shown once, as it is now.
+/// A front end is also told of its own writes; it finds them shown
+/// already.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Change {
-    /// A person was first seen.
+    /// A person was first seen, or made by a front end.
     PersonAdded(Key),
-    /// A person's did:webvh DID changed.
+    /// A person's did:webvh DID or local display name changed.
     PersonChanged(Key),
-    /// A room was joined or found.
+    /// A person record was removed ([`crate::Store::forget_person`]).
+    PersonForgotten(Key),
+    /// A room was joined, hosted or found.
     RoomAdded(Key),
     /// A room's participants or roles changed, or may have: the front end
     /// shows them again from the record.
     RoomChanged(Key),
-    /// This user is out of the room.
+    /// This user is out of the room, or leaving it.
     RoomLeft(Key),
+    /// A room was deleted here with everything the store kept of it
+    /// ([`crate::Store::forget_room`]; docs/design/agent-frontends.md
+    /// §7.9). Its records are gone; the keys are what the front end may
+    /// still show.
+    RoomForgotten {
+        /// The room's key.
+        key: Key,
+        /// Its messages' keys.
+        messages: Vec<Key>,
+        /// Its bans' keys.
+        bans: Vec<Key>,
+    },
     /// A message or notice was stored.
     MessageAdded(Key),
-    /// A message was edited or retracted, or an attachment of it arrived.
+    /// A message was edited, retracted or deleted here (its record keeps
+    /// `deleted`), or an attachment of it arrived.
     MessageChanged(Key),
-    /// A room holds a user banned whom it did not before.
+    /// A message's record was deleted here, in every front end
+    /// ([`crate::Store::delete_message`]).
+    MessageDeleted(Key),
+    /// A room holds a user banned whom it did not before, or a front end
+    /// banned one.
     BanAdded(Key),
+    /// A ban's local reason or expiry changed.
+    BanChanged(Key),
     /// A ban was lifted, or the room holds the user banned no more; the
     /// record is gone.
     BanLifted(Key),
+    /// An invite, by number, waits for the user: the invite policy did not
+    /// join it.
+    InvitePending(u64),
+    /// A pending invite is gone: accepted, or no longer in the agent.
+    InviteGone(u64),
+    /// A read position was set.
+    ReadPositionMoved(Key),
+    /// A read position was removed.
+    ReadPositionForgotten(Key),
 }

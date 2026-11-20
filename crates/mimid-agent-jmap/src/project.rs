@@ -1,7 +1,10 @@
 //! The JMAP projection of the store (docs/design/agent-frontends.md §2,
-//! "The JMAP projection"): what a [`Store::sync`](mimid_agent_store::Store)
-//! changed in the records, written into the `MemoryBackend` as JMAP
-//! objects under the records' keys.
+//! "The JMAP projection"): what the store's change feed publishes, from a
+//! sync or from any front end's write, written into the `MemoryBackend`
+//! as JMAP objects under the records' keys. It runs in every save, before
+//! the records are written (`JmapExt`, the JMAP front end's
+//! [`mimid_agent_store::Frontend`]), so a record is never saved without
+//! the JMAP object it should have, whoever made it.
 //!
 //! Each record is written as the JMAP object it is now: one record-to-
 //! object function per type, merged over the object the backend holds,
@@ -11,7 +14,14 @@
 //! the backend already shows writes nothing. A record named several times
 //! in one commit is written once. People come first, then rooms,
 //! messages and bans, so a Chat's members and a Message's sender name
-//! ChatContacts that exist.
+//! ChatContacts that exist; deleted records go last.
+//!
+//! The JMAP front end's own writes come through the feed too. A record
+//! added whose object exists was made by a JMAP write hook, which shows
+//! it already: nothing is written. A changed record writes only what
+//! differs, which for a JMAP write is nothing, except a Chat's `members`,
+//! which a member change shows again from the room's participants, as the
+//! sync that follows it would.
 //!
 //! | Record | JMAP object | Properties the store owns |
 //! |---|---|---|
@@ -20,6 +30,11 @@
 //! | Message | Message | `senderMsgId`, `senderId`, `chatId`, `sentAt`, `receivedAt`, `replyTo`, `topicId`, `deliveryState` (made only); `body`, `bodyType`, `attachments`, `editedAt`, `editHistory`, `deletedAt`, `deletedForAll` |
 //! | Ban | ChatBan | all, made only; destroyed when the record is gone |
 //!
+//! A record deleted (a forgotten person, a deleted message, a room
+//! deleted with its messages and bans) destroys its object, if there is
+//! one. Invites and read positions have no projection: JMAP Chat has no
+//! object for an invite, and only JMAP writes read positions.
+//!
 //! # Limitations
 //!
 //! - A Chat's `createdAt`, a ChatContact's `firstSeenAt` and a Message's
@@ -27,21 +42,28 @@
 //! - Dates the store owns are compared to the millisecond, so an object
 //!   whose date text differs (a client's, or one with more digits) is not
 //!   rewritten for that alone.
+//! - Destroying a Chat destroys each of its Messages, one Message change
+//!   each, so a long history can push a client's state out of the change
+//!   log ([`crate::CHANGE_LOG_LIMIT`]): its next `/changes` is then
+//!   `cannotCalculateChanges` and it resyncs.
 
 use jmap_chat_server::ChatStore;
 use jmap_chat_types::{
     BodyType, Chat, ChatBan, ChatContact, ChatKind, ChatMember, ChatMemberRole, DeliveryState,
     Message,
 };
-use jmap_server::{Id, now_utc_string};
-use mimid_agent_store::Change;
+use jmap_server::{
+    BackendSetError, GetObject, Id, JmapObject, JmapReads, SetErrorType, SetObject, now_utc_string,
+};
 use mimid_agent_store::convert::{parse_utc_date, utc_date};
 use mimid_agent_store::record::{self, Reply, Sender};
 use mimid_agent_store::sync::bans::BANNED_ROLE_INDEX;
+use mimid_agent_store::{Change, Store};
 use serde_json::{Map, Value, json};
 
-use crate::backend::{AgentChat, ROOM_ID};
+use crate::backend::ROOM_ID;
 use crate::edits::retraction_patch;
+use crate::persist::JmapExt;
 use crate::sync::SyncError;
 
 /// The records one commit names, each once, in the order first named.
@@ -221,55 +243,130 @@ pub(crate) fn message_content(message: &record::Message) -> Map<String, Value> {
     fields
 }
 
-impl AgentChat {
+/// A Message's content properties as the projection writes them: as
+/// [`message_content`] renders them, but for a message deleted here alone
+/// emptied as crate-jmap empties it (draft-atwood-jmap-chat-00 §Message
+/// `deletedAt`: empty `body` and `attachments`, no `editHistory`), while
+/// the record keeps its content for reports.
+fn shown_content(message: &record::Message) -> Map<String, Value> {
+    let mut content = message_content(message);
+    if matches!(
+        message.deleted,
+        Some(record::Deletion { for_all: false, .. })
+    ) {
+        content.insert("body".to_owned(), json!(""));
+        content.insert("attachments".to_owned(), json!([]));
+        content.insert("editHistory".to_owned(), Value::Null);
+    }
+    content
+}
+
+impl JmapExt {
     /// Writes the records `changes` name into the backend (see the module
     /// documentation).
-    pub(crate) async fn project(&self, changes: Vec<Change>) -> Result<(), SyncError> {
+    pub(crate) async fn project(&self, store: &Store, changes: &[Change]) -> Result<(), SyncError> {
         let (mut people, mut rooms, mut messages, mut bans) = (
             Named::default(),
             Named::default(),
             Named::default(),
             Named::default(),
         );
-        for change in changes {
+        let mut gone: Vec<(&'static str, String)> = Vec::new();
+        for change in changes.iter().cloned() {
             match change {
                 Change::PersonAdded(key) => people.added(key),
                 Change::PersonChanged(key) => people.changed(key),
+                Change::PersonForgotten(key) => gone.push((ChatContact::TYPE_NAME, key)),
                 Change::RoomAdded(key) => rooms.added(key),
                 Change::RoomChanged(key) => rooms.changed(key),
                 Change::RoomLeft(key) => rooms.left(key),
+                Change::RoomForgotten {
+                    key,
+                    messages,
+                    bans,
+                } => {
+                    gone.push((Chat::TYPE_NAME, key));
+                    gone.extend(messages.into_iter().map(|m| (Message::TYPE_NAME, m)));
+                    gone.extend(bans.into_iter().map(|b| (ChatBan::TYPE_NAME, b)));
+                }
                 Change::MessageAdded(key) => messages.added(key),
                 Change::MessageChanged(key) => messages.changed(key),
+                Change::MessageDeleted(key) => gone.push((Message::TYPE_NAME, key)),
                 Change::BanAdded(key) => bans.added(key),
-                Change::BanLifted(key) => bans.changed(key),
-                // Change is #[non_exhaustive].
+                Change::BanChanged(key) | Change::BanLifted(key) => bans.changed(key),
+                // Invites and read positions have no projection; Change is
+                // #[non_exhaustive].
                 _ => {}
             }
         }
         for key in &people.keys {
-            self.project_person(key, people.added.contains(key)).await?;
-        }
-        for key in &rooms.keys {
-            self.project_room(key, rooms.added.contains(key), rooms.changed.contains(key))
+            self.project_person(store, key, people.added.contains(key))
                 .await?;
         }
+        for key in &rooms.keys {
+            self.project_room(
+                store,
+                key,
+                rooms.added.contains(key),
+                rooms.changed.contains(key),
+                rooms.left.contains(key),
+            )
+            .await?;
+        }
         for key in &messages.keys {
-            self.project_message(key, messages.added.contains(key))
+            self.project_message(store, key, messages.added.contains(key))
                 .await?;
         }
         for key in &bans.keys {
-            self.project_ban(key).await?;
+            self.project_ban(store, key).await?;
+        }
+        for (type_name, key) in gone {
+            match type_name {
+                "ChatContact" => self.destroy_unheld::<ChatContact>(&key).await,
+                "Chat" => self.destroy_unheld::<Chat>(&key).await,
+                "ChatBan" => self.destroy_unheld::<ChatBan>(&key).await,
+                _ => self.destroy_unheld::<Message>(&key).await,
+            }
         }
         Ok(())
     }
 
+    /// The stored object `id` of type `O`.
+    async fn stored<O: GetObject + Send + Sync>(&self, id: &Id) -> Result<Option<O>, SyncError> {
+        let (mut found, _) = self
+            .inner
+            .get_objects::<O>(&(), &self.account, Some(std::slice::from_ref(id)), None)
+            .await?;
+        Ok(found.pop())
+    }
+
+    /// Destroys object `key` of type `O`, whose record is gone, if the
+    /// backend holds it; a failure is logged, since the record is gone
+    /// already.
+    async fn destroy_unheld<O: SetObject + Send + Sync>(&self, key: &str) {
+        match self
+            .inner
+            .destroy_object::<O>(&(), &self.account, &Id::from(key))
+            .await
+        {
+            Ok(()) => {}
+            Err(BackendSetError::SetError(e)) if e.error_type == SetErrorType::NotFound => {}
+            Err(error) => tracing::error!(
+                name: "agent_chat_destroy_failed",
+                type_name = O::TYPE_NAME,
+                error = ?error,
+                "an object whose record was deleted was not destroyed"
+            ),
+        }
+    }
+
     /// The JMAP id that names user `user`: the accountId for the user,
     /// else the ChatContact of their person record.
-    fn id_of_user(&self, user: &str) -> Option<Id> {
+    fn id_of_user(&self, store: &Store, user: &str) -> Option<Id> {
         if user == self.user {
             return Some(self.account.clone());
         }
-        self.store
+        store
             .state()
             .person_of_user(user)
             .map(|key| Id::from(key.as_str()))
@@ -277,8 +374,8 @@ impl AgentChat {
 
     /// A person record as its ChatContact: made when `added` and absent,
     /// else its `did` and `didChangedAt` written where they differ.
-    async fn project_person(&self, key: &str, added: bool) -> Result<(), SyncError> {
-        let Some(person) = self.store.state().people.get(key).cloned() else {
+    async fn project_person(&self, store: &Store, key: &str, added: bool) -> Result<(), SyncError> {
+        let Some(person) = store.state().people.get(key).cloned() else {
             return Ok(());
         };
         let id = Id::from(key);
@@ -330,7 +427,12 @@ impl AgentChat {
     /// now. Each one's role is the room's (decision mimid-1wgh.62 item 9):
     /// `admin` for a participant whose role is named "admin", `member`
     /// otherwise; a banned participant (role 1, "banned") is not a member.
-    fn members_of(&self, room: &record::Room, existing: &[ChatMember]) -> Vec<ChatMember> {
+    fn members_of(
+        &self,
+        store: &Store,
+        room: &record::Room,
+        existing: &[ChatMember],
+    ) -> Vec<ChatMember> {
         let mut members = Vec::with_capacity(room.participants.len());
         for participant in &room.participants {
             let user = &participant.user;
@@ -342,7 +444,7 @@ impl AgentChat {
                 Some((_, "admin")) => ChatMemberRole::Admin,
                 _ => ChatMemberRole::Member,
             };
-            let Some(id) = self.id_of_user(user) else {
+            let Some(id) = self.id_of_user(store, user) else {
                 continue;
             };
             members.push(match existing.iter().find(|m| m.id == id) {
@@ -359,17 +461,28 @@ impl AgentChat {
 
     /// A room record as its Chat: made when `added` and absent, named by
     /// the room's name; else, when `changed`, its `members` shown again
-    /// from the participants, or, when only left, the accountId taken out
-    /// of them.
-    async fn project_room(&self, key: &str, added: bool, changed: bool) -> Result<(), SyncError> {
-        let Some(room) = self.store.state().rooms.get(key).cloned() else {
+    /// from the participants, and, when `left`, the accountId taken out of
+    /// them. An added room whose Chat exists was made by a JMAP write,
+    /// which shows it.
+    async fn project_room(
+        &self,
+        store: &Store,
+        key: &str,
+        added: bool,
+        changed: bool,
+        left: bool,
+    ) -> Result<(), SyncError> {
+        let Some(room) = store.state().rooms.get(key).cloned() else {
             return Ok(());
         };
         let id = Id::from(key);
         let existing = self.stored::<Chat>(&id).await?;
         let members = match existing {
             None if added => {
-                let members = self.members_of(&room, &[]);
+                let mut members = self.members_of(store, &room, &[]);
+                if left {
+                    members.retain(|m| m.id != self.account);
+                }
                 let mut chat = Chat::new(id, ChatKind::Group, now(), 0, vec![], false, true);
                 chat.name = Some(room.name.clone().unwrap_or_default());
                 chat.members = Some(members);
@@ -377,18 +490,18 @@ impl AgentChat {
                 self.inner.insert_object(&self.account, chat).await?;
                 return Ok(());
             }
+            // A Chat a client is destroying.
             None => return Ok(()),
             Some(chat) => chat.members.unwrap_or_default(),
         };
-        let after = if changed || added {
-            self.members_of(&room, &members)
+        let mut after = if changed {
+            self.members_of(store, &room, &members)
         } else {
-            members
-                .iter()
-                .filter(|m| m.id != self.account)
-                .cloned()
-                .collect()
+            members.clone()
         };
+        if left {
+            after.retain(|m| m.id != self.account);
+        }
         if after != members {
             self.inner
                 .update_object::<Chat>(
@@ -402,18 +515,24 @@ impl AgentChat {
         Ok(())
     }
 
-    /// A message record as its Message: made when `added` and absent,
-    /// else its content written where it differs.
-    async fn project_message(&self, key: &str, added: bool) -> Result<(), SyncError> {
-        let Some(message) = self.store.state().messages.get(key).cloned() else {
+    /// A message record as its Message: made when `added` and absent;
+    /// else, unless `added` (a JMAP write made the object), its content
+    /// written where it differs.
+    async fn project_message(
+        &self,
+        store: &Store,
+        key: &str,
+        added: bool,
+    ) -> Result<(), SyncError> {
+        let Some(message) = store.state().messages.get(key).cloned() else {
             return Ok(());
         };
         let id = Id::from(key);
-        let content = Value::Object(message_content(&message));
+        let content = Value::Object(shown_content(&message));
         match self.stored::<Message>(&id).await? {
             None if added => {
                 let sender = match &message.sender {
-                    Sender::User(user) => self.id_of_user(user),
+                    Sender::User(user) => self.id_of_user(store, user),
                     // A notice is the account's (sync::store_notice before
                     // the store; bead mimid-1wgh.4.81.27).
                     _ => Some(self.account.clone()),
@@ -447,7 +566,9 @@ impl AgentChat {
                     .insert_object(&self.account, from_json::<Message>(value)?)
                     .await?;
             }
+            // A Message a client is destroying.
             None => {}
+            Some(_) if added => {}
             Some(existing) => {
                 let existing = to_json(&existing)?;
                 // The content as the type writes it, merged over the
@@ -475,14 +596,14 @@ impl AgentChat {
 
     /// A ban record as its ChatBan: made when absent, destroyed when the
     /// record is gone.
-    async fn project_ban(&self, key: &str) -> Result<(), SyncError> {
-        let ban = self.store.state().bans.get(key).cloned();
+    async fn project_ban(&self, store: &Store, key: &str) -> Result<(), SyncError> {
+        let ban = store.state().bans.get(key).cloned();
         let id = Id::from(key);
         let existing = self.stored::<ChatBan>(&id).await?;
         match (ban, existing) {
             (Some(ban), None) => {
-                let user = self.id_of_user(&ban.user);
-                let banned_by = self.id_of_user(&ban.banned_by);
+                let user = self.id_of_user(store, &ban.user);
+                let banned_by = self.id_of_user(store, &ban.banned_by);
                 let (Some(user), Some(banned_by)) = (user, banned_by) else {
                     return Err(SyncError::Store(format!(
                         "ban {key} names a user with no ChatContact"

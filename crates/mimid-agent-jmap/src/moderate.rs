@@ -125,7 +125,7 @@ impl AgentChat {
             )
             .await
             .map_err(action_failure)?;
-        let ban = self.inner.insert_object(&self.account, ban).await?;
+        let ban = self.insert_shown(&id, ban).await?;
         self.drop_member(&ban.chat_id, &ban.user_id).await?;
         Ok((id, ban))
     }

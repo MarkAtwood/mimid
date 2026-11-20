@@ -1,54 +1,84 @@
-//! [`Store`]: the agent, its records, their file and the blob store.
+//! [`Store`]: the agent, its records, their file, the blob store and the
+//! change feed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use mimid_agent_core::Agent;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, Notify, broadcast};
 
+use crate::action::ForgottenRoom;
 use crate::blobs::BlobStore;
+use crate::change::Change;
 use crate::db::{Database, FileError};
+use crate::feed::{Feed, TooOld};
 use crate::record::Key;
 use crate::state::State;
 use crate::sync::InvitePolicy;
 
-/// A front end's part in [`Store::save`]: what it keeps in the records
-/// (its `ext`) may lag behind what it shows, so it brings that up to date
-/// just before the records are written. Every save runs every registered
+/// How many wake-ups the feed's broadcast holds for a slow subscriber;
+/// one that lags reads the log anyway ([`Store::changes_since`]).
+const FEED_WAKEUPS: usize = 64;
+
+/// A front end's part in [`Store::save`]. Every save runs every registered
 /// front end's [`Frontend::before_save`] ([`Store::add_frontend`]),
-/// whoever asked for the save, so the records saved always carry each
-/// front end's current `ext`.
+/// whoever asked for the save, with the changes the save publishes: the
+/// front end shows them, and brings what it keeps in the records (its
+/// `ext`) up to date, before the records are written. So the records
+/// saved always carry each front end's current `ext`, and a record made
+/// by another front end or by a sync is saved with what this front end
+/// keeps of it.
 pub trait Frontend: Send + Sync {
-    /// Brings this front end's `ext` in `store`'s records up to date. It
-    /// runs with no lock of the store held but the one that keeps saves
-    /// one at a time; it must not call [`Store::save`].
+    /// Shows `changes` ([`Change`]; the records are read from
+    /// [`Store::state`]) and brings this front end's `ext` in `store`'s
+    /// records up to date. It runs with no lock of the store held but the
+    /// one that keeps saves one at a time; it must not call
+    /// [`Store::save`] or take the agent.
     ///
     /// # Errors
     ///
-    /// Why it could not, as text; the save then writes nothing.
+    /// Why it could not, as text; the save then writes nothing. The
+    /// changes are not handed to it again.
     fn before_save<'a>(
         &'a self,
         store: &'a Store,
+        changes: &'a [Change],
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+    /// The blob ids this front end's `ext` in `state` names, which the
+    /// blob store must keep ([`Store::blobs_in_use`]). None by default.
+    fn named_blobs(&self, state: &State) -> BTreeSet<String> {
+        let _ = state;
+        BTreeSet::new()
+    }
 }
 
 /// One user's plaintext store: the agent it consumes, the records of what
 /// the agent received ([`State`]), the database they are kept in
-/// ([`Store::open_database`], [`crate::db`]), and the blob store of
-/// attachment content. [`Store::sync`] is the agent's only journal
-/// consumer.
+/// ([`Store::open_database`], [`crate::db`]), the blob store of
+/// attachment content, and the change feed ([`crate::feed`]).
+/// [`Store::sync`] is the agent's only journal consumer: no front end,
+/// and nothing else that holds the agent ([`Store::agent`]), calls
+/// `Agent::receive` or `Agent::acknowledge`, since the tombstones of
+/// deleted messages and rooms count on it.
+///
+/// Several front ends share one store (`Arc<Store>`): each registers
+/// itself ([`Store::add_frontend`]), calls the write methods
+/// ([`crate::action`]) and saves; each save publishes what changed to all
+/// of them ([`Frontend::before_save`], [`Store::subscribe`]).
 ///
 /// Lock order: the agent lock first, then the state lock. The state lock
 /// is a `std::sync::Mutex`, never held across an await
-/// (docs/design/agent-frontends.md §2).
+/// (docs/design/agent-frontends.md §2); the feed's lock is taken last and
+/// alone.
 pub struct Store {
     pub(crate) agent: Arc<AsyncMutex<Agent>>,
     pub(crate) user: String,
     pub(crate) invites: InvitePolicy,
-    pub(crate) blobs: Option<BlobStore>,
+    pub(crate) blobs: OnceLock<BlobStore>,
     state: Mutex<State>,
     /// Each active room's epoch when the people's DIDs were last set from
     /// its leaves; a change of any sets them again.
@@ -60,6 +90,14 @@ pub struct Store {
     save_lock: AsyncMutex<()>,
     /// The front ends whose `ext` each save brings up to date.
     frontends: Mutex<Vec<Arc<dyn Frontend>>>,
+    /// The changes not yet published, and the log of those that were.
+    feed: Mutex<Feed>,
+    /// Wakes the subscribers with the last sequence number published.
+    published: broadcast::Sender<u64>,
+    /// Wakes whatever runs [`Store::sync`] ([`Store::sync_wanted`]).
+    wake: Arc<Notify>,
+    /// Rooms deleted here whose blobs go after the next save that writes.
+    forgotten: Mutex<Vec<ForgottenRoom>>,
 }
 
 impl std::fmt::Debug for Store {
@@ -80,17 +118,21 @@ impl Store {
             state: Mutex::new(State::new(user.clone())),
             user,
             invites,
-            blobs: None,
+            blobs: OnceLock::new(),
             did_epochs: Mutex::new(BTreeMap::new()),
             keys: Mutex::new(ulid::Generator::new()),
             file: Mutex::new(None),
             save_lock: AsyncMutex::new(()),
             frontends: Mutex::new(Vec::new()),
+            feed: Mutex::new(Feed::default()),
+            published: broadcast::channel(FEED_WAKEUPS).0,
+            wake: Arc::new(Notify::new()),
+            forgotten: Mutex::new(Vec::new()),
         }
     }
 
-    /// Registers `frontend`, so every [`Store::save`] first brings its
-    /// `ext` up to date.
+    /// Registers `frontend`, so every [`Store::save`] hands it the changes
+    /// it publishes and has it bring its `ext` up to date first.
     pub fn add_frontend(&self, frontend: Arc<dyn Frontend>) {
         self.frontends
             .lock()
@@ -107,12 +149,12 @@ impl Store {
     ///
     /// The [`FileError`] of [`Database::open`] and [`Database::load`]. The
     /// database is then not used, and nothing is written.
-    pub fn open_database(&mut self, path: impl AsRef<Path>) -> Result<(), FileError> {
+    pub fn open_database(&self, path: impl AsRef<Path>) -> Result<(), FileError> {
         let mut database = Database::open(path.as_ref())?;
         if let Some(state) = database.load(&self.user)? {
             self.restore(state);
         }
-        *self.file.get_mut().unwrap_or_else(PoisonError::into_inner) = Some(database);
+        *self.file.lock().unwrap_or_else(PoisonError::into_inner) = Some(database);
         Ok(())
     }
 
@@ -125,48 +167,174 @@ impl Store {
             .is_some()
     }
 
-    /// Writes what changed in the records to the database, if there is
-    /// one, in one transaction ([`Database::save`]), after every
-    /// registered [`Frontend`] has brought its `ext` up to date. One save
-    /// at a time; the records are locked only while they are copied.
+    /// Publishes the changes recorded since the last save and writes what
+    /// changed in the records to the database, if there is one. In order,
+    /// one save at a time:
+    ///
+    /// 1. every registered [`Frontend`] is handed the changes and brings
+    ///    its `ext` up to date ([`Frontend::before_save`]);
+    /// 2. the records are copied and written, in one transaction
+    ///    ([`Database::save`]), unless a front end failed;
+    /// 3. the changes get their sequence numbers in the log and the
+    ///    subscribers are woken ([`Store::subscribe`]), whether or not the
+    ///    write succeeded: the records in memory hold them, and the next
+    ///    save that succeeds writes them;
+    /// 4. after a write that succeeded (or with no database), the blobs of
+    ///    rooms deleted since ([`Store::forget_room`]) that nothing names
+    ///    any more are deleted ([`Store::delete_blobs`]); a failure is
+    ///    logged.
     ///
     /// The store's write methods ([`crate::action`]) do not save: the
     /// front end that called one shows the result, then saves.
-    /// [`Store::sync`] saves after each round's [`crate::Commit`].
+    /// [`Store::sync`] saves after each round.
     ///
     /// # Errors
     ///
     /// [`FileError::Frontend`] if a front end fails, and the
     /// [`FileError`] of [`Database::save`]; nothing is then written.
     pub async fn save(&self) -> Result<(), FileError> {
-        if !self.has_database() {
-            return Ok(());
-        }
         let _one_at_a_time = self.save_lock.lock().await;
+        let changes = self.feed().take();
         let frontends = self
             .frontends
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
+        let mut result = Ok(());
         for frontend in &frontends {
-            frontend
-                .before_save(self)
-                .await
-                .map_err(FileError::Frontend)?;
+            // Every front end sees the changes, even after one failed.
+            if let Err(e) = frontend.before_save(self, &changes).await
+                && result.is_ok()
+            {
+                result = Err(FileError::Frontend(e));
+            }
         }
-        let state = self.state().clone();
-        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(file) = file.as_mut() {
-            file.save(&state)?;
+        if result.is_ok() && self.has_database() {
+            let state = self.state().clone();
+            let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(file) = file.as_mut() {
+                result = file.save(&state).map(|_| ());
+            }
         }
-        Ok(())
+        if let Some(last) = self.feed().publish(changes) {
+            // No receiver only means no subscriber.
+            let _ = self.published.send(last);
+        }
+        if result.is_ok() {
+            self.delete_forgotten_blobs();
+        }
+        result
+    }
+
+    /// Deletes the blobs of the rooms deleted since the last save that
+    /// wrote, that nothing names any more ([`Store::delete_blobs`]).
+    fn delete_forgotten_blobs(&self) {
+        let forgotten = std::mem::take(
+            &mut *self
+                .forgotten
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        if forgotten.is_empty() {
+            return;
+        }
+        let in_use = self.blobs_in_use();
+        for room in &forgotten {
+            if let Err(error) = self.delete_blobs(room, &in_use) {
+                tracing::error!(
+                    name: "agent_chat_blobs_not_deleted",
+                    error = &error as &dyn std::error::Error,
+                    "a deleted chat's attachments were not all deleted"
+                );
+            }
+        }
+    }
+
+    /// Keeps `room`'s blobs for deletion after the next save that writes.
+    pub(crate) fn delete_blobs_after_save(&self, room: ForgottenRoom) {
+        self.forgotten
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(room);
+    }
+
+    /// The feed, locked.
+    fn feed(&self) -> MutexGuard<'_, Feed> {
+        self.feed.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Keeps `changes` for the next [`Store::save`] to publish.
+    pub(crate) fn record(&self, changes: impl IntoIterator<Item = Change>) {
+        self.feed().record(changes);
+    }
+
+    /// A subscription to the change feed: it receives the sequence number
+    /// of the last change each save publishes. The value only wakes the
+    /// subscriber, which reads what it has not applied with
+    /// [`Store::changes_since`]; a lagging receiver
+    /// (`broadcast::error::RecvError::Lagged`) does the same.
+    #[must_use]
+    pub fn subscribe(&self) -> broadcast::Receiver<u64> {
+        self.published.subscribe()
+    }
+
+    /// The sequence number of the last change published; 0 before any.
+    /// A new subscriber starts from it.
+    #[must_use]
+    pub fn last_seq(&self) -> u64 {
+        self.feed().last()
+    }
+
+    /// Every change published after sequence number `seq`, in order, with
+    /// its sequence number.
+    ///
+    /// # Errors
+    ///
+    /// [`TooOld`] if the log no longer keeps them all
+    /// ([`crate::feed::MAX_LOGGED_CHANGES`]): the caller reloads what it
+    /// shows from the records, then goes on from [`Store::last_seq`].
+    pub fn changes_since(&self, seq: u64) -> Result<Vec<(u64, Change)>, TooOld> {
+        self.feed().since(seq)
+    }
+
+    /// What [`Store::sync`] waits on besides its interval: the write
+    /// methods that the agent acts on notify it, so the sync that follows
+    /// a write comes at once (a send's echo, a join's held messages, the
+    /// moderation Commit's member change).
+    #[must_use]
+    pub fn sync_wanted(&self) -> &Arc<Notify> {
+        &self.wake
+    }
+
+    /// Wakes whatever waits on [`Store::sync_wanted`].
+    pub(crate) fn want_sync(&self) {
+        self.wake.notify_one();
+    }
+
+    /// Every blob id the store and its front ends name: the blobs the blob
+    /// store's quota must keep ([`Store::referenced_blobs`], and each
+    /// [`Frontend::named_blobs`]).
+    #[must_use]
+    pub fn blobs_in_use(&self) -> BTreeSet<String> {
+        let mut ids = self.referenced_blobs();
+        let frontends = self
+            .frontends
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let state = self.state();
+        for frontend in &frontends {
+            ids.extend(frontend.named_blobs(&state));
+        }
+        ids
     }
 
     /// Every blob id a message's attachments name: the referenced blobs
     /// of the blob store's quota (decision mimid-1wgh.68). A deleted
     /// message names none, nor does a retracted one, whose attachments
     /// are emptied. Attachments waiting for a retry name a URL, not a
-    /// blob. A front end adds what its own `ext` names.
+    /// blob. [`Store::blobs_in_use`] adds what the front ends' `ext`
+    /// names.
     #[must_use]
     pub fn referenced_blobs(&self) -> BTreeSet<String> {
         self.state()
@@ -179,9 +347,20 @@ impl Store {
     /// Keeps received attachments in `blobs`. Without a blob store they
     /// are left out.
     #[must_use]
-    pub fn with_blobs(mut self, blobs: BlobStore) -> Self {
-        self.blobs = Some(blobs);
+    pub fn with_blobs(self, blobs: BlobStore) -> Self {
+        // A new store has none.
+        let _ = self.set_blobs(blobs);
         self
+    }
+
+    /// Keeps attachments in `blobs` from now on, if the store has no blob
+    /// store yet; otherwise gives `blobs` back.
+    ///
+    /// # Errors
+    ///
+    /// `blobs`, if the store has a blob store already.
+    pub fn set_blobs(&self, blobs: BlobStore) -> Result<(), BlobStore> {
+        self.blobs.set(blobs)
     }
 
     /// Replaces the records with `state`, read from a database. Its
@@ -190,7 +369,10 @@ impl Store {
         *self.state() = state;
     }
 
-    /// The agent.
+    /// The agent, for what the store has no method for (publishing
+    /// KeyPackages, taking a did:webvh log). Never call `Agent::receive` or
+    /// `Agent::acknowledge` through it: [`Store::sync`] is the journal's
+    /// only consumer.
     #[must_use]
     pub fn agent(&self) -> &Arc<AsyncMutex<Agent>> {
         &self.agent
@@ -205,7 +387,7 @@ impl Store {
     /// The blob store, if there is one.
     #[must_use]
     pub fn blobs(&self) -> Option<&BlobStore> {
-        self.blobs.as_ref()
+        self.blobs.get()
     }
 
     /// The records, locked. Never hold the guard across an await.

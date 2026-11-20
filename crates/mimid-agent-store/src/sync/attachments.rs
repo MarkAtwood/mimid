@@ -48,7 +48,7 @@ impl Store {
         if parts.is_empty() {
             return (Vec::new(), Vec::new());
         }
-        if self.blobs.is_none() {
+        if self.blobs.get().is_none() {
             report.problems.push(format!(
                 "{room}: {} attachments left out: no blob store",
                 parts.len()
@@ -90,7 +90,7 @@ impl Store {
         room: &str,
         part: &ExternalPart,
     ) -> Result<Attachment, (String, bool)> {
-        let Some(blobs) = &self.blobs else {
+        let Some(blobs) = self.blobs.get() else {
             return Err(("no blob store".to_owned(), false));
         };
         let plaintext = agent

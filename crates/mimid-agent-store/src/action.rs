@@ -4,9 +4,12 @@
 //! action means something in MIMI, and writes the result into the
 //! records. A front end translates its own names to keys and URIs, calls
 //! the method, shows the record it gets back, and then saves
-//! ([`Store::save`]), which brings every front end's `ext` up to date
-//! first. The methods do not save by themselves, so that the record and
-//! what the calling front end shows of it are saved together.
+//! ([`Store::save`]). The methods do not save by themselves, so that the
+//! record and what the calling front end shows of it are saved together.
+//! Each records what it changed ([`crate::Change`]); the save publishes
+//! it to every front end ([`crate::Frontend`], [`Store::subscribe`]), so
+//! the others learn of the write. A method the agent acts on also wakes
+//! the sync loop ([`Store::sync_wanted`]).
 //!
 //! | Action | Method | Agent |
 //! |---|---|---|
@@ -29,9 +32,6 @@
 //!
 //! # Limitations
 //!
-//! - There is no change feed yet (step 6): a write is shown only by the
-//!   front end that made it, and other front ends see it at their next
-//!   reload.
 //! - A write method makes no person records. The people a write names
 //!   (an invited user, say) get one at the next [`Store::sync`] that sees
 //!   them in a room, as before the store.
@@ -51,6 +51,7 @@ use mimid_agent_core::{
 use sha2::{Digest, Sha256};
 
 use crate::blobs::{BlobError, MIN_UNREFERENCED_AGE, hex};
+use crate::change::Change;
 use crate::content::BodyType;
 use crate::convert::{message_ref, sender_msg_id};
 use crate::record::{
@@ -255,6 +256,8 @@ impl Store {
             ext: BTreeMap::new(),
         };
         self.state().insert_room(room.clone());
+        self.record([Change::RoomAdded(room.key.clone())]);
+        self.want_sync();
         Ok(room)
     }
 
@@ -301,11 +304,16 @@ impl Store {
                 if let Some(room) = self.state().rooms.get_mut(key) {
                     room.status = Status::Leaving;
                 }
+                self.record([Change::RoomLeft(key.to_owned())]);
             }
             Ok(())
         }
         .await;
         self.refresh_participants(&agent, key, &uri);
+        if !(changes.invite.is_empty() && changes.remove.is_empty() && changes.roles.is_empty()) {
+            self.record([Change::RoomChanged(key.to_owned())]);
+        }
+        self.want_sync();
         result
     }
 
@@ -329,6 +337,8 @@ impl Store {
             if let Some(room) = self.state().rooms.get_mut(key) {
                 room.status = Status::Leaving;
             }
+            self.record([Change::RoomLeft(key.to_owned())]);
+            self.want_sync();
         }
         Ok(())
     }
@@ -342,28 +352,39 @@ impl Store {
     /// room the agent is still in is not kept out: the next sync makes a
     /// new record for it.
     ///
-    /// The blobs of its attachments stay in the blob store until the
-    /// caller has shown the deletion and saved, then calls
-    /// [`Store::delete_blobs`] with the result. Takes the agent lock, so it
-    /// waits for a sync that is running. `None` if there is no such room.
+    /// The deletion is a [`Change::RoomForgotten`]. The blobs of its
+    /// attachments stay in the blob store until the next save that writes
+    /// the records ([`Store::save`]), which then deletes those nothing
+    /// names any more ([`Store::delete_blobs`]). Takes the agent lock, so
+    /// it waits for a sync that is running. `None` if there is no such
+    /// room.
     pub async fn forget_room(&self, key: &str) -> Option<ForgottenRoom> {
         let _agent = self.agent.lock().await;
         let removed = self.state().remove_room(key)?;
-        Some(ForgottenRoom {
+        let forgotten = ForgottenRoom {
             removed,
             at: std::time::SystemTime::now(),
-        })
+        };
+        self.record([Change::RoomForgotten {
+            key: key.to_owned(),
+            messages: forgotten.removed.messages.clone(),
+            bans: forgotten.removed.bans.clone(),
+        }]);
+        self.delete_blobs_after_save(forgotten.clone());
+        Some(forgotten)
     }
 
     /// Deletes from the blob store the blobs of the attachments of a room
     /// [`Store::forget_room`] deleted, except those in `referenced` (every
-    /// blob id that a record or a front end still names) and those stored
+    /// blob id that a record or a front end still names,
+    /// [`Store::blobs_in_use`]) and those stored
     /// again since. A blob of the user's own message is the user's upload:
     /// it is deleted only if it was last stored or sent at least
     /// [`crate::blobs::MIN_UNREFERENCED_AGE`] before the room was
     /// forgotten, since RFC 8620 §6 keeps an unreferenced upload that long;
     /// otherwise the blob store's quota deletes it later. Returns how many
-    /// it deleted; 0 without a blob store.
+    /// it deleted; 0 without a blob store. [`Store::save`] calls it for
+    /// every room forgotten since the last save that wrote.
     ///
     /// # Errors
     ///
@@ -374,7 +395,7 @@ impl Store {
         forgotten: &ForgottenRoom,
         referenced: &BTreeSet<String>,
     ) -> Result<usize, ActionError> {
-        let Some(blobs) = &self.blobs else {
+        let Some(blobs) = self.blobs.get() else {
             return Ok(0);
         };
         let uploads_by = forgotten
@@ -444,6 +465,9 @@ impl Store {
             ext: BTreeMap::new(),
         };
         state.insert_message(message.clone());
+        drop(state);
+        self.record([Change::MessageAdded(message.key.clone())]);
+        self.want_sync();
         Ok(message)
     }
 
@@ -458,7 +482,7 @@ impl Store {
         if files.is_empty() {
             return Ok((Vec::new(), Vec::new()));
         }
-        let blobs = self.blobs.as_ref().ok_or(ActionError::NoBlobStore)?;
+        let blobs = self.blobs.get().ok_or(ActionError::NoBlobStore)?;
         let now = std::time::SystemTime::now();
         let mut outgoing = Vec::with_capacity(files.len());
         let mut attachments = Vec::with_capacity(files.len());
@@ -531,14 +555,13 @@ impl Store {
             .await
             .send_edit(&uri, &first, text)
             .await?;
-        let mut state = self.state();
-        state.edit_message(key, text.to_owned(), body_type, sent.accepted_at);
-        state.add_alias(key, message_ref(&sent.message_id));
-        state
-            .messages
-            .get(key)
-            .cloned()
-            .ok_or_else(|| ActionError::NoSuchMessage(key.to_owned()))
+        let edited = {
+            let mut state = self.state();
+            state.edit_message(key, text.to_owned(), body_type, sent.accepted_at);
+            state.add_alias(key, message_ref(&sent.message_id));
+            state.messages.get(key).cloned()
+        };
+        self.changed_message(key, edited)
     }
 
     /// Retracts the user's message `key` for everyone (decision
@@ -558,14 +581,13 @@ impl Store {
             .await
             .send_retraction(&uri, &first)
             .await?;
-        let mut state = self.state();
-        state.retract_message(key, sent.accepted_at);
-        state.add_alias(key, message_ref(&sent.message_id));
-        state
-            .messages
-            .get(key)
-            .cloned()
-            .ok_or_else(|| ActionError::NoSuchMessage(key.to_owned()))
+        let retracted = {
+            let mut state = self.state();
+            state.retract_message(key, sent.accepted_at);
+            state.add_alias(key, message_ref(&sent.message_id));
+            state.messages.get(key).cloned()
+        };
+        self.changed_message(key, retracted)
     }
 
     /// Marks message `key` deleted here at `at`, in milliseconds, unless
@@ -579,15 +601,28 @@ impl Store {
         };
         if message.deleted.is_none() {
             message.deleted = Some(Deletion { at, for_all: false });
+            drop(state);
+            self.record([Change::MessageChanged(key.to_owned())]);
         }
         true
+    }
+
+    /// A [`Change::MessageChanged`] of `key`, after an edit or retraction
+    /// was sent and recorded; the record as it is now.
+    fn changed_message(&self, key: &str, now: Option<Message>) -> Result<Message, ActionError> {
+        self.want_sync();
+        let message = now.ok_or_else(|| ActionError::NoSuchMessage(key.to_owned()))?;
+        self.record([Change::MessageChanged(key.to_owned())]);
+        Ok(message)
     }
 
     /// Deletes message `key` here, in every front end, with a tombstone
     /// so the journal does not bring it back ([`crate::State::delete_message`]);
     /// nothing is sent.
     pub fn delete_message(&self, key: &str) -> Option<Message> {
-        self.state().delete_message(key)
+        let message = self.state().delete_message(key)?;
+        self.record([Change::MessageDeleted(key.to_owned())]);
+        Some(message)
     }
 
     /// Bans `user` in room `key` (`Agent::ban`: one Commit that gives the
@@ -623,6 +658,11 @@ impl Store {
         };
         self.state().bans.insert(ban.key.clone(), ban.clone());
         self.refresh_participants(&agent, key, &uri);
+        self.record([
+            Change::BanAdded(ban.key.clone()),
+            Change::RoomChanged(key.to_owned()),
+        ]);
+        self.want_sync();
         Ok(ban)
     }
 
@@ -640,6 +680,8 @@ impl Store {
         };
         ban.reason = reason;
         ban.expires_at = expires_at;
+        drop(state);
+        self.record([Change::BanChanged(key.to_owned())]);
         true
     }
 
@@ -662,9 +704,12 @@ impl Store {
             state.bans.remove(key);
             state.rooms.get(&ban.room).map(|r| r.uri.clone())
         };
+        self.record([Change::BanLifted(key.to_owned())]);
         if let Some(uri) = uri {
             self.refresh_participants(&agent, &ban.room, &uri);
+            self.record([Change::RoomChanged(ban.room.clone())]);
         }
+        self.want_sync();
         Ok(Some(ban))
     }
 
@@ -679,10 +724,16 @@ impl Store {
     pub async fn kick(&self, key: &str, users: &[String]) -> Result<(), ActionError> {
         let uri = self.room_uri(key)?;
         let mut agent = self.agent.lock().await;
-        for user in users {
-            agent.kick(&uri, user).await?;
+        let result = async {
+            for user in users {
+                agent.kick(&uri, user).await?;
+            }
+            Ok(())
         }
-        Ok(())
+        .await;
+        // The records change with the agent's member change, at the sync.
+        self.want_sync();
+        result
     }
 
     /// Reports the received messages `keys`, all of one room, to the
@@ -754,6 +805,7 @@ impl Store {
             ext: BTreeMap::new(),
         };
         self.state().insert_person(person.clone());
+        self.record([Change::PersonAdded(person.key.clone())]);
         person
     }
 
@@ -765,12 +817,16 @@ impl Store {
             return false;
         };
         person.display_name = display_name;
+        drop(state);
+        self.record([Change::PersonChanged(key.to_owned())]);
         true
     }
 
     /// Forgets person `key`; the user gets a new record when next seen.
     pub fn forget_person(&self, key: &str) -> Option<Person> {
-        self.state().remove_person(key)
+        let person = self.state().remove_person(key)?;
+        self.record([Change::PersonForgotten(key.to_owned())]);
+        Some(person)
     }
 
     /// Sets read position `key` in room `room`: the last message read and
@@ -796,12 +852,17 @@ impl Store {
         position.room = room;
         position.message = message;
         position.at = at;
-        position.clone()
+        let position = position.clone();
+        drop(state);
+        self.record([Change::ReadPositionMoved(position.key.clone())]);
+        position
     }
 
     /// Forgets read position `key`.
     pub fn forget_read_position(&self, key: &str) -> Option<ReadPosition> {
-        self.state().read_positions.remove(key)
+        let position = self.state().read_positions.remove(key)?;
+        self.record([Change::ReadPositionForgotten(key.to_owned())]);
+        Some(position)
     }
 
     /// Allows `user`: their invites are joined from the next
@@ -812,7 +873,10 @@ impl Store {
     ///
     /// [`ActionError::Agent`] if the server refuses or cannot be reached.
     pub async fn allow(&self, user: &str) -> Result<(), ActionError> {
-        Ok(self.agent.lock().await.allow(user).await?)
+        self.agent.lock().await.allow(user).await?;
+        // A pending invite from them is joined at the sync.
+        self.want_sync();
+        Ok(())
     }
 
     /// Refuses `user` (`Agent::deny`, a Consent/set `revoke`).
@@ -821,7 +885,9 @@ impl Store {
     ///
     /// As [`Store::allow`].
     pub async fn deny(&self, user: &str) -> Result<(), ActionError> {
-        Ok(self.agent.lock().await.deny(user).await?)
+        self.agent.lock().await.deny(user).await?;
+        self.want_sync();
+        Ok(())
     }
 
     /// Joins pending invite `number`, whatever the invite policy says
@@ -834,6 +900,9 @@ impl Store {
     pub async fn accept_invite(&self, number: u64) -> Result<String, ActionError> {
         let uri = self.agent.lock().await.join(number)?;
         self.state().invites.retain(|i| i.number != number);
+        self.record([Change::InviteGone(number)]);
+        // The room's record and messages come with the sync.
+        self.want_sync();
         Ok(uri)
     }
 }

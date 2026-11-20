@@ -143,7 +143,9 @@
 //!   so a long history can push a client's state out of the log.
 //! - A destroyed Chat's attachments that are the user's own uploads from
 //!   the last hour stay in the blob store until its quota deletes them
-//!   (RFC 8620 §6); if the save after the destroy fails, all of them stay.
+//!   (RFC 8620 §6); if the save after the destroy fails, all of them stay
+//!   until a save succeeds, and a restart before that leaves them to the
+//!   quota.
 //! - Direct Chats are `forbidden` (only group Chats map to rooms).
 //! - On a room-bound Chat, `name`, `description` and `avatarBlobId` are
 //!   `forbidden` (§Chat.roomId). Roles map only to "admin" (the room's

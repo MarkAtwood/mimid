@@ -4,9 +4,11 @@
 //! The store is the agent's only journal consumer. Each round of a sync
 //! polls the agent, joins the invites [`InvitePolicy`] allows and the
 //! user's rooms this device is not in, writes every event into the
-//! records, mirrors the rooms' bans and the people's DIDs, hands the
-//! changed records to the front end ([`Commit`]), which shows them, saves
-//! ([`Store::save`]), and only then acknowledges what the agent delivered: a message
+//! records, mirrors the rooms' bans and the people's DIDs, records what
+//! changed ([`Change`]), saves ([`Store::save`]: every front end is handed
+//! the changes and shows them, then the records are written and the
+//! changes published), and only then acknowledges what the agent
+//! delivered: a message
 //! cannot be decrypted again, and an event not acknowledged comes again
 //! after a crash (a message already stored is skipped, and so is one
 //! deleted here since: [`State::delete_message`] keeps a tombstone until
@@ -39,14 +41,15 @@
 //! # Limitations
 //!
 //! - The sync holds the agent for its whole run, attachment fetches and
-//!   the front end's commit included.
+//!   the save (with every front end's part in it) included.
 //! - Events of a room deleted here and joined again before an earlier
 //!   delivery of it was acknowledged (a failed save, then a new invite
 //!   accepted) are stored in the new record.
-//! - The save comes after the front end's commit has shown the changes,
-//!   and brings every front end's `ext` up to date first
-//!   ([`crate::Frontend`]), so what a front end keeps in the records is
-//!   saved with them.
+//! - The save has every front end show the changes and bring its `ext` up
+//!   to date first ([`crate::Frontend`]), so what a front end keeps in the
+//!   records is saved with them.
+//! - The tombstones count on this being the only caller of
+//!   `Agent::receive` and `Agent::acknowledge`.
 
 use std::collections::BTreeMap;
 
@@ -115,35 +118,16 @@ pub struct SyncReport {
 /// A failure of [`Store::sync`].
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum SyncError<E> {
+pub enum SyncError {
     /// The agent failed: the server could not be reached, or local state.
     /// Nothing is lost: the agent keeps what was not acknowledged.
     #[error(transparent)]
     Agent(#[from] AgentError),
-    /// The front end's [`Commit`] failed; what the round delivered was
-    /// not acknowledged.
-    #[error(transparent)]
-    Commit(E),
-    /// The records could not be saved; what the round delivered was not
-    /// acknowledged.
+    /// The save failed: a front end could not show the changes
+    /// ([`crate::FileError::Frontend`]), or the records could not be
+    /// written. What the round delivered was not acknowledged.
     #[error(transparent)]
     Save(crate::db::FileError),
-}
-
-/// What a front end does with the records a sync round changed, before
-/// they are saved and the agent's delivery is acknowledged: show them.
-pub trait Commit {
-    /// Why it failed.
-    type Error;
-
-    /// Shows `changes` ([`Change`]); the records are read from
-    /// [`Store::state`]. The store saves after it ([`Store::save`]). An
-    /// error stops the sync before the round is saved and acknowledged, so
-    /// the agent delivers it again.
-    fn commit(
-        &self,
-        changes: Vec<Change>,
-    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send;
 }
 
 /// A room's participants with their roles, and its role names, read from
@@ -204,8 +188,8 @@ pub(crate) fn now_ms() -> u64 {
 }
 
 impl Store {
-    /// Polls the agent and writes what came into the records, then hands
-    /// the changes to `commit` and acknowledges; see the module
+    /// Polls the agent and writes what came into the records, then saves,
+    /// which publishes the changes, and acknowledges; see the module
     /// documentation. Joined rooms become room records, received text
     /// messages, membership changes participants. Pending invites are
     /// joined as the [`InvitePolicy`] allows, then the user's rooms this
@@ -213,17 +197,14 @@ impl Store {
     /// (`Agent::join_own_rooms`; decision mimid-1wgh.61). A round that
     /// joins is followed by one more, since a join's held messages come
     /// with the next poll. Last, attachments due for a retry are fetched,
-    /// and committed if any changed.
+    /// and saved if any changed.
     ///
     /// # Errors
     ///
-    /// [`SyncError::Agent`] if polling fails, [`SyncError::Commit`] if
-    /// `commit` does, and [`SyncError::Save`] if the save does. Either way
-    /// nothing is lost: the agent keeps what it has not had acknowledged.
-    pub async fn sync<C: Commit + Sync>(
-        &self,
-        commit: &C,
-    ) -> Result<SyncReport, SyncError<C::Error>> {
+    /// [`SyncError::Agent`] if polling fails, and [`SyncError::Save`] if
+    /// the save does. Either way nothing is lost: the agent keeps what it
+    /// has not had acknowledged.
+    pub async fn sync(&self) -> Result<SyncReport, SyncError> {
         let mut agent = self.agent.lock().await;
         let mut report = SyncReport::default();
         let mut changes = Vec::new();
@@ -232,7 +213,9 @@ impl Store {
         for _ in 0..2 {
             let (events, receipt) = agent.receive().await?;
             let settled = self.settle_forgotten_rooms(&agent);
-            let mut joined = self.accept_invites(&mut agent, &mut report).await?;
+            let mut joined = self
+                .accept_invites(&mut agent, &mut report, &mut changes)
+                .await?;
             // This user's rooms that this device is not in yet: a new
             // device joins them by external Commit (decision
             // mimid-1wgh.61). After the invites, so a room this device
@@ -286,10 +269,7 @@ impl Store {
                 self.refresh_dids(&agent, None, &mut changes);
             }
             // Shown and saved first, then acknowledged.
-            commit
-                .commit(std::mem::take(&mut changes))
-                .await
-                .map_err(SyncError::Commit)?;
+            self.record(std::mem::take(&mut changes));
             self.save().await.map_err(SyncError::Save)?;
             agent.acknowledge(receipt)?;
             // Every event that stored a message deleted since is
@@ -308,7 +288,7 @@ impl Store {
             .retry_attachments(&mut agent, &mut report, &mut changes)
             .await
         {
-            commit.commit(changes).await.map_err(SyncError::Commit)?;
+            self.record(changes);
             self.save().await.map_err(SyncError::Save)?;
         }
         Ok(report)
@@ -316,14 +296,15 @@ impl Store {
 
     /// Joins the pending invites the policy allows; returns how many. The
     /// rest are kept in [`State::invites`], refused.
-    async fn accept_invites<E>(
+    async fn accept_invites(
         &self,
         agent: &mut Agent,
         report: &mut SyncReport,
-    ) -> Result<usize, SyncError<E>> {
+        changes: &mut Vec<Change>,
+    ) -> Result<usize, SyncError> {
         let invites = agent.invites();
         if invites.is_empty() {
-            self.state().invites.clear();
+            self.set_invites(Vec::new(), changes);
             return Ok(0);
         }
         let allowed: Vec<String> = match self.invites {
@@ -372,8 +353,27 @@ impl Store {
                     .push(format!("joining invite {}: {e}", invite.number)),
             }
         }
-        self.state().invites = pending;
+        self.set_invites(pending, changes);
         Ok(joined)
+    }
+
+    /// Replaces the pending invites with `pending`: an
+    /// [`Change::InvitePending`] for each new one, an
+    /// [`Change::InviteGone`] for each one gone.
+    fn set_invites(&self, pending: Vec<crate::record::Invite>, changes: &mut Vec<Change>) {
+        let mut state = self.state();
+        let had = |list: &[crate::record::Invite], number| list.iter().any(|i| i.number == number);
+        for invite in &pending {
+            if !had(&state.invites, invite.number) {
+                changes.push(Change::InvitePending(invite.number));
+            }
+        }
+        for invite in &state.invites {
+            if !had(&pending, invite.number) {
+                changes.push(Change::InviteGone(invite.number));
+            }
+        }
+        state.invites = pending;
     }
 
     /// Sets the participants, role indexes and role names of every room
@@ -898,27 +898,15 @@ mod tests {
 
     use super::*;
 
-    struct Nothing;
-
-    impl Commit for Nothing {
-        type Error = std::convert::Infallible;
-
-        async fn commit(&self, _changes: Vec<Change>) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
-
     /// A daemon runs `sync` in a spawned task, which needs a `Send` future:
     /// holding `&Agent` or the state lock across an await does not give
     /// one. A compile-time check.
     #[test]
     fn the_sync_future_is_send() {
-        fn sync_of<'a>(
-            store: &'a Store,
-            commit: &'a Nothing,
-        ) -> impl Future<Output = Result<SyncReport, SyncError<std::convert::Infallible>>> + Send + 'a
-        {
-            store.sync(commit)
+        fn sync_of(
+            store: &Store,
+        ) -> impl Future<Output = Result<SyncReport, SyncError>> + Send + '_ {
+            store.sync()
         }
         let _ = sync_of;
     }

@@ -1,7 +1,7 @@
 # Agent front ends: one plaintext store, JMAP and IRC over it
 
 Design note for epic mimid-1vul. Written 2026-11-19 against main at
-e4e91cd. Status: steps 1 to 5 of §3 are built (2026-11-20). Each step
+e4e91cd. Status: steps 1 to 5 of §3 are built, and step 6 in part (2026-11-20). Each step
 notes the changes it made to this design.
 
 Mark decided on 2026-11-19 that the IRC front end is native. It is built
@@ -245,7 +245,8 @@ a trait, so this needs no write to crate-jmap.
   (crates/mimid-agent/src/http.rs:744-756). Changed by step 5: the
   method does not save; the caller shows the record, then calls
   `Store::save`, and every save runs each registered front end's
-  `before_save` first (§3 step 5).
+  `before_save` first (§3 step 5). Changed by step 6: the method records
+  its changes and the save publishes them (§3 step 6).
 - Lock order: the agent lock first, then the store's state lock. The state
   lock is a `std::sync::Mutex` and is never held across an await.
 
@@ -554,6 +555,73 @@ step runs the full check list in AGENTS.md before its commit.
    most of all `stock_rust_client_chats_through_two_daemons` and
    `two_daemons_chat_over_http` (EventSource state changes), and
    `the_store_keeps_a_bounded_change_log_and_records_no_events`.
+
+   Built (2026-11-20):
+
+   - `mimid-agent-store::feed`. A sync round and every write method
+     record their `Change`s in the store; the next `Store::save`
+     publishes them. In order, one save at a time: every registered
+     `Frontend`'s `before_save(store, changes)` is handed the batch; the
+     records are written; the batch gets sequence numbers in a bounded
+     in-memory log (`MAX_LOGGED_CHANGES`, 4096, INVENTED) and the last
+     number goes out on a `tokio::sync::broadcast<u64>`
+     (`Store::subscribe`, `Store::changes_since(seq)`, `TooOld`,
+     `Store::last_seq`). A batch is published whether or not the write
+     succeeded: memory holds it, and the next save that succeeds writes
+     it. Sequence numbers start again at each start. Nothing new is
+     saved, so the schema version stays 2.
+   - `Change` gains `PersonForgotten`, `RoomForgotten {key, messages,
+     bans}`, `MessageDeleted`, `BanChanged`, `InvitePending(n)`,
+     `InviteGone(n)`, `ReadPositionMoved` and `ReadPositionForgotten`.
+     A local deletion (`mark_deleted`) is a `MessageChanged`; the record
+     keeps `deleted`. Kick records nothing: the agent's member change
+     comes with the next sync.
+   - The JMAP projector takes the batch in `before_save`, not from the
+     broadcast, and before `ext["jmap"]` is rebuilt. This closes the
+     crash window: a record that a sync or another front end made is
+     saved with its JMAP object, so step 4's load rule (no `ext["jmap"]`
+     means no object) loses nothing. Rendering records without `ext` at
+     load was the other choice. It cannot give a Chat's `members` or
+     other JMAP-only properties, so it was not taken. The projector does
+     not use the bounded log, so a large sync round never makes it
+     `TooOld`. `Commit` is gone, and `Store::sync()` takes no argument.
+   - JMAP's own writes reach the feed too, so other front ends learn of
+     them. An added record whose object exists (made by a JMAP hook)
+     writes nothing. A changed record writes only what differs. The
+     exception is `RoomChanged` after a member change: it shows
+     `members` again from the room's participants, as the sync that
+     follows would. A locally deleted message is shown emptied, as
+     crate-jmap empties it. A save may come between a store write and
+     the hook's insert, and project the record first. The hooks therefore
+     insert with `insert_shown`, which overwrites the projected object
+     instead of failing with `alreadyExists`.
+   - Deleting a chat: the hook leaves, destroys the Chat, calls
+     `forget_room` and saves. The projector destroys the Messages and
+     ChatBans of the `RoomForgotten`. `Store::save` deletes the blobs
+     itself after the next save that writes (or with no database):
+     `forget_room` queues the room, and `Store::blobs_in_use` adds each
+     front end's `Frontend::named_blobs` (JMAP: blob ids in
+     `ext["jmap"]`). A failed save keeps the room queued for the next
+     one; a restart loses the queue, and the quota cleans up later.
+     Destroying a Chat still writes one Message change per Message. A
+     long history can push a JMAP client's state out of
+     `CHANGE_LOG_LIMIT`, and the client then resyncs. Not fixed.
+   - Wake-ups: `Store::sync_wanted()` is a `Notify`. `create_room`,
+     `change_members`, `leave`, `send`, `edit`, `retract`, `ban`, `unban`,
+     `kick`, `allow`, `deny` and `accept_invite` notify it. The daemon
+     uses it as its `sync_now`.
+   - `AgentChat::over(Arc<Store>, account, options)` registers `JmapExt`
+     with a clone of its own `MemoryBackend` and seeds from the records.
+     `AgentChat::new` builds its own store and goes through the same
+     path. `Store::open_database` and `Store::set_blobs` take `&self`
+     (the blob store is a `OnceLock`). `AgentChat::store()` exposes the
+     store.
+   - The unit test `the_sync_future_is_send` in mimid-agent-store lost
+     its `Commit` argument. New tests: `feed`'s unit test of numbering,
+     the bounded log and `TooOld`; mimid-agent-jmap `tests/feed.rs`
+     (another front end's write reaches JMAP and the feed, and survives
+     a crash right after its save; JMAP writes and a Chat deletion on the
+     feed; writes wake the sync).
 7. **Configuration.** Parse `[jmap]` and `[irc]` (section 5) with no IRC
    listener yet. Oracle: the config unit tests, plus new ones for the new
    keys and for refusing a non-loopback IRC address.

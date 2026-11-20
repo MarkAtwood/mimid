@@ -18,6 +18,11 @@
 //! was. There is no reading of the `chat.json` this crate wrote before the
 //! store (§7.10).
 //!
+//! The same save first has this front end show the changes it publishes
+//! ([`crate::project`]), so every record saved, whoever made it (a sync,
+//! another front end, a JMAP write a save overtook), carries its JMAP
+//! object in `ext["jmap"]`, and a crash after the save loses none.
+//!
 //! # Limitations
 //!
 //! - Each save rebuilds every record's `ext["jmap"]` and encodes every
@@ -32,7 +37,7 @@
 //!   decrypted event to its journal, so a crash in that one write loses
 //!   the message.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -44,7 +49,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 
 use mimid_agent_store::record::Ext;
-use mimid_agent_store::{FileError, Frontend, State, Store};
+use mimid_agent_store::{Change, FileError, Frontend, State, Store};
 
 use crate::backend::AgentChat;
 use crate::render::{JMAP, Render, laid_over, not_rendered};
@@ -204,21 +209,28 @@ impl AgentChat {
     /// database fails, and [`PersistError::Malformed`] if it is not a
     /// store this version reads for this account. A store that cannot be
     /// read is never replaced.
-    pub fn persisted_at(mut self, path: impl Into<PathBuf>) -> Result<Self, PersistError> {
+    pub fn persisted_at(self, path: impl Into<PathBuf>) -> Result<Self, PersistError> {
         let path = path.into();
         self.store
             .open_database(&path)
             .map_err(|e| file_error(&path, e))?;
+        self.load_records(&path)?;
+        Ok(self)
+    }
+
+    /// Checks that the records are this account's, then seeds the JMAP
+    /// object of every record that has one; `path` names the database in
+    /// errors.
+    pub(crate) fn load_records(&self, path: &Path) -> Result<(), PersistError> {
         if let Some(account) = account_of(&self.store.state())
             && account != self.account.as_ref()
         {
             return Err(malformed(
-                &path,
+                path,
                 format!("account {account} is not this one"),
             ));
         }
-        self.seed_records(&path)?;
-        Ok(self)
+        self.seed_records(path)
     }
 
     /// Seeds the JMAP object of every record that has one.
@@ -270,10 +282,12 @@ impl AgentChat {
     }
 }
 
-/// The JMAP front end's part in every save ([`Frontend`]): it rebuilds
-/// each record's `ext["jmap"]` from the objects the backend holds (see the
-/// module documentation). It holds the backend itself (a `MemoryBackend`
-/// clone shares its state), so the store can run it for any save.
+/// The JMAP front end's part in every save ([`Frontend`]): it shows the
+/// changes the save publishes ([`crate::project`]), then, with a database,
+/// rebuilds each record's `ext["jmap"]` from the objects the backend holds
+/// (see the module documentation). It holds the backend itself (a
+/// `MemoryBackend` clone shares its state), so the store can run it for
+/// any save.
 pub(crate) struct JmapExt {
     pub(crate) inner: MemoryBackend,
     pub(crate) account: Id,
@@ -284,8 +298,15 @@ impl Frontend for JmapExt {
     fn before_save<'a>(
         &'a self,
         store: &'a Store,
+        changes: &'a [Change],
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
+            self.project(store, changes)
+                .await
+                .map_err(|e| e.to_string())?;
+            if !store.has_database() {
+                return Ok(());
+            }
             let mut objects = Objects::new();
             for (type_name, values) in [
                 (ChatContact::TYPE_NAME, self.all::<ChatContact>().await?),
@@ -306,6 +327,51 @@ impl Frontend for JmapExt {
             self.keep_objects(store, &objects);
             Ok(())
         })
+    }
+
+    /// The value of any property named `blobId` or ending in `BlobId`, at
+    /// any depth, of what the records keep for JMAP alone (`ext["jmap"]`:
+    /// an attachment's thumbnail, a Chat's avatar).
+    fn named_blobs(&self, state: &State) -> BTreeSet<String> {
+        let mut ids = BTreeSet::new();
+        let exts = state
+            .people
+            .values()
+            .map(|r| &r.ext)
+            .chain(state.rooms.values().map(|r| &r.ext))
+            .chain(state.bans.values().map(|r| &r.ext))
+            .chain(state.messages.values().map(|r| &r.ext))
+            .chain(state.read_positions.values().map(|r| &r.ext))
+            .chain(std::iter::once(&state.ext));
+        for ext in exts {
+            if let Some(value) = ext.get(JMAP) {
+                collect_blob_ids(value, &mut ids);
+            }
+        }
+        ids
+    }
+}
+
+/// Adds to `ids` the string value of every property of `value`, at any
+/// depth, named `blobId` or ending in `BlobId`.
+fn collect_blob_ids(value: &Value, ids: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                if (key == "blobId" || key.ends_with("BlobId"))
+                    && let Value::String(id) = value
+                {
+                    ids.insert(id.clone());
+                }
+                collect_blob_ids(value, ids);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_blob_ids(value, ids);
+            }
+        }
+        _ => {}
     }
 }
 

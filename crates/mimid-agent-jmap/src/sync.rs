@@ -1,12 +1,12 @@
-//! [`AgentChat::sync`]: the store's sync ([`Store::sync`]), with the
-//! changed records projected into the `MemoryBackend` ([`crate::project`])
-//! and the plaintext store saved before the agent's delivery is
+//! [`AgentChat::sync`]: the store's sync ([`Store::sync`]), whose saves
+//! show the changed records in the `MemoryBackend` ([`crate::project`])
+//! before the plaintext store is written and the agent's delivery is
 //! acknowledged.
 
 use jmap_chat_server::memory::MemoryError;
 use jmap_server::BackendSetError;
 use mimid_agent_core::AgentError;
-use mimid_agent_store::{Change, Commit, Store};
+use mimid_agent_store::Store;
 
 pub use mimid_agent_store::SyncReport;
 
@@ -43,16 +43,6 @@ impl From<BackendSetError<MemoryError>> for SyncError {
     }
 }
 
-/// Each round of a sync: the changed records become JMAP objects; the
-/// store then saves (see [`AgentChat::persisted_at`]).
-impl Commit for AgentChat {
-    type Error = SyncError;
-
-    async fn commit(&self, changes: Vec<Change>) -> Result<(), SyncError> {
-        self.project(changes).await
-    }
-}
-
 impl AgentChat {
     /// Polls the agent and stores what came ([`Store::sync`]): joined
     /// rooms as Chats, received text as Messages, membership changes as
@@ -60,19 +50,19 @@ impl AgentChat {
     /// [`crate::Options::invites`] allows, then the user's rooms this
     /// device is not in are joined by external Commit
     /// (`Agent::join_own_rooms`). Call it whenever the client should see
-    /// new state; the store's `/changes` then report it.
+    /// new state; the store's `/changes` then report it. A daemon that
+    /// shares the store with other front ends calls [`Store::sync`]
+    /// itself; this is the same.
     ///
     /// # Errors
     ///
     /// [`SyncError::Agent`] if polling fails (nothing is lost: the agent
-    /// keeps what it has not delivered), [`SyncError::Store`] if the
-    /// store refuses a write, and [`SyncError::Persist`] if the store
-    /// cannot be written.
+    /// keeps what it has not delivered), and [`SyncError::Persist`] if the
+    /// changes cannot be shown or the store cannot be written.
     pub async fn sync(&self) -> Result<SyncReport, SyncError> {
         let store: &Store = &self.store;
-        store.sync(self).await.map_err(|e| match e {
+        store.sync().await.map_err(|e| match e {
             mimid_agent_store::SyncError::Agent(e) => SyncError::Agent(e),
-            mimid_agent_store::SyncError::Commit(e) => e,
             mimid_agent_store::SyncError::Save(e) => {
                 SyncError::Persist(crate::persist::save_error(e))
             }

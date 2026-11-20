@@ -12,23 +12,24 @@
 //! IRC code.
 //!
 //! The store itself is [`Store`]: the agent, the records of [`record`] in
-//! a [`State`], and the blob store. [`Store::sync`] is the agent's only
-//! journal consumer ([`mod@sync`]): it writes what the agent received into
-//! the records and hands each round's [`Change`]s to the front end that
-//! called it ([`Commit`]) before saving and acknowledging. Every action of
-//! the user's is a `Store` method too ([`action`]): it makes the agent
-//! call and writes the result into the records. The records are kept in
-//! an SQLite database ([`db`], [`Store::open_database`]); each save first
-//! has every registered front end bring what it keeps in the records up
-//! to date ([`Frontend`]).
+//! a [`State`], the blob store, and the change feed ([`feed`]).
+//! [`Store::sync`] is the agent's only journal consumer ([`mod@sync`]): it
+//! writes what the agent received into the records. Every action of the
+//! user's is a `Store` method too ([`action`]): it makes the agent call
+//! and writes the result into the records. Both record what they changed
+//! ([`Change`]), and the next save publishes it: every registered front
+//! end ([`Frontend`]) is handed the changes, shows them and brings what it
+//! keeps in the records up to date, then the records are written to an
+//! SQLite database ([`db`], [`Store::open_database`]), and the changes
+//! are logged under sequence numbers for any number of subscribers
+//! ([`Store::subscribe`], [`Store::changes_since`]). So several front ends
+//! can serve one store, each seeing what the others did.
 //!
 //! # Limitations
 //!
-//! - This is step 5 of the migration in docs/design/agent-frontends.md §3:
-//!   inbound and outbound go through the store, and the store owns its
-//!   file. There is no change feed yet (step 6): a sync's changes go to
-//!   the front end that called it, and a write is shown by the front end
-//!   that made it.
+//! - This is step 6 of the migration in docs/design/agent-frontends.md §3:
+//!   one store, a change feed, and the JMAP front end over it; the IRC
+//!   front end is step 8.
 //! - See each module for its own limits.
 
 #![forbid(unsafe_code)]
@@ -39,6 +40,7 @@ mod change;
 pub mod content;
 pub mod convert;
 pub mod db;
+pub mod feed;
 pub mod notice;
 pub mod record;
 pub mod report;
@@ -50,6 +52,7 @@ pub mod sync;
 pub use action::ActionError;
 pub use change::Change;
 pub use db::FileError;
+pub use feed::TooOld;
 pub use state::{RemovedRoom, State, accepted_at_of, reference_of};
 pub use store::{Frontend, Store};
-pub use sync::{Commit, InvitePolicy, SyncError, SyncReport};
+pub use sync::{InvitePolicy, SyncError, SyncReport};

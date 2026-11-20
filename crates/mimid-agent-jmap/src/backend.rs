@@ -87,20 +87,23 @@ impl Options {
 /// One user's MIMI rooms as a JMAP Chat account.
 ///
 /// The records live in a [`Store`], which is the agent's journal
-/// consumer; the JMAP objects live in a crate-jmap `MemoryBackend`, a
-/// projection of the records under their keys. Each client write is a
-/// call of the store's method for it ([`mimid_agent_store::action`]),
-/// which sends what means something in MIMI through the [`Agent`] and
-/// writes the records; the write hook translates JMAP ids to store keys
-/// and user URIs, and the store's errors to SetErrors, then writes the
-/// JMAP object and saves. See the crate documentation for what maps and
-/// what does not.
+/// consumer and may serve other front ends too ([`AgentChat::over`]); the
+/// JMAP objects live in a crate-jmap `MemoryBackend`, a projection of the
+/// records under their keys, which every save of the store brings up to
+/// date with what the store's change feed publishes (the `project` module).
+/// Each client write is a call of the store's method for it
+/// ([`mimid_agent_store::action`]), which sends what means something in
+/// MIMI through the [`Agent`] and writes the records; the write hook
+/// translates JMAP ids to store keys and user URIs, and the store's
+/// errors to SetErrors, then writes the JMAP object and saves. See the
+/// crate documentation for what maps and what does not.
 pub struct AgentChat {
     pub(crate) inner: MemoryBackend,
     pub(crate) account: Id,
     pub(crate) user: String,
-    /// The agent, the records and the blob store.
-    pub(crate) store: Store,
+    /// The agent, the records and the blob store, maybe shared with other
+    /// front ends.
+    pub(crate) store: Arc<Store>,
     pub(crate) options: Options,
 }
 
@@ -115,8 +118,40 @@ impl std::fmt::Debug for AgentChat {
 
 impl AgentChat {
     /// An account `account_id` over `agent`, empty until the first
-    /// [`AgentChat::sync`].
+    /// [`AgentChat::sync`], with a [`Store`] of its own that joins the
+    /// invites [`Options::invites`] allows.
     pub fn new(agent: Agent, account_id: Id, options: Options) -> Self {
+        let store = Arc::new(Store::new(agent, options.invites.clone()));
+        Self::build(store, account_id, options)
+    }
+
+    /// An account `account_id` over `store`, which the caller has opened
+    /// ([`Store::open_database`]) and given its blob store
+    /// ([`Store::with_blobs`]), and which other front ends may share:
+    /// each record of it that has a JMAP object is shown, under its key,
+    /// as the object it was saved as. From now on every save of the store,
+    /// whoever asks for it, shows the changes it publishes as JMAP objects
+    /// and keeps them in `ext["jmap"]` (see `persist`). The store's
+    /// invite policy and blob quota are its own: [`Options::invites`] and
+    /// [`Options::blob_quota`] are not used.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::PersistError::Malformed`] if the records are another
+    /// account's, or a record and what `ext["jmap"]` keeps of it do not
+    /// make a JMAP object.
+    pub fn over(
+        store: Arc<Store>,
+        account_id: Id,
+        options: Options,
+    ) -> Result<Self, crate::PersistError> {
+        let chat = Self::build(store, account_id, options);
+        chat.load_records(std::path::Path::new("the plaintext store"))?;
+        Ok(chat)
+    }
+
+    /// An account over `store`, with the JMAP front end registered on it.
+    fn build(store: Arc<Store>, account_id: Id, options: Options) -> Self {
         // Decision mimid-1wgh.66: a bounded change log, and no outbound or
         // lifecycle events recorded, since nothing here reads them (every
         // outbound change goes to the agent in the write hooks).
@@ -124,9 +159,9 @@ impl AgentChat {
             .with_change_log_limit(options.change_log_limit)
             .with_event_limit(0);
         inner.register_account(&account_id);
-        let user = agent.user().to_owned();
-        let store = Store::new(agent, options.invites.clone());
-        // Every save, whoever asks for it, rebuilds ext["jmap"] first.
+        let user = store.user().to_owned();
+        // Every save, whoever asks for it, shows its changes and rebuilds
+        // ext["jmap"] first.
         store.add_frontend(Arc::new(crate::persist::JmapExt {
             inner: inner.clone(),
             account: account_id.clone(),
@@ -145,23 +180,30 @@ impl AgentChat {
     /// missing): uploads, the attachments of Messages sent, and those
     /// fetched for Messages received, with unreferenced blobs held to
     /// [`Options::blob_quota`]. Without it Messages carry no attachments:
-    /// the account's limits allow none and received ones are left out.
+    /// the account's limits allow none and received ones are left out. A
+    /// store that has a blob store already ([`AgentChat::over`]) keeps it,
+    /// and this logs a warning.
     ///
     /// # Errors
     ///
     /// The [`BlobError`] of [`BlobStore::open`].
-    pub fn with_blobs(mut self, dir: impl Into<std::path::PathBuf>) -> Result<Self, BlobError> {
+    pub fn with_blobs(self, dir: impl Into<std::path::PathBuf>) -> Result<Self, BlobError> {
         let blobs = BlobStore::open(dir)?.with_quota(self.options.blob_quota);
-        self.store = self.store.with_blobs(blobs);
+        if self.store.set_blobs(blobs).is_err() {
+            tracing::warn!(
+                name: "agent_chat_blob_store_kept",
+                "the store has a blob store already; it is kept"
+            );
+        }
         Ok(self)
     }
 
     /// Every blob id the store names, for the blob store's quota
-    /// (decision mimid-1wgh.68): each message's attachments
-    /// ([`Store::referenced_blobs`]), and the value of any property named
-    /// `blobId` or ending in `BlobId`, at any depth, of what the records
-    /// keep for JMAP alone (`ext["jmap"]`: an attachment's thumbnail, a
-    /// Chat's avatar). A destroyed Message is no longer stored and a
+    /// (decision mimid-1wgh.68; [`Store::blobs_in_use`]): each message's
+    /// attachments ([`Store::referenced_blobs`]), and the value of any
+    /// property named `blobId` or ending in `BlobId`, at any depth, of what
+    /// the records keep for JMAP alone (`ext["jmap"]`: an attachment's
+    /// thumbnail, a Chat's avatar), and whatever other front ends name. A destroyed Message is no longer stored and a
     /// retracted one has no attachments, so theirs do not count.
     /// Attachments waiting for another fetch ([`crate::retry`]) name a
     /// URL, not a blob here, so they add nothing; a blob a retry stores is
@@ -174,24 +216,7 @@ impl AgentChat {
     pub async fn referenced_blobs(
         &self,
     ) -> Result<std::collections::BTreeSet<String>, crate::PersistError> {
-        let mut ids = self.store.referenced_blobs();
-        let state = self.store.state();
-        let jmap = crate::render::JMAP;
-        let exts = state
-            .people
-            .values()
-            .map(|r| &r.ext)
-            .chain(state.rooms.values().map(|r| &r.ext))
-            .chain(state.bans.values().map(|r| &r.ext))
-            .chain(state.messages.values().map(|r| &r.ext))
-            .chain(state.read_positions.values().map(|r| &r.ext))
-            .chain(std::iter::once(&state.ext));
-        for ext in exts {
-            if let Some(value) = ext.get(jmap) {
-                collect_blob_ids(value, &mut ids);
-            }
-        }
-        Ok(ids)
+        Ok(self.store.blobs_in_use())
     }
 
     /// The blob store, if there is one: the daemon serves uploads and
@@ -226,9 +251,15 @@ impl AgentChat {
     }
 
     /// The agent, for what JMAP Chat has no method for: publishing
-    /// KeyPackages and consent decisions.
+    /// KeyPackages and consent decisions. Never `Agent::receive` or
+    /// `Agent::acknowledge` ([`Store::agent`]).
     pub fn agent(&self) -> &Arc<Mutex<Agent>> {
         self.store.agent()
+    }
+
+    /// The store this account is over.
+    pub fn store(&self) -> &Arc<Store> {
+        &self.store
     }
 
     /// The Chat bound to MIMI room `room`: the key of its room record.
@@ -343,7 +374,7 @@ impl AgentChat {
             .map_err(action_failure)?;
         value[ROOM_ID] = json!(room.uri);
         let chat = serde_json::from_value::<O>(value).map_err(serde_failure)?;
-        let chat = self.inner.insert_object(&self.account, chat).await?;
+        let chat = self.insert_shown(&id, chat).await?;
         Ok((id, chat))
     }
 
@@ -470,7 +501,7 @@ impl AgentChat {
         message.sender_msg_id = Id::from(sent.sender_msg_id.as_str());
         message.delivery_state = DeliveryState::Delivered;
         message.delivered_at = Some(utc_date(sent.accepted_at));
-        let stored = self.inner.insert_object(&self.account, message).await?;
+        let stored = self.insert_shown(&id, message).await?;
         Ok((id, stored))
     }
 
@@ -478,12 +509,12 @@ impl AgentChat {
     /// docs/design/agent-frontends.md §7.9): the room is left if the agent
     /// is in it ([`Store::leave`]), the Chat is destroyed (crate-jmap
     /// destroys its ReadPositions), and the store deletes the room with its
-    /// records ([`Store::forget_room`]). Its Messages and ChatBans are
-    /// destroyed too, each a change of its type, so a client's `/changes`
-    /// sees them go. After the save, the blobs of its attachments that
-    /// nothing names any more are deleted ([`Store::delete_blobs`]). The
-    /// history of the room's other members is theirs: nothing is sent but
-    /// the leave.
+    /// records ([`Store::forget_room`]). The save that follows destroys
+    /// its Messages and ChatBans too ([`crate::project`]), each a change of
+    /// its type, so a client's `/changes` sees them go, and then deletes
+    /// the blobs of its attachments that nothing names any more
+    /// ([`Store::save`]). The history of the room's other members is
+    /// theirs: nothing is sent but the leave.
     async fn destroy_chat<O: SetObject + Send + Sync>(
         &self,
         caller: &(),
@@ -499,53 +530,39 @@ impl AgentChat {
         self.inner
             .destroy_object::<O>(caller, account_id, id)
             .await?;
-        let Some(forgotten) = self.store.forget_room(id.as_ref()).await else {
-            self.save_or_log().await;
-            return Ok(());
-        };
-        for message in &forgotten.removed.messages {
-            self.destroy_part::<Message>(message).await;
-        }
-        for ban in &forgotten.removed.bans {
-            self.destroy_part::<ChatBan>(ban).await;
-        }
-        if let Err(error) = self.save().await {
-            // The blobs stay: the database still names them.
-            tracing::error!(
-                name: "agent_chat_store_failed",
-                error = &error as &dyn std::error::Error,
-                "the plaintext store was not written; the deleted Chat's attachments are kept"
-            );
-            return Ok(());
-        }
-        let referenced = self.referenced_blobs().await.unwrap_or_default();
-        if let Err(error) = self.store.delete_blobs(&forgotten, &referenced) {
-            tracing::error!(
-                name: "agent_chat_blobs_not_deleted",
-                error = &error as &dyn std::error::Error,
-                "a deleted Chat's attachments were not all deleted"
-            );
-        }
+        self.store.forget_room(id.as_ref()).await;
+        // The blobs stay if this fails: the database still names them.
+        self.save_or_log().await;
         Ok(())
     }
 
-    /// Destroys object `key` of type `O` of a deleted Chat in the backend,
-    /// if it has one; a failure is logged, since the Chat is gone already.
-    async fn destroy_part<O: SetObject + Send + Sync>(&self, key: &str) {
-        match self
-            .inner
-            .destroy_object::<O>(&(), &self.account, &Id::from(key))
-            .await
-        {
-            Ok(()) => {}
-            Err(BackendSetError::SetError(e)) if e.error_type == SetErrorType::NotFound => {}
-            Err(error) => tracing::error!(
-                name: "agent_chat_destroy_failed",
-                type_name = O::TYPE_NAME,
-                error = ?error,
-                "an object of a deleted Chat was not destroyed"
-            ),
+    /// Stores `object`, the JMAP object `id` a write hook made for the
+    /// record of the same key that the store just made. A save may have
+    /// come between and shown the record already ([`crate::project`]):
+    /// the object the hook made then replaces it, property by property,
+    /// so the `/set` response and the stored object agree.
+    pub(crate) async fn insert_shown<O: SetObject + Send + Sync>(
+        &self,
+        id: &Id,
+        object: O,
+    ) -> Result<O, BackendSetError<MemoryError>> {
+        let value = serde_json::to_value(&object).map_err(serde_failure)?;
+        match self.inner.insert_object(&self.account, object).await {
+            Err(BackendSetError::SetError(e)) if e.error_type == SetErrorType::AlreadyExists => {}
+            inserted => return inserted,
         }
+        let patch: serde_json::Map<String, Value> = value
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| *key != "id")
+            .map(|(key, v)| (key.clone(), v.clone()))
+            .collect();
+        let patch = serde_json::from_value(Value::Object(patch)).map_err(serde_failure)?;
+        self.inner
+            .update_object::<O>(&(), &self.account, id, patch)
+            .await?;
+        serde_json::from_value(value).map_err(serde_failure)
     }
 
     /// Writes into the records what a client changed of a local object
@@ -626,29 +643,6 @@ impl AgentChat {
 /// The store key of the record JMAP id `id` names: the same text.
 pub(crate) fn key(id: &Id) -> String {
     id.as_ref().to_owned()
-}
-
-/// Adds to `ids` the string value of every property of `value`, at any
-/// depth, named `blobId` or ending in `BlobId`.
-fn collect_blob_ids(value: &Value, ids: &mut std::collections::BTreeSet<String>) {
-    match value {
-        Value::Object(map) => {
-            for (key, value) in map {
-                if (key == "blobId" || key.ends_with("BlobId"))
-                    && let Value::String(id) = value
-                {
-                    ids.insert(id.clone());
-                }
-                collect_blob_ids(value, ids);
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                collect_blob_ids(value, ids);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// `invalidProperties` on `attachments`: blob `id` is not in the store, or
