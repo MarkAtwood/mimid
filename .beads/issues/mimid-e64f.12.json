@@ -1,0 +1,22 @@
+{
+  "id": "mimid-e64f.12",
+  "title": "Server: maxMlsObjectSize 4 MiB, one limit for both bindings (F10)",
+  "description": "Account capability maxMlsObjectSize = 4 MiB raw; JMAP and stream enforce the same per-object limit; update mimid-1wgh.78.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "feature",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-20T22:56:22.147977887Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-20T22:56:22.147977887Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-e64f.12",
+      "depends_on_id": "mimid-e64f",
+      "type": "parent-child",
+      "created_at": "2026-11-20T22:56:22.190016719Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
