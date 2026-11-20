@@ -11,7 +11,12 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-axum.workspace = true
+# ws: the live stream (docs/design/binary-live-stream.md); its
+# tokio-tungstenite is the version already in the lockfile.
+axum = { workspace = true, features = ["ws"] }
+# Splits the live stream's WebSocket into reader and writer; already in
+# the lockfile.
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
 # Unpadded base64url JMAP bearer tokens (mimid-1wgh.11.1); already in the lockfile.
 base64 = "=0.22.1"
 # JMAP request parsing and method dispatch (RFC 8620), and the JMAP Chat
@@ -66,6 +71,7 @@ httpdate = "1.0.3"
 mimi-content = { path = "../mimi-content" }
 mimi-mls = { path = "../mimi-mls" }
 mimi-protocol = { path = "../mimi-protocol" }
+mimid-live = { path = "../mimid-live" }
 mimi-room-policy = { path = "../mimi-room-policy" }
 # rustls with its default aws-lc-rs provider (decisions mimid-1wgh.26, .6.16).
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
@@ -106,4 +112,7 @@ openmls.workspace = true
 openmls_basic_credential = "=0.6.0"
 openmls_rust_crypto.workspace = true
 tempfile = "=3.23.0"
+# A WebSocket client for the live stream tests; the version already in
+# the lockfile.
+tokio-tungstenite = "=0.29.0"
 tower = { version = "=0.5.2", features = ["util"] }

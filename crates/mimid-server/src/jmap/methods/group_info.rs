@@ -27,7 +27,7 @@ use mimi_protocol::{GroupInfoCode, GroupInfoRequest, GroupInfoResponse};
 use serde_json::{Value, json};
 
 use super::Services;
-use super::room_common::{bytes, invalid, relay_error, room_args, server_fail};
+use super::room_common::{bytes, invalid, relay_error, require_room_uri, room_call, server_fail};
 use crate::follower::Follower;
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
@@ -61,20 +61,9 @@ impl JmapHandler<Account> for Handler {
 }
 
 async fn fetch(follower: &Follower, caller: &Account, args: Value) -> Result<Value, JmapError> {
-    // Any room the client names: the room's hub decides by its policy
-    // whether to answer (bead mimid-1wgh.12.46). The relay checks that the
-    // request's credential is the account's user.
-    let call = room_args(METHOD, caller, args)?;
+    let call = room_call(METHOD, caller, args)?;
     let request = bytes(METHOD, &call.args, "request")?;
-    GroupInfoRequest::tls_deserialize_exact(&request[..])
-        .map_err(|_| invalid(METHOD, "request is not a GroupInfoRequest"))?;
-    let response = follower
-        .relay_group_info(caller.user(), &call.room_id, &request)
-        .await
-        .map_err(|error| relay_error(METHOD, error))?;
-    let status = GroupInfoResponse::tls_deserialize_exact(&response[..])
-        .map_err(|e| server_fail(METHOD, &e))?
-        .status();
+    let (status, response) = fetch_core(follower, caller, &call.room_id, &request).await?;
     Ok(json!({
         "accountId": call.account_id,
         "status": match status {
@@ -84,4 +73,32 @@ async fn fetch(follower: &Follower, caller: &Account, args: Value) -> Result<Val
         },
         "response": URL_SAFE_NO_PAD.encode(&response),
     }))
+}
+
+/// `GroupInfo/fetch` of `room_id` with the GroupInfoRequest `request`, as
+/// both bindings call it: the status and the whole GroupInfoResponse.
+///
+/// # Errors
+///
+/// The method's `invalidArguments`, `serverUnavailable` and `serverFail`.
+pub(crate) async fn fetch_core(
+    follower: &Follower,
+    caller: &Account,
+    room_id: &str,
+    request: &[u8],
+) -> Result<(GroupInfoCode, Vec<u8>), JmapError> {
+    // Any room the client names: the room's hub decides by its policy
+    // whether to answer (bead mimid-1wgh.12.46). The relay checks that the
+    // request's credential is the account's user.
+    require_room_uri(METHOD, room_id)?;
+    GroupInfoRequest::tls_deserialize_exact(request)
+        .map_err(|_| invalid(METHOD, "request is not a GroupInfoRequest"))?;
+    let response = follower
+        .relay_group_info(caller.user(), room_id, request)
+        .await
+        .map_err(|error| relay_error(METHOD, error))?;
+    let status = GroupInfoResponse::tls_deserialize_exact(&response[..])
+        .map_err(|e| server_fail(METHOD, &e))?
+        .status();
+    Ok((status, response))
 }

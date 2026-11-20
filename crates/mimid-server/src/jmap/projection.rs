@@ -270,6 +270,30 @@ pub enum ProjectionError {
     Request,
 }
 
+/// What [`Projection::message_changes_since`] found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MessageChangesView {
+    /// The Messages created, as `Message/changes` lists them.
+    pub(crate) created: Vec<String>,
+    /// The state after them.
+    pub(crate) new_state: String,
+    /// Whether more changes follow `new_state`.
+    pub(crate) has_more: bool,
+}
+
+/// One Chat as [`Projection::chat_entries`] gives it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ChatEntryView {
+    /// The Chat's id.
+    pub(crate) chat_id: String,
+    /// Its room.
+    pub(crate) room_id: String,
+    /// Whether it is bound (findings log F4).
+    pub(crate) bound: bool,
+    /// Its `privateMetadata`.
+    pub(crate) private: Map<String, Value>,
+}
+
 /// The JMAP read projection over the store and the hub.
 #[derive(Debug)]
 pub(crate) struct Projection {
@@ -692,19 +716,90 @@ impl Projection {
         since: &str,
         max_changes: Option<u64>,
     ) -> Result<ChangesResult, BackendChangesError<ProjectionError>> {
-        let since = parse_message_state(since).ok_or(BackendChangesError::CannotCalculate)?;
         let changes = self
-            .store
-            .projection_message_changes(account.user().as_str(), since, max_changes)
-            .await
-            .map_err(ProjectionError::from)?
+            .message_changes_since(account, since, max_changes)
+            .await?
             .ok_or(BackendChangesError::CannotCalculate)?;
         Ok(ChangesResult::new(
             changes.created.into_iter().map(Id::from).collect(),
             Vec::new(),
             Vec::new(),
             changes.has_more,
-            State::from(message_state(changes.new_cursor)),
+            State::from(changes.new_state),
+        ))
+    }
+
+    /// `Message/changes` from the state `since`, as both bindings use it
+    /// (docs/design/binary-live-stream.md §5.5): the Messages created, in
+    /// the order `/changes` lists them, and the new state; `None` when the
+    /// changes cannot be calculated (a state that does not parse, or one
+    /// ahead of the account's).
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectionError::Store`] if the store fails.
+    pub(crate) async fn message_changes_since(
+        &self,
+        account: &Account,
+        since: &str,
+        max_changes: Option<u64>,
+    ) -> Result<Option<MessageChangesView>, ProjectionError> {
+        let Some(since) = parse_message_state(since) else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .projection_message_changes(account.user().as_str(), since, max_changes)
+            .await?
+            .map(|changes| MessageChangesView {
+                created: changes.created,
+                new_state: message_state(changes.new_cursor),
+                has_more: changes.has_more,
+            }))
+    }
+
+    /// `Message/get` of `ids` (every visible Message when `None`), as both
+    /// bindings use it: the state and the Messages in log order.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectionError::Store`] if the store fails.
+    pub(crate) async fn messages(
+        &self,
+        account: &Account,
+        ids: Option<&[String]>,
+    ) -> Result<(String, Vec<MessageRow>), ProjectionError> {
+        let (cursor, rows) = self
+            .store
+            .projection_messages(account.user().as_str(), ids, u32::MAX)
+            .await?;
+        Ok((message_state(cursor), rows))
+    }
+
+    /// `Chat/get` of the account's Chats, as the live stream lists them:
+    /// the Chat state and, per Chat, its id, room, whether it is bound
+    /// and its `privateMetadata`.
+    ///
+    /// # Errors
+    ///
+    /// As `Chat/get`.
+    pub(crate) async fn chat_entries(
+        &self,
+        account: &Account,
+    ) -> Result<(String, Vec<ChatEntryView>), ProjectionError> {
+        let (cursor, chats, digest) = self.chats(account).await?;
+        let state = chat_state(cursor, &digest, metadata_seq(&chats));
+        Ok((
+            state,
+            chats
+                .into_iter()
+                .map(|chat| ChatEntryView {
+                    chat_id: chat.row.chat_id,
+                    room_id: chat.row.room_id,
+                    bound: chat.row.bound,
+                    private: chat.private,
+                })
+                .collect(),
         ))
     }
 

@@ -33,16 +33,9 @@ pub(super) fn server_fail(
     JmapError::server_fail("internal error")
 }
 
-/// Checks `accountId` and `roomId`. With `bound`, a Chat of the account
-/// must be bound to the room; otherwise any Chat with that `roomId` will do
-/// (§Room/unbind).
-pub(super) async fn room_call(
-    method: &'static str,
-    store: &Store,
-    caller: &Account,
-    args: Value,
-    bound: bool,
-) -> Result<RoomCall, JmapError> {
+/// Checks `accountId` and reads `roomId`, as every room method does
+/// first.
+fn call_args(method: &'static str, caller: &Account, args: Value) -> Result<RoomCall, JmapError> {
     let Value::Object(args) = args else {
         return Err(invalid(method, "arguments must be an object"));
     };
@@ -57,23 +50,6 @@ pub(super) async fn room_call(
         Some(Value::String(room_id)) => room_id.clone(),
         _ => return Err(invalid(method, "roomId is required")),
     };
-    let (_, chats) = store
-        .projection_chats(caller.user().as_str())
-        .await
-        .map_err(|e| server_fail(method, &e))?;
-    if !chats
-        .iter()
-        .any(|chat| chat.room_id == room_id && (chat.bound || !bound))
-    {
-        return Err(invalid(
-            method,
-            if bound {
-                "no Chat of this account is bound to roomId"
-            } else {
-                "no Chat of this account has roomId"
-            },
-        ));
-    }
     Ok(RoomCall {
         account_id,
         room_id,
@@ -81,38 +57,59 @@ pub(super) async fn room_call(
     })
 }
 
-/// Checks `accountId` and that `roomId` is a MIMI room URI, without
-/// requiring a Chat of the account for it: GroupInfo/fetch and the
-/// external Commit of Room/update reach a room the account is not in yet
-/// (draft-atwood-jmap-chat-mimi-00 §GroupInfo/fetch, §Room/update; bead
-/// mimid-1wgh.12.46).
-pub(super) fn room_args(
+/// Checks `accountId` and reads `roomId`; the method's core function
+/// checks the room ([`require_chat`] or [`require_room_uri`]), so that the
+/// live stream, which calls the core function, gets the same checks.
+pub(super) fn room_call(
     method: &'static str,
     caller: &Account,
     args: Value,
 ) -> Result<RoomCall, JmapError> {
-    let Value::Object(args) = args else {
-        return Err(invalid(method, "arguments must be an object"));
-    };
-    let account_id = match args.get("accountId") {
-        Some(Value::String(id)) => id.clone(),
-        _ => return Err(invalid(method, "accountId is required")),
-    };
-    caller
-        .check_account_id(&account_id)
-        .map_err(|_| JmapError::account_not_found())?;
-    let room_id = match args.get("roomId") {
-        Some(Value::String(room_id)) if crate::hub::room_uri_domain(room_id).is_some() => {
-            room_id.clone()
-        }
-        Some(Value::String(_)) => return Err(invalid(method, "roomId is not a MIMI room URI")),
-        _ => return Err(invalid(method, "roomId is required")),
-    };
-    Ok(RoomCall {
-        account_id,
-        room_id,
-        args,
-    })
+    call_args(method, caller, args)
+}
+
+/// Requires a Chat of `caller`'s account with `room_id`. With `bound`, it
+/// must be bound to the room; otherwise any Chat with that `roomId` will
+/// do (§Room/unbind).
+pub(crate) async fn require_chat(
+    method: &'static str,
+    store: &Store,
+    caller: &Account,
+    room_id: &str,
+    bound: bool,
+) -> Result<(), JmapError> {
+    let (_, chats) = store
+        .projection_chats(caller.user().as_str())
+        .await
+        .map_err(|e| server_fail(method, &e))?;
+    if chats
+        .iter()
+        .any(|chat| chat.room_id == room_id && (chat.bound || !bound))
+    {
+        Ok(())
+    } else {
+        Err(invalid(
+            method,
+            if bound {
+                "no Chat of this account is bound to roomId"
+            } else {
+                "no Chat of this account has roomId"
+            },
+        ))
+    }
+}
+
+/// Requires `room_id` to be a MIMI room URI, without requiring a Chat of
+/// the account for it: GroupInfo/fetch and the external Commit of
+/// Room/update reach a room the account is not in yet
+/// (draft-atwood-jmap-chat-mimi-00 §GroupInfo/fetch, §Room/update; bead
+/// mimid-1wgh.12.46).
+pub(crate) fn require_room_uri(method: &'static str, room_id: &str) -> Result<(), JmapError> {
+    if crate::hub::room_uri_domain(room_id).is_some() {
+        Ok(())
+    } else {
+        Err(invalid(method, "roomId is not a MIMI room URI"))
+    }
 }
 
 /// Whether a Chat of `caller`'s account is bound to `room_id`.

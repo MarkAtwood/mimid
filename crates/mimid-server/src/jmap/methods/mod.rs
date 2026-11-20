@@ -12,18 +12,18 @@ use crate::hub::{Clock, Hub};
 use crate::store::{BlobQuota, Store};
 
 pub(crate) mod blob;
-mod chat_set;
-mod consent;
-mod group_info;
-mod key_material;
+pub(super) mod chat_set;
+pub(super) mod consent;
+pub(super) mod group_info;
+pub(super) mod key_material;
 pub(crate) mod key_package;
 mod message_set;
-mod room_common;
-mod room_create;
-mod room_report_abuse;
-mod room_send;
-mod room_unbind;
-mod room_update;
+pub(super) mod room_common;
+pub(super) mod room_create;
+pub(super) mod room_report_abuse;
+pub(super) mod room_send;
+pub(super) mod room_unbind;
+pub(super) mod room_update;
 
 /// What the method handlers work with.
 #[allow(dead_code, reason = "read by the method beads mimid-1wgh.12.3-.12.8")]

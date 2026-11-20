@@ -230,7 +230,12 @@ fn send_error(error: ConsentSendError, as_target: bool) -> Result<Value, JmapErr
     }
 }
 
-struct Cx<'a> {
+/// The account's Consent records, as both bindings use them
+/// (docs/design/binary-live-stream.md §5.10): one create, update or
+/// destroy at a time through [`Cx::create_one`], [`Cx::update_one`] and
+/// [`Cx::destroy_one`], which take the record or patch as JMAP gives it
+/// and answer with the JMAP result or SetError.
+pub(crate) struct Cx<'a> {
     store: &'a Store,
     follower: &'a Follower,
     /// The account's user, in RFC 3986 normal form.
@@ -238,8 +243,20 @@ struct Cx<'a> {
     account_id: String,
 }
 
+impl<'a> Cx<'a> {
+    /// The Consent records of `caller`'s account.
+    pub(crate) fn new(store: &'a Store, follower: &'a Follower, caller: &Account) -> Self {
+        Self {
+            store,
+            follower,
+            owner: lookup_uri(caller.user().as_str(), "userUri").into_owned(),
+            account_id: caller.account_id().to_owned(),
+        }
+    }
+}
+
 impl Cx<'_> {
-    async fn state(&self) -> Result<String, JmapError> {
+    pub(crate) async fn state(&self) -> Result<String, JmapError> {
         Ok(self
             .store
             .consent_state(&self.owner)
@@ -248,7 +265,7 @@ impl Cx<'_> {
             .to_string())
     }
 
-    async fn records(&self) -> Result<Vec<ConsentRecord>, JmapError> {
+    pub(crate) async fn records(&self) -> Result<Vec<ConsentRecord>, JmapError> {
         self.store
             .consent_records(&self.owner)
             .await
@@ -501,7 +518,10 @@ impl Cx<'_> {
         ))
     }
 
-    async fn create_one(&self, create: &Value) -> Result<Result<Value, Value>, JmapError> {
+    pub(crate) async fn create_one(
+        &self,
+        create: &Value,
+    ) -> Result<Result<Value, Value>, JmapError> {
         let (scope, requested, decision) = match self.create_args(create) {
             Ok(parsed) => parsed,
             Err(error) => return Ok(Err(error)),
@@ -546,7 +566,11 @@ impl Cx<'_> {
         }
     }
 
-    async fn update_one(&self, id: &str, patch: &Value) -> Result<Result<Value, Value>, JmapError> {
+    pub(crate) async fn update_one(
+        &self,
+        id: &str,
+        patch: &Value,
+    ) -> Result<Result<Value, Value>, JmapError> {
         let Some(record) = self
             .store
             .consent_record(&self.owner, id)
@@ -630,7 +654,7 @@ impl Cx<'_> {
         })))
     }
 
-    async fn destroy_one(&self, id: &str) -> Result<Result<(), Value>, JmapError> {
+    pub(crate) async fn destroy_one(&self, id: &str) -> Result<Result<(), Value>, JmapError> {
         let Some(record) = self
             .store
             .consent_record(&self.owner, id)

@@ -28,7 +28,9 @@ use mimi_protocol::{HandshakeBundle, UpdateRequest, UpdateResult, UpdateRoomResp
 use serde_json::{Value, json};
 
 use super::Services;
-use super::room_common::{bytes, has_bound_chat, invalid, relay_error, room_args, server_fail};
+use super::room_common::{
+    bytes, has_bound_chat, invalid, relay_error, require_room_uri, room_call, server_fail,
+};
 use crate::follower::Follower;
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
@@ -71,43 +73,9 @@ async fn update(
     caller: &Account,
     args: Value,
 ) -> Result<Value, JmapError> {
-    let call = room_args(METHOD, caller, args)?;
+    let call = room_call(METHOD, caller, args)?;
     let request = bytes(METHOD, &call.args, "request")?;
-    let decoded = UpdateRequest::tls_deserialize_exact(&request[..])
-        .map_err(|_| invalid(METHOD, "request is not an UpdateRequest"))?;
-    // An external Commit must join as the account's own user, whether or
-    // not the account is in the room: its leaf key is bound to no
-    // KeyPackage the account published, so this is the only check that it
-    // is the account's (bead mimid-1wgh.12.46).
-    let joiner = match &decoded.bundle {
-        HandshakeBundle::Commit {
-            proposal_or_commit, ..
-        } => proposal_or_commit.external_commit_identity(),
-        HandshakeBundle::Proposal { .. } => None,
-    };
-    if let Some(identity) = joiner
-        && identity != caller.user().as_str().as_bytes()
-    {
-        return Err(invalid(
-            METHOD,
-            "the external Commit joins a user other than this account's",
-        ));
-    }
-    // Without a bound Chat only an external Commit is allowed; when the hub
-    // accepts it the follower makes the account a member and binds the
-    // Chat (Follower::relay_update).
-    if joiner.is_none() && !has_bound_chat(METHOD, store, caller, &call.room_id).await? {
-        return Err(invalid(
-            METHOD,
-            "no Chat of this account is bound to roomId",
-        ));
-    }
-    let response = follower
-        .relay_update(caller.user(), &call.room_id, &request)
-        .await
-        .map_err(|error| relay_error(METHOD, error))?;
-    let response = UpdateRoomResponse::tls_deserialize_exact(&response[..])
-        .map_err(|e| server_fail(METHOD, &e))?;
+    let response = update_core(follower, store, caller, &call.room_id, &request).await?;
     let mut answer = json!({
         "accountId": call.account_id,
         "errorDescription": response.error_description.as_str(),
@@ -136,4 +104,54 @@ async fn update(
         }
     }
     Ok(answer)
+}
+
+/// `Room/update` of `room_id` with the UpdateRequest `request`, as both
+/// bindings call it: every check, the relay, and the hub's response.
+///
+/// # Errors
+///
+/// The method's `invalidArguments`, `serverUnavailable` and `serverFail`.
+pub(crate) async fn update_core(
+    follower: &Follower,
+    store: &Store,
+    caller: &Account,
+    room_id: &str,
+    request: &[u8],
+) -> Result<UpdateRoomResponse, JmapError> {
+    require_room_uri(METHOD, room_id)?;
+    let decoded = UpdateRequest::tls_deserialize_exact(request)
+        .map_err(|_| invalid(METHOD, "request is not an UpdateRequest"))?;
+    // An external Commit must join as the account's own user, whether or
+    // not the account is in the room: its leaf key is bound to no
+    // KeyPackage the account published, so this is the only check that it
+    // is the account's (bead mimid-1wgh.12.46).
+    let joiner = match &decoded.bundle {
+        HandshakeBundle::Commit {
+            proposal_or_commit, ..
+        } => proposal_or_commit.external_commit_identity(),
+        HandshakeBundle::Proposal { .. } => None,
+    };
+    if let Some(identity) = joiner
+        && identity != caller.user().as_str().as_bytes()
+    {
+        return Err(invalid(
+            METHOD,
+            "the external Commit joins a user other than this account's",
+        ));
+    }
+    // Without a bound Chat only an external Commit is allowed; when the hub
+    // accepts it the follower makes the account a member and binds the
+    // Chat (Follower::relay_update).
+    if joiner.is_none() && !has_bound_chat(METHOD, store, caller, room_id).await? {
+        return Err(invalid(
+            METHOD,
+            "no Chat of this account is bound to roomId",
+        ));
+    }
+    let response = follower
+        .relay_update(caller.user(), room_id, request)
+        .await
+        .map_err(|error| relay_error(METHOD, error))?;
+    UpdateRoomResponse::tls_deserialize_exact(&response[..]).map_err(|e| server_fail(METHOD, &e))
 }

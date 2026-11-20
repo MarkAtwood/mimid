@@ -232,6 +232,7 @@ async fn main() -> anyhow::Result<()> {
     // JMAP shares the protocol listener (decision mimid-1wgh.12.28).
     let mut jmap_options = JmapOptions::default();
     jmap_options.max_key_packages = config.max_key_packages;
+    jmap_options.live_stream = config.live_stream;
     // Fired when shutdown starts, so open EventSource streams end and the
     // graceful shutdown below can finish.
     let (stop_streams, streams_stopped) = tokio::sync::watch::channel(false);

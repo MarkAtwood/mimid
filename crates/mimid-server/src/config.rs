@@ -6,6 +6,7 @@
 //! base_url = "https://mimi.a.example"
 //! database = "/var/lib/mimid/mimid.sqlite"
 //! max_key_packages = 97   # optional
+//! live_stream = false      # optional; serve the live stream at /mimid/live
 //! reuse_last_resort_key_packages = false  # optional; true serves a last-resort KeyPackage again
 //! blob_lifetime_secs = 2592000  # optional; uploads are deleted this long after upload (at least 3600)
 //!
@@ -105,6 +106,11 @@ pub struct Config {
     /// [`DEFAULT_MAX_KEY_PACKAGES`].
     #[serde(default = "default_max_key_packages")]
     pub max_key_packages: u64,
+    /// Serve the live stream at `/mimid/live`, mimid's second binding of
+    /// draft-atwood-jmap-chat-mimi-00 (docs/design/binary-live-stream.md;
+    /// decision mimid-1wgh.80). Off by default: JMAP is the binding.
+    #[serde(default)]
+    pub live_stream: bool,
     /// Serve a last-resort KeyPackage in more than one keyMaterial
     /// response, as mls-extensions-11 §6.4 allows. Off by default, as
     /// protocol-07 §5.2 requires (bead mimid-gunw).
@@ -468,6 +474,7 @@ mod tests {
                 (domain("c.example"), base("https://mimi.c.example:8443")),
             ]),
             max_key_packages: 97,
+            live_stream: false,
             reuse_last_resort_key_packages: false,
             local_listen: None,
             local_token: None,

@@ -157,6 +157,36 @@ async fn create(
     };
     let group_info = base64(&args, "groupInfo")?;
     let ratchet_tree = base64(&args, "ratchetTree")?;
+    let chat_id = create_core(
+        hub,
+        store,
+        bus,
+        caller,
+        requested_room_id.clone(),
+        &group_info,
+        &ratchet_tree,
+    )
+    .await?;
+    Ok(json!({ "accountId": account_id, "roomId": requested_room_id, "chatId": chat_id }))
+}
+
+/// `Room/create` of `requested_room_id` from `group_info` and
+/// `ratchet_tree`, as both bindings call it: every check, the room at the
+/// hub, and the creator's Chat, whose id it returns.
+///
+/// # Errors
+///
+/// The method's `invalidArguments` and `serverFail`.
+pub(crate) async fn create_core(
+    hub: &Hub,
+    store: &Store,
+    bus: &ChangeBus,
+    caller: &Account,
+    requested_room_id: String,
+    group_info: &[u8],
+    ratchet_tree: &[u8],
+) -> Result<String, JmapError> {
+    let (group_info, ratchet_tree) = (group_info.to_vec(), ratchet_tree.to_vec());
     let user = caller.user().as_str();
 
     // The group as the hub will see it; the hub repeats the MLS checks.
@@ -288,9 +318,9 @@ async fn create(
         name: "jmap_room_created",
         room_id,
         user,
-        "room created over JMAP"
+        "room created"
     );
-    Ok(json!({ "accountId": account_id, "roomId": room_id, "chatId": chat_id }))
+    Ok(chat_id)
 }
 
 #[cfg(test)]

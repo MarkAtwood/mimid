@@ -207,6 +207,85 @@ fn upload_type(headers: &HeaderMap) -> Option<String> {
     }
 }
 
+/// A refused blob request: what the HTTP route answers, and the live
+/// stream's `Error` code for it (decision mimid-1wgh.79).
+pub(super) struct Refused {
+    /// The HTTP answer.
+    pub(super) response: Response,
+    /// The stream's code.
+    pub(super) code: &'static str,
+}
+
+impl Refused {
+    fn new(response: Response, code: &'static str) -> Self {
+        Self { response, code }
+    }
+
+    fn store(error: &(dyn std::error::Error + 'static)) -> Self {
+        Self::new(store_failed(error), "serverFail")
+    }
+}
+
+/// Stores the upload `body` of type `media_type` for `account`, as both
+/// bindings call it (docs/design/binary-live-stream.md §5.10): the blob's
+/// id. The caller has admitted the upload against
+/// [`MAX_CONCURRENT_UPLOAD`].
+#[allow(
+    clippy::result_large_err,
+    reason = "one per refused request; the response is sent as is"
+)]
+pub(super) async fn upload_core(
+    state: &JmapState,
+    account: &Account,
+    media_type: &str,
+    body: &[u8],
+) -> Result<String, Refused> {
+    let stored = state
+        .0
+        .store
+        .insert_blob(
+            account.account_id(),
+            media_type,
+            body,
+            state.0.clock.now_ms(),
+            state.0.blob_quota,
+        )
+        .await;
+    let blob_id = match stored {
+        Ok(blob_id) => blob_id,
+        Err(BlobError::TooLarge { .. }) => {
+            return Err(Refused::new(
+                jmap_problem(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "limit",
+                    Some("maxSizeUpload"),
+                ),
+                "tooLarge",
+            ));
+        }
+        Err(BlobError::OverQuota) => {
+            return Err(Refused::new(
+                jmap_problem(StatusCode::FORBIDDEN, "overQuota", None),
+                "overQuota",
+            ));
+        }
+        Err(BlobError::MediaTypeTooLong) => {
+            return Err(Refused::new(
+                blank_problem(StatusCode::BAD_REQUEST),
+                "invalidArguments",
+            ));
+        }
+        Err(error) => return Err(Refused::store(&error)),
+    };
+    tracing::debug!(
+        account_id = account.account_id(),
+        blob_id = %blob_id,
+        size = body.len(),
+        "blob uploaded"
+    );
+    Ok(blob_id.to_string())
+}
+
 /// `POST /jmap/upload/{accountId}/` (RFC 8620 §6.1).
 pub(super) async fn upload(
     State(state): State<JmapState>,
@@ -239,43 +318,15 @@ pub(super) async fn upload(
         }
         Err(rejection) => return rejection.into_response(),
     };
-    let stored = state
-        .0
-        .store
-        .insert_blob(
-            account.account_id(),
-            &media_type,
-            &body,
-            state.0.clock.now_ms(),
-            state.0.blob_quota,
-        )
-        .await;
-    let blob_id = match stored {
+    let blob_id = match upload_core(&state, &account, &media_type, &body).await {
         Ok(blob_id) => blob_id,
-        Err(BlobError::TooLarge { .. }) => {
-            return jmap_problem(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "limit",
-                Some("maxSizeUpload"),
-            );
-        }
-        Err(BlobError::OverQuota) => {
-            return jmap_problem(StatusCode::FORBIDDEN, "overQuota", None);
-        }
-        Err(BlobError::MediaTypeTooLong) => return blank_problem(StatusCode::BAD_REQUEST),
-        Err(error) => return store_failed(&error),
+        Err(refused) => return refused.response,
     };
-    tracing::debug!(
-        account_id = account.account_id(),
-        blob_id = %blob_id,
-        size = body.len(),
-        "blob uploaded"
-    );
     (
         StatusCode::CREATED,
         Json(Uploaded {
             account_id: account.account_id().to_owned(),
-            blob_id: blob_id.to_string(),
+            blob_id,
             media_type,
             size: u64::try_from(body.len()).unwrap_or(u64::MAX),
         }),
@@ -389,6 +440,25 @@ pub(super) async fn fetch_asset(
         return blank_problem(StatusCode::NOT_FOUND);
     }
     tracing::Span::current().record("room_id", query.room.as_str());
+    match fetch_asset_core(&state, &account, &query.room, &query.url).await {
+        Ok(body) => octet_stream(body),
+        Err(refused) => refused.response,
+    }
+}
+
+/// Fetches the attachment at `url` for a message of `room` for
+/// `account`, as both bindings call it: this server's own asset from the
+/// store, anything else through the room's hub.
+#[allow(
+    clippy::result_large_err,
+    reason = "one per refused request; the response is sent as is"
+)]
+pub(super) async fn fetch_asset_core(
+    state: &JmapState,
+    account: &Account,
+    room: &str,
+    url: &str,
+) -> Result<Vec<u8>, Refused> {
     let inner = &state.0;
     // Only for a member of a room this provider follows
     // (draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object:
@@ -397,26 +467,30 @@ pub(super) async fn fetch_asset(
     // not know.
     let access = match inner
         .store
-        .follower_room_access(&query.room, account.user().as_str())
+        .follower_room_access(room, account.user().as_str())
         .await
     {
         Ok(Some(access)) if access.member => access,
         Ok(_) => {
-            return refused(
+            return Err(refused(
                 StatusCode::NOT_FOUND,
                 "no-such-room",
                 "not a member of a followed room",
-            );
+            ));
         }
-        Err(error) => return store_failed(&error),
+        Err(error) => return Err(Refused::store(&error)),
     };
     // This server's own asset is read from the store; anything else goes
     // through the room's hub.
-    if let Some(blob_id) = local_asset_id(&inner.base_url, &query.url) {
+    if let Some(blob_id) = local_asset_id(&inner.base_url, url) {
         return match inner.store.asset(&blob_id).await {
-            Ok(Some(bytes)) => octet_stream(bytes),
-            Ok(None) => refused(StatusCode::NOT_FOUND, "no-such-asset", "no such asset"),
-            Err(error) => store_failed(&error),
+            Ok(Some(bytes)) => Ok(bytes),
+            Ok(None) => Err(refused(
+                StatusCode::NOT_FOUND,
+                "no-such-asset",
+                "no such asset",
+            )),
+            Err(error) => Err(Refused::store(&error)),
         };
     }
     let Ok(hub_domain) = Domain::try_from(access.hub_domain) else {
@@ -424,49 +498,56 @@ pub(super) async fn fetch_asset(
             name: "jmap_asset_bad_hub_domain",
             "stored hub domain of a followed room is not a domain"
         );
-        return blank_problem(StatusCode::INTERNAL_SERVER_ERROR);
+        return Err(Refused::new(
+            blank_problem(StatusCode::INTERNAL_SERVER_ERROR),
+            "serverFail",
+        ));
     };
     let fetched = if &hub_domain == inner.hub.domain() {
-        inner
-            .hub
-            .fetch_asset(&query.url)
-            .await
-            .map(|asset| asset.body)
+        inner.hub.fetch_asset(url).await.map(|asset| asset.body)
     } else {
         let Some(peers) = inner.hub.peers() else {
-            return refused(
+            return Err(refused(
                 StatusCode::NOT_IMPLEMENTED,
                 "not-implemented",
                 "no peer client",
-            );
+            ));
         };
-        match peers.proxy_download(&hub_domain, &query.url).await {
+        match peers.proxy_download(&hub_domain, url).await {
             Ok(body) => Ok(body),
-            Err(error) => return peer_failed(&hub_domain, &error),
+            Err(error) => return Err(peer_failed(&hub_domain, &error)),
         }
     };
-    match fetched {
-        Ok(body) => octet_stream(body),
-        Err(error) => hub_failed(&error),
+    fetched.map_err(|error| hub_failed(&error))
+}
+
+/// The stream code of a refusal with `status`.
+fn code_of(status: StatusCode) -> &'static str {
+    match status.as_u16() {
+        400 => "invalidArguments",
+        403 => "forbidden",
+        404 => "notFound",
+        502 => "serverUnavailable",
+        _ => "serverFail",
     }
 }
 
 /// A refusal of `/jmap/asset`, in the problem form of the protocol routes
 /// ([`crate::http::problem`]), logged at DEBUG with `why`.
-fn refused(status: StatusCode, kind: &str, why: &str) -> Response {
+fn refused(status: StatusCode, kind: &str, why: &str) -> Refused {
     tracing::debug!(
         status = status.as_u16(),
         kind,
         why,
         "jmap asset fetch refused"
     );
-    crate::http::problem(status, kind)
+    Refused::new(crate::http::problem(status, kind), code_of(status))
 }
 
 /// Maps this hub's own fetch failure as the proxyDownload route does
 /// (`crate::http`): `403` refused, `404` no such own asset, `502` the
 /// asset provider failed.
-fn hub_failed(error: &HubError) -> Response {
+fn hub_failed(error: &HubError) -> Refused {
     let (status, kind) = match error {
         HubError::AssetRefused(_) => (StatusCode::FORBIDDEN, "asset-refused"),
         HubError::NoSuchAsset => (StatusCode::NOT_FOUND, "no-such-asset"),
@@ -480,7 +561,10 @@ fn hub_failed(error: &HubError) -> Response {
                 error = error as &dyn std::error::Error,
                 "jmap asset fetch failed"
             );
-            return crate::http::problem(StatusCode::INTERNAL_SERVER_ERROR, "internal-error");
+            return Refused::new(
+                crate::http::problem(StatusCode::INTERNAL_SERVER_ERROR, "internal-error"),
+                "serverFail",
+            );
         }
     };
     // The user chose the URL: a refusal or a failing asset provider is
@@ -490,12 +574,12 @@ fn hub_failed(error: &HubError) -> Response {
         error = error as &dyn std::error::Error,
         "jmap asset fetch refused"
     );
-    crate::http::problem(status, kind)
+    Refused::new(crate::http::problem(status, kind), code_of(status))
 }
 
 /// Maps a failed proxyDownload at the peer hub `hub`: its `403` and
 /// `404` pass through, anything else is `502`.
-fn peer_failed(hub: &Domain, error: &PeerError) -> Response {
+fn peer_failed(hub: &Domain, error: &PeerError) -> Refused {
     let (status, kind) = match error {
         PeerError::Rejected { status: 403, .. } => (StatusCode::FORBIDDEN, "asset-refused"),
         PeerError::Rejected { status: 404, .. } => (StatusCode::NOT_FOUND, "no-such-asset"),
@@ -511,7 +595,10 @@ fn peer_failed(hub: &Domain, error: &PeerError) -> Response {
                 status = rejection.status,
                 "proxyDownload at the room's hub failed"
             );
-            return crate::http::problem(StatusCode::BAD_GATEWAY, "peer-provider-failed");
+            return Refused::new(
+                crate::http::problem(StatusCode::BAD_GATEWAY, "peer-provider-failed"),
+                "serverUnavailable",
+            );
         }
     };
     tracing::debug!(
@@ -520,7 +607,7 @@ fn peer_failed(hub: &Domain, error: &PeerError) -> Response {
         error = error as &dyn std::error::Error,
         "proxyDownload at the room's hub refused"
     );
-    crate::http::problem(status, kind)
+    Refused::new(crate::http::problem(status, kind), code_of(status))
 }
 
 /// Deletes blobs a lifetime after their upload (decision mimid-1wgh.67;

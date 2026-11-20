@@ -134,6 +134,68 @@ fn client(material: &ClientKeyMaterial) -> Result<Value, mimi_mls::tls_codec::Er
     Ok(Value::Object(object))
 }
 
+/// `KeyMaterial/fetch` of the KeyMaterialRequest `request` for `room_id`,
+/// as both bindings call it: every check, the relay, and the
+/// KeyMaterialResponse as received.
+///
+/// # Errors
+///
+/// The method's `invalidArguments`, `serverUnavailable` and `serverFail`.
+pub(crate) async fn fetch_core(
+    follower: &Follower,
+    store: &Store,
+    caller: &Account,
+    room_id: &str,
+    request: &[u8],
+) -> Result<Vec<u8>, JmapError> {
+    let decoded = KeyMaterialRequest::tls_deserialize_exact(request)
+        .map_err(|_| invalid("request is not a KeyMaterialRequest"))?;
+    let tbs = decoded.tbs();
+    if tbs.requesting_user.as_str() != caller.user().as_str() {
+        return Err(invalid("requestingUser is not this account's user"));
+    }
+    if tbs.room_id.as_str() != room_id {
+        return Err(invalid("the request's roomId is not roomId"));
+    }
+    let (_, chats) = store
+        .projection_chats(caller.user().as_str())
+        .await
+        .map_err(|e| server_fail(&e))?;
+    if !chats
+        .iter()
+        .any(|chat| chat.room_id == *room_id && chat.bound)
+    {
+        return Err(invalid("no Chat of this account is bound to roomId"));
+    }
+    match follower.relay_key_material(caller.user(), request).await {
+        Ok(response) => Ok(response),
+        // A provider asked for the material: the room's hub (this server
+        // relays) or the target's provider (this server is the hub).
+        // Decision JM-6: a 4xx is invalidArguments; no answer, a 5xx or a
+        // broken directory is serverUnavailable.
+        Err(FollowerError::Relay(
+            RelayError::Peer(error) | RelayError::Hub(crate::hub::HubError::Peer(error)),
+        )) => {
+            tracing::debug!(
+                error = &error as &dyn std::error::Error,
+                "KeyMaterial/fetch: the provider did not answer the request"
+            );
+            Err(match error {
+                PeerError::Rejected { status, .. } if (400..500).contains(&status) => {
+                    invalid("the provider refused the request")
+                }
+                _ => JmapError::server_unavailable(),
+            })
+        }
+        Err(FollowerError::Relay(
+            RelayError::WrongIdentity { .. }
+            | RelayError::InvalidRoomId
+            | RelayError::InvalidRequest(_),
+        )) => Err(invalid("the request is not valid for this room")),
+        Err(error) => Err(server_fail(&error)),
+    }
+}
+
 async fn fetch(
     follower: &Follower,
     store: &Store,
@@ -159,53 +221,7 @@ async fn fetch(
     let request = URL_SAFE_NO_PAD
         .decode(request)
         .map_err(|_| invalid("request is not unpadded base64url"))?;
-    let decoded = KeyMaterialRequest::tls_deserialize_exact(&request[..])
-        .map_err(|_| invalid("request is not a KeyMaterialRequest"))?;
-    let tbs = decoded.tbs();
-    if tbs.requesting_user.as_str() != caller.user().as_str() {
-        return Err(invalid("requestingUser is not this account's user"));
-    }
-    if tbs.room_id.as_str() != room_id {
-        return Err(invalid("the request's roomId is not roomId"));
-    }
-    let (_, chats) = store
-        .projection_chats(caller.user().as_str())
-        .await
-        .map_err(|e| server_fail(&e))?;
-    if !chats
-        .iter()
-        .any(|chat| chat.room_id == *room_id && chat.bound)
-    {
-        return Err(invalid("no Chat of this account is bound to roomId"));
-    }
-
-    let response = match follower.relay_key_material(caller.user(), &request).await {
-        Ok(response) => response,
-        // A provider asked for the material: the room's hub (this server
-        // relays) or the target's provider (this server is the hub).
-        // Decision JM-6: a 4xx is invalidArguments; no answer, a 5xx or a
-        // broken directory is serverUnavailable.
-        Err(FollowerError::Relay(
-            RelayError::Peer(error) | RelayError::Hub(crate::hub::HubError::Peer(error)),
-        )) => {
-            tracing::debug!(
-                error = &error as &dyn std::error::Error,
-                "KeyMaterial/fetch: the provider did not answer the request"
-            );
-            return Err(match error {
-                PeerError::Rejected { status, .. } if (400..500).contains(&status) => {
-                    invalid("the provider refused the request")
-                }
-                _ => JmapError::server_unavailable(),
-            });
-        }
-        Err(FollowerError::Relay(
-            RelayError::WrongIdentity { .. }
-            | RelayError::InvalidRoomId
-            | RelayError::InvalidRequest(_),
-        )) => return Err(invalid("the request is not valid for this room")),
-        Err(error) => return Err(server_fail(&error)),
-    };
+    let response = fetch_core(follower, store, caller, room_id, &request).await?;
     let response =
         KeyMaterialResponse::tls_deserialize_exact(&response[..]).map_err(|e| server_fail(&e))?;
     let clients = response

@@ -34,7 +34,7 @@ use mimi_protocol::AbuseReport;
 use serde_json::{Value, json};
 
 use super::Services;
-use super::room_common::{bytes, invalid, relay_error, room_call};
+use super::room_common::{bytes, invalid, relay_error, require_chat, room_call};
 use crate::follower::relay::RelayError;
 use crate::follower::{Follower, FollowerError};
 use crate::http::PROBLEM_TYPE_PREFIX;
@@ -80,35 +80,58 @@ async fn report(
     caller: &Account,
     args: Value,
 ) -> Result<Value, JmapError> {
-    let call = room_call(METHOD, store, caller, args, false).await?;
+    let call = room_call(METHOD, caller, args)?;
     let report = bytes(METHOD, &call.args, "report")?;
-    // The relay decodes it again; this gives the client a precise error.
-    AbuseReport::tls_deserialize_exact(&report[..])
-        .map_err(|_| invalid(METHOD, "report is not an AbuseReport"))?;
     let mut answer = json!({ "accountId": call.account_id });
-    match follower
-        .relay_report_abuse(caller.user(), &call.room_id, &report)
-        .await
-    {
-        Ok(()) => answer["responseCode"] = json!("accepted"),
-        Err(error) => match refusal(&error) {
-            Some(Refusal::NotAllowed) => answer["responseCode"] = json!("notAllowed"),
-            Some(Refusal::Unverified) => answer["responseCode"] = json!("unverifiedMessage"),
-            Some(Refusal::Other(status)) => {
-                answer["responseCode"] = json!("refused");
-                answer["status"] = json!(status);
-            }
-            None => return Err(relay_error(METHOD, error)),
-        },
+    match report_core(follower, store, caller, &call.room_id, &report).await? {
+        None => answer["responseCode"] = json!("accepted"),
+        Some(Refusal::NotAllowed) => answer["responseCode"] = json!("notAllowed"),
+        Some(Refusal::Unverified) => answer["responseCode"] = json!("unverifiedMessage"),
+        Some(Refusal::Other(status)) => {
+            answer["responseCode"] = json!("refused");
+            answer["status"] = json!(status);
+        }
     }
     Ok(answer)
 }
 
+/// `Room/reportAbuse` of the AbuseReport `report` about `room_id`, as both
+/// bindings call it: `None` when the hub accepted it, else its refusal.
+///
+/// # Errors
+///
+/// The method's `invalidArguments`, `serverUnavailable` and `serverFail`.
+pub(crate) async fn report_core(
+    follower: &Follower,
+    store: &Store,
+    caller: &Account,
+    room_id: &str,
+    report: &[u8],
+) -> Result<Option<Refusal>, JmapError> {
+    require_chat(METHOD, store, caller, room_id, false).await?;
+    // The relay decodes it again; this gives the client a precise error.
+    AbuseReport::tls_deserialize_exact(report)
+        .map_err(|_| invalid(METHOD, "report is not an AbuseReport"))?;
+    match follower
+        .relay_report_abuse(caller.user(), room_id, report)
+        .await
+    {
+        Ok(()) => Ok(None),
+        Err(error) => match refusal(&error) {
+            Some(refusal) => Ok(Some(refusal)),
+            None => Err(relay_error(METHOD, error)),
+        },
+    }
+}
+
 /// How the hub refused a report it received.
 #[derive(Debug, PartialEq, Eq)]
-enum Refusal {
+pub(crate) enum Refusal {
+    /// The room's policy does not let the reporter report.
     NotAllowed,
+    /// A reported message's frank did not verify.
     Unverified,
+    /// Any other refusal, with another provider's HTTP status.
     Other(u16),
 }
 

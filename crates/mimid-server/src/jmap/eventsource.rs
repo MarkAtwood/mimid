@@ -68,7 +68,7 @@ const EVENT_BUFFER: usize = 16;
 
 /// The parsed query of an EventSource request.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Params {
+pub(super) struct Params {
     kinds: Vec<Kind>,
     /// Whether `KeyPackage` is among the types (bead mimid-1wgh.12.40).
     key_packages: bool,
@@ -79,6 +79,19 @@ struct Params {
 }
 
 impl Params {
+    /// The types of the live stream's `Changed` (docs/design/binary-live-stream.md
+    /// §5.6): `Chat`, `KeyPackage` and `Consent`. Messages arrive as
+    /// `Deliver`s instead.
+    pub(super) fn live_notices() -> Self {
+        Self {
+            kinds: vec![Kind::Chat],
+            key_packages: true,
+            consent: true,
+            close_after_state: false,
+            ping: None,
+        }
+    }
+
     /// Reads the query, or `None` if a parameter is malformed.
     fn parse(query: &BTreeMap<String, String>) -> Option<Self> {
         let (kinds, key_packages, consent) = match query.get("types").map(String::as_str) {
@@ -166,7 +179,7 @@ pub(super) async fn get_eventsource(
 
 /// Why the account's states could not be read.
 #[derive(Debug, thiserror::Error)]
-enum StateError {
+pub(super) enum StateError {
     #[error(transparent)]
     Projection(#[from] super::projection::ProjectionError),
     #[error(transparent)]
@@ -175,7 +188,7 @@ enum StateError {
 
 /// The account's state strings for the requested types. `KeyPackage` is
 /// included only when requested and the server keeps KeyPackages.
-async fn states(
+pub(super) async fn states(
     projection: &Projection,
     key_packages: Option<&KeyPackages>,
     store: &Store,

@@ -25,7 +25,7 @@ use mimi_protocol::{
 use serde_json::{Value, json};
 
 use super::Services;
-use super::room_common::{bytes, invalid, relay_error, room_call, server_fail};
+use super::room_common::{bytes, invalid, relay_error, require_chat, room_call, server_fail};
 use crate::follower::Follower;
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
@@ -68,9 +68,41 @@ async fn send(
     caller: &Account,
     args: Value,
 ) -> Result<Value, JmapError> {
-    let call = room_call(METHOD, store, caller, args, true).await?;
+    let call = room_call(METHOD, caller, args)?;
     let message = bytes(METHOD, &call.args, "message")?;
-    let app_message = MLSMessage::tls_deserialize_exact(&message[..])
+    let mut answer = json!({ "accountId": call.account_id });
+    match send_core(follower, store, caller, &call.room_id, &message).await? {
+        SubmitResult::Accepted {
+            accepted_timestamp, ..
+        } => {
+            answer["responseCode"] = json!("accepted");
+            answer["acceptedAt"] = json!(utc_date(accepted_timestamp));
+        }
+        SubmitResult::NotAllowed => answer["responseCode"] = json!("notAllowed"),
+        SubmitResult::EpochTooOld { current_epoch } => {
+            answer["responseCode"] = json!("epochTooOld");
+            answer["currentEpoch"] = json!(current_epoch);
+        }
+    }
+    Ok(answer)
+}
+
+/// `Room/send` of the MLSMessage `message` to `room_id` for `caller`, as
+/// both bindings call it (docs/design/binary-live-stream.md §5.10): every
+/// check, the relay, and the hub's SubmitResult, frank included.
+///
+/// # Errors
+///
+/// The method's `invalidArguments`, `serverUnavailable` and `serverFail`.
+pub(crate) async fn send_core(
+    follower: &Follower,
+    store: &Store,
+    caller: &Account,
+    room_id: &str,
+    message: &[u8],
+) -> Result<SubmitResult, JmapError> {
+    require_chat(METHOD, store, caller, room_id, true).await?;
+    let app_message = MLSMessage::tls_deserialize_exact(message)
         .map_err(|_| invalid(METHOD, "message is not an MLSMessage"))?;
     let sending_uri = IdentifierUri::new(caller.user().as_str())
         .map_err(|_| invalid(METHOD, "this account's user URI is not an IdentifierUri"))?;
@@ -87,24 +119,10 @@ async fn send(
     SubmitMessageRequest::tls_deserialize_exact(&request[..])
         .map_err(|_| invalid(METHOD, "message is not a PrivateMessage"))?;
     let response = follower
-        .relay_submit_message(caller.user(), &call.room_id, &request)
+        .relay_submit_message(caller.user(), room_id, &request)
         .await
         .map_err(|error| relay_error(METHOD, error))?;
     let response = SubmitMessageResponse::tls_deserialize_exact(&response[..])
         .map_err(|e| server_fail(METHOD, &e))?;
-    let mut answer = json!({ "accountId": call.account_id });
-    match response.result {
-        SubmitResult::Accepted {
-            accepted_timestamp, ..
-        } => {
-            answer["responseCode"] = json!("accepted");
-            answer["acceptedAt"] = json!(utc_date(accepted_timestamp));
-        }
-        SubmitResult::NotAllowed => answer["responseCode"] = json!("notAllowed"),
-        SubmitResult::EpochTooOld { current_epoch } => {
-            answer["responseCode"] = json!("epochTooOld");
-            answer["currentEpoch"] = json!(current_epoch);
-        }
-    }
-    Ok(answer)
+    Ok(response.result)
 }

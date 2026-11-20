@@ -14,13 +14,17 @@
 //!   `assetUrl` template ([`blobs`]);
 //! - `GET /jmap/asset/{accountId}?room=&url=`: a user's fetch of an
 //!   attachment from any provider, at the `assetDownloadUrl` template
-//!   ([`blobs`]).
+//!   ([`blobs`]);
+//! - `GET /mimid/live`, only with [`JmapOptions::live_stream`]: the live
+//!   stream, mimid's second binding of the same operations over CBOR on
+//!   a WebSocket (module `live`; docs/design/binary-live-stream.md).
 //!
 //! The upload route's body limit is [`blobs::MAX_BLOB_LEN`];
 //! every other JMAP route has a body limit of [`api::MAX_SIZE_REQUEST`]
 //! (decision mimid-1wgh.12.36). [`auth`] authenticates bearer tokens and is
 //! the endpoint's only authorization point (AGENTS.md, security
-//! invariants). [`bus`] carries the changes that move JMAP state.
+//! invariants); the live stream's hello goes through the same check.
+//! [`bus`] carries the changes that move JMAP state.
 //!
 //! # Limitations
 //!
@@ -44,6 +48,7 @@ pub mod blobs;
 pub mod bus;
 mod eventsource;
 pub mod language;
+mod live;
 pub mod metadata;
 mod methods;
 pub mod projection;
@@ -90,6 +95,9 @@ pub struct JmapOptions {
     /// lifetime; the router does not sweep. `None` (the default):
     /// `assetLifetime` is left out, as for a server that deletes nothing.
     pub asset_lifetime: Option<u64>,
+    /// Whether to serve the live stream at [`mimid_live::PATH`]
+    /// (module `live`; decision mimid-1wgh.80). `false` by default.
+    pub live_stream: bool,
 }
 
 impl std::fmt::Debug for JmapOptions {
@@ -99,6 +107,7 @@ impl std::fmt::Debug for JmapOptions {
             .field("stop", &self.stop)
             .field("blob_quota", &self.blob_quota)
             .field("asset_lifetime", &self.asset_lifetime)
+            .field("live_stream", &self.live_stream)
             .finish_non_exhaustive()
     }
 }
@@ -111,6 +120,7 @@ impl Default for JmapOptions {
             clock: Arc::new(SystemClock),
             blob_quota: BlobQuota::default(),
             asset_lifetime: None,
+            live_stream: false,
         }
     }
 }
@@ -139,6 +149,14 @@ struct Inner {
     clock: Arc<dyn Clock>,
     /// Limits uploads.
     blob_quota: BlobQuota,
+    /// The follower, for the live stream's operations.
+    follower: Arc<Follower>,
+    /// `maxKeyPackages`.
+    max_key_packages: u64,
+    /// The hub's ExternalSender, TLS-encoded (`hubSender`).
+    hub_sender: Vec<u8>,
+    /// `assetLifetime`.
+    asset_lifetime: Option<u64>,
 }
 
 impl FromRef<JmapState> for Authenticator {
@@ -167,10 +185,11 @@ pub fn router(
     follower: Arc<Follower>,
     options: JmapOptions,
 ) -> Result<Router, HubError> {
+    let hub_sender = hub.hub_sender()?;
     let session = SessionTemplate::new(
         base_url,
         hub.domain(),
-        &hub.hub_sender()?,
+        &hub_sender,
         options.max_key_packages,
         options.asset_lifetime,
         methods::blob::blob_capability(&options.blob_quota),
@@ -191,7 +210,7 @@ pub fn router(
         &Services {
             store: store.clone(),
             hub: Arc::clone(&hub),
-            follower,
+            follower: Arc::clone(&follower),
             bus: bus.clone(),
             projection: Arc::clone(&projection),
             max_key_packages: options.max_key_packages,
@@ -215,8 +234,16 @@ pub fn router(
         uploads: InFlight::with_limit(blobs::MAX_CONCURRENT_UPLOAD),
         clock: options.clock,
         blob_quota: options.blob_quota,
+        follower,
+        max_key_packages: options.max_key_packages,
+        hub_sender,
+        asset_lifetime: options.asset_lifetime,
     }));
-    Ok(Router::new()
+    let mut router = Router::new();
+    if options.live_stream {
+        router = router.route(mimid_live::PATH, get(live::get_live));
+    }
+    Ok(router
         .route("/.well-known/jmap", get(session::get_session))
         .route("/jmap/api", post(api::post_api))
         .route("/jmap/eventsource", get(eventsource::get_eventsource))

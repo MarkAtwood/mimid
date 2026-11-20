@@ -199,8 +199,7 @@ async fn get_key_packages(
             "unknown property {unknown}"
         )));
     }
-    let entries = stored(key_packages, caller).await?;
-    let state = state_of(&entries);
+    let (state, entries) = list(key_packages, caller).await?;
     let by_id: BTreeMap<String, Map<String, Value>> = entries
         .iter()
         .map(|(entry, bytes)| {
@@ -293,6 +292,78 @@ fn derived_last_resort(bytes: &[u8]) -> Option<bool> {
         .map(|info| info.is_last_resort())
 }
 
+/// One `KeyPackage/set` create of the KeyPackage `bytes`, with the
+/// claimed `lastResort` if given, as both bindings call it: the stored
+/// entry, or the SetError (`invalidProperties`, `overQuota`).
+///
+/// # Errors
+///
+/// `serverFail` if the store fails.
+pub(crate) async fn create_one(
+    key_packages: &KeyPackages,
+    caller: &Account,
+    bytes: &[u8],
+    claimed: Option<bool>,
+    max_key_packages: u64,
+) -> Result<Result<KeyPackageEntry, Value>, JmapError> {
+    if let (Some(claimed), Some(derived)) = (claimed, derived_last_resort(bytes))
+        && claimed != derived
+    {
+        return Ok(Err(set_error("invalidProperties", Some(&["lastResort"]))));
+    }
+    let options = InsertOptions {
+        replace_last_resort: true,
+        max_key_packages: Some(max_key_packages),
+    };
+    match key_packages
+        .upload_key_package_with(caller.user(), bytes, options)
+        .await
+    {
+        Ok(entry) => Ok(Ok(entry)),
+        Err(UploadError::OverQuota) => Ok(Err(set_error("overQuota", None))),
+        Err(UploadError::Store(error)) => Err(server_fail(&error)),
+        Err(error) => {
+            tracing::debug!(
+                error = &error as &dyn std::error::Error,
+                "KeyPackage create refused"
+            );
+            Ok(Err(set_error("invalidProperties", Some(&["keyPackage"]))))
+        }
+    }
+}
+
+/// One `KeyPackage/set` destroy of the KeyPackage whose TLS-encoded
+/// KeyPackageRef is `reference`, as both bindings call it: whether there
+/// was one.
+///
+/// # Errors
+///
+/// `serverFail` if the store fails.
+pub(crate) async fn destroy_one(
+    key_packages: &KeyPackages,
+    caller: &Account,
+    reference: &[u8],
+) -> Result<bool, JmapError> {
+    key_packages
+        .delete_key_package(caller.user(), reference)
+        .await
+        .map_err(|e| server_fail(&e))
+}
+
+/// `KeyPackage/get` of every record, as both bindings call it: the state
+/// and each entry with its bytes.
+///
+/// # Errors
+///
+/// `serverFail` if the store fails.
+pub(crate) async fn list(
+    key_packages: &KeyPackages,
+    caller: &Account,
+) -> Result<(String, Vec<(KeyPackageEntry, Vec<u8>)>), JmapError> {
+    let entries = stored(key_packages, caller).await?;
+    Ok((state_of(&entries), entries))
+}
+
 async fn set_key_packages(
     key_packages: &KeyPackages,
     caller: &Account,
@@ -307,11 +378,6 @@ async fn set_key_packages(
     {
         return Err(JmapError::state_mismatch());
     }
-    let options = InsertOptions {
-        replace_last_resort: true,
-        max_key_packages: Some(max_key_packages),
-    };
-
     let mut created = Map::new();
     let mut not_created = Map::new();
     if let Some(creates) = args.get("create").filter(|v| !v.is_null()) {
@@ -326,19 +392,7 @@ async fn set_key_packages(
                     continue;
                 }
             };
-            if let (Some(claimed), Some(derived)) = (claimed, derived_last_resort(&bytes))
-                && claimed != derived
-            {
-                not_created.insert(
-                    creation_id.clone(),
-                    set_error("invalidProperties", Some(&["lastResort"])),
-                );
-                continue;
-            }
-            match key_packages
-                .upload_key_package_with(caller.user(), &bytes, options)
-                .await
-            {
+            match create_one(key_packages, caller, &bytes, claimed, max_key_packages).await? {
                 Ok(entry) => {
                     let id = URL_SAFE_NO_PAD.encode(&entry.reference);
                     created.insert(
@@ -346,19 +400,8 @@ async fn set_key_packages(
                         json!({ "id": id, "keyPackageRef": id, "lastResort": entry.last_resort }),
                     );
                 }
-                Err(UploadError::OverQuota) => {
-                    not_created.insert(creation_id.clone(), set_error("overQuota", None));
-                }
-                Err(UploadError::Store(error)) => return Err(server_fail(&error)),
                 Err(error) => {
-                    tracing::debug!(
-                        error = &error as &dyn std::error::Error,
-                        "KeyPackage create refused"
-                    );
-                    not_created.insert(
-                        creation_id.clone(),
-                        set_error("invalidProperties", Some(&["keyPackage"])),
-                    );
+                    not_created.insert(creation_id.clone(), error);
                 }
             }
         }
@@ -375,10 +418,7 @@ async fn set_key_packages(
     let mut not_destroyed = Map::new();
     for id in strings(args, "destroy")?.into_iter().flatten() {
         let deleted = match URL_SAFE_NO_PAD.decode(&id) {
-            Ok(reference) => key_packages
-                .delete_key_package(caller.user(), &reference)
-                .await
-                .map_err(|e| server_fail(&e))?,
+            Ok(reference) => destroy_one(key_packages, caller, &reference).await?,
             Err(_) => false,
         };
         if deleted {

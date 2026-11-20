@@ -3,7 +3,9 @@
 //!
 //! The [`Account`] extractor is the only JMAP authorization point
 //! (AGENTS.md: the JMAP boundary checks the bearer token) and the only
-//! non-test code that builds a [`LocalUser`]. A request with a missing,
+//! non-test code that builds a [`LocalUser`]. The live stream's
+//! `ClientHello` token goes through the same check after the header step
+//! (`Authenticator::authenticate_token`; decision mimid-1wgh.73). A request with a missing,
 //! malformed, unknown or revoked token is refused with `401` and an
 //! RFC 7807 problem body; RFC 8620 §3.6.1 asks for problem details on
 //! request-level errors. Every refusal looks the same, so a client cannot
@@ -56,7 +58,27 @@ impl Authenticator {
             tracing::debug!("jmap authentication refused: missing or malformed bearer token");
             return Err(AuthRejection::Unauthorized);
         };
-        let owner = match self.store.account_for_token(&token).await {
+        self.authenticate_bearer(&token).await
+    }
+
+    /// The account the bearer token `text` authenticates: the live
+    /// stream's `ClientHello` check (decision mimid-1wgh.73), the same as
+    /// the extractor's after the header is read.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthRejection::Unauthorized`] for a malformed, unknown or revoked
+    /// token, alike; [`AuthRejection::Internal`] if the store fails.
+    pub(crate) async fn authenticate_token(&self, text: &str) -> Result<Account, AuthRejection> {
+        let Ok(token) = BearerToken::parse(text) else {
+            tracing::debug!("live stream authentication refused: malformed bearer token");
+            return Err(AuthRejection::Unauthorized);
+        };
+        self.authenticate_bearer(&token).await
+    }
+
+    async fn authenticate_bearer(&self, token: &BearerToken) -> Result<Account, AuthRejection> {
+        let owner = match self.store.account_for_token(token).await {
             Ok(Some(owner)) => owner,
             Ok(None) => {
                 tracing::debug!("jmap authentication refused: unknown or revoked bearer token");

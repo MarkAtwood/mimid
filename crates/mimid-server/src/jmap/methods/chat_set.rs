@@ -172,60 +172,13 @@ async fn chat_set(
     let mut not_updated = BTreeMap::new();
     let mut written = false;
     for (id, patch) in patches {
-        if patch.is_empty() || patch.keys().any(|key| metadata::root(key).is_none()) {
-            not_updated.insert(id.clone(), refused(&id));
-            continue;
-        }
-        // draft-ietf-jmap-metadata-05 §3: without the capability "Foo/set
-        // MUST reject any write to them with an "invalidProperties"
-        // SetError".
-        if !account.metadata() {
-            not_updated.insert(
-                id,
-                json!({
-                    "type": "invalidProperties",
-                    "properties": patch.keys().collect::<Vec<_>>(),
-                    "description": "the request does not use urn:ietf:params:jmap:metadata",
-                }),
-            );
-            continue;
-        }
-        if let Err(error) = check_patch_shape(patch) {
-            not_updated.insert(id, invalid_patch(&error));
-            continue;
-        }
-        if !found.contains(&id) {
-            not_updated.insert(id, set_error("notFound"));
-            continue;
-        }
-        if patch
-            .keys()
-            .any(|key| metadata::root(key) == Some(metadata::METADATA))
-        {
-            // Decision mimid-1wgh.63 item 2.
-            not_updated.insert(id, set_error("forbidden"));
-            continue;
-        }
-        let outcome = store
-            .update_chat_private_metadata(account.user().as_str(), &id, |stored| {
-                change(stored, patch, &info)
-            })
-            .await
-            .map_err(|e| server_fail(&e))?;
-        match outcome {
-            MetadataUpdate::Written => {
-                written = true;
+        match update_one(store, account, &found, &info, &id, patch).await? {
+            Ok(changed) => {
+                written |= changed;
                 updated.insert(id, Value::Null);
             }
-            MetadataUpdate::Unchanged => {
-                updated.insert(id, Value::Null);
-            }
-            MetadataUpdate::Refused(error) => {
+            Err(error) => {
                 not_updated.insert(id, error);
-            }
-            // Gone since `found` was read, or a variant added later.
-            _ => {
-                not_updated.insert(id, set_error("notFound"));
             }
         }
     }
@@ -265,6 +218,92 @@ async fn chat_set(
         "notUpdated": or_null(not_updated),
         "notDestroyed": or_null(not_destroyed),
     }))
+}
+
+/// One `Chat/set` update of Chat `id` with `patch`, among the account's
+/// Chats `found`: whether it wrote anything, or the SetError.
+async fn update_one(
+    store: &Store,
+    account: &Account,
+    found: &std::collections::BTreeSet<String>,
+    info: &DataTypeMetadataInfo,
+    id: &str,
+    patch: &Map<String, Value>,
+) -> Result<Result<bool, Value>, JmapError> {
+    let refused = || {
+        if found.contains(id) {
+            set_error("forbidden")
+        } else {
+            set_error("notFound")
+        }
+    };
+    if patch.is_empty() || patch.keys().any(|key| metadata::root(key).is_none()) {
+        return Ok(Err(refused()));
+    }
+    // draft-ietf-jmap-metadata-05 §3: without the capability "Foo/set
+    // MUST reject any write to them with an "invalidProperties"
+    // SetError".
+    if !account.metadata() {
+        return Ok(Err(json!({
+            "type": "invalidProperties",
+            "properties": patch.keys().collect::<Vec<_>>(),
+            "description": "the request does not use urn:ietf:params:jmap:metadata",
+        })));
+    }
+    if let Err(error) = check_patch_shape(patch) {
+        return Ok(Err(invalid_patch(&error)));
+    }
+    if !found.contains(id) {
+        return Ok(Err(set_error("notFound")));
+    }
+    if patch
+        .keys()
+        .any(|key| metadata::root(key) == Some(metadata::METADATA))
+    {
+        // Decision mimid-1wgh.63 item 2.
+        return Ok(Err(set_error("forbidden")));
+    }
+    let outcome = store
+        .update_chat_private_metadata(account.user().as_str(), id, |stored| {
+            change(stored, patch, info)
+        })
+        .await
+        .map_err(|e| server_fail(&e))?;
+    Ok(match outcome {
+        MetadataUpdate::Written => Ok(true),
+        MetadataUpdate::Unchanged => Ok(false),
+        MetadataUpdate::Refused(error) => Err(error),
+        // Gone since `found` was read, or a variant added later.
+        _ => Err(set_error("notFound")),
+    })
+}
+
+/// One `Chat/set` update of the privateMetadata of Chat `id` with
+/// `patch`, as both bindings call it: the same checks and write as a
+/// `Chat/set` with that one update, `Ok(())` or the SetError.
+///
+/// # Errors
+///
+/// `serverFail` if the store fails.
+pub(crate) async fn update_private_metadata(
+    projection: &Projection,
+    store: &Store,
+    bus: &ChangeBus,
+    account: &Account,
+    id: &str,
+    patch: &Map<String, Value>,
+) -> Result<Result<(), Value>, JmapError> {
+    let (_, found) = projection
+        .chat_ids(account)
+        .await
+        .map_err(|e| server_fail(&e))?;
+    let outcome = update_one(store, account, &found, &metadata::chat_info(), id, patch).await?;
+    if outcome == Ok(true) {
+        bus.publish(Change::ChatMetadata {
+            user_uri: account.user().as_str().to_owned(),
+        });
+    }
+    Ok(outcome.map(drop))
 }
 
 /// The new stored privateMetadata for `patch` over `stored`, `None` if it

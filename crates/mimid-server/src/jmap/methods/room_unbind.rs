@@ -12,7 +12,7 @@ use jmap_server::{CallContext, HandlerFuture, HandlerOutput, JmapError, JmapHand
 use serde_json::{Value, json};
 
 use super::Services;
-use super::room_common::{room_call, server_fail};
+use super::room_common::{require_chat, room_call, server_fail};
 use crate::follower::Follower;
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
@@ -54,10 +54,25 @@ async fn unbind(
     caller: &Account,
     args: Value,
 ) -> Result<Value, JmapError> {
-    let call = room_call(METHOD, store, caller, args, false).await?;
-    follower
-        .leave(caller.user(), &call.room_id)
-        .await
-        .map_err(|e| server_fail(METHOD, &e))?;
+    let call = room_call(METHOD, caller, args)?;
+    unbind_core(follower, store, caller, &call.room_id).await?;
     Ok(json!({ "accountId": call.account_id }))
+}
+
+/// `Room/unbind` of `room_id` for `caller`, as both bindings call it.
+///
+/// # Errors
+///
+/// `invalidArguments` without a Chat for the room, `serverFail`.
+pub(crate) async fn unbind_core(
+    follower: &Follower,
+    store: &Store,
+    caller: &Account,
+    room_id: &str,
+) -> Result<(), JmapError> {
+    require_chat(METHOD, store, caller, room_id, false).await?;
+    follower
+        .leave(caller.user(), room_id)
+        .await
+        .map_err(|e| server_fail(METHOD, &e))
 }
