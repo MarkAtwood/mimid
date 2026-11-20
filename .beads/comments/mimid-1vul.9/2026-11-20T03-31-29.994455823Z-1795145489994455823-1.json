@@ -1,0 +1,7 @@
+{
+  "id": "1795145489994455823-1",
+  "issue_id": "mimid-1vul.9",
+  "author": "Mark Atwood",
+  "text": "With no chat.json migration (Mark 2026-11-20), there are no unknown-room leftovers to purge; only the delete itself and its tombstones are needed.",
+  "created_at": "2026-11-20T03:31:29.994455823Z"
+}
