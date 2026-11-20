@@ -12,7 +12,6 @@
   "labels": [
     "agent",
     "adapter",
-    "human",
     "client"
   ],
   "dependencies": [
