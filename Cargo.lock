@@ -2639,6 +2639,7 @@ dependencies = [
  "mimi-protocol",
  "mimi-room-policy",
  "mimid-agent-core",
+ "mimid-agent-store",
  "mimid-server",
  "mls-rs",
  "mls-rs-core",
@@ -2655,6 +2656,22 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "ulid 3.0.0",
+]
+
+[[package]]
+name = "mimid-agent-store"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "mimi-content",
+ "mimid-agent-core",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror",
+ "tracing",
  "ulid 3.0.0",
 ]
 

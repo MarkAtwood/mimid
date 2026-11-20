@@ -278,9 +278,20 @@ step runs the full check list in AGENTS.md before its commit.
    (convert.rs:12-39), the date arithmetic behind `utc_date` returning a
    `String` (convert.rs:44-77), `safe_filename`, `body_type`, the notice
    keys and texts (sync.rs:919-1034) and `KeptFrank` (report.rs:72-85).
-   `BlobInfo::id` becomes a `String` (it is a `jmap_server::Id` at
+   `BlobInfo::id` becomes a `BlobId` (it is a `jmap_server::Id` at
    blobs.rs:124). mimid-agent-jmap re-exports the public names it exports
    now (lib.rs:205-213). Oracle: all of the above; no behaviour changes.
+
+   Changed while doing it (2026-11-20): `BlobId` is a newtype over the
+   id's `String` with `AsRef<str>`, `Display` and a transparent
+   `Serialize`, not a bare `String`. The integration tests call
+   `blob.id.as_ref()` and pass the result to `Path::join` and
+   `BTreeSet<String>::contains`; with a `String` that call is ambiguous
+   (`String` is `AsRef` of `str`, `[u8]`, `OsStr` and `Path`) and the
+   tests would have to change. `body_type` returns the store's own
+   `BodyType` (plain or markdown); mimid-agent-jmap maps it to JMAP's, and
+   `sender_msg_id` and `utc_date` return `String`s that it wraps as `Id`
+   and `UTCDate`.
 2. **The model and the file, not wired.** Add the records, `Store`'s
    in-memory state, the format-2 file and the format-1 reader. Add a
    fixture: a chat.json written by the e4e91cd code (a test run of

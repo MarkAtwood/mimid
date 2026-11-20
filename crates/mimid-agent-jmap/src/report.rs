@@ -60,7 +60,7 @@ use mimid_agent_core::{
     AbuseType, AgentError, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES, ReceivedMessage, ReportOutcome,
     ReportedMessage,
 };
-use serde::{Deserialize, Serialize};
+use mimid_agent_store::report::KeptFrank;
 use serde_json::{Map, Value, json};
 
 use crate::backend::AgentChat;
@@ -68,21 +68,6 @@ use crate::sync::SyncReport;
 
 /// The method's name.
 pub const METHOD: &str = "Message/reportAbuse";
-
-/// What a received Message keeps for a report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct KeptFrank {
-    /// The room URI.
-    room: String,
-    /// The hex of the TLS-encoded `AbusiveMessage`, or of the
-    /// `UnverifiedAbusiveMessage` if `unverified`.
-    message: String,
-    /// The message has no frank (decision mimid-1wgh.60). Absent in a file
-    /// written before unfranked messages were kept, which kept only
-    /// franked ones.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    unverified: bool,
-}
 
 /// Registers [`METHOD`] on `dispatcher`, served by `chat`.
 pub(crate) fn register(chat: &Arc<AgentChat>, dispatcher: &mut Dispatcher<()>) {

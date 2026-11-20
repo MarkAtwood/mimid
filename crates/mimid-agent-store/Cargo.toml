@@ -1,0 +1,25 @@
+[package]
+name = "mimid-agent-store"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The plaintext layer of mimid-agent, shared by its front ends: blobs, messages, notices"
+
+# No crate-jmap and no IRC code (docs/design/agent-frontends.md §2): the
+# front ends depend on this crate, never the other way.
+[dependencies]
+mimid-agent-core = { path = "../mimid-agent-core" }
+mimi-content = { path = "../mimi-content" }
+serde.workspace = true
+# Blob ids and notice keys are SHA-256 digests.
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# The version mimid-server and mimid-agent-jmap use.
+ulid = "=3.0.0"
+
+[dev-dependencies]
+hex = "0.4.3"
+serde_json.workspace = true
+tempfile = "=3.23.0"

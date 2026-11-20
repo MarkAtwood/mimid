@@ -193,7 +193,6 @@
 #![forbid(unsafe_code)]
 
 mod backend;
-mod blobs;
 mod convert;
 pub mod edits;
 pub mod moderate;
@@ -205,7 +204,7 @@ mod sync;
 pub use backend::{
     AgentChat, CHANGE_LOG_LIMIT, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, Options,
 };
-pub use blobs::{
+pub use mimid_agent_store::blobs::{
     BlobError, BlobInfo, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN, MAX_UNREFERENCED_BLOB_BYTES,
     MAX_UNREFERENCED_BLOBS, MIN_UNREFERENCED_AGE, is_media_type,
 };

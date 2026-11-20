@@ -16,8 +16,8 @@
 //! Unreferenced blobs have a quota of their own (RFC 8620 §6; decision
 //! mimid-1wgh.68): [`BlobQuota`], by default
 //! [`MAX_UNREFERENCED_BLOB_BYTES`] and [`MAX_UNREFERENCED_BLOBS`]. The
-//! caller says which blobs are referenced (`AgentChat::referenced_blobs`:
-//! any blob id a stored object names). When an upload
+//! caller says which blobs are referenced (mimid-agent-jmap's
+//! `AgentChat::referenced_blobs`: any blob id a stored object names). When an upload
 //! ([`BlobStore::put_upload`]) would take the unreferenced blobs over the
 //! quota, the oldest are deleted first, by file modification time, until
 //! there is room; none younger than [`MIN_UNREFERENCED_AGE`] is ever
@@ -50,7 +50,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use jmap_server::Id;
 use sha2::{Digest, Sha256};
 
 /// The largest blob, in octets: 16 MiB less the 16-octet AES-128-GCM tag,
@@ -117,11 +116,46 @@ pub enum BlobError {
     },
 }
 
+/// A blob id: `s` and the lowercase hex SHA-256 of the blob's content,
+/// 65 characters. Only the store makes one; it serializes as the string.
+///
+/// Not a bare `String`, so that `id.as_ref()` has one meaning (`&str`)
+/// wherever a caller passes it on.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(transparent)]
+pub struct BlobId(String);
+
+impl BlobId {
+    /// The id as text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for BlobId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for BlobId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<BlobId> for String {
+    fn from(id: BlobId) -> Self {
+        id.0
+    }
+}
+
 /// What the store knows of one blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobInfo {
     /// Its id.
-    pub id: Id,
+    pub id: BlobId,
     /// Its length in octets.
     pub size: u64,
     /// The SHA-256 of its content.
@@ -405,7 +439,7 @@ impl BlobStore {
         let sha256: [u8; 32] = Sha256::digest(content).into();
         let id = blob_id(&sha256);
         let info = BlobInfo {
-            id: Id::from(id.as_str()),
+            id: BlobId(id.clone()),
             size: content.len() as u64,
             sha256,
         };
@@ -452,7 +486,7 @@ impl BlobStore {
         let path = self.dir.join(id);
         match std::fs::metadata(&path) {
             Ok(meta) if meta.is_file() => Ok(Some(BlobInfo {
-                id: Id::from(id),
+                id: BlobId(id.to_owned()),
                 size: meta.len(),
                 sha256,
             })),
@@ -507,7 +541,8 @@ fn blob_id(sha256: &[u8; 32]) -> String {
 }
 
 /// Lowercase hex of `octets`.
-pub(crate) fn hex(octets: &[u8]) -> String {
+#[must_use]
+pub fn hex(octets: &[u8]) -> String {
     octets.iter().map(|b| format!("{b:02x}")).collect()
 }
 

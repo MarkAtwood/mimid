@@ -11,6 +11,7 @@ description = "JMAP Chat over mimid-agent-core: a user's MIMI rooms as Chats and
 # serves the dispatcher and drives sync.
 [dependencies]
 mimid-agent-core = { path = "../mimid-agent-core" }
+mimid-agent-store = { path = "../mimid-agent-store" }
 mimi-content = { path = "../mimi-content" }
 # The crate-jmap revision mimid-server uses.
 jmap-chat-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "e4d206ea400b7a65001bd62e393d9efbca744db8", features = ["memory"] }

@@ -23,8 +23,8 @@ use mimid_agent_core::{
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-use crate::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
 use crate::convert::{MessageRef, message_ref, sender_msg_id, utc_date};
+use mimid_agent_store::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
 
 /// The Chat property that names its MIMI room
 /// (draft-atwood-jmap-chat-mimi-00 §Chat.roomId).
@@ -144,7 +144,7 @@ pub struct AgentChat {
     /// What a report of each received Message needs (its frank, or its
     /// content unverified), by Message id, for `Message/reportAbuse`
     /// ([`crate::report`]).
-    pub(crate) franks: StdMutex<BTreeMap<String, crate::report::KeptFrank>>,
+    pub(crate) franks: StdMutex<BTreeMap<String, mimid_agent_store::report::KeptFrank>>,
     /// Each Message's MIMI message IDs, by Message id ([`crate::edits`]).
     pub(crate) mimi_ids: StdMutex<BTreeMap<String, crate::edits::MimiIds>>,
 }

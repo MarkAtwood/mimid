@@ -7,27 +7,22 @@ use jmap_chat_types::{
     Message,
 };
 use jmap_server::{BackendSetError, Id, JmapReads, now_utc_string};
-use mimi_content::{ExternalPart, MimiContent, Part};
+use mimi_content::{ExternalPart, MimiContent};
 use mimid_agent_core::{Agent, AgentError, Event, ReceivedMessage, RoomStatus};
 use serde_json::json;
 
 use crate::backend::{
     AgentChat, BANNED_ROLE_INDEX, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, ROOM_ID,
 };
-use crate::blobs::{hex, is_media_type};
 use crate::convert::{MessageRef, message_ref, sender_msg_id, topic_id, utc_date};
 use crate::moderate::Committers;
+use mimid_agent_store::blobs::{hex, is_media_type};
+use mimid_agent_store::content::safe_filename;
+use mimid_agent_store::notice::{identity_notice, notice_ref, removal_notice, removal_notice_ref};
 
 /// The creation id given to the store for objects sync makes; no client
 /// sees it.
 const SYNC_CREATE_ID: &str = "sync";
-
-/// The longest file name kept for a received attachment, in characters;
-/// a longer one is cut. INVENTED, NOT FROM SPEC.
-pub(crate) const MAX_FILENAME_CHARS: usize = 255;
-
-/// The file name of a received attachment that has none.
-const FALLBACK_FILENAME: &str = "attachment";
 
 /// The media type of a received attachment whose own is not one.
 const FALLBACK_CONTENT_TYPE: &str = "application/octet-stream";
@@ -724,7 +719,7 @@ impl AgentChat {
 
     /// Fetches, opens and stores the attachments `parts` of a message in
     /// `room`, and returns them as JMAP Attachments: the part's file name
-    /// (made safe, or [`FALLBACK_FILENAME`]) and media type (or
+    /// (made safe, or [`mimid_agent_store::content::FALLBACK_FILENAME`]) and media type (or
     /// [`FALLBACK_CONTENT_TYPE`]), the plaintext's size and SHA-256. Also
     /// returns, by position, the ones whose fetch failed in a way that may
     /// pass, for [`crate::retry`]. Any other failure is reported in
@@ -916,120 +911,12 @@ impl AgentChat {
     }
 }
 
-/// The `bodyType` of received `content`: `text/markdown` for a
-/// `text/markdown` single part, `text/plain` otherwise.
+/// The `bodyType` of received `content`
+/// ([`mimid_agent_store::content::body_type`]).
 pub(crate) fn body_type(content: &MimiContent) -> BodyType {
-    match &content.nested_part.part {
-        Part::Single { content_type, .. }
-            if content_type
-                .to_ascii_lowercase()
-                .starts_with("text/markdown") =>
-        {
-            BodyType::Markdown
-        }
+    match mimid_agent_store::content::body_type(content) {
+        mimid_agent_store::content::BodyType::Markdown => BodyType::Markdown,
         _ => BodyType::Plain,
-    }
-}
-
-/// A received attachment's file name as an Attachment may carry it
-/// (draft-atwood-jmap-chat-00 §Attachment: no `/`, `\` or null): those
-/// and other control characters become `_`, it is cut to
-/// [`MAX_FILENAME_CHARS`], and an empty one is [`FALLBACK_FILENAME`].
-/// The reference octets (the random part of `senderMsgId`) of the identity
-/// notice for one mismatch: the first 10 octets of SHA-256 over a label and
-/// the room, user, pinned SCID and presented SCID (`basic` for a
-/// BasicCredential leaf), each ended by a NUL. INVENTED, NOT FROM SPEC.
-pub(crate) fn notice_ref(
-    room: &str,
-    user: &str,
-    pinned: &str,
-    presented: Option<&str>,
-) -> MessageRef {
-    use sha2::{Digest, Sha256};
-    let mut hash = Sha256::new();
-    for part in [
-        "mimid identity-changed notice",
-        room,
-        user,
-        pinned,
-        presented.unwrap_or("basic"),
-    ] {
-        hash.update(part.as_bytes());
-        hash.update([0]);
-    }
-    let digest = hash.finalize();
-    let mut out = [0u8; 10];
-    out.copy_from_slice(&digest[..10]);
-    out
-}
-
-/// The [`MessageRef`] of the removal notice for a client of `user` removed
-/// in `room` at `epoch` (bead mimid-4lp4.4): the first 10 octets of
-/// SHA-256 over the parts, each ended by a NUL.
-pub(crate) fn removal_notice_ref(room: &str, user: &str, epoch: u64) -> MessageRef {
-    use sha2::{Digest, Sha256};
-    let mut hash = Sha256::new();
-    for part in [
-        "mimid removed-without-app-data-update notice",
-        room,
-        user,
-        &epoch.to_string(),
-    ] {
-        hash.update(part.as_bytes());
-        hash.update([0]);
-    }
-    let digest = hash.finalize();
-    let mut out = [0u8; 10];
-    out.copy_from_slice(&digest[..10]);
-    out
-}
-
-/// The text of a removal notice for `name` (bead mimid-4lp4.4).
-pub(crate) fn removal_notice(name: &str) -> String {
-    format!(
-        "Notice from your mimid agent: a device of {name} was removed from this chat. Its app \
-         could not take part in a security update of the chat (it does not support MLS \
-         AppDataUpdate). {name} is still a participant and can rejoin from an app that \
-         supports it."
-    )
-}
-
-/// The text of an identity notice for contact `name`. Only public values:
-/// the name and the SCIDs.
-pub(crate) fn identity_notice(name: &str, pinned: &str, presented: Option<&str>) -> String {
-    let change = match presented {
-        Some(presented) => format!(
-            "A device of {name} now presents a different did:webvh identity (SCID {presented}) \
-             from the one first seen for them (SCID {pinned})."
-        ),
-        None => format!(
-            "A device of {name} presents no did:webvh credential, but {name} was first seen \
-             with one (SCID {pinned})."
-        ),
-    };
-    format!(
-        "Security notice from your mimid agent, not from {name}: the identity of {name} \
-         changed. {change} Verify the new identity with {name} by other means before you \
-         trust messages from that device."
-    )
-}
-
-pub(crate) fn safe_filename(name: &str) -> String {
-    let safe: String = name
-        .chars()
-        .take(MAX_FILENAME_CHARS)
-        .map(|c| {
-            if c == '/' || c == '\\' || c.is_control() {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    if safe.trim().is_empty() {
-        FALLBACK_FILENAME.to_owned()
-    } else {
-        safe
     }
 }
 
@@ -1042,48 +929,6 @@ mod tests {
     /// A daemon runs `sync` in a spawned task, which needs a `Send` future:
     /// holding `&Agent` across an await does not give one, since `Agent`
     /// (its SQLite connection) is not `Sync`. A compile-time check.
-    // Oracle: Python, hashlib.sha256(b"mimid removed-without-app-data-update
-    // notice\0mimi://a.example/r/one\0mimi://b.example/u/erin\05\0")
-    // .digest()[:10].hex().
-    const REMOVAL_KEY: &str = "571a45c0fb47ce2bb9b1";
-
-    #[test]
-    fn removal_notices_are_keyed_by_room_user_and_epoch() {
-        let key = removal_notice_ref("mimi://a.example/r/one", "mimi://b.example/u/erin", 5);
-        assert_eq!(hex::encode(key), REMOVAL_KEY);
-        assert_ne!(
-            key,
-            removal_notice_ref("mimi://a.example/r/one", "mimi://b.example/u/erin", 6)
-        );
-        assert_ne!(
-            key,
-            notice_ref(
-                "mimi://a.example/r/one",
-                "mimi://b.example/u/erin",
-                "5",
-                None
-            )
-        );
-        let text = removal_notice("Erin");
-        assert!(text.contains("a device of Erin was removed"), "{text}");
-        assert!(text.contains("AppDataUpdate"), "{text}");
-        assert!(text.contains("can rejoin"), "{text}");
-    }
-
-    #[test]
-    fn received_file_names_are_made_safe() {
-        assert_eq!(safe_filename("report.pdf"), "report.pdf");
-        assert_eq!(safe_filename("../../etc/passwd"), ".._.._etc_passwd");
-        assert_eq!(safe_filename("a\\b\0c\nd"), "a_b_c_d");
-        assert_eq!(safe_filename(""), FALLBACK_FILENAME);
-        assert_eq!(safe_filename("   "), FALLBACK_FILENAME);
-        // Bidi and zero-width characters are the client's to render
-        // safely; they are not control characters (Cc) and stay.
-        assert_eq!(safe_filename("a\u{202e}b\u{200b}"), "a\u{202e}b\u{200b}");
-        let long = "\u{e9}".repeat(MAX_FILENAME_CHARS + 10);
-        assert_eq!(safe_filename(&long).chars().count(), MAX_FILENAME_CHARS);
-    }
-
     #[test]
     fn the_sync_future_is_send() {
         fn sync_of(

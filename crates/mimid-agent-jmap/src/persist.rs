@@ -80,7 +80,7 @@ struct Snapshot {
     /// ([`crate::report`]). Absent in a file written before abuse reports,
     /// which reads as none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    franks: BTreeMap<String, crate::report::KeptFrank>,
+    franks: BTreeMap<String, mimid_agent_store::report::KeptFrank>,
     /// Each Message's MIMI message IDs: the first version's and its
     /// aliases ([`crate::edits`]). Absent in a file written before edits,
     /// which reads as none.
