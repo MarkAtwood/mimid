@@ -1,6 +1,6 @@
 {
   "id": "mimid-1vul.4",
-  "title": "Store step 4: the store owns the file (format 2, one-time conversion, tombstone)",
+  "title": "The store owns the file: SQLite database, one-time format-1 conversion, chat.json.v1",
   "description": "See docs/design/agent-frontends.md §3 (migration steps) and §4/§7 (IRC, Mark's decisions 2026-11-20); docs/irc-lessons.md.",
   "status": "in_progress",
   "priority": 2,
@@ -9,7 +9,7 @@
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-20T00:44:04.26261117Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-20T03:17:33.996370586Z",
+  "updated_at": "2026-11-20T03:26:27.638595418Z",
   "started_at": "2026-11-20T03:17:33.996370586Z",
   "lease_expires_at": "2026-11-20T03:22:33.996370586Z",
   "heartbeat_at": "2026-11-20T03:17:33.996370586Z",
