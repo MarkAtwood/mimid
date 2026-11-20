@@ -10,6 +10,7 @@
 //! - One write transaction runs at a time (decision mimid-1wgh.42; see
 //!   [`Store`]).
 
+mod accepted;
 mod blobs;
 mod consent;
 mod consent_record;
@@ -32,6 +33,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
 use crate::config::Domain;
 
+pub use accepted::{ACCEPTED_RETENTION_MS, AcceptedKind};
 pub use blobs::{
     Blob, BlobError, BlobId, BlobInfo, BlobQuota, DEFAULT_BLOB_LIFETIME_SECS, ExpiredBlobs,
     MAX_ACCOUNT_BLOB_BYTES, MAX_ACCOUNT_BLOBS, MAX_BLOB_LEN, MAX_MEDIA_TYPE_LEN,
@@ -45,8 +47,8 @@ pub use jmap::{
     MetadataUpdate, ProjectionCursor, TOKEN_LEN, TokenOwner,
 };
 pub use key_packages::{
-    ClaimCandidate, InsertOptions, KeyPackageClaim, KeyPackageInsert, NewKeyPackage,
-    StoredKeyPackage,
+    ClaimCandidate, InsertOptions, KeyPackageChanges, KeyPackageClaim, KeyPackageInsert,
+    NewKeyPackage, StoredKeyPackage,
 };
 pub use keys::StoredHubSecret;
 pub use log::{EpochSnapshot, EventKind, NewEvent, OutboxEntry};
@@ -246,7 +248,7 @@ mod tests {
                 .fetch_all(&store.pool)
                 .await
                 .unwrap();
-        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 
         let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, domain FROM provider")
             .fetch_all(&store.pool)

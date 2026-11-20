@@ -277,13 +277,19 @@ that `Message/changes` accepts. This is the first finding of the log.
 A lagging change bus does not lose anything: the bus only says when to
 look again. If `since` does not parse, or names a state the provider
 never gave (ahead of the account's current state), the provider answers
-`Error` `cannotResume`. The agent then subscribes again without `since`,
-as it falls back to `Message/get` of every Message on
-`cannotCalculateChanges` today (client.rs:616-620). One `Subscribe` per
+`Error` `cannotResume`. The agent then subscribes again without `since`
+and with `after`: per Chat, the id of the last Message it handled there.
+The provider replays every Message of the Chats not named, and in each
+named Chat only the Messages whose ids sort after the one given (Message
+ids sort in the order they were stored, findings log F2 and F12). This
+is the stream's form of `Message/query` sorted by `id` with an `anchor`,
+which the agent uses on JMAP after `cannotCalculateChanges`. `after`
+with `since` is `badMessage`. One `Subscribe` per
 connection; a second gets `badMessage`.
 
-The agent's own messages still come back, as on JMAP today; it skips
-them by digest (`Jmap::is_own`, client.rs:580).
+The agent's own messages still come back, as on JMAP; it skips them by
+the `messageIds` of the `Send` or `Update` `Ack` (findings log F18), and
+by digest when an answer named none.
 
 ### 5.6 Notices
 
@@ -308,15 +314,21 @@ them by, not by JMAP ids, where it can:
 
 ### 5.8 Size
 
-`ProviderHello` states two limits (INVENTED):
+`ProviderHello` states three limits (INVENTED):
 
 - `maxMessageBytes`, 16 MiB + 64 KiB: no frame in either direction is
   larger. It fits an `Upload` or a `FetchAsset` answer of the largest
   blob mimid stores (16 MiB, crates/mimid-server/src/store/blobs.rs).
-- `maxRequestBytes`, 4 MiB + 64 KiB: no client request other than
-  `Upload` is larger. It fits the largest MLS object mimid takes on any
-  other route (4 MiB, crates/mimid-server/src/http.rs:90), as JMAP's
-  `maxSizeRequest` does after base64url (api.rs:59).
+- `maxRequestBytes`, 2 × 4 MiB + 64 KiB: no client request other than
+  `Upload` is larger. It fits two MLS objects of `maxMlsObjectSize`
+  (4 MiB, the largest body mimid takes on the protocol routes,
+  crates/mimid-server/src/http.rs:90), the most one request carries
+  (`CreateRoom`'s GroupInfo and ratchet tree), as JMAP's
+  `maxSizeRequest` does after base64url (api.rs).
+- `maxMlsObjectSize`, 4 MiB: the account capability of the same name
+  (findings log F10). The core functions refuse a larger MLS or MIMI
+  structure with `invalidArguments` on both bindings (a KeyPackage with
+  `tooLarge`), so the per-object limit is the one a client meets.
 
 A larger frame gets `Error` `tooLarge` without `id`, and the connection
 closes. No FanoutMessage mimid stores is larger than the protocol
@@ -417,6 +429,7 @@ ProviderHello = {
   "maxKeyPackages": uint,
   "maxMessageBytes": uint, ; no frame is larger (mimid-1wgh.78)
   "maxRequestBytes": uint, ; no request but Upload is larger
+  ? "maxMlsObjectSize": uint, ; the mimi capability's (findings F10)
   "storesAssets": bool,    ; assetUrl present
   ? "assetLifetime": uint, ; seconds
   "fetchesAssets": bool,   ; assetDownloadUrl present
@@ -428,7 +441,8 @@ ProviderHello = {
 request = { common, "id": req-id, op }
 
 op = (
-    "t": "Subscribe", ? "since": jmap-state )                 ; absent: every Message
+    "t": "Subscribe", ? "since": jmap-state,                 ; absent: every Message
+                      ? "after": { * tstr => tstr } )        ; F12, without since
   // ( "t": "Send", "room": room-id, "message": tls )          ; MLSMessage
   // ( "t": "Update", "room": room-id, "request": tls )        ; UpdateRequest
   // ( "t": "CreateRoom", "room": room-id,
@@ -459,8 +473,10 @@ Ack = { common, "id": req-id, ack-result }   ; "t": "Ack"
 
 ack-result = (
     "state": jmap-state )                               ; Subscribe
-  // ( "acceptedAt": ms, ? "frank": tls )               ; Send
-  // ( "acceptedAt": ms, ? "errorDescription": tstr )   ; Update
+  // ( "acceptedAt": ms, ? "frank": tls,               ; Send
+       ? "messageIds": [* tstr] )                       ; F18
+  // ( "acceptedAt": ms, ? "errorDescription": tstr,    ; Update
+       ? "messageIds": [* tstr] )                       ; F18
   // ( "chatId": tstr )                                 ; CreateRoom
   // ( )                     ; Unbind, ReportAbuse, DestroyKeyPackage,
                              ; UpdateConsent, DestroyConsent, SetChatAccepted

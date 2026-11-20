@@ -236,6 +236,7 @@ async fn hello(
         max_key_packages: state.0.max_key_packages,
         max_message_bytes: MAX_MESSAGE_BYTES as u64,
         max_request_bytes: MAX_REQUEST_BYTES as u64,
+        max_mls_object_size: Some(super::MAX_MLS_OBJECT_SIZE as u64),
         stores_assets: true,
         asset_lifetime: state.0.asset_lifetime,
         fetches_assets: true,
@@ -364,13 +365,20 @@ impl Connection {
             return false;
         }
         let id = request.id;
-        if let Op::Subscribe { since } = request.op {
-            if subscription.is_some() {
+        if let Op::Subscribe { since, after } = request.op {
+            if subscription.is_some() || (since.is_some() && after.is_some()) {
                 let mut answer = ErrorMessage::new(Some(id), code::BAD_MESSAGE);
-                answer.detail = Some("one Subscribe per connection".to_owned());
+                answer.detail = Some(
+                    if subscription.is_some() {
+                        "one Subscribe per connection"
+                    } else {
+                        "since and after together"
+                    }
+                    .to_owned(),
+                );
                 return self.sender.error(answer).await;
             }
-            return match self.subscribe(id, since.as_deref()).await {
+            return match self.subscribe(id, since.as_deref(), after.as_ref()).await {
                 Ok(Some(started)) => {
                     *subscription = Some(started);
                     true
@@ -413,8 +421,15 @@ impl Connection {
 
     /// The replay of a `Subscribe` and its answer: the subscription, or
     /// `Ok(None)` after an `Error` answer, or `Err(())` if the client is
-    /// gone.
-    async fn subscribe(&self, id: u64, since: Option<&str>) -> Result<Option<Subscription>, ()> {
+    /// gone. Without `since`, every Message, except in a Chat named in
+    /// `after` the Messages up to the id given for it (findings log F12:
+    /// ids sort in the order the Messages were stored, F2).
+    async fn subscribe(
+        &self,
+        id: u64,
+        since: Option<&str>,
+        after: Option<&BTreeMap<String, String>>,
+    ) -> Result<Option<Subscription>, ()> {
         let projection = &self.state.0.projection;
         let fail = |e: &(dyn std::error::Error + 'static)| {
             tracing::error!(
@@ -425,7 +440,19 @@ impl Connection {
             ErrorMessage::new(Some(id), code::SERVER_FAIL)
         };
         let replay = match since {
-            None => projection.messages(&self.account, None).await,
+            None => projection
+                .messages(&self.account, None)
+                .await
+                .map(|(state, mut rows)| {
+                    if let Some(after) = after {
+                        rows.retain(|row| {
+                            after
+                                .get(&row.chat_id)
+                                .is_none_or(|last| row.message_id > *last)
+                        });
+                    }
+                    (state, rows)
+                }),
             Some(since) => match projection
                 .message_changes_since(&self.account, since, None)
                 .await
@@ -659,10 +686,10 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
     let jmap = |e: JmapError| method_error(&e);
     Ok(match op {
         Op::Send { room, message } => {
-            match room_send::send_core(follower, store, account, &room, &message)
+            let sent = room_send::send_core(follower, store, account, &room, &message)
                 .await
-                .map_err(jmap)?
-            {
+                .map_err(jmap)?;
+            match sent.result {
                 SubmitResult::Accepted {
                     accepted_timestamp,
                     frank,
@@ -672,6 +699,7 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
                         .map(|f| f.tls_serialize_detached())
                         .transpose()
                         .map_err(|e| server_fail(&e))?,
+                    message_ids: Some(sent.message_ids),
                 },
                 SubmitResult::NotAllowed => return Err(ErrorMessage::new(None, code::NOT_ALLOWED)),
                 SubmitResult::EpochTooOld { current_epoch } => {
@@ -683,9 +711,10 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
             }
         }
         Op::Update { room, request } => {
-            let response = room_update::update_core(follower, store, account, &room, &request)
-                .await
-                .map_err(jmap)?;
+            let (response, message_ids) =
+                room_update::update_core(follower, store, account, &room, &request)
+                    .await
+                    .map_err(jmap)?;
             let description = response.error_description.as_str().to_owned();
             let refused = |code: &str| ErrorMessage {
                 error_description: Some(description.clone()).filter(|d| !d.is_empty()),
@@ -695,6 +724,7 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
                 UpdateResult::Success { accepted_timestamp } => AckResult::Update {
                     accepted_at: accepted_timestamp,
                     error_description: Some(description.clone()).filter(|d| !d.is_empty()),
+                    message_ids: Some(message_ids),
                 },
                 UpdateResult::WrongEpoch { current_epoch } => {
                     return Err(ErrorMessage {
@@ -807,7 +837,7 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
             }
         }
         Op::ListKeyPackages => {
-            let (state_text, entries) = key_package::list(key_packages(state)?, account)
+            let (state_text, entries) = key_package::list(key_packages(state)?, store, account)
                 .await
                 .map_err(jmap)?;
             AckResult::ListKeyPackages {

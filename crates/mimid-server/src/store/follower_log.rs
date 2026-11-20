@@ -270,7 +270,9 @@ impl Store {
 
     /// Ends `user_uri`'s current membership of the room `room_id` at `now`
     /// (decision mimid-1wgh.7.7): no event stored from now on is shown to
-    /// the user through it. Returns whether there was one.
+    /// the user through it, and it takes the next leaving number, which
+    /// moves the user's Chat state (findings log F15). Returns whether
+    /// there was one.
     ///
     /// # Errors
     ///
@@ -284,7 +286,8 @@ impl Store {
     ) -> Result<bool, StoreError> {
         let left = sqlx::query(
             "UPDATE follower_member SET left_at = ?, \
-             left_seq = (SELECT COALESCE(MAX(seq), 0) + 1 FROM follower_event) \
+             left_seq = (SELECT COALESCE(MAX(seq), 0) + 1 FROM follower_event), \
+             left_mod = (SELECT COALESCE(MAX(left_mod), 0) + 1 FROM follower_member) \
              WHERE room_id = ? AND user_uri = ? AND left_at IS NULL",
         )
         .bind(to_sql_int(now)?)

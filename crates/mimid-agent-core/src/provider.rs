@@ -488,6 +488,7 @@ impl Provider {
             Ok(AckResult::Update {
                 accepted_at,
                 error_description,
+                ..
             }) => (
                 UpdateResult::Success {
                     accepted_timestamp: accepted_at,

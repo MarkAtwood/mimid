@@ -1,0 +1,16 @@
+; Ack of a Send with messageIds (findings log F18) =
+;   {"v": 1, "t": "Ack", "id": 301, "acceptedAt": 5, "messageIds": ["M1"]}
+; Keys in bytewise order of their encodings: t, v, id, acceptedAt,
+; messageIds ("acceptedAt" 6a 61 ... sorts before "messageIds" 6a 6d ...).
+a5                                  ; map, 5 pairs
+61 74                               ; "t"
+63 41 63 6b                         ; "Ack"
+61 76                               ; "v"
+01                                  ; 1
+62 69 64                            ; "id"
+19 01 2d                            ; 301
+6a 61 63 63 65 70 74 65 64 41 74    ; "acceptedAt"
+05                                  ; 5
+6a 6d 65 73 73 61 67 65 49 64 73    ; "messageIds"
+81                                  ; array, 1 item
+62 4d 31                            ; "M1"

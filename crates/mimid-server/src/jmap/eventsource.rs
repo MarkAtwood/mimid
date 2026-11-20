@@ -199,12 +199,10 @@ pub(super) async fn states(
     for kind in &params.kinds {
         states.insert(kind.name(), projection.state(*kind, account).await?);
     }
-    if params.key_packages
-        && let Some(key_packages) = key_packages
-    {
+    if params.key_packages && key_packages.is_some() {
         states.insert(
             "KeyPackage",
-            super::methods::key_package::key_package_state(key_packages, account).await?,
+            super::methods::key_package::key_package_state(store, account).await?,
         );
     }
     if params.consent {

@@ -46,17 +46,20 @@ use serde_json::Value;
 use super::JmapState;
 use super::auth::Account;
 use super::session::{CAPABILITIES, METADATA_CAPABILITY};
-use crate::http::MAX_BODY_LEN;
+use super::{MAX_MLS_OBJECT_SIZE, MAX_MLS_OBJECTS_PER_CALL};
 
 /// Room for the JSON around the largest base64url payload a request
 /// carries. INVENTED, NOT FROM SPEC.
 pub const REQUEST_ENVELOPE_ALLOWANCE: usize = 64 * 1024;
 
 /// `maxSizeRequest` (RFC 8620 §2), and the JMAP routes' body limit
-/// (decision mimid-1wgh.12.36): the base64 encoding of a
-/// [`MAX_BODY_LEN`]-octet MLS message plus [`REQUEST_ENVELOPE_ALLOWANCE`]
-/// (plan of mimid-1wgh.12 §3).
-pub const MAX_SIZE_REQUEST: usize = MAX_BODY_LEN.div_ceil(3) * 4 + REQUEST_ENVELOPE_ALLOWANCE;
+/// (decision mimid-1wgh.12.36): the base64 encoding of
+/// [`MAX_MLS_OBJECTS_PER_CALL`] objects of [`MAX_MLS_OBJECT_SIZE`] plus
+/// [`REQUEST_ENVELOPE_ALLOWANCE`] (plan of mimid-1wgh.12 §3), so that one
+/// call with its largest arguments fits and `maxMlsObjectSize` is the
+/// limit a client meets (findings log F10).
+pub const MAX_SIZE_REQUEST: usize =
+    MAX_MLS_OBJECTS_PER_CALL * MAX_MLS_OBJECT_SIZE.div_ceil(3) * 4 + REQUEST_ENVELOPE_ALLOWANCE;
 
 /// `maxCallsInRequest`: RFC 8620 §2's suggested minimum.
 pub const MAX_CALLS_IN_REQUEST: usize = 16;

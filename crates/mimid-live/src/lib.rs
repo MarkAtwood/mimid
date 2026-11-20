@@ -48,10 +48,12 @@ pub const VERSION: u64 = 1;
 /// plus 64 KiB (decision mimid-1wgh.78). INVENTED, NOT FROM SPEC.
 pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024 + 64 * 1024;
 
-/// The largest client request other than `Upload`: 4 MiB, mimid's largest
-/// MLS object, plus 64 KiB (decision mimid-1wgh.78). INVENTED, NOT FROM
-/// SPEC.
-pub const MAX_REQUEST_BYTES: usize = 4 * 1024 * 1024 + 64 * 1024;
+/// The largest client request other than `Upload`: two MLS objects of
+/// mimid's `maxMlsObjectSize`, 4 MiB each (a `CreateRoom` carries a
+/// GroupInfo and a ratchet tree), plus 64 KiB (decision mimid-1wgh.78, as
+/// updated for findings log F10: the per-object limit, which both
+/// bindings enforce, is the one a client meets). INVENTED, NOT FROM SPEC.
+pub const MAX_REQUEST_BYTES: usize = 2 * 4 * 1024 * 1024 + 64 * 1024;
 
 /// The most requests a client may have outstanding on one connection
 /// (decision mimid-1wgh.78). INVENTED, NOT FROM SPEC.

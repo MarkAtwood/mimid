@@ -71,6 +71,24 @@ use bus::ChangeBus;
 use methods::Services;
 use session::{DEFAULT_MAX_KEY_PACKAGES, SessionTemplate};
 
+/// `maxMlsObjectSize` (findings log F10): the largest MLS or MIMI
+/// structure, in octets before base64url, that any argument of the mimi
+/// methods may carry, on JMAP and on the live stream alike (decision
+/// mimid-1wgh.78, as updated for F10). 4 MiB, the largest body the
+/// protocol routes take ([`crate::http::MAX_BODY_LEN`]). INVENTED, NOT
+/// FROM SPEC: the draft names the property, not its value.
+pub const MAX_MLS_OBJECT_SIZE: usize = 4 * 1024 * 1024;
+
+/// The most MLS or MIMI structures one method call carries: `Room/create`'s
+/// `groupInfo` and `ratchetTree`. The request limits of both bindings
+/// ([`api::MAX_SIZE_REQUEST`], [`mimid_live::MAX_REQUEST_BYTES`]) fit that
+/// many objects of [`MAX_MLS_OBJECT_SIZE`], so the per-object limit is the
+/// one a client meets.
+pub const MAX_MLS_OBJECTS_PER_CALL: usize = 2;
+
+const _: () =
+    assert!(mimid_live::MAX_REQUEST_BYTES >= MAX_MLS_OBJECTS_PER_CALL * MAX_MLS_OBJECT_SIZE);
+
 /// Settings of the JMAP endpoint.
 #[derive(Clone)]
 #[non_exhaustive]

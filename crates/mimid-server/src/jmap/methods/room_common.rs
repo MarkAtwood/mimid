@@ -9,6 +9,7 @@ use serde_json::{Map, Value};
 
 use crate::follower::FollowerError;
 use crate::follower::relay::RelayError;
+use crate::jmap::MAX_MLS_OBJECT_SIZE;
 use crate::jmap::auth::Account;
 use crate::peer::PeerError;
 use crate::store::Store;
@@ -20,7 +21,7 @@ pub(super) struct RoomCall {
     pub(super) args: Map<String, Value>,
 }
 
-pub(super) fn invalid(method: &'static str, why: &str) -> JmapError {
+pub(crate) fn invalid(method: &'static str, why: &str) -> JmapError {
     tracing::debug!(method, why, "room method refused");
     JmapError::invalid_arguments(why)
 }
@@ -31,6 +32,25 @@ pub(super) fn server_fail(
 ) -> JmapError {
     tracing::error!(name: "jmap_room_method_failed", method, error, "room method failed");
     JmapError::server_fail("internal error")
+}
+
+/// Refuses `bytes`, the MLS or MIMI structure argument `name` of
+/// `method`, if it is larger than `maxMlsObjectSize`
+/// ([`MAX_MLS_OBJECT_SIZE`]; findings log F10). Both bindings call it
+/// through the methods' core functions, so they enforce the one limit.
+pub(crate) fn check_mls_object(
+    method: &'static str,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), JmapError> {
+    if bytes.len() > MAX_MLS_OBJECT_SIZE {
+        Err(invalid(
+            method,
+            &format!("{name} is larger than maxMlsObjectSize"),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// Checks `accountId` and reads `roomId`, as every room method does

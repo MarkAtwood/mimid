@@ -208,6 +208,8 @@ impl SessionTemplate {
                         "hubSender": self.hub_sender,
                         "cipherSuites": CIPHER_SUITES,
                         "maxKeyPackages": self.max_key_packages,
+                        // findings log F10.
+                        "maxMlsObjectSize": super::MAX_MLS_OBJECT_SIZE,
                     }))?;
                     mimi.asset_url = Some(format!("{base}{ASSET_URL_TEMPLATE}"));
                     mimi.asset_download_url = Some(asset_download_url(base, &account_id));

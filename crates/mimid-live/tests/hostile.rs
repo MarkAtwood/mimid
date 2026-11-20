@@ -150,7 +150,8 @@ fn null_bytes_bidi_and_zero_width_text_are_data() {
         assert_eq!(
             request.op,
             mimid_live::Op::Subscribe {
-                since: Some(odd.to_owned())
+                since: Some(odd.to_owned()),
+                after: None,
             }
         );
     }

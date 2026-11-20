@@ -108,6 +108,7 @@ pub(crate) async fn report_core(
     room_id: &str,
     report: &[u8],
 ) -> Result<Option<Refusal>, JmapError> {
+    super::room_common::check_mls_object(METHOD, "report", report)?;
     require_chat(METHOD, store, caller, room_id, false).await?;
     // The relay decodes it again; this gives the client a precise error.
     AbuseReport::tls_deserialize_exact(report)

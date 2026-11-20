@@ -354,7 +354,17 @@ async fn a_request_that_does_not_decode_is_bad_message_with_its_id() {
 async fn subscribe_without_messages_gives_the_jmap_state() {
     let server = server(true).await;
     let mut socket = server.open().await;
-    send(&mut socket, &request(1, Op::Subscribe { since: None })).await;
+    send(
+        &mut socket,
+        &request(
+            1,
+            Op::Subscribe {
+                since: None,
+                after: None,
+            },
+        ),
+    )
+    .await;
     let state = match receive(&mut socket, Some(OpKind::Subscribe)).await {
         Some(ProviderMessage::Ack(ack)) => match ack.result {
             AckResult::Subscribe { state } => state,
@@ -364,8 +374,33 @@ async fn subscribe_without_messages_gives_the_jmap_state() {
     };
     // The Message state of a fresh account, s.m (projection.rs).
     assert_eq!(state, "0.0");
-    send(&mut socket, &request(2, Op::Subscribe { since: None })).await;
+    send(
+        &mut socket,
+        &request(
+            2,
+            Op::Subscribe {
+                since: None,
+                after: None,
+            },
+        ),
+    )
+    .await;
     expect_error(&mut socket, Some(2), code::BAD_MESSAGE, false).await;
+
+    // findings log F12: `after` is for a Subscribe without `since`.
+    let mut socket = server.open().await;
+    send(
+        &mut socket,
+        &request(
+            1,
+            Op::Subscribe {
+                since: Some(state.clone()),
+                after: Some(std::collections::BTreeMap::new()),
+            },
+        ),
+    )
+    .await;
+    expect_error(&mut socket, Some(1), code::BAD_MESSAGE, false).await;
 
     // A state that does not parse, or one ahead of the account's.
     for since in ["x", "9.9"] {
@@ -376,6 +411,7 @@ async fn subscribe_without_messages_gives_the_jmap_state() {
                 1,
                 Op::Subscribe {
                     since: Some(since.to_owned()),
+                    after: None,
                 },
             ),
         )

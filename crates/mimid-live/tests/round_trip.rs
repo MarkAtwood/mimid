@@ -10,7 +10,10 @@ use mimid_live::{
 fn ops() -> Vec<Op> {
     let room = || "mimi://a.example/r/x".to_owned();
     vec![
-        Op::Subscribe { since: None },
+        Op::Subscribe {
+            since: None,
+            after: None,
+        },
         Op::Send {
             room: room(),
             message: vec![1],
@@ -112,6 +115,7 @@ fn every_ack_round_trips() {
             AckResult::Update {
                 accepted_at: 1,
                 error_description: Some("x".to_owned()),
+                message_ids: Some(vec!["M1".to_owned(), "M2".to_owned()]),
             },
         ),
         (

@@ -186,6 +186,8 @@ pub(crate) async fn create_core(
     group_info: &[u8],
     ratchet_tree: &[u8],
 ) -> Result<String, JmapError> {
+    super::room_common::check_mls_object("Room/create", "groupInfo", group_info)?;
+    super::room_common::check_mls_object("Room/create", "ratchetTree", ratchet_tree)?;
     let (group_info, ratchet_tree) = (group_info.to_vec(), ratchet_tree.to_vec());
     let user = caller.user().as_str();
 

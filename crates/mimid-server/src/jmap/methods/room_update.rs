@@ -16,7 +16,9 @@
 //!
 //! The answer is the UpdateRoomResponse: `responseCode` by name,
 //! `errorDescription`, and `acceptedAt`, `currentEpoch` or
-//! `invalidProposals` (unpadded base64url ProposalRefs) as the code has.
+//! `invalidProposals` (unpadded base64url ProposalRefs) as the code has,
+//! and on success `messageIds`, the ids of the Messages stored for the
+//! handshake in the account (findings log F18).
 
 use std::sync::Arc;
 
@@ -26,10 +28,12 @@ use jmap_server::{CallContext, HandlerFuture, HandlerOutput, JmapError, JmapHand
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_protocol::{HandshakeBundle, UpdateRequest, UpdateResult, UpdateRoomResponse};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::Services;
 use super::room_common::{
-    bytes, has_bound_chat, invalid, relay_error, require_room_uri, room_call, server_fail,
+    bytes, check_mls_object, has_bound_chat, invalid, relay_error, require_room_uri, room_call,
+    server_fail,
 };
 use crate::follower::Follower;
 use crate::jmap::api::Methods;
@@ -75,7 +79,8 @@ async fn update(
 ) -> Result<Value, JmapError> {
     let call = room_call(METHOD, caller, args)?;
     let request = bytes(METHOD, &call.args, "request")?;
-    let response = update_core(follower, store, caller, &call.room_id, &request).await?;
+    let (response, message_ids) =
+        update_core(follower, store, caller, &call.room_id, &request).await?;
     let mut answer = json!({
         "accountId": call.account_id,
         "errorDescription": response.error_description.as_str(),
@@ -84,6 +89,7 @@ async fn update(
         UpdateResult::Success { accepted_timestamp } => {
             answer["responseCode"] = json!("success");
             answer["acceptedAt"] = json!(utc_date(accepted_timestamp));
+            answer["messageIds"] = json!(message_ids);
         }
         UpdateResult::WrongEpoch { current_epoch } => {
             answer["responseCode"] = json!("wrongEpoch");
@@ -107,7 +113,9 @@ async fn update(
 }
 
 /// `Room/update` of `room_id` with the UpdateRequest `request`, as both
-/// bindings call it: every check, the relay, and the hub's response.
+/// bindings call it: every check, the relay, the hub's response, and on
+/// success the ids of the Messages stored for the handshake in the
+/// account (findings log F18).
 ///
 /// # Errors
 ///
@@ -118,7 +126,8 @@ pub(crate) async fn update_core(
     caller: &Account,
     room_id: &str,
     request: &[u8],
-) -> Result<UpdateRoomResponse, JmapError> {
+) -> Result<(UpdateRoomResponse, Vec<String>), JmapError> {
+    check_mls_object(METHOD, "request", request)?;
     require_room_uri(METHOD, room_id)?;
     let decoded = UpdateRequest::tls_deserialize_exact(request)
         .map_err(|_| invalid(METHOD, "request is not an UpdateRequest"))?;
@@ -153,5 +162,25 @@ pub(crate) async fn update_core(
         .relay_update(caller.user(), room_id, request)
         .await
         .map_err(|error| relay_error(METHOD, error))?;
-    UpdateRoomResponse::tls_deserialize_exact(&response[..]).map_err(|e| server_fail(METHOD, &e))
+    let response = UpdateRoomResponse::tls_deserialize_exact(&response[..])
+        .map_err(|e| server_fail(METHOD, &e))?;
+    let message_ids = match response.result {
+        UpdateResult::Success { .. } => {
+            let handshake = match &decoded.bundle {
+                HandshakeBundle::Commit {
+                    proposal_or_commit, ..
+                }
+                | HandshakeBundle::Proposal {
+                    proposal_or_commit, ..
+                } => proposal_or_commit,
+            };
+            let hash = Sha256::digest(handshake.as_bytes()).into();
+            store
+                .projection_accepted_ids(caller.user().as_str(), room_id, &hash)
+                .await
+                .map_err(|e| server_fail(METHOD, &e))?
+        }
+        _ => Vec::new(),
+    };
+    Ok((response, message_ids))
 }

@@ -25,10 +25,10 @@ use common::{
     domain, franking_agent, no_components, open_hub,
 };
 use mimi_mls::member::{ExternalSender, Member};
-use mimi_mls::tls_codec::Serialize;
+use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
-use mimi_protocol::{IdentifierUri, RoomMetaData, Utf8String};
+use mimi_protocol::{FanoutEvent, FanoutMessage, IdentifierUri, RoomMetaData, Utf8String};
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimid_server::config::BaseUrl;
 use mimid_server::follower::Follower;
@@ -541,11 +541,20 @@ async fn a_room_is_updated_sent_to_and_unbound() {
     assert!(updated["acceptedAt"].as_str().unwrap().ends_with('Z'));
     let (_, chats) = f.call("Chat/get", json!({"ids": [chat_id]})).await;
     assert_eq!(chats["list"][0]["name"], "Launch");
-    assert_eq!(
-        message_ids(&f, &chat_id).await.len(),
-        1,
-        "alice's own Commit is stored"
-    );
+    let ids = message_ids(&f, &chat_id).await;
+    assert_eq!(ids.len(), 1, "alice's own Commit is stored");
+    // findings log F18: the answer names the stored copy.
+    assert_eq!(updated["messageIds"], json!(ids), "{updated}");
+    // findings log F11: the same request again gets the same answer, not
+    // the hub's wrongEpoch for a Commit it has, and stores nothing more.
+    let (_, again) = f
+        .call(
+            "Room/update",
+            json!({"roomId": room_id, "request": URL_SAFE_NO_PAD.encode(&request)}),
+        )
+        .await;
+    assert_eq!(again, updated, "a lost answer is given again");
+    assert_eq!(message_ids(&f, &chat_id).await, ids);
 
     // Room/send.
     let data = b"hello room";
@@ -565,10 +574,88 @@ async fn a_room_is_updated_sent_to_and_unbound() {
         .await;
     assert_eq!(name, "Room/send", "{sent}");
     assert_eq!(sent["responseCode"], "accepted", "{sent}");
+    let ids = message_ids(&f, &chat_id).await;
+    assert_eq!(ids.len(), 2, "alice's own message is stored");
+    // findings log F18 and F3: the stored copy, and the hub's frank as the
+    // stored FanoutMessage carries it.
+    assert_eq!(sent["messageIds"], json!([ids[1]]), "{sent}");
+    let (_, stored) = f
+        .call(
+            "Message/get",
+            json!({"ids": [ids[1]], "properties": ["body"]}),
+        )
+        .await;
+    let body = URL_SAFE_NO_PAD
+        .decode(stored["list"][0]["body"].as_str().unwrap())
+        .unwrap();
+    let FanoutEvent::Application {
+        frank: Some(frank), ..
+    } = FanoutMessage::tls_deserialize_exact(&body[..])
+        .unwrap()
+        .event
+    else {
+        panic!("the stored copy is not a franked application message");
+    };
     assert_eq!(
-        message_ids(&f, &chat_id).await.len(),
-        2,
-        "alice's own message is stored"
+        sent["frank"],
+        json!(URL_SAFE_NO_PAD.encode(frank.tls_serialize_detached().unwrap())),
+        "{sent}"
+    );
+    // findings log F11: the same message again is answered as before,
+    // acceptance time included, without reaching the hub again.
+    let (_, again) = f
+        .call(
+            "Room/send",
+            json!({"roomId": room_id, "message": URL_SAFE_NO_PAD.encode(&message)}),
+        )
+        .await;
+    assert_eq!(again, sent, "a lost answer is given again");
+    assert_eq!(message_ids(&f, &chat_id).await, ids);
+
+    // findings log F2 and F12: sorted by id, the Chat's Messages come in
+    // the order they were stored, which Message/get keeps; an id anchor
+    // with anchorOffset 1 gives what followed it.
+    let (_, all) = f
+        .call("Message/get", json!({"ids": null, "properties": ["id"]}))
+        .await;
+    let stored_order: Vec<Value> = all["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].clone())
+        .collect();
+    let (_, by_id) = f
+        .call(
+            "Message/query",
+            json!({"filter": {"chatId": chat_id}, "sort": [{"property": "id"}]}),
+        )
+        .await;
+    assert_eq!(by_id["ids"], json!(stored_order), "{by_id}");
+    let (_, after) = f
+        .call(
+            "Message/query",
+            json!({
+                "filter": {"chatId": chat_id},
+                "sort": [{"property": "id"}],
+                "anchor": stored_order[0],
+                "anchorOffset": 1,
+            }),
+        )
+        .await;
+    assert_eq!(after["ids"], json!(stored_order[1..]), "{after}");
+    let (name, missing) = f
+        .call(
+            "Message/query",
+            json!({
+                "filter": {"chatId": chat_id},
+                "sort": [{"property": "id"}],
+                "anchor": "01AAAAAAAAAAAAAAAAAAAAAAAA",
+            }),
+        )
+        .await;
+    assert_eq!(
+        (name.as_str(), &missing["type"]),
+        ("error", &json!("anchorNotFound"))
     );
 
     // Bad arguments.
@@ -588,12 +675,23 @@ async fn a_room_is_updated_sent_to_and_unbound() {
         );
     }
 
-    // Room/unbind.
+    // Room/unbind. findings log F4 and F15: `roomBound` goes from true
+    // to false, and the Chat state moves, with the Chat as updated.
+    let (_, before) = f.call("Chat/get", json!({"ids": [chat_id]})).await;
+    assert_eq!(before["list"][0]["roomBound"], true, "{before}");
     let (name, unbound) = f.call("Room/unbind", json!({"roomId": room_id})).await;
     assert_eq!(
         (name.as_str(), &unbound),
         ("Room/unbind", &json!({"accountId": f.account}))
     );
+    let (_, after) = f.call("Chat/get", json!({"ids": [chat_id]})).await;
+    assert_eq!(after["list"][0]["roomBound"], false, "{after}");
+    assert_ne!(after["state"], before["state"]);
+    let (_, changes) = f
+        .call("Chat/changes", json!({"sinceState": before["state"]}))
+        .await;
+    assert_eq!(changes["updated"], json!([chat_id]), "{changes}");
+    assert_eq!(changes["newState"], after["state"], "{changes}");
     let (name, error) = f
         .call(
             "Room/send",

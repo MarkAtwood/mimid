@@ -441,6 +441,7 @@ async fn subscribe(
             "Subscribe",
             Op::Subscribe {
                 since: since.map(str::to_owned),
+                after: None,
             },
         )
         .await?;

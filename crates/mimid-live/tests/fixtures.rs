@@ -1,6 +1,8 @@
 //! The hand-encoded fixtures (tests/fixtures/PROVENANCE): decode, compare
 //! with the value written out here, encode again, require the same bytes.
 
+use std::collections::BTreeMap;
+
 use mimid_live::cbor::Value;
 use mimid_live::{
     Ack, AckResult, Changed, ChatEntry, ClientHello, ClientMessage, ConsentEntry, Deliver,
@@ -74,6 +76,22 @@ fn subscribe() {
             7,
             Op::Subscribe {
                 since: Some("12.3".to_owned()),
+                after: None,
+            },
+        ),
+    );
+}
+
+/// findings log F12: the last handled Message per Chat.
+#[test]
+fn subscribe_after() {
+    client(
+        "subscribe-after.hex",
+        request(
+            8,
+            Op::Subscribe {
+                since: None,
+                after: Some(BTreeMap::from([("C1".to_owned(), "M9".to_owned())])),
             },
         ),
     );
@@ -120,8 +138,11 @@ fn provider_hello() {
             hub_sender: vec![1],
             cipher_suites: vec![1],
             max_key_packages: 100,
-            max_message_bytes: mimid_live::MAX_MESSAGE_BYTES as u64,
-            max_request_bytes: mimid_live::MAX_REQUEST_BYTES as u64,
+            // The values the fixture was written with (decision
+            // mimid-1wgh.78 before findings log F10), not the constants.
+            max_message_bytes: 16 * 1024 * 1024 + 64 * 1024,
+            max_request_bytes: 4 * 1024 * 1024 + 64 * 1024,
+            max_mls_object_size: None,
             stores_assets: true,
             asset_lifetime: Some(3600),
             fetches_assets: true,
@@ -141,6 +162,24 @@ fn ack_of_a_send() {
             AckResult::Send {
                 accepted_at: 1_700_000_100_123,
                 frank: Some(vec![0xaa, 0xbb]),
+                message_ids: None,
+            },
+        ),
+    );
+}
+
+/// findings log F18: the ids of the Messages stored for a sent message.
+#[test]
+fn ack_of_a_send_with_message_ids() {
+    provider(
+        "ack-send-message-ids.hex",
+        Some(OpKind::Send),
+        ack(
+            301,
+            AckResult::Send {
+                accepted_at: 5,
+                frank: None,
+                message_ids: Some(vec!["M1".to_owned()]),
             },
         ),
     );

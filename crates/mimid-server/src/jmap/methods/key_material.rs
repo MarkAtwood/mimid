@@ -21,7 +21,9 @@
 //! `userUri`, and `clients`: per client `clientStatus`, `clientUri`,
 //! `keyPackage` (unpadded base64url, for `success`) and
 //! `clientCapabilities` (unpadded base64url of the MLS Capabilities, when
-//! present).
+//! present), and as `response`, the unpadded base64url of the whole
+//! KeyMaterialResponse exactly as the provider answered (findings log
+//! F5), so a client need not rebuild it from the split fields.
 
 use std::sync::Arc;
 
@@ -148,6 +150,7 @@ pub(crate) async fn fetch_core(
     room_id: &str,
     request: &[u8],
 ) -> Result<Vec<u8>, JmapError> {
+    super::room_common::check_mls_object("KeyMaterial/fetch", "request", request)?;
     let decoded = KeyMaterialRequest::tls_deserialize_exact(request)
         .map_err(|_| invalid("request is not a KeyMaterialRequest"))?;
     let tbs = decoded.tbs();
@@ -221,9 +224,9 @@ async fn fetch(
     let request = URL_SAFE_NO_PAD
         .decode(request)
         .map_err(|_| invalid("request is not unpadded base64url"))?;
-    let response = fetch_core(follower, store, caller, room_id, &request).await?;
+    let bytes = fetch_core(follower, store, caller, room_id, &request).await?;
     let response =
-        KeyMaterialResponse::tls_deserialize_exact(&response[..]).map_err(|e| server_fail(&e))?;
+        KeyMaterialResponse::tls_deserialize_exact(&bytes[..]).map_err(|e| server_fail(&e))?;
     let clients = response
         .clients
         .iter()
@@ -235,5 +238,6 @@ async fn fetch(
         "userStatus": user_status(response.user_status),
         "userUri": response.user_uri.as_str(),
         "clients": clients,
+        "response": URL_SAFE_NO_PAD.encode(&bytes),
     }))
 }

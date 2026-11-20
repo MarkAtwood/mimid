@@ -12,10 +12,15 @@
 //! mimid-1wgh.7.30), as the draft requires.
 //!
 //! The answer is the SubmitMessageResponse: `responseCode` by name, and
-//! `acceptedAt` or `currentEpoch` as the code has.
+//! `acceptedAt` or `currentEpoch` as the code has. An accepted message
+//! also gets `frank`, the hub's Frank when it franked the message
+//! (findings log F3), and `messageIds`, the ids of the Messages stored
+//! for it in the account (findings log F18).
 
 use std::sync::Arc;
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jmap_server::{CallContext, HandlerFuture, HandlerOutput, JmapError, JmapHandler};
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::wire::MLSMessage;
@@ -23,9 +28,12 @@ use mimi_protocol::{
     IdentifierUri, Protocol, SubmitMessageRequest, SubmitMessageResponse, SubmitResult,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::Services;
-use super::room_common::{bytes, invalid, relay_error, require_chat, room_call, server_fail};
+use super::room_common::{
+    bytes, check_mls_object, invalid, relay_error, require_chat, room_call, server_fail,
+};
 use crate::follower::Follower;
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
@@ -71,12 +79,21 @@ async fn send(
     let call = room_call(METHOD, caller, args)?;
     let message = bytes(METHOD, &call.args, "message")?;
     let mut answer = json!({ "accountId": call.account_id });
-    match send_core(follower, store, caller, &call.room_id, &message).await? {
+    let sent = send_core(follower, store, caller, &call.room_id, &message).await?;
+    match sent.result {
         SubmitResult::Accepted {
-            accepted_timestamp, ..
+            accepted_timestamp,
+            frank,
         } => {
             answer["responseCode"] = json!("accepted");
             answer["acceptedAt"] = json!(utc_date(accepted_timestamp));
+            if let Some(frank) = frank {
+                let frank = frank
+                    .tls_serialize_detached()
+                    .map_err(|e| server_fail(METHOD, &e))?;
+                answer["frank"] = json!(URL_SAFE_NO_PAD.encode(frank));
+            }
+            answer["messageIds"] = json!(sent.message_ids);
         }
         SubmitResult::NotAllowed => answer["responseCode"] = json!("notAllowed"),
         SubmitResult::EpochTooOld { current_epoch } => {
@@ -87,9 +104,19 @@ async fn send(
     Ok(answer)
 }
 
+/// What `Room/send` did.
+pub(crate) struct SendOutcome {
+    /// The hub's answer, frank included.
+    pub(crate) result: SubmitResult,
+    /// When the hub accepted: the ids of the Messages stored for the
+    /// message in the account (findings log F18).
+    pub(crate) message_ids: Vec<String>,
+}
+
 /// `Room/send` of the MLSMessage `message` to `room_id` for `caller`, as
 /// both bindings call it (docs/design/binary-live-stream.md §5.10): every
-/// check, the relay, and the hub's SubmitResult, frank included.
+/// check, the relay, the hub's SubmitResult, frank included, and the ids
+/// of the Messages stored for an accepted message.
 ///
 /// # Errors
 ///
@@ -100,7 +127,8 @@ pub(crate) async fn send_core(
     caller: &Account,
     room_id: &str,
     message: &[u8],
-) -> Result<SubmitResult, JmapError> {
+) -> Result<SendOutcome, JmapError> {
+    check_mls_object(METHOD, "message", message)?;
     require_chat(METHOD, store, caller, room_id, true).await?;
     let app_message = MLSMessage::tls_deserialize_exact(message)
         .map_err(|_| invalid(METHOD, "message is not an MLSMessage"))?;
@@ -124,5 +152,19 @@ pub(crate) async fn send_core(
         .map_err(|error| relay_error(METHOD, error))?;
     let response = SubmitMessageResponse::tls_deserialize_exact(&response[..])
         .map_err(|e| server_fail(METHOD, &e))?;
-    Ok(response.result)
+    let message_ids = match response.result {
+        SubmitResult::Accepted { .. } => store
+            .projection_accepted_ids(
+                caller.user().as_str(),
+                room_id,
+                &Sha256::digest(message).into(),
+            )
+            .await
+            .map_err(|e| server_fail(METHOD, &e))?,
+        _ => Vec::new(),
+    };
+    Ok(SendOutcome {
+        result: response.result,
+        message_ids,
+    })
 }

@@ -357,4 +357,61 @@ async fn key_package_changes_are_pushed() {
         state_change(&finished(stream).await)["changed"][&f.account]["KeyPackage"],
         after["state"]
     );
+
+    // findings log F9: KeyPackage/changes names the handed-out KeyPackage
+    // in `destroyed`, and leaves out one created and handed out since.
+    let id = created["created"]["k"]["id"].clone();
+    let (name, changes) = f
+        .call(
+            "KeyPackage/changes",
+            json!({"sinceState": created["newState"]}),
+        )
+        .await;
+    assert_eq!(name, "KeyPackage/changes", "{changes}");
+    assert_eq!(changes["destroyed"], json!([id]), "{changes}");
+    assert_eq!(changes["created"], json!([]));
+    assert_eq!(changes["updated"], json!([]));
+    assert_eq!(changes["newState"], after["state"]);
+    assert_eq!(changes["hasMoreChanges"], false);
+    let (_, whole) = f
+        .call(
+            "KeyPackage/changes",
+            json!({"sinceState": created["oldState"]}),
+        )
+        .await;
+    assert_eq!(
+        (&whole["created"], &whole["destroyed"]),
+        (&json!([]), &json!([])),
+        "{whole}"
+    );
+    // Two more: maxChanges 1 gives an intermediate state.
+    let second = f.create(&key_package(&device, false), json!({})).await;
+    f.create(&key_package(&device, false), json!({})).await;
+    let (_, first) = f
+        .call(
+            "KeyPackage/changes",
+            json!({"sinceState": after["state"], "maxChanges": 1}),
+        )
+        .await;
+    assert_eq!(first["created"], json!([second["created"]["k"]["id"]]));
+    assert_eq!(first["hasMoreChanges"], true);
+    let (_, rest) = f
+        .call(
+            "KeyPackage/changes",
+            json!({"sinceState": first["newState"]}),
+        )
+        .await;
+    assert_eq!(rest["created"].as_array().unwrap().len(), 1, "{rest}");
+    assert_eq!(rest["hasMoreChanges"], false);
+    assert_eq!(rest["newState"], f.get().await["state"]);
+    for bad in ["99999", "x", ""] {
+        let (name, error) = f
+            .call("KeyPackage/changes", json!({"sinceState": bad}))
+            .await;
+        assert_eq!(
+            (name.as_str(), &error["type"]),
+            ("error", &json!("cannotCalculateChanges")),
+            "{bad}"
+        );
+    }
 }

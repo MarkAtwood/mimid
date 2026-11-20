@@ -10,7 +10,8 @@
 //!   the user is not or the room is followed (decisions mimid-1wgh.12.25,
 //!   mimid-1wgh.11.9). `unreadCount` counts every visible Message and
 //!   `lastMessageAt` is the latest visible `receivedAt` (decision
-//!   mimid-1wgh.12.32). Unbinding is invisible on the Chat. `metadata` is
+//!   mimid-1wgh.12.32). `roomBound` is whether the account is a member
+//!   of the room now (findings log F4). `metadata` is
 //!   `{}` and `privateMetadata` the account's own (draft-ietf-jmap-metadata-05;
 //!   [`super::metadata`]): default properties only for a request using
 //!   `urn:ietf:params:jmap:metadata`, which can also filter on them.
@@ -28,11 +29,13 @@
 //!
 //! - Message: `s.m`. `/changes` returns the Messages visible above s, plus
 //!   every visible Message of a membership above m.
-//! - Chat: `s.m.d.p`, where d is 16 hex digits of SHA-256 over the `name`s
-//!   of the account's hosted-room Chats, so it changes whenever one does,
-//!   and p the latest `privateMetadata` write of the account's Chats
-//!   (decision mimid-1wgh.63). A three-part state from before p existed
-//!   gets `cannotCalculateChanges`.
+//! - Chat: `s.m.d.p.u`, where d is 16 hex digits of SHA-256 over the
+//!   `name`s of the account's hosted-room Chats, so it changes whenever
+//!   one does, p the latest `privateMetadata` write of the account's Chats
+//!   (decision mimid-1wgh.63), and u the latest leaving of one of the
+//!   account's rooms, so that unbinding moves it (findings log F15). A
+//!   state of fewer parts, from before p or u existed, gets
+//!   `cannotCalculateChanges`.
 //! - ChatContact: `m`.
 //!
 //! Messages are never updated or destroyed. `/queryChanges` always answers
@@ -43,6 +46,9 @@
 //! - Filters are FilterConditions only: a FilterOperator gets
 //!   `unsupportedFilter` (RFC 8620 §5.5 lets a server refuse a filter it
 //!   cannot process).
+//! - `Message/query` sorts by `receivedAt` (the default) or by `id`, the
+//!   order the Messages were stored in (findings log F2, F12), only by
+//!   the first comparator.
 //! - `Message/query` needs a `chatId` filter; with `hasMention: true` and no
 //!   `chatId` it is `unsupportedFilter` (no cross-chat mention queries).
 //!   `text` and `threadRootId` are `unsupportedFilter` (no full-text search,
@@ -118,6 +124,7 @@ const CHAT_PROPERTIES: &[&str] = &[
     "receiptSharing",
     "messageExpirySeconds",
     "roomId",
+    "roomBound",
     "locale",
     "localizations",
     "metadata",
@@ -320,6 +327,16 @@ fn metadata_seq(chats: &[ChatView]) -> u64 {
         .unwrap_or(0)
 }
 
+/// The latest leaving of `chats`' rooms: the fifth part of the Chat
+/// state (findings log F15).
+fn left_seq(chats: &[ChatView]) -> u64 {
+    chats
+        .iter()
+        .map(|chat| chat.row.last_left)
+        .max()
+        .unwrap_or(0)
+}
+
 impl Projection {
     pub(crate) fn new(store: Store, hub: Arc<Hub>) -> Self {
         Self { store, hub }
@@ -393,7 +410,7 @@ impl Projection {
         account: &Account,
     ) -> Result<(String, BTreeSet<String>), ProjectionError> {
         let (cursor, chats, digest) = self.chats(account).await?;
-        let state = chat_state(cursor, &digest, metadata_seq(&chats));
+        let state = chat_state(cursor, &digest, metadata_seq(&chats), left_seq(&chats));
         Ok((
             state,
             chats.into_iter().map(|chat| chat.row.chat_id).collect(),
@@ -410,7 +427,7 @@ impl Projection {
         Ok(match kind {
             Kind::Chat => {
                 let (cursor, chats, digest) = self.chats(account).await?;
-                chat_state(cursor, &digest, metadata_seq(&chats))
+                chat_state(cursor, &digest, metadata_seq(&chats), left_seq(&chats))
             }
             Kind::Message => message_state(self.store.projection_cursor(user).await?),
             Kind::ChatContact => self.store.projection_hubs(user).await?.0.to_string(),
@@ -447,7 +464,10 @@ impl Projection {
                     .map(|chat| chat_object(chat, i18n))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|error| fail(error.into()))?;
-                (chat_state(cursor, &digest, metadata_seq(&chats)), objects)
+                (
+                    chat_state(cursor, &digest, metadata_seq(&chats), left_seq(&chats)),
+                    objects,
+                )
             }
             Kind::Message => {
                 let unique: Option<Vec<String>> = wanted
@@ -549,6 +569,7 @@ impl Projection {
                 check_filter(&condition, &[("kind", Type::String), ("muted", Type::Bool)])?;
                 let (cursor, chats, digest) = self.chats(account).await?;
                 let seq = metadata_seq(&chats);
+                let left = left_seq(&chats);
                 // Shared metadata is always {} (decision mimid-1wgh.63).
                 let shared = Map::new();
                 let mut chats: Vec<&ChatView> = chats
@@ -572,7 +593,7 @@ impl Projection {
                     .then_with(|| a.row.chat_id.cmp(&b.row.chat_id))
                 });
                 let ids = chats.iter().map(|chat| chat.row.chat_id.clone()).collect();
-                Ok((chat_state(cursor, &digest, seq), ids))
+                Ok((chat_state(cursor, &digest, seq, left), ids))
             }
             Kind::Message => {
                 check_filter(
@@ -607,6 +628,15 @@ impl Projection {
                     || condition.get("hasMention") == Some(&Value::Bool(true));
                 if matches_none {
                     ids.clear();
+                }
+                // findings log F12: sorted by `id`, which follows the order
+                // the Messages were stored in (F2), a client fetches what
+                // followed the last Message it handled with an `anchor`.
+                if comparators
+                    .first()
+                    .is_some_and(|(property, _)| property == "id")
+                {
+                    ids.sort_unstable();
                 }
                 // The store's order is receivedAt ascending, the default.
                 if comparators.first().is_some_and(|(_, ascending)| !ascending) {
@@ -669,16 +699,22 @@ impl Projection {
     ) -> Result<ChangesResult, BackendChangesError<ProjectionError>> {
         let (cursor, chats, digest) = self.chats(account).await?;
         let current_metadata = metadata_seq(&chats);
-        let mut parts = since.splitn(4, '.');
-        let (Some(seq), Some(member), Some(since_digest), Some(since_metadata)) = (
+        let current_left = left_seq(&chats);
+        let mut parts = since.splitn(5, '.');
+        let (Some(seq), Some(member), Some(since_digest), Some(since_metadata), Some(since_left)) = (
             parts.next().and_then(parse_counter),
             parts.next().and_then(parse_counter),
             parts.next(),
             parts.next().and_then(parse_counter),
+            parts.next().and_then(parse_counter),
         ) else {
             return Err(BackendChangesError::CannotCalculate);
         };
-        if seq > cursor.seq || member > cursor.member || since_metadata > current_metadata {
+        if seq > cursor.seq
+            || member > cursor.member
+            || since_metadata > current_metadata
+            || since_left > current_left
+        {
             return Err(BackendChangesError::CannotCalculate);
         }
         let renamed = since_digest != digest;
@@ -690,6 +726,7 @@ impl Projection {
             if row.first_member > member {
                 created.push(Id::from(row.chat_id.as_str()));
             } else if row.last_member > member
+                || row.last_left > since_left
                 || row.last_seq.is_some_and(|last| last > seq)
                 || (renamed && chat.hosted)
             {
@@ -704,7 +741,7 @@ impl Projection {
         changes(
             created,
             updated,
-            chat_state(cursor, &digest, current_metadata),
+            chat_state(cursor, &digest, current_metadata, current_left),
             max_changes,
         )
         .map(|result| result.with_updated_properties(properties))
@@ -788,7 +825,7 @@ impl Projection {
         account: &Account,
     ) -> Result<(String, Vec<ChatEntryView>), ProjectionError> {
         let (cursor, chats, digest) = self.chats(account).await?;
-        let state = chat_state(cursor, &digest, metadata_seq(&chats));
+        let state = chat_state(cursor, &digest, metadata_seq(&chats), left_seq(&chats));
         Ok((
             state,
             chats
@@ -857,9 +894,13 @@ fn changes(
     ))
 }
 
-/// The Chat state `s.m.d.p` (module docs; decision mimid-1wgh.63 item 4).
-fn chat_state(cursor: ProjectionCursor, digest: &str, metadata: u64) -> String {
-    format!("{}.{}.{digest}.{metadata}", cursor.seq, cursor.member)
+/// The Chat state `s.m.d.p.u` (module docs; decision mimid-1wgh.63 item
+/// 4; findings log F15).
+fn chat_state(cursor: ProjectionCursor, digest: &str, metadata: u64, left: u64) -> String {
+    format!(
+        "{}.{}.{digest}.{metadata}.{left}",
+        cursor.seq, cursor.member
+    )
 }
 
 fn message_state(cursor: ProjectionCursor) -> String {
@@ -970,6 +1011,9 @@ fn chat_object(
         "muted": false,
         "receiveTypingIndicators": true,
         "roomId": row.room_id,
+        // findings log F4: server-set, present exactly when roomId is,
+        // which every projected Chat has.
+        "roomBound": row.bound,
         // draft-ietf-jmap-metadata-05 §2; decision mimid-1wgh.63.
         "metadata": {},
         "privateMetadata": chat.private,
@@ -1084,7 +1128,9 @@ fn comparators(
         // Base draft §Chat/query and §Message/query name only a default
         // sort, on these properties.
         Kind::Chat => &["lastMessageAt"],
-        Kind::Message => &["receivedAt"],
+        // findings log F12: and `id`, the order the Messages were stored
+        // in (F2; decision mimid-1wgh.12.31).
+        Kind::Message => &["receivedAt", "id"],
         Kind::ChatContact => &["lastSeenAt", "login", "lastActiveAt"],
     };
     let invalid = |text: &str| BackendQueryError::Method(JmapError::invalid_arguments(text));

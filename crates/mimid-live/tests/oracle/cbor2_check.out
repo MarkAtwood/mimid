@@ -2,6 +2,8 @@ ack-create-consent.hex: ok
   {"t": "Ack", "v": 1, "id": 3, "record": {"room": null, "updated": 1700000000000, "decision": null, "consentId": "cs7", "requested": true, "targetUri": "mimi://e.example/u/erin", "requesterUri": "mimi://a.example/u/alice"}}
 ack-list-chats.hex: ok
   {"t": "Ack", "v": 1, "id": 5, "chats": [{"room": "mimi://a.example/r/x", "bound": true, "chatId": "C1", "accepted": false}], "state": "s1"}
+ack-send-message-ids.hex: ok
+  {"t": "Ack", "v": 1, "id": 301, "acceptedAt": 5, "messageIds": ["M1"]}
 ack-send.hex: ok
   {"t": "Ack", "v": 1, "id": 300, "frank": h'aabb', "acceptedAt": 1700000100123}
 changed.hex: ok
@@ -18,6 +20,8 @@ provider-hello.hex: ok
   {"t": "ProviderHello", "v": 1, "userUri": "mimi://a.example/u/alice", "version": 1, "hubSender": h'01', "cipherSuites": [1], "roomIdPrefix": "mimi://a.example/r/", "storesAssets": true, "acceptedRooms": true, "assetLifetime": 3600, "fetchesAssets": true, "maxKeyPackages": 100, "maxMessageBytes": 16842752, "maxRequestBytes": 4259840}
 send.hex: ok
   {"t": "Send", "v": 1, "id": 300, "room": "mimi://a.example/r/x", "message": h'000102'}
+subscribe-after.hex: ok
+  {"t": "Subscribe", "v": 1, "id": 8, "after": {"C1": "M9"}}
 subscribe.hex: ok
   {"t": "Subscribe", "v": 1, "id": 7, "since": "12.3"}
 update-consent.hex: ok

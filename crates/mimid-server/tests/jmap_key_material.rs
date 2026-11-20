@@ -22,6 +22,8 @@ use axum::http::{Request, StatusCode, header};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use common::{ROOM_ID, domain};
+use mimi_mls::tls_codec::{Deserialize, Serialize};
+use mimi_protocol::{ClientKeyMaterial, KeyMaterialResponse, KeyMaterialUserCode, Protocol};
 use mimid_server::config::BaseUrl;
 use mimid_server::follower::Follower;
 use mimid_server::follower::key_packages::KeyPackages;
@@ -182,6 +184,22 @@ async fn a_local_target_is_served_from_the_key_package_store() {
     assert_eq!(
         clients[0]["keyPackage"],
         URL_SAFE_NO_PAD.encode(&f.zed_key_package)
+    );
+    // findings log F5: the whole KeyMaterialResponse, which says what the
+    // split fields say, protocol included.
+    let whole = URL_SAFE_NO_PAD
+        .decode(response["response"].as_str().unwrap())
+        .unwrap();
+    let decoded = KeyMaterialResponse::tls_deserialize_exact(&whole[..]).unwrap();
+    assert_eq!(decoded.protocol, Protocol::Mls10);
+    assert_eq!(decoded.user_status, KeyMaterialUserCode::Success);
+    assert_eq!(decoded.user_uri.as_str(), ZED);
+    let [ClientKeyMaterial::Success { key_package, .. }] = &decoded.clients[..] else {
+        panic!("{decoded:?}");
+    };
+    assert_eq!(
+        key_package.tls_serialize_detached().unwrap(),
+        f.zed_key_package
     );
 
     // The one-time KeyPackage was handed out: zed is now exhausted.

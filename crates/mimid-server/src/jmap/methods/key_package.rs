@@ -1,5 +1,6 @@
-//! `KeyPackage/get` and `KeyPackage/set` (draft-atwood-jmap-chat-mimi-00
-//! §KeyPackages; bead mimid-1wgh.12.3).
+//! `KeyPackage/get`, `KeyPackage/changes` and `KeyPackage/set`
+//! (draft-atwood-jmap-chat-mimi-00 §KeyPackages; bead mimid-1wgh.12.3;
+//! `/changes` from findings log F9).
 //!
 //! A KeyPackage record is one of the account's stored KeyPackages
 //! ([`KeyPackages`]). Its `id` and `keyPackageRef` are both the unpadded
@@ -8,9 +9,15 @@
 //! `keyPackage` is the unpadded base64url of the KeyPackage as uploaded,
 //! and `lastResort` is derived from it.
 //!
-//! The type's state is a digest of the account's stored KeyPackageRefs, so
-//! it changes when a KeyPackage is created, destroyed, replaced or handed
-//! out to a keyMaterial request.
+//! The type's state is the highest number of the account's rows in the
+//! KeyPackage change log (`key_package_change`, written by triggers on
+//! every store and removal), so it changes when a KeyPackage is created,
+//! destroyed, replaced or handed out to a keyMaterial request.
+//!
+//! `KeyPackage/changes` is standard RFC 8620 §5.2 `/changes` over that
+//! log (findings log F9): a KeyPackage handed out, destroyed or replaced
+//! is in `destroyed`; one stored and removed again since `sinceState` is
+//! left out. With `maxChanges` it returns intermediate states.
 //!
 //! `KeyPackage/set`:
 //!
@@ -26,9 +33,7 @@
 //!
 //! # Limitations
 //!
-//! - There is no `KeyPackage/changes`: a client that sees a new KeyPackage
-//!   state through EventSource (bead mimid-1wgh.12.40) re-reads with
-//!   `KeyPackage/get`.
+//! - The change log keeps every row; nothing prunes it.
 //! - The creates of one call are checked and stored one at a time, not as
 //!   one transaction: an earlier create stays stored if a later one fails.
 
@@ -42,30 +47,42 @@ use jmap_server::{CallContext, HandlerFuture, HandlerOutput, JmapError, JmapHand
 use mimi_mls::tls_codec::Deserialize;
 use mimi_mls::wire::KeyPackage;
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 
 use super::Services;
 use crate::follower::key_packages::{KeyPackageEntry, KeyPackages, UploadError};
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
-use crate::store::InsertOptions;
+use crate::store::{InsertOptions, Store};
 
 /// The properties of a KeyPackage record.
 const PROPERTIES: &[&str] = &["id", "keyPackage", "keyPackageRef", "lastResort"];
 
-/// Registers `KeyPackage/get` and `KeyPackage/set` when the follower holds
-/// the local users' KeyPackages.
+/// Which method a [`Handler`] serves.
+#[derive(Clone, Copy)]
+enum Method {
+    Get,
+    Changes,
+    Set,
+}
+
+/// Registers `KeyPackage/get`, `KeyPackage/changes` and `KeyPackage/set`
+/// when the follower holds the local users' KeyPackages.
 pub(super) fn register(methods: &mut Methods, services: &Services) {
     let Some(key_packages) = services.follower.key_packages() else {
         return;
     };
-    for (method, set) in [("KeyPackage/get", false), ("KeyPackage/set", true)] {
+    for (name, method) in [
+        ("KeyPackage/get", Method::Get),
+        ("KeyPackage/changes", Method::Changes),
+        ("KeyPackage/set", Method::Set),
+    ] {
         methods.add(
-            method,
+            name,
             Arc::new(Handler {
                 key_packages: Arc::clone(key_packages),
+                store: services.store.clone(),
                 max_key_packages: services.max_key_packages,
-                set,
+                method,
             }),
         );
     }
@@ -73,15 +90,17 @@ pub(super) fn register(methods: &mut Methods, services: &Services) {
 
 struct Handler {
     key_packages: Arc<KeyPackages>,
+    store: Store,
     max_key_packages: u64,
-    set: bool,
+    method: Method,
 }
 
 impl JmapHandler<Account> for Handler {
     fn call(&self, cx: CallContext<Account>) -> HandlerFuture {
         let CallContext { args, caller, .. } = cx;
         let key_packages = Arc::clone(&self.key_packages);
-        let (max, set) = (self.max_key_packages, self.set);
+        let store = self.store.clone();
+        let (max, method) = (self.max_key_packages, self.method);
         Box::pin(async move {
             let args = match args {
                 Value::Object(args) => args,
@@ -94,10 +113,15 @@ impl JmapHandler<Account> for Handler {
             caller
                 .check_account_id(&account_id)
                 .map_err(|_| JmapError::account_not_found())?;
-            let primary = if set {
-                set_key_packages(&key_packages, &caller, &account_id, &args, max).await?
-            } else {
-                get_key_packages(&key_packages, &caller, &account_id, &args).await?
+            let primary = match method {
+                Method::Set => {
+                    set_key_packages(&key_packages, &store, &caller, &account_id, &args, max)
+                        .await?
+                }
+                Method::Get => {
+                    get_key_packages(&key_packages, &store, &caller, &account_id, &args).await?
+                }
+                Method::Changes => changes(&store, &caller, &account_id, &args).await?,
             };
             Ok(HandlerOutput::new(primary))
         })
@@ -131,36 +155,65 @@ async fn stored(
 ///
 /// Returns [`crate::store::StoreError`] if the store fails.
 pub(crate) async fn key_package_state(
-    key_packages: &KeyPackages,
+    store: &Store,
     caller: &Account,
 ) -> Result<String, crate::store::StoreError> {
-    Ok(state_of(
-        &key_packages
-            .list_key_packages_with_bytes(caller.user())
-            .await?,
-    ))
+    Ok(store
+        .key_package_modseq(caller.user().as_str())
+        .await?
+        .to_string())
 }
 
-/// The state: a digest of the stored KeyPackageRefs, in order.
-fn state_of(entries: &[(KeyPackageEntry, Vec<u8>)]) -> String {
-    let mut refs: Vec<&[u8]> = entries
-        .iter()
-        .map(|(e, _)| e.reference.as_slice())
-        .collect();
-    refs.sort_unstable();
-    let mut digest = Sha256::new();
-    for reference in refs {
-        digest.update(
-            u32::try_from(reference.len())
-                .unwrap_or(u32::MAX)
-                .to_be_bytes(),
-        );
-        digest.update(reference);
-    }
-    digest.finalize()[..8]
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+/// The state, or `serverFail`.
+async fn state_now(store: &Store, caller: &Account) -> Result<String, JmapError> {
+    key_package_state(store, caller)
+        .await
+        .map_err(|e| server_fail(&e))
+}
+
+/// `KeyPackage/changes` (RFC 8620 §5.2; findings log F9).
+async fn changes(
+    store: &Store,
+    caller: &Account,
+    account_id: &str,
+    args: &Map<String, Value>,
+) -> Result<Value, JmapError> {
+    let Some(Value::String(since)) = args.get("sinceState") else {
+        return Err(JmapError::invalid_arguments("sinceState is required"));
+    };
+    let max_changes = match args.get("maxChanges") {
+        None | Some(Value::Null) => None,
+        Some(value) => match value.as_u64() {
+            Some(max) if max > 0 => Some(max),
+            _ => {
+                return Err(JmapError::invalid_arguments(
+                    "maxChanges must be a positive integer",
+                ));
+            }
+        },
+    };
+    let since_modseq = since
+        .parse::<u64>()
+        .ok()
+        .filter(|_| !since.is_empty() && since.bytes().all(|b| b.is_ascii_digit()))
+        .ok_or_else(JmapError::cannot_calculate_changes)?;
+    let found = store
+        .key_package_changes(caller.user().as_str(), since_modseq, max_changes)
+        .await
+        .map_err(|e| server_fail(&e))?
+        .ok_or_else(JmapError::cannot_calculate_changes)?;
+    let ids = |refs: Vec<Vec<u8>>| -> Vec<String> {
+        refs.iter().map(|r| URL_SAFE_NO_PAD.encode(r)).collect()
+    };
+    Ok(json!({
+        "accountId": account_id,
+        "oldState": since,
+        "newState": found.new_modseq.to_string(),
+        "hasMoreChanges": found.has_more,
+        "created": ids(found.created),
+        "updated": ids(found.updated),
+        "destroyed": ids(found.destroyed),
+    }))
 }
 
 fn object(entry: &KeyPackageEntry, bytes: &[u8]) -> Map<String, Value> {
@@ -184,6 +237,7 @@ fn strings(args: &Map<String, Value>, key: &str) -> Result<Option<Vec<String>>, 
 
 async fn get_key_packages(
     key_packages: &KeyPackages,
+    store: &Store,
     caller: &Account,
     account_id: &str,
     args: &Map<String, Value>,
@@ -199,7 +253,7 @@ async fn get_key_packages(
             "unknown property {unknown}"
         )));
     }
-    let (state, entries) = list(key_packages, caller).await?;
+    let (state, entries) = list(key_packages, store, caller).await?;
     let by_id: BTreeMap<String, Map<String, Value>> = entries
         .iter()
         .map(|(entry, bytes)| {
@@ -306,6 +360,10 @@ pub(crate) async fn create_one(
     claimed: Option<bool>,
     max_key_packages: u64,
 ) -> Result<Result<KeyPackageEntry, Value>, JmapError> {
+    // findings log F10: RFC 8620 §5.3 `tooLarge`.
+    if bytes.len() > crate::jmap::MAX_MLS_OBJECT_SIZE {
+        return Ok(Err(set_error("tooLarge", Some(&["keyPackage"]))));
+    }
     if let (Some(claimed), Some(derived)) = (claimed, derived_last_resort(bytes))
         && claimed != derived
     {
@@ -351,27 +409,32 @@ pub(crate) async fn destroy_one(
 }
 
 /// `KeyPackage/get` of every record, as both bindings call it: the state
-/// and each entry with its bytes.
+/// and each entry with its bytes. The state is read first, so a change
+/// between the two reads comes again from `/changes` rather than being
+/// missed.
 ///
 /// # Errors
 ///
 /// `serverFail` if the store fails.
 pub(crate) async fn list(
     key_packages: &KeyPackages,
+    store: &Store,
     caller: &Account,
 ) -> Result<(String, Vec<(KeyPackageEntry, Vec<u8>)>), JmapError> {
+    let state = state_now(store, caller).await?;
     let entries = stored(key_packages, caller).await?;
-    Ok((state_of(&entries), entries))
+    Ok((state, entries))
 }
 
 async fn set_key_packages(
     key_packages: &KeyPackages,
+    store: &Store,
     caller: &Account,
     account_id: &str,
     args: &Map<String, Value>,
     max_key_packages: u64,
 ) -> Result<Value, JmapError> {
-    let old_state = state_of(&stored(key_packages, caller).await?);
+    let old_state = state_now(store, caller).await?;
     if let Some(expected) = args.get("ifInState")
         && !expected.is_null()
         && expected.as_str() != Some(old_state.as_str())
@@ -428,7 +491,7 @@ async fn set_key_packages(
         }
     }
 
-    let new_state = state_of(&stored(key_packages, caller).await?);
+    let new_state = state_now(store, caller).await?;
     let or_null = |map: Map<String, Value>| {
         if map.is_empty() {
             Value::Null

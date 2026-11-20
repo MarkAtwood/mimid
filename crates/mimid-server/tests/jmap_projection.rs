@@ -18,6 +18,9 @@
 
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
 mod common;
+#[allow(dead_code, reason = "shared helpers; this test binary uses a subset")]
+#[path = "common/notify.rs"]
+mod common_notify;
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
 #[path = "common/update.rs"]
 mod update;
@@ -37,6 +40,7 @@ use mimi_protocol::{IdentifierUri, RichDescription, RoomMetaData, UpdateResult, 
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::follower::Follower;
 use mimid_server::hub::Hub;
+use mimid_server::hub::fanout::LocalDelivery;
 use mimid_server::jmap::{self, JmapOptions};
 use mimid_server::store::{BearerToken, FanoutKind, NewFanout, Store};
 use serde_json::{Value, json};
@@ -316,7 +320,7 @@ async fn objects_match_the_drafts() {
         chats,
         json!({
             "accountId": account,
-            "state": format!("1.1.{NO_NAMES}.0"),
+            "state": format!("1.1.{NO_NAMES}.0.0"),
             "list": [{
                 "id": chat_id,
                 "kind": "group",
@@ -330,6 +334,8 @@ async fn objects_match_the_drafts() {
                 "muted": false,
                 "receiveTypingIndicators": true,
                 "roomId": DEN,
+                // findings log F4.
+                "roomBound": true,
             }],
             "notFound": [],
         })
@@ -398,7 +404,7 @@ async fn objects_match_the_drafts() {
         .await;
     assert_eq!(bob_chats["list"], json!([]));
     assert_eq!(bob_chats["notFound"], json!([chat_id]));
-    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}.0"));
+    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}.0.0"));
     let (_, bob_messages) = f
         .call(
             &f.bob_token,
@@ -454,7 +460,7 @@ async fn a_join_below_the_state_is_reported() {
     let changes = f
         .alice(
             "Chat/changes",
-            json!({"accountId": f.alice_id, "sinceState": format!("{later}.1.{NO_NAMES}.0")}),
+            json!({"accountId": f.alice_id, "sinceState": format!("{later}.1.{NO_NAMES}.0.0")}),
         )
         .await;
     assert_eq!(
@@ -613,7 +619,7 @@ async fn changes_report_new_chats_messages_and_contacts() {
     let chats = f
         .alice(
             "Chat/changes",
-            json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}.0")}),
+            json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}.0.0")}),
         )
         .await;
     assert_eq!(changed(&chats), (vec![chat_id.clone()], vec![]));
@@ -631,7 +637,7 @@ async fn changes_report_new_chats_messages_and_contacts() {
     f.join(LOFT, ALICE, 1, JOINED).await;
     f.alice_error(
         "Chat/changes",
-        json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}.0"), "maxChanges": 1}),
+        json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}.0.0"), "maxChanges": 1}),
         "cannotCalculateChanges",
     )
     .await;
@@ -1247,7 +1253,7 @@ async fn chat_private_metadata_follows_draft_ietf_jmap_metadata_05() {
     assert_eq!(before["list"][0]["metadata"], json!({}));
     assert_eq!(before["list"][0]["privateMetadata"], json!({}));
     let state = before["state"].as_str().unwrap().to_owned();
-    assert_eq!(state, format!("1.1.{NO_NAMES}.0"));
+    assert_eq!(state, format!("1.1.{NO_NAMES}.0.0"));
 
     // §3.2: a namespace patch.
     let set = f.meta(
@@ -1261,7 +1267,7 @@ async fn chat_private_metadata_follows_draft_ietf_jmap_metadata_05() {
     assert_eq!(set["notUpdated"], Value::Null);
     assert_eq!(set["oldState"], state);
     let after = set["newState"].as_str().unwrap().to_owned();
-    assert_eq!(after, format!("1.1.{NO_NAMES}.1"));
+    assert_eq!(after, format!("1.1.{NO_NAMES}.1.0"));
 
     // A deeper path, and a second namespace.
     let set = f
@@ -1361,13 +1367,17 @@ async fn chat_private_metadata_follows_draft_ietf_jmap_metadata_05() {
         .await;
     assert_eq!(mixed["updated"], json!([chat_id.clone()]));
     assert_eq!(mixed["updatedProperties"], Value::Null);
-    // A three-part state from before privateMetadata cannot be followed.
-    f.alice_error(
-        "Chat/changes",
-        json!({"accountId": account, "sinceState": format!("1.1.{NO_NAMES}")}),
-        "cannotCalculateChanges",
-    )
-    .await;
+    // A three-part state from before privateMetadata, and a four-part one
+    // from before the leaving counter (findings log F15), cannot be
+    // followed.
+    for old in [format!("1.1.{NO_NAMES}"), format!("1.1.{NO_NAMES}.1")] {
+        f.alice_error(
+            "Chat/changes",
+            json!({"accountId": account, "sinceState": old}),
+            "cannotCalculateChanges",
+        )
+        .await;
+    }
 
     // §3.6 filter conditions.
     for (filter, expected) in [
@@ -1517,7 +1527,7 @@ async fn chat_private_metadata_follows_draft_ietf_jmap_metadata_05() {
             json!({"accountId": f.bob_id, "ids": []}),
         )
         .await;
-    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}.0"));
+    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}.0.0"));
     f.close().await;
 }
 
@@ -1975,6 +1985,62 @@ async fn a_chat_change_is_pushed_as_a_state_event() {
     assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
     let anonymous = eventsource(&f, None, "types=*&closeafter=no&ping=0").await;
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    f.close().await;
+}
+
+/// findings log F16: a StateChange for Message is sent only once
+/// Message/changes from the earlier state returns the new Message. The
+/// state the event announces is the one `Message/changes` reaches, and
+/// the Message is among its `created`.
+#[tokio::test]
+async fn a_pushed_message_state_already_shows_the_message() {
+    let f = fixture().await;
+    let since = f.store.follower_next_seq().await.unwrap();
+    f.join(common::ROOM_ID, ALICE, since, JOINED).await;
+    let account = f.alice_id.clone();
+    let before = f
+        .alice("Message/get", json!({"accountId": account, "ids": []}))
+        .await;
+    let response = eventsource(
+        &f,
+        Some(&f.alice_token),
+        "types=Message&closeafter=state&ping=0",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = tokio::spawn(to_bytes(response.into_body(), usize::MAX));
+    // Let the stream subscribe and read its first states.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    f.follower
+        .deliver(
+            common::ROOM_ID,
+            &common_notify::application_fanout(common_notify::T2, common_notify::APPLICATION_1),
+        )
+        .await
+        .unwrap();
+    let body = tokio::time::timeout(std::time::Duration::from_secs(10), body)
+        .await
+        .expect("closeafter=state ends the stream")
+        .unwrap()
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    let data = text
+        .lines()
+        .skip_while(|line| *line != "event: state")
+        .nth(1)
+        .and_then(|line| line.strip_prefix("data: "))
+        .unwrap_or_else(|| panic!("no state event in {text:?}"));
+    let change: Value = serde_json::from_str(data).unwrap();
+    let announced = &change["changed"][&account]["Message"];
+    assert_ne!(*announced, before["state"]);
+    let changes = f
+        .alice(
+            "Message/changes",
+            json!({"accountId": account, "sinceState": before["state"]}),
+        )
+        .await;
+    assert_eq!(changes["newState"], *announced, "{changes}");
+    assert_eq!(changes["created"].as_array().unwrap().len(), 1, "{changes}");
     f.close().await;
 }
 

@@ -32,6 +32,13 @@
 //! member. An echo, from the mimid hub (which echoes) or after a failover,
 //! is absorbed by the inner-message rule.
 //!
+//! A relayed SubmitMessage or update the hub accepted is recorded with the
+//! hub's response ([`Store::record_accepted`]), and the same bytes from the
+//! same user for the same room are answered from that record without
+//! reaching the hub again (draft-atwood-jmap-chat-mimi-00 §Room/send,
+//! §Room/update; findings log F11), so a client that lost the answer can
+//! send again safely.
+//!
 //! # Limitations
 //!
 //! - Received consent entries are stored, not enforced
@@ -88,12 +95,13 @@ use mimi_protocol::{
     FanoutEvent, FanoutMessage, HandshakeBundle, KeyMaterialRequest, SubmitMessageRequest,
     SubmitMessageResponse, SubmitResult, UpdateRequest, UpdateResult, UpdateRoomResponse,
 };
+use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
 use crate::config::Domain;
 use crate::hub::Clock;
 use crate::peer::PeerClient;
-use crate::store::{FollowerEvent, Store, StoreError};
+use crate::store::{AcceptedKind, FollowerEvent, Store, StoreError};
 use key_packages::{KeyMaterialError, KeyPackages};
 use relay::{LocalUser, Relay, RelayError};
 
@@ -226,9 +234,14 @@ impl Follower {
     /// relay, [`FollowerError::Relay`] if relaying fails, and the errors of
     /// storing the FanoutMessage, among them [`FollowerError::Store`] and
     /// [`FollowerError::TimestampOutOfRange`]. If storing fails after the
-    /// hub accepted, the caller retries; the hub answers a retry with the
-    /// same response, and a FanoutMessage already stored is not stored
+    /// hub accepted, the caller retries; the retry is answered from the
+    /// record below, and a FanoutMessage already stored is not stored
     /// again.
+    ///
+    /// A request the hub accepted is recorded; the same `request` from
+    /// `user` for `room_id` again gets the recorded response without
+    /// being relayed (findings log F11), and its FanoutMessage and the
+    /// membership are stored again if an earlier attempt stopped before.
     pub async fn relay_update(
         &self,
         user: &LocalUser,
@@ -236,16 +249,43 @@ impl Follower {
         request: &[u8],
     ) -> Result<Vec<u8>, FollowerError> {
         let relay = self.relay()?;
+        let hash: [u8; 32] = Sha256::digest(request).into();
         // Taken before sending, so that fanout racing the response, such
         // as the echo of the user's own Commit, stays visible.
         let since_seq = self.store.follower_next_seq().await?;
-        let response = relay
-            .relay_update(user, room_id, request)
-            .await
-            .map_err(FollowerError::Relay)?;
+        let response = match self
+            .store
+            .accepted_response(
+                user.as_str(),
+                room_id,
+                AcceptedKind::Update,
+                &hash,
+                self.clock.now_ms(),
+            )
+            .await?
+        {
+            Some(response) => {
+                tracing::debug!(room_id, "an accepted update is answered again");
+                response
+            }
+            None => relay
+                .relay_update(user, room_id, request)
+                .await
+                .map_err(FollowerError::Relay)?,
+        };
         let decoded = UpdateRoomResponse::tls_deserialize_exact(&response)
             .map_err(|error| FollowerError::Relay(RelayError::InvalidResponse(error)))?;
         if let UpdateResult::Success { accepted_timestamp } = decoded.result {
+            self.store
+                .record_accepted(
+                    user.as_str(),
+                    room_id,
+                    AcceptedKind::Update,
+                    &hash,
+                    &response,
+                    self.clock.now_ms(),
+                )
+                .await?;
             // The relay decoded the request already.
             let request = UpdateRequest::tls_deserialize_exact(request)
                 .map_err(FollowerError::InvalidRequest)?;
@@ -292,7 +332,9 @@ impl Follower {
     /// `SubmitMessageResponse` as received. If the hub accepted the
     /// message, its FanoutMessage is stored in the room's log, with
     /// `accepted_timestamp` as its `timestamp` and the response's `frank`
-    /// (decision mimid-1wgh.7.30).
+    /// (decision mimid-1wgh.7.30). As for [`Follower::relay_update`], an
+    /// accepted request is recorded and the same bytes again are answered
+    /// from the record (findings log F11).
     ///
     /// # Errors
     ///
@@ -306,11 +348,28 @@ impl Follower {
         room_id: &str,
         request: &[u8],
     ) -> Result<Vec<u8>, FollowerError> {
-        let response = self
-            .relay()?
-            .relay_submit_message(user, room_id, request)
-            .await
-            .map_err(FollowerError::Relay)?;
+        let relay = self.relay()?;
+        let hash: [u8; 32] = Sha256::digest(request).into();
+        let response = match self
+            .store
+            .accepted_response(
+                user.as_str(),
+                room_id,
+                AcceptedKind::Send,
+                &hash,
+                self.clock.now_ms(),
+            )
+            .await?
+        {
+            Some(response) => {
+                tracing::debug!(room_id, "an accepted message is answered again");
+                response
+            }
+            None => relay
+                .relay_submit_message(user, room_id, request)
+                .await
+                .map_err(FollowerError::Relay)?,
+        };
         let decoded = SubmitMessageResponse::tls_deserialize_exact(&response)
             .map_err(|error| FollowerError::Relay(RelayError::InvalidResponse(error)))?;
         if let SubmitResult::Accepted {
@@ -318,6 +377,16 @@ impl Follower {
             frank,
         } = decoded.result
         {
+            self.store
+                .record_accepted(
+                    user.as_str(),
+                    room_id,
+                    AcceptedKind::Send,
+                    &hash,
+                    &response,
+                    self.clock.now_ms(),
+                )
+                .await?;
             // The relay decoded the request already.
             let request = SubmitMessageRequest::tls_deserialize_exact(request)
                 .map_err(FollowerError::InvalidRequest)?;

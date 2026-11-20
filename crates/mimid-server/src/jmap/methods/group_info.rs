@@ -87,6 +87,7 @@ pub(crate) async fn fetch_core(
     room_id: &str,
     request: &[u8],
 ) -> Result<(GroupInfoCode, Vec<u8>), JmapError> {
+    super::room_common::check_mls_object("GroupInfo/fetch", "request", request)?;
     // Any room the client names: the room's hub decides by its policy
     // whether to answer (bead mimid-1wgh.12.46). The relay checks that the
     // request's credential is the account's user.

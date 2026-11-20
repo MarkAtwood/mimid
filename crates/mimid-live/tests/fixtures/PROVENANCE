@@ -22,6 +22,7 @@
 # SHA-256:
 #   524bf9ce6d4fa7b95f2232a7c3ab19e411d55e24793250d07c3dfcf4bca97280  ack-create-consent.hex
 #   3a900cbb860b356b77ffb14a282eb238c137f5f0ed84e0bc002b5c47c5ec6a91  ack-list-chats.hex
+#   3bfb19aaa8534831c8d1216e42adc665a035b44bbd893c58fca3356ed3e4ef1c  ack-send-message-ids.hex
 #   0332d9730ff9c136b7a22e6ac3ee984104b82653be50828aff656439d41f3bc7  ack-send.hex
 #   4448603244533eaeeb8fab9f398b95123952a414398402de2a2b41b66bdcac4d  changed.hex
 #   9df82e52bee56e89af8db01e7f544a592d069d0a4ff8e0dfd3cd65e0bfa307e5  client-hello.hex
@@ -30,7 +31,8 @@
 #   6abc6478184f90b1449c3d54acb43e5d5b82cf0a7ce21a7e201df248a4f8d966  position-unknown-member.hex
 #   12eae7287aa0b802731320434c6020f4516ec51e4374fc70486bc587bbbab3af  provider-hello.hex
 #   ff60363aa1b6173cd384a4affa94a775f5c8b1f29eaf32d45869b83bcfe52c46  send.hex
+#   020ab711749650cd7cf81c6cc40e75633b2e1582113d60ae7506864d29437ddc  subscribe-after.hex
 #   226ac5ca7a09d81db7f808c0da2d0aae586b7dd98ecb52927177cc9c060bde21  subscribe.hex
 #   238142743658b9ad51d79d3b5bcffcec0a5c8a14968669a7d9715fc45e381c4d  update-consent.hex
 #   03c559c084749c2f31a9c584e740fc646fd0e94e450a683b58c91edade53b125  oracle/cbor2_check.py
-#   851f189ee1aee1efdb3df375aaebe6ccc42e2dd85cce0e8b0ae513b672e00ffa  oracle/cbor2_check.out
+#   808192e56a9d9432907212856b1740df3ff2e45e6a5e33cbb491fbec13bd694f  oracle/cbor2_check.out

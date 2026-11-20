@@ -447,7 +447,10 @@ async fn a_membership_change_while_subscribed() {
     let subscribe = ClientMessage::Request(Request {
         v: 1,
         id: 1,
-        op: Op::Subscribe { since: None },
+        op: Op::Subscribe {
+            since: None,
+            after: None,
+        },
         extra: Vec::new(),
     });
     socket

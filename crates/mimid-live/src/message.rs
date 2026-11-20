@@ -1,6 +1,8 @@
 //! The messages of version 1 (docs/design/binary-live-stream.md §5.11,
 //! whose CDDL each type mirrors; decision mimid-1wgh.77).
 
+use std::collections::BTreeMap;
+
 use crate::cbor::{self, Value};
 use crate::fields::{Extra, Fields, Writer, as_bytes, as_text, as_uint};
 use crate::{DecodeError, FrameError, VERSION};
@@ -55,6 +57,12 @@ pub enum Op {
     Subscribe {
         /// A Message state; `None` for every stored Message.
         since: Option<String>,
+        /// Without `since`: per Chat id, the id of the last Message the
+        /// client handled in that Chat, so that only the Messages after
+        /// it are replayed for that Chat (findings log F12, the stream's
+        /// `Message/query` sorted by `id` with an `anchor`). A Chat not
+        /// named is replayed whole.
+        after: Option<BTreeMap<String, String>>,
     },
     /// `Send`: Room/send.
     Send {
@@ -290,6 +298,7 @@ impl Op {
         Ok(match kind {
             OpKind::Subscribe => Self::Subscribe {
                 since: f.opt_text("since")?,
+                after: f.opt_value("after").map(text_map).transpose()?,
             },
             OpKind::Send => Self::Send {
                 room: f.text("room")?,
@@ -361,8 +370,19 @@ impl Op {
 
     fn write(&self, w: &mut Writer) {
         match self {
-            Self::Subscribe { since } => {
+            Self::Subscribe { since, after } => {
                 w.opt_text("since", since.as_deref());
+                if let Some(after) = after {
+                    w.put(
+                        "after",
+                        Value::Map(
+                            after
+                                .iter()
+                                .map(|(k, v)| (Value::Text(k.clone()), Value::Text(v.clone())))
+                                .collect(),
+                        ),
+                    );
+                }
             }
             Self::Send { room, message } => {
                 w.text("room", room).bytes("message", message);
@@ -579,6 +599,9 @@ pub struct ProviderHello {
     pub max_message_bytes: u64,
     /// The largest request but `Upload`.
     pub max_request_bytes: u64,
+    /// `maxMlsObjectSize`: the largest MLS or MIMI structure any request
+    /// carries (findings log F10), the account capability's.
+    pub max_mls_object_size: Option<u64>,
     /// Whether `Upload` stores blobs at an unauthenticated URL (`assetUrl`).
     pub stores_assets: bool,
     /// `assetLifetime`, seconds.
@@ -619,6 +642,9 @@ pub enum AckResult {
         accepted_at: u64,
         /// The hub's Frank, TLS-encoded.
         frank: Option<Vec<u8>>,
+        /// `messageIds`: the Messages stored for it in the account
+        /// (findings log F18).
+        message_ids: Option<Vec<String>>,
     },
     /// `Update`.
     Update {
@@ -626,6 +652,9 @@ pub enum AckResult {
         accepted_at: u64,
         /// The hub's `errorDescription`, when not empty.
         error_description: Option<String>,
+        /// `messageIds`: the Messages stored for the handshake in the
+        /// account (findings log F18).
+        message_ids: Option<Vec<String>>,
     },
     /// `CreateRoom`.
     CreateRoom {
@@ -825,6 +854,21 @@ fn texts(key: &'static str, items: Vec<Value>) -> Result<Vec<String>, DecodeErro
     items.into_iter().map(|v| as_text(key, v)).collect()
 }
 
+/// A map of text to text (`{ * tstr => tstr }`).
+fn text_map(value: Value) -> Result<BTreeMap<String, String>, DecodeError> {
+    let Value::Map(pairs) = value else {
+        return Err(DecodeError::WrongType("after"));
+    };
+    pairs
+        .into_iter()
+        .map(|(k, v)| Ok((as_text("after", k)?, as_text("after", v)?)))
+        .collect()
+}
+
+fn opt_texts(f: &mut Fields, key: &'static str) -> Result<Option<Vec<String>>, DecodeError> {
+    f.opt_array(key)?.map(|items| texts(key, items)).transpose()
+}
+
 fn text_array(items: &[String]) -> Value {
     Value::Array(items.iter().map(|t| Value::Text(t.clone())).collect())
 }
@@ -934,10 +978,12 @@ impl AckResult {
             OpKind::Send => Self::Send {
                 accepted_at: f.uint("acceptedAt")?,
                 frank: f.opt_bytes("frank")?,
+                message_ids: opt_texts(f, "messageIds")?,
             },
             OpKind::Update => Self::Update {
                 accepted_at: f.uint("acceptedAt")?,
                 error_description: f.opt_text("errorDescription")?,
+                message_ids: opt_texts(f, "messageIds")?,
             },
             OpKind::CreateRoom => Self::CreateRoom {
                 chat_id: f.text("chatId")?,
@@ -993,16 +1039,27 @@ impl AckResult {
             Self::Subscribe { state } => {
                 w.text("state", state);
             }
-            Self::Send { accepted_at, frank } => {
+            Self::Send {
+                accepted_at,
+                frank,
+                message_ids,
+            } => {
                 w.uint("acceptedAt", *accepted_at)
                     .opt_bytes("frank", frank.as_deref());
+                if let Some(ids) = message_ids {
+                    w.put("messageIds", text_array(ids));
+                }
             }
             Self::Update {
                 accepted_at,
                 error_description,
+                message_ids,
             } => {
                 w.uint("acceptedAt", *accepted_at)
                     .opt_text("errorDescription", error_description.as_deref());
+                if let Some(ids) = message_ids {
+                    w.put("messageIds", text_array(ids));
+                }
             }
             Self::CreateRoom { chat_id } => {
                 w.text("chatId", chat_id);
@@ -1088,6 +1145,7 @@ impl ProviderMessage {
                     max_key_packages: f.uint("maxKeyPackages")?,
                     max_message_bytes: f.uint("maxMessageBytes")?,
                     max_request_bytes: f.uint("maxRequestBytes")?,
+                    max_mls_object_size: f.opt_uint("maxMlsObjectSize")?,
                     stores_assets: f.bool("storesAssets")?,
                     asset_lifetime: f.opt_uint("assetLifetime")?,
                     fetches_assets: f.bool("fetchesAssets")?,
@@ -1201,6 +1259,7 @@ impl ProviderMessage {
                     .uint("maxKeyPackages", h.max_key_packages)
                     .uint("maxMessageBytes", h.max_message_bytes)
                     .uint("maxRequestBytes", h.max_request_bytes)
+                    .opt_uint("maxMlsObjectSize", h.max_mls_object_size)
                     .bool("storesAssets", h.stores_assets)
                     .opt_uint("assetLifetime", h.asset_lifetime)
                     .bool("fetchesAssets", h.fetches_assets)

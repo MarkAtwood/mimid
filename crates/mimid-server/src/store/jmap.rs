@@ -347,6 +347,9 @@ pub struct ChatRow {
     pub last_member: u64,
     /// Whether the user is a member of the room now.
     pub bound: bool,
+    /// The leaving number of the user's latest leaving of the room, or 0
+    /// (findings log F15).
+    pub last_left: u64,
     /// The Chat's privateMetadata as stored JSON text, if it was ever
     /// written (draft-ietf-jmap-metadata-05 §2; decision mimid-1wgh.63).
     pub private_metadata: Option<String>,
@@ -495,6 +498,7 @@ impl Store {
             i64,
             i64,
             bool,
+            Option<i64>,
             Option<String>,
             Option<i64>,
         );
@@ -514,6 +518,8 @@ impl Store {
                  WHERE n.user_uri = ?1 AND n.room_id = c.room_id), \
                EXISTS (SELECT 1 FROM follower_member n \
                  WHERE n.user_uri = ?1 AND n.room_id = c.room_id AND n.left_at IS NULL), \
+               (SELECT MAX(n.left_mod) FROM follower_member n \
+                 WHERE n.user_uri = ?1 AND n.room_id = c.room_id), \
                m.value, m.modseq \
              FROM follower_chat c JOIN follower_room r ON r.room_id = c.room_id \
              LEFT JOIN chat_private_metadata m ON m.chat_id = c.chat_id \
@@ -537,6 +543,7 @@ impl Store {
                     first,
                     last,
                     bound,
+                    last_left,
                     private_metadata,
                     modseq,
                 )| {
@@ -551,6 +558,7 @@ impl Store {
                         first_member: from_sql_int(first)?,
                         last_member: from_sql_int(last)?,
                         bound,
+                        last_left: last_left.map(from_sql_int).transpose()?.unwrap_or(0),
                         private_metadata,
                         metadata_modseq: modseq.map(from_sql_int).transpose()?.unwrap_or(0),
                     })
@@ -694,6 +702,35 @@ impl Store {
         .await?;
         tx.commit().await?;
         Ok((at, ids))
+    }
+
+    /// The ids of the Messages `user_uri` may see in the room `room_id`
+    /// whose FanoutMessage carries the MLSMessage with SHA-256
+    /// `message_hash`: the user's own accepted message or handshake as
+    /// stored (draft-atwood-jmap-chat-mimi-00 §Room/send, §Room/update;
+    /// findings log F18). A room stores one such Message at most (decision
+    /// mimid-1wgh.7.30), so there is at most one id.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlx`] if the query fails.
+    pub async fn projection_accepted_ids(
+        &self,
+        user_uri: &str,
+        room_id: &str,
+        message_hash: &[u8; 32],
+    ) -> Result<Vec<String>, StoreError> {
+        Ok(sqlx::query_scalar(concat!(
+            "SELECT e.message_id FROM follower_event e \
+             WHERE e.room_id = ?2 AND e.message_hash = ?3 AND ",
+            visible!(),
+            " ORDER BY e.seq"
+        ))
+        .bind(user_uri)
+        .bind(room_id)
+        .bind(&message_hash[..])
+        .fetch_all(&self.reader)
+        .await?)
     }
 
     /// The Messages that became visible to `user_uri` since `since`, at

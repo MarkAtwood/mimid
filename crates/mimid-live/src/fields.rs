@@ -104,6 +104,11 @@ impl Fields {
         }
     }
 
+    /// A member of any type, if present.
+    pub(crate) fn opt_value(&mut self, key: &'static str) -> Option<Value> {
+        self.take(key)
+    }
+
     /// A member of any type.
     pub(crate) fn take_value(&mut self, key: &'static str) -> Result<Value, DecodeError> {
         self.need(key)

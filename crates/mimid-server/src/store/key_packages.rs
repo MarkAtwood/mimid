@@ -369,6 +369,116 @@ impl Store {
     }
 }
 
+/// What [`Store::key_package_changes`] found (findings log F9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyPackageChanges {
+    /// KeyPackageRefs stored since, and still stored.
+    pub created: Vec<Vec<u8>>,
+    /// KeyPackageRefs removed and stored again since.
+    pub updated: Vec<Vec<u8>>,
+    /// KeyPackageRefs stored before and removed since: destroyed, replaced
+    /// or handed out to a keyMaterial request.
+    pub destroyed: Vec<Vec<u8>>,
+    /// The change-log number the client is at after these changes.
+    pub new_modseq: u64,
+    /// Whether more changes follow `new_modseq`.
+    pub has_more: bool,
+}
+
+impl Store {
+    /// `user_uri`'s KeyPackage state: the highest number of the change
+    /// log among the user's rows, or 0 (findings log F9).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails.
+    pub async fn key_package_modseq(&self, user_uri: &str) -> Result<u64, StoreError> {
+        let modseq: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(modseq), 0) FROM key_package_change WHERE user_uri = ?",
+        )
+        .bind(user_uri)
+        .fetch_one(&self.reader)
+        .await?;
+        from_sql_int(modseq)
+    }
+
+    /// The changes to `user_uri`'s KeyPackages after the change-log number
+    /// `since` (findings log F9), at most `max_changes` KeyPackageRefs of
+    /// them; `None` if `since` is ahead of the user's state. A KeyPackage
+    /// stored and removed again since is left out.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails, and
+    /// [`StoreError::OutOfRange`] if `since` does not fit SQLite.
+    pub async fn key_package_changes(
+        &self,
+        user_uri: &str,
+        since: u64,
+        max_changes: Option<u64>,
+    ) -> Result<Option<KeyPackageChanges>, StoreError> {
+        let mut tx = self.reader.begin().await?;
+        let current: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(modseq), 0) FROM key_package_change WHERE user_uri = ?",
+        )
+        .bind(user_uri)
+        .fetch_one(&mut *tx)
+        .await?;
+        let current = from_sql_int(current)?;
+        if since > current {
+            return Ok(None);
+        }
+        let rows: Vec<(i64, Vec<u8>, bool)> = sqlx::query_as(
+            "SELECT modseq, ref, destroyed FROM key_package_change \
+             WHERE user_uri = ? AND modseq > ? ORDER BY modseq",
+        )
+        .bind(user_uri)
+        .bind(to_sql_int(since)?)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        // Per ref: whether it was stored at `since` (its first change is a
+        // removal) and whether it is stored now (its last change is not).
+        let mut order: Vec<Vec<u8>> = Vec::new();
+        let mut seen: std::collections::BTreeMap<Vec<u8>, (bool, bool)> =
+            std::collections::BTreeMap::new();
+        let mut new_modseq = since;
+        let mut has_more = false;
+        for (modseq, reference, destroyed) in rows {
+            if !seen.contains_key(&reference) {
+                if max_changes.is_some_and(|max| order.len() as u64 >= max) {
+                    has_more = true;
+                    break;
+                }
+                order.push(reference.clone());
+                seen.insert(reference.clone(), (destroyed, !destroyed));
+            } else if let Some(entry) = seen.get_mut(&reference) {
+                entry.1 = !destroyed;
+            }
+            new_modseq = from_sql_int(modseq)?;
+        }
+        if !has_more {
+            new_modseq = current;
+        }
+        let mut changes = KeyPackageChanges {
+            created: Vec::new(),
+            updated: Vec::new(),
+            destroyed: Vec::new(),
+            new_modseq,
+            has_more,
+        };
+        for reference in order {
+            match seen.get(&reference) {
+                Some((false, true)) => changes.created.push(reference),
+                Some((true, true)) => changes.updated.push(reference),
+                Some((true, false)) => changes.destroyed.push(reference),
+                _ => {}
+            }
+        }
+        Ok(Some(changes))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
