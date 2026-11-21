@@ -1,0 +1,22 @@
+{
+  "id": "mimid-kiy1.8",
+  "title": "Bridge step 8: attachments and expiry",
+  "description": "Attachments both ways through media_dir and the store's blob store; absolute expiry as scheduled deletes; retention from the link; refuse read rules with a notice (decision 4). See docs/design/marmot-bridge.md (branch bridge-decisions, 1c2b6eba) §5, §9 step 8.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:21:02.3126555Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:21:02.3126555Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-kiy1.8",
+      "depends_on_id": "mimid-kiy1",
+      "type": "parent-child",
+      "created_at": "2026-11-21T21:21:02.355152756Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
