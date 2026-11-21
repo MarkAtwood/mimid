@@ -1,3 +1,4 @@
 {"id":"01a1fa51-cf90-7469-9fc0-c703559808ad","issue_id":"mimid-vegk","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-20T18:57:07.984290184Z"}
 {"id":"01a1fa51-cf97-7c58-9ca0-02f91c4a6b9e","issue_id":"mimid-vegk","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-20T18:57:07.991810999Z"}
 {"id":"01a1fa51-cf9a-7774-a6b0-024a08973d33","issue_id":"mimid-vegk","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: irc","created_at":"2026-11-20T18:57:07.994489401Z"}
+{"id":"01a1fc0a-d43f-7eac-a6ae-db93d83c99ff","issue_id":"mimid-vegk","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Checked with irssi 1.4.3 driven via tmux (a712980, docs/irc-lessons.md). WeeChat/HexChat not tried; findings filed.","created_at":"2026-11-21T02:58:50.55996289Z"}
