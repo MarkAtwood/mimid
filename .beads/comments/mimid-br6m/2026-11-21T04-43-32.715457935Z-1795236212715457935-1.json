@@ -1,0 +1,7 @@
+{
+  "id": "1795236212715457935-1",
+  "issue_id": "mimid-br6m",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-21: option (a): invite under the room's real channel name (INVITE nick #name, JOIN #name accepts), name read from the staged Welcome before joining; \u0026invite-N only as fallback.",
+  "created_at": "2026-11-21T04:43:32.715457935Z"
+}
