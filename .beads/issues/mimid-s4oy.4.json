@@ -1,0 +1,26 @@
+{
+  "id": "mimid-s4oy.4",
+  "title": "purple-mimi 4: skeleton plugin",
+  "description": "Build system, plugin registration, account options, connect/disconnect to mimid via the chosen protocol (step 2), CI. Separate repo MarkAtwood/purple-mimi unless step 2 says otherwise.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:31:43.405263454Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:31:43.405263454Z",
+  "labels": [
+    "client",
+    "purple"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-s4oy.4",
+      "depends_on_id": "mimid-s4oy",
+      "type": "parent-child",
+      "created_at": "2026-11-21T21:31:43.469721505Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
