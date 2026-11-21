@@ -16,8 +16,7 @@ and in which of two shapes:
   gateway below unless the section says otherwise.
 
 The Nostr and White Noise case is covered by nostr-comparison.md and by
-marmot-bridge.md (branch `marmot-bridge-note`, not on main yet). This
-note does not redo it. Its relay-mode bridge is the nearest thing in
+marmot-bridge.md. This note does not redo it. Its relay-mode bridge is the nearest thing in
 mimid to a gateway, and §8 builds on it.
 
 Values and sizes marked *estimate* are mine. Sizes compare with what
@@ -616,9 +615,12 @@ bridges someone asks for.
    friction). Recommendation: Matrix, without Element X at first.
 6. **Gateways and the multi-user host.** Should mimid grow a host that
    runs many virtual users, which XMPP and Matrix gateways and
-   Marmot's puppet mode all need? Recommendation: not before the
-   Marmot relay bridge has been used; then design the host once, for
-   XMPP first.
+   Marmot's puppet mode all need? Recommendation (superseded by S6
+   below): not before the Marmot relay bridge has been used; then
+   design the host once, for XMPP first. Mark decided to design it once
+   now, in marmot-bridge.md's puppet-mode section (§3.3.6), shaped so
+   an XMPP gateway fits, and to build it after relay mode works
+   (marmot-bridge.md §3.3.7, §9 step 13).
 7. **Marking gatewayed members.** A gateway's virtual users look like
    any MIMI user, though their messages are not end to end.
    Recommendation: take it to #mimi together with N7 (on-behalf-of) as
@@ -644,9 +646,9 @@ mimid-rvqk (Matrix), mimid-wmdj (XMPP), mimid-qqtk (store groundwork).
   off switch.
 - **S5. Both second front ends:** Matrix first (without Element X at
   first), then XMPP.
-- **S6. The multi-user host:** design it once (the bridge's puppet
-  mode, shaped so an XMPP gateway fits), and build it after the bridge's
-  relay mode.
+- **S6. The multi-user host:** design it once now, in the bridge's
+  puppet-mode section (marmot-bridge.md §3.3.6, shaped so an XMPP
+  gateway fits), and build it after the bridge's relay mode works.
 - **S7. Marking gatewayed members:** raise gateway-held leaves with the
   working group together with onBehalfOf. The draft goes to Mark first.
 
