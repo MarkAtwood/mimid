@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.87",
+  "title": "Decision: one-to-one rooms are ordinary unnamed rooms of two, flagged direct locally; not room-policy-04 fixed_membership (agent choice, epic mimid-qqtk)",
+  "description": "Mark S2 (client-survey.md §10): a store-level direct flag. room-policy-04 §5 names fixed_membership rooms as the DM style (participants set at creation, no canAddParticipant on non-zero roles, ordinary users cannot leave, one such room per set of participants). Not used: mimid hosts a room then invites (participants are not set at creation), agent-frontends.md §7.1 makes PART a real leave, and the hub would need the uniqueness rule. Chosen: Store::open_direct hosts an unnamed room (HostOptions::named(\"\"), default policy) and invites the user; the direct flag is local and never sent, so other providers see an ordinary room. A room first seen unnamed with exactly two participants is taken as direct (INVENTED heuristic). JMAP kind direct with contactId. Open for Mark: adopt fixed_membership (and max_users = 2) later. Doc: agent-frontends.md §7.29.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T22:13:33.837151508Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T22:13:33.837151508Z",
+  "labels": [
+    "agent",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.87",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-21T22:13:33.892715238Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
