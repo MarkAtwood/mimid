@@ -487,6 +487,8 @@ impl Store {
             mimi_id: Some(Octets(sent.message_id.0)),
             aliases: Vec::new(),
             accepted_at: sent.accepted_at,
+            // Its arrival is the hub's acceptance (record::Message).
+            received_at: sent.accepted_at,
             sender_msg_id: sender_msg_id(sent.accepted_at, &sent.message_id),
             body: text.to_owned(),
             body_type: BodyType::Plain,

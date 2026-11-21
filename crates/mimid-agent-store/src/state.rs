@@ -389,6 +389,7 @@ mod tests {
             mimi_id: None,
             aliases: Vec::new(),
             accepted_at: 1_000,
+            received_at: 1_001,
             sender_msg_id: "01M7VA1QTK2Y4V6ER4Z3A3V6QN".into(),
             body: body.into(),
             body_type: BodyType::Plain,

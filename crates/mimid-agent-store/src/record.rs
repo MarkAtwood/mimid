@@ -260,6 +260,13 @@ pub struct Message {
     /// The hub's acceptance time in milliseconds (for a notice, when it
     /// was made).
     pub accepted_at: u64,
+    /// When it arrived here, in milliseconds (docs/design/agent-frontends.md
+    /// §7.18): when this store stored a message received from the hub;
+    /// for one this device sent, the hub's acceptance time
+    /// (`accepted_at`), which is also when it reached the provider and
+    /// stays the same when the outbox finishes the send after a crash
+    /// (§3 step 10); for a notice, when it was made.
+    pub received_at: u64,
     /// The stable id every front end shows it under
     /// ([`crate::convert::sender_msg_id`]); its random part is the
     /// message's reference octets.

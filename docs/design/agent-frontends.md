@@ -131,7 +131,7 @@ write made keeps its JMAP id as its key.
   question 2); bans (below). Rooms come from `Agent::rooms` as today.
 - **Message**: key; room key; sender (a user URI, or `Agent` for a
   notice); the first version's MIMI message ID, all 32 octets; aliases
-  (reference octets of later versions); `accepted_at` in ms; the stable
+  (reference octets of later versions); `accepted_at` in ms; `received_at`, its arrival here, in ms (§7.18); the stable
   id `senderMsgId` (convert.rs:25-29); body and body type (plain or
   markdown); `in_reply_to` resolved to a message key, or kept as raw
   reference octets when not stored; `topic_id`; attachments; edit history
@@ -1335,9 +1335,10 @@ Added on 2026-11-20:
     - The dates the record does not hold: a Chat's `createdAt`, its
       members' `joinedAt` and a ChatBan's `createdAt` are the start, as
       they are the time of the sync that makes them when JMAP is on. A
-      Message's `receivedAt` is its `sentAt` (the hub's acceptance time),
-      not the start: the store keeps no time of receipt, and the start
-      would date every old Message alike.
+      Message's `receivedAt` is the record's `received_at`, its arrival
+      here (§7.18), with JMAP on or off. Until §7.18 the store kept no
+      time of receipt and `sentAt` (the hub's acceptance time) stood in
+      for it, since the start would date every old Message alike.
     - The objects are seeded like the others, so they are no change: a
       client's `/changes` from the states read after the start names only
       what comes after. State strings restart at each start anyway. The
@@ -1345,16 +1346,16 @@ Added on 2026-11-20:
       them exactly; a crash before that save makes them again, with the
       next start's dates. An INFO event,
       `agent_chat_objects_made_from_records`, counts them.
-    - Nothing on disk changes: no migration, and the schema version
-      stays 2.
+    - Nothing on disk changed for this: no migration, and the schema
+      version stayed 2 (§7.18 later bumped it for `received_at`).
     - Test: mimid-agent `tests/jmap_seed.rs` runs one scenario (a room
       with bob an admin, two messages, an edit, a ban) twice, once with
       bob's JMAP on and once with it off and then on, and compares what
       bob's client reads property by property, ids and dates named
       alike. They agree. Ids are minted per run and dates are each run's
       own, so the test checks what the dates say: the ones above are not
-      before the start, and `receivedAt` equals `sentAt` (with JMAP on it
-      is the time of the sync). A second start shows every object as the
+      before the start, and `receivedAt` is the record's arrival time,
+      before the restart (§7.18). A second start shows every object as the
       first did, and `/changes` names only a new Message.
 
 12. **JOIN 0 leaves every room (Mark, 2026-11-20).** `JOIN 0` is honoured
@@ -1504,6 +1505,32 @@ Added on 2026-11-20:
     `chat.sqlite` already was, with a message saying it is the database
     under its earlier name and that this agent does not convert or rename
     it. Test: mimid-agent-core `state::tests::the_older_layout_is_refused`.
+
+18. **A message's real arrival time (Mark, 2026-11-21).** The store
+    records when each message arrived, and JMAP's `receivedAt` is that
+    time, for objects the projection makes as a sync brings the record
+    and for those made from records without `ext["jmap"]` (§7.11, which
+    used `sentAt` as a stand-in):
+
+    - `record::Message::received_at` (milliseconds). A message received
+      from the hub: when this store stored it (`Store::sync`). A message
+      this device sent: the hub's acceptance time, `accepted_at`, whether
+      `Store::send` stores it or the journal's `Event::Sent` does after a
+      crash (§3 step 10). The acceptance time is when the provider got
+      it, so it is the honest arrival time of one's own message, and it
+      does not move when the outbox finishes a send hours later; the
+      time of the store's write would. A message of this user sent from
+      another device arrives from the hub like anyone's. A notice: when
+      it was made.
+    - mimid-agent-jmap renders `receivedAt` from it (`Render::message`,
+      `Render::new_message`), so `ext["jmap"]` no longer keeps it unless
+      a client's object differs.
+    - The store's schema is part `store` version 4; a version 3 database
+      is refused, not converted (nothing runs in production).
+    - Test: mimid-agent `tests/jmap_seed.rs` receives the messages with
+      bob's JMAP off, turns it on, and requires each Message's
+      `receivedAt` to be the record's `received_at`, after the scenario
+      began, before the restart and not before `sentAt`.
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

@@ -183,9 +183,13 @@ impl RoomRoles {
     }
 }
 
-/// Milliseconds since the UNIX epoch.
+/// Milliseconds since the UNIX epoch, to the millisecond: a message's
+/// arrival time (docs/design/agent-frontends.md §7.18) is compared with
+/// the hub's acceptance time, which has milliseconds.
 pub(crate) fn now_ms() -> u64 {
-    crate::retry::now_secs().saturating_mul(1000)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 impl Store {
@@ -605,8 +609,13 @@ impl Store {
             // A message this device sent is stored as a received one: a
             // record of it that Store::send made already has its MIMI
             // message ID, so it is not stored twice.
-            Event::Message(message) | Event::Sent(message) => {
-                self.store_message(agent, *message, report, changes).await;
+            Event::Message(message) => {
+                self.store_message(agent, *message, false, report, changes)
+                    .await;
+            }
+            Event::Sent(message) => {
+                self.store_message(agent, *message, true, report, changes)
+                    .await;
             }
             Event::MembersChanged {
                 room, participants, ..
@@ -763,6 +772,7 @@ impl Store {
             mimi_id: None,
             aliases: Vec::new(),
             accepted_at: at,
+            received_at: at,
             sender_msg_id: ulid::Ulid::from_parts(at, u128::from_be_bytes(random)).to_string(),
             body: body(&name),
             body_type: crate::content::BodyType::Plain,
@@ -848,11 +858,14 @@ impl Store {
 
     /// Stores a received message (draft-atwood-jmap-chat-mimi-00
     /// §Message Identifiers, §Senders, §Topics), or applies it to the
-    /// message it replaces ([`replace`]).
+    /// message it replaces ([`replace`]). `sent_here`: this device sent
+    /// it (`Event::Sent`), so it arrived when the hub accepted it; any
+    /// other message arrives now (docs/design/agent-frontends.md §7.18).
     async fn store_message(
         &self,
         agent: &mut Agent,
         received: ReceivedMessage,
+        sent_here: bool,
         report: &mut SyncReport,
         changes: &mut Vec<Change>,
     ) {
@@ -909,6 +922,11 @@ impl Store {
             mimi_id: Some(Octets(received.message_id.0)),
             aliases: Vec::new(),
             accepted_at: received.accepted_at,
+            received_at: if sent_here {
+                received.accepted_at
+            } else {
+                now_ms()
+            },
             sender_msg_id: sender_msg_id(received.accepted_at, &received.message_id),
             body: text,
             body_type: crate::content::body_type(content),

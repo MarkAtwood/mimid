@@ -20,8 +20,9 @@
 //!   run and dates are the run's own times, so they cannot be equal; what
 //!   they say is checked instead: the dates made at the restart (a Chat's
 //!   `createdAt`, its members' `joinedAt`, a ChatBan's `createdAt`) are not
-//!   before it, and a Message made at the restart has `receivedAt` equal
-//!   to `sentAt` (the store keeps no time of receipt).
+//!   before it. A Message's `receivedAt` is when bob's store stored it
+//!   while JMAP was off (§7.18): the record's `received_at`, after the
+//!   scenario began, before the restart and not before its `sentAt`.
 //! - Another restart shows every object exactly as before: the objects
 //!   made new were saved.
 //! - `/changes` from the restart's states names only what came after: a
@@ -298,7 +299,15 @@ async fn records_kept_with_jmap_off_are_shown_when_jmap_is_on_again() {
         ..mimid_agent::config::IrcSetting::default()
     });
     let bob = Bob::start(&bob_config).await;
+    let began = parse_utc_date(jmap_server::now_utc_string().as_ref()).unwrap();
     let alice = alice_acts(&server, dir.path(), &bob.store).await;
+    let arrived: BTreeMap<String, u64> = bob
+        .store
+        .state()
+        .messages
+        .values()
+        .map(|m| (m.key.clone(), m.received_at))
+        .collect();
     {
         // Nothing of JMAP's is in the records.
         let state = bob.store.state();
@@ -349,8 +358,12 @@ async fn records_kept_with_jmap_off_are_shown_when_jmap_is_on_again() {
     for member in chat["members"].as_array().unwrap() {
         assert_eq!(member["joinedAt"], chat["createdAt"], "{chat}");
     }
-    for message in seen["Message"].values() {
-        assert_eq!(message["receivedAt"], message["sentAt"], "{message}");
+    // receivedAt: when bob's store stored the message, with JMAP off.
+    for (id, message) in &seen["Message"] {
+        let received = at(&message["receivedAt"]);
+        assert_eq!(Some(&received), arrived.get(id), "{message}");
+        assert!(received >= began && received < restarted_at, "{message}");
+        assert!(received >= at(&message["sentAt"]), "{message}");
     }
     for ban in seen["ChatBan"].values() {
         assert!(at(&ban["createdAt"]) >= restarted_at, "{ban}");

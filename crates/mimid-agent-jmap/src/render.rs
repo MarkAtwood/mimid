@@ -21,12 +21,13 @@
 //! (docs/design/agent-frontends.md §7.11).
 //!
 //! What a rendering cannot know comes from `ext["jmap"]`: a Chat's
-//! `members`, `createdAt` and the other JMAP-only properties, a
-//! Message's `receivedAt`, the date texts a client wrote with more or
-//! fewer digits than the store keeps, and the JMAP id of a user who has
-//! no ChatContact (one a client destroyed). A rendering fills those deterministically
-//! ([`EPOCH`], [`UNKNOWN_ID`], `sentAt` for `receivedAt`), so the same
-//! record always renders the same.
+//! `members`, `createdAt` and the other JMAP-only properties, the date
+//! texts a client wrote with more or fewer digits than the store keeps,
+//! and the JMAP id of a user who has no ChatContact (one a client
+//! destroyed). A rendering fills those deterministically ([`EPOCH`],
+//! [`UNKNOWN_ID`]), so the same record always renders the same. A
+//! Message's `receivedAt` is the record's `received_at`, its arrival
+//! here (docs/design/agent-frontends.md §7.18).
 //!
 //! # Limitations
 //!
@@ -166,19 +167,15 @@ impl Render<'_> {
         chat
     }
 
-    /// A message as the Message made for it when first shown, received at
-    /// `received_at`: `sentAt` its acceptance time, delivered, its content
-    /// as shown (a message deleted here alone emptied); a notice is the
-    /// account's.
+    /// A message as the Message made for it when first shown: `sentAt` its
+    /// acceptance time, `receivedAt` its arrival here, delivered, its
+    /// content as shown (a message deleted here alone emptied); a notice
+    /// is the account's.
     ///
     /// # Errors
     ///
     /// The JMAP type refuses the object it makes.
-    pub(crate) fn new_message(
-        &self,
-        message: &record::Message,
-        received_at: UTCDate,
-    ) -> Result<Message, String> {
+    pub(crate) fn new_message(&self, message: &record::Message) -> Result<Message, String> {
         let sender = match &message.sender {
             Sender::User(user) => self.id_of(user),
             // A notice is the account's (bead mimid-1wgh.4.81.27); Sender
@@ -193,7 +190,7 @@ impl Render<'_> {
             String::new(),
             BodyType::Plain,
             date(message.accepted_at),
-            received_at,
+            date(message.received_at),
             DeliveryState::Delivered,
         );
         jmap.reply_to = match &message.in_reply_to {
@@ -260,8 +257,8 @@ impl Render<'_> {
         )?))
     }
 
-    /// A message as a Message, `sentAt` and `receivedAt` its acceptance
-    /// time; a notice is the account's.
+    /// A message as a Message, `sentAt` its acceptance time and
+    /// `receivedAt` its arrival here; a notice is the account's.
     pub(crate) fn message(&self, message: &record::Message) -> Result<Map<String, Value>, String> {
         let sender = match &message.sender {
             Sender::User(user) => self.id_of(user),
@@ -269,7 +266,6 @@ impl Render<'_> {
             // the account's.
             _ => self.account.clone(),
         };
-        let at = date(message.accepted_at);
         let mut jmap = Message::new(
             Id::from(message.key.as_str()),
             Id::from(message.sender_msg_id.as_str()),
@@ -277,8 +273,8 @@ impl Render<'_> {
             Id::from(message.room.as_str()),
             String::new(),
             BodyType::Plain,
-            at.clone(),
-            at,
+            date(message.accepted_at),
+            date(message.received_at),
             DeliveryState::Delivered,
         );
         jmap.reply_to = match &message.in_reply_to {
@@ -477,6 +473,7 @@ mod tests {
             mimi_id: None,
             aliases: Vec::new(),
             accepted_at: accepted_at_of(id).unwrap(),
+            received_at: 0,
             sender_msg_id: id.into(),
             body: body.into(),
             body_type: Body::Plain,
@@ -491,12 +488,14 @@ mod tests {
             ext: Default::default(),
         };
         let mut m1 = message("M1", 1, CAROL, "01M7VA1QTK2Y4V6ER4Z3A3V6QN", "hello");
+        m1.received_at = ms("2026-11-20T01:45:00.937Z");
         m1.deleted = Some(Deletion {
             at: ms("2026-11-20T01:48:00.000Z"),
             for_all: false,
         });
         state.insert_message(m1);
         let mut m2 = message("M2", 2, BOB, "01M7VA1SH7BF44J3XAZZRD6RXZ", "after");
+        m2.received_at = ms("2026-11-20T01:45:02.887Z");
         m2.edited_at = Some(ms("2026-11-20T01:45:03.069Z"));
         m2.edit_history = vec![Revision {
             body: "before".into(),
@@ -617,23 +616,13 @@ mod tests {
                    "members": [{"id": "P1", "role": "member", "joinedAt": at},
                                {"id": "bob", "role": "member", "joinedAt": at}]})
         );
-        let m1 = serde_json::to_value(
-            render
-                .new_message(&state.messages["M1"], at.clone())
-                .unwrap(),
-        )
-        .unwrap();
+        let m1 = serde_json::to_value(render.new_message(&state.messages["M1"]).unwrap()).unwrap();
         assert_eq!(m1["senderId"], json!(UNKNOWN_ID));
         assert_eq!(m1["body"], json!(""));
         assert_eq!(m1["deletedAt"], json!("2026-11-20T01:48:00Z"));
         assert_eq!(m1["sentAt"], json!("2026-11-20T01:45:00.499Z"));
-        assert_eq!(m1["receivedAt"], json!(at));
-        let m2 = serde_json::to_value(
-            render
-                .new_message(&state.messages["M2"], at.clone())
-                .unwrap(),
-        )
-        .unwrap();
+        assert_eq!(m1["receivedAt"], json!("2026-11-20T01:45:00.937Z"));
+        let m2 = serde_json::to_value(render.new_message(&state.messages["M2"]).unwrap()).unwrap();
         assert_eq!(m2["senderId"], json!("bob"));
         assert_eq!(m2["body"], json!("after"));
         assert_eq!(m2["editHistory"][0]["body"], json!("before"));

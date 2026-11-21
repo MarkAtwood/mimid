@@ -44,6 +44,7 @@ fn message(key: &str, room: &str, seq: u64, sender: Sender, n: u8) -> Message {
         mimi_id: Some(Octets([n; 32])),
         aliases: vec![Octets([n + 100; 10])],
         accepted_at: 1_700_000_000_000 + u64::from(n),
+        received_at: 1_700_000_000_500 + u64::from(n),
         sender_msg_id: sender_msg_id(n),
         body: format!("message {n}"),
         body_type: BodyType::Plain,

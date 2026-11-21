@@ -37,8 +37,9 @@
 //!
 //! # Limitations
 //!
-//! - A Chat's `createdAt`, a ChatContact's `firstSeenAt` and a Message's
-//!   `receivedAt` are when the object is made here, as before the store.
+//! - A Chat's `createdAt` and a ChatContact's `firstSeenAt` are when the
+//!   object is made here, as before the store. A Message's `receivedAt`
+//!   is the record's arrival time (docs/design/agent-frontends.md §7.18).
 //! - Dates the store owns are compared to the millisecond, so an object
 //!   whose date text differs (a client's, or one with more digits) is not
 //!   rewritten for that alone.
@@ -490,7 +491,7 @@ impl JmapExt {
                 }
                 let jmap = self
                     .render(&store.state())
-                    .new_message(&message, now())
+                    .new_message(&message)
                     .map_err(SyncError::Store)?;
                 self.inner.insert_object(&self.account, jmap).await?;
             }

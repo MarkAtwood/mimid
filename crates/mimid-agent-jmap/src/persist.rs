@@ -50,7 +50,6 @@ use jmap_server::{GetObject, Id, JmapObject, JmapReads, UTCDate, now_utc_string}
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 
-use mimid_agent_store::convert::utc_date;
 use mimid_agent_store::record::Ext;
 use mimid_agent_store::{Change, FileError, Frontend, State, Store};
 
@@ -168,9 +167,8 @@ fn json_of<T: Serialize>(value: &T) -> Result<Value, String> {
 /// was registered (JMAP off, docs/design/agent-frontends.md §7.11) and
 /// gets an object made new, as the projection makes one when a sync
 /// brings the record, created (a Chat, its members, a ChatBan) at `now`.
-/// A Message's `receivedAt` is its `sentAt`, the hub's acceptance time:
-/// the store keeps no time of receipt, and `now` would date every old
-/// Message at this start.
+/// A Message's `receivedAt` is the record's arrival time (§7.18), not
+/// `now`, which would date every old Message at this start.
 fn seeds(render: &Render<'_>, now: &UTCDate) -> Vec<(&'static str, String, Seed)> {
     let state = render.state;
     let mut out = Vec::new();
@@ -191,10 +189,7 @@ fn seeds(render: &Render<'_>, now: &UTCDate) -> Vec<(&'static str, String, Seed)
         out.push((ChatBan::TYPE_NAME, b.key.clone(), object));
     }
     for m in state.messages.values() {
-        let fresh = || {
-            let sent = UTCDate::from(utc_date(m.accepted_at).as_str());
-            json_of(&render.new_message(m, sent)?)
-        };
+        let fresh = || json_of(&render.new_message(m)?);
         let object = seed::<Message>(&m.ext, || render.message(m), fresh);
         out.push((Message::TYPE_NAME, m.key.clone(), object));
     }
