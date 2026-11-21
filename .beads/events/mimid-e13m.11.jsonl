@@ -1,3 +1,4 @@
 {"id":"01a2004d-2676-75d7-9437-9edba532817d","issue_id":"mimid-e13m.11","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-21T22:49:45.846383422Z"}
 {"id":"01a2004d-2679-7a37-a686-f3b991654c0b","issue_id":"mimid-e13m.11","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-21T22:49:45.849670278Z"}
 {"id":"01a2004d-267c-79a0-9d07-c998607958c6","issue_id":"mimid-e13m.11","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: auth","created_at":"2026-11-21T22:49:45.85263119Z"}
+{"id":"01a2008b-99d4-7629-9afb-e5e3b2f0b449","issue_id":"mimid-e13m.11","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Built with step 4 in commit 7c419f7c on branch auth-impl (decision A3: SCRAM-SHA-256 offered now beside PLAIN and PASS).","created_at":"2026-11-21T23:57:58.612404644Z"}
