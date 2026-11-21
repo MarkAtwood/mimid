@@ -1,0 +1,22 @@
+{
+  "id": "mimid-kiy1.5",
+  "title": "Bridge step 5: crate, [marmot] config, links, commands, notices",
+  "description": "mimid-agent-marmot crate; [marmot] config with both modes parsed and dedicated mode run; the speaker resolver seam (relay only); link records; in-room !bridge commands and codes; IRC service commands; link notices; homepage convention in the bot_policy entry (decision 5). See docs/design/marmot-bridge.md (branch bridge-decisions, 1c2b6eba) §2.1, §2.4, §3.1, §4, §9 step 5.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:21:01.768848398Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:21:01.768848398Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-kiy1.5",
+      "depends_on_id": "mimid-kiy1",
+      "type": "parent-child",
+      "created_at": "2026-11-21T21:21:01.802631531Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
