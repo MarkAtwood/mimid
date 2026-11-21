@@ -2,13 +2,15 @@
   "id": "mimid-e64f.22",
   "title": "A5 maxClients and Client records (Client/get, /changes, /set destroy) on both bindings",
   "description": "Draft additions approved by Mark 2026-11-21 (jmap-chat-spec 43ee02c, bde5330); docs/design/air-api-comparison.md. Branch air-impl.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T18:26:41.330769111Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T18:26:41.330769111Z",
+  "updated_at": "2026-11-21T19:55:02.075900435Z",
+  "closed_at": "2026-11-21T19:55:02.075900435Z",
+  "close_reason": "Done in 63aa9be (branch air-impl): maxClients 10 (INVENTED) in mimi capability and ProviderHello; Client/get, /changes, /set destroy-only; overQuota past maxClients on KeyPackage/set; external Commit binds its key on acceptance, other account invalidArguments, past maxClients forbidden; destroy unbinds and deletes KeyPackages, Room/create refuses; stream ListClients/DestroyClient/Changed Client.",
   "dependencies": [
     {
       "issue_id": "mimid-e64f.22",
