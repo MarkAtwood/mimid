@@ -1,12 +1,12 @@
 {
   "id": "mimid-kiy1",
   "title": "MIMI ↔ Marmot bridge",
-  "description": "Bridge MIMI rooms and Marmot (White Noise) groups in relay mode: a front end in mimid-agent (crate mimid-agent-marmot, name not final) that drives MDK's wn-agent over its marmot.agent-control.v2 socket. Design note: docs/design/marmot-bridge.md, on branch marmot-bridge-note (commit 26b41a9), following option (b) of docs/design/nostr-comparison.md. Code waits for Mark's review of the note and his answers to its open questions (§10). No sub-issues are filed until he approves the step plan (§9).",
+  "description": "Bridge MIMI rooms and Marmot (White Noise) groups: a front end in mimid-agent (crate mimid-agent-marmot, name not final) that drives MDK's wn-agent over its marmot.agent-control.v2 socket, relay mode first, then puppet mode on a multi-user host. Design note: docs/design/marmot-bridge.md, following option (b) of docs/design/nostr-comparison.md. Mark's decisions on the note's twelve open questions (2026-11-21) are in its §10, 'Decisions (Mark, 2026-11-21)', applied on branch bridge-decisions (commit 1c2b6eba, not merged yet). The step plan is §9; each step is a child bead. WG issue drafts (not posted, need Mark's OK): IETF repo notes/draft-room-policy-bot-user.md and notes/draft-mimi-content-on-behalf-of.md.",
   "status": "open",
   "priority": 3,
   "issue_type": "epic",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T20:53:20.442309467Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T20:53:20.442309467Z"
+  "updated_at": "2026-11-21T21:20:41.816525767Z"
 }
