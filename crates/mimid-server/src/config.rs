@@ -11,6 +11,8 @@
 //! blob_lifetime_secs = 2592000  # optional; uploads are deleted this long after upload (at least 3600)
 //! message_retention_secs = 604800  # optional; messages are deleted this long after the hub
 //!                                  # accepted them (at least 3600), or "unlimited"
+//! client_idle_unbind_secs = 7776000  # optional; a signature key idle this long is unbound
+//!                                    # (at least 86400), or "unlimited"
 //!
 //! [peers]
 //! "b.example" = "http://127.0.0.1:9080"
@@ -210,6 +212,13 @@ pub struct Config {
     /// `messageRetention`, and leave that out when it is unlimited.
     #[serde(default)]
     pub message_retention_secs: crate::retention::MessageRetention,
+    /// How long a client's signature key may be idle, in seconds, before
+    /// it is unbound from its account, or `"unlimited"` (clean-room
+    /// finding C6; [`crate::client_idle`]). Defaults to 90 days
+    /// ([`crate::client_idle::DEFAULT_CLIENT_IDLE_SECS`]); under
+    /// [`crate::client_idle::MIN_CLIENT_IDLE_SECS`] is refused.
+    #[serde(default)]
+    pub client_idle_unbind_secs: crate::client_idle::ClientIdle,
     /// How often an account may call `KeyMaterial/fetch` (bead
     /// mimid-e64f.21; [`crate::jmap::rate`]). Defaults to
     /// [`crate::jmap::rate::DEFAULT_KEY_MATERIAL_LIMIT`]; a `burst` of 0
@@ -331,7 +340,9 @@ impl Config {
     /// under [`crate::store::MIN_BLOB_LIFETIME_SECS`], and
     /// [`ConfigError::MessageRetentionTooShort`] for a
     /// `message_retention_secs` under
-    /// [`crate::retention::MIN_MESSAGE_RETENTION_SECS`].
+    /// [`crate::retention::MIN_MESSAGE_RETENTION_SECS`], and
+    /// [`ConfigError::ClientIdleTooShort`] for a `client_idle_unbind_secs`
+    /// under [`crate::client_idle::MIN_CLIENT_IDLE_SECS`].
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let config: Self = toml::from_str(text)?;
         if config.blob_lifetime_secs < crate::store::MIN_BLOB_LIFETIME_SECS {
@@ -341,6 +352,11 @@ impl Config {
             && seconds < crate::retention::MIN_MESSAGE_RETENTION_SECS
         {
             return Err(ConfigError::MessageRetentionTooShort(seconds));
+        }
+        if let Some(seconds) = config.client_idle_unbind_secs.seconds()
+            && seconds < crate::client_idle::MIN_CLIENT_IDLE_SECS
+        {
+            return Err(ConfigError::ClientIdleTooShort(seconds));
         }
         if config.peers.contains_key(&config.domain) {
             return Err(ConfigError::OwnDomainInPeers(config.domain));
@@ -414,6 +430,13 @@ pub enum ConfigError {
         min = crate::retention::MIN_MESSAGE_RETENTION_SECS
     )]
     MessageRetentionTooShort(u64),
+    /// `client_idle_unbind_secs` is under
+    /// [`crate::client_idle::MIN_CLIENT_IDLE_SECS`].
+    #[error(
+        "client_idle_unbind_secs = {0} is under {min}; use \"unlimited\" to keep idle clients",
+        min = crate::client_idle::MIN_CLIENT_IDLE_SECS
+    )]
+    ClientIdleTooShort(u64),
 }
 
 /// A lowercase DNS domain name.
@@ -561,6 +584,7 @@ mod tests {
             did_webvh: mimi_mls::mls_didwebvh::CodePoints::DEFAULT,
             blob_lifetime_secs: 30 * 24 * 3600,
             message_retention_secs: crate::retention::MessageRetention::default(),
+            client_idle_unbind_secs: crate::client_idle::ClientIdle::default(),
             key_material_rate: default_key_material_rate(),
         };
         assert_eq!(config, expected);
@@ -686,6 +710,39 @@ mod tests {
             with("blob_lifetime_secs = 0"),
             Err(ConfigError::BlobLifetimeTooShort(0))
         ));
+    }
+
+    #[test]
+    fn client_idle_defaults_to_ninety_days_parses_and_has_a_floor() {
+        use crate::client_idle::ClientIdle;
+        let with =
+            |line: &str| Config::parse(&VALID.replace("[peers]", &format!("{line}\n[peers]")));
+        assert_eq!(
+            Config::parse(VALID).unwrap().client_idle_unbind_secs,
+            ClientIdle::Seconds(7_776_000)
+        );
+        assert_eq!(
+            with("client_idle_unbind_secs = 86400")
+                .unwrap()
+                .client_idle_unbind_secs,
+            ClientIdle::Seconds(86_400)
+        );
+        assert_eq!(
+            with("client_idle_unbind_secs = \"unlimited\"")
+                .unwrap()
+                .client_idle_unbind_secs,
+            ClientIdle::Unlimited
+        );
+        assert!(matches!(
+            with("client_idle_unbind_secs = 86399"),
+            Err(ConfigError::ClientIdleTooShort(86_399))
+        ));
+        for bad in [
+            "client_idle_unbind_secs = \"never\"",
+            "client_idle_unbind_secs = -1",
+        ] {
+            assert!(matches!(with(bad), Err(ConfigError::Parse(_))), "{bad}");
+        }
     }
 
     #[test]

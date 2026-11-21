@@ -287,6 +287,66 @@ impl KeyPackages {
         Ok(unbound)
     }
 
+    /// Records that `user`'s client with the leaf signature key
+    /// `signature_key` acted through the mimi capability now, if it is
+    /// bound to `user` (clean-room finding C6; [`crate::client_idle`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the store fails.
+    pub async fn record_activity(
+        &self,
+        user: &LocalUser,
+        signature_key: &[u8],
+    ) -> Result<(), StoreError> {
+        self.store
+            .touch_client(user.as_str(), signature_key, self.now_ms())
+            .await
+            .map(drop)
+    }
+
+    /// Unbinds the clients idle for `period` by this KeyPackages' clock,
+    /// as a Client/set destroy does, [`crate::client_idle::IDLE_SWEEP_BATCH`]
+    /// at a time, and returns how many (clean-room finding C6; the rule is
+    /// [`Store::unbind_idle_clients`]'s).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the store fails; what earlier batches
+    /// unbound stays unbound.
+    pub async fn unbind_idle_clients(
+        &self,
+        period: std::time::Duration,
+    ) -> Result<u64, StoreError> {
+        let period_ms = u64::try_from(period.as_millis()).unwrap_or(u64::MAX);
+        // Idle since before now - period. A period longer than the clock's
+        // reading unbinds nothing.
+        let Some(cutoff_ms) = self.now_ms().checked_sub(period_ms) else {
+            return Ok(0);
+        };
+        let mut total = 0;
+        loop {
+            let unbound = self
+                .store
+                .unbind_idle_clients(cutoff_ms, crate::client_idle::IDLE_SWEEP_BATCH)
+                .await?;
+            for (user_uri, client_uri) in &unbound {
+                self.announce(user_uri);
+                tracing::info!(
+                    name: "client_unbound_idle",
+                    client_uri,
+                    "an idle signature key was unbound from its account"
+                );
+            }
+            let count = unbound.len() as u64;
+            total += count;
+            if count < crate::client_idle::IDLE_SWEEP_BATCH {
+                return Ok(total);
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+
     /// Whether an external Commit of `user` with the leaf signature key
     /// `signature_key` may go to the hub (§Room/update): `Ok` when the key
     /// is bound to `user` or can be, else why not ([`ClientBinding`]).
@@ -455,6 +515,8 @@ impl KeyPackages {
             .await?;
         match outcome {
             KeyPackageInsert::Inserted => {
+                // Clean-room finding C6: an upload is activity.
+                self.record_activity(user, info.signature_key()).await?;
                 self.announce(user.as_str());
                 tracing::info!(
                     name: "key_package_uploaded",

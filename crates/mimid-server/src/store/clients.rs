@@ -175,6 +175,87 @@ impl Store {
         Ok(true)
     }
 
+    /// Records that `user_uri`'s client with the leaf signature key
+    /// `signature_key` acted at `now_ms` (clean-room finding C6; the acts
+    /// are listed in [`crate::client_idle`]). Returns whether such a client
+    /// is bound to `user_uri`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::OutOfRange`] if `now_ms` does not fit an
+    /// SQLite integer, and [`StoreError::Sqlx`] if the query fails.
+    pub async fn touch_client(
+        &self,
+        user_uri: &str,
+        signature_key: &[u8],
+        now_ms: u64,
+    ) -> Result<bool, StoreError> {
+        let touched = sqlx::query(
+            "UPDATE client SET last_active_ms = MAX(COALESCE(last_active_ms, 0), ?) \
+             WHERE user_uri = ? AND signature_key = ?",
+        )
+        .bind(to_sql_int(now_ms)?)
+        .bind(user_uri)
+        .bind(signature_key)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(touched > 0)
+    }
+
+    /// Unbinds at most `batch` clients that have been idle since before
+    /// `cutoff_ms` (milliseconds since the UNIX epoch), as
+    /// [`Store::unbind_client`] does, in one transaction, and returns each
+    /// one's user URI and client ID. A client is idle when it has a
+    /// signature key, no recorded activity at or after the cutoff, no
+    /// stored KeyPackage whose `not_after` is at or after it, and no
+    /// KeyPackage handed out at or after it (clean-room finding C6).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::OutOfRange`] if `cutoff_ms` or `batch` does
+    /// not fit an SQLite integer, and [`StoreError::Sqlx`] if a query
+    /// fails; nothing is unbound then.
+    pub async fn unbind_idle_clients(
+        &self,
+        cutoff_ms: u64,
+        batch: u64,
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        let cutoff_secs = to_sql_int(cutoff_ms / 1_000)?;
+        let cutoff_ms = to_sql_int(cutoff_ms)?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let idle: Vec<(String, String)> = sqlx::query_as(
+            "SELECT user_uri, client_id FROM client AS c \
+             WHERE signature_key IS NOT NULL \
+             AND COALESCE(last_active_ms, 0) < ? \
+             AND NOT EXISTS (SELECT 1 FROM key_package AS k \
+                 WHERE k.client_id = c.client_id AND k.not_after >= ?) \
+             AND NOT EXISTS (SELECT 1 FROM key_package_claim AS h \
+                 WHERE h.client_id = c.client_id AND h.claimed_at >= ?) \
+             ORDER BY client_id LIMIT ?",
+        )
+        .bind(cutoff_ms)
+        .bind(cutoff_secs)
+        .bind(cutoff_ms)
+        .bind(to_sql_int(batch)?)
+        .fetch_all(&mut *tx)
+        .await?;
+        for (_, client_id) in &idle {
+            // The KeyPackage change log's trigger reads the owner from
+            // `client`, so the (expired) KeyPackages go first.
+            sqlx::query("DELETE FROM key_package WHERE client_id = ?")
+                .bind(client_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM client WHERE client_id = ?")
+                .bind(client_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(idle)
+    }
+
     /// `user_uri`'s Client state: the highest number of the change log
     /// among the user's rows, or 0.
     ///

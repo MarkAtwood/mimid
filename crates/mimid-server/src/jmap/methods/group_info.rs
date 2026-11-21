@@ -92,7 +92,7 @@ pub(crate) async fn fetch_core(
     // whether to answer (bead mimid-1wgh.12.46). The relay checks that the
     // request's credential is the account's user.
     require_room_uri(METHOD, room_id)?;
-    GroupInfoRequest::tls_deserialize_exact(request)
+    let decoded = GroupInfoRequest::tls_deserialize_exact(request)
         .map_err(|_| invalid(METHOD, "request is not a GroupInfoRequest"))?;
     let response = follower
         .relay_group_info(caller.user(), room_id, request)
@@ -101,5 +101,20 @@ pub(crate) async fn fetch_core(
     let status = GroupInfoResponse::tls_deserialize_exact(&response[..])
         .map_err(|e| server_fail(METHOD, &e))?
         .status();
+    // Clean-room finding C6: a request the hub answered, whose signature
+    // it verified, is activity of the client with its key.
+    // The key is kept as its TLS encoding, `opaque<V>`; Client records
+    // hold the octets inside.
+    if status == GroupInfoCode::Success
+        && let Some(key_packages) = follower.key_packages()
+        && let Ok(key) = mimi_mls::tls_codec::VLBytes::tls_deserialize_exact(
+            decoded.tbs().requesting_signature_key.as_bytes(),
+        )
+    {
+        key_packages
+            .record_activity(caller.user(), key.as_slice())
+            .await
+            .map_err(|e| server_fail(METHOD, &e))?;
+    }
     Ok((status, response))
 }

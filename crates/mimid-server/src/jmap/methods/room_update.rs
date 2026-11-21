@@ -220,6 +220,20 @@ pub(crate) async fn update_core(
             );
         }
     }
+    // Clean-room finding C6: a Commit the hub accepted is activity of the
+    // client whose key is in its UpdatePath leaf.
+    if let (UpdateResult::Success { .. }, Some(key_packages)) =
+        (&response.result, follower.key_packages())
+        && let HandshakeBundle::Commit {
+            proposal_or_commit, ..
+        } = &decoded.bundle
+        && let Some(key) = proposal_or_commit.commit_path_signature_key()
+    {
+        key_packages
+            .record_activity(caller.user(), key)
+            .await
+            .map_err(|e| server_fail(METHOD, &e))?;
+    }
     let message_ids = match response.result {
         UpdateResult::Success { .. } => {
             let handshake = match &decoded.bundle {

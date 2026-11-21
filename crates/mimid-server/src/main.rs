@@ -228,7 +228,7 @@ async fn main() -> anyhow::Result<()> {
         .with_fanout(fanout)
         .with_peers(peers()?)
         .with_base_url(config.base_url.clone())
-        .with_local_key_material(key_packages)
+        .with_local_key_material(Arc::clone(&key_packages) as _)
         .with_limits(config.field_limits())
         .with_wire_profiles(wire_profiles.clone()),
     );
@@ -271,6 +271,15 @@ async fn main() -> anyhow::Result<()> {
         mimid_server::retention::MessageSweeper::new(
             store.clone(),
             Arc::clone(&clock),
+            Duration::from_secs(seconds),
+        )
+        .spawn()
+    });
+    // Clean-room finding C6: idle signature keys are unbound; the sweep
+    // runs until exit.
+    let _idle_client_sweep = config.client_idle_unbind_secs.seconds().map(|seconds| {
+        mimid_server::client_idle::IdleClientSweeper::new(
+            Arc::clone(&key_packages),
             Duration::from_secs(seconds),
         )
         .spawn()

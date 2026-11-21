@@ -339,6 +339,13 @@ fn joins_mls_rs_group_and_all_agree() {
             Some(carol.signature_public_key()),
             "{case}"
         );
+        // The same key as the Commit's path leaf, as a provider reads it to
+        // record the client's activity (clean-room finding C6).
+        assert_eq!(
+            commit_message.commit_path_signature_key(),
+            Some(carol.signature_public_key()),
+            "{case}"
+        );
         let expected_aad = if context_dictionary.is_some() {
             EMPTY_SAFE_AAD.to_vec()
         } else {

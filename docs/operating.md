@@ -77,6 +77,8 @@ Value forms used below:
 | `max_uri_octets` | integer, octets | `2048` | The longest URI accepted: participant list users, room metadata URIs, a base policy's `parent_room`, and the URIs in identifierQuery, consent and keyMaterial requests. |
 | `blob_lifetime_secs` | integer, seconds, at least 3600 | `2592000` (30 days) | How long an uploaded attachment is kept. Every upload is deleted this long after it was uploaded, whether or not anyone fetched it, because the server cannot read the messages that refer to it. The JMAP Session reports it as `assetLifetime`. A value under 3600 is refused. |
 
+| `client_idle_unbind_secs` | integer, seconds, at least 86400, or `"unlimited"` | `7776000` (90 days) | How long a client's signature key may be idle before it is unbound from its account. See [Idle clients](#idle-clients). A value under 86400 is refused. |
+
 The three `max_*_octets` keys are mimid's own policy; the drafts set no limit for these fields. A longer value is refused.
 
 ### `[peers]`
@@ -241,6 +243,17 @@ The table is optional. If it is present, both keys are required.
 | `heads_component` | integer, 16 bits | `0xf013` | The `app_data_dictionary` component that carries the `did_webvh_heads` record. 0xF013 is in the private-use range and is mimid's own choice. 0x0000 to 0x0005 and the GREASE values below 0x8000 are refused. |
 
 The key `heads_extension_type` of earlier versions is gone and is refused as unknown.
+
+### Idle clients
+
+Every KeyPackage upload or external join with a new signature key binds that key to the account as a client, and each bound key counts toward `maxClients` and gets KeyPackages handed out for it. Clients that no longer exist, such as reinstalled apps, would otherwise pile up. Once an hour, `mimid` unbinds every key that has been idle for `client_idle_unbind_secs`, as if the user had destroyed its Client record: its KeyPackages are deleted and JMAP `Client/changes` lists it as destroyed. A key is idle when, for the whole period:
+
+- it had no KeyPackage on the server: none stored that had not expired, and none handed out to an invitation; and
+- the server saw it do nothing. Activity is what the server can tie to one key: a KeyPackage upload with the key, a `Room/update` the hub accepted whose Commit carries the key in its UpdatePath leaf, and a `GroupInfo/fetch` signed with the key that the hub answered.
+
+Sending messages (`Room/send`) is not activity, because the server cannot see which client sent an encrypted message. A client that only sends messages and keeps no KeyPackage on the server is unbound after the period; its next KeyPackage upload or external join binds it again. Unbinding a key does not remove its client from any room.
+
+With `client_idle_unbind_secs = "unlimited"` no key is unbound for being idle. Each unbinding is logged as `client_unbound_idle`.
 
 ### Message retention
 

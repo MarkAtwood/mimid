@@ -125,6 +125,7 @@
 #![forbid(unsafe_code)]
 
 pub mod admin;
+pub mod client_idle;
 pub mod config;
 pub mod directory;
 pub mod follower;
