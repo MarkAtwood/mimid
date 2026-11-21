@@ -633,3 +633,136 @@ async fn full_tree_hubs_get_the_next_epochs_tree_with_each_commit() {
     );
     assert_eq!(option.ratchet_tree(), None);
 }
+
+/// The GroupContext of a room the agent hosts, read from the hub and
+/// decoded by hand: every component with state is listed in
+/// `app_components`, frank_aad, which uses Safe AAD, is listed in both
+/// `app_components` and `safe_aad` (mls-extensions-11 §5), the room has no
+/// avatar (protocol-07 §7.6: the user set none), and the base policy names
+/// the roles_list among its policy components (room-policy-04 §5). Before
+/// the fix frank_aad was in `safe_aad` only, the avatar was the room URI
+/// and `policy_component_ids` was empty (bead mimid-hpg8, clean-room
+/// findings M8).
+///
+/// Oracle: the component IDs of mls-extensions-11 §7.5, protocol-07 §10.1
+/// and room-policy-04 §10.1, and the TLS presentation-language structs of
+/// RFC 9420 §8.1, protocol-07 §7.6 and room-policy-04 §5.
+#[tokio::test]
+async fn a_hosted_rooms_group_context_lists_its_components() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let mut alice = agent(&server, ALICE, dir.path()).await;
+    let room = alice
+        .host_room(&HostOptions::named("planning"))
+        .await
+        .unwrap();
+    let state = server.hub.public_state(&room).await.unwrap();
+    let components = group_context_components(&state.group_context);
+    // frank_aad 0x0020, franking_agent 0x0021, participant_list 0x0022,
+    // room_metadata 0x0023, roles_list 0x0025, base_room_policy 0x0027.
+    let app_components = components_list(&components[&0x0001]);
+    assert_eq!(
+        app_components,
+        [0x0020, 0x0021, 0x0022, 0x0023, 0x0025, 0x0027]
+    );
+    let safe_aad = components_list(&components[&0x0002]);
+    assert_eq!(safe_aad, [0x0020]);
+    for id in components.keys().filter(|id| **id > 0x0002) {
+        assert!(app_components.contains(id), "{id:#06x} not required");
+    }
+
+    // RoomMetaData: room_uri, room_name, room_descriptions, room_avatar,
+    // room_subject, room_mood, each opaque<V>.
+    let mut metadata = &components[&0x0023][..];
+    assert_eq!(opaque(&mut metadata), room.as_bytes());
+    assert_eq!(opaque(&mut metadata), b"planning");
+    assert_eq!(opaque(&mut metadata), b"");
+    assert_eq!(opaque(&mut metadata), b"", "room_avatar");
+    assert_eq!(opaque(&mut metadata), b"");
+    assert_eq!(opaque(&mut metadata), b"");
+    assert!(metadata.is_empty());
+
+    // BaseRoomPolicy: fixed_membership, parent_dependant, parent_room<V>,
+    // multi_device, optional<uint32> max_clients and max_users,
+    // pseudonyms_allowed, persistent_room, discoverable,
+    // policy_component_ids<V>.
+    let mut policy = &components[&0x0027][..];
+    policy = &policy[2..];
+    opaque(&mut policy);
+    policy = &policy[1..];
+    for _ in 0..2 {
+        let present = policy[0];
+        policy = &policy[1 + 4 * usize::from(present)..];
+    }
+    policy = &policy[3..];
+    assert_eq!(components_list(policy), [0x0025]);
+}
+
+/// Reads an RFC 9420 §2.1.2 variable-length integer from the front of
+/// `bytes`.
+fn varint(bytes: &mut &[u8]) -> usize {
+    let first = bytes[0];
+    let len = 1usize << (first >> 6);
+    let mut value = usize::from(first & 0x3f);
+    for byte in &bytes[1..len] {
+        value = (value << 8) | usize::from(*byte);
+    }
+    *bytes = &bytes[len..];
+    value
+}
+
+/// Reads an `opaque<V>` from the front of `bytes`.
+fn opaque<'a>(bytes: &mut &'a [u8]) -> &'a [u8] {
+    let len = varint(bytes);
+    let (value, rest) = bytes.split_at(len);
+    *bytes = rest;
+    value
+}
+
+fn uint16(bytes: &mut &[u8]) -> u16 {
+    let value = u16::from_be_bytes([bytes[0], bytes[1]]);
+    *bytes = &bytes[2..];
+    value
+}
+
+/// The `app_data_dictionary` (mls-extensions-11 §4.6, extension 0x0006)
+/// of a TLS-encoded GroupContext (RFC 9420 §8.1), decoded by hand, by
+/// component ID.
+fn group_context_components(group_context: &[u8]) -> BTreeMap<u16, Vec<u8>> {
+    let mut rest = group_context;
+    uint16(&mut rest); // version
+    uint16(&mut rest); // cipher_suite
+    opaque(&mut rest); // group_id
+    rest = &rest[8..]; // epoch
+    opaque(&mut rest); // tree_hash
+    opaque(&mut rest); // confirmed_transcript_hash
+    let mut extensions = opaque(&mut rest);
+    assert!(rest.is_empty());
+    let mut components = BTreeMap::new();
+    while !extensions.is_empty() {
+        let extension_type = uint16(&mut extensions);
+        let mut data = opaque(&mut extensions);
+        if extension_type != 0x0006 {
+            continue;
+        }
+        let mut dictionary = opaque(&mut data);
+        assert!(data.is_empty());
+        while !dictionary.is_empty() {
+            let id = uint16(&mut dictionary);
+            components.insert(id, opaque(&mut dictionary).to_vec());
+        }
+    }
+    components
+}
+
+/// A ComponentsList (mls-extensions-11 §5), decoded by hand.
+fn components_list(data: &[u8]) -> Vec<u16> {
+    let mut rest = data;
+    let mut ids = opaque(&mut rest);
+    assert!(rest.is_empty());
+    let mut out = Vec::new();
+    while !ids.is_empty() {
+        out.push(uint16(&mut ids));
+    }
+    out
+}

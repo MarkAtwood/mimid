@@ -1394,12 +1394,17 @@ impl Agent {
                     .map_err(|e| AgentError::tls("the hub's credential", e))?,
             })?;
             vec![
-                // app_components: franking_agent, participant_list,
-                // roles_list, base_room_policy; every member's leaf must
-                // list them, and frank_aad (safe_aad below).
+                // app_components: frank_aad, franking_agent,
+                // participant_list, roles_list, base_room_policy; every
+                // member's leaf must list them. frank_aad uses Safe AAD, so
+                // it is in safe_aad too: "A component that uses Safe AAD is
+                // listed in both app_components and safe_aad"
+                // (mls-extensions-11 §5; bead mimid-hpg8).
                 (
                     APP_COMPONENTS,
-                    vec![0x08, 0x00, 0x21, 0x00, 0x22, 0x00, 0x25, 0x00, 0x27],
+                    vec![
+                        0x0a, 0x00, 0x20, 0x00, 0x21, 0x00, 0x22, 0x00, 0x25, 0x00, 0x27,
+                    ],
                 ),
                 (SAFE_AAD, vec![0x02, 0x00, 0x20]),
                 (FRANKING_AGENT, franking_agent),
@@ -4945,7 +4950,9 @@ fn default_base_policy() -> BaseRoomPolicy {
         pseudonyms_allowed: Bool::False,
         persistent_room: Bool::True,
         discoverable: Bool::False,
-        policy_component_ids: vec![],
+        // The other policy components of the room: its roles_list
+        // (room-policy-04 §5; bead mimid-hpg8).
+        policy_component_ids: vec![ROLES_LIST],
     }
 }
 
@@ -5157,10 +5164,13 @@ fn room_metadata(room: &str, name: &str) -> Result<Vec<u8>, AgentError> {
     let text =
         |t: &str| Utf8String::new(t.to_owned()).map_err(|e| AgentError::Invalid(format!("{e:?}")));
     encode(&RoomMetaData {
-        room_uri: uri.clone(),
+        room_uri: uri,
         room_name: text(name)?,
         room_descriptions: vec![],
-        room_avatar: uri,
+        // No avatar unless the user sets one: room_avatar is "an https URI
+        // resolving to an avatar image" (protocol-07 §7.6), and an empty
+        // Uri is none (bead mimid-hpg8).
+        room_avatar: IdentifierUri::default(),
         room_subject: text("")?,
         room_mood: text("")?,
     })
