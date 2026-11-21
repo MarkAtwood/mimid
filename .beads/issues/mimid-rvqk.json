@@ -11,5 +11,15 @@
   "updated_at": "2026-11-21T21:17:54.032515633Z",
   "labels": [
     "agent"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-rvqk",
+      "depends_on_id": "mimid-e13m",
+      "type": "blocks",
+      "created_at": "2026-11-21T22:37:24.840532695Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
   ]
 }
