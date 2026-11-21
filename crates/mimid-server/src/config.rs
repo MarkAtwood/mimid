@@ -7,7 +7,7 @@
 //! database = "/var/lib/mimid/mimid.sqlite"
 //! max_key_packages = 97   # optional
 //! live_stream = false      # optional; serve the live stream at /mimid/live
-//! reuse_last_resort_key_packages = true  # optional; false serves a last-resort KeyPackage once
+//! reuse_last_resort_key_packages = false  # optional; true serves a last-resort KeyPackage again
 //! blob_lifetime_secs = 2592000  # optional; uploads are deleted this long after upload (at least 3600)
 //! message_retention_secs = 604800  # optional; messages are deleted this long after the hub
 //!                                  # accepted them (at least 3600), or "unlimited"
@@ -124,10 +124,12 @@ pub struct Config {
     #[serde(default)]
     pub live_stream: bool,
     /// Serve a last-resort KeyPackage in more than one keyMaterial
-    /// response, as draft-atwood-jmap-chat-mimi-00 §Handing Out
-    /// KeyPackages requires and mls-extensions-11 §6.4 allows. On by
-    /// default (clean-room finding C7, bead mimid-fl1i); off serves it
-    /// once, as protocol-07 §5.2 asks (bead mimid-gunw).
+    /// response. Off by default: it is served once, as protocol-07 §5.2
+    /// asks and as Mark promised the editors (bead mimid-gunw). On, it is
+    /// served again whenever its client has no other, as mls-extensions-11
+    /// §6.4 allows and draft-atwood-jmap-chat-mimi-00 §Handing Out
+    /// KeyPackages permits (a server MAY reuse it; jmap-chat-spec 4ccf72c;
+    /// bead mimid-fl1i).
     #[serde(default = "default_reuse_last_resort")]
     pub reuse_last_resort_key_packages: bool,
     /// The loopback address of the local control listener
@@ -288,7 +290,7 @@ impl Config {
 }
 
 fn default_reuse_last_resort() -> bool {
-    true
+    false
 }
 
 fn default_max_key_packages() -> u64 {
@@ -573,7 +575,7 @@ mod tests {
             ]),
             max_key_packages: 97,
             live_stream: false,
-            reuse_last_resort_key_packages: true,
+            reuse_last_resort_key_packages: false,
             local_listen: None,
             local_token: None,
             require_franking: false,
@@ -595,6 +597,18 @@ mod tests {
             key_material_rate: default_key_material_rate(),
         };
         assert_eq!(config, expected);
+    }
+
+    #[test]
+    fn reuse_last_resort_key_packages_is_off_unless_set() {
+        assert!(!Config::parse(VALID).unwrap().reuse_last_resort_key_packages);
+        for (value, expected) in [("true", true), ("false", false)] {
+            let config = Config::parse(&format!(
+                "reuse_last_resort_key_packages = {value}\n{VALID}"
+            ))
+            .unwrap();
+            assert_eq!(config.reuse_last_resort_key_packages, expected, "{value}");
+        }
     }
 
     #[test]

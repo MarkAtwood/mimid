@@ -91,15 +91,14 @@ struct Provider {
 
 impl Provider {
     /// With KeyPackages' defaults: a last-resort KeyPackage is served
-    /// whenever its client has no other (draft-atwood-jmap-chat-mimi-00
-    /// §Handing Out KeyPackages; clean-room finding C7).
+    /// once (protocol-07 §5.2; bead mimid-gunw).
     async fn open() -> Self {
         Self::open_with(None).await
     }
 
     /// With `reuse`, a last-resort KeyPackage is served in more than one
-    /// response (mls-extensions-11 §6.4, the default); without, once
-    /// (protocol-07 §5.2; bead mimid-gunw).
+    /// response (mls-extensions-11 §6.4); without, once (protocol-07
+    /// §5.2, the default; bead mimid-gunw).
     async fn open_with_reuse(reuse: bool) -> Self {
         Self::open_with(Some(reuse)).await
     }
@@ -556,13 +555,41 @@ async fn with_reuse_last_resort_is_served_again_and_never_consumed() {
     assert_eq!(p.claims().await.len(), 4);
 }
 
-/// By default (draft-atwood-jmap-chat-mimi-00 §Handing Out KeyPackages;
-/// clean-room finding C7, scenario s6): a client that published only a
-/// last-resort KeyPackage gets it handed out in every response, and it
-/// stays stored.
+/// By default (protocol-07 §5.2; bead mimid-gunw): a client that
+/// published only a last-resort KeyPackage gets it handed out once; it
+/// stays stored, and every later request finds the client
+/// keyMaterialExhausted.
 #[tokio::test]
-async fn by_default_a_lone_last_resort_key_package_is_handed_out_and_kept() {
+async fn by_default_a_lone_last_resort_key_package_is_handed_out_once() {
     let p = Provider::open().await;
+    let phone = client(TARGET, 30 * DAY, &[]);
+    let last_resort = key_package(&phone, true);
+    p.upload(TARGET, &last_resort).await;
+    let first = decode(&p.serve(&request(&ask())).await);
+    assert_eq!(first.user_status, KeyMaterialUserCode::Success);
+    assert_eq!(served(&first), std::slice::from_ref(&last_resort));
+    for _ in 0..2 {
+        let response = decode(&p.serve(&request(&ask())).await);
+        assert_eq!(
+            response.user_status,
+            KeyMaterialUserCode::NoCompatibleMaterial
+        );
+        assert!(matches!(
+            response.clients[..],
+            [ClientKeyMaterial::KeyMaterialExhausted { .. }]
+        ));
+    }
+    assert_eq!(p.listed().await, BTreeSet::from([reference(&last_resort)]));
+    assert_eq!(p.claims().await.len(), 1);
+}
+
+/// With reuse on (mls-extensions-11 §6.4; draft-atwood-jmap-chat-mimi-00
+/// §Handing Out KeyPackages; clean-room finding C7, scenario s6): a client
+/// that published only a last-resort KeyPackage gets it handed out in
+/// every response, and it stays stored.
+#[tokio::test]
+async fn with_reuse_a_lone_last_resort_key_package_is_handed_out_and_kept() {
+    let p = Provider::open_with_reuse(true).await;
     let phone = client(TARGET, 30 * DAY, &[]);
     let last_resort = key_package(&phone, true);
     p.upload(TARGET, &last_resort).await;
