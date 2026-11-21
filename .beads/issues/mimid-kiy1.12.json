@@ -1,0 +1,22 @@
+{
+  "id": "mimid-kiy1.12",
+  "title": "Bridge step 12: relay-mode docs and manual round trip",
+  "description": "docs/agent.md [marmot], server docs for [nostr], operator guide (dedicated and personal), AGENTS.md crate map; manual round trip with a real wn-agent and a White Noise phone in both modes; measure whether the hold catches withdrawals. See docs/design/marmot-bridge.md (branch bridge-decisions, 1c2b6eba) §9 step 12, §11.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:21:03.081391646Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:21:03.081391646Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-kiy1.12",
+      "depends_on_id": "mimid-kiy1",
+      "type": "parent-child",
+      "created_at": "2026-11-21T21:21:03.117245815Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
