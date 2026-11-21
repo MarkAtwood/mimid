@@ -499,38 +499,29 @@ async fn telemetry_exports_to_the_collector() {
     }
 }
 
-/// An open EventSource stream does not hold up a graceful shutdown: on
-/// SIGINT the stream ends and the binary exits. Before the fix the stream
-/// only ended when its client left, so axum's graceful shutdown waited on
-/// it forever.
-///
-/// Oracle: the process exits successfully within the deadline while the
-/// client still holds the stream open, and the client then sees the
-/// stream end.
-#[tokio::test]
-async fn an_open_eventsource_stream_does_not_block_shutdown() {
-    let dir = tempfile::tempdir().unwrap();
-    let config = |addrs: &Addrs| {
+/// The configuration of one provider with a local control listener and
+/// the live stream on, in `dir`.
+fn one_provider(dir: &Path) -> impl Fn(&Addrs) -> String + '_ {
+    move |addrs: &Addrs| {
         format!(
             "domain = \"a.example\"\n\
          listen = \"{listen}\"\n\
          base_url = \"{base}\"\n\
          database = \"{database}\"\n\
-         local_listen = \"{local}\"\n",
+         local_listen = \"{local}\"\n\
+         live_stream = true\n",
             listen = addrs.listen,
             base = addrs.base(),
             local = addrs.local,
-            database = dir.path().join("mimid.sqlite").display(),
+            database = dir.join("mimid.sqlite").display(),
         )
-    };
-    // The local listener is bound before the other one: waiting for the
-    // local one only raced the eventsource request below (bead
-    // mimid-fchx). Server::start waits for both.
-    let (mut server, addrs) =
-        Server::start(dir.path(), &[("RUST_LOG", "warn,mimid=info")], config).await;
-    let (base, local) = (addrs.base(), addrs.local.clone());
-    let http = reqwest::Client::new();
-    let local_base = format!("http://{local}/local/v1");
+    }
+}
+
+/// Creates Alice's account through the local control listener and
+/// returns a bearer token for it.
+async fn alice_token(http: &reqwest::Client, addrs: &Addrs) -> String {
+    let local_base = format!("http://{}/local/v1", addrs.local);
     let response = http
         .post(format!("{local_base}/users"))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -551,46 +542,215 @@ async fn an_open_eventsource_stream_does_not_block_shutdown() {
         .await
         .unwrap();
     let token: serde_json::Value = serde_json::from_slice(&token).unwrap();
-    let token = token["token"].as_str().unwrap().to_owned();
+    token["token"].as_str().unwrap().to_owned()
+}
 
+impl Server {
+    /// Sends `signal` (`INT` or `TERM`) and waits up to `limit` for the
+    /// process to exit.
+    async fn signal(&mut self, signal: &str, limit: Duration) -> std::process::ExitStatus {
+        let pid = self.child.id().to_string();
+        let sent = Command::new("kill")
+            .args([&format!("-{signal}"), &pid])
+            .status()
+            .unwrap();
+        assert!(sent.success());
+        let deadline = Instant::now() + limit;
+        loop {
+            if let Some(exit) = self.child.try_wait().unwrap() {
+                return exit;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "server did not stop within {limit:?} of SIG{signal}:\n{}",
+                self.logs()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
+/// An open EventSource stream does not hold up a graceful shutdown on
+/// `signal`: the stream ends and the binary exits within a few seconds.
+/// The clean-room client found SIGTERM ignored while one was open (bead
+/// mimid-9q1u).
+///
+/// Oracle: the process exits successfully within the deadline while the
+/// client still holds the stream open, and the client then sees the
+/// stream end.
+async fn an_open_eventsource_stream_does_not_block(signal: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    // The local listener is bound before the other one: waiting for the
+    // local one only raced the eventsource request below (bead
+    // mimid-fchx). Server::start waits for both.
+    let (mut server, addrs) = Server::start(
+        dir.path(),
+        &[("RUST_LOG", "warn,mimid=info")],
+        one_provider(dir.path()),
+    )
+    .await;
+    let http = reqwest::Client::new();
+    let token = alice_token(&http, &addrs).await;
     let mut stream = http
         .get(format!(
-            "{base}/jmap/eventsource?types=Chat&closeafter=no&ping=0"
+            "{}/jmap/eventsource?types=*&closeafter=no&ping=30",
+            addrs.base()
         ))
         .bearer_auth(&token)
         .send()
         .await
         .unwrap();
     // The headers are in, so the stream is open; it sends nothing until a
-    // change, and this test makes none.
+    // change or a ping, and neither comes in this test.
     assert_eq!(stream.status(), StatusCode::OK);
 
-    let pid = server.child.id().to_string();
-    assert!(
-        Command::new("kill")
-            .args(["-INT", &pid])
-            .status()
-            .unwrap()
-            .success()
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let exit = loop {
-        if let Some(exit) = server.child.try_wait().unwrap() {
-            break exit;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "server did not stop with an EventSource stream open"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+    let exit = server.signal(signal, Duration::from_secs(5)).await;
     assert!(exit.success(), "{exit:?}");
+    assert!(server.logs().contains("mimid stopped"), "{}", server.logs());
     // The stream ended (cleanly or by the connection closing); a timeout
     // here would mean it was still open.
     let end = tokio::time::timeout(Duration::from_secs(5), stream.chunk())
         .await
         .expect("the stream ended");
     assert!(!matches!(end, Ok(Some(_))));
+}
+
+#[tokio::test]
+async fn an_open_eventsource_stream_does_not_block_sigint() {
+    an_open_eventsource_stream_does_not_block("INT").await;
+}
+
+#[tokio::test]
+async fn an_open_eventsource_stream_does_not_block_sigterm() {
+    an_open_eventsource_stream_does_not_block("TERM").await;
+}
+
+/// An open live stream, subscribed, ends on SIGTERM and the binary exits
+/// within a few seconds (bead mimid-9q1u).
+///
+/// Oracle: the exit status, and the socket closing after the hello and
+/// the Subscribe answer, written out from docs/design/binary-live-stream.md.
+#[tokio::test]
+async fn an_open_live_stream_does_not_block_sigterm() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, addrs) = Server::start(
+        dir.path(),
+        &[("RUST_LOG", "warn,mimid=info")],
+        one_provider(dir.path()),
+    )
+    .await;
+    let http = reqwest::Client::new();
+    let token = alice_token(&http, &addrs).await;
+    let url = format!("ws://{}{}", addrs.listen, mimid_live::PATH);
+    let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    let hello = mimid_live::ClientMessage::Hello(mimid_live::ClientHello {
+        versions: vec![1],
+        token,
+        extra: Vec::new(),
+    });
+    let subscribe = mimid_live::ClientMessage::Request(mimid_live::Request {
+        v: 1,
+        id: 1,
+        op: mimid_live::Op::Subscribe {
+            since: None,
+            after: None,
+        },
+        extra: Vec::new(),
+    });
+    // ProviderHello, then the Subscribe's Ack.
+    for (message, kind) in [
+        (hello, None),
+        (subscribe, Some(mimid_live::OpKind::Subscribe)),
+    ] {
+        socket
+            .send(Message::Binary(message.encode().into()))
+            .await
+            .unwrap();
+        let frame = tokio::time::timeout(Duration::from_secs(10), socket.next())
+            .await
+            .unwrap();
+        let Some(Ok(Message::Binary(bytes))) = frame else {
+            panic!("no answer: {frame:?}");
+        };
+        let answer = mimid_live::ProviderMessage::decode(&bytes, |_| kind).unwrap();
+        assert!(
+            matches!(
+                answer,
+                mimid_live::ProviderMessage::Hello(_) | mimid_live::ProviderMessage::Ack(_)
+            ),
+            "{answer:?}"
+        );
+    }
+
+    let exit = server.signal("TERM", Duration::from_secs(5)).await;
+    assert!(exit.success(), "{exit:?}");
+    // The socket is closed: a close frame, an error or the end, never a
+    // timeout.
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .expect("the live stream ended");
+        match frame {
+            Some(Ok(Message::Binary(_) | Message::Ping(_) | Message::Pong(_))) => {}
+            _ => break,
+        }
+    }
+}
+
+/// A request in flight that never completes holds up shutdown no longer
+/// than the binary's grace period (`SHUTDOWN_GRACE` in main.rs, 10
+/// seconds). Before the fix a client that sent a request's headers and
+/// part of its body kept the process running after SIGTERM until the
+/// client left (bead mimid-9q1u).
+///
+/// Oracle: the exit status within the grace period plus a margin, and the
+/// binary's warning that it abandoned requests.
+#[tokio::test]
+async fn a_stuck_request_delays_sigterm_only_by_the_grace_period() {
+    use tokio::io::AsyncWriteExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, addrs) = Server::start(
+        dir.path(),
+        &[("RUST_LOG", "warn,mimid=info")],
+        one_provider(dir.path()),
+    )
+    .await;
+    let http = reqwest::Client::new();
+    let token = alice_token(&http, &addrs).await;
+    let mut stuck = tokio::net::TcpStream::connect(&addrs.listen).await.unwrap();
+    stuck
+        .write_all(
+            format!(
+                "POST /jmap/api HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {token}\r\n\
+                 Content-Type: application/json\r\nContent-Length: 1000\r\n\r\n{{",
+                addrs.listen
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    stuck.flush().await.unwrap();
+    // Let the server read the headers and start the request.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let started = Instant::now();
+    let exit = server.signal("TERM", Duration::from_secs(20)).await;
+    assert!(exit.success(), "{exit:?}");
+    assert!(
+        started.elapsed() >= Duration::from_secs(9),
+        "stopped before the grace period: {:?}",
+        started.elapsed()
+    );
+    let logs = server.logs();
+    assert!(
+        logs.contains("abandoned") && logs.contains("mimid stopped"),
+        "{logs}"
+    );
+    drop(stuck);
 }
 
 /// The Session's `assetLifetime` is the config file's

@@ -47,9 +47,13 @@
 //! - The hub, follower, relay and fanout worker each have their own
 //!   [`PeerClient`], so each fetches and caches peer directories
 //!   separately.
-//! - SIGINT and SIGTERM stop it gracefully, once logging is set up; one
-//!   that arrives during startup stops it as soon as it serves. A signal
-//!   before that (while the configuration loads) kills it. Unix only.
+//! - SIGINT and SIGTERM stop it gracefully and alike, once logging is set
+//!   up; one that arrives during startup stops it as soon as it serves. A
+//!   signal before that (while the configuration loads) kills it. Unix
+//!   only. On the signal it stops accepting connections and ends every
+//!   EventSource and live stream at once; requests in flight get
+//!   [`SHUTDOWN_GRACE`] to finish, and whatever is still running then is
+//!   abandoned and the process exits (bead mimid-9q1u).
 //! - On shutdown the fanout worker is abandoned mid-request; the row is
 //!   sent again on the next start.
 //! - The hub's signing and franking keys are stored unencrypted in the
@@ -90,6 +94,12 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+
+/// How long after SIGINT or SIGTERM the requests in flight, the local
+/// control listener and the database get to finish before `mimid` exits
+/// without them (bead mimid-9q1u). Push streams do not count against it:
+/// they end as soon as shutdown starts. INVENTED, NOT FROM SPEC.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -236,7 +246,8 @@ async fn main() -> anyhow::Result<()> {
     // Fired when shutdown starts, so open EventSource streams end and the
     // graceful shutdown below can finish.
     let (stop_streams, streams_stopped) = tokio::sync::watch::channel(false);
-    jmap_options.stop = Some(streams_stopped);
+    jmap_options.stop = Some(streams_stopped.clone());
+    let mut stopping = streams_stopped;
     let shutdown = async move {
         signals.await;
         let _ = stop_streams.send(true);
@@ -385,32 +396,52 @@ async fn main() -> anyhow::Result<()> {
         "mimid listening"
     );
 
-    match &config.tls {
-        // mimid terminates TLS and asks for client certificates (bead
-        // mimid-75nk.4).
-        Some(tls) => {
-            let server = mimid_server::tls::server_config(tls).context("reading [tls]")?;
-            mimid_server::tls::serve(listener, server, app, shutdown).await;
-        }
-        // Connection info lets a trusted proxy's address be recognised.
-        None => axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .with_graceful_shutdown(shutdown)
-        .await
-        .context("serving HTTP")?,
-    }
-    if let Some(local) = local {
-        // Nothing waits for a stop if the receiver is gone already.
-        let _ = stop_local.send(());
-        local
+    let tls = match &config.tls {
+        Some(tls) => Some(mimid_server::tls::server_config(tls).context("reading [tls]")?),
+        None => None,
+    };
+    let serve_and_close = async {
+        match tls {
+            // mimid terminates TLS and asks for client certificates (bead
+            // mimid-75nk.4).
+            Some(server) => mimid_server::tls::serve(listener, server, app, shutdown).await,
+            // Connection info lets a trusted proxy's address be recognised.
+            None => axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown)
             .await
-            .context("joining the local control listener")?
-            .context("serving the local control listener")?;
+            .context("serving HTTP")?,
+        }
+        if let Some(local) = local {
+            // Nothing waits for a stop if the receiver is gone already.
+            let _ = stop_local.send(());
+            local
+                .await
+                .context("joining the local control listener")?
+                .context("serving the local control listener")?;
+        }
+        store.close().await;
+        anyhow::Ok(())
+    };
+    // Resolves SHUTDOWN_GRACE after shutdown starts. Without it a request
+    // whose client never finished sending it held the process up for good
+    // (bead mimid-9q1u).
+    let grace_over = async {
+        if stopping.wait_for(|stopping| *stopping).await.is_err() {
+            std::future::pending::<()>().await;
+        }
+        tokio::time::sleep(SHUTDOWN_GRACE).await;
+    };
+    tokio::select! {
+        result = serve_and_close => result?,
+        () = grace_over => tracing::warn!(
+            name: "shutdown_grace_expired",
+            grace_secs = SHUTDOWN_GRACE.as_secs(),
+            "requests still in flight after the shutdown grace period are abandoned"
+        ),
     }
-
-    store.close().await;
     tracing::info!(name: "server_stopped", "mimid stopped");
     for failure in telemetry.shutdown() {
         tracing::warn!(
