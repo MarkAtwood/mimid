@@ -26,6 +26,23 @@ from Mark Atwood's two IRC servers in Go:
   splits a long line itself before sending. Not checked: autojoin after
   422, the hostmask from 001, a one-burst CAP END (irssi waits for the
   LS reply), WeeChat and HexChat.
+- **Across two providers (2026-11-21, bead mimid-4jvf):** mimid-agent's
+  `tests/irc_two_providers.rs` puts alice on a.example and bob on
+  b.example, each provider in the other's peer map, each user on IRC.
+  Both directions work as on one provider, with no change to the front
+  end or the agent: JOIN hosts on the user's own provider, INVITE by user
+  URI, a pending `&invite-<n>` accepted with JOIN, `allow` then an invite
+  joined at once, `deny` then NoConsent from the peer, PRIVMSG with exact
+  non-ASCII text, NAMES, WHO, WHOIS, MODE +o/-o of the remote user, PART,
+  and a new invite after PART. Nicks are `alice-a` and `bob-b` on both
+  sides (the label is the first DNS label). An invite needs no consent
+  set up: the KeyPackage fetch is allowed unless the target refused
+  (`deny`). bob's daemon joins by itself only with `invites = "any"` or
+  after `/msg mimid allow alice-a`; otherwise the invite waits as an
+  INVITE line. Not covered: provider authentication between the two (the
+  test wiring has none, as in mimid-server's own two-provider tests), and
+  a real client across providers (`acceptance_fixture --two-providers
+  --irc` serves for that).
 
 ## Must do
 
