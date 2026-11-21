@@ -1,0 +1,7 @@
+{
+  "id": "1795228320490968674-1",
+  "issue_id": "mimid-1wgh.6.12",
+  "author": "Mark Atwood",
+  "text": "Amended 2026-11-21 by decision mimid-1wgh.81 (bug mimid-jvde): the hub still sends its own tree as full whatever the client sent, but only while the Welcome FanoutMessage with it fits MAX_BODY_LEN; a longer one goes with distributionService and the joiners fetch the tree by groupInfo, and if that cannot fit either the Commit is refused.",
+  "created_at": "2026-11-21T02:32:00.490968674Z"
+}
