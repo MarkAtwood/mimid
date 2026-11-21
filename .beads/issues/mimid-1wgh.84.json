@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.84",
   "title": "Decision: mimid-read-expiry mimiExtensions key for burnOnRead and expiresAfterReadSeconds (INVENTED, NOT FROM SPEC)",
   "description": "Mark, 2026-11-21 (bead mimid-tu1g, item 3). draft-atwood-jmap-chat-00 Message burnOnRead and expiresAfterReadSeconds have no field of their own in mimi-content-10, so mimid sends them in mimiExtensions (mimi-content-10 §4.3, a private-use text key) under the key \"mimid-read-expiry\". INVENTED, NOT FROM SPEC. Value, deterministic CBOR (§6.1): readExpiry = [ burnOnRead: bool, expiresAfterReadSeconds: null / uint .size 4 ]. Sent only when one of the two is set (from JMAP Message/set create, or IRC '/msg mimid burn'). Only mimid receivers honour it; any other implementation keeps an unknown extension and ignores it (§4.3), so the receiver's copy is not deleted there. A value in any other form is ignored with a sync problem; the message is still stored. Receiving: a mimi-content-10 expires with relative=true is the same rule as expiresAfterReadSeconds (§4.1: 'a relative amount of time after the receiving client reads the message') and is honoured as such; with both present the earlier deadline wins. Open question for Mark (not acted on): since relative expires is delete-after-read, mimid could also send expiresAfterReadSeconds as expires [true, N] when no senderExpiresAt is set, so other implementations honour it. Code: crates/mimid-agent-store/src/expiry.rs READ_EXPIRY_KEY. Doc: docs/design/agent-frontends.md §7.22.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T19:01:41.559146756Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T19:01:41.559146756Z",
+  "updated_at": "2026-11-21T19:28:09.259960442Z",
+  "closed_at": "2026-11-21T19:28:09.259960442Z",
+  "close_reason": "Mark 2026-11-21 (bead mimid-tu1g item 3); built in 4c99e99 on branch disappearing",
   "labels": [
     "agent"
   ],
