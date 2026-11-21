@@ -95,7 +95,7 @@ argument parsing, UTCDate rendering (convert.rs:44) and the delegation to
 | Attachments waiting for retry, with their keys | `pending` (backend.rs:140) | In chat.json (persist.rs:75-78) |
 | Epochs at the last DID refresh | `did_epochs` (backend.rs:143) | No |
 | Attachment plaintext | `<state_dir>/blobs`, content-addressed, 0700/0600 (crates/mimid-agent-jmap/src/blobs.rs:1-41) | Yes |
-| MLS keys, groups, rooms, invites, the delivery journal | mimid-agent-core: `mls.sqlite`, `state.json` (crates/mimid-agent-core/src/lib.rs:45-51); since §3 step 9 one file, `agent.sqlite`, with the store's records | Yes |
+| MLS keys, groups, rooms, invites, the delivery journal | mimid-agent-core: `mls.sqlite`, `state.json` (crates/mimid-agent-core/src/lib.rs:45-51); since §3 step 9 one file, `mimid.sqlite`, with the store's records | Yes |
 | The local token | `<state_dir>/agent-token`, 0600 (crates/mimid-agent/src/token.rs:1-7) | Yes |
 
 chat.json is rewritten whole, 0600, through a temporary file and a rename
@@ -474,7 +474,7 @@ step runs the full check list in AGENTS.md before its commit.
      one transaction is possible, but needs the agent to own one
      connection, the journal to move from `state.json` into it, and new
      APIs in mimi-mls and mimid-agent-core: bead mimid-1vul.10, built as
-     step 9 (one file, `agent.sqlite`; `persisted_at(path)` became
+     step 9 (one file, `mimid.sqlite`; `persisted_at(path)` became
      `persisted()`; `schema_version` replaces `user_version`).
 5. **Outbound through the store.** Move room create, member and role
    changes, leave, send with attachments, edit, retraction, ban, unban,
@@ -757,8 +757,9 @@ step runs the full check list in AGENTS.md before its commit.
 
    Built (2026-11-20):
 
-   - One file, `<state_dir>/agent.sqlite` (0600, in the 0700 state
-     directory; `mimid_agent_core::DATABASE_FILE`), replaces `mls.sqlite`,
+   - One file, `<state_dir>/mimid.sqlite` (0600, in the 0700 state
+     directory; `mimid_agent_core::DATABASE_FILE`; built as
+     `agent.sqlite` and renamed by §7.17), replaces `mls.sqlite`,
      `state.json` and `chat.sqlite`. It holds OpenMLS's tables, the
      agent's state (`agent_state`, one row: what `state.json` held, as
      JSON), the journal (`journal`, one row per undelivered event, by
@@ -768,7 +769,7 @@ step runs the full check list in AGENTS.md before its commit.
      `agent` version 1, the store's part `store` version 3 (2 was
      `chat.sqlite`). Another version is refused; nothing is converted. A
      state directory that holds `state.json`, `mls.sqlite` or
-     `chat.sqlite` and no `agent.sqlite` is refused with a message naming
+     `chat.sqlite` and no `mimid.sqlite` is refused with a message naming
      the file, rather than minting a second identity beside it; nothing
      runs in production, so there is no migration.
    - Connections. `mimi_mls::Store` owns its `rusqlite::Connection` by
@@ -858,7 +859,7 @@ step runs the full check list in AGENTS.md before its commit.
 
     Built (2026-11-20):
 
-    - The outbox (`outbox` table in `agent.sqlite`, part `agent` version
+    - The outbox (`outbox` table in `mimid.sqlite`, part `agent` version
       2; crates/mimid-agent-core/src/outbox.rs). `Agent::send_content`
       encrypts, saves the MLSMessage's digest and writes an outbox entry
       (room, the MLSMessage bytes, the mimi-content as encrypted) in one
@@ -1307,7 +1308,7 @@ Added on 2026-11-20:
     Whether the records can share `mls.sqlite` and one transaction with
     the MLS state is bead mimid-1vul.10. They can: §3 step 9 puts them, the
     MLS state, the agent's state and the journal in one file,
-    `agent.sqlite`, which replaces `chat.sqlite`.
+    `mimid.sqlite`, which replaces `chat.sqlite`.
 
 11. **JMAP built from the store (Mark, 2026-11-20).** When the JMAP front
     end starts over a store, a record without `ext["jmap"]` (made while
@@ -1494,6 +1495,15 @@ Added on 2026-11-20:
       `topic_sets_the_subject_for_every_member` (the user's other
       connections see the reason, bob the fixed text),
       `two_daemons_chat_over_irc_and_jmap` (the fixed text).
+17. **The database is `mimid.sqlite` (Mark, 2026-11-21).** The agent's
+    one database (§3 step 9) is `<state_dir>/mimid.sqlite`
+    (`mimid_agent_core::DATABASE_FILE`), not `agent.sqlite`. Nothing runs
+    in production, so there is no migration and no rename on start: a
+    state directory that has no `mimid.sqlite` and holds `agent.sqlite`
+    is refused, as one holding `state.json`, `mls.sqlite` or
+    `chat.sqlite` already was, with a message saying it is the database
+    under its earlier name and that this agent does not convert or rename
+    it. Test: mimid-agent-core `state::tests::the_older_layout_is_refused`.
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

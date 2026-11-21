@@ -1,4 +1,4 @@
-//! The state directory (0700) and its one database, `agent.sqlite`
+//! The state directory (0700) and its one database, `mimid.sqlite`
 //! ([`DATABASE_FILE`], 0600; bead mimid-1vul.10). It holds:
 //!
 //! - OpenMLS's state, through [`mimi_mls::Store`]: the identity's private
@@ -22,9 +22,9 @@
 //! A new directory gets a new database and identity. An existing directory
 //! or file that group or others can reach is refused, and so is a
 //! database of another schema version (nothing is converted), and a
-//! directory holding the files of the layout before this one
-//! (`state.json`, `mls.sqlite`, `chat.sqlite`), which this agent does not
-//! read.
+//! directory holding the files of a layout before this one
+//! (`state.json`, `mls.sqlite`, `chat.sqlite`, or the database under its
+//! earlier name `agent.sqlite`), which this agent does not read.
 
 use std::collections::BTreeMap;
 use std::fs::{DirBuilder, OpenOptions};
@@ -41,7 +41,10 @@ use crate::AgentError;
 use crate::journal::Journaled;
 
 /// The database in the state directory.
-pub const DATABASE_FILE: &str = "agent.sqlite";
+/// It was `agent.sqlite` until Mark's decision of 2026-11-21
+/// (docs/design/agent-frontends.md §7.17); a directory holding a file of
+/// that name is refused, not converted.
+pub const DATABASE_FILE: &str = "mimid.sqlite";
 
 /// The schema of this crate's tables. Version 1 (bead mimid-1vul.10) is
 /// the first in SQLite; the state was `state.json` before. Version 2 adds
@@ -51,8 +54,13 @@ pub const SCHEMA_VERSION: i64 = 2;
 /// This crate's row in `schema_version`.
 const SCHEMA_PART: &str = "agent";
 
-/// The files of the layout before [`DATABASE_FILE`], which are not read.
-const OLD_FILES: [&str; 3] = ["state.json", "mls.sqlite", "chat.sqlite"];
+/// The files of the layouts before [`DATABASE_FILE`], which are not read:
+/// the JSON state with the MLS and chat databases beside it, and the one
+/// database under its earlier name, `agent.sqlite`.
+const OLD_FILES: [&str; 4] = ["state.json", "mls.sqlite", "chat.sqlite", OLD_DATABASE_FILE];
+
+/// [`DATABASE_FILE`]'s name until 2026-11-21.
+const OLD_DATABASE_FILE: &str = "agent.sqlite";
 
 /// How long a statement waits for another connection's write lock (the
 /// store's records share the file).
@@ -396,13 +404,21 @@ impl StateDir {
     fn mls_store(&self) -> Result<mimi_mls::Store, AgentError> {
         if !self.path.exists() {
             for old in OLD_FILES {
-                let old = self.dir.join(old);
-                if old.exists() {
+                let path = self.dir.join(old);
+                if path.exists() {
+                    let what = if old == OLD_DATABASE_FILE {
+                        format!(
+                            "is the agent's database under its earlier name; this agent reads \
+                             only {DATABASE_FILE} and does not convert or rename the old one"
+                        )
+                    } else {
+                        "is of the agent's older state layout, which this agent does not read"
+                            .to_owned()
+                    };
                     return Err(AgentError::State {
-                        path: old,
+                        path,
                         detail: format!(
-                            "is of the agent's older state layout, which this agent does not \
-                             read; use another state directory, or remove this one's files \
+                            "{what}; use another state directory, or remove this one's files \
                              (an identity in them is lost) so that a new {DATABASE_FILE} is made"
                         ),
                         source: None,
@@ -668,8 +684,9 @@ mod tests {
         }
     }
 
-    /// A directory holding a file of the layout before `agent.sqlite`
-    /// is refused, and no database is made in it.
+    /// A directory holding a file of a layout before `mimid.sqlite`,
+    /// `agent.sqlite` among them, is refused, and no database is made in
+    /// it.
     #[test]
     fn the_older_layout_is_refused() {
         for old in OLD_FILES {
@@ -686,7 +703,12 @@ mod tests {
                     ..
                 }) => {
                     assert_eq!(refused, path.join(old));
-                    assert!(detail.contains("older state layout"), "{detail}");
+                    if old == "agent.sqlite" {
+                        assert!(detail.contains("earlier name"), "{detail}");
+                        assert!(detail.contains("mimid.sqlite"), "{detail}");
+                    } else {
+                        assert!(detail.contains("older state layout"), "{detail}");
+                    }
                 }
                 other => panic!("{old} not refused: {:?}", other.map(|_| ())),
             }

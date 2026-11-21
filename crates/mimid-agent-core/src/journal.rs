@@ -1,6 +1,6 @@
 //! The delivery journal (bead mimid-s4b1): the events [`crate::Agent`]
 //! found and its caller has not acknowledged, kept in the `journal` table
-//! of the agent's database (`agent.sqlite`, [`crate::DATABASE_FILE`]).
+//! of the agent's database (`mimid.sqlite`, [`crate::DATABASE_FILE`]).
 //!
 //! Receiving consumes MLS secrets (RFC 9420 §9.2): a message decrypted once
 //! cannot be decrypted again. So an event is written to the journal, with

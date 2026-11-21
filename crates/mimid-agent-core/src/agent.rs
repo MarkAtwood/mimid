@@ -683,7 +683,7 @@ impl Agent {
         }
     }
 
-    /// The agent's database, `agent.sqlite` in the state directory
+    /// The agent's database, `mimid.sqlite` in the state directory
     /// ([`crate::DATABASE_FILE`]): OpenMLS's state, the agent's state and
     /// the delivery journal. A caller may keep its own tables there, on a
     /// connection of its own, and acknowledge in the transaction that

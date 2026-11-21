@@ -1,7 +1,7 @@
 //! The outbox: what this agent is sending, from before it leaves until
 //! the provider's answer is handled (docs/design/agent-frontends.md §3
 //! step 10), kept in the `outbox` table of the agent's database
-//! (`agent.sqlite`, [`crate::DATABASE_FILE`]).
+//! (`mimid.sqlite`, [`crate::DATABASE_FILE`]).
 //!
 //! Sending consumes MLS secrets as receiving does: an application message
 //! is encrypted with a ratchet generation that cannot be used again, and

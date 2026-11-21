@@ -47,7 +47,7 @@
 //! # State
 //!
 //! The state directory (mode 0700) holds one SQLite database,
-//! `agent.sqlite` ([`DATABASE_FILE`], mode 0600): OpenMLS's store with the
+//! `mimid.sqlite` ([`DATABASE_FILE`], mode 0600): OpenMLS's store with the
 //! identity's private keys and the groups, the agent's state (rooms,
 //! pending invites, held messages, the JMAP Message state, the digests of
 //! sent messages, the device's `did_webvh` credential if it has one and

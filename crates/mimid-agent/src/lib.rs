@@ -15,7 +15,7 @@
 //!
 //! The daemon builds the plaintext store first
 //! ([`mimid_agent_store::Store`]: the agent, the records in the agent's
-//! database `<state_dir>/agent.sqlite`, the blob store, the change feed), then puts
+//! database `<state_dir>/mimid.sqlite`, the blob store, the change feed), then puts
 //! the JMAP front end over it ([`mimid_agent_jmap::AgentChat::over`]),
 //! unless the configuration has `[jmap] enabled = false`: then the store
 //! syncs as ever, the HTTP listener serves only the did:webvh log endpoint
@@ -109,7 +109,7 @@
 //! # Limitations
 //!
 //! - The decrypted Chats and Messages are kept in the agent's SQLite
-//!   database `<state_dir>/agent.sqlite` ([`DATABASE_FILE`], mode 0600),
+//!   database `<state_dir>/mimid.sqlite` ([`DATABASE_FILE`], mode 0600),
 //!   beside the MLS state, what changed written after each change; see
 //!   mimid-agent-jmap's `persist` limits (state strings restart, so
 //!   clients resync after a restart). A `chat.json`, or a state directory

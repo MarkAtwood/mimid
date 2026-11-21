@@ -106,7 +106,7 @@ pub enum StartError {
     /// The Session does not build (a crate-jmap type changed).
     #[error("building the Session")]
     Session(#[from] serde_json::Error),
-    /// The plaintext store (its tables in `<state_dir>/agent.sqlite`) could
+    /// The plaintext store (its tables in `<state_dir>/mimid.sqlite`) could
     /// not be read.
     #[error("opening the plaintext store")]
     Records(#[from] mimid_agent_store::FileError),

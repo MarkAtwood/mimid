@@ -1,5 +1,5 @@
 //! The store's database (docs/design/agent-frontends.md §7.10, §3 step 9): the
-//! store's tables in the agent's own SQLite database, `agent.sqlite` in its
+//! store's tables in the agent's own SQLite database, `mimid.sqlite` in its
 //! state directory (0600; [`mimid_agent_core::DATABASE_FILE`]), beside
 //! OpenMLS's state, the agent's state and its delivery journal. The store
 //! reaches it through a connection of its own, so its saves do not wait for
