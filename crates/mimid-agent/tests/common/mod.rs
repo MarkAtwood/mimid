@@ -1,5 +1,6 @@
-//! What the daemon tests share: an in-process mimid server, daemons
-//! started on it, and a JMAP client that speaks only HTTP to a daemon.
+//! What the daemon tests share: an in-process mimid server (or two,
+//! peers of each other), daemons started on it, and a JMAP client that
+//! speaks only HTTP to a daemon.
 
 // Each test binary uses part of this module.
 #![allow(dead_code)]
@@ -31,13 +32,16 @@ use tokio::task::JoinHandle;
 
 pub const ALICE: &str = "mimi://a.example/u/alice";
 pub const BOB: &str = "mimi://a.example/u/bob";
+/// bob on the second provider, for the two-provider tests.
+pub const BOB_B: &str = "mimi://b.example/u/bob";
 
 /// How long a test waits for something that should happen.
 pub const PATIENCE: Duration = Duration::from_secs(15);
 
-/// A running mimid server: its base URL, a bearer token per user, and
-/// the switch on its EventSource.
+/// A running mimid server: its domain, its base URL, a bearer token per
+/// user, and the switch on its EventSource.
 pub struct Server {
+    pub domain: String,
     pub base: String,
     pub tokens: BTreeMap<&'static str, String>,
     pub push: PushControl,
@@ -128,17 +132,62 @@ impl PushControl {
 }
 
 /// Starts a.example's stack as mimid-server's `main.rs` wires it (as
-/// mimid-agent-jmap's two_accounts test does), with accounts for `users`.
+/// mimid-agent-jmap's two_accounts test does), with accounts for `users`
+/// and no peers.
 pub async fn server(dir: &Path, users: &[&'static str]) -> Server {
-    let domain = Domain::try_from("a.example".to_owned()).unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = bind().await;
+    provider(listener, "a.example", dir, users, BTreeMap::new()).await
+}
+
+/// Starts two providers, a.example with accounts for `a_users` and
+/// b.example with accounts for `b_users`, each in the other's peer map,
+/// as mimid-server's two-provider tests wire them
+/// (crates/mimid-server/tests/common/providers.rs): plain HTTP on
+/// loopback, and no provider authentication layer, as there.
+pub async fn two_providers(
+    dir: &Path,
+    a_users: &[&'static str],
+    b_users: &[&'static str],
+) -> (Server, Server) {
+    let (a_listener, b_listener) = (bind().await, bind().await);
+    let peer = |domain: &str, listener: &tokio::net::TcpListener| {
+        BTreeMap::from([(
+            Domain::try_from(domain.to_owned()).unwrap(),
+            BaseUrl::try_from(format!("http://{}", listener.local_addr().unwrap())).unwrap(),
+        )])
+    };
+    let (a_peers, b_peers) = (
+        peer("b.example", &b_listener),
+        peer("a.example", &a_listener),
+    );
+    let a = provider(a_listener, "a.example", dir, a_users, a_peers).await;
+    let b = provider(b_listener, "b.example", dir, b_users, b_peers).await;
+    (a, b)
+}
+
+async fn bind() -> tokio::net::TcpListener {
+    tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap()
+}
+
+/// Starts `domain`'s stack on `listener`, as mimid-server's `main.rs`
+/// wires it, with `peer_map` as its peer map and accounts for `users`, each
+/// of which must be on `domain`. Its database is `<domain>.sqlite` in
+/// `dir`.
+async fn provider(
+    listener: tokio::net::TcpListener,
+    domain: &str,
+    dir: &Path,
+    users: &[&'static str],
+    peer_map: BTreeMap<Domain, BaseUrl>,
+) -> Server {
+    let domain = Domain::try_from(domain.to_owned()).unwrap();
     let base_text = format!("http://{}", listener.local_addr().unwrap());
     let base = BaseUrl::try_from(base_text.clone()).unwrap();
-    let store = Store::open(&dir.join("mimid.sqlite"), &domain)
+    let store = Store::open(&dir.join(format!("{domain}.sqlite")), &domain)
         .await
         .unwrap();
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let peers = || PeerClient::new(&domain, BTreeMap::new()).unwrap();
+    let peers = || PeerClient::new(&domain, peer_map.clone()).unwrap();
     let key_packages = Arc::new(KeyPackages::new(
         store.clone(),
         domain.clone(),
@@ -163,6 +212,7 @@ pub async fn server(dir: &Path, users: &[&'static str]) -> Server {
             .unwrap()
             .with_fanout(fanout)
             .with_peers(peers())
+            .with_base_url(base.clone())
             .with_local_key_material(Arc::clone(&key_packages) as _),
     );
     follower
@@ -170,6 +220,10 @@ pub async fn server(dir: &Path, users: &[&'static str]) -> Server {
         .unwrap();
     let mut tokens = BTreeMap::new();
     for user in users {
+        assert!(
+            user.starts_with(&format!("mimi://{domain}/")),
+            "{user} is on {domain}"
+        );
         let account = store.create_account(&domain, user, 1).await.unwrap();
         let token = store.issue_token(&account, 2).await.unwrap();
         tokens.insert(*user, token.expose_secret());
@@ -191,6 +245,7 @@ pub async fn server(dir: &Path, users: &[&'static str]) -> Server {
     );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
+        domain: domain.to_string(),
         base: base_text,
         tokens,
         push,
