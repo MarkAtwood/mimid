@@ -320,15 +320,21 @@ them by, not by JMAP ids, where it can:
   larger. It fits an `Upload` or a `FetchAsset` answer of the largest
   blob mimid stores (16 MiB, crates/mimid-server/src/store/blobs.rs).
 - `maxRequestBytes`, 2 × 4 MiB + 64 KiB: no client request other than
-  `Upload` is larger. It fits two MLS objects of `maxMlsObjectSize`
-  (4 MiB, the largest body mimid takes on the protocol routes,
-  crates/mimid-server/src/http.rs:90), the most one request carries
-  (`CreateRoom`'s GroupInfo and ratchet tree), as JMAP's
-  `maxSizeRequest` does after base64url (api.rs).
-- `maxMlsObjectSize`, 4 MiB: the account capability of the same name
-  (findings log F10). The core functions refuse a larger MLS or MIMI
-  structure with `invalidArguments` on both bindings (a KeyPackage with
-  `tooLarge`), so the per-object limit is the one a client meets.
+  `Upload` is larger. It fits two MLS objects of 4 MiB (the largest
+  body mimid takes on the protocol routes,
+  crates/mimid-server/src/http.rs:90), more than two of
+  `maxMlsObjectSize`, the most one request carries (`CreateRoom`'s
+  GroupInfo and ratchet tree); JMAP's `maxSizeRequest` fits two of
+  `maxMlsObjectSize` after base64url (api.rs).
+- `maxMlsObjectSize`, 4 MiB less 64 KiB (4 128 768 octets): the account
+  capability of the same name (findings log F10). The 64 KiB is room
+  for the envelope the object travels in to and from the hub
+  (`SubmitMessageRequest`, `FanoutMessage`), so an object at the limit
+  fits the protocol routes' 4 MiB body cap (bead mimid-e64f.18;
+  `MLS_OBJECT_ENVELOPE_ALLOWANCE`, crates/mimid-server/src/jmap/mod.rs).
+  The core functions refuse a larger MLS or MIMI structure with
+  `invalidArguments` on both bindings (a KeyPackage with `tooLarge`),
+  so the per-object limit is the one a client meets.
 
 A larger frame gets `Error` `tooLarge` without `id`, and the connection
 closes. No FanoutMessage mimid stores is larger than the protocol

@@ -132,6 +132,9 @@ impl Server {
                     hello.max_message_bytes,
                     mimid_live::MAX_MESSAGE_BYTES as u64
                 );
+                // findings log F10, bead mimid-e64f.18: 4 MiB less 64 KiB,
+                // as the JMAP capability states it.
+                assert_eq!(hello.max_mls_object_size, Some(4_128_768));
             }
             other => panic!("no ProviderHello: {other:?}"),
         }
@@ -326,6 +329,33 @@ async fn frames_past_the_limits_are_refused_and_at_them_accepted() {
     expect_error(&mut socket, Some(2), "invalidArguments", false).await;
     send(&mut socket, &send_of(mimid_live::MAX_REQUEST_BYTES + 1)).await;
     expect_error(&mut socket, None, code::TOO_LARGE, true).await;
+
+    // A message one octet over maxMlsObjectSize fits the frame limit and
+    // is refused by Room/send's own check (bead mimid-e64f.18).
+    let mut socket = server.open().await;
+    let over = request(
+        3,
+        Op::Send {
+            room: "mimi://a.example/r/x".to_owned(),
+            message: vec![0; mimid_server::jmap::MAX_MLS_OBJECT_SIZE + 1],
+        },
+    );
+    send(&mut socket, &over).await;
+    match receive(&mut socket, None).await {
+        Some(ProviderMessage::Error(ErrorMessage {
+            id: Some(3),
+            code,
+            detail,
+            ..
+        })) => {
+            assert_eq!(code, "invalidArguments");
+            assert!(
+                detail.is_some_and(|d| d.contains("maxMlsObjectSize")),
+                "the size check, not the Chat check, refused it"
+            );
+        }
+        other => panic!("expected Error invalidArguments, got {other:?}"),
+    }
 }
 
 #[tokio::test]

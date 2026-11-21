@@ -71,13 +71,35 @@ use bus::ChangeBus;
 use methods::Services;
 use session::{DEFAULT_MAX_KEY_PACKAGES, SessionTemplate};
 
+/// The part of a protocol body ([`crate::http::MAX_BODY_LEN`]) kept for
+/// the envelope around an MLS object on its way to and from the hub, so
+/// that an object of [`MAX_MLS_OBJECT_SIZE`] still fits once wrapped
+/// (bead mimid-e64f.18). INVENTED, NOT FROM SPEC.
+///
+/// The envelopes, in protocol-07 octets beyond the object:
+///
+/// - `SubmitMessageRequest` (Room/send): 1 (`protocol`) + up to 4
+///   (length of `sendingUri`) + the user URI.
+/// - `UpdateRequest` (Room/update): 0; the argument is the whole request.
+/// - `FanoutMessage`: 8 (`timestamp`) + 1 (an empty `external_proposals`)
+///   for a Commit; 8 for a Proposal and its `more_proposals`, all from
+///   the request; 8 + 1 + 99 (`Frank`: 32 + 2 + 1 + a 64-octet Ed25519
+///   signature, the hub's only scheme) = 108 for an application message.
+///
+/// The largest, a Room/send's, is 5 octets plus the user URI, so 64 KiB
+/// covers any user URI shorter than 65 531 octets.
+pub const MLS_OBJECT_ENVELOPE_ALLOWANCE: usize = 64 * 1024;
+
 /// `maxMlsObjectSize` (findings log F10): the largest MLS or MIMI
 /// structure, in octets before base64url, that any argument of the mimi
 /// methods may carry, on JMAP and on the live stream alike (decision
-/// mimid-1wgh.78, as updated for F10). 4 MiB, the largest body the
-/// protocol routes take ([`crate::http::MAX_BODY_LEN`]). INVENTED, NOT
-/// FROM SPEC: the draft names the property, not its value.
-pub const MAX_MLS_OBJECT_SIZE: usize = 4 * 1024 * 1024;
+/// mimid-1wgh.78, as updated for F10). The protocol routes' body cap
+/// ([`crate::http::MAX_BODY_LEN`], 4 MiB) less
+/// [`MLS_OBJECT_ENVELOPE_ALLOWANCE`] (64 KiB), 4 128 768 octets, so that
+/// an object at the limit passes the relay and its fanout passes
+/// `/notify` (bead mimid-e64f.18). INVENTED, NOT FROM SPEC: the draft
+/// names the property, not its value.
+pub const MAX_MLS_OBJECT_SIZE: usize = crate::http::MAX_BODY_LEN - MLS_OBJECT_ENVELOPE_ALLOWANCE;
 
 /// The most MLS or MIMI structures one method call carries: `Room/create`'s
 /// `groupInfo` and `ratchetTree`. The request limits of both bindings

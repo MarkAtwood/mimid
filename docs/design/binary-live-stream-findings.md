@@ -365,7 +365,7 @@ but not one JMAP request with another argument beside it.
 
 **Decision.** Take; mimid-server advertises 4 MiB, and both bindings use that one limit. (Mark, 2026-11-20.)
 
-Built: `maxMlsObjectSize` = 4 MiB in the mimi capability and in `ProviderHello`; the core functions refuse a larger argument with `invalidArguments` (a KeyPackage with SetError `tooLarge`) on both bindings; `maxSizeRequest` and the stream's `maxRequestBytes` were raised to fit two such objects (Room/create), so this is the limit a client meets. An object near 4 MiB still fails at the protocol relay, whose body cap (`MAX_BODY_LEN`, 4 MiB) must hold the object plus its SubmitMessageRequest or FanoutMessage envelope: see the open question in the report of bead mimid-e64f.12.
+Built: `maxMlsObjectSize` = 4 MiB less 64 KiB (4 128 768 octets) in the mimi capability and in `ProviderHello`; the core functions refuse a larger argument with `invalidArguments` (a KeyPackage with SetError `tooLarge`) on both bindings; `maxSizeRequest` and the stream's `maxRequestBytes` fit two such objects (Room/create), so this is the limit a client meets. The protocol routes' body cap stays `MAX_BODY_LEN`, 4 MiB (decision mimid-1wgh.6.8); the 64 KiB (`MLS_OBJECT_ENVELOPE_ALLOWANCE`, crates/mimid-server/src/jmap/mod.rs, INVENTED) is room for the envelope an object travels in to and from the hub: at most 108 octets for a FanoutMessage, 5 plus the user URI for a SubmitMessageRequest, none for an UpdateRequest. A message of exactly `maxMlsObjectSize` goes from alice at a through a's hub to bob at b (crates/mimid-server/tests/jmap_two_providers.rs, step 4a); one octet more is refused by Room/send. (Mark, 2026-11-21; bead mimid-e64f.18.)
 
 ## F11. A lost answer to Room/send or Room/update cannot be retried safely
 
@@ -432,7 +432,7 @@ anchor, which RFC 8620 §5.5 provides.)
 
 **Decision.** Take; mimid-server sorts `Message/query` by `id` with an `anchor`, and the agent uses it on `cannotCalculateChanges`. (Mark, 2026-11-20.)
 
-Built: `Message/query` sorts by `id`, and `anchor` with `anchorOffset` 1 gives the later Messages. The stream's counterpart is `Subscribe` with `after` (per Chat, the last Message handled) and no `since`. The agent uses them on `cannotCalculateChanges` and `cannotResume`. The proposed text says "with `anchor` set to the last Message it processed"; with RFC 8620's default `anchorOffset` of 0 the result starts at that Message itself, so the text should say `anchorOffset` 1 (or "the Messages after it").
+Built: `Message/query` sorts by `id`, and `anchor` with `anchorOffset` 1 gives the later Messages. The stream's counterpart is `Subscribe` with `after` (per Chat, the last Message handled) and no `since`. The agent uses them on `cannotCalculateChanges` and `cannotResume`. The proposed text says "with `anchor` set to the last Message it processed"; with RFC 8620's default `anchorOffset` of 0 the result starts at that Message itself, so the text should say `anchorOffset` 1 (or "the Messages after it"). Fixed in the draft: jmap-chat-spec 813ad11 says `anchorOffset` 1.
 
 ## Push semantics (F13 to F17)
 

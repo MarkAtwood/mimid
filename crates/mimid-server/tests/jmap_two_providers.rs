@@ -642,6 +642,38 @@ async fn two_providers_over_jmap_only() {
         reply,
     );
 
+    // 4a. maxMlsObjectSize (bead mimid-e64f.18): a message of exactly
+    // that many octets passes a's relay as a SubmitMessageRequest and
+    // reaches b's /notify as a FanoutMessage, each within the protocol
+    // routes' body cap; bob decrypts it. One octet more is refused by
+    // Room/send itself.
+    let limit = mimid_server::jmap::MAX_MLS_OBJECT_SIZE;
+    // The ciphertext's overhead does not depend on the plaintext's length
+    // in this range (no padding; the same length-prefix widths), so a
+    // probe, never sent, measures it.
+    let probe_len = limit - 4096;
+    let overhead = franked(&alice, &mut alice_group, &vec![b'p'; probe_len]).len() - probe_len;
+    let big = vec![b'x'; limit - overhead];
+    let sent = franked(&alice, &mut alice_group, &big);
+    assert_eq!(sent.len(), limit, "the message is exactly maxMlsObjectSize");
+    alice_jmap.send(&room_id, &sent).await;
+    assert_eq!(mls_bytes(&alice_jmap.next().await), sent, "alice's own");
+    assert_decrypts(&bob, &mut bob_group, &bob_jmap.next().await, ALICE, &big);
+    let (name, refused) = alice_jmap
+        .call(
+            "Room/send",
+            json!({"roomId": room_id, "message": b64(&vec![0; limit + 1])}),
+        )
+        .await;
+    assert_eq!(name, "error", "{refused}");
+    assert_eq!(refused["type"], "invalidArguments", "{refused}");
+    assert!(
+        refused["description"]
+            .as_str()
+            .is_some_and(|d| d.contains("maxMlsObjectSize")),
+        "{refused}"
+    );
+
     // 5. Epoch 3: bob's second client joins by external Commit through b.
     let requester = Requester::new(BOB);
     let fetched = bob_jmap

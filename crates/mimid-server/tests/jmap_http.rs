@@ -181,10 +181,10 @@ fn expected_session(
                 "maxSizeUpload": 16_777_216,
                 // RFC 8620 §2's suggested minimum.
                 "maxConcurrentUpload": 4,
-                // Two objects of maxMlsObjectSize (4 MiB) in base64:
-                // 2 * 4 * ceil(4194304 / 3) = 2 * 5592408, plus the
+                // Two objects of maxMlsObjectSize (4128768) in base64:
+                // 2 * 4 * ceil(4128768 / 3) = 2 * 5505024, plus the
                 // 65536-octet envelope allowance (findings log F10).
-                "maxSizeRequest": 11_250_352,
+                "maxSizeRequest": 11_075_584,
                 "maxConcurrentRequests": 4,
                 "maxCallsInRequest": 16,
                 "maxObjectsInGet": 500,
@@ -226,8 +226,9 @@ fn expected_session(
                         "hubSender": URL_SAFE_NO_PAD.encode(hub_sender(hub_key)),
                         "cipherSuites": [1],
                         "maxKeyPackages": max_key_packages,
-                        // findings log F10: 4 MiB.
-                        "maxMlsObjectSize": 4_194_304,
+                        // findings log F10, bead mimid-e64f.18: 4 MiB
+                        // less 64 KiB, 4194304 - 65536.
+                        "maxMlsObjectSize": 4_128_768,
                         // mimi-00 §Account-Level Capability Object
                         // (jmap-chat-spec 92fecd6): RFC 6570 level 1
                         // templates; the paths are mimid's own.
