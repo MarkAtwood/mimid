@@ -1,0 +1,7 @@
+{
+  "id": "1795226916587898171-1",
+  "issue_id": "mimid-jvde",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-21: build the out-of-band tree path now: when the Welcome plus the full tree won't fit MAX_BODY_LEN, the hub sends the Welcome with a ratchet tree option that says to fetch the tree elsewhere, and the newcomer fetches it via GroupInfo fetch.",
+  "created_at": "2026-11-21T02:08:36.587898171Z"
+}
