@@ -73,16 +73,20 @@
 //!    and the origin (protocol-07 §5.5).
 //!
 //! A refusal after a proposal was stored rebuilds the room from its stored
-//! state. Every refusal is `notAllowed` (decision mimid-1wgh.6.55), with an
-//! empty `errorDescription`: the reason is logged at DEBUG, not sent (bead
-//! mimid-1wgh.49).
+//! state. Every refusal is `notAllowed` (decision mimid-1wgh.6.55), with
+//! the check that failed in `errorDescription` (draft-atwood-jmap-chat-mimi-00
+//! §capability and §Room/update, jmap-chat-spec 735503c; clean-room
+//! finding C5, amending bead mimid-1wgh.49, which sent it empty). A Commit
+//! or proposal that is not valid MLS is told apart from a policy refusal
+//! there: its description starts "the commit is not valid MLS" or "a
+//! proposal is not valid MLS", followed by the validation error.
 //!
 //! # Limitations
 //!
 //! - The `From` checks are consistency checks, not security (decision
 //!   mimid-1wgh.6.9).
-//! - MLS-invalid messages are answered `notAllowed`; `invalidProposal` is
-//!   never sent, since the hub cannot compute the ProposalRef of a proposal
+//! - MLS-invalid messages are answered `notAllowed`, said so only in
+//!   `errorDescription`; `invalidProposal` is never sent, since the hub cannot compute the ProposalRef of a proposal
 //!   that fails validation (decision mimid-1wgh.6.55).
 //! - Only `proposalOrCommit`'s sender is checked against `From`; each
 //!   `moreProposals` entry is authorized for its own sender (decision
@@ -332,13 +336,28 @@ enum Write {
     },
 }
 
-/// Encodes a response. errorDescription is always empty: the result code
-/// carries the meaning, and fixed English text here would end up in other
-/// providers' user interfaces (bead mimid-1wgh.49, amending decision
-/// mimid-1wgh.6.55). The reason for a refusal is logged instead.
+/// The longest errorDescription the hub sends, in octets; a longer one is
+/// cut at a character boundary. INVENTED, NOT FROM SPEC.
+const MAX_ERROR_DESCRIPTION_LEN: usize = 1024;
+
+/// Encodes a response with an empty errorDescription.
 fn respond(result: UpdateResult) -> Result<Vec<u8>, HubError> {
+    respond_with(result, String::new())
+}
+
+/// Encodes a response with `description` as its errorDescription: which
+/// check failed (clean-room finding C5). A description that is not a
+/// valid UTF8String is sent empty.
+fn respond_with(result: UpdateResult, mut description: String) -> Result<Vec<u8>, HubError> {
+    if description.len() > MAX_ERROR_DESCRIPTION_LEN {
+        let mut end = MAX_ERROR_DESCRIPTION_LEN;
+        while !description.is_char_boundary(end) {
+            end -= 1;
+        }
+        description.truncate(end);
+    }
     UpdateRoomResponse {
-        error_description: Utf8String::default(),
+        error_description: Utf8String::new(description).unwrap_or_default(),
         result,
     }
     .tls_serialize_detached()
@@ -351,14 +370,37 @@ fn success(accepted_timestamp: u64) -> Result<Vec<u8>, HubError> {
 }
 
 /// Logs why a request is refused and answers `notAllowed` (decision
-/// mimid-1wgh.6.55); `reason` stays in the log (bead mimid-1wgh.49).
+/// mimid-1wgh.6.55) with `reason` as its errorDescription (clean-room
+/// finding C5).
 fn refuse(room_id: &str, reason: &'static str, restore: bool) -> Result<Outcome, HubError> {
+    refuse_because(room_id, reason, reason.to_owned(), restore)
+}
+
+/// As [`refuse`], with `detail`, the error that made the check fail,
+/// after `reason` in the errorDescription; the metric and the log event
+/// keep `reason` alone.
+fn refuse_with(
+    room_id: &str,
+    reason: &'static str,
+    detail: &(dyn std::error::Error + 'static),
+    restore: bool,
+) -> Result<Outcome, HubError> {
+    let description = format!("{reason}: {}", crate::jmap::error_chain(detail));
+    refuse_because(room_id, reason, description, restore)
+}
+
+fn refuse_because(
+    room_id: &str,
+    reason: &'static str,
+    description: String,
+    restore: bool,
+) -> Result<Outcome, HubError> {
     crate::telemetry::metrics()
         .update_refusals
         .add(1, &[opentelemetry::KeyValue::new("reason", reason)]);
     tracing::debug!(room_id, reason, "update refused");
     Ok(Outcome::Respond {
-        response: respond(UpdateResult::NotAllowed)?,
+        response: respond_with(UpdateResult::NotAllowed, description)?,
         restore,
     })
 }
@@ -430,7 +472,9 @@ fn stage_commit(
                 error = &error as &dyn std::error::Error,
                 "commit failed MLS validation"
             );
-            return refuse(room_id, "the commit is not valid", false);
+            // draft-atwood-jmap-chat-mimi-00 §Room/update: not valid MLS,
+            // rather than refused by policy (clean-room finding C5).
+            return refuse_with(room_id, "the commit is not valid MLS", &error, false);
         }
     }
     let refused = |room: &mut Room, reason| {
@@ -482,7 +526,13 @@ fn stage_commit(
             denied = &denied as &dyn std::error::Error,
             "commit refused by room policy"
         );
-        return refused(room, "the commit is refused by room policy");
+        room.observer.clear_pending_commit();
+        return refuse_with(
+            room_id,
+            "the commit is refused by room policy",
+            &denied,
+            false,
+        );
     }
     // Decision mimid-1wgh.4.76.2 (revising mimid-1wgh.6.74): under
     // mls-extensions-11 §5.1 an AppDataUpdate can change safe_aad, so a
@@ -564,7 +614,7 @@ fn stage_commit(
                 error = &error as &dyn std::error::Error,
                 "GroupInfo does not match the merged commit"
             );
-            return refuse(room_id, "the GroupInfo is not valid", true);
+            return refuse_with(room_id, "the GroupInfo is not valid", &error, true);
         }
     };
     let ratchet_tree = room.observer.ratchet_tree().map_err(HubError::Mls)?;
@@ -721,7 +771,7 @@ fn stage_proposals(
                     error = &error as &dyn std::error::Error,
                     "proposal failed MLS validation"
                 );
-                return refuse(room_id, "a proposal is not valid", stored);
+                return refuse_with(room_id, "a proposal is not valid MLS", &error, stored);
             }
         };
         let (sender, kind) = match (proposal_sender(&detail), proposal_kind(&detail.proposal)) {
@@ -740,7 +790,12 @@ fn stage_proposals(
                 denied = &denied as &dyn std::error::Error,
                 "proposal refused by room policy"
             );
-            return refuse(room_id, "a proposal is refused by room policy", true);
+            return refuse_with(
+                room_id,
+                "a proposal is refused by room policy",
+                &denied,
+                true,
+            );
         }
         // mls-extensions-11 §4.7; decision mimid-1wgh.4.65; bead
         // mimid-1wgh.6.73.

@@ -200,16 +200,19 @@ pub(crate) async fn fetch_core(
             );
             Err(match error {
                 PeerError::Rejected { status, .. } if (400..500).contains(&status) => {
-                    invalid("the provider refused the request")
+                    invalid(&format!("the provider refused the request (HTTP {status})"))
                 }
-                _ => JmapError::server_unavailable(),
+                _ => super::room_common::unavailable(&error),
             })
         }
         Err(FollowerError::Relay(
-            RelayError::WrongIdentity { .. }
+            error @ (RelayError::WrongIdentity { .. }
             | RelayError::InvalidRoomId
-            | RelayError::InvalidRequest(_),
-        )) => Err(invalid("the request is not valid for this room")),
+            | RelayError::InvalidRequest(_)),
+        )) => Err(invalid(&format!(
+            "the request is not valid for this room: {}",
+            crate::jmap::error_chain(&error)
+        ))),
         Err(error) => Err(server_fail(&error)),
     }
 }

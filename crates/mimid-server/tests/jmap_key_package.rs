@@ -615,3 +615,33 @@ async fn the_lifetime_limit_is_stated_and_named_in_refusals() {
         "a lifetime within the limit is accepted"
     );
 }
+
+/// Clean-room finding C5: every SetError of KeyPackage/set and Client/set
+/// says in `description` which check failed.
+#[tokio::test]
+async fn set_errors_say_which_check_failed() {
+    let f = fixture_with(1, Some(10)).await;
+    let device = client(ALICE, DAY, &[]);
+    assert!(f.create(&key_package(&device, false), json!({})).await["created"]["k"].is_object());
+    let over = f.create(&key_package(&device, false), json!({})).await;
+    let wrong = f
+        .set(json!({"create": {"k": {"keyPackage": 1}}, "update": {"x": {}}, "destroy": ["nope"]}))
+        .await;
+    let (_, clients) = f
+        .call(
+            "Client/set",
+            json!({"create": {"c": {}}, "destroy": ["nope"]}),
+        )
+        .await;
+    for (error, needle) in [
+        (&over["notCreated"]["k"], "maxKeyPackages (1)"),
+        (&wrong["notCreated"]["k"], "keyPackage"),
+        (&wrong["notUpdated"]["x"], "cannot be updated"),
+        (&wrong["notDestroyed"]["nope"], "no KeyPackage"),
+        (&clients["notCreated"]["c"], "only be destroyed"),
+        (&clients["notDestroyed"]["nope"], "no Client record"),
+    ] {
+        let description = error["description"].as_str().unwrap_or_default();
+        assert!(description.contains(needle), "{error}");
+    }
+}

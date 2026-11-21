@@ -201,7 +201,13 @@ async fn tampered_commit_signature_writes_nothing() {
     let before = counts(&db).await;
     let before_state = hub.public_state(ROOM_ID).await.unwrap();
     let refused = hub.update(ROOM_ID, &a(), &request).await.unwrap();
-    assert_not_allowed(logs, &refused, "the commit is not valid");
+    // Clean-room finding C5: said to be invalid MLS, not a policy refusal.
+    assert_not_allowed(logs, &refused, "the commit is not valid MLS");
+    let description = response(&refused).1;
+    assert!(
+        description.starts_with("the commit is not valid MLS: ") && !description.contains("policy"),
+        "{description}"
+    );
     assert_eq!(counts(&db).await, before);
     assert_eq!(hub.public_state(ROOM_ID).await.unwrap(), before_state);
     db.close().await;

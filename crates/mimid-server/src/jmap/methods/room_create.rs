@@ -195,13 +195,23 @@ pub(crate) async fn create_core(
     let room_id = {
         let mls_store = mimi_mls::Store::open_in_memory().map_err(|e| server_fail(&e))?;
         let mut observer = Observer::from_group_info(&mls_store, &group_info, Some(&ratchet_tree))
-            .map_err(|_| invalid("groupInfo and ratchetTree are not a valid group"))?
+            .map_err(|e| {
+                invalid(&format!(
+                    "groupInfo and ratchetTree are not a valid group: {}",
+                    crate::jmap::error_chain(&e)
+                ))
+            })?
             .observer;
         // A did_webvh creator is known by the user URI its log names
         // (decision mimid-1wgh.4.81.21); the hub checks the rules again.
         observer
             .enforce_did_webvh(hub.did_webvh_code_points())
-            .map_err(|_| invalid("the group fails the did_webvh rules"))?;
+            .map_err(|e| {
+                invalid(&format!(
+                    "the group fails the did_webvh rules: {}",
+                    crate::jmap::error_chain(&e)
+                ))
+            })?;
 
         // Rule 6 (length; the hub checks it is unused).
         if observer.group_id().len() != ID_OCTETS {
@@ -237,8 +247,13 @@ pub(crate) async fn create_core(
         }
         // Rule 5.
         if let Some(data) = observer.component(ROOM_METADATA) {
-            let metadata = components::decode::<RoomMetaData>(ROOM_METADATA, data)
-                .map_err(|_| invalid("the room metadata does not decode"))?;
+            let metadata =
+                components::decode::<RoomMetaData>(ROOM_METADATA, data).map_err(|e| {
+                    invalid(&format!(
+                        "the room metadata does not decode: {}",
+                        crate::jmap::error_chain(&e)
+                    ))
+                })?;
             if metadata.room_uri.as_str() != requested_room_id {
                 return Err(invalid("the room metadata's room_uri is not roomId"));
             }
@@ -286,7 +301,10 @@ pub(crate) async fn create_core(
                 error = &error as &dyn std::error::Error,
                 "Room/create refused by the hub"
             );
-            return Err(JmapError::invalid_arguments("the hub refuses this group"));
+            return Err(JmapError::invalid_arguments(format!(
+                "the hub refuses this group: {}",
+                crate::jmap::error_chain(&error)
+            )));
         }
         Err(error) => return Err(server_fail(&error)),
     }

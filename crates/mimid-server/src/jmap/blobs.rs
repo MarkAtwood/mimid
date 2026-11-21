@@ -158,6 +158,25 @@ fn jmap_problem(status: StatusCode, error_type: &str, limit: Option<&str>) -> Re
     problem_response(status, body)
 }
 
+/// An RFC 7807 §4.2 `about:blank` problem response whose `detail` names
+/// the check that failed (clean-room finding C5).
+fn blank_problem_detail(status: StatusCode, detail: &str) -> Response {
+    tracing::debug!(
+        status = status.as_u16(),
+        detail,
+        "jmap blob request refused"
+    );
+    let mut body = serde_json::Map::new();
+    body.insert("type".to_owned(), "about:blank".into());
+    body.insert(
+        "title".to_owned(),
+        status.canonical_reason().unwrap_or_default().into(),
+    );
+    body.insert("status".to_owned(), status.as_u16().into());
+    body.insert("detail".to_owned(), detail.into());
+    problem_response(status, body)
+}
+
 /// An RFC 7807 §4.2 `about:blank` problem response.
 pub(super) fn blank_problem(status: StatusCode) -> Response {
     tracing::debug!(status = status.as_u16(), "jmap blob request refused");
@@ -214,11 +233,23 @@ pub(super) struct Refused {
     pub(super) response: Response,
     /// The stream's code.
     pub(super) code: &'static str,
+    /// Which check failed, for the stream's `Error` `detail` (clean-room
+    /// finding C5).
+    pub(super) detail: Option<String>,
 }
 
 impl Refused {
     fn new(response: Response, code: &'static str) -> Self {
-        Self { response, code }
+        Self {
+            response,
+            code,
+            detail: None,
+        }
+    }
+
+    fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
     }
 
     fn store(error: &(dyn std::error::Error + 'static)) -> Self {
@@ -261,19 +292,22 @@ pub(super) async fn upload_core(
                     Some("maxSizeUpload"),
                 ),
                 "tooLarge",
-            ));
+            )
+            .with_detail("the blob is larger than maxSizeUpload"));
         }
         Err(BlobError::OverQuota) => {
             return Err(Refused::new(
                 jmap_problem(StatusCode::FORBIDDEN, "overQuota", None),
                 "overQuota",
-            ));
+            )
+            .with_detail("the account's blob quota is full"));
         }
         Err(BlobError::MediaTypeTooLong) => {
             return Err(Refused::new(
-                blank_problem(StatusCode::BAD_REQUEST),
+                blank_problem_detail(StatusCode::BAD_REQUEST, "the media type is too long"),
                 "invalidArguments",
-            ));
+            )
+            .with_detail("the media type is too long"));
         }
         Err(error) => return Err(Refused::store(&error)),
     };
@@ -305,7 +339,10 @@ pub(super) async fn upload(
         );
     };
     let Some(media_type) = upload_type(request.headers()) else {
-        return blank_problem(StatusCode::BAD_REQUEST);
+        return blank_problem_detail(
+            StatusCode::BAD_REQUEST,
+            "Content-Type must be one media type of visible ASCII",
+        );
     };
     let body = match Bytes::from_request(request, &()).await {
         Ok(body) => body,
@@ -342,7 +379,7 @@ pub(super) async fn download(
     query: Result<Query<DownloadQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Response {
     let Ok(Query(query)) = query else {
-        return blank_problem(StatusCode::BAD_REQUEST);
+        return blank_problem_detail(StatusCode::BAD_REQUEST, "the query string does not parse");
     };
     if account.check_account_id(&account_id).is_err() {
         return blank_problem(StatusCode::NOT_FOUND);
@@ -357,10 +394,10 @@ pub(super) async fn download(
     };
     let media_type = query.accept.unwrap_or(blob.media_type);
     let Ok(content_type) = HeaderValue::from_str(&media_type) else {
-        return blank_problem(StatusCode::BAD_REQUEST);
+        return blank_problem_detail(StatusCode::BAD_REQUEST, "accept is not a usable media type");
     };
     let Ok(disposition) = HeaderValue::from_str(&content_disposition(&name)) else {
-        return blank_problem(StatusCode::BAD_REQUEST);
+        return blank_problem_detail(StatusCode::BAD_REQUEST, "name is not usable in a header");
     };
     (
         [
@@ -434,7 +471,10 @@ pub(super) async fn fetch_asset(
     query: Result<Query<AssetQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Response {
     let Ok(Query(query)) = query else {
-        return blank_problem(StatusCode::BAD_REQUEST);
+        return blank_problem_detail(
+            StatusCode::BAD_REQUEST,
+            "the query string needs room and url",
+        );
     };
     if account.check_account_id(&account_id).is_err() {
         return blank_problem(StatusCode::NOT_FOUND);
@@ -541,7 +581,7 @@ fn refused(status: StatusCode, kind: &str, why: &str) -> Refused {
         why,
         "jmap asset fetch refused"
     );
-    Refused::new(crate::http::problem(status, kind), code_of(status))
+    Refused::new(crate::http::problem(status, kind), code_of(status)).with_detail(why)
 }
 
 /// Maps this hub's own fetch failure as the proxyDownload route does
@@ -574,7 +614,7 @@ fn hub_failed(error: &HubError) -> Refused {
         error = error as &dyn std::error::Error,
         "jmap asset fetch refused"
     );
-    Refused::new(crate::http::problem(status, kind), code_of(status))
+    Refused::new(crate::http::problem(status, kind), code_of(status)).with_detail(kind)
 }
 
 /// Maps a failed proxyDownload at the peer hub `hub`: its `403` and
@@ -607,7 +647,7 @@ fn peer_failed(hub: &Domain, error: &PeerError) -> Refused {
         error = error as &dyn std::error::Error,
         "proxyDownload at the room's hub refused"
     );
-    Refused::new(crate::http::problem(status, kind), code_of(status))
+    Refused::new(crate::http::problem(status, kind), code_of(status)).with_detail(kind)
 }
 
 /// Deletes blobs a lifetime after their upload (decision mimid-1wgh.67;

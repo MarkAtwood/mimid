@@ -305,10 +305,14 @@ async fn get_key_packages(
     }))
 }
 
-fn set_error(kind: &str, properties: Option<&[&str]>) -> Value {
+/// A SetError of type `kind`, naming `properties` if given, whose
+/// `description` names the check that failed (clean-room finding C5).
+fn set_error(kind: &str, properties: Option<&[&str]>, description: &str) -> Value {
     match properties {
-        Some(properties) => json!({ "type": kind, "properties": properties }),
-        None => json!({ "type": kind }),
+        Some(properties) => {
+            json!({ "type": kind, "properties": properties, "description": description })
+        }
+        None => json!({ "type": kind, "description": description }),
     }
 }
 
@@ -316,25 +320,49 @@ fn set_error(kind: &str, properties: Option<&[&str]>) -> Value {
 /// claimed `lastResort`, if given.
 fn create_args(create: &Value) -> Result<(Vec<u8>, Option<bool>), Value> {
     let Value::Object(create) = create else {
-        return Err(set_error("invalidProperties", None));
+        return Err(set_error(
+            "invalidProperties",
+            None,
+            "a create must be an object",
+        ));
     };
     if let Some(other) = create
         .keys()
         .find(|key| !matches!(key.as_str(), "keyPackage" | "lastResort"))
     {
         let other: &str = other;
-        return Err(set_error("invalidProperties", Some(&[other])));
+        return Err(set_error(
+            "invalidProperties",
+            Some(&[other]),
+            "only keyPackage and lastResort may be given",
+        ));
     }
     let bytes = match create.get("keyPackage") {
-        Some(Value::String(text)) => URL_SAFE_NO_PAD
-            .decode(text)
-            .map_err(|_| set_error("invalidProperties", Some(&["keyPackage"])))?,
-        _ => return Err(set_error("invalidProperties", Some(&["keyPackage"]))),
+        Some(Value::String(text)) => URL_SAFE_NO_PAD.decode(text).map_err(|_| {
+            set_error(
+                "invalidProperties",
+                Some(&["keyPackage"]),
+                "keyPackage is not unpadded base64url",
+            )
+        })?,
+        _ => {
+            return Err(set_error(
+                "invalidProperties",
+                Some(&["keyPackage"]),
+                "keyPackage is required and must be a string",
+            ));
+        }
     };
     let last_resort = match create.get("lastResort") {
         None => None,
         Some(Value::Bool(value)) => Some(*value),
-        Some(_) => return Err(set_error("invalidProperties", Some(&["lastResort"]))),
+        Some(_) => {
+            return Err(set_error(
+                "invalidProperties",
+                Some(&["lastResort"]),
+                "lastResort must be a Boolean",
+            ));
+        }
     };
     Ok((bytes, last_resort))
 }
@@ -365,12 +393,20 @@ pub(crate) async fn create_one(
 ) -> Result<Result<KeyPackageEntry, Value>, JmapError> {
     // findings log F10: RFC 8620 §5.3 `tooLarge`.
     if bytes.len() > crate::jmap::MAX_MLS_OBJECT_SIZE {
-        return Ok(Err(set_error("tooLarge", Some(&["keyPackage"]))));
+        return Ok(Err(set_error(
+            "tooLarge",
+            Some(&["keyPackage"]),
+            "keyPackage is larger than maxMlsObjectSize",
+        )));
     }
     if let (Some(claimed), Some(derived)) = (claimed, derived_last_resort(bytes))
         && claimed != derived
     {
-        return Ok(Err(set_error("invalidProperties", Some(&["lastResort"]))));
+        return Ok(Err(set_error(
+            "invalidProperties",
+            Some(&["lastResort"]),
+            "lastResort does not match the KeyPackage",
+        )));
     }
     let options = InsertOptions {
         replace_last_resort: true,
@@ -384,18 +420,27 @@ pub(crate) async fn create_one(
         Ok(entry) => Ok(Ok(entry)),
         // §KeyPackage/set: past maxKeyPackages, or a new signature key past
         // maxClients (bead mimid-e64f.22).
-        Err(UploadError::OverQuota | UploadError::TooManyClients) => {
-            Ok(Err(set_error("overQuota", None)))
-        }
+        Err(UploadError::OverQuota) => Ok(Err(set_error(
+            "overQuota",
+            None,
+            &format!("the account would have more than maxKeyPackages ({max_key_packages})"),
+        ))),
+        Err(UploadError::TooManyClients) => Ok(Err(set_error(
+            "overQuota",
+            None,
+            "the signature key is new and maxClients keys are already bound",
+        ))),
         Err(UploadError::Store(error)) => Err(server_fail(&error)),
         Err(error) => {
             tracing::debug!(
                 error = &error as &dyn std::error::Error,
                 "KeyPackage create refused"
             );
-            let mut refusal = set_error("invalidProperties", Some(&["keyPackage"]));
-            refusal["description"] = json!(upload_refusal(&error));
-            Ok(Err(refusal))
+            Ok(Err(set_error(
+                "invalidProperties",
+                Some(&["keyPackage"]),
+                &upload_refusal(&error),
+            )))
         }
     }
 }
@@ -497,7 +542,10 @@ async fn set_key_packages(
     let mut not_updated = Map::new();
     if let Some(Value::Object(updates)) = args.get("update") {
         for id in updates.keys() {
-            not_updated.insert(id.clone(), set_error("forbidden", None));
+            not_updated.insert(
+                id.clone(),
+                set_error("forbidden", None, "KeyPackage records cannot be updated"),
+            );
         }
     }
 
@@ -511,7 +559,14 @@ async fn set_key_packages(
         if deleted {
             destroyed.push(id);
         } else {
-            not_destroyed.insert(id, set_error("notFound", None));
+            not_destroyed.insert(
+                id,
+                set_error(
+                    "notFound",
+                    None,
+                    "no KeyPackage of this account has this id",
+                ),
+            );
         }
     }
 

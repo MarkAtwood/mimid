@@ -177,7 +177,13 @@ pub(crate) async fn update_core(
                     method = METHOD,
                     "an external Commit past maxClients refused"
                 );
-                return Err(JmapError::forbidden());
+                let mut forbidden = JmapError::forbidden();
+                forbidden.description = Some(
+                    "maxClients signature keys are already bound to this account, \
+                     and the external Commit's key is not one of them"
+                        .to_owned(),
+                );
+                return Err(forbidden);
             }
         }
     }

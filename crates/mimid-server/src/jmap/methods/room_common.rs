@@ -177,10 +177,11 @@ pub(super) fn relay_error(method: &'static str, error: FollowerError) -> JmapErr
                 "the hub did not answer the request"
             );
             match error {
-                PeerError::Rejected { status, .. } if (400..500).contains(&status) => {
-                    invalid(method, "the hub refused the request")
-                }
-                _ => JmapError::server_unavailable(),
+                PeerError::Rejected { status, .. } if (400..500).contains(&status) => invalid(
+                    method,
+                    &format!("the hub refused the request (HTTP {status})"),
+                ),
+                _ => unavailable(&error),
             }
         }
         // A room this server's hub does not host: as a remote hub's 404
@@ -204,9 +205,28 @@ pub(super) fn relay_error(method: &'static str, error: FollowerError) -> JmapErr
             | RelayError::RequestTooLarge
             | RelayError::Hub(crate::hub::HubError::InvalidRequest(_)),
         )
-        | FollowerError::InvalidRequest(_) => {
-            invalid(method, "the request is not valid for this room")
-        }
+        | FollowerError::InvalidRequest(_) => invalid(
+            method,
+            &format!(
+                "the request is not valid for this room: {}",
+                crate::jmap::error_chain(&error)
+            ),
+        ),
         error => server_fail(method, &error),
     }
+}
+
+/// `serverUnavailable`, with a description saying whether the provider
+/// asked (the room's hub, or the target user's provider) answered an
+/// error status or could not be reached (clean-room finding C5). The
+/// transport error itself stays in the log: it can name local files.
+pub(crate) fn unavailable(error: &PeerError) -> JmapError {
+    let mut unavailable = JmapError::server_unavailable();
+    unavailable.description = Some(match error {
+        PeerError::Rejected { status, .. } => {
+            format!("the provider asked answered HTTP {status}")
+        }
+        _ => "the provider asked could not be reached".to_owned(),
+    });
+    unavailable
 }

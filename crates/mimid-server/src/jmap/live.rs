@@ -658,6 +658,14 @@ fn set_error(error: &Value) -> ErrorMessage {
     answer
 }
 
+/// `notFound` with `detail` (clean-room finding C5).
+fn not_found(detail: &str) -> ErrorMessage {
+    ErrorMessage {
+        detail: Some(detail.to_owned()),
+        ..ErrorMessage::new(None, code::NOT_FOUND)
+    }
+}
+
 fn server_fail(error: &(dyn std::error::Error + 'static)) -> ErrorMessage {
     tracing::error!(
         name: "live_stream_request_failed",
@@ -891,7 +899,7 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
             {
                 AckResult::Done
             } else {
-                return Err(ErrorMessage::new(None, code::NOT_FOUND));
+                return Err(not_found("no KeyPackage of this account has this ref"));
             }
         }
         Op::ListClients => {
@@ -917,7 +925,7 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
             {
                 AckResult::Done
             } else {
-                return Err(ErrorMessage::new(None, code::NOT_FOUND));
+                return Err(not_found("no Client record of this account has this id"));
             }
         }
         Op::ListConsent => {
@@ -1067,13 +1075,23 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
                     blob_id,
                     size,
                 },
-                Err(refused) => return Err(ErrorMessage::new(None, refused.code)),
+                Err(refused) => {
+                    return Err(ErrorMessage {
+                        detail: refused.detail,
+                        ..ErrorMessage::new(None, refused.code)
+                    });
+                }
             }
         }
         Op::FetchAsset { room, url } => {
             match super::blobs::fetch_asset_core(state, account, &room, &url).await {
                 Ok(data) => AckResult::FetchAsset { data },
-                Err(refused) => return Err(ErrorMessage::new(None, refused.code)),
+                Err(refused) => {
+                    return Err(ErrorMessage {
+                        detail: refused.detail,
+                        ..ErrorMessage::new(None, refused.code)
+                    });
+                }
             }
         }
         Op::Subscribe { .. } => {

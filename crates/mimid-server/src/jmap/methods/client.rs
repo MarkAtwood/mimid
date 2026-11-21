@@ -314,8 +314,10 @@ async fn changes(
     }))
 }
 
-fn set_error(kind: &str) -> Value {
-    json!({ "type": kind })
+/// A SetError of type `kind` whose `description` names the check that
+/// failed (clean-room finding C5).
+fn set_error(kind: &str, description: &str) -> Value {
+    json!({ "type": kind, "description": description })
 }
 
 async fn set(
@@ -341,7 +343,12 @@ async fn set(
         match args.get(key) {
             Some(Value::Object(map)) => map
                 .keys()
-                .map(|id| (id.clone(), set_error("forbidden")))
+                .map(|id| {
+                    (
+                        id.clone(),
+                        set_error("forbidden", "Client records can only be destroyed"),
+                    )
+                })
                 .collect(),
             _ => Map::new(),
         }
@@ -355,7 +362,10 @@ async fn set(
         if destroy_one(key_packages, caller, &id).await? {
             destroyed.push(id);
         } else {
-            not_destroyed.insert(id, set_error("notFound"));
+            not_destroyed.insert(
+                id,
+                set_error("notFound", "no Client record of this account has this id"),
+            );
         }
     }
     let new_state = state_now().await?;
