@@ -375,10 +375,13 @@ async fn edits_and_retractions_reach_jmap_and_only_from_the_sender() {
 
     // carol's edit and retraction of alice's message are refused, and an
     // edit of a message nobody sent is skipped.
-    carol.send_edit(&room, &original, "forged").await.unwrap();
-    carol.send_retraction(&room, &original).await.unwrap();
     carol
-        .send_edit(&room, &MessageId([9; 32]), "of nothing")
+        .send_edit(&room, &original, "forged", true)
+        .await
+        .unwrap();
+    carol.send_retraction(&room, &original, true).await.unwrap();
+    carol
+        .send_edit(&room, &MessageId([9; 32]), "of nothing", false)
         .await
         .unwrap();
     let mut reports: Vec<SyncReport> = Vec::new();

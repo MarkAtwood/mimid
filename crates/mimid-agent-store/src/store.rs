@@ -112,6 +112,9 @@ pub struct Store {
     /// Wakes whatever waits for the next expiry
     /// ([`Store::expiry_wanted`]).
     pub(crate) expiry_wake: Arc<Notify>,
+    /// Whether edits and retractions go with Room/send `silent`
+    /// ([`Store::set_silent_edits`]).
+    silent_edits: std::sync::atomic::AtomicBool,
 }
 
 impl std::fmt::Debug for Store {
@@ -146,7 +149,25 @@ impl Store {
             forgotten: Mutex::new(Vec::new()),
             expired_blobs: Mutex::new(Vec::new()),
             expiry_wake: Arc::new(Notify::new()),
+            silent_edits: std::sync::atomic::AtomicBool::new(true),
         }
+    }
+
+    /// Whether [`Store::edit`] and [`Store::retract`] send with Room/send
+    /// `silent`, so that the server may skip push notifications for them
+    /// (draft-atwood-jmap-chat-mimi-00 §Room/send: "such as a message
+    /// status report or an edit"). On by default: recipients need an
+    /// edit but need not be woken for it. Every front end's edits follow
+    /// it.
+    pub fn set_silent_edits(&self, silent: bool) {
+        self.silent_edits
+            .store(silent, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// See [`Store::set_silent_edits`].
+    #[must_use]
+    pub fn silent_edits(&self) -> bool {
+        self.silent_edits.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Registers `frontend`, so every [`Store::save`] hands it the changes

@@ -642,6 +642,31 @@ async fn two_providers_over_jmap_only() {
         reply,
     );
 
+    // 4. A silent message (draft-atwood-jmap-chat-mimi-00 §Room/send;
+    // bead mimid-e64f.20): accepted and stored like any other, and the
+    // recipient reads it as before (mimid has no push to skip; its
+    // EventSource still reports the new state). A non-Boolean `silent` is
+    // invalidArguments.
+    let quiet = b"an edit, say";
+    let sent = franked(&alice, &mut alice_group, quiet);
+    let answer = alice_jmap
+        .ok(
+            "Room/send",
+            json!({"roomId": room_id, "message": b64(&sent), "silent": true}),
+        )
+        .await;
+    assert_eq!(answer["responseCode"], "accepted", "{answer}");
+    assert_eq!(mls_bytes(&alice_jmap.next().await), sent, "alice's own");
+    assert_decrypts(&bob, &mut bob_group, &bob_jmap.next().await, ALICE, quiet);
+    let (name, refused) = alice_jmap
+        .call(
+            "Room/send",
+            json!({"roomId": room_id, "message": b64(&sent), "silent": "yes"}),
+        )
+        .await;
+    assert_eq!(name, "error", "{refused}");
+    assert_eq!(refused["type"], "invalidArguments", "{refused}");
+
     // 4a. maxMlsObjectSize (bead mimid-e64f.18): a message of exactly
     // that many octets passes a's relay as a SubmitMessageRequest and
     // reaches b's /notify as a FanoutMessage, each within the protocol

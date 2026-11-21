@@ -687,10 +687,21 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
     let (store, follower) = (&inner.store, &*inner.follower);
     let jmap = |e: JmapError| method_error(&e);
     Ok(match op {
-        Op::Send { room, message } => {
-            let sent = room_send::send_core(follower, store, account, &room, &message)
-                .await
-                .map_err(jmap)?;
+        Op::Send {
+            room,
+            message,
+            silent,
+        } => {
+            let sent = room_send::send_core(
+                follower,
+                store,
+                account,
+                &room,
+                &message,
+                silent.unwrap_or(false),
+            )
+            .await
+            .map_err(jmap)?;
             match sent.result {
                 SubmitResult::Accepted {
                     accepted_timestamp,

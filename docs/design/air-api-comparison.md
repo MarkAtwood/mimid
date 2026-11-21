@@ -389,6 +389,19 @@ The last sentence marks a MIMI gap: `SubmitMessageRequest` and
 `FanoutMessage` carry no such flag, so remote recipients are woken
 anyway. That is a question for #mimi, not for this draft.
 
+**Built** (bead mimid-e64f.20; jmap-chat-spec 43ee02c). mimid-server
+takes `silent` on Room/send and the stream's `Send` (`? "silent":
+bool`), refuses a non-Boolean with `invalidArguments`, and otherwise
+does nothing with it: mimid has no PushSubscription (decision
+mimid-1wgh.12.30), and the EventSource `StateChange` goes out for a
+silent message as for any other, since clients need it to sync. The
+agent sends edits and retractions silent (`Agent::send_edit`,
+`send_retraction`, `send_content_with`), keeps the flag in its outbox
+(schema 4) so a send again after a crash is silent too, and the store's
+`Store::set_silent_edits` (on by default) decides it for every front
+end's edits. The agent sends no reactions or status reports, so there
+is nothing else to mark.
+
 ### A3. Push goes out even to a client that is connected
 
 **Gap.** Air pushes only to a client with no open `Listen`

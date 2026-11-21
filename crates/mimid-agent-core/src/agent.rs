@@ -2201,6 +2201,9 @@ impl Agent {
     /// first version of the message, however often it was edited. The
     /// edit has no `inReplyTo` or `topicId` (§9.3: an edit changes only
     /// the NestedPart; the caller edits only messages sent without them).
+    /// With `silent`, it goes with Room/send `silent`: recipients need it
+    /// but need not be woken for it (draft-atwood-jmap-chat-mimi-00
+    /// §Room/send).
     ///
     /// # Errors
     ///
@@ -2211,14 +2214,16 @@ impl Agent {
         room: &str,
         replaces: &MessageId,
         text: &str,
+        silent: bool,
     ) -> Result<Sent, AgentError> {
-        self.send_edit_with(room, replaces, text, &ContentOptions::default())
+        self.send_edit_with(room, replaces, text, &ContentOptions::default(), silent)
             .await
     }
 
     /// [`Agent::send_edit`], the edit carrying `options`: mimid sends an
     /// edit with the `expires` and extensions of the message it edits
-    /// (docs/design/agent-frontends.md §7.20).
+    /// (docs/design/agent-frontends.md §7.20). `silent` as for
+    /// [`Agent::send_edit`].
     ///
     /// # Errors
     ///
@@ -2229,6 +2234,7 @@ impl Agent {
         replaces: &MessageId,
         text: &str,
         options: &ContentOptions,
+        silent: bool,
     ) -> Result<Sent, AgentError> {
         if text.len() > MAX_TEXT_LEN {
             return Err(AgentError::Invalid("message too long".to_owned()));
@@ -2239,12 +2245,13 @@ impl Agent {
         };
         let mut content = self.replacement(room, replaces, part)?;
         options.apply(&mut content);
-        self.send_content(room, &content).await
+        self.send_content_with(room, &content, silent).await
     }
 
     /// Sends a retraction of this user's message `replaces` in `room`: a
     /// message whose `replaces` is `replaces` and whose body is a NullPart
     /// (mimi-content-10 §5.6). `replaces` names the first version.
+    /// `silent` as for [`Agent::send_edit`].
     ///
     /// # Errors
     ///
@@ -2253,9 +2260,10 @@ impl Agent {
         &mut self,
         room: &str,
         replaces: &MessageId,
+        silent: bool,
     ) -> Result<Sent, AgentError> {
         let content = self.replacement(room, replaces, Part::Null)?;
-        self.send_content(room, &content).await
+        self.send_content_with(room, &content, silent).await
     }
 
     /// The content replacing `replaces` in `room` with body `part`, with
@@ -2529,6 +2537,23 @@ impl Agent {
         room: &str,
         content: &MimiContent,
     ) -> Result<Sent, AgentError> {
+        self.send_content_with(room, content, false).await
+    }
+
+    /// [`Agent::send_content`], with Room/send `silent` when `silent`: the
+    /// server may skip push notifications for it
+    /// (draft-atwood-jmap-chat-mimi-00 §Room/send), as for a message the
+    /// recipients need but need not be woken for, such as an edit.
+    ///
+    /// # Errors
+    ///
+    /// As [`Agent::send_content`].
+    pub async fn send_content_with(
+        &mut self,
+        room: &str,
+        content: &MimiContent,
+        silent: bool,
+    ) -> Result<Sent, AgentError> {
         let bytes = content
             .encode()
             .map_err(|e| AgentError::encoding("encoding mimi-content", e))?;
@@ -2559,11 +2584,15 @@ impl Agent {
                 None,
             )
             .map_err(|e| agent.dir.database_error("writing the outbox", e))?;
+            if silent {
+                outbox::mark_silent(agent.connection(), entry)
+                    .map_err(|e| agent.dir.database_error("writing the outbox", e))?;
+            }
             Ok((message, entry))
         })?;
         #[cfg(feature = "fail-points")]
         self.fail_at(FailPoint::BeforeSend)?;
-        let accepted = match self.provider.send(room, &message).await {
+        let accepted = match self.provider.send(room, &message, silent).await {
             Ok(accepted) => accepted,
             Err(refused @ AgentError::Refused { .. }) => {
                 self.in_transaction(|agent| agent.drop_outbox(entry))?;
@@ -3638,7 +3667,9 @@ impl Agent {
                         })?;
                         continue;
                     };
-                    match self.provider.send(&entry.room, &message).await {
+                    let silent = outbox::is_silent(self.connection(), id)
+                        .map_err(|e| self.dir.database_error("reading the outbox", e))?;
+                    match self.provider.send(&entry.room, &message, silent).await {
                         Ok(accepted) => {
                             let content = entry.content.clone().unwrap_or_default();
                             self.in_transaction(|agent| {

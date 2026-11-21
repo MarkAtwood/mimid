@@ -476,7 +476,8 @@ request = { common, "id": req-id, op }
 op = (
     "t": "Subscribe", ? "since": jmap-state,                 ; absent: every Message
                       ? "after": { * tstr => tstr } )        ; F12, without since
-  // ( "t": "Send", "room": room-id, "message": tls )          ; MLSMessage
+  // ( "t": "Send", "room": room-id, "message": tls,          ; MLSMessage
+       ? "silent": bool )                                     ; Room/send's
   // ( "t": "Update", "room": room-id, "request": tls )        ; UpdateRequest
   // ( "t": "CreateRoom", "room": room-id,
        "groupInfo": tls, "ratchetTree": tls )

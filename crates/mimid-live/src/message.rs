@@ -70,6 +70,10 @@ pub enum Op {
         room: String,
         /// The MLSMessage.
         message: Vec<u8>,
+        /// `silent`: the provider may skip push notifications for the
+        /// Messages it stores for it (draft-atwood-jmap-chat-mimi-00
+        /// §Room/send); `None` is `false`.
+        silent: Option<bool>,
     },
     /// `Update`: Room/update.
     Update {
@@ -303,6 +307,7 @@ impl Op {
             OpKind::Send => Self::Send {
                 room: f.text("room")?,
                 message: f.bytes("message")?,
+                silent: f.opt_bool("silent")?,
             },
             OpKind::Update => Self::Update {
                 room: f.text("room")?,
@@ -384,8 +389,14 @@ impl Op {
                     );
                 }
             }
-            Self::Send { room, message } => {
-                w.text("room", room).bytes("message", message);
+            Self::Send {
+                room,
+                message,
+                silent,
+            } => {
+                w.text("room", room)
+                    .bytes("message", message)
+                    .opt_bool("silent", *silent);
             }
             Self::Update { room, request }
             | Self::FetchGroupInfo { room, request }

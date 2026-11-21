@@ -106,6 +106,23 @@ fn send() {
             Op::Send {
                 room: "mimi://a.example/r/x".to_owned(),
                 message: vec![0, 1, 2],
+                silent: None,
+            },
+        ),
+    );
+}
+
+/// Bead mimid-e64f.20: `silent`.
+#[test]
+fn send_silent() {
+    client(
+        "send-silent.hex",
+        request(
+            300,
+            Op::Send {
+                room: "mimi://a.example/r/x".to_owned(),
+                message: vec![0, 1, 2],
+                silent: Some(true),
             },
         ),
     );

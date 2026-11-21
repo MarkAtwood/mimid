@@ -732,7 +732,9 @@ impl Store {
         let options = crate::expiry::content_options(&expiry);
         // Locked until the alias is in, as in Store::send.
         let mut agent = self.agent.lock().await;
-        let sent = agent.send_edit_with(&uri, &first, text, &options).await?;
+        let sent = agent
+            .send_edit_with(&uri, &first, text, &options, self.silent_edits())
+            .await?;
         let edited = {
             let mut state = self.state();
             state.edit_message(key, text.to_owned(), body_type, sent.accepted_at);
@@ -756,7 +758,9 @@ impl Store {
         let (uri, first, _) = self.editable(key)?;
         // Locked until the alias is in, as in Store::send.
         let mut agent = self.agent.lock().await;
-        let sent = agent.send_retraction(&uri, &first).await?;
+        let sent = agent
+            .send_retraction(&uri, &first, self.silent_edits())
+            .await?;
         let retracted = {
             let mut state = self.state();
             state.retract_message(key, sent.accepted_at);

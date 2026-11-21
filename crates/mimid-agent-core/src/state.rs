@@ -48,9 +48,10 @@ pub const DATABASE_FILE: &str = "mimid.sqlite";
 
 /// The schema of this crate's tables. Version 1 (bead mimid-1vul.10) is
 /// the first in SQLite; the state was `state.json` before. Version 2 adds
-/// the outbox (docs/design/agent-frontends.md §3 step 10), and version 3
-/// its proposals and external Commits (§7.19).
-pub const SCHEMA_VERSION: i64 = 3;
+/// the outbox (docs/design/agent-frontends.md §3 step 10), version 3
+/// its proposals and external Commits (§7.19), and version 4 whether a
+/// message goes `silent` (draft-atwood-jmap-chat-mimi-00 §Room/send).
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// This crate's row in `schema_version`.
 const SCHEMA_PART: &str = "agent";

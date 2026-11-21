@@ -19,6 +19,8 @@
 # provider-hello-retention.hex was added on 2026-11-21 the same way, by
 # hand from the CDDL's messageRetention (bead mimid-e64f.19).
 #
+# send-silent.hex likewise, from Send's silent (bead mimid-e64f.20).
+#
 # fixtures.rs decodes each file, compares it to the value written out in
 # the test, encodes it again and requires the same bytes.
 #
@@ -34,9 +36,10 @@
 #   6abc6478184f90b1449c3d54acb43e5d5b82cf0a7ce21a7e201df248a4f8d966  position-unknown-member.hex
 #   14f7167f3f7c59358640ab9120f86c285216e5c0c29695478c25c1102e1066e0  provider-hello-retention.hex
 #   12eae7287aa0b802731320434c6020f4516ec51e4374fc70486bc587bbbab3af  provider-hello.hex
+#   0620fb1af329dd4cfee651f3c7a3fc1d5df28c2dcb52c4944cea54cac12fc796  send-silent.hex
 #   ff60363aa1b6173cd384a4affa94a775f5c8b1f29eaf32d45869b83bcfe52c46  send.hex
 #   020ab711749650cd7cf81c6cc40e75633b2e1582113d60ae7506864d29437ddc  subscribe-after.hex
 #   226ac5ca7a09d81db7f808c0da2d0aae586b7dd98ecb52927177cc9c060bde21  subscribe.hex
 #   238142743658b9ad51d79d3b5bcffcec0a5c8a14968669a7d9715fc45e381c4d  update-consent.hex
 #   03c559c084749c2f31a9c584e740fc646fd0e94e450a683b58c91edade53b125  oracle/cbor2_check.py
-#   de94039981dda62ed15b7c932afb5172d00b16b133c3690dbdadbb6f4b3e8c19  oracle/cbor2_check.out
+#   a787ae8d866c807a1860a97853be1467622e242f572cd0a305aa13436b218b61  oracle/cbor2_check.out

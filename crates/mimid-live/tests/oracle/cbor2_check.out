@@ -20,6 +20,8 @@ provider-hello-retention.hex: ok
   {"t": "ProviderHello", "v": 1, "userUri": "mimi://a.example/u/alice", "version": 1, "hubSender": h'01', "cipherSuites": [1], "roomIdPrefix": "mimi://a.example/r/", "storesAssets": true, "acceptedRooms": true, "assetLifetime": 3600, "fetchesAssets": true, "maxKeyPackages": 100, "maxMessageBytes": 16842752, "maxRequestBytes": 4259840, "messageRetention": 604800}
 provider-hello.hex: ok
   {"t": "ProviderHello", "v": 1, "userUri": "mimi://a.example/u/alice", "version": 1, "hubSender": h'01', "cipherSuites": [1], "roomIdPrefix": "mimi://a.example/r/", "storesAssets": true, "acceptedRooms": true, "assetLifetime": 3600, "fetchesAssets": true, "maxKeyPackages": 100, "maxMessageBytes": 16842752, "maxRequestBytes": 4259840}
+send-silent.hex: ok
+  {"t": "Send", "v": 1, "id": 300, "room": "mimi://a.example/r/x", "silent": true, "message": h'000102'}
 send.hex: ok
   {"t": "Send", "v": 1, "id": 300, "room": "mimi://a.example/r/x", "message": h'000102'}
 subscribe-after.hex: ok

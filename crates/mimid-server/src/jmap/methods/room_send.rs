@@ -11,6 +11,15 @@
 //! hub; on acceptance the message is stored in the room's log (decision
 //! mimid-1wgh.7.30), as the draft requires.
 //!
+//! `silent` (Boolean, default `false`; jmap-chat-spec 43ee02c) lets the
+//! server skip push notifications for the Messages it stores for the
+//! message. mimid has no push notifications to skip: its only push is the
+//! EventSource (decision mimid-1wgh.12.30; no PushSubscription), whose
+//! `StateChange` a client needs to sync, so it is sent for a silent
+//! message too. The argument is checked (anything but a Boolean is
+//! `invalidArguments`) and then has no effect. The flag does not reach the
+//! hub: protocol-07's SubmitMessageRequest has no place for it.
+//!
 //! The answer is the SubmitMessageResponse: `responseCode` by name, and
 //! `acceptedAt` or `currentEpoch` as the code has. An accepted message
 //! also gets `frank`, the hub's Frank when it franked the message
@@ -78,8 +87,13 @@ async fn send(
 ) -> Result<Value, JmapError> {
     let call = room_call(METHOD, caller, args)?;
     let message = bytes(METHOD, &call.args, "message")?;
+    let silent = match call.args.get("silent") {
+        None => false,
+        Some(Value::Bool(silent)) => *silent,
+        Some(_) => return Err(invalid(METHOD, "silent must be a Boolean")),
+    };
     let mut answer = json!({ "accountId": call.account_id });
-    let sent = send_core(follower, store, caller, &call.room_id, &message).await?;
+    let sent = send_core(follower, store, caller, &call.room_id, &message, silent).await?;
     match sent.result {
         SubmitResult::Accepted {
             accepted_timestamp,
@@ -116,7 +130,8 @@ pub(crate) struct SendOutcome {
 /// `Room/send` of the MLSMessage `message` to `room_id` for `caller`, as
 /// both bindings call it (docs/design/binary-live-stream.md §5.10): every
 /// check, the relay, the hub's SubmitResult, frank included, and the ids
-/// of the Messages stored for an accepted message.
+/// of the Messages stored for an accepted message. `silent` would skip
+/// push notifications; mimid has none (module documentation).
 ///
 /// # Errors
 ///
@@ -127,7 +142,13 @@ pub(crate) async fn send_core(
     caller: &Account,
     room_id: &str,
     message: &[u8],
+    silent: bool,
 ) -> Result<SendOutcome, JmapError> {
+    if silent {
+        // Nothing to skip: the EventSource StateChange goes out, as the
+        // client needs it to sync.
+        tracing::debug!(method = METHOD, "a silent message; mimid sends no push");
+    }
     check_mls_object(METHOD, "message", message)?;
     require_chat(METHOD, store, caller, room_id, true).await?;
     let app_message = MLSMessage::tls_deserialize_exact(message)

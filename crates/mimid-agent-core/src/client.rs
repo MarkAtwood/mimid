@@ -895,22 +895,23 @@ impl Jmap {
     /// Room/send of the MLSMessage `message`; the hub's accepted time in
     /// milliseconds and the ids of the Messages stored for it (findings
     /// log F18), or the refusal as an error. The caller remembers what it
-    /// sends ([`Jmap::remember_sent`]) first.
+    /// sends ([`Jmap::remember_sent`]) first. With `silent`, the call says
+    /// `"silent": true` (draft-atwood-jmap-chat-mimi-00 §Room/send).
     pub async fn send(
         &self,
         room: &str,
         message: &mimi_mls::wire::MLSMessage,
+        silent: bool,
     ) -> Result<Accepted, AgentError> {
         const WHAT: &str = "Room/send";
         let bytes = message
             .tls_serialize_detached()
             .map_err(|e| AgentError::tls("own message", e))?;
-        let answer = self
-            .call(
-                WHAT,
-                json!({"roomId": room, "message": URL_SAFE_NO_PAD.encode(bytes)}),
-            )
-            .await?;
+        let mut args = json!({"roomId": room, "message": URL_SAFE_NO_PAD.encode(bytes)});
+        if silent {
+            args["silent"] = json!(true);
+        }
+        let answer = self.call(WHAT, args).await?;
         match answer["responseCode"].as_str() {
             Some("accepted") => Ok(Accepted {
                 accepted_at: utc_date_ms(answer["acceptedAt"].as_str().unwrap_or(""))

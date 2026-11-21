@@ -388,7 +388,7 @@ async fn edits_and_retractions_keep_the_expiry() {
         .agent()
         .lock()
         .await
-        .send_edit_with(&uri, &first, "v3", &other)
+        .send_edit_with(&uri, &first, "v3", &other, false)
         .await
         .unwrap();
     sync_until_stored(&pair.bob, "v3").await;

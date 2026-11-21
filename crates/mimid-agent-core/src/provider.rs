@@ -601,9 +601,10 @@ impl Provider {
         &self,
         room: &str,
         message: &mimi_mls::wire::MLSMessage,
+        silent: bool,
     ) -> Result<Accepted, AgentError> {
         let s = match self {
-            Self::Jmap(j) => return j.send(room, message).await,
+            Self::Jmap(j) => return j.send(room, message, silent).await,
             Self::Stream(s) => s,
         };
         const WHAT: &str = "Room/send";
@@ -613,6 +614,7 @@ impl Provider {
         let op = Op::Send {
             room: room.to_owned(),
             message: bytes,
+            silent: silent.then_some(true),
         };
         match s.stream.call(WHAT, op).await? {
             Ok(AckResult::Send {

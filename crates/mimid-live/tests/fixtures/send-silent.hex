@@ -1,0 +1,19 @@
+; Send = {"v": 1, "t": "Send", "id": 300, "room": "mimi://a.example/r/x",
+;         "message": h'000102', "silent": true}
+; (draft-atwood-jmap-chat-mimi-00 §Room/send silent; bead mimid-e64f.20)
+; Keys by length, then bytes: t, v, id, room, silent, message.
+a6                                  ; map, 6 pairs
+61 74                               ; "t"
+64 53 65 6e 64                      ; "Send"
+61 76                               ; "v"
+01                                  ; 1
+62 69 64                            ; "id"
+19 01 2c                            ; 300, two-byte argument
+64 72 6f 6f 6d                      ; "room"
+74                                  ; text, 20 bytes
+6d 69 6d 69 3a 2f 2f 61 2e 65       ; "mimi://a.e"
+78 61 6d 70 6c 65 2f 72 2f 78       ; "xample/r/x"
+66 73 69 6c 65 6e 74                ; "silent"
+f5                                  ; true
+67 6d 65 73 73 61 67 65             ; "message"
+43 00 01 02                         ; bytes, 3: 00 01 02

@@ -17,6 +17,12 @@ fn ops() -> Vec<Op> {
         Op::Send {
             room: room(),
             message: vec![1],
+            silent: None,
+        },
+        Op::Send {
+            room: room(),
+            message: vec![1],
+            silent: Some(true),
         },
         Op::Update {
             room: room(),

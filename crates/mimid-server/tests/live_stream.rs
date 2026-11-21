@@ -380,6 +380,7 @@ async fn frames_past_the_limits_are_refused_and_at_them_accepted() {
             Op::Send {
                 room: "mimi://a.example/r/x".to_owned(),
                 message: Vec::new(),
+                silent: None,
             },
         )
         .encode()
@@ -389,6 +390,7 @@ async fn frames_past_the_limits_are_refused_and_at_them_accepted() {
             Op::Send {
                 room: "mimi://a.example/r/x".to_owned(),
                 message: vec![0; len - empty - 4],
+                silent: None,
             },
         )
     };
@@ -408,6 +410,7 @@ async fn frames_past_the_limits_are_refused_and_at_them_accepted() {
         Op::Send {
             room: "mimi://a.example/r/x".to_owned(),
             message: vec![0; mimid_server::jmap::MAX_MLS_OBJECT_SIZE + 1],
+            silent: None,
         },
     );
     send(&mut socket, &over).await;

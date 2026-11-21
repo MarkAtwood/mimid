@@ -117,7 +117,8 @@ pub(crate) struct Pending {
     pub finish: Option<Finish>,
 }
 
-/// The table, part of the agent's schema ([`crate::SCHEMA_VERSION`] 3).
+/// The table, part of the agent's schema ([`crate::SCHEMA_VERSION`] 4).
+/// `silent` is 1 for a message sent with Room/send `silent`.
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      room TEXT NOT NULL,
@@ -126,7 +127,8 @@ CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      wire BLOB NOT NULL,
                      content BLOB,
                      removed TEXT NOT NULL,
-                     finish TEXT);
+                     finish TEXT,
+                     silent INTEGER NOT NULL DEFAULT 0 CHECK (silent IN (0, 1)));
 ";
 
 /// Adds an entry inside the caller's transaction; returns its number.
@@ -151,6 +153,24 @@ pub(crate) fn insert(
 
 fn to_text<T: Serialize + ?Sized>(value: &T) -> rusqlite::Result<String> {
     serde_json::to_string(value).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
+}
+
+/// Marks message entry `id` to be sent with Room/send `silent`, inside
+/// the caller's transaction, so a send again after a crash is silent too.
+pub(crate) fn mark_silent(connection: &Connection, id: i64) -> rusqlite::Result<()> {
+    connection.execute("UPDATE outbox SET silent = 1 WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Whether entry `id` is sent `silent` ([`mark_silent`]); `false` for one
+/// that is gone.
+pub(crate) fn is_silent(connection: &Connection, id: i64) -> rusqlite::Result<bool> {
+    Ok(connection
+        .query_row("SELECT silent FROM outbox WHERE id = ?1", [id], |row| {
+            row.get::<_, i64>(0)
+        })
+        .optional()?
+        == Some(1))
 }
 
 /// Removes entry `id`, inside the caller's transaction.
