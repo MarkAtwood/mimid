@@ -1,0 +1,7 @@
+{
+  "id": "1795300853273199487-1",
+  "issue_id": "mimid-1wgh.87",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-21: use room-policy-04 fixed_membership (max_users 2) for one-to-one rooms, not an ordinary room. Implement its rules in hub and agent; reconcile with §7.1 (PART leaves) for direct rooms.",
+  "created_at": "2026-11-21T22:40:53.273199487Z"
+}
