@@ -2,13 +2,15 @@
   "id": "mimid-2e6f",
   "title": "Server: fill error descriptions; don't report an invalid Commit as notAllowed (clean-room C5)",
   "description": "Clean-room C5: KeyPackage/set refusals had no description (lifetime too long); a malformed external_pub came back as 'not a valid group'; an invalid Commit came back as notAllowed with empty errorDescription although the hub log said 'the commit is not valid'. Fill description/errorDescription with which check failed everywhere; keep notAllowed for policy refusals and use a distinct, documented result for MLS-invalid commits. Mark 2026-11-21.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T20:01:42.151496336Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T20:01:42.151496336Z",
+  "updated_at": "2026-11-21T20:57:23.615425294Z",
+  "closed_at": "2026-11-21T20:57:23.615425294Z",
+  "close_reason": "ceb1502f: descriptions/errorDescription on refusals of Room/update (hub), Room/create, relayed calls, KeyPackage/set, Client/set, blobs, live Errors; MLS-invalid Commit stays notAllowed (protocol-07 has no fitting code) with errorDescription 'the commit is not valid MLS: ...'. Amends mimid-1wgh.49.",
   "labels": [
     "server",
     "cleanroom"
