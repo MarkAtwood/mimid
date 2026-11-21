@@ -1,0 +1,25 @@
+{
+  "id": "mimid-e64f.18",
+  "title": "maxMlsObjectSize 4 MiB cannot be met at the protocol relay",
+  "description": "Findings log F10 as built (48f5e33): maxMlsObjectSize = 4 MiB as Mark decided, but the relay and /notify cap a whole protocol body at MAX_BODY_LEN = 4 MiB (decision mimid-1wgh.6.8). A Room/send message within ~100 octets of 4 MiB is refused at the relay (SubmitMessageRequest envelope), and a Commit near 4 MiB cannot be fanned out (FanoutMessage envelope). Options: advertise MAX_BODY_LEN minus an envelope allowance (e.g. 4 MiB - 64 KiB), or raise MAX_BODY_LEN to 4 MiB + 64 KiB. Needs Mark: changes the advertised number or a provider-to-provider limit.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T00:21:11.647369083Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T00:21:11.647369083Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-e64f.18",
+      "depends_on_id": "mimid-e64f",
+      "type": "parent-child",
+      "created_at": "2026-11-21T00:21:11.718959589Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
