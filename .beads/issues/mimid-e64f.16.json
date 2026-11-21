@@ -2,13 +2,15 @@
   "id": "mimid-e64f.16",
   "title": "Agent: outgoing messages and Commits survive a crash around the send",
   "description": "Record the outgoing message/Commit as sending in agent.sqlite before it leaves; finish on the answer in one transaction; finish sending entries on restart with safe retry (F11) and messageIds (F18). Never re-encrypt.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-20T22:56:24.641995957Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-20T22:56:24.641995957Z",
+  "updated_at": "2026-11-21T00:21:08.903446078Z",
+  "closed_at": "2026-11-21T00:21:08.903446078Z",
+  "close_reason": "Done in dcac627 (branch findings-impl); test ddf2663; design 885255e",
   "dependencies": [
     {
       "issue_id": "mimid-e64f.16",
