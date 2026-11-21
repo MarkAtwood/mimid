@@ -550,3 +550,36 @@ async fn timestamp_at_or_above_2_48_is_400() {
     assert_eq!(id, sender_msg_id(&body));
     p.close().await;
 }
+
+/// Findings log F11: a message and an update the hub accepted, sent again
+/// with the same bytes (a client that lost the answer), get the hub's
+/// earlier response from the follower's record, without reaching the hub
+/// a second time, and nothing more is stored. The mock hub counts what it
+/// receives; mimid's own hub would answer a repeat the same way, so only a
+/// remote hub shows the record at work.
+#[tokio::test]
+async fn an_accepted_request_sent_again_is_answered_without_the_hub() {
+    let sent = bob_sends();
+    let request = submit::submit_request(&sent.app_message, BOB_URI.as_bytes());
+    let hub = MockHub::start(200, submit_accepted()).await;
+    let own = Own::start(&hub).await;
+    assert_eq!(own.submit(&request).await.unwrap(), submit_accepted());
+    assert_eq!(own.submit(&request).await.unwrap(), submit_accepted());
+    assert_eq!(hub.received().len(), 1, "the hub saw the message once");
+    assert_eq!(own.log().await.len(), 1);
+    own.close().await;
+
+    let hub = MockHub::start(200, update_success()).await;
+    let own = Own::start(&hub).await;
+    assert_eq!(
+        own.update(&sent.update_request).await.unwrap(),
+        update_success()
+    );
+    assert_eq!(
+        own.update(&sent.update_request).await.unwrap(),
+        update_success()
+    );
+    assert_eq!(hub.received().len(), 1, "the hub saw the update once");
+    assert_eq!(own.log().await.len(), 1);
+    own.close().await;
+}
