@@ -615,6 +615,12 @@ pub struct Agent {
     /// Rooms [`Agent::join_own_rooms`] does not try again until a restart
     /// (decision mimid-1wgh.61 item 5).
     not_joinable: std::collections::BTreeSet<String>,
+    /// The `roomId` of each Chat a Message came from, `None` for a Chat
+    /// without one (draft-atwood-jmap-chat-mimi-00 §Chat.roomId), so that
+    /// a Welcome is known by the room it was stored for (bead
+    /// mimid-6vsz). Read with Chat/get when a Message comes from a Chat
+    /// not in it.
+    chat_rooms: BTreeMap<String, Option<String>>,
     /// Events delivered since the last save, which the next save appends
     /// to the journal with the state.
     undelivered: Vec<Journaled>,
@@ -701,6 +707,7 @@ impl Agent {
             deferred_leaver: None,
             did_webvh: config.did_webvh.clone(),
             not_joinable: std::collections::BTreeSet::new(),
+            chat_rooms: BTreeMap::new(),
             undelivered: Vec::new(),
             #[cfg(feature = "fail-points")]
             fail_point: None,
@@ -1618,9 +1625,19 @@ impl Agent {
         let details = Member::welcome_details(&self.identity, &welcome, tree.as_deref())
             .map_err(|e| AgentError::mls("reading the Welcome", e))?;
         let metadata = details.group.components.get(&ROOM_METADATA);
+        let chat_room = self
+            .state
+            .invites
+            .iter()
+            .find(|i| i.number == number)
+            .and_then(|i| i.room.as_deref());
         Ok(InviteDetails {
             inviter: String::from_utf8_lossy(&details.sender).into_owned(),
-            room: room_of_group(&details.group.group_id, metadata.map(Vec::as_slice)),
+            room: room_of_group(
+                &details.group.group_id,
+                metadata.map(Vec::as_slice),
+                chat_room,
+            ),
             room_name: metadata
                 .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
                 .map(|metadata| metadata.room_name.as_str().to_owned()),
@@ -1685,6 +1702,7 @@ impl Agent {
             .map_err(|e| AgentError::mls("joining from the Welcome", e))?
             .member;
         let used = self.state.invites.remove(index);
+        let chat_room = used.room;
         self.state.consumed_welcomes.push(used.welcome);
         let excess = self
             .state
@@ -1692,10 +1710,16 @@ impl Agent {
             .len()
             .saturating_sub(MAX_CONSUMED_WELCOMES);
         self.state.consumed_welcomes.drain(..excess);
-        // The room is the room metadata's room_uri when the group has one
-        // (a Room/create room, whose group ID is random), else the group ID.
-        let room = room_of_group(member.group_id(), member.component(ROOM_METADATA))
-            .ok_or_else(|| AgentError::Invalid("the group has no room URI".to_owned()))?;
+        // The room is the room metadata's room_uri when the group has one,
+        // else the roomId of the Chat the Welcome came in (a Room/create
+        // room, whose group ID is random; bead mimid-6vsz), else the group
+        // ID.
+        let room = room_of_group(
+            member.group_id(),
+            member.component(ROOM_METADATA),
+            chat_room.as_deref(),
+        )
+        .ok_or_else(|| AgentError::Invalid("the group has no room URI".to_owned()))?;
         self.state
             .group_rooms
             .insert(hex::encode(member.group_id()), room.clone());
@@ -3298,6 +3322,12 @@ impl Agent {
             .provider
             .messages_since(since.as_deref(), &self.state.last_handled)
             .await?;
+        if messages
+            .iter()
+            .any(|message| !self.chat_rooms.contains_key(&message.chat))
+        {
+            self.read_chat_rooms(&messages).await?;
+        }
         for Fetched { id, chat, body } in &messages {
             // Handled already: in this round, or in a Chat whose Messages
             // up to a later id are (Message ids sort in the order they
@@ -3343,6 +3373,19 @@ impl Agent {
             .map_err(|e| self.dir.database_error("reading the journal", e))
     }
 
+    /// Reads the `roomId` of every Chat of the account into
+    /// [`Agent::chat_rooms`], and records the Chats of `messages` that
+    /// have none.
+    async fn read_chat_rooms(&mut self, messages: &[Fetched]) -> Result<(), AgentError> {
+        for chat in self.provider.chats().await? {
+            self.chat_rooms.insert(chat.id, Some(chat.room));
+        }
+        for message in messages {
+            self.chat_rooms.entry(message.chat.clone()).or_insert(None);
+        }
+        Ok(())
+    }
+
     /// Handles server Message `id` (`body`) from its FanoutMessage number
     /// `from` on, inside the caller's transaction: its events go to the
     /// journal and it is marked handled. When a proposal makes this agent
@@ -3364,7 +3407,8 @@ impl Agent {
             match FanoutMessage::decode_all(body) {
                 Ok(fanouts) if !fanouts.is_empty() => {
                     for (i, fanout) in fanouts.into_iter().enumerate().skip(from) {
-                        if let Some((room, leaf)) = self.incoming(fanout, &mut events) {
+                        let chat_room = self.chat_rooms.get(chat).cloned().flatten();
+                        if let Some((room, leaf)) = self.incoming(fanout, chat_room, &mut events) {
                             self.deliver(events);
                             self.state.in_progress = Some((id.to_owned(), i + 1));
                             self.save()?;
@@ -4019,13 +4063,15 @@ impl Agent {
         self.withdraw(room);
     }
 
-    /// Handles one FanoutMessage. Returns the room and leaf of a leave
+    /// Handles one FanoutMessage, stored in a Chat bound to `chat_room`
+    /// if the server named one. Returns the room and leaf of a leave
     /// this agent is to commit, when the proposals of a Proposal fanout
     /// call for one ([`Agent::maybe_commit_leave`]): the caller sends that
     /// Commit outside its transaction.
     fn incoming(
         &mut self,
         fanout: FanoutMessage,
+        chat_room: Option<String>,
         events: &mut Vec<Event>,
     ) -> Option<(String, u32)> {
         match fanout.event {
@@ -4055,11 +4101,12 @@ impl Agent {
                     if ratchet_tree_option.representation()
                         == RatchetTreeRepresentation::DistributionService =>
                 {
-                    self.await_tree(welcome);
+                    self.await_tree(welcome, chat_room);
                 }
                 Ok(welcome) => self.add_invite(
                     welcome,
                     ratchet_tree_option.ratchet_tree().map(<[u8]>::to_vec),
+                    chat_room,
                     events,
                 ),
                 Err(e) => events.push(Event::Problem {
@@ -4071,15 +4118,21 @@ impl Agent {
         None
     }
 
-    /// Keeps `welcome`, which came without its ratchet tree, for
-    /// [`Agent::fetch_trees`], unless it is known already.
-    fn await_tree(&mut self, welcome: Vec<u8>) {
+    /// Keeps `welcome`, which came without its ratchet tree, and the
+    /// `roomId` of its Chat, for [`Agent::fetch_trees`], unless it is known
+    /// already.
+    fn await_tree(&mut self, welcome: Vec<u8>, chat_room: Option<String>) {
         let welcome_hex = hex::encode(&welcome);
         if self.state.awaiting_tree.contains(&welcome_hex)
             || self.state.consumed_welcomes.contains(&welcome_hex)
             || self.state.invites.iter().any(|i| i.welcome == welcome_hex)
         {
             return;
+        }
+        if let Some(room) = chat_room {
+            self.state
+                .awaiting_tree_rooms
+                .insert(welcome_hex.clone(), room);
         }
         self.state.awaiting_tree.push(welcome_hex);
     }
@@ -4097,8 +4150,9 @@ impl Agent {
     async fn fetch_trees(&mut self) -> Result<(), AgentError> {
         let waiting = self.state.awaiting_tree.clone();
         for welcome_hex in waiting {
+            let chat_room = self.state.awaiting_tree_rooms.get(&welcome_hex).cloned();
             let fetched = match hex::decode(&welcome_hex) {
-                Ok(welcome) => self.fetch_tree(&welcome).await,
+                Ok(welcome) => self.fetch_tree(&welcome, chat_room.as_deref()).await,
                 Err(_) => Err((
                     AgentError::Invalid("a stored Welcome is not hex".to_owned()),
                     false,
@@ -4107,9 +4161,11 @@ impl Agent {
             let mut events = Vec::new();
             match fetched {
                 Ok(tree) => {
-                    let number = self
-                        .state
-                        .push_invite(welcome_hex.clone(), Some(hex::encode(tree)));
+                    let number = self.state.push_invite(
+                        welcome_hex.clone(),
+                        Some(hex::encode(tree)),
+                        chat_room,
+                    );
                     events.push(Event::InviteArrived { number });
                 }
                 Err((error, true)) => {
@@ -4136,25 +4192,31 @@ impl Agent {
                 }
             }
             self.state.awaiting_tree.retain(|w| *w != welcome_hex);
+            self.state.awaiting_tree_rooms.remove(&welcome_hex);
             self.deliver(events);
             self.save()?;
         }
         Ok(())
     }
 
-    /// The ratchet tree for `welcome` (decision mimid-1wgh.81), or the
-    /// error and whether it may pass (the server unreachable or
-    /// unavailable).
+    /// The ratchet tree for `welcome` (decision mimid-1wgh.81), stored in
+    /// a Chat bound to `chat_room` if the server named one, or the error
+    /// and whether it may pass (the server unreachable or unavailable).
     ///
     /// `&mut self`, though it changes nothing: the agent is not `Sync`, so
     /// only a unique borrow may be held across the request's await.
-    async fn fetch_tree(&mut self, welcome: &[u8]) -> Result<Vec<u8>, (AgentError, bool)> {
+    async fn fetch_tree(
+        &mut self,
+        welcome: &[u8],
+        chat_room: Option<&str>,
+    ) -> Result<Vec<u8>, (AgentError, bool)> {
         let never = |e: AgentError| (e, false);
         let group = Member::welcome_group(&self.identity, welcome)
             .map_err(|e| never(AgentError::mls("reading the Welcome", e)))?;
         let room = room_of_group(
             &group.group_id,
             group.components.get(&ROOM_METADATA).map(Vec::as_slice),
+            chat_room,
         )
         .ok_or_else(|| never(AgentError::Invalid("the group has no room URI".to_owned())))?;
         let (hpke_key, hpke_public) = mimi_mls::label::HpkePrivateKey::generate()
@@ -4223,7 +4285,13 @@ impl Agent {
             })
     }
 
-    fn add_invite(&mut self, welcome: Vec<u8>, tree: Option<Vec<u8>>, events: &mut Vec<Event>) {
+    fn add_invite(
+        &mut self,
+        welcome: Vec<u8>,
+        tree: Option<Vec<u8>>,
+        chat_room: Option<String>,
+        events: &mut Vec<Event>,
+    ) {
         let welcome_hex = hex::encode(&welcome);
         if let Some(existing) = self
             .state
@@ -4234,14 +4302,17 @@ impl Agent {
             if existing.ratchet_tree.is_none() {
                 existing.ratchet_tree = tree.as_deref().map(hex::encode);
             }
+            if existing.room.is_none() {
+                existing.room = chat_room;
+            }
             return;
         }
         if self.state.consumed_welcomes.contains(&welcome_hex) {
             return;
         }
-        let number = self
-            .state
-            .push_invite(welcome_hex, tree.as_deref().map(hex::encode));
+        let number =
+            self.state
+                .push_invite(welcome_hex, tree.as_deref().map(hex::encode), chat_room);
         events.push(Event::InviteArrived { number });
     }
 
@@ -5005,13 +5076,20 @@ fn group_info_request(
 }
 
 /// The room of the MLS group `group_id` with the `room_metadata` component
-/// `metadata`: the metadata's room_uri when the group has one (a
-/// Room/create room, whose group ID is random), else the group ID if it is
-/// a URI.
-fn room_of_group(group_id: &[u8], metadata: Option<&[u8]>) -> Option<String> {
+/// `metadata`, whose Welcome the server stored in a Chat bound to
+/// `chat_room`: the metadata's room_uri when the group has one, else
+/// `chat_room` (draft-atwood-jmap-chat-mimi-00 §Fanout Messages; room
+/// metadata is optional, §Room/create, and a Room/create room's group ID
+/// is random; bead mimid-6vsz), else the group ID if it is a URI.
+fn room_of_group(
+    group_id: &[u8],
+    metadata: Option<&[u8]>,
+    chat_room: Option<&str>,
+) -> Option<String> {
     metadata
         .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
         .map(|metadata| metadata.room_uri.as_str().to_owned())
+        .or_else(|| chat_room.map(str::to_owned))
         .or_else(|| {
             String::from_utf8(group_id.to_vec())
                 .ok()

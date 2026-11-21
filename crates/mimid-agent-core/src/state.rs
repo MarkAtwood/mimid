@@ -117,6 +117,12 @@ pub(crate) struct Invite {
     /// The number [`crate::Agent::join`] takes; stable while other
     /// invites come and go.
     pub number: u64,
+    /// The `roomId` of the Chat the Welcome was stored in
+    /// (draft-atwood-jmap-chat-mimi-00 §Fanout Messages), when the server
+    /// gave one: the room of a group without `room_metadata` (bead
+    /// mimid-6vsz).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<String>,
 }
 
 /// An MLSMessage held for a room not joined yet, replayed at the join.
@@ -157,6 +163,10 @@ pub(crate) struct State {
     /// mimid-1wgh.81).
     #[serde(default)]
     pub awaiting_tree: Vec<String>,
+    /// For Welcomes in `awaiting_tree`, by Welcome (hex), the `roomId` of
+    /// the Chat each was stored in, as [`Invite::room`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub awaiting_tree_rooms: BTreeMap<String, String>,
     /// The KeyPackages this device published that the server still
     /// holds, by id (the unpadded base64url KeyPackageRef), as of
     /// `key_package_state` and the publishing since (findings log F9).
@@ -251,13 +261,19 @@ fn one() -> u64 {
 
 impl State {
     /// Adds an invite under the next number, and returns that number.
-    pub fn push_invite(&mut self, welcome: String, ratchet_tree: Option<String>) -> u64 {
+    pub fn push_invite(
+        &mut self,
+        welcome: String,
+        ratchet_tree: Option<String>,
+        room: Option<String>,
+    ) -> u64 {
         let number = self.next_invite;
         self.next_invite += 1;
         self.invites.push(Invite {
             welcome,
             ratchet_tree,
             number,
+            room,
         });
         number
     }
@@ -391,6 +407,7 @@ impl StateDir {
             held: Vec::new(),
             consumed_welcomes: Vec::new(),
             awaiting_tree: Vec::new(),
+            awaiting_tree_rooms: BTreeMap::new(),
             key_packages: Vec::new(),
             key_package_state: None,
             signature_key_bound: false,
@@ -630,11 +647,11 @@ mod tests {
         let (_, mut s) = state_dir
             .load_or_create("mimi://a.example/u/bob", &crate::DidWebvhConfig::default())
             .unwrap();
-        assert_eq!(s.push_invite("w1".into(), None), 1);
-        assert_eq!(s.push_invite("w2".into(), None), 2);
+        assert_eq!(s.push_invite("w1".into(), None, None), 1);
+        assert_eq!(s.push_invite("w2".into(), None, None), 2);
         s.invites.remove(0);
         assert_eq!(s.invites[0].number, 2);
-        assert_eq!(s.push_invite("w3".into(), None), 3);
+        assert_eq!(s.push_invite("w3".into(), None, None), 3);
     }
 
     #[test]

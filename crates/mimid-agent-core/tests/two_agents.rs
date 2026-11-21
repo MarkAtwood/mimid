@@ -448,6 +448,58 @@ async fn a_room_without_metadata_and_a_lone_leave() {
     );
 }
 
+/// A Welcome into a room without `room_metadata` is an invite like any
+/// other: the room is the `roomId` of the Chat the server stored the
+/// Welcome in (draft-atwood-jmap-chat-mimi-00 §Fanout Messages; room
+/// metadata is optional, §Room/create), and it has no name. Before the
+/// fix the agent refused to join it: "the group has no room URI" (bead
+/// mimid-6vsz, clean-room findings C14).
+///
+/// Oracle: the room ID the server answered Room/create with.
+#[tokio::test]
+async fn a_welcome_without_room_metadata_joins_by_the_chats_room_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut alice = agent(&server, ALICE, dir.path()).await;
+    let mut bob = agent(&server, BOB, dir.path()).await;
+    bob.publish_key_packages(1).await.unwrap();
+    let room = alice
+        .host_room(&HostOptions {
+            name: String::new(),
+            metadata: false,
+            open: false,
+            roles: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(alice.room_name(&room).unwrap(), None);
+    alice.invite(&room, BOB).await.unwrap();
+
+    let number = poll_until(&mut bob, |e| match e {
+        Event::InviteArrived { number } => Some(*number),
+        _ => None,
+    })
+    .await;
+    let details = bob.invite_details(number).unwrap();
+    assert_eq!(details.inviter, ALICE);
+    assert_eq!(details.room.as_deref(), Some(room.as_str()));
+    assert_eq!(details.room_name, None);
+    assert_eq!(bob.join(number).unwrap(), room);
+    assert_eq!(bob.room_name(&room).unwrap(), None);
+    assert_eq!(bob.participants(&room).unwrap(), [ALICE, BOB]);
+
+    alice.send_text(&room, "no metadata").await.unwrap();
+    let got = poll_until(&mut bob, |e| match e {
+        Event::Message(m) => Some(m.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(
+        (got.room.as_str(), got.text.as_deref()),
+        (room.as_str(), Some("no metadata"))
+    );
+}
+
 #[tokio::test]
 async fn bad_input_is_refused_before_any_request() {
     let dir = tempfile::tempdir().unwrap();

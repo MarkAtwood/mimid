@@ -443,25 +443,28 @@ impl Provider {
         }
     }
 
-    /// See [`Jmap::own_chats`].
+    /// [`Provider::chats`], one per room, by room: of a room's Chats, one
+    /// whose room is recorded as accepted if there is one.
     pub async fn own_chats(&self) -> Result<Vec<OwnChat>, AgentError> {
+        let mut chats = self.chats().await?;
+        chats.sort_by(|a, b| a.room.cmp(&b.room).then(b.accepted.cmp(&a.accepted)));
+        chats.dedup_by(|later, first| later.room == first.room);
+        Ok(chats)
+    }
+
+    /// See [`Jmap::chats`].
+    pub async fn chats(&self) -> Result<Vec<OwnChat>, AgentError> {
         match self {
-            Self::Jmap(j) => j.own_chats().await,
+            Self::Jmap(j) => j.chats().await,
             Self::Stream(s) => match s.stream.ok("Chat/get", Op::ListChats).await? {
-                AckResult::ListChats { chats, .. } => {
-                    let mut chats: Vec<OwnChat> = chats
-                        .into_iter()
-                        .map(|chat| OwnChat {
-                            id: chat.chat_id,
-                            room: chat.room,
-                            accepted: chat.accepted,
-                        })
-                        .collect();
-                    // As Jmap::own_chats.
-                    chats.sort_by(|a, b| a.room.cmp(&b.room).then(b.accepted.cmp(&a.accepted)));
-                    chats.dedup_by(|later, first| later.room == first.room);
-                    Ok(chats)
-                }
+                AckResult::ListChats { chats, .. } => Ok(chats
+                    .into_iter()
+                    .map(|chat| OwnChat {
+                        id: chat.chat_id,
+                        room: chat.room,
+                        accepted: chat.accepted,
+                    })
+                    .collect()),
                 other => Err(unexpected("Chat/get", &other)),
             },
         }

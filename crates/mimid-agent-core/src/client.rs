@@ -554,8 +554,9 @@ impl Jmap {
     /// (draft-atwood-jmap-chat-mimi-00 §Chat.roomId), bound or not: the
     /// rooms the user is or was in, whichever client joined them, with
     /// whether a device recorded the room as accepted (always `false`
-    /// without [`Jmap::chat_metadata`]). By room.
-    pub async fn own_chats(&self) -> Result<Vec<OwnChat>, AgentError> {
+    /// without [`Jmap::chat_metadata`]), in the server's order; a room can
+    /// have more than one Chat.
+    pub async fn chats(&self) -> Result<Vec<OwnChat>, AgentError> {
         const WHAT: &str = "Chat/get";
         let selector = format!("privateMetadata/{ACCEPTED_NAMESPACE}");
         let properties = if self.chat_metadata {
@@ -566,7 +567,7 @@ impl Jmap {
         let answer = self
             .call(WHAT, json!({"ids": null, "properties": properties}))
             .await?;
-        let mut chats: Vec<OwnChat> = answer["list"]
+        Ok(answer["list"]
             .as_array()
             .ok_or_else(|| AgentError::malformed(WHAT, "no list"))?
             .iter()
@@ -577,10 +578,7 @@ impl Jmap {
                     accepted: chat["privateMetadata"][ACCEPTED_NAMESPACE]["accepted"] == true,
                 })
             })
-            .collect();
-        chats.sort_by(|a, b| a.room.cmp(&b.room).then(b.accepted.cmp(&a.accepted)));
-        chats.dedup_by(|later, first| later.room == first.room);
-        Ok(chats)
+            .collect())
     }
 
     /// Records in Chat `chat_id`'s `privateMetadata` that the user accepted
