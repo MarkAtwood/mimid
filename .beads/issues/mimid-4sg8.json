@@ -1,0 +1,15 @@
+{
+  "id": "mimid-4sg8",
+  "title": "IRC: small irssi findings (329 per member, 330 shows nick, INVITE by unseen nick)",
+  "description": "Found driving irssi 1.4.3 (2026-11-21): (1) 329 channel creation time differs per member (taken from each member's local room record key), so alice and bob see different 'created' times for one room; (2) WHOIS 330 gives the nick as the account name; the user URI would be more useful; (3) INVITE \u003cnick\u003e for a user this agent has never seen gets 401: only INVITE \u003cuser URI\u003e works (the service help says so).",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T02:58:49.444908496Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T02:58:49.444908496Z",
+  "labels": [
+    "irc"
+  ]
+}
