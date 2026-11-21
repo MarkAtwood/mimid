@@ -39,6 +39,17 @@ The agent token is one credential among the agent's app passwords (see [App pass
 
 An app password is a secret the agent makes for one device or client: 16 lowercase letters shown in four groups of four, `kqzv-trwm-hpaf-dnye`. It is shown once and the agent keeps no copy. Every front end takes it wherever it takes the agent token. When typed, case, spaces and hyphens do not matter (`KQZV TRWM HPAF DNYE` works), except with SCRAM, which needs the form shown, hyphens included.
 
+Manage them with:
+
+```sh
+mimid-agent <config.toml> app-password list            # names, kinds, made, last used; never a secret
+mimid-agent <config.toml> app-password add <name>      # name: 1 to 32 of a-z, 0-9 and -
+mimid-agent <config.toml> app-password revoke <name>
+mimid-agent <config.toml> app-password rotate-token    # a new agent-token file
+```
+
+These open `mimid.sqlite` themselves, so they work whether or not the agent runs. A running agent reads the table again every 2 seconds and before each login: revoking a credential, or replacing the agent token, closes every IRC connection and JMAP EventSource stream that logged in with it within that time, and its next request gets `401`. After `rotate-token`, attachment links made before keep working until the agent restarts.
+
 The agent stores each credential, the agent token included, as a SCRAM-SHA-256 verifier (4,096 iterations) in the `credentials` table of `mimid.sqlite`. At most 64 are unrevoked at once. A revoked one is listed for 30 days, then deleted. Design: docs/design/frontend-auth.md §3.
 
 ## The configuration file

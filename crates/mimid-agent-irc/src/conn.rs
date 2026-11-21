@@ -414,6 +414,9 @@ pub(crate) async fn run(
     let mut session = Session::new(shared, peer);
     let mut last_heard = Instant::now();
     let mut ping_sent: Option<Instant> = None;
+    // docs/design/frontend-auth.md §3.7: a connection closes once the
+    // credential it logged in with is revoked.
+    let mut credentials = session.shared.credentials.changes();
     loop {
         let deadline = match (session.me.is_some(), ping_sent) {
             (false, _) => last_heard + ping_after + pong_within,
@@ -429,6 +432,20 @@ pub(crate) async fn run(
         tokio::select! {
             () = stopped(&mut stop) => {
                 session.close("mimid-agent is stopping");
+            }
+            Ok(()) = credentials.changed() => {
+                if let Some(login) = &session.login
+                    && !session.shared.credentials.is_active(login.id)
+                {
+                    tracing::info!(
+                        name: "agent_session_revoked",
+                        front_end = "irc",
+                        credential = %login.name,
+                        peer = %session.peer,
+                        "an IRC connection closed: its credential was revoked"
+                    );
+                    session.close("credential revoked");
+                }
             }
             received = incoming.recv() => match received {
                 Some(Incoming::Line(bytes)) => {

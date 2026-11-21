@@ -35,6 +35,8 @@ pub struct Daemon {
     irc: Option<IrcFrontEnd>,
     /// The plaintext store the front ends share; its sync is the loop's.
     store: Arc<Store>,
+    /// The credentials every front end checks logins against.
+    credentials: Arc<Credentials>,
     stop: watch::Sender<bool>,
     sync_interval: Duration,
     /// The server's EventSource, which wakes the sync loop; `None` if its
@@ -66,6 +68,12 @@ impl std::fmt::Debug for Daemon {
             .finish_non_exhaustive()
     }
 }
+
+/// How often the daemon reads the credential table again, so that a
+/// change the `app-password` CLI made is seen and the sessions of a
+/// revoked credential close (docs/design/frontend-auth.md §3.6).
+/// INVENTED VALUE, NOT FROM SPEC.
+pub const CREDENTIAL_RECHECK: Duration = Duration::from_secs(2);
 
 /// The blob store's directory in the state directory: attachments in
 /// plaintext.
@@ -252,6 +260,7 @@ impl Daemon {
             http,
             irc,
             store,
+            credentials,
             stop,
             sync_interval: config.sync_interval(),
             push,
@@ -337,6 +346,10 @@ impl Daemon {
             self.log_watch,
         ));
         let expiry = tokio::spawn(expiry_loop(Arc::clone(&self.store), stop.subscribe()));
+        let recheck = tokio::spawn(recheck_credentials(
+            Arc::clone(&self.credentials),
+            stop.subscribe(),
+        ));
         // The server's EventSource wakes the sync loop; the interval is
         // the fallback.
         let push = match (self.push, self.stream_wake) {
@@ -393,6 +406,7 @@ impl Daemon {
         for (name, task) in [
             ("sync loop", Some(sync)),
             ("expiry loop", Some(expiry)),
+            ("credential recheck", Some(recheck)),
             ("push", push),
             ("feed", feed),
             ("IRC front end", irc),
@@ -410,6 +424,25 @@ impl Daemon {
         }
         tracing::info!(name: "agent_stopped", "mimid-agent stopped");
         served
+    }
+}
+
+/// Reads the credential table again every [`CREDENTIAL_RECHECK`] until
+/// stopped: a change another process made (the `app-password` CLI) then
+/// reaches the front ends ([`Credentials::changes`]). A failure is logged.
+async fn recheck_credentials(credentials: Arc<Credentials>, mut stop: watch::Receiver<bool>) {
+    loop {
+        tokio::select! {
+            () = stopped(&mut stop) => return,
+            () = tokio::time::sleep(CREDENTIAL_RECHECK) => {}
+        }
+        if let Err(error) = credentials.refresh() {
+            tracing::warn!(
+                name: "agent_credentials_unreadable",
+                error = &error as &dyn std::error::Error,
+                "the credential table could not be read again"
+            );
+        }
     }
 }
 

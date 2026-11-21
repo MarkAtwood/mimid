@@ -125,7 +125,7 @@ use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{Notify, Semaphore, broadcast, mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 
-use mimid_agent_store::credentials::Credentials;
+use mimid_agent_store::credentials::{CredentialId, Credentials, Login};
 use mimid_agent_store::links::LINK_PATH;
 
 /// Resolves once `stop` is true (or its sender is gone). The `Ref`
@@ -411,7 +411,12 @@ async fn guard(State(endpoint): State<Arc<Endpoint>>, request: Request, next: Ne
     if let Some(login) = &login {
         endpoint.credentials.note_used(login.id, "jmap");
     }
-    let mut response = if link || login.is_some() {
+    let mut request = request;
+    let authorized = link || login.is_some();
+    if let Some(login) = login {
+        request.extensions_mut().insert(login);
+    }
+    let mut response = if authorized {
         next.run(request).await
     } else {
         tracing::debug!("agent request refused: missing, malformed or wrong bearer token");
@@ -969,6 +974,7 @@ impl Params {
 /// `GET /jmap/eventsource`.
 async fn get_eventsource(
     State(endpoint): State<Arc<Endpoint>>,
+    login: Option<axum::Extension<Login>>,
     Query(query): Query<BTreeMap<String, String>>,
 ) -> Response {
     let Some(jmap) = &endpoint.jmap else {
@@ -988,7 +994,8 @@ async fn get_eventsource(
             .into_response();
     };
     let (sender, receiver) = mpsc::channel(EVENT_BUFFER);
-    tokio::spawn(stream(endpoint, chat, params, sender));
+    let credential = login.map(|axum::Extension(login)| login.id);
+    tokio::spawn(stream(endpoint, chat, params, sender, credential));
     Sse::new(ReceiverStream::new(receiver)).into_response()
 }
 
@@ -1021,10 +1028,14 @@ async fn stream(
     chat: Arc<AgentChat>,
     params: Params,
     sender: mpsc::Sender<Result<Event, Infallible>>,
+    credential: Option<CredentialId>,
 ) {
     // Subscribe before reading the states, so no change falls between.
     let mut changes = endpoint.changes.subscribe();
     let mut stop = endpoint.stop.clone();
+    // docs/design/frontend-auth.md §3.7: the stream ends once the
+    // credential that opened it is revoked.
+    let mut credentials = endpoint.credentials.changes();
     let mut last = match states(&chat, &params.types).await {
         Ok(states) => states,
         Err(error) => {
@@ -1049,6 +1060,19 @@ async fn stream(
         tokio::select! {
             () = sender.closed() => return,
             () = stopped(&mut stop) => return,
+            Ok(()) = credentials.changed() => {
+                if let Some(id) = credential
+                    && !endpoint.credentials.is_active(id)
+                {
+                    tracing::info!(
+                        name: "agent_session_revoked",
+                        front_end = "jmap",
+                        credential = %id,
+                        "an EventSource stream closed: its credential was revoked"
+                    );
+                    return;
+                }
+            }
             () = ping => {
                 let interval = params.ping.map_or(0, |p| p.as_secs());
                 let event = Event::default().event("ping").data(json!({"interval": interval}).to_string());

@@ -84,3 +84,90 @@ async fn app_passwords_and_the_agent_token_log_in_everywhere() {
     assert!(pass_works(irc, &token).await);
     alice.stop().await;
 }
+
+/// Runs `mimid-agent <config> app-password <words>` as the CLI does, and
+/// its output.
+fn cli(config: &mimid_agent::Config, words: &[&str]) -> Result<String, mimid_agent::cli::CliError> {
+    let words: Vec<String> = words.iter().map(|w| (*w).to_owned()).collect();
+    let mut out = Vec::new();
+    mimid_agent::cli::app_password(config, &words, &mut out)?;
+    Ok(String::from_utf8(out).unwrap())
+}
+
+/// Oracle: docs/design/frontend-auth.md §3.6, §3.7: an app password made
+/// with the CLI while the daemon runs logs in; revoking it with the CLI
+/// closes the IRC connection and the EventSource stream that used it,
+/// within the daemon's recheck, with `ERROR` naming the reason, and leaves
+/// a connection of another credential open. The listing shows names and
+/// never a secret.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn revoking_with_the_cli_closes_live_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let config = with_irc(dir.path(), &server);
+    let alice = Running::start(&config).await;
+    let irc = alice.irc.unwrap();
+
+    let added = cli(&config, &["add", "phone"]).unwrap();
+    let password = added
+        .lines()
+        .map(str::trim)
+        .find(|l| l.len() == 19 && l.matches('-').count() == 3)
+        .unwrap()
+        .to_owned();
+    let listed = cli(&config, &["list"]).unwrap();
+    assert!(listed.contains("phone  app-password"), "{listed}");
+    assert!(listed.contains("agent-token  agent-token"), "{listed}");
+    assert!(!listed.contains(&password), "{listed}");
+    assert!(matches!(
+        cli(&config, &["add", "phone"]),
+        Err(mimid_agent::cli::CliError::Credentials(_))
+    ));
+    assert!(matches!(
+        cli(&config, &["frobnicate"]),
+        Err(mimid_agent::cli::CliError::Usage)
+    ));
+
+    let (mut phone, _) = Irc::register(irc, &password, "alice", &[]).await;
+    let (mut desk, _) = Irc::register(irc, &alice.token(), "alice", &[]).await;
+    let events = common::Client::connect(&alice.base(), &password)
+        .await
+        .events()
+        .await;
+
+    let revoked = cli(&config, &["revoke", "phone"]).unwrap();
+    assert!(revoked.contains("Revoked \"phone\""), "{revoked}");
+    let error = phone.until_command("ERROR").await;
+    assert!(error.text().contains("credential revoked"), "{}", error.raw);
+    assert!(phone.closes().await);
+    assert!(events.ends().await);
+    // The other connection stays.
+    assert!(desk.sync().await.is_empty());
+    assert!(cli(&config, &["list"]).unwrap().contains("REVOKED"));
+    alice.stop().await;
+}
+
+/// Oracle: §3.4: `rotate-token` writes a new token file; the old token
+/// stops working and its sessions close, the new one works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rotating_the_token_replaces_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let config = with_irc(dir.path(), &server);
+    let alice = Running::start(&config).await;
+    let old = alice.token();
+    let (mut irc, _) = Irc::register(alice.irc.unwrap(), &old, "alice", &[]).await;
+    assert!(cli(&config, &["revoke", "agent-token"]).is_err());
+    cli(&config, &["rotate-token"]).unwrap();
+    let new = alice.token();
+    assert_ne!(new, old);
+    assert!(
+        irc.until_command("ERROR")
+            .await
+            .text()
+            .contains("credential revoked")
+    );
+    assert_eq!(session_status(&alice, &old).await, 401);
+    assert_eq!(session_status(&alice, &new).await, 200);
+    alice.stop().await;
+}

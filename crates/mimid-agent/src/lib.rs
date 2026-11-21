@@ -167,6 +167,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cli;
 pub mod config;
 mod daemon;
 pub mod didwebvh;
@@ -175,7 +176,7 @@ mod push;
 pub mod token;
 
 pub use config::{Config, ConfigError, Invites, IrcSetting, JmapSetting};
-pub use daemon::{BLOBS_DIR, Daemon, StartError};
+pub use daemon::{BLOBS_DIR, CREDENTIAL_RECHECK, Daemon, StartError};
 pub use http::{
     CAPABILITIES, CHAT_CAPABILITY, CORE_CAPABILITY, MAX_CONCURRENT_UPLOAD, MAX_SIZE_UPLOAD,
 };

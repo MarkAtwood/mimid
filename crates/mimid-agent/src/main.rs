@@ -1,8 +1,10 @@
 //! `mimid-agent`: one user's MIMI rooms as a local JMAP Chat endpoint. See
 //! the [`mimid_agent`] library documentation.
 //!
-//! Usage: `mimid-agent <config.toml>`. `RUST_LOG` filters the log and
-//! defaults to `info`. SIGINT and SIGTERM stop it gracefully.
+//! Usage: `mimid-agent <config.toml>` runs the daemon. `RUST_LOG` filters
+//! the log and defaults to `info`. SIGINT and SIGTERM stop it gracefully.
+//! `mimid-agent <config.toml> app-password list | add <name> | revoke
+//! <name> | rotate-token` manages the credentials ([`mimid_agent::cli`]).
 //!
 //! # Limitations
 //!
@@ -20,9 +22,21 @@ use tracing_subscriber::EnvFilter;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args_os().skip(1);
-    let (Some(config_path), None) = (args.next().map(PathBuf::from), args.next()) else {
-        bail!("usage: mimid-agent <config.toml>");
+    let Some(config_path) = args.next().map(PathBuf::from) else {
+        bail!("usage: mimid-agent <config.toml> [app-password ...]");
     };
+    let rest: Vec<String> = args
+        .map(|a| a.into_string())
+        .collect::<Result<_, _>>()
+        .map_err(|_| anyhow::anyhow!("the arguments are not UTF-8"))?;
+    if let Some((command, words)) = rest.split_first() {
+        let config = Config::load(&config_path)?;
+        let mut out = std::io::stdout().lock();
+        return match command.as_str() {
+            "app-password" => Ok(mimid_agent::cli::app_password(&config, words, &mut out)?),
+            _ => bail!("usage: mimid-agent <config.toml> [app-password ...]"),
+        };
+    }
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
     tracing_subscriber::fmt().with_env_filter(filter).init();
     let config = Config::load(&config_path)?;

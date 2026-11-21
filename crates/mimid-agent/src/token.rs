@@ -85,6 +85,37 @@ impl LocalToken {
         }
     }
 
+    /// Writes a new token to `<state_dir>/agent-token` in place of the old
+    /// one (`app-password rotate-token`): written to a temporary file of
+    /// mode 0600 beside it, then renamed over it, so a reader sees the old
+    /// token or the new one, never part of one.
+    ///
+    /// # Errors
+    ///
+    /// [`TokenError::Io`] and [`TokenError::Random`].
+    pub fn replace(state_dir: &Path) -> Result<Self, TokenError> {
+        let path = state_dir.join(TOKEN_FILE);
+        let temporary = state_dir.join(format!("{TOKEN_FILE}.new"));
+        let io = |source| TokenError::Io {
+            path: path.clone(),
+            source,
+        };
+        let mut octets = [0u8; TOKEN_OCTETS];
+        getrandom::fill(&mut octets).map_err(|_| TokenError::Random)?;
+        let token = URL_SAFE_NO_PAD.encode(octets);
+        let _ = std::fs::remove_file(&temporary);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .map_err(io)?;
+        file.write_all(token.as_bytes()).map_err(io)?;
+        file.sync_all().map_err(io)?;
+        std::fs::rename(&temporary, &path).map_err(io)?;
+        Ok(Self(token))
+    }
+
     /// `text` as a token, if it is one this module made.
     fn parse(text: &str) -> Option<Self> {
         (text.len() == TOKEN_LEN
