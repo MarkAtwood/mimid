@@ -73,7 +73,7 @@ Each crate documents its own limitations in the `# Limitations` section of its r
 | `mimid-agent-jmap` | JMAP Chat over `mimid-agent-core`: the user's rooms as Chats and Messages |
 | `mimid-agent` | The `mimid-agent` daemon: builds the plaintext store and serves `mimid-agent-jmap` over it as a local JMAP Chat endpoint on loopback (`[jmap]` in its configuration) |
 
-The four `mimi-*` crates are synchronous and do no I/O. Planned but not yet written: an admin CLI. mimid ships no UI of its own.
+The four `mimi-*` crates are synchronous and do no I/O. The admin CLI is `mimid admin` ([docs/operating.md](docs/operating.md#the-admin-commands)). mimid ships no UI of its own.
 
 mimid builds against a fork of OpenMLS ([MarkAtwood/openmls](https://github.com/MarkAtwood/openmls)) carrying fixes that are not yet in an OpenMLS release.
 
@@ -88,9 +88,9 @@ cargo test --workspace --all-features
 
 The full set of checks CI runs is in `.github/workflows/ci.yml`. Tests are fully offline.
 
-To run the server: `mimid <config.toml>`. The config format is documented in `mimid_server::config`.
+To run the server: `mimid <config.toml>`. Every configuration key, the admin commands and how to stop the server are in [docs/operating.md](docs/operating.md).
 
-To run the agent for one user: `mimid-agent <config.toml>`. The config format is documented in `mimid_agent::config`, the `[jmap]` and `[irc]` front-end tables included; a JMAP Chat client authenticates with the token in `<state_dir>/agent-token`, and an IRC client sends the same token as its server password (`PASS`).
+To run the agent for one user: `mimid-agent <config.toml>`. Its configuration, the `[jmap]` and `[irc]` front-end tables included, is in [docs/agent.md](docs/agent.md); a JMAP Chat client authenticates with the token in `<state_dir>/agent-token`, and an IRC client sends the same token as its server password (`PASS`).
 
 ## Interoperability
 
