@@ -1,0 +1,16 @@
+{
+  "id": "mimid-e13m",
+  "title": "Front-end authentication that stock clients accept (all c2s front ends)",
+  "description": "Mark 2026-11-21: every client-facing front end (IRC v2, Matrix, XMPP, JMAP Chat, purple-mimi) needs good-enough, easy, not-upsetting auth that works with existing clients, users and ecosystems. Design once: one credential model across front ends (per-device, named, revocable app passwords stored hashed; the current local token as one of them); what each protocol's stock clients do (IRC SASL PLAIN/PASS, SCRAM; XMPP SASL SCRAM-SHA-1/256 and PLAIN, SASL2 for Monal; Matrix m.login.password, OIDC later; JMAP Basic/Bearer; IMAP LOGIN); TLS certificates clients trust without warnings (ACME, tailscale cert, or a local CA the user installs, ranked by friction); onboarding (setup links / QR codes per client: xmpp: preauth URIs, ircs:// URLs, Matrix login links); per-device revocation from IRC /msg mimid and JMAP. Design note first (docs/design/frontend-auth.md), then implement before or with IRC v2 (mimid-i0id).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T22:37:24.316852952Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T22:37:24.316852952Z",
+  "labels": [
+    "agent",
+    "auth"
+  ]
+}
