@@ -12,8 +12,7 @@
   "closed_at": "2026-11-20T19:36:40.442331593Z",
   "close_reason": "Chosen by agent 2026-11-20 for mimid-e64f, unattended; INVENTED, NOT FROM SPEC; flag to Mark",
   "labels": [
-    "live-stream",
-    "human"
+    "live-stream"
   ],
   "dependencies": [
     {
