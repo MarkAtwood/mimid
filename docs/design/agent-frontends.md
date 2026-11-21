@@ -713,7 +713,11 @@ step runs the full check list in AGENTS.md before its commit.
      (§7.12). It was refused at first.
    - PRIVMSG to a nick is 404 naming the nick ("JOIN a new channel and
      INVITE them", §7.2); to an unknown nick 401.
-   - The service has `help`, `allow`, `deny` and `invites`. JOIN and PART
+   - The service has `help`, `allow`, `deny` and `invites`, and since
+     bead mimid-e64f.23 `devices` and `forget-device <id>`
+     (draft-atwood-jmap-chat-mimi-00 §Clients: list the clients bound to
+     the account, and forget a lost one, which removes its leaves from
+     the rooms this device shares with it). JOIN and PART
      make and leave rooms (§7.1), and JOIN of a pending invite's name
      accepts it (§7.13), so
      `create`, `leave` and `join` are gone; `remove` and `report` are not

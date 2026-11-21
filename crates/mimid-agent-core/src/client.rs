@@ -429,6 +429,36 @@ impl Jmap {
         self.set("Consent/set", args).await.map(drop)
     }
 
+    /// The account's Client records (draft-atwood-jmap-chat-mimi-00
+    /// §Clients): each id with its signature key, the
+    /// SignaturePublicKey's octets without the length prefix.
+    pub async fn clients(&self) -> Result<Vec<(String, Vec<u8>)>, AgentError> {
+        const WHAT: &str = "Client/get";
+        let answer = self.call(WHAT, json!({"ids": null})).await?;
+        answer["list"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|record| {
+                let id = record["id"]
+                    .as_str()
+                    .ok_or_else(|| AgentError::malformed(WHAT, "a record without id"))?;
+                let key = record["signatureKey"]
+                    .as_str()
+                    .and_then(|key| URL_SAFE_NO_PAD.decode(key).ok())
+                    .ok_or_else(|| AgentError::malformed(WHAT, "a signatureKey"))?;
+                Ok((id.to_owned(), signature_key_octets(WHAT, &key)?))
+            })
+            .collect()
+    }
+
+    /// Client/set destroy of record `id`.
+    pub async fn destroy_client(&self, id: &str) -> Result<(), AgentError> {
+        self.set("Client/set", json!({"destroy": [id]}))
+            .await
+            .map(drop)
+    }
+
     /// KeyPackage/set create.
     pub async fn publish_key_package(&self, key_package: &[u8]) -> Result<String, AgentError> {
         let answer = self
@@ -1009,6 +1039,14 @@ pub(crate) struct Fetched {
     pub chat: String,
     /// The FanoutMessage.
     pub body: Vec<u8>,
+}
+
+/// The octets of a TLS-encoded SignaturePublicKey (RFC 9420 §5.1.1), as a
+/// Client record's `signatureKey` carries it.
+pub(crate) fn signature_key_octets(what: &str, encoded: &[u8]) -> Result<Vec<u8>, AgentError> {
+    VLBytes::tls_deserialize_exact(encoded)
+        .map(|key| key.as_slice().to_vec())
+        .map_err(|e| AgentError::malformed(what, format!("signatureKey: {e:?}")))
 }
 
 /// `messageIds` of a Room/send or Room/update answer (findings log F18).

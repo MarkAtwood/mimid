@@ -572,6 +572,29 @@ pub enum Event {
     },
 }
 
+/// One of the user's clients as the server lists it: a signature key
+/// bound to the account (draft-atwood-jmap-chat-mimi-00 §Clients).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Device {
+    /// The Client record's id.
+    pub id: String,
+    /// The client's signature key (the SignaturePublicKey's octets).
+    pub signature_key: Vec<u8>,
+    /// Whether it is this device.
+    pub this_device: bool,
+}
+
+/// What [`Agent::forget_device`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ForgottenDevice {
+    /// The rooms the device's leaves were removed from, by Commit.
+    pub removed_from: Vec<String>,
+    /// The rooms where they could not be removed, and why.
+    pub failed: Vec<(String, String)>,
+}
+
 /// One user's MIMI client: its MLS groups and the JMAP connection to its
 /// server. See the crate documentation.
 pub struct Agent {
@@ -975,6 +998,89 @@ impl Agent {
     pub fn clients(&self, room: &str) -> Result<Vec<RoomClient>, AgentError> {
         let member = self.member(room)?;
         Ok(room_clients(member, &self.identity))
+    }
+
+    /// The user's clients as the server lists them, this device among
+    /// them once it has published a KeyPackage
+    /// (draft-atwood-jmap-chat-mimi-00 §Clients).
+    ///
+    /// # Errors
+    ///
+    /// The errors of reaching the server.
+    pub async fn devices(&mut self) -> Result<Vec<Device>, AgentError> {
+        let own = self.identity.signature_public_key().to_vec();
+        Ok(self
+            .provider
+            .clients()
+            .await?
+            .into_iter()
+            .map(|(id, signature_key)| Device {
+                this_device: signature_key == own,
+                id,
+                signature_key,
+            })
+            .collect())
+    }
+
+    /// Forgets another client of this user, such as a lost device: its
+    /// Client record is destroyed, which unbinds its key and destroys its
+    /// KeyPackages, and then its leaves are removed by Commit from every
+    /// room this device shares with it (§Client/set: "A client that
+    /// destroys the record of another of the owner's clients ... removes
+    /// that client's leaves, with `Room/update`, from the rooms they
+    /// share"). The user stays a participant of each room. A room whose
+    /// Commit fails is in [`ForgottenDevice::failed`], not an error; the
+    /// leaves can be removed later by another Commit.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Invalid`] for this device or an id the server does
+    /// not list, and the errors of reaching the server.
+    pub async fn forget_device(&mut self, id: &str) -> Result<ForgottenDevice, AgentError> {
+        let devices = self.devices().await?;
+        let device = devices
+            .into_iter()
+            .find(|d| d.id == id)
+            .ok_or_else(|| AgentError::Invalid(format!("no device {id} of this user")))?;
+        if device.this_device {
+            return Err(AgentError::Invalid(
+                "this is this device; forget it from another one".to_owned(),
+            ));
+        }
+        self.provider.destroy_client(id).await?;
+        let mut outcome = ForgottenDevice::default();
+        let rooms: Vec<String> = self
+            .state
+            .rooms
+            .iter()
+            .filter(|(_, r)| r.status == RoomStatus::Active)
+            .map(|(room, _)| room.clone())
+            .collect();
+        for room in rooms {
+            let Some(member) = self.members.get(&room) else {
+                continue;
+            };
+            let leaves: Vec<u32> = member
+                .member_signature_keys()
+                .into_iter()
+                .filter(|(_, key)| *key == device.signature_key)
+                .map(|(leaf, _)| leaf)
+                .collect();
+            if leaves.is_empty() {
+                continue;
+            }
+            match self.moderate(&room, &leaves, &[], "forget device").await {
+                Ok(()) => outcome.removed_from.push(room),
+                Err(error) => outcome.failed.push((room, error.to_string())),
+            }
+        }
+        tracing::info!(
+            name: "device_forgotten",
+            removed = outcome.removed_from.len(),
+            failed = outcome.failed.len(),
+            "a device of this user was forgotten"
+        );
+        Ok(outcome)
     }
 
     /// Checks every leaf of `room` against the contact pins, pinning new

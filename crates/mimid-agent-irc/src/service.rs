@@ -15,6 +15,8 @@
 //! | `expire <#channel> [<duration> or off]` | shows or sets the room's local expiry policy: messages older than the duration are deleted here (`Store::set_message_expiry`, §7.21) |
 //! | `burn <#channel> <text>` | sends `text` to be deleted by each mimid recipient once read; the user's own copy stays (`Store::send_with`, §7.22) |
 //! | `call <#channel> <url> [<description>]` | sends a call to join: `url`, which must be `https` or `wss`, as mimi-content-10 §5.10 has it (`Store::send_call`, §7.24) |
+//! | `devices` | lists the user's devices, the clients the server has bound to the account (`Store::devices`; draft-atwood-jmap-chat-mimi-00 §Clients) |
+//! | `forget-device <id>` | forgets another device, such as a lost one: the server unbinds it and its leaves leave every room this device shares with it (`Store::forget_device`) |
 //!
 //! # Limitations
 //!
@@ -41,6 +43,8 @@ const HELP: &[&str] = &[
     "                read; your own copy stays; other software keeps it",
     "  call #channel <url> [<description>]  send a call to join; the URL",
     "                must be https:// or wss://",
+    "  devices       list your devices (the clients bound to your account)",
+    "  forget-device <id>  forget a lost device: it is unbound and removed from your rooms",
     "A <user> is a nick, a user URI (mimi://domain/u/name) or name@domain,",
     "which stands for mimi://domain/u/name.",
     "Rooms: JOIN #name hosts a new room; PART leaves a room for good;",
@@ -140,6 +144,39 @@ impl Session {
                 self.service_says("usage: expire #channel [<duration> or off]");
             }
             ("burn", None) => self.service_says("usage: burn #channel <text>"),
+            ("devices", _) => {
+                let devices = self.store().devices().await;
+                match devices {
+                    Ok(devices) if devices.is_empty() => self.service_says("no devices"),
+                    Ok(devices) => {
+                        for device in devices {
+                            let this = if device.this_device {
+                                " (this device)"
+                            } else {
+                                ""
+                            };
+                            self.service_says(&format!("device {}{this}", device.id));
+                        }
+                    }
+                    Err(error) => self.service_says(&format!("devices failed: {error}")),
+                }
+            }
+            ("forget-device", Some(id)) => {
+                let forgotten = self.store().forget_device(id).await;
+                match forgotten {
+                    Ok(forgotten) => {
+                        self.service_says(&format!(
+                            "forgot device {id}: removed from {} room(s)",
+                            forgotten.removed_from.len()
+                        ));
+                        for (room, why) in forgotten.failed {
+                            self.service_says(&format!("not removed from {room}: {why}"));
+                        }
+                    }
+                    Err(error) => self.service_says(&format!("forget-device {id} failed: {error}")),
+                }
+            }
+            ("forget-device", None) => self.service_says("usage: forget-device <id>, from devices"),
             _ => self.service_says(&format!("unknown command {command:?}; try help")),
         }
     }

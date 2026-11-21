@@ -369,6 +369,39 @@ impl Provider {
         }
     }
 
+    /// See [`Jmap::clients`].
+    pub async fn clients(&self) -> Result<Vec<(String, Vec<u8>)>, AgentError> {
+        const WHAT: &str = "Client/get";
+        match self {
+            Self::Jmap(j) => j.clients().await,
+            Self::Stream(s) => match s.stream.ok(WHAT, Op::ListClients).await? {
+                AckResult::ListClients { clients, .. } => clients
+                    .into_iter()
+                    .map(|c| {
+                        Ok((
+                            c.client_id,
+                            crate::client::signature_key_octets(WHAT, &c.signature_key)?,
+                        ))
+                    })
+                    .collect(),
+                other => Err(unexpected(WHAT, &other)),
+            },
+        }
+    }
+
+    /// See [`Jmap::destroy_client`].
+    pub async fn destroy_client(&self, id: &str) -> Result<(), AgentError> {
+        match self {
+            Self::Jmap(j) => j.destroy_client(id).await,
+            Self::Stream(s) => {
+                let op = Op::DestroyClient {
+                    client_id: id.to_owned(),
+                };
+                s.stream.ok("Client/set", op).await.map(drop)
+            }
+        }
+    }
+
     /// See [`Jmap::key_package_ids`].
     pub async fn key_package_ids(&self) -> Result<(String, Vec<String>), AgentError> {
         match self {

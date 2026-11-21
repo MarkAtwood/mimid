@@ -763,6 +763,30 @@ async fn invites_and_consent_from_irc() {
     let later = b.sync().await;
     assert!(!later.iter().any(|m| m.command == "INVITE"), "{later:#?}");
 
+    // devices and forget-device (bead mimid-e64f.23): bob's one device is
+    // this one, and it cannot be forgotten from itself; an unknown id is
+    // refused too.
+    b.send("PRIVMSG mimid :devices").await;
+    let devices = b.until_command("NOTICE").await;
+    assert!(
+        devices.text().starts_with("device ") && devices.text().ends_with(" (this device)"),
+        "{}",
+        devices.raw
+    );
+    let id = devices.text().split(' ').nth(1).unwrap().to_owned();
+    for target in [id.as_str(), "nope"] {
+        b.send(&format!("PRIVMSG mimid :forget-device {target}"))
+            .await;
+        let refused = b.until_command("NOTICE").await;
+        assert!(
+            refused
+                .text()
+                .starts_with(&format!("forget-device {target} failed")),
+            "{}",
+            refused.raw
+        );
+    }
+
     bob.stop().await;
     alice.stop().await;
 }

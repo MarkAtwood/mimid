@@ -28,6 +28,7 @@
 //! | People | [`Store::add_person`], [`Store::rename_person`], [`Store::forget_person`] | none |
 //! | Read positions | [`Store::set_read_position`], [`Store::forget_read_position`] | none |
 //! | Consent and invites | [`Store::allow`], [`Store::deny`], [`Store::accept_invite`] | `allow`, `deny`, `join` |
+//! | Devices | [`Store::devices`], [`Store::forget_device`] | `devices`, `forget_device` |
 //!
 //! A method that makes a record takes its key: [`Store::new_key`], or a
 //! front end's own id of the same form (a JMAP write keeps its JMAP id).
@@ -1093,6 +1094,34 @@ impl Store {
         self.agent.lock().await.deny(user).await?;
         self.want_sync();
         Ok(())
+    }
+
+    /// The user's devices as the server lists them (`Agent::devices`;
+    /// draft-atwood-jmap-chat-mimi-00 §Clients).
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Agent`] if the server cannot be reached.
+    pub async fn devices(&self) -> Result<Vec<mimid_agent_core::Device>, ActionError> {
+        Ok(self.agent.lock().await.devices().await?)
+    }
+
+    /// Forgets the user's device `id`, such as a lost one: its Client
+    /// record is destroyed and its leaves removed from the rooms this
+    /// device shares with it (`Agent::forget_device`). The membership
+    /// changes reach the records at the next [`Store::sync`].
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Agent`] for this device, an unknown id, or a server
+    /// that cannot be reached.
+    pub async fn forget_device(
+        &self,
+        id: &str,
+    ) -> Result<mimid_agent_core::ForgottenDevice, ActionError> {
+        let forgotten = self.agent.lock().await.forget_device(id).await?;
+        self.want_sync();
+        Ok(forgotten)
     }
 
     /// Joins pending invite `number`, whatever the invite policy says
