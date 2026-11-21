@@ -186,7 +186,7 @@ impl RoomRoles {
 /// Milliseconds since the UNIX epoch, to the millisecond: a message's
 /// arrival time (docs/design/agent-frontends.md §7.18) is compared with
 /// the hub's acceptance time, which has milliseconds.
-pub(crate) fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
@@ -547,6 +547,7 @@ impl Store {
             status: Status::Active,
             participants: roles.participants(&participants),
             role_names: roles.names(),
+            message_expiry_seconds: None,
             ext: BTreeMap::new(),
         });
         changes.push(Change::RoomAdded(key.clone()));
@@ -796,6 +797,8 @@ impl Store {
             deleted: None,
             kept_frank: None,
             notice: Some(kind),
+            expiry: Default::default(),
+            read_at: None,
             ext: BTreeMap::new(),
         });
         changes.push(Change::MessageAdded(key));
@@ -897,6 +900,39 @@ impl Store {
             self.apply_replacement(&room, replaces, &received, report, changes);
             return;
         }
+        // docs/design/agent-frontends.md §7.20, §7.22; decision
+        // mimid-1wgh.2.19: the agent checks expiry sanity.
+        let expiry = match crate::expiry::received(&received.content, now_ms()) {
+            crate::expiry::Received::Expiry(expiry, problem) => {
+                report
+                    .problems
+                    .extend(problem.map(|p| format!("{}: {p}", received.room)));
+                expiry
+            }
+            crate::expiry::Received::Discard(why) => {
+                tracing::warn!(
+                    name: "agent_message_discarded",
+                    room = %received.room,
+                    reason = %why,
+                    "a received message was discarded"
+                );
+                report
+                    .problems
+                    .push(format!("{}: a message was discarded: {why}", received.room));
+                return;
+            }
+        };
+        // draft-atwood-jmap-chat-00 §Message `senderExpiresAt`: "Servers
+        // MUST reject a `senderExpiresAt` value that is already in the past
+        // at delivery time." Not stored; a delivery of it again finds it
+        // past as well.
+        if expiry.sender_expires_at.is_some_and(|at| at <= now_ms()) {
+            report.skipped.push(format!(
+                "{}: a message whose expiry had passed",
+                received.room
+            ));
+            return;
+        }
         let parts = received.attachments();
         let text = match received.text.clone() {
             Some(text) => text,
@@ -924,6 +960,11 @@ impl Store {
                 None => Reply::Reference(Octets(target)),
             }
         });
+        let expiring = !expiry.is_none()
+            || state
+                .rooms
+                .get(&room)
+                .is_some_and(|r| r.message_expiry_seconds.is_some());
         let key = self.mint();
         let seq = state.take_seq();
         state.insert_message(Message {
@@ -950,11 +991,17 @@ impl Store {
             deleted: None,
             kept_frank,
             notice: None,
+            expiry,
+            read_at: None,
             ext: BTreeMap::new(),
         });
         changes.push(Change::MessageAdded(key.clone()));
         keep_for_retry(&mut state, &key, &received.room, retry, report);
         report.messages += 1;
+        if expiring {
+            drop(state);
+            self.want_expiry();
+        }
     }
 }
 

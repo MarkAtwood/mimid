@@ -18,7 +18,8 @@
 //! | Leave a room | [`Store::leave`] | `leave` |
 //! | Set a room's subject | [`Store::set_subject`] | `set_room_subject` |
 //! | Delete a room here, with its messages | [`Store::forget_room`], [`Store::delete_blobs`] | none |
-//! | Send | [`Store::send`] | `send_message` |
+//! | Send | [`Store::send`], [`Store::send_with`] | `send_message`, `send_message_with` |
+//! | Disappearing messages | [`Store::mark_read`], [`Store::set_message_expiry`], [`Store::expire_due`] | none |
 //! | Edit, retract | [`Store::edit`], [`Store::retract`] | `send_edit`, `send_retraction` |
 //! | Delete here | [`Store::mark_deleted`], [`Store::delete_message`] | none |
 //! | Ban, unban, kick | [`Store::ban`], [`Store::unban`], [`Store::kick`] | `ban`, `unban`, `kick` |
@@ -56,7 +57,7 @@ use crate::change::Change;
 use crate::content::BodyType;
 use crate::convert::{message_ref, sender_msg_id};
 use crate::record::{
-    Attachment, Ban, Deletion, Key, Message, Octets, Person, ReadPosition, Room,
+    Attachment, Ban, Deletion, Key, Message, MessageExpiry, Octets, Person, ReadPosition, Room,
     RoomStatus as Status, Sender,
 };
 use crate::state::RemovedRoom;
@@ -115,6 +116,9 @@ pub enum ActionError {
     /// What a message kept for reports does not decode.
     #[error("a message kept for reports does not decode")]
     Unreadable(#[source] AgentError),
+    /// The message's expiry cannot be sent ([`crate::expiry`]).
+    #[error(transparent)]
+    Expiry(#[from] crate::expiry::ExpiryError),
 }
 
 impl ActionError {
@@ -269,6 +273,7 @@ impl Store {
             status: Status::Active,
             participants: roles.participants(&participants),
             role_names: roles.names(),
+            message_expiry_seconds: None,
             ext: BTreeMap::new(),
         };
         self.state().insert_room(room.clone());
@@ -468,6 +473,32 @@ impl Store {
         text: &str,
         files: &[OutgoingFile],
     ) -> Result<Message, ActionError> {
+        self.send_with(key, room, text, files, MessageExpiry::default())
+            .await
+    }
+
+    /// [`Store::send`] of a message that disappears as `expiry` asks
+    /// ([`crate::expiry`]; docs/design/agent-frontends.md §7.20, §7.22):
+    /// its `senderExpiresAt`, cut to the whole second, goes as the MIMI
+    /// `expires` and its read rule in [`crate::expiry::READ_EXPIRY_KEY`];
+    /// the record keeps the expiry, so the user's own copy goes at the
+    /// sender's time too.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Store::send`], and [`ActionError::Expiry`] for a
+    /// `senderExpiresAt` not ahead of now or more than a year ahead;
+    /// nothing is then sent.
+    pub async fn send_with(
+        &self,
+        key: Key,
+        room: &str,
+        text: &str,
+        files: &[OutgoingFile],
+        expiry: MessageExpiry,
+    ) -> Result<Message, ActionError> {
+        let expiry = crate::expiry::to_whole_seconds(expiry);
+        crate::expiry::check_outgoing(&expiry, now_ms())?;
         let uri = self.room_uri(room)?;
         let (outgoing, attachments) = self.read_files(files)?;
         // The agent stays locked until the record is in: the agent has
@@ -476,7 +507,10 @@ impl Store {
         // store that entry before this record exists, and this one
         // again.
         let mut agent = self.agent.lock().await;
-        let sent = agent.send_message(&uri, text, &outgoing).await?;
+        let options = crate::expiry::content_options(&expiry);
+        let sent = agent
+            .send_message_with(&uri, text, &outgoing, &options)
+            .await?;
         let mut state = self.state();
         let seq = state.take_seq();
         let message = Message {
@@ -500,12 +534,17 @@ impl Store {
             deleted: None,
             kept_frank: None,
             notice: None,
+            expiry,
+            read_at: None,
             ext: BTreeMap::new(),
         };
         state.insert_message(message.clone());
         drop(state);
         drop(agent);
         self.record([Change::MessageAdded(message.key.clone())]);
+        if !expiry.is_none() {
+            self.want_expiry();
+        }
         self.want_sync();
         Ok(message)
     }
@@ -548,7 +587,10 @@ impl Store {
 
     /// The room URI and first MIMI message ID of message `key`, which the
     /// user may edit or retract.
-    fn editable(&self, key: &str) -> Result<(String, mimi_content::MessageId), ActionError> {
+    fn editable(
+        &self,
+        key: &str,
+    ) -> Result<(String, mimi_content::MessageId, MessageExpiry), ActionError> {
         let state = self.state();
         let message = state
             .messages
@@ -565,7 +607,7 @@ impl Store {
         if message.aliases.len() >= MAX_ALIASES {
             return Err(ActionError::TooManyVersions);
         }
-        Ok((uri, mimi_content::MessageId(first.0)))
+        Ok((uri, mimi_content::MessageId(first.0), message.expiry))
     }
 
     /// Edits the user's message `key` to `text` of `body_type`
@@ -587,10 +629,13 @@ impl Store {
         text: &str,
         body_type: BodyType,
     ) -> Result<Message, ActionError> {
-        let (uri, first) = self.editable(key)?;
+        let (uri, first, expiry) = self.editable(key)?;
+        // The edit carries the message's expiry, which it cannot change
+        // (mimi-content-10 §9.3; docs/design/agent-frontends.md §7.20).
+        let options = crate::expiry::content_options(&expiry);
         // Locked until the alias is in, as in Store::send.
         let mut agent = self.agent.lock().await;
-        let sent = agent.send_edit(&uri, &first, text).await?;
+        let sent = agent.send_edit_with(&uri, &first, text, &options).await?;
         let edited = {
             let mut state = self.state();
             state.edit_message(key, text.to_owned(), body_type, sent.accepted_at);
@@ -611,7 +656,7 @@ impl Store {
     ///
     /// As [`Store::edit`].
     pub async fn retract(&self, key: &str) -> Result<Message, ActionError> {
-        let (uri, first) = self.editable(key)?;
+        let (uri, first, _) = self.editable(key)?;
         // Locked until the alias is in, as in Store::send.
         let mut agent = self.agent.lock().await;
         let sent = agent.send_retraction(&uri, &first).await?;
@@ -866,6 +911,9 @@ impl Store {
 
     /// Sets read position `key` in room `room`: the last message read and
     /// when (milliseconds). The room need not be one the store holds.
+    /// Every message of the room up to the one read, in history order, is
+    /// read ([`Store::mark_read`]; docs/design/agent-frontends.md §7.22),
+    /// which may delete some.
     pub fn set_read_position(
         &self,
         key: Key,
@@ -888,8 +936,29 @@ impl Store {
         position.message = message;
         position.at = at;
         let position = position.clone();
+        // Every message up to the one read is read, for the read rules
+        // (docs/design/agent-frontends.md §7.22).
+        let read: Vec<Key> = position
+            .message
+            .as_ref()
+            .and_then(|last| state.messages.get(last))
+            .map(|last| (last.accepted_at, last.seq))
+            .map(|upto| {
+                state
+                    .messages
+                    .values()
+                    .filter(|m| m.room == position.room && (m.accepted_at, m.seq) <= upto)
+                    .filter(|m| m.expiry.counts_from_read() && m.read_at.is_none())
+                    .map(|m| m.key.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
         drop(state);
         self.record([Change::ReadPositionMoved(position.key.clone())]);
+        let when = position.at.unwrap_or_else(now_ms);
+        for key in read {
+            self.mark_read(&key, when);
+        }
         position
     }
 

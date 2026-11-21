@@ -81,6 +81,33 @@ fn date(ms: u64) -> UTCDate {
     UTCDate::from(utc_date(ms).as_str())
 }
 
+/// A message's expiry as draft-atwood-jmap-chat-00 §Message names it
+/// (docs/design/agent-frontends.md §7.20, §7.22): `senderExpiresAt`,
+/// `burnOnRead` and `expiresAfterReadSeconds`, null where it asks nothing.
+pub(crate) fn expiry_props(message: &record::Message) -> Map<String, Value> {
+    let expiry = &message.expiry;
+    let mut fields = Map::new();
+    fields.insert(
+        "senderExpiresAt".to_owned(),
+        expiry
+            .sender_expires_at
+            .map_or(Value::Null, |at| json!(utc_date(at))),
+    );
+    fields.insert(
+        "burnOnRead".to_owned(),
+        if expiry.burn_on_read {
+            json!(true)
+        } else {
+            Value::Null
+        },
+    );
+    fields.insert(
+        "expiresAfterReadSeconds".to_owned(),
+        json!(expiry.expires_after_read_seconds),
+    );
+    fields
+}
+
 /// Renders records as JMAP objects, naming users as the backend does: the
 /// accountId for the user, else the ChatContact of their person record.
 pub(crate) struct Render<'a> {
@@ -163,6 +190,7 @@ impl Render<'_> {
         );
         chat.name = Some(room.name.clone().unwrap_or_default());
         chat.members = Some(members);
+        chat.message_expiry_seconds = room.message_expiry_seconds;
         chat.extra.insert(ROOM_ID.to_owned(), json!(room.uri));
         chat
     }
@@ -200,6 +228,7 @@ impl Render<'_> {
         jmap.topic_id.clone_from(&message.topic_id);
         let mut value = object(serde_json::to_value(jmap).map_err(|e| e.to_string())?);
         value.extend(shown_content(message));
+        value.extend(expiry_props(message));
         serde_json::from_value(Value::Object(value)).map_err(|e| e.to_string())
     }
 
@@ -251,6 +280,7 @@ impl Render<'_> {
             true,
         );
         chat.name.clone_from(&room.name);
+        chat.message_expiry_seconds = room.message_expiry_seconds;
         chat.extra.insert(ROOM_ID.to_owned(), json!(room.uri));
         Ok(object(normal::<Chat>(
             serde_json::to_value(chat).map_err(|e| e.to_string())?,
@@ -284,6 +314,7 @@ impl Render<'_> {
         jmap.topic_id.clone_from(&message.topic_id);
         let mut value = object(serde_json::to_value(jmap).map_err(|e| e.to_string())?);
         value.extend(message_content(message));
+        value.extend(expiry_props(message));
         Ok(object(normal::<Message>(Value::Object(value))?))
     }
 
@@ -463,6 +494,7 @@ mod tests {
                 })
                 .into(),
             role_names: Default::default(),
+            message_expiry_seconds: None,
             ext: Default::default(),
         });
         let message = |key: &str, seq, sender: &str, id: &str, body: &str| MessageRecord {
@@ -485,6 +517,8 @@ mod tests {
             deleted: None,
             kept_frank: None,
             notice: None,
+            expiry: Default::default(),
+            read_at: None,
             ext: Default::default(),
         };
         let mut m1 = message("M1", 1, CAROL, "01M7VA1QTK2Y4V6ER4Z3A3V6QN", "hello");

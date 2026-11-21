@@ -56,6 +56,8 @@ fn message(key: &str, room: &str, seq: u64, sender: Sender, n: u8) -> Message {
         deleted: None,
         kept_frank: None,
         notice: None,
+        expiry: Default::default(),
+        read_at: None,
         ext: BTreeMap::new(),
     }
 }
@@ -64,7 +66,8 @@ fn message(key: &str, room: &str, seq: u64, sender: Sender, n: u8) -> Message {
 /// makes: a sender without a person record (a ChatContact a client
 /// destroyed), a participant whose role is not read yet, a message and a
 /// ban naming a room that is not held, a notice, a reply to a message not stored, a retraction,
-/// tombstones of both kinds, and front-end extensions.
+/// tombstones of both kinds, an expiring message read and a room's
+/// expiry policy, and front-end extensions.
 fn state() -> State {
     let mut state = State::new(BOB);
     state
@@ -92,6 +95,7 @@ fn state() -> State {
             },
         ],
         role_names: BTreeMap::from([(1, "banned".to_owned()), (2, "member".to_owned())]),
+        message_expiry_seconds: Some(86_400),
         ext: BTreeMap::from([("jmap".to_owned(), json!({"members": [], "unreadCount": 3}))]),
     });
     state.insert_person(Person {
@@ -104,6 +108,12 @@ fn state() -> State {
         ext: BTreeMap::new(),
     });
     let mut first = message("M1", "R1", 1, Sender::User(ALICE.to_owned()), 1);
+    first.expiry = mimid_agent_store::record::MessageExpiry {
+        sender_expires_at: Some(1_800_000_000_000),
+        burn_on_read: false,
+        expires_after_read_seconds: Some(30),
+    };
+    first.read_at = Some(1_700_000_001_000);
     first.attachments.push(Attachment {
         blob_id: format!("s{}", "ab".repeat(32)),
         file_name: "a.txt".to_owned(),

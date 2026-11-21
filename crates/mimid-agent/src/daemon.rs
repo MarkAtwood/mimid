@@ -1,6 +1,7 @@
 //! [`Daemon`]: the agent, its plaintext store, its front ends over the
 //! store (JMAP Chat on the HTTP endpoint unless `[jmap] enabled = false`,
-//! IRC with `[irc]`), and the sync loop.
+//! IRC with `[irc]`), the sync loop, and the expiry loop that deletes
+//! messages at their time (docs/design/agent-frontends.md §7.20 to §7.23).
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -319,6 +320,7 @@ impl Daemon {
             self.key_packages,
             self.log_watch,
         ));
+        let expiry = tokio::spawn(expiry_loop(Arc::clone(&self.store), stop.subscribe()));
         // The server's EventSource wakes the sync loop; the interval is
         // the fallback.
         let push = match (self.push, self.stream_wake) {
@@ -374,6 +376,7 @@ impl Daemon {
         signal.abort();
         for (name, task) in [
             ("sync loop", Some(sync)),
+            ("expiry loop", Some(expiry)),
             ("push", push),
             ("feed", feed),
             ("IRC front end", irc),
@@ -487,6 +490,43 @@ async fn sync_loop(
             () = stopped(&mut stop) => return,
             () = tokio::time::sleep(interval) => {}
             () = sync_now.notified() => {}
+        }
+    }
+}
+
+/// The longest the expiry loop sleeps without looking again, so a clock
+/// set forward is noticed. INVENTED VALUE, NOT FROM SPEC.
+const EXPIRY_RECHECK: Duration = Duration::from_secs(60);
+
+/// Deletes messages at their expiry (docs/design/agent-frontends.md §7.20
+/// to §7.23; [`Store::expire_now`]) until `stop` is true: at once, so what
+/// fell due while the agent was stopped goes at start, then at each next
+/// deadline ([`Store::next_expiry`]), when a new one may be nearer
+/// ([`Store::expiry_wanted`]), and at least every [`EXPIRY_RECHECK`].
+async fn expiry_loop(store: Arc<Store>, mut stop: watch::Receiver<bool>) {
+    let wanted = Arc::clone(store.expiry_wanted());
+    loop {
+        match store.expire_now().await {
+            Ok(0) => {}
+            Ok(count) => tracing::info!(
+                name: "agent_messages_expired",
+                count,
+                "messages deleted at their expiry"
+            ),
+            Err(error) => tracing::warn!(
+                name: "agent_expiry_save_failed",
+                error = &error as &dyn std::error::Error,
+                "messages deleted at their expiry were not saved; the next save writes them"
+            ),
+        }
+        let wait = store.next_expiry().map_or(EXPIRY_RECHECK, |at| {
+            let now = mimid_agent_store::sync::now_ms();
+            Duration::from_millis(at.saturating_sub(now)).min(EXPIRY_RECHECK)
+        });
+        tokio::select! {
+            () = stopped(&mut stop) => return,
+            () = tokio::time::sleep(wait) => {}
+            () = wanted.notified() => {}
         }
     }
 }

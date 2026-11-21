@@ -1213,3 +1213,101 @@ async fn topic_sets_the_subject_for_every_member() {
     bob.stop().await;
     alice.stop().await;
 }
+
+/// Whether `store` holds a message with `body`.
+fn holds(store: &Store, body: &str) -> bool {
+    store.state().messages.values().any(|m| m.body == body)
+}
+
+/// Waits until `store` no longer holds a message with `body`.
+async fn until_gone(store: &Store, body: &str) {
+    tokio::time::timeout(PATIENCE, async {
+        while holds(store, body) {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{body:?} was never deleted"));
+}
+
+/// The service's next NOTICE to the user.
+async fn service_says(irc: &mut Irc) -> String {
+    irc.until("the service's NOTICE", |m| {
+        m.command == "NOTICE" && m.source.starts_with("mimid!")
+    })
+    .await
+    .text()
+    .to_owned()
+}
+
+/// Disappearing messages from IRC (docs/design/agent-frontends.md §7.21,
+/// §7.22): `/msg mimid burn` sends a burn-on-read message, which bob's
+/// daemon deletes once his IRC client got it, alice's copy staying; a
+/// message with no rule stays; `/msg mimid expire` sets bob's local
+/// policy for the room, which deletes his copies only.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn burn_and_expire_from_irc() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let bob = Served::start(&irc_only(&server, BOB, dir.path(), "any")).await;
+    let (mut a, _) = Irc::register(alice.irc.unwrap(), &alice.token(), "alice", &ALL_CAPS).await;
+    let (mut b, _) = Irc::register(bob.irc, &bob.token, "bob", &["message-tags"]).await;
+    a.send("JOIN #lobby").await;
+    joined(&mut a, ALICE_MASK, "#lobby").await;
+    a.send(&format!("INVITE {BOB} #lobby")).await;
+    a.until_command("341").await;
+    joined(&mut b, BOB_MASK, "#lobby").await;
+
+    let shown = |text: &'static str| {
+        move |m: &Msg| m.command == "PRIVMSG" && m.source == ALICE_MASK && m.text() == text
+    };
+    a.send("PRIVMSG #lobby :stays").await;
+    b.until("a plain line", shown("stays")).await;
+    a.send("PRIVMSG mimid :burn #lobby  secret  words").await;
+    b.until("the burn line", shown("secret  words")).await;
+    until_gone(&bob.store, "secret  words").await;
+    assert!(
+        holds(&alice.store, "secret  words"),
+        "the sender's copy stays"
+    );
+    assert!(holds(&bob.store, "stays"));
+    a.send("PRIVMSG mimid :burn #nowhere x").await;
+    assert!(service_says(&mut a).await.contains("no such channel"));
+    a.send("PRIVMSG mimid :burn #lobby").await;
+    assert!(service_says(&mut a).await.starts_with("usage"));
+
+    let room = bob
+        .store
+        .state()
+        .room_of_uri(&alice.store.state().rooms.values().next().unwrap().uri)
+        .cloned()
+        .unwrap();
+    b.send("PRIVMSG mimid :expire #lobby").await;
+    assert_eq!(service_says(&mut b).await, "#lobby: messages are kept");
+    b.send("PRIVMSG mimid :expire #lobby soon").await;
+    assert!(service_says(&mut b).await.contains("is no duration"));
+    b.send("PRIVMSG mimid :expire #lobby 2s").await;
+    assert!(
+        service_says(&mut b)
+            .await
+            .starts_with("#lobby: messages are deleted here 2s after they arrive")
+    );
+    assert_eq!(
+        bob.store.state().rooms[&room].message_expiry_seconds,
+        Some(2)
+    );
+    // "stays" arrived long enough ago, or will have soon.
+    until_gone(&bob.store, "stays").await;
+    a.send("PRIVMSG #lobby :short-lived").await;
+    b.until("the short-lived line", shown("short-lived")).await;
+    until_gone(&bob.store, "short-lived").await;
+    assert!(holds(&alice.store, "short-lived") && holds(&alice.store, "stays"));
+    b.send("PRIVMSG mimid :expire #lobby off").await;
+    assert_eq!(service_says(&mut b).await, "#lobby: messages are kept");
+    assert_eq!(bob.store.state().rooms[&room].message_expiry_seconds, None);
+
+    drop((a, b));
+    bob.stop().await;
+    alice.stop().await;
+}

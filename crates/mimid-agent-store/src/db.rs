@@ -91,13 +91,15 @@ pub enum FileError {
 }
 
 /// The schema this version reads and writes. A database of another
-/// version is refused (§7.10: no conversions). Version 4 adds each
+/// version is refused (§7.10: no conversions). Version 5 adds each
+/// message's `expiry` and `readAt`, and each room's
+/// `messageExpirySeconds` (§7.20 to §7.23). Version 4 adds each
 /// message's `receivedAt`, its arrival here (§7.18). Version 3 (bead
 /// mimid-1vul.10) keeps the tables in the agent's database, with the
 /// version in its `schema_version` table; version 2 (bead mimid-1vul.11),
 /// in `chat.sqlite` under `user_version`, names every participant, sender,
 /// banned user and banner by URI; version 1 also allowed an unknown one.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// The store's row in `schema_version`.
 const SCHEMA_PART: &str = "store";

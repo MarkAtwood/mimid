@@ -141,6 +141,11 @@ impl Session {
             }
             Change::MessageAdded(key) => self.show_message(key),
             Change::MessageChanged(key) => self.show_change(key),
+            // IRC cannot take a line back; the record is gone, so nothing
+            // shows it again (docs/design/agent-frontends.md §7.20).
+            Change::MessageExpired(key) | Change::MessageDeleted(key) => {
+                self.shown.remove(key);
+            }
             Change::InvitePending(_) => self.show_invites(),
             _ => {}
         }
@@ -377,6 +382,9 @@ impl Session {
             tags.push(("+draft/reply".to_owned(), reply.clone()));
         }
         let time = m.record.accepted_at;
+        if m.record.expiry.counts_from_read() {
+            self.delivered.push(key.to_owned());
+        }
         match &m.sender {
             Some(sender) => {
                 self.text_lines(

@@ -49,6 +49,10 @@ pub enum Change {
     /// A message's record was deleted here, in every front end
     /// ([`crate::Store::delete_message`]).
     MessageDeleted(Key),
+    /// A message's record was deleted at its expiry, in every front end
+    /// ([`crate::Store::expire_due`], [`crate::Store::mark_read`];
+    /// docs/design/agent-frontends.md §7.20): a hard delete.
+    MessageExpired(Key),
     /// A room holds a user banned whom it did not before, or a front end
     /// banned one.
     BanAdded(Key),

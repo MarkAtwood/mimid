@@ -76,7 +76,7 @@ impl Session {
     }
 
     /// The room key of `channel`, if this connection shows it.
-    fn shown_room(&self, channel: &str) -> Option<Key> {
+    pub(crate) fn shown_room(&self, channel: &str) -> Option<Key> {
         let folded = fold(channel);
         self.channels
             .iter()

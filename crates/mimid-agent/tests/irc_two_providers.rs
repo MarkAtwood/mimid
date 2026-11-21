@@ -410,3 +410,46 @@ async fn bob_on_b_hosts_and_alice_on_a_joins() {
     bob.stop().await;
     alice.stop().await;
 }
+
+/// A burn-on-read message from IRC across providers
+/// (docs/design/agent-frontends.md §7.22): bob's daemon on b.example
+/// deletes its copy once his IRC client got the line; alice's on
+/// a.example keeps hers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_burn_on_read_line_across_providers() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = two_providers(dir.path(), &[ALICE], &[BOB_B]).await;
+    let alice = Running::start(&with_irc(&a, ALICE, dir.path(), "any")).await;
+    let bob = Running::start(&with_irc(&b, BOB_B, dir.path(), "any")).await;
+    let mut ai = register(&alice, ALICE_NICK, ALICE).await;
+    let mut bi = register(&bob, BOB_NICK, BOB_B).await;
+    ai.send("JOIN #x").await;
+    joined(&mut ai, ALICE_MASK, "#x").await;
+    ai.send(&format!("INVITE {BOB_B} #x")).await;
+    ai.until_command("341").await;
+    joined(&mut bi, BOB_MASK, "#x").await;
+
+    ai.send("PRIVMSG mimid :burn #x read once").await;
+    bi.until("the burn line", |m| {
+        m.command == "PRIVMSG" && m.source == ALICE_MASK && m.text() == "read once"
+    })
+    .await;
+    let holds = |store: &mimid_agent_store::Store| {
+        store
+            .state()
+            .messages
+            .values()
+            .any(|m| m.body == "read once")
+    };
+    tokio::time::timeout(common::PATIENCE, async {
+        while holds(&bob.store) {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("bob's copy is deleted once read");
+    assert!(holds(&alice.store));
+    drop((ai, bi));
+    bob.stop().await;
+    alice.stop().await;
+}

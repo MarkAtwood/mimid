@@ -166,6 +166,10 @@ pub(crate) struct Session {
     pub(crate) own_sends: HashSet<Key>,
     /// When the connection registered, in milliseconds.
     pub(crate) connected_at: u64,
+    /// Received messages with a read rule whose lines are queued: once
+    /// written to the client, they are read (docs/design/agent-frontends.md
+    /// §7.22).
+    pub(crate) delivered: Vec<Key>,
     /// Close after writing what is queued.
     pub(crate) closing: bool,
     seen_first_line: bool,
@@ -190,6 +194,7 @@ impl Session {
             invites_shown: BTreeSet::new(),
             own_sends: HashSet::new(),
             connected_at: 0,
+            delivered: Vec::new(),
             closing: false,
             seen_first_line: false,
         }
@@ -272,6 +277,25 @@ impl Session {
     pub(crate) async fn save(&mut self) {
         if let Err(error) = self.shared.store.save().await {
             self.server_notice(&format!("mimid: saving failed: {error}"));
+        }
+    }
+
+    /// Marks read the messages with a read rule whose lines were just
+    /// written to the client, and saves (docs/design/agent-frontends.md
+    /// §7.22: on IRC a message is read once it reached a connected
+    /// client): a burn-on-read message is deleted now, everywhere; one
+    /// deleted some seconds after the read gets its deadline.
+    async fn read_delivered(&mut self) {
+        if self.delivered.is_empty() {
+            return;
+        }
+        let at = mimid_agent_store::sync::now_ms();
+        let mut changed = false;
+        for key in std::mem::take(&mut self.delivered) {
+            changed |= self.shared.store.mark_read(&key, at);
+        }
+        if changed {
+            self.save().await;
         }
     }
 
@@ -422,7 +446,7 @@ pub(crate) async fn run(
         if !session.out.is_empty() {
             let out = std::mem::take(&mut session.out);
             match tokio::time::timeout(pong_within, write.write_all(&out)).await {
-                Ok(Ok(())) => {}
+                Ok(Ok(())) => session.read_delivered().await,
                 _ => break,
             }
         }

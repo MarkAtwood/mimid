@@ -130,6 +130,13 @@ pub struct Room {
     /// The room's role names by index.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub role_names: BTreeMap<u32, String>,
+    /// The user's local expiry policy for the room, in seconds
+    /// (draft-atwood-jmap-chat-00 §Chat `messageExpirySeconds`): a
+    /// message older than this, counted from its arrival here
+    /// ([`Message::received_at`]), is deleted ([`crate::expiry`]). `None`
+    /// or 0: none. Not sent to anyone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_expiry_seconds: Option<u64>,
     /// Front-end extensions.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Ext,
@@ -299,9 +306,53 @@ pub struct Message {
     /// What a notice says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<NoticeKind>,
+    /// When it is to be deleted, as its sender asked ([`crate::expiry`]).
+    #[serde(default, skip_serializing_if = "MessageExpiry::is_none")]
+    pub expiry: MessageExpiry,
+    /// When the user first read it, in milliseconds: kept only for a
+    /// received message whose [`MessageExpiry`] counts from the read
+    /// ([`crate::Store::mark_read`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_at: Option<u64>,
     /// Front-end extensions.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Ext,
+}
+
+/// When a message is to be deleted, as its sender asked
+/// (docs/design/agent-frontends.md §7.20; [`crate::expiry`]). The names
+/// are those of draft-atwood-jmap-chat-00 §Message. Fixed when the
+/// message is stored: an edit does not change it (mimi-content-10 §9.3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MessageExpiry {
+    /// When every copy is deleted, the sender's own included, in
+    /// milliseconds (a whole second): mimi-content-10 §4.1 `expires`,
+    /// absolute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_expires_at: Option<u64>,
+    /// A receiver's copy is deleted as soon as the user reads it; the
+    /// sender's copy is not.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub burn_on_read: bool,
+    /// A receiver's copy is deleted this many seconds after the user
+    /// reads it; the sender's copy is not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_after_read_seconds: Option<u32>,
+}
+
+impl MessageExpiry {
+    /// Whether it asks for nothing.
+    #[must_use]
+    pub fn is_none(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Whether a receiver's copy is deleted on or after the user's read.
+    #[must_use]
+    pub fn counts_from_read(&self) -> bool {
+        self.burn_on_read || self.expires_after_read_seconds.is_some()
+    }
 }
 
 /// A user the agent has seen.

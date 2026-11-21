@@ -106,6 +106,12 @@ pub struct Store {
     wake: Arc<Notify>,
     /// Rooms deleted here whose blobs go after the next save that writes.
     forgotten: Mutex<Vec<ForgottenRoom>>,
+    /// The blobs of messages deleted at their expiry, with when, which go
+    /// after the next save that writes ([`crate::expiry`]).
+    expired_blobs: Mutex<Vec<(BTreeSet<String>, std::time::SystemTime)>>,
+    /// Wakes whatever waits for the next expiry
+    /// ([`Store::expiry_wanted`]).
+    pub(crate) expiry_wake: Arc<Notify>,
 }
 
 impl std::fmt::Debug for Store {
@@ -138,6 +144,8 @@ impl Store {
             published: broadcast::channel(FEED_WAKEUPS).0,
             wake: Arc::new(Notify::new()),
             forgotten: Mutex::new(Vec::new()),
+            expired_blobs: Mutex::new(Vec::new()),
+            expiry_wake: Arc::new(Notify::new()),
         }
     }
 
@@ -267,8 +275,51 @@ impl Store {
         }
         if result.is_ok() {
             self.delete_forgotten_blobs();
+            self.delete_expired_blobs();
         }
         result
+    }
+
+    /// Keeps `blobs`, those of messages deleted at their expiry now, for
+    /// deletion after the next save that writes.
+    pub(crate) fn delete_blobs_of_expired(&self, blobs: BTreeSet<String>) {
+        if blobs.is_empty() {
+            return;
+        }
+        self.expired_blobs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((blobs, std::time::SystemTime::now()));
+    }
+
+    /// Deletes the blobs of the messages deleted at their expiry since the
+    /// last save that wrote, unless something still names them or they
+    /// were stored again since (draft-atwood-jmap-chat-00 §Message
+    /// `senderExpiresAt`: "After hard deletion, stored attachment blobs
+    /// referenced by the message SHOULD also be purged"). The user's own
+    /// uploads go too: the message they were sent in is gone everywhere.
+    fn delete_expired_blobs(&self) {
+        let expired = std::mem::take(
+            &mut *self
+                .expired_blobs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        let Some(blobs) = self.blobs.get().filter(|_| !expired.is_empty()) else {
+            return;
+        };
+        let in_use = self.blobs_in_use();
+        for (ids, at) in &expired {
+            for id in ids {
+                if let Err(error) = blobs.delete_if_unreferenced(id, &in_use, *at) {
+                    tracing::error!(
+                        name: "agent_expired_blob_not_deleted",
+                        error = &error as &dyn std::error::Error,
+                        "an attachment of an expired message was not deleted"
+                    );
+                }
+            }
+        }
     }
 
     /// Deletes the blobs of the rooms deleted since the last save that

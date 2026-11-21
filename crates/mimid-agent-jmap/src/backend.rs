@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use jmap_chat_server::memory::{MemoryBackend, MemoryError};
 use jmap_chat_server::{
-    AttachmentBlob, ChatEvents, ChatLimits, ChatModeration, ChatResolvers, ChatRestrictions,
-    ChatSettings, ChatStore, DelegateChatAccessPolicy, DelegateChatMessageLifecycle,
-    DelegateChatSpaces, DelegateSpacePolicy,
+    AttachmentBlob, ChatEvents, ChatLimits, ChatMessageLifecycle, ChatModeration, ChatResolvers,
+    ChatRestrictions, ChatSettings, ChatStore, DelegateChatAccessPolicy, DelegateChatSpaces,
+    DelegateSpacePolicy,
 };
 use jmap_chat_types::{
     BodyType, Chat, ChatBan, ChatContact, ChatMember, ChatMemberRole, DeliveryState, Message,
@@ -25,6 +25,7 @@ use crate::convert::utc_date;
 use mimid_agent_store::action::{MemberChanges, OutgoingFile, Role};
 use mimid_agent_store::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
 use mimid_agent_store::convert::parse_utc_date;
+use mimid_agent_store::record::MessageExpiry;
 use mimid_agent_store::{ActionError, Store};
 
 pub use mimid_agent_store::InvitePolicy;
@@ -374,6 +375,10 @@ impl AgentChat {
             .create_room(key(&id), &name, &users)
             .await
             .map_err(action_failure)?;
+        // Local (docs/design/agent-frontends.md §7.21).
+        if let Some(seconds) = value["messageExpirySeconds"].as_u64() {
+            self.store.set_message_expiry(&room.key, Some(seconds));
+        }
         value[ROOM_ID] = json!(room.uri);
         let chat = serde_json::from_value::<O>(value).map_err(serde_failure)?;
         let chat = self.insert_shown(&id, chat).await?;
@@ -490,6 +495,7 @@ impl AgentChat {
                 .with_properties([property]),
             )));
         }
+        let expiry = requested_expiry(&message)?;
         let files: Vec<OutgoingFile> = message
             .attachments
             .iter()
@@ -497,7 +503,13 @@ impl AgentChat {
             .collect();
         let sent = self
             .store
-            .send(key(&id), message.chat_id.as_ref(), &message.body, &files)
+            .send_with(
+                key(&id),
+                message.chat_id.as_ref(),
+                &message.body,
+                &files,
+                expiry,
+            )
             .await
             .map_err(action_failure)?;
         message.sender_msg_id = Id::from(sent.sender_msg_id.as_str());
@@ -608,14 +620,17 @@ impl AgentChat {
                 }
             }
             "Message" => {
-                if let Some(at) = self
-                    .stored::<Message>(id)
-                    .await?
-                    .and_then(|m| m.deleted_at)
-                    .as_ref()
-                    .and_then(date)
-                {
+                let Some(message) = self.stored::<Message>(id).await? else {
+                    return Ok(());
+                };
+                if let Some(at) = message.deleted_at.as_ref().and_then(date) {
                     self.store.mark_deleted(id.as_ref(), at);
+                }
+                // The owner's readAt is the read of the read rules
+                // (docs/design/agent-frontends.md §7.22); only the first
+                // counts.
+                if let Some(at) = message.read_at.as_ref().and_then(date) {
+                    self.store.mark_read(id.as_ref(), at);
                 }
             }
             _ => {}
@@ -676,15 +691,42 @@ fn unsupported_message_property(message: &Message) -> Option<&'static str> {
         Some("topicId")
     } else if message.subject.is_some() {
         Some("subject")
-    } else if message.sender_expires_at.is_some() {
-        Some("senderExpiresAt")
-    } else if message.burn_on_read.is_some() {
-        Some("burnOnRead")
-    } else if message.expires_after_read_seconds.is_some() {
-        Some("expiresAfterReadSeconds")
     } else {
         None
     }
+}
+
+/// The expiry a `Message/set` create asks (draft-atwood-jmap-chat-00
+/// §Message; docs/design/agent-frontends.md §7.20, §7.22), or
+/// `invalidProperties` on the property that cannot be sent: an
+/// `expiresAfterReadSeconds` past `uint .size 4`, as
+/// [`mimid_agent_store::expiry::READ_EXPIRY_KEY`] carries it, or a date
+/// that does not parse. crate-jmap has already refused a
+/// `senderExpiresAt` in the past; the store checks it again, and that it
+/// is at most a year ahead.
+fn requested_expiry(message: &Message) -> Result<MessageExpiry, BackendSetError<MemoryError>> {
+    let invalid = |property: &str, why: &str| {
+        BackendSetError::SetError(Box::new(
+            set_error(SetErrorType::InvalidProperties, why).with_properties([property]),
+        ))
+    };
+    let mut expiry = MessageExpiry::default();
+    if let Some(at) = &message.sender_expires_at {
+        expiry.sender_expires_at = Some(
+            parse_utc_date(at.as_ref())
+                .ok_or_else(|| invalid("senderExpiresAt", "not a UTCDate"))?,
+        );
+    }
+    expiry.burn_on_read = message.burn_on_read == Some(true);
+    if let Some(seconds) = message.expires_after_read_seconds {
+        expiry.expires_after_read_seconds = Some(u32::try_from(seconds).map_err(|_| {
+            invalid(
+                "expiresAfterReadSeconds",
+                "more seconds than MIMI carries (2^32 - 1)",
+            )
+        })?);
+    }
+    Ok(expiry)
 }
 
 /// A failure of a write hook before the store is touched.
@@ -765,6 +807,13 @@ pub(crate) fn action_set_failure(e: ActionError) -> SetFailure {
             BackendSetError::SetError(e) => SetFailure::Set(e),
             _ => SetFailure::Other(MemoryError::new(format!("no blob {id}"))),
         },
+        // draft-atwood-jmap-chat-00 §Message `senderExpiresAt`: "in
+        // `Message/set` the rejection is an `invalidProperties` SetError
+        // with `properties: ["senderExpiresAt"]`".
+        ActionError::Expiry(e) => SetFailure::set(
+            set_error(SetErrorType::InvalidProperties, e.to_string())
+                .with_properties(["senderExpiresAt"]),
+        ),
         e => SetFailure::Other(MemoryError::new(e.to_string())),
     }
 }
@@ -876,6 +925,7 @@ impl ChatStore for AgentChat {
             .map_err(SetFailure::into_backend)?;
         let mut patch = patch;
         let mut content = false;
+        let mut expiry_policy = None;
         match O::TYPE_NAME {
             "Chat" => {
                 if self.room_of_chat(id).is_some() {
@@ -883,6 +933,11 @@ impl ChatStore for AgentChat {
                     self.update_room_chat(id, &value)
                         .await
                         .map_err(SetFailure::into_backend)?;
+                    // Local (docs/design/agent-frontends.md §7.21); null
+                    // clears it.
+                    expiry_policy = value
+                        .get("messageExpirySeconds")
+                        .map(serde_json::Value::as_u64);
                 }
             }
             // may_update_message admits local Message properties, edits
@@ -905,6 +960,11 @@ impl ChatStore for AgentChat {
         // An edit or retraction is in the records already.
         if result.is_ok() && !content {
             self.record_local(O::TYPE_NAME, id).await;
+        }
+        if result.is_ok()
+            && let Some(seconds) = expiry_policy
+        {
+            self.store.set_message_expiry(id.as_ref(), seconds);
         }
         self.saved(result).await
     }
@@ -1190,10 +1250,60 @@ impl DelegateChatAccessPolicy for AgentChat {
     }
 }
 
-impl DelegateChatMessageLifecycle for AgentChat {
-    type Target = MemoryBackend;
+/// Expiry is the store's (docs/design/agent-frontends.md §7.20 to
+/// §7.23): it deletes each record at its deadline and the projection
+/// hard-deletes the Message (`crate::project`). These hooks are for the
+/// handler's own deletions, which go to the store too.
+impl ChatMessageLifecycle for AgentChat {
+    /// draft-atwood-jmap-chat-00 §Message `burnOnRead`: the owner's
+    /// `readAt` on a received burn-on-read Message. The backend checks the
+    /// patch and hard-deletes the Message in one step; then the store
+    /// deletes the record as read ([`Store::mark_read`]), everywhere, and
+    /// saves.
+    async fn read_and_burn_message(
+        &self,
+        caller: &(),
+        account_id: &Id,
+        message_id: &Id,
+        patch: jmap_types::PatchObject,
+    ) -> Result<(), BackendSetError<MemoryError>> {
+        self.check_account(account_id)
+            .map_err(SetFailure::into_backend)?;
+        let read_at = serde_json::to_value(&patch)
+            .ok()
+            .and_then(|p| p.get("readAt").and_then(Value::as_str).map(str::to_owned))
+            .and_then(|at| parse_utc_date(&at))
+            .unwrap_or_else(mimid_agent_store::sync::now_ms);
+        self.inner
+            .read_and_burn_message(caller, account_id, message_id, patch)
+            .await?;
+        if !self.store.mark_read(message_id.as_ref(), read_at) {
+            // The record had no read rule the object showed: delete it as
+            // the object was.
+            self.store.expire(message_id.as_ref());
+        }
+        self.save_or_log().await;
+        Ok(())
+    }
 
-    fn chat_message_lifecycle(&self) -> &MemoryBackend {
-        &self.inner
+    /// A Message the handler expires: the store deletes the record as at
+    /// its expiry, then the backend the Message.
+    async fn expire_message(
+        &self,
+        caller: &(),
+        account_id: &Id,
+        message_id: &Id,
+    ) -> Result<(), MemoryError> {
+        if *account_id != self.account {
+            return Ok(());
+        }
+        let expired = self.store.expire(message_id.as_ref());
+        self.inner
+            .expire_message(caller, account_id, message_id)
+            .await?;
+        if expired {
+            self.save_or_log().await;
+        }
+        Ok(())
     }
 }

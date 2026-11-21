@@ -12,6 +12,8 @@
 //! `user@domain` stands for the user URI `mimi://domain/u/user` (§7.15),
 //! here and in INVITE.
 //! | `invites` | lists the pending invites, each accepted by JOIN of the channel name it is shown under (§7.13) or of `&invite-<number>` |
+//! | `expire <#channel> [<duration> or off]` | shows or sets the room's local expiry policy: messages older than the duration are deleted here (`Store::set_message_expiry`, §7.21) |
+//! | `burn <#channel> <text>` | sends `text` to be deleted by each mimid recipient once read; the user's own copy stays (`Store::send_with`, §7.22) |
 //!
 //! # Limitations
 //!
@@ -24,7 +26,7 @@ use crate::command::Who;
 use crate::conn::{Session, one_line};
 use crate::line::Out;
 use crate::names::SERVICE_NICK;
-use mimid_agent_store::record::Invite;
+use mimid_agent_store::record::{Invite, MessageExpiry};
 
 /// The help text, one NOTICE a line.
 const HELP: &[&str] = &[
@@ -32,6 +34,10 @@ const HELP: &[&str] = &[
     "  allow <user>  let this user's invites in (joined at the next sync)",
     "  deny <user>   refuse this user: they can no longer invite you",
     "  invites       list pending invites; JOIN of the invite's channel accepts it",
+    "  expire #channel [<duration>|off]  show or set how long messages are kept",
+    "                here: 90s, 30m, 12h, 7d or 2w; off keeps them",
+    "  burn #channel <text>  send text that each mimid recipient deletes once",
+    "                read; your own copy stays; other software keeps it",
     "A <user> is a nick, a user URI (mimi://domain/u/name) or name@domain,",
     "which stands for mimi://domain/u/name.",
     "Rooms: JOIN #name hosts a new room; PART leaves a room for good;",
@@ -107,7 +113,169 @@ impl Session {
                     self.service_says(&format!("invite {number} from {from}: {how}"));
                 }
             }
+            ("expire", Some(channel)) => self.expire(channel, words.next()).await,
+            ("burn", Some(channel)) => {
+                // The text is the rest of the line as sent, spaces kept.
+                let text = text
+                    .trim_start()
+                    .split_once(char::is_whitespace)
+                    .and_then(|(_, rest)| rest.trim_start().split_once(char::is_whitespace))
+                    .map_or("", |(_, text)| text.trim_start());
+                self.burn(channel, text).await;
+            }
+            ("expire", None) => {
+                self.service_says("usage: expire #channel [<duration> or off]");
+            }
+            ("burn", None) => self.service_says("usage: burn #channel <text>"),
             _ => self.service_says(&format!("unknown command {command:?}; try help")),
         }
+    }
+
+    /// `expire #channel [duration|off]` (docs/design/agent-frontends.md
+    /// §7.21): shows or sets the room's local expiry policy.
+    async fn expire(&mut self, channel: &str, duration: Option<&str>) {
+        let Some(key) = self.shown_room(channel) else {
+            self.service_says(&format!("{channel}: no such channel here"));
+            return;
+        };
+        let store = self.store();
+        let Some(duration) = duration else {
+            let now = store
+                .state()
+                .rooms
+                .get(&key)
+                .and_then(|r| r.message_expiry_seconds);
+            self.service_says(&match now {
+                Some(seconds) => format!(
+                    "{channel}: messages are deleted here {} after they arrive",
+                    show_duration(seconds)
+                ),
+                None => format!("{channel}: messages are kept"),
+            });
+            return;
+        };
+        let Some(seconds) = parse_duration(duration) else {
+            self.service_says(&format!(
+                "{duration:?} is no duration; give 90s, 30m, 12h, 7d, 2w, or off"
+            ));
+            return;
+        };
+        store.set_message_expiry(&key, seconds);
+        self.save().await;
+        self.service_says(&match seconds {
+            Some(seconds) => format!(
+                "{channel}: messages are deleted here {} after they arrive;                  others in the room keep their own copies",
+                show_duration(seconds)
+            ),
+            None => format!("{channel}: messages are kept"),
+        });
+    }
+
+    /// `burn #channel text` (docs/design/agent-frontends.md §7.22): sends
+    /// `text` with burnOnRead.
+    async fn burn(&mut self, channel: &str, text: &str) {
+        let Some(key) = self.shown_room(channel) else {
+            self.service_says(&format!("{channel}: no such channel here"));
+            return;
+        };
+        if text.is_empty() {
+            self.service_says("usage: burn #channel <text>");
+            return;
+        }
+        let store = self.store();
+        let message_key = store.new_key();
+        let expiry = MessageExpiry {
+            burn_on_read: true,
+            ..MessageExpiry::default()
+        };
+        self.own_sends.insert(message_key.clone());
+        match store
+            .send_with(message_key.clone(), &key, text, &[], expiry)
+            .await
+        {
+            Ok(_) => self.save().await,
+            Err(error) => {
+                self.own_sends.remove(&message_key);
+                self.service_says(&format!("{channel}: not sent: {error}"));
+            }
+        }
+    }
+}
+
+/// The largest duration `expire` takes: a year, as mimi-content-10 §9.1
+/// bounds an expiry. INVENTED, NOT FROM SPEC: applying that bound to a
+/// local policy.
+const MAX_DURATION_SECS: u64 = mimid_agent_store::expiry::ONE_YEAR_SECS;
+
+/// `off` or `0` as `None`; `<n>[s|m|h|d|w]` (seconds without a unit) as
+/// seconds, up to [`MAX_DURATION_SECS`]; `None` inside for off, outer
+/// `None` for anything else.
+fn parse_duration(text: &str) -> Option<Option<u64>> {
+    let text = text.to_ascii_lowercase();
+    if text == "off" || text == "0" {
+        return Some(None);
+    }
+    let (digits, unit) = match text.find(|c: char| !c.is_ascii_digit()) {
+        Some(i) => text.split_at(i),
+        None => (text.as_str(), "s"),
+    };
+    let unit = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        "w" => 604_800,
+        _ => return None,
+    };
+    let seconds = digits.parse::<u64>().ok()?.checked_mul(unit)?;
+    match seconds {
+        0 => Some(None),
+        s if s <= MAX_DURATION_SECS => Some(Some(s)),
+        _ => None,
+    }
+}
+
+/// `seconds` in the largest unit that divides it.
+fn show_duration(seconds: u64) -> String {
+    for (unit, name) in [(604_800, "w"), (86_400, "d"), (3600, "h"), (60, "m")] {
+        if seconds.is_multiple_of(unit) {
+            return format!("{}{name}", seconds / unit);
+        }
+    }
+    format!("{seconds}s")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durations_parse_with_units_and_off() {
+        assert_eq!(parse_duration("off"), Some(None));
+        assert_eq!(parse_duration("OFF"), Some(None));
+        assert_eq!(parse_duration("0"), Some(None));
+        assert_eq!(parse_duration("0h"), Some(None));
+        assert_eq!(parse_duration("90"), Some(Some(90)));
+        assert_eq!(parse_duration("90s"), Some(Some(90)));
+        assert_eq!(parse_duration("30m"), Some(Some(1_800)));
+        assert_eq!(parse_duration("12h"), Some(Some(43_200)));
+        assert_eq!(parse_duration("7d"), Some(Some(604_800)));
+        assert_eq!(parse_duration("2W"), Some(Some(1_209_600)));
+        assert_eq!(parse_duration("365d"), Some(Some(31_536_000)));
+        for bad in [
+            "",
+            "m",
+            "-5",
+            "5x",
+            "1.5h",
+            "366d",
+            "99999999999999999999w",
+            "5 m",
+        ] {
+            assert_eq!(parse_duration(bad), None, "{bad:?}");
+        }
+        assert_eq!(show_duration(90), "90s");
+        assert_eq!(show_duration(1_800), "30m");
+        assert_eq!(show_duration(1_209_600), "2w");
     }
 }

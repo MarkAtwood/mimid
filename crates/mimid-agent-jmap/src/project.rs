@@ -26,13 +26,14 @@
 //! | Record | JMAP object | Properties the store owns |
 //! |---|---|---|
 //! | Person | ChatContact | `identity`, `login`, `firstSeenAt`, `lastSeenAt` (made only), `did`, `didChangedAt` |
-//! | Room | Chat, kind `group` | `name`, `roomId` (made only), `members` |
-//! | Message | Message | `senderMsgId`, `senderId`, `chatId`, `sentAt`, `receivedAt`, `replyTo`, `topicId`, `deliveryState` (made only); `body`, `bodyType`, `attachments`, `editedAt`, `editHistory`, `deletedAt`, `deletedForAll` |
+//! | Room | Chat, kind `group` | `name`, `roomId` (made only), `members`, `messageExpirySeconds` |
+//! | Message | Message | `senderMsgId`, `senderId`, `chatId`, `sentAt`, `receivedAt`, `replyTo`, `topicId`, `deliveryState`, `senderExpiresAt`, `burnOnRead`, `expiresAfterReadSeconds` (made only); `body`, `bodyType`, `attachments`, `editedAt`, `editHistory`, `deletedAt`, `deletedForAll` |
 //! | Ban | ChatBan | all, made only; destroyed when the record is gone |
 //!
 //! A record deleted (a forgotten person, a deleted message, a room
 //! deleted with its messages and bans) destroys its object, if there is
-//! one. Invites and read positions have no projection: JMAP Chat has no
+//! one; a message deleted at its expiry is hard-deleted
+//! (`ChatMessageLifecycle::expire_message`). Invites and read positions have no projection: JMAP Chat has no
 //! object for an invite, and only JMAP writes read positions.
 //!
 //! # Limitations
@@ -48,7 +49,11 @@
 //!   log ([`crate::CHANGE_LOG_LIMIT`]): its next `/changes` is then
 //!   `cannotCalculateChanges` and it resyncs.
 
-use jmap_chat_server::ChatStore;
+use jmap_chat_server::{ChatMessageLifecycle, ChatStore};
+
+/// What [`JmapExt::project`] lists for a Message hard-deleted at its
+/// expiry, beside the type names of the objects it destroys.
+const EXPIRED: &str = "expired Message";
 use jmap_chat_types::{BodyType, Chat, ChatBan, ChatContact, Message};
 use jmap_server::{
     BackendSetError, GetObject, Id, JmapObject, JmapReads, SetErrorType, SetObject, now_utc_string,
@@ -289,6 +294,7 @@ impl JmapExt {
                 Change::MessageAdded(key) => messages.added(key),
                 Change::MessageChanged(key) => messages.changed(key),
                 Change::MessageDeleted(key) => gone.push((Message::TYPE_NAME, key)),
+                Change::MessageExpired(key) => gone.push((EXPIRED, key)),
                 Change::BanAdded(key) => bans.added(key),
                 Change::BanChanged(key) | Change::BanLifted(key) => bans.changed(key),
                 // Invites and read positions have no projection; Change is
@@ -322,6 +328,7 @@ impl JmapExt {
                 "ChatContact" => self.destroy_unheld::<ChatContact>(&key).await,
                 "Chat" => self.destroy_unheld::<Chat>(&key).await,
                 "ChatBan" => self.destroy_unheld::<ChatBan>(&key).await,
+                EXPIRED => self.expire(&key).await,
                 _ => self.destroy_unheld::<Message>(&key).await,
             }
         }
@@ -354,6 +361,25 @@ impl JmapExt {
                 error = ?error,
                 "an object whose record was deleted was not destroyed"
             ),
+        }
+    }
+
+    /// Hard-deletes Message `key`, whose record expired
+    /// (draft-atwood-jmap-chat-00 §Message: "A hard-deleted message appears
+    /// in the `destroyed` list of subsequent `Message/changes` responses";
+    /// crate-jmap's `expire_message` also unpins it, §Chat
+    /// `pinnedMessageIds`); nothing if the backend has no such Message.
+    async fn expire(&self, key: &str) {
+        if let Err(error) = self
+            .inner
+            .expire_message(&(), &self.account, &Id::from(key))
+            .await
+        {
+            tracing::error!(
+                name: "agent_chat_expire_failed",
+                error = %error,
+                "a Message whose record expired was not destroyed"
+            );
         }
     }
 
@@ -433,6 +459,21 @@ impl JmapExt {
         };
         let id = Id::from(key);
         let existing = self.stored::<Chat>(&id).await?;
+        // The room's local expiry policy, which another front end may set
+        // (docs/design/agent-frontends.md §7.21).
+        if let Some(chat) = &existing
+            && changed
+            && chat.message_expiry_seconds != room.message_expiry_seconds
+        {
+            self.inner
+                .update_object::<Chat>(
+                    &(),
+                    &self.account,
+                    &id,
+                    from_json(json!({ "messageExpirySeconds": room.message_expiry_seconds }))?,
+                )
+                .await?;
+        }
         let members = match existing {
             None if added => {
                 let mut chat = self.render(&store.state()).new_chat(&room, now());

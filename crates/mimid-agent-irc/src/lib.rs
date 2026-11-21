@@ -33,6 +33,12 @@
 //!   (or to `&invite-<number>` when its Welcome could not be read, which
 //!   JOIN also accepts); `/msg mimid allow <nick>` and `deny <nick>`
 //!   decide consent (`/msg mimid help`).
+//! - **Disappearing messages** (§7.20 to §7.22): a message is read once
+//!   its lines are written to a connected client, which deletes a
+//!   burn-on-read message (and starts a delete-after-read one's clock)
+//!   in every front end; `/msg mimid burn #c <text>` sends one, and
+//!   `/msg mimid expire #c <duration|off>` sets the room's local policy.
+//!   A line already shown stays in the client: IRC cannot take it back.
 //! - Messages are `PRIVMSG` with `msgid` (the store's `senderMsgId`) and
 //!   `time`; an edit is a new line starting `(edited) `, a retraction a
 //!   server NOTICE. Attachments are not shown (§7.4), and nothing that

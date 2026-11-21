@@ -124,6 +124,16 @@
 //!   and its frank, if any, and `Message/reportAbuse` (INVENTED, NOT FROM
 //!   SPEC) reports Messages to the room's hub through the agent, unfranked
 //!   ones as unverified.
+//! - **Disappearing messages** (docs/design/agent-frontends.md §7.20 to
+//!   §7.23; [`mimid_agent_store::expiry`]): `Message/set` create takes
+//!   `senderExpiresAt` (sent as the MIMI `expires`, absolute, in whole
+//!   seconds; refused with `invalidProperties` when past or more than a
+//!   year ahead), `burnOnRead` and `expiresAfterReadSeconds` (sent in
+//!   mimid's own extension); a received message shows them. The store
+//!   deletes each record at its time, and the Message is hard-deleted:
+//!   `destroyed` in `Message/changes`. A read is the owner's `readAt`, or
+//!   a `ReadPosition` at or past the Message. `messageExpirySeconds` on a
+//!   Chat is the room's local policy, kept in the store.
 //! - **Local objects**: ChatContact and ReadPosition writes, `readAt` and
 //!   `privateMetadata` on a Message, and destroying a Message change only
 //!   this account.
@@ -157,8 +167,12 @@
 //!   `invalidProperties` and a longer body `tooLarge`, from crate-jmap's
 //!   checks against those limits.
 //! - `Message/set` create with `mentions`, `broadcastMentions`, `replyTo`,
-//!   `threadRootId`, `topicId`, `subject`, or expiry or burn settings, is
-//!   `forbidden`, naming the property.
+//!   `threadRootId`, `topicId` or `subject` is `forbidden`, naming the
+//!   property.
+//! - `burnOnRead` and `expiresAfterReadSeconds` reach only mimid
+//!   receivers (an INVENTED extension, decision mimid-1wgh.84); other
+//!   implementations keep such a Message. The `Chat/set` update of
+//!   `messageExpirySeconds` is honoured only on a room-bound Chat.
 //! - Sending attachments needs a server that stores them (its Session's
 //!   mimi capability has `assetUrl`), and receiving them one that fetches
 //!   them (`assetDownloadUrl`; draft-atwood-jmap-chat-mimi-00

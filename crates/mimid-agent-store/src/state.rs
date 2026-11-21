@@ -160,6 +160,16 @@ impl State {
         Some(message)
     }
 
+    /// Deletes message `key` at its expiry ([`crate::expiry`]): as
+    /// [`State::delete_message`], with its tombstones, and with its
+    /// attachments waiting for a retry. Returns the message, or `None` if
+    /// there is none.
+    pub fn expire_message(&mut self, key: &str) -> Option<Message> {
+        let message = self.delete_message(key)?;
+        self.pending_attachments.retain(|p| p.message != key);
+        Some(message)
+    }
+
     /// Edits message `key` to `body` of `body_type` at `at`, in
     /// milliseconds: its old body becomes the last of at most
     /// [`MAX_EDIT_HISTORY`] revisions (draft-atwood-jmap-chat-00 §Editing a
@@ -411,6 +421,8 @@ mod tests {
                 unverified: true,
             }),
             notice: None,
+            expiry: Default::default(),
+            read_at: None,
             ext: Ext::new(),
         }
     }
@@ -474,6 +486,7 @@ mod tests {
                 role: Some(2),
             }],
             role_names: BTreeMap::new(),
+            message_expiry_seconds: None,
             ext: Ext::new(),
         }
     }

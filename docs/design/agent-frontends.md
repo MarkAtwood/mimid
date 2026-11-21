@@ -1580,6 +1580,130 @@ Added on 2026-11-20:
       other device and bob, with two leaves of alice and one of bob, and
       that messages pass both ways.
 
+20. **Disappearing messages: the sender's time (Mark, 2026-11-21; bead
+    mimid-tu1g).** A message can carry a time at which every copy is
+    deleted, the sender's own included.
+
+    - **Mapping.** JMAP Chat `senderExpiresAt` (draft-atwood-jmap-chat-00
+      §Message) is mimi-content-10 §4.1 `expires` with `relative` false:
+      seconds since the UNIX epoch, `uint .size 4`. A `Message/set` create
+      sends the time cut to the whole second (the draft deletes "at or
+      before this time"), and the sender's record keeps that second. A
+      received absolute `expires` becomes the record's
+      `expiry.senderExpiresAt`, shown as the Message's `senderExpiresAt`.
+      A received `expires` with `relative` true is the read rule of §7.22,
+      not a time.
+    - **Refused.** A create whose `senderExpiresAt` is not after now is
+      `invalidProperties` naming `senderExpiresAt`, as the draft requires;
+      so is one more than a year ahead, which mimi-content-10 §9.1 tells
+      receivers to discard. A received message whose `expires` is more
+      than a year in the past or the future is discarded and reported
+      (§9.1; decision mimid-1wgh.2.19 gives that check to the agent). A
+      received message whose time has passed when it arrives is not
+      stored ("Servers MUST reject a `senderExpiresAt` value that is
+      already in the past at delivery time").
+    - **The deletion** (`Store::expire_due`, `mimid_agent_store::expiry`)
+      is the local delete's: the record goes, with a tombstone of its
+      versions, so a delivery of it again (an acknowledgement that failed,
+      the sender's own `Event::Sent` read back after a crash) stores
+      nothing; its attachments waiting for a retry go; after the save that
+      writes the deletion its blobs go unless another message names them,
+      the sender's own upload included. Every front end is told
+      (`Change::MessageExpired`): JMAP hard-deletes the Message
+      (crate-jmap `expire_message`: `destroyed` in `Message/changes`, and
+      unpinned); IRC has nothing to take back and never shows it again,
+      since it plays nothing back (§7.6).
+    - **Edits and retractions.** The expiry belongs to the message and an
+      edit cannot change it (mimi-content-10 §9.3: the sender changes only
+      the NestedPart). mimid sends an edit with the `expires` and
+      extension of the message it edits, so a receiver that keeps versions
+      deletes them alike; a received edit's own `expires` is ignored. A
+      retraction carries none, and a retracted message keeps its expiry:
+      its emptied record goes at the same time. An edit or retraction that
+      arrives after the message is gone here is dropped as one of a
+      message not stored.
+    - Tests: mimid-agent-store `tests/expiry.rs`
+      `the_senders_time_deletes_every_copy_and_its_blobs`,
+      `edits_and_retractions_keep_the_expiry`,
+      `a_message_past_its_time_is_not_stored_or_restored`;
+      `expiry::tests`; mimid-agent `tests/disappearing.rs`
+      `senders_time_read_rules_and_policy_over_jmap` and
+      `across_two_providers`.
+
+21. **A room's own expiry policy (Mark, 2026-11-21).** JMAP Chat
+    `messageExpirySeconds` is local, as the draft says ("This is a local
+    setting, not a bilateral negotiated commitment"): the room record
+    keeps it (`Room::message_expiry_seconds`) and nothing is sent. A
+    message older than that many seconds, counted from its arrival here
+    (`receivedAt`, §7.18), is deleted by the same path as §7.20,
+    notices included; the sender's time still applies, and whichever comes
+    first wins. It is set by `Chat/set` create or update of a room-bound
+    Chat (null or 0 clears it), and from IRC by `/msg mimid expire #c
+    <duration>` (`90s`, `30m`, `12h`, `7d`, `2w`, at most a year; `off`
+    clears it; without a duration it is shown). A change made from one
+    front end shows in the other (the Chat's `messageExpirySeconds`).
+    Tests: mimid-agent-store `tests/expiry.rs`
+    `a_rooms_policy_deletes_older_messages_here_only`; mimid-agent
+    `tests/disappearing.rs`, `tests/irc.rs` `burn_and_expire_from_irc`.
+
+22. **Burn on read and delete after read (Mark, 2026-11-21).**
+    - **On the wire.** mimid sends `burnOnRead` and
+      `expiresAfterReadSeconds` in a mimiExtensions entry of its own,
+      text key `mimid-read-expiry`, value `[burnOnRead: bool,
+      expiresAfterReadSeconds: null / uint .size 4]` in deterministic
+      CBOR, only when one is set. INVENTED, NOT FROM SPEC (decision
+      mimid-1wgh.84). Only mimid receivers honour it; any other
+      implementation keeps the unknown extension and the message. A
+      value of any other form is ignored, with a sync problem; the
+      message is stored. A received mimi-content-10 `expires` with
+      `relative` true ("a relative amount of time after the receiving
+      client reads the message", §4.1) is honoured as
+      `expiresAfterReadSeconds`; with both, the earlier deadline wins.
+    - **Whose copy.** The receiver's only; the sender's copy, on any of
+      the sender's devices, is not affected (draft-atwood-jmap-chat-00
+      §Message). `burnOnRead` deletes at the read,
+      `expiresAfterReadSeconds` so many seconds after it; burn wins.
+    - **What a read is.** The store keeps the first read
+      (`Message::read_at`, only for a received message with a read rule;
+      `Store::mark_read`). On JMAP: the owner's `readAt` on the Message
+      (a burn-on-read Message goes in the same `Message/set`, through
+      crate-jmap's `read_and_burn_message`), or a `ReadPosition` whose
+      `lastReadMessageId` is the Message or a later one in history order.
+      On IRC: the message's lines were written to at least one connected
+      IRC client of the user's (`Session::read_delivered`). A message that
+      arrived while no IRC client was connected is not read on IRC, since
+      IRC plays nothing back (§7.6).
+    - **Sending.** JMAP: `burnOnRead` and `expiresAfterReadSeconds` on
+      `Message/set` create (a value past `uint .size 4` is
+      `invalidProperties`). IRC: `/msg mimid burn #c <text>` sends a
+      burn-on-read message; IRC has no way to send delete-after-read or a
+      sender's time.
+    - Tests: mimid-agent-store `tests/expiry.rs`
+      `read_rules_delete_the_receivers_copy_only`; `expiry::tests`;
+      mimid-agent `tests/disappearing.rs`, `tests/irc.rs`
+      `burn_and_expire_from_irc`, `tests/irc_two_providers.rs`
+      `a_burn_on_read_line_across_providers`.
+
+23. **Expiry across restarts and crashes (Mark, 2026-11-21).** The
+    deadlines are fields of the records (`expiry`, `readAt`, the room's
+    policy) and are saved with them; no timer state exists outside the
+    database. The daemon's expiry loop (`expiry_loop`) runs
+    `Store::expire_now` at start, so what fell due while the agent was
+    stopped goes then, and again at each next deadline
+    (`Store::next_expiry`), when one may have come nearer
+    (`Store::expiry_wanted`: a message stored, a read, a policy set), and
+    at least every minute. A deletion is a store write like any other: the
+    record and its tombstone are written in one transaction by the next
+    save; if that save fails or the agent crashes first, the record is
+    still in the database at the next start, its deadline has passed, and
+    it is deleted again. Blobs go only after the save that wrote the
+    deletion; a crash between leaves them to the blob store's quota. The
+    store's schema is part `store` version 5; a version 4 database is
+    refused, not converted (nothing runs in production). Tests:
+    mimid-agent-store `tests/expiry.rs`
+    `deletions_survive_a_restart_and_a_failed_save`; mimid-agent
+    `tests/disappearing.rs` `a_deletion_due_while_stopped_happens_at_start`.
+
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 
 Mark decided on 2026-11-20 that JMAP (draft-atwood-jmap-chat-mimi) is
