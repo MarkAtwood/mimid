@@ -2,13 +2,15 @@
   "id": "mimid-qrbe",
   "title": "One-to-one rooms use room-policy fixed_membership (max_users 2)",
   "description": "Mark 2026-11-21 (decision mimid-1wgh.87): direct rooms use room-policy-04 §5 fixed_membership with max_users 2, replacing the ordinary-room shape of c9d76e9f. Read room-policy-04 §5 rules (participants fixed at creation, no adds, cannot leave, one room per participant set) and implement: the agent creates the room with both participants at creation (a Welcome to the peer, no separate invite step; consent still applies), the hub enforces fixed_membership (refuses adds/removes except as the draft allows; check what 'cannot leave' means for a user removing their own devices), one room per pair (open_direct finds the existing one), and what IRC PART and JMAP Chat destroy do in a fixed room (likely: leave locally / hide, not leave the MLS group; record and ask Mark if the draft forces a user-visible change). Tests across two providers. Record as §7 entry.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T22:40:53.687908799Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T22:40:53.687908799Z",
+  "updated_at": "2026-11-21T23:48:42.48608414Z",
+  "closed_at": "2026-11-21T23:48:42.48608414Z",
+  "close_reason": "Done: 0b729c70 on direct-latest (fixed_membership + max_users 2, hub rules per decision mimid-1wgh.89, two-provider test). PART/destroy in a fixed room left for Mark in a human bead.",
   "labels": [
     "agent",
     "server"

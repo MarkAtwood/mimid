@@ -1,3 +1,4 @@
 {"id":"01a20045-07bd-77b9-a990-043bb64fab54","issue_id":"mimid-qrbe","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-21T22:40:53.693507323Z"}
 {"id":"01a20045-07c1-7dcc-8863-e8582f60730f","issue_id":"mimid-qrbe","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-21T22:40:53.697905615Z"}
 {"id":"01a20045-07c5-788b-985a-344081dafbcb","issue_id":"mimid-qrbe","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: server","created_at":"2026-11-21T22:40:53.701561055Z"}
+{"id":"01a20083-1d79-7df4-ad15-487f3736eff8","issue_id":"mimid-qrbe","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Done: 0b729c70 on direct-latest (fixed_membership + max_users 2, hub rules per decision mimid-1wgh.89, two-provider test). PART/destroy in a fixed room left for Mark in a human bead.","created_at":"2026-11-21T23:48:42.489915805Z"}
