@@ -2,13 +2,15 @@
   "id": "mimid-vkff",
   "title": "Server: unbind signature keys idle 90 days (configurable) (clean-room C6)",
   "description": "Clean-room C6: test clients piled up as bound signature keys, each with a last-resort KeyPackage, so invites added dead leaves. jmap-chat-spec 735503c: a server MAY unbind a key with no KeyPackage record that sent nothing through the capability for a period it chooses. Mark 2026-11-21: mimid unbinds keys idle 90 days, operator-configurable (client_idle_unbind_secs, 'unlimited' allowed; INVENTED default). Activity (INVENTED): KeyPackage/set create with the key, accepted Room/update whose Commit UpdatePath leaf has the key (member or external), GroupInfo/fetch signed with the key answered success. Room/send is unattributable (PrivateMessage hides the sender). 'No KeyPackage record': none stored with not_after in the period and none handed out in it. Schema: migration 0016 adds client.last_active_ms.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "feature",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T21:02:26.967734631Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T21:02:26.967734631Z",
+  "updated_at": "2026-11-21T21:09:13.153116027Z",
+  "closed_at": "2026-11-21T21:09:13.153116027Z",
+  "close_reason": "820a51bd: client_idle_unbind_secs (default 90 days, 'unlimited' allowed, min 1 day); hourly sweep unbinds keys with no unexpired/handed-out KeyPackage and no activity (KeyPackage/set create, accepted Room/update with the key in the UpdatePath leaf, successful GroupInfo/fetch signed by it; Room/send unattributable). Migration 0016.",
   "labels": [
     "cleanroom",
     "server"
