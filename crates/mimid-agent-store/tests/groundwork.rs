@@ -460,3 +460,79 @@ async fn one_to_one_rooms_are_made_once_and_recognised() {
     assert!(bob.set_direct(&key, false));
     assert_eq!(bob.state().rooms[&key].direct_peer(BOB), None);
 }
+
+/// The bodies of `page`.
+fn bodies(page: &mimid_agent_store::Page) -> Vec<&str> {
+    page.messages.iter().map(|m| m.body.as_str()).collect()
+}
+
+/// Oracle: docs/design/agent-frontends.md §7.31 (hub order, pages before
+/// and after a message, an edge or a time, exclusive of a message point;
+/// deleted, locally deleted and due messages left out, retracted ones
+/// kept), with the order alice sent in.
+#[tokio::test]
+async fn history_pages_in_hub_order() {
+    use mimid_agent_store::{Direction, Point};
+    let dir = tempfile::tempdir().unwrap();
+    let (mut alice, bob, room, room_key) = alice_and_bob(dir.path()).await;
+    let mut sent = Vec::new();
+    for n in 1..=6 {
+        sent.push(alice.send_text(&room, &format!("m{n}")).await.unwrap());
+    }
+    until_store(&bob, |s| key_of(s, "m6").is_some()).await;
+    let key = |body: &str| key_of(&bob, body).unwrap();
+    let page =
+        |point: Point, direction, limit| bob.history(&room_key, &point, direction, limit).unwrap();
+
+    let latest = page(Point::Edge, Direction::Before, 2);
+    assert_eq!((bodies(&latest), latest.more), (vec!["m5", "m6"], true));
+    let older = page(Point::Message(key("m5")), Direction::Before, 2);
+    assert_eq!((bodies(&older), older.more), (vec!["m3", "m4"], true));
+    let oldest = page(Point::Message(key("m2")), Direction::Before, 2);
+    assert_eq!((bodies(&oldest), oldest.more), (vec!["m1"], false));
+    let first = page(Point::Edge, Direction::After, 3);
+    assert_eq!((bodies(&first), first.more), (vec!["m1", "m2", "m3"], true));
+    let rest = page(Point::Message(key("m3")), Direction::After, 10);
+    assert_eq!((bodies(&rest), rest.more), (vec!["m4", "m5", "m6"], false));
+    // A time: before is strictly before it, after is at or after it.
+    let at = sent[3].accepted_at;
+    let before = page(Point::Time(at), Direction::Before, 10);
+    assert!(!bodies(&before).contains(&"m4") && bodies(&before).contains(&"m3"));
+    let after = page(Point::Time(at), Direction::After, 1);
+    assert_eq!(bodies(&after), ["m4"]);
+
+    // Deleted here, deleted here only, retracted.
+    bob.delete_message(&key("m2"));
+    assert!(bob.mark_deleted(&key("m3"), sent[2].accepted_at));
+    alice
+        .send_retraction(&room, &sent[4].message_id, false)
+        .await
+        .unwrap();
+    until_store(&bob, |s| {
+        s.state()
+            .messages
+            .values()
+            .any(|m| m.deleted.is_some_and(|d| d.for_all))
+    })
+    .await;
+    let all = page(Point::Edge, Direction::After, 100);
+    assert_eq!(bodies(&all), ["m1", "m4", "", "m6"]);
+    assert!(all.messages[2].deleted.is_some());
+    assert!(
+        bob.history(&room_key, &Point::Message(key("m3")), Direction::After, 1)
+            .is_err()
+    );
+    assert!(
+        bob.history("nosuchroom", &Point::Edge, Direction::After, 1)
+            .is_err()
+    );
+
+    // Due under the room's expiry, though not yet deleted: left out.
+    bob.set_message_expiry(&room_key, Some(1));
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    assert!(
+        page(Point::Edge, Direction::Before, 100)
+            .messages
+            .is_empty()
+    );
+}

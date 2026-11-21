@@ -8,7 +8,8 @@
 //! front end shows a message under ([`convert`]), the agent's own notices
 //! ([`notice`]), body types and safe file names ([`content`]), and what a
 //! message keeps for an abuse report ([`report`]), and attachment links a
-//! front end can hand any client ([`links`]). mimid-agent-jmap's JMAP
+//! front end can hand any client ([`links`]). A room's history comes a
+//! page at a time ([`history`]). mimid-agent-jmap's JMAP
 //! Chat front end and mimid-agent-irc's IRC front end are built on it; it
 //! depends on neither crate-jmap nor any IRC code.
 //!
@@ -44,6 +45,7 @@ pub mod convert;
 pub mod db;
 pub mod expiry;
 pub mod feed;
+pub mod history;
 pub mod links;
 pub mod notice;
 pub mod record;
@@ -58,6 +60,7 @@ pub use change::Change;
 pub use db::FileError;
 pub use expiry::ExpiryError;
 pub use feed::TooOld;
+pub use history::{Direction, Page, Point};
 pub use state::{RemovedRoom, State, accepted_at_of, reference_of};
 pub use store::{Frontend, Store};
 pub use sync::{InvitePolicy, SyncError, SyncReport};

@@ -1963,6 +1963,28 @@ Added on 2026-11-20:
     - Tests: mimid-agent-store `links::tests`; mimid-agent
       `tests/groundwork.rs` `attachment_links_give_one_file_until_they_expire`.
 
+31. **History (epic mimid-qqtk, bead mimid-qqtk.6).** For IRCv3
+    `draft/chathistory` (S2) and Matrix `/messages`: `Store::history(room,
+    point, direction, limit)` returns a page of a room's messages, oldest
+    first, and whether there are more beyond it.
+    - **Order.** Hub order: the hub's acceptance time, then the store's
+      sequence number for messages stored in the same millisecond. A
+      notice is at the time it was made.
+    - **Points.** `Point::Edge` (with `Before`, the newest messages; with
+      `After`, the oldest), `Point::Message(key)` (the page leaves the
+      message out), `Point::Time(ms)` (before: accepted strictly before
+      it; after: at or after it). chathistory's `BEFORE`, `AFTER` and
+      `LATEST` map onto these directly; `AROUND` and `BETWEEN` are two
+      calls. At most `MAX_HISTORY_PAGE` (1000, INVENTED) a page.
+    - **What a page holds.** What a front end may show: a message deleted
+      here (record gone, or deleted for this user only) is left out, and
+      so is one whose expiry has come (`expiry::deadline`) though the
+      store has not deleted it yet. A retracted message stays, emptied,
+      for the placeholder front ends show.
+    - Tests: mimid-agent-store `tests/groundwork.rs`
+      `history_pages_in_hub_order`. No front end uses it yet: IRC v2's
+      chathistory and the Matrix front end will.
+
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 
 Mark decided on 2026-11-20 that JMAP (draft-atwood-jmap-chat-mimi) is
