@@ -2,13 +2,15 @@
   "id": "mimid-m1sm",
   "title": "KeyMaterial/fetch uses up KeyPackages with no Commit following (clean-room C21)",
   "description": "C21: KeyMaterial/fetch consumes KeyPackages even when no commit follows. Decide with Mark if behaviour or draft text changes; do after air-impl merges.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T19:50:54.541949241Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T19:50:54.541949241Z",
+  "updated_at": "2026-11-21T21:31:46.168897226Z",
+  "closed_at": "2026-11-21T21:31:46.168897226Z",
+  "close_reason": "By design, no change (code reading, mimid-agent-core at 1ecf16b3). The agent calls KeyMaterial/fetch only in Agent::invite, right before build_commit, which writes the UpdateRequest (the fetched KeyPackages inside the Commit's Adds and Welcome) to the outbox in one transaction. A retry after a lost answer or crash (finish_outbox -\u003e send_update) resends entry.wire byte for byte and never calls invite, so it never fetches again (covered by mimid-agent-store tests/send_crash.rs, the invite of carol at BeforeSend/AfterAccepted). A refused Commit (wrongEpoch, notAllowed) is not retried automatically; a new invite is a new Commit and fetches anew. This meets the draft's SHOULD (fetch only when ready to commit; reuse a fetched KeyPackage when retrying the same Commit).",
   "labels": [
     "server",
     "cleanroom"
