@@ -90,25 +90,33 @@ struct Provider {
 }
 
 impl Provider {
+    /// With KeyPackages' defaults: a last-resort KeyPackage is served
+    /// whenever its client has no other (draft-atwood-jmap-chat-mimi-00
+    /// §Handing Out KeyPackages; clean-room finding C7).
     async fn open() -> Self {
-        Self::open_with_reuse(false).await
+        Self::open_with(None).await
     }
 
     /// With `reuse`, a last-resort KeyPackage is served in more than one
-    /// response (mls-extensions-11 §6.4); without, once (protocol-07
-    /// §5.2, the default; bead mimid-gunw).
+    /// response (mls-extensions-11 §6.4, the default); without, once
+    /// (protocol-07 §5.2; bead mimid-gunw).
     async fn open_with_reuse(reuse: bool) -> Self {
+        Self::open_with(Some(reuse)).await
+    }
+
+    async fn open_with(reuse: Option<bool>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mimid.sqlite");
         let store = Store::open(&path, &domain("b.example")).await.unwrap();
-        let key_packages = Arc::new(
-            KeyPackages::new(
-                store.clone(),
-                domain("b.example"),
-                Arc::new(FixedClock(now_ms())),
-            )
-            .with_last_resort_reuse(reuse),
+        let mut key_packages = KeyPackages::new(
+            store.clone(),
+            domain("b.example"),
+            Arc::new(FixedClock(now_ms())),
         );
+        if let Some(reuse) = reuse {
+            key_packages = key_packages.with_last_resort_reuse(reuse);
+        }
+        let key_packages = Arc::new(key_packages);
         Self {
             _dir: dir,
             path,
@@ -488,12 +496,12 @@ async fn concurrent_claims(reuse: bool) {
     assert_eq!(p.listed().await, BTreeSet::from([reference(&last_resort)]));
 }
 
-/// By default (protocol-07 §5.2) the last-resort KeyPackage, after the
-/// one-time ones, is served once; it stays stored, and the next request
-/// is keyMaterialExhausted.
+/// With reuse off (protocol-07 §5.2) the last-resort KeyPackage, after
+/// the one-time ones, is served once; it stays stored, and the next
+/// request is keyMaterialExhausted.
 #[tokio::test]
-async fn last_resort_is_served_after_one_time_ones_and_once_by_default() {
-    let p = Provider::open().await;
+async fn without_reuse_last_resort_is_served_after_one_time_ones_and_once() {
+    let p = Provider::open_with_reuse(false).await;
     let phone = client(TARGET, 30 * DAY, &[]);
     let last_resort = key_package(&phone, true);
     let one_time = key_package(&phone, false);
@@ -546,6 +554,59 @@ async fn with_reuse_last_resort_is_served_again_and_never_consumed() {
     }
     assert_eq!(p.listed().await, BTreeSet::from([reference(&last_resort)]));
     assert_eq!(p.claims().await.len(), 4);
+}
+
+/// By default (draft-atwood-jmap-chat-mimi-00 §Handing Out KeyPackages;
+/// clean-room finding C7, scenario s6): a client that published only a
+/// last-resort KeyPackage gets it handed out in every response, and it
+/// stays stored.
+#[tokio::test]
+async fn by_default_a_lone_last_resort_key_package_is_handed_out_and_kept() {
+    let p = Provider::open().await;
+    let phone = client(TARGET, 30 * DAY, &[]);
+    let last_resort = key_package(&phone, true);
+    p.upload(TARGET, &last_resort).await;
+    for _ in 0..3 {
+        let response = decode(&p.serve(&request(&ask())).await);
+        assert_eq!(response.user_status, KeyMaterialUserCode::Success);
+        assert_eq!(served(&response), std::slice::from_ref(&last_resort));
+    }
+    assert_eq!(p.listed().await, BTreeSet::from([reference(&last_resort)]));
+}
+
+/// draft-atwood-jmap-chat-mimi-00 §Handing Out KeyPackages (jmap-chat-spec
+/// 735503c; clean-room finding C7): when every client is exhausted, which
+/// happens only when none has a last-resort KeyPackage, userStatus is
+/// noCompatibleMaterial and each client is listed as
+/// keyMaterialExhausted; with one client served it is partialSuccess.
+#[tokio::test]
+async fn when_every_client_is_exhausted_each_is_listed_as_such() {
+    let p = Provider::open().await;
+    let phone = client(TARGET, 30 * DAY, &[]);
+    let laptop = client(TARGET, 30 * DAY, &[]);
+    p.upload(TARGET, &key_package(&phone, false)).await;
+    p.upload(TARGET, &key_package(&laptop, false)).await;
+    p.upload(TARGET, &key_package(&laptop, false)).await;
+
+    let first = decode(&p.serve(&request(&ask())).await);
+    assert_eq!(first.user_status, KeyMaterialUserCode::Success);
+    assert_eq!(served(&first).len(), 2);
+
+    let second = decode(&p.serve(&request(&ask())).await);
+    assert_eq!(second.user_status, KeyMaterialUserCode::PartialSuccess);
+    assert_eq!(served(&second).len(), 1);
+
+    let third = decode(&p.serve(&request(&ask())).await);
+    assert_eq!(third.user_status, KeyMaterialUserCode::NoCompatibleMaterial);
+    assert_eq!(third.clients.len(), 2);
+    assert!(
+        third
+            .clients
+            .iter()
+            .all(|c| matches!(c, ClientKeyMaterial::KeyMaterialExhausted { .. })),
+        "{:?}",
+        third.clients
+    );
 }
 
 #[tokio::test]

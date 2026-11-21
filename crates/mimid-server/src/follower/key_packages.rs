@@ -37,28 +37,32 @@
 //!    last-resort one. The first candidate still stored is claimed, all
 //!    clients in one transaction ([`Store::claim_key_packages`]): a
 //!    one-time KeyPackage is removed, so it is never served twice; a
-//!    last-resort one stays stored but, by default, is served only once
-//!    (protocol-07 §5.2; [`KeyPackages::with_last_resort_reuse`]). Every
+//!    last-resort one stays stored and, by default, is served whenever
+//!    its client has no other (draft-atwood-jmap-chat-mimi-00 §Handing Out
+//!    KeyPackages; [`KeyPackages::with_last_resort_reuse`]). Every
 //!    claim is recorded (decision mimid-1wgh.7.15).
 //! 8. A client with usable KeyPackages but no suitable one is
 //!    `nothingCompatible`; a client that got none otherwise, including one
 //!    whose candidates concurrent requests claimed first, is
 //!    `keyMaterialExhausted`. `userStatus` is
 //!    `success` if every client got a KeyPackage, `partialSuccess` if some
-//!    did, and `noCompatibleMaterial`, with the clients listed, if none did.
+//!    did, and `noCompatibleMaterial`, with the clients listed, if none did,
+//!    including when every client is `keyMaterialExhausted`, for which
+//!    protocol-07 §5.2 has no code (draft-atwood-jmap-chat-mimi-00
+//!    §Handing Out KeyPackages, jmap-chat-spec 735503c).
 //!
 //! A request refused at steps 2 to 6 gets `noConsent` with no clients,
 //! §5.2's catch-all, and nothing is written.
 //!
 //! # Limitations
 //!
-//! - With `reuse_last_resort_key_packages` on, a last-resort KeyPackage is
-//!   served again in later responses, as mls-extensions-11 §6.4 allows but
-//!   against §5.2's "MUST NOT be provided in any other response" (bead
-//!   mimid-gunw, wg item mimid-1dzo; earlier decisions mimid-1wgh.12.16,
-//!   mimid-1wgh.7.14 served it again always). Off, a client whose
-//!   last-resort KeyPackage was served is `keyMaterialExhausted` until it
-//!   publishes more.
+//! - With `reuse_last_resort_key_packages` on, the default, a last-resort
+//!   KeyPackage is served again in later responses, as
+//!   draft-atwood-jmap-chat-mimi-00 requires and mls-extensions-11 §6.4
+//!   allows, but against protocol-07 §5.2's "MUST NOT be provided in any
+//!   other response" (beads mimid-fl1i, mimid-gunw; wg item mimid-1dzo).
+//!   Off, a client whose last-resort KeyPackage was served is
+//!   `keyMaterialExhausted` until it publishes more.
 //! - The target-side checks are consistency checks, not security: the
 //!   requester's credential is a BasicCredential that nothing binds to its
 //!   key, and `From` is unauthenticated (decision mimid-1wgh.6.9).
@@ -220,7 +224,7 @@ impl KeyPackages {
             domain,
             clock,
             did_webvh: CodePoints::DEFAULT,
-            reuse_last_resort: false,
+            reuse_last_resort: true,
             max_clients: Some(DEFAULT_MAX_CLIENTS),
             changes: tokio::sync::broadcast::channel(KEY_PACKAGE_CHANGES_CAPACITY).0,
         }
@@ -409,10 +413,13 @@ impl KeyPackages {
     }
 
     /// Whether a last-resort KeyPackage may be served in more than one
-    /// response. Off by default, as protocol-07 §5.2 requires ("MUST NOT
-    /// be provided in any other response"); mls-extensions-11 §6.4 lets a
-    /// last-resort KeyPackage "be used more than once", which this turns on
-    /// (bead mimid-gunw; the conflict is wg item mimid-1dzo).
+    /// response. On by default, as draft-atwood-jmap-chat-mimi-00
+    /// §Handing Out KeyPackages requires ("returns the client's compatible
+    /// last-resort KeyPackage, if any, and keeps it"; clean-room finding
+    /// C7, bead mimid-fl1i) and mls-extensions-11 §6.4 allows ("used more
+    /// than once"). Off, it is served once, as protocol-07 §5.2 asks ("MUST
+    /// NOT be provided in any other response"; bead mimid-gunw; the
+    /// conflict is wg item mimid-1dzo).
     #[must_use]
     pub fn with_last_resort_reuse(mut self, reuse: bool) -> Self {
         self.reuse_last_resort = reuse;

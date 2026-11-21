@@ -7,7 +7,7 @@
 //! database = "/var/lib/mimid/mimid.sqlite"
 //! max_key_packages = 97   # optional
 //! live_stream = false      # optional; serve the live stream at /mimid/live
-//! reuse_last_resort_key_packages = false  # optional; true serves a last-resort KeyPackage again
+//! reuse_last_resort_key_packages = true  # optional; false serves a last-resort KeyPackage once
 //! blob_lifetime_secs = 2592000  # optional; uploads are deleted this long after upload (at least 3600)
 //! message_retention_secs = 604800  # optional; messages are deleted this long after the hub
 //!                                  # accepted them (at least 3600), or "unlimited"
@@ -123,9 +123,11 @@ pub struct Config {
     #[serde(default)]
     pub live_stream: bool,
     /// Serve a last-resort KeyPackage in more than one keyMaterial
-    /// response, as mls-extensions-11 §6.4 allows. Off by default, as
-    /// protocol-07 §5.2 requires (bead mimid-gunw).
-    #[serde(default)]
+    /// response, as draft-atwood-jmap-chat-mimi-00 §Handing Out
+    /// KeyPackages requires and mls-extensions-11 §6.4 allows. On by
+    /// default (clean-room finding C7, bead mimid-fl1i); off serves it
+    /// once, as protocol-07 §5.2 asks (bead mimid-gunw).
+    #[serde(default = "default_reuse_last_resort")]
     pub reuse_last_resort_key_packages: bool,
     /// The loopback address of the local control listener
     /// ([`crate::local`]), or none to leave it off. The server refuses to
@@ -282,6 +284,10 @@ impl Config {
             uri: self.max_uri_octets,
         }
     }
+}
+
+fn default_reuse_last_resort() -> bool {
+    true
 }
 
 fn default_max_key_packages() -> u64 {
@@ -566,7 +572,7 @@ mod tests {
             ]),
             max_key_packages: 97,
             live_stream: false,
-            reuse_last_resort_key_packages: false,
+            reuse_last_resort_key_packages: true,
             local_listen: None,
             local_token: None,
             require_franking: false,
