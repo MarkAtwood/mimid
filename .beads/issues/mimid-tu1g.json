@@ -2,13 +2,15 @@
   "id": "mimid-tu1g",
   "title": "Disappearing messages: timed delete, per-chat expiry, burn-on-read, delete-after-read",
   "description": "Mark 2026-11-21: build all of it now. (1) sender timed delete: JMAP Chat senderExpiresAt \u003c-\u003e mimi-content expires, both ways; the store deletes at that time everywhere (tombstone). (2) per-chat local messageExpirySeconds. (3) burnOnRead and expiresAfterReadSeconds via a mimid-only mimiExtensions entry (INVENTED), honoured only by mimid recipients; read = JMAP readAt, and on IRC 'shown to the IRC client'. Plus a WG question on carrying (3) in mimi-content (Mark's OK before posting).",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "feature",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T18:53:14.994403633Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T18:53:14.994403633Z",
+  "updated_at": "2026-11-21T19:28:10.052336099Z",
+  "closed_at": "2026-11-21T19:28:10.052336099Z",
+  "close_reason": "Built on branch disappearing: 1b144c7 (agent-core ContentOptions), 4c99e99 (store expiry, JMAP, IRC, daemon loop, tests, §7.20-§7.23). Extension key: decision mimid-1wgh.84. Not pushed.",
   "labels": [
     "agent"
   ]
