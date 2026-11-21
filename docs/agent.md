@@ -90,10 +90,28 @@ The IRC front end. Absent means no IRC. An empty `[irc]` table turns it on with 
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `listen` | socket address, loopback | `127.0.0.1:6667` | Where the IRC server listens. It must be a loopback address. Browsers refuse to connect to port 6667, which blocks web pages from sending HTTP to it. |
+| `listen` | socket address, loopback | `127.0.0.1:6667` | Where the IRC server listens, without TLS. It must be a loopback address. Browsers refuse to connect to port 6667, which blocks web pages from sending HTTP to it. |
+| `listen_tls` | socket address | none | Where the IRC server also listens with TLS, on any address: a tailnet or WireGuard address is the safe choice. Needs `[tls]`. Off by default. An address that may be reachable from the internet is allowed, with a WARN at start. |
 | `server_name` | string | `"mimid.invalid"` | The name the IRC server gives itself: at most 63 characters, letters, digits, `-` and `.`, with at least one dot and no empty label. |
 
-The client's `PASS` is the token in `<state_dir>/agent-token`. There is no SASL.
+The client logs in with a credential (the token in `<state_dir>/agent-token`, or an app password) as its server password (`PASS`).
+
+### `[tls]`
+
+Where the certificate of the TLS listeners comes from (docs/design/frontend-auth.md §5). Needed by any `listen_tls`; absent by default.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `source` | `"files"` or `"tailscale"` | required | `files`: a PEM certificate chain and key you already have. `tailscale`: tailscaled's certificate for the machine's MagicDNS name, fetched over its LocalAPI. |
+| `names` | list of DNS names | `[]` | The names the certificate covers. The first is the name setup prints, and with `tailscale` the one asked for, which must then be the machine's `<machine>.<tailnet>.ts.net`. Required with `tailscale`. |
+
+`[tls.files]` has `cert` and `key`, PEM paths. The agent reads them at start, and again within a minute of either changing; open connections keep the certificate they started with.
+
+`[tls.tailscale]` has `socket`, tailscaled's LocalAPI socket, default `/var/run/tailscale/tailscaled.sock`. tailscaled hands certificates only to root, its operator user (`tailscale set --operator=$USER`) or the uid in `TS_PERMIT_CERT_UID`; the tailnet needs MagicDNS and HTTPS certificates turned on in its admin console. The agent asks again once a day.
+
+**`tailscale cert` makes your names public.** Every certificate a public CA issues is published in Certificate Transparency logs, which anyone can search, so the tailnet's name and the machine's name become public. The agent therefore asks first: run `mimid-agent <config.toml> setup tls`, which explains this and asks. A yes is kept in `<state_dir>/tailscale-cert-consent` with the names; without it, or after the names change, the agent refuses to start with `source = "tailscale"`. If you do not want the names public, use your own certificate with `source = "files"`.
+
+No warning is logged before the certificate expires; a client's refusal is what shows it.
 
 ### `[did_webvh]`
 
@@ -131,7 +149,7 @@ For the two loopback providers in [operating.md](operating.md#example-two-federa
 ## How clients connect
 
 - **JMAP Chat**: the Session is at `http://127.0.0.1:<port>/.well-known/jmap`, with `Authorization: Bearer <agent-token>`. The request's `Host` must be `127.0.0.1:<port>`, `[::1]:<port>` or `localhost:<port>`; any other gets `421`. This blocks DNS rebinding.
-- **IRC**: connect to the `[irc]` `listen` address and send the agent token with `PASS`.
+- **IRC**: connect to the `[irc]` `listen` address, or with TLS to `listen_tls`, and send a credential with `PASS`.
 
 ## Attachment links
 

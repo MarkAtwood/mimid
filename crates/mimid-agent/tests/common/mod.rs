@@ -277,11 +277,49 @@ pub fn config(server: &Server, user: &'static str, dir: &Path, invites: &str) ->
     .unwrap()
 }
 
+/// The test CA and server certificate (tests/fixtures/tls, made by its
+/// make.sh): the server's names are localhost, 127.0.0.1 and
+/// host.tailnet.ts.net.
+pub fn fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/tls")
+        .join(name)
+}
+
+/// A TLS connection to `addr` as `name`, trusting only the test CA.
+pub async fn tls_connect(
+    addr: SocketAddr,
+    name: &str,
+) -> std::io::Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>> {
+    use rustls::pki_types::pem::PemObject;
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls::pki_types::CertificateDer::pem_file_iter(fixture("ca.pem")).unwrap() {
+        roots.add(cert.unwrap()).unwrap();
+    }
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    let stream = tokio::net::TcpStream::connect(addr).await?;
+    connector
+        .connect(
+            rustls::pki_types::ServerName::try_from(name.to_owned()).unwrap(),
+            stream,
+        )
+        .await
+}
+
 /// A daemon serving in a task.
 pub struct Running {
     pub addr: SocketAddr,
     /// The IRC front end's address, with `[irc]`.
     pub irc: Option<SocketAddr>,
+    /// The IRC front end's TLS address, with `[irc] listen_tls`.
+    pub irc_tls: Option<SocketAddr>,
     pub state_dir: PathBuf,
     /// The daemon's store.
     pub store: Arc<mimid_agent_store::Store>,
@@ -295,6 +333,7 @@ impl Running {
         let daemon = Daemon::start(config).await.unwrap();
         let addr = daemon.local_addr().expect("the daemon listens for HTTP");
         let irc = daemon.irc_addr();
+        let irc_tls = daemon.irc_tls_addr();
         let store = Arc::clone(daemon.store());
         let (stop, stopped) = oneshot::channel::<()>();
         let task = tokio::spawn(daemon.serve(async move {
@@ -303,6 +342,7 @@ impl Running {
         Self {
             addr,
             irc,
+            irc_tls,
             state_dir: config.state_dir.clone(),
             store,
             stop,

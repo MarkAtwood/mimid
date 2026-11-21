@@ -4,7 +4,8 @@
 //! Usage: `mimid-agent <config.toml>` runs the daemon. `RUST_LOG` filters
 //! the log and defaults to `info`. SIGINT and SIGTERM stop it gracefully.
 //! `mimid-agent <config.toml> app-password list | add <name> | revoke
-//! <name> | rotate-token` manages the credentials ([`mimid_agent::cli`]).
+//! <name> | rotate-token` manages the credentials, and `setup tls` asks
+//! before the agent may use `tailscale cert` ([`mimid_agent::cli`]).
 //!
 //! # Limitations
 //!
@@ -23,7 +24,7 @@ use tracing_subscriber::EnvFilter;
 async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args_os().skip(1);
     let Some(config_path) = args.next().map(PathBuf::from) else {
-        bail!("usage: mimid-agent <config.toml> [app-password ...]");
+        bail!("usage: mimid-agent <config.toml> [app-password ... | setup ...]");
     };
     let rest: Vec<String> = args
         .map(|a| a.into_string())
@@ -34,7 +35,13 @@ async fn main() -> anyhow::Result<()> {
         let mut out = std::io::stdout().lock();
         return match command.as_str() {
             "app-password" => Ok(mimid_agent::cli::app_password(&config, words, &mut out)?),
-            _ => bail!("usage: mimid-agent <config.toml> [app-password ...]"),
+            "setup" => Ok(mimid_agent::cli::setup(
+                &config,
+                words,
+                &mut std::io::stdin().lock(),
+                &mut out,
+            )?),
+            _ => bail!("usage: mimid-agent <config.toml> [app-password ... | setup ...]"),
         };
     }
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());

@@ -4,9 +4,8 @@
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 use super::PATIENCE;
 
@@ -74,8 +73,8 @@ impl Msg {
 
 /// An IRC connection.
 pub struct Irc {
-    read: BufReader<OwnedReadHalf>,
-    write: OwnedWriteHalf,
+    read: BufReader<Box<dyn AsyncRead + Send + Unpin>>,
+    write: Box<dyn AsyncWrite + Send + Unpin>,
     /// Every line received, in order.
     pub seen: Vec<Msg>,
 }
@@ -83,12 +82,23 @@ pub struct Irc {
 impl Irc {
     pub async fn connect(addr: SocketAddr) -> Self {
         let stream = TcpStream::connect(addr).await.unwrap();
-        let (read, write) = stream.into_split();
+        Self::over(stream)
+    }
+
+    /// A connection over `stream`, plain or TLS.
+    pub fn over(stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> Self {
+        let (read, write) = tokio::io::split(stream);
         Self {
-            read: BufReader::new(read),
-            write,
+            read: BufReader::new(Box::new(read)),
+            write: Box::new(write),
             seen: Vec::new(),
         }
+    }
+
+    /// Connects with TLS to `addr` as `name`, trusting only the test CA
+    /// (tests/fixtures/tls).
+    pub async fn connect_tls(addr: SocketAddr, name: &str) -> Self {
+        Self::over(super::tls_connect(addr, name).await.unwrap())
     }
 
     /// Sends `line` with CR-LF.

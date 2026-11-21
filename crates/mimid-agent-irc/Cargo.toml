@@ -16,6 +16,9 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio = { version = "1.53.3", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+# The TLS listener (docs/design/frontend-auth.md §5); the daemon makes the
+# rustls configuration. The version mimid-server uses.
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["aws_lc_rs"] }
 tracing.workspace = true
 # The msgid of an edit: a ULID like the store's senderMsgId; the version
 # mimid-agent-store uses.

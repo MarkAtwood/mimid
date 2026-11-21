@@ -61,7 +61,9 @@
 //!
 //! # Limitations
 //!
-//! - Plain TCP on loopback only; no TLS.
+//! - The plain listener is loopback only; the TLS listener
+//!   ([`IrcOptions::listen_tls`]) takes any address. A TLS handshake must
+//!   end within [`HANDSHAKE_WITHIN`].
 //! - No private queries, attachments, history playback, chathistory,
 //!   labeled-response, batch, or sending edits or retractions from IRC
 //!   (§4 "Sending", §7).
@@ -103,12 +105,18 @@ pub const DEFAULT_PING_AFTER: Duration = Duration::from_secs(90);
 /// VALUE, NOT FROM SPEC.
 pub const DEFAULT_PONG_WITHIN: Duration = Duration::from_secs(90);
 
+/// How long a client has to finish the TLS handshake. INVENTED VALUE, NOT
+/// FROM SPEC.
+pub const HANDSHAKE_WITHIN: Duration = Duration::from_secs(10);
+
 /// How the IRC front end serves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct IrcOptions {
-    /// The loopback address to listen on.
+    /// The loopback address to listen on, plain.
     pub listen: SocketAddr,
+    /// An address of any kind to listen on with TLS; `None` for none.
+    pub listen_tls: Option<SocketAddr>,
     /// The name the server gives itself.
     pub server_name: String,
     /// See [`DEFAULT_PING_AFTER`].
@@ -118,11 +126,13 @@ pub struct IrcOptions {
 }
 
 impl IrcOptions {
-    /// Listening on `listen` as `server_name`, with the default keepalive.
+    /// Listening on `listen` as `server_name`, with the default keepalive,
+    /// and no TLS listener.
     #[must_use]
     pub fn new(listen: SocketAddr, server_name: impl Into<String>) -> Self {
         Self {
             listen,
+            listen_tls: None,
             server_name: server_name.into(),
             ping_after: DEFAULT_PING_AFTER,
             pong_within: DEFAULT_PONG_WITHIN,
@@ -138,6 +148,9 @@ pub enum IrcError {
     /// on loopback.
     #[error("IRC listen address {0} is not loopback")]
     NotLoopback(SocketAddr),
+    /// A TLS listener without a TLS configuration.
+    #[error("IRC listen_tls {0} has no certificate")]
+    NoTls(SocketAddr),
     /// The listen address could not be bound.
     #[error("binding the IRC listener on {addr}")]
     Bind {

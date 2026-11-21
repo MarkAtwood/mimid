@@ -10,6 +10,8 @@ use mimid_agent_store::{Change, Frontend, Store};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::rustls::ServerConfig;
 
 use crate::conn::{Shared, run, stopped};
 use crate::names::Names;
@@ -20,6 +22,8 @@ use mimid_agent_store::credentials::Credentials;
 pub struct IrcFrontEnd {
     listener: TcpListener,
     local_addr: SocketAddr,
+    /// The TLS listener, its address and its acceptor.
+    tls: Option<(TcpListener, SocketAddr, TlsAcceptor)>,
     shared: Arc<Shared>,
 }
 
@@ -81,12 +85,23 @@ impl Frontend for IrcExt {
     }
 }
 
+/// Accepts on the TLS listener, or never without one.
+async fn accept_tls(
+    tls: Option<&(TcpListener, SocketAddr, TlsAcceptor)>,
+) -> std::io::Result<(tokio::net::TcpStream, SocketAddr)> {
+    match tls {
+        Some((listener, _, _)) => listener.accept().await,
+        None => std::future::pending().await,
+    }
+}
+
 impl IrcFrontEnd {
     /// Binds `options.listen`, which must be loopback, and registers the
     /// front end on `store`: the names of every person and active room are
     /// read from the records, and those that have none are given one,
     /// written at the next save. A client logs in with one of
-    /// `credentials`.
+    /// `credentials`. With `options.listen_tls`, also binds that address,
+    /// of any kind, for TLS with `tls`.
     ///
     /// # Errors
     ///
@@ -95,6 +110,7 @@ impl IrcFrontEnd {
         store: Arc<Store>,
         options: IrcOptions,
         credentials: Arc<Credentials>,
+        tls: Option<Arc<ServerConfig>>,
     ) -> Result<Self, IrcError> {
         if !options.listen.ip().is_loopback() {
             return Err(IrcError::NotLoopback(options.listen));
@@ -105,6 +121,16 @@ impl IrcFrontEnd {
         };
         let listener = TcpListener::bind(options.listen).await.map_err(bind)?;
         let local_addr = listener.local_addr().map_err(bind)?;
+        let tls = match (options.listen_tls, tls) {
+            (Some(addr), Some(config)) => {
+                let bind = |source| IrcError::Bind { addr, source };
+                let listener = TcpListener::bind(addr).await.map_err(bind)?;
+                let local = listener.local_addr().map_err(bind)?;
+                Some((listener, local, TlsAcceptor::from(config)))
+            }
+            (Some(addr), None) => return Err(IrcError::NoTls(addr)),
+            (None, _) => None,
+        };
         let mut names = Names::new(store.user());
         names.load(&mut store.state());
         let names = Arc::new(Mutex::new(names));
@@ -115,6 +141,7 @@ impl IrcFrontEnd {
         Ok(Self {
             listener,
             local_addr,
+            tls,
             shared,
         })
     }
@@ -125,12 +152,45 @@ impl IrcFrontEnd {
         self.local_addr
     }
 
+    /// The TLS listener's address, if any.
+    #[must_use]
+    pub fn tls_addr(&self) -> Option<SocketAddr> {
+        self.tls.as_ref().map(|(_, addr, _)| *addr)
+    }
+
     /// Accepts connections until `stop` becomes true, then tells every
     /// connection the server is closing and waits for them to end.
     pub async fn serve(self, mut stop: watch::Receiver<bool>) {
         let mut connections = JoinSet::new();
         loop {
             tokio::select! {
+                accepted = accept_tls(self.tls.as_ref()) => match accepted {
+                    Ok((stream, peer)) => {
+                        let Some((_, _, acceptor)) = &self.tls else { continue };
+                        let acceptor = acceptor.clone();
+                        let shared = Arc::clone(&self.shared);
+                        let stop = stop.clone();
+                        connections.spawn(async move {
+                            match tokio::time::timeout(crate::HANDSHAKE_WITHIN, acceptor.accept(stream)).await {
+                                Ok(Ok(stream)) => {
+                                    tracing::debug!(peer = %peer, "IRC connection over TLS");
+                                    run(shared, stream, peer, stop).await;
+                                }
+                                Ok(Err(error)) => tracing::debug!(
+                                    peer = %peer,
+                                    error = &error as &dyn std::error::Error,
+                                    "IRC TLS handshake failed"
+                                ),
+                                Err(_) => tracing::debug!(peer = %peer, "IRC TLS handshake timed out"),
+                            }
+                        });
+                    }
+                    Err(error) => tracing::warn!(
+                        name: "agent_irc_accept_failed",
+                        error = &error as &dyn std::error::Error,
+                        "accepting an IRC TLS connection failed"
+                    ),
+                },
                 () = stopped(&mut stop) => break,
                 accepted = self.listener.accept() => match accepted {
                     Ok((stream, peer)) => {

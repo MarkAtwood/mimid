@@ -8,6 +8,7 @@
 //! | `app-password add <name>` | makes an app password and prints it, once |
 //! | `app-password revoke <name>` | revokes it: a running daemon closes its sessions within [`crate::CREDENTIAL_RECHECK`] |
 //! | `app-password rotate-token` | writes a new `agent-token` file; a running daemon closes the old token's sessions |
+//! | `setup tls` | with `[tls] source = "tailscale"`, explains that the names go into public Certificate Transparency logs and asks before the agent may use `tailscale cert` (decision A6) |
 //!
 //! The commands open `<state_dir>/mimid.sqlite` themselves, so they work
 //! whether or not the daemon runs; a running daemon notices the change
@@ -19,11 +20,13 @@
 //!   restarts: the running daemon keeps the link key it made from the old
 //!   token at start.
 
-use std::io::Write;
+use std::io::{BufRead, Write};
+use std::os::unix::fs::DirBuilderExt;
 
 use mimid_agent_store::credentials::{CredentialError, Credentials, describe};
 
 use crate::config::Config;
+use crate::tls::{TlsSource, consent_question, has_consent, record_consent};
 use crate::token::{LocalToken, TokenError};
 
 /// Why a command failed.
@@ -35,6 +38,9 @@ pub enum CliError {
         "usage: mimid-agent <config.toml> app-password list | add <name> | revoke <name> | rotate-token"
     )]
     Usage,
+    /// The arguments are not a `setup` command.
+    #[error("usage: mimid-agent <config.toml> setup tls")]
+    SetupUsage,
     /// The credential table refused or failed.
     #[error(transparent)]
     Credentials(#[from] CredentialError),
@@ -110,5 +116,92 @@ pub fn app_password(config: &Config, args: &[String], out: &mut dyn Write) -> Re
         }
         _ => return Err(CliError::Usage),
     }
+    Ok(())
+}
+
+/// Asks `question` on `out` and reads one line from `input`: whether the
+/// answer is `y` or `yes`, in any case.
+fn ask(question: &str, input: &mut dyn BufRead, out: &mut dyn Write) -> Result<bool, CliError> {
+    write!(out, "{question}")?;
+    out.flush()?;
+    let mut answer = String::new();
+    input.read_line(&mut answer)?;
+    let answer = answer.trim().to_ascii_lowercase();
+    Ok(answer == "y" || answer == "yes")
+}
+
+/// Decision A6: with `[tls] source = "tailscale"`, asks before the agent
+/// may use `tailscale cert`, unless the user agreed for these names
+/// already, and records a yes. Returns whether the agent may.
+fn tailscale_consent(
+    config: &Config,
+    input: &mut dyn BufRead,
+    out: &mut dyn Write,
+) -> Result<bool, CliError> {
+    let Some(tls) = &config.tls else {
+        return Ok(true);
+    };
+    if tls.source != TlsSource::Tailscale || has_consent(&config.state_dir, &tls.names) {
+        return Ok(true);
+    }
+    if ask(&consent_question(&tls.names), input, out)? {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&config.state_dir)?;
+        record_consent(&config.state_dir, &tls.names)?;
+        writeln!(
+            out,
+            "Recorded. The agent will ask tailscaled for the certificate at its next start."
+        )?;
+        Ok(true)
+    } else {
+        writeln!(
+            out,
+            "Not using tailscale cert. Set [tls] source = \"files\" with your own certificate, \
+             or run setup tls again."
+        )?;
+        Ok(false)
+    }
+}
+
+/// Runs `setup <words>` for `config`: `setup tls` asks the question of
+/// decision A6 if it is due.
+///
+/// # Errors
+///
+/// [`CliError`].
+pub fn setup(
+    config: &Config,
+    words: &[String],
+    input: &mut dyn BufRead,
+    out: &mut dyn Write,
+) -> Result<(), CliError> {
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    match words.as_slice() {
+        ["tls"] => setup_tls(config, input, out),
+        _ => Err(CliError::SetupUsage),
+    }
+}
+
+/// `setup tls`.
+fn setup_tls(
+    config: &Config,
+    input: &mut dyn BufRead,
+    out: &mut dyn Write,
+) -> Result<(), CliError> {
+    let Some(tls) = config
+        .tls
+        .as_ref()
+        .filter(|t| t.source == TlsSource::Tailscale)
+    else {
+        writeln!(out, "Nothing to ask: [tls] source is not \"tailscale\".")?;
+        return Ok(());
+    };
+    if has_consent(&config.state_dir, &tls.names) {
+        writeln!(out, "Already agreed for these names.")?;
+        return Ok(());
+    }
+    tailscale_consent(config, input, out)?;
     Ok(())
 }

@@ -1,0 +1,10 @@
+Made on 2026-11-21 by make.sh in this directory with OpenSSL 3.0.22:
+a P-256 CA (key not kept) and a server certificate from it for
+DNS:localhost, IP:127.0.0.1 and DNS:host.tailnet.ts.net, valid 36500
+days. Test-only keys; never use them elsewhere.
+
+SHA-256:
+85da63da9510ee6cd9839553571ff35191995a70ee8586a8f29e7c3ac4889cc9  ca.pem
+32c750257dcc3c75f480f89d4580d484dffafba7b46ae0c2e36fdd5e79233505  server.pem
+365c50c5c2f3cc12f80011978e98f7ae4e01acbf8ce12d575712639080888ab6  server.key
+68638f1c2bb9ab7d2b2560b233e88a161ac642f02ff379d7fb5abf902ed86d08  make.sh

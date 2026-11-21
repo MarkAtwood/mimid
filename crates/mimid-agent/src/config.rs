@@ -20,7 +20,15 @@
 //!
 //! [irc]                                   # optional; absent means no IRC
 //! listen = "127.0.0.1:6667"               # the default; loopback only
+//! listen_tls = "100.64.1.2:6697"          # optional; needs [tls]
 //! server_name = "mimid.invalid"           # the default
+//!
+//! [tls]                                   # needed by any listen_tls
+//! source = "files"                        # or "tailscale"
+//! names = ["chat.example.org"]            # the first is what setup prints
+//! [tls.files]
+//! cert = "/etc/ssl/chat/fullchain.pem"
+//! key = "/etc/ssl/chat/key.pem"
 //!
 //! [did_webvh]                             # optional; see below
 //! support = true                          # the default
@@ -91,6 +99,13 @@
 //! `server_name` is the name the server gives itself, at most
 //! [`MAX_IRC_SERVER_NAME_LEN`] letters, digits, `-` and `.`, with at least
 //! one dot so that clients do not read it as a nick (mimid-agent-irc).
+//!
+//! `[irc] listen_tls` adds a TLS listener for IRC on any address the user
+//! names, off by default (client-survey.md decision S1); it needs `[tls]`,
+//! which says where the certificate comes from (the `tls` module;
+//! docs/design/frontend-auth.md §5). The plain `listen` addresses stay
+//! loopback only. A TLS listener on a public address is allowed and gets
+//! a WARN at start (decision A9).
 //!
 //! With `[jmap] enabled = false` and no `[irc]`, the daemon would serve
 //! nothing, and the configuration is refused.
@@ -221,6 +236,10 @@ pub struct Config {
     /// The IRC front end; `None`, the default, for no IRC.
     #[serde(default)]
     pub irc: Option<IrcSetting>,
+    /// Where the TLS listeners' certificate comes from; needed by any
+    /// `listen_tls`.
+    #[serde(default)]
+    pub tls: Option<crate::tls::TlsSetting>,
 }
 
 /// The `[jmap]` table.
@@ -248,6 +267,9 @@ pub struct IrcSetting {
     /// The name the IRC server gives itself.
     #[serde(default = "default_irc_server_name")]
     pub server_name: String,
+    /// A TLS listener on any address, off by default; needs `[tls]`.
+    #[serde(default)]
+    pub listen_tls: Option<SocketAddr>,
 }
 
 impl Default for IrcSetting {
@@ -255,6 +277,7 @@ impl Default for IrcSetting {
         Self {
             listen: DEFAULT_IRC_LISTEN,
             server_name: DEFAULT_IRC_SERVER_NAME.to_owned(),
+            listen_tls: None,
         }
     }
 }
@@ -464,8 +487,15 @@ impl Config {
             if !is_irc_server_name(&irc.server_name) {
                 return Err(ConfigError::IrcServerName(irc.server_name.clone()));
             }
+            // S1: no listener off loopback without TLS.
+            if irc.listen_tls.is_some() && self.tls.is_none() {
+                return Err(ConfigError::NoTls("[irc] listen_tls"));
+            }
         } else if !self.jmap.enabled {
             return Err(ConfigError::NothingServed);
+        }
+        if let Some(tls) = &self.tls {
+            tls.check().map_err(ConfigError::Tls)?;
         }
         Ok(())
     }
@@ -571,6 +601,13 @@ pub enum ConfigError {
     /// JMAP is off and there is no `[irc]`: the daemon would serve nothing.
     #[error("[jmap] enabled = false with no [irc]: the agent would serve nothing")]
     NothingServed,
+    /// A TLS listener is configured without `[tls]` (client-survey.md
+    /// decision S1).
+    #[error("{0} needs [tls], which says where the certificate comes from")]
+    NoTls(&'static str),
+    /// `[tls]` is incomplete.
+    #[error("{0}")]
+    Tls(&'static str),
 }
 
 #[cfg(test)]
@@ -713,6 +750,7 @@ mod tests {
             Some(IrcSetting {
                 listen: "[::1]:6697".parse().unwrap(),
                 server_name: "irc.alice.example".to_owned(),
+                listen_tls: None,
             })
         );
         for name in [

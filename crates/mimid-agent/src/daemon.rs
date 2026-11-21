@@ -33,6 +33,8 @@ pub struct Daemon {
     http: Option<Http>,
     /// The IRC front end, with `[irc]`.
     irc: Option<IrcFrontEnd>,
+    /// The TLS certificate source, with `[tls]`.
+    tls: Option<Arc<crate::tls::Tls>>,
     /// The plaintext store the front ends share; its sync is the loop's.
     store: Arc<Store>,
     /// The credentials every front end checks logins against.
@@ -114,6 +116,9 @@ pub enum StartError {
         #[source]
         source: std::io::Error,
     },
+    /// The TLS certificate could not be had (`[tls]`).
+    #[error("TLS")]
+    Tls(#[from] crate::tls::TlsError),
     /// The IRC front end could not start (`[irc].listen`).
     #[error("starting the IRC front end")]
     Irc(#[from] mimid_agent_irc::IrcError),
@@ -168,6 +173,14 @@ impl Daemon {
             &config.state_dir.join(mimid_agent_core::DATABASE_FILE),
         )?);
         credentials.set_agent_token(token.as_bytes())?;
+        // docs/design/frontend-auth.md §5; decision A6 is checked here
+        // for the tailscale source.
+        let tls = match &config.tls {
+            Some(setting) => Some(Arc::new(
+                crate::tls::Tls::start(setting, &config.state_dir).await?,
+            )),
+            None => None,
+        };
         let push = agent.push_source()?;
         let stream_wake = agent.stream_wake();
         let listener = match config.listen {
@@ -245,11 +258,17 @@ impl Daemon {
                 // docs/design/frontend-auth.md §4.1: the IRC client's PASS
                 // is any credential; the one check at the IRC boundary
                 // (AGENTS.md).
+                let mut options = IrcOptions::new(setting.listen, setting.server_name.clone());
+                options.listen_tls = setting.listen_tls;
+                if let Some(addr) = setting.listen_tls {
+                    crate::tls::warn_if_public("irc", addr);
+                }
                 Some(
                     IrcFrontEnd::bind(
                         Arc::clone(&store),
-                        IrcOptions::new(setting.listen, setting.server_name.clone()),
+                        options,
                         Arc::clone(&credentials),
+                        tls.as_ref().map(|t| t.server_config()),
                     )
                     .await?,
                 )
@@ -259,6 +278,7 @@ impl Daemon {
         Ok(Self {
             http,
             irc,
+            tls,
             store,
             credentials,
             stop,
@@ -287,6 +307,12 @@ impl Daemon {
     /// The address the IRC front end listens on; `None` without `[irc]`.
     pub fn irc_addr(&self) -> Option<SocketAddr> {
         self.irc.as_ref().map(IrcFrontEnd::local_addr)
+    }
+
+    /// The address of the IRC front end's TLS listener; `None` without
+    /// `[irc] listen_tls`.
+    pub fn irc_tls_addr(&self) -> Option<SocketAddr> {
+        self.irc.as_ref().and_then(IrcFrontEnd::tls_addr)
     }
 
     /// The plaintext store the front ends share. Its sync is the daemon's
@@ -323,6 +349,7 @@ impl Daemon {
             jmap,
             irc = self.irc.is_some(),
             irc_listen = %self.irc_addr().map_or_else(|| "none".to_owned(), |a| a.to_string()),
+            irc_listen_tls = %self.irc_tls_addr().map_or_else(|| "none".to_owned(), |a| a.to_string()),
             user = %self.user_uri,
             server_url = %self.server_url,
             "mimid-agent listening"
@@ -346,6 +373,10 @@ impl Daemon {
             self.log_watch,
         ));
         let expiry = tokio::spawn(expiry_loop(Arc::clone(&self.store), stop.subscribe()));
+        let reload = self
+            .tls
+            .as_ref()
+            .map(|tls| tokio::spawn(Arc::clone(tls).reload_loop(stop.subscribe())));
         let recheck = tokio::spawn(recheck_credentials(
             Arc::clone(&self.credentials),
             stop.subscribe(),
@@ -407,6 +438,7 @@ impl Daemon {
             ("sync loop", Some(sync)),
             ("expiry loop", Some(expiry)),
             ("credential recheck", Some(recheck)),
+            ("certificate reload", reload),
             ("push", push),
             ("feed", feed),
             ("IRC front end", irc),

@@ -14,8 +14,7 @@ use std::time::Duration;
 
 use mimid_agent_store::Store;
 use mimid_agent_store::record::Key;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Instant;
 
@@ -400,13 +399,15 @@ pub(crate) fn one_line(text: &str) -> String {
 }
 
 /// Serves one connection until it closes or `stop` becomes true.
-pub(crate) async fn run(
+pub(crate) async fn run<S>(
     shared: Arc<Shared>,
-    stream: TcpStream,
+    stream: S,
     peer: SocketAddr,
     mut stop: watch::Receiver<bool>,
-) {
-    let (read, mut write) = stream.into_split();
+) where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    let (read, mut write) = tokio::io::split(stream);
     let (lines, mut incoming) = mpsc::channel(READ_AHEAD);
     let reader = tokio::spawn(read_lines(read, lines));
     let ping_after = shared.ping_after;
@@ -493,7 +494,7 @@ pub(crate) async fn run(
 /// Reads lines from `read` into `lines` until the end of input: each line
 /// ends at LF, with a CR before it dropped. A line past [`MAX_READ`]
 /// octets is dropped whole and handed over as [`Incoming::TooLong`].
-async fn read_lines(read: impl AsyncRead + Unpin, lines: mpsc::Sender<Incoming>) {
+async fn read_lines(read: impl AsyncRead + Unpin + Send, lines: mpsc::Sender<Incoming>) {
     let mut read = BufReader::new(read);
     let mut line = Vec::new();
     let mut too_long = false;

@@ -75,9 +75,11 @@
 //!
 //! # Configuration and the local token
 //!
-//! [`Config`] is the TOML file (see the `config` module). The listen
-//! address must be loopback, or the daemon refuses to start: the endpoint
-//! serves plaintext. On first start the daemon makes a random local bearer
+//! [`Config`] is the TOML file (see the `config` module). The plain listen
+//! addresses must be loopback, or the daemon refuses to start: they serve
+//! plaintext. IRC can also listen with TLS on any address
+//! (`[irc] listen_tls`), with the certificate `[tls]` names ([`tls`];
+//! client-survey.md decision S1). On first start the daemon makes a random local bearer
 //! token in `<state_dir>/agent-token` ([`token::TOKEN_FILE`], mode 0600)
 //! and reuses it afterwards; every request, on every path, must carry
 //! `Authorization: Bearer <that token>` and is otherwise `401`. Clients
@@ -173,6 +175,7 @@ mod daemon;
 pub mod didwebvh;
 mod http;
 mod push;
+pub mod tls;
 pub mod token;
 
 pub use config::{Config, ConfigError, Invites, IrcSetting, JmapSetting};
