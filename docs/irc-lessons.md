@@ -17,6 +17,15 @@ from Mark Atwood's two IRC servers in Go:
   checked against HEAD.
 - **Unverified:** items marked *unverified* are client behaviour that
   neither repo records. Check them against real clients.
+- **Checked against mimid-agent-irc (2026-11-21):** irssi 1.4.3, two
+  clients driven through tmux against the acceptance fixture
+  (`acceptance_fixture --irc`): registration and the nick change after
+  001, CAP (irssi asked only for server-time), JOIN and channel sync,
+  INVITE by user URI, PRIVMSG both ways with non-ASCII text, `/me`, a
+  channel NOTICE (relayed as a plain message), WHOIS, PART, QUIT. irssi
+  splits a long line itself before sending. Not checked: autojoin after
+  422, the hostmask from 001, a one-burst CAP END (irssi waits for the
+  LS reply), WeeChat and HexChat.
 
 ## Must do
 
@@ -55,7 +64,8 @@ from Mark Atwood's two IRC servers in Go:
     forever.
   - tailircd closed on a 5-minute read deadline without probing.
 - Answer PING with `:server PONG server :token`. irssi matches the last
-  parameter (*unverified*), and tailircd's bare `PONG token` was wrong.
+  parameter (irssi 1.4.3 took `:server PONG server :server` as its lag
+  pong, checked 2026-11-21), and tailircd's bare `PONG token` was wrong.
 
 ### Line length and encoding
 
@@ -102,7 +112,9 @@ from Mark Atwood's two IRC servers in Go:
   remote users in NAMES, so they spoke without being in the nick list.
 - **WHO and WHOIS:**
   - WHO always ends with 315, even for an unknown mask. Clients send
-    `WHO #c` on join (*unverified*).
+    `WHO #c` on join: irssi 1.4.3 sends `MODE #c`, `WHO #c` and
+    `MODE #c b` on every join and reports the channel synced only once
+    324, 315 and 368 have come (checked 2026-11-21).
   - WHOIS always ends with 318, including 401 then 318 for an unknown nick.
 - **Also implement:** NAMES, PART, QUIT (`ERROR :Closing Link` before
   closing), TOPIC, AWAY (305, 306 and 301), and ISON or USERHOST.
