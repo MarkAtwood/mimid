@@ -1,0 +1,26 @@
+{
+  "id": "mimid-e13m.2",
+  "title": "auth 2: app-password CLI and revocation of open sessions",
+  "description": "mimid-agent \u003cconfig\u003e app-password list/add/revoke/rotate-token; data_version watch; close IRC connections and EventSource streams of a revoked credential. Before IRC v2. Design: docs/design/frontend-auth.md §3.6, §3.7, §9 step 2.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T22:49:44.240913302Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T22:49:44.240913302Z",
+  "labels": [
+    "agent",
+    "auth"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-e13m.2",
+      "depends_on_id": "mimid-e13m",
+      "type": "parent-child",
+      "created_at": "2026-11-21T22:49:44.281062145Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
