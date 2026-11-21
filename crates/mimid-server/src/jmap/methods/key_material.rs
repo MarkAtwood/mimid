@@ -24,6 +24,13 @@
 //! present), and as `response`, the unpadded base64url of the whole
 //! KeyMaterialResponse exactly as the provider answered (findings log
 //! F5), so a client need not rebuild it from the split fields.
+//!
+//! An account that calls it more often than the server's limit allows
+//! gets the method-level error `rateLimited` with `retryAfter`, before
+//! anything is checked or relayed (draft-atwood-jmap-chat-mimi-00
+//! §capability and §Security Considerations, "Servers SHOULD rate-limit
+//! key material requests per requester"; [`crate::jmap::rate`]; bead
+//! mimid-e64f.21).
 
 use std::sync::Arc;
 
@@ -41,6 +48,7 @@ use crate::follower::relay::RelayError;
 use crate::follower::{Follower, FollowerError};
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
+use crate::jmap::rate::RateLimiter;
 use crate::peer::PeerError;
 use crate::store::Store;
 
@@ -51,6 +59,7 @@ pub(super) fn register(methods: &mut Methods, services: &Services) {
         Arc::new(Handler {
             follower: Arc::clone(&services.follower),
             store: services.store.clone(),
+            limiter: services.key_material_limiter.clone(),
         }),
     );
 }
@@ -58,6 +67,7 @@ pub(super) fn register(methods: &mut Methods, services: &Services) {
 struct Handler {
     follower: Arc<Follower>,
     store: Store,
+    limiter: Option<RateLimiter>,
 }
 
 impl JmapHandler<Account> for Handler {
@@ -65,8 +75,9 @@ impl JmapHandler<Account> for Handler {
         let CallContext { args, caller, .. } = cx;
         let follower = Arc::clone(&self.follower);
         let store = self.store.clone();
+        let limiter = self.limiter.clone();
         Box::pin(async move {
-            fetch(&follower, &store, &caller, args)
+            fetch(&follower, &store, limiter.as_ref(), &caller, args)
                 .await
                 .map(HandlerOutput::new)
         })
@@ -146,10 +157,14 @@ fn client(material: &ClientKeyMaterial) -> Result<Value, mimi_mls::tls_codec::Er
 pub(crate) async fn fetch_core(
     follower: &Follower,
     store: &Store,
+    limiter: Option<&RateLimiter>,
     caller: &Account,
     room_id: &str,
     request: &[u8],
 ) -> Result<Vec<u8>, JmapError> {
+    if let Some(limiter) = limiter {
+        limiter.check("KeyMaterial/fetch", caller.account_id())?;
+    }
     super::room_common::check_mls_object("KeyMaterial/fetch", "request", request)?;
     let decoded = KeyMaterialRequest::tls_deserialize_exact(request)
         .map_err(|_| invalid("request is not a KeyMaterialRequest"))?;
@@ -202,6 +217,7 @@ pub(crate) async fn fetch_core(
 async fn fetch(
     follower: &Follower,
     store: &Store,
+    limiter: Option<&RateLimiter>,
     caller: &Account,
     args: Value,
 ) -> Result<Value, JmapError> {
@@ -224,7 +240,7 @@ async fn fetch(
     let request = URL_SAFE_NO_PAD
         .decode(request)
         .map_err(|_| invalid("request is not unpadded base64url"))?;
-    let bytes = fetch_core(follower, store, caller, room_id, &request).await?;
+    let bytes = fetch_core(follower, store, limiter, caller, room_id, &request).await?;
     let response =
         KeyMaterialResponse::tls_deserialize_exact(&bytes[..]).map_err(|e| server_fail(&e))?;
     let clients = response

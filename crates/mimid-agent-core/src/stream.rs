@@ -365,13 +365,35 @@ impl Stream {
     }
 
     /// `op`, answered: the `Ack`'s result, or the `Error` as the JMAP
-    /// error of `method`.
+    /// error of `method`. A `rateLimited` answer is waited out and the
+    /// request sent again, as on JMAP
+    /// ([`crate::client::rate_limited_wait`]; bead mimid-e64f.21).
     pub async fn call(
         &self,
         method: &str,
         op: Op,
     ) -> Result<Result<AckResult, ErrorMessage>, AgentError> {
-        self.connection().await?.call(method, op).await
+        let mut attempt = 0;
+        loop {
+            let answer = self.connection().await?.call(method, op.clone()).await?;
+            let wait = match &answer {
+                Err(error) if error.code == mimid_live::code::RATE_LIMITED => {
+                    crate::client::rate_limited_wait(attempt, error.retry_after)
+                }
+                _ => None,
+            };
+            let Some(wait) = wait else {
+                return Ok(answer);
+            };
+            tracing::info!(
+                name: "agent_rate_limited",
+                method,
+                wait_ms = u64::try_from(wait.as_millis()).unwrap_or(u64::MAX),
+                "the server asked this agent to slow down; sending again after the wait"
+            );
+            tokio::time::sleep(wait).await;
+            attempt += 1;
+        }
     }
 
     /// `op`, whose `Error` is an error.

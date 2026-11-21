@@ -629,6 +629,11 @@ fn method_error(error: &JmapError) -> ErrorMessage {
         .unwrap_or_else(|| code::SERVER_FAIL.to_owned());
     ErrorMessage {
         detail: error.description.clone(),
+        // rateLimited (jmap-chat-spec 43ee02c; bead mimid-e64f.21).
+        retry_after: error
+            .extra
+            .get("retryAfter")
+            .and_then(serde_json::Value::as_u64),
         ..ErrorMessage::new(None, &code)
     }
 }
@@ -818,9 +823,16 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
             }
         }
         Op::FetchKeyMaterial { room, request } => {
-            let response = key_material::fetch_core(follower, store, account, &room, &request)
-                .await
-                .map_err(jmap)?;
+            let response = key_material::fetch_core(
+                follower,
+                store,
+                inner.key_material_limiter.as_ref(),
+                account,
+                &room,
+                &request,
+            )
+            .await
+            .map_err(jmap)?;
             // As the JMAP method: a response that does not decode is the
             // server's failure.
             KeyMaterialResponse::tls_deserialize_exact(&response[..])

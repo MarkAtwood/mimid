@@ -87,6 +87,11 @@ async fn server(on: bool) -> Server {
     let mut options = JmapOptions::default();
     options.live_stream = on;
     options.message_retention = Some(3600);
+    // Two KeyMaterial/fetch calls, then one an hour (bead mimid-e64f.21).
+    options.key_material_limit = Some(mimid_server::jmap::rate::RateLimit {
+        burst: 2,
+        refill_ms: 3_600_000,
+    });
     let jmap = jmap::router(
         &base,
         store.clone(),
@@ -710,5 +715,87 @@ async fn replay(socket: &mut Socket) -> (Vec<String>, String) {
             },
             other => panic!("{other:?}"),
         }
+    }
+}
+
+/// Bead mimid-e64f.21: past the account's KeyMaterial/fetch limit, both
+/// bindings answer `rateLimited` with `retryAfter`, from one bucket the
+/// account shares between them. Oracle: draft-atwood-jmap-chat-mimi-00
+/// §capability (jmap-chat-spec 43ee02c) and the limit the server was
+/// given (2, then one an hour).
+#[tokio::test]
+async fn key_material_over_the_limit_is_rate_limited_on_both_bindings() {
+    let server = server(true).await;
+    let client = reqwest::Client::new();
+    let session: serde_json::Value = client
+        .get(format!("{}/.well-known/jmap", server.base))
+        .bearer_auth(server.token.expose_secret())
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .map(|b| serde_json::from_slice(&b).unwrap())
+        .unwrap();
+    let account = session["primaryAccounts"]["urn:ietf:params:jmap:chat:mimi"].clone();
+    let fetch = || async {
+        let answer: serde_json::Value = client
+            .post(format!("{}/jmap/api", server.base))
+            .bearer_auth(server.token.expose_secret())
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({
+                    "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat:mimi"],
+                    "methodCalls": [["KeyMaterial/fetch", {
+                        "accountId": account,
+                        "roomId": "mimi://a.example/r/x",
+                        "request": "AAAA",
+                    }, "c"]],
+                })
+                .to_string(),
+            )
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .map(|b| serde_json::from_slice(&b).unwrap())
+            .unwrap();
+        answer["methodResponses"][0].clone()
+    };
+    // Within the limit, the call is checked as before.
+    for _ in 0..2 {
+        let answer = fetch().await;
+        assert_eq!(answer[1]["type"], "invalidArguments", "{answer}");
+    }
+    let answer = fetch().await;
+    assert_eq!(answer[0], "error", "{answer}");
+    assert_eq!(answer[1]["type"], "rateLimited", "{answer}");
+    let retry_after = answer[1]["retryAfter"].as_u64().unwrap();
+    assert!((3599..=3600).contains(&retry_after), "{answer}");
+
+    let mut socket = server.open().await;
+    send(
+        &mut socket,
+        &request(
+            7,
+            Op::FetchKeyMaterial {
+                room: "mimi://a.example/r/x".to_owned(),
+                request: vec![0; 3],
+            },
+        ),
+    )
+    .await;
+    match receive(&mut socket, Some(OpKind::FetchKeyMaterial)).await {
+        Some(ProviderMessage::Error(error)) => {
+            assert_eq!(error.id, Some(7));
+            assert_eq!(error.code, code::RATE_LIMITED);
+            assert!(
+                error
+                    .retry_after
+                    .is_some_and(|s| (3599..=3600).contains(&s))
+            );
+        }
+        other => panic!("{other:?}"),
     }
 }

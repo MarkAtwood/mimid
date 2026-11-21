@@ -249,7 +249,13 @@ stream's own codes are `badMessage`, `unsupportedVersion`,
 `serverFail`.
 
 At most 16 requests may be outstanding on one connection (INVENTED);
-one more is answered with `rateLimited`. JMAP's limit is 4 requests in
+one more is answered with `rateLimited`, without `retryAfter`, since the
+wait depends on the other requests. A request over the account's
+`KeyMaterial/fetch` limit, which the stream shares with JMAP
+(crates/mimid-server/src/jmap/rate.rs; bead mimid-e64f.21), is
+`rateLimited` with `retryAfter`, as on JMAP. The agent waits it out,
+1 s when `retryAfter` is absent, at most 30 s and three times, then
+reports the error. JMAP's limit is 4 requests in
 flight per account (crates/mimid-server/src/jmap/api.rs:72), each
 carrying one method call here.
 
@@ -542,7 +548,9 @@ Error = {
   ? "errorDescription": tstr,     ; a refused Update: the hub's text
   ? "status": uint,        ; refused: another provider's HTTP status
   ? "properties": [* tstr],       ; invalidProperties
-  ? "existingId": tstr     ; alreadyExists
+  ? "existingId": tstr,    ; alreadyExists
+  ? "retryAfter": uint     ; rateLimited: seconds (the draft's
+                           ; retryAfter; bead mimid-e64f.21)
 }
 
 ; ---- unsolicited, after a Subscribe ----

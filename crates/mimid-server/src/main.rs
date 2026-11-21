@@ -254,6 +254,8 @@ async fn main() -> anyhow::Result<()> {
     // Messages expire (decision mimid-1wgh.82): the sweep runs until exit,
     // and the Session and the live stream say when (messageRetention).
     jmap_options.message_retention = config.message_retention_secs.seconds();
+    // Bead mimid-e64f.21.
+    jmap_options.key_material_limit = config.key_material_rate.limit();
     let _message_sweep = config.message_retention_secs.seconds().map(|seconds| {
         mimid_server::retention::MessageSweeper::new(
             store.clone(),

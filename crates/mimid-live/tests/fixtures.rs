@@ -285,6 +285,19 @@ fn error_epoch_too_old() {
     );
 }
 
+/// Bead mimid-e64f.21: `retryAfter`.
+#[test]
+fn error_rate_limited() {
+    provider(
+        "error-rate-limited.hex",
+        None,
+        ProviderMessage::Error(ErrorMessage {
+            retry_after: Some(2),
+            ..ErrorMessage::new(Some(7), mimid_live::code::RATE_LIMITED)
+        }),
+    );
+}
+
 #[test]
 fn deliver() {
     provider(

@@ -52,6 +52,7 @@ mod live;
 pub mod metadata;
 mod methods;
 pub mod projection;
+pub mod rate;
 pub mod session;
 
 use std::sync::Arc;
@@ -144,6 +145,10 @@ pub struct JmapOptions {
     /// router does not sweep. `None` (the default): `messageRetention` is
     /// left out, as for a server that keeps Messages forever.
     pub message_retention: Option<u64>,
+    /// The per-account limit on `KeyMaterial/fetch`, on both bindings
+    /// ([`rate`]; bead mimid-e64f.21), or `None` for none.
+    /// [`rate::DEFAULT_KEY_MATERIAL_LIMIT`] by default.
+    pub key_material_limit: Option<rate::RateLimit>,
     /// Whether to serve the live stream at [`mimid_live::PATH`]
     /// (module `live`; decision mimid-1wgh.80). `false` by default.
     pub live_stream: bool,
@@ -157,6 +162,7 @@ impl std::fmt::Debug for JmapOptions {
             .field("blob_quota", &self.blob_quota)
             .field("asset_lifetime", &self.asset_lifetime)
             .field("message_retention", &self.message_retention)
+            .field("key_material_limit", &self.key_material_limit)
             .field("live_stream", &self.live_stream)
             .finish_non_exhaustive()
     }
@@ -171,6 +177,7 @@ impl Default for JmapOptions {
             blob_quota: BlobQuota::default(),
             asset_lifetime: None,
             message_retention: None,
+            key_material_limit: Some(rate::DEFAULT_KEY_MATERIAL_LIMIT),
             live_stream: false,
         }
     }
@@ -210,6 +217,8 @@ struct Inner {
     asset_lifetime: Option<u64>,
     /// `messageRetention`.
     message_retention: Option<u64>,
+    /// The `KeyMaterial/fetch` limit both bindings share.
+    key_material_limiter: Option<rate::RateLimiter>,
 }
 
 impl FromRef<JmapState> for Authenticator {
@@ -259,6 +268,10 @@ pub fn router(
     }
     let authenticator = Authenticator::new(store.clone(), hub.domain().clone());
     let projection = Arc::new(projection::Projection::new(store.clone(), Arc::clone(&hub)));
+    let key_material_limiter = options
+        .key_material_limit
+        .filter(|limit| limit.burst > 0)
+        .map(|limit| rate::RateLimiter::new(limit, Arc::clone(&options.clock)));
     let mut methods = Methods::new();
     methods::register_all(
         &mut methods,
@@ -272,6 +285,7 @@ pub fn router(
             clock: Arc::clone(&options.clock),
             blob_quota: options.blob_quota,
             asset_lifetime: options.asset_lifetime,
+            key_material_limiter: key_material_limiter.clone(),
         },
     );
     let state = JmapState(Arc::new(Inner {
@@ -294,6 +308,7 @@ pub fn router(
         hub_sender,
         asset_lifetime: options.asset_lifetime,
         message_retention: options.message_retention,
+        key_material_limiter,
     }));
     let mut router = Router::new();
     if options.live_stream {

@@ -59,6 +59,31 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 /// The start of an error body kept in [`AgentError::Status`].
 const MAX_ERROR_BODY: usize = 512;
 
+/// How often a call answered `rateLimited` is made again before the
+/// error is the caller's (draft-atwood-jmap-chat-mimi-00 §capability: "A
+/// client that receives `rateLimited` waits before it calls again, at
+/// least `retryAfter` seconds when it is present"; bead mimid-e64f.21).
+/// INVENTED, NOT FROM SPEC, as the two bounds below.
+pub(crate) const RATE_LIMITED_RETRIES: u32 = 3;
+
+/// The wait before calling again after a `rateLimited` without
+/// `retryAfter`.
+pub(crate) const RATE_LIMITED_DEFAULT_WAIT: Duration = Duration::from_secs(1);
+
+/// The longest wait after a `rateLimited`: a longer `retryAfter` is the
+/// caller's error at once, not a wait.
+pub(crate) const RATE_LIMITED_MAX_WAIT: Duration = Duration::from_secs(30);
+
+/// How long to wait after the `rateLimited` answer number `attempt`
+/// (from 0) with `retry_after`, or `None` to give up.
+pub(crate) fn rate_limited_wait(attempt: u32, retry_after: Option<u64>) -> Option<Duration> {
+    if attempt >= RATE_LIMITED_RETRIES {
+        return None;
+    }
+    let wait = retry_after.map_or(RATE_LIMITED_DEFAULT_WAIT, Duration::from_secs);
+    (wait <= RATE_LIMITED_MAX_WAIT).then_some(wait)
+}
+
 /// A deterministic 64-bit digest of an MLSMessage's bytes: SipHash with
 /// fixed keys, the same in every run. Enough to recognise one's own
 /// messages among a room's.
@@ -221,9 +246,46 @@ impl Jmap {
             .transpose()
     }
 
-    /// One method call; its response arguments, or the method error.
+    /// One method call; its response arguments, or the method error. A
+    /// `rateLimited` answer is waited out and the call made again
+    /// ([`rate_limited_wait`]).
     async fn call(&self, method: &str, mut args: Value) -> Result<Value, AgentError> {
         args["accountId"] = json!(self.account_id);
+        let mut attempt = 0;
+        loop {
+            match self.call_once(method, &args).await? {
+                Ok(answer) => return Ok(answer),
+                Err(error) => {
+                    let wait = (error["type"] == "rateLimited")
+                        .then(|| rate_limited_wait(attempt, error["retryAfter"].as_u64()))
+                        .flatten();
+                    let Some(wait) = wait else {
+                        return Err(AgentError::Method {
+                            method: method.to_owned(),
+                            kind: error["type"].as_str().unwrap_or("error").to_owned(),
+                            description: error["description"].as_str().unwrap_or("").to_owned(),
+                        });
+                    };
+                    tracing::info!(
+                        name: "agent_rate_limited",
+                        method,
+                        wait_ms = u64::try_from(wait.as_millis()).unwrap_or(u64::MAX),
+                        "the server asked this agent to slow down; calling again after the wait"
+                    );
+                    tokio::time::sleep(wait).await;
+                    attempt += 1;
+                }
+            }
+        }
+    }
+
+    /// One method call, once: its response arguments, or the method
+    /// error object.
+    async fn call_once(
+        &self,
+        method: &str,
+        args: &Value,
+    ) -> Result<Result<Value, Value>, AgentError> {
         let mut using = USING.to_vec();
         if self.chat_metadata {
             using.push(METADATA);
@@ -244,13 +306,9 @@ impl Jmap {
         let value = read_json(method, response).await?;
         let call = &value["methodResponses"][0];
         if call[0] == "error" {
-            return Err(AgentError::Method {
-                method: method.to_owned(),
-                kind: call[1]["type"].as_str().unwrap_or("error").to_owned(),
-                description: call[1]["description"].as_str().unwrap_or("").to_owned(),
-            });
+            return Ok(Err(call[1].clone()));
         }
-        Ok(call[1].clone())
+        Ok(Ok(call[1].clone()))
     }
 
     /// A /set call; the first SetError is an error.
@@ -1122,6 +1180,20 @@ pub(crate) fn expand_template(template: &str, vars: &[(&str, &str)]) -> Result<S
 mod tests {
 
     /// RFC 8620 §1.3: an UnsignedInt is an integer in 0..=2^53-1.
+    /// Bead mimid-e64f.21: `retryAfter` as given, 1 s without it,
+    /// bounded in length and in number of retries.
+    #[test]
+    fn rate_limited_waits_are_bounded() {
+        assert_eq!(rate_limited_wait(0, Some(2)), Some(Duration::from_secs(2)));
+        assert_eq!(rate_limited_wait(0, None), Some(RATE_LIMITED_DEFAULT_WAIT));
+        assert_eq!(
+            rate_limited_wait(2, Some(30)),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(rate_limited_wait(0, Some(31)), None);
+        assert_eq!(rate_limited_wait(RATE_LIMITED_RETRIES, Some(1)), None);
+    }
+
     #[test]
     fn asset_lifetime_is_an_unsigned_int_or_absent() {
         use super::parse_asset_lifetime as parse;

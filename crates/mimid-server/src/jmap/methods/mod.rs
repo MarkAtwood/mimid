@@ -41,6 +41,8 @@ pub(crate) struct Services {
     pub(crate) blob_quota: BlobQuota,
     /// How long a blob lives, in seconds (`JmapOptions::asset_lifetime`).
     pub(crate) asset_lifetime: Option<u64>,
+    /// The `KeyMaterial/fetch` limit ([`crate::jmap::rate`]).
+    pub(crate) key_material_limiter: Option<crate::jmap::rate::RateLimiter>,
 }
 
 /// Registers every method file's handlers.

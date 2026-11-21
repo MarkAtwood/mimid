@@ -15,6 +15,13 @@
 //! [peers]
 //! "b.example" = "http://127.0.0.1:9080"
 //!
+//! # Optional: how often an account may call KeyMaterial/fetch, on JMAP and
+//! # the live stream (crate::jmap::rate): a burst, then one call each
+//! # refill_ms. burst = 0 sets no limit. These are the defaults.
+//! [key_material_rate]
+//! burst = 30
+//! refill_ms = 1000
+//!
 //! # Optional: how peers prove who they are (crate::provider_auth).
 //! [provider_auth]
 //! mode = "enforce"        # the default for every provider
@@ -203,6 +210,41 @@ pub struct Config {
     /// `messageRetention`, and leave that out when it is unlimited.
     #[serde(default)]
     pub message_retention_secs: crate::retention::MessageRetention,
+    /// How often an account may call `KeyMaterial/fetch` (bead
+    /// mimid-e64f.21; [`crate::jmap::rate`]). Defaults to
+    /// [`crate::jmap::rate::DEFAULT_KEY_MATERIAL_LIMIT`]; a `burst` of 0
+    /// sets no limit.
+    #[serde(default = "default_key_material_rate")]
+    pub key_material_rate: KeyMaterialRate,
+}
+
+/// The `[key_material_rate]` table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeyMaterialRate {
+    /// Calls an account may make at once; 0 for no limit.
+    pub burst: u32,
+    /// Milliseconds after which one more call is allowed.
+    pub refill_ms: u64,
+}
+
+impl KeyMaterialRate {
+    /// The limit for [`crate::jmap::JmapOptions::key_material_limit`].
+    #[must_use]
+    pub fn limit(self) -> Option<crate::jmap::rate::RateLimit> {
+        (self.burst > 0).then_some(crate::jmap::rate::RateLimit {
+            burst: self.burst,
+            refill_ms: self.refill_ms,
+        })
+    }
+}
+
+fn default_key_material_rate() -> KeyMaterialRate {
+    let limit = crate::jmap::rate::DEFAULT_KEY_MATERIAL_LIMIT;
+    KeyMaterialRate {
+        burst: limit.burst,
+        refill_ms: limit.refill_ms,
+    }
 }
 
 /// The `[did_webvh]` table.
@@ -519,6 +561,7 @@ mod tests {
             did_webvh: mimi_mls::mls_didwebvh::CodePoints::DEFAULT,
             blob_lifetime_secs: 30 * 24 * 3600,
             message_retention_secs: crate::retention::MessageRetention::default(),
+            key_material_rate: default_key_material_rate(),
         };
         assert_eq!(config, expected);
     }
@@ -678,6 +721,37 @@ mod tests {
         ] {
             assert!(matches!(with(bad), Err(ConfigError::Parse(_))), "{bad}");
         }
+    }
+
+    #[test]
+    fn key_material_rate_defaults_parses_and_turns_off() {
+        let with = |table: &str| Config::parse(&format!("{VALID}\n[key_material_rate]\n{table}\n"));
+        let default = Config::parse(VALID).unwrap().key_material_rate;
+        assert_eq!(
+            default.limit(),
+            Some(crate::jmap::rate::DEFAULT_KEY_MATERIAL_LIMIT)
+        );
+        let set = with("burst = 5\nrefill_ms = 200")
+            .unwrap()
+            .key_material_rate;
+        assert_eq!(
+            set.limit(),
+            Some(crate::jmap::rate::RateLimit {
+                burst: 5,
+                refill_ms: 200
+            })
+        );
+        assert_eq!(
+            with("burst = 0\nrefill_ms = 1")
+                .unwrap()
+                .key_material_rate
+                .limit(),
+            None
+        );
+        assert!(matches!(
+            with("burst = 5\nrefill_ms = 200\nper = 1"),
+            Err(ConfigError::Parse(_))
+        ));
     }
 
     #[test]

@@ -21,6 +21,8 @@
 #
 # send-silent.hex likewise, from Send's silent (bead mimid-e64f.20).
 #
+# error-rate-limited.hex likewise, from Error's retryAfter (bead mimid-e64f.21).
+#
 # fixtures.rs decodes each file, compares it to the value written out in
 # the test, encodes it again and requires the same bytes.
 #
@@ -33,6 +35,7 @@
 #   9df82e52bee56e89af8db01e7f544a592d069d0a4ff8e0dfd3cd65e0bfa307e5  client-hello.hex
 #   3b6ae4f2fe27cad6532aea42360a07a5060dfe6978ea61f5e0d63c3db2c4d52d  deliver.hex
 #   2d7e9beb80f4efa1fb5814a42543a81f08c1e07d763a90ae7c7b84177c373a32  error-epoch-too-old.hex
+#   0c1369d9468ada985fa86d6c8b893f59d4a12b55ae05b9d83ae4d5f873e8c074  error-rate-limited.hex
 #   6abc6478184f90b1449c3d54acb43e5d5b82cf0a7ce21a7e201df248a4f8d966  position-unknown-member.hex
 #   14f7167f3f7c59358640ab9120f86c285216e5c0c29695478c25c1102e1066e0  provider-hello-retention.hex
 #   12eae7287aa0b802731320434c6020f4516ec51e4374fc70486bc587bbbab3af  provider-hello.hex
@@ -42,4 +45,4 @@
 #   226ac5ca7a09d81db7f808c0da2d0aae586b7dd98ecb52927177cc9c060bde21  subscribe.hex
 #   238142743658b9ad51d79d3b5bcffcec0a5c8a14968669a7d9715fc45e381c4d  update-consent.hex
 #   03c559c084749c2f31a9c584e740fc646fd0e94e450a683b58c91edade53b125  oracle/cbor2_check.py
-#   a787ae8d866c807a1860a97853be1467622e242f572cd0a305aa13436b218b61  oracle/cbor2_check.out
+#   57d83d8faac63773fa5c84c57a4d3367c27324fd0fc8c70fbbe54239fe4b9ee9  oracle/cbor2_check.out

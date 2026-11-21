@@ -441,6 +441,21 @@ defines a method-level `rateLimited` only for `Peer/*` methods.
 And extend the base draft's `rateLimited` registration to name this
 document's methods.
 
+**Built** (bead mimid-e64f.21; jmap-chat-spec 43ee02c, bde5330).
+mimid-server's limits on the draft's methods, all of them: a token
+bucket per account on `KeyMaterial/fetch` (the draft's SHOULD; burst 30,
+then one a second, INVENTED; `[key_material_rate]`, `burst = 0` for
+none), shared by both bindings and answered `rateLimited` with
+`retryAfter`; and the stream's own limits, 16 outstanding requests and
+4 concurrent uploads per account, answered `rateLimited` without
+`retryAfter`. JMAP's `maxConcurrentRequests` and `maxConcurrentUpload`
+stay RFC 8620 request-level `limit` errors. The stream's `Error` gains
+`retryAfter`. The agent, on either binding, waits `retryAfter` (1 s
+when absent, at most 30 s, three times) and calls again. Not built: the
+draft's SHOULD to rate-limit consent requests per requester and per
+provider concerns requests from other providers, not this document's
+methods.
+
 ### A5. No limit on the number of clients per account
 
 **Gap.** Air caps devices per user (`max_devices`, announced in

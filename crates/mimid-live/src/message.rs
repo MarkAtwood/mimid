@@ -813,6 +813,10 @@ pub struct ErrorMessage {
     pub properties: Option<Vec<String>>,
     /// The existing record, for `alreadyExists`.
     pub existing_id: Option<String>,
+    /// For `rateLimited`: the seconds after which the provider expects
+    /// the request can succeed (draft-atwood-jmap-chat-mimi-00
+    /// §capability `retryAfter`).
+    pub retry_after: Option<u64>,
     /// Members the CDDL does not name.
     pub extra: Extra,
 }
@@ -1215,6 +1219,7 @@ impl ProviderMessage {
                                 .map(|items| texts("properties", items))
                                 .transpose()?,
                             existing_id: f.opt_text("existingId")?,
+                            retry_after: f.opt_uint("retryAfter")?,
                             extra: Vec::new(),
                         })
                     })()
@@ -1307,7 +1312,8 @@ impl ProviderMessage {
                 if let Some(properties) = &e.properties {
                     w.put("properties", text_array(properties));
                 }
-                w.opt_text("existingId", e.existing_id.as_deref());
+                w.opt_text("existingId", e.existing_id.as_deref())
+                    .opt_uint("retryAfter", e.retry_after);
                 w.finish(&e.extra)
             }
             Self::Deliver(d) => {

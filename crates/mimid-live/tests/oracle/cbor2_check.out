@@ -14,6 +14,8 @@ deliver.hex: ok
   {"t": "Deliver", "v": 1, "chatId": "C1", "fanout": h'0001', "messageId": "M1"}
 error-epoch-too-old.hex: ok
   {"t": "Error", "v": 1, "id": 9, "code": "epochTooOld", "currentEpoch": 4}
+error-rate-limited.hex: ok
+  {"t": "Error", "v": 1, "id": 7, "code": "rateLimited", "retryAfter": 2}
 position-unknown-member.hex: ok
   {"t": "Position", "v": 1, "zz": 0, "state": "12.3"}
 provider-hello-retention.hex: ok
