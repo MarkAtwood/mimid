@@ -18,6 +18,9 @@ pub struct NewKeyPackage<'a> {
     pub client_id: &'a str,
     /// The local user the client belongs to.
     pub user_uri: &'a str,
+    /// The leaf's signature key, which the client ID is derived from: the
+    /// SignaturePublicKey octets, without the length prefix.
+    pub signature_key: &'a [u8],
     /// The TLS-encoded KeyPackageRef (RFC 9420 §5.2).
     pub reference: &'a [u8],
     /// The TLS-encoded KeyPackage exactly as uploaded.
@@ -44,6 +47,9 @@ pub enum KeyPackageInsert {
     /// KeyPackages, counted after a last-resort replacement (decision
     /// mimid-1wgh.12.27).
     OverQuota,
+    /// The client is new and the user has the most clients allowed
+    /// (draft-atwood-jmap-chat-mimi-00 `maxClients`).
+    TooManyClients,
 }
 
 /// How [`Store::insert_key_package_with`] treats a client's existing
@@ -55,6 +61,9 @@ pub struct InsertOptions {
     pub replace_last_resort: bool,
     /// The most KeyPackages the user may have stored, if limited.
     pub max_key_packages: Option<u64>,
+    /// The most clients (bound signature keys) the user may have, if
+    /// limited (draft-atwood-jmap-chat-mimi-00 `maxClients`).
+    pub max_clients: Option<u64>,
 }
 
 /// A stored KeyPackage.
@@ -134,20 +143,48 @@ impl Store {
     ) -> Result<KeyPackageInsert, StoreError> {
         let not_after = to_sql_int(key_package.not_after)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        sqlx::query(
-            "INSERT INTO client (client_id, user_uri) VALUES (?, ?) \
-             ON CONFLICT (client_id) DO NOTHING",
-        )
-        .bind(key_package.client_id)
-        .bind(key_package.user_uri)
-        .execute(&mut *tx)
-        .await?;
-        let owner: String = sqlx::query_scalar("SELECT user_uri FROM client WHERE client_id = ?")
-            .bind(key_package.client_id)
-            .fetch_one(&mut *tx)
-            .await?;
-        if owner != key_package.user_uri {
-            return Ok(KeyPackageInsert::ClientOfAnotherUser);
+        let owner: Option<String> =
+            sqlx::query_scalar("SELECT user_uri FROM client WHERE client_id = ?")
+                .bind(key_package.client_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        match owner {
+            Some(owner) if owner != key_package.user_uri => {
+                return Ok(KeyPackageInsert::ClientOfAnotherUser);
+            }
+            // A row from before migration 0015 gets its key.
+            Some(_) => {
+                sqlx::query(
+                    "UPDATE client SET signature_key = ? \
+                     WHERE client_id = ? AND signature_key IS NULL",
+                )
+                .bind(key_package.signature_key)
+                .bind(key_package.client_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+            // The first KeyPackage of a signature key binds it, and makes
+            // its Client record (draft-atwood-jmap-chat-mimi-00 §Clients).
+            None => {
+                if let Some(maximum) = options.max_clients {
+                    let clients: i64 =
+                        sqlx::query_scalar("SELECT COUNT(*) FROM client WHERE user_uri = ?")
+                            .bind(key_package.user_uri)
+                            .fetch_one(&mut *tx)
+                            .await?;
+                    if from_sql_int(clients)? >= maximum {
+                        return Ok(KeyPackageInsert::TooManyClients);
+                    }
+                }
+                sqlx::query(
+                    "INSERT INTO client (client_id, user_uri, signature_key) VALUES (?, ?, ?)",
+                )
+                .bind(key_package.client_id)
+                .bind(key_package.user_uri)
+                .bind(key_package.signature_key)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
         // A claimed single-use KeyPackage has left `key_package`; uploading
         // it again must not make it servable twice.
@@ -497,6 +534,7 @@ mod tests {
         NewKeyPackage {
             client_id,
             user_uri: "mimi://b.example/u/bob",
+            signature_key: client_id.as_bytes(),
             reference,
             bytes: b"kp",
             last_resort,

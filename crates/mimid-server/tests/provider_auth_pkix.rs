@@ -71,6 +71,7 @@ async fn target() -> Target {
         .insert_key_package(&NewKeyPackage {
             client_id: "mimi://b.example/u/bob/client",
             user_uri: "mimi://b.example/u/bob",
+            signature_key: b"signature key",
             reference: &[1; 32],
             bytes: b"key package",
             last_resort: true,

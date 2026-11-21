@@ -563,6 +563,7 @@ async fn provider() -> Provider {
         .insert_key_package(&NewKeyPackage {
             client_id: &format!("{ALICE}/client"),
             user_uri: ALICE,
+            signature_key: b"signature key",
             reference: &[0; 32],
             bytes: b"key package",
             last_resort: true,

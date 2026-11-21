@@ -792,6 +792,55 @@ async fn two_providers_over_jmap_only() {
     )
     .await;
 
+    // 5a. §Clients (jmap-chat-spec bde5330; bead mimid-e64f.22): the
+    // accepted external Commit bound bob2's key to bob's account at b, so
+    // b lists two Clients for bob. A third client's external Commit is past
+    // maxClients (2 here): refused with forbidden before it reaches the
+    // hub, whose epoch stays 3.
+    let clients = bob_jmap.ok("Client/get", json!({})).await;
+    let mut keys: Vec<String> = clients["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["signatureKey"].as_str().unwrap().to_owned())
+        .collect();
+    keys.sort();
+    let mut expected: Vec<String> = [&bob, &bob2]
+        .iter()
+        .map(|id| b64(&[&[0x20][..], id.signature_public_key()].concat()))
+        .collect();
+    expected.sort();
+    assert_eq!(keys, expected, "{clients}");
+    let requester = Requester::new(BOB);
+    let fetched = bob_jmap
+        .ok(
+            "GroupInfo/fetch",
+            json!({"roomId": room_id, "request": b64(&requester.request(None))}),
+        )
+        .await;
+    let served = group_info::open(&hub, &room_id, &requester, &unb64(&fetched["response"]));
+    let bob3 = Identity::generate(BOB, memory()).unwrap();
+    let join3 = Member::join_external(
+        &bob3,
+        &[&GROUP_INFO_HEADER[..], served.group_info.as_bytes()].concat(),
+        served.ratchet_tree_option.ratchet_tree(),
+    )
+    .unwrap();
+    let (name, refused) = bob_jmap
+        .call(
+            "Room/update",
+            json!({"roomId": room_id, "request": b64(&update::commit_request(
+                &join3.commit_bundle.commit,
+                None,
+                &join3.commit_bundle.group_info,
+                &join3.member.ratchet_tree().unwrap(),
+            ))}),
+        )
+        .await;
+    assert_eq!(name, "error", "{refused}");
+    assert_eq!(refused["type"], "forbidden", "{refused}");
+    assert_eq!(hub.public_state(&room_id).await.unwrap().epoch, 3);
+
     // 6. Epoch 4: alice leaves (protocol-07 §3.5): her Remove and the
     // participant-list update, one bundle; bob commits them through b.
     let remove = alice_group.propose_self_remove(&alice).unwrap();

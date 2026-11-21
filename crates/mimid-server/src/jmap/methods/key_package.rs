@@ -372,13 +372,18 @@ pub(crate) async fn create_one(
     let options = InsertOptions {
         replace_last_resort: true,
         max_key_packages: Some(max_key_packages),
+        max_clients: key_packages.max_clients(),
     };
     match key_packages
         .upload_key_package_with(caller.user(), bytes, options)
         .await
     {
         Ok(entry) => Ok(Ok(entry)),
-        Err(UploadError::OverQuota) => Ok(Err(set_error("overQuota", None))),
+        // §KeyPackage/set: past maxKeyPackages, or a new signature key past
+        // maxClients (bead mimid-e64f.22).
+        Err(UploadError::OverQuota | UploadError::TooManyClients) => {
+            Ok(Err(set_error("overQuota", None)))
+        }
         Err(UploadError::Store(error)) => Err(server_fail(&error)),
         Err(error) => {
             tracing::debug!(

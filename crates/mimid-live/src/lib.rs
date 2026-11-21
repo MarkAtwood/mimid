@@ -37,8 +37,9 @@ mod message;
 
 pub use fields::Extra;
 pub use message::{
-    Ack, AckResult, Changed, ChatEntry, ClientHello, ClientMessage, ConsentEntry, Deliver,
-    ErrorMessage, KeyPackageEntry, Op, OpKind, Position, ProviderHello, ProviderMessage, Request,
+    Ack, AckResult, Changed, ChatEntry, ClientEntry, ClientHello, ClientMessage, ConsentEntry,
+    Deliver, ErrorMessage, KeyPackageEntry, Op, OpKind, Position, ProviderHello, ProviderMessage,
+    Request,
 };
 
 /// The stream version this crate speaks (`v`).

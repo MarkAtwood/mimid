@@ -1,0 +1,20 @@
+; Ack of a ListClients = {"v": 1, "t": "Ack", "id": 5, "state": "s1",
+;   "clients": [{"clientId": "c1", "signatureKey": h'0102'}]}
+; (draft-atwood-jmap-chat-mimi-00 §Clients; bead mimid-e64f.22)
+; Keys: t, v, id, state, clients; inside: clientId, signatureKey.
+a5                                  ; map, 5 pairs
+61 74                               ; "t"
+63 41 63 6b                         ; "Ack"
+61 76                               ; "v"
+01                                  ; 1
+62 69 64                            ; "id"
+05                                  ; 5
+65 73 74 61 74 65                   ; "state"
+62 73 31                            ; "s1"
+67 63 6c 69 65 6e 74 73             ; "clients"
+81                                  ; array, 1 item
+a2                                  ; map, 2 pairs
+68 63 6c 69 65 6e 74 49 64          ; "clientId"
+62 63 31                            ; "c1"
+6c 73 69 67 6e 61 74 75 72 65 4b 65 79 ; "signatureKey" (12)
+42 01 02                            ; bytes, 2: 01 02

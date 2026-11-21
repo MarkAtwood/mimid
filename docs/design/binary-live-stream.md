@@ -325,10 +325,10 @@ by digest when an answer named none.
 ### 5.6 Notices
 
 `Changed` names the data types whose state moved for the account:
-`Chat`, `KeyPackage` and `Consent`, computed as the EventSource computes
-its `StateChange` (eventsource.rs). It is sent only after a `Subscribe`.
-The client then lists what it wants again (`ListChats`,
-`ListKeyPackages`, `ListConsent`). Messages need no notice: they arrive
+`Chat`, `KeyPackage`, `Consent` and `Client` (bead mimid-e64f.22),
+computed as the EventSource computes its `StateChange` (eventsource.rs).
+It is sent only after a `Subscribe`. The client then lists what it wants
+again (`ListChats`, `ListKeyPackages`, `ListConsent`, `ListClients`). Messages need no notice: they arrive
 as `Deliver`s.
 
 ### 5.7 Identifiers
@@ -340,8 +340,10 @@ them by, not by JMAP ids, where it can:
 - a room by its room ID;
 - a Message by `messageId`, the JMAP Message id, because nothing in the
   FanoutMessage names one stored copy;
-- a Chat by `chatId`, and a Consent record by `consentId`, the JMAP ids,
-  because the draft defines no other name for them.
+- a Chat by `chatId`, a Consent record by `consentId`, and a Client
+  record by `clientId`, the JMAP ids, because the draft defines no other
+  name for them (a Client's signature key would do, but the record's id
+  is what `ListClients` gives the client to pick from).
 
 ### 5.8 Size
 
@@ -385,6 +387,9 @@ stream message for each. "Agent" marks what the agent uses today.
 | `KeyPackage/set` update (always `forbidden`) | methods/key_package.rs | no | none: KeyPackages are immutable |
 | `KeyPackage/set` destroy | methods/key_package.rs | no | `DestroyKeyPackage` |
 | KeyPackage handed out (§keypackage-claim, StateChange) | EventSource `KeyPackage` | no | `Changed` `KeyPackage` |
+| `Client/get` (§client) | methods/client.rs | yes, client.rs (`Agent::devices`) | `ListClients` |
+| `Client/changes` | methods/client.rs | no | `Changed` `Client`, then `ListClients` |
+| `Client/set` destroy (create, update always `forbidden`) | methods/client.rs | yes (`Agent::forget_device`) | `DestroyClient` |
 | `KeyMaterial/fetch` (§keymaterial-fetch) | methods/key_material.rs | yes, client.rs:470 | `FetchKeyMaterial` |
 | `Consent/get` (§consent) | methods/consent.rs | yes, client.rs:338 | `ListConsent` |
 | `Consent/changes` | methods/consent.rs | no | `Changed` `Consent`, then `ListConsent` |
@@ -464,6 +469,8 @@ ProviderHello = {
   "hubSender": tls,        ; ExternalSender
   "cipherSuites": [* uint],
   "maxKeyPackages": uint,
+  ? "maxClients": uint,    ; the mimi capability's (mimid-e64f.22);
+                           ; absent: no stated limit
   "maxMessageBytes": uint, ; no frame is larger (mimid-1wgh.78)
   "maxRequestBytes": uint, ; no request but Upload is larger
   ? "maxMlsObjectSize": uint, ; the mimi capability's (findings F10)
@@ -494,6 +501,8 @@ op = (
   // ( "t": "PublishKeyPackage", "keyPackage": tls, ? "lastResort": bool )
   // ( "t": "ListKeyPackages" )
   // ( "t": "DestroyKeyPackage", "keyPackageRef": tls )
+  // ( "t": "ListClients" )
+  // ( "t": "DestroyClient", "clientId": tstr )
   // ( "t": "ListConsent" )
   // ( "t": "CreateConsent", "requesterUri": tstr, "targetUri": tstr,
        ? "room": room-id, ? "requested": bool, ? "decision": decision )
@@ -518,12 +527,13 @@ ack-result = (
   // ( "acceptedAt": ms, ? "errorDescription": tstr,    ; Update
        ? "messageIds": [* tstr] )                       ; F18
   // ( "chatId": tstr )                                 ; CreateRoom
-  // ( )                     ; Unbind, ReportAbuse, DestroyKeyPackage,
+  // ( )                     ; Unbind, ReportAbuse, DestroyKeyPackage, DestroyClient,
                              ; UpdateConsent, DestroyConsent, SetChatAccepted
   // ( "status": tstr, "response": tls )                ; FetchGroupInfo
   // ( "response": tls )                                ; FetchKeyMaterial
   // ( "keyPackageRef": tls, "lastResort": bool )       ; PublishKeyPackage
   // ( "state": tstr, "keyPackages": [* key-package] )  ; ListKeyPackages
+  // ( "state": tstr, "clients": [* client] )           ; ListClients
   // ( "state": tstr, "records": [* consent] )          ; ListConsent
   // ( "record": consent )                              ; CreateConsent
   // ( "state": tstr, "chats": [* chat] )               ; ListChats
@@ -531,6 +541,7 @@ ack-result = (
   // ( "data": bstr )                                   ; FetchAsset
 
 key-package = { "keyPackageRef": tls, "keyPackage": tls, "lastResort": bool }
+client = { "clientId": tstr, "signatureKey": tls }  ; SignaturePublicKey
 consent = {
   "consentId": tstr, "requesterUri": tstr, "targetUri": tstr,
   "room": room-id / null, "requested": bool,
@@ -557,7 +568,7 @@ Error = {
 
 Deliver  = { common, "messageId": tstr, "chatId": tstr, "fanout": tls }
 Position = { common, "state": jmap-state }
-Changed  = { common, "types": [+ ("Chat" / "KeyPackage" / "Consent")] }
+Changed  = { common, "types": [+ ("Chat" / "KeyPackage" / "Consent" / "Client")] }
 ```
 
 The `Ack` has no member naming its request's type: the client knows it

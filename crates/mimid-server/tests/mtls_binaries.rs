@@ -1321,6 +1321,7 @@ async fn dane_authenticates_a_binary_by_its_tlsa_records() {
             .insert_key_package(&NewKeyPackage {
                 client_id: &format!("{}/client", text(user)),
                 user_uri: text(user),
+                signature_key: b"signature key",
                 reference: &[u8::try_from(i).unwrap(); 32],
                 bytes: b"key package",
                 last_resort: true,

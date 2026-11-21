@@ -2,6 +2,8 @@ ack-create-consent.hex: ok
   {"t": "Ack", "v": 1, "id": 3, "record": {"room": null, "updated": 1700000000000, "decision": null, "consentId": "cs7", "requested": true, "targetUri": "mimi://e.example/u/erin", "requesterUri": "mimi://a.example/u/alice"}}
 ack-list-chats.hex: ok
   {"t": "Ack", "v": 1, "id": 5, "chats": [{"room": "mimi://a.example/r/x", "bound": true, "chatId": "C1", "accepted": false}], "state": "s1"}
+ack-list-clients.hex: ok
+  {"t": "Ack", "v": 1, "id": 5, "state": "s1", "clients": [{"clientId": "c1", "signatureKey": h'0102'}]}
 ack-send-message-ids.hex: ok
   {"t": "Ack", "v": 1, "id": 301, "acceptedAt": 5, "messageIds": ["M1"]}
 ack-send.hex: ok
@@ -18,6 +20,8 @@ error-rate-limited.hex: ok
   {"t": "Error", "v": 1, "id": 7, "code": "rateLimited", "retryAfter": 2}
 position-unknown-member.hex: ok
   {"t": "Position", "v": 1, "zz": 0, "state": "12.3"}
+provider-hello-max-clients.hex: ok
+  {"t": "ProviderHello", "v": 1, "userUri": "mimi://a.example/u/alice", "version": 1, "hubSender": h'01', "maxClients": 10, "cipherSuites": [1], "roomIdPrefix": "mimi://a.example/r/", "storesAssets": true, "acceptedRooms": true, "assetLifetime": 3600, "fetchesAssets": true, "maxKeyPackages": 100, "maxMessageBytes": 16842752, "maxRequestBytes": 4259840}
 provider-hello-retention.hex: ok
   {"t": "ProviderHello", "v": 1, "userUri": "mimi://a.example/u/alice", "version": 1, "hubSender": h'01', "cipherSuites": [1], "roomIdPrefix": "mimi://a.example/r/", "storesAssets": true, "acceptedRooms": true, "assetLifetime": 3600, "fetchesAssets": true, "maxKeyPackages": 100, "maxMessageBytes": 16842752, "maxRequestBytes": 4259840, "messageRetention": 604800}
 provider-hello.hex: ok

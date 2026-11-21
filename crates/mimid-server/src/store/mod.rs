@@ -12,6 +12,7 @@
 
 mod accepted;
 mod blobs;
+mod clients;
 mod consent;
 mod consent_record;
 mod follower_log;
@@ -40,6 +41,7 @@ pub use blobs::{
     MAX_ACCOUNT_BLOB_BYTES, MAX_ACCOUNT_BLOBS, MAX_BLOB_LEN, MAX_MEDIA_TYPE_LEN,
     MIN_BLOB_LIFETIME_SECS, MalformedBlobId,
 };
+pub use clients::{ClientBinding, ClientChanges, ClientRow};
 pub use consent::{ConsentDecision, ConsentKey, ConsentRow, ReceivedConsent};
 pub use consent_record::{ConsentChanges, ConsentPatch, ConsentRecord};
 pub use follower_log::{AppendedFanout, FanoutKind, FollowerEvent, NewFanout, RoomAccess};
@@ -250,7 +252,7 @@ mod tests {
                 .fetch_all(&store.pool)
                 .await
                 .unwrap();
-        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
         let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, domain FROM provider")
             .fetch_all(&store.pool)

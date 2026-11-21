@@ -72,6 +72,7 @@ async fn target_with_dns(auth: &str, dns: Option<Arc<dyn TxtResolver>>) -> Targe
         .insert_key_package(&NewKeyPackage {
             client_id: "mimi://b.example/u/bob/client",
             user_uri: BOB,
+            signature_key: b"signature key",
             reference: &[1; 32],
             bytes: b"key package",
             last_resort: true,

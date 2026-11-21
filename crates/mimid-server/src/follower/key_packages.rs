@@ -98,8 +98,8 @@ use crate::hub::{
     Clock, LocalKeyMaterial, LocalKeyMaterialFuture, identity_domain, lookup_uri, user_uri_domain,
 };
 use crate::store::{
-    ClaimCandidate, InsertOptions, KeyPackageClaim, KeyPackageInsert, NewKeyPackage, Store,
-    StoreError, StoredKeyPackage,
+    ClaimCandidate, ClientBinding, ClientRow, InsertOptions, KeyPackageClaim, KeyPackageInsert,
+    NewKeyPackage, Store, StoreError, StoredKeyPackage,
 };
 
 /// A stored KeyPackage, as its owner sees it.
@@ -159,6 +159,20 @@ fn base32(bytes: &[u8]) -> String {
     out
 }
 
+/// The default `maxClients`: signature keys one account may bind
+/// (draft-atwood-jmap-chat-mimi-00 §capability, §Clients; bead
+/// mimid-e64f.22). INVENTED VALUE, NOT FROM SPEC: the draft leaves it to
+/// the server; ten devices of one person.
+pub const DEFAULT_MAX_CLIENTS: u64 = 10;
+
+/// The JMAP id of the Client record of the client `client_uri`
+/// ([`client_uri`]): its last path segment, the base32 of the SHA-256 of
+/// its signature key, which uses only JMAP Id characters (RFC 8620 §1.2).
+#[must_use]
+pub fn client_record_id(client_uri: &str) -> &str {
+    client_uri.rsplit('/').next().unwrap_or(client_uri)
+}
+
 /// Local users' KeyPackages, and the keyMaterial endpoint that serves them.
 pub struct KeyPackages {
     store: Store,
@@ -170,6 +184,8 @@ pub struct KeyPackages {
     /// Serve a last-resort KeyPackage in more than one response
     /// ([`KeyPackages::with_last_resort_reuse`]).
     reuse_last_resort: bool,
+    /// `maxClients` ([`KeyPackages::with_max_clients`]).
+    max_clients: Option<u64>,
     /// Announces the user whose stored KeyPackages may have changed.
     changes: tokio::sync::broadcast::Sender<String>,
 }
@@ -205,8 +221,123 @@ impl KeyPackages {
             clock,
             did_webvh: CodePoints::DEFAULT,
             reuse_last_resort: false,
+            max_clients: Some(DEFAULT_MAX_CLIENTS),
             changes: tokio::sync::broadcast::channel(KEY_PACKAGE_CHANGES_CAPACITY).0,
         }
+    }
+
+    /// Sets `maxClients`, the most signature keys one user may bind
+    /// (draft-atwood-jmap-chat-mimi-00 §Clients), or `None` for no limit.
+    /// Without this, [`DEFAULT_MAX_CLIENTS`].
+    #[must_use]
+    pub fn with_max_clients(mut self, max_clients: Option<u64>) -> Self {
+        self.max_clients = max_clients;
+        self
+    }
+
+    /// `maxClients`, if limited.
+    #[must_use]
+    pub fn max_clients(&self) -> Option<u64> {
+        self.max_clients
+    }
+
+    /// The client URI of the client whose leaf signature key is
+    /// `signature_key` ([`client_uri`]).
+    #[must_use]
+    pub fn client_uri_of(&self, signature_key: &[u8]) -> String {
+        client_uri(&self.domain, signature_key)
+    }
+
+    /// The client URI of the Client record `id` ([`client_record_id`]).
+    #[must_use]
+    pub fn client_uri_of_record(&self, id: &str) -> String {
+        format!("mimi://{}/d/{id}", self.domain)
+    }
+
+    /// `user`'s Client records: its bound signature keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the store fails.
+    pub async fn clients(&self, user: &LocalUser) -> Result<Vec<ClientRow>, StoreError> {
+        self.store.clients_with_keys(user.as_str()).await
+    }
+
+    /// Unbinds `user`'s client `client_uri`: its KeyPackages are destroyed
+    /// and it no longer counts toward `maxClients` (§Client/set). Returns
+    /// whether there was one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the store fails.
+    pub async fn unbind_client(
+        &self,
+        user: &LocalUser,
+        client_uri: &str,
+    ) -> Result<bool, StoreError> {
+        let unbound = self.store.unbind_client(user.as_str(), client_uri).await?;
+        if unbound {
+            self.announce(user.as_str());
+            tracing::info!(
+                name: "client_unbound",
+                client_uri,
+                "a signature key was unbound from its account"
+            );
+        }
+        Ok(unbound)
+    }
+
+    /// Whether an external Commit of `user` with the leaf signature key
+    /// `signature_key` may go to the hub (§Room/update): `Ok` when the key
+    /// is bound to `user` or can be, else why not ([`ClientBinding`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the store fails.
+    pub async fn check_external_join(
+        &self,
+        user: &LocalUser,
+        signature_key: &[u8],
+    ) -> Result<Result<(), ClientBinding>, StoreError> {
+        let client = self.client_uri_of(signature_key);
+        match self.store.client_owner(&client).await? {
+            Some(owner) if owner == user.as_str() => return Ok(Ok(())),
+            Some(_) => return Ok(Err(ClientBinding::OtherUser)),
+            None => {}
+        }
+        if let Some(maximum) = self.max_clients
+            && self.store.client_count(user.as_str()).await? >= maximum
+        {
+            return Ok(Err(ClientBinding::OverQuota));
+        }
+        Ok(Ok(()))
+    }
+
+    /// Binds `signature_key` to `user`, after the hub accepted an external
+    /// Commit with it (§Room/update), and makes its Client record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the store fails.
+    pub async fn bind_external(
+        &self,
+        user: &LocalUser,
+        signature_key: &[u8],
+    ) -> Result<ClientBinding, StoreError> {
+        let client = self.client_uri_of(signature_key);
+        let bound = self
+            .store
+            .bind_client(user.as_str(), &client, signature_key, self.max_clients)
+            .await?;
+        if bound == ClientBinding::Bound {
+            self.announce(user.as_str());
+            tracing::info!(
+                name: "client_bound",
+                client_uri = client,
+                "an external Commit bound a signature key to its account"
+            );
+        }
+        Ok(bound)
     }
 
     /// Sets the `did_webvh` code points of accepted KeyPackages. Without
@@ -313,6 +444,7 @@ impl KeyPackages {
                 &NewKeyPackage {
                     client_id: &entry.client_uri,
                     user_uri: user.as_str(),
+                    signature_key: info.signature_key(),
                     reference: &entry.reference,
                     bytes,
                     last_resort: entry.last_resort,
@@ -336,6 +468,7 @@ impl KeyPackages {
             KeyPackageInsert::SecondLastResort => Err(UploadError::SecondLastResort),
             KeyPackageInsert::ClientOfAnotherUser => Err(UploadError::ClientOfAnotherUser),
             KeyPackageInsert::OverQuota => Err(UploadError::OverQuota),
+            KeyPackageInsert::TooManyClients => Err(UploadError::TooManyClients),
         }
     }
 
@@ -665,6 +798,10 @@ pub enum UploadError {
     /// The user would have more KeyPackages than allowed.
     #[error("too many KeyPackages")]
     OverQuota,
+    /// The KeyPackage's signature key is new and the user has `maxClients`
+    /// clients already.
+    #[error("too many clients")]
+    TooManyClients,
     /// The store failed.
     #[error("database error")]
     Store(#[from] StoreError),

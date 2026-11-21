@@ -39,7 +39,7 @@ use crate::follower::Follower;
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
 use crate::jmap::projection::utc_date;
-use crate::store::Store;
+use crate::store::{ClientBinding, Store};
 
 const METHOD: &str = "Room/update";
 
@@ -149,6 +149,38 @@ pub(crate) async fn update_core(
             "the external Commit joins a user other than this account's",
         ));
     }
+    // §Room/update (jmap-chat-spec bde5330; bead mimid-e64f.22): an
+    // external Commit binds its signature key once the hub accepts it; a
+    // key of another account is refused, and so is a new key past
+    // maxClients, before anything is submitted.
+    let joining_key = match &decoded.bundle {
+        HandshakeBundle::Commit {
+            proposal_or_commit, ..
+        } if joiner.is_some() => proposal_or_commit.external_commit_signature_key(),
+        _ => None,
+    };
+    if let (Some(key_packages), Some(key)) = (follower.key_packages(), joining_key) {
+        match key_packages
+            .check_external_join(caller.user(), key)
+            .await
+            .map_err(|e| server_fail(METHOD, &e))?
+        {
+            Ok(()) => {}
+            Err(ClientBinding::OtherUser) => {
+                return Err(invalid(
+                    METHOD,
+                    "the external Commit's signature key is bound to another account",
+                ));
+            }
+            Err(_) => {
+                tracing::debug!(
+                    method = METHOD,
+                    "an external Commit past maxClients refused"
+                );
+                return Err(JmapError::forbidden());
+            }
+        }
+    }
     // Without a bound Chat only an external Commit is allowed; when the hub
     // accepts it the follower makes the account a member and binds the
     // Chat (Follower::relay_update).
@@ -164,6 +196,24 @@ pub(crate) async fn update_core(
         .map_err(|error| relay_error(METHOD, error))?;
     let response = UpdateRoomResponse::tls_deserialize_exact(&response[..])
         .map_err(|e| server_fail(METHOD, &e))?;
+    if let (UpdateResult::Success { .. }, Some(key_packages), Some(key)) =
+        (&response.result, follower.key_packages(), joining_key)
+    {
+        let bound = key_packages
+            .bind_external(caller.user(), key)
+            .await
+            .map_err(|e| server_fail(METHOD, &e))?;
+        if !matches!(bound, ClientBinding::Bound | ClientBinding::AlreadyBound) {
+            // A race with another binding since the check: the hub has
+            // the Commit, so the client is in the room unbound.
+            tracing::warn!(
+                name: "client_not_bound",
+                method = METHOD,
+                outcome = ?bound,
+                "an accepted external Commit's signature key could not be bound"
+            );
+        }
+    }
     let message_ids = match response.result {
         UpdateResult::Success { .. } => {
             let handshake = match &decoded.bundle {

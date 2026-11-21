@@ -296,6 +296,30 @@ async fn a_one_member_group_becomes_a_hosted_room_and_a_bound_chat() {
     );
 }
 
+/// §Client/set (jmap-chat-spec bde5330; bead mimid-e64f.22): destroying
+/// the Client record of the key unbinds it, and Room/create then refuses
+/// a group whose leaf has that key. Oracle: the draft's text, and the
+/// record id computed here from the identity's key (base32 of SHA-256).
+#[tokio::test]
+async fn a_destroyed_client_cannot_create_a_room() {
+    use sha2::Digest;
+    let f = fixture().await;
+    let alice = f.alice(true).await;
+    let id = base32(&sha2::Sha256::digest(alice.signature_public_key()));
+    let (name, set) = f.call("Client/set", json!({"destroy": [id]})).await;
+    assert_eq!(name, "Client/set", "{set}");
+    assert_eq!(set["destroyed"], json!([id]), "{set}");
+    let (_, kps) = f.call("KeyPackage/get", json!({})).await;
+    assert_eq!(kps["list"], json!([]), "its KeyPackages went with it");
+    let (group_info, tree, room_id) = group(&f.hub, &alice, Spec::default());
+    let (name, refused) = f.create(&group_info, &tree, &room_id).await;
+    assert_eq!(
+        (name.as_str(), &refused["type"]),
+        ("error", &json!("invalidArguments")),
+        "{refused}"
+    );
+}
+
 /// A room without room metadata, whose app_components does not list
 /// room_metadata either, is created: metadata is optional (bead
 /// mimid-1wgh.12.45), and such a room can add members whose clients do not

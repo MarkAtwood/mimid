@@ -2069,6 +2069,16 @@ impl Member {
             .collect()
     }
 
+    /// The current members as (leaf index, leaf signature key): the
+    /// SignaturePublicKey octets of each leaf, without the length prefix,
+    /// which name the client (draft-atwood-jmap-chat-mimi-00 §Clients).
+    pub fn member_signature_keys(&self) -> Vec<(u32, Vec<u8>)> {
+        self.group
+            .members()
+            .map(|member| (member.index.u32(), member.signature_key.clone()))
+            .collect()
+    }
+
     /// The current members whose credential is `did_webvh`, as (leaf index,
     /// SCID), for an identity that uses `did_webvh`
     /// (draft-atwood-mls-didwebvh-credential-00 §Reference Identifiers: the

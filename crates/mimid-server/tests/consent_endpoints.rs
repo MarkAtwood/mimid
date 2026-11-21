@@ -86,6 +86,7 @@ async fn provider(domain: &str, local_users: &[&str], peers: &[&str]) -> Provide
             .insert_key_package(&NewKeyPackage {
                 client_id: &format!("{user}/client"),
                 user_uri: user,
+                signature_key: b"signature key",
                 reference: &[u8::try_from(n).unwrap(); 32],
                 bytes: b"key package",
                 last_resort: true,

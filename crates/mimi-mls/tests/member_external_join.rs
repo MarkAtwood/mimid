@@ -332,6 +332,13 @@ fn joins_mls_rs_group_and_all_agree() {
             Some(&b"carol"[..]),
             "{case}"
         );
+        // And the joining leaf's signature key, which a provider binds to
+        // the account (draft-atwood-jmap-chat-mimi-00 §Clients).
+        assert_eq!(
+            commit_message.external_commit_signature_key(),
+            Some(carol.signature_public_key()),
+            "{case}"
+        );
         let expected_aad = if context_dictionary.is_some() {
             EMPTY_SAFE_AAD.to_vec()
         } else {

@@ -54,9 +54,9 @@ use jmap_server::JmapError;
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_protocol::{GroupInfoCode, KeyMaterialResponse, SubmitResult, UpdateResult};
 use mimid_live::{
-    AckResult, ChatEntry, ClientMessage, ConsentEntry, Deliver, ErrorMessage, KeyPackageEntry,
-    MAX_MESSAGE_BYTES, MAX_OUTSTANDING, MAX_REQUEST_BYTES, Op, Position, ProviderHello,
-    ProviderMessage, VERSION, code,
+    AckResult, ChatEntry, ClientEntry, ClientMessage, ConsentEntry, Deliver, ErrorMessage,
+    KeyPackageEntry, MAX_MESSAGE_BYTES, MAX_OUTSTANDING, MAX_REQUEST_BYTES, Op, Position,
+    ProviderHello, ProviderMessage, VERSION, code,
 };
 use serde_json::{Map, Value, json};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -66,8 +66,8 @@ use super::JmapState;
 use super::auth::{Account, AuthRejection};
 use super::eventsource::{self, Params};
 use super::methods::{
-    chat_set, consent, group_info, key_material, key_package, room_create, room_report_abuse,
-    room_send, room_unbind, room_update,
+    chat_set, client, consent, group_info, key_material, key_package, room_create,
+    room_report_abuse, room_send, room_unbind, room_update,
 };
 use super::session::{ASSET_URL_TEMPLATE, CIPHER_SUITES};
 use crate::store::ConsentDecision;
@@ -240,6 +240,11 @@ async fn hello(
         stores_assets: true,
         asset_lifetime: state.0.asset_lifetime,
         message_retention: state.0.message_retention,
+        max_clients: state
+            .0
+            .key_packages
+            .as_deref()
+            .and_then(crate::follower::key_packages::KeyPackages::max_clients),
         fetches_assets: true,
         accepted_rooms: true,
         extra: Vec::new(),
@@ -880,6 +885,32 @@ async fn run(state: &JmapState, account: &Account, op: Op) -> Result<AckResult, 
         }
         Op::DestroyKeyPackage { key_package_ref } => {
             if key_package::destroy_one(key_packages(state)?, account, &key_package_ref)
+                .await
+                .map_err(jmap)?
+            {
+                AckResult::Done
+            } else {
+                return Err(ErrorMessage::new(None, code::NOT_FOUND));
+            }
+        }
+        Op::ListClients => {
+            let (state_text, entries) = client::list(key_packages(state)?, store, account)
+                .await
+                .map_err(jmap)?;
+            AckResult::ListClients {
+                state: state_text,
+                clients: entries
+                    .into_iter()
+                    .map(|entry| ClientEntry {
+                        client_id: entry.id,
+                        signature_key: entry.signature_key,
+                        extra: Vec::new(),
+                    })
+                    .collect(),
+            }
+        }
+        Op::DestroyClient { client_id } => {
+            if client::destroy_one(key_packages(state)?, account, &client_id)
                 .await
                 .map_err(jmap)?
             {

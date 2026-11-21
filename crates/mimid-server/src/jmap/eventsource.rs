@@ -10,7 +10,9 @@
 //!   KeyPackages (bead mimid-1wgh.12.40), whose state changes when one is
 //!   created, destroyed, replaced or handed out to a keyMaterial request,
 //!   and `Consent` (bead mimid-1wgh.12.43), whose state changes when one of
-//!   the account's Consent records does. Names of types mimid does not serve are ignored: their state never
+//!   the account's Consent records does, and `Client` when the server
+//!   keeps KeyPackages (bead mimid-e64f.22), whose state changes when a
+//!   signature key is bound or unbound. Names of types mimid does not serve are ignored: their state never
 //!   changes.
 //! - `closeafter`: `state` closes the stream after the first `state`
 //!   event; `no` (the default) keeps it open.
@@ -74,19 +76,22 @@ pub(super) struct Params {
     key_packages: bool,
     /// Whether `Consent` is among the types (bead mimid-1wgh.12.43).
     consent: bool,
+    /// Whether `Client` is among the types (bead mimid-e64f.22).
+    clients: bool,
     close_after_state: bool,
     ping: Option<Duration>,
 }
 
 impl Params {
     /// The types of the live stream's `Changed` (docs/design/binary-live-stream.md
-    /// §5.6): `Chat`, `KeyPackage` and `Consent`. Messages arrive as
-    /// `Deliver`s instead.
+    /// §5.6): `Chat`, `KeyPackage`, `Consent` and `Client`. Messages arrive
+    /// as `Deliver`s instead.
     pub(super) fn live_notices() -> Self {
         Self {
             kinds: vec![Kind::Chat],
             key_packages: true,
             consent: true,
+            clients: true,
             close_after_state: false,
             ping: None,
         }
@@ -94,8 +99,8 @@ impl Params {
 
     /// Reads the query, or `None` if a parameter is malformed.
     fn parse(query: &BTreeMap<String, String>) -> Option<Self> {
-        let (kinds, key_packages, consent) = match query.get("types").map(String::as_str) {
-            None | Some("*") => (Kind::ALL.to_vec(), true, true),
+        let (kinds, key_packages, consent, clients) = match query.get("types").map(String::as_str) {
+            None | Some("*") => (Kind::ALL.to_vec(), true, true, true),
             Some(list) => {
                 let names: Vec<&str> = list.split(',').collect();
                 if names.iter().any(|name| name.is_empty()) {
@@ -108,6 +113,7 @@ impl Params {
                         .collect(),
                     names.contains(&"KeyPackage"),
                     names.contains(&"Consent"),
+                    names.contains(&"Client"),
                 )
             }
         };
@@ -126,6 +132,7 @@ impl Params {
             kinds,
             key_packages,
             consent,
+            clients,
             close_after_state,
             ping,
         })
@@ -203,6 +210,12 @@ pub(super) async fn states(
         states.insert(
             "KeyPackage",
             super::methods::key_package::key_package_state(store, account).await?,
+        );
+    }
+    if params.clients && key_packages.is_some() {
+        states.insert(
+            "Client",
+            super::methods::client::client_state(store, account).await?,
         );
     }
     if params.consent {
@@ -330,6 +343,7 @@ mod tests {
                 kinds: Kind::ALL.to_vec(),
                 key_packages: true,
                 consent: true,
+                clients: true,
                 close_after_state: false,
                 ping: None
             })
@@ -344,6 +358,7 @@ mod tests {
                 kinds: vec![Kind::Chat, Kind::Message],
                 key_packages: false,
                 consent: false,
+                clients: false,
                 close_after_state: true,
                 ping: Some(Duration::from_secs(300))
             })

@@ -23,12 +23,16 @@
 #
 # error-rate-limited.hex likewise, from Error's retryAfter (bead mimid-e64f.21).
 #
+# ack-list-clients.hex and provider-hello-max-clients.hex likewise, from
+# ListClients and maxClients (bead mimid-e64f.22).
+#
 # fixtures.rs decodes each file, compares it to the value written out in
 # the test, encodes it again and requires the same bytes.
 #
 # SHA-256:
 #   524bf9ce6d4fa7b95f2232a7c3ab19e411d55e24793250d07c3dfcf4bca97280  ack-create-consent.hex
 #   3a900cbb860b356b77ffb14a282eb238c137f5f0ed84e0bc002b5c47c5ec6a91  ack-list-chats.hex
+#   f6f55724e33c5724c7a8a149d182dba95d8b6fbeaad0d3acc67b3bafe395e908  ack-list-clients.hex
 #   3bfb19aaa8534831c8d1216e42adc665a035b44bbd893c58fca3356ed3e4ef1c  ack-send-message-ids.hex
 #   0332d9730ff9c136b7a22e6ac3ee984104b82653be50828aff656439d41f3bc7  ack-send.hex
 #   4448603244533eaeeb8fab9f398b95123952a414398402de2a2b41b66bdcac4d  changed.hex
@@ -37,6 +41,7 @@
 #   2d7e9beb80f4efa1fb5814a42543a81f08c1e07d763a90ae7c7b84177c373a32  error-epoch-too-old.hex
 #   0c1369d9468ada985fa86d6c8b893f59d4a12b55ae05b9d83ae4d5f873e8c074  error-rate-limited.hex
 #   6abc6478184f90b1449c3d54acb43e5d5b82cf0a7ce21a7e201df248a4f8d966  position-unknown-member.hex
+#   38831155dd165e5505d703638917335f0b455088a43e90db7dc4796f9fea0638  provider-hello-max-clients.hex
 #   14f7167f3f7c59358640ab9120f86c285216e5c0c29695478c25c1102e1066e0  provider-hello-retention.hex
 #   12eae7287aa0b802731320434c6020f4516ec51e4374fc70486bc587bbbab3af  provider-hello.hex
 #   0620fb1af329dd4cfee651f3c7a3fc1d5df28c2dcb52c4944cea54cac12fc796  send-silent.hex
@@ -45,4 +50,4 @@
 #   226ac5ca7a09d81db7f808c0da2d0aae586b7dd98ecb52927177cc9c060bde21  subscribe.hex
 #   238142743658b9ad51d79d3b5bcffcec0a5c8a14968669a7d9715fc45e381c4d  update-consent.hex
 #   03c559c084749c2f31a9c584e740fc646fd0e94e450a683b58c91edade53b125  oracle/cbor2_check.py
-#   57d83d8faac63773fa5c84c57a4d3367c27324fd0fc8c70fbbe54239fe4b9ee9  oracle/cbor2_check.out
+#   93bdb9eef042d79d5d93b5990eefbbd050ae1b1e5d755f16172479b49c6c50a4  oracle/cbor2_check.out

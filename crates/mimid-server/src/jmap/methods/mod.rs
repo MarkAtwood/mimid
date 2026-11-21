@@ -13,6 +13,7 @@ use crate::store::{BlobQuota, Store};
 
 pub(crate) mod blob;
 pub(super) mod chat_set;
+pub(super) mod client;
 pub(super) mod consent;
 pub(super) mod group_info;
 pub(super) mod key_material;
@@ -51,6 +52,7 @@ pub(super) fn register_all(methods: &mut Methods, services: &Services) {
     chat_set::register(methods, services);
     message_set::register(methods, services);
     key_package::register(methods, services);
+    client::register(methods, services);
     key_material::register(methods, services);
     consent::register(methods, services);
     room_create::register(methods, services);

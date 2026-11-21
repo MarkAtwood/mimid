@@ -898,6 +898,7 @@ async fn store_unchecked(store: &Store, user: &str, key_package: &[u8]) {
         .insert_key_package(&NewKeyPackage {
             client_id: &format!("{user}/client"),
             user_uri: user,
+            signature_key: b"signature key",
             reference: &reference(key_package),
             bytes: key_package,
             last_resort: false,

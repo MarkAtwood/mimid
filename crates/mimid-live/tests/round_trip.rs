@@ -54,6 +54,10 @@ fn ops() -> Vec<Op> {
         Op::DestroyKeyPackage {
             key_package_ref: vec![9],
         },
+        Op::ListClients,
+        Op::DestroyClient {
+            client_id: "c1".to_owned(),
+        },
         Op::ListConsent,
         Op::CreateConsent {
             requester_uri: "mimi://a.example/u/a".to_owned(),

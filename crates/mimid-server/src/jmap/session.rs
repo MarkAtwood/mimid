@@ -140,6 +140,7 @@ pub(super) struct SessionTemplate {
     max_key_packages: u64,
     asset_lifetime: Option<u64>,
     message_retention: Option<u64>,
+    max_clients: Option<u64>,
     blob: BlobAccountCapability,
     /// The live stream's URL, if the stream is on.
     live_url: Option<String>,
@@ -150,7 +151,9 @@ impl SessionTemplate {
     /// `domain`, whose hub signs with the TLS-encoded ExternalSender
     /// `hub_sender`, which keeps a blob at `assetUrl` for
     /// `asset_lifetime` seconds after its upload (`None`: no limit), which
-    /// keeps a Message `message_retention` seconds (`None`: no limit), and
+    /// keeps a Message `message_retention` seconds (`None`: no limit), which
+    /// binds at most `max_clients` signature keys to an account (`None`: no
+    /// limit), and
     /// whose accounts have the `urn:ietf:params:jmap:blob2` capability
     /// `blob`, and which serves the live stream if `live_stream`.
     ///
@@ -170,6 +173,7 @@ impl SessionTemplate {
         max_key_packages: u64,
         asset_lifetime: Option<u64>,
         message_retention: Option<u64>,
+        max_clients: Option<u64>,
         blob: BlobAccountCapability,
         live_stream: bool,
     ) -> Self {
@@ -184,6 +188,7 @@ impl SessionTemplate {
             max_key_packages,
             asset_lifetime,
             message_retention,
+            max_clients,
             blob,
             live_url: live_stream.then(|| live_url(base_url)),
         }
@@ -253,6 +258,11 @@ impl SessionTemplate {
                     if let Some(seconds) = self.message_retention {
                         mimi.extra
                             .insert("messageRetention".to_owned(), serde_json::json!(seconds));
+                    }
+                    // Bead mimid-e64f.22; absent when unlimited.
+                    if let Some(max) = self.max_clients {
+                        mimi.extra
+                            .insert("maxClients".to_owned(), serde_json::json!(max));
                     }
                     mimi
                 },

@@ -139,11 +139,12 @@ impl Provider {
         install_outbox_capture(&self.path).await;
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let peer_client = || PeerClient::new(domain, peers.clone()).unwrap();
-        let key_packages = Arc::new(KeyPackages::new(
-            store.clone(),
-            domain.clone(),
-            Arc::clone(&clock),
-        ));
+        // Two clients per account, so that the tests reach maxClients
+        // (bead mimid-e64f.22).
+        let key_packages = Arc::new(
+            KeyPackages::new(store.clone(), domain.clone(), Arc::clone(&clock))
+                .with_max_clients(Some(2)),
+        );
         let follower = Arc::new(
             Follower::new(domain.clone(), store.clone(), Arc::clone(&clock))
                 .with_peers(peer_client())

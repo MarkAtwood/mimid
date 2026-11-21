@@ -625,6 +625,7 @@ pub struct MLSMessage {
     epoch: Option<u64>,
     authenticated_data: Option<Vec<u8>>,
     external_commit_identity: Option<Vec<u8>>,
+    external_commit_signature_key: Option<Vec<u8>>,
 }
 
 impl_encoding_from_bytes!(MLSMessage);
@@ -684,6 +685,15 @@ impl MLSMessage {
     pub fn external_commit_identity(&self) -> Option<&[u8]> {
         self.external_commit_identity.as_deref()
     }
+
+    /// For an external Commit whose UpdatePath leaf has a BasicCredential
+    /// (when [`MLSMessage::external_commit_identity`] is `Some`), that
+    /// leaf's `signature_key`: the joining client's SignaturePublicKey
+    /// octets, without the length prefix. Read from the clear bytes, as
+    /// the identity is; nothing is authenticated here.
+    pub fn external_commit_signature_key(&self) -> Option<&[u8]> {
+        self.external_commit_signature_key.as_deref()
+    }
 }
 
 /// The BasicCredential identity of the UpdatePath leaf of the external
@@ -696,7 +706,7 @@ impl MLSMessage {
 /// LeafNode `encryption_key<V>`, `signature_key<V>`, then the Credential:
 /// `credential_type` (1 for basic) and `identity<V>`. The message decoded
 /// already, so a failure here only means "not one".
-fn external_commit_identity(bytes: &[u8]) -> Option<Vec<u8>> {
+fn external_commit_identity(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     let mut rest = bytes.get(4..)?;
     let skip = |rest: &mut &[u8]| VLBytes::tls_deserialize(rest).ok().map(drop);
     skip(&mut rest)?; // group_id
@@ -719,15 +729,18 @@ fn external_commit_identity(bytes: &[u8]) -> Option<Vec<u8>> {
     }
     rest = after;
     skip(&mut rest)?; // encryption_key
-    skip(&mut rest)?; // signature_key
+    let signature_key = VLBytes::tls_deserialize(&mut rest).ok()?;
     let credential_type = u16::from_be_bytes([*rest.first()?, *rest.get(1)?]);
     if credential_type != 1 {
         return None;
     }
     rest = rest.get(2..)?;
-    VLBytes::tls_deserialize(&mut rest)
-        .ok()
-        .map(|identity| identity.as_slice().to_vec())
+    VLBytes::tls_deserialize(&mut rest).ok().map(|identity| {
+        (
+            identity.as_slice().to_vec(),
+            signature_key.as_slice().to_vec(),
+        )
+    })
 }
 
 impl Deserialize for MLSMessage {
@@ -742,14 +755,18 @@ impl Deserialize for MLSMessage {
             epoch: None,
             authenticated_data: None,
             external_commit_identity: None,
+            external_commit_signature_key: None,
         };
         match body {
             MlsMessageBodyIn::PublicMessage(m) => {
                 message.content_type = Some(m.content_type().into());
                 message.group_id = Some(m.group_id().as_slice().to_vec());
                 message.epoch = Some(m.epoch().as_u64());
-                if matches!(m.sender(), openmls::prelude::Sender::NewMemberCommit) {
-                    message.external_commit_identity = external_commit_identity(&message.bytes);
+                if matches!(m.sender(), openmls::prelude::Sender::NewMemberCommit)
+                    && let Some((identity, key)) = external_commit_identity(&message.bytes)
+                {
+                    message.external_commit_identity = Some(identity);
+                    message.external_commit_signature_key = Some(key);
                 }
             }
             MlsMessageBodyIn::PrivateMessage(m) => {

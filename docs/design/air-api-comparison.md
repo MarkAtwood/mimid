@@ -473,6 +473,26 @@ is one more KeyPackage handed out per key material request.
 > KeyPackage would bind one more with `overQuota`. Absent if the
 > server states no limit.
 
+**Built** (beads mimid-e64f.22, mimid-e64f.23; jmap-chat-spec 43ee02c,
+bde5330). mimid-server advertises `maxClients` = 10 (INVENTED;
+`KeyPackages::with_max_clients`) in the mimi capability and
+`ProviderHello`, keeps a Client record per bound signature key
+(migration 0015: the key, and a change log for `Client/changes`), and
+serves `Client/get`, `Client/changes` and `Client/set` (destroy only;
+create and update `forbidden`); the stream has `ListClients`,
+`DestroyClient` and `Changed` `Client`. A KeyPackage/set create with a
+new key past `maxClients` is `overQuota`. An external Commit's
+UpdatePath key (now read by `MLSMessage::external_commit_signature_key`)
+bound to another account is `invalidArguments`, a new one past
+`maxClients` is method-level `forbidden`, both before anything is
+submitted, and once the hub accepts it the key is bound. Destroying a
+record deletes its KeyPackages and unbinds the key, so Room/create
+refuses it. The agent lists the account's devices and forgets a lost
+one (`Agent::devices`, `Agent::forget_device`, `Store::devices`,
+`Store::forget_device`), removing its leaves by Commit from the rooms
+they share; the IRC service has `devices` and `forget-device <id>`.
+The JMAP Chat front end has no notion of devices.
+
 ### A6. The caught-up point is implicit
 
 **Gap.** Air sends `QueueEmpty` after the backlog, so a client can

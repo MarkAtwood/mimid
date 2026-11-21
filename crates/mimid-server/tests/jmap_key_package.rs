@@ -42,15 +42,18 @@ struct Fixture {
 }
 
 async fn fixture(max_key_packages: u64) -> Fixture {
+    fixture_with(max_key_packages, Some(10)).await
+}
+
+async fn fixture_with(max_key_packages: u64, max_clients: Option<u64>) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
     let account = store.create_account(&domain(), ALICE, 1).await.unwrap();
     let token = store.issue_token(&account, 2).await.unwrap();
-    let key_packages = Arc::new(KeyPackages::new(
-        store.clone(),
-        domain(),
-        Arc::new(FixedClock(now_ms())),
-    ));
+    let key_packages = Arc::new(
+        KeyPackages::new(store.clone(), domain(), Arc::new(FixedClock(now_ms())))
+            .with_max_clients(max_clients),
+    );
     let follower = Follower::new(domain(), store.clone(), Arc::new(FixedClock(now_ms())))
         .with_key_packages(Arc::clone(&key_packages));
     let mut options = JmapOptions::default();
@@ -412,6 +415,156 @@ async fn key_package_changes_are_pushed() {
             (name.as_str(), &error["type"]),
             ("error", &json!("cannotCalculateChanges")),
             "{bad}"
+        );
+    }
+}
+
+/// Unpadded lowercase RFC 4648 §6 base32, written here as the oracle of
+/// Client ids.
+fn base32(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+    let (mut out, mut buffer, mut bits) = (String::new(), 0u32, 0);
+    for &byte in bytes {
+        buffer = (buffer << 8) | u32::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(char::from(ALPHABET[((buffer >> bits) & 31) as usize]));
+        }
+    }
+    if bits > 0 {
+        out.push(char::from(ALPHABET[((buffer << (5 - bits)) & 31) as usize]));
+    }
+    out
+}
+
+/// The leaf signature key of `key_package`, as mls-rs reads it.
+fn signature_key(key_package: &[u8]) -> Vec<u8> {
+    let message =
+        mls_rs::MlsMessage::from_bytes(&[&[0x00, 0x01, 0x00, 0x05][..], key_package].concat())
+            .unwrap();
+    message
+        .into_key_package()
+        .unwrap()
+        .signing_identity()
+        .signature_key
+        .to_vec()
+}
+
+/// §Clients (jmap-chat-spec bde5330; bead mimid-e64f.22): each signature
+/// key a KeyPackage binds is one Client record; past maxClients a new
+/// key is overQuota; Client/set creates and updates nothing, and its
+/// destroy unbinds the key with its KeyPackages and frees the place.
+/// Oracles: the draft's text; ids and keys computed here from mls-rs's
+/// KeyPackages (the id is base32 of SHA-256 of the key; signatureKey is
+/// the TLS SignaturePublicKey, a one-octet length 32 then the key).
+#[tokio::test]
+async fn clients_are_bound_listed_limited_and_destroyed() {
+    use sha2::Digest;
+    let f = fixture_with(10, Some(2)).await;
+    let devices = [
+        client(ALICE, DAY, &[]),
+        client(ALICE, DAY, &[]),
+        client(ALICE, DAY, &[]),
+    ];
+    let packages: Vec<Vec<u8>> = devices.iter().map(|d| key_package(d, false)).collect();
+    let keys: Vec<Vec<u8>> = packages.iter().map(|kp| signature_key(kp)).collect();
+    let ids: Vec<String> = keys
+        .iter()
+        .map(|key| base32(&sha2::Sha256::digest(key)))
+        .collect();
+    let encoded = |key: &[u8]| URL_SAFE_NO_PAD.encode([&[0x20][..], key].concat());
+
+    let (_, empty) = f.call("Client/get", json!({})).await;
+    assert_eq!(empty["list"], json!([]));
+    assert!(f.create(&packages[0], json!({})).await["created"]["k"].is_object());
+    let (_, one) = f.call("Client/get", json!({})).await;
+    assert_eq!(
+        one["list"],
+        json!([{"id": ids[0], "signatureKey": encoded(&keys[0])}])
+    );
+    // A second KeyPackage of the same key binds nothing new.
+    assert!(
+        f.create(&key_package(&devices[0], false), json!({})).await["created"]["k"].is_object()
+    );
+    assert!(f.create(&packages[1], json!({})).await["created"]["k"].is_object());
+    // maxClients is 2: a third key is overQuota.
+    let over = f.create(&packages[2], json!({})).await;
+    assert_eq!(refusal(&over).0, "overQuota", "{over}");
+    let (_, changes) = f
+        .call("Client/changes", json!({"sinceState": one["state"]}))
+        .await;
+    assert_eq!(changes["created"], json!([ids[1]]), "{changes}");
+    assert_eq!(changes["destroyed"], json!([]));
+
+    // Only destroy.
+    let (_, set) = f
+        .call(
+            "Client/set",
+            json!({
+                "create": {"c": {"signatureKey": encoded(&keys[2])}},
+                "update": {ids[0].clone(): {}},
+                "destroy": [ids[1], "nope"],
+            }),
+        )
+        .await;
+    assert_eq!(set["notCreated"]["c"]["type"], "forbidden", "{set}");
+    assert_eq!(set["notUpdated"][&ids[0]]["type"], "forbidden");
+    assert_eq!(set["destroyed"], json!([ids[1]]));
+    assert_eq!(set["notDestroyed"]["nope"]["type"], "notFound");
+    let (_, after) = f
+        .call("Client/changes", json!({"sinceState": changes["newState"]}))
+        .await;
+    assert_eq!(after["destroyed"], json!([ids[1]]), "{after}");
+    // Its KeyPackage went with it; the first key's two stay.
+    assert_eq!(f.get().await["list"].as_array().unwrap().len(), 2);
+    // The place is free: the third key binds now.
+    assert!(f.create(&packages[2], json!({})).await["created"]["k"].is_object());
+    let (_, got) = f
+        .call(
+            "Client/get",
+            json!({"ids": [ids[2], ids[1]], "properties": ["id"]}),
+        )
+        .await;
+    let (list, not_found) = (got["list"].clone(), got["notFound"].clone());
+    assert_eq!(list, json!([{"id": ids[2]}]));
+    assert_eq!(not_found, json!([ids[1]]));
+    let (name, error) = f
+        .call("Client/changes", json!({"sinceState": "99999"}))
+        .await;
+    assert_eq!(
+        (name.as_str(), &error["type"]),
+        ("error", &json!("cannotCalculateChanges"))
+    );
+}
+
+/// The mimi capability states maxClients, and leaves it out when the
+/// server sets no limit (bead mimid-e64f.22).
+#[tokio::test]
+async fn the_session_states_max_clients() {
+    for (max, expected) in [(Some(2), json!(2)), (None, Value::Null)] {
+        let f = fixture_with(10, max).await;
+        let response = f
+            .app
+            .clone()
+            .oneshot(
+                Request::get("/.well-known/jmap")
+                    .header(
+                        header::AUTHORIZATION,
+                        format!("Bearer {}", f.token.expose_secret()),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let session: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(
+            session["accounts"][&f.account]["accountCapabilities"]["urn:ietf:params:jmap:chat:mimi"]
+                ["maxClients"],
+            expected
         );
     }
 }

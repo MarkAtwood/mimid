@@ -131,6 +131,14 @@ pub enum Op {
         /// The KeyPackageRef, as its TLS encoding.
         key_package_ref: Vec<u8>,
     },
+    /// `ListClients`: Client/get (draft-atwood-jmap-chat-mimi-00
+    /// §Clients).
+    ListClients,
+    /// `DestroyClient`: Client/set destroy.
+    DestroyClient {
+        /// The Client record's id.
+        client_id: String,
+    },
     /// `ListConsent`: Consent/get.
     ListConsent,
     /// `CreateConsent`: Consent/set create.
@@ -202,6 +210,8 @@ pub enum OpKind {
     PublishKeyPackage,
     ListKeyPackages,
     DestroyKeyPackage,
+    ListClients,
+    DestroyClient,
     ListConsent,
     CreateConsent,
     UpdateConsent,
@@ -213,7 +223,7 @@ pub enum OpKind {
 }
 
 impl OpKind {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 21] = [
         Self::Subscribe,
         Self::Send,
         Self::Update,
@@ -225,6 +235,8 @@ impl OpKind {
         Self::PublishKeyPackage,
         Self::ListKeyPackages,
         Self::DestroyKeyPackage,
+        Self::ListClients,
+        Self::DestroyClient,
         Self::ListConsent,
         Self::CreateConsent,
         Self::UpdateConsent,
@@ -249,6 +261,8 @@ impl OpKind {
             Self::PublishKeyPackage => "PublishKeyPackage",
             Self::ListKeyPackages => "ListKeyPackages",
             Self::DestroyKeyPackage => "DestroyKeyPackage",
+            Self::ListClients => "ListClients",
+            Self::DestroyClient => "DestroyClient",
             Self::ListConsent => "ListConsent",
             Self::CreateConsent => "CreateConsent",
             Self::UpdateConsent => "UpdateConsent",
@@ -287,6 +301,8 @@ impl Op {
             Self::PublishKeyPackage { .. } => OpKind::PublishKeyPackage,
             Self::ListKeyPackages => OpKind::ListKeyPackages,
             Self::DestroyKeyPackage { .. } => OpKind::DestroyKeyPackage,
+            Self::ListClients => OpKind::ListClients,
+            Self::DestroyClient { .. } => OpKind::DestroyClient,
             Self::ListConsent => OpKind::ListConsent,
             Self::CreateConsent { .. } => OpKind::CreateConsent,
             Self::UpdateConsent { .. } => OpKind::UpdateConsent,
@@ -340,6 +356,10 @@ impl Op {
             OpKind::ListKeyPackages => Self::ListKeyPackages,
             OpKind::DestroyKeyPackage => Self::DestroyKeyPackage {
                 key_package_ref: f.bytes("keyPackageRef")?,
+            },
+            OpKind::ListClients => Self::ListClients,
+            OpKind::DestroyClient => Self::DestroyClient {
+                client_id: f.text("clientId")?,
             },
             OpKind::ListConsent => Self::ListConsent,
             OpKind::CreateConsent => Self::CreateConsent {
@@ -425,7 +445,10 @@ impl Op {
                 w.bytes("keyPackage", key_package)
                     .opt_bool("lastResort", *last_resort);
             }
-            Self::ListKeyPackages | Self::ListConsent | Self::ListChats => {}
+            Self::ListKeyPackages | Self::ListClients | Self::ListConsent | Self::ListChats => {}
+            Self::DestroyClient { client_id } => {
+                w.text("clientId", client_id);
+            }
             Self::DestroyKeyPackage { key_package_ref } => {
                 w.bytes("keyPackageRef", key_package_ref);
             }
@@ -606,6 +629,9 @@ pub struct ProviderHello {
     pub cipher_suites: Vec<u64>,
     /// `maxKeyPackages`.
     pub max_key_packages: u64,
+    /// `maxClients`: the most signature keys the account binds; `None`
+    /// if the provider states no limit (bead mimid-e64f.22).
+    pub max_clients: Option<u64>,
     /// The largest frame either side sends.
     pub max_message_bytes: u64,
     /// The largest request but `Upload`.
@@ -677,7 +703,7 @@ pub enum AckResult {
         /// The new Chat.
         chat_id: String,
     },
-    /// `Unbind`, `ReportAbuse`, `DestroyKeyPackage`, `UpdateConsent`,
+    /// `Unbind`, `ReportAbuse`, `DestroyKeyPackage`, `DestroyClient`, `UpdateConsent`,
     /// `DestroyConsent`, `SetChatAccepted`: nothing.
     Done,
     /// `FetchGroupInfo`.
@@ -705,6 +731,13 @@ pub enum AckResult {
         state: String,
         /// The records.
         key_packages: Vec<KeyPackageEntry>,
+    },
+    /// `ListClients`.
+    ListClients {
+        /// The Client state.
+        state: String,
+        /// The records.
+        clients: Vec<ClientEntry>,
     },
     /// `ListConsent`.
     ListConsent {
@@ -750,6 +783,17 @@ pub struct KeyPackageEntry {
     pub key_package: Vec<u8>,
     /// `lastResort`.
     pub last_resort: bool,
+    /// Members the CDDL does not name.
+    pub extra: Extra,
+}
+
+/// One Client record (draft-atwood-jmap-chat-mimi-00 §Clients).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientEntry {
+    /// `clientId`, the record's id.
+    pub client_id: String,
+    /// `signatureKey`, the TLS-encoded SignaturePublicKey.
+    pub signature_key: Vec<u8>,
     /// Members the CDDL does not name.
     pub extra: Extra,
 }
@@ -864,7 +908,7 @@ pub struct Position {
 pub struct Changed {
     /// `v`.
     pub v: u64,
-    /// `Chat`, `KeyPackage`, `Consent`.
+    /// `Chat`, `KeyPackage`, `Consent`, `Client`.
     pub types: Vec<String>,
     /// Members the CDDL does not name.
     pub extra: Extra,
@@ -922,6 +966,23 @@ impl KeyPackageEntry {
             .bytes("keyPackageRef", &self.key_package_ref)
             .bytes("keyPackage", &self.key_package)
             .bool("lastResort", self.last_resort)
+            .finish(&self.extra)
+    }
+}
+
+impl ClientEntry {
+    fn read(f: &mut Fields) -> Result<Self, DecodeError> {
+        Ok(Self {
+            client_id: f.text("clientId")?,
+            signature_key: f.bytes("signatureKey")?,
+            extra: Vec::new(),
+        })
+    }
+
+    fn value(&self) -> Value {
+        Writer::default()
+            .text("clientId", &self.client_id)
+            .bytes("signatureKey", &self.signature_key)
             .finish(&self.extra)
     }
 }
@@ -991,6 +1052,7 @@ impl AckResult {
         let kp = with_rest(KeyPackageEntry::read, |r, e| r.extra = e);
         let consent = with_rest(ConsentEntry::read, |r, e| r.extra = e);
         let chat = with_rest(ChatEntry::read, |r, e| r.extra = e);
+        let client = with_rest(ClientEntry::read, |r, e| r.extra = e);
         Ok(match kind {
             OpKind::Subscribe => Self::Subscribe {
                 state: f.text("state")?,
@@ -1011,6 +1073,7 @@ impl AckResult {
             OpKind::Unbind
             | OpKind::ReportAbuse
             | OpKind::DestroyKeyPackage
+            | OpKind::DestroyClient
             | OpKind::UpdateConsent
             | OpKind::DestroyConsent
             | OpKind::SetChatAccepted => Self::Done,
@@ -1028,6 +1091,10 @@ impl AckResult {
             OpKind::ListKeyPackages => Self::ListKeyPackages {
                 state: f.text("state")?,
                 key_packages: records("keyPackages", f.array("keyPackages")?, kp)?,
+            },
+            OpKind::ListClients => Self::ListClients {
+                state: f.text("state")?,
+                clients: records("clients", f.array("clients")?, client)?,
             },
             OpKind::ListConsent => Self::ListConsent {
                 state: f.text("state")?,
@@ -1107,6 +1174,12 @@ impl AckResult {
                     Value::Array(key_packages.iter().map(KeyPackageEntry::value).collect()),
                 );
             }
+            Self::ListClients { state, clients } => {
+                w.text("state", state).put(
+                    "clients",
+                    Value::Array(clients.iter().map(ClientEntry::value).collect()),
+                );
+            }
             Self::ListConsent { state, records } => {
                 w.text("state", state).put(
                     "records",
@@ -1163,6 +1236,7 @@ impl ProviderMessage {
                         .map(|v| as_uint("cipherSuites", v))
                         .collect::<Result<_, _>>()?,
                     max_key_packages: f.uint("maxKeyPackages")?,
+                    max_clients: f.opt_uint("maxClients")?,
                     max_message_bytes: f.uint("maxMessageBytes")?,
                     max_request_bytes: f.uint("maxRequestBytes")?,
                     max_mls_object_size: f.opt_uint("maxMlsObjectSize")?,
@@ -1279,6 +1353,7 @@ impl ProviderMessage {
                         Value::Array(h.cipher_suites.iter().map(|s| Value::Uint(*s)).collect()),
                     )
                     .uint("maxKeyPackages", h.max_key_packages)
+                    .opt_uint("maxClients", h.max_clients)
                     .uint("maxMessageBytes", h.max_message_bytes)
                     .uint("maxRequestBytes", h.max_request_bytes)
                     .opt_uint("maxMlsObjectSize", h.max_mls_object_size)

@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 
 use mimid_live::cbor::Value;
 use mimid_live::{
-    Ack, AckResult, Changed, ChatEntry, ClientHello, ClientMessage, ConsentEntry, Deliver,
-    ErrorMessage, Op, OpKind, Position, ProviderHello, ProviderMessage, Request,
+    Ack, AckResult, Changed, ChatEntry, ClientEntry, ClientHello, ClientMessage, ConsentEntry,
+    Deliver, ErrorMessage, Op, OpKind, Position, ProviderHello, ProviderMessage, Request,
 };
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -163,6 +163,34 @@ fn provider_hello() {
             stores_assets: true,
             asset_lifetime: Some(3600),
             message_retention: None,
+            max_clients: None,
+            fetches_assets: true,
+            accepted_rooms: true,
+            extra: Vec::new(),
+        }),
+    );
+}
+
+/// Bead mimid-e64f.22: `maxClients`.
+#[test]
+fn provider_hello_with_max_clients() {
+    provider(
+        "provider-hello-max-clients.hex",
+        None,
+        ProviderMessage::Hello(ProviderHello {
+            version: 1,
+            user_uri: "mimi://a.example/u/alice".to_owned(),
+            room_id_prefix: "mimi://a.example/r/".to_owned(),
+            hub_sender: vec![1],
+            cipher_suites: vec![1],
+            max_key_packages: 100,
+            max_clients: Some(10),
+            max_message_bytes: 16 * 1024 * 1024 + 64 * 1024,
+            max_request_bytes: 4 * 1024 * 1024 + 64 * 1024,
+            max_mls_object_size: None,
+            stores_assets: true,
+            asset_lifetime: Some(3600),
+            message_retention: None,
             fetches_assets: true,
             accepted_rooms: true,
             extra: Vec::new(),
@@ -189,6 +217,7 @@ fn provider_hello_with_message_retention() {
             stores_assets: true,
             asset_lifetime: Some(3600),
             message_retention: Some(604_800),
+            max_clients: None,
             fetches_assets: true,
             accepted_rooms: true,
             extra: Vec::new(),
@@ -243,6 +272,26 @@ fn ack_of_a_list_chats() {
                     room: "mimi://a.example/r/x".to_owned(),
                     bound: true,
                     accepted: false,
+                    extra: Vec::new(),
+                }],
+            },
+        ),
+    );
+}
+
+/// Bead mimid-e64f.22.
+#[test]
+fn ack_of_list_clients() {
+    provider(
+        "ack-list-clients.hex",
+        Some(OpKind::ListClients),
+        ack(
+            5,
+            AckResult::ListClients {
+                state: "s1".to_owned(),
+                clients: vec![ClientEntry {
+                    client_id: "c1".to_owned(),
+                    signature_key: vec![1, 2],
                     extra: Vec::new(),
                 }],
             },

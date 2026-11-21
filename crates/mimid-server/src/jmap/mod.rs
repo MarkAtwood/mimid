@@ -255,6 +255,9 @@ pub fn router(
         options.max_key_packages,
         options.asset_lifetime,
         options.message_retention,
+        follower
+            .key_packages()
+            .and_then(|key_packages| key_packages.max_clients()),
         methods::blob::blob_capability(&options.blob_quota),
         options.live_stream,
     );

@@ -143,6 +143,8 @@ impl Server {
                 assert_eq!(hello.max_mls_object_size, Some(4_128_768));
                 // Decision mimid-1wgh.82: as the options give it.
                 assert_eq!(hello.message_retention, Some(3600));
+                // Bead mimid-e64f.22: the default maxClients.
+                assert_eq!(hello.max_clients, Some(10));
             }
             other => panic!("no ProviderHello: {other:?}"),
         }
