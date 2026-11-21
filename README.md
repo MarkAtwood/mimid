@@ -84,7 +84,7 @@ The full set of checks CI runs is in `.github/workflows/ci.yml`. Tests are fully
 
 To run the server: `mimid <config.toml>`. The config format is documented in `mimid_server::config`.
 
-To run the agent for one user: `mimid-agent <config.toml>`. The config format is documented in `mimid_agent::config`, the `[jmap]` and `[irc]` front-end tables included (the IRC front end is not built yet); a JMAP Chat client authenticates with the token in `<state_dir>/agent-token`.
+To run the agent for one user: `mimid-agent <config.toml>`. The config format is documented in `mimid_agent::config`, the `[jmap]` and `[irc]` front-end tables included; a JMAP Chat client authenticates with the token in `<state_dir>/agent-token`, and an IRC client sends the same token as its server password (`PASS`).
 
 ## Interoperability
 
