@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.82",
+  "title": "Decision: mimid-server keeps Messages 7 days by default; operator configures unlimited or another interval",
+  "description": "Mark, 2026-11-21 (draft-atwood-jmap-chat-mimi-00 §capability messageRetention, jmap-chat-spec 43ee02c; air-api-comparison A1). mimid-server keeps encrypted messages (follower_event, room_event and what derives from them) for 7 days after hub acceptance by default. The operator sets anything else in the server config: unlimited, or another interval. messageRetention advertises the configured seconds (604800 by default) in the mimi capability and in the live stream's ProviderHello; with unlimited the field is absent. Pruning runs periodically in bounded batches so it never blocks request handling. Supersedes the first reading of item A1 ('advertise what mimid does today'). Implemented under mimid-e64f.19.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T18:31:42.241638158Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T18:31:42.241638158Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.82",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-21T18:31:42.350890742Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
