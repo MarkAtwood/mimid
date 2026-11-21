@@ -1,3 +1,4 @@
 {"id":"01a1ffa9-6632-7112-8ed5-a7dc3a965f16","issue_id":"mimid-f8u8","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-21T19:50:54.258071164Z"}
 {"id":"01a1ffa9-6638-710e-b606-028138ca1db4","issue_id":"mimid-f8u8","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: docs","created_at":"2026-11-21T19:50:54.2640711Z"}
 {"id":"01a1ffa9-663b-7d27-b2ad-b17a20afd1ee","issue_id":"mimid-f8u8","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: cleanroom","created_at":"2026-11-21T19:50:54.267862652Z"}
+{"id":"01a1ffc8-8ba8-7b95-85f3-3b109afc1718","issue_id":"mimid-f8u8","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Fixed in e8c5fee (branch cleanroom-bugs): docs/operating.md and docs/agent.md, linked from README; example configs parsed by tests.","created_at":"2026-11-21T20:24:55.464759918Z"}
