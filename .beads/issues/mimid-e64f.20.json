@@ -2,13 +2,15 @@
   "id": "mimid-e64f.20",
   "title": "A2 silent on Room/send and the stream's Send; agent sends edits and reports silent",
   "description": "Draft additions approved by Mark 2026-11-21 (jmap-chat-spec 43ee02c, bde5330); docs/design/air-api-comparison.md. Branch air-impl.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T18:26:39.491307373Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T18:26:39.491307373Z",
+  "updated_at": "2026-11-21T19:21:28.368035453Z",
+  "closed_at": "2026-11-21T19:21:28.368035453Z",
+  "close_reason": "Done in 166f07b (branch air-impl): silent on Room/send and stream Send (validated, no push to skip; StateChange still sent), agent edits/retractions silent via Store::set_silent_edits (default on), outbox keeps the flag (agent schema 4).",
   "dependencies": [
     {
       "issue_id": "mimid-e64f.20",
