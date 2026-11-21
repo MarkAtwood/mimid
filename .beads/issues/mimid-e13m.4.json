@@ -2,13 +2,15 @@
   "id": "mimid-e13m.4",
   "title": "auth 4: IRC SASL PLAIN, account-required, PASS kept, shared rate limiter",
   "description": "sasl=PLAIN, pipelined AUTHENTICATE, soju.im/account-required, draft/ACCOUNTREQUIRED, FAIL ACCOUNT_REQUIRED, PASS+SASL together, 90x numerics, §7 limiter and connection caps; update irc-lessons.md (S3). Before IRC v2. Design: docs/design/frontend-auth.md §4.1, §7, §9 step 4.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T22:49:44.594744363Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T22:49:44.594744363Z",
+  "updated_at": "2026-11-21T23:57:58.407443629Z",
+  "closed_at": "2026-11-21T23:57:58.407443629Z",
+  "close_reason": "Built in commit 7c419f7c on branch auth-impl: SASL PLAIN, PASS kept, both together, account-required (cap, ISUPPORT, FAIL), 90x numerics, §7 limiter and connection caps (credentials::limits), over loopback and the TLS listener.",
   "labels": [
     "agent",
     "auth"
