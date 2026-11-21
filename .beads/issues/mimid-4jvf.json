@@ -2,11 +2,15 @@
   "id": "mimid-4jvf",
   "title": "Agents on two providers, IRC user on each",
   "description": "mimid-agent tests and the acceptance fixture run one provider (a.example). Add a two-provider helper (a.example, b.example wired as peers), tests/irc_two_providers.rs (alice on a, bob on b, both over IRC; invite, consent, messages both ways, nick labels, WHO/NAMES, PART, the reverse direction, one JMAP check), and acceptance_fixture --two-providers. Fix what breaks across providers. Worktree /data/PROJECT/mimid-worktrees/two-provider-irc, branch two-provider-irc.",
-  "status": "open",
+  "status": "in_progress",
   "priority": 2,
   "issue_type": "task",
+  "assignee": "Mark Atwood",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T03:00:26.155297156Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T03:00:26.155297156Z"
+  "updated_at": "2026-11-21T03:00:31.058286655Z",
+  "started_at": "2026-11-21T03:00:31.058286655Z",
+  "lease_expires_at": "2026-11-21T03:05:31.058286655Z",
+  "heartbeat_at": "2026-11-21T03:00:31.058286655Z"
 }
