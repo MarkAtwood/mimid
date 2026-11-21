@@ -1,0 +1,26 @@
+{
+  "id": "mimid-s4oy.1",
+  "title": "purple-mimi 1: survey libpurple 2 vs 3",
+  "description": "Read Pidgin/libpurple at HEAD: is libpurple 3 released or still in development; plugin API (PurpleProtocol GObject in 3 vs PurplePluginProtocolInfo in 2); which distros ship which; how third-party protocol plugins are built and distributed (purple-* examples: purple-discord, purple-matrix (archived?), purple-signald, purple-gowhatsapp, purple-teams); language options (C, Rust via bindings, Go via purple-gowhatsapp's approach); what chat features the UI supports (rooms, edits, reactions, replies, attachments, read receipts). Write docs/design/purple-mimi.md §1. Read-only; post nothing.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:31:41.294204782Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:31:41.294204782Z",
+  "labels": [
+    "client",
+    "purple"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-s4oy.1",
+      "depends_on_id": "mimid-s4oy",
+      "type": "parent-child",
+      "created_at": "2026-11-21T21:31:41.382892238Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
