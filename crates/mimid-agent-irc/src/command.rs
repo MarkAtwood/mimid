@@ -40,6 +40,7 @@
 //!   other command is 421.
 
 use mimid_agent_store::action::{MemberChanges, Role, SendOptions};
+use mimid_agent_store::convert::MessageRef;
 use mimid_agent_store::record::Key;
 
 use crate::conn::{Session, VERSION, one_line};
@@ -88,6 +89,18 @@ impl Session {
             .state()
             .message_of_ref(room, &reference)
             .cloned()
+    }
+
+    /// The version of message `key` a reply or reaction from this
+    /// connection names, by its reference octets: the latest version this
+    /// connection showed (docs/design/agent-frontends.md §7.26), else the
+    /// one `msgid` names. The store takes octets that name no version of
+    /// the message as its latest version.
+    pub(crate) fn version_shown(&self, key: &str, msgid: &str) -> Option<MessageRef> {
+        self.shown
+            .get(key)
+            .and_then(|shown| shown.version)
+            .or_else(|| mimid_agent_store::reference_of(msgid))
     }
 
     /// The room key of `channel`, if this connection shows it.
@@ -347,9 +360,12 @@ impl Session {
             let mut options = SendOptions::new();
             // +draft/reply names the msgid (senderMsgId) of a message of
             // this room; one not stored here is sent as a plain message.
-            options.in_reply_to = line
-                .tag("+draft/reply")
-                .and_then(|msgid| self.message_of_msgid(&key, msgid));
+            if let Some(msgid) = line.tag("+draft/reply")
+                && let Some(target) = self.message_of_msgid(&key, msgid)
+            {
+                options.in_reply_to_version = self.version_shown(&target, msgid);
+                options.in_reply_to = Some(target);
+            }
             match store
                 .send_message(message_key.clone(), &key, &text, &[], &options)
                 .await
@@ -410,17 +426,20 @@ impl Session {
             return;
         };
         let (react, unreact) = (line.tag("+draft/react"), line.tag("+draft/unreact"));
-        let Some(message) = line
-            .tag("+draft/reply")
-            .and_then(|msgid| self.message_of_msgid(&room, msgid))
-        else {
+        let Some(msgid) = line.tag("+draft/reply") else {
             return;
         };
+        let Some(message) = self.message_of_msgid(&room, msgid) else {
+            return;
+        };
+        let version = self.version_shown(&message, msgid);
         let store = self.store();
         let result = if let Some(reaction) = react {
             let key = store.new_key();
             self.own_sends.insert(key.clone());
-            let result = store.react(key.clone(), &message, reaction).await;
+            let result = store
+                .react(key.clone(), &message, version.as_ref(), reaction)
+                .await;
             if result.is_err() {
                 self.own_sends.remove(&key);
             }

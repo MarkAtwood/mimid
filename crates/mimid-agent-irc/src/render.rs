@@ -428,6 +428,7 @@ impl Session {
             key.to_owned(),
             ShownMessage {
                 edited_at: m.record.edited_at,
+                version: latest_ref(&m.record),
                 retracted: m.record.deleted.is_some(),
                 reactions: m
                     .record
@@ -528,13 +529,14 @@ impl Session {
             && (since.is_some() || after(edited_at))
         {
             seen.edited_at = Some(edited_at);
+            seen.version = latest_ref(&m.record);
             let msgid = m
                 .record
                 .aliases
                 .last()
                 .map(|alias| {
                     let mut random = [0u8; 16];
-                    random[6..].copy_from_slice(&alias.0);
+                    random[6..].copy_from_slice(&alias.reference());
                     ulid::Ulid::from_parts(edited_at, u128::from_be_bytes(random)).to_string()
                 })
                 .unwrap_or_else(|| m.record.sender_msg_id.clone());
@@ -720,6 +722,12 @@ impl Session {
     pub(crate) fn store(&self) -> Arc<mimid_agent_store::Store> {
         Arc::clone(&self.shared.store)
     }
+}
+
+/// The reference octets of the latest version of `record`, the version
+/// shown when it is shown now.
+fn latest_ref(record: &Message) -> Option<mimid_agent_store::convert::MessageRef> {
+    record.latest_mimi_id().map(|id| id.reference())
 }
 
 #[cfg(test)]

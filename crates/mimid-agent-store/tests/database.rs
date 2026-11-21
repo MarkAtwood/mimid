@@ -42,7 +42,7 @@ fn message(key: &str, room: &str, seq: u64, sender: Sender, n: u8) -> Message {
         seq,
         sender,
         mimi_id: Some(Octets([n; 32])),
-        aliases: vec![Octets([n + 100; 10])],
+        aliases: vec![Octets([n + 100; 32])],
         accepted_at: 1_700_000_000_000 + u64::from(n),
         received_at: 1_700_000_000_500 + u64::from(n),
         sender_msg_id: sender_msg_id(n),
@@ -125,6 +125,7 @@ fn state() -> State {
         sender: BOB.to_owned(),
         reaction: "\u{2764}".to_owned(),
         mimi_id: mimid_agent_store::record::Octets([8; 32]),
+        in_reply_to: mimid_agent_store::record::Octets([7; 32]),
         accepted_at: 1_700_000_002_000,
     });
     first.attachments.push(Attachment {

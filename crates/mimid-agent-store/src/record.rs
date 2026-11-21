@@ -41,6 +41,15 @@ pub type Ext = BTreeMap<String, serde_json::Value>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Octets<const N: usize>(pub [u8; N]);
 
+impl Octets<32> {
+    /// The reference octets of this MIMI message ID
+    /// ([`crate::convert::message_ref`]).
+    #[must_use]
+    pub fn reference(&self) -> crate::convert::MessageRef {
+        crate::convert::message_ref(&mimi_content::MessageId(self.0))
+    }
+}
+
 impl<const N: usize> Serialize for Octets<N> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&crate::blobs::hex(&self.0))
@@ -320,6 +329,10 @@ pub struct Reaction {
     /// The MIMI message ID of the reaction's message, all 32 octets,
     /// which an unlike replaces.
     pub mimi_id: Octets<32>,
+    /// The reaction's `inReplyTo`, all 32 octets: the version of the
+    /// message it reacts to, which an unlike sends again
+    /// (mimi-content-10 §9.3).
+    pub in_reply_to: Octets<32>,
     /// The hub's acceptance time of the reaction's message, in
     /// milliseconds.
     pub accepted_at: u64,
@@ -481,9 +494,12 @@ pub struct Message {
     /// notice, and for a message stored before these were kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mimi_id: Option<Octets<32>>,
-    /// The reference octets of its later versions, oldest first.
+    /// The MIMI message IDs of its later versions (its edits and its
+    /// retraction), all 32 octets, oldest first, so that a reply or
+    /// reaction can name the latest version (mimi-content-10 §4.1;
+    /// [`Message::latest_mimi_id`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub aliases: Vec<Octets<10>>,
+    pub aliases: Vec<Octets<32>>,
     /// The hub's acceptance time in milliseconds (for a notice, when it
     /// was made).
     pub accepted_at: u64,
@@ -563,6 +579,28 @@ pub struct Message {
 }
 
 impl Message {
+    /// The MIMI message ID of its latest version: its last alias, else
+    /// its first version; `None` for a notice. mimi-content-10 §4.1: a
+    /// reply "SHOULD refer to the most current version at the time the
+    /// reply is sent".
+    #[must_use]
+    pub fn latest_mimi_id(&self) -> Option<Octets<32>> {
+        self.mimi_id
+            .map(|first| *self.aliases.last().unwrap_or(&first))
+    }
+
+    /// The MIMI message ID of its version whose reference octets are
+    /// `reference` (draft-atwood-jmap-chat-mimi-00 §Message
+    /// Identifiers): the first version or an alias. `None` if no version
+    /// has them.
+    #[must_use]
+    pub fn version_of_ref(&self, reference: &crate::convert::MessageRef) -> Option<Octets<32>> {
+        self.mimi_id
+            .into_iter()
+            .chain(self.aliases.iter().copied())
+            .find(|id| id.reference() == *reference)
+    }
+
     /// Its `mimid-on-behalf-of` extension ([`ON_BEHALF_OF_KEY`]), if it
     /// has one whose value is a map with a text `uri`; `name` and `src`
     /// are kept when they are text. Other entries are ignored.

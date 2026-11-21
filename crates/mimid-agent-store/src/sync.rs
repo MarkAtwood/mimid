@@ -25,7 +25,8 @@
 //!   moves ([`Store::sync`]).
 //! - **Messages**: a received message is stored once per room and
 //!   reference octets, with its first MIMI message ID; a reply resolves
-//!   within the room. Edits and retractions change the message they name
+//!   within the room, to any version. Edits and retractions change the
+//!   message they name, which keeps their whole IDs as its later versions
 //!   ([`replace`]). A reaction (mimi-content-10 §5.3) is kept on the
 //!   message it names, and taken back by its sender's unlike (§5.7).
 //!   Attachments are fetched into the blob store, or kept
@@ -1113,6 +1114,7 @@ impl Store {
                     sender: received.sender.clone(),
                     reaction,
                     mimi_id: Octets(received.message_id.0),
+                    in_reply_to: Octets(in_reply_to.0),
                     accepted_at: received.accepted_at,
                 },
             );
@@ -1250,11 +1252,6 @@ fn keep_for_retry(
                 &part,
             ));
     }
-}
-
-/// The reference octets of `id`, as kept in a record.
-pub(crate) fn alias_of(id: &MessageId) -> Octets<10> {
-    Octets(message_ref(id))
 }
 
 #[cfg(test)]

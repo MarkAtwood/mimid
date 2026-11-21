@@ -1797,11 +1797,29 @@ Added on 2026-11-20:
       NestedPart; the §5.5 example keeps it). A notice, which has no MIMI
       message ID, or a message of another room cannot be replied to
       (`ActionError::NotReferable`).
-    - **Which version.** Only a message's first version keeps its whole
-      message ID; later versions keep their reference octets. A reply
-      names the first version, which every receiver that stored the
-      message resolves (draft-atwood-jmap-chat-mimi-00 §Message
-      Identifiers). INVENTED, NOT FROM SPEC: the choice of version.
+    - **Which version (Mark, 2026-11-21; bead mimid-y5or; decision
+      mimid-1wgh.85 as revised).** mimi-content-10 §4.1: "Note that a
+      inReplyTo always references a specific message ID. Even if the
+      original message was edited several times, a reply always refers
+      to a specific version of that message, and SHOULD refer to the
+      most current version at the time the reply is sent." A reply
+      names the latest version the user saw. The record keeps every
+      version's whole message ID: the first in `mimi_id`, each later one
+      (an edit, a retraction) in `aliases`, oldest first
+      (`Message::latest_mimi_id`). `SendOptions::in_reply_to_version`
+      names the version the user saw by its reference octets; without it,
+      or if the octets name no version of the target, the reply names the
+      latest. JMAP Chat: the Message's current version, that is the
+      latest. IRC: the latest version this connection showed (the message
+      line, or its last `(edited)` line), else the one the
+      `+draft/reply` msgid names.
+    - **Receiving.** Any version resolves: the first, a later one, or
+      any by its reference octets (draft-atwood-jmap-chat-mimi-00
+      §Message Identifiers), through the room's index of every version's
+      reference octets. A receiver that missed the edit a reply names
+      cannot know that version; it keeps the reply's `inReplyTo` exactly
+      and its reference octets, as for any message not stored here.
+      Schema version 10.
     - **JMAP Chat.** `replyTo` on `Message/set` create is sent; one that
       names no Message of the Chat, or a notice, is `invalidProperties`
       on `replyTo`. `replyTo` beside a call to join stays `forbidden`.
@@ -1812,8 +1830,11 @@ Added on 2026-11-20:
       of the room is sent as a reply to it; one naming nothing stored
       here is sent as a plain message.
     - Tests: mimid-agent-store `tests/groundwork.rs`
-      `replies_are_sent_kept_and_edited_with_their_target`; mimid-agent
-      `tests/groundwork.rs` `replies_through_jmap_and_irc`.
+      `replies_are_sent_kept_and_edited_with_their_target`,
+      `replies_and_reactions_name_the_latest_version` (a reply and a
+      reaction to an edited message, received by a store that missed the
+      edit); mimid-agent `tests/groundwork.rs`
+      `replies_through_jmap_and_irc`.
 
 27. **Reactions (epic mimid-qqtk, bead mimid-qqtk.2; marmot-bridge.md
     §5 P2).** mimi-content-10 §5.3 (a reaction is a message of
@@ -1841,9 +1862,12 @@ Added on 2026-11-20:
       a message not stored here is skipped. At most
       `MAX_REACTIONS_PER_MESSAGE` (1024, INVENTED) per message. A
       retraction of the message drops its reactions. `Store::react`
-      sends one, naming the message's first version as a reply does;
-      `Store::unreact` takes back one of the user's, silent as edits
-      are. Schema version 7.
+      sends one, naming the version the user saw or else the latest, as
+      a reply does (§7.26); the kept reaction keeps the version it names
+      (`Reaction::in_reply_to`), and `Store::unreact` takes back one of
+      the user's naming that same version (§9.3: a replacement changes
+      only the NestedPart), silent as edits are. Schema version 7;
+      `Reaction::in_reply_to` version 10.
     - **JMAP Chat.** Each kept reaction is in the Message's `reactions`
       under its key: `emoji` the text, `senderId` the accountId or the
       reactor's ChatContact, `sentAt` the hub's time. The owner's patch

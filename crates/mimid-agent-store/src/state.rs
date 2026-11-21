@@ -88,7 +88,7 @@ impl State {
         for (key, message) in &self.messages {
             let references = reference_of(&message.sender_msg_id)
                 .into_iter()
-                .chain(message.aliases.iter().map(|alias| alias.0));
+                .chain(message.aliases.iter().map(alias_ref));
             for reference in references {
                 indexes
                     .message_of_ref
@@ -124,7 +124,7 @@ impl State {
     pub fn insert_message(&mut self, message: Message) {
         let references = reference_of(&message.sender_msg_id)
             .into_iter()
-            .chain(message.aliases.iter().map(|alias| alias.0));
+            .chain(message.aliases.iter().map(alias_ref));
         for reference in references {
             self.indexes
                 .message_of_ref
@@ -183,16 +183,18 @@ impl State {
             .get(&(room.to_owned(), *reference))
     }
 
-    /// Adds `alias`, the reference octets of a later version, to message
-    /// `key`, and indexes it; false if there is no such message.
-    pub fn add_alias(&mut self, key: &str, alias: MessageRef) -> bool {
+    /// Adds `alias`, the MIMI message ID of a later version, to message
+    /// `key`, and indexes it by its reference octets; false if there is
+    /// no such message.
+    pub fn add_alias(&mut self, key: &str, alias: &mimi_content::MessageId) -> bool {
         let Some(message) = self.messages.get_mut(key) else {
             return false;
         };
-        message.aliases.push(crate::record::Octets(alias));
-        self.indexes
-            .message_of_ref
-            .insert((message.room.clone(), alias), key.to_owned());
+        message.aliases.push(crate::record::Octets(alias.0));
+        self.indexes.message_of_ref.insert(
+            (message.room.clone(), crate::convert::message_ref(alias)),
+            key.to_owned(),
+        );
         true
     }
 
@@ -205,7 +207,7 @@ impl State {
         let message = self.messages.remove(key)?;
         let references = reference_of(&message.sender_msg_id)
             .into_iter()
-            .chain(message.aliases.iter().map(|alias| alias.0));
+            .chain(message.aliases.iter().map(alias_ref));
         for reaction in &message.reactions {
             self.indexes
                 .reaction_of_ref
@@ -430,6 +432,11 @@ pub struct RemovedRoom {
     /// Those of [`RemovedRoom::blobs`] that a message of the user's own
     /// named: the user's uploads.
     pub sent: BTreeSet<String>,
+}
+
+/// The reference octets of a message's later version `alias`.
+fn alias_ref(alias: &Octets<32>) -> MessageRef {
+    alias.reference()
 }
 
 /// The reference octets of the message of `reaction`.

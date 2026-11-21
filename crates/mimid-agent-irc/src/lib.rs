@@ -45,7 +45,9 @@
 //!   came before the connection is played back (§7.6).
 //! - **Replies** (§7.26): a reply is shown addressed `<nick>: ` to the
 //!   replied-to sender, with `+draft/reply` under message-tags; a
-//!   PRIVMSG with `+draft/reply` is sent as a reply.
+//!   PRIVMSG with `+draft/reply` is sent as a reply, naming the latest
+//!   version of the message this connection showed (mimi-content-10
+//!   §4.1).
 //! - **On behalf of** (§7.28): a message carrying `mimid-on-behalf-of`
 //!   is shown `<name> (via <nick>): <text>` unless its text starts with
 //!   the name.

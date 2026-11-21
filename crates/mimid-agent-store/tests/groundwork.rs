@@ -34,6 +34,7 @@ use mimid_server::peer::PeerClient;
 
 const ALICE: &str = "mimi://a.example/u/alice";
 const BOB: &str = "mimi://a.example/u/bob";
+const CAROL: &str = "mimi://a.example/u/carol";
 
 /// A running server: its base URL and a token per user.
 struct Server {
@@ -259,7 +260,7 @@ async fn reactions_are_sent_kept_added_up_and_taken_back() {
 
     // bob's reaction, as alice's agent decodes it.
     let mine = bob.new_key();
-    let reacted = bob.react(mine.clone(), &target, "👍").await.unwrap();
+    let reacted = bob.react(mine.clone(), &target, None, "👍").await.unwrap();
     assert_eq!(reacted.reactions.len(), 1);
     assert_eq!(reacted.reactions[0].key, mine);
     let got = until_message(&mut alice, |m| m.text.as_deref() == Some("👍")).await;
@@ -333,6 +334,131 @@ async fn reactions_are_sent_kept_added_up_and_taken_back() {
     alice.send_text(&room, "end").await.unwrap();
     until_store(&bob, |s| key_of(s, "end").is_some()).await;
     assert!(key_of(&bob, "🙃").is_none() && key_of(&bob, "👍").is_none());
+}
+
+/// Oracle: mimi-content-10 §4.1, "Even if the original message was
+/// edited several times, a reply always refers to a specific version of
+/// that message, and SHOULD refer to the most current version at the time
+/// the reply is sent"; §5.3 (a reaction names its message as a reply
+/// does); §9.3 (an unlike keeps the reaction's `inReplyTo`);
+/// draft-atwood-jmap-chat-mimi-00 §Message Identifiers (a version
+/// resolves by its reference octets). The IDs compared are those alice's
+/// plain agent sent and decodes.
+#[tokio::test]
+async fn replies_and_reactions_name_the_latest_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB, CAROL]).await;
+    let mut alice = agent(&server, ALICE, dir.path()).await;
+    let mut stores = Vec::new();
+    for user in [BOB, CAROL] {
+        let store = Store::new(agent(&server, user, dir.path()).await, InvitePolicy::Any);
+        store.open_database().unwrap();
+        store
+            .agent()
+            .lock()
+            .await
+            .publish_key_packages(4)
+            .await
+            .unwrap();
+        stores.push(store);
+    }
+    let (bob, carol) = (&stores[0], &stores[1]);
+    let room = alice.host_room(&HostOptions::named("r")).await.unwrap();
+    alice.invite(&room, BOB).await.unwrap();
+    alice.invite(&room, CAROL).await.unwrap();
+    let first = alice.send_text(&room, "draft").await.unwrap();
+    for store in [bob, carol] {
+        until_store(store, |s| key_of(s, "draft").is_some()).await;
+    }
+    let room_key = bob.state().room_of_uri(&room).cloned().unwrap();
+    let target = key_of(bob, "draft").unwrap();
+
+    // alice edits. carol misses the edit: her agent's events are taken
+    // past her store, as if the edit had never reached her.
+    let edit = alice
+        .send_edit(&room, &first.message_id, "final", false)
+        .await
+        .unwrap();
+    {
+        let mut agent = carol.agent().lock().await;
+        until_message(&mut agent, |m| m.content.replaces.is_some()).await;
+    }
+    until_store(bob, |s| key_of(s, "final").is_some()).await;
+    let record = bob.state().messages[&target].clone();
+    assert_eq!(record.mimi_id, Some(Octets(first.message_id.0)));
+    assert_eq!(record.aliases, [Octets(edit.message_id.0)]);
+    assert_eq!(record.latest_mimi_id(), Some(Octets(edit.message_id.0)));
+
+    // bob saw the edit: his reply and reaction name it (JMAP: the
+    // Message's current version).
+    let mut options = SendOptions::new();
+    options.in_reply_to = Some(target.clone());
+    let reply = bob
+        .send_message(bob.new_key(), &room_key, "agreed", &[], &options)
+        .await
+        .unwrap();
+    assert_eq!(reply.in_reply_to, Some(Reply::Message(target.clone())));
+    assert_eq!(reply.in_reply_to_id, Some(Octets(edit.message_id.0)));
+    let got = until_message(&mut alice, |m| m.text.as_deref() == Some("agreed")).await;
+    assert_eq!(got.content.in_reply_to, Some(edit.message_id));
+
+    let mine = bob.new_key();
+    let reacted = bob.react(mine.clone(), &target, None, "👍").await.unwrap();
+    assert_eq!(reacted.reactions[0].in_reply_to, Octets(edit.message_id.0));
+    let got = until_message(&mut alice, |m| m.text.as_deref() == Some("👍")).await;
+    assert_eq!(got.content.in_reply_to, Some(edit.message_id));
+    let reaction_id = got.message_id;
+    bob.unreact(&target, &mine).await.unwrap();
+    let unlike = until_message(&mut alice, |m| m.content.replaces == Some(reaction_id)).await;
+    assert_eq!(unlike.content.in_reply_to, Some(edit.message_id));
+
+    // A reply naming the version the user saw (IRC: the latest shown),
+    // here the first.
+    let mut options = SendOptions::new();
+    options.in_reply_to = Some(target.clone());
+    let mut v1 = [0u8; 10];
+    v1.copy_from_slice(&first.message_id.0[1..11]);
+    options.in_reply_to_version = Some(v1);
+    let older = bob
+        .send_message(bob.new_key(), &room_key, "as first written", &[], &options)
+        .await
+        .unwrap();
+    assert_eq!(older.in_reply_to_id, Some(Octets(first.message_id.0)));
+
+    // Receiving resolves any version: alice's replies to the first and
+    // to the later version both name bob's record.
+    for (text, version) in [("to v1", first.message_id), ("to v2", edit.message_id)] {
+        let mut options = mimid_agent_core::ContentOptions::new();
+        options.in_reply_to = Some(version);
+        alice
+            .send_message_with(&room, text, &[], &options)
+            .await
+            .unwrap();
+    }
+    until_store(bob, |s| key_of(s, "to v2").is_some()).await;
+    for text in ["to v1", "to v2"] {
+        let key = key_of(bob, text).unwrap();
+        let message = bob.state().messages[&key].clone();
+        assert_eq!(message.in_reply_to, Some(Reply::Message(target.clone())));
+    }
+
+    // carol, who missed the edit, keeps bob's reply with its inReplyTo
+    // exactly; the later version's reference octets name nothing she
+    // stored, so it stays a reference. The reply to the first version
+    // resolves. The reaction to the later version is not kept.
+    until_store(carol, |s| key_of(s, "to v2").is_some()).await;
+    let carols = key_of(carol, "draft").unwrap();
+    let mut v2 = [0u8; 10];
+    v2.copy_from_slice(&edit.message_id.0[1..11]);
+    let agreed_key = key_of(carol, "agreed").unwrap();
+    let agreed = carol.state().messages[&agreed_key].clone();
+    assert_eq!(agreed.in_reply_to_id, Some(Octets(edit.message_id.0)));
+    assert_eq!(agreed.in_reply_to, Some(Reply::Reference(Octets(v2))));
+    let to_v1_key = key_of(carol, "to v1").unwrap();
+    let to_v1 = carol.state().messages[&to_v1_key].clone();
+    assert_eq!(to_v1.in_reply_to, Some(Reply::Message(carols.clone())));
+    assert!(carol.state().messages[&carols].reactions.is_empty());
+    assert_eq!(carol.state().messages[&carols].body, "draft");
 }
 
 /// The `mimid-on-behalf-of` value of docs/design/marmot-bridge.md §3.2,

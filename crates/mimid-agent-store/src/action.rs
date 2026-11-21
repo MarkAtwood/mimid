@@ -248,8 +248,15 @@ pub struct SendOptions {
     pub expiry: MessageExpiry,
     /// The message it replies to, by key: a message of the same room
     /// whose MIMI message ID is kept. Sent as mimi-content-10 `inReplyTo`
-    /// (§5.2), naming the target's first version.
+    /// (§5.2), naming the version of it in
+    /// [`SendOptions::in_reply_to_version`].
     pub in_reply_to: Option<Key>,
+    /// The version of [`SendOptions::in_reply_to`] the user saw, by its
+    /// reference octets: its first version or a later one. `None`, or
+    /// octets that name no version of it, is its latest version
+    /// (mimi-content-10 §4.1: a reply "SHOULD refer to the most current
+    /// version at the time the reply is sent").
+    pub in_reply_to_version: Option<crate::convert::MessageRef>,
     /// Extensions beside `senderUri` and `roomUri` (mimi-content-10
     /// §4.3), such as a bridge's [`crate::record::ON_BEHALF_OF_KEY`];
     /// keys 1 and 2 are refused by the encoder. The record keeps them.
@@ -266,26 +273,34 @@ impl SendOptions {
 
 impl Store {
     /// The reply to message `target` from room `room`: the record's
-    /// [`Reply`] and the `inReplyTo` to send, the target's first version
-    /// (its later versions keep only their reference octets, and every
-    /// receiver resolves the first: draft-atwood-jmap-chat-mimi-00
-    /// §Message Identifiers).
+    /// [`Reply`] and the `inReplyTo` to send. That is the version of the
+    /// target whose reference octets are `version`, the version the user
+    /// saw; without `version`, or if it names no version of the target,
+    /// the target's latest version ([`Message::latest_mimi_id`]).
+    /// mimi-content-10 §4.1: a reply "SHOULD refer to the most current
+    /// version at the time the reply is sent" (decision mimid-1wgh.85 as
+    /// revised).
     pub(crate) fn reply_to(
         &self,
         room: &str,
         target: &str,
+        version: Option<&crate::convert::MessageRef>,
     ) -> Result<(Reply, mimi_content::MessageId), ActionError> {
         let state = self.state();
         let message = state
             .messages
             .get(target)
             .ok_or_else(|| ActionError::NoSuchMessage(target.to_owned()))?;
-        match message.mimi_id {
-            Some(id) if message.room == room => Ok((
+        if message.room != room {
+            return Err(ActionError::NotReferable(target.to_owned()));
+        }
+        let named = version.and_then(|reference| message.version_of_ref(reference));
+        match named.or_else(|| message.latest_mimi_id()) {
+            Some(id) => Ok((
                 Reply::Message(target.to_owned()),
                 mimi_content::MessageId(id.0),
             )),
-            _ => Err(ActionError::NotReferable(target.to_owned())),
+            None => Err(ActionError::NotReferable(target.to_owned())),
         }
     }
 
@@ -664,7 +679,9 @@ impl Store {
         crate::expiry::check_outgoing(&expiry, now_ms())?;
         let uri = self.room_uri(room)?;
         let reply = match &options.in_reply_to {
-            Some(target) => Some(self.reply_to(room, target)?),
+            Some(target) => {
+                Some(self.reply_to(room, target, options.in_reply_to_version.as_ref())?)
+            }
             None => None,
         };
         let (outgoing, attachments) = self.read_files(files)?;
@@ -930,7 +947,7 @@ impl Store {
         let edited = {
             let mut state = self.state();
             state.edit_message(key, text.to_owned(), body_type, sent.accepted_at);
-            state.add_alias(key, message_ref(&sent.message_id));
+            state.add_alias(key, &sent.message_id);
             state.messages.get(key).cloned()
         };
         drop(agent);
@@ -956,7 +973,7 @@ impl Store {
         let retracted = {
             let mut state = self.state();
             state.retract_message(key, sent.accepted_at);
-            state.add_alias(key, message_ref(&sent.message_id));
+            state.add_alias(key, &sent.message_id);
             state.messages.get(key).cloned()
         };
         drop(agent);
@@ -964,9 +981,10 @@ impl Store {
     }
 
     /// Reacts with `reaction` to message `message` (mimi-content-10
-    /// §5.3; `Agent::send_reaction`), naming the message's first version
-    /// as a reply does ([`SendOptions::in_reply_to`]), and keeps the
-    /// reaction on the message under `key`, at the hub's acceptance time.
+    /// §5.3; `Agent::send_reaction`), naming the version of it whose
+    /// reference octets are `version`, or its latest, as a reply does
+    /// ([`SendOptions::in_reply_to_version`]), and keeps the reaction on
+    /// the message under `key`, at the hub's acceptance time.
     ///
     /// # Errors
     ///
@@ -978,6 +996,7 @@ impl Store {
         &self,
         key: Key,
         message: &str,
+        version: Option<&crate::convert::MessageRef>,
         reaction: &str,
     ) -> Result<Message, ActionError> {
         let room = self
@@ -987,7 +1006,7 @@ impl Store {
             .map(|m| m.room.clone())
             .ok_or_else(|| ActionError::NoSuchMessage(message.to_owned()))?;
         let uri = self.room_uri(&room)?;
-        let (_, target) = self.reply_to(&room, message)?;
+        let (_, target) = self.reply_to(&room, message, version)?;
         // Locked until the reaction is in, as in Store::send.
         let mut agent = self.agent.lock().await;
         let sent = agent.send_reaction(&uri, &target, reaction).await?;
@@ -1000,6 +1019,7 @@ impl Store {
                     sender: self.user.clone(),
                     reaction: reaction.to_owned(),
                     mimi_id: Octets(sent.message_id.0),
+                    in_reply_to: Octets(target.0),
                     accepted_at: sent.accepted_at,
                 },
             );
@@ -1012,7 +1032,8 @@ impl Store {
     /// Takes back the user's reaction `reaction` to message `message`
     /// (mimi-content-10 §5.7, "Unlike"; `Agent::send_unreaction`), with
     /// every other part of the same reaction message, and removes them
-    /// from the message. Silent as edits are ([`Store::set_silent_edits`]).
+    /// from the message. The unlike names the version the reaction named
+    /// (§9.3: a replacement changes only the NestedPart). Silent as edits are ([`Store::set_silent_edits`]).
     ///
     /// # Errors
     ///
@@ -1020,7 +1041,7 @@ impl Store {
     /// the message holds no reaction of that key that the user sent,
     /// [`ActionError::NoSuchRoom`], and [`ActionError::Agent`].
     pub async fn unreact(&self, message: &str, reaction: &str) -> Result<Message, ActionError> {
-        let (room, target, mimi_id) = {
+        let (room, mimi_id, target) = {
             let state = self.state();
             let record = state
                 .messages
@@ -1031,10 +1052,9 @@ impl Store {
                 .iter()
                 .find(|r| r.key == reaction && r.sender == self.user)
                 .ok_or_else(|| ActionError::NoSuchReaction(reaction.to_owned()))?;
-            (record.room.clone(), record.mimi_id, own.mimi_id)
+            (record.room.clone(), own.mimi_id, own.in_reply_to)
         };
         let uri = self.room_uri(&room)?;
-        let target = target.ok_or_else(|| ActionError::NotReferable(message.to_owned()))?;
         let mut agent = self.agent.lock().await;
         agent
             .send_unreaction(

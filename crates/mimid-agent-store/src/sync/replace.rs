@@ -24,7 +24,7 @@
 use mimi_content::{MessageId, Part};
 use mimid_agent_core::ReceivedMessage;
 
-use super::{SyncReport, alias_of, keep_reportable};
+use super::{SyncReport, keep_reportable};
 use crate::change::Change;
 use crate::content::BodyType;
 use crate::convert::message_ref;
@@ -144,7 +144,7 @@ impl Store {
                 }
             }
         }
-        state.add_alias(&key, alias_of(&received.message_id).0);
+        state.add_alias(&key, &received.message_id);
         changes.push(Change::MessageChanged(key));
         report.edits += 1;
     }

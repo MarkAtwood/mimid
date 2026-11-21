@@ -88,7 +88,7 @@ impl AgentChat {
             let emoji = value.get("emoji").and_then(Value::as_str).unwrap_or("");
             let record = self
                 .store
-                .react(reaction.to_owned(), id.as_ref(), emoji)
+                .react(reaction.to_owned(), id.as_ref(), None, emoji)
                 .await
                 .map_err(action_failure)?;
             let at = record

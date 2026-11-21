@@ -134,6 +134,11 @@ pub(crate) struct ChannelView {
 pub(crate) struct ShownMessage {
     /// The edit time last shown.
     pub(crate) edited_at: Option<u64>,
+    /// The reference octets of the latest version shown, which a reply
+    /// or reaction from this connection names (mimi-content-10 §4.1;
+    /// docs/design/agent-frontends.md §7.26); `None` for a message shown
+    /// with no MIMI message ID.
+    pub(crate) version: Option<mimid_agent_store::convert::MessageRef>,
     /// Whether its retraction was shown.
     pub(crate) retracted: bool,
     /// The reactions shown, by key: who reacted, by URI, and the

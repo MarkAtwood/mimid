@@ -54,8 +54,8 @@
 //!   `sync` when the ban was made elsewhere.
 //! - **Message**: `Message/set` create sends `body` as one `text/plain`
 //!   part; with `replyTo`, naming a Message of the same Chat, as a reply
-//!   whose MIMI `inReplyTo` is that Message's first version
-//!   ([`mimid_agent_store::Store::send_message`]). Received messages with a `text/*` single part are stored with
+//!   whose MIMI `inReplyTo` is that Message's current version, its latest
+//!   (mimi-content-10 §4.1; [`mimid_agent_store::Store::send_message`]). Received messages with a `text/*` single part are stored with
 //!   `bodyType` `text/markdown` for `text/markdown` and `text/plain`
 //!   otherwise.
 //! - **Edits and retractions** ([`edits`]; §Edits, decision
