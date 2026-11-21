@@ -1,0 +1,7 @@
+{
+  "id": "1795305079842768469-1",
+  "issue_id": "mimid-e13m.6",
+  "author": "Mark Atwood",
+  "text": "From step 3 (auth-impl, d0234730): the Host check taking [tls] names moves here with the HTTPS listener, since step 3 built TLS for IRC only. mimid_agent::tls::Tls::server_config() is ready to reuse.",
+  "created_at": "2026-11-21T23:51:19.842768469Z"
+}
