@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.4.10",
   "title": "mimi-mls: SemiPrivateMessage (deferred)",
   "description": "Deferred by Mark 2026-10-17: protocol-06 L1468 makes it optional; needs fork-scale OpenMLS change. See DR-7.",
-  "status": "deferred",
+  "status": "closed",
   "priority": 4,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T18:05:32.189936207Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T18:05:32.189936207Z",
+  "updated_at": "2026-11-21T01:20:19.712386985Z",
+  "closed_at": "2026-11-21T01:20:19.712386985Z",
+  "close_reason": "Superseded by mimid-1wgh.4.79 (Mark 2026-11-21: adding SemiPrivateMessage)",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.4.10",

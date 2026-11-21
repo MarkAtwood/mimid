@@ -1,1 +1,2 @@
 {"id":"01a14b0a-5aa0-7209-a6ab-e228734842c4","issue_id":"mimid-1wgh.4.10","event_type":"created","actor":"agent","old_value":"","new_value":"","created_at":"2026-10-17T18:05:32.192134084Z"}
+{"id":"01a1fbb0-a304-750b-a95c-0073b00b67de","issue_id":"mimid-1wgh.4.10","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Superseded by mimid-1wgh.4.79 (Mark 2026-11-21: adding SemiPrivateMessage)","created_at":"2026-11-21T01:20:19.716331547Z"}
