@@ -1,0 +1,26 @@
+{
+  "id": "mimid-e13m.10",
+  "title": "auth 10: XMPP SASL: SCRAM and PLAIN on SASL1 and SASL2, FAST, later -PLUS",
+  "description": "With the XMPP front end. Once SASL2 or -PLUS is offered it stays offered (Conversations pinning, Monal). Design: docs/design/frontend-auth.md §4.4, §9 step 10.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T22:49:45.666384122Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T22:49:45.666384122Z",
+  "labels": [
+    "agent",
+    "auth"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-e13m.10",
+      "depends_on_id": "mimid-e13m",
+      "type": "parent-child",
+      "created_at": "2026-11-21T22:49:45.706554208Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
