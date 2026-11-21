@@ -13,6 +13,8 @@ tbe = "tbe"
 caf = "caf"
 # CBOR Object Signing and Encryption (RFC 9052).
 cose = "cose"
+# XMPP Multi-User Chat (XEP-0045).
+muc = "muc"
 
 [files]
 # Vendored mimi-content WG examples: EDN and diagnostic dumps are full of hex.
