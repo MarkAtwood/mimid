@@ -42,6 +42,10 @@ pub(crate) struct Shared {
     pong_within: Duration,
     /// When the front end started, for 003.
     pub(crate) created: String,
+    /// The reason of the user's last PART of each room on any connection,
+    /// by room key, for the PART the other connections show (§7.16). MIMI
+    /// carries no reason for a leave, so it reaches no one else.
+    part_reasons: Mutex<HashMap<Key, String>>,
 }
 
 impl Shared {
@@ -59,7 +63,31 @@ impl Shared {
             ping_after: options.ping_after,
             pong_within: options.pong_within,
             created: mimid_agent_store::convert::utc_date(crate::render::now_ms()),
+            part_reasons: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Keeps `reason` as the user's reason for leaving room `key`, or
+    /// forgets it (`None`).
+    pub(crate) fn set_part_reason(&self, key: &str, reason: Option<&str>) {
+        let mut reasons = self
+            .part_reasons
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match reason {
+            Some(reason) => reasons.insert(key.to_owned(), reason.to_owned()),
+            None => reasons.remove(key),
+        };
+    }
+
+    /// The reason the user gave on a connection of this front end for
+    /// leaving room `key`, if any.
+    pub(crate) fn part_reason(&self, key: &str) -> Option<String> {
+        self.part_reasons
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key)
+            .cloned()
     }
 
     /// The names, locked. Taken after the store's state lock, never
@@ -95,6 +123,8 @@ pub(crate) struct Caps {
 pub(crate) struct ChannelView {
     /// The channel name.
     pub(crate) name: String,
+    /// The topic shown.
+    pub(crate) topic: String,
     /// Members shown, by user URI, with whether they are shown as `@`.
     pub(crate) members: BTreeMap<String, bool>,
 }
@@ -190,6 +220,23 @@ impl Session {
         all.extend(params.iter().map(|p| (*p).to_owned()));
         let out = Out::new(&self.shared.server, code, all);
         self.send(&out);
+    }
+
+    /// Queues `out` with its last parameter cut, on a UTF-8 boundary, to
+    /// fit the line limit: for peer text that is not split over lines
+    /// (a topic).
+    pub(crate) fn send_cut(&mut self, mut out: Out) {
+        out.cut_to_fit(self.caps.message_tags);
+        self.send(&out);
+    }
+
+    /// Queues numeric `code` as [`Session::numeric`] does, its last
+    /// parameter cut to fit ([`Session::send_cut`]).
+    pub(crate) fn numeric_cut(&mut self, code: &str, params: &[&str]) {
+        let mut all = vec![self.target()];
+        all.extend(params.iter().map(|p| (*p).to_owned()));
+        let out = Out::new(&self.shared.server, code, all);
+        self.send_cut(out);
     }
 
     /// Queues a NOTICE from the server to the client.

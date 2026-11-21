@@ -310,6 +310,11 @@ async fn registration_queries_and_refusals() {
         answers[3].params,
         [ALICE_NICK, ALICE_NICK, "alice", "a.example", "*", ALICE]
     );
+    // §7.15: 330 gives the user URI as the account.
+    assert_eq!(
+        answers[5].params,
+        [ALICE_NICK, ALICE_NICK, ALICE, "is logged in as"]
+    );
 
     // JOIN of a name that is no room hosts one (§7.1).
     irc.send("JOIN #lobby").await;
@@ -321,7 +326,7 @@ async fn registration_queries_and_refusals() {
     irc.send("JOIN #LOBBY").await;
     assert!(irc.sync().await.is_empty());
 
-    // MODE queries: 324 and 329, then the lists; never 482.
+    // MODE queries: 324, no 329 (§7.15), then the lists; never 482.
     irc.send("MODE #lobby").await;
     irc.send("MODE #lobby b").await;
     irc.send("MODE #lobby e").await;
@@ -329,18 +334,51 @@ async fn registration_queries_and_refusals() {
     irc.send("MODE #lobby +b").await;
     let answers = irc.sync().await;
     let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
-    assert_eq!(
-        codes,
-        ["324", "329", "368", "349", "347", "368"],
-        "{answers:#?}"
-    );
+    assert_eq!(codes, ["324", "368", "349", "347", "368"], "{answers:#?}");
     assert_eq!(answers[0].params[1..], ["#lobby", "+nt"]);
-    // Setting the topic is 482; reading it is 332 and 333.
-    irc.send("TOPIC #lobby :new").await;
+    // §7.14: with no subject set, TOPIC reads 332 alone: no setter or
+    // time is known, so no 333; the JOIN burst had none either.
+    assert!(numerics(&irc.seen, "333").is_empty(), "{:#?}", irc.seen);
     irc.send("TOPIC #lobby").await;
     let answers = irc.sync().await;
     let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
-    assert_eq!(codes, ["482", "332", "333"], "{answers:#?}");
+    assert_eq!(codes, ["332"], "{answers:#?}");
+    assert_eq!(answers[0].params[1], "#lobby");
+    assert_eq!(answers[0].text(), topic);
+    // The creator sets the subject: TOPIC from her own mask, `subject |
+    // name | URI`; then 333 names her and the hub's time.
+    let uri = topic.strip_prefix("lobby | ").unwrap().to_owned();
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    irc.send("TOPIC #lobby :plans for friday").await;
+    let changed = irc.until_command("TOPIC").await;
+    assert_eq!(changed.source, ALICE_MASK);
+    assert_eq!(
+        changed.params,
+        ["#lobby", &format!("plans for friday | lobby | {uri}")]
+    );
+    irc.send("TOPIC #lobby").await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["332", "333"], "{answers:#?}");
+    assert_eq!(answers[0].text(), changed.params[1]);
+    assert_eq!(answers[1].params[1..3], ["#lobby", ALICE_MASK]);
+    let at: u64 = answers[1].params[3].parse().unwrap();
+    assert!(at >= before && at <= before + 60, "{at} vs {before}");
+    // A NUL is no MIMI Utf8String: not a rights problem, so a NOTICE.
+    irc.send("TOPIC #lobby :a\0b").await;
+    let answers = irc.sync().await;
+    assert_eq!(answers.len(), 1, "{answers:#?}");
+    assert_eq!(answers[0].command, "NOTICE");
+    assert!(
+        answers[0]
+            .text()
+            .contains("subject of #lobby was not changed"),
+        "{}",
+        answers[0].raw
+    );
     // WHO of the channel: one 352 per member, then 315.
     irc.send("WHO #lobby").await;
     let answers = irc.sync().await;
@@ -369,6 +407,13 @@ async fn registration_queries_and_refusals() {
             (format!("mimid!mimid@{SERVER}").as_str(), "NOTICE")
         );
     }
+    // The help says what user@domain stands for (§7.15).
+    assert!(
+        answers
+            .iter()
+            .any(|m| m.text().contains("which stands for mimi://domain/u/name")),
+        "{answers:#?}"
+    );
     // ISON and USERHOST.
     irc.send(&format!("ISON {ALICE_NICK} MIMID nobody-x")).await;
     irc.send(&format!("USERHOST {ALICE_NICK}")).await;
@@ -611,15 +656,18 @@ async fn two_daemons_chat_over_irc_and_jmap() {
         "{answers:#?}"
     );
 
-    // PART leaves the room for good (§7.1): alice sees bob go.
+    // PART leaves the room for good (§7.1): alice sees bob go. MIMI
+    // carries no reason for a leave, so she sees the fixed text (§7.16).
     b.send("PART #lobby :bye now").await;
     let part = b.until_command("PART").await;
     assert_eq!(part.source, BOB_MASK);
     assert_eq!(part.params, ["#lobby", "bye now"]);
-    a.until("bob's PART", |m| {
-        m.command == "PART" && m.source == BOB_MASK
-    })
-    .await;
+    let seen = a
+        .until("bob's PART", |m| {
+            m.command == "PART" && m.source == BOB_MASK
+        })
+        .await;
+    assert_eq!(seen.params, ["#lobby", "no longer in this room"]);
     // JOIN of the same name now hosts a new room of bob's alone.
     b.send("JOIN #lobby").await;
     let names = joined(&mut b, BOB_MASK, "#lobby").await;
@@ -643,11 +691,14 @@ async fn invites_and_consent_from_irc() {
     let (mut a, _) = Irc::register(alice.irc.unwrap(), &alice.token(), "alice", &[]).await;
     let (mut b, _) = Irc::register(bob.irc, &bob.token, "bob", &[]).await;
 
-    async fn host_and_invite(a: &mut Irc, channel: &str) {
+    /// JOIN of the channel `invite` names, then `invite`.
+    async fn host_and_invite(a: &mut Irc, invite: &str) {
+        let channel = invite.rsplit(' ').next().unwrap();
         a.send(&format!("JOIN {channel}")).await;
         joined(a, ALICE_MASK, channel).await;
-        a.send(&format!("INVITE {BOB} {channel}")).await;
-        a.until_command("341").await;
+        a.send(invite).await;
+        let invited = a.until_command("341").await;
+        assert_eq!(invited.params[1..], [BOB_NICK, channel]);
     }
     async fn invited(b: &mut Irc) -> String {
         let invite = b.until_command("INVITE").await;
@@ -656,7 +707,7 @@ async fn invites_and_consent_from_irc() {
         invite.params[1].clone()
     }
 
-    host_and_invite(&mut a, "#one").await;
+    host_and_invite(&mut a, &format!("INVITE {BOB} #one")).await;
     let pending = invited(&mut b).await;
     assert_eq!(pending, "#one");
     b.send("PRIVMSG mimid :invites").await;
@@ -674,8 +725,9 @@ async fn invites_and_consent_from_irc() {
     b.send("JOIN &invite-999").await;
     b.until_command("403").await;
 
-    // allow: the next invite is joined without asking.
-    b.send(&format!("PRIVMSG mimid :allow {ALICE_NICK}")).await;
+    // allow, by user@domain (§7.15): the next invite is joined without
+    // asking. The domain's case does not matter; the user part's is kept.
+    b.send("PRIVMSG mimid :allow alice@A.Example").await;
     let allowed = b.until_command("NOTICE").await;
     assert_eq!(allowed.source, format!("mimid!mimid@{SERVER}"));
     assert!(
@@ -683,7 +735,8 @@ async fn invites_and_consent_from_irc() {
         "{}",
         allowed.raw
     );
-    host_and_invite(&mut a, "#two").await;
+    // INVITE by user@domain, for a user who has a nick here too.
+    host_and_invite(&mut a, "INVITE bob@a.example #two").await;
     joined(&mut b, BOB_MASK, "#two").await;
     let invites = b.seen.iter().filter(|m| m.command == "INVITE").count();
     assert_eq!(invites, 1, "#two came without an INVITE");
@@ -1027,6 +1080,136 @@ async fn join_0_leaves_every_room() {
     );
 
     drop((a, b, again));
+    bob.stop().await;
+    alice.stop().await;
+}
+
+/// Oracle: §7.14 (Mark, 2026-11-21): TOPIC sets the MIMI room subject
+/// (protocol-07 §7.6 `room_subject`), which the hub allows by
+/// room-policy-04 §8.2 `canChangeRoomSubject`: the admin role holds it,
+/// the member role does not (decision mimid-1wgh.56). Every member's IRC
+/// shows the change as TOPIC from the Commit's sender, the topic being
+/// `subject | name | URI`, with 333 naming the setter and the hub's time.
+/// A role without the capability gets 482. JMAP Chat has no subject for a
+/// group Chat (`topic` is for channel Chats only), so JMAP shows none.
+/// §7.15: INVITE by `user@domain` of a user never seen. §7.16: a PART
+/// reason reaches the user's other IRC connections, and other members
+/// see the fixed text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn topic_sets_the_subject_for_every_member() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let bob = Served::start(&irc_only(&server, BOB, dir.path(), "any")).await;
+    let (mut a, _) = Irc::register(alice.irc.unwrap(), &alice.token(), "alice", &[]).await;
+    let (mut a2, _) = Irc::register(alice.irc.unwrap(), &alice.token(), "alice2", &[]).await;
+    let (mut b, _) = Irc::register(bob.irc, &bob.token, "bob", &[]).await;
+
+    a.send("JOIN #lobby").await;
+    joined(&mut a, ALICE_MASK, "#lobby").await;
+    joined(&mut a2, ALICE_MASK, "#lobby").await;
+    // bob has never been seen at alice's: user@domain names him.
+    a.send("INVITE bob@a.example #lobby").await;
+    let inviting = a.until_command("341").await;
+    assert_eq!(inviting.params, [ALICE_NICK, BOB_NICK, "#lobby"]);
+    joined(&mut b, BOB_MASK, "#lobby").await;
+    for irc in [&mut a, &mut a2] {
+        irc.until("bob's JOIN", |m| {
+            m.command == "JOIN" && m.source == BOB_MASK
+        })
+        .await;
+    }
+    let uri = alice
+        .store
+        .state()
+        .rooms
+        .values()
+        .next()
+        .unwrap()
+        .uri
+        .clone();
+
+    // alice, the admin, sets the subject; all three connections see it.
+    a.send("TOPIC #lobby :plans for friday").await;
+    let topic = format!("plans for friday | lobby | {uri}");
+    for irc in [&mut a, &mut a2, &mut b] {
+        let changed = irc.until_command("TOPIC").await;
+        assert_eq!(changed.source, ALICE_MASK);
+        assert_eq!(changed.params, ["#lobby", topic.as_str()]);
+    }
+    // bob's TOPIC query: 332 and 333 with alice and the hub's time, the
+    // same as alice's own.
+    let mut set = Vec::new();
+    for irc in [&mut a, &mut b] {
+        irc.send("TOPIC #lobby").await;
+        let answers = irc.sync().await;
+        let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+        assert_eq!(codes, ["332", "333"], "{answers:#?}");
+        assert_eq!(answers[0].text(), topic);
+        assert_eq!(answers[1].params[1..3], ["#lobby", ALICE_MASK]);
+        set.push(answers[1].params[3].clone());
+    }
+    assert_eq!(set[0], set[1], "one time for both members");
+
+    // bob is a member: his role lacks canChangeRoomSubject, so 482, and
+    // nothing changes.
+    b.send("TOPIC #lobby :mine now").await;
+    let answers = b.sync().await;
+    assert_eq!(answers.len(), 1, "{answers:#?}");
+    assert_eq!(answers[0].command, "482");
+    assert_eq!(answers[0].params[1], "#lobby");
+    assert!(
+        answers[0].text().contains("canChangeRoomSubject"),
+        "{}",
+        answers[0].raw
+    );
+    assert!(!a.sync().await.iter().any(|m| m.command == "TOPIC"));
+
+    // Made an op (role admin), bob may: alice sees TOPIC from bob, and a
+    // new connection's JOIN burst carries the topic and 333 naming him.
+    a.send(&format!("MODE #lobby +o {BOB_NICK}")).await;
+    b.until("MODE +o", |m| m.command == "MODE" && m.params[1] == "+o")
+        .await;
+    b.send("TOPIC #lobby :bob's topic").await;
+    let topic = format!("bob's topic | lobby | {uri}");
+    for irc in [&mut a, &mut a2, &mut b] {
+        let changed = irc.until_command("TOPIC").await;
+        assert_eq!(changed.source, BOB_MASK);
+        assert_eq!(changed.params, ["#lobby", topic.as_str()]);
+    }
+    let (mut a3, burst) = Irc::register(alice.irc.unwrap(), &alice.token(), "alice3", &[]).await;
+    let mut burst = burst;
+    burst.extend(a3.sync().await);
+    let topics = numerics(&burst, "332");
+    assert_eq!(topics.len(), 1, "{burst:#?}");
+    assert_eq!(topics[0].params[1..], ["#lobby", topic.as_str()]);
+    let set = numerics(&burst, "333");
+    assert_eq!(set.len(), 1, "{burst:#?}");
+    assert_eq!(set[0].params[1..3], ["#lobby", BOB_MASK]);
+
+    // The store keeps the subject; the JMAP Chat shows the room's name
+    // and has no field for the subject.
+    let jmap = alice.client().await;
+    let chats = jmap.get("Chat", None).await;
+    assert_eq!(chats[0]["name"], json!("lobby"));
+    assert!(chats[0].get("topic").is_none(), "{chats:#?}");
+
+    // §7.16: alice PARTs with a reason. Her other connections show it;
+    // bob sees the fixed text, since MIMI carries no reason.
+    a.send("PART #lobby :off to lunch").await;
+    for irc in [&mut a, &mut a2, &mut a3] {
+        let part = irc.until_command("PART").await;
+        assert_eq!(part.source, ALICE_MASK);
+        assert_eq!(part.params, ["#lobby", "off to lunch"]);
+    }
+    let part = b
+        .until("alice's PART", |m| {
+            m.command == "PART" && m.source == ALICE_MASK
+        })
+        .await;
+    assert_eq!(part.params, ["#lobby", "no longer in this room"]);
+
+    drop((a, a2, a3, b));
     bob.stop().await;
     alice.stop().await;
 }

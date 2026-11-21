@@ -121,6 +121,8 @@ from Mark Atwood's two IRC servers in Go:
 
 - **MODE queries:** `MODE #c` and `MODE #c b|e|I` with no argument are
   queries. Answer 324 and 329, then 367/368, 348/349 and 346/347; never 482.
+  (mimid sends no 329: it knows no creation time every member shares;
+  docs/design/agent-frontends.md §7.15.)
   Textual and irssi send `MODE #c b` on every join. This is a field report:
   meshIRCd 4a4382c, VIBED.md:269-282. RFC 2812 §3.2.3 never says this.
 - **JOIN:** echo the JOIN to the joiner, then send 332 and 333 (or 331),

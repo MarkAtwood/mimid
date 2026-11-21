@@ -230,6 +230,22 @@ impl Out {
         out
     }
 
+    /// Cuts the last parameter on a UTF-8 boundary so that the line, tags
+    /// included if `with_tags`, fits [`MAX_LINE`]: for peer text that is
+    /// shown on one line only (a topic).
+    pub fn cut_to_fit(&mut self, with_tags: bool) {
+        let room = self.room_for_trailing(with_tags);
+        if let Some(last) = self.params.last_mut()
+            && last.len() > room
+        {
+            let mut end = room;
+            while !last.is_char_boundary(end) {
+                end -= 1;
+            }
+            last.truncate(end);
+        }
+    }
+
     /// The octets this line takes on the wire with an empty last
     /// parameter written as trailing: what is left of [`MAX_LINE`] is
     /// the room for that parameter's text. Tags count if `with_tags`.
@@ -408,5 +424,32 @@ mod tests {
         assert_eq!(pack_words(&words, 3), ["aa", "bbb", "c", "dddd"]);
         assert_eq!(pack_words(&words, 100), ["aa bbb c dddd"]);
         assert!(pack_words(&[], 10).is_empty());
+    }
+
+    /// Oracle: docs/irc-lessons.md "Writing": a line is at most 512
+    /// octets; a topic longer than that is cut on a UTF-8 boundary.
+    #[test]
+    fn a_long_last_parameter_is_cut_to_the_line_limit() {
+        let topic = "é".repeat(400);
+        let mut out = Out::new(
+            "alice-a!alice@a.example",
+            "TOPIC",
+            vec!["#lobby".to_owned(), topic.clone()],
+        );
+        out.cut_to_fit(false);
+        let wire = out.to_wire(false);
+        // At most 512; short of it by a cut 2-octet character and the
+        // `:` that text without a space does not need.
+        assert!(
+            (MAX_LINE - 2..=MAX_LINE).contains(&wire.len()),
+            "{}",
+            wire.len()
+        );
+        let text = &out.params[1];
+        assert!(!text.is_empty() && topic.starts_with(text.as_str()));
+        // A short one is left alone.
+        let mut short = Out::new("s", "TOPIC", vec!["#c".to_owned(), "hi".to_owned()]);
+        short.cut_to_fit(true);
+        assert_eq!(short.params[1], "hi");
     }
 }

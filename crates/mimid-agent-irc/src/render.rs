@@ -3,10 +3,11 @@
 //!
 //! | Store | IRC |
 //! |---|---|
-//! | Active room | Channel: JOIN, 332/333 (the name and the room URI), 353/366 |
+//! | Active room | Channel: JOIN, 332 (the subject, the name and the room URI), 333 when the subject's setter and time are known (§7.14), 353/366 |
+//! | Subject changed | TOPIC from the Commit's sender, or from the server if not known (§7.14) |
 //! | Participants | NAMES, `@` for the role "admin"; banned users left out |
 //! | Members changed | JOIN and PART of others; MODE +o/-o from the server |
-//! | The user out of a room | PART from the user, "no longer in this room" |
+//! | The user out of a room | PART from the user, with the reason the user gave on another connection of this daemon, else "no longer in this room" (§7.16) |
 //! | Room deleted here | PART from the user, "deleted here" |
 //! | Message | PRIVMSG from the sender's hostmask, `msgid` and `time`; `/me ` text as ACTION |
 //! | Reply | `+draft/reply=<msgid>` of a stored message |
@@ -56,17 +57,17 @@ pub(crate) fn server_time(ms: u64) -> String {
     }
 }
 
-/// The seconds of the time in store key `key` (a ULID), or 0.
-pub(crate) fn key_time(key: &str) -> u64 {
-    ulid::Ulid::from_string(key).map_or(0, |u| u.timestamp_ms() / 1000)
-}
-
-/// A room's topic: its name and its URI.
+/// A room's topic (§7.14): `subject | name | URI`, leaving out an empty
+/// subject or name. Peer text is data, on one line.
 pub(crate) fn topic_of(room: &Room) -> String {
-    match room.name.as_deref().filter(|n| !n.is_empty()) {
-        Some(name) => format!("{} | {}", data(name).replace(['\r', '\n'], " "), room.uri),
-        None => room.uri.clone(),
-    }
+    [room.subject.as_deref(), room.name.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| data(t).replace(['\r', '\n'], " "))
+        .chain(std::iter::once(room.uri.clone()))
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 /// The members a room shows: its participants but the banned, each with
@@ -91,7 +92,8 @@ pub(crate) fn data(text: &str) -> String {
 pub(crate) struct RoomShown {
     pub(crate) channel: String,
     pub(crate) topic: String,
-    pub(crate) created: u64,
+    /// Who set the subject and when, in seconds, if both are known.
+    pub(crate) topic_set: Option<(Identity, u64)>,
     pub(crate) members: Vec<(Identity, bool)>,
 }
 
@@ -158,10 +160,14 @@ impl Session {
             .into_iter()
             .map(|(uri, op)| (names.identity(&uri), op))
             .collect();
+        let topic_set = room
+            .subject_set
+            .as_ref()
+            .and_then(|set| Some((names.identity(set.by.as_deref()?), set.at / 1000)));
         Some(RoomShown {
             channel,
             topic: topic_of(room),
-            created: key_time(key),
+            topic_set,
             members,
         })
     }
@@ -171,7 +177,11 @@ impl Session {
     pub(crate) fn show_room(&mut self, key: &str) {
         let Some(shown) = self.room_shown(key) else {
             if let Some(view) = self.channels.remove(key) {
-                self.part_own(&view.name, "no longer in this room");
+                let reason = self.shared.part_reason(key);
+                self.part_own(
+                    &view.name,
+                    reason.as_deref().unwrap_or("no longer in this room"),
+                );
             }
             return;
         };
@@ -223,24 +233,36 @@ impl Session {
                 Some(_) => {}
             }
         }
+        if view.topic != shown.topic {
+            let source = shown
+                .topic_set
+                .as_ref()
+                .map_or_else(|| server.clone(), |(who, _)| who.mask());
+            self.send_cut(Out::new(
+                &source,
+                "TOPIC",
+                vec![channel.clone(), shown.topic.clone()],
+            ));
+        }
         self.channels.insert(
             key.to_owned(),
             ChannelView {
                 name: channel,
+                topic: shown.topic,
                 members: now.into_iter().map(|(w, op)| (w.uri, op)).collect(),
             },
         );
     }
 
-    /// The JOIN of a channel: JOIN, 332, 333, 353, 366
+    /// The JOIN of a channel: JOIN, 332, 333 if known, 353, 366
     /// (docs/irc-lessons.md "JOIN").
     fn join_burst(&mut self, key: &str, shown: &RoomShown) {
         let me = self.me();
         let channel = shown.channel.clone();
+        // In the room again: a reason for leaving it before is spent.
+        self.shared.set_part_reason(key, None);
         self.send(&Out::new(&me.mask(), "JOIN", vec![channel.clone()]));
-        self.numeric("332", &[&channel, &shown.topic]);
-        let server = self.shared.server.clone();
-        self.numeric("333", &[&channel, &server, &shown.created.to_string()]);
+        self.topic_reply(shown);
         let members: Vec<(String, bool)> = shown
             .members
             .iter()
@@ -251,6 +273,7 @@ impl Session {
             key.to_owned(),
             ChannelView {
                 name: channel,
+                topic: shown.topic.clone(),
                 members: shown
                     .members
                     .iter()
@@ -258,6 +281,18 @@ impl Session {
                     .collect(),
             },
         );
+    }
+
+    /// The topic of a channel (§7.14): 332, then 333 naming the subject's
+    /// setter and the hub's time when both are known. Nothing else is
+    /// honest: the agent knows no setter or time for a subject the room
+    /// had when it joined, and a time from its own records would differ
+    /// between members.
+    pub(crate) fn topic_reply(&mut self, shown: &RoomShown) {
+        self.numeric_cut("332", &[&shown.channel, &shown.topic]);
+        if let Some((who, at)) = &shown.topic_set {
+            self.numeric("333", &[&shown.channel, &who.mask(), &at.to_string()]);
+        }
     }
 
     /// 353 lines within the line limit, then 366.
@@ -563,5 +598,36 @@ mod tests {
             ]
         );
         assert_eq!(topic_of(&room), "mimi://a.example/r/x");
+    }
+
+    /// Oracle: §7.14: `subject | name | URI`, an empty or absent part left
+    /// out, peer text on one line and without CTCP.
+    #[test]
+    fn topic_is_subject_name_and_uri() {
+        let room = |subject: Option<&str>, name: Option<&str>| -> Room {
+            serde_json::from_value(serde_json::json!({
+                "key": "R", "uri": "mimi://a.example/r/x", "status": "active",
+                "name": name, "subject": subject,
+            }))
+            .unwrap()
+        };
+        let uri = "mimi://a.example/r/x";
+        assert_eq!(
+            topic_of(&room(Some("plans"), Some("lobby"))),
+            format!("plans | lobby | {uri}")
+        );
+        assert_eq!(
+            topic_of(&room(Some(""), Some("lobby"))),
+            format!("lobby | {uri}")
+        );
+        assert_eq!(
+            topic_of(&room(Some("plans"), None)),
+            format!("plans | {uri}")
+        );
+        assert_eq!(topic_of(&room(Some(" "), Some(""))), uri);
+        assert_eq!(
+            topic_of(&room(Some("a\r\nb\x01"), Some("lobby"))),
+            format!("a  b\u{2401} | lobby | {uri}")
+        );
     }
 }

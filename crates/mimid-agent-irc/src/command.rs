@@ -12,18 +12,26 @@
 //!   `n` (§7.5) and is answered with JOIN and PART of `&invite-<n>`, so
 //!   the client closes that window, before the room's own JOIN. `JOIN 0`
 //!   leaves every room shown, each as `PART` does (§7.12).
-//! - `PART #c`: leaves the room for good (§7.1).
+//! - `PART #c [reason]`: leaves the room for good (§7.1). The reason is
+//!   shown to the user's other IRC connections of this daemon only: MIMI
+//!   carries no reason for a leave, so other members see "no longer in
+//!   this room" (§7.16).
 //! - `PRIVMSG #c`: sends the text; `/me` as ACTION text. To a nick:
 //!   refused with 404, since v1 has no private queries (§7.2); to
 //!   [`crate::names::SERVICE_NICK`]: the service ([`crate::service`]).
 //! - `NOTICE` is never answered with an error (docs/irc-lessons.md
 //!   "NOTICE"); to a channel it is sent as a plain message.
-//! - `MODE #c` and `MODE #c b|e|I` are queries, answered 324/329,
-//!   367/368, 349, 347, never 482. `+o`, `-o`, `+b`, `-b` change roles and
+//! - `MODE #c` and `MODE #c b|e|I` are queries, answered 324 (no 329,
+//!   §7.15), 367/368, 349, 347, never 482. `+o`, `-o`, `+b`, `-b` change roles and
 //!   bans; a ban mask must be `nick` or `nick!*@*`.
-//! - `TOPIC #c` reads; setting it is 482: the agent changes no room
-//!   metadata. `KICK`, `INVITE` (nick or user URI), `NAMES`, `LIST`, `WHO`
-//!   (always ends 315), `WHOIS` (always ends 318), `ISON`, `USERHOST`,
+//! - `TOPIC #c` reads (332, and 333 when the setter is known; §7.14).
+//!   `TOPIC #c :text` sets the room's subject (`Store::set_subject`); the
+//!   TOPIC line comes with the room's change. A role without
+//!   room-policy-04 `canChangeRoomSubject` gets 482, any other failure a
+//!   NOTICE saying why.
+//! - `KICK`, `INVITE` (nick, user URI or `user@domain`, §7.15), `NAMES`,
+//!   `LIST`, `WHO` (always ends 315), `WHOIS` (always ends 318, 330 giving
+//!   the user URI as the account), `ISON`, `USERHOST`,
 //!   `AWAY` (305, 306), `MOTD` (422), `PING`, `PONG`, `QUIT`, `CAP`; every
 //!   other command is 421.
 
@@ -32,7 +40,7 @@ use mimid_agent_store::record::Key;
 
 use crate::conn::{Session, VERSION, one_line};
 use crate::line::{Line, Out};
-use crate::names::{Held, SERVICE_NICK, fold, is_channel_name, parse_user_uri};
+use crate::names::{Held, SERVICE_NICK, fold, is_channel_name, parse_user_address, parse_user_uri};
 
 /// Whom a nick or user URI names.
 pub(crate) enum Who {
@@ -54,6 +62,16 @@ impl Session {
             Some("") => Who::Service,
             Some(uri) => Who::User(uri.to_owned()),
             None => Who::Unknown,
+        }
+    }
+
+    /// The user `name` names where a user may be named who has no nick
+    /// yet (INVITE, the service's `allow` and `deny`; §7.15): as
+    /// [`Session::who`], or `user@domain` for `mimi://domain/u/user`.
+    pub(crate) fn who_or_address(&self, name: &str) -> Who {
+        match parse_user_address(name) {
+            Some(uri) => Who::User(uri),
+            None => self.who(name),
         }
     }
 
@@ -91,7 +109,7 @@ impl Session {
             "NOTICE" => self.privmsg(line, true).await,
             "TAGMSG" => {}
             "MODE" => self.mode(line).await,
-            "TOPIC" => self.topic(line),
+            "TOPIC" => self.topic(line).await,
             "NAMES" => self.names(line),
             "LIST" => self.list(),
             "WHO" => self.who_cmd(line),
@@ -240,6 +258,9 @@ impl Session {
     /// fails.
     async fn part_room(&mut self, key: &str, reason: &str) {
         let store = self.store();
+        // Before the leave, so that the other connections have it when
+        // the change reaches them.
+        self.shared.set_part_reason(key, Some(reason));
         match store.leave(key).await {
             Ok(()) => {
                 if let Some(view) = self.channels.remove(key) {
@@ -248,6 +269,7 @@ impl Session {
                 self.save().await;
             }
             Err(error) => {
+                self.shared.set_part_reason(key, None);
                 let channel = self
                     .channels
                     .get(key)
@@ -372,9 +394,9 @@ impl Session {
         };
         let channel = self.channels[&key].name.clone();
         let Some(modes) = line.param(1) else {
+            // No 329: the agent knows no creation time that every member
+            // would agree on (§7.15).
             self.numeric("324", &[&channel, "+nt"]);
-            let created = crate::render::key_time(&key).to_string();
-            self.numeric("329", &[&channel, &created]);
             return;
         };
         let mut args = line.params[2..].iter();
@@ -401,7 +423,7 @@ impl Session {
                     None => self.numeric("461", &["MODE", "Not enough parameters"]),
                 },
                 'n' | 't' => self.server_notice(&format!(
-                    "mimid: {channel} is always +nt: only members send, and nobody sets the topic"
+                    "mimid: {channel} is always +nt: only members send, and the room policy says who sets the topic"
                 )),
                 other => {
                     let other = other.to_string();
@@ -500,7 +522,7 @@ impl Session {
         }
     }
 
-    fn topic(&mut self, line: &Line) {
+    async fn topic(&mut self, line: &Line) {
         let Some(target) = line.param(0) else {
             self.numeric("461", &["TOPIC", "Not enough parameters"]);
             return;
@@ -510,17 +532,32 @@ impl Session {
             return;
         };
         let channel = self.channels[&key].name.clone();
-        if line.param(1).is_some() {
-            self.numeric("482", &[&channel, "The agent changes no room metadata"]);
-            return;
-        }
-        match self.room_shown(&key) {
-            Some(shown) => {
-                self.numeric("332", &[&channel, &shown.topic]);
-                let server = self.shared.server.clone();
-                self.numeric("333", &[&channel, &server, &shown.created.to_string()]);
+        let Some(subject) = line.param(1) else {
+            match self.room_shown(&key) {
+                Some(shown) => self.topic_reply(&shown),
+                None => self.numeric("331", &[&channel, "No topic is set"]),
             }
-            None => self.numeric("331", &[&channel, "No topic is set"]),
+            return;
+        };
+        // §7.14: the topic sets the room's subject; the TOPIC line comes
+        // with the room's change, to every connection.
+        let store = self.store();
+        match store.set_subject(&key, subject).await {
+            Ok(()) => self.save().await,
+            Err(error) if let Some(capability) = error.missing_capability() => {
+                self.numeric(
+                    "482",
+                    &[
+                        &channel,
+                        &format!(
+                            "Your role in this room may not change its subject ({capability})"
+                        ),
+                    ],
+                );
+            }
+            Err(error) => self.server_notice(&format!(
+                "mimid: the subject of {channel} was not changed: {error}"
+            )),
         }
     }
 
@@ -555,7 +592,7 @@ impl Session {
         for key in keys {
             if let Some(shown) = self.room_shown(&key) {
                 let count = shown.members.len().to_string();
-                self.numeric("322", &[&shown.channel, &count, &shown.topic]);
+                self.numeric_cut("322", &[&shown.channel, &count, &shown.topic]);
             }
         }
         self.numeric("323", &["End of /LIST"]);
@@ -640,7 +677,8 @@ impl Session {
                 if let Some(did) = did {
                     self.numeric("320", &[&who.nick, &format!("has the did:webvh DID {did}")]);
                 }
-                self.numeric("330", &[&who.nick, &who.nick, "is logged in as"]);
+                // §7.15: the account is the user URI.
+                self.numeric("330", &[&who.nick, &who.uri, "is logged in as"]);
                 self.numeric("318", &[&who.nick, "End of /WHOIS list"]);
                 return;
             }
@@ -729,7 +767,7 @@ impl Session {
             self.numeric("442", &[channel, "You're not on that channel"]);
             return;
         };
-        let Who::User(user) = self.who(nick) else {
+        let Who::User(user) = self.who_or_address(nick) else {
             self.numeric("401", &[nick, "No such nick/channel"]);
             return;
         };

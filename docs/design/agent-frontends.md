@@ -965,7 +965,8 @@ src/service.rs   the `mimid` service nick
   token is 43 base64url characters with no spaces, so it fits one PASS
   parameter.
 - After registration send 900 with the user's nick as the account name
-  and the user URI in the text, and 330 in WHOIS.
+  and the user URI in the text, and 330 in WHOIS, which gives the user
+  URI as the account (§7.15).
 - AGENTS.md's boundary table gains a row: Agent (loopback IRC), the local
   token by PASS. That is one check at the IRC boundary, with a test that a
   wrong token is refused.
@@ -1011,14 +1012,14 @@ never change, so logs and scripts keep working.
 | Store | IRC |
 |---|---|
 | Active room | Channel. After 422 the server JOINs the client to every active room it has not hidden, then sends 332/333 and 353/366 for each. |
-| Room name | TOPIC: the name and the room URI, with 333 naming the server as setter. Setting TOPIC is refused with 482: the agent changes no room metadata (crates/mimid-agent-core/src/lib.rs:93-95). |
+| Room subject and name | TOPIC: `subject \| name \| URI`, an empty part left out; 333 only when the subject's setter and time are known. `TOPIC #c :text` sets the room's subject; 482 only for a role without `canChangeRoomSubject` (§7.14). |
 | Participants | 353 NAMES, WHO and WHOIS 319 list every participant, remote or not (irc-lessons.md "Virtual users"). Banned users are left out. |
-| Members changed | JOIN and PART lines for others; MODE +o/-o for role changes. |
-| This user left (`Event::Left`) | PART from the user's own nick, reason "no longer in this room". |
+| Members changed | JOIN and PART lines for others, a PART with "no longer in this room" (MIMI carries no reason, §7.16); MODE +o/-o for role changes. |
+| This user left (`Event::Left`) | PART from the user's own nick, reason "no longer in this room", or the reason the user gave with PART on another IRC connection of the same daemon (§7.16). |
 | Role "admin" | `@`. `PREFIX=(o)@`. `MODE #c +o nick` and `-o` are `Store::change_role`. |
 | Bans | `MODE #c b` lists the room's banned users as 367 `nick!*@domain`, then 368. `MODE #c +b nick` (or `nick!*@*`) is `Store::ban`, `-b` is `unban`. Other masks are refused with a NOTICE and change nothing. |
 | Kick | `KICK #c nick :reason` is `Store::kick` (the user's clients leave; they stay a participant). |
-| Channel modes | `CHANMODES=b,,,nt`; 324 answers `+nt`, which is true: only members send, and nobody sets the topic. 004 lists the same modes. |
+| Channel modes | `CHANMODES=b,,,nt`; 324 answers `+nt`, which is true: only members send, and the room policy says who sets the topic (§7.14). No 329 (§7.15). 004 lists the same modes. |
 | Message | PRIVMSG from the sender's hostmask, with `time` (`accepted_at`) and `msgid` (`senderMsgId`). A body with newlines, or longer than one line, is split on line breaks and UTF-8 boundaries; only the first line carries `msgid`. |
 | Own message sent elsewhere (JMAP, another IRC connection) | PRIVMSG from the user's own hostmask. Whether every client shows those well without echo-message is *unverified*. |
 | Reply | `+draft/reply=<msgid of the target>` when message-tags is on; the text is unchanged. |
@@ -1028,7 +1029,7 @@ never change, so logs and scripts keep working.
 | Notices | NOTICE to the channel from the server name, with the store's notice text. IRC has a system sender, so the JMAP rule that the account sends them (sync.rs:446-452) does not apply. |
 | Attachments | One NOTICE line per attachment from the sender: file name, size, media type and an agent URL (question 4). Without the HTTP endpoint, no URL. |
 | Pending invite | `:<inviter> INVITE <nick> #<channel>`, the channel name the room will have, read from the Welcome before joining (§7.13). JOIN of that name accepts it (`Agent::join` through the store); the client then gets JOIN of the same name. Only when the Welcome cannot be read is it `&invite-<number>`, whose JOIN is answered with JOIN and PART of it before the room's JOIN. The `&` channel never exists. |
-| Invite someone | `INVITE <nick> #c` is `Store::invite`. A user URI in place of the nick is also taken, since a user never seen has no nick. |
+| Invite someone | `INVITE <nick> #c` is `Store::invite`. A user URI or `user@domain` (for `mimi://domain/u/user`, §7.15) in place of the nick is also taken, since a user never seen has no nick. |
 
 **Text from peers is data.** CR, LF and NUL in peer text are split or
 replaced. A peer's `\x01` is replaced with U+2401, so a peer cannot send
@@ -1094,9 +1095,11 @@ From docs/irc-lessons.md "Must do":
 - **Lines**: read up to 8191 octets of tags plus 512 once message-tags is
   on; a longer line gets 417, not a disconnect. Write lines of at most 512
   octets with prefix and tags; split 353; unescape tags per the spec.
-- **Channels**: `JOIN`, `PART` (question 1), `TOPIC` (read; set refused),
-  `NAMES`, `MODE` (queries answer 324 and 329, then 367/368, 348/349
-  empty, 346/347 empty; never 482 for a query; `+o -o +b -b`), `KICK`,
+- **Channels**: `JOIN`, `PART` (question 1), `TOPIC` (read; set is the
+  room's subject, §7.14),
+  `NAMES`, `MODE` (queries answer 324, no 329 (§7.15), then 367/368,
+  348/349 empty, 346/347 empty; never 482 for a query; `+o -o +b -b`),
+  `KICK`,
   `INVITE`, `LIST` (322 per room, then 323).
 - **Users**: `WHO` (always ends 315), `WHOIS` (always ends 318, with 401
   first for an unknown nick), `ISON`, `USERHOST`, `AWAY` (305 and 306; no
@@ -1107,7 +1110,8 @@ From docs/irc-lessons.md "Must do":
 - **Other**: `QUIT` (`ERROR :Closing Link` first). Anything else gets 421.
 - **Flood control**: none on loopback.
 - **The `mimid` service nick** (INVENTED, NOT FROM SPEC, documented in the
-  crate): `allow <nick|uri>`, `deny <nick|uri>`, `invites`, `join
+  crate): `allow <nick|uri|user@domain>`, `deny <nick|uri|user@domain>`,
+  `invites`, `join
   <number>`, `create <name>`, `leave #c`, `remove #c <nick>` (the user
   leaves the participant list), `report <msgid> [reason]`, `help`. These
   are what IRC has no command for (question 5).
@@ -1420,6 +1424,76 @@ Added on 2026-11-20:
       collision with a channel shown, a room hosted while the invite
       waits, and the fallback); mimid-agent-irc `names` unit tests;
       mimid-agent-core `two_agents`; mimi-mls `welcome_sender`.
+
+14. **TOPIC is the room's subject (Mark, 2026-11-21; bead mimid-uxmf).**
+    irssi showed an op's TOPIC answered with 482 "not channel operator".
+    `TOPIC #c :text` now sets the MIMI room subject: the `room_subject`
+    of RoomMetaData (protocol-07 §7.6), in a Commit carrying that one
+    `room_metadata` update with every other field unchanged
+    (`Agent::set_room_subject`, `Store::set_subject`). The hub checks
+    room-policy-04 §8.2 `canChangeRoomSubject`; the default roles give
+    it to "admin" (`@`) and not to "member".
+    - The topic every IRC connection shows is `subject | name | URI`,
+      an empty subject or name left out, cut to fit one IRC line.
+    - 482 only for a rights problem: the agent checks the user's role
+      against the room's own `roles_list` before it builds the Commit,
+      since the hub's refusal (`notAllowed`) does not say which check
+      failed. Any other failure (no room metadata, a subject that is no
+      MIMI `Utf8String`, the hub's refusal) is a NOTICE saying why.
+    - A change by any member, from any front end, is
+      `Event::RoomMetadataChanged`, for a Commit received and for this
+      device's own; the store reads the name and subject again and
+      records the Commit's sender and the hub's acceptance time
+      (`Room::subject_set`). Every IRC connection then gets
+      `:<setter> TOPIC #c :<topic>`, from the server when the sender is
+      not known.
+    - `TOPIC #c` alone answers 332, and 333 only with what is honestly
+      known: the setter and the hub's time of a change the agent saw.
+      A subject the room had when the agent joined has neither, so no
+      333; the server is never named as setter, and a per-device time
+      (the room record's key) is never used.
+    - JMAP shows no subject: draft-atwood-jmap-chat-00 `topic` is for
+      channel Chats only, and a MIMI room is a group Chat.
+    - Tests: mimid-agent `tests/irc.rs`
+      `registration_queries_and_refusals` (set by the creator, 333, a
+      NUL refused with a NOTICE) and
+      `topic_sets_the_subject_for_every_member` (seen by the other
+      member and the user's other connections, 482 for a member, TOPIC
+      from another member once an op, 333 in a new connection's JOIN).
+15. **No 329; 330 is the user URI; `user@domain` (Mark, 2026-11-21;
+    bead mimid-4sg8).**
+    - No 329 at all: the only creation time the agent had was its own
+      room record's key, which differs between members. Showing
+      nothing beats a per-device time. 333 had the same flaw and now
+      follows §7.14.
+    - WHOIS 330 gives the user URI as the account name.
+    - INVITE and the service's `allow` and `deny` also take
+      `user@domain`, mapped to `mimi://domain/u/user` (the domain in
+      lowercase), for a user who has no nick here yet. The service's
+      help says so.
+    - Tests: mimid-agent `tests/irc.rs`
+      `registration_queries_and_refusals` (no 329, 330, the help),
+      `invites_and_consent_from_irc` (`allow alice@A.Example`, INVITE
+      by `bob@a.example`), `topic_sets_the_subject_for_every_member`
+      (INVITE of a user never seen); mimid-agent-irc `names` unit
+      tests.
+16. **PART reasons; the invitee's JOIN (Mark, 2026-11-21; bead
+    mimid-zo20).**
+    - A PART reason cannot reach other members: a MIMI leave is
+      Remove proposals for all of the user's devices and an
+      AppDataUpdate of the participant list (protocol-07 §3.5), and none
+      carries text. Other members therefore see the honest
+      fixed text `no longer in this room`. The reason is shown on the
+      leaver's connection and on the user's other IRC connections of
+      the same daemon (kept in memory until the room is joined again or
+      the daemon stops).
+    - Decided, no change: the invitee's JOIN is shown to the other
+      members at once, when the Commit adds her to the MLS group. That
+      is accurate to MLS, and MIMI has no "accepted" signal to wait for.
+    - Tests: mimid-agent `tests/irc.rs`
+      `topic_sets_the_subject_for_every_member` (the user's other
+      connections see the reason, bob the fixed text),
+      `two_daemons_chat_over_irc_and_jmap` (the fixed text).
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

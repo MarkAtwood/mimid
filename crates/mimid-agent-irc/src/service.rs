@@ -6,8 +6,11 @@
 //! | Command | Does |
 //! |---|---|
 //! | `help` | lists these commands |
-//! | `allow <nick or user URI>` | consents to the user: their invites are joined from the next sync (`Store::allow`) |
-//! | `deny <nick or user URI>` | refuses the user: they may no longer fetch the user's KeyPackages to invite them, and their invites are not joined (`Store::deny`) |
+//! | `allow <nick, user URI or user@domain>` | consents to the user: their invites are joined from the next sync (`Store::allow`) |
+//! | `deny <nick, user URI or user@domain>` | refuses the user: they may no longer fetch the user's KeyPackages to invite them, and their invites are not joined (`Store::deny`) |
+//!
+//! `user@domain` stands for the user URI `mimi://domain/u/user` (§7.15),
+//! here and in INVITE.
 //! | `invites` | lists the pending invites, each accepted by JOIN of the channel name it is shown under (§7.13) or of `&invite-<number>` |
 //!
 //! # Limitations
@@ -26,11 +29,14 @@ use mimid_agent_store::record::Invite;
 /// The help text, one NOTICE a line.
 const HELP: &[&str] = &[
     "mimid service commands:",
-    "  allow <nick or user URI>  let this user's invites in (joined at the next sync)",
-    "  deny <nick or user URI>   refuse this user: they can no longer invite you",
-    "  invites                   list pending invites; JOIN of the invite's channel accepts it",
+    "  allow <user>  let this user's invites in (joined at the next sync)",
+    "  deny <user>   refuse this user: they can no longer invite you",
+    "  invites       list pending invites; JOIN of the invite's channel accepts it",
+    "A <user> is a nick, a user URI (mimi://domain/u/name) or name@domain,",
+    "which stands for mimi://domain/u/name.",
     "Rooms: JOIN #name hosts a new room; PART leaves a room for good;",
-    "INVITE <nick or user URI> #channel invites someone. No private messages.",
+    "INVITE <user> #channel invites someone; TOPIC #channel :text sets the",
+    "room's subject, if your role may. No private messages.",
 ];
 
 impl Session {
@@ -53,9 +59,9 @@ impl Session {
                 }
             }
             ("allow" | "deny", Some(name)) => {
-                let Who::User(user) = self.who(name) else {
+                let Who::User(user) = self.who_or_address(name) else {
                     self.service_says(&format!(
-                        "{name} is no nick here; give the user URI (mimi://<domain>/u/<name>)"
+                        "{name} is no nick here; give the user URI (mimi://<domain>/u/<name>) or <name>@<domain>"
                     ));
                     return;
                 };
@@ -76,7 +82,7 @@ impl Session {
                 }
             }
             ("allow" | "deny", None) => {
-                self.service_says(&format!("usage: {command} <nick or user URI>"));
+                self.service_says(&format!("usage: {command} <nick, user URI or name@domain>"));
             }
             ("invites", _) => {
                 let invites: Vec<Invite> = self.shared.store.state().invites.clone();

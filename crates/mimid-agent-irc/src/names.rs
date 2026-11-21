@@ -76,6 +76,27 @@ pub fn parse_user_uri(uri: &str) -> Option<(&str, &str)> {
     (!domain.is_empty() && !local.is_empty() && !local.contains('/')).then_some((domain, local))
 }
 
+/// The user URI `mimi://<domain>/u/<user>` that `<user>@<domain>` stands
+/// for (docs/design/agent-frontends.md §7.15), the domain in lowercase:
+/// `None` unless `text` is one `@` between a non-empty user part without
+/// `/`, `:`, `!`, `*`, `?` or whitespace and a domain of DNS letters,
+/// digits, `-` and `.` that neither starts nor ends with `.`.
+#[must_use]
+pub fn parse_user_address(text: &str) -> Option<String> {
+    let (user, domain) = text.split_once('@')?;
+    let user_ok = !user.is_empty()
+        && !user
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || "/:@!*?".contains(c));
+    let domain_ok = !domain.is_empty()
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && domain
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.');
+    (user_ok && domain_ok).then(|| format!("mimi://{}/u/{user}", domain.to_ascii_lowercase()))
+}
+
 /// How IRC shows one user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
@@ -538,6 +559,36 @@ mod tests {
             "key": key, "uri": uri, "name": name, "status": "active",
         }))
         .unwrap()
+    }
+
+    /// Oracle: §7.15 (Mark, 2026-11-21): `user@domain` stands for
+    /// `mimi://domain/u/user`; anything else is not an address.
+    #[test]
+    fn user_at_domain_is_a_user_uri() {
+        assert_eq!(
+            parse_user_address("bob@b.example").as_deref(),
+            Some("mimi://b.example/u/bob")
+        );
+        assert_eq!(
+            parse_user_address("Bob.X@B.Example").as_deref(),
+            Some("mimi://b.example/u/Bob.X")
+        );
+        for not in [
+            "bob",
+            "@b.example",
+            "bob@",
+            "bob@b.example.",
+            "bob@.b.example",
+            "bob@b_example",
+            "bob@b.example/x",
+            "bo/b@b.example",
+            "bob@x@b.example",
+            "bob smith@b.example",
+            "nick!*@*",
+            "mimi://b.example/u/bob",
+        ] {
+            assert_eq!(parse_user_address(not), None, "{not}");
+        }
     }
 
     /// Oracle: `CASEMAPPING=ascii` folds A-Z and nothing else
