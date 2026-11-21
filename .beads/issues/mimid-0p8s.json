@@ -2,13 +2,15 @@
   "id": "mimid-0p8s",
   "title": "Agent: show a session-disposition ExternalPart (call link) as a link, never fetch it",
   "description": "mimi-content-10 §5.10: a conference join URL travels as an ExternalPart with disposition session. mimid parses Disposition::SESSION but the agent likely treats every ExternalPart as an attachment to fetch. Fix: never fetch a session part; show it as a 'join call' link on JMAP Chat and IRC; test with the §5.10 example.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T19:49:16.136500243Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T19:49:16.136500243Z",
+  "updated_at": "2026-11-21T20:10:27.36794274Z",
+  "closed_at": "2026-11-21T20:10:27.36794274Z",
+  "close_reason": "Fixed in 797b523 (branch session-part): session parts are never fetched; stored as calls; JMAP vtc MessageAction, IRC ACTION line; send via Store::send_call, JMAP actions, /msg mimid call. docs/design/agent-frontends.md §7.24.",
   "labels": [
     "agent"
   ]
