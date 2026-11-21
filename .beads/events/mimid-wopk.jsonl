@@ -1,3 +1,4 @@
 {"id":"01a1ffdb-8c1e-717d-ab4a-2d108a913a0a","issue_id":"mimid-wopk","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-21T20:45:40.766098152Z"}
 {"id":"01a1ffdb-8c21-72d8-8007-1a0c389f9690","issue_id":"mimid-wopk","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: cleanroom","created_at":"2026-11-21T20:45:40.76918689Z"}
 {"id":"01a1ffdb-8c24-70cf-99af-32f2d8125203","issue_id":"mimid-wopk","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: server","created_at":"2026-11-21T20:45:40.772053455Z"}
+{"id":"01a1ffde-4fc9-75e4-9478-f9efa4957fbd","issue_id":"mimid-wopk","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"8a5e31e: maxKeyPackageLifetime 31539600 s (the enforced 365d+1h constant, not 28d) in the mimi capability and ProviderHello; KeyPackage/set refusals carry a description naming the limit.","created_at":"2026-11-21T20:48:41.929387204Z"}
