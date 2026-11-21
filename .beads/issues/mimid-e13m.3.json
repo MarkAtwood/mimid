@@ -2,13 +2,15 @@
   "id": "mimid-e13m.3",
   "title": "auth 3: TLS core: [tls] with files and tailscale sources, listen_tls, Host check",
   "description": "Cert from files or tailscaled LocalAPI, swap without dropping connections, refusal without TLS on non-loopback (S1), Host check takes [tls] names; agent.md and AGENTS.md. Before IRC v2. Design: docs/design/frontend-auth.md §5, §9 step 3.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T22:49:44.418474609Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T22:49:44.418474609Z",
+  "updated_at": "2026-11-21T23:51:16.564055962Z",
+  "closed_at": "2026-11-21T23:51:16.564055962Z",
+  "close_reason": "Built in commit d0234730 on branch auth-impl: [tls] files and tailscale (LocalAPI; setup tls asks first, A6), [irc] listen_tls, S1 refusal, A9 WARN. Deferred to step 6 (mimid-e13m.6): the JMAP HTTPS listener and the Host check taking [tls] names. Deferred: expiry warnings of §5.4.",
   "labels": [
     "agent",
     "auth"
