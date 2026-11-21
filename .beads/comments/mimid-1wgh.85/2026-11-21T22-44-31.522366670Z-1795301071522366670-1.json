@@ -1,0 +1,7 @@
+{
+  "id": "1795301071522366670-1",
+  "issue_id": "mimid-1wgh.85",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-21, superseding the earlier note: mimi-content-10 §4.1 says inReplyTo SHOULD refer to the most current version at send time. Replies and reactions name the latest version the user saw; the store keeps every version's full 32-octet ID. No WG question on this.",
+  "created_at": "2026-11-21T22:44:31.52236667Z"
+}
