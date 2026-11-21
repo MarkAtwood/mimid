@@ -1,0 +1,25 @@
+{
+  "id": "mimid-qqtk.4",
+  "title": "One-to-one rooms: store-level direct flag (S2), find or create the direct room with a user",
+  "description": "JMAP Chat kind direct; the store API IRC v2 queries will call. Record the MIMI room shape and policy.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:22:56.133235333Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:22:56.133235333Z",
+  "labels": [
+    "agent"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-qqtk.4",
+      "depends_on_id": "mimid-qqtk",
+      "type": "parent-child",
+      "created_at": "2026-11-21T21:22:56.195144708Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
