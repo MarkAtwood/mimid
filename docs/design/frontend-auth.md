@@ -1,6 +1,8 @@
 # Front-end authentication: one credential model for every client protocol
 
-Design note, 2026-11-21, for Mark's review. Epic mimid-e13m. It covers
+Design note, 2026-11-21, reviewed by Mark the same day: his answers to
+§10 are its "Decisions" section, and the body follows them where they
+differ from the recommendations. Epic mimid-e13m. It covers
 how a stock client logs in to mimid-agent over each front end the agent
 has or plans: IRC (mimid-i0id), Matrix (mimid-rvqk), XMPP (mimid-wmdj),
 JMAP Chat (today's front end, and purple-mimi through it), and, for
@@ -70,28 +72,31 @@ today.
   revoked from a CLI, from `/msg mimid`, and over JMAP. Revoking one
   closes its open sessions and logs out its Matrix devices.
 - **Stored as SCRAM verifiers.** XMPP clients want SCRAM, and SCRAM
-  needs salted keys, not a password hash. So the agent keeps SCRAM-SHA-1
-  and SCRAM-SHA-256 verifiers for every credential, made when the
-  password is made, and checks plain logins (SASL PLAIN, PASS, HTTP
-  Basic and Bearer, Matrix password login, IMAP LOGIN) against the same
-  verifiers. An argon2id hash beside them would protect nothing more,
-  because the weakest stored verifier sets the bar (§3.3, question 2).
-- **Per protocol.** IRC: SASL PLAIN and PASS, with
-  `soju.im/account-required`. JMAP: Bearer and Basic. Matrix:
-  `m.login.password` issuing a per-device access token, no refresh
-  tokens, never a soft logout. XMPP: SCRAM-SHA-256, SCRAM-SHA-1 and
-  PLAIN over TLS, on SASL1 and on SASL2 (Monal uses SCRAM only over
-  SASL2); FAST tokens; -PLUS with `tls-exporter` and
-  `tls-server-end-point` later, and once offered, never withdrawn.
+  needs salted keys, not a password hash. So the agent keeps a
+  SCRAM-SHA-256 verifier for every credential, made when the password
+  is made, and checks plain logins (SASL PLAIN, PASS, HTTP Basic and
+  Bearer, Matrix password login, IMAP LOGIN) against the same verifier.
+  No SCRAM-SHA-1 and no argon2id (decision A2): clients that know only
+  SCRAM-SHA-1, such as Dino, use PLAIN over TLS.
+- **Per protocol.** IRC: SASL PLAIN, SASL SCRAM-SHA-256 and PASS, with
+  `soju.im/account-required` (decision A3). JMAP: Bearer and Basic.
+  Matrix: `m.login.password` issuing a per-device access token, no
+  refresh tokens, never a soft logout. XMPP: SCRAM-SHA-256 and PLAIN
+  over TLS, on SASL1 and on SASL2 (Monal uses SCRAM only over SASL2);
+  FAST tokens; -PLUS with `tls-exporter` and `tls-server-end-point`
+  later, and once offered, never withdrawn.
 - **TLS, ranked.** (1) `tailscale cert` when the listener is on a
-  tailnet; (2) ACME DNS-01, or certificate files the user already has,
+  tailnet, used only after setup has asked the user and explained that
+  the names go into public Certificate Transparency logs (decision A6);
+  (2) ACME DNS-01, or certificate files the user already has,
   when the user has a domain; (3) a local CA the agent makes,
   name-constrained, with a setup page, as a last resort. No self-signed
   certificate with warnings by default.
 - **Tailnet identity** (Mark, 2026-11-21, from tailircd). On a tailnet
   listener the agent MAY ask tailscaled who is connecting (LocalAPI
   `whois`) and let the owner's own devices in with no password: IRC with
-  the password left empty, XMPP and Matrix with a fixed word. JMAP keeps
+  the password left empty, XMPP and Matrix with a fixed word. Off by
+  default; setup offers it (decision A7). JMAP keeps
   its token, because ambient authority over HTTP lets any web page the
   owner opens make calls. With `tailscale cert` this is the least
   friction for a phone: install Tailscale, type the server name (§4.6).
@@ -99,9 +104,10 @@ today.
   an app password and prints what that client needs: an `ircs://` URL,
   a Matrix homeserver URL, an XMPP address, a JMAP Session URL, with a
   QR code where the client can read one.
-- **Before IRC v2** (mimid-i0id): steps 1 to 5 of §9 (credential
-  store, TLS core with files and tailscale, IRC SASL, IRC and CLI
-  management, setup output). **Before Matrix** (mimid-rvqk): step 7
+- **Before IRC v2** (mimid-i0id): steps 1 to 5 and 11 of §9
+  (credential store, TLS core with files and tailscale, IRC SASL PLAIN
+  and SCRAM-SHA-256, IRC and CLI management, setup output). **Before
+  Matrix** (mimid-rvqk): step 7
   (Matrix login and devices) and JMAP over the network (step 6).
 
 ## 1. Today
@@ -267,8 +273,9 @@ What matters for the agent:
   offer (dropping -PLUS, or tls-exporter to tls-server-end-point) fails
   as a downgrade attack. FAST is exempt (`:1895`). So whatever the agent
   offers it MAY add to later, and never take away.
-- **Dino does SCRAM-SHA-1 and PLAIN only** (`xmpp-vala/src/module/sasl.vala:117-136`)
-  and has no manual host setting, so the JID domain must resolve to the
+- **Dino does SCRAM-SHA-1 and PLAIN only** (`xmpp-vala/src/module/sasl.vala:117-136`);
+  with no SCRAM-SHA-1 offered (decision A2) it logs in with PLAIN over
+  TLS. It has no manual host setting, so the JID domain must resolve to the
   agent, and the certificate must chain to a system CA
   (`libdino/src/service/connection_manager.vala:386-394`).
 - **The certificate must name the JID domain.** Gajim (`nbxmpp/tcp.py:163-166`),
@@ -282,7 +289,8 @@ What matters for the agent:
   registration (XEP-0077) with a token: Conversations sends it in a
   `urn:xmpp:pars:0` `<preauth>` IQ (`xmpp/manager/RegistrationManager.java:224-232`),
   Monal uses `urn:xmpp:ibr-token:0` (XEP-0445) when offered
-  (`xmpp.m:3356-3368`). In both the user picks the password (question 4).
+  (`xmpp.m:3356-3368`). In both the user picks the password (decision
+  A4: later).
 - **No client needs SRV records**; all but Dino have a manual host and
   port. Conversations uses direct TLS on 443 or 5223 and STARTTLS
   elsewhere (`utils/Resolver.java:76-102`).
@@ -320,7 +328,7 @@ A row in a new table in `mimid.sqlite` (INVENTED names):
 | `id` | Integer, never reused. |
 | `name` | What the user called it: `phone`, `laptop-weechat`. 1 to 32 characters of `[a-z0-9-]`, unique among unrevoked credentials. |
 | `kind` | `app-password` or `agent-token`. |
-| `scram` | For each of SCRAM-SHA-1 and SCRAM-SHA-256: salt (16 random octets), iteration count, StoredKey, ServerKey (RFC 5802 §3). |
+| `scram` | SCRAM-SHA-256 (RFC 7677): salt, iteration count, StoredKey, ServerKey (RFC 5802 §3). No SCRAM-SHA-1 (decision A2). The salt is the agent's one SCRAM salt (§3.3). |
 | `created_at`, `created_by` | When, and from where (`cli`, `irc`, `jmap`, and the credential that asked). |
 | `last_used_at`, `last_used_by` | The last successful login: time, front end, peer address. Written at most once a minute per credential (INVENTED) so busy HTTP clients do not churn the database. |
 | `revoked_at` | Null until revoked. A revoked row is kept 30 days (INVENTED) so the listing can say "revoked", then deleted. |
@@ -375,28 +383,38 @@ The agent stores SCRAM verifiers, not a password hash:
   (§2.3). SCRAM's server side needs StoredKey and ServerKey, which come
   from PBKDF2 of the password with a salt. They can only be made while
   the plain password is in hand: when it is created. So the agent makes
-  SCRAM-SHA-1 and SCRAM-SHA-256 verifiers for every credential from the
-  first version, even before any front end offers SCRAM. Adding
-  SCRAM-SHA-512 later would need every app password made again.
+  a SCRAM-SHA-256 verifier for every credential from the first version.
+  Only SCRAM-SHA-256 (decision A2): a client that knows only SCRAM-SHA-1
+  (Dino) uses PLAIN over TLS, which every client in §2.3 can do. Adding
+  SCRAM-SHA-1 or SCRAM-SHA-512 later would need every app password made
+  again.
 - For a login that carries the password itself (SASL PLAIN, PASS, HTTP
   Basic and Bearer, Matrix `m.login.password`, IMAP LOGIN), the agent
   runs the SCRAM-SHA-256 derivation on what it was given and compares
   the result with each unrevoked credential's StoredKey in constant time.
 - Iterations: 4,096, the floor RFC 7677 sets and what many XMPP servers
-  use (INVENTED as a choice; raising it slows every login that tries
-  all 64 credentials).
+  use (INVENTED as a choice).
+- **One salt for every credential** (INVENTED, found while building
+  step 1). A SCRAM server sends the salt before the client has shown
+  anything that picks a credential, and the username cannot pick one
+  (§3.5). So the agent makes one SCRAM salt of 16 random octets when it
+  first makes the credential table, and every credential's verifier
+  uses it; the credentials still differ in StoredKey and ServerKey
+  because their secrets differ. A plain login then costs one PBKDF2
+  derivation however many credentials there are, compared with each
+  StoredKey. What it gives up: an attacker holding the database can
+  test one guess against every credential at once, which matters
+  nothing against 75-bit generated secrets.
 
-**Why not argon2id as well.** The task asked for argon2id. An argon2id
-hash beside the SCRAM verifiers would not make the stored data harder
+**Why not argon2id as well** (decision A2: no argon2id). An argon2id
+hash beside the SCRAM verifier would not make the stored data harder
 to attack, since an attacker with the database tries the cheapest
-verifier: SCRAM-SHA-1 at 4,096 iterations. It would make each login
+verifier: SCRAM-SHA-256 at 4,096 iterations. It would make each login
 slower, and a plain login has no way to name the credential, so the
 check may run once per unrevoked credential. And an attacker who can read
 `mimid.sqlite` already has the user's MLS keys and every message in
 plaintext (agent.md, "Files"). The secrets are random, so a stolen
-verifier leaks no password used anywhere else. Question 2 asks Mark to
-confirm. If he wants argon2id anyway, it goes in a separate column and
-SCRAM is still needed for XMPP.
+verifier leaks no password used anywhere else.
 
 **A cache.** A JMAP client sends Bearer on every request. After a
 successful check the agent keeps, in memory only, SHA-256 of the
@@ -462,8 +480,8 @@ Three places, one set of operations (all INVENTED, NOT FROM SPEC):
   own, not forwarded to the provider.
 - **Adding from IRC** puts the new secret in a NOTICE, and most IRC
   clients log every line to disk (irssi, WeeChat, HexChat by default,
-  *unverified* for each default). Question 5 asks whether IRC may add,
-  or only list and revoke.
+  *unverified* for each default). IRC may add (decision A5); the NOTICE
+  warns that the line may be in the client's log.
 - Any authenticated session may list, add and revoke, including revoking
   the credential it is using. There is one user; every device is equal,
   as on a Google or Apple account.
@@ -506,10 +524,10 @@ Their lifetimes are in §4.
 
 | Front end | Offered | Username | After login |
 |---|---|---|---|
-| IRC | SASL PLAIN; PASS | any; Goguma sends the nick | the connection carries the credential id |
+| IRC | SASL PLAIN, SASL SCRAM-SHA-256; PASS | any; Goguma sends the nick | the connection carries the credential id |
 | JMAP (and purple-mimi) | `Authorization: Bearer <secret>`; `Basic` | any | each request checked (cache, §3.3) |
-| Matrix | `m.login.password` | any `m.id.user` or full user id | a per-device access token |
-| XMPP | SCRAM-SHA-256, SCRAM-SHA-1, PLAIN (TLS only), over SASL1 and SASL2; FAST; later -PLUS | the local part | FAST token per client instance |
+| Matrix | `m.login.password` | any `m.id.user` or full user id (`@alice:a.example`) | a per-device access token |
+| XMPP | SCRAM-SHA-256, PLAIN (TLS only), over SASL1 and SASL2; FAST; later -PLUS | the local part | FAST token per client instance |
 | IMAP (not planned) | LOGIN, AUTHENTICATE PLAIN | any | the connection |
 
 Everywhere: no login before TLS on a listener that is not loopback (on
@@ -519,14 +537,21 @@ every client in §2 can do.
 
 ### 4.1 IRC
 
-- CAP LS advertises `sasl=PLAIN` (a value, not a bare `sasl`, so
-  irc-framework and HexChat can read it; Goguma reads either) and
+- CAP LS advertises `sasl=PLAIN,SCRAM-SHA-256` (a value, not a bare
+  `sasl`, so irc-framework and HexChat can read it; Goguma reads either,
+  and with PLAIN in the list shows its password field) and
   `soju.im/account-required`; ISUPPORT carries `draft/ACCOUNTREQUIRED`.
 - AUTHENTICATE PLAIN: authzid empty or equal to authcid, authcid any
   (§3.5), password a credential. 903 and 900 on success; 904 on a
   wrong secret, after the §7 delay if the source is being slowed; 905
   for an over-long payload; 906 on abort; 907 for a second attempt
-  after success; 908 lists `PLAIN` when another mechanism is asked for.
+  after success; 908 lists `PLAIN,SCRAM-SHA-256` when another mechanism
+  is asked for.
+- AUTHENTICATE SCRAM-SHA-256 (RFC 7677, RFC 5802, decision A3), against
+  the stored verifier: no channel binding (`n,,` only; a client asking
+  for it is refused), username any (§3.5). The salt sent is the
+  agent's one SCRAM salt (§3.3), and the client's proof is checked
+  against each unrevoked credential's StoredKey.
 - The agent accepts AUTHENTICATE sent before its CAP LS reply has gone
   out (Goguma pipelines it).
 - PASS stays, checked against the same credentials, for HexChat's
@@ -537,9 +562,9 @@ every client in §2 can do.
 - With neither before registration ends: `FAIL * ACCOUNT_REQUIRED` if
   the client enabled `sasl`, else 464, then `ERROR` and close (as soju,
   §2.1).
-- Not offered at first: SCRAM (question 3), EXTERNAL with client
-  certificates (soju's device certificates; a later option, since
-  Goguma cannot do it), OAUTHBEARER.
+- Not offered: SCRAM-SHA-1 and SCRAM-SHA-512 (no verifiers, A2),
+  EXTERNAL with client certificates (soju's device certificates; a
+  later option, since Goguma cannot do it), OAUTHBEARER.
 - irc-lessons.md "No SASL" and agent-frontends.md §4 change to say
   this (S3).
 
@@ -595,22 +620,29 @@ every client in §2 can do.
   M_UNKNOWN_TOKEN` with `soft_logout: false`. With no refresh tokens
   there is nothing a soft logout could recover.
 - `/versions` lists v1.10 among its versions, for Nheko.
-- `.well-known/matrix/client` is served on the HTTPS listener with
-  `m.homeserver.base_url`. It helps only when the user types a full user
-  id; the setup output gives the URL itself (§6.3).
-- The Matrix user id is `@<local>:<TLS name>` (client-survey.md §3 had
-  `@x:d` with the MIMI domain; using the TLS name means a client that
-  starts from the user id finds the agent through well-known). Question
-  10.
+- The Matrix user id is `@<local>:<MIMI domain>`, `@alice:a.example`
+  for `mimi://a.example/u/alice` (decision A10, as client-survey.md §3
+  had it), not the TLS name. A client that starts from the full user id
+  looks up `https://a.example/.well-known/matrix/client`, so the MIMI
+  domain's web server delegates to the agent: it serves
+  `{"m.homeserver": {"base_url": "https://<TLS name>:<port>"}}`. That
+  file is the domain's, not the agent's; agent.md says what to put in
+  it. A domain has one such file, so it can name one agent; on a domain
+  with several users, the others type the homeserver URL, which every
+  client takes (§2.2), and setup prints it.
+- The agent serves the same `.well-known/matrix/client` on its own HTTPS
+  listener, for clients given the agent's URL.
+- `POST /login` takes `@alice:a.example`, `alice`, or any other name
+  (§3.5); `user_id` in the answer is `@alice:a.example`.
 
 ### 4.4 XMPP
 
 What every client in §2.3 can use:
 
-- **SASL1** (RFC 6120) offering `SCRAM-SHA-256`, `SCRAM-SHA-1` and
-  `PLAIN`, after TLS. Dino needs SCRAM-SHA-1 or PLAIN, Siskin and Gajim
-  take SCRAM-SHA-256, Monal on SASL1 needs PLAIN.
-- **SASL2** (XEP-0388) offering `SCRAM-SHA-256` and `SCRAM-SHA-1`,
+- **SASL1** (RFC 6120) offering `SCRAM-SHA-256` and `PLAIN`, after
+  TLS. Dino, which knows SCRAM-SHA-1 and PLAIN, uses PLAIN (decision
+  A2); Siskin and Gajim take SCRAM-SHA-256; Monal on SASL1 needs PLAIN.
+- **SASL2** (XEP-0388) offering `SCRAM-SHA-256`,
   with `<authorization-identifier>` in `<success>`, and Bind2 (XEP-0386)
   so Monal and Conversations bind in the same round trip. This is what
   Monal needs to use SCRAM at all. PLAIN is not offered inside SASL2;
@@ -621,7 +653,7 @@ What every client in §2.3 can use:
   credential, stored as SHA-256, tied to that credential and to the
   client's `<user-agent id>`; it lasts 30 days from last use (INVENTED)
   and is rotated as the XEP says.
-- **-PLUS** (`SCRAM-SHA-256-PLUS`, `SCRAM-SHA-1-PLUS`) with the
+- **-PLUS** (`SCRAM-SHA-256-PLUS`) with the
   XEP-0440 list `tls-exporter` and `tls-server-end-point`, both of
   which rustls can give (`export_keying_material`; the end-point hash
   from the agent's own certificate). This is a later step, and the
@@ -631,7 +663,7 @@ What every client in §2.3 can use:
   break without it. The same holds for SASL2 once offered: so offer
   SASL2 from the first XMPP release, never add-and-remove.
 - Username: the local part of the user's URI, and the domain the TLS
-  name (§2.3). Anything else is `not-authorized`, logged as
+  name (§2.3; decision A10: XMPP addresses use the TLS name). Anything else is `not-authorized`, logged as
   `username-mismatch`.
 - SCRAM verifiers come from the credential table (§3.3); nothing new is
   stored for SCRAM itself.
@@ -652,7 +684,10 @@ each connection, `lc.WhoIs(ctx, remoteAddr)`, and takes the answer's
 (`identity.go:29-60`). tailircd listens through tsnet on port 6667 with
 no TLS of its own (`main.go`, `srv.Listen("tcp", ":6667")`).
 
-**The rule for mimid-agent** (INVENTED, NOT FROM SPEC). When a
+**The rule for mimid-agent** (INVENTED, NOT FROM SPEC; decision A7:
+off by default, setup offers it, owners default and the three
+exclusions as below, the fixed word `tailnet` for XMPP SCRAM and
+Matrix). When a
 connection arrives on a listener bound to a tailnet address and
 `[tailnet] identity = true`, the agent MAY identify the client by
 asking tailscaled who it is, and skip the password, if the answer
@@ -709,7 +744,7 @@ can ask WhoIs then and tailor what it offers.
 | Matrix | `m.login.password` with something in the field | any password succeeds; the device and its token belong to a pseudo-credential `tailnet:<node>`, and the token is accepted only from that node | server, username; any password (setup says `tailnet`) |
 | JMAP | — | **no change: Bearer or Basic still required** (below) | an app password |
 
-**Why not HTTP.** With no Authorization header, a request would be
+**Why not HTTP** (decision A7: JMAP stays on tokens). With no Authorization header, a request would be
 authorised by where it comes from. A web page open in a browser on the
 owner's laptop comes from the laptop, so any site the owner visits
 could POST JMAP calls to `https://<name>` (a simple cross-origin POST
@@ -717,7 +752,6 @@ needs no preflight; CORS stops the page reading the answer, not the
 call happening). The Host check does not help: the page uses the real
 name. So JMAP keeps its token, and Matrix uses tailnet identity only at
 `/login`, where it mints a token that every later request must carry.
-Question 7.
 
 **Sessions.** A connection let in by WhoIs records the node, not a
 credential. Every `recheck_s` seconds (INVENTED: 300) the agent asks
@@ -828,7 +862,14 @@ pin. That is the ranking of §5.2.
      admin console.
    - The name goes into the public Certificate Transparency logs, so
      the tailnet's name and the machine's name become public. Tailscale
-     says so when the feature is turned on (*from memory*). Question 6.
+     says so when the feature is turned on (*from memory*). So the
+     agent never asks tailscaled for a certificate until the user has
+     answered yes to a question that says this (decision A6; §6.1):
+     `mimid-agent <config> setup tls` asks it, and records the answer
+     and the names it covered in the state directory. With `source =
+     "tailscale"` and no recorded yes for the configured names, the
+     agent refuses to start and says to run it. There is no silent
+     default.
    - The agent asks tailscaled for the pair over its LocalAPI,
      `GET /localapi/v0/cert/<name>?type=pair` on the tailscaled socket
      (tailscale `ipn/localapi/cert.go:48-60`). tailscaled answers root,
@@ -930,8 +971,14 @@ listen_tls = "100.64.1.2:8448"
   the loopback names. It still blocks DNS rebinding: a rebinding page
   cannot present a name the certificate covers.
 - One certificate serves every front end. Each front end uses its own
-  port; there is no ALPN or SNI routing on one port (question 8 has the
-  case for 443).
+  port; there is no ALPN or SNI routing on one port. The Matrix and
+  JMAP HTTPS listener defaults to 443 on the tailnet address with the
+  `tailscale` source, else 8448, and setup prints the full URL either
+  way (decision A8).
+- A listener on an address that is not loopback, private (RFC 1918,
+  RFC 4193), link-local or the tailnet's CGNAT range (100.64.0.0/10) is
+  allowed, never by default, and logged as a WARN at start naming the
+  address as public (decision A9).
 
 ### 5.4 Renewal and failure
 
@@ -978,6 +1025,34 @@ The password is never put in a QR code or URL, because no client in
 §2 except Delta Chat reads one from there, and a URL ends up in browser
 history and screenshots.
 
+Tailnet identity is off by default (decision A7). When `setup` sees a
+listener on a tailnet address with the `tailscale` certificate source,
+it offers to turn it on; it never turns it on by itself.
+
+**Asking before `tailscale cert`** (decision A6). With `[tls] source =
+"tailscale"`, `setup` (any client, or `setup tls` alone) first checks
+whether the user has agreed for these names. If not, it explains and
+asks:
+
+```text
+The agent can get its TLS certificate from Tailscale (tailscale cert).
+Every certificate a public CA issues is published in Certificate
+Transparency logs, which anyone can search. These names would become
+public, with the time the certificate was made:
+
+    host.tailnet.ts.net
+
+That reveals your tailnet's name and this machine's name. If you do not
+want that, answer no and use your own certificate files ([tls] source =
+"files") instead.
+
+Get a certificate from Tailscale for these names? [y/N]
+```
+
+Only `y` or `yes` counts. The answer and the names are kept in the
+state directory; a change of names asks again. Without a yes the agent
+does not start with that source.
+
 With `[tailnet] identity = true`, `setup` asks WhoIs nothing (the phone
 is not connected yet); it prints the tailnet variant first, "leave the
 password empty" for IRC and "password: `tailnet`" for XMPP and Matrix,
@@ -1005,9 +1080,11 @@ client is JMAP. The ranking for a phone, least friction first:
 
 - **Homeserver URL**: `https://<name>` if the Matrix listener is on
   port 443, else `https://<name>:<port>`. Every client takes a typed URL
-  (§2.2). Question 8 is about using 443.
+  (§2.2). 443 with the `tailscale` source, else 8448 (decision A8).
 - **Username**: `<local>`; for Nheko, which wants a full id,
-  `@<local>:<name>`.
+  `@<local>:<MIMI domain>` (decision A10), which works only where the
+  MIMI domain delegates to the agent (§4.3); else `<local>` with the
+  homeserver URL typed.
 - **Password**: the app password.
 - **Element X**: a QR code of its deep link with the server and login
   hint (`https://mobile.element.io/element/?account_provider=<name>&login_hint=<local>`;
@@ -1036,8 +1113,8 @@ client is JMAP. The ranking for a phone, least friction first:
 - **Preauth URIs** (`xmpp:<local>@<name>?register;preauth=<token>`)
   would make the account from a QR code, with the user choosing a
   password, in Conversations, Monal and Siskin. That needs in-band
-  registration and user-chosen passwords, so it is question 4, not the
-  first version.
+  registration and user-chosen passwords: later, through one-time
+  preauth tokens, with at least 12 characters (decision A4).
 
 ### 6.5 JMAP Chat and purple-mimi
 
@@ -1182,7 +1259,8 @@ any list, and §7 keeps the noise down. What this adds over the tailnet
 case is exposure of the agent's code to strangers before login: the
 IRC line parser, the XMPP XML parser, the HTTP stack. That is the
 larger risk, and it is why the docs recommend a tailnet or WireGuard
-address and why a public listener is never the default. Question 9.
+address and why a public listener is never the default. A public
+listener is allowed, with a WARN at start (decision A9).
 
 **What this design does not protect against:**
 
@@ -1200,24 +1278,24 @@ three commits and one child bead of mimid-e13m.
 
 | Step | What | Size | Needed before |
 |---|---|---|---|
-| 1 | **Credential store.** The table (§3.1), secret generation and normalisation (§3.2), SCRAM-SHA-1 and -256 verifiers and the plain check against them (§3.3), the Bearer cache, `agent-token` as a credential (§3.4), `last_used`. The daemon's one check per boundary becomes `Credentials::check_plain(secret) -> Option<CredentialId>`, handed to each front end in place of `PasswordCheck`. JMAP and IRC switch to it with no change a client can see. The canary test grows. | 700 to 1,000 | IRC v2 |
+| 1 | **Credential store.** The table (§3.1), secret generation and normalisation (§3.2), SCRAM-SHA-256 verifiers and the plain check against them (§3.3), the Bearer cache, `agent-token` as a credential (§3.4), `last_used`. The daemon's one check per boundary becomes `Credentials::check_plain(secret) -> Option<CredentialId>`, handed to each front end in place of `PasswordCheck`. JMAP and IRC switch to it with no change a client can see. The canary test grows. | 700 to 1,000 | IRC v2 |
 | 2 | **CLI and revocation.** `mimid-agent <config> app-password list/add/revoke/rotate-token`; the `data_version` watch; closing IRC connections and EventSource streams of a revoked credential. | 400 to 600 | IRC v2 |
 | 3 | **TLS core.** `[tls]` with `source = "files"` and `"tailscale"`, `listen_tls` for IRC, certificate swap without dropping connections, the Host check taking `[tls] names`, refusal to start without TLS on a non-loopback address (S1). agent.md and AGENTS.md change with it. | 600 to 900 | IRC v2 |
 | 4 | **IRC SASL.** `sasl=PLAIN` in CAP, AUTHENTICATE PLAIN (pipelined, as Goguma sends it), `soju.im/account-required` and ISUPPORT `draft/ACCOUNTREQUIRED`, `FAIL * ACCOUNT_REQUIRED`, PASS kept, PASS and SASL together accepted, 903/904/905/906/907/908, the rate limiter and connection caps of §7 as a shared module. irc-lessons.md updated (S3). | 500 to 700 | IRC v2 |
-| 5 | **Management in IRC and setup output.** `/msg mimid passwords`, `password add` (per question 5), `password revoke`; `mimid-agent <config> setup <client> <device>` printing the per-client text and a terminal QR code (§6). | 400 to 600 | IRC v2 |
+| 5 | **Management in IRC and setup output.** `/msg mimid passwords`, `password add` (decision A5), `password revoke`; `mimid-agent <config> setup <client> <device>` printing the per-client text and a terminal QR code (§6). | 400 to 600 | IRC v2 |
 | 6 | **JMAP over the network.** `listen_tls` for HTTP, Basic beside Bearer, the `…:mimid:app-passwords` capability with `AppPassword/get` and `/set`. | 400 to 600 | Matrix (it shares the HTTPS listener) |
 | 7 | **Matrix login.** `/login` (GET and POST, `m.login.password`), per-device access tokens, `/logout`, `/logout/all`, `/devices` and `DELETE /devices/{id}` (with the UIA answer of §4.3), `/whoami`, soft logout never, hard logout on revoke, `.well-known/matrix/client`. | 600 to 900 | Matrix |
 | 8 | **ACME DNS-01.** `source = "acme"` with RFC 2136, acme-dns and hook; account key and order state in the state directory; renewal. | 800 to 1,200 | none; after IRC v2 |
 | 9 | **Local CA.** `source = "local-ca"`, the name-constrained CA, leaf renewal, the setup page serving the CA for iOS and Android with fingerprints (§6.6). | 500 to 800 | none |
-| 10 | **XMPP SASL.** SASL1 SCRAM-SHA-1, SCRAM-SHA-256 and PLAIN; SASL2 with the same; FAST tokens; `tls-exporter` and -PLUS with XEP-0440. | 900 to 1,300 | XMPP |
-| 11 | **IRC SCRAM-SHA-256**, if question 3 says yes. | 150 to 250 | none |
+| 10 | **XMPP SASL.** SASL1 SCRAM-SHA-256 and PLAIN; SASL2 with SCRAM-SHA-256; FAST tokens; `tls-exporter` and -PLUS with XEP-0440. | 900 to 1,300 | XMPP |
+| 11 | **IRC SCRAM-SHA-256** (decision A3: with step 4, before IRC v2). | 150 to 250 | IRC v2 |
 | 12 | **Tailnet identity.** LocalAPI client (`whois`, `status`) over the Unix socket, the `[tailnet]` table and matching rules with the three exclusions, the hooks in IRC (no `account-required` for matched peers), XMPP (the fixed SCRAM word) and Matrix `/login` (tokens bound to the node), the recheck timer, `/msg mimid tailnet` and `deny`, setup output. | 600 to 900 | none, but best with IRC v2 for Goguma; needs steps 1 and 3 |
 
 Step 12 is not required by anything, but with step 3's tailscale source
 it gives Goguma the easiest setup there is, so it is worth doing with
-IRC v2 if question 7 says yes.
+IRC v2; it is off by default and setup offers it (decision A7).
 
-Steps 1 to 5 (about 2,600 to 3,800 lines) are the part IRC v2 needs:
+Steps 1 to 5 and 11 (about 2,750 to 4,050 lines) are the part IRC v2 needs:
 with them Goguma on either phone logs in with an app password, over a
 certificate it trusts, to an agent on the user's tailnet. Steps 6 and 7
 go with Matrix, step 10 with XMPP. Steps 8 and 9 widen who can get a
@@ -1285,6 +1363,47 @@ trusted certificate and can go in any order after step 3.
     both, and show the MIMI URI in profiles and WHOIS-like places, as
     the IRC front end does.
 
+### Decisions (Mark, 2026-11-21)
+
+These answer the questions above, in the same order. Where an answer
+differs from the recommendation, the body of this note has been changed
+to match.
+
+- **A1. The credential model: as proposed.** One named app password per
+  device, 16 lowercase letters shown in four groups of four, made by the
+  agent, shown once, good on every front end. The agent token is kept
+  as one more credential.
+- **A2. SCRAM-SHA-256 verifiers only.** No SCRAM-SHA-1 verifier and no
+  argon2id hash. This differs from the recommendation, which also kept
+  SCRAM-SHA-1. Dino, which knows only SCRAM-SHA-1 and PLAIN, logs in
+  with PLAIN over TLS. 4,096 iterations.
+- **A3. SCRAM in IRC: yes, now.** IRC offers SASL PLAIN, SASL
+  SCRAM-SHA-256 and PASS. This differs from the recommendation (PLAIN
+  and PASS only, SCRAM if a user asks): step 11 is scheduled with the
+  IRC SASL work, before IRC v2.
+- **A4. User-chosen passwords: later.** XMPP preauth QR codes come
+  later, through one-time tokens, and a chosen password needs at least
+  12 characters.
+- **A5. Adding an app password from IRC: allowed.** The NOTICE that
+  carries it warns that the client may log it.
+- **A6. `tailscale cert`: ask first.** Setup asks before the agent
+  uses `tailscale cert`, and explains that the names go into public
+  Certificate Transparency logs. There is no silent default. This
+  differs from the recommendation, which made it the first choice
+  without asking.
+- **A7. Tailnet identity: off by default, setup offers it.** The
+  default `owners` and the three exclusions as proposed; the fixed word
+  `tailnet` for XMPP SCRAM and Matrix; JMAP stays on tokens.
+- **A8. Port 443** for the Matrix and JMAP HTTPS listener on the
+  tailnet with `tailscale cert`, else 8448; setup prints the full URL.
+- **A9. A listener on a public address: allowed with a WARN**, never a
+  default.
+- **A10. The Matrix and XMPP domain.** XMPP addresses use the TLS name.
+  Matrix uses the MIMI domain, `@alice:a.example`, which needs the
+  domain's `.well-known/matrix/client` to delegate to the agent. This
+  differs from the recommendation, which used the TLS name for both;
+  §4.3 and §6.3 follow it.
+
 ## 11. Uncertainties
 
 - Whether iOS's camera opens an `ircs://` QR code in Goguma, and the
@@ -1307,6 +1426,6 @@ trusted certificate and can go in any order after step 3.
 - What Monal does if SASL2 `<success>` lacks `<authorization-identifier>`;
   the agent always sends it.
 - Whether Matrix clients show `429 M_LIMIT_EXCEEDED` on `/login` well.
-- Default logging of irssi, WeeChat and HexChat (question 5).
+- Default logging of irssi, WeeChat and HexChat (decision A5).
 - Palaver, closed source and possibly withdrawn (client-survey.md §11).
 - Every size is an estimate; every value marked INVENTED is open.
