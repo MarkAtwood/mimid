@@ -334,3 +334,78 @@ async fn reactions_are_sent_kept_added_up_and_taken_back() {
     until_store(&bob, |s| key_of(s, "end").is_some()).await;
     assert!(key_of(&bob, "🙃").is_none() && key_of(&bob, "👍").is_none());
 }
+
+/// The `mimid-on-behalf-of` value of docs/design/marmot-bridge.md §3.2,
+/// encoded by hand (RFC 8949 §4.2.1 key order):
+/// `{"src": "abcd", "uri": "nostr:npub1x", "name": "Bob"}`.
+const ON_BEHALF_OF: [u8; 36] = [
+    0xa3, 0x63, b's', b'r', b'c', 0x64, b'a', b'b', b'c', b'd', 0x63, b'u', b'r', b'i', 0x6c, b'n',
+    b'o', b's', b't', b'r', b':', b'n', b'p', b'u', b'b', b'1', b'x', 0x64, b'n', b'a', b'm', b'e',
+    0x63, b'B', b'o', b'b',
+];
+
+/// Oracle: mimi-content-10 §4.3 (extensions other than keys 1 and 2 are
+/// kept as received), §9.3 (an edit keeps them);
+/// docs/design/marmot-bridge.md §3.2 (the `mimid-on-behalf-of` map).
+#[tokio::test]
+async fn extensions_are_kept_sent_and_edited() {
+    use mimi_content::{ExtensionKey, RawValue};
+    use mimid_agent_store::record::{ExtensionName, ON_BEHALF_OF_KEY};
+    let dir = tempfile::tempdir().unwrap();
+    let (mut alice, bob, room, room_key) = alice_and_bob(dir.path()).await;
+    let on_behalf_of = RawValue::new(&ON_BEHALF_OF).unwrap();
+    let mut options = mimid_agent_core::ContentOptions::new();
+    options.extensions.insert(
+        ExtensionKey::Text(ON_BEHALF_OF_KEY.to_owned()),
+        on_behalf_of.clone(),
+    );
+    options
+        .extensions
+        .insert(ExtensionKey::Uint(99), RawValue::new(&[0x01]).unwrap());
+    alice
+        .send_message_with(&room, "relayed", &[], &options)
+        .await
+        .unwrap();
+    until_store(&bob, |s| key_of(s, "relayed").is_some()).await;
+    let key = key_of(&bob, "relayed").unwrap();
+    let relayed = bob.state().messages[&key].clone();
+    let names: Vec<&ExtensionName> = relayed.extensions.iter().map(|e| &e.name).collect();
+    assert_eq!(
+        names,
+        [
+            &ExtensionName::Uint(99),
+            &ExtensionName::Text(ON_BEHALF_OF_KEY.to_owned())
+        ]
+    );
+    assert_eq!(relayed.extensions[0].value, "01");
+    let who = relayed.on_behalf_of().unwrap();
+    assert_eq!(who.uri, "nostr:npub1x");
+    assert_eq!(who.name.as_deref(), Some("Bob"));
+    assert_eq!(who.src.as_deref(), Some("abcd"));
+
+    // Sent by the store, and sent again with an edit.
+    let mut options = SendOptions::new();
+    options.extensions.insert(
+        ExtensionKey::Text(ON_BEHALF_OF_KEY.to_owned()),
+        on_behalf_of.clone(),
+    );
+    let sent = bob
+        .send_message(bob.new_key(), &room_key, "copied", &[], &options)
+        .await
+        .unwrap();
+    assert!(sent.on_behalf_of().is_some());
+    let got = until_message(&mut alice, |m| m.text.as_deref() == Some("copied")).await;
+    let key = ExtensionKey::Text(ON_BEHALF_OF_KEY.to_owned());
+    assert_eq!(
+        got.content.mimi_extensions.other.get(&key),
+        Some(&on_behalf_of)
+    );
+    bob.edit(&sent.key, "copied, edited", BodyType::Plain)
+        .await
+        .unwrap();
+    let edit = until_message(&mut alice, |m| m.text.as_deref() == Some("copied, edited")).await;
+    assert_eq!(
+        edit.content.mimi_extensions.other.get(&key),
+        Some(&on_behalf_of)
+    );
+}

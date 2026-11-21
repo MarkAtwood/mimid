@@ -809,6 +809,7 @@ impl Store {
             in_reply_to_id: None,
             topic_id: None,
             attachments: Vec::new(),
+            extensions: Vec::new(),
             reactions: Vec::new(),
             calls: Vec::new(),
             edit_history: Vec::new(),
@@ -987,6 +988,14 @@ impl Store {
             .await;
         let kept_frank = keep_reportable(&received, report);
         let content = &received.content;
+        let (extensions, left_out) = crate::content::kept_extensions(&content.mimi_extensions);
+        if left_out > 0 {
+            report.problems.push(format!(
+                "{}: {left_out} extensions of a message not kept: over {} octets",
+                received.room,
+                crate::content::MAX_KEPT_EXTENSION_LEN
+            ));
+        }
         let mut state = self.state();
         if received.sender != self.user {
             self.person_for(&mut state, &received.sender, changes);
@@ -1025,6 +1034,7 @@ impl Store {
             in_reply_to_id: content.in_reply_to.map(|id| Octets(id.0)),
             topic_id: topic_id(&content.topic_id),
             attachments,
+            extensions,
             reactions: Vec::new(),
             calls,
             edit_history: Vec::new(),

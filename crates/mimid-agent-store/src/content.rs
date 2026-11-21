@@ -162,6 +162,101 @@ pub fn is_call_link(url: &str) -> bool {
         && url.bytes().all(|b| b.is_ascii_graphic())
 }
 
+/// `text` as octets, if it is lowercase hex of whole octets.
+pub(crate) fn unhex(text: &str) -> Option<Vec<u8>> {
+    let digits = text.as_bytes();
+    if !digits.len().is_multiple_of(2) {
+        return None;
+    }
+    let value = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        _ => None,
+    };
+    digits
+        .chunks(2)
+        .map(|pair| Some(value(pair[0])? << 4 | value(pair[1])?))
+        .collect()
+}
+
+/// The most octets of extension values a message keeps
+/// ([`crate::record::Message::extensions`]); past it the extensions in
+/// key order that do not fit are left out. INVENTED, NOT FROM SPEC.
+pub const MAX_KEPT_EXTENSION_LEN: usize = 4096;
+
+/// The extensions of `extensions` beside `senderUri` and `roomUri`, as a
+/// message keeps them: in key order, at most [`MAX_KEPT_EXTENSION_LEN`]
+/// octets of values; the second item is how many were left out.
+pub(crate) fn kept_extensions(
+    extensions: &mimi_content::Extensions,
+) -> (Vec<crate::record::Extension>, usize) {
+    let mut kept = Vec::new();
+    let (mut size, mut left) = (0usize, 0usize);
+    for (key, value) in &extensions.other {
+        let len = value.as_bytes().len();
+        if size + len > MAX_KEPT_EXTENSION_LEN {
+            left += 1;
+            continue;
+        }
+        size += len;
+        kept.push(crate::record::Extension {
+            name: crate::record::ExtensionName::of(key),
+            value: crate::blobs::hex(value.as_bytes()),
+        });
+    }
+    (kept, left)
+}
+
+/// The extensions of a record as the agent sends them again; one whose
+/// value is no longer one CBOR item (a hand-edited database) is left out.
+pub(crate) fn sent_extensions(
+    extensions: &[crate::record::Extension],
+) -> std::collections::BTreeMap<mimi_content::ExtensionKey, mimi_content::RawValue> {
+    extensions
+        .iter()
+        .filter_map(|e| {
+            let value = mimi_content::RawValue::new(&e.octets()?).ok()?;
+            Some((e.name.key(), value))
+        })
+        .collect()
+}
+
+/// The `mimid-on-behalf-of` value `value` (a CBOR map, docs/design/
+/// marmot-bridge.md §3.2) read: `uri` must be text; `name` and `src` are
+/// kept when text. `None` for anything else.
+pub(crate) fn on_behalf_of(value: &[u8]) -> Option<crate::record::OnBehalfOf> {
+    use mimi_content::minicbor::Decoder;
+    use mimi_content::minicbor::data::Type;
+    let mut d = Decoder::new(value);
+    let entries = d.map().ok()??;
+    let (mut uri, mut name, mut src) = (None, None, None);
+    for _ in 0..entries {
+        if d.datatype().ok()? != Type::String {
+            d.skip().ok()?;
+            d.skip().ok()?;
+            continue;
+        }
+        let key = d.str().ok()?.to_owned();
+        let text = if d.datatype().ok()? == Type::String {
+            Some(d.str().ok()?.to_owned())
+        } else {
+            d.skip().ok()?;
+            None
+        };
+        match key.as_str() {
+            "uri" => uri = text,
+            "name" => name = text,
+            "src" => src = text,
+            _ => {}
+        }
+    }
+    Some(crate::record::OnBehalfOf {
+        uri: uri?,
+        name,
+        src,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,5 +427,54 @@ mod tests {
         assert_eq!(safe_filename("a\u{202e}b\u{200b}"), "a\u{202e}b\u{200b}");
         let long = "\u{e9}".repeat(MAX_FILENAME_CHARS + 10);
         assert_eq!(safe_filename(&long).chars().count(), MAX_FILENAME_CHARS);
+    }
+
+    /// Oracle: docs/design/marmot-bridge.md §3.2, the value
+    /// `{"uri": ..., "name": ... / null, "src": ...}`, encoded by hand in
+    /// RFC 8949 §4.2.1 deterministic order (shorter keys first).
+    #[test]
+    fn on_behalf_of_reads_the_bridge_map() {
+        // a3 63 "src" 64 "abcd" 63 "uri" 6c "nostr:npub1x" 64 "name" 63 "Bob"
+        let bob = hex::decode(concat!(
+            "a3",
+            "63737263",
+            "6461626364",
+            "63757269",
+            "6c6e6f7374723a6e70756231",
+            "78",
+            "646e616d65",
+            "63426f62"
+        ));
+        let bob = on_behalf_of(&bob).unwrap();
+        assert_eq!(bob.uri, "nostr:npub1x");
+        assert_eq!(bob.name.as_deref(), Some("Bob"));
+        assert_eq!(bob.src.as_deref(), Some("abcd"));
+        // name null, an unknown key and an integer key: skipped.
+        let other = hex::decode(concat!(
+            "a4",
+            "01",
+            "02",
+            "63757269",
+            "61",
+            "75",
+            "646e616d65",
+            "f6",
+            "65657874726101",
+        ));
+        let other = on_behalf_of(&other).unwrap();
+        assert_eq!(
+            (other.uri.as_str(), other.name, other.src),
+            ("u", None, None)
+        );
+        // No uri, or not a map: none.
+        assert!(on_behalf_of(&hex::decode("a0")).is_none());
+        assert!(on_behalf_of(&hex::decode("6175")).is_none());
+        assert!(on_behalf_of(&[]).is_none());
+    }
+
+    mod hex {
+        pub(super) fn decode(text: &str) -> Vec<u8> {
+            super::super::unhex(text).unwrap()
+        }
     }
 }

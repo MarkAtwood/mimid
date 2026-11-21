@@ -302,3 +302,63 @@ async fn reactions_through_jmap_and_irc() {
     drop(plain);
     p.stop().await;
 }
+
+/// `{"src": "abcd", "uri": "nostr:npub1x", "name": "Bob"}`, the
+/// `mimid-on-behalf-of` value of docs/design/marmot-bridge.md §3.2,
+/// encoded by hand.
+const ON_BEHALF_OF: [u8; 36] = [
+    0xa3, 0x63, b's', b'r', b'c', 0x64, b'a', b'b', b'c', b'd', 0x63, b'u', b'r', b'i', 0x6c, b'n',
+    b'o', b's', b't', b'r', b':', b'n', b'p', b'u', b'b', b'1', b'x', 0x64, b'n', b'a', b'm', b'e',
+    0x63, b'B', b'o', b'b',
+];
+
+/// Oracle: docs/design/marmot-bridge.md §3.2 ("only as 'Bob (via
+/// marmot-bridge)', never as a sender in its own right") and
+/// docs/design/agent-frontends.md §7.28: IRC shows `Bob (via bob-a):`
+/// unless the text starts with the name; JMAP carries the entry in
+/// `mimid.invalid:onBehalfOf`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn on_behalf_of_through_jmap_and_irc() {
+    use mimid_agent_store::action::SendOptions;
+    use mimid_agent_store::record::ON_BEHALF_OF_KEY;
+    let mut p = pair(&["message-tags"]).await;
+    let room = p
+        .bob
+        .store
+        .state()
+        .rooms
+        .values()
+        .next()
+        .unwrap()
+        .key
+        .clone();
+    let mut options = SendOptions::new();
+    options.extensions.insert(
+        mimi_content::ExtensionKey::Text(ON_BEHALF_OF_KEY.to_owned()),
+        mimi_content::RawValue::new(&ON_BEHALF_OF).unwrap(),
+    );
+    for text in ["sounds good", "Bob (npub1x, via bridge): prefixed"] {
+        let key = p.bob.store.new_key();
+        p.bob
+            .store
+            .send_message(key, &room, text, &[], &options)
+            .await
+            .unwrap();
+        p.bob.store.save().await.unwrap();
+    }
+    privmsg(
+        &mut p.a,
+        BOB_MASK,
+        &format!("Bob (via {BOB_NICK}): sounds good"),
+    )
+    .await;
+    privmsg(&mut p.a, BOB_MASK, "Bob (npub1x, via bridge): prefixed").await;
+    let jmap = p.alice.client().await;
+    let message = message_with_body(&jmap, "sounds good").await;
+    assert_eq!(
+        message["mimid.invalid:onBehalfOf"],
+        json!({"uri": "nostr:npub1x", "name": "Bob", "src": "abcd"})
+    );
+    assert_ne!(message["senderId"], json!(jmap.account));
+    p.stop().await;
+}

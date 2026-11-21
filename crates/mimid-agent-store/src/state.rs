@@ -487,6 +487,7 @@ mod tests {
                 size: 1,
                 sha256: "00".into(),
             }],
+            extensions: Vec::new(),
             reactions: Vec::new(),
             calls: Vec::new(),
             edit_history: Vec::new(),

@@ -276,6 +276,85 @@ pub struct Reaction {
     pub accepted_at: u64,
 }
 
+/// The key of an extension a message carries (mimi-content-10 §4.3
+/// `name = int / tstr`), as [`mimi_content::ExtensionKey`] has it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub enum ExtensionName {
+    /// A non-negative integer key.
+    Uint(u64),
+    /// A negative integer key, by its CBOR argument `n`: the key is
+    /// `-1 - n`.
+    Nint(u64),
+    /// A text key, for private use.
+    Text(String),
+}
+
+impl ExtensionName {
+    /// `key` as kept.
+    #[must_use]
+    pub fn of(key: &mimi_content::ExtensionKey) -> Self {
+        match key {
+            mimi_content::ExtensionKey::Uint(n) => Self::Uint(*n),
+            mimi_content::ExtensionKey::Nint(n) => Self::Nint(*n),
+            mimi_content::ExtensionKey::Text(t) => Self::Text(t.clone()),
+        }
+    }
+
+    /// The key as mimi-content has it.
+    #[must_use]
+    pub fn key(&self) -> mimi_content::ExtensionKey {
+        match self {
+            Self::Uint(n) => mimi_content::ExtensionKey::Uint(*n),
+            Self::Nint(n) => mimi_content::ExtensionKey::Nint(*n),
+            Self::Text(t) => mimi_content::ExtensionKey::Text(t.clone()),
+        }
+    }
+}
+
+/// An extension a message carries beside `senderUri` and `roomUri`
+/// (mimi-content-10 §4.3 `mimiExtensions`), its value exactly as received
+/// or sent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Extension {
+    /// Its key.
+    pub name: ExtensionName,
+    /// Its value: one deterministically encoded CBOR item, as hex.
+    pub value: String,
+}
+
+impl Extension {
+    /// The value's CBOR octets, if `value` is hex.
+    #[must_use]
+    pub fn octets(&self) -> Option<Vec<u8>> {
+        crate::content::unhex(&self.value)
+    }
+}
+
+/// The `mimid-on-behalf-of` extension of a message
+/// ([`ON_BEHALF_OF_KEY`]; docs/design/marmot-bridge.md §3.2): whom a
+/// bridge or another relay sent the message for. Never authenticated: the
+/// sender is the MLS sender, and this is what they say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct OnBehalfOf {
+    /// The person's URI on their own network (`nostr:npub1...`).
+    pub uri: String,
+    /// Their display name, if one was given.
+    pub name: Option<String>,
+    /// The id of the original message on its network, if given.
+    pub src: Option<String>,
+}
+
+/// The text key of mimid's private on-behalf-of extension
+/// (docs/design/marmot-bridge.md §3.2; nostr-comparison.md N7):
+/// INVENTED, NOT FROM SPEC, a private-use text key (mimi-content-10
+/// §4.3, §8.2.1). Its value is a CBOR map with text keys `uri`, `name`
+/// (text or null) and `src`.
+pub const ON_BEHALF_OF_KEY: &str = "mimid-on-behalf-of";
+
 /// An earlier version of an edited message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -396,6 +475,13 @@ pub struct Message {
     /// [`Message::reaction_counts`] adds them up.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<Reaction>,
+    /// Its mimiExtensions beside `senderUri` and `roomUri`
+    /// (mimi-content-10 §4.3), each as received or sent, in key order:
+    /// what a relay that copies messages checks (its own
+    /// [`ON_BEHALF_OF_KEY`], [`Message::on_behalf_of`]), and what an
+    /// edit sends again (§9.3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extensions: Vec<Extension>,
     /// The calls to join it carries ([`Call`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calls: Vec<Call>,
@@ -428,6 +514,19 @@ pub struct Message {
 }
 
 impl Message {
+    /// Its `mimid-on-behalf-of` extension ([`ON_BEHALF_OF_KEY`]), if it
+    /// has one whose value is a map with a text `uri`; `name` and `src`
+    /// are kept when they are text. Other entries are ignored.
+    #[must_use]
+    pub fn on_behalf_of(&self) -> Option<OnBehalfOf> {
+        let value = self
+            .extensions
+            .iter()
+            .find(|e| e.name == ExtensionName::Text(ON_BEHALF_OF_KEY.to_owned()))?
+            .octets()?;
+        crate::content::on_behalf_of(&value)
+    }
+
     /// Its reactions added up: each distinct reaction, in the order first
     /// seen, with who sent it, each user once, in the order they did.
     #[must_use]

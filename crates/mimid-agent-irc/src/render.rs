@@ -11,6 +11,7 @@
 //! | Room deleted here | PART from the user, "deleted here" |
 //! | Message | PRIVMSG from the sender's hostmask, `msgid` and `time`; `/me ` text as ACTION |
 //! | Call to join (§7.24) | ACTION from the sender after the text: `call: <description> <<url>>`, or `(not a web link: <url>)` for a URL that is not `https` or `wss` |
+//! | On behalf of (§7.28) | `<name> (via <sender>): <text>`, unless the text starts with the name |
 //! | Reply | The text after `<nick>: `, the replied-to sender's nick, unless it starts so already; `+draft/reply=<msgid>` of a stored message |
 //! | Edit | PRIVMSG `(edited) <text>`, its own msgid, `+draft/reply` naming the first version |
 //! | Retraction | NOTICE from the server: `<nick> retracted a message` |
@@ -41,7 +42,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use mimid_agent_store::Change;
-use mimid_agent_store::record::{Invite, Key, Message, Reply, Room, RoomStatus, Sender};
+use mimid_agent_store::record::{
+    Invite, Key, Message, OnBehalfOf, Reply, Room, RoomStatus, Sender,
+};
 
 use crate::conn::{ChannelView, Session, ShownMessage};
 use crate::line::{Out, split_text};
@@ -102,6 +105,19 @@ pub(crate) fn one_line_data(text: &str) -> String {
 /// Peer text as data: NUL as U+2400, `\x01` as U+2401.
 pub(crate) fn data(text: &str) -> String {
     text.replace('\0', "\u{2400}").replace('\x01', "\u{2401}")
+}
+
+/// The text of a message sent on behalf of `o` by `nick` (§7.28;
+/// docs/design/marmot-bridge.md §3.2): `<name> (via <nick>): <text>`,
+/// the name `o`'s name or else its URI, unless the text already starts
+/// with that name, as a bridge's own prefix does. Peer text on one line.
+pub(crate) fn via_text(o: &OnBehalfOf, nick: &str, text: &str) -> String {
+    let name = one_line_data(o.name.as_deref().unwrap_or(&o.uri));
+    let name = name.trim();
+    if name.is_empty() || text.starts_with(name) {
+        return text.to_owned();
+    }
+    format!("{name} (via {nick}): {text}")
 }
 
 /// A room as a connection shows it.
@@ -440,6 +456,10 @@ impl Session {
                     let body = match &m.reply_nick {
                         Some(nick) => reply_text(nick, &m.record.body),
                         None => m.record.body.clone(),
+                    };
+                    let body = match m.record.on_behalf_of() {
+                        Some(o) => via_text(&o, &sender.nick, &body),
+                        None => body,
                     };
                     self.text_lines(
                         &mask,

@@ -67,6 +67,12 @@
 //!   reaction the store keeps is in its Message's `reactions`, keyed by
 //!   the reaction message's `senderMsgId`; the owner's patch
 //!   `reactions/<senderReactionId>` sends one, and `null` takes it back.
+//! - **On behalf of** (docs/design/marmot-bridge.md §3.2;
+//!   docs/design/agent-frontends.md §7.28): a received message's
+//!   `mimid-on-behalf-of` extension is the Message's vendor property
+//!   `mimid.invalid:onBehalfOf`, `{"uri", "name", "src"}`, for a client
+//!   to show as "name (via sender)". INVENTED, NOT FROM SPEC: the
+//!   property.
 //! - **Calls to join** (mimi-content-10 §5.10; docs/design/agent-frontends.md
 //!   §7.24): a received part of disposition `session` is never fetched;
 //!   an `https` or `wss` URL is a MessageAction of `type`

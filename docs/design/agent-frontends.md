@@ -1864,6 +1864,32 @@ Added on 2026-11-20:
       `reactions_are_sent_kept_added_up_and_taken_back`; mimid-agent
       `tests/groundwork.rs` `reactions_through_jmap_and_irc`.
 
+28. **A received message's extensions (epic mimid-qqtk, bead
+    mimid-qqtk.3; marmot-bridge.md §3.2, §5 P3, §6.3).** mimi-content-10
+    §4.3: extensions other than `senderUri` (1) and `roomUri` (2).
+    - **Store.** A message keeps its extensions as received or sent
+      (`Message::extensions`: the key, int or text, and the value's CBOR
+      as hex, in key order), at most `MAX_KEPT_EXTENSION_LEN` (4096,
+      INVENTED) octets of values; past it the rest are left out with a
+      sync problem. `SendOptions::extensions` sends more with a message,
+      and the record keeps them; an edit sends the record's again (§9.3).
+      `Message::on_behalf_of` reads the bridge's `mimid-on-behalf-of`
+      (`ON_BEHALF_OF_KEY`, INVENTED, NOT FROM SPEC): a CBOR map whose
+      text `uri` is required and text `name` and `src` are kept. It is
+      what the sender says, never authenticated. Schema version 8.
+    - **JMAP Chat.** The entry is the Message's vendor property
+      `mimid.invalid:onBehalfOf` (RFC 8620 §1.8 names an extension's
+      property with a domain and a colon), `{"uri", "name", "src"}`,
+      for a client to show as "name (via sender)". INVENTED, NOT FROM
+      SPEC: the property.
+    - **IRC.** A message with the entry is shown `<name> (via <nick>):
+      <text>`, the name the entry's name or else its URI, unless the
+      text already starts with that name, as the bridge's own prefix
+      does (marmot-bridge.md §3.2). The sender stays the MLS sender.
+    - Tests: mimid-agent-store `content::tests::on_behalf_of_reads_the_bridge_map`,
+      `tests/groundwork.rs` `extensions_are_kept_sent_and_edited`;
+      mimid-agent `tests/groundwork.rs` `on_behalf_of_through_jmap_and_irc`.
+
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 
 Mark decided on 2026-11-20 that JMAP (draft-atwood-jmap-chat-mimi) is

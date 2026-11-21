@@ -46,6 +46,9 @@
 //! - **Replies** (§7.26): a reply is shown addressed `<nick>: ` to the
 //!   replied-to sender, with `+draft/reply` under message-tags; a
 //!   PRIVMSG with `+draft/reply` is sent as a reply.
+//! - **On behalf of** (§7.28): a message carrying `mimid-on-behalf-of`
+//!   is shown `<name> (via <nick>): <text>` unless its text starts with
+//!   the name.
 //! - **Reactions** (§7.27): shown as TAGMSG with `+draft/react` under
 //!   message-tags, else as a short ACTION line; a TAGMSG with
 //!   `+draft/react` or `+draft/unreact` reacts or takes it back.

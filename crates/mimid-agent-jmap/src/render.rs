@@ -50,6 +50,12 @@ use serde_json::{Map, Value, json};
 use crate::backend::ROOM_ID;
 use crate::project::{message_content, shown_content};
 
+/// The Message property that carries a message's `mimid-on-behalf-of`
+/// extension ([`Render::on_behalf_of`]): a vendor property, named with a
+/// domain and a colon as RFC 8620 §1.8 asks of extensions not
+/// registered. INVENTED, NOT FROM SPEC.
+pub(crate) const ON_BEHALF_OF: &str = "mimid.invalid:onBehalfOf";
+
 /// The front-end name the JMAP front end keeps its properties under in a
 /// record's `ext`.
 pub(crate) const JMAP: &str = "jmap";
@@ -230,6 +236,9 @@ impl Render<'_> {
         value.extend(shown_content(message));
         value.extend(expiry_props(message));
         value.insert("reactions".to_owned(), self.reactions(message));
+        if let on_behalf_of @ Value::Object(_) = Self::on_behalf_of(message) {
+            value.insert(ON_BEHALF_OF.to_owned(), on_behalf_of);
+        }
         serde_json::from_value(Value::Object(value)).map_err(|e| e.to_string())
     }
 
@@ -251,6 +260,17 @@ impl Render<'_> {
             );
         }
         Value::Object(map)
+    }
+
+    /// The [`ON_BEHALF_OF`] property of a message: its
+    /// `mimid-on-behalf-of` extension (docs/design/marmot-bridge.md §3.2)
+    /// as `{"uri", "name", "src"}`, or null. Data for a client to show as
+    /// "name (via sender)"; never a sender of its own.
+    pub(crate) fn on_behalf_of(message: &record::Message) -> Value {
+        match message.on_behalf_of() {
+            Some(o) => json!({"uri": o.uri, "name": o.name, "src": o.src}),
+            None => Value::Null,
+        }
     }
 
     /// A ban as the ChatBan made for it when first shown, created at
@@ -337,6 +357,9 @@ impl Render<'_> {
         value.extend(message_content(message));
         value.extend(expiry_props(message));
         value.insert("reactions".to_owned(), self.reactions(message));
+        if let on_behalf_of @ Value::Object(_) = Self::on_behalf_of(message) {
+            value.insert(ON_BEHALF_OF.to_owned(), on_behalf_of);
+        }
         Ok(object(normal::<Message>(Value::Object(value))?))
     }
 
@@ -535,6 +558,7 @@ mod tests {
             in_reply_to_id: None,
             topic_id: None,
             attachments: Vec::new(),
+            extensions: Vec::new(),
             reactions: Vec::new(),
             calls: Vec::new(),
             edit_history: Vec::new(),

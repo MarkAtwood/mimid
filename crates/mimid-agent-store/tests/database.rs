@@ -52,6 +52,7 @@ fn message(key: &str, room: &str, seq: u64, sender: Sender, n: u8) -> Message {
         in_reply_to_id: None,
         topic_id: None,
         attachments: Vec::new(),
+        extensions: Vec::new(),
         reactions: Vec::new(),
         calls: Vec::new(),
         edit_history: Vec::new(),

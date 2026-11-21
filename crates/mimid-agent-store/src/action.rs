@@ -232,6 +232,7 @@ struct Editable {
     first: mimi_content::MessageId,
     expiry: MessageExpiry,
     in_reply_to: Option<mimi_content::MessageId>,
+    extensions: BTreeMap<mimi_content::ExtensionKey, mimi_content::RawValue>,
 }
 
 /// What [`Store::send_message`] sends besides the text and attachments.
@@ -245,6 +246,10 @@ pub struct SendOptions {
     /// whose MIMI message ID is kept. Sent as mimi-content-10 `inReplyTo`
     /// (§5.2), naming the target's first version.
     pub in_reply_to: Option<Key>,
+    /// Extensions beside `senderUri` and `roomUri` (mimi-content-10
+    /// §4.3), such as a bridge's [`crate::record::ON_BEHALF_OF_KEY`];
+    /// keys 1 and 2 are refused by the encoder. The record keeps them.
+    pub extensions: BTreeMap<mimi_content::ExtensionKey, mimi_content::RawValue>,
 }
 
 impl SendOptions {
@@ -603,6 +608,17 @@ impl Store {
         let mut agent = self.agent.lock().await;
         let mut content = crate::expiry::content_options(&expiry);
         content.in_reply_to = reply.as_ref().map(|(_, id)| *id);
+        content.extensions.extend(
+            options
+                .extensions
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        let (extensions, _) = crate::content::kept_extensions(&mimi_content::Extensions {
+            sender_uri: None,
+            room_uri: None,
+            other: content.extensions.clone(),
+        });
         let sent = agent
             .send_message_with(&uri, text, &outgoing, &content)
             .await?;
@@ -625,6 +641,7 @@ impl Store {
             in_reply_to_id: reply.map(|(_, id)| Octets(id.0)),
             topic_id: None,
             attachments,
+            extensions,
             reactions: Vec::new(),
             calls: Vec::new(),
             edit_history: Vec::new(),
@@ -713,6 +730,7 @@ impl Store {
             in_reply_to_id: None,
             topic_id: None,
             attachments: Vec::new(),
+            extensions: Vec::new(),
             reactions: Vec::new(),
             calls: vec![Call {
                 expires: call.expires.filter(|&at| at != 0),
@@ -800,6 +818,7 @@ impl Store {
             in_reply_to: message
                 .in_reply_to_id
                 .map(|id| mimi_content::MessageId(id.0)),
+            extensions: crate::content::sent_extensions(&message.extensions),
         })
     }
 
@@ -827,12 +846,14 @@ impl Store {
             first,
             expiry,
             in_reply_to,
+            extensions,
         } = self.editable(key)?;
-        // The edit carries the message's expiry and inReplyTo, which it
-        // cannot change (mimi-content-10 §9.3; docs/design/agent-frontends.md
+        // The edit carries the message's expiry, inReplyTo and
+        // extensions, which it cannot change (mimi-content-10 §9.3; docs/design/agent-frontends.md
         // §7.20).
         let mut options = crate::expiry::content_options(&expiry);
         options.in_reply_to = in_reply_to;
+        options.extensions.extend(extensions);
         // Locked until the alias is in, as in Store::send.
         let mut agent = self.agent.lock().await;
         let sent = agent
