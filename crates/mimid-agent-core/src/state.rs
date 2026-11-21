@@ -221,6 +221,27 @@ pub(crate) struct State {
     /// (decision mimid-1wgh.63 item 6).
     #[serde(default)]
     pub withdrawn: Vec<String>,
+    /// Per room, the hub acceptance time of the last MLS message this
+    /// device took in for it: where a gap of lost messages starts
+    /// (decision mimid-1wgh.83).
+    #[serde(default)]
+    pub last_seen: BTreeMap<String, u64>,
+    /// Rooms whose group fell behind: a message came for a later epoch
+    /// than the group's, so Commits were missed (deleted at the provider
+    /// after its retention, or by its operator; decisions mimid-1wgh.82,
+    /// mimid-1wgh.83). Each waits for a rejoin by external Commit.
+    #[serde(default)]
+    pub gaps: BTreeMap<String, Gap>,
+}
+
+/// A room's lost messages (decision mimid-1wgh.83): the hub acceptance
+/// times they lie between.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Gap {
+    /// The last message taken in before the gap, if any.
+    pub from: Option<u64>,
+    /// The last message that could not be taken in.
+    pub to: u64,
 }
 
 fn one() -> u64 {
@@ -383,6 +404,8 @@ impl StateDir {
             did_webvh_credential: None,
             pinned_scids: BTreeMap::new(),
             withdrawn: Vec::new(),
+            last_seen: BTreeMap::new(),
+            gaps: BTreeMap::new(),
         };
         let connection = identity.store().connection();
         let record = record_of(&state).map_err(|e| self.refused(e))?;

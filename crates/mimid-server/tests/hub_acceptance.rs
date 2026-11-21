@@ -1264,6 +1264,27 @@ async fn room_lifecycle_across_restart() {
     let before = provider.state().await;
     let stored_secret = provider.store.hub_secret().await.unwrap().unwrap();
     provider.stop().await;
+    // Decision mimid-1wgh.83: an operator deletes hub log rows by hand
+    // while the server is stopped, here every one but the newest, with
+    // foreign keys off as in the sqlite3 CLI. The hub rebuilds the room
+    // from its snapshot, never from the log, and goes on.
+    {
+        let db = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .foreign_keys(false),
+        )
+        .await
+        .unwrap();
+        let deleted =
+            sqlx::query("DELETE FROM room_event WHERE seq < (SELECT MAX(seq) FROM room_event)")
+                .execute(&db)
+                .await
+                .unwrap()
+                .rows_affected();
+        assert!(deleted > 0);
+        db.close().await;
+    }
     provider = Provider::start(&path, HUB_RESTART_MS, &peers, &streams.local, &fanout_clock).await;
     assert_eq!(provider.state().await, before, "rebuilt byte-identically");
     assert_eq!(*provider.hub.signature_public_key(), hub_key);

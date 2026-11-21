@@ -135,6 +135,15 @@ pub struct JmapOptions {
     /// lifetime; the router does not sweep. `None` (the default):
     /// `assetLifetime` is left out, as for a server that deletes nothing.
     pub asset_lifetime: Option<u64>,
+    /// How long, in seconds, the server keeps a Message after storing it,
+    /// advertised as the mimi capability's `messageRetention` and in the
+    /// live stream's `ProviderHello` (draft-atwood-jmap-chat-mimi-00
+    /// §Account-Level Capability Object; decision mimid-1wgh.82). It
+    /// states what a [`crate::retention::MessageSweeper`] enforces, so
+    /// whoever runs the sweeper sets it to the sweeper's retention; the
+    /// router does not sweep. `None` (the default): `messageRetention` is
+    /// left out, as for a server that keeps Messages forever.
+    pub message_retention: Option<u64>,
     /// Whether to serve the live stream at [`mimid_live::PATH`]
     /// (module `live`; decision mimid-1wgh.80). `false` by default.
     pub live_stream: bool,
@@ -147,6 +156,7 @@ impl std::fmt::Debug for JmapOptions {
             .field("stop", &self.stop)
             .field("blob_quota", &self.blob_quota)
             .field("asset_lifetime", &self.asset_lifetime)
+            .field("message_retention", &self.message_retention)
             .field("live_stream", &self.live_stream)
             .finish_non_exhaustive()
     }
@@ -160,6 +170,7 @@ impl Default for JmapOptions {
             clock: Arc::new(SystemClock),
             blob_quota: BlobQuota::default(),
             asset_lifetime: None,
+            message_retention: None,
             live_stream: false,
         }
     }
@@ -197,6 +208,8 @@ struct Inner {
     hub_sender: Vec<u8>,
     /// `assetLifetime`.
     asset_lifetime: Option<u64>,
+    /// `messageRetention`.
+    message_retention: Option<u64>,
 }
 
 impl FromRef<JmapState> for Authenticator {
@@ -232,6 +245,7 @@ pub fn router(
         &hub_sender,
         options.max_key_packages,
         options.asset_lifetime,
+        options.message_retention,
         methods::blob::blob_capability(&options.blob_quota),
         options.live_stream,
     );
@@ -279,6 +293,7 @@ pub fn router(
         max_key_packages: options.max_key_packages,
         hub_sender,
         asset_lifetime: options.asset_lifetime,
+        message_retention: options.message_retention,
     }));
     let mut router = Router::new();
     if options.live_stream {

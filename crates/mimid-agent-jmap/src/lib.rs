@@ -113,6 +113,14 @@
 //!   and was removed, and that the member can rejoin. One per room, user
 //!   and epoch, however often it is replayed. INVENTED, NOT FROM SPEC:
 //!   the notice and its text.
+//! - **Messages lost** (decision mimid-1wgh.83): when the agent missed
+//!   Commits its server no longer had (deleted after `messageRetention`,
+//!   or by the operator) and rejoined the room, or left it as needing a
+//!   new invite (`Event::MessagesLost`), `sync` stores one plain-text
+//!   notice in that room's Chat, sent by the accountId like the others,
+//!   saying that messages from one time to another could not be
+//!   delivered. One per gap. INVENTED, NOT FROM SPEC: the notice and its
+//!   text.
 //!
 //!   Decision note (bead mimid-1wgh.4.81.27): the Session does not
 //!   advertise `urn:ietf:params:jmap:chat:did`. draft-atwood-jmap-chat-did-00

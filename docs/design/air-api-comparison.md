@@ -349,6 +349,21 @@ Nothing on removal.
 Per-client acks, as Air has, would need a client identity at the JMAP
 layer, which the draft does not have; not proposed.
 
+**Built** (bead mimid-e64f.19; jmap-chat-spec 43ee02c; decisions
+mimid-1wgh.82, mimid-1wgh.83). mimid-server keeps Messages 7 days after
+hub acceptance by default (`message_retention_secs`: seconds, at least
+3600, or `"unlimited"`), advertises `messageRetention` in the mimi
+capability and in `ProviderHello` (absent when unlimited), and sweeps
+`follower_event` and `room_event` every 10 minutes in batches of 500.
+Rows deleted by hand are handled the same way: triggers keep the
+Message state, Welcome refs and Message ids right; a state from before
+a deletion gets `cannotCalculateChanges` (stream: `cannotResume`). The
+agent rejoins a room whose Commits it missed by external Commit and
+shows one lost-messages notice; a room that refuses the rejoin is left
+for a new invite. The draft counts retention "after storing it"; mimid
+counts from the hub's acceptance (Mark, 2026-11-21), which for a
+FanoutMessage that arrives late is earlier.
+
 ### A2. A sender cannot ask that a message not wake anyone
 
 **Gap.** Air's `SendMessagePayload.suppress_notifications` stops push

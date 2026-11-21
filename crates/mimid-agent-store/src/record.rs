@@ -298,6 +298,17 @@ pub enum NoticeKind {
         /// The epoch of the removing Commit.
         epoch: u64,
     },
+    /// Messages of the room could not be delivered: the provider no
+    /// longer had what this device missed (`Event::MessagesLost`;
+    /// decision mimid-1wgh.83).
+    #[serde(rename_all = "camelCase")]
+    MessagesLost {
+        /// The hub acceptance time of the last message before the gap, in
+        /// milliseconds since the UNIX epoch, if there was one.
+        from: Option<u64>,
+        /// That of the last message lost.
+        to: u64,
+    },
 }
 
 /// A message in a room: received, sent by the user, or a notice.

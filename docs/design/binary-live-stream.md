@@ -287,6 +287,18 @@ single state after each `Deliver`, and a `Deliver` cannot carry its own
 position. The provider sends `Position` only where it can name a state
 that `Message/changes` accepts. This is the first finding of the log.
 
+Messages deleted at the provider, after its `messageRetention`
+(decision mimid-1wgh.82) or by its operator by hand (decision
+mimid-1wgh.83), make every position from before the deletion one that
+`Message/changes` refuses (`cannotCalculateChanges`; the Message state
+carries a count of deleted events, projection.rs), so a `Subscribe`
+from it is `cannotResume`, and the agent comes back with `after`. A
+connection already subscribed is not cut off by a deletion: its
+following passes over deleted Messages, which it delivered already, and
+sends only the new ones. The agent then finds by the epoch of the next
+message whether it missed a Commit, and rejoins by external Commit
+(agent.rs, `Agent::recover_gaps`).
+
 A lagging change bus does not lose anything: the bus only says when to
 look again. If `since` does not parse, or names a state the provider
 never gave (ahead of the account's current state), the provider answers
@@ -451,6 +463,8 @@ ProviderHello = {
   ? "maxMlsObjectSize": uint, ; the mimi capability's (findings F10)
   "storesAssets": bool,    ; assetUrl present
   ? "assetLifetime": uint, ; seconds
+  ? "messageRetention": uint, ; seconds; the mimi capability's
+                           ; (mimid-1wgh.82); absent: no stated limit
   "fetchesAssets": bool,   ; assetDownloadUrl present
   "acceptedRooms": bool    ; SetChatAccepted works (mimid-1wgh.63)
 }

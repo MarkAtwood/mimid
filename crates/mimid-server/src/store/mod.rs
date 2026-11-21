@@ -20,6 +20,7 @@ mod key_packages;
 mod keys;
 mod log;
 mod outbox;
+mod retention;
 mod rooms;
 
 use std::fs::OpenOptions;
@@ -53,6 +54,7 @@ pub use key_packages::{
 pub use keys::StoredHubSecret;
 pub use log::{EpochSnapshot, EventKind, NewEvent, OutboxEntry};
 pub use outbox::OutboxRow;
+pub use retention::ExpiredEvents;
 pub use rooms::RoomSnapshot;
 
 /// Permission bits a database file must not have: any access by group or
@@ -248,7 +250,7 @@ mod tests {
                 .fetch_all(&store.pool)
                 .await
                 .unwrap();
-        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
 
         let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, domain FROM provider")
             .fetch_all(&store.pool)

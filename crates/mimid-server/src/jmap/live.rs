@@ -239,6 +239,7 @@ async fn hello(
         max_mls_object_size: Some(super::MAX_MLS_OBJECT_SIZE as u64),
         stores_assets: true,
         asset_lifetime: state.0.asset_lifetime,
+        message_retention: state.0.message_retention,
         fetches_assets: true,
         accepted_rooms: true,
         extra: Vec::new(),
@@ -454,7 +455,7 @@ impl Connection {
                     (state, rows)
                 }),
             Some(since) => match projection
-                .message_changes_since(&self.account, since, None)
+                .message_changes_since(&self.account, since, None, false)
                 .await
             {
                 Ok(Some(changes)) => projection
@@ -533,13 +534,14 @@ impl Connection {
         }
         let projection = &self.state.0.projection;
         let changes = match projection
-            .message_changes_since(&self.account, &subscription.position, None)
+            .message_changes_since(&self.account, &subscription.position, None, true)
             .await
         {
             Ok(Some(changes)) => changes,
             Ok(None) => {
                 // A state this provider gave cannot be ahead of the
-                // account's; the store went back.
+                // account's, and deletions since it are passed over (the
+                // client has every Message up to it); the store went back.
                 self.sender.fail(code::CANNOT_RESUME).await;
                 return false;
             }

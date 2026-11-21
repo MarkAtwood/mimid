@@ -14,7 +14,10 @@
 //! §Account-Level Capability Object defines them (jmap-chat-spec 92fecd6),
 //! and, when the server deletes blobs, `assetLifetime`, the seconds a blob
 //! stays at `assetUrl` after its upload (jmap-chat-spec 120db2c;
-//! [`super::JmapOptions::asset_lifetime`]). Each account also has
+//! [`super::JmapOptions::asset_lifetime`]), and, when the server deletes
+//! Messages, `messageRetention`, the seconds it keeps one (jmap-chat-spec
+//! 43ee02c; [`super::JmapOptions::message_retention`]; decision
+//! mimid-1wgh.82). Each account also has
 //! draft-ietf-jmap-blobext-03's `urn:ietf:params:jmap:blob2`
 //! (`super::methods::blob`).
 //!
@@ -136,6 +139,7 @@ pub(super) struct SessionTemplate {
     hub_sender: String,
     max_key_packages: u64,
     asset_lifetime: Option<u64>,
+    message_retention: Option<u64>,
     blob: BlobAccountCapability,
     /// The live stream's URL, if the stream is on.
     live_url: Option<String>,
@@ -145,7 +149,8 @@ impl SessionTemplate {
     /// The template for a server reachable at `base_url`, serving users of
     /// `domain`, whose hub signs with the TLS-encoded ExternalSender
     /// `hub_sender`, which keeps a blob at `assetUrl` for
-    /// `asset_lifetime` seconds after its upload (`None`: no limit), and
+    /// `asset_lifetime` seconds after its upload (`None`: no limit), which
+    /// keeps a Message `message_retention` seconds (`None`: no limit), and
     /// whose accounts have the `urn:ietf:params:jmap:blob2` capability
     /// `blob`, and which serves the live stream if `live_stream`.
     ///
@@ -154,12 +159,17 @@ impl SessionTemplate {
     /// Panics if crate-jmap's `ChatCapability` no longer accepts the
     /// fields of draft-atwood-jmap-chat-00 §3.2: a dependency bug, caught
     /// at startup.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one per part of the Session the router's options set"
+    )]
     pub(super) fn new(
         base_url: &BaseUrl,
         domain: &Domain,
         hub_sender: &[u8],
         max_key_packages: u64,
         asset_lifetime: Option<u64>,
+        message_retention: Option<u64>,
         blob: BlobAccountCapability,
         live_stream: bool,
     ) -> Self {
@@ -173,6 +183,7 @@ impl SessionTemplate {
             hub_sender: URL_SAFE_NO_PAD.encode(hub_sender),
             max_key_packages,
             asset_lifetime,
+            message_retention,
             blob,
             live_url: live_stream.then(|| live_url(base_url)),
         }
@@ -238,6 +249,11 @@ impl SessionTemplate {
                     mimi.asset_download_url = Some(asset_download_url(base, &account_id));
                     // Present only with assetUrl, which is always set here.
                     mimi.asset_lifetime = self.asset_lifetime;
+                    // Decision mimid-1wgh.82; absent when unlimited.
+                    if let Some(seconds) = self.message_retention {
+                        mimi.extra
+                            .insert("messageRetention".to_owned(), serde_json::json!(seconds));
+                    }
                     mimi
                 },
                 i18n: Empty {},

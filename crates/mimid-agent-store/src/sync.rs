@@ -61,7 +61,9 @@ use mimid_agent_core::{Agent, AgentError, Event, ReceivedMessage, ReportedMessag
 
 use crate::change::Change;
 use crate::convert::{MessageRef, message_ref, sender_msg_id, topic_id};
-use crate::notice::{identity_notice, notice_ref, removal_notice, removal_notice_ref};
+use crate::notice::{
+    identity_notice, lost_notice, lost_notice_ref, notice_ref, removal_notice, removal_notice_ref,
+};
 use crate::record::{
     Call, Key, Message, NoticeKind, Octets, Participant, Person, Reply, Room, RoomStatus as Status,
     Sender, SubjectSet,
@@ -620,6 +622,13 @@ impl Store {
                     changes,
                     removal_notice,
                 );
+            }
+            Event::MessagesLost { room, from, to } => {
+                let reference = lost_notice_ref(&room, to);
+                let kind = NoticeKind::MessagesLost { from, to };
+                self.store_notice(agent, &room, "", reference, kind, changes, |_| {
+                    lost_notice(from, to)
+                });
             }
             // A message this device sent is stored as a received one: a
             // record of it that Store::send made already has its MIMI

@@ -451,7 +451,8 @@ async fn insert_fanout(
 }
 
 /// The Message id for an event stored at `received_at`: a new ULID of that
-/// time, or, if the log's latest id is not older, that id incremented, so
+/// time, or, if the log's latest id, stored or deleted, is not older, that
+/// id incremented, so
 /// ids increase with seq however the clock moves (draft-atwood-jmap-chat-00
 /// §Message IDs; decision mimid-1wgh.12.31).
 async fn next_message_id(
@@ -459,9 +460,14 @@ async fn next_message_id(
     received_at: i64,
 ) -> Result<String, StoreError> {
     let now = from_sql_int(received_at)?;
-    let latest: Option<String> = sqlx::query_scalar("SELECT MAX(message_id) FROM follower_event")
-        .fetch_one(&mut **tx)
-        .await?;
+    // A deleted event's id counts too (migration 0014; decision
+    // mimid-1wgh.83): a client may hold it as an anchor.
+    let latest: Option<String> = sqlx::query_scalar(
+        "SELECT MAX(id) FROM (SELECT MAX(message_id) AS id FROM follower_event \
+         UNION ALL SELECT max_message_id FROM follower_gone)",
+    )
+    .fetch_one(&mut **tx)
+    .await?;
     let latest = latest
         .map(|id| Ulid::from_string(&id))
         .transpose()

@@ -546,6 +546,23 @@ pub enum Event {
         /// The epoch the Commit made.
         epoch: u64,
     },
+    /// Messages of `room` could not be delivered: the group missed
+    /// Commits that the provider no longer has (deleted after its
+    /// `messageRetention`, or by its operator; draft-atwood-jmap-chat-mimi-00
+    /// §capability; decision mimid-1wgh.83), so the application messages
+    /// between `from` and `to` (hub acceptance times, milliseconds since
+    /// the UNIX epoch; `from` is `None` when nothing came before) are lost
+    /// to this device. Reported once per gap, when the device has rejoined
+    /// the room by external Commit, or failed to and left it as needing a
+    /// new invite (with an [`Event::Problem`]).
+    MessagesLost {
+        /// The room URI.
+        room: String,
+        /// The last message taken in before the gap, if any.
+        from: Option<u64>,
+        /// The last message that could not be taken in.
+        to: u64,
+    },
     /// An item could not be handled; it is dropped. Polling goes on.
     Problem {
         /// The room, when known.
@@ -1726,7 +1743,7 @@ impl Agent {
             }))
             .collect();
         for room in rooms {
-            match self.join_external(&room, &invited).await {
+            match self.join_external(&room, &invited, false).await {
                 Ok(()) => {
                     tracing::info!(
                         name: "own_room_joined",
@@ -1826,12 +1843,17 @@ impl Agent {
         }
     }
 
-    /// One room of [`Agent::join_own_rooms`]. The error comes with what
+    /// One room of [`Agent::join_own_rooms`], or with `rejoin` the rejoin
+    /// of a room whose group fell behind ([`Agent::recover_gaps`]): the
+    /// group this device has for it is deleted in the transaction that
+    /// makes the new one, and the external Commit removes this device's
+    /// old leaf (a resync, RFC 9420 §12.4.3.2). The error comes with what
     /// it means for the room.
     async fn join_external(
         &mut self,
         room: &str,
         invited: &std::collections::BTreeSet<Vec<u8>>,
+        rejoin: bool,
     ) -> Result<(), (AgentError, NotJoined)> {
         let later = |e: AgentError| (e, NotJoined::Later);
         let never = |e: AgentError| (e, NotJoined::Never);
@@ -1897,6 +1919,10 @@ impl Agent {
         let mut why = NotJoined::Never;
         let entry = self
             .in_transaction(|agent| {
+                // A rollback reads the groups again, the old one included.
+                if rejoin && let Some(old) = agent.members.remove(room) {
+                    forget_group(&agent.identity, old);
+                }
                 let joined = Member::join_external(
                     &agent.identity,
                     &group_info,
@@ -1904,7 +1930,7 @@ impl Agent {
                 )
                 .map_err(|e| AgentError::mls("joining by external Commit", e))?;
                 let tree = agent
-                    .check_external_join(room, &joined.member, &success.tbs().hub_sender)
+                    .check_external_join(room, &joined.member, &success.tbs().hub_sender, rejoin)
                     .map_err(|(e, reason)| {
                         why = reason;
                         e
@@ -1922,6 +1948,92 @@ impl Agent {
         self.send_update(&entry, "external join", false)
             .await
             .map_err(later)
+    }
+
+    /// Rejoins, by external Commit, each room whose group fell behind
+    /// (decision mimid-1wgh.83; draft-atwood-jmap-chat-mimi-00
+    /// §capability `messageRetention`: "Such a client MAY rejoin the room
+    /// by external join"). A room the hub lets back in is joined at its
+    /// current epoch ([`Agent::joined_externally`] reports the lost
+    /// messages); one it refuses, or that cannot be joined, is left, with
+    /// an [`Event::Problem`] saying it needs a new invite and an
+    /// [`Event::MessagesLost`]. A room with something in the outbox, or
+    /// that the server cannot be asked about now, waits for the next
+    /// [`Agent::receive`].
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Database`] or [`AgentError::State`] if the outcome
+    /// cannot be written.
+    async fn recover_gaps(&mut self) -> Result<(), AgentError> {
+        if self.state.gaps.is_empty() {
+            return Ok(());
+        }
+        let waiting: std::collections::BTreeSet<String> = outbox::all(self.connection())
+            .map_err(|e| self.dir.database_error("reading the outbox", e))?
+            .into_iter()
+            .map(|entry| entry.room)
+            .collect();
+        let rooms: Vec<String> = self.state.gaps.keys().cloned().collect();
+        for room in rooms {
+            if waiting.contains(&room) {
+                continue;
+            }
+            if self.state.rooms.get(&room).map(|r| r.status) != Some(RoomStatus::Active) {
+                self.state.gaps.remove(&room);
+                self.save()?;
+                continue;
+            }
+            match self
+                .join_external(&room, &std::collections::BTreeSet::new(), true)
+                .await
+            {
+                Ok(()) => tracing::info!(
+                    name: "room_rejoined",
+                    room = room.as_str(),
+                    "rejoined a room whose group fell behind, by external Commit"
+                ),
+                Err((error, NotJoined::Later)) if !matches!(error, AgentError::Refused { .. }) => {
+                    tracing::info!(
+                        name: "room_rejoin_deferred",
+                        room = room.as_str(),
+                        error = &error as &dyn std::error::Error,
+                        "a room whose group fell behind is not rejoined yet; trying again later"
+                    );
+                }
+                Err((error, _)) => {
+                    tracing::warn!(
+                        name: "room_rejoin_failed",
+                        room = room.as_str(),
+                        error = &error as &dyn std::error::Error,
+                        "a room whose group fell behind cannot be rejoined; it needs a new invite"
+                    );
+                    self.in_transaction(|agent| {
+                        let gap = agent.state.gaps.remove(&room);
+                        agent.finish_leaving(&room);
+                        let mut events = vec![Event::Left { room: room.clone() }];
+                        if let Some(gap) = gap {
+                            events.push(Event::MessagesLost {
+                                room: room.clone(),
+                                from: gap.from,
+                                to: gap.to,
+                            });
+                        }
+                        events.push(Event::Problem {
+                            room: Some(room.clone()),
+                            description: format!(
+                                "this device missed changes to the room that the server no \
+                                 longer has, and could not rejoin it ({error}); it needs a \
+                                 new invite"
+                            ),
+                        });
+                        agent.deliver(events);
+                        Ok(())
+                    })?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Inside a transaction: the hub accepted the external Commit that
@@ -1966,6 +2078,14 @@ impl Agent {
                 .unwrap_or_default(),
         });
         self.replay(room, replay, &mut events);
+        // A rejoin after missed Commits (Agent::recover_gaps).
+        if let Some(gap) = self.state.gaps.remove(room) {
+            events.push(Event::MessagesLost {
+                room: room.to_owned(),
+                from: gap.from,
+                to: gap.to,
+            });
+        }
         self.deliver(events);
         Ok(())
     }
@@ -1978,6 +2098,7 @@ impl Agent {
         room: &str,
         member: &Member,
         hub_sender: &mimi_mls::wire::ExternalSender,
+        rejoin: bool,
     ) -> Result<Option<Vec<u8>>, (AgentError, NotJoined)> {
         let never = |e: AgentError| (e, NotJoined::Never);
         let skip = |e: AgentError| (e, NotJoined::Skip);
@@ -2003,12 +2124,14 @@ impl Agent {
             )));
         }
         // Decision mimid-1wgh.61 item 3: another client of this user is
-        // in the group.
+        // in the group. A rejoin replaces this device's own leaf.
         let me = normalized_uri(&self.me);
         let own_leaf = member.own_leaf_index();
-        if !member.members().iter().any(|(leaf, user)| {
-            *leaf != own_leaf && normalized_uri(&String::from_utf8_lossy(user)) == me
-        }) {
+        if !rejoin
+            && !member.members().iter().any(|(leaf, user)| {
+                *leaf != own_leaf && normalized_uri(&String::from_utf8_lossy(user)) == me
+            })
+        {
             return Err(skip(AgentError::Invalid(format!(
                 "no client of {} is in {room}",
                 self.me
@@ -3077,6 +3200,7 @@ impl Agent {
             self.deliver(events);
         }
         self.fetch_trees().await?;
+        self.recover_gaps().await?;
         self.state.message_state = Some(state);
         self.state.handled.clear();
         self.remember_sent()?;
@@ -4062,6 +4186,32 @@ impl Agent {
         let Some(member) = self.members.get_mut(&room) else {
             return;
         };
+        // Decision mimid-1wgh.83: a message of a later epoch than the
+        // group's means Commits were missed, deleted at the provider; the
+        // room waits for a rejoin (Agent::recover_gaps), and nothing of it
+        // is taken in until then. A group out of sync waits as it is
+        // (decision mimid-1wgh.4.61): its Commit is there but failed.
+        let behind = message.epoch().is_some_and(|epoch| epoch > member.epoch())
+            && member.out_of_sync().is_none();
+        if behind || self.state.gaps.contains_key(&room) {
+            let from = self.state.last_seen.get(&room).copied();
+            let gap = self
+                .state
+                .gaps
+                .entry(room.clone())
+                .or_insert(crate::state::Gap {
+                    from,
+                    to: accepted_at,
+                });
+            gap.to = gap.to.max(accepted_at);
+            tracing::info!(
+                name: "room_gap_found",
+                epoch = message.epoch(),
+                "a message for a later epoch than the group's: Commits were missed"
+            );
+            return;
+        }
+        self.state.last_seen.insert(room.clone(), accepted_at);
         // The leaves before a Commit, to name the clients it removes, and
         // its room metadata, to tell whether it changed.
         let (before, metadata_before) = if message.content_type() == Some(ContentType::Commit) {

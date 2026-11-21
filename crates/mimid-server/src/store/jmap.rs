@@ -322,6 +322,11 @@ pub struct ProjectionCursor {
     pub seq: u64,
     /// The user's highest `follower_member` id, or 0.
     pub member: u64,
+    /// How many events of the rooms the user was ever in were deleted
+    /// (`follower_room.gone`; decisions mimid-1wgh.82, mimid-1wgh.83). A
+    /// state with another count cannot be followed by `/changes`: what it
+    /// knew may be gone, and `seq` may have gone back.
+    pub gone: u64,
 }
 
 /// A user's Chat for one room.
@@ -451,11 +456,13 @@ async fn cursor(
     conn: &mut SqliteConnection,
     user_uri: &str,
 ) -> Result<ProjectionCursor, StoreError> {
-    let (seq, member): (i64, i64) = sqlx::query_as(concat!(
+    let (seq, member, gone): (i64, i64, i64) = sqlx::query_as(concat!(
         "SELECT COALESCE((SELECT MAX(e.seq) FROM follower_event e \
            WHERE e.room_id IN (SELECT room_id FROM follower_member WHERE user_uri = ?1) AND ",
         visible!(),
-        "), 0), COALESCE((SELECT MAX(id) FROM follower_member WHERE user_uri = ?1), 0)"
+        "), 0), COALESCE((SELECT MAX(id) FROM follower_member WHERE user_uri = ?1), 0), \
+         COALESCE((SELECT SUM(r.gone) FROM follower_room r \
+           WHERE r.room_id IN (SELECT room_id FROM follower_member WHERE user_uri = ?1)), 0)"
     ))
     .bind(user_uri)
     .fetch_one(conn)
@@ -463,6 +470,7 @@ async fn cursor(
     Ok(ProjectionCursor {
         seq: from_sql_int(seq)?,
         member: from_sql_int(member)?,
+        gone: from_sql_int(gone)?,
     })
 }
 
@@ -742,8 +750,15 @@ impl Store {
     /// can reveal events at or below `since.seq`.
     ///
     /// Returns `None` if the changes cannot be calculated: `since` is ahead
-    /// of the current cursor, or the second set alone exceeds
+    /// of the current cursor, events were deleted since (its `gone`
+    /// differs; decision mimid-1wgh.83), or the second set alone exceeds
     /// `max_changes`.
+    ///
+    /// With `past_deletions`, deletions since `since` are not a reason for
+    /// `None`: the new Messages are listed and the deleted ones left out.
+    /// That suits a follower that has every Message up to `since` and
+    /// needs only the new ones (the live stream's subscription), not a
+    /// `/changes`, which would have to list the deleted ones as destroyed.
     ///
     /// # Errors
     ///
@@ -754,12 +769,21 @@ impl Store {
         user_uri: &str,
         since: ProjectionCursor,
         max_changes: Option<u64>,
+        past_deletions: bool,
     ) -> Result<Option<MessageChanges>, StoreError> {
         let mut tx = self.reader.begin().await?;
-        let current = cursor(&mut tx, user_uri).await?;
-        if since.seq > current.seq || since.member > current.member {
+        let mut current = cursor(&mut tx, user_uri).await?;
+        let deleted = since.gone != current.gone;
+        if since.member > current.member
+            || since.gone > current.gone
+            || (deleted && !past_deletions)
+            || (!deleted && since.seq > current.seq)
+        {
             return Ok(None);
         }
+        // A deletion may have taken the newest events: the follower's
+        // cursor never goes back.
+        current.seq = current.seq.max(since.seq);
         let mut created: Vec<String> = sqlx::query_scalar(concat!(
             "SELECT e.message_id FROM follower_event e \
              WHERE e.seq <= ?2 AND EXISTS (SELECT 1 FROM follower_member n \

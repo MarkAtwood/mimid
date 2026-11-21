@@ -7,6 +7,9 @@
 //! - The removal notice: a client of a member was removed because its app
 //!   lacks AppDataUpdate (`Event::RemovedWithoutAppDataUpdate`; bead
 //!   mimid-4lp4.4).
+//! - The lost-messages notice: messages of the room could not be
+//!   delivered, because the provider no longer had what this device
+//!   missed (`Event::MessagesLost`; decision mimid-1wgh.83).
 //!
 //! # Limitations
 //!
@@ -60,6 +63,41 @@ pub fn removal_notice_ref(room: &str, user: &str, epoch: u64) -> MessageRef {
     out
 }
 
+/// The [`MessageRef`] of the lost-messages notice for the gap in `room`
+/// that ends at `to` (decision mimid-1wgh.83): the first 10 octets of
+/// SHA-256 over the parts, each ended by a NUL.
+#[must_use]
+pub fn lost_notice_ref(room: &str, to: u64) -> MessageRef {
+    let mut hash = Sha256::new();
+    for part in ["mimid messages-lost notice", room, &to.to_string()] {
+        hash.update(part.as_bytes());
+        hash.update([0]);
+    }
+    let digest = hash.finalize();
+    let mut out = [0u8; 10];
+    out.copy_from_slice(&digest[..10]);
+    out
+}
+
+/// The text of a lost-messages notice for the messages between `from`
+/// and `to`, hub acceptance times in milliseconds since the UNIX epoch,
+/// shown as UTC (decision mimid-1wgh.83).
+#[must_use]
+pub fn lost_notice(from: Option<u64>, to: u64) -> String {
+    let to = crate::convert::utc_date(to);
+    match from {
+        Some(from) => format!(
+            "Notice from your mimid agent: messages from {} to {to} could not be delivered. \
+             Your server no longer had them when this device came back.",
+            crate::convert::utc_date(from)
+        ),
+        None => format!(
+            "Notice from your mimid agent: messages up to {to} could not be delivered. \
+             Your server no longer had them when this device came back."
+        ),
+    }
+}
+
 /// The text of a removal notice for `name` (bead mimid-4lp4.4).
 #[must_use]
 pub fn removal_notice(name: &str) -> String {
@@ -100,6 +138,32 @@ mod tests {
     // notice\0mimi://a.example/r/one\0mimi://b.example/u/erin\05\0")
     // .digest()[:10].hex().
     const REMOVAL_KEY: &str = "571a45c0fb47ce2bb9b1";
+
+    // Oracle: Python, hashlib.sha256(b"mimid messages-lost notice\0
+    // mimi://a.example/r/one\01700000100123\0").digest()[:10].hex(); the
+    // dates from datetime.fromtimestamp(ms / 1000, timezone.utc).
+    #[test]
+    fn lost_notices_are_keyed_by_room_and_end_and_name_both_times() {
+        let key = lost_notice_ref("mimi://a.example/r/one", 1_700_000_100_123);
+        assert_eq!(
+            key,
+            [0x68, 0x94, 0xed, 0xe7, 0xd4, 0xd6, 0xac, 0x97, 0xa9, 0xb8]
+        );
+        assert_ne!(
+            key,
+            lost_notice_ref("mimi://a.example/r/one", 1_700_000_100_124)
+        );
+        let text = lost_notice(Some(1_700_000_000_001), 1_700_000_100_123);
+        assert!(
+            text.contains("messages from 2023-11-14T22:13:20.001Z to 2023-11-14T22:15:00.123Z could not be delivered"),
+            "{text}"
+        );
+        let text = lost_notice(None, 1_700_000_100_123);
+        assert!(
+            text.contains("messages up to 2023-11-14T22:15:00.123Z could not be delivered"),
+            "{text}"
+        );
+    }
 
     #[test]
     fn removal_notices_are_keyed_by_room_user_and_epoch() {

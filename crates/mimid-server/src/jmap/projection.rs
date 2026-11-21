@@ -27,18 +27,26 @@
 //! State strings (plan of mimid-1wgh.12 §3 "State strings"; s is the
 //! highest visible seq, m the highest membership id, both decimal):
 //!
-//! - Message: `s.m`. `/changes` returns the Messages visible above s, plus
-//!   every visible Message of a membership above m.
-//! - Chat: `s.m.d.p.u`, where d is 16 hex digits of SHA-256 over the
+//! - Message: `s.m.g`, g the number of events ever deleted from the
+//!   rooms the account was in (expired, or deleted out of band; decisions
+//!   mimid-1wgh.82, mimid-1wgh.83). `/changes` returns the Messages
+//!   visible above s, plus every visible Message of a membership above m;
+//!   from a state with another g it is `cannotCalculateChanges`, since the
+//!   deleted Messages cannot be listed as destroyed.
+//! - Chat: `s.m.d.p.u.g`, where d is 16 hex digits of SHA-256 over the
 //!   `name`s of the account's hosted-room Chats, so it changes whenever
 //!   one does, p the latest `privateMetadata` write of the account's Chats
 //!   (decision mimid-1wgh.63), and u the latest leaving of one of the
-//!   account's rooms, so that unbinding moves it (findings log F15). A
-//!   state of fewer parts, from before p or u existed, gets
-//!   `cannotCalculateChanges`.
+//!   account's rooms, so that unbinding moves it (findings log F15), and g
+//!   as for Messages. A state of fewer parts, from before p, u or g
+//!   existed, or with another g, gets `cannotCalculateChanges`.
 //! - ChatContact: `m`.
 //!
-//! Messages are never updated or destroyed. `/queryChanges` always answers
+//! Messages are never updated. They are destroyed only by deletion from
+//! the log (the retention sweep, or an operator), which `/changes` does
+//! not report: it answers `cannotCalculateChanges` instead (above). A
+//! deleted id is `notFound` in `/get`, and as an `anchor` of `/query` it
+//! is `anchorNotFound`. `/queryChanges` always answers
 //! `cannotCalculateChanges` (decision mimid-1wgh.12.22).
 //!
 //! # Limitations
@@ -700,17 +708,29 @@ impl Projection {
         let (cursor, chats, digest) = self.chats(account).await?;
         let current_metadata = metadata_seq(&chats);
         let current_left = left_seq(&chats);
-        let mut parts = since.splitn(5, '.');
-        let (Some(seq), Some(member), Some(since_digest), Some(since_metadata), Some(since_left)) = (
+        let mut parts = since.splitn(6, '.');
+        let (
+            Some(seq),
+            Some(member),
+            Some(since_digest),
+            Some(since_metadata),
+            Some(since_left),
+            Some(since_gone),
+        ) = (
             parts.next().and_then(parse_counter),
             parts.next().and_then(parse_counter),
             parts.next(),
             parts.next().and_then(parse_counter),
             parts.next().and_then(parse_counter),
-        ) else {
+            parts.next().and_then(parse_counter),
+        )
+        else {
             return Err(BackendChangesError::CannotCalculate);
         };
-        if seq > cursor.seq
+        // Decision mimid-1wgh.83: after a deletion, unreadCount and
+        // lastMessageAt may have changed, and s may have gone back.
+        if since_gone != cursor.gone
+            || seq > cursor.seq
             || member > cursor.member
             || since_metadata > current_metadata
             || since_left > current_left
@@ -754,7 +774,7 @@ impl Projection {
         max_changes: Option<u64>,
     ) -> Result<ChangesResult, BackendChangesError<ProjectionError>> {
         let changes = self
-            .message_changes_since(account, since, max_changes)
+            .message_changes_since(account, since, max_changes, false)
             .await?
             .ok_or(BackendChangesError::CannotCalculate)?;
         Ok(ChangesResult::new(
@@ -769,8 +789,9 @@ impl Projection {
     /// `Message/changes` from the state `since`, as both bindings use it
     /// (docs/design/binary-live-stream.md §5.5): the Messages created, in
     /// the order `/changes` lists them, and the new state; `None` when the
-    /// changes cannot be calculated (a state that does not parse, or one
-    /// ahead of the account's).
+    /// changes cannot be calculated (a state that does not parse, one
+    /// ahead of the account's, or one from before a deletion unless
+    /// `past_deletions`: [`Store::projection_message_changes`]).
     ///
     /// # Errors
     ///
@@ -780,13 +801,14 @@ impl Projection {
         account: &Account,
         since: &str,
         max_changes: Option<u64>,
+        past_deletions: bool,
     ) -> Result<Option<MessageChangesView>, ProjectionError> {
         let Some(since) = parse_message_state(since) else {
             return Ok(None);
         };
         Ok(self
             .store
-            .projection_message_changes(account.user().as_str(), since, max_changes)
+            .projection_message_changes(account.user().as_str(), since, max_changes, past_deletions)
             .await?
             .map(|changes| MessageChangesView {
                 created: changes.created,
@@ -898,21 +920,23 @@ fn changes(
 /// 4; findings log F15).
 fn chat_state(cursor: ProjectionCursor, digest: &str, metadata: u64, left: u64) -> String {
     format!(
-        "{}.{}.{digest}.{metadata}.{left}",
-        cursor.seq, cursor.member
+        "{}.{}.{digest}.{metadata}.{left}.{}",
+        cursor.seq, cursor.member, cursor.gone
     )
 }
 
 fn message_state(cursor: ProjectionCursor) -> String {
-    format!("{}.{}", cursor.seq, cursor.member)
+    format!("{}.{}.{}", cursor.seq, cursor.member, cursor.gone)
 }
 
 fn parse_message_state(state: &str) -> Option<ProjectionCursor> {
-    let (seq, member) = state.split_once('.')?;
-    Some(ProjectionCursor {
-        seq: parse_counter(seq)?,
-        member: parse_counter(member)?,
-    })
+    let mut parts = state.split('.');
+    let cursor = ProjectionCursor {
+        seq: parse_counter(parts.next()?)?,
+        member: parse_counter(parts.next()?)?,
+        gone: parse_counter(parts.next()?)?,
+    };
+    parts.next().is_none().then_some(cursor)
 }
 
 /// A state-string counter: decimal digits only, at most `i64::MAX`.
@@ -1779,10 +1803,14 @@ mod tests {
             assert_eq!(parse_counter(bad), None, "{bad:?}");
         }
         assert_eq!(
-            parse_message_state("3.1"),
-            Some(ProjectionCursor { seq: 3, member: 1 })
+            parse_message_state("3.1.0"),
+            Some(ProjectionCursor {
+                seq: 3,
+                member: 1,
+                gone: 0
+            })
         );
-        for bad in ["3", "3.", ".1", "3.1.0", "a.b"] {
+        for bad in ["3", "3.", ".1", "3.1", "3.1.0.0", "3.1.", "a.b.c"] {
             assert_eq!(parse_message_state(bad), None, "{bad:?}");
         }
     }

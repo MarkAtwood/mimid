@@ -606,6 +606,11 @@ pub struct ProviderHello {
     pub stores_assets: bool,
     /// `assetLifetime`, seconds.
     pub asset_lifetime: Option<u64>,
+    /// `messageRetention`, seconds: how long the provider keeps a stored
+    /// Message; `None` if it states no limit
+    /// (draft-atwood-jmap-chat-mimi-00 §capability; decision
+    /// mimid-1wgh.82).
+    pub message_retention: Option<u64>,
     /// Whether `FetchAsset` works (`assetDownloadUrl`).
     pub fetches_assets: bool,
     /// Whether `SetChatAccepted` works (decision mimid-1wgh.63).
@@ -1148,6 +1153,7 @@ impl ProviderMessage {
                     max_mls_object_size: f.opt_uint("maxMlsObjectSize")?,
                     stores_assets: f.bool("storesAssets")?,
                     asset_lifetime: f.opt_uint("assetLifetime")?,
+                    message_retention: f.opt_uint("messageRetention")?,
                     fetches_assets: f.bool("fetchesAssets")?,
                     accepted_rooms: f.bool("acceptedRooms")?,
                     extra: Vec::new(),
@@ -1262,6 +1268,7 @@ impl ProviderMessage {
                     .opt_uint("maxMlsObjectSize", h.max_mls_object_size)
                     .bool("storesAssets", h.stores_assets)
                     .opt_uint("assetLifetime", h.asset_lifetime)
+                    .opt_uint("messageRetention", h.message_retention)
                     .bool("fetchesAssets", h.fetches_assets)
                     .bool("acceptedRooms", h.accepted_rooms);
                 w.finish(&h.extra)

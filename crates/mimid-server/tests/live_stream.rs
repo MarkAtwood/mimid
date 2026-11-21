@@ -34,7 +34,7 @@ type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 struct Server {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     base: String,
     store: Store,
     token: BearerToken,
@@ -86,6 +86,7 @@ async fn server(on: bool) -> Server {
     let token = store.issue_token(&account, 2).await.unwrap();
     let mut options = JmapOptions::default();
     options.live_stream = on;
+    options.message_retention = Some(3600);
     let jmap = jmap::router(
         &base,
         store.clone(),
@@ -97,7 +98,7 @@ async fn server(on: bool) -> Server {
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
-        _dir: dir,
+        dir,
         base: base_text,
         store,
         token,
@@ -135,6 +136,8 @@ impl Server {
                 // findings log F10, bead mimid-e64f.18: 4 MiB less 64 KiB,
                 // as the JMAP capability states it.
                 assert_eq!(hello.max_mls_object_size, Some(4_128_768));
+                // Decision mimid-1wgh.82: as the options give it.
+                assert_eq!(hello.message_retention, Some(3600));
             }
             other => panic!("no ProviderHello: {other:?}"),
         }
@@ -469,8 +472,8 @@ async fn subscribe_without_messages_gives_the_jmap_state() {
         },
         other => panic!("{other:?}"),
     };
-    // The Message state of a fresh account, s.m (projection.rs).
-    assert_eq!(state, "0.0");
+    // The Message state of a fresh account, s.m.g (projection.rs).
+    assert_eq!(state, "0.0.0");
     send(
         &mut socket,
         &request(
@@ -500,7 +503,7 @@ async fn subscribe_without_messages_gives_the_jmap_state() {
     expect_error(&mut socket, Some(1), code::BAD_MESSAGE, false).await;
 
     // A state that does not parse, or one ahead of the account's.
-    for since in ["x", "9.9"] {
+    for since in ["x", "9.9", "9.9.9", "0.0.1"] {
         let mut socket = server.open().await;
         send(
             &mut socket,
@@ -613,5 +616,96 @@ async fn requests_are_answered_by_the_jmap_core_functions() {
             other => panic!("{other:?}"),
         },
         other => panic!("{other:?}"),
+    }
+}
+
+/// Decision mimid-1wgh.83: after an operator deletes Messages by hand, a
+/// Subscribe from a position before the deletion is `cannotResume`, and
+/// one without a position, or from the new one, replays what is left.
+#[tokio::test]
+async fn subscribe_from_before_a_deletion_cannot_resume() {
+    use mimid_server::store::{FanoutKind, NewFanout};
+    use sha2::{Digest, Sha256};
+    const DEN: &str = "mimi://c.example/r/den";
+    let server = server(true).await;
+    let c = Domain::try_from("c.example".to_owned()).unwrap();
+    assert!(
+        server
+            .store
+            .add_follower_member(DEN, &c, ALICE, 1, 1)
+            .await
+            .unwrap()
+    );
+    for i in 0..3u8 {
+        let bytes = [b'm', i];
+        let hash: [u8; 32] = Sha256::digest(bytes).into();
+        let mut sender_msg_id = [0; 16];
+        sender_msg_id[6..].copy_from_slice(&hash[..10]);
+        server
+            .store
+            .append_fanout(
+                DEN,
+                &c,
+                2,
+                &[NewFanout {
+                    bytes: &bytes,
+                    hash,
+                    message_hash: Sha256::digest([b"inner ", &bytes[..]].concat()).into(),
+                    sender_msg_id,
+                    hub_timestamp: 2,
+                    kind: FanoutKind::Application,
+                    group_id: None,
+                    welcome_refs: Vec::new(),
+                }],
+            )
+            .await
+            .unwrap();
+    }
+    let subscribe = |since: Option<String>| request(1, Op::Subscribe { since, after: None });
+    let mut socket = server.open().await;
+    send(&mut socket, &subscribe(None)).await;
+    let (all, before) = replay(&mut socket).await;
+    assert_eq!(all.len(), 3);
+
+    let db = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(server.dir.path().join("mimid.sqlite"))
+            .foreign_keys(false),
+    )
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM follower_event WHERE message_id = ?")
+        .bind(&all[1])
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+
+    let mut socket = server.open().await;
+    send(&mut socket, &subscribe(Some(before))).await;
+    expect_error(&mut socket, Some(1), code::CANNOT_RESUME, false).await;
+    let mut socket = server.open().await;
+    send(&mut socket, &subscribe(None)).await;
+    let (left, now) = replay(&mut socket).await;
+    assert_eq!(left, [all[0].clone(), all[2].clone()]);
+    let mut socket = server.open().await;
+    send(&mut socket, &subscribe(Some(now))).await;
+    let (none, _) = replay(&mut socket).await;
+    assert!(none.is_empty());
+}
+
+/// The `Deliver`s of a Subscribe's replay, by Message id, and its `Ack`'s
+/// state.
+async fn replay(socket: &mut Socket) -> (Vec<String>, String) {
+    let mut delivered = Vec::new();
+    loop {
+        match receive(socket, Some(OpKind::Subscribe)).await {
+            Some(ProviderMessage::Deliver(deliver)) => delivered.push(deliver.message_id),
+            Some(ProviderMessage::Ack(ack)) => match ack.result {
+                AckResult::Subscribe { state } => return (delivered, state),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        }
     }
 }

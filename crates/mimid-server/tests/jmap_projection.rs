@@ -320,7 +320,7 @@ async fn objects_match_the_drafts() {
         chats,
         json!({
             "accountId": account,
-            "state": format!("1.1.{NO_NAMES}.0.0"),
+            "state": format!("1.1.{NO_NAMES}.0.0.0"),
             "list": [{
                 "id": chat_id,
                 "kind": "group",
@@ -351,7 +351,7 @@ async fn objects_match_the_drafts() {
         messages,
         json!({
             "accountId": account,
-            "state": "1.1",
+            "state": "1.1.0",
             "list": [{
                 "id": message_id,
                 // Python: ULID(HUB_TS, SHA-256(b"fanout one")[:10]).
@@ -404,7 +404,7 @@ async fn objects_match_the_drafts() {
         .await;
     assert_eq!(bob_chats["list"], json!([]));
     assert_eq!(bob_chats["notFound"], json!([chat_id]));
-    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}.0.0"));
+    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}.0.0.0"));
     let (_, bob_messages) = f
         .call(
             &f.bob_token,
@@ -413,7 +413,7 @@ async fn objects_match_the_drafts() {
         )
         .await;
     assert_eq!(bob_messages["list"], json!([]));
-    assert_eq!(bob_messages["state"], "0.0");
+    assert_eq!(bob_messages["state"], "0.0.0");
     f.close().await;
 }
 
@@ -439,7 +439,7 @@ async fn a_join_below_the_state_is_reported() {
         .as_str()
         .unwrap()
         .to_owned();
-    assert_eq!(state, format!("{later}.1"));
+    assert_eq!(state, format!("{later}.1.0"));
     // The hub accepts; the membership is recorded below the state.
     f.join(PATIO, ALICE, since, JOINED).await;
 
@@ -453,14 +453,14 @@ async fn a_join_below_the_state_is_reported() {
         changed(&changes),
         (vec![f.message_id(hidden).await], vec![])
     );
-    assert_eq!(changes["newState"], format!("{later}.2"));
+    assert_eq!(changes["newState"], format!("{later}.2.0"));
     assert_eq!(changes["hasMoreChanges"], false);
 
     // The Chat is new, and its counts include the revealed event.
     let changes = f
         .alice(
             "Chat/changes",
-            json!({"accountId": f.alice_id, "sinceState": format!("{later}.1.{NO_NAMES}.0.0")}),
+            json!({"accountId": f.alice_id, "sinceState": format!("{later}.1.{NO_NAMES}.0.0.0")}),
         )
         .await;
     assert_eq!(
@@ -568,7 +568,7 @@ async fn changes_report_new_chats_messages_and_contacts() {
     let empty = f
         .alice("Message/get", json!({"accountId": account, "ids": []}))
         .await;
-    assert_eq!(empty["state"], "0.0");
+    assert_eq!(empty["state"], "0.0.0");
     let contact_state = f
         .alice("ChatContact/get", json!({"accountId": account, "ids": []}))
         .await["state"]
@@ -586,7 +586,7 @@ async fn changes_report_new_chats_messages_and_contacts() {
     }
 
     // Paged two at a time, in seq order, through intermediate states.
-    let mut state = json!("0.0");
+    let mut state = json!("0.0.0");
     let mut seen = Vec::new();
     loop {
         let changes = f
@@ -604,7 +604,7 @@ async fn changes_report_new_chats_messages_and_contacts() {
         }
     }
     assert_eq!(seen, ids);
-    assert_eq!(state, format!("{}.1", seqs[4]));
+    assert_eq!(state, format!("{}.1.0", seqs[4]));
     // Nothing new: no changes, same state.
     let changes = f
         .alice(
@@ -619,7 +619,7 @@ async fn changes_report_new_chats_messages_and_contacts() {
     let chats = f
         .alice(
             "Chat/changes",
-            json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}.0.0")}),
+            json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}.0.0.0")}),
         )
         .await;
     assert_eq!(changed(&chats), (vec![chat_id.clone()], vec![]));
@@ -637,7 +637,7 @@ async fn changes_report_new_chats_messages_and_contacts() {
     f.join(LOFT, ALICE, 1, JOINED).await;
     f.alice_error(
         "Chat/changes",
-        json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}.0.0"), "maxChanges": 1}),
+        json!({"accountId": account, "sinceState": format!("0.0.{NO_NAMES}.0.0.0"), "maxChanges": 1}),
         "cannotCalculateChanges",
     )
     .await;
@@ -679,10 +679,13 @@ async fn changes_report_new_chats_messages_and_contacts() {
         "1",
         "1.2.3",
         "-1.0",
-        "99.0",
-        "0.99",
-        "0.0.0",
-        "18446744073709551616.0",
+        "1.2",
+        "99.0.0",
+        "0.99.0",
+        "0.0.1",
+        "0.0",
+        "0.0.0.0",
+        "18446744073709551616.0.0",
     ] {
         f.alice_error(
             "Message/changes",
@@ -709,7 +712,7 @@ async fn changes_report_new_chats_messages_and_contacts() {
     }
     f.alice_error(
         "Message/changes",
-        json!({"accountId": account, "sinceState": "0.0", "maxChanges": 0}),
+        json!({"accountId": account, "sinceState": "0.0.0", "maxChanges": 0}),
         "invalidArguments",
     )
     .await;
@@ -977,7 +980,7 @@ async fn foreign_accounts_bad_ids_and_properties_are_refused() {
             ("Message/get", json!({"ids": [message_id]})),
             ("ChatContact/get", json!({})),
             ("Chat/changes", json!({"sinceState": "0.0.x"})),
-            ("Message/changes", json!({"sinceState": "0.0"})),
+            ("Message/changes", json!({"sinceState": "0.0.0"})),
             ("ChatContact/changes", json!({"sinceState": "0"})),
             ("Chat/query", json!({})),
             ("Message/query", json!({"filter": {"chatId": "x"}})),
@@ -1184,7 +1187,7 @@ async fn sets_refuse_everything() {
     // ifInState mismatch: nothing is looked at (RFC 8620 §5.3).
     f.alice_error(
         "Message/set",
-        json!({"accountId": account, "ifInState": "0.0", "destroy": [message_id]}),
+        json!({"accountId": account, "ifInState": "0.0.0", "destroy": [message_id]}),
         "stateMismatch",
     )
     .await;
@@ -1253,7 +1256,7 @@ async fn chat_private_metadata_follows_draft_ietf_jmap_metadata_05() {
     assert_eq!(before["list"][0]["metadata"], json!({}));
     assert_eq!(before["list"][0]["privateMetadata"], json!({}));
     let state = before["state"].as_str().unwrap().to_owned();
-    assert_eq!(state, format!("1.1.{NO_NAMES}.0.0"));
+    assert_eq!(state, format!("1.1.{NO_NAMES}.0.0.0"));
 
     // §3.2: a namespace patch.
     let set = f.meta(
@@ -1267,7 +1270,7 @@ async fn chat_private_metadata_follows_draft_ietf_jmap_metadata_05() {
     assert_eq!(set["notUpdated"], Value::Null);
     assert_eq!(set["oldState"], state);
     let after = set["newState"].as_str().unwrap().to_owned();
-    assert_eq!(after, format!("1.1.{NO_NAMES}.1.0"));
+    assert_eq!(after, format!("1.1.{NO_NAMES}.1.0.0"));
 
     // A deeper path, and a second namespace.
     let set = f
@@ -1367,10 +1370,15 @@ async fn chat_private_metadata_follows_draft_ietf_jmap_metadata_05() {
         .await;
     assert_eq!(mixed["updated"], json!([chat_id.clone()]));
     assert_eq!(mixed["updatedProperties"], Value::Null);
-    // A three-part state from before privateMetadata, and a four-part one
-    // from before the leaving counter (findings log F15), cannot be
+    // A three-part state from before privateMetadata, a four-part one
+    // from before the leaving counter (findings log F15), and a five-part
+    // one from before the deletion count (decision mimid-1wgh.83) cannot be
     // followed.
-    for old in [format!("1.1.{NO_NAMES}"), format!("1.1.{NO_NAMES}.1")] {
+    for old in [
+        format!("1.1.{NO_NAMES}"),
+        format!("1.1.{NO_NAMES}.1"),
+        format!("1.1.{NO_NAMES}.1.0"),
+    ] {
         f.alice_error(
             "Chat/changes",
             json!({"accountId": account, "sinceState": old}),
@@ -1527,7 +1535,7 @@ async fn chat_private_metadata_follows_draft_ietf_jmap_metadata_05() {
             json!({"accountId": f.bob_id, "ids": []}),
         )
         .await;
-    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}.0.0"));
+    assert_eq!(bob_chats["state"], format!("0.0.{NO_NAMES}.0.0.0"));
     f.close().await;
 }
 
@@ -2066,4 +2074,286 @@ async fn an_idle_stream_pings_at_the_clamped_interval() {
     );
     drop(body);
     f.close().await;
+}
+
+/// A connection as the sqlite3 CLI makes it: foreign keys off.
+async fn operator(path: &std::path::Path) -> SqlitePool {
+    SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(path)
+            .foreign_keys(false),
+    )
+    .await
+    .unwrap()
+}
+
+/// Decision mimid-1wgh.83: rows an operator deletes by hand, while the
+/// server runs, not a prefix: every answer stays well-formed. Oracles:
+/// RFC 8620 §5.1 (`notFound`), §5.2 (`cannotCalculateChanges`), §5.5
+/// (`anchorNotFound`), and the Message ids the database holds.
+#[tokio::test]
+async fn rows_deleted_out_of_band_are_answered_cleanly() {
+    let f = fixture().await;
+    f.join(DEN, ALICE, 1, JOINED).await;
+    let mut seqs = Vec::new();
+    for i in 0..6u8 {
+        seqs.push(f.append(DEN, RECEIVED, &[b'm', i]).await);
+    }
+    let mut ids = Vec::new();
+    for seq in &seqs {
+        ids.push(f.message_id(*seq).await);
+    }
+    // A Welcome for alice, with its ref, deleted too.
+    const KP_REF: &[u8] = b"\x20alice's key package reference..";
+    let db = f.db().await;
+    sqlx::query(
+        "INSERT INTO key_package_claim (ref, user_uri, client_id, requester, room_id, claimed_at) \
+         VALUES (?, ?, 'client', 'mimi://c.example/u/carol', ?, 1)",
+    )
+    .bind(KP_REF)
+    .bind(ALICE)
+    .bind(DEN)
+    .execute(&db)
+    .await
+    .unwrap();
+    db.close().await;
+    let welcome = f
+        .store
+        .append_fanout(
+            DEN,
+            &hub_of(DEN),
+            RECEIVED,
+            &[fanout(b"welcome", FanoutKind::Welcome, vec![KP_REF])],
+        )
+        .await
+        .unwrap()
+        .new_seqs[0];
+    let account = f.alice_id.clone();
+    let chat = f.chat_id(ALICE, DEN).await;
+    let old = f
+        .alice("Message/get", json!({"accountId": account, "ids": []}))
+        .await["state"]
+        .clone();
+    let old_chat = f
+        .alice("Chat/get", json!({"accountId": account, "ids": []}))
+        .await["state"]
+        .clone();
+
+    // Not a prefix: the second, the newest application message, and the
+    // Welcome.
+    let db = operator(&f.path).await;
+    for seq in [seqs[1], seqs[5], welcome] {
+        sqlx::query("DELETE FROM follower_event WHERE seq = ?")
+            .bind(i64::try_from(seq).unwrap())
+            .execute(&db)
+            .await
+            .unwrap();
+    }
+    let refs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM welcome_ref")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(refs, 0, "the Welcome's refs went with it");
+    db.close().await;
+
+    let got = f
+        .alice(
+            "Message/get",
+            json!({"accountId": account, "ids": [ids[0], ids[1], ids[5]], "properties": ["id"]}),
+        )
+        .await;
+    assert_eq!(got["list"], json!([{"id": ids[0]}]));
+    assert_eq!(got["notFound"], json!([ids[1], ids[5]]));
+    let now = got["state"].clone();
+    assert_ne!(now, old, "a deletion moves the Message state");
+    f.alice_error(
+        "Message/changes",
+        json!({"accountId": account, "sinceState": old}),
+        "cannotCalculateChanges",
+    )
+    .await;
+    f.alice_error(
+        "Chat/changes",
+        json!({"accountId": account, "sinceState": old_chat}),
+        "cannotCalculateChanges",
+    )
+    .await;
+    let none = f
+        .alice(
+            "Message/changes",
+            json!({"accountId": account, "sinceState": now}),
+        )
+        .await;
+    assert_eq!(none["created"], json!([]));
+    let in_den = |extra: Value| {
+        let mut query = json!({
+            "accountId": account,
+            "filter": {"chatId": chat},
+            "sort": [{"property": "id"}],
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            query[key] = value.clone();
+        }
+        query
+    };
+    f.alice_error(
+        "Message/query",
+        in_den(json!({"anchor": ids[1], "anchorOffset": 1})),
+        "anchorNotFound",
+    )
+    .await;
+    let listed = f.alice("Message/query", in_den(json!({}))).await;
+    assert_eq!(
+        listed["ids"],
+        json!([ids[0], ids[2], ids[3], ids[4]]),
+        "what is left"
+    );
+    let anchored = f
+        .alice(
+            "Message/query",
+            in_den(json!({"anchor": ids[2], "anchorOffset": 1})),
+        )
+        .await;
+    assert_eq!(anchored["ids"], json!([ids[3], ids[4]]));
+    let chats = f
+        .alice("Chat/get", json!({"accountId": account, "ids": [chat]}))
+        .await;
+    assert_eq!(chats["list"][0]["unreadCount"], 4);
+
+    // New traffic: its id sorts after every id handed out, the deleted
+    // newest included, and /changes from the new state lists it.
+    let seq = f.append(DEN, RECEIVED, b"after").await;
+    let new_id = f.message_id(seq).await;
+    assert!(new_id > ids[5], "{new_id} after the deleted {}", ids[5]);
+    let changes = f
+        .alice(
+            "Message/changes",
+            json!({"accountId": account, "sinceState": now}),
+        )
+        .await;
+    assert_eq!(changes["created"], json!([new_id]));
+    f.close().await;
+}
+
+/// Decision mimid-1wgh.82: the sweep deletes what the hub accepted a
+/// retention ago, in batches, from both logs, and nothing newer; the
+/// Session states the retention. Oracle: the counts written here.
+#[tokio::test]
+async fn the_sweep_deletes_expired_messages_in_batches() {
+    use mimid_server::retention::{MESSAGE_SWEEP_BATCH, MessageSweeper};
+    use mimid_server::store::{EventKind, NewEvent};
+    const RETENTION_MS: u64 = 7 * 24 * 3600 * 1000;
+    const NOW: u64 = HUB_TS + RETENTION_MS + 1;
+    let f = fixture().await;
+    f.join(DEN, ALICE, 1, JOINED).await;
+    // More expired than one batch, the last one expired (accepted exactly
+    // a retention ago), and two kept.
+    let old = usize::try_from(MESSAGE_SWEEP_BATCH).unwrap() + 3;
+    let mut bodies: Vec<(Vec<u8>, u64)> = (0..old)
+        .map(|i| (format!("old {i}").into_bytes(), HUB_TS))
+        .collect();
+    bodies.push((b"at the edge".to_vec(), HUB_TS + 1));
+    bodies.push((b"just kept".to_vec(), HUB_TS + 2));
+    bodies.push((b"new".to_vec(), NOW));
+    for (bytes, hub_timestamp) in &bodies {
+        let mut message = fanout(bytes, FanoutKind::Application, Vec::new());
+        message.hub_timestamp = *hub_timestamp;
+        f.store
+            .append_fanout(DEN, &hub_of(DEN), RECEIVED, &[message])
+            .await
+            .unwrap();
+    }
+    // The hub log: one expired event, one kept, in a room this server
+    // hosts (a row of `room` stands for it).
+    let db = operator(&f.path).await;
+    sqlx::query(
+        "INSERT INTO room (room_id, group_id, epoch, group_info, ratchet_tree, created_at) \
+         VALUES ('mimi://a.example/r/hall', x'01', 1, x'00', x'00', 0)",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    db.close().await;
+    for (hash, accepted_at) in [(&b"h-old"[..], HUB_TS), (&b"h-new"[..], NOW)] {
+        f.store
+            .append_event(
+                &NewEvent {
+                    room_id: "mimi://a.example/r/hall",
+                    epoch: 1,
+                    accepted_at,
+                    kind: EventKind::Application,
+                    bytes: b"message",
+                    hash,
+                },
+                &[],
+            )
+            .await
+            .unwrap();
+    }
+    let before = f.store.event_counts().await.unwrap();
+    assert_eq!((before.follower, before.hub), (old as u64 + 3, 2));
+    let swept = MessageSweeper::new(
+        f.store.clone(),
+        Arc::new(FixedClock(NOW)),
+        std::time::Duration::from_millis(RETENTION_MS),
+    )
+    .sweep()
+    .await
+    .unwrap();
+    assert_eq!((swept.follower, swept.hub), (old as u64 + 1, 1));
+    let after = f.store.event_counts().await.unwrap();
+    assert_eq!((after.follower, after.hub), (2, 1));
+    let account = f.alice_id.clone();
+    let left = f
+        .alice("Message/get", json!({"accountId": account, "ids": null}))
+        .await;
+    assert_eq!(left["list"].as_array().unwrap().len(), 2);
+    f.close().await;
+}
+
+/// The mimi capability states `messageRetention` when the options give
+/// one (decision mimid-1wgh.82), and leaves it out otherwise.
+#[tokio::test]
+async fn the_session_states_the_message_retention() {
+    for (retention, expected) in [(Some(604_800), json!(604_800)), (None, Value::Null)] {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+        let account = store.create_account(&domain(), ALICE, 1).await.unwrap();
+        let token = store.issue_token(&account, 2).await.unwrap();
+        let follower = Arc::new(Follower::new(
+            domain(),
+            store.clone(),
+            Arc::new(FixedClock(5)),
+        ));
+        let mut options = JmapOptions::default();
+        options.message_retention = retention;
+        let app = jmap::router(
+            &BaseUrl::try_from("https://mimi.a.example".to_owned()).unwrap(),
+            store.clone(),
+            Arc::new(hub),
+            follower,
+            options,
+        )
+        .unwrap();
+        let response = app
+            .oneshot(
+                Request::get("/.well-known/jmap")
+                    .header(
+                        header::AUTHORIZATION,
+                        format!("Bearer {}", token.expose_secret()),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let session: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            session["accounts"][&account]["accountCapabilities"]["urn:ietf:params:jmap:chat:mimi"]
+                ["messageRetention"],
+            expected
+        );
+        store.close().await;
+    }
 }

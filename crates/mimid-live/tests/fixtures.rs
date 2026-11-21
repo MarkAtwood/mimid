@@ -145,6 +145,33 @@ fn provider_hello() {
             max_mls_object_size: None,
             stores_assets: true,
             asset_lifetime: Some(3600),
+            message_retention: None,
+            fetches_assets: true,
+            accepted_rooms: true,
+            extra: Vec::new(),
+        }),
+    );
+}
+
+/// Decision mimid-1wgh.82: `messageRetention` in seconds.
+#[test]
+fn provider_hello_with_message_retention() {
+    provider(
+        "provider-hello-retention.hex",
+        None,
+        ProviderMessage::Hello(ProviderHello {
+            version: 1,
+            user_uri: "mimi://a.example/u/alice".to_owned(),
+            room_id_prefix: "mimi://a.example/r/".to_owned(),
+            hub_sender: vec![1],
+            cipher_suites: vec![1],
+            max_key_packages: 100,
+            max_message_bytes: 16 * 1024 * 1024 + 64 * 1024,
+            max_request_bytes: 4 * 1024 * 1024 + 64 * 1024,
+            max_mls_object_size: None,
+            stores_assets: true,
+            asset_lifetime: Some(3600),
+            message_retention: Some(604_800),
             fetches_assets: true,
             accepted_rooms: true,
             extra: Vec::new(),

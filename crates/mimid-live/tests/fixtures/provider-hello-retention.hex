@@ -1,0 +1,39 @@
+; ProviderHello as provider-hello.hex, with "messageRetention": 604800
+; (draft-atwood-jmap-chat-mimi-00 §capability; decision mimid-1wgh.82).
+; Keys by length, then bytes: as provider-hello.hex, then messageRetention
+; (16 bytes) last.
+af                                  ; map, 15 pairs
+61 74                               ; "t"
+6d 50 72 6f 76 69 64 65 72 48 65 6c 6c 6f ; "ProviderHello" (13)
+61 76                               ; "v"
+01                                  ; 1
+67 75 73 65 72 55 72 69             ; "userUri"
+78 18                               ; text, 24 bytes
+6d 69 6d 69 3a 2f 2f 61 2e 65 78 61 ; "mimi://a.exa"
+6d 70 6c 65 2f 75 2f 61 6c 69 63 65 ; "mple/u/alice"
+67 76 65 72 73 69 6f 6e             ; "version"
+01                                  ; 1
+69 68 75 62 53 65 6e 64 65 72       ; "hubSender"
+41 01                               ; bytes, 1: 01
+6c 63 69 70 68 65 72 53 75 69 74 65 73 ; "cipherSuites"
+81 01                               ; [1]
+6c 72 6f 6f 6d 49 64 50 72 65 66 69 78 ; "roomIdPrefix"
+73                                  ; text, 19 bytes
+6d 69 6d 69 3a 2f 2f 61 2e 65       ; "mimi://a.e"
+78 61 6d 70 6c 65 2f 72 2f          ; "xample/r/"
+6c 73 74 6f 72 65 73 41 73 73 65 74 73 ; "storesAssets"
+f5                                  ; true
+6d 61 63 63 65 70 74 65 64 52 6f 6f 6d 73 ; "acceptedRooms"
+f5                                  ; true
+6d 61 73 73 65 74 4c 69 66 65 74 69 6d 65 ; "assetLifetime"
+19 0e 10                            ; 3600
+6d 66 65 74 63 68 65 73 41 73 73 65 74 73 ; "fetchesAssets"
+f5                                  ; true
+6e 6d 61 78 4b 65 79 50 61 63 6b 61 67 65 73 ; "maxKeyPackages"
+18 64                               ; 100
+6f 6d 61 78 4d 65 73 73 61 67 65 42 79 74 65 73 ; "maxMessageBytes"
+1a 01 01 00 00                      ; 16842752 = 16 MiB + 64 KiB
+6f 6d 61 78 52 65 71 75 65 73 74 42 79 74 65 73 ; "maxRequestBytes"
+1a 00 41 00 00                      ; 4259840 = 4 MiB + 64 KiB
+70 6d 65 73 73 61 67 65 52 65 74 65 6e 74 69 6f 6e ; "messageRetention" (16)
+1a 00 09 3a 80                      ; 604800 = 7 days in seconds

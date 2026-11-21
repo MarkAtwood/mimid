@@ -16,6 +16,8 @@ error-epoch-too-old.hex: ok
   {"t": "Error", "v": 1, "id": 9, "code": "epochTooOld", "currentEpoch": 4}
 position-unknown-member.hex: ok
   {"t": "Position", "v": 1, "zz": 0, "state": "12.3"}
+provider-hello-retention.hex: ok
+  {"t": "ProviderHello", "v": 1, "userUri": "mimi://a.example/u/alice", "version": 1, "hubSender": h'01', "cipherSuites": [1], "roomIdPrefix": "mimi://a.example/r/", "storesAssets": true, "acceptedRooms": true, "assetLifetime": 3600, "fetchesAssets": true, "maxKeyPackages": 100, "maxMessageBytes": 16842752, "maxRequestBytes": 4259840, "messageRetention": 604800}
 provider-hello.hex: ok
   {"t": "ProviderHello", "v": 1, "userUri": "mimi://a.example/u/alice", "version": 1, "hubSender": h'01', "cipherSuites": [1], "roomIdPrefix": "mimi://a.example/r/", "storesAssets": true, "acceptedRooms": true, "assetLifetime": 3600, "fetchesAssets": true, "maxKeyPackages": 100, "maxMessageBytes": 16842752, "maxRequestBytes": 4259840}
 send.hex: ok

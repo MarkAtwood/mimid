@@ -100,6 +100,11 @@ pub(crate) enum Journaled {
         user: String,
         epoch: u64,
     },
+    MessagesLost {
+        room: String,
+        from: Option<u64>,
+        to: u64,
+    },
     Problem {
         room: Option<String>,
         description: String,
@@ -163,6 +168,7 @@ impl Journaled {
             Event::RemovedWithoutAppDataUpdate { room, user, epoch } => {
                 Self::RemovedWithoutAppDataUpdate { room, user, epoch }
             }
+            Event::MessagesLost { room, from, to } => Self::MessagesLost { room, from, to },
             Event::Problem { room, description } => Self::Problem { room, description },
         }
     }
@@ -216,6 +222,7 @@ impl Journaled {
             Self::RemovedWithoutAppDataUpdate { room, user, epoch } => {
                 Event::RemovedWithoutAppDataUpdate { room, user, epoch }
             }
+            Self::MessagesLost { room, from, to } => Event::MessagesLost { room, from, to },
             Self::Problem { room, description } => Event::Problem { room, description },
         }
     }

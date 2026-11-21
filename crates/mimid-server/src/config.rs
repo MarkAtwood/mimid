@@ -9,6 +9,8 @@
 //! live_stream = false      # optional; serve the live stream at /mimid/live
 //! reuse_last_resort_key_packages = false  # optional; true serves a last-resort KeyPackage again
 //! blob_lifetime_secs = 2592000  # optional; uploads are deleted this long after upload (at least 3600)
+//! message_retention_secs = 604800  # optional; messages are deleted this long after the hub
+//!                                  # accepted them (at least 3600), or "unlimited"
 //!
 //! [peers]
 //! "b.example" = "http://127.0.0.1:9080"
@@ -192,6 +194,15 @@ pub struct Config {
     /// [`crate::store::MIN_BLOB_LIFETIME_SECS`] is refused.
     #[serde(default = "default_blob_lifetime_secs")]
     pub blob_lifetime_secs: u64,
+    /// How long the server keeps a message, in seconds after the hub
+    /// accepted it, or `"unlimited"` (decision mimid-1wgh.82;
+    /// [`crate::retention`]). Defaults to 7 days
+    /// ([`crate::retention::DEFAULT_MESSAGE_RETENTION_SECS`]); under
+    /// [`crate::retention::MIN_MESSAGE_RETENTION_SECS`] is refused. The
+    /// JMAP Session and the live stream advertise it as
+    /// `messageRetention`, and leave that out when it is unlimited.
+    #[serde(default)]
+    pub message_retention_secs: crate::retention::MessageRetention,
 }
 
 /// The `[did_webvh]` table.
@@ -275,11 +286,19 @@ impl Config {
     /// provider's own domain, [`ConfigError::WireProfileForUnknownPeer`]
     /// if `[wire_profiles]` names a domain not in `peers`, and
     /// [`ConfigError::BlobLifetimeTooShort`] for a `blob_lifetime_secs`
-    /// under [`crate::store::MIN_BLOB_LIFETIME_SECS`].
+    /// under [`crate::store::MIN_BLOB_LIFETIME_SECS`], and
+    /// [`ConfigError::MessageRetentionTooShort`] for a
+    /// `message_retention_secs` under
+    /// [`crate::retention::MIN_MESSAGE_RETENTION_SECS`].
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let config: Self = toml::from_str(text)?;
         if config.blob_lifetime_secs < crate::store::MIN_BLOB_LIFETIME_SECS {
             return Err(ConfigError::BlobLifetimeTooShort(config.blob_lifetime_secs));
+        }
+        if let Some(seconds) = config.message_retention_secs.seconds()
+            && seconds < crate::retention::MIN_MESSAGE_RETENTION_SECS
+        {
+            return Err(ConfigError::MessageRetentionTooShort(seconds));
         }
         if config.peers.contains_key(&config.domain) {
             return Err(ConfigError::OwnDomainInPeers(config.domain));
@@ -346,6 +365,13 @@ pub enum ConfigError {
         min = crate::store::MIN_BLOB_LIFETIME_SECS
     )]
     BlobLifetimeTooShort(u64),
+    /// `message_retention_secs` is under
+    /// [`crate::retention::MIN_MESSAGE_RETENTION_SECS`].
+    #[error(
+        "message_retention_secs = {0} is under {min}; use \"unlimited\" to keep messages",
+        min = crate::retention::MIN_MESSAGE_RETENTION_SECS
+    )]
+    MessageRetentionTooShort(u64),
 }
 
 /// A lowercase DNS domain name.
@@ -492,6 +518,7 @@ mod tests {
             telemetry: None,
             did_webvh: mimi_mls::mls_didwebvh::CodePoints::DEFAULT,
             blob_lifetime_secs: 30 * 24 * 3600,
+            message_retention_secs: crate::retention::MessageRetention::default(),
         };
         assert_eq!(config, expected);
     }
@@ -616,6 +643,41 @@ mod tests {
             with("blob_lifetime_secs = 0"),
             Err(ConfigError::BlobLifetimeTooShort(0))
         ));
+    }
+
+    #[test]
+    fn message_retention_defaults_to_seven_days_parses_and_has_a_floor() {
+        use crate::retention::MessageRetention;
+        let with =
+            |line: &str| Config::parse(&VALID.replace("[peers]", &format!("{line}\n[peers]")));
+        assert_eq!(
+            Config::parse(VALID).unwrap().message_retention_secs,
+            MessageRetention::Seconds(604_800)
+        );
+        assert_eq!(
+            with("message_retention_secs = 3600")
+                .unwrap()
+                .message_retention_secs,
+            MessageRetention::Seconds(3600)
+        );
+        assert_eq!(
+            with("message_retention_secs = \"unlimited\"")
+                .unwrap()
+                .message_retention_secs,
+            MessageRetention::Unlimited
+        );
+        assert_eq!(MessageRetention::Unlimited.seconds(), None);
+        assert!(matches!(
+            with("message_retention_secs = 3599"),
+            Err(ConfigError::MessageRetentionTooShort(3599))
+        ));
+        for bad in [
+            "message_retention_secs = \"forever\"",
+            "message_retention_secs = -1",
+            "message_retention_secs = 1.5",
+        ] {
+            assert!(matches!(with(bad), Err(ConfigError::Parse(_))), "{bad}");
+        }
     }
 
     #[test]

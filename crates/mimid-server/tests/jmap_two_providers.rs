@@ -674,6 +674,47 @@ async fn two_providers_over_jmap_only() {
         "{refused}"
     );
 
+    // 4b. Decision mimid-1wgh.83: the operators delete messages by hand,
+    // not a prefix: a's while it runs, b's while it is stopped, before it
+    // starts again. A state from before is cannotCalculateChanges; read
+    // from the current state, everything below goes on as before.
+    let operator = |path: std::path::PathBuf| async move {
+        sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(path)
+                .foreign_keys(false),
+        )
+        .await
+        .unwrap()
+    };
+    let deleting = [
+        "DELETE FROM follower_event WHERE seq % 2 = 0 \
+         OR seq = (SELECT MAX(seq) FROM follower_event)",
+        "DELETE FROM room_event WHERE seq % 2 = 1",
+    ];
+    let db = operator(a.path.clone()).await;
+    for statement in deleting {
+        sqlx::query(statement).execute(&db).await.unwrap();
+    }
+    db.close().await;
+    b.stop().await;
+    let db = operator(b.path.clone()).await;
+    for statement in deleting {
+        sqlx::query(statement).execute(&db).await.unwrap();
+    }
+    db.close().await;
+    b.boot(&b_peers).await;
+    for jmap in [&mut alice_jmap, &mut bob_jmap] {
+        let old = jmap.state.clone().unwrap();
+        let (name, refused) = jmap
+            .call("Message/changes", json!({"sinceState": old}))
+            .await;
+        assert_eq!(name, "error", "{refused}");
+        assert_eq!(refused["type"], "cannotCalculateChanges", "{refused}");
+        let now = jmap.ok("Message/get", json!({"ids": []})).await;
+        jmap.state = Some(now["state"].as_str().unwrap().to_owned());
+    }
+
     // 5. Epoch 3: bob's second client joins by external Commit through b.
     let requester = Requester::new(BOB);
     let fetched = bob_jmap

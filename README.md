@@ -57,6 +57,8 @@ Not deliberate; each is being fixed:
 
 Each crate documents its own limitations in the `# Limitations` section of its rustdoc.
 
+- **Message retention.** The server keeps each encrypted message 7 days after the hub accepted it, then deletes it (`message_retention_secs` in the server's configuration: another number of seconds, at least 3600, or `"unlimited"`). It says so to clients as `messageRetention` in the JMAP Session's mimi capability and in the live stream's `ProviderHello`, and leaves that out when unlimited. A sweep runs every 10 minutes and deletes in batches of 500 rows, so it never holds the database for long. An agent that was away longer, and so missed a Commit, rejoins each such room by external Commit when the room's policy lets it, and shows one notice in the room saying which messages could not be delivered; otherwise it leaves the room, which then needs a new invite. An operator may also delete old messages by hand (`follower_event` and `room_event`, with the sqlite3 CLI, the server running or not): clients then get `cannotCalculateChanges`, `notFound`, `anchorNotFound` or, on the live stream, `cannotResume`, and recover the same way. Decisions mimid-1wgh.82, mimid-1wgh.83.
+
 ## Crates
 
 | Crate | Contents |

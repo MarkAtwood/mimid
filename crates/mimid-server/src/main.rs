@@ -251,6 +251,17 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_secs(config.blob_lifetime_secs),
     )
     .spawn();
+    // Messages expire (decision mimid-1wgh.82): the sweep runs until exit,
+    // and the Session and the live stream say when (messageRetention).
+    jmap_options.message_retention = config.message_retention_secs.seconds();
+    let _message_sweep = config.message_retention_secs.seconds().map(|seconds| {
+        mimid_server::retention::MessageSweeper::new(
+            store.clone(),
+            Arc::clone(&clock),
+            Duration::from_secs(seconds),
+        )
+        .spawn()
+    });
     let jmap = jmap::router(
         &config.base_url,
         store.clone(),
