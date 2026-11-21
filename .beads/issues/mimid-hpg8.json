@@ -2,13 +2,15 @@
   "id": "mimid-hpg8",
   "title": "Agent-created rooms: frank_aad in safe_aad but not app_components; avatar set to the room URI",
   "description": "clean-room M8: mimid-agent's rooms put frank_aad in safe_aad but not in app_components, and set the room avatar to the room URI. Check mls-extensions-11 / mimi drafts and fix.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T19:50:54.09421389Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T19:50:54.09421389Z",
+  "updated_at": "2026-11-21T20:24:55.263984065Z",
+  "closed_at": "2026-11-21T20:24:55.263984065Z",
+  "close_reason": "Fixed in 84921bb (branch cleanroom-bugs): frank_aad in app_components, empty room_avatar, policy_component_ids = [roles_list].",
   "labels": [
     "agent",
     "cleanroom"
