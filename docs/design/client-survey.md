@@ -624,6 +624,32 @@ bridges someone asks for.
    Recommendation: take it to #mimi together with N7 (on-behalf-of) as
    one finding, before building any puppet gateway.
 
+### Decisions (Mark, 2026-11-21)
+
+These answer the questions above. Epics: mimid-i0id (IRC v2),
+mimid-rvqk (Matrix), mimid-wmdj (XMPP), mimid-qqtk (store groundwork).
+
+- **S1. A listener that is not loopback: yes.** The agent may open a TLS
+  listener on an address the user names, off by default, with the same
+  token, and it refuses to start without TLS. The docs suggest binding it
+  to a WireGuard or Tailscale address.
+- **S2. Queries and history in IRC: lift agent-frontends.md §7.2 and
+  §7.6 for IRC v2.** Queries are one-to-one rooms, marked by a
+  store-level `direct` flag; chathistory is served from the store.
+- **S3. SASL in the IRC front end: yes.** Offer SASL PLAIN, carrying the
+  agent token, and keep PASS. Update docs/irc-lessons.md to match.
+- **S4. Push through vendor relays: on by default, minimal payloads.**
+  Matrix pushes `event_id_only`, Palaver `private`, Goguma encrypted Web
+  Push. The docs say what each relay sees. Each front end has its own
+  off switch.
+- **S5. Both second front ends:** Matrix first (without Element X at
+  first), then XMPP.
+- **S6. The multi-user host:** design it once (the bridge's puppet
+  mode, shaped so an XMPP gateway fits), and build it after the bridge's
+  relay mode.
+- **S7. Marking gatewayed members:** raise gateway-held leaves with the
+  working group together with onBehalfOf. The draft goes to Mark first.
+
 ## 11. Uncertainties
 
 - Palaver's status: the store lookup and page were empty on

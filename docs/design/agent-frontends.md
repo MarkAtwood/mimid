@@ -1774,6 +1774,14 @@ Added on 2026-11-20:
       mimid-agent-core `tests/session_parts.rs`; mimid-agent-store
       `content::tests`.
 
+25. **Front ends after v1 (Mark, 2026-11-21).** docs/design/client-survey.md
+    §10, "Decisions (Mark, 2026-11-21)", S1 to S7. For this note: S2
+    lifts §7.2 and §7.6 for IRC v2 (queries are one-to-one rooms with a
+    store-level `direct` flag; chathistory comes from the store), and S3
+    lifts "No SASL" in §4 for IRC v2 (SASL PLAIN with the agent token,
+    PASS kept). v1 stays as decided above until IRC v2 is built
+    (epic mimid-i0id); the store groundwork for it is epic mimid-qqtk.
+
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 
 Mark decided on 2026-11-20 that JMAP (draft-atwood-jmap-chat-mimi) is
