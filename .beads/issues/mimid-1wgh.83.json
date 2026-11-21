@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.83",
+  "title": "Decision: out-of-band deletion of stored messages must be handled cleanly",
+  "description": "Mark, 2026-11-21. An operator may delete old messages directly in the database (sqlite3 CLI), with the server running or stopped, in any amount and order, not necessarily a clean prefix. Nothing may panic, return serverFail, wedge a room or corrupt state. Message/changes from a state whose rows are gone returns cannotCalculateChanges (or the correct changes); Message/get of a gone id lists it in notFound; Message/query with a gone anchor returns anchorNotFound; a stream Subscribe from a gone position returns cannotResume. Fanout, outbox and hub processing keep working. The agent that missed Commits rejoins by external Commit where room policy allows, otherwise reports a Problem and marks the room as needing a re-invite; missed application messages are shown as one notice in the room. Implemented under mimid-e64f.19.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T18:31:45.074647016Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T18:31:45.074647016Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.83",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-21T18:31:45.237666196Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
