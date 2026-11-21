@@ -121,6 +121,13 @@ pub const MAX_BODY_BYTES: u64 = (MAX_BODY_LEN * 4).div_ceil(3) as u64;
 /// only (decision mimid-1wgh.23).
 pub const CIPHER_SUITES: [u16; 1] = [1];
 
+/// `maxKeyPackageLifetime` (draft-atwood-jmap-chat-mimi-00 §capability;
+/// clean-room finding C4): the longest leaf node lifetime, in seconds,
+/// that `KeyPackage/set` accepts, which is
+/// [`mimi_mls::wire::MAX_KEY_PACKAGE_LIFETIME_SECONDS`] (365 days and one
+/// hour; decision mimid-1wgh.7.25).
+pub const MAX_KEY_PACKAGE_LIFETIME: u64 = mimi_mls::wire::MAX_KEY_PACKAGE_LIFETIME_SECONDS;
+
 /// The default `maxKeyPackages`, used when the config file sets none.
 /// INVENTED VALUE, NOT FROM SPEC: draft-atwood-jmap-chat-mimi-00 L166
 /// leaves the number to the server. Mark chose 97, the largest prime below
@@ -254,6 +261,13 @@ impl SessionTemplate {
                     mimi.asset_download_url = Some(asset_download_url(base, &account_id));
                     // Present only with assetUrl, which is always set here.
                     mimi.asset_lifetime = self.asset_lifetime;
+                    // draft-atwood-jmap-chat-mimi-00 §capability
+                    // (clean-room finding C4): the limit
+                    // KeyPackage::verify enforces at upload.
+                    mimi.extra.insert(
+                        "maxKeyPackageLifetime".to_owned(),
+                        serde_json::json!(MAX_KEY_PACKAGE_LIFETIME),
+                    );
                     // Decision mimid-1wgh.82; absent when unlimited.
                     if let Some(seconds) = self.message_retention {
                         mimi.extra

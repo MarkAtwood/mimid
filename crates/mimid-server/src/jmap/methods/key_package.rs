@@ -24,7 +24,9 @@
 //! - create: `keyPackage` is required; `lastResort` may be given and must
 //!   equal the derived value; any other property is `invalidProperties`.
 //!   The KeyPackage must pass [`KeyPackages::upload_key_package_with`]'s
-//!   checks, else `invalidProperties` naming `keyPackage`. A last-resort
+//!   checks, else `invalidProperties` naming `keyPackage`, with a
+//!   `description` naming the check that failed (clean-room findings C4,
+//!   C5). A last-resort
 //!   KeyPackage replaces the client's previous one. Past `maxKeyPackages`,
 //!   counted after that replacement (decision mimid-1wgh.12.27), it is
 //!   `overQuota`.
@@ -45,13 +47,14 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jmap_server::{CallContext, HandlerFuture, HandlerOutput, JmapError, JmapHandler};
 use mimi_mls::tls_codec::Deserialize;
-use mimi_mls::wire::KeyPackage;
+use mimi_mls::wire::{KeyPackage, KeyPackageError};
 use serde_json::{Map, Value, json};
 
 use super::Services;
 use crate::follower::key_packages::{KeyPackageEntry, KeyPackages, UploadError};
 use crate::jmap::api::Methods;
 use crate::jmap::auth::Account;
+use crate::jmap::session::MAX_KEY_PACKAGE_LIFETIME;
 use crate::store::{InsertOptions, Store};
 
 /// The properties of a KeyPackage record.
@@ -390,9 +393,25 @@ pub(crate) async fn create_one(
                 error = &error as &dyn std::error::Error,
                 "KeyPackage create refused"
             );
-            Ok(Err(set_error("invalidProperties", Some(&["keyPackage"]))))
+            let mut refusal = set_error("invalidProperties", Some(&["keyPackage"]));
+            refusal["description"] = json!(upload_refusal(&error));
+            Ok(Err(refusal))
         }
     }
+}
+
+/// The `description` of a refused upload (draft-atwood-jmap-chat-mimi-00
+/// §capability: a server MAY say which check failed; clean-room finding
+/// C5): the error and its sources, or, for a lifetime past
+/// `maxKeyPackageLifetime`, that limit (clean-room finding C4).
+fn upload_refusal(error: &UploadError) -> String {
+    if let UploadError::Invalid(KeyPackageError::LifetimeTooLong) = error {
+        return format!(
+            "the KeyPackage's leaf node lifetime is longer than maxKeyPackageLifetime \
+             ({MAX_KEY_PACKAGE_LIFETIME} seconds)"
+        );
+    }
+    crate::jmap::error_chain(error)
 }
 
 /// One `KeyPackage/set` destroy of the KeyPackage whose TLS-encoded

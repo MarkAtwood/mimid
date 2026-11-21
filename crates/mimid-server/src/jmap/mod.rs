@@ -72,6 +72,25 @@ use bus::ChangeBus;
 use methods::Services;
 use session::{DEFAULT_MAX_KEY_PACKAGES, SessionTemplate};
 
+/// `error` and each of its sources, joined by `": "`: the `description`
+/// or `errorDescription` of a refusal, saying which check failed
+/// (draft-atwood-jmap-chat-mimi-00 §capability; clean-room finding C5).
+/// Only for errors that carry no secret and no store detail.
+pub(crate) fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        // Some errors repeat their source's text in their own.
+        if !text.ends_with(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
+}
+
 /// The part of a protocol body ([`crate::http::MAX_BODY_LEN`]) kept for
 /// the envelope around an MLS object on its way to and from the hub, so
 /// that an object of [`MAX_MLS_OBJECT_SIZE`] still fits once wrapped

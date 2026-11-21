@@ -145,6 +145,9 @@ impl Server {
                 assert_eq!(hello.message_retention, Some(3600));
                 // Bead mimid-e64f.22: the default maxClients.
                 assert_eq!(hello.max_clients, Some(10));
+                // Clean-room finding C4: 365 days and an hour, as the JMAP
+                // capability states it.
+                assert_eq!(hello.max_key_package_lifetime, Some(31_539_600));
             }
             other => panic!("no ProviderHello: {other:?}"),
         }

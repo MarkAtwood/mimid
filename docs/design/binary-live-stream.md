@@ -469,6 +469,8 @@ ProviderHello = {
   "hubSender": tls,        ; ExternalSender
   "cipherSuites": [* uint],
   "maxKeyPackages": uint,
+  ? "maxKeyPackageLifetime": uint, ; seconds; the mimi capability's
+                           ; (clean-room C4); absent: no stated limit
   ? "maxClients": uint,    ; the mimi capability's (mimid-e64f.22);
                            ; absent: no stated limit
   "maxMessageBytes": uint, ; no frame is larger (mimid-1wgh.78)

@@ -568,3 +568,50 @@ async fn the_session_states_max_clients() {
         );
     }
 }
+
+/// Clean-room finding C4: the mimi capability states
+/// maxKeyPackageLifetime, a KeyPackage whose lifetime is longer is refused
+/// with a description naming that limit, and one within it is stored.
+#[tokio::test]
+async fn the_lifetime_limit_is_stated_and_named_in_refusals() {
+    let f = fixture(10).await;
+    let response = f
+        .app
+        .clone()
+        .oneshot(
+            Request::get("/.well-known/jmap")
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", f.token.expose_secret()),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let session: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let limit = session["accounts"][&f.account]["accountCapabilities"]
+        ["urn:ietf:params:jmap:chat:mimi"]["maxKeyPackageLifetime"]
+        .as_u64()
+        .expect("maxKeyPackageLifetime is stated");
+    assert_eq!(limit, 365 * DAY + 3600);
+
+    let too_long = key_package(&client(ALICE, limit + DAY, &[]), false);
+    let refused = f.create(&too_long, json!({})).await;
+    assert_eq!(
+        refusal(&refused),
+        ("invalidProperties".into(), json!(["keyPackage"]))
+    );
+    let description = refused["notCreated"]["k"]["description"].as_str().unwrap();
+    assert!(
+        description.contains("maxKeyPackageLifetime") && description.contains(&limit.to_string()),
+        "{description}"
+    );
+
+    let within = key_package(&client(ALICE, limit - DAY, &[]), false);
+    assert!(
+        f.create(&within, json!({})).await["created"]["k"].is_object(),
+        "a lifetime within the limit is accepted"
+    );
+}

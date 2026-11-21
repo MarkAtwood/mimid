@@ -629,6 +629,10 @@ pub struct ProviderHello {
     pub cipher_suites: Vec<u64>,
     /// `maxKeyPackages`.
     pub max_key_packages: u64,
+    /// `maxKeyPackageLifetime`, seconds: the longest leaf node lifetime the
+    /// provider accepts in a KeyPackage; `None` if it states no limit
+    /// (draft-atwood-jmap-chat-mimi-00 §capability; clean-room finding C4).
+    pub max_key_package_lifetime: Option<u64>,
     /// `maxClients`: the most signature keys the account binds; `None`
     /// if the provider states no limit (bead mimid-e64f.22).
     pub max_clients: Option<u64>,
@@ -1236,6 +1240,7 @@ impl ProviderMessage {
                         .map(|v| as_uint("cipherSuites", v))
                         .collect::<Result<_, _>>()?,
                     max_key_packages: f.uint("maxKeyPackages")?,
+                    max_key_package_lifetime: f.opt_uint("maxKeyPackageLifetime")?,
                     max_clients: f.opt_uint("maxClients")?,
                     max_message_bytes: f.uint("maxMessageBytes")?,
                     max_request_bytes: f.uint("maxRequestBytes")?,
@@ -1353,6 +1358,7 @@ impl ProviderMessage {
                         Value::Array(h.cipher_suites.iter().map(|s| Value::Uint(*s)).collect()),
                     )
                     .uint("maxKeyPackages", h.max_key_packages)
+                    .opt_uint("maxKeyPackageLifetime", h.max_key_package_lifetime)
                     .opt_uint("maxClients", h.max_clients)
                     .uint("maxMessageBytes", h.max_message_bytes)
                     .uint("maxRequestBytes", h.max_request_bytes)

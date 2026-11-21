@@ -155,6 +155,7 @@ fn provider_hello() {
             hub_sender: vec![1],
             cipher_suites: vec![1],
             max_key_packages: 100,
+            max_key_package_lifetime: None,
             // The values the fixture was written with (decision
             // mimid-1wgh.78 before findings log F10), not the constants.
             max_message_bytes: 16 * 1024 * 1024 + 64 * 1024,
@@ -184,6 +185,7 @@ fn provider_hello_with_max_clients() {
             hub_sender: vec![1],
             cipher_suites: vec![1],
             max_key_packages: 100,
+            max_key_package_lifetime: None,
             max_clients: Some(10),
             max_message_bytes: 16 * 1024 * 1024 + 64 * 1024,
             max_request_bytes: 4 * 1024 * 1024 + 64 * 1024,
@@ -191,6 +193,34 @@ fn provider_hello_with_max_clients() {
             stores_assets: true,
             asset_lifetime: Some(3600),
             message_retention: None,
+            fetches_assets: true,
+            accepted_rooms: true,
+            extra: Vec::new(),
+        }),
+    );
+}
+
+/// Clean-room finding C4: `maxKeyPackageLifetime` in seconds.
+#[test]
+fn provider_hello_with_max_key_package_lifetime() {
+    provider(
+        "provider-hello-max-kp-lifetime.hex",
+        None,
+        ProviderMessage::Hello(ProviderHello {
+            version: 1,
+            user_uri: "mimi://a.example/u/alice".to_owned(),
+            room_id_prefix: "mimi://a.example/r/".to_owned(),
+            hub_sender: vec![1],
+            cipher_suites: vec![1],
+            max_key_packages: 100,
+            max_key_package_lifetime: Some(31_539_600),
+            max_message_bytes: 16 * 1024 * 1024 + 64 * 1024,
+            max_request_bytes: 4 * 1024 * 1024 + 64 * 1024,
+            max_mls_object_size: None,
+            stores_assets: true,
+            asset_lifetime: Some(3600),
+            message_retention: None,
+            max_clients: None,
             fetches_assets: true,
             accepted_rooms: true,
             extra: Vec::new(),
@@ -211,6 +241,7 @@ fn provider_hello_with_message_retention() {
             hub_sender: vec![1],
             cipher_suites: vec![1],
             max_key_packages: 100,
+            max_key_package_lifetime: None,
             max_message_bytes: 16 * 1024 * 1024 + 64 * 1024,
             max_request_bytes: 4 * 1024 * 1024 + 64 * 1024,
             max_mls_object_size: None,

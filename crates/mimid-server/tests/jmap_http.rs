@@ -226,6 +226,9 @@ fn expected_session(
                         "hubSender": URL_SAFE_NO_PAD.encode(hub_sender(hub_key)),
                         "cipherSuites": [1],
                         "maxKeyPackages": max_key_packages,
+                        // Clean-room finding C4: 365 days and one hour,
+                        // 31536000 + 3600.
+                        "maxKeyPackageLifetime": 31_539_600,
                         // findings log F10, bead mimid-e64f.18: 4 MiB
                         // less 64 KiB, 4194304 - 65536.
                         "maxMlsObjectSize": 4_128_768,

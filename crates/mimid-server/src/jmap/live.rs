@@ -234,6 +234,7 @@ async fn hello(
         hub_sender: state.0.hub_sender.clone(),
         cipher_suites: CIPHER_SUITES.iter().map(|s| u64::from(*s)).collect(),
         max_key_packages: state.0.max_key_packages,
+        max_key_package_lifetime: Some(super::session::MAX_KEY_PACKAGE_LIFETIME),
         max_message_bytes: MAX_MESSAGE_BYTES as u64,
         max_request_bytes: MAX_REQUEST_BYTES as u64,
         max_mls_object_size: Some(super::MAX_MLS_OBJECT_SIZE as u64),
