@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.89",
+  "title": "Decision: room-policy-04 §5 fixed_membership rules as enforced (creation by first Commit, no leave or removal, one room per set on this hub)",
+  "description": "room-policy-04 §5 fixed_membership, as mimid's hub and agent enforce it for one-to-one rooms (bead mimid-qrbe; decision mimid-1wgh.87 as revised by Mark 2026-11-21). Replaces decision mimid-1wgh.3.50 (fixed-membership removal not enforced in v1).\n\nText: \"Rooms with fixed_membership set to true (fixed-membership rooms) have the list of participants specified when they are created. While clients of existing participants can be added, other users cannot be added, so none of its non-zero, non-banned roles can contain the canAddParticipant capability. Ordinary users cannot leave or be removed, however a user can remove all its clients from the associated MLS group. ... Only a single fixed-membership room can exist for any unique set of participants.\"\n\nAmbiguities and readings chosen:\n1. \"specified when they are created\": draft-atwood-jmap-chat-mimi-00 §Room/create rules 2 and 4 make a room whose group and participant list hold the creator alone, and §5 forbids canAddParticipant. Readings: (a) Room/create carries both users and a Welcome (changes Mark's draft); (b) creation is Room/create plus the creator's Commits while it is the list's only entry, which may add users in a defined non-zero, non-banned role with no capability; (c) build the room ordinary and switch to fixed afterwards. Chosen (b): no draft change, stateless at the hub (a fixed room's list has one entry only before its participants are given, since none can leave). KeyMaterial through the hub and the consent it carries are unchanged. INVENTED, NOT FROM SPEC.\n2. \"Ordinary users\": undefined. Chosen: every user; no participant-list removal or leave, inline or by reference, the hub operator's own removal included. A ban is a role change, left to the roles (direct rooms grant none).\n3. Exception, INVENTED: the creator may leave a fixed room whose other participants were never added (the add failed, e.g. no consent), so a half-made room is abandoned.\n4. \"a user can remove all its clients\": Remove/SelfRemove of own clients stays allowed by canRemoveOwnClient; new own clients by canAddOwnClient.\n5. \"Only a single fixed-membership room ... for any unique set of participants\": the hub refuses the Commit that would give a fixed room the participant set of another fixed room it hosts (byte-for-byte user URIs). Rooms on other hubs are not visible; the agent's open_direct finds an existing one. Two simultaneous opens on two providers can still make two.\n6. persistent_room: true for direct rooms (mimid never makes a new MLS group for a room).\n7. Joins: a GroupInfo for a join, and open/preauth joins, are refused to users not listed.\n\nCode: mimid-server hub/policy.rs (RoomState::fixed_change, authorize_key_material, authorize_group_info), hub/update.rs (fixed_rooms_elsewhere); mimid-agent-core HostOptions::direct, direct_roles, direct_base_policy, Agent::leave. Doc: agent-frontends.md §7.29. Tests: mimid-server tests/hub_policy.rs fixed_membership_rooms.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T23:23:20.493605339Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T23:23:20.493605339Z",
+  "labels": [
+    "agent",
+    "server"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.89",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-21T23:23:20.712820478Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
