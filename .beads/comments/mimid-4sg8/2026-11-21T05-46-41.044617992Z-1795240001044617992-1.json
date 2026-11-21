@@ -1,0 +1,7 @@
+{
+  "id": "1795240001044617992-1",
+  "issue_id": "mimid-4sg8",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-21: (1) send no 329; (3) INVITE and the mimid service also accept user@domain, mapped to mimi://domain/u/user. (2) WHOIS 330 with the user URI is a plain fix.",
+  "created_at": "2026-11-21T05:46:41.044617992Z"
+}
