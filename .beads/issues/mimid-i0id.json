@@ -1,0 +1,15 @@
+{
+  "id": "mimid-i0id",
+  "title": "IRC v2 for Goguma: TLS listener, SASL PLAIN, queries, chathistory, web push, read markers",
+  "description": "client-survey.md §2. S1 TLS listener on a chosen address, off by default, same token, refuse without TLS; S2 lift §7.2 and §7.6 (queries -\u003e one-to-one rooms; chathistory from store); S3 SASL PLAIN with the agent token, keep PASS; S4 push on by default with minimal payloads (soju.im/webpush encrypted to the phone), per-front-end switch, docs say what each relay sees. After the store groundwork. Decisions (Mark, 2026-11-21) in /data/tmp/survey-decisions.txt, to be recorded in docs/design/client-survey.md §10 and agent-frontends.md §7.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:17:53.009303815Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:17:53.009303815Z",
+  "labels": [
+    "irc"
+  ]
+}
