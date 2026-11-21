@@ -77,6 +77,11 @@ pub(crate) enum Journaled {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         committer: Option<String>,
     },
+    RoomMetadataChanged {
+        room: String,
+        committer: Option<String>,
+        accepted_at: u64,
+    },
     Proposal {
         room: String,
         sender: Option<String>,
@@ -133,6 +138,15 @@ impl Journaled {
                 participants,
                 committer,
             },
+            Event::RoomMetadataChanged {
+                room,
+                committer,
+                accepted_at,
+            } => Self::RoomMetadataChanged {
+                room,
+                committer,
+                accepted_at,
+            },
             Event::Proposal { room, sender } => Self::Proposal { room, sender },
             Event::Left { room } => Self::Left { room },
             Event::IdentityChanged {
@@ -176,6 +190,15 @@ impl Journaled {
                 epoch,
                 participants,
                 committer,
+            },
+            Self::RoomMetadataChanged {
+                room,
+                committer,
+                accepted_at,
+            } => Event::RoomMetadataChanged {
+                room,
+                committer,
+                accepted_at,
             },
             Self::Proposal { room, sender } => Event::Proposal { room, sender },
             Self::Left { room } => Event::Left { room },

@@ -16,6 +16,7 @@
 //! | Host a room and invite | [`Store::create_room`] | `host_room`, `invite` |
 //! | Invite, remove, change roles, leave | [`Store::change_members`] | `invite`, `remove`, `change_role`, `leave` |
 //! | Leave a room | [`Store::leave`] | `leave` |
+//! | Set a room's subject | [`Store::set_subject`] | `set_room_subject` |
 //! | Delete a room here, with its messages | [`Store::forget_room`], [`Store::delete_blobs`] | none |
 //! | Send | [`Store::send`] | `send_message` |
 //! | Edit, retract | [`Store::edit`], [`Store::retract`] | `send_edit`, `send_retraction` |
@@ -114,6 +115,19 @@ pub enum ActionError {
     /// What a message kept for reports does not decode.
     #[error("a message kept for reports does not decode")]
     Unreadable(#[source] AgentError),
+}
+
+impl ActionError {
+    /// The room-policy-04 capability the user's role lacks, if that is
+    /// why the write was not made (`AgentError::NotPermitted`): a rights
+    /// problem, as against every other refusal.
+    #[must_use]
+    pub fn missing_capability(&self) -> Option<&'static str> {
+        match self {
+            Self::Agent(AgentError::NotPermitted { capability, .. }) => Some(capability),
+            _ => None,
+        }
+    }
 }
 
 /// A role a user can be given in a room.
@@ -249,6 +263,8 @@ impl Store {
         let room = Room {
             key,
             name: agent.room_name(&uri).ok().flatten(),
+            subject: agent.room_subject(&uri).ok().flatten(),
+            subject_set: None,
             uri,
             status: Status::Active,
             participants: roles.participants(&participants),
@@ -315,6 +331,25 @@ impl Store {
         }
         self.want_sync();
         result
+    }
+
+    /// Sets the subject of room `key` (protocol-07 §7.6 `room_subject`)
+    /// to `subject`, in a Commit the hub checks against room-policy-04
+    /// §8.2 `canChangeRoomSubject` (`Agent::set_room_subject`). The record
+    /// changes, with who set it and when, at the sync that reads the
+    /// change back, as for a change by another member.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::NoSuchRoom`], and [`ActionError::Agent`]:
+    /// `AgentError::NotPermitted` if the user's role lacks the
+    /// capability, else the agent's or the hub's refusal.
+    pub async fn set_subject(&self, key: &str, subject: &str) -> Result<(), ActionError> {
+        let uri = self.room_uri(key)?;
+        let mut agent = self.agent.lock().await;
+        let result = agent.set_room_subject(&uri, subject).await;
+        self.want_sync();
+        Ok(result?)
     }
 
     /// Leaves room `key`, if the agent is in it: every device of the user

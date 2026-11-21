@@ -457,6 +457,8 @@ mod tests {
             key: "R1".into(),
             uri: "mimi://a.example/r/one".into(),
             name: Some("kept".into()),
+            subject: None,
+            subject_set: None,
             status: RoomStatus::Active,
             participants: [ALICE, BOB]
                 .map(|user| Participant {

@@ -446,6 +446,20 @@ pub enum Event {
         /// committer was recorded (bead mimid-cqof).
         committer: Option<String>,
     },
+    /// A Commit changed the room's `room_metadata` (protocol-07 §7.6):
+    /// its name, subject or another field. Follows the Commit's
+    /// [`Event::MembersChanged`]; [`Agent::room_name`] and
+    /// [`Agent::room_subject`] give the new values.
+    RoomMetadataChanged {
+        /// The room URI.
+        room: String,
+        /// The Commit's sender, as [`Event::MembersChanged`] names it.
+        committer: Option<String>,
+        /// The hub's acceptance time of the Commit, in milliseconds since
+        /// the epoch (the FanoutMessage `timestamp`, protocol-07 §5.5, or
+        /// the `accepted_timestamp` of this device's own Commit, §5.3).
+        accepted_at: u64,
+    },
     /// Another member proposed something (protocol-07 §3.5: a leave).
     Proposal {
         /// The room URI.
@@ -962,6 +976,85 @@ impl Agent {
             .component(ROOM_METADATA)
             .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
             .map(|metadata| metadata.room_name.as_str().to_owned()))
+    }
+
+    /// The `room_subject` of an active room's `room_metadata`
+    /// (protocol-07 §7.6), or `None` if the room has no metadata or it
+    /// does not decode. An empty subject is `Some("")`.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`].
+    pub fn room_subject(&self, room: &str) -> Result<Option<String>, AgentError> {
+        Ok(self
+            .member(room)?
+            .component(ROOM_METADATA)
+            .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
+            .map(|metadata| metadata.room_subject.as_str().to_owned()))
+    }
+
+    /// Sets the `room_subject` of `room`'s `room_metadata` (protocol-07
+    /// §7.6) to `subject`, every other field unchanged, in a Commit with
+    /// that one update (a Commit carries at most one `room_metadata`
+    /// update, decision mimid-1wgh.64). The hub checks room-policy-04
+    /// §8.2 `canChangeRoomSubject`; so does this method first, against
+    /// the room's `roles_list`, so that a missing capability is told
+    /// apart from the hub's other refusals. Once the hub accepts, an
+    /// [`Event::RoomMetadataChanged`].
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`], [`AgentError::Invalid`] for a room
+    /// without `room_metadata` or a subject that is no `Utf8String`,
+    /// [`AgentError::NotPermitted`] if the user's role lacks
+    /// `canChangeRoomSubject`, [`AgentError::Refused`] if the hub refuses,
+    /// and the errors of building the Commit.
+    pub async fn set_room_subject(&mut self, room: &str, subject: &str) -> Result<(), AgentError> {
+        if self.state.rooms.get(room).map(|r| r.status) != Some(RoomStatus::Active) {
+            return Err(AgentError::NoSuchRoom(room.to_owned()));
+        }
+        let member = self.member(room)?;
+        let mut metadata = member
+            .component(ROOM_METADATA)
+            .map(RoomMetaData::tls_deserialize_exact)
+            .transpose()
+            .map_err(|e| AgentError::tls("the room metadata", e))?
+            .ok_or_else(|| {
+                AgentError::Invalid(format!(
+                    "{room} has no room metadata, so it has no subject to set"
+                ))
+            })?;
+        // An open room has no roles_list, and the hub checks nothing.
+        if let Some(roles) = member
+            .component(ROLES_LIST)
+            .and_then(|data| RoleData::tls_deserialize_exact(data).ok())
+        {
+            let me = normalized_uri(&self.me);
+            let role = participant_list_of(member)?
+                .participants
+                .iter()
+                .find(|p| normalized_uri(&String::from_utf8_lossy(&p.user)) == me)
+                .map_or(0, |p| p.role_index);
+            if roles
+                .authorize_capability(role, Capability::CAN_CHANGE_ROOM_SUBJECT)
+                .is_err()
+            {
+                return Err(AgentError::NotPermitted {
+                    room: room.to_owned(),
+                    capability: "canChangeRoomSubject",
+                });
+            }
+        }
+        metadata.room_subject = Utf8String::new(subject.to_owned())
+            .map_err(|e| AgentError::Invalid(format!("the subject: {e:?}")))?;
+        let update = AppDataUpdate::Update {
+            component_id: ROOM_METADATA,
+            update: encode(&metadata)?,
+        };
+        self.commit(room, &[], &[], &[update], "subject change")
+            .await?;
+        tracing::info!(name: "room_subject_changed", "subject change Commit accepted");
+        self.save()
     }
 
     /// The Welcomes waiting for [`Agent::join`].
@@ -3103,9 +3196,9 @@ impl Agent {
         #[cfg(feature = "fail-points")]
         self.fail_at(FailPoint::AfterAccepted)?;
         match response.result {
-            UpdateResult::Success { .. } => {
-                self.in_transaction(|agent| agent.commit_accepted(entry, &ids, false))
-            }
+            UpdateResult::Success { accepted_timestamp } => self.in_transaction(|agent| {
+                agent.commit_accepted(entry, &ids, false, accepted_timestamp)
+            }),
             other => {
                 self.in_transaction(|agent| agent.commit_refused(entry))?;
                 Err(AgentError::Refused {
@@ -3168,8 +3261,10 @@ impl Agent {
                         continue;
                     };
                     let (response, ids) = self.provider.update(&entry.room, &request).await?;
-                    if matches!(response.result, UpdateResult::Success { .. }) {
-                        self.in_transaction(|agent| agent.commit_accepted(id, &ids, true))?;
+                    if let UpdateResult::Success { accepted_timestamp } = response.result {
+                        self.in_transaction(|agent| {
+                            agent.commit_accepted(id, &ids, true, accepted_timestamp)
+                        })?;
                     } else {
                         let reason = format!("{:?}", response.result);
                         self.in_transaction(|agent| {
@@ -3220,6 +3315,7 @@ impl Agent {
         entry: i64,
         ids: &[String],
         again: bool,
+        accepted_at: u64,
     ) -> Result<(), AgentError> {
         let pending = outbox::get(self.connection(), entry)
             .map_err(|e| self.dir.database_error("reading the outbox", e))?
@@ -3229,6 +3325,7 @@ impl Agent {
             .members
             .get_mut(room)
             .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
+        let metadata = member.component(ROOM_METADATA).map(<[u8]>::to_vec);
         member
             .merge_pending_commit(&self.identity)
             .map_err(|e| AgentError::mls("merging this device's Commit", e))?;
@@ -3240,6 +3337,13 @@ impl Agent {
                 epoch,
                 participants: participants(member)?,
                 committer: Some(self.me.clone()),
+            });
+        }
+        if member.component(ROOM_METADATA) != metadata.as_deref() {
+            events.push(Event::RoomMetadataChanged {
+                room: room.to_owned(),
+                committer: Some(self.me.clone()),
+                accepted_at,
             });
         }
         self.deliver(events);
@@ -3636,11 +3740,15 @@ impl Agent {
         let Some(member) = self.members.get_mut(&room) else {
             return;
         };
-        // The leaves before a Commit, to name the clients it removes.
-        let before = if message.content_type() == Some(ContentType::Commit) {
-            room_clients(member, &self.identity)
+        // The leaves before a Commit, to name the clients it removes, and
+        // its room metadata, to tell whether it changed.
+        let (before, metadata_before) = if message.content_type() == Some(ContentType::Commit) {
+            (
+                room_clients(member, &self.identity),
+                member.component(ROOM_METADATA).map(<[u8]>::to_vec),
+            )
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
         let own_leaf = member.own_leaf_index();
         let result = member.process(&self.identity, &bytes, apply_commit_op);
@@ -3728,12 +3836,23 @@ impl Agent {
                         .committer_identity
                         .filter(|identity| !identity.is_empty())
                         .map(|identity| String::from_utf8_lossy(&identity).into_owned());
+                    let metadata_changed = self
+                        .members
+                        .get(&room)
+                        .is_some_and(|m| m.component(ROOM_METADATA) != metadata_before.as_deref());
                     events.push(Event::MembersChanged {
-                        room,
+                        room: room.clone(),
                         epoch: summary.epoch,
                         participants,
-                        committer,
+                        committer: committer.clone(),
                     });
+                    if metadata_changed {
+                        events.push(Event::RoomMetadataChanged {
+                            room,
+                            committer,
+                            accepted_at,
+                        });
+                    }
                     events.extend(alerts);
                 }
             }

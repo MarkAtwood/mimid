@@ -112,7 +112,8 @@
 //!   with the lowest leaf index commits it. This crate sends no proposals
 //!   but a leave's and a credential Update.
 //! - No policy edits (role definitions, preauthorization, membership
-//!   style, room metadata); no external joins other than
+//!   style) and no room metadata edits but the subject
+//!   ([`Agent::set_room_subject`]); no external joins other than
 //!   [`Agent::join_own_rooms`] (no open rooms, join links or codes).
 //! - Moderation: [`Agent::ban`] takes only a current participant;
 //!   [`Agent::unban`] gives role 2 back and adds no client, and the

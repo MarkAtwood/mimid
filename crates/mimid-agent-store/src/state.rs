@@ -465,6 +465,8 @@ mod tests {
             key: key.into(),
             uri: uri.into(),
             name: None,
+            subject: None,
+            subject_set: None,
             status: RoomStatus::Active,
             participants: vec![Participant {
                 user: ALICE.into(),

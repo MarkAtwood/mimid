@@ -62,7 +62,7 @@ use crate::convert::{MessageRef, message_ref, sender_msg_id, topic_id};
 use crate::notice::{identity_notice, notice_ref, removal_notice, removal_notice_ref};
 use crate::record::{
     Key, Message, NoticeKind, Octets, Participant, Person, Reply, Room, RoomStatus as Status,
-    Sender,
+    Sender, SubjectSet,
 };
 use crate::report::KeptFrank;
 use crate::state::State;
@@ -512,6 +512,7 @@ impl Store {
             }
         }
         let name = agent.room_name(uri).ok().flatten();
+        let subject = agent.room_subject(uri).ok().flatten();
         let participants = agent.participants(uri).unwrap_or_default();
         let roles = RoomRoles::of(agent, uri);
         let mut state = self.state();
@@ -525,6 +526,8 @@ impl Store {
             key: key.clone(),
             uri: uri.to_owned(),
             name,
+            subject,
+            subject_set: None,
             status: Status::Active,
             participants: roles.participants(&participants),
             role_names: roles.names(),
@@ -628,6 +631,11 @@ impl Store {
                 }
                 changes.push(Change::RoomLeft(key));
             }
+            Event::RoomMetadataChanged {
+                room,
+                committer,
+                accepted_at,
+            } => self.set_metadata(agent, &room, committer, accepted_at, changes),
             Event::Problem { room, description } => {
                 report.problems.push(match room {
                     Some(room) => format!("{room}: {description}"),
@@ -663,6 +671,43 @@ impl Store {
             room.participants = roles.participants(participants);
             room.role_names = roles.names();
         }
+        changes.push(Change::RoomChanged(key));
+    }
+
+    /// Reads the name and subject of room `uri` again after a Commit by
+    /// `committer`, accepted at `accepted_at`, changed its room metadata;
+    /// a changed subject records who set it and when. A
+    /// [`Change::RoomChanged`] if either changed. A room the agent is no
+    /// longer in keeps what it had.
+    fn set_metadata(
+        &self,
+        agent: &Agent,
+        uri: &str,
+        committer: Option<String>,
+        accepted_at: u64,
+        changes: &mut Vec<Change>,
+    ) {
+        let Some(key) = self.room_for(agent, uri, changes) else {
+            return;
+        };
+        let (Ok(name), Ok(subject)) = (agent.room_name(uri), agent.room_subject(uri)) else {
+            return;
+        };
+        let mut state = self.state();
+        let Some(room) = state.rooms.get_mut(&key) else {
+            return;
+        };
+        if room.name == name && room.subject == subject {
+            return;
+        }
+        if room.subject != subject {
+            room.subject_set = Some(SubjectSet {
+                by: committer,
+                at: accepted_at,
+            });
+        }
+        room.name = name;
+        room.subject = subject;
         changes.push(Change::RoomChanged(key));
     }
 

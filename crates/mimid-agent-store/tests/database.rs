@@ -16,7 +16,7 @@ use mimid_agent_store::content::BodyType;
 use mimid_agent_store::db::{Database, SCHEMA_VERSION};
 use mimid_agent_store::record::{
     Attachment, Ban, Deletion, Message, NoticeKind, Octets, Participant, Person, ReadPosition,
-    Reply, Revision, Room, RoomStatus, Sender, Tombstone,
+    Reply, Revision, Room, RoomStatus, Sender, SubjectSet, Tombstone,
 };
 use serde_json::json;
 
@@ -74,6 +74,11 @@ fn state() -> State {
         key: "R1".to_owned(),
         uri: "mimi://a.example/r/one".to_owned(),
         name: Some("one".to_owned()),
+        subject: Some("plans".to_owned()),
+        subject_set: Some(SubjectSet {
+            by: Some(ALICE.to_owned()),
+            at: 1_700_000_000_000,
+        }),
         status: RoomStatus::Active,
         participants: vec![
             Participant {

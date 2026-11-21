@@ -79,6 +79,17 @@ pub enum AgentError {
     /// No room with that URI is known to this agent, or it is not active.
     #[error("no active room {0}")]
     NoSuchRoom(String),
+    /// The user's role in the room does not hold the room-policy-04
+    /// capability a change needs, by the room's own `roles_list`; nothing
+    /// was sent.
+    #[error("the user's role in {room} does not hold {capability}")]
+    NotPermitted {
+        /// The room URI.
+        room: String,
+        /// The capability's room-policy-04 name, e.g.
+        /// `canChangeRoomSubject`.
+        capability: &'static str,
+    },
     /// No pending invite with that number.
     #[error("no pending invite {0}")]
     NoSuchInvite(u64),

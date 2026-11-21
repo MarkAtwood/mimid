@@ -114,6 +114,14 @@ pub struct Room {
     /// The room's `room_name`, if it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The room's `room_subject` (protocol-07 §7.6), if it has room
+    /// metadata; empty when no subject is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    /// Who last changed the subject, and when, if a change was seen;
+    /// `None` for a subject the room had when the record was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_set: Option<SubjectSet>,
     /// Where the room stands.
     pub status: RoomStatus,
     /// The participants, banned ones included, with their roles.
@@ -125,6 +133,19 @@ pub struct Room {
     /// Front-end extensions.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Ext,
+}
+
+/// A change of a room's subject: the Commit that made it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubjectSet {
+    /// The user URI of the Commit's sender, if known
+    /// (`Event::MembersChanged`'s `committer`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    /// The hub's acceptance time of the Commit, in milliseconds since the
+    /// epoch.
+    pub at: u64,
 }
 
 /// Who sent a message.
