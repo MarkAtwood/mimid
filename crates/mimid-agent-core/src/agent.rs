@@ -268,6 +268,45 @@ impl ReceivedMessage {
             .collect()
     }
 
+    /// The reactions this message carries (mimi-content-10 §5.3), if it
+    /// is a reaction: its body has disposition `reaction`, it names the
+    /// message reacted to in `inReplyTo`, and it is one `text/*` part of
+    /// at most [`MAX_REACTION_LEN`] octets, or a `processAll` MultiPart
+    /// of such parts each of disposition `reaction` (§5.3: "a separate
+    /// part inside a MultiPart with processAll semantics"; Appendix B.2).
+    /// `None` for anything else: a reaction of another media type, which
+    /// draft-atwood-jmap-chat-mimi-00 §Reactions carries as a reply, is
+    /// a message, and so is one that names no message.
+    pub fn reactions(&self) -> Option<Vec<String>> {
+        let body = &self.content.nested_part;
+        if body.disposition != Disposition::REACTION
+            || self.content.in_reply_to.is_none()
+            || self.content.replaces.is_some()
+        {
+            return None;
+        }
+        let one = |part: &NestedPart| match &part.part {
+            Part::Single {
+                content_type,
+                content,
+            } if part.disposition == Disposition::REACTION
+                && content_type.to_ascii_lowercase().starts_with("text/")
+                && !content.is_empty()
+                && content.len() <= MAX_REACTION_LEN =>
+            {
+                String::from_utf8(content.clone()).ok()
+            }
+            _ => None,
+        };
+        match &body.part {
+            Part::Multi {
+                part_semantics: PartSemantics::ProcessAll,
+                parts,
+            } => parts.iter().map(one).collect(),
+            _ => one(body).map(|r| vec![r]),
+        }
+    }
+
     /// The protocol-07 §5.9 `AbusiveMessage` for reporting this message
     /// with [`Agent::report_abuse`]: its `application_data`, its frank and
     /// the hub's acceptance time. `None` for an unfranked message; report
@@ -352,6 +391,16 @@ impl std::fmt::Debug for OutgoingAttachment {
             .finish()
     }
 }
+
+/// The most octets of a reaction [`Agent::send_reaction`] sends, and that
+/// a received one may have ([`ReceivedMessage::reactions`]): room for the
+/// longest emoji sequences (a flag with tag characters is 28, the §5.3
+/// health worker 17). INVENTED, NOT FROM SPEC.
+pub const MAX_REACTION_LEN: usize = 64;
+
+/// The content type of a reaction [`Agent::send_reaction`] sends: the
+/// §5.3 example's.
+const REACTION_CONTENT_TYPE: &str = "text/plain;charset=utf-8";
 
 /// What a message to send carries besides its body
 /// ([`Agent::send_message_with`], [`Agent::send_edit_with`]): its
@@ -2412,6 +2461,74 @@ impl Agent {
         silent: bool,
     ) -> Result<Sent, AgentError> {
         let content = self.replacement(room, replaces, Part::Null)?;
+        self.send_content_with(room, &content, silent).await
+    }
+
+    /// Sends a reaction to the message `in_reply_to` in `room`
+    /// (mimi-content-10 §5.3): `inReplyTo` names the message, and the
+    /// body is `reaction` as one `text/plain;charset=utf-8` part of
+    /// disposition `reaction`, as in the §5.3 example. One reaction per
+    /// message (§5.3: several are never one text part).
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Invalid`] for an empty reaction or one over
+    /// [`MAX_REACTION_LEN`] octets, and the errors of
+    /// [`Agent::send_content`].
+    pub async fn send_reaction(
+        &mut self,
+        room: &str,
+        in_reply_to: &MessageId,
+        reaction: &str,
+    ) -> Result<Sent, AgentError> {
+        if reaction.is_empty() || reaction.len() > MAX_REACTION_LEN {
+            return Err(AgentError::Invalid(format!(
+                "a reaction is 1 to {MAX_REACTION_LEN} octets"
+            )));
+        }
+        let content = MimiContent {
+            salt: random()?,
+            replaces: None,
+            topic_id: vec![],
+            expires: None,
+            in_reply_to: Some(*in_reply_to),
+            mimi_extensions: Extensions {
+                sender_uri: Some(self.me.clone()),
+                room_uri: Some(room.to_owned()),
+                other: BTreeMap::new(),
+            },
+            nested_part: NestedPart {
+                disposition: Disposition::REACTION,
+                language: String::new(),
+                part: Part::Single {
+                    content_type: REACTION_CONTENT_TYPE.to_owned(),
+                    content: reaction.as_bytes().to_vec(),
+                },
+            },
+        };
+        self.send_content(room, &content).await
+    }
+
+    /// Takes back this user's reaction `reaction` to the message
+    /// `in_reply_to` in `room` (mimi-content-10 §5.7, "Unlike"): a message
+    /// whose `replaces` is the reaction, whose `inReplyTo` is the message
+    /// reacted to, and whose body is a NullPart of disposition
+    /// `reaction`, as in the §5.7 example. `silent` as for
+    /// [`Agent::send_edit`].
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Agent::send_content`].
+    pub async fn send_unreaction(
+        &mut self,
+        room: &str,
+        reaction: &MessageId,
+        in_reply_to: &MessageId,
+        silent: bool,
+    ) -> Result<Sent, AgentError> {
+        let mut content = self.replacement(room, reaction, Part::Null)?;
+        content.in_reply_to = Some(*in_reply_to);
+        content.nested_part.disposition = Disposition::REACTION;
         self.send_content_with(room, &content, silent).await
     }
 
@@ -5251,6 +5368,80 @@ fn random<const N: usize>() -> Result<[u8; N], AgentError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A WG example of mimi-content-10 (crates/mimi-content/tests/
+    /// fixtures/wg-10, with its PROVENANCE), as received from `sender`.
+    fn wg_example(name: &str, sender: &str) -> ReceivedMessage {
+        let path = format!(
+            "{}/../mimi-content/tests/fixtures/wg-10/{name}.cbor",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        received(
+            &std::fs::read(path).unwrap(),
+            sender,
+            "mimi://example.com/r/engineering_team",
+            0,
+        )
+        .unwrap()
+    }
+
+    /// Oracle: mimi-content-10 §5.3 (the REACTION example is one reaction,
+    /// U+2764), §5.7 (the UNLIKE example replaces the reaction: no new
+    /// reaction), §5.2 (a reply is no reaction), Appendix B.2 (the
+    /// multiple-reactions example names no message in `inReplyTo`, so
+    /// there is nothing to react to).
+    #[test]
+    fn reactions_are_read_from_the_wg_examples() {
+        let cathy = "mimi://example.com/u/cathy-washington";
+        assert_eq!(
+            wg_example("reaction", cathy).reactions(),
+            Some(vec!["\u{2764}".to_owned()])
+        );
+        assert_eq!(wg_example("unlike", cathy).reactions(), None);
+        assert_eq!(
+            wg_example("reply", "mimi://example.com/u/bob-jones").reactions(),
+            None
+        );
+        let multi = wg_example("multipart-2", "mimi://example.com/u/alice-smith");
+        assert_eq!(multi.reactions(), None);
+        // The same parts naming a message are three reactions.
+        let mut content = multi.content.clone();
+        content.in_reply_to = Some(MessageId([1; 32]));
+        let again = received(
+            &content.encode().unwrap(),
+            "mimi://example.com/u/alice-smith",
+            "mimi://example.com/r/engineering_team",
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            again.reactions(),
+            Some(vec![
+                "\u{2764}".to_owned(),
+                "\u{1f973}".to_owned(),
+                "\u{1f91e}".to_owned()
+            ])
+        );
+        // Over MAX_REACTION_LEN, or not text: a message, not a reaction.
+        let mut long = multi.content;
+        long.in_reply_to = Some(MessageId([1; 32]));
+        long.nested_part = NestedPart {
+            disposition: Disposition::REACTION,
+            language: String::new(),
+            part: Part::Single {
+                content_type: "text/plain".to_owned(),
+                content: vec![b'x'; MAX_REACTION_LEN + 1],
+            },
+        };
+        let long = received(
+            &long.encode().unwrap(),
+            "mimi://example.com/u/alice-smith",
+            "mimi://example.com/r/engineering_team",
+            0,
+        )
+        .unwrap();
+        assert_eq!(long.reactions(), None);
+    }
 
     // Bead mimid-4lp4.4: the removed leaves are named from the leaves
     // before the Commit, and each becomes one event that survives the

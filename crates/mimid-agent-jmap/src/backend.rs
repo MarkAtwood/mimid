@@ -883,6 +883,10 @@ pub(crate) fn action_set_failure(e: ActionError) -> SetFailure {
             "no MIMI message ID is kept for this Message, so it cannot be edited or retracted",
         ),
         ActionError::TooManyVersions => forbidden("the Message has too many versions"),
+        ActionError::NoSuchReaction(_) => SetFailure::set(
+            set_error(SetErrorType::Forbidden, "no such reaction of the owner's")
+                .with_properties(["reactions"]),
+        ),
         // draft-atwood-jmap-chat-00 §Message `replyTo`: "Servers MUST
         // validate that this ID exists in the same Chat before storing."
         ActionError::NotReferable(_) => SetFailure::set(
@@ -1046,7 +1050,12 @@ impl ChatStore for AgentChat {
             // and deletions; edits and deletions for all go to the room
             // first (crate::edits).
             "Message" => {
-                let value = serde_json::to_value(&patch).map_err(serde_failure)?;
+                let mut value = serde_json::to_value(&patch).map_err(serde_failure)?;
+                if let Some(reacted) = self.send_reactions(id, &value).await? {
+                    value = reacted;
+                    patch = serde_json::from_value(value.clone()).map_err(serde_failure)?;
+                    content = true;
+                }
                 if let Some(changed) = self.send_change(id, &value).await? {
                     patch = serde_json::from_value(changed).map_err(serde_failure)?;
                     content = true;
@@ -1140,8 +1149,9 @@ impl ChatRestrictions for AgentChat {
     /// retraction) go to the room as MIMI content with `replaces`, and
     /// `deletedAt` alone is a local deletion (crate::edits; decision
     /// mimid-1wgh.65). crate-jmap checks that only the owner's Messages are
-    /// edited or deleted for all. Mentions and reactions are not sent over
-    /// MIMI here.
+    /// edited or deleted for all. `reactions/<senderReactionId>` adds or
+    /// takes back the owner's reaction ([`crate::reactions`]). Mentions are
+    /// not sent over MIMI here.
     async fn may_update_message(
         &self,
         _caller: &(),
@@ -1151,6 +1161,7 @@ impl ChatRestrictions for AgentChat {
         patch_keys: &[&str],
     ) -> Result<Result<(), SetError>, MemoryError> {
         const ALLOWED: &[&str] = &[
+            "reactions",
             "readAt",
             "privateMetadata",
             "body",

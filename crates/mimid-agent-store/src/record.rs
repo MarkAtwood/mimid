@@ -251,6 +251,31 @@ impl Call {
     }
 }
 
+/// A reaction to a message (mimi-content-10 §5.3): one reaction part of
+/// a message of disposition `reaction` whose `inReplyTo` names the
+/// message it is kept on. Taken back by a message that replaces the
+/// reaction's message (§5.7, "Unlike").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Reaction {
+    /// Its key among the message's reactions: for one received, the
+    /// `senderMsgId` of the reaction's message (with `-<n>` after it for
+    /// its part `n` past the first, Appendix B.2); for one the user sent,
+    /// the key the front end gave ([`crate::Store::react`]), so a JMAP
+    /// client's `senderReactionId` is kept.
+    pub key: Key,
+    /// The user URI of who reacted: the authenticated MLS sender.
+    pub sender: String,
+    /// The reaction, as received: an emoji sequence, typically.
+    pub reaction: String,
+    /// The MIMI message ID of the reaction's message, all 32 octets,
+    /// which an unlike replaces.
+    pub mimi_id: Octets<32>,
+    /// The hub's acceptance time of the reaction's message, in
+    /// milliseconds.
+    pub accepted_at: u64,
+}
+
 /// An earlier version of an edited message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -367,6 +392,10 @@ pub struct Message {
     /// Its attachments in the blob store.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    /// Its reactions ([`Reaction`]), in the order they came;
+    /// [`Message::reaction_counts`] adds them up.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<Reaction>,
     /// The calls to join it carries ([`Call`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calls: Vec<Call>,
@@ -396,6 +425,28 @@ pub struct Message {
     /// Front-end extensions.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Ext,
+}
+
+impl Message {
+    /// Its reactions added up: each distinct reaction, in the order first
+    /// seen, with who sent it, each user once, in the order they did.
+    #[must_use]
+    pub fn reaction_counts(&self) -> Vec<(String, Vec<String>)> {
+        let mut counts: Vec<(String, Vec<String>)> = Vec::new();
+        for r in &self.reactions {
+            let at = match counts.iter().position(|(text, _)| *text == r.reaction) {
+                Some(at) => at,
+                None => {
+                    counts.push((r.reaction.clone(), Vec::new()));
+                    counts.len() - 1
+                }
+            };
+            if !counts[at].1.contains(&r.sender) {
+                counts[at].1.push(r.sender.clone());
+            }
+        }
+        counts
+    }
 }
 
 /// When a message is to be deleted, as its sender asked

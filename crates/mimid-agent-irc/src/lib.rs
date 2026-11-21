@@ -46,6 +46,9 @@
 //! - **Replies** (§7.26): a reply is shown addressed `<nick>: ` to the
 //!   replied-to sender, with `+draft/reply` under message-tags; a
 //!   PRIVMSG with `+draft/reply` is sent as a reply.
+//! - **Reactions** (§7.27): shown as TAGMSG with `+draft/react` under
+//!   message-tags, else as a short ACTION line; a TAGMSG with
+//!   `+draft/react` or `+draft/unreact` reacts or takes it back.
 //!
 //! # Limitations
 //!

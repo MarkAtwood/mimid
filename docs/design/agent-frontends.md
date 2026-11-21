@@ -1029,7 +1029,7 @@ never change, so logs and scripts keep working.
 | Reply | The text addressed `<nick>: ` to the replied-to sender, unless it starts so already, and `+draft/reply=<msgid of the target>` when message-tags is on (§7.26). |
 | Edit | A new PRIVMSG from the original sender, text `(edited) <new text>`, with its own msgid and `+draft/reply` naming the first version. |
 | Retraction | NOTICE to the channel from the server: `<nick> retracted a message`. With message-tags, `+draft/reply` names it. The text is not repeated. |
-| Reactions | mimid sends none and models none (crates/mimid-agent-jmap/src/lib.rs:165-168); a received one is a message like any other. A client's `+draft/react` TAGMSG is dropped. |
+| Reactions | TAGMSG from the reacting user with `+draft/react` and `+draft/reply`, without message-tags an ACTION line; a client's `+draft/react` TAGMSG reacts (§7.27). |
 | Notices | NOTICE to the channel from the server name, with the store's notice text. IRC has a system sender, so the JMAP rule that the account sends them (sync.rs:446-452) does not apply. |
 | Attachments | One NOTICE line per attachment from the sender: file name, size, media type and an agent URL (question 4). Without the HTTP endpoint, no URL. |
 | Pending invite | `:<inviter> INVITE <nick> #<channel>`, the channel name the room will have, read from the Welcome before joining (§7.13). JOIN of that name accepts it (`Agent::join` through the store); the client then gets JOIN of the same name. Only when the Welcome cannot be read is it `&invite-<number>`, whose JOIN is answered with JOIN and PART of it before the room's JOIN. The `&` channel never exists. |
@@ -1812,6 +1812,57 @@ Added on 2026-11-20:
     - Tests: mimid-agent-store `tests/groundwork.rs`
       `replies_are_sent_kept_and_edited_with_their_target`; mimid-agent
       `tests/groundwork.rs` `replies_through_jmap_and_irc`.
+
+27. **Reactions (epic mimid-qqtk, bead mimid-qqtk.2; marmot-bridge.md
+    §5 P2).** mimi-content-10 §5.3 (a reaction is a message of
+    disposition `reaction`, `inReplyTo` the message reacted to), §5.7
+    (an unlike replaces the reaction message with a NullPart of that
+    disposition), Appendix B.2 (several in a `processAll` MultiPart).
+    - **Agent.** `Agent::send_reaction` sends the §5.3 shape, one
+      `text/plain;charset=utf-8` part; `Agent::send_unreaction` the §5.7
+      shape. `ReceivedMessage::reactions` reads a received one: top
+      disposition `reaction`, an `inReplyTo`, no `replaces`, and one
+      `text/*` part or a `processAll` MultiPart of them, each of
+      disposition `reaction` and at most `MAX_REACTION_LEN` (64,
+      INVENTED) octets. Anything else, a media reaction included, stays
+      a message (draft-atwood-jmap-chat-mimi-00 §Reactions carries those
+      as replies). The B.2 example names no message in `inReplyTo`, so
+      as written it is no reaction to anything; it is kept as a message.
+    - **Store.** A reaction is not a message: it is kept on the message
+      it names (`Message::reactions`), keyed by the reaction message's
+      `senderMsgId` (`-<n>` after it for part `n` past the first), with
+      the reacting user, the text, the reaction message's ID and the
+      hub's time. `Message::reaction_counts` adds them up per reaction
+      text, each user once. An unlike from the reaction's sender takes
+      every part of that reaction message back; one from anyone else is
+      refused (§9.3); an edit of a reaction is not applied. A reaction to
+      a message not stored here is skipped. At most
+      `MAX_REACTIONS_PER_MESSAGE` (1024, INVENTED) per message. A
+      retraction of the message drops its reactions. `Store::react`
+      sends one, naming the message's first version as a reply does;
+      `Store::unreact` takes back one of the user's, silent as edits
+      are. Schema version 7.
+    - **JMAP Chat.** Each kept reaction is in the Message's `reactions`
+      under its key: `emoji` the text, `senderId` the accountId or the
+      reactor's ChatContact, `sentAt` the hub's time. The owner's patch
+      `reactions/<senderReactionId>` with an object reacts, the
+      `senderReactionId` kept as the store key, `sentAt` set to the hub's
+      time; `null` takes it back; a changed `emoji` takes the old one back
+      and sends the new. `customEmojiId` is `invalidProperties`.
+    - **IRC.** With message-tags: TAGMSG from the reacting user with
+      `+draft/react=<text>` and `+draft/reply=<msgid>`; taken back,
+      `+draft/unreact=<text>` (the unreact tag is *unverified* against
+      the IRCv3 react draft, which was not read for this). Without:
+      `ACTION reacted <text> to <nick>`, and `ACTION took back <text>
+      from <nick>`. A client's TAGMSG with `+draft/react` (or
+      `+draft/unreact`) and `+draft/reply` naming a message of the room
+      reacts (or takes back the user's reaction of that text). A
+      reaction made before the connection registered, to a message it
+      has not shown, is not shown.
+    - Tests: mimid-agent-core `agent::tests::reactions_are_read_from_the_wg_examples`
+      (the WG examples); mimid-agent-store `tests/groundwork.rs`
+      `reactions_are_sent_kept_added_up_and_taken_back`; mimid-agent
+      `tests/groundwork.rs` `reactions_through_jmap_and_irc`.
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

@@ -229,7 +229,28 @@ impl Render<'_> {
         let mut value = object(serde_json::to_value(jmap).map_err(|e| e.to_string())?);
         value.extend(shown_content(message));
         value.extend(expiry_props(message));
+        value.insert("reactions".to_owned(), self.reactions(message));
         serde_json::from_value(Value::Object(value)).map_err(|e| e.to_string())
+    }
+
+    /// A message's reactions as JMAP Chat's `reactions` map
+    /// (draft-atwood-jmap-chat-00 §Reaction): each under its key
+    /// ([`record::Reaction::key`], the `senderReactionId`), with `emoji`
+    /// the reaction, `senderId` the accountId or the reacting user's
+    /// ChatContact, and `sentAt` the hub's acceptance time.
+    pub(crate) fn reactions(&self, message: &record::Message) -> Value {
+        let mut map = Map::new();
+        for r in &message.reactions {
+            map.insert(
+                r.key.clone(),
+                json!({
+                    "emoji": r.reaction,
+                    "senderId": self.id_of(&r.sender),
+                    "sentAt": utc_date(r.accepted_at),
+                }),
+            );
+        }
+        Value::Object(map)
     }
 
     /// A ban as the ChatBan made for it when first shown, created at
@@ -315,6 +336,7 @@ impl Render<'_> {
         let mut value = object(serde_json::to_value(jmap).map_err(|e| e.to_string())?);
         value.extend(message_content(message));
         value.extend(expiry_props(message));
+        value.insert("reactions".to_owned(), self.reactions(message));
         Ok(object(normal::<Message>(Value::Object(value))?))
     }
 
@@ -513,6 +535,7 @@ mod tests {
             in_reply_to_id: None,
             topic_id: None,
             attachments: Vec::new(),
+            reactions: Vec::new(),
             calls: Vec::new(),
             edit_history: Vec::new(),
             edited_at: None,

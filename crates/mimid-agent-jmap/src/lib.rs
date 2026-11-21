@@ -63,6 +63,10 @@
 //!   on their own Message sends an edit, and `deletedForAll: true` a
 //!   retraction, each naming the first version; `deletedAt` alone is a
 //!   local deletion.
+//! - **Reactions** ([`reactions`]; mimi-content-10 §5.3, §5.7): every
+//!   reaction the store keeps is in its Message's `reactions`, keyed by
+//!   the reaction message's `senderMsgId`; the owner's patch
+//!   `reactions/<senderReactionId>` sends one, and `null` takes it back.
 //! - **Calls to join** (mimi-content-10 §5.10; docs/design/agent-frontends.md
 //!   §7.24): a received part of disposition `session` is never fetched;
 //!   an `https` or `wss` URL is a MessageAction of `type`
@@ -211,8 +215,8 @@
 //!   referenced ones have no quota (see [`BlobStore`]; decision
 //!   mimid-1wgh.68). Attachments are fetched one at a time while `sync`
 //!   holds the agent. Updating a
-//!   Message's `mentions`, `broadcastMentions`, `readDisposition` or
-//!   `reactions` is `forbidden`. See [`edits`] for the limits of edits
+//!   Message's `mentions`, `broadcastMentions` or `readDisposition` is
+//!   `forbidden`. See [`edits`] for the limits of edits
 //!   and retractions.
 //! - Received messages from rooms without franking are reported
 //!   unverified, in a component only a mimid hub reads; see [`report`]
@@ -246,6 +250,7 @@ pub mod edits;
 pub mod moderate;
 mod persist;
 mod project;
+pub mod reactions;
 mod render;
 pub mod report;
 pub mod retry;

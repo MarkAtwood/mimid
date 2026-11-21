@@ -170,9 +170,9 @@ pub mod uri;
 pub use agent::FailPoint;
 pub use agent::{
     Agent, AgentConfig, ContentOptions, Device, DidWebvhApplied, Event, ForgottenDevice,
-    HostOptions, InviteDetails, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES, MAX_TEXT_LEN,
-    OutgoingAttachment, OwnRoomsJoined, PendingInvite, ReceivedMessage, ReportOutcome,
-    ReportedMessage, RoomInfo, Sent,
+    HostOptions, InviteDetails, MAX_NOTE_LEN, MAX_REACTION_LEN, MAX_REPORTED_MESSAGES,
+    MAX_TEXT_LEN, OutgoingAttachment, OwnRoomsJoined, PendingInvite, ReceivedMessage,
+    ReportOutcome, ReportedMessage, RoomInfo, Sent,
 };
 pub use client::{ACCEPTED_NAMESPACE, ConsentRecord};
 pub use didwebvh::{DidWebvhConfig, RoomClient};

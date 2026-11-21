@@ -27,7 +27,7 @@
 //! |---|---|---|
 //! | Person | ChatContact | `identity`, `login`, `firstSeenAt`, `lastSeenAt` (made only), `did`, `didChangedAt` |
 //! | Room | Chat, kind `group` | `name`, `roomId` (made only), `members`, `messageExpirySeconds` |
-//! | Message | Message | `senderMsgId`, `senderId`, `chatId`, `sentAt`, `receivedAt`, `replyTo`, `topicId`, `deliveryState`, `senderExpiresAt`, `burnOnRead`, `expiresAfterReadSeconds` (made only); `body`, `bodyType`, `attachments`, `actions` (the calls, §7.24), `editedAt`, `editHistory`, `deletedAt`, `deletedForAll` |
+//! | Message | Message | `senderMsgId`, `senderId`, `chatId`, `sentAt`, `receivedAt`, `replyTo`, `topicId`, `deliveryState`, `senderExpiresAt`, `burnOnRead`, `expiresAfterReadSeconds` (made only); `reactions`, `body`, `bodyType`, `attachments`, `actions` (the calls, §7.24), `editedAt`, `editHistory`, `deletedAt`, `deletedForAll` |
 //! | Ban | ChatBan | all, made only; destroyed when the record is gone |
 //!
 //! A record deleted (a forgotten person, a deleted message, a room
@@ -125,6 +125,7 @@ fn same(key: &str, a: Option<&Value>, b: Option<&Value>) -> bool {
             (_, None | Some(Value::Null)) => None,
             ("deletedForAll", Some(Value::Bool(false))) => None,
             ("editHistory", Some(Value::Array(a))) if a.is_empty() => None,
+            ("reactions", Some(Value::Object(m))) if m.is_empty() => None,
             (_, v) => v,
         }
     }
@@ -163,7 +164,8 @@ fn patch_of(existing: &Value, desired: &Value, keys: &[&str]) -> Map<String, Val
 }
 
 /// The Message properties the store owns after the message is made.
-const MESSAGE_CONTENT: [&str; 8] = [
+const MESSAGE_CONTENT: [&str; 9] = [
+    "reactions",
     "body",
     "bodyType",
     "attachments",
@@ -598,8 +600,10 @@ impl JmapExt {
                 // The content as the type writes it, merged over the
                 // object, so only what really differs is written.
                 let mut desired = existing.clone();
+                let reactions = self.render(&store.state()).reactions(&message);
                 if let Value::Object(desired) = &mut desired {
                     desired.extend(shown_content(&message));
+                    desired.insert("reactions".to_owned(), reactions);
                 }
                 let desired = to_json(&from_json::<Message>(desired)?)?;
                 let patch = patch_of(&existing, &desired, &MESSAGE_CONTENT);

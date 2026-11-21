@@ -91,7 +91,8 @@ pub enum FileError {
 }
 
 /// The schema this version reads and writes. A database of another
-/// version is refused (§7.10: no conversions). Version 6 adds each
+/// version is refused (§7.10: no conversions). Version 7 adds each
+/// message's `reactions` (epic mimid-qqtk). Version 6 adds each
 /// message's `inReplyToId`, its `inReplyTo` exactly (epic mimid-qqtk).
 /// Version 5 adds each
 /// message's `expiry` and `readAt`, and each room's
@@ -101,7 +102,7 @@ pub enum FileError {
 /// version in its `schema_version` table; version 2 (bead mimid-1vul.11),
 /// in `chat.sqlite` under `user_version`, names every participant, sender,
 /// banned user and banner by URI; version 1 also allowed an unknown one.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// The store's row in `schema_version`.
 const SCHEMA_PART: &str = "store";

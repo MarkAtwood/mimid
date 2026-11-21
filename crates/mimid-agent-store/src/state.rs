@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::content::BodyType;
 use crate::convert::MessageRef;
 use crate::record::{
-    Ban, Deletion, Ext, Invite, Key, Message, Octets, Person, ReadPosition, Revision, Room, Sender,
-    Tombstone,
+    Ban, Deletion, Ext, Invite, Key, Message, Octets, Person, Reaction, ReadPosition, Revision,
+    Room, Sender, Tombstone,
 };
 use crate::retry::PendingAttachment;
 use crate::sync::MAX_EDIT_HISTORY;
@@ -58,6 +58,9 @@ struct Indexes {
     /// (room key, reference octets of the first version or an alias) to
     /// message key.
     message_of_ref: BTreeMap<(Key, MessageRef), Key>,
+    /// (room key, reference octets of a reaction's message) to the key of
+    /// the message it is kept on.
+    reaction_of_ref: BTreeMap<(Key, MessageRef), Key>,
 }
 
 impl State {
@@ -91,6 +94,11 @@ impl State {
                     .message_of_ref
                     .insert((message.room.clone(), reference), key.clone());
             }
+            for reaction in &message.reactions {
+                indexes
+                    .reaction_of_ref
+                    .insert((message.room.clone(), reaction_ref(reaction)), key.clone());
+            }
         }
         self.indexes = indexes;
     }
@@ -122,7 +130,57 @@ impl State {
                 .message_of_ref
                 .insert((message.room.clone(), reference), message.key.clone());
         }
+        for reaction in &message.reactions {
+            self.indexes.reaction_of_ref.insert(
+                (message.room.clone(), reaction_ref(reaction)),
+                message.key.clone(),
+            );
+        }
         self.messages.insert(message.key.clone(), message);
+    }
+
+    /// Adds `reaction` to message `key`, indexed by the reference octets
+    /// of its message; false if there is no such message, or it holds a
+    /// reaction of that key already.
+    pub fn add_reaction(&mut self, key: &str, reaction: Reaction) -> bool {
+        let Some(message) = self.messages.get_mut(key) else {
+            return false;
+        };
+        if message.reactions.iter().any(|r| r.key == reaction.key) {
+            return false;
+        }
+        self.indexes.reaction_of_ref.insert(
+            (message.room.clone(), reaction_ref(&reaction)),
+            key.to_owned(),
+        );
+        message.reactions.push(reaction);
+        true
+    }
+
+    /// Takes the reactions of message `key` whose message `reference`
+    /// names (a reaction message's parts are taken together, §5.7), and
+    /// returns them.
+    pub fn remove_reactions(&mut self, key: &str, reference: &MessageRef) -> Vec<Reaction> {
+        let Some(message) = self.messages.get_mut(key) else {
+            return Vec::new();
+        };
+        let taken: Vec<Reaction> = message
+            .reactions
+            .extract_if(.., |r| reaction_ref(r) == *reference)
+            .collect();
+        self.indexes
+            .reaction_of_ref
+            .remove(&(message.room.clone(), *reference));
+        taken
+    }
+
+    /// The key of the message in room `room` that holds a reaction whose
+    /// message `reference` names.
+    #[must_use]
+    pub fn reaction_of_ref(&self, room: &str, reference: &MessageRef) -> Option<&Key> {
+        self.indexes
+            .reaction_of_ref
+            .get(&(room.to_owned(), *reference))
     }
 
     /// Adds `alias`, the reference octets of a later version, to message
@@ -148,6 +206,11 @@ impl State {
         let references = reference_of(&message.sender_msg_id)
             .into_iter()
             .chain(message.aliases.iter().map(|alias| alias.0));
+        for reaction in &message.reactions {
+            self.indexes
+                .reaction_of_ref
+                .remove(&(message.room.clone(), reaction_ref(reaction)));
+        }
         for reference in references {
             self.indexes
                 .message_of_ref
@@ -193,8 +256,8 @@ impl State {
     }
 
     /// Retracts message `key` for everyone at `at`, in milliseconds
-    /// (mimi-content-10 §5.6): its content goes, with the kept report
-    /// record and any attachment still to fetch. The retraction's alias
+    /// (mimi-content-10 §5.6): its content goes, with its reactions, the
+    /// kept report record and any attachment still to fetch. The retraction's alias
     /// is the caller's to add. False if there is no such message.
     pub fn retract_message(&mut self, key: &str, at: u64) -> bool {
         let Some(message) = self.messages.get_mut(key) else {
@@ -205,6 +268,11 @@ impl State {
         message.attachments.clear();
         message.calls.clear();
         message.edit_history.clear();
+        for reaction in std::mem::take(&mut message.reactions) {
+            self.indexes
+                .reaction_of_ref
+                .remove(&(message.room.clone(), reaction_ref(&reaction)));
+        }
         message.kept_frank = None;
         self.pending_attachments.retain(|p| p.message != key);
         true
@@ -364,6 +432,11 @@ pub struct RemovedRoom {
     pub sent: BTreeSet<String>,
 }
 
+/// The reference octets of the message of `reaction`.
+fn reaction_ref(reaction: &Reaction) -> MessageRef {
+    crate::convert::message_ref(&mimi_content::MessageId(reaction.mimi_id.0))
+}
+
 /// The reference octets of a `senderMsgId`: the last 10 octets of the
 /// ULID's random part, or `None` if it is not a ULID.
 #[must_use]
@@ -414,6 +487,7 @@ mod tests {
                 size: 1,
                 sha256: "00".into(),
             }],
+            reactions: Vec::new(),
             calls: Vec::new(),
             edit_history: Vec::new(),
             edited_at: None,

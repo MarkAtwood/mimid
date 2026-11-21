@@ -26,7 +26,9 @@
 //! - **Messages**: a received message is stored once per room and
 //!   reference octets, with its first MIMI message ID; a reply resolves
 //!   within the room. Edits and retractions change the message they name
-//!   ([`replace`]). Attachments are fetched into the blob store, or kept
+//!   ([`replace`]). A reaction (mimi-content-10 §5.3) is kept on the
+//!   message it names, and taken back by its sender's unlike (§5.7).
+//!   Attachments are fetched into the blob store, or kept
 //!   for a retry ([`attachments`]). A part of disposition `session` is a
 //!   call to join, kept in the message as a [`crate::record::Call`] and
 //!   never fetched (docs/design/agent-frontends.md §7.24).
@@ -65,8 +67,8 @@ use crate::notice::{
     identity_notice, lost_notice, lost_notice_ref, notice_ref, removal_notice, removal_notice_ref,
 };
 use crate::record::{
-    Call, Key, Message, NoticeKind, Octets, Participant, Person, Reply, Room, RoomStatus as Status,
-    Sender, SubjectSet,
+    Call, Key, Message, NoticeKind, Octets, Participant, Person, Reaction, Reply, Room,
+    RoomStatus as Status, Sender, SubjectSet,
 };
 use crate::report::KeptFrank;
 use crate::state::State;
@@ -118,6 +120,9 @@ pub struct SyncReport {
     /// Attachments fetched on a retry and added to their messages
     /// ([`crate::retry`]).
     pub attachments_retried: usize,
+    /// Reactions kept and taken back (mimi-content-10 §5.3, §5.7), by
+    /// message received.
+    pub reactions: usize,
 }
 
 /// A failure of [`Store::sync`].
@@ -804,6 +809,7 @@ impl Store {
             in_reply_to_id: None,
             topic_id: None,
             attachments: Vec::new(),
+            reactions: Vec::new(),
             calls: Vec::new(),
             edit_history: Vec::new(),
             edited_at: None,
@@ -904,13 +910,27 @@ impl Store {
         {
             let state = self.state();
             if state.message_of_ref(&room, &reference).is_some()
+                || state.reaction_of_ref(&room, &reference).is_some()
                 || state.is_deleted(&room, &reference)
             {
                 return;
             }
         }
         if let Some(replaces) = &received.content.replaces {
-            self.apply_replacement(&room, replaces, &received, report, changes);
+            let reaction = self
+                .state()
+                .reaction_of_ref(&room, &message_ref(replaces))
+                .cloned();
+            match reaction {
+                Some(target) => {
+                    self.apply_unreaction(&target, replaces, &received, report, changes);
+                }
+                None => self.apply_replacement(&room, replaces, &received, report, changes),
+            }
+            return;
+        }
+        if let Some(reactions) = received.reactions() {
+            self.store_reactions(&room, reactions, &received, report, changes);
             return;
         }
         // docs/design/agent-frontends.md §7.20, §7.22; decision
@@ -1005,6 +1025,7 @@ impl Store {
             in_reply_to_id: content.in_reply_to.map(|id| Octets(id.0)),
             topic_id: topic_id(&content.topic_id),
             attachments,
+            reactions: Vec::new(),
             calls,
             edit_history: Vec::new(),
             edited_at: None,
@@ -1024,6 +1045,115 @@ impl Store {
         }
     }
 }
+
+impl Store {
+    /// Keeps `reactions`, those of `received`, on the message of room
+    /// `room` that its `inReplyTo` names (mimi-content-10 §5.3), keyed by
+    /// the reaction message's `senderMsgId` ([`Reaction::key`]). A
+    /// reaction to a message not stored here is listed in
+    /// `report.skipped`, and one past [`MAX_REACTIONS_PER_MESSAGE`] in
+    /// `report.problems`.
+    fn store_reactions(
+        &self,
+        room: &str,
+        reactions: Vec<String>,
+        received: &ReceivedMessage,
+        report: &mut SyncReport,
+        changes: &mut Vec<Change>,
+    ) {
+        let uri = &received.room;
+        let Some(in_reply_to) = received.content.in_reply_to else {
+            return;
+        };
+        let mut state = self.state();
+        let Some(target) = state
+            .message_of_ref(room, &message_ref(&in_reply_to))
+            .cloned()
+        else {
+            report
+                .skipped
+                .push(format!("{uri}: a reaction to a message not stored here"));
+            return;
+        };
+        if received.sender != self.user {
+            self.person_for(&mut state, &received.sender, changes);
+        }
+        let base = sender_msg_id(received.accepted_at, &received.message_id);
+        let mut added = false;
+        for (n, reaction) in reactions.into_iter().enumerate() {
+            let held = state.messages.get(&target).map_or(0, |m| m.reactions.len());
+            if held >= MAX_REACTIONS_PER_MESSAGE {
+                report.problems.push(format!(
+                    "{uri}: a reaction past the first {MAX_REACTIONS_PER_MESSAGE} of a message left out"
+                ));
+                break;
+            }
+            let key = if n == 0 {
+                base.clone()
+            } else {
+                format!("{base}-{n}")
+            };
+            added |= state.add_reaction(
+                &target,
+                Reaction {
+                    key,
+                    sender: received.sender.clone(),
+                    reaction,
+                    mimi_id: Octets(received.message_id.0),
+                    accepted_at: received.accepted_at,
+                },
+            );
+        }
+        if added {
+            changes.push(Change::MessageChanged(target));
+            report.reactions += 1;
+        }
+    }
+
+    /// Applies `received`, which replaces `replaces`, the message of
+    /// reactions kept on message `target` (mimi-content-10 §5.7): with a
+    /// NullPart body, from the reactions' sender, they are taken back;
+    /// one from anyone else is refused (§9.3), and an edit of a reaction
+    /// is listed in `report.skipped`.
+    fn apply_unreaction(
+        &self,
+        target: &str,
+        replaces: &MessageId,
+        received: &ReceivedMessage,
+        report: &mut SyncReport,
+        changes: &mut Vec<Change>,
+    ) {
+        let uri = &received.room;
+        if !matches!(received.content.nested_part.part, mimi_content::Part::Null) {
+            report
+                .skipped
+                .push(format!("{uri}: an edit of a reaction is not applied"));
+            return;
+        }
+        let reference = message_ref(replaces);
+        let mut state = self.state();
+        let sender = state.messages.get(target).and_then(|m| {
+            m.reactions
+                .iter()
+                .find(|r| crate::convert::message_ref(&MessageId(r.mimi_id.0)) == reference)
+                .map(|r| r.sender.clone())
+        });
+        if sender.as_deref() != Some(received.sender.as_str()) {
+            report.problems.push(format!(
+                "{uri}: refused taking back a reaction by {}, who did not send it",
+                received.sender
+            ));
+            return;
+        }
+        state.remove_reactions(target, &reference);
+        changes.push(Change::MessageChanged(target.to_owned()));
+        report.reactions += 1;
+    }
+}
+
+/// The most reactions one message keeps; a received reaction past it is
+/// left out. INVENTED, NOT FROM SPEC.
+pub const MAX_REACTIONS_PER_MESSAGE: usize = 1024;
 
 /// The calls to join of `received` ([`crate::content::call_of`]), at most
 /// [`crate::content::MAX_CALLS_PER_MESSAGE`]; a session part that names

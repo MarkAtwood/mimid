@@ -172,3 +172,133 @@ async fn replies_through_jmap_and_irc() {
     assert!(refused["notCreated"]["k"].is_object(), "{refused}");
     p.stop().await;
 }
+
+/// Polls `client`'s Message `id` until `done` holds for it.
+async fn until_message(client: &common::Client, id: &str, done: impl Fn(&Value) -> bool) -> Value {
+    for _ in 0..100 {
+        let got = client.get("Message", Some(vec![id])).await;
+        if let Some(m) = got.first()
+            && done(m)
+        {
+            return m.clone();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("Message {id} never got there");
+}
+
+/// Oracle: draft-atwood-jmap-chat-00 §Reaction and §Adding and Removing
+/// Reactions (`reactions/<senderReactionId>`, `emoji`, `senderId`); the
+/// IRCv3 `+draft/react` and `+draft/reply` client tags on TAGMSG;
+/// docs/design/agent-frontends.md §7.27 for the ACTION lines without
+/// message-tags and for `+draft/unreact`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reactions_through_jmap_and_irc() {
+    let mut p = pair(&["message-tags"]).await;
+    // A second IRC connection of alice's, without message-tags.
+    let (mut plain, _) = Irc::register(p.alice.irc.unwrap(), &p.alice.token(), "alice", &[]).await;
+    p.a.send("PRIVMSG #lobby :vote").await;
+    let vote = privmsg(&mut p.b, ALICE_MASK, "vote").await;
+    let msgid = vote.tags["msgid"].clone();
+
+    // bob reacts from IRC.
+    p.b.send(&format!(
+        "@+draft/react=👍;+draft/reply={msgid} TAGMSG #lobby"
+    ))
+    .await;
+    let tagged =
+        p.a.until("bob's reaction", |m| {
+            m.command == "TAGMSG" && m.source == BOB_MASK
+        })
+        .await;
+    assert_eq!(tagged.params, ["#lobby"]);
+    assert_eq!(tagged.tags["+draft/react"], "👍");
+    assert_eq!(tagged.tags["+draft/reply"], msgid);
+    let action = plain
+        .until("bob's reaction as ACTION", |m| {
+            m.command == "PRIVMSG" && m.source == BOB_MASK
+        })
+        .await;
+    assert_eq!(
+        action.params,
+        [
+            "#lobby",
+            &format!("\x01ACTION reacted 👍 to {ALICE_NICK}\x01")
+        ]
+    );
+
+    // alice's JMAP client sees it, and reacts and takes it back.
+    let jmap = p.alice.client().await;
+    let message = message_with_body(&jmap, "vote").await;
+    let id = message["id"].as_str().unwrap().to_owned();
+    let seen = until_message(&jmap, &id, |m| {
+        m["reactions"].as_object().is_some_and(|r| r.len() == 1)
+    })
+    .await;
+    let (_, bobs) = seen["reactions"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap();
+    assert_eq!(bobs["emoji"], json!("👍"));
+    assert_ne!(bobs["senderId"], json!(jmap.account));
+    let reaction_id = "01HF7YAT01041061050R3GG28B";
+    let answer = jmap
+        .call(
+            "Message/set",
+            json!({"update": {&id: {format!("reactions/{reaction_id}"): {"emoji": "❤"}}}}),
+        )
+        .await;
+    assert!(answer["updated"].get(&id).is_some(), "{answer}");
+    let heart =
+        p.b.until("alice's reaction", |m| {
+            m.command == "TAGMSG" && m.source == ALICE_MASK
+        })
+        .await;
+    assert_eq!(heart.tags["+draft/react"], "❤");
+    assert_eq!(heart.tags["+draft/reply"], msgid);
+    let stored = jmap.get("Message", Some(vec![&id])).await;
+    assert_eq!(stored[0]["reactions"][reaction_id]["emoji"], json!("❤"));
+    assert_eq!(
+        stored[0]["reactions"][reaction_id]["senderId"],
+        json!(jmap.account)
+    );
+    let answer = jmap
+        .call(
+            "Message/set",
+            json!({"update": {&id: {format!("reactions/{reaction_id}"): null}}}),
+        )
+        .await;
+    assert!(answer["updated"].get(&id).is_some(), "{answer}");
+    let gone =
+        p.b.until("alice's unreaction", |m| {
+            m.command == "TAGMSG" && m.tags.contains_key("+draft/unreact")
+        })
+        .await;
+    assert_eq!(gone.tags["+draft/unreact"], "❤");
+
+    // bob takes his back from IRC.
+    p.b.send(&format!(
+        "@+draft/unreact=👍;+draft/reply={msgid} TAGMSG #lobby"
+    ))
+    .await;
+    let action = plain
+        .until("bob's unreaction as ACTION", |m| {
+            m.command == "PRIVMSG" && m.source == BOB_MASK && m.text().contains("took back")
+        })
+        .await;
+    assert_eq!(
+        action.params,
+        [
+            "#lobby",
+            &format!("\x01ACTION took back 👍 from {ALICE_NICK}\x01")
+        ]
+    );
+    until_message(&jmap, &id, |m| {
+        m["reactions"].as_object().is_none_or(|r| r.is_empty())
+    })
+    .await;
+    drop(plain);
+    p.stop().await;
+}

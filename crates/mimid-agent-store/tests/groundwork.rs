@@ -239,3 +239,98 @@ async fn replies_are_sent_kept_and_edited_with_their_target() {
     assert_eq!(other.in_reply_to, Some(Reply::Reference(Octets(reference))));
     assert_eq!(other.in_reply_to_id, Some(Octets(content_id)));
 }
+
+/// The reactions of message `key` in `store`, added up.
+fn counts(store: &Store, key: &str) -> Vec<(String, Vec<String>)> {
+    store.state().messages[key].reaction_counts()
+}
+
+/// Oracle: mimi-content-10 §5.3 (a reaction is a message of disposition
+/// `reaction` whose `inReplyTo` names the message), §5.7 (an unlike
+/// replaces the reaction with a NullPart of that disposition, `inReplyTo`
+/// still the message), §9.3 (only the sender may take it back).
+#[tokio::test]
+async fn reactions_are_sent_kept_added_up_and_taken_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut alice, bob, room, _) = alice_and_bob(dir.path()).await;
+    let first = alice.send_text(&room, "pick one").await.unwrap();
+    until_store(&bob, |s| key_of(s, "pick one").is_some()).await;
+    let target = key_of(&bob, "pick one").unwrap();
+
+    // bob's reaction, as alice's agent decodes it.
+    let mine = bob.new_key();
+    let reacted = bob.react(mine.clone(), &target, "👍").await.unwrap();
+    assert_eq!(reacted.reactions.len(), 1);
+    assert_eq!(reacted.reactions[0].key, mine);
+    let got = until_message(&mut alice, |m| m.text.as_deref() == Some("👍")).await;
+    assert_eq!(got.content.in_reply_to, Some(first.message_id));
+    assert_eq!(
+        got.content.nested_part.disposition,
+        mimi_content::Disposition::REACTION
+    );
+    assert_eq!(got.reactions(), Some(vec!["👍".to_owned()]));
+    let bobs_reaction = got.message_id;
+
+    // alice reacts twice; bob adds them up.
+    let heart = alice
+        .send_reaction(&room, &first.message_id, "❤")
+        .await
+        .unwrap();
+    alice
+        .send_reaction(&room, &first.message_id, "👍")
+        .await
+        .unwrap();
+    until_store(&bob, |s| s.state().messages[&target].reactions.len() == 3).await;
+    assert_eq!(
+        counts(&bob, &target),
+        [
+            ("👍".to_owned(), vec![BOB.to_owned(), ALICE.to_owned()]),
+            ("❤".to_owned(), vec![ALICE.to_owned()]),
+        ]
+    );
+
+    // alice takes back her heart; her unlike of bob's reaction is refused.
+    alice
+        .send_unreaction(&room, &heart.message_id, &first.message_id, false)
+        .await
+        .unwrap();
+    alice
+        .send_unreaction(&room, &bobs_reaction, &first.message_id, false)
+        .await
+        .unwrap();
+    alice.send_text(&room, "marker").await.unwrap();
+    until_store(&bob, |s| key_of(s, "marker").is_some()).await;
+    assert_eq!(
+        counts(&bob, &target),
+        [("👍".to_owned(), vec![BOB.to_owned(), ALICE.to_owned()])]
+    );
+
+    // bob takes his back: alice's agent decodes the §5.7 shape.
+    let after = bob.unreact(&target, &mine).await.unwrap();
+    assert_eq!(after.reactions.len(), 1);
+    let unlike = until_message(&mut alice, |m| m.content.replaces == Some(bobs_reaction)).await;
+    assert_eq!(unlike.content.in_reply_to, Some(first.message_id));
+    assert_eq!(
+        unlike.content.nested_part.disposition,
+        mimi_content::Disposition::REACTION
+    );
+    assert!(matches!(
+        unlike.content.nested_part.part,
+        mimi_content::Part::Null
+    ));
+    // Only the user's own reaction can be taken back.
+    let alices = bob.state().messages[&target].reactions[0].key.clone();
+    assert!(bob.unreact(&target, &alices).await.is_err());
+
+    // A reaction to a message bob never stored is not kept; a reaction
+    // is no message of its own.
+    let mut unknown = [9u8; 32];
+    unknown[0] = 1;
+    alice
+        .send_reaction(&room, &MessageId(unknown), "🙃")
+        .await
+        .unwrap();
+    alice.send_text(&room, "end").await.unwrap();
+    until_store(&bob, |s| key_of(s, "end").is_some()).await;
+    assert!(key_of(&bob, "🙃").is_none() && key_of(&bob, "👍").is_none());
+}

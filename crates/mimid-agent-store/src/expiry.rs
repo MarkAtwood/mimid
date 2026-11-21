@@ -720,6 +720,7 @@ mod tests {
             in_reply_to_id: None,
             topic_id: None,
             attachments: Vec::new(),
+            reactions: Vec::new(),
             calls: Vec::new(),
             edit_history: Vec::new(),
             edited_at: None,

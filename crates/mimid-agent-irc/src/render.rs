@@ -14,6 +14,8 @@
 //! | Reply | The text after `<nick>: `, the replied-to sender's nick, unless it starts so already; `+draft/reply=<msgid>` of a stored message |
 //! | Edit | PRIVMSG `(edited) <text>`, its own msgid, `+draft/reply` naming the first version |
 //! | Retraction | NOTICE from the server: `<nick> retracted a message` |
+//! | Reaction (§7.27) | TAGMSG from the reacting user, `+draft/react` and `+draft/reply`; without message-tags an ACTION `reacted <reaction> to <nick>` |
+//! | Reaction taken back | TAGMSG with `+draft/unreact`; without message-tags an ACTION `took back <reaction> from <nick>` |
 //! | Notice of the agent's | NOTICE from the server, with the notice's text |
 //! | Pending invite | `:<inviter> INVITE <nick> #<channel>`, the channel the room will have (§7.13); `&invite-<number>` if its Welcome could not be read |
 //!
@@ -85,6 +87,15 @@ pub(crate) fn members_of(room: &Room) -> Vec<(String, bool)> {
             (role.map(String::as_str) != Some("banned"))
                 .then(|| (p.user.clone(), role.map(String::as_str) == Some("admin")))
         })
+        .collect()
+}
+
+/// Peer text as data on one line: as [`data`], with every other control
+/// character a space.
+pub(crate) fn one_line_data(text: &str) -> String {
+    data(text)
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
         .collect()
 }
 
@@ -402,6 +413,12 @@ impl Session {
             ShownMessage {
                 edited_at: m.record.edited_at,
                 retracted: m.record.deleted.is_some(),
+                reactions: m
+                    .record
+                    .reactions
+                    .iter()
+                    .map(|r| (r.key.clone(), (r.sender.clone(), r.reaction.clone())))
+                    .collect(),
             },
         );
         if m.record.deleted.is_some() || (own_send && !self.caps.echo_message) {
@@ -469,8 +486,9 @@ impl Session {
         let Some(m) = self.message_shown(key) else {
             return;
         };
-        let since = self.shown.get(key).copied();
-        let mut seen = since.unwrap_or_default();
+        let since = self.shown.get(key).cloned();
+        let mut seen = since.clone().unwrap_or_default();
+        self.show_reactions(&m, since.is_some(), &mut seen);
         let after = |at: u64| at >= self.connected_at;
         if let Some(deleted) = m.record.deleted {
             if deleted.for_all && !seen.retracted && (since.is_some() || after(deleted.at)) {
@@ -519,6 +537,73 @@ impl Session {
             );
         }
         self.shown.insert(key.to_owned(), seen);
+    }
+
+    /// Shows the reactions of `m` added or taken back since `seen` was
+    /// shown (§7.27), and records them in `seen`: with message-tags, a
+    /// TAGMSG from the reacting user with `+draft/react` (or
+    /// `+draft/unreact`) and `+draft/reply` naming the message; without,
+    /// an ACTION line `reacted <reaction> to <nick>` (or `took back
+    /// <reaction> from <nick>`). A reaction added before the connection
+    /// registered to a message it has not shown is recorded, not shown;
+    /// one this connection sent is shown to it only with echo-message.
+    fn show_reactions(&mut self, m: &MessageShown, known: bool, seen: &mut ShownMessage) {
+        let target = m
+            .sender
+            .as_ref()
+            .map_or("mimid", |s| s.nick.as_str())
+            .to_owned();
+        let mut lines = Vec::new();
+        for r in &m.record.reactions {
+            if seen.reactions.contains_key(&r.key) {
+                continue;
+            }
+            seen.reactions
+                .insert(r.key.clone(), (r.sender.clone(), r.reaction.clone()));
+            let own = self.own_sends.remove(&r.key);
+            if (!known && r.accepted_at < self.connected_at) || (own && !self.caps.echo_message) {
+                continue;
+            }
+            lines.push((r.sender.clone(), r.reaction.clone(), true, r.accepted_at));
+        }
+        let now: BTreeSet<&str> = m.record.reactions.iter().map(|r| r.key.as_str()).collect();
+        let gone: Vec<Key> = seen
+            .reactions
+            .keys()
+            .filter(|k| !now.contains(k.as_str()))
+            .cloned()
+            .collect();
+        for key in gone {
+            if let Some((sender, reaction)) = seen.reactions.remove(&key) {
+                lines.push((sender, reaction, false, now_ms()));
+            }
+        }
+        for (sender, reaction, added, at) in lines {
+            let who = self.shared.names().identity(&sender);
+            let reaction = one_line_data(&reaction);
+            let time = self.caps.server_time.then(|| server_time(at));
+            let mut out = if self.caps.message_tags {
+                let tag = if added {
+                    "+draft/react"
+                } else {
+                    "+draft/unreact"
+                };
+                Out::new(&who.mask(), "TAGMSG", vec![m.channel.clone()])
+                    .tag(tag, &reaction)
+                    .tag("+draft/reply", &m.record.sender_msg_id)
+            } else {
+                let text = if added {
+                    format!("\x01ACTION reacted {reaction} to {target}\x01")
+                } else {
+                    format!("\x01ACTION took back {reaction} from {target}\x01")
+                };
+                Out::new(&who.mask(), "PRIVMSG", vec![m.channel.clone(), text])
+            };
+            if let Some(time) = time {
+                out = out.tag("time", &time);
+            }
+            self.send_cut(out);
+        }
     }
 
     /// `body` as `command` lines from `source` to `channel`, split on line

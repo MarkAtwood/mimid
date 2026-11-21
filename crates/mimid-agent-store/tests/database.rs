@@ -52,6 +52,7 @@ fn message(key: &str, room: &str, seq: u64, sender: Sender, n: u8) -> Message {
         in_reply_to_id: None,
         topic_id: None,
         attachments: Vec::new(),
+        reactions: Vec::new(),
         calls: Vec::new(),
         edit_history: Vec::new(),
         edited_at: None,
@@ -116,6 +117,14 @@ fn state() -> State {
         expires_after_read_seconds: Some(30),
     };
     first.read_at = Some(1_700_000_001_000);
+    first.in_reply_to_id = Some(mimid_agent_store::record::Octets([7; 32]));
+    first.reactions.push(mimid_agent_store::record::Reaction {
+        key: "01M7VA1QTK2Y4V6ER4Z3A3V6QN".to_owned(),
+        sender: BOB.to_owned(),
+        reaction: "\u{2764}".to_owned(),
+        mimi_id: mimid_agent_store::record::Octets([8; 32]),
+        accepted_at: 1_700_000_002_000,
+    });
     first.attachments.push(Attachment {
         blob_id: format!("s{}", "ab".repeat(32)),
         file_name: "a.txt".to_owned(),

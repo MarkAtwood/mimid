@@ -20,6 +20,9 @@
 //!   `+draft/reply` tag naming a message of the room, as a reply to it. To a nick:
 //!   refused with 404, since v1 has no private queries (§7.2); to
 //!   [`crate::names::SERVICE_NICK`]: the service ([`crate::service`]).
+//! - `TAGMSG #c` with `+draft/react` or `+draft/unreact` and
+//!   `+draft/reply` reacts to a message or takes the reaction back
+//!   (§7.27); any other TAGMSG is dropped.
 //! - `NOTICE` is never answered with an error (docs/irc-lessons.md
 //!   "NOTICE"); to a channel it is sent as a plain message.
 //! - `MODE #c` and `MODE #c b|e|I` are queries, answered 324 (no 329,
@@ -119,7 +122,7 @@ impl Session {
             "PART" => self.part(line).await,
             "PRIVMSG" => self.privmsg(line, false).await,
             "NOTICE" => self.privmsg(line, true).await,
-            "TAGMSG" => {}
+            "TAGMSG" => self.tagmsg(line).await,
             "MODE" => self.mode(line).await,
             "TOPIC" => self.topic(line).await,
             "NAMES" => self.names(line),
@@ -392,6 +395,58 @@ impl Session {
                 ],
             ),
             Who::Unknown => self.numeric("401", &[target, "No such nick/channel"]),
+        }
+    }
+
+    /// TAGMSG to a channel (§7.27): `+draft/react` with `+draft/reply`
+    /// naming a message of the room reacts to it; `+draft/unreact` takes
+    /// back the user's reaction of that text to it. Anything else is
+    /// read and dropped; a refusal is a server NOTICE.
+    async fn tagmsg(&mut self, line: &Line) {
+        let Some(target) = line.param(0) else {
+            return;
+        };
+        let Some(room) = self.shown_room(target) else {
+            return;
+        };
+        let (react, unreact) = (line.tag("+draft/react"), line.tag("+draft/unreact"));
+        let Some(message) = line
+            .tag("+draft/reply")
+            .and_then(|msgid| self.message_of_msgid(&room, msgid))
+        else {
+            return;
+        };
+        let store = self.store();
+        let result = if let Some(reaction) = react {
+            let key = store.new_key();
+            self.own_sends.insert(key.clone());
+            let result = store.react(key.clone(), &message, reaction).await;
+            if result.is_err() {
+                self.own_sends.remove(&key);
+            }
+            result.map(|_| ())
+        } else if let Some(reaction) = unreact {
+            let me = self.me();
+            let own = store.state().messages.get(&message).and_then(|m| {
+                m.reactions
+                    .iter()
+                    .find(|r| r.sender == me.uri && r.reaction == reaction)
+                    .map(|r| r.key.clone())
+            });
+            match own {
+                Some(key) => store.unreact(&message, &key).await.map(|_| ()),
+                None => return,
+            }
+        } else {
+            return;
+        };
+        match result {
+            Ok(()) => self.save().await,
+            Err(error) => {
+                let text = one_line(&format!("Reaction not sent: {error}"));
+                let server = self.shared.server.clone();
+                self.send(&Out::new(&server, "NOTICE", vec![target.to_owned(), text]));
+            }
         }
     }
 

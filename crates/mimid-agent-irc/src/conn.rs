@@ -130,12 +130,16 @@ pub(crate) struct ChannelView {
 }
 
 /// What the session showed of a message.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ShownMessage {
     /// The edit time last shown.
     pub(crate) edited_at: Option<u64>,
     /// Whether its retraction was shown.
     pub(crate) retracted: bool,
+    /// The reactions shown, by key: who reacted, by URI, and the
+    /// reaction, so that taking one back can be shown after the record
+    /// lost it.
+    pub(crate) reactions: BTreeMap<Key, (String, String)>,
 }
 
 /// One connection's state.
@@ -162,7 +166,8 @@ pub(crate) struct Session {
     pub(crate) channels: BTreeMap<Key, ChannelView>,
     pub(crate) shown: HashMap<Key, ShownMessage>,
     pub(crate) invites_shown: BTreeSet<u64>,
-    /// Messages this connection sent, not yet seen on the feed.
+    /// Messages and reactions this connection sent, not yet seen on the
+    /// feed.
     pub(crate) own_sends: HashSet<Key>,
     /// When the connection registered, in milliseconds.
     pub(crate) connected_at: u64,

@@ -21,6 +21,7 @@
 //! | Send, reply | [`Store::send`], [`Store::send_with`], [`Store::send_message`] | `send_message`, `send_message_with` |
 //! | Disappearing messages | [`Store::mark_read`], [`Store::set_message_expiry`], [`Store::expire_due`] | none |
 //! | Edit, retract | [`Store::edit`], [`Store::retract`] | `send_edit`, `send_retraction` |
+//! | React, take back | [`Store::react`], [`Store::unreact`] | `send_reaction`, `send_unreaction` |
 //! | Delete here | [`Store::mark_deleted`], [`Store::delete_message`] | none |
 //! | Ban, unban, kick | [`Store::ban`], [`Store::unban`], [`Store::kick`] | `ban`, `unban`, `kick` |
 //! | A ban's reason and expiry | [`Store::set_ban_terms`] | none |
@@ -38,8 +39,8 @@
 //! - A write method makes no person records. The people a write names
 //!   (an invited user, say) get one at the next [`Store::sync`] that sees
 //!   them in a room, as before the store.
-//! - Reactions are not an action: the agent sends none
-//!   (docs/design/agent-frontends.md §4, "The mapping").
+//! - A reaction is one emoji sequence per message; several at once
+//!   (mimi-content-10 Appendix B.2) are received, not sent.
 //! - Each method locks the agent for its own calls only; a front end that
 //!   needs several in a row ([`Store::change_members`]) gets them under
 //!   one lock.
@@ -58,8 +59,8 @@ use crate::change::Change;
 use crate::content::BodyType;
 use crate::convert::{message_ref, sender_msg_id};
 use crate::record::{
-    Attachment, Ban, Call, Deletion, Key, Message, MessageExpiry, Octets, Person, ReadPosition,
-    Reply, Room, RoomStatus as Status, Sender,
+    Attachment, Ban, Call, Deletion, Key, Message, MessageExpiry, Octets, Person, Reaction,
+    ReadPosition, Reply, Room, RoomStatus as Status, Sender,
 };
 use crate::state::RemovedRoom;
 use crate::store::Store;
@@ -94,6 +95,10 @@ pub enum ActionError {
     /// (a notice), or that is in another room.
     #[error("message {0} cannot be replied or reacted to here")]
     NotReferable(Key),
+    /// A reaction to take back that message's reactions do not hold, or
+    /// that another user sent.
+    #[error("no reaction {0} of the user's")]
+    NoSuchReaction(Key),
     /// An edit or retraction of a message with [`MAX_ALIASES`] versions.
     #[error("the message has too many versions")]
     TooManyVersions,
@@ -620,6 +625,7 @@ impl Store {
             in_reply_to_id: reply.map(|(_, id)| Octets(id.0)),
             topic_id: None,
             attachments,
+            reactions: Vec::new(),
             calls: Vec::new(),
             edit_history: Vec::new(),
             edited_at: None,
@@ -707,6 +713,7 @@ impl Store {
             in_reply_to_id: None,
             topic_id: None,
             attachments: Vec::new(),
+            reactions: Vec::new(),
             calls: vec![Call {
                 expires: call.expires.filter(|&at| at != 0),
                 ..call.clone()
@@ -865,6 +872,97 @@ impl Store {
         };
         drop(agent);
         self.changed_message(key, retracted)
+    }
+
+    /// Reacts with `reaction` to message `message` (mimi-content-10
+    /// §5.3; `Agent::send_reaction`), naming the message's first version
+    /// as a reply does ([`SendOptions::in_reply_to`]), and keeps the
+    /// reaction on the message under `key`, at the hub's acceptance time.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::NoSuchMessage`], [`ActionError::NotReferable`] for
+    /// a notice, [`ActionError::NoSuchRoom`], and [`ActionError::Agent`]:
+    /// `AgentError::Invalid` for an empty reaction or one over
+    /// `MAX_REACTION_LEN` octets, else the agent's or the hub's refusal.
+    pub async fn react(
+        &self,
+        key: Key,
+        message: &str,
+        reaction: &str,
+    ) -> Result<Message, ActionError> {
+        let room = self
+            .state()
+            .messages
+            .get(message)
+            .map(|m| m.room.clone())
+            .ok_or_else(|| ActionError::NoSuchMessage(message.to_owned()))?;
+        let uri = self.room_uri(&room)?;
+        let (_, target) = self.reply_to(&room, message)?;
+        // Locked until the reaction is in, as in Store::send.
+        let mut agent = self.agent.lock().await;
+        let sent = agent.send_reaction(&uri, &target, reaction).await?;
+        let reacted = {
+            let mut state = self.state();
+            state.add_reaction(
+                message,
+                Reaction {
+                    key,
+                    sender: self.user.clone(),
+                    reaction: reaction.to_owned(),
+                    mimi_id: Octets(sent.message_id.0),
+                    accepted_at: sent.accepted_at,
+                },
+            );
+            state.messages.get(message).cloned()
+        };
+        drop(agent);
+        self.changed_message(message, reacted)
+    }
+
+    /// Takes back the user's reaction `reaction` to message `message`
+    /// (mimi-content-10 §5.7, "Unlike"; `Agent::send_unreaction`), with
+    /// every other part of the same reaction message, and removes them
+    /// from the message. Silent as edits are ([`Store::set_silent_edits`]).
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::NoSuchMessage`], [`ActionError::NoSuchReaction`] if
+    /// the message holds no reaction of that key that the user sent,
+    /// [`ActionError::NoSuchRoom`], and [`ActionError::Agent`].
+    pub async fn unreact(&self, message: &str, reaction: &str) -> Result<Message, ActionError> {
+        let (room, target, mimi_id) = {
+            let state = self.state();
+            let record = state
+                .messages
+                .get(message)
+                .ok_or_else(|| ActionError::NoSuchMessage(message.to_owned()))?;
+            let own = record
+                .reactions
+                .iter()
+                .find(|r| r.key == reaction && r.sender == self.user)
+                .ok_or_else(|| ActionError::NoSuchReaction(reaction.to_owned()))?;
+            (record.room.clone(), record.mimi_id, own.mimi_id)
+        };
+        let uri = self.room_uri(&room)?;
+        let target = target.ok_or_else(|| ActionError::NotReferable(message.to_owned()))?;
+        let mut agent = self.agent.lock().await;
+        agent
+            .send_unreaction(
+                &uri,
+                &mimi_content::MessageId(mimi_id.0),
+                &mimi_content::MessageId(target.0),
+                self.silent_edits(),
+            )
+            .await?;
+        let now = {
+            let mut state = self.state();
+            let reference = message_ref(&mimi_content::MessageId(mimi_id.0));
+            state.remove_reactions(message, &reference);
+            state.messages.get(message).cloned()
+        };
+        drop(agent);
+        self.changed_message(message, now)
     }
 
     /// Marks message `key` deleted here at `at`, in milliseconds, unless
