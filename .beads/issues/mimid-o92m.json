@@ -1,11 +1,13 @@
 {
   "id": "mimid-o92m",
   "title": "Document the room-size limit from the 4 MiB provider body cap (decision 6, Mark 2026-11-21)",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T06:00:35.99160269Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T06:00:35.99160269Z"
+  "updated_at": "2026-11-21T07:02:49.945122377Z",
+  "closed_at": "2026-11-21T07:02:49.945122377Z",
+  "close_reason": "Done in f02c4d2 on branch agent-decisions (not pushed): README Limits section and hub module Limitations: 246 octets/leaf measured with hub_welcome_tree.rs at 65 and 257 leaves, ~13k-17k leaves in 4 MiB, roughly 4,000-5,500 members at 3 devices; welcome_too_large; WG note mimid-3hoq."
 }
