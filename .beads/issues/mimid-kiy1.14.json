@@ -1,0 +1,22 @@
+{
+  "id": "mimid-kiy1.14",
+  "title": "Bridge step 14: puppet identities and keys",
+  "description": "Binding table; account_create with label recovery; puppet profiles; puppet-domain MIMI accounts through the local control listener; retirement. Check wn-agent with many accounts first. See docs/design/marmot-bridge.md (branch bridge-decisions, 1c2b6eba) §3.3.2, §3.3.3, §9 step 14, §11.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:21:03.442252358Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:21:03.442252358Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-kiy1.14",
+      "depends_on_id": "mimid-kiy1",
+      "type": "parent-child",
+      "created_at": "2026-11-21T21:21:03.477464699Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
