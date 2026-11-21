@@ -1,0 +1,7 @@
+{
+  "id": "1795293543189944133-1",
+  "issue_id": "mimid-wpms",
+  "author": "Mark Atwood",
+  "text": "2026-11-21: PR opened with Mark's OK: https://github.com/LukaJCB/ts-mls/pull/878 (fixes #874), from fork MarkAtwood/ietf-ts-mls branch apply-custom-proposals. Other ts-mls PRs (#875-#877) wait for the maintainer's reply.",
+  "created_at": "2026-11-21T20:39:03.189944133Z"
+}
