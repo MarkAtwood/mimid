@@ -1,0 +1,16 @@
+{
+  "id": "mimid-prex",
+  "title": "MIMI room \u003c-\u003e IRC channel bridge (meshIRCd, tailircd, any IRC network)",
+  "description": "Mark 2026-11-21. The agent connects OUT to an IRC network (Mark's meshIRCd and tailircd first: github.com/MarkAtwood/meshIRCd, /tailircd; notes in docs/irc-lessons.md) as an IRC client and relays between a MIMI room and an IRC channel. Relay mode as in docs/design/marmot-bridge.md (one bridge identity per side, '(via bridge)', mimid-on-behalf-of, consent, loop prevention, hold/retract not needed), reusing its relay-mode design and the multi-user host later for puppets. E2EE ends at the bridge (IRC is not E2EE). meshIRCd bead ircd-atjq already names mimid-agent's local IRC interface as the E2EE route. Design note first (docs/design/irc-bridge.md), code after Mark's review.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T22:50:38.908360188Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T22:50:38.908360188Z",
+  "labels": [
+    "bridge",
+    "irc"
+  ]
+}
