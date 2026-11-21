@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use mimi_content::{
-    Disposition, Extensions, ExternalPart, MessageId, MimiContent, NestedPart, Part, PartSemantics,
+    Disposition, Expiration, ExtensionKey, Extensions, ExternalPart, MessageId, MimiContent,
+    NestedPart, Part, PartSemantics, RawValue,
 };
 use mimi_mls::label::LabelSigner;
 use mimi_mls::member::{
@@ -329,6 +330,36 @@ impl std::fmt::Debug for OutgoingAttachment {
             .field("content_type", &self.content_type)
             .field("filename", &self.filename)
             .finish()
+    }
+}
+
+/// What a message to send carries besides its body
+/// ([`Agent::send_message_with`], [`Agent::send_edit_with`]): its
+/// mimi-content-10 §4.1 `expires`, and extensions beside `senderUri` and
+/// `roomUri` (§4.3). The default carries neither.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ContentOptions {
+    /// The message's `expires`.
+    pub expires: Option<Expiration>,
+    /// Further extensions; keys 1 and 2 are refused by the encoder.
+    pub extensions: BTreeMap<ExtensionKey, RawValue>,
+}
+
+impl ContentOptions {
+    /// Neither `expires` nor further extensions.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets `content`'s `expires` and adds the extensions.
+    fn apply(&self, content: &mut MimiContent) {
+        content.expires = self.expires;
+        content
+            .mimi_extensions
+            .other
+            .extend(self.extensions.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
 }
 
@@ -1989,10 +2020,21 @@ impl Agent {
     /// [`AgentError::Invalid`] for text over [`MAX_TEXT_LEN`] octets, and
     /// the errors of [`Agent::send_content`].
     pub async fn send_text(&mut self, room: &str, text: &str) -> Result<Sent, AgentError> {
+        self.send_text_with(room, text, &ContentOptions::default())
+            .await
+    }
+
+    /// [`Agent::send_text`], carrying `options`.
+    async fn send_text_with(
+        &mut self,
+        room: &str,
+        text: &str,
+        options: &ContentOptions,
+    ) -> Result<Sent, AgentError> {
         if text.len() > MAX_TEXT_LEN {
             return Err(AgentError::Invalid("message too long".to_owned()));
         }
-        let content = MimiContent {
+        let mut content = MimiContent {
             salt: random()?,
             replaces: None,
             topic_id: vec![],
@@ -2012,6 +2054,7 @@ impl Agent {
                 },
             },
         };
+        options.apply(&mut content);
         self.send_content(room, &content).await
     }
 
@@ -2032,6 +2075,24 @@ impl Agent {
         replaces: &MessageId,
         text: &str,
     ) -> Result<Sent, AgentError> {
+        self.send_edit_with(room, replaces, text, &ContentOptions::default())
+            .await
+    }
+
+    /// [`Agent::send_edit`], the edit carrying `options`: mimid sends an
+    /// edit with the `expires` and extensions of the message it edits
+    /// (docs/design/agent-frontends.md §7.20).
+    ///
+    /// # Errors
+    ///
+    /// As [`Agent::send_edit`].
+    pub async fn send_edit_with(
+        &mut self,
+        room: &str,
+        replaces: &MessageId,
+        text: &str,
+        options: &ContentOptions,
+    ) -> Result<Sent, AgentError> {
         if text.len() > MAX_TEXT_LEN {
             return Err(AgentError::Invalid("message too long".to_owned()));
         }
@@ -2039,7 +2100,8 @@ impl Agent {
             content_type: TEXT_PLAIN.to_owned(),
             content: text.as_bytes().to_vec(),
         };
-        let content = self.replacement(room, replaces, part)?;
+        let mut content = self.replacement(room, replaces, part)?;
+        options.apply(&mut content);
         self.send_content(room, &content).await
     }
 
@@ -2106,8 +2168,26 @@ impl Agent {
         text: &str,
         attachments: &[OutgoingAttachment],
     ) -> Result<Sent, AgentError> {
+        self.send_message_with(room, text, attachments, &ContentOptions::default())
+            .await
+    }
+
+    /// [`Agent::send_message`], the message carrying `options`: an
+    /// `expires` and further extensions (mimi-content-10 §4.1, §4.3).
+    ///
+    /// # Errors
+    ///
+    /// As [`Agent::send_message`]; an extension key the encoder refuses
+    /// is an encoding error.
+    pub async fn send_message_with(
+        &mut self,
+        room: &str,
+        text: &str,
+        attachments: &[OutgoingAttachment],
+        options: &ContentOptions,
+    ) -> Result<Sent, AgentError> {
         if attachments.is_empty() {
-            return self.send_text(room, text).await;
+            return self.send_text_with(room, text, options).await;
         }
         if text.len() > MAX_TEXT_LEN {
             return Err(AgentError::Invalid("message too long".to_owned()));
@@ -2145,7 +2225,7 @@ impl Agent {
                 )),
             });
         }
-        let content = MimiContent {
+        let mut content = MimiContent {
             salt: random()?,
             replaces: None,
             topic_id: vec![],
@@ -2171,6 +2251,7 @@ impl Agent {
                 }
             },
         };
+        options.apply(&mut content);
         self.send_content(room, &content).await
     }
 
