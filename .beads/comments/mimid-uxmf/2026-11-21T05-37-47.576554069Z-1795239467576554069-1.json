@@ -1,0 +1,7 @@
+{
+  "id": "1795239467576554069-1",
+  "issue_id": "mimid-uxmf",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-21: /topic sets the MIMI room subject (RoomMetaData subject; hub checks canChangeRoomSubject). The IRC topic shows 'subject | name | URI'.",
+  "created_at": "2026-11-21T05:37:47.576554069Z"
+}
