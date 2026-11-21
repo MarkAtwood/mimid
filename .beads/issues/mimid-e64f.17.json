@@ -2,13 +2,15 @@
   "id": "mimid-e64f.17",
   "title": "AGENTS.md and docs for the findings implementation",
   "description": "Crate map and design docs where behaviour changed.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-20T22:56:25.950040378Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-20T22:56:25.950040378Z",
+  "updated_at": "2026-11-21T00:21:10.05079673Z",
+  "closed_at": "2026-11-21T00:21:10.05079673Z",
+  "close_reason": "Done in 885255e (branch findings-impl)",
   "dependencies": [
     {
       "issue_id": "mimid-e64f.17",
