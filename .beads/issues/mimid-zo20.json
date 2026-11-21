@@ -1,0 +1,15 @@
+{
+  "id": "mimid-zo20",
+  "title": "IRC: small cross-provider findings (PART reason dropped, invitee shown joined before accepting)",
+  "description": "From irssi across two providers (2026-11-21): (1) PART #c :bye reaches others as PART #c :no longer in this room; the user's reason is dropped. (2) When bob invites alice, bob's channel shows alice JOIN at once (she is in the MLS group after the Commit), while alice still has a pending \u0026invite-N she has not accepted. Accurate to MLS, possibly surprising; decide whether to show the invitee as joined only once she accepts.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T03:41:19.566017448Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T03:41:19.566017448Z",
+  "labels": [
+    "irc"
+  ]
+}
