@@ -157,6 +157,46 @@ impl SignatureKeyPair {
     }
 }
 
+/// A holder of an Ed25519 signature private key that makes RFC 9420 §5.1.2
+/// `SignWithLabel` signatures without handing the key out: a
+/// [`SignatureKeyPair`], or an [`Identity`](crate::Identity), whose key
+/// is its leaves' signature key.
+pub trait LabelSigner {
+    /// RFC 9420 §5.1.2 `SignWithLabel(SignatureKey, Label, Content)`: the
+    /// 64-byte Ed25519 signature over the serialized `SignContent`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Encode`] if `content` is too long for `opaque <V>`,
+    /// and [`Error::Sign`] if signing fails.
+    fn sign_with_label(&self, label: &str, content: &[u8]) -> Result<Vec<u8>, Error>;
+
+    /// The 32-byte Ed25519 public key that verifies the signatures.
+    fn verification_key(&self) -> &[u8];
+}
+
+impl LabelSigner for SignatureKeyPair {
+    fn sign_with_label(&self, label: &str, content: &[u8]) -> Result<Vec<u8>, Error> {
+        SignatureKeyPair::sign_with_label(self, label, content)
+    }
+
+    fn verification_key(&self) -> &[u8] {
+        SignatureKeyPair::verification_key(self)
+    }
+}
+
+/// The serialized RFC 9420 §5.1.2 `SignContent` for `label` and `content`,
+/// which a [`LabelSigner`] signs.
+///
+/// # Errors
+///
+/// Returns [`Error::Encode`] if `content` is too long for `opaque <V>`.
+pub(crate) fn sign_content(label: &str, content: &[u8]) -> Result<Vec<u8>, Error> {
+    SignContent::new(label, content.into())
+        .tls_serialize_detached()
+        .map_err(Error::Encode)
+}
+
 impl std::fmt::Debug for SignatureKeyPair {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SignatureKeyPair")
@@ -271,9 +311,7 @@ struct EncryptContext {
 /// Returns [`Error::Encode`] if `content` is too long for `opaque <V>`, and
 /// [`Error::Sign`] if `signature_key` is malformed.
 fn sign_with_label(signature_key: &[u8], label: &str, content: &[u8]) -> Result<Vec<u8>, Error> {
-    let sign_content = SignContent::new(label, content.into())
-        .tls_serialize_detached()
-        .map_err(Error::Encode)?;
+    let sign_content = sign_content(label, content)?;
     RustCrypto::default()
         .sign(
             CIPHERSUITE.signature_algorithm(),

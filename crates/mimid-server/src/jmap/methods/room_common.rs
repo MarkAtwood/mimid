@@ -189,6 +189,14 @@ pub(super) fn relay_error(method: &'static str, error: FollowerError) -> JmapErr
         FollowerError::Relay(RelayError::Hub(crate::hub::HubError::NoSuchRoom)) => {
             invalid(method, "no such room")
         }
+        // Decision mimid-1wgh.81. A remote hub's 422 for the same is the
+        // generic refusal above.
+        FollowerError::Relay(RelayError::Hub(crate::hub::HubError::GroupInfoTooLarge {
+            ..
+        })) => invalid(
+            method,
+            "the room's GroupInfo and ratchet tree are too large to send",
+        ),
         FollowerError::Relay(
             RelayError::WrongIdentity { .. }
             | RelayError::InvalidRoomId

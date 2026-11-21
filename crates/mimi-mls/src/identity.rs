@@ -409,7 +409,25 @@ impl Identity {
     pub(crate) fn signer(&self) -> &SignatureKeyPair {
         &self.signer
     }
+}
 
+/// Signs with the identity's signature key, the key of every leaf it
+/// creates: a request signed so proves that its sender holds such a leaf
+/// (the groupInfo request of a joiner whose Welcome came without the
+/// ratchet tree; decision mimid-1wgh.81).
+impl crate::label::LabelSigner for Identity {
+    fn sign_with_label(&self, label: &str, content: &[u8]) -> Result<Vec<u8>, crate::label::Error> {
+        let sign_content = crate::label::sign_content(label, content)?;
+        openmls_traits::signatures::Signer::sign(&self.signer, &sign_content)
+            .map_err(|e| crate::label::Error::Sign(format!("{e:?}").into()))
+    }
+
+    fn verification_key(&self) -> &[u8] {
+        self.signer.public()
+    }
+}
+
+impl Identity {
     pub(crate) fn credential_with_key(&self) -> &CredentialWithKey {
         &self.credential_with_key
     }

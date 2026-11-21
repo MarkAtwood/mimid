@@ -351,6 +351,22 @@ pub struct WelcomeJoin {
     pub inviter: Vec<u8>,
 }
 
+/// What a Welcome says of its group before the ratchet tree is at hand
+/// ([`Member::welcome_group`]): read from the GroupInfo the Welcome
+/// carries, which is decrypted but not verified, since its signer's leaf is
+/// in the tree. [`Member::join_welcome`] verifies it all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WelcomeGroup {
+    /// The GroupContext's `group_id`.
+    pub group_id: Vec<u8>,
+    /// The GroupContext's `epoch`: the epoch the Welcome joins.
+    pub epoch: u64,
+    /// The GroupContext's `app_data_dictionary` entries (mls-extensions-11
+    /// §4.6), by component id.
+    pub components: std::collections::BTreeMap<ComponentId, Vec<u8>>,
+}
+
 /// The result of [`Member::join_external`].
 #[derive(Debug)]
 #[non_exhaustive]
@@ -832,6 +848,52 @@ impl Member {
     ) -> Result<Vec<u8>, MemberError> {
         let (staged, _) = stage_welcome(identity, welcome, ratchet_tree)?;
         Ok(staged.group_context().group_id().as_slice().to_vec())
+    }
+}
+
+impl Member {
+    /// What the Welcome `welcome` (a TLS-encoded `MLSMessage`) says of its
+    /// group, without the ratchet tree and without joining: nothing is
+    /// stored and the KeyPackage stays usable. For a Welcome whose
+    /// RatchetTreeOption is not `full`, so that the joiner can ask the
+    /// room's hub for the tree of that group and epoch (decision
+    /// mimid-1wgh.81). The values are not verified: a wrong tree fetched on
+    /// their strength fails [`Member::join_welcome`].
+    ///
+    /// # Errors
+    ///
+    /// [`MemberError::Decode`] for malformed input,
+    /// [`MemberError::UnexpectedMessage`] if the message is not a Welcome,
+    /// and [`MemberError::Join`] if this identity cannot decrypt it.
+    pub fn welcome_group(identity: &Identity, welcome: &[u8]) -> Result<WelcomeGroup, MemberError> {
+        let message = MlsMessageIn::tls_deserialize_exact(welcome)
+            .map_err(|e| MemberError::Decode(e.into()))?;
+        let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
+            return Err(MemberError::UnexpectedMessage);
+        };
+        let config = MlsGroupJoinConfig::builder()
+            .wire_format_policy(MIXED_PLAINTEXT_WIRE_FORMAT_POLICY)
+            .build();
+        let provider = &identity.provider();
+        let builder = StagedWelcome::build_from_welcome(provider, &config, welcome)
+            .map_err(|e| MemberError::Join(e.into()))?;
+        let group_info = builder.processed_welcome().unverified_group_info();
+        let context = group_info.group_context();
+        Ok(WelcomeGroup {
+            group_id: context.group_id().as_slice().to_vec(),
+            epoch: context.epoch().as_u64(),
+            components: context
+                .extensions()
+                .app_data_dictionary()
+                .map(|extension| {
+                    extension
+                        .dictionary()
+                        .entries()
+                        .map(|entry| (entry.id(), entry.data().to_vec()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
     }
 }
 

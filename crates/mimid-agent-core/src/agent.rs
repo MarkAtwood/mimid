@@ -8,13 +8,15 @@ use std::time::SystemTime;
 use mimi_content::{
     Disposition, Extensions, ExternalPart, MessageId, MimiContent, NestedPart, Part, PartSemantics,
 };
+use mimi_mls::label::LabelSigner;
 use mimi_mls::member::{
     AppDataUpdate, CommitBundle, ExternalSender, Incoming, Member, OutOfSync, Sender,
 };
 use mimi_mls::tls_codec::{Deserialize, Serialize, VLBytes};
 use mimi_mls::wire::{
     AppDataDictionary, CipherSuite, ContentType, Credential, GroupInfo, HPKEPublicKey, MLSMessage,
-    RatchetTreeOption, RequiredCapabilities, SignaturePublicKey, Welcome,
+    RatchetTreeOption, RatchetTreeRepresentation, RequiredCapabilities, SignaturePublicKey,
+    Welcome,
 };
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
@@ -1376,15 +1378,7 @@ impl Agent {
         self.state.consumed_welcomes.drain(..excess);
         // The room is the room metadata's room_uri when the group has one
         // (a Room/create room, whose group ID is random), else the group ID.
-        let room = member
-            .component(ROOM_METADATA)
-            .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
-            .map(|metadata| metadata.room_uri.as_str().to_owned())
-            .or_else(|| {
-                String::from_utf8(member.group_id().to_vec())
-                    .ok()
-                    .filter(|r| IdentifierUri::new(r).is_ok())
-            })
+        let room = room_of_group(member.group_id(), member.component(ROOM_METADATA))
             .ok_or_else(|| AgentError::Invalid("the group has no room URI".to_owned()))?;
         self.state
             .group_rooms
@@ -1520,6 +1514,12 @@ impl Agent {
                 let (welcome, tree) = self.invite_material(invite.number).ok()?;
                 Member::welcome_group_id(&self.identity, &welcome, tree.as_deref()).ok()
             })
+            .chain(self.state.awaiting_tree.iter().filter_map(|welcome| {
+                let welcome = hex::decode(welcome).ok()?;
+                Member::welcome_group(&self.identity, &welcome)
+                    .ok()
+                    .map(|group| group.group_id)
+            }))
             .collect();
         for room in rooms {
             match self.join_external(&room, &invited).await {
@@ -1634,7 +1634,11 @@ impl Agent {
         let skip = |e: AgentError| (e, NotJoined::Skip);
         let (hpke_key, hpke_public) = mimi_mls::label::HpkePrivateKey::generate()
             .map_err(|e| later(AgentError::mls("the groupInfoPublicKey", e)))?;
-        let request = group_info_request(&self.me, &hpke_public).map_err(later)?;
+        // A key of its own: the request is for a group this device is not
+        // in, and needs no tie to its leaves.
+        let pair = mimi_mls::label::SignatureKeyPair::generate()
+            .map_err(|e| later(AgentError::mls("the request key", e)))?;
+        let request = group_info_request(&self.me, &hpke_public, &pair).map_err(later)?;
         let response = self
             .provider
             .group_info(room, &request)
@@ -2614,7 +2618,10 @@ impl Agent {
     /// Reads what the server stored since the last poll and handles it:
     /// Welcomes become invites, Commits and proposals change the groups,
     /// application messages are decrypted. A member's leave proposals are
-    /// committed by the remaining member with the lowest leaf index.
+    /// committed by the remaining member with the lowest leaf index. A
+    /// Welcome that came without its ratchet tree (`distributionService`)
+    /// becomes an invite once the tree is fetched from the room's hub,
+    /// after the Messages are handled (decision mimid-1wgh.81).
     ///
     /// First it sends again what an earlier attempt left in the outbox
     /// (module `outbox`). Messages this device sent are skipped, by the
@@ -2688,6 +2695,7 @@ impl Agent {
             self.maybe_commit_leave(&room, leaf, &mut events).await;
             self.deliver(events);
         }
+        self.fetch_trees().await?;
         self.state.message_state = Some(state);
         self.state.handled.clear();
         self.remember_sent()?;
@@ -3309,6 +3317,14 @@ impl Agent {
                 message,
                 ratchet_tree_option,
             } => match encode(&message) {
+                // Decision mimid-1wgh.81: the tree is fetched from the hub
+                // (Agent::fetch_trees) before the invite is made.
+                Ok(welcome)
+                    if ratchet_tree_option.representation()
+                        == RatchetTreeRepresentation::DistributionService =>
+                {
+                    self.await_tree(welcome);
+                }
                 Ok(welcome) => self.add_invite(
                     welcome,
                     ratchet_tree_option.ratchet_tree().map(<[u8]>::to_vec),
@@ -3321,6 +3337,158 @@ impl Agent {
             },
         }
         None
+    }
+
+    /// Keeps `welcome`, which came without its ratchet tree, for
+    /// [`Agent::fetch_trees`], unless it is known already.
+    fn await_tree(&mut self, welcome: Vec<u8>) {
+        let welcome_hex = hex::encode(&welcome);
+        if self.state.awaiting_tree.contains(&welcome_hex)
+            || self.state.consumed_welcomes.contains(&welcome_hex)
+            || self.state.invites.iter().any(|i| i.welcome == welcome_hex)
+        {
+            return;
+        }
+        self.state.awaiting_tree.push(welcome_hex);
+    }
+
+    /// For each Welcome that came with the RatchetTreeOption
+    /// `distributionService` (decision mimid-1wgh.81): fetches the room's
+    /// GroupInfo and ratchet tree from its hub with a groupInfo request
+    /// signed with this device's leaf key, which the hub answers because
+    /// the Commit that made the leaf is merged (`group_info.rs` step 4 of
+    /// mimid-server's hub), and makes the Welcome an invite with that tree,
+    /// with an [`Event::InviteArrived`]. A Welcome that cannot be fetched
+    /// for now (the server unreachable or unavailable) waits for the next
+    /// [`Agent::receive`]; one that cannot be used becomes an
+    /// [`Event::Problem`] and is dropped.
+    async fn fetch_trees(&mut self) -> Result<(), AgentError> {
+        let waiting = self.state.awaiting_tree.clone();
+        for welcome_hex in waiting {
+            let fetched = match hex::decode(&welcome_hex) {
+                Ok(welcome) => self.fetch_tree(&welcome).await,
+                Err(_) => Err((
+                    AgentError::Invalid("a stored Welcome is not hex".to_owned()),
+                    false,
+                )),
+            };
+            let mut events = Vec::new();
+            match fetched {
+                Ok(tree) => {
+                    let number = self
+                        .state
+                        .push_invite(welcome_hex.clone(), Some(hex::encode(tree)));
+                    events.push(Event::InviteArrived { number });
+                }
+                Err((error, true)) => {
+                    tracing::info!(
+                        name: "agent_tree_fetch_deferred",
+                        error = &error as &dyn std::error::Error,
+                        "the ratchet tree of a Welcome could not be fetched; trying again later"
+                    );
+                    continue;
+                }
+                Err((error, false)) => {
+                    tracing::warn!(
+                        name: "agent_tree_fetch_failed",
+                        error = &error as &dyn std::error::Error,
+                        "the ratchet tree of a Welcome could not be fetched; the Welcome is dropped"
+                    );
+                    events.push(Event::Problem {
+                        room: None,
+                        description: format!(
+                            "a Welcome came without its ratchet tree, and the tree \
+                             could not be fetched from the room's hub: {error}"
+                        ),
+                    });
+                }
+            }
+            self.state.awaiting_tree.retain(|w| *w != welcome_hex);
+            self.deliver(events);
+            self.save()?;
+        }
+        Ok(())
+    }
+
+    /// The ratchet tree for `welcome` (decision mimid-1wgh.81), or the
+    /// error and whether it may pass (the server unreachable or
+    /// unavailable).
+    ///
+    /// `&mut self`, though it changes nothing: the agent is not `Sync`, so
+    /// only a unique borrow may be held across the request's await.
+    async fn fetch_tree(&mut self, welcome: &[u8]) -> Result<Vec<u8>, (AgentError, bool)> {
+        let never = |e: AgentError| (e, false);
+        let group = Member::welcome_group(&self.identity, welcome)
+            .map_err(|e| never(AgentError::mls("reading the Welcome", e)))?;
+        let room = room_of_group(
+            &group.group_id,
+            group.components.get(&ROOM_METADATA).map(Vec::as_slice),
+        )
+        .ok_or_else(|| never(AgentError::Invalid("the group has no room URI".to_owned())))?;
+        let (hpke_key, hpke_public) = mimi_mls::label::HpkePrivateKey::generate()
+            .map_err(|e| never(AgentError::mls("the groupInfoPublicKey", e)))?;
+        // Signed with the identity's key, which is the new leaf's: that is
+        // what entitles this device to the tree.
+        let request = group_info_request(&self.me, &hpke_public, &self.identity).map_err(never)?;
+        let response = self
+            .provider
+            .group_info(&room, &request)
+            .await
+            .map_err(|e| {
+                let passing = may_pass(&e);
+                (e, passing)
+            })?;
+        let success = match GroupInfoResponse::tls_deserialize_exact(&response[..]) {
+            Ok(GroupInfoResponse::Success(success)) => success,
+            Ok(other) => {
+                return Err(never(AgentError::Refused {
+                    what: format!("GroupInfo/fetch for {room}"),
+                    reason: format!("{:?}", other.status()),
+                }));
+            }
+            Err(e) => return Err(never(AgentError::tls("a GroupInfoResponse", e))),
+        };
+        success
+            .verify()
+            .map_err(|e| never(AgentError::encoding("the GroupInfoResponse signature", e)))?;
+        if success.tbs().room_id != room.as_bytes() {
+            return Err(never(AgentError::malformed(
+                "GroupInfo/fetch",
+                "the response is for another room",
+            )));
+        }
+        let tbe = mimi_protocol::decrypt_group_info(
+            &hpke_key,
+            room.as_bytes(),
+            &success.tbs().encrypted_groupinfo_and_tree,
+        )
+        .map_err(|e| never(AgentError::encoding("opening the GroupInfo", e)))?;
+        // The tree must be the one of the Welcome's group and epoch; the
+        // join checks it against the Welcome's tree hash in any case.
+        let group_info = encode(&tbe.group_info).map_err(never)?;
+        if group_info_group_id(&group_info).map_err(never)? != group.group_id {
+            return Err(never(AgentError::malformed(
+                "GroupInfo/fetch",
+                "the GroupInfo is for another group",
+            )));
+        }
+        let epoch = group_info_epoch(&group_info).map_err(never)?;
+        if epoch != group.epoch {
+            return Err(never(AgentError::Invalid(format!(
+                "{room} is at epoch {epoch}, past the Welcome's epoch {}; \
+                 the Welcome cannot be used, and an invite has to be sent again",
+                group.epoch
+            ))));
+        }
+        tbe.ratchet_tree_option
+            .ratchet_tree()
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| {
+                never(AgentError::malformed(
+                    "GroupInfo/fetch",
+                    "the response does not carry the full ratchet tree",
+                ))
+            })
     }
 
     fn add_invite(&mut self, welcome: Vec<u8>, tree: Option<Vec<u8>>, events: &mut Vec<Event>) {
@@ -4036,10 +4204,9 @@ fn key_material_request(
 fn group_info_request(
     requester: &str,
     group_info_public_key: &[u8],
+    signer: &impl LabelSigner,
 ) -> Result<Vec<u8>, AgentError> {
-    let pair = mimi_mls::label::SignatureKeyPair::generate()
-        .map_err(|e| AgentError::mls("the request key", e))?;
-    let key = encode(&VLBytes::new(pair.verification_key().to_vec()))?;
+    let key = encode(&VLBytes::new(signer.verification_key().to_vec()))?;
     let credential = [
         vec![0x00, 0x01], // CredentialType basic
         encode(&VLBytes::new(requester.as_bytes().to_vec()))?,
@@ -4058,9 +4225,47 @@ fn group_info_request(
             .map_err(|e| AgentError::tls("the groupInfoPublicKey", e))?,
         joining_code: None,
     }
-    .sign(&pair)
+    .sign(signer)
     .map_err(|e| AgentError::encoding("signing the GroupInfo request", e))?;
     encode(&request)
+}
+
+/// The room of the MLS group `group_id` with the `room_metadata` component
+/// `metadata`: the metadata's room_uri when the group has one (a
+/// Room/create room, whose group ID is random), else the group ID if it is
+/// a URI.
+fn room_of_group(group_id: &[u8], metadata: Option<&[u8]>) -> Option<String> {
+    metadata
+        .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
+        .map(|metadata| metadata.room_uri.as_str().to_owned())
+        .or_else(|| {
+            String::from_utf8(group_id.to_vec())
+                .ok()
+                .filter(|r| IdentifierUri::new(r).is_ok())
+        })
+}
+
+/// Whether a failed request may succeed if made again later: the server
+/// could not be reached or said it is unavailable.
+fn may_pass(error: &AgentError) -> bool {
+    match error {
+        AgentError::Http { .. } | AgentError::Stream { .. } => true,
+        AgentError::Status { status, .. } => *status >= 500,
+        AgentError::Method { kind, .. } => kind == "serverUnavailable",
+        _ => false,
+    }
+}
+
+/// The epoch of a TLS-encoded GroupInfo: its GroupContext (RFC 9420 §8.1)
+/// goes on from the group_id ([`group_info_group_id`]) with `uint64
+/// epoch`. The GroupInfo decoded already, so this only reads the field.
+fn group_info_epoch(group_info: &[u8]) -> Result<u64, AgentError> {
+    let mut rest = group_info
+        .get(4..)
+        .ok_or_else(|| AgentError::malformed("GroupInfo/fetch", "a GroupInfo too short"))?;
+    VLBytes::tls_deserialize(&mut rest)
+        .map_err(|e| AgentError::tls("the GroupInfo's group_id", e))?;
+    u64::tls_deserialize(&mut rest).map_err(|e| AgentError::tls("the GroupInfo's epoch", e))
 }
 
 /// The group ID of a TLS-encoded GroupInfo: RFC 9420 §12.4.3 GroupInfo

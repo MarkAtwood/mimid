@@ -38,7 +38,16 @@
 //!     after it plus the origin (decision mimid-1wgh.6.17), and the Welcome
 //!     for the domains of the users its Add proposals add (decision
 //!     mimid-1wgh.6.10), with the hub's own tree as
-//!     `RatchetTreeOption::full` (decision mimid-1wgh.6.12).
+//!     `RatchetTreeOption::full` (decision mimid-1wgh.6.12), whatever the
+//!     client sent. A Welcome whose FanoutMessage would then be longer than
+//!     a provider takes ([`crate::http::MAX_BODY_LEN`]) goes out with
+//!     `RatchetTreeOption::distributionService` instead, and its joiners
+//!     fetch the tree with a groupInfo request signed with their new leaf's
+//!     key (decision mimid-1wgh.81; `group_info.rs` step 4). If that
+//!     FanoutMessage too, or the groupInfo response the joiners would get,
+//!     is longer than that, the tree cannot reach them, and the Commit is
+//!     refused before anything is written: the room has outgrown the
+//!     transport.
 //!
 //! A refused Commit is dropped, and the epoch stays open for the next
 //! valid and allowed Commit (decision mimid-1wgh.6.5). A refusal or failure
@@ -85,6 +94,13 @@
 //! - The hub never staples proposals to an external Commit (decision
 //!   mimid-1wgh.6.4), so `externalProposals` in its fanout is always
 //!   empty.
+//! - The groupInfo response carries the same tree as a `full` Welcome, so
+//!   `distributionService` helps only while the Welcome's
+//!   `EncryptedGroupSecrets` (about 120 octets per joining client) are
+//!   what tips it over the limit; past that, Commits that add members are
+//!   refused (decision mimid-1wgh.81). A joiner of a `distributionService`
+//!   Welcome gets the tree of the epoch current when it asks, which is
+//!   useless to it once the room has moved on.
 //! - ponytail: undoing a refused proposal or a failed write rebuilds the
 //!   whole room from storage, which costs one GroupInfo verification and
 //!   one replay of the pending proposals. Upgrade path: an Observer call
@@ -108,7 +124,7 @@ use super::policy::{
 };
 use super::room::{self, GROUP_INFO_MESSAGE_HEADER};
 use super::state::{identity_domain, member_domains, room_state};
-use super::{Hub, HubError, PendingAppData, Room, restore_room};
+use super::{Hub, HubError, PendingAppData, Room, group_info, restore_room};
 use crate::config::Domain;
 use crate::store::{EpochSnapshot, EventKind, NewEvent, OutboxEntry};
 use mimi_protocol::components;
@@ -580,17 +596,49 @@ fn stage_commit(
         )
         .map_err(HubError::Encode)?;
         // Decision mimid-1wgh.6.12: the hub's own tree, whatever the client
-        // sent.
-        let welcome_body = FanoutMessage {
-            timestamp: accepted_at,
-            event: FanoutEvent::Welcome {
+        // sent, in the Welcome while it fits (decision mimid-1wgh.81).
+        let full = welcome_fanout(
+            accepted_at,
+            message.clone(),
+            RatchetTreeOption::full(&ratchet_tree).map_err(HubError::Encode)?,
+        )?;
+        let welcome_body = if full.len() <= hub.body_limit {
+            full
+        } else {
+            let by_reference = welcome_fanout(
+                accepted_at,
                 message,
-                ratchet_tree_option: RatchetTreeOption::full(&ratchet_tree)
-                    .map_err(HubError::Encode)?,
-            },
-        }
-        .tls_serialize_detached()
-        .map_err(HubError::Encode)?;
+                RatchetTreeOption::distribution_service(),
+            )?;
+            let group_info_len =
+                group_info::response_len(hub, room_id, &group_info, &ratchet_tree)?;
+            if by_reference.len() > hub.body_limit || group_info_len > hub.body_limit {
+                tracing::info!(
+                    name: "welcome_too_large",
+                    room_id,
+                    welcome_len = full.len(),
+                    welcome_without_tree_len = by_reference.len(),
+                    group_info_len,
+                    limit = hub.body_limit,
+                    "the ratchet tree cannot reach the new members; commit refused"
+                );
+                return refuse(
+                    room_id,
+                    "the ratchet tree cannot reach the new members",
+                    true,
+                );
+            }
+            tracing::info!(
+                name: "welcome_tree_by_reference",
+                room_id,
+                epoch = new_epoch,
+                welcome_len = full.len(),
+                group_info_len,
+                limit = hub.body_limit,
+                "Welcome sent with RatchetTreeOption distributionService"
+            );
+            by_reference
+        };
         outbox.extend(
             welcome_domains
                 .into_iter()
@@ -608,6 +656,24 @@ fn stage_commit(
             ratchet_tree,
         },
     })))
+}
+
+/// The encoded Welcome FanoutMessage of `message` with `ratchet_tree_option`
+/// (protocol-07 §5.5).
+fn welcome_fanout(
+    timestamp: u64,
+    message: MLSMessage,
+    ratchet_tree_option: RatchetTreeOption,
+) -> Result<Vec<u8>, HubError> {
+    FanoutMessage {
+        timestamp,
+        event: FanoutEvent::Welcome {
+            message,
+            ratchet_tree_option,
+        },
+    }
+    .tls_serialize_detached()
+    .map_err(HubError::Encode)
 }
 
 /// Runs the proposal steps 3 to 6 of the module documentation.

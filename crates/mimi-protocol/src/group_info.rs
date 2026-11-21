@@ -115,8 +115,10 @@ impl GroupInfoRequestTbs {
     /// Signs this TBS: `SignWithLabel(requestingSignatureKey,
     /// "GroupInfoRequestTBS", GroupInfoRequestTBS)`.
     ///
-    /// `signature_private_key` is the key pair whose public key is
-    /// `requesting_signature_key` (Ed25519 for suite 1).
+    /// `signature_private_key` holds the private key whose public key is
+    /// `requesting_signature_key` (Ed25519 for suite 1): a key pair made
+    /// for the request, or an [`Identity`](mimi_mls::Identity), whose key
+    /// is that of its leaves.
     ///
     /// # Errors
     ///
@@ -125,7 +127,7 @@ impl GroupInfoRequestTbs {
     /// [`Error::Label`] if signing fails.
     pub fn sign(
         self,
-        signature_private_key: &label::SignatureKeyPair,
+        signature_private_key: &impl label::LabelSigner,
     ) -> Result<GroupInfoRequest, Error> {
         check_cipher_suite(self.cipher_suite)?;
         let tbs_bytes = self.tls_serialize_detached().map_err(Error::Encoding)?;

@@ -32,10 +32,8 @@
 mod common;
 
 use common::{
-    ALICE, BOB, assert_agreement, catch_up, device, device_with, leaves, poll_until, sends, server,
-};
-use mimi_room_policy::{
-    BANNED_ROLE_INDEX, Capability, Role, RoleData, SingleSourceRoleChangeTargets,
+    ALICE, BOB, assert_agreement, catch_up, device, device_with, leaves, poll_until,
+    roles_without_add_own_client, sends, server,
 };
 use mimid_agent_core::mls_didwebvh::PublicKey;
 use mimid_agent_core::mls_didwebvh::controller::{DidLog, Parameters, UpdateKey};
@@ -294,41 +292,6 @@ async fn leaving_removes_every_device_of_the_user() {
     let mut a3 = device(&server, ALICE, dir.path(), "a3").await;
     let outcome = a3.join_own_rooms().await.unwrap();
     assert!(outcome.joined.is_empty(), "{outcome:?}");
-}
-
-/// The default roles without `canAddOwnClient`.
-fn roles_without_add_own_client() -> RoleData {
-    let role = |role_index: u32, name: &str, changes: Vec<SingleSourceRoleChangeTargets>| Role {
-        role_index,
-        role_name: name.to_owned(),
-        role_description: String::new(),
-        role_capabilities: if role_index == BANNED_ROLE_INDEX {
-            vec![]
-        } else {
-            vec![
-                Capability::CAN_ADD_PARTICIPANT,
-                Capability::CAN_REMOVE_SELF,
-                Capability::CAN_SEND_MESSAGE,
-                Capability::CAN_RECEIVE_MESSAGE,
-            ]
-        },
-        minimum_participants_constraint: 0,
-        maximum_participants_constraint: None,
-        minimum_active_participants_constraint: 0,
-        maximum_active_participants_constraint: None,
-        authorized_role_changes: changes,
-    };
-    let change = |from: u32, to: &[u32]| SingleSourceRoleChangeTargets {
-        from_role_index: from,
-        target_role_indexes: to.to_vec(),
-    };
-    RoleData {
-        roles: vec![
-            role(BANNED_ROLE_INDEX, "banned", vec![]),
-            role(2, "member", vec![change(0, &[2]), change(2, &[0])]),
-            role(3, "admin", vec![change(0, &[2]), change(3, &[0])]),
-        ],
-    }
 }
 
 #[tokio::test]

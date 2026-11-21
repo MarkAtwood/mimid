@@ -69,6 +69,15 @@
 //!   but mls-rs refuses two leaves with the same identity (the
 //!   multi-device limit H1), so such a room cannot have an mls-rs member.
 //!   With a `did_webvh` credential ([`didwebvh`]) the leaves differ.
+//! - A Welcome that comes with the RatchetTreeOption `distributionService`
+//!   (a mimid hub sends one when the tree does not fit the Welcome's
+//!   FanoutMessage, decision mimid-1wgh.81) becomes an invite only once
+//!   [`Agent::receive`] has fetched the tree from the room's hub with
+//!   GroupInfo/fetch. The hub serves only its current epoch's tree, so a
+//!   Welcome whose room has had another Commit before the fetch cannot be
+//!   used: it becomes an [`Event::Problem`], and the user has to be
+//!   invited again. Welcomes with `httpsUrl` or `outOfBand` become invites
+//!   without a tree and fail to join.
 //! - [`Agent::join_own_rooms`] joins only rooms a device of the user
 //!   accepted, recorded in the Chat's `privateMetadata` on the user's
 //!   server (draft-ietf-jmap-metadata-05; decision mimid-1wgh.63), and

@@ -141,6 +141,12 @@ pub(crate) struct State {
     /// Welcomes (hex) already joined, newest last.
     #[serde(default)]
     pub consumed_welcomes: Vec<String>,
+    /// Welcomes (hex) that came with the RatchetTreeOption
+    /// `distributionService`, oldest first, waiting for the ratchet tree
+    /// from the room's hub before they become invites (decision
+    /// mimid-1wgh.81).
+    #[serde(default)]
+    pub awaiting_tree: Vec<String>,
     /// The KeyPackages this device published that the server still
     /// holds, by id (the unpadded base64url KeyPackageRef), as of
     /// `key_package_state` and the publishing since (findings log F9).
@@ -353,6 +359,7 @@ impl StateDir {
             invites: Vec::new(),
             held: Vec::new(),
             consumed_welcomes: Vec::new(),
+            awaiting_tree: Vec::new(),
             key_packages: Vec::new(),
             key_package_state: None,
             signature_key_bound: false,

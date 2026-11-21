@@ -253,6 +253,11 @@ pub struct Hub {
     /// Peers that speak an encoding other than protocol-07 for the
     /// messages #190 extends (bead mimid-1wgh.55.5).
     wire_profiles: BTreeMap<Domain, mimi_protocol::WireProfile>,
+    /// The longest Welcome fanout body and groupInfo response the hub
+    /// makes: [`crate::http::MAX_BODY_LEN`], which bounds what a peer reads
+    /// (decisions mimid-1wgh.6.67, mimid-1wgh.81), unless a test lowered
+    /// it with [`Hub::with_body_limit`].
+    body_limit: usize,
 }
 
 /// What a deployment requires of the rooms it hosts beyond the drafts
@@ -399,7 +404,20 @@ impl Hub {
             requirements,
             limits: FieldLimits::default(),
             wire_profiles: BTreeMap::new(),
+            body_limit: crate::http::MAX_BODY_LEN,
         })
+    }
+
+    /// Test hook: lowers the longest Welcome fanout body and groupInfo
+    /// response the hub makes from [`crate::http::MAX_BODY_LEN`] to
+    /// `limit`, so that a test reaches the out-of-band ratchet tree path of
+    /// decision mimid-1wgh.81 with a small room instead of one whose tree
+    /// is megabytes. A deployment never calls it: a peer reads at most
+    /// [`crate::http::MAX_BODY_LEN`], whatever this says.
+    #[must_use]
+    pub fn with_body_limit(mut self, limit: usize) -> Self {
+        self.body_limit = limit.min(crate::http::MAX_BODY_LEN);
+        self
     }
 
     /// Sets the size limits on fields the hub receives (bead
@@ -872,10 +890,12 @@ impl Hub {
     }
 
     /// protocol-07 §5.6 `POST /groupInfo/{roomId}`: checks the TLS-encoded
-    /// `GroupInfoRequest` `request` and, if room policy allows the
-    /// requester an external join, answers with the room's GroupInfo,
-    /// ratchet tree and pending proposals, encrypted to the requester.
-    /// `from` is the domain of the request's `From` header.
+    /// `GroupInfoRequest` `request` and, if the requester holds a leaf of
+    /// the group (a joiner whose Welcome came without the tree, decision
+    /// mimid-1wgh.81) or room policy allows it an external join, answers
+    /// with the room's GroupInfo, ratchet tree and pending proposals,
+    /// encrypted to the requester. `from` is the domain of the request's
+    /// `From` header.
     ///
     /// Returns the TLS-encoded `GroupInfoResponse`: `success`, signed by
     /// the hub's key, or `notAuthorized` for a request whose signature does
@@ -887,7 +907,9 @@ impl Hub {
     /// # Errors
     ///
     /// Returns [`HubError::InvalidRequest`] if `request` does not decode,
-    /// [`HubError::NoSuchRoom`] if the room is not hosted here, and
+    /// [`HubError::NoSuchRoom`] if the room is not hosted here,
+    /// [`HubError::GroupInfoTooLarge`] if the response would be longer
+    /// than a peer reads (decision mimid-1wgh.81), and
     /// [`HubError::Encode`], [`HubError::GroupInfoResponse`],
     /// [`HubError::SnapshotMismatch`] or [`HubError::Store`] for internal
     /// failures.
@@ -1098,6 +1120,14 @@ pub enum HubError {
     /// mimid-1wgh.6.11).
     #[error("the GroupInfo embeds a ratchet_tree extension")]
     GroupInfoHasRatchetTree,
+    /// The groupInfo response, with the room's ratchet tree in it, would
+    /// be longer than [`crate::http::MAX_BODY_LEN`], which is all a peer
+    /// reads (decisions mimid-1wgh.6.67, mimid-1wgh.81).
+    #[error("the GroupInfo and ratchet tree are too large for one response ({len} octets)")]
+    GroupInfoTooLarge {
+        /// The length of the response the hub would have sent.
+        len: usize,
+    },
     /// The GroupInfo or ratchet tree failed MLS validation.
     #[error("invalid GroupInfo or ratchet tree")]
     InvalidGroupInfo(#[source] ObserverError),

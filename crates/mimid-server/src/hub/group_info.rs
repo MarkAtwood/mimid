@@ -12,23 +12,37 @@
 //! 3. `requestingCredential` must be a BasicCredential whose identity is a
 //!    user URI (decision mimid-1wgh.6.1), and the `From` domain must be
 //!    that URI's domain (decision mimid-1wgh.6.9).
-//! 4. Room policy must let that user fetch the GroupInfo
+//! 4. A requester that holds a leaf of the group gets the GroupInfo
+//!    without a policy check: `requestingSignatureKey` is the signature key
+//!    of a current leaf whose member identity is the requesting
+//!    credential's (decision mimid-1wgh.81). The request's signature in
+//!    step 2 proves it holds that leaf's private key. This is how a joiner
+//!    whose Welcome came with the `distributionService` RatchetTreeOption
+//!    gets the tree: the Commit that added it is merged, so its leaf is in
+//!    the hub's tree, and a member is entitled to the tree it is in.
+//! 5. Anyone else needs room policy to let it fetch the GroupInfo
 //!    ([`policy::authorize_group_info`]): a listed participant whose role
 //!    holds `canAddOwnClient`, or an unlisted user allowed by `canOpenJoin`
 //!    or by preauthorization. A request with a `joiningCode` is refused
 //!    (decision mimid-1wgh.6.13).
-//! 5. The payload is the stored GroupInfo, which never embeds a
+//! 6. The payload is the stored GroupInfo, which never embeds a
 //!    ratchet_tree (decision mimid-1wgh.6.11), the stored ratchet tree as a
 //!    `full` [`RatchetTreeOption`], and the current epoch's pending
 //!    proposals in hub order with their `hub_accepted_time`. It is
 //!    encrypted to `groupInfoPublicKey` with the room ID as context
 //!    ([`encrypt_group_info`]).
-//! 6. The `GroupInfoResponseTBS` is signed with the hub's key. `hub_sender`
+//! 7. The `GroupInfoResponseTBS` is signed with the hub's key. `hub_sender`
 //!    is that key with the credential `mimi://<hub domain>` (decisions
 //!    mimid-1wgh.6.18, mimid-1wgh.6.35), and `cipher_suite` is the
 //!    request's.
+//! 8. A response longer than a peer reads ([`crate::http::MAX_BODY_LEN`],
+//!    decision mimid-1wgh.6.67) is not sent: the answer is
+//!    [`HubError::GroupInfoTooLarge`] (decision mimid-1wgh.81). The hub
+//!    refuses a Commit whose newcomers would get that answer
+//!    ([`response_len`]), so it comes only when pending proposals have
+//!    grown the response since.
 //!
-//! Every refusal in steps 2 to 5 is `notAuthorized`, the only failure
+//! Every refusal in steps 2 to 6 is `notAuthorized`, the only failure
 //! code §5.6 defines besides `noSuchRoom` (decision mimid-1wgh.6.59). A
 //! room not hosted here is [`HubError::NoSuchRoom`], which HTTP answers
 //! with `404` (decisions mimid-1wgh.6.8, mimid-1wgh.6.60). Nothing is
@@ -45,12 +59,20 @@
 //! - A request is not correlated with the external Commit that follows it
 //!   (decision mimid-1wgh.6.14).
 //! - Join codes are not supported (decision mimid-1wgh.6.13).
-//! - The ratchet tree is always sent `full` (decision mimid-1wgh.6.11).
+//! - The ratchet tree is always sent `full` (decision mimid-1wgh.6.11), so
+//!   a room whose tree does not fit one response cannot be joined, by
+//!   external Commit or by a Welcome without the tree (decision
+//!   mimid-1wgh.81).
+//! - The response is the current epoch's. A joiner whose Welcome is for an
+//!   earlier epoch cannot use it (decision mimid-1wgh.81).
 //! - A `groupInfoPublicKey` that HPKE cannot encrypt to gets
 //!   `notAuthorized`, as §5.6 has no code for a malformed request.
 
-use mimi_mls::tls_codec::{Deserialize, Serialize};
-use mimi_mls::wire::{ExternalSender, GroupInfo, MLSMessage, RatchetTreeOption};
+use mimi_mls::tls_codec::{Deserialize, Serialize, VLBytes};
+use mimi_mls::wire::{
+    CipherSuite, ExternalSender, GroupInfo, HPKECiphertext, HPKEPublicKey, MLSMessage,
+    RatchetTreeOption,
+};
 use mimi_protocol::{
     GroupInfoRatchetTreeTbe, GroupInfoRequest, GroupInfoResponse, GroupInfoResponseTbs,
     PendingProposal, Protocol, encrypt_group_info,
@@ -60,7 +82,7 @@ use super::room::{GROUP_INFO_MESSAGE_HEADER, hub_sender};
 use super::state::{room_state, user_domain};
 use super::{Hub, HubError, Room, policy};
 use crate::config::Domain;
-use crate::store::{RoomSnapshot, StoreError};
+use crate::store::StoreError;
 
 /// Runs [`Hub::group_info`].
 pub(super) async fn group_info(
@@ -100,28 +122,24 @@ pub(super) async fn group_info(
         .pending_proposals_with_times(room_id, epoch)
         .await?;
     let pending_count = pending.len();
-    let tbe = payload(&snapshot, pending)?;
+    let tbe = payload(&snapshot.group_info, &snapshot.ratchet_tree, pending)?;
     let tbs = decoded.tbs();
-    // protocol-07 §5.6; decisions mimid-1wgh.5.30 (room_id context),
-    // mimid-1wgh.5.55 (suite-1 HPKE).
-    let encrypted = match encrypt_group_info(&tbs.group_info_public_key, room_id.as_bytes(), &tbe) {
-        Ok(encrypted) => encrypted,
-        Err(mimi_protocol::Error::Encoding(error)) => return Err(HubError::Encode(error)),
-        Err(_) => return refuse(room_id, "groupInfoPublicKey is unusable"),
+    let Some(encrypted) = encrypt(&tbs.group_info_public_key, room_id, &tbe)? else {
+        return refuse(room_id, "groupInfoPublicKey is unusable");
     };
-    let (key, credential) = hub_sender(hub.signing_key.public(), &hub.domain)?;
-    let response_tbs = GroupInfoResponseTbs {
-        protocol: Protocol::Mls10,
-        room_id: room_id.as_bytes().to_vec(),
-        cipher_suite: tbs.cipher_suite,
-        hub_sender: ExternalSender::tls_deserialize_exact([key, credential].concat())
-            .map_err(HubError::Encode)?,
-        encrypted_groupinfo_and_tree: encrypted,
-    };
-    let success = hub.signing_key.sign_group_info_response(response_tbs)?;
-    let body = GroupInfoResponse::Success(success)
-        .tls_serialize_detached()
-        .map_err(HubError::Encode)?;
+    let body = signed_response(hub, room_id, tbs.cipher_suite, encrypted)?;
+    // Decision mimid-1wgh.81: never a response a peer will not read.
+    if body.len() > hub.body_limit {
+        tracing::info!(
+            name: "group_info_too_large",
+            room_id,
+            epoch,
+            len = body.len(),
+            limit = hub.body_limit,
+            "GroupInfo and ratchet tree too large for one response; not served"
+        );
+        return Err(HubError::GroupInfoTooLarge { len: body.len() });
+    }
     tracing::info!(
         name: "group_info_served",
         room_id,
@@ -132,7 +150,77 @@ pub(super) async fn group_info(
     Ok(body)
 }
 
-/// Runs steps 2 to 4 of the module documentation. Returns why the request
+/// The length of the groupInfo response a newcomer of the epoch the hub
+/// just merged would get: `group_info` (with its MLSMessage header) and
+/// `ratchet_tree` are that epoch's, and there are no pending proposals yet.
+/// The response is built in full, encrypted to a key made for the purpose,
+/// since its length does not depend on the requester's key (decision
+/// mimid-1wgh.81).
+///
+/// # Errors
+///
+/// [`HubError::Store`] if `group_info` or `ratchet_tree` does not decode,
+/// [`HubError::KeyGeneration`] if no HPKE key can be made, and the errors
+/// of signing and encoding.
+pub(super) fn response_len(
+    hub: &Hub,
+    room_id: &str,
+    group_info: &[u8],
+    ratchet_tree: &[u8],
+) -> Result<usize, HubError> {
+    let tbe = payload(group_info, ratchet_tree, Vec::new())?;
+    let (_, public) =
+        mimi_mls::label::HpkePrivateKey::generate().map_err(|_| HubError::KeyGeneration)?;
+    let public = VLBytes::new(public)
+        .tls_serialize_detached()
+        .and_then(HPKEPublicKey::tls_deserialize_exact)
+        .map_err(HubError::Encode)?;
+    let encrypted = encrypt(&public, room_id, &tbe)?.ok_or(HubError::Store(
+        StoreError::Corrupt("a fresh HPKE key is unusable"),
+    ))?;
+    let suite_1 = CipherSuite::tls_deserialize_exact([0x00, 0x01]).map_err(HubError::Encode)?;
+    Ok(signed_response(hub, room_id, suite_1, encrypted)?.len())
+}
+
+/// Encrypts `tbe` to `group_info_public_key` with the room ID as context
+/// (protocol-07 §5.6; decisions mimid-1wgh.5.30, mimid-1wgh.5.55). `None`
+/// if HPKE cannot encrypt to the key.
+fn encrypt(
+    group_info_public_key: &HPKEPublicKey,
+    room_id: &str,
+    tbe: &GroupInfoRatchetTreeTbe,
+) -> Result<Option<HPKECiphertext>, HubError> {
+    match encrypt_group_info(group_info_public_key, room_id.as_bytes(), tbe) {
+        Ok(encrypted) => Ok(Some(encrypted)),
+        Err(mimi_protocol::Error::Encoding(error)) => Err(HubError::Encode(error)),
+        Err(_) => Ok(None),
+    }
+}
+
+/// The encoded `success` GroupInfoResponse carrying `encrypted`, signed
+/// with the hub's key (step 7).
+fn signed_response(
+    hub: &Hub,
+    room_id: &str,
+    cipher_suite: CipherSuite,
+    encrypted: HPKECiphertext,
+) -> Result<Vec<u8>, HubError> {
+    let (key, credential) = hub_sender(hub.signing_key.public(), &hub.domain)?;
+    let response_tbs = GroupInfoResponseTbs {
+        protocol: Protocol::Mls10,
+        room_id: room_id.as_bytes().to_vec(),
+        cipher_suite,
+        hub_sender: ExternalSender::tls_deserialize_exact([key, credential].concat())
+            .map_err(HubError::Encode)?,
+        encrypted_groupinfo_and_tree: encrypted,
+    };
+    let success = hub.signing_key.sign_group_info_response(response_tbs)?;
+    GroupInfoResponse::Success(success)
+        .tls_serialize_detached()
+        .map_err(HubError::Encode)
+}
+
+/// Runs steps 2 to 5 of the module documentation. Returns why the request
 /// is refused, if it is.
 fn check(
     room: &Room,
@@ -153,6 +241,10 @@ fn check(
     let requester_domain = std::str::from_utf8(requester).ok().and_then(user_domain);
     if requester_domain != Some(from.as_str()) {
         return Err("From domain is not the requesting credential's domain");
+    }
+    // Decision mimid-1wgh.81: a member, by the leaf key it signed with.
+    if holds_leaf(room, requester, tbs.requesting_signature_key.as_bytes()) {
+        return Ok(());
     }
     // A malformed policy component is refused at creation, so this is
     // defence in depth (decision mimid-1wgh.6.51); a missing one makes an
@@ -176,19 +268,39 @@ fn check(
     })
 }
 
-/// Builds the `GroupInfoRatchetTreeTBE` from the room's stored snapshot and
-/// its current pending proposals as (proposal, `hub_accepted_time`).
+/// Whether `signature_key` (an encoded `SignaturePublicKey`) is the
+/// signature key of a current leaf of the room whose member identity is
+/// `requester` (step 4; decision mimid-1wgh.81).
+fn holds_leaf(room: &Room, requester: &[u8], signature_key: &[u8]) -> bool {
+    let Ok(key) = VLBytes::tls_deserialize_exact(signature_key) else {
+        return false;
+    };
+    let identities = room.observer.members();
+    room.observer
+        .member_signature_keys()
+        .iter()
+        .filter(|(_, leaf_key)| leaf_key.as_slice() == key.as_slice())
+        .any(|(index, _)| {
+            identities
+                .iter()
+                .any(|(leaf, identity)| leaf == index && identity.as_slice() == requester)
+        })
+}
+
+/// Builds the `GroupInfoRatchetTreeTBE` from a stored GroupInfo (with its
+/// MLSMessage header) and ratchet tree, and the pending proposals as
+/// (proposal, `hub_accepted_time`).
 fn payload(
-    snapshot: &RoomSnapshot,
+    group_info: &[u8],
+    ratchet_tree: &[u8],
     pending: Vec<(Vec<u8>, u64)>,
 ) -> Result<GroupInfoRatchetTreeTbe, HubError> {
     let corrupt = |what| HubError::Store(StoreError::Corrupt(what));
-    let group_info = snapshot
-        .group_info
+    let group_info = group_info
         .strip_prefix(&GROUP_INFO_MESSAGE_HEADER)
         .and_then(|body| GroupInfo::tls_deserialize_exact(body).ok())
         .ok_or_else(|| corrupt("stored GroupInfo does not decode"))?;
-    let ratchet_tree_option = RatchetTreeOption::full(&snapshot.ratchet_tree)
+    let ratchet_tree_option = RatchetTreeOption::full(ratchet_tree)
         .map_err(|_| corrupt("stored ratchet tree does not decode"))?;
     let pending_proposals = pending
         .into_iter()

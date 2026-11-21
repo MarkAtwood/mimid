@@ -9,6 +9,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use mimi_room_policy::{
+    BANNED_ROLE_INDEX, Capability, Role, RoleData, SingleSourceRoleChangeTargets,
+};
 use mimid_agent_core::{Agent, AgentConfig, DidWebvhConfig, Event};
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::directory;
@@ -26,11 +29,13 @@ pub const ALICE: &str = "mimi://a.example/u/alice";
 pub const BOB: &str = "mimi://a.example/u/bob";
 pub const CAROL: &str = "mimi://a.example/u/carol";
 
-/// A running server: its base URL, a token per user and its hub.
+/// A running server: its base URL, a token per user, its hub and its
+/// store.
 pub struct Server {
     pub base: String,
     pub tokens: BTreeMap<&'static str, String>,
     pub hub: Arc<Hub>,
+    pub store: Store,
 }
 
 /// a.example's stack as `main.rs` wires it (hub, follower, fanout with
@@ -42,6 +47,18 @@ pub async fn server(dir: &Path, users: &[&'static str]) -> Server {
 
 /// [`server`] with the JMAP endpoint's `options`.
 pub async fn server_with(dir: &Path, users: &[&'static str], options: JmapOptions) -> Server {
+    server_limited(dir, users, options, None).await
+}
+
+/// [`server_with`] whose hub makes no Welcome fanout body or groupInfo
+/// response longer than `body_limit` ([`Hub::with_body_limit`], the test
+/// hook of decision mimid-1wgh.81), if given.
+pub async fn server_limited(
+    dir: &Path,
+    users: &[&'static str],
+    options: JmapOptions,
+    body_limit: Option<usize>,
+) -> Server {
     let domain = Domain::try_from("a.example".to_owned()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_text = format!("http://{}", listener.local_addr().unwrap());
@@ -69,14 +86,16 @@ pub async fn server_with(dir: &Path, users: &[&'static str], options: JmapOption
         Arc::clone(&clock),
     )
     .spawn();
-    let hub = Arc::new(
-        Hub::open(store.clone(), domain.clone(), Arc::clone(&clock))
-            .await
-            .unwrap()
-            .with_fanout(fanout)
-            .with_peers(peers())
-            .with_local_key_material(Arc::clone(&key_packages) as _),
-    );
+    let mut hub = Hub::open(store.clone(), domain.clone(), Arc::clone(&clock))
+        .await
+        .unwrap()
+        .with_fanout(fanout)
+        .with_peers(peers())
+        .with_local_key_material(Arc::clone(&key_packages) as _);
+    if let Some(limit) = body_limit {
+        hub = hub.with_body_limit(limit);
+    }
+    let hub = Arc::new(hub);
     follower
         .set_relay(Relay::new(Arc::clone(&hub), peers()))
         .unwrap();
@@ -88,7 +107,7 @@ pub async fn server_with(dir: &Path, users: &[&'static str], options: JmapOption
     }
     let jmap = jmap::router(
         &base,
-        store,
+        store.clone(),
         Arc::clone(&hub),
         Arc::clone(&follower),
         options,
@@ -100,6 +119,7 @@ pub async fn server_with(dir: &Path, users: &[&'static str], options: JmapOption
         base: base_text,
         tokens,
         hub,
+        store,
     }
 }
 
@@ -214,5 +234,40 @@ pub async fn sends(
             "{} receiving {text:?}",
             receiver.user()
         );
+    }
+}
+
+/// The default roles without `canAddOwnClient`.
+pub fn roles_without_add_own_client() -> RoleData {
+    let role = |role_index: u32, name: &str, changes: Vec<SingleSourceRoleChangeTargets>| Role {
+        role_index,
+        role_name: name.to_owned(),
+        role_description: String::new(),
+        role_capabilities: if role_index == BANNED_ROLE_INDEX {
+            vec![]
+        } else {
+            vec![
+                Capability::CAN_ADD_PARTICIPANT,
+                Capability::CAN_REMOVE_SELF,
+                Capability::CAN_SEND_MESSAGE,
+                Capability::CAN_RECEIVE_MESSAGE,
+            ]
+        },
+        minimum_participants_constraint: 0,
+        maximum_participants_constraint: None,
+        minimum_active_participants_constraint: 0,
+        maximum_active_participants_constraint: None,
+        authorized_role_changes: changes,
+    };
+    let change = |from: u32, to: &[u32]| SingleSourceRoleChangeTargets {
+        from_role_index: from,
+        target_role_indexes: to.to_vec(),
+    };
+    RoleData {
+        roles: vec![
+            role(BANNED_ROLE_INDEX, "banned", vec![]),
+            role(2, "member", vec![change(0, &[2]), change(2, &[0])]),
+            role(3, "admin", vec![change(0, &[2]), change(3, &[0])]),
+        ],
     }
 }
