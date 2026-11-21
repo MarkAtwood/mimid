@@ -84,9 +84,9 @@ use jmap_server::{
     BackendChangesError, BackendQueryError, CallContext, ChangesParams, ChangesResult, GetObject,
     HandlerFuture, HandlerOutput, I18nInfo, I18nProjection, Id, JmapAccounts, JmapError,
     JmapHandler, JmapObject, JmapReads, QueryChangesParams, QueryChangesResult, QueryObject,
-    QueryParams, QueryResult, SetError, SetErrorType, State, handle_changes, handle_query,
-    handle_query_changes, handle_query_changes_with_i18n, handle_query_with_i18n,
-    resolve_query_start, server_fail_from_backend,
+    QueryParams, QueryResult, State, handle_changes, handle_query, handle_query_changes,
+    handle_query_changes_with_i18n, handle_query_with_i18n, resolve_query_start,
+    server_fail_from_backend,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -1573,35 +1573,26 @@ pub(crate) fn register(methods: &mut Methods, projection: &Arc<Projection>) {
     }
 }
 
-/// How a `/set` refuses a create or update.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Refusal {
-    /// The entry gets the SetError `forbidden`.
-    Forbidden,
-    /// The whole call gets the method-level error `invalidArguments`
-    /// (RFC 8620 §3.6.2), which mimi-00 §mls-messages names for a Message
-    /// create and a body change (decision mimid-1wgh.11.8).
-    InvalidArguments,
+/// The SetError `forbidden` with `description`.
+fn forbidden(description: &str) -> Value {
+    json!({"type": "forbidden", "description": description})
 }
 
-/// The SetError `forbidden`.
-fn forbidden() -> Value {
-    serde_json::to_value(SetError::new(SetErrorType::Forbidden))
-        .unwrap_or_else(|_| json!({"type": "serverFail"}))
-}
-
-/// The rules of a `/set` that changes nothing.
+/// What a `/set` that changes nothing answers for a create or update:
+/// the SetError of the entry.
 #[derive(Clone, Copy)]
 pub(crate) struct RefusingSet {
-    /// What every create gets.
-    pub(crate) create: Refusal,
-    /// What an update of an existing object with this patch gets.
-    pub(crate) update: fn(&Map<String, Value>) -> Refusal,
+    /// The SetError of a create of `object`; `known_chat` is whether its
+    /// `chatId` names a Chat the account sees.
+    pub(crate) create: fn(object: &Map<String, Value>, known_chat: bool) -> Value,
+    /// The SetError of an update of an existing object with this patch.
+    pub(crate) update: fn(&Map<String, Value>) -> Value,
 }
 
 /// RFC 8620 §5.3 `/set` for a projected `kind` that refuses every create,
-/// update and destroy by `rules`: an update or destroy of an object the
-/// account cannot see is `notFound`, and `ifInState` is checked first.
+/// update and destroy by `rules`, each with its own SetError: an update
+/// or destroy of an object the account cannot see is `notFound`, and
+/// `ifInState` is checked first.
 async fn refuse_set(
     projection: &Projection,
     kind: Kind,
@@ -1642,6 +1633,13 @@ async fn refuse_set(
         };
         patches.push((id.clone(), patch));
     }
+    let mut creates = Vec::with_capacity(create.len());
+    for (id, object) in &create {
+        let Value::Object(object) = object else {
+            return Err(JmapError::invalid_arguments("a create must be an object"));
+        };
+        creates.push((id.clone(), object));
+    }
     let named: Vec<String> = update
         .keys()
         .cloned()
@@ -1660,34 +1658,61 @@ async fn refuse_set(
         Some(Value::String(_)) => return Err(JmapError::state_mismatch()),
         Some(_) => return Err(JmapError::invalid_arguments("ifInState must be a string")),
     }
-    // Decision mimid-1wgh.11.8: one such entry refuses the whole call.
-    let refuses_call = (!create.is_empty() && rules.create == Refusal::InvalidArguments)
-        || patches.iter().any(|(id, patch)| {
-            found.contains(id) && (rules.update)(patch) == Refusal::InvalidArguments
-        });
-    if refuses_call {
-        return Err(JmapError::invalid_arguments(
-            "server-created Messages cannot be created or have their content changed",
-        ));
-    }
-    let not_found = || json!({"type": "notFound"});
-    let refused = |id: &String| {
-        if found.contains(id) {
-            forbidden()
-        } else {
-            not_found()
-        }
+    // The Chats the creates name, for the create rule.
+    let chat_ids: Vec<String> = creates
+        .iter()
+        .filter_map(|(_, object)| object.get("chatId")?.as_str().map(str::to_owned))
+        .collect();
+    let chats: BTreeSet<String> = if chat_ids.is_empty() {
+        BTreeSet::new()
+    } else {
+        projection
+            .records(
+                Kind::Chat,
+                account,
+                Some(&chat_ids),
+                Some(&[][..]),
+                &stored(account),
+            )
+            .await?
+            .1
+            .iter()
+            .filter_map(|object| object.get("id")?.as_str().map(str::to_owned))
+            .collect()
     };
-    let not_created: BTreeMap<String, Value> = create
-        .keys()
-        .map(|key| (key.clone(), forbidden()))
+    let not_found = || json!({"type": "notFound"});
+    let not_created: BTreeMap<String, Value> = creates
+        .iter()
+        .map(|(id, object)| {
+            let known_chat = object
+                .get("chatId")
+                .and_then(Value::as_str)
+                .is_some_and(|chat| chats.contains(chat));
+            (id.clone(), (rules.create)(object, known_chat))
+        })
         .collect();
     let not_updated: BTreeMap<String, Value> = patches
         .iter()
-        .map(|(id, _)| (id.clone(), refused(id)))
+        .map(|(id, patch)| {
+            let error = if found.contains(id) {
+                (rules.update)(patch)
+            } else {
+                not_found()
+            };
+            (id.clone(), error)
+        })
         .collect();
-    let not_destroyed: BTreeMap<String, Value> =
-        destroy.iter().map(|id| (id.clone(), refused(id))).collect();
+    let not_destroyed: BTreeMap<String, Value> = destroy
+        .iter()
+        .map(|id| {
+            let error = if found.contains(id) {
+                forbidden("server-created Messages cannot be destroyed")
+            } else {
+                not_found()
+            };
+            (id.clone(), error)
+        })
+        .collect();
     let or_null = |map: BTreeMap<String, Value>| {
         if map.is_empty() {
             Value::Null

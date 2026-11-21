@@ -1138,30 +1138,30 @@ async fn sets_refuse_everything() {
         })
     );
 
-    // Decision mimid-1wgh.11.8: a create, or a content change of an
-    // existing Message, refuses the whole call with invalidArguments.
-    let create = json!({"m": {
-        "chatId": chat_id,
-        "body": "aGk",
-        "bodyType": "application/mimi-fanout",
-        "sentAt": "2023-11-14T22:15:00Z",
-    }});
-    for args in [
-        json!({"accountId": account, "create": create, "destroy": [message_id]}),
-        json!({"accountId": account, "update": {message_id.clone(): {"body": "x"}}}),
-    ] {
-        let (name, response) = f.call(&f.alice_token, "Message/set", args.clone()).await;
-        assert_eq!(name, "error", "{args}");
-        assert_eq!(response["type"], "invalidArguments", "{args}");
-    }
-
-    // Other updates and destroys get forbidden per entry; unknown ids,
-    // even with a content change, get notFound.
+    // jmap-chat-spec 735503c (clean-room finding C17): a create in a Chat
+    // with a roomId is forbidden whatever its bodyType; one naming no Chat
+    // is invalidProperties chatId; a content change of an existing Message
+    // is invalidProperties naming what it changes; other updates and
+    // destroys are forbidden; unknown ids, even with a content change, are
+    // notFound. Each refusal has a description.
+    let create = |body_type: &str, chat: &str| {
+        json!({
+            "chatId": chat,
+            "body": "aGk",
+            "bodyType": body_type,
+            "sentAt": "2023-11-14T22:15:00Z",
+        })
+    };
     let response = f
         .alice(
             "Message/set",
             json!({
                 "accountId": account,
+                "create": {
+                    "fanout": create("application/mimi-fanout", &chat_id),
+                    "text": create("text/plain", &chat_id),
+                    "nowhere": create("text/plain", "01ARYZ6S41TSV4RRFFQ69G5FAV"),
+                },
                 "update": {
                     message_id.clone(): {"readAt": "2023-11-14T22:15:00Z"},
                     "01ARYZ6S41TSV4RRFFQ69G5FAV": {"body": "x"},
@@ -1170,19 +1170,51 @@ async fn sets_refuse_everything() {
             }),
         )
         .await;
-    assert_eq!(response["notCreated"], Value::Null);
+    let types = |map: &Value| -> Value {
+        Value::Object(
+            map.as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| {
+                    assert!(
+                        v["type"] == "notFound" || v["description"].is_string(),
+                        "{v}"
+                    );
+                    (k.clone(), json!([v["type"], v["properties"]]))
+                })
+                .collect(),
+        )
+    };
     assert_eq!(
-        response["notUpdated"],
+        types(&response["notCreated"]),
         json!({
-            message_id.clone(): {"type": "forbidden"},
-            "01ARYZ6S41TSV4RRFFQ69G5FAV": {"type": "notFound"},
+            "fanout": ["forbidden", null],
+            "text": ["forbidden", null],
+            "nowhere": ["invalidProperties", ["chatId"]],
         })
     );
     assert_eq!(
-        response["notDestroyed"],
-        json!({message_id.clone(): {"type": "forbidden"}})
+        types(&response["notUpdated"]),
+        json!({
+            message_id.clone(): ["forbidden", null],
+            "01ARYZ6S41TSV4RRFFQ69G5FAV": ["notFound", null],
+        })
+    );
+    assert_eq!(
+        types(&response["notDestroyed"]),
+        json!({message_id.clone(): ["forbidden", null]})
     );
     assert_eq!(response["created"], Value::Null);
+    let content = f
+        .alice(
+            "Message/set",
+            json!({"accountId": account, "update": {message_id.clone(): {"body": "x", "reactions/k": null}}}),
+        )
+        .await;
+    assert_eq!(
+        types(&content["notUpdated"]),
+        json!({message_id.clone(): ["invalidProperties", ["body", "reactions"]]})
+    );
 
     // ifInState mismatch: nothing is looked at (RFC 8620 §5.3).
     f.alice_error(
