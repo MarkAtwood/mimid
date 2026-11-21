@@ -2,13 +2,15 @@
   "id": "mimid-jvde",
   "title": "A Welcome fanout with the hub's ratchet tree can exceed MAX_BODY_LEN",
   "description": "Found by mimid-e64f.18 (2026-11-21). maxMlsObjectSize (4 MiB - 64 KiB) bounds what a client sends, but a Welcome's FanoutMessage carries the hub's own ratchet tree (crates/mimid-server/src/hub/update.rs), not anything from the client's request. If a client's Commit carries no tree (e.g. tree by reference), the Welcome fanout body is the Welcome plus the whole tree and can exceed MAX_BODY_LEN (4 MiB) however small the object limit is. Options: send the tree out of band (ratchet tree options), refuse at the hub with a clear error, or bound the group size. Needs a decision before large rooms.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T01:36:32.730234761Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T01:36:32.730234761Z",
+  "updated_at": "2026-11-21T03:01:12.427313734Z",
+  "closed_at": "2026-11-21T03:01:12.427313734Z",
+  "close_reason": "Fixed in b765ccd (branch welcome-tree): oversized Welcomes go with RatchetTreeOption distributionService and joiners fetch the tree by groupInfo with their leaf key; if neither fits, the Commit is refused. Decision mimid-1wgh.81; spec gaps mimid-3hoq.",
   "labels": [
     "server"
   ]
