@@ -512,6 +512,7 @@ mod tests {
             in_reply_to: None,
             topic_id: None,
             attachments: Vec::new(),
+            calls: Vec::new(),
             edit_history: Vec::new(),
             edited_at: None,
             deleted: None,

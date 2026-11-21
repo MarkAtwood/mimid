@@ -57,8 +57,8 @@ use crate::change::Change;
 use crate::content::BodyType;
 use crate::convert::{message_ref, sender_msg_id};
 use crate::record::{
-    Attachment, Ban, Deletion, Key, Message, MessageExpiry, Octets, Person, ReadPosition, Room,
-    RoomStatus as Status, Sender,
+    Attachment, Ban, Call, Deletion, Key, Message, MessageExpiry, Octets, Person, ReadPosition,
+    Room, RoomStatus as Status, Sender,
 };
 use crate::state::RemovedRoom;
 use crate::store::Store;
@@ -119,6 +119,11 @@ pub enum ActionError {
     /// The message's expiry cannot be sent ([`crate::expiry`]).
     #[error(transparent)]
     Expiry(#[from] crate::expiry::ExpiryError),
+    /// A call to send whose URL is no `https` or `wss` link
+    /// ([`crate::content::is_call_link`]), or whose description is over
+    /// [`crate::content::MAX_CALL_DESCRIPTION_CHARS`].
+    #[error("not a call to send: {0}")]
+    InvalidCall(&'static str),
 }
 
 impl ActionError {
@@ -531,6 +536,96 @@ impl Store {
             in_reply_to: None,
             topic_id: None,
             attachments,
+            calls: Vec::new(),
+            edit_history: Vec::new(),
+            edited_at: None,
+            deleted: None,
+            kept_frank: None,
+            notice: None,
+            expiry,
+            read_at: None,
+            ext: BTreeMap::new(),
+        };
+        state.insert_message(message.clone());
+        drop(state);
+        drop(agent);
+        self.record([Change::MessageAdded(message.key.clone())]);
+        if !expiry.is_none() {
+            self.want_expiry();
+        }
+        self.want_sync();
+        Ok(message)
+    }
+
+    /// Sends a call to join (mimi-content-10 §5.10;
+    /// docs/design/agent-frontends.md §7.24) to room `key`, after `text`
+    /// if it is not empty (`Agent::send_session_link`): the call's URL as
+    /// an ExternalPart of disposition `session` with its description,
+    /// nothing uploaded, and the call's `expires` as the part's. The
+    /// message disappears as `expiry` asks, as for [`Store::send_with`],
+    /// and is recorded under `key` as the user's, with the call.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::InvalidCall`] for a URL that is no `https` or `wss`
+    /// link or a description over
+    /// [`crate::content::MAX_CALL_DESCRIPTION_CHARS`];
+    /// [`ActionError::NoSuchRoom`]; [`ActionError::Expiry`] as for
+    /// [`Store::send_with`]; [`ActionError::Agent`] if sending fails.
+    /// Nothing is sent on any but the last.
+    pub async fn send_call(
+        &self,
+        key: Key,
+        room: &str,
+        text: &str,
+        call: &Call,
+        expiry: MessageExpiry,
+    ) -> Result<Message, ActionError> {
+        if !call.is_link() {
+            return Err(ActionError::InvalidCall(
+                "the URL is not an https or wss link",
+            ));
+        }
+        if call.description.chars().count() > crate::content::MAX_CALL_DESCRIPTION_CHARS {
+            return Err(ActionError::InvalidCall("the description is too long"));
+        }
+        let expiry = crate::expiry::to_whole_seconds(expiry);
+        crate::expiry::check_outgoing(&expiry, now_ms())?;
+        let uri = self.room_uri(room)?;
+        // Held until the record is in, as in Store::send_with.
+        let mut agent = self.agent.lock().await;
+        let options = crate::expiry::content_options(&expiry);
+        let sent = agent
+            .send_session_link(
+                &uri,
+                text,
+                &call.url,
+                &call.description,
+                call.expires.unwrap_or(0),
+                &options,
+            )
+            .await?;
+        let mut state = self.state();
+        let seq = state.take_seq();
+        let message = Message {
+            key,
+            room: room.to_owned(),
+            seq,
+            sender: Sender::User(self.user.clone()),
+            mimi_id: Some(Octets(sent.message_id.0)),
+            aliases: Vec::new(),
+            accepted_at: sent.accepted_at,
+            received_at: sent.accepted_at,
+            sender_msg_id: sender_msg_id(sent.accepted_at, &sent.message_id),
+            body: text.to_owned(),
+            body_type: BodyType::Plain,
+            in_reply_to: None,
+            topic_id: None,
+            attachments: Vec::new(),
+            calls: vec![Call {
+                expires: call.expires.filter(|&at| at != 0),
+                ..call.clone()
+            }],
             edit_history: Vec::new(),
             edited_at: None,
             deleted: None,

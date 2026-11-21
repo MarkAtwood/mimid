@@ -27,7 +27,7 @@
 //! |---|---|---|
 //! | Person | ChatContact | `identity`, `login`, `firstSeenAt`, `lastSeenAt` (made only), `did`, `didChangedAt` |
 //! | Room | Chat, kind `group` | `name`, `roomId` (made only), `members`, `messageExpirySeconds` |
-//! | Message | Message | `senderMsgId`, `senderId`, `chatId`, `sentAt`, `receivedAt`, `replyTo`, `topicId`, `deliveryState`, `senderExpiresAt`, `burnOnRead`, `expiresAfterReadSeconds` (made only); `body`, `bodyType`, `attachments`, `editedAt`, `editHistory`, `deletedAt`, `deletedForAll` |
+//! | Message | Message | `senderMsgId`, `senderId`, `chatId`, `sentAt`, `receivedAt`, `replyTo`, `topicId`, `deliveryState`, `senderExpiresAt`, `burnOnRead`, `expiresAfterReadSeconds` (made only); `body`, `bodyType`, `attachments`, `actions` (the calls, §7.24), `editedAt`, `editHistory`, `deletedAt`, `deletedForAll` |
 //! | Ban | ChatBan | all, made only; destroyed when the record is gone |
 //!
 //! A record deleted (a forgotten person, a deleted message, a room
@@ -163,10 +163,11 @@ fn patch_of(existing: &Value, desired: &Value, keys: &[&str]) -> Map<String, Val
 }
 
 /// The Message properties the store owns after the message is made.
-const MESSAGE_CONTENT: [&str; 7] = [
+const MESSAGE_CONTENT: [&str; 8] = [
     "body",
     "bodyType",
     "attachments",
+    "actions",
     "editedAt",
     "editHistory",
     "deletedAt",
@@ -187,6 +188,46 @@ fn attachment_json(a: &record::Attachment) -> Value {
     })
 }
 
+/// The MessageAction and Endpoint `type` of a video or voice call
+/// (draft-atwood-jmap-chat-00 §Endpoint): a call to join is shown as a
+/// MessageAction of this type (docs/design/agent-frontends.md §7.24).
+pub(crate) const VTC: &str = "urn:ietf:params:jmap:chat:cap:vtc";
+
+/// The JSON of a record's call as a JMAP MessageAction
+/// (draft-atwood-jmap-chat-00 §MessageAction): `type` [`VTC`], `uri` the
+/// URL, `label` the description if it has one, `expiresAt` the part's
+/// `expires` if it has one. Only for a call that [`record::Call::is_link`].
+fn action_json(call: &record::Call) -> Value {
+    let mut action = Map::new();
+    action.insert("type".to_owned(), json!(VTC));
+    action.insert("uri".to_owned(), json!(call.url));
+    if !call.description.is_empty() {
+        action.insert("label".to_owned(), json!(call.description));
+    }
+    if let Some(at) = call.expires {
+        action.insert(
+            "expiresAt".to_owned(),
+            json!(utc_date(u64::from(at) * 1000)),
+        );
+    }
+    Value::Object(action)
+}
+
+/// A Message's `body` for `message`: its text, then a line of
+/// [`record::Call::text`] for each call that is no link, which is shown
+/// as text and never as a MessageAction (docs/design/agent-frontends.md
+/// §7.24).
+fn body_json(message: &record::Message) -> Value {
+    let mut body = message.body.clone();
+    for call in message.calls.iter().filter(|c| !c.is_link()) {
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        body.push_str(&call.text());
+    }
+    json!(body)
+}
+
 fn body_type_json(body_type: mimid_agent_store::content::BodyType) -> Value {
     match body_type {
         mimid_agent_store::content::BodyType::Markdown => json!(BodyType::Markdown),
@@ -199,11 +240,22 @@ fn body_type_json(body_type: mimid_agent_store::content::BodyType) -> Value {
 pub(crate) fn message_content(message: &record::Message) -> Map<String, Value> {
     let date = |ms: Option<u64>| ms.map_or(Value::Null, |ms| json!(utc_date(ms)));
     let mut fields = Map::new();
-    fields.insert("body".to_owned(), json!(message.body));
+    fields.insert("body".to_owned(), body_json(message));
     fields.insert("bodyType".to_owned(), body_type_json(message.body_type));
     fields.insert(
         "attachments".to_owned(),
         Value::Array(message.attachments.iter().map(attachment_json).collect()),
+    );
+    fields.insert(
+        "actions".to_owned(),
+        Value::Array(
+            message
+                .calls
+                .iter()
+                .filter(|c| c.is_link())
+                .map(action_json)
+                .collect(),
+        ),
     );
     fields.insert("editedAt".to_owned(), date(message.edited_at));
     let history: Vec<Value> = message
@@ -248,7 +300,8 @@ pub(crate) fn message_content(message: &record::Message) -> Map<String, Value> {
 /// A Message's content properties as the projection writes them: as
 /// [`message_content`] renders them, but for a message deleted here alone
 /// emptied as crate-jmap empties it (draft-atwood-jmap-chat-00 §Message
-/// `deletedAt`: empty `body` and `attachments`, no `editHistory`), while
+/// `deletedAt`: empty `body` and `attachments`, no `editHistory`; and no
+/// `actions`, docs/design/agent-frontends.md §7.24), while
 /// the record keeps its content for reports.
 pub(crate) fn shown_content(message: &record::Message) -> Map<String, Value> {
     let mut content = message_content(message);
@@ -258,6 +311,7 @@ pub(crate) fn shown_content(message: &record::Message) -> Map<String, Value> {
     ) {
         content.insert("body".to_owned(), json!(""));
         content.insert("attachments".to_owned(), json!([]));
+        content.insert("actions".to_owned(), json!([]));
         content.insert("editHistory".to_owned(), Value::Null);
     }
     content

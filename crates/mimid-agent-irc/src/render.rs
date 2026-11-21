@@ -10,6 +10,7 @@
 //! | The user out of a room | PART from the user, with the reason the user gave on another connection of this daemon, else "no longer in this room" (§7.16) |
 //! | Room deleted here | PART from the user, "deleted here" |
 //! | Message | PRIVMSG from the sender's hostmask, `msgid` and `time`; `/me ` text as ACTION |
+//! | Call to join (§7.24) | ACTION from the sender after the text: `call: <description> <<url>>`, or `(not a web link: <url>)` for a URL that is not `https` or `wss` |
 //! | Reply | `+draft/reply=<msgid>` of a stored message |
 //! | Edit | PRIVMSG `(edited) <text>`, its own msgid, `+draft/reply` naming the first version |
 //! | Retraction | NOTICE from the server: `<nick> retracted a message` |
@@ -27,7 +28,10 @@
 //!
 //! - Messages stored before the connection registered are not shown, and
 //!   neither are edits or retractions made before it (§7.6).
-//! - A message whose text is empty (attachments only) is not shown (§7.4).
+//! - A message whose text is empty and that has no call (attachments
+//!   only) is not shown (§7.4).
+//! - An IRC client may make a link of any URL it sees, the ones shown as
+//!   `not a web link` too; the front end only does not mark them as links.
 //! - A reply to a message not stored here carries no `+draft/reply`.
 
 use std::collections::BTreeSet;
@@ -387,15 +391,32 @@ impl Session {
         }
         match &m.sender {
             Some(sender) => {
-                self.text_lines(
-                    &sender.mask(),
-                    "PRIVMSG",
-                    &m.channel,
-                    &m.record.body,
-                    "",
-                    tags,
-                    time,
-                );
+                let mask = sender.mask();
+                let mut tags = Some(tags);
+                if !m.record.body.is_empty() {
+                    self.text_lines(
+                        &mask,
+                        "PRIVMSG",
+                        &m.channel,
+                        &m.record.body,
+                        "",
+                        tags.take().unwrap_or_default(),
+                        time,
+                    );
+                }
+                // Each call as an ACTION line of its own (§7.24); the
+                // first line of the message carries its tags.
+                for call in &m.record.calls {
+                    self.text_lines(
+                        &mask,
+                        "PRIVMSG",
+                        &m.channel,
+                        &format!("/me {}", call.text()),
+                        "",
+                        tags.take().unwrap_or_default(),
+                        time,
+                    );
+                }
             }
             None => {
                 let server = self.shared.server.clone();

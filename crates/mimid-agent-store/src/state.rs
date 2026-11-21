@@ -203,6 +203,7 @@ impl State {
         message.deleted = Some(Deletion { at, for_all: true });
         message.body = String::new();
         message.attachments.clear();
+        message.calls.clear();
         message.edit_history.clear();
         message.kept_frank = None;
         self.pending_attachments.retain(|p| p.message != key);
@@ -412,6 +413,7 @@ mod tests {
                 size: 1,
                 sha256: "00".into(),
             }],
+            calls: Vec::new(),
             edit_history: Vec::new(),
             edited_at: None,
             deleted: None,

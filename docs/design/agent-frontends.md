@@ -1714,6 +1714,62 @@ Added on 2026-11-20:
     `deletions_survive_a_restart_and_a_failed_save`; mimid-agent
     `tests/disappearing.rs` `a_deletion_due_while_stopped_happens_at_start`.
 
+24. **Calls to join (Mark, 2026-11-21; bead mimid-0p8s).** mimi-content-10
+    §5.10 carries a conference join URL as a part of disposition
+    `session` (7), the example an unencrypted ExternalPart with the URL
+    and a description. Before this, the agent took every ExternalPart for
+    an attachment: it asked its provider to fetch the join URL (mimid's
+    hub refuses a host that is no peer provider's; another provider might
+    fetch it), stored the message with an empty body, and IRC showed
+    nothing.
+    - **Received.** A session part, external or inline, at the top level
+      or in a top-level `processAll` MultiPart, is never fetched
+      (`ReceivedMessage::attachments` leaves it out;
+      `ReceivedMessage::session_parts`). It becomes a `Call` on the
+      message record: `url`, `description`, and the ExternalPart's
+      `expires` if not 0. An inline part is a call only if it is text,
+      its first line that is not empty or a `#` comment the URL
+      (`text/uri-list`, RFC 2483); SDP and other descriptions are left
+      out with a sync problem. At most 4 calls a message, a URL cut to
+      2048 octets, a description to 256 characters (INVENTED, NOT FROM
+      SPEC). A message with only a call is stored, its body empty.
+    - **Link or text.** Only a URL whose scheme is `https` or `wss`, with
+      a host, in printable ASCII without spaces (`content::is_call_link`)
+      is shown as a link. Anything else (`http`, `sip`, `tel`,
+      `javascript`, non-ASCII hosts) is shown as text, and the agent never
+      opens or fetches any call URL.
+    - **JMAP Chat.** draft-atwood-jmap-chat-00 has the representation: a
+      MessageAction (§MessageAction) of `type`
+      `urn:ietf:params:jmap:chat:cap:vtc` (§Endpoint), `uri` the URL,
+      `label` the description if any, `expiresAt` the part's `expires` if
+      any, in the Message's `actions`. A call that is no link is not an
+      action: it is a line of the `body`, after any text,
+      `call: <description> (not a web link: <url>)`. A deleted or
+      retracted Message has no actions. Sending: `Message/set` create
+      with one such MessageAction (and optionally `body`) sends the
+      §5.10 shape: the session ExternalPart alone, or after a
+      `text/plain` part in a `processAll` MultiPart; `expiresAt` goes as
+      the part's `expires`. Another action type, more than one action,
+      `metadata` (MIMI has no place for it), attachments beside it, or a
+      URL that is no link is `invalidProperties` on `actions`.
+    - **IRC.** Each call is an ACTION from the sender after the text, the
+      message's tags on its first line: `* alice-a call: Join the Foo
+      118 conference <https://example.com/join/12345>` as a client shows
+      it; a call that is no link reads `call: <description> (not a web
+      link: <url>)`. Control characters in either become spaces. IRC
+      clients make links of URLs themselves; the front end cannot stop
+      that for the text form. Sending: `/msg mimid call #channel <url>
+      [<description>]`, the URL `https` or `wss`.
+    - **Store.** `Store::send_call` sends one call with optional text and
+      expiry (`Agent::send_session_link`), checks the URL and description
+      first, and records the call. An edit does not change a message's
+      calls; a retraction removes them.
+    - Tests: mimid-agent `tests/calls.rs` `calls_on_one_provider`,
+      `calls_across_two_providers` (the §5.10 example from raw content,
+      JMAP and IRC, both ways; the body sent equals the example's);
+      mimid-agent-core `tests/session_parts.rs`; mimid-agent-store
+      `content::tests`.
+
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 
 Mark decided on 2026-11-20 that JMAP (draft-atwood-jmap-chat-mimi) is

@@ -195,6 +195,62 @@ pub struct Attachment {
     pub sha256: String,
 }
 
+/// A call to join that a message carries: a part of disposition
+/// `session` (mimi-content-10 §4.4, §5.10; docs/design/agent-frontends.md
+/// §7.24). Never fetched; the front ends show it as a link only if
+/// [`Call::is_link`], and otherwise as text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Call {
+    /// The URL, as received, cut to
+    /// [`crate::content::MAX_CALL_URL_LEN`] octets.
+    pub url: String,
+    /// The part's description, as received, cut to
+    /// [`crate::content::MAX_CALL_DESCRIPTION_CHARS`]; empty if none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// The part's `expires`, in seconds since the UNIX epoch, or `None`
+    /// for an inline part or an `expires` of 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<u32>,
+}
+
+impl Call {
+    /// Whether the URL may be shown as a link
+    /// ([`crate::content::is_call_link`]).
+    #[must_use]
+    pub fn is_link(&self) -> bool {
+        crate::content::is_call_link(&self.url)
+    }
+
+    /// The call as one line of text, as the front ends show it where they
+    /// show text (docs/design/agent-frontends.md §7.24): `call:
+    /// <description> <<url>>` for a link, `call: <description> (not a web
+    /// link: <url>)` otherwise, the description left out when empty, and
+    /// every control character a space.
+    #[must_use]
+    pub fn text(&self) -> String {
+        let one_line = |text: &str| -> String {
+            text.chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect()
+        };
+        let mut line = "call:".to_owned();
+        let description = one_line(&self.description);
+        if !description.trim().is_empty() {
+            line.push(' ');
+            line.push_str(description.trim());
+        }
+        let url = one_line(&self.url);
+        if self.is_link() {
+            line.push_str(&format!(" <{url}>"));
+        } else {
+            line.push_str(&format!(" (not a web link: {url})"));
+        }
+        line
+    }
+}
+
 /// An earlier version of an edited message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -278,7 +334,8 @@ pub struct Message {
     /// ([`crate::convert::sender_msg_id`]); its random part is the
     /// message's reference octets.
     pub sender_msg_id: String,
-    /// The text; empty when retracted, or for attachments without text.
+    /// The text; empty when retracted, or for attachments or calls
+    /// without text.
     pub body: String,
     /// The text's type.
     pub body_type: BodyType,
@@ -291,6 +348,9 @@ pub struct Message {
     /// Its attachments in the blob store.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    /// The calls to join it carries ([`Call`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calls: Vec<Call>,
     /// Earlier versions, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edit_history: Vec<Revision>,

@@ -121,14 +121,17 @@ fn store_body_type(body_type: &BodyType) -> mimid_agent_store::content::BodyType
 }
 
 /// The patch retracting a Message at `at` (draft-atwood-jmap-chat-00
-/// §Message `deletedAt`: `body` and `attachments` empty, no `editHistory`):
-/// how a retracted record is shown ([`crate::project`]).
+/// §Message `deletedAt`: `body` and `attachments` empty, no `editHistory`;
+/// and no `actions`, as a retracted record has no calls,
+/// docs/design/agent-frontends.md §7.24): how a retracted record is shown
+/// ([`crate::project`]).
 pub(crate) fn retraction_patch(at: &UTCDate) -> Value {
     json!({
         "deletedAt": at,
         "deletedForAll": true,
         "body": "",
         "attachments": [],
+        "actions": [],
         "editHistory": null,
     })
 }
@@ -233,6 +236,7 @@ mod tests {
                 "deletedForAll": true,
                 "body": "",
                 "attachments": [],
+                "actions": [],
                 "editHistory": null,
             })
         );

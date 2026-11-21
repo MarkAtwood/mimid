@@ -61,6 +61,12 @@
 //!   on their own Message sends an edit, and `deletedForAll: true` a
 //!   retraction, each naming the first version; `deletedAt` alone is a
 //!   local deletion.
+//! - **Calls to join** (mimi-content-10 §5.10; docs/design/agent-frontends.md
+//!   §7.24): a received part of disposition `session` is never fetched;
+//!   an `https` or `wss` URL is a MessageAction of `type`
+//!   `urn:ietf:params:jmap:chat:cap:vtc` in `actions` (the description as
+//!   its `label`), any other a line of `body`. A `Message/set` create with
+//!   one such action sends it as the §5.10 ExternalPart.
 //! - **Attachments** (bead mimid-1wgh.14), with a blob store
 //!   ([`AgentChat::with_blobs`], a [`BlobStore`] of plaintext files): a
 //!   created Message's attachments are read from the store, and

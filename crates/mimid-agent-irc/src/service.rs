@@ -14,6 +14,7 @@
 //! | `invites` | lists the pending invites, each accepted by JOIN of the channel name it is shown under (§7.13) or of `&invite-<number>` |
 //! | `expire <#channel> [<duration> or off]` | shows or sets the room's local expiry policy: messages older than the duration are deleted here (`Store::set_message_expiry`, §7.21) |
 //! | `burn <#channel> <text>` | sends `text` to be deleted by each mimid recipient once read; the user's own copy stays (`Store::send_with`, §7.22) |
+//! | `call <#channel> <url> [<description>]` | sends a call to join: `url`, which must be `https` or `wss`, as mimi-content-10 §5.10 has it (`Store::send_call`, §7.24) |
 //!
 //! # Limitations
 //!
@@ -26,7 +27,7 @@ use crate::command::Who;
 use crate::conn::{Session, one_line};
 use crate::line::Out;
 use crate::names::SERVICE_NICK;
-use mimid_agent_store::record::{Invite, MessageExpiry};
+use mimid_agent_store::record::{Call, Invite, MessageExpiry};
 
 /// The help text, one NOTICE a line.
 const HELP: &[&str] = &[
@@ -38,6 +39,8 @@ const HELP: &[&str] = &[
     "                here: 90s, 30m, 12h, 7d or 2w; off keeps them",
     "  burn #channel <text>  send text that each mimid recipient deletes once",
     "                read; your own copy stays; other software keeps it",
+    "  call #channel <url> [<description>]  send a call to join; the URL",
+    "                must be https:// or wss://",
     "A <user> is a nick, a user URI (mimi://domain/u/name) or name@domain,",
     "which stands for mimi://domain/u/name.",
     "Rooms: JOIN #name hosts a new room; PART leaves a room for good;",
@@ -123,6 +126,16 @@ impl Session {
                     .map_or("", |(_, text)| text.trim_start());
                 self.burn(channel, text).await;
             }
+            ("call", Some(channel)) => {
+                let Some(url) = words.next() else {
+                    self.service_says("usage: call #channel <url> [<description>]");
+                    return;
+                };
+                // The description is the rest of the line, spaces kept.
+                let description = after_words(text, 3).trim_end();
+                self.call(channel, url, description).await;
+            }
+            ("call", None) => self.service_says("usage: call #channel <url> [<description>]"),
             ("expire", None) => {
                 self.service_says("usage: expire #channel [<duration> or off]");
             }
@@ -202,6 +215,53 @@ impl Session {
     }
 }
 
+impl Session {
+    /// `call #channel url [description]` (docs/design/agent-frontends.md
+    /// §7.24): sends a call to join.
+    async fn call(&mut self, channel: &str, url: &str, description: &str) {
+        let Some(key) = self.shown_room(channel) else {
+            self.service_says(&format!("{channel}: no such channel here"));
+            return;
+        };
+        let store = self.store();
+        let message_key = store.new_key();
+        let call = Call {
+            url: url.to_owned(),
+            description: description.to_owned(),
+            expires: None,
+        };
+        self.own_sends.insert(message_key.clone());
+        match store
+            .send_call(
+                message_key.clone(),
+                &key,
+                "",
+                &call,
+                MessageExpiry::default(),
+            )
+            .await
+        {
+            Ok(_) => self.save().await,
+            Err(error) => {
+                self.own_sends.remove(&message_key);
+                self.service_says(&format!("{channel}: not sent: {error}"));
+            }
+        }
+    }
+}
+
+/// `text` after its first `n` words, the space after them left out.
+fn after_words(text: &str, n: usize) -> &str {
+    let mut rest = text.trim_start();
+    for _ in 0..n {
+        rest = rest
+            .split_once(char::is_whitespace)
+            .map_or("", |(_, tail)| tail)
+            .trim_start();
+    }
+    rest
+}
+
 /// The largest duration `expire` takes: a year, as mimi-content-10 §9.1
 /// bounds an expiry. INVENTED, NOT FROM SPEC: applying that bound to a
 /// local policy.
@@ -248,6 +308,16 @@ fn show_duration(seconds: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_call_description_is_the_rest_of_the_line() {
+        assert_eq!(
+            after_words(" call  #c\thttps://example.com/j  Join the  Foo ", 3),
+            "Join the  Foo "
+        );
+        assert_eq!(after_words("call #c https://example.com/j", 3), "");
+        assert_eq!(after_words("call", 3), "");
+    }
 
     #[test]
     fn durations_parse_with_units_and_off() {

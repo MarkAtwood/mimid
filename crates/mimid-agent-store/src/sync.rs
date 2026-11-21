@@ -27,7 +27,9 @@
 //!   reference octets, with its first MIMI message ID; a reply resolves
 //!   within the room. Edits and retractions change the message they name
 //!   ([`replace`]). Attachments are fetched into the blob store, or kept
-//!   for a retry ([`attachments`]).
+//!   for a retry ([`attachments`]). A part of disposition `session` is a
+//!   call to join, kept in the message as a [`crate::record::Call`] and
+//!   never fetched (docs/design/agent-frontends.md §7.24).
 //! - **Notices**: the identity-change and removed-without-AppDataUpdate
 //!   notices are messages from [`Sender::Agent`], once per key
 //!   ([`crate::notice`]).
@@ -61,7 +63,7 @@ use crate::change::Change;
 use crate::convert::{MessageRef, message_ref, sender_msg_id, topic_id};
 use crate::notice::{identity_notice, notice_ref, removal_notice, removal_notice_ref};
 use crate::record::{
-    Key, Message, NoticeKind, Octets, Participant, Person, Reply, Room, RoomStatus as Status,
+    Call, Key, Message, NoticeKind, Octets, Participant, Person, Reply, Room, RoomStatus as Status,
     Sender, SubjectSet,
 };
 use crate::report::KeptFrank;
@@ -792,6 +794,7 @@ impl Store {
             in_reply_to: None,
             topic_id: None,
             attachments: Vec::new(),
+            calls: Vec::new(),
             edit_history: Vec::new(),
             edited_at: None,
             deleted: None,
@@ -933,14 +936,19 @@ impl Store {
             ));
             return;
         }
+        // Session parts are calls to join, never fetched (mimi-content-10
+        // §5.10; docs/design/agent-frontends.md §7.24); attachments()
+        // leaves them out.
         let parts = received.attachments();
+        let calls = calls_of(&received, report);
         let text = match received.text.clone() {
             Some(text) => text,
-            None if !parts.is_empty() => String::new(),
+            None if !parts.is_empty() || !calls.is_empty() => String::new(),
             None => {
-                report
-                    .skipped
-                    .push(format!("{}: neither text nor attachments", received.room));
+                report.skipped.push(format!(
+                    "{}: neither text nor attachments nor a call",
+                    received.room
+                ));
                 return;
             }
         };
@@ -986,6 +994,7 @@ impl Store {
             in_reply_to,
             topic_id: topic_id(&content.topic_id),
             attachments,
+            calls,
             edit_history: Vec::new(),
             edited_at: None,
             deleted: None,
@@ -1003,6 +1012,30 @@ impl Store {
             self.want_expiry();
         }
     }
+}
+
+/// The calls to join of `received` ([`crate::content::call_of`]), at most
+/// [`crate::content::MAX_CALLS_PER_MESSAGE`]; a session part that names
+/// no call, and each past the limit, is a problem in `report`.
+fn calls_of(received: &ReceivedMessage, report: &mut SyncReport) -> Vec<Call> {
+    let mut calls = Vec::new();
+    for part in received.session_parts() {
+        match crate::content::call_of(part) {
+            Some(_) if calls.len() >= crate::content::MAX_CALLS_PER_MESSAGE => {
+                report.problems.push(format!(
+                    "{}: a call past the first {} left out",
+                    received.room,
+                    crate::content::MAX_CALLS_PER_MESSAGE
+                ));
+            }
+            Some(call) => calls.push(call),
+            None => report.problems.push(format!(
+                "{}: a session part that names no URL left out",
+                received.room
+            )),
+        }
+    }
+    calls
 }
 
 /// What a report of `received` needs: its frank and content, or its

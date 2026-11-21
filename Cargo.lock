@@ -2586,6 +2586,7 @@ dependencies = [
  "jmap-chat-types",
  "jmap-server",
  "jmap-types",
+ "mimi-content",
  "mimid-agent-core",
  "mimid-agent-irc",
  "mimid-agent-jmap",

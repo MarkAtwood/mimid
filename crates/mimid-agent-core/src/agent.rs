@@ -237,14 +237,28 @@ pub struct ReceivedMessage {
 
 impl ReceivedMessage {
     /// The message's attachments: the ExternalParts at the top level or
-    /// in a top-level `processAll` MultiPart (mimi-content-10 §4.5). Fetch
-    /// one with [`Agent::fetch_attachment`].
+    /// in a top-level `processAll` MultiPart (mimi-content-10 §4.5), but
+    /// those of disposition `session`, which name a call to join, not
+    /// content to fetch ([`ReceivedMessage::session_parts`]). Fetch one
+    /// with [`Agent::fetch_attachment`].
     pub fn attachments(&self) -> Vec<&ExternalPart> {
         top_level_parts(&self.content.nested_part)
+            .filter(|part| part.disposition != Disposition::SESSION)
             .filter_map(|part| match &part.part {
                 Part::External(external) => Some(external),
                 _ => None,
             })
+            .collect()
+    }
+
+    /// The message's parts of disposition `session` (mimi-content-10
+    /// §4.4, §5.10: a multimedia session description, or a URI to join
+    /// one), external or inline, at the top level or in a top-level
+    /// `processAll` MultiPart. Never fetched: the URL is the receiver's
+    /// to open, if they choose to.
+    pub fn session_parts(&self) -> Vec<&NestedPart> {
+        top_level_parts(&self.content.nested_part)
+            .filter(|part| part.disposition == Disposition::SESSION)
             .collect()
     }
 
@@ -2255,6 +2269,90 @@ impl Agent {
         self.send_content(room, &content).await
     }
 
+    /// Sends a call to join (mimi-content-10 §5.10) to `room`: `url` as
+    /// an unencrypted ExternalPart of disposition `session`, with
+    /// `description` and `expires` (seconds since the UNIX epoch, or 0),
+    /// as the §5.10 example has it (no content type, size, key or hash),
+    /// after `text` as a `text/plain` part in a `processAll` MultiPart if
+    /// `text` is not empty. Nothing is uploaded; that the URL is one to
+    /// send is the caller's to check.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Invalid`] for text over [`MAX_TEXT_LEN`] octets or an
+    /// empty `url`, and the errors of [`Agent::send_content`].
+    pub async fn send_session_link(
+        &mut self,
+        room: &str,
+        text: &str,
+        url: &str,
+        description: &str,
+        expires: u32,
+        options: &ContentOptions,
+    ) -> Result<Sent, AgentError> {
+        if text.len() > MAX_TEXT_LEN {
+            return Err(AgentError::Invalid("message too long".to_owned()));
+        }
+        if url.is_empty() {
+            return Err(AgentError::Invalid("a call needs a URL".to_owned()));
+        }
+        let session = NestedPart {
+            disposition: Disposition::SESSION,
+            language: String::new(),
+            part: Part::External(ExternalPart {
+                content_type: String::new(),
+                url: url.to_owned(),
+                expires,
+                size: 0,
+                enc_alg: 0,
+                key: Vec::new(),
+                nonce: Vec::new(),
+                aad: Vec::new(),
+                hash_alg: 0,
+                content_hash: Vec::new(),
+                description: description.to_owned(),
+                filename: String::new(),
+            }),
+        };
+        let nested_part = if text.is_empty() {
+            session
+        } else {
+            NestedPart {
+                disposition: Disposition::RENDER,
+                language: String::new(),
+                part: Part::Multi {
+                    part_semantics: PartSemantics::ProcessAll,
+                    parts: vec![
+                        NestedPart {
+                            disposition: Disposition::RENDER,
+                            language: String::new(),
+                            part: Part::Single {
+                                content_type: TEXT_PLAIN.to_owned(),
+                                content: text.as_bytes().to_vec(),
+                            },
+                        },
+                        session,
+                    ],
+                },
+            }
+        };
+        let mut content = MimiContent {
+            salt: random()?,
+            replaces: None,
+            topic_id: vec![],
+            expires: None,
+            in_reply_to: None,
+            mimi_extensions: Extensions {
+                sender_uri: Some(self.me.clone()),
+                room_uri: Some(room.to_owned()),
+                other: BTreeMap::new(),
+            },
+            nested_part,
+        };
+        options.apply(&mut content);
+        self.send_content(room, &content).await
+    }
+
     /// Fetches attachment `part` of a message in `room` through this
     /// user's server, checks it against its contentHash, and decrypts it
     /// ([`crate::asset::open`]). An expired part (mimi-content-10 §4.5
@@ -4214,13 +4312,14 @@ fn received(
         .map_err(|e| format!("the message ID: {e}"))?;
     // The one text part, or the first text part of a top-level processAll
     // MultiPart that is not an attachment (a message with attachments,
-    // Agent::send_message).
+    // Agent::send_message) or a call (ReceivedMessage::session_parts).
     let text = top_level_parts(&content.nested_part).find_map(|part| match &part.part {
         Part::Single {
             content_type,
             content,
         } if content_type.to_ascii_lowercase().starts_with("text/")
-            && part.disposition != Disposition::ATTACHMENT =>
+            && part.disposition != Disposition::ATTACHMENT
+            && part.disposition != Disposition::SESSION =>
         {
             Some(String::from_utf8_lossy(content).into_owned())
         }

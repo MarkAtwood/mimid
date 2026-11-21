@@ -22,10 +22,11 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use crate::convert::utc_date;
+use crate::project::VTC;
 use mimid_agent_store::action::{MemberChanges, OutgoingFile, Role};
 use mimid_agent_store::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
 use mimid_agent_store::convert::parse_utc_date;
-use mimid_agent_store::record::MessageExpiry;
+use mimid_agent_store::record::{Call, MessageExpiry};
 use mimid_agent_store::{ActionError, ExpiryError, Store};
 
 pub use mimid_agent_store::InvitePolicy;
@@ -496,6 +497,24 @@ impl AgentChat {
             )));
         }
         let expiry = requested_expiry(&message)?;
+        if let Some(call) = requested_call(&message)? {
+            let sent = self
+                .store
+                .send_call(
+                    key(&id),
+                    message.chat_id.as_ref(),
+                    &message.body,
+                    &call,
+                    expiry,
+                )
+                .await
+                .map_err(action_failure)?;
+            message.sender_msg_id = Id::from(sent.sender_msg_id.as_str());
+            message.delivery_state = DeliveryState::Delivered;
+            message.delivered_at = Some(utc_date(sent.accepted_at));
+            let stored = self.insert_shown(&id, message).await?;
+            return Ok((id, stored));
+        }
         let files: Vec<OutgoingFile> = message
             .attachments
             .iter()
@@ -730,6 +749,51 @@ fn requested_expiry(message: &Message) -> Result<MessageExpiry, BackendSetError<
     Ok(expiry)
 }
 
+/// The call to join a `Message/set` create asks
+/// (docs/design/agent-frontends.md §7.24), as its `actions`: none for no
+/// actions; one MessageAction of `type` [`VTC`] (draft-atwood-jmap-chat-00
+/// §Endpoint), its `uri` the URL, its `label` the description and its
+/// `expiresAt` the part's `expires`, cut to the second. Anything else is
+/// `invalidProperties` on `actions`: another type, more than one action,
+/// `metadata` (MIMI has no place for it), an `expiresAt` that is no
+/// UTCDate or past `uint .size 4` seconds, or attachments beside it.
+/// [`Store::send_call`] checks the URL and the label's length.
+fn requested_call(message: &Message) -> Result<Option<Call>, BackendSetError<MemoryError>> {
+    let invalid = |why: &str| {
+        BackendSetError::SetError(Box::new(
+            set_error(SetErrorType::InvalidProperties, why).with_properties(["actions"]),
+        ))
+    };
+    let [action] = message.actions.as_slice() else {
+        return if message.actions.is_empty() {
+            Ok(None)
+        } else {
+            Err(invalid("at most one action, a call, is sent over MIMI"))
+        };
+    };
+    if action.action_type != VTC {
+        return Err(invalid(&format!("only a call ({VTC}) is sent over MIMI")));
+    }
+    if action.metadata.is_some() {
+        return Err(invalid("a call's metadata is not sent over MIMI"));
+    }
+    if !message.attachments.is_empty() {
+        return Err(invalid("a call is sent without attachments"));
+    }
+    let expires = match &action.expires_at {
+        None => None,
+        Some(at) => {
+            let ms = parse_utc_date(at.as_ref()).ok_or_else(|| invalid("not a UTCDate"))?;
+            Some(u32::try_from(ms / 1000).map_err(|_| invalid("expiresAt is too far ahead"))?)
+        }
+    };
+    Ok(Some(Call {
+        url: action.uri.clone(),
+        description: action.label.clone().unwrap_or_default(),
+        expires,
+    }))
+}
+
 /// A failure of a write hook before the store is touched.
 pub(crate) enum SetFailure {
     Set(Box<SetError>),
@@ -811,6 +875,9 @@ pub(crate) fn action_set_failure(e: ActionError) -> SetFailure {
         // draft-atwood-jmap-chat-00 §Message `senderExpiresAt`: "in
         // `Message/set` the rejection is an `invalidProperties` SetError
         // with `properties: ["senderExpiresAt"]`".
+        ActionError::InvalidCall(_) => SetFailure::set(
+            set_error(SetErrorType::InvalidProperties, e.to_string()).with_properties(["actions"]),
+        ),
         ActionError::Expiry(e) => {
             let property = match e {
                 ExpiryError::ReadTooLong => "expiresAfterReadSeconds",
