@@ -1,0 +1,25 @@
+{
+  "id": "mimid-qqtk.3",
+  "title": "Keep a received message's mimiExtensions on the record; show mimid-on-behalf-of as (via ...)",
+  "description": "Same as bridge step 3 (mimid-kiy1.3, P3). Needed for crash recovery and loop checks in the bridge.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:22:55.540876259Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:22:55.540876259Z",
+  "labels": [
+    "agent"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-qqtk.3",
+      "depends_on_id": "mimid-qqtk",
+      "type": "parent-child",
+      "created_at": "2026-11-21T21:22:55.637290745Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
