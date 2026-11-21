@@ -1,0 +1,16 @@
+{
+  "id": "mimid-f8u8",
+  "title": "Server config documented only in rustdoc",
+  "description": "clean-room: README points operators to rustdoc of mimid_server::config; an operator must not need rustdoc. Write an operator doc (example config, every key, admin CLI) and link it from README.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T19:50:54.252948627Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T19:50:54.252948627Z",
+  "labels": [
+    "docs",
+    "cleanroom"
+  ]
+}
