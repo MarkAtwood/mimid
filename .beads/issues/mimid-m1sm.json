@@ -1,0 +1,16 @@
+{
+  "id": "mimid-m1sm",
+  "title": "KeyMaterial/fetch uses up KeyPackages with no Commit following (clean-room C21)",
+  "description": "C21: KeyMaterial/fetch consumes KeyPackages even when no commit follows. Decide with Mark if behaviour or draft text changes; do after air-impl merges.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T19:50:54.541949241Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T19:50:54.541949241Z",
+  "labels": [
+    "server",
+    "cleanroom"
+  ]
+}
