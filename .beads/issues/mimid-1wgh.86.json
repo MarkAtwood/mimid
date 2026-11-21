@@ -10,8 +10,7 @@
   "created_by": "Mark Atwood",
   "updated_at": "2026-11-21T22:13:32.738561199Z",
   "labels": [
-    "agent",
-    "human"
+    "agent"
   ],
   "dependencies": [
     {
