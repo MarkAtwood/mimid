@@ -2,13 +2,15 @@
   "id": "mimid-br6m",
   "title": "IRC: accepting with JOIN \u0026invite-N leaves irssi typing into a dead channel",
   "description": "Found driving irssi 1.4.3 across two providers (2026-11-21). The pending invite is shown as INVITE alice-a \u0026invite-1; JOIN \u0026invite-1 accepts, but the server answers with JOIN #bside (the room's channel). irssi keeps a pending \u0026invite-1 window as the active one, so the next line the user types goes to PRIVMSG \u0026invite-1 and gets 403 No such channel. Options: (a) name the invite after the room's channel (INVITE alice-a #bside, JOIN #bside accepts), reading the name from the staged Welcome before joining, with \u0026invite-N only as fallback; (b) keep \u0026invite-N but answer the accept with JOIN \u0026invite-1 then PART \u0026invite-1 before JOIN #bside so clients close the placeholder. Needs Mark's choice.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T03:41:19.004642475Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T03:41:19.004642475Z",
+  "updated_at": "2026-11-21T05:09:10.273559148Z",
+  "closed_at": "2026-11-21T05:09:10.273559148Z",
+  "close_reason": "Fixed in 7b3213d (branch invite-names): pending invite shown under the room's channel name read from the staged Welcome (§7.13); \u0026invite-N fallback answered with JOIN+PART.",
   "labels": [
     "irc"
   ]

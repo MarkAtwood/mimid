@@ -1,2 +1,3 @@
 {"id":"01a1fc31-b724-75b8-b9a0-76547af691d6","issue_id":"mimid-br6m","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-21T03:41:19.012375967Z"}
 {"id":"01a1fc31-b72b-7c6e-83b3-b9778b385747","issue_id":"mimid-br6m","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: irc","created_at":"2026-11-21T03:41:19.019815679Z"}
+{"id":"01a1fc82-2607-7711-969f-3f444bcdc3c8","issue_id":"mimid-br6m","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Fixed in 7b3213d (branch invite-names): pending invite shown under the room's channel name read from the staged Welcome (§7.13); \u0026invite-N fallback answered with JOIN+PART.","created_at":"2026-11-21T05:09:10.279464432Z"}
