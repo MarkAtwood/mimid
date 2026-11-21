@@ -1,3 +1,4 @@
 {"id":"01a1ffa9-650c-70b4-a4c0-ac5e82c8efa6","issue_id":"mimid-6vsz","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-21T19:50:53.964046856Z"}
 {"id":"01a1ffa9-6510-70d2-b0b5-e58382672964","issue_id":"mimid-6vsz","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-21T19:50:53.968054819Z"}
 {"id":"01a1ffa9-6513-7933-b540-091cf074eec4","issue_id":"mimid-6vsz","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: cleanroom","created_at":"2026-11-21T19:50:53.971603984Z"}
+{"id":"01a1ffc8-8a23-7845-8021-0fbc31d3e7c7","issue_id":"mimid-6vsz","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Fixed in bd828f0 (branch cleanroom-bugs): Welcome's room falls back to the Chat roomId when the group has no room_metadata.","created_at":"2026-11-21T20:24:55.07554347Z"}
