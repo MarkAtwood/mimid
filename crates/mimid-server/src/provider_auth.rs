@@ -12,8 +12,8 @@
 //! failure and lets the request through, for rollout with peers that do not
 //! authenticate yet.
 //!
-//! Mechanisms (decision of mimid-75nk, in build order), tried in this
-//! order:
+//! Mechanisms (decision of mimid-75nk), numbered and tried in this order
+//! (docs/operating.md lists them the same way):
 //!
 //! 1. [`Mechanism::TrustList`] (bead mimid-75nk.1): RFC 9421 request
 //!    signatures ([`crate::httpsig`]) with Ed25519 keys configured per
@@ -22,16 +22,16 @@
 //!    keys published at `<selector>._mimi.<domain>`
 //!    (draft-atwood-mimi-provider-auth-00 §5; [`dns`]), looked up with a
 //!    DNSSEC-validating resolver. On unless `dns_keys = false`.
-//! 3. [`Mechanism::Pkix`] (bead mimid-75nk.5): the client certificate of
+//! 3. [`Mechanism::Dane`] (bead mimid-75nk.6): the client certificate of
 //!    the request's connection ([`crate::tls::ClientCertificate`]),
-//!    validated per RFC 5280 against configured anchors and matched to the
-//!    `From` domain as a DNS-ID (draft-atwood-mimi-provider-auth-00 §7;
-//!    [`pkix`]). On when `pkix_anchors` names any.
-//! 4. [`Mechanism::Dane`] (bead mimid-75nk.6): the client certificate
 //!    checked against DNSSEC-secure TLSA records at
 //!    `_mimi._client.<domain>` (draft-atwood-mimi-provider-auth-00 §6;
 //!    [`dane`]). On unless `dane = false`; tried before PKIX, so that a
 //!    provider with TLSA records is checked against them first.
+//! 4. [`Mechanism::Pkix`] (bead mimid-75nk.5): the client certificate,
+//!    validated per RFC 5280 against configured anchors and matched to the
+//!    `From` domain as a DNS-ID (draft-atwood-mimi-provider-auth-00 §7;
+//!    [`pkix`]). On when `pkix_anchors` names any.
 //!
 //! A signature counts only if it follows draft-atwood-mimi-provider-auth-00
 //! §5.2 and §5.3: it covers `@method`, `@target-uri` and `from`
@@ -184,7 +184,7 @@ pub struct ProviderAuthConfig {
     /// of its DNS key record (`<selector>._mimi.<domain>`).
     #[serde(default = "default_selector")]
     pub selector: String,
-    /// Whether to look up keys in DNS (mechanism 1, mimid-75nk.3). On by
+    /// Whether to look up keys in DNS (mechanism 2, mimid-75nk.3). On by
     /// default: an open provider accepts DNS keys from anyone
     /// (draft-atwood-mimi-provider-auth-00 §10).
     #[serde(default = "default_true")]
@@ -199,12 +199,12 @@ pub struct ProviderAuthConfig {
     #[serde(default)]
     pub dns_servers: Vec<std::net::IpAddr>,
     /// Whether to check client certificates against TLSA records
-    /// (mechanism 2, mimid-75nk.6). On by default, like `dns_keys`; it
+    /// (mechanism 3, mimid-75nk.6). On by default, like `dns_keys`; it
     /// needs the same validating resolvers.
     #[serde(default = "default_true")]
     pub dane: bool,
     /// PEM files of trust anchors for PKIX client certificates from any
-    /// provider (mechanism 3, mimid-75nk.5): a federation's CA, say. Not a
+    /// provider (mechanism 4, mimid-75nk.5): a federation's CA, say. Not a
     /// Web PKI root store (draft-atwood-mimi-provider-auth-00 §7).
     #[serde(default)]
     pub pkix_anchors: Vec<std::path::PathBuf>,
@@ -623,7 +623,7 @@ impl ProviderAuth {
         }
     }
 
-    /// Adds mechanism 1, DNS-published keys looked up with `resolver`
+    /// Adds mechanism 2, DNS-published keys looked up with `resolver`
     /// (mimid-75nk.3), after the trust list, unless the configuration
     /// turned it off (`dns_keys = false`).
     #[must_use]
@@ -637,7 +637,7 @@ impl ProviderAuth {
         self
     }
 
-    /// Adds mechanism 2, DANE client certificates (mimid-75nk.6), with
+    /// Adds mechanism 3, DANE client certificates (mimid-75nk.6), with
     /// TLSA records from `resolver`, unless `dane = false`. Call it before
     /// [`ProviderAuth::with_pkix`], so TLSA records are checked first.
     #[must_use]
@@ -649,7 +649,7 @@ impl ProviderAuth {
         self
     }
 
-    /// Adds mechanism 3, PKIX client certificates (mimid-75nk.5), after
+    /// Adds mechanism 4, PKIX client certificates (mimid-75nk.5), after
     /// the signature mechanisms.
     #[must_use]
     pub fn with_pkix(mut self, pkix: PkixCertificates) -> Self {

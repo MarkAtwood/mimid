@@ -77,6 +77,7 @@ Value forms used below:
 | `max_uri_octets` | integer, octets | `2048` | The longest URI accepted: participant list users, room metadata URIs, a base policy's `parent_room`, and the URIs in identifierQuery, consent and keyMaterial requests. |
 | `blob_lifetime_secs` | integer, seconds, at least 3600 | `2592000` (30 days) | How long an uploaded attachment is kept. Every upload is deleted this long after it was uploaded, whether or not anyone fetched it, because the server cannot read the messages that refer to it. The JMAP Session reports it as `assetLifetime`. A value under 3600 is refused. |
 
+| `message_retention_secs` | integer, seconds, at least 3600, or `"unlimited"` | `604800` (7 days) | How long a message is kept after the hub accepted it. See [Message retention](#message-retention). A value under 3600 is refused. |
 | `client_idle_unbind_secs` | integer, seconds, at least 86400, or `"unlimited"` | `7776000` (90 days) | How long a client's signature key may be idle before it is unbound from its account. See [Idle clients](#idle-clients). A value under 86400 is refused. |
 
 The three `max_*_octets` keys are mimid's own policy; the drafts set no limit for these fields. A longer value is refused.
@@ -257,9 +258,22 @@ With `client_idle_unbind_secs = "unlimited"` no key is unbound for being idle. E
 
 ### Message retention
 
-A default message retention of 7 days is being added on another branch. It is not on main yet, and this version of `mimid` has no retention key.
+`mimid` keeps each message, its users' JMAP Messages and the events of the rooms it hosts as hub, for `message_retention_secs` after the hub accepted it, and then deletes it. The default is 7 days (`604800`). The shortest accepted value is one hour (`3600`); `"unlimited"` keeps everything.
 
-> Placeholder: the retention key will be documented here when that branch is merged.
+```toml
+message_retention_secs = 604800       # the default, 7 days
+# message_retention_secs = "unlimited"
+```
+
+The JMAP Session and the live stream's `ProviderHello` report the value as `messageRetention`, and leave it out when it is unlimited. A sweep runs every 10 minutes and deletes expired rows 500 at a time, so a large backlog never holds the database for long; each sweep that deletes anything logs `message_sweep`.
+
+What this means for users and operators:
+
+- The server cannot read messages, so it cannot keep some and drop others: every message, Commit and Welcome is deleted on the same schedule.
+- A device that is offline longer than the retention misses messages, and the Commits among them, for good. `mimid-agent` then rejoins its rooms by external Commit, where room policy lets it, and the messages sent while it was away are lost to that device.
+- A Welcome deleted before its user's device fetched it is lost; the inviter has to invite again.
+- A request the hub accepted longer ago than the retention is no longer recognised as a repeat by the hub; the server's own record of accepted requests, kept 30 days, still answers a user's repeat.
+- Rows an operator deletes by hand from `follower_event` are handled the same way as expired ones.
 
 ## Example: one provider
 
@@ -384,8 +398,6 @@ A room summary is `{"roomId", "groupId", "epoch", "members", "participants", "ro
 `remove` and `ban` are an operator power outside the drafts: room-policy-04 gives only the room's own roles the right to remove or ban.
 
 Room IDs and user URIs are percent-encoded by `mimid admin`; pass them as they are, for example `mimid admin a.toml room mimi://a.example/r/one`.
-
-The usage line `mimid admin` prints for an unknown command does not list `remove` and `ban`; they work as described here.
 
 To put a user's token in a file for `mimid-agent`, which wants the bare token:
 

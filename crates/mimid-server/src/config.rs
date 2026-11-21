@@ -62,11 +62,12 @@
 //! metrics_interval_secs = 60
 //!
 //! # Optional: the code points of draft-atwood-mls-didwebvh-credential,
-//! # which IANA has not assigned (bead mimid-1wgh.4.81.18).
+//! # which IANA has not assigned (bead mimid-1wgh.4.81.18). Without the
+//! # table both take the values below; with it, both keys are required.
 //! [did_webvh]
-//! credential_type = 0x0008        # the draft's suggested value, the default
+//! credential_type = 0x0008        # the draft's suggested value
 //! heads_component = 0xf013        # the record's app_data_dictionary
-//!                                 # component; private use, the default
+//!                                 # component; private use
 //!
 //! # Optional: TLS toward peers.
 //! [peer_tls]

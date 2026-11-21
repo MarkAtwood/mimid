@@ -3,7 +3,7 @@
 //! CLI planned in mimid-1wgh.32 (Mark, 2026-11-15): every action goes
 //! through the running server, so it reaches the hub's in-memory rooms.
 //!
-//! Usage: `mimid admin <config.toml> <command> [argument]`, where the
+//! Usage: `mimid admin <config.toml> <command> [arguments]`, where the
 //! configuration names `local_listen` (and `local_token` if the listener
 //! requires one). Commands:
 //!
@@ -31,7 +31,7 @@ use crate::local::LocalToken;
 pub enum AdminError {
     /// The command line is not a known command with its argument.
     #[error(
-        "usage: mimid admin <config.toml> hub-sender | rooms | room <roomId> | users | add-user <userUri> | token <userUri> | consent | provider-key"
+        "usage: mimid admin <config.toml> hub-sender | rooms | room <roomId> | remove <roomId> <userUri> | ban <roomId> <userUri> | users | add-user <userUri> | token <userUri> | consent | provider-key"
     )]
     Usage,
     /// The configuration has no `local_listen`.

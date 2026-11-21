@@ -57,7 +57,8 @@
 //! - On shutdown the fanout worker is abandoned mid-request; the row is
 //!   sent again on the next start.
 //! - The hub's signing and franking keys are stored unencrypted in the
-//!   database file, which must be mode 0600.
+//!   database file. It is created mode 0600, and the store refuses to open
+//!   one that grants its group or others any access (mode bits 0o077).
 
 #![forbid(unsafe_code)]
 
@@ -108,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
     let all: Vec<String> = std::env::args().skip(1).collect();
     if all.first().map(String::as_str) == Some("admin") {
         let Some(config_path) = all.get(1) else {
-            bail!("usage: mimid admin <config.toml> <command> [argument]");
+            bail!("usage: mimid admin <config.toml> <command> [arguments]");
         };
         let config = Config::load(std::path::Path::new(config_path))
             .with_context(|| format!("loading {config_path}"))?;
