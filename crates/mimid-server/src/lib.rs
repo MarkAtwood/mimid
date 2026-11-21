@@ -100,9 +100,12 @@
 //!     room-policy §6 and §7
 //!     components are refused as unknown to the hub (decision
 //!     mimid-1wgh.6.53).
-//!   - The room-policy-04 §5 rule that ordinary users of a fixed-membership
-//!     room cannot leave or be removed is not enforced (decision
-//!     mimid-1wgh.3.50). The §5 `parent_dependant` subset rule and
+//!   - The room-policy-04 §5 rules of a fixed-membership room are enforced
+//!     as decision mimid-1wgh.89 reads them (replacing mimid-1wgh.3.50):
+//!     "ordinary users" is every user, and its participants are those its
+//!     creator's first Commits name. "Only a single fixed-membership room
+//!     can exist for any unique set of participants" is checked among the
+//!     rooms this hub hosts only. The §5 `parent_dependant` subset rule and
 //!     `pseudonyms_allowed` are not checked: the hub has no parent room
 //!     state and BasicCredential has no notion of a pseudonym.
 //!   - `canDestroyRoom` is not enforced: the hub offers no way to destroy a

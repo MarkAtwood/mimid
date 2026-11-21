@@ -14,7 +14,7 @@
 //! | Action | Method | Agent |
 //! |---|---|---|
 //! | Host a room and invite | [`Store::create_room`] | `host_room`, `invite` |
-//! | One-to-one rooms | [`Store::open_direct`], [`Store::direct_room`], [`Store::set_direct`] | `host_room`, `invite` |
+//! | One-to-one rooms | [`Store::open_direct`], [`Store::direct_room`] | `host_room` (`HostOptions::direct`), `invite` |
 //! | Invite, remove, change roles, leave | [`Store::change_members`] | `invite`, `remove`, `change_role`, `leave` |
 //! | Leave a room | [`Store::leave`] | `leave` |
 //! | Set a room's subject | [`Store::set_subject`] | `set_room_subject` |
@@ -339,8 +339,18 @@ impl Store {
         name: &str,
         invite: &[String],
     ) -> Result<Room, ActionError> {
+        self.host(key, &HostOptions::named(name), invite).await
+    }
+
+    /// [`Store::create_room`] with `options`.
+    async fn host(
+        &self,
+        key: Key,
+        options: &HostOptions,
+        invite: &[String],
+    ) -> Result<Room, ActionError> {
         let mut agent = self.agent.lock().await;
-        let uri = agent.host_room(&HostOptions::named(name)).await?;
+        let uri = agent.host_room(options).await?;
         for user in invite {
             if let Err(e) = agent.invite(&uri, user).await {
                 // Do not keep a room the caller is told was not made.
@@ -352,6 +362,7 @@ impl Store {
         }
         let participants = agent.participants(&uri).unwrap_or_default();
         let roles = RoomRoles::of(&agent, &uri);
+        let direct = agent.is_direct(&uri).unwrap_or(false);
         let room = Room {
             key,
             name: agent.room_name(&uri).ok().flatten(),
@@ -362,7 +373,7 @@ impl Store {
             participants: roles.participants(&participants),
             role_names: roles.names(),
             message_expiry_seconds: None,
-            direct: false,
+            direct,
             ext: BTreeMap::new(),
         };
         self.state().insert_room(room.clone());
@@ -387,11 +398,17 @@ impl Store {
 
     /// The one-to-one room with `user` (docs/design/client-survey.md §10
     /// S2; docs/design/agent-frontends.md §7.29): the one
-    /// [`Store::direct_room`] finds, or else a new room hosted with no
-    /// name and `user` invited ([`Store::create_room`]), under `key`,
-    /// flagged [`Room::direct`]. The second item is whether it is new.
-    /// What the hub and the other members see is an ordinary unnamed room
-    /// of two participants.
+    /// [`Store::direct_room`] finds, or else a new one under `key`. The
+    /// second item is whether it is new.
+    ///
+    /// A new one is a room-policy-04 §5 `fixed_membership` room with
+    /// `max_users` 2 (`HostOptions::direct`), hosted with no name, whose
+    /// first Commit adds `user` and sends them a Welcome (`Agent::invite`,
+    /// so their consent applies as to any invite). §5: "Only a single
+    /// fixed-membership room can exist for any unique set of
+    /// participants", so there is one per pair; the hub refuses a second
+    /// one it would host, and this finds the existing one. If the add
+    /// fails, the room is abandoned as [`Store::create_room`] does.
     ///
     /// # Errors
     ///
@@ -406,32 +423,14 @@ impl Store {
         {
             return Ok((room, false));
         }
-        let mut room = self
-            .create_room(key, "", std::slice::from_ref(&user.to_owned()))
+        let room = self
+            .host(
+                key,
+                &HostOptions::direct(),
+                std::slice::from_ref(&user.to_owned()),
+            )
             .await?;
-        room.direct = true;
-        if let Some(record) = self.state().rooms.get_mut(&room.key) {
-            record.direct = true;
-        }
         Ok((room, true))
-    }
-
-    /// Marks room `key` one-to-one or not ([`Room::direct`]); local, as
-    /// a [`Change::RoomChanged`]. False if there is no such room.
-    pub fn set_direct(&self, key: &str, direct: bool) -> bool {
-        let changed = {
-            let mut state = self.state();
-            let Some(room) = state.rooms.get_mut(key) else {
-                return false;
-            };
-            let changed = room.direct != direct;
-            room.direct = direct;
-            changed
-        };
-        if changed {
-            self.record([Change::RoomChanged(key.to_owned())]);
-        }
-        true
     }
 
     /// Makes `changes` in room `key` under one lock of the agent, in the

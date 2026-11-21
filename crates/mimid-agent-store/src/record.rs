@@ -147,11 +147,11 @@ pub struct Room {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_expiry_seconds: Option<u64>,
     /// A one-to-one room (docs/design/client-survey.md §10 S2;
-    /// docs/design/agent-frontends.md §7.29): local to this store, never
-    /// sent. Set for a room [`crate::Store::open_direct`] made, and for a
-    /// room first seen unnamed with exactly two participants
-    /// ([`Room::looks_direct`]); [`Room::direct_peer`] says whom it is
-    /// with.
+    /// docs/design/agent-frontends.md §7.29): a room-policy-04 §5
+    /// `fixed_membership` room with `max_users` 2, as
+    /// [`crate::Store::open_direct`] makes them, read from the room's
+    /// policy when the room is first seen (`Agent::is_direct`);
+    /// [`Room::direct_peer`] says whom it is with.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub direct: bool,
     /// Front-end extensions.
@@ -162,8 +162,8 @@ pub struct Room {
 impl Room {
     /// The other user of a one-to-one room: for a [`Room::direct`] room
     /// whose participants, the banned left out, are `user` and one other,
-    /// that other's URI. `None` for any other room, a direct one a third
-    /// user joined included.
+    /// that other's URI. `None` for any other room, and for a direct one
+    /// whose other participant has not been added (or is banned).
     #[must_use]
     pub fn direct_peer(&self, user: &str) -> Option<&str> {
         if !self.direct {
@@ -179,16 +179,6 @@ impl Room {
             [other] => Some(other),
             _ => None,
         }
-    }
-
-    /// Whether a room first seen with `name` and `participants` is taken
-    /// for a one-to-one room: no name (or an empty one) and exactly two
-    /// participants. INVENTED, NOT FROM SPEC: MIMI marks no room
-    /// one-to-one but by room-policy-04 §5 `fixed_membership`, which
-    /// mimid does not use (§7.29).
-    #[must_use]
-    pub fn looks_direct(name: Option<&str>, participants: &[Participant]) -> bool {
-        name.is_none_or(|n| n.trim().is_empty()) && participants.len() == 2
     }
 
     /// Whether `participant` holds the role named "banned".

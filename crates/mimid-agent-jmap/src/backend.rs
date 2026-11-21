@@ -390,7 +390,8 @@ impl AgentChat {
     /// `Chat/set` create of a direct Chat (draft-atwood-jmap-chat-00
     /// §Creating a Direct Chat; docs/design/agent-frontends.md §7.29):
     /// the one-to-one room with the user of `contactId`
-    /// ([`Store::open_direct`]), hosted unnamed with them invited, or
+    /// ([`Store::open_direct`]), a fixed-membership room whose first
+    /// Commit adds them, or
     /// `alreadyExists` naming the Chat of the one there is.
     async fn create_direct_chat<O: SetObject + Send + Sync>(
         &self,

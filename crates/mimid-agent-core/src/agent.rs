@@ -127,8 +127,16 @@ pub struct HostOptions {
     /// The room's `roles_list` in place of the default one (room-policy-04
     /// §3), for a room that is not open. The creator gets role 3 and
     /// participants this agent adds get role 2, so the list must define
-    /// both.
+    /// both. In a [`HostOptions::direct`] room the creator gets role 2
+    /// too.
     pub roles: Option<RoleData>,
+    /// A one-to-one room (docs/design/agent-frontends.md §7.29; decision
+    /// mimid-1wgh.87 as revised): room-policy-04 §5 `fixed_membership`
+    /// with `max_users` 2, the creator in role 2 "member" of
+    /// `direct_roles` (unless `roles` is given), which holds no
+    /// `canAddParticipant`. The other user is added by the first Commit,
+    /// [`Agent::invite`]; nobody can be added after it. Not with `open`.
+    pub direct: bool,
 }
 
 impl HostOptions {
@@ -140,6 +148,16 @@ impl HostOptions {
             metadata: true,
             open: false,
             roles: None,
+            direct: false,
+        }
+    }
+
+    /// A one-to-one room ([`HostOptions::direct`]): no name, with
+    /// metadata and franking.
+    pub fn direct() -> Self {
+        Self {
+            direct: true,
+            ..Self::named("")
         }
     }
 }
@@ -1422,6 +1440,11 @@ impl Agent {
                 "a room name is at most 255 octets".to_owned(),
             ));
         }
+        if options.direct && options.open {
+            return Err(AgentError::Invalid(
+                "a one-to-one room has a room policy; it cannot be open".to_owned(),
+            ));
+        }
         if !self.state.signature_key_bound {
             self.publish_key_packages(1).await?;
         }
@@ -1470,13 +1493,30 @@ impl Agent {
                 (SAFE_AAD, vec![0x02, 0x00, 0x20]),
                 (FRANKING_AGENT, franking_agent),
                 // The creator is the room's admin (decision
-                // mimid-1wgh.56).
-                (PARTICIPANT_LIST, participant_list(&self.me, ADMIN_ROLE)?),
+                // mimid-1wgh.56); in a one-to-one room, a member like the
+                // other user.
+                (
+                    PARTICIPANT_LIST,
+                    participant_list(&self.me, if options.direct { ROLE } else { ADMIN_ROLE })?,
+                ),
                 (
                     ROLES_LIST,
-                    encode(&options.roles.clone().unwrap_or_else(default_roles))?,
+                    encode(&options.roles.clone().unwrap_or_else(|| {
+                        if options.direct {
+                            direct_roles()
+                        } else {
+                            default_roles()
+                        }
+                    }))?,
                 ),
-                (BASE_ROOM_POLICY, encode(&default_base_policy())?),
+                (
+                    BASE_ROOM_POLICY,
+                    encode(&if options.direct {
+                        direct_base_policy()
+                    } else {
+                        default_base_policy()
+                    })?,
+                ),
             ]
         };
         if options.metadata {
@@ -2918,6 +2958,16 @@ impl Agent {
             .position(|u| *u == self.me)
             .ok_or_else(|| AgentError::Invalid(format!("not in {room}'s participant list")))?;
         let alone = list.len() == 1;
+        // room-policy-04 §5: "Ordinary users cannot leave or be removed"
+        // from a fixed-membership room. Its creator alone, before the
+        // first Commit names the other participants, may abandon it
+        // (decision mimid-1wgh.89).
+        if !alone && self.is_fixed_membership(room)? {
+            return Err(AgentError::Invalid(format!(
+                "{room} is a fixed-membership room: a participant cannot leave it \
+                 (room-policy-04 §5)"
+            )));
+        }
         let index = u32::try_from(index)
             .map_err(|_| AgentError::Invalid("participant index".to_owned()))?;
         // One transaction: the proposals OpenMLS stores and the outbox
@@ -3038,6 +3088,41 @@ impl Agent {
             .ok_or_else(|| {
                 AgentError::Invalid(format!("{room} has no role named \"{MEMBER_ROLE_NAME}\""))
             })
+    }
+
+    /// Whether `room` is a fixed-membership room: its `base_room_policy`
+    /// has `fixed_membership` true (room-policy-04 §5). False for a room
+    /// without one, an open room, or one whose policy does not decode.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`].
+    pub fn is_fixed_membership(&self, room: &str) -> Result<bool, AgentError> {
+        Ok(self
+            .base_room_policy(room)?
+            .is_some_and(|base| bool::from(base.fixed_membership)))
+    }
+
+    /// Whether `room` is a one-to-one room as [`HostOptions::direct`]
+    /// makes them: `fixed_membership` with `max_users` 2 (room-policy-04
+    /// §5; decision mimid-1wgh.87 as revised).
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`].
+    pub fn is_direct(&self, room: &str) -> Result<bool, AgentError> {
+        Ok(self
+            .base_room_policy(room)?
+            .is_some_and(|base| bool::from(base.fixed_membership) && base.max_users == Some(2)))
+    }
+
+    /// The `base_room_policy` of an active room, `None` if it has none or
+    /// it does not decode.
+    fn base_room_policy(&self, room: &str) -> Result<Option<BaseRoomPolicy>, AgentError> {
+        Ok(self
+            .member(room)?
+            .component(BASE_ROOM_POLICY)
+            .and_then(|data| BaseRoomPolicy::tls_deserialize_exact(data).ok()))
     }
 
     /// Removes every client of `user` from `room` without changing the
@@ -5113,6 +5198,61 @@ fn default_base_policy() -> BaseRoomPolicy {
         // The other policy components of the room: its roles_list
         // (room-policy-04 §5; bead mimid-hpg8).
         policy_component_ids: vec![ROLES_LIST],
+    }
+}
+
+/// The base_room_policy of a one-to-one room ([`HostOptions::direct`]):
+/// room-policy-04 §5 `fixed_membership` with `max_users` 2, otherwise as
+/// [`default_base_policy`]. `persistent_room` stays true: mimid never
+/// makes a new MLS group for a room (decision mimid-1wgh.89).
+fn direct_base_policy() -> BaseRoomPolicy {
+    BaseRoomPolicy {
+        fixed_membership: Bool::True,
+        max_users: Some(2),
+        ..default_base_policy()
+    }
+}
+
+/// The roles of a one-to-one room ([`HostOptions::direct`]), valid for
+/// room-policy-04 §5 `fixed_membership` ("none of its non-zero,
+/// non-banned roles can contain the canAddParticipant capability"):
+///
+/// - 1 "banned", no capabilities;
+/// - 2 "member", both users': send, receive, reply, react and report
+///   abuse (§8.3), add and remove an own client (§8.1.1, §8.1.2), so a
+///   user's new device joins and a user can take all its clients out of
+///   the group, which §5 allows. No `canAddParticipant`,
+///   `canRemoveSelf`, `canRemoveParticipant`, role changes, metadata or
+///   policy changes, and no role transitions.
+fn direct_roles() -> RoleData {
+    let role = |role_index: u32, name: &str, role_capabilities: Vec<Capability>| Role {
+        role_index,
+        role_name: name.to_owned(),
+        role_description: String::new(),
+        role_capabilities,
+        minimum_participants_constraint: 0,
+        maximum_participants_constraint: None,
+        minimum_active_participants_constraint: 0,
+        maximum_active_participants_constraint: None,
+        authorized_role_changes: Vec::new(),
+    };
+    RoleData {
+        roles: vec![
+            role(BANNED_ROLE_INDEX, "banned", vec![]),
+            role(
+                ROLE,
+                MEMBER_ROLE_NAME,
+                vec![
+                    Capability::CAN_ADD_OWN_CLIENT,
+                    Capability::CAN_REMOVE_OWN_CLIENT,
+                    Capability::CAN_SEND_MESSAGE,
+                    Capability::CAN_RECEIVE_MESSAGE,
+                    Capability::CAN_REPLY_TO_MESSAGE,
+                    Capability::CAN_REACT_TO_MESSAGE,
+                    Capability::CAN_REPORT_ABUSE,
+                ],
+            ),
+        ],
     }
 }
 

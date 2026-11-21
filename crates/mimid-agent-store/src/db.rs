@@ -91,7 +91,9 @@ pub enum FileError {
 }
 
 /// The schema this version reads and writes. A database of another
-/// version is refused (§7.10: no conversions). Version 10 keeps each
+/// version is refused (§7.10: no conversions). Version 11 sets each
+/// room's `direct` from its room-policy-04 §5 `fixed_membership` policy
+/// instead of its name and count (bead mimid-qrbe). Version 10 keeps each
 /// later version's whole MIMI message ID in a message's `aliases`, and
 /// the version a reaction names in its `inReplyTo` (bead mimid-y5or).
 /// Version 9 adds each
@@ -107,7 +109,7 @@ pub enum FileError {
 /// version in its `schema_version` table; version 2 (bead mimid-1vul.11),
 /// in `chat.sqlite` under `user_version`, names every participant, sender,
 /// banned user and banner by URI; version 1 also allowed an unknown one.
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// The store's row in `schema_version`.
 const SCHEMA_PART: &str = "store";

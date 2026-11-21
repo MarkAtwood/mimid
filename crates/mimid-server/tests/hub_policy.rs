@@ -1170,47 +1170,197 @@ fn base_room_policy_limits() {
     ]);
 }
 
-#[test]
-fn fixed_membership_removal_not_enforced() {
-    // decision mimid-1wgh.3.50: the §5 rule that ordinary users of a
-    // fixed-membership room "cannot leave or be removed" is not enforced in
-    // v1, so a removal authorized by the roles goes through.
+/// A one-to-one room as mimid-agent-core's `HostOptions::direct` makes
+/// it: `fixed_membership` with `max_users` 2, role 2 "member" holding no
+/// `canAddParticipant` and no role changes. alice made it; with `full`
+/// bob is in it with two clients, else alice is its only participant.
+fn fixed_room(full: bool) -> RoomState {
     let roles = RoleData {
         roles: vec![
-            role(0, "no_role", &[], 0, None, 0, Some(0), &[]),
             banned(),
             role(
                 2,
                 "member",
                 &[
-                    C::CAN_REMOVE_PARTICIPANT,
-                    C::CAN_REMOVE_SELF,
                     C::CAN_ADD_OWN_CLIENT,
+                    C::CAN_REMOVE_OWN_CLIENT,
+                    C::CAN_SEND_MESSAGE,
                 ],
                 0,
                 None,
                 0,
                 None,
-                &[(2, &[0])],
+                &[],
             ),
         ],
     };
-    let mut state = room(
-        roles,
-        &[(ALICE, 2), (BOB, 2)],
-        &[(L_ALICE, ALICE), (L_BOB, BOB), (L_BOB2, BOB)],
-    );
+    let mut state = if full {
+        room(
+            roles,
+            &[(ALICE, 2), (BOB, 2)],
+            &[(L_ALICE, ALICE), (L_BOB, BOB), (L_BOB2, BOB)],
+        )
+    } else {
+        room(roles, &[(ALICE, 2)], &[(L_ALICE, ALICE)])
+    };
     state.base.fixed_membership = true.into();
+    state.base.max_users = Some(2);
     assert_eq!(state.roles.validate(true), Ok(()), "fixture must validate");
-    let removal = commit(
-        L_ALICE,
-        vec![
-            inline(plu(&[], &[1], &[])),
-            inline(remove(L_BOB)),
-            inline(remove(L_BOB2)),
-        ],
+    state
+}
+
+/// room-policy-04 §5 as decision mimid-1wgh.89 reads it: "Rooms with
+/// fixed_membership set to true (fixed-membership rooms) have the list of
+/// participants specified when they are created. While clients of
+/// existing participants can be added, other users cannot be added ...
+/// Ordinary users cannot leave or be removed, however a user can remove
+/// all its clients from the associated MLS group." The creator's Commits
+/// while it is the only participant specify the others.
+#[test]
+fn fixed_membership_rooms() {
+    let ext = || Proposal {
+        kind: plu(&[], &[I_BOB], &[]),
+        origin: Origin::ByReference(ProposalSender::External { sender_index: 0 }),
+    };
+    check_commits(vec![
+        (
+            "§5 the creator's first Commit specifies the other participant",
+            fixed_room(false),
+            commit(
+                L_ALICE,
+                vec![inline(plu(&[], &[], &[(BOB, 2)])), inline(add(BOB))],
+            ),
+            OK,
+        ),
+        (
+            "§5 max_users 2 holds in the creating Commit",
+            fixed_room(false),
+            commit(
+                L_ALICE,
+                vec![inline(plu(&[], &[], &[(BOB, 2), (CAROL, 2)]))],
+            ),
+            Err(Denied::TooManyUsers {
+                maximum: 2,
+                actual: 3,
+            }),
+        ),
+        (
+            "the creating Commit names a defined role, not banned",
+            fixed_room(false),
+            commit(L_ALICE, vec![inline(plu(&[], &[], &[(BOB, 1)]))]),
+            Err(Denied::FixedMembershipAdd),
+        ),
+        (
+            "the creating Commit names a defined role",
+            fixed_room(false),
+            commit(L_ALICE, vec![inline(plu(&[], &[], &[(BOB, 7)]))]),
+            Err(Denied::FixedMembershipAdd),
+        ),
+        (
+            "§5 other users cannot be added once the room is made",
+            fixed_room(true),
+            commit(L_ALICE, vec![inline(plu(&[], &[], &[(CAROL, 2)]))]),
+            Err(Denied::FixedMembershipAdd),
+        ),
+        (
+            "§5 nor join",
+            fixed_room(true),
+            external(CAROL, vec![inline(plu(&[], &[], &[(CAROL, 2)]))]),
+            Err(Denied::FixedMembershipAdd),
+        ),
+        (
+            "§5 clients of existing participants can be added",
+            fixed_room(true),
+            external(BOB, vec![]),
+            OK,
+        ),
+        (
+            "§5 ordinary users cannot be removed",
+            fixed_room(true),
+            commit(
+                L_ALICE,
+                vec![
+                    inline(plu(&[], &[I_BOB], &[])),
+                    inline(remove(L_BOB)),
+                    inline(remove(L_BOB2)),
+                ],
+            ),
+            Err(Denied::FixedMembershipRemoval),
+        ),
+        (
+            "§5 ordinary users cannot leave, by reference either",
+            fixed_room(true),
+            commit(
+                L_ALICE,
+                vec![
+                    by_ref(L_BOB, K::SelfRemove),
+                    by_ref(L_BOB, remove(L_BOB2)),
+                    by_ref(L_BOB, plu(&[], &[I_BOB], &[])),
+                ],
+            ),
+            Err(Denied::FixedMembershipRemoval),
+        ),
+        (
+            "the hub's own removal is refused too",
+            fixed_room(true),
+            commit(
+                L_ALICE,
+                vec![ext(), inline(remove(L_BOB)), inline(remove(L_BOB2))],
+            ),
+            Err(Denied::FixedMembershipRemoval),
+        ),
+        (
+            "§5 a user can remove all its clients from the MLS group",
+            fixed_room(true),
+            commit(
+                L_ALICE,
+                vec![by_ref(L_BOB, K::SelfRemove), by_ref(L_BOB, remove(L_BOB2))],
+            ),
+            OK,
+        ),
+    ]);
+    check_proposals(vec![
+        (
+            "§5 a participant's leave is refused when it arrives",
+            fixed_room(true),
+            member(L_BOB),
+            plu(&[], &[I_BOB], &[]),
+            Err(Denied::FixedMembershipRemoval),
+        ),
+        (
+            "§5 an addition is refused when it arrives",
+            fixed_room(true),
+            member(L_ALICE),
+            plu(&[], &[], &[(CAROL, 2)]),
+            Err(Denied::FixedMembershipAdd),
+        ),
+        (
+            "the creator abandons a room whose others were never added",
+            fixed_room(false),
+            member(L_ALICE),
+            plu(&[], &[I_ALICE], &[]),
+            OK,
+        ),
+        (
+            "§5 removing an own client",
+            fixed_room(true),
+            member(L_BOB),
+            K::SelfRemove,
+            OK,
+        ),
+    ]);
+    // Key material only for the creating Commit; a GroupInfo only for a
+    // participant's own new client.
+    assert_eq!(authorize_key_material(&fixed_room(false), ALICE), OK);
+    assert_eq!(
+        authorize_key_material(&fixed_room(true), ALICE),
+        Err(Denied::FixedMembershipAdd)
     );
-    assert_eq!(authorize_commit(&state, &removal).map(drop), OK);
+    assert_eq!(authorize_group_info(&fixed_room(true), BOB, None), OK);
+    assert_eq!(
+        authorize_group_info(&fixed_room(true), CAROL, None),
+        Err(Denied::FixedMembershipAdd)
+    );
 }
 
 #[test]

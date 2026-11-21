@@ -549,7 +549,8 @@ impl Store {
         }
         let key = self.mint();
         let participants = roles.participants(&participants);
-        let direct = Room::looks_direct(name.as_deref(), &participants);
+        // room-policy-04 §5 fixed_membership with max_users 2 (§7.29).
+        let direct = agent.is_direct(uri).unwrap_or(false);
         state.insert_room(Room {
             key: key.clone(),
             uri: uri.to_owned(),

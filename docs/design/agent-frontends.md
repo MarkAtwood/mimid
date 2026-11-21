@@ -1917,37 +1917,124 @@ Added on 2026-11-20:
       mimid-agent `tests/groundwork.rs` `on_behalf_of_through_jmap_and_irc`.
 
 29. **One-to-one rooms (epic mimid-qqtk, bead mimid-qqtk.4; Mark's
-    S2, docs/design/client-survey.md §10; decision mimid-1wgh.87).**
-    - **The flag.** `Room::direct` is local to the store and never sent.
-      `Room::direct_peer` names the other user while the room, banned
-      users left out, holds exactly the user and one other. A room first
-      seen with no name (or an empty one) and exactly two participants
-      is taken as direct (`Room::looks_direct`, INVENTED); `Store::set_direct`
-      marks or unmarks one by hand.
-    - **Finding and making.** `Store::direct_room` finds the active
-      one-to-one room with a user (the oldest by key if several).
-      `Store::open_direct` returns it, or hosts a new unnamed room and
-      invites the user (`Store::create_room`), flagged direct. IRC v2's
-      queries will call these (S2); v1 still has none (§7.2).
-    - **On MIMI.** The room is an ordinary room: no name, the default
-      room policy, the user and the one invited. room-policy-04 §5 names
-      `fixed_membership` rooms as the style for direct messages, but its
-      rules (participants set at creation, nobody added, ordinary users
-      unable to leave, one such room per set of participants) do not fit
-      how mimid hosts rooms (host, then invite) or §7.1 (PART leaves),
-      so it is not used; whether to adopt it, with `max_users` 2, is open
-      for Mark (decision mimid-1wgh.87). Other providers see nothing new.
+    S2, docs/design/client-survey.md §10; decision mimid-1wgh.87 as
+    revised by Mark on 2026-11-21, bead mimid-qrbe; decision
+    mimid-1wgh.89).** A one-to-one room is a room-policy-04 §5
+    `fixed_membership` room with `max_users` 2. This replaces the
+    ordinary unnamed room of two that c9d76e9f built.
+    - **What §5 says.** room-policy-04 §5, quoted whole for the rules
+      used here:
+
+      > Rooms with fixed_membership set to true (fixed-membership rooms)
+      > have the list of participants specified when they are created.
+      > While clients of existing participants can be added, other users
+      > cannot be added, so none of its non-zero, non-banned roles can
+      > contain the canAddParticipant capability. Ordinary users cannot
+      > leave or be removed, however a user can remove all its clients
+      > from the associated MLS group. The most common case of a
+      > fixed-membership room is a 1:1 conversation. This room membership
+      > style is used to implement Direct Message (DM) and Group DM
+      > features. Only a single fixed-membership room can exist for any
+      > unique set of participants.
+
+      > When max_clients has a value, the room's associated MLS group
+      > MUST NOT have more clients than the provided value. Likewise when
+      > max_users has a value, the room MUST NOT have more non-banned
+      > entries in the participant list than that value.
+
+      > If persistent_room is false, the room will be automatically
+      > inaccsessible when the corresponding MLS group is destroyed (when
+      > there are no clients in the group). If persistent_room is true,
+      > the room policy will remain and a client whose user has
+      > appropriate authorization can create a new MLS group for the same
+      > room.
+
+      §8.1.2 gives the client-level actions §5 leaves open:
+      `canRemoveOwnClient` "can propose to remove its own client using an
+      MLS Remove or SelfRemove proposal without changing the Participant
+      list", which "cannot be committed by the leaving user"; and
+      `canRemoveSelf`, leaving the participant list, which §5 rules out
+      in a fixed room.
+    - **The room.** `HostOptions::direct` (mimid-agent-core):
+      `fixed_membership` true, `max_users` 2, `multi_device` true, no
+      `max_clients`, `persistent_room` true (mimid never makes a new MLS
+      group for a room, so a room whose last client leaves stays as it
+      is), not discoverable, no name. Its roles (`direct_roles`): 1
+      "banned"; 2 "member" for both users, creator included, holding
+      `canAddOwnClient`, `canRemoveOwnClient`, send, receive, reply,
+      react and report abuse, no `canAddParticipant`, no `canRemoveSelf`,
+      no role changes and no metadata or policy capability.
+    - **Creation.** draft-atwood-jmap-chat-mimi-00 §Room/create makes a
+      room whose group and participant list hold the creator alone
+      (rules 2 and 4), so "specified when they are created" is read as:
+      Room/create, then the creator's first Commit, which adds the other
+      user's clients and the participant-list entry and sends them a
+      Welcome (`Agent::invite`, as for any invite). The KeyMaterial
+      request of that Commit goes through the target's provider as
+      always, so the other user's consent applies unchanged
+      (`noConsent` refuses the room, which the creator then abandons).
+      On the other side the Welcome is an invite like any other, joined
+      or held by the invite policy (§7.5). A room whose add failed is
+      abandoned: the creator leaves it, which the hub allows only while
+      the creator is the only participant (decision mimid-1wgh.89,
+      INVENTED).
+    - **The hub's rules** (mimid-server `hub::policy`, decision
+      mimid-1wgh.89, which replaces decision mimid-1wgh.3.50's "not
+      enforced"):
+      - "other users cannot be added": no participant-list addition, by
+        add or by join (open join, preauthorization, external Commit of a
+        new user), except in a Commit by the creator while it is the
+        list's only entry, which may add users in a defined role other
+        than 0 and 1 with no capability (no role can hold
+        `canAddParticipant`). `max_users` 2 then caps it. KeyMaterial
+        requests through the hub, and GroupInfo requests from users not
+        listed, follow the same rule.
+      - "Ordinary users cannot leave or be removed": "ordinary" is read
+        as every user, since §5 defines no other kind. No entry leaves
+        the participant list, by leave, removal or the hub operator's own
+        removal, inline or by reference; a ban (a role change) is left to
+        the roles, and `direct_roles` grants none.
+      - "a user can remove all its clients": Remove and SelfRemove of the
+        proposer's own clients stay allowed (`canRemoveOwnClient`), as do
+        a participant's new clients (`canAddOwnClient`).
+      - "Only a single fixed-membership room can exist for any unique set
+        of participants": the Commit that specifies a fixed room's
+        participants is refused if another fixed room this hub hosts has
+        the same set. A hub cannot see rooms other hubs host; two users
+        who open a room with each other at once on two providers can end
+        up with two (the agent shows both, and `direct_room` picks the
+        oldest).
+    - **The agent and the store.** `Agent::is_fixed_membership` and
+      `Agent::is_direct` read the room's policy; `Agent::leave` refuses a
+      fixed room (§5) unless the user is its only participant.
+      `Room::direct` is set from the policy when a room is first seen
+      (`Agent::is_direct`), no longer from a name and a count;
+      `Store::set_direct` is gone. `Store::direct_room` finds the active
+      one-to-one room with a user (the oldest by key if several);
+      `Store::open_direct` returns it, or hosts a new one
+      (`HostOptions::direct`) and adds the user in its first Commit.
+    - **PART and destroy: open for Mark.** §5 lets a user "remove all
+      its clients from the associated MLS group" but not leave the
+      participant list, so §7.1 ("PART leaves the room for real: every
+      device of the user leaves, and only a new invite brings them back")
+      cannot hold as written: no one can invite them back (they are still
+      a participant, and nobody can add a user), and they can come back
+      on their own (`canAddOwnClient`). Until Mark decides, `Agent::leave`
+      refuses a fixed room, so IRC PART and JMAP Chat destroy of a direct
+      Chat fail with that error and change nothing.
     - **JMAP Chat.** A direct room is a Chat of kind `direct` whose
       `contactId` is the other participant's ChatContact, with no
       `name` and no `members` (draft-atwood-jmap-chat-00 §Chat: "Group
       chats only"). `Chat/set` create with `kind: "direct"` and
       `contactId` is `Store::open_direct`; with a one-to-one room already
-      there it is `alreadyExists` with its `existingId`. A direct Chat
-      stays `direct` if a third user joins (`kind` is immutable).
-    - Schema version 9.
-    - Tests: mimid-agent-store `tests/groundwork.rs`
+      there it is `alreadyExists` with its `existingId`.
+    - Schema version 9 (the `direct` flag); version 11 (`direct` read
+      from the policy).
+    - Tests: mimid-server `tests/hub_policy.rs` `fixed_membership_rooms`;
+      mimid-agent-store `tests/groundwork.rs`
       `one_to_one_rooms_are_made_once_and_recognised`; mimid-agent
-      `tests/groundwork.rs` `direct_chats_over_jmap`.
+      `tests/groundwork.rs` `direct_chats_over_jmap`, and
+      `tests/direct_two_providers.rs` (a.example and b.example).
 
 30. **Attachment links (epic mimid-qqtk, bead mimid-qqtk.5; decision
     mimid-1wgh.88).** For front ends whose clients cannot send the

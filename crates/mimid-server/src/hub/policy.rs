@@ -75,6 +75,14 @@
 //!   in every room; setting an empty one needs nothing, but only to the
 //!   room's ID (bead mimid-bjt5). A `remove` is judged as an update to the
 //!   all-empty data (decision mimid-1wgh.64).
+//! - In a fixed-membership room (room-policy-04 §5; decision
+//!   mimid-1wgh.89), no user joins or is added, except by the creator's
+//!   Commits while it is the only participant, which specify the others
+//!   with no capability; and no participant leaves or is removed, by
+//!   inline proposal or by reference, except the creator from a room
+//!   whose others were never added. Clients come and go as in any room
+//!   (`canAddOwnClient`, `canRemoveOwnClient`, `canKick`). Key material
+//!   is fetched and a GroupInfo for a join served on the same terms.
 //! - After the commit, the role list passes its structural checks, the §5
 //!   `max_clients`, `max_users` and `multi_device` limits hold, and every
 //!   role's §3 participant constraints hold, checked once on the state
@@ -379,9 +387,78 @@ pub enum Denied {
     /// Join codes are not supported (decision mimid-1wgh.6.13).
     #[error("join codes are not supported")]
     JoinCode,
+    /// A user would be added to a fixed-membership room after it was
+    /// created: "other users cannot be added" (room-policy-04 §5;
+    /// decision mimid-1wgh.89).
+    #[error("a fixed-membership room takes no new participant")]
+    FixedMembershipAdd,
+    /// A user would leave or be removed from a fixed-membership room:
+    /// "Ordinary users cannot leave or be removed" (room-policy-04 §5;
+    /// decision mimid-1wgh.89).
+    #[error("a participant of a fixed-membership room cannot leave or be removed")]
+    FixedMembershipRemoval,
 }
 
 impl RoomState {
+    /// Whether the room is a fixed-membership room: its
+    /// `base_room_policy` has `fixed_membership` true (room-policy-04
+    /// §5). An open room has no policy and is not.
+    fn is_fixed(&self) -> bool {
+        !self.open && bool::from(self.base.fixed_membership)
+    }
+
+    /// Whether `actor` is creating this fixed-membership room: it is the
+    /// participant list's only entry, so the room's other participants
+    /// have not been given yet. Since no participant of a fixed room
+    /// leaves or is removed, the list holds one entry only until the
+    /// first Commit that names the others (decision mimid-1wgh.89).
+    fn is_being_created_by(&self, actor: &[u8]) -> bool {
+        matches!(&self.participants.participants[..], [only] if only.user == actor)
+    }
+
+    /// room-policy-04 §5 on one participant-list change in a
+    /// fixed-membership room by `actor` (decision mimid-1wgh.89):
+    ///
+    /// - "Rooms with fixed_membership set to true (fixed-membership
+    ///   rooms) have the list of participants specified when they are
+    ///   created. While clients of existing participants can be added,
+    ///   other users cannot be added". The room is created by
+    ///   Room/create with its creator alone (draft-atwood-jmap-chat-mimi-00
+    ///   §Room/create rule 4), so the creator's first Commit specifies the
+    ///   others: while `actor` is the list's only entry it may add other
+    ///   users, in a defined role other than 0 and 1, with no capability
+    ///   (§5 forbids `canAddParticipant` on every non-zero role). No other
+    ///   addition is allowed, a join included.
+    /// - "Ordinary users cannot leave or be removed": no entry leaves the
+    ///   list, by leaving or by removal, except that the creator may
+    ///   leave a room whose other participants were never added.
+    ///
+    /// `Some` with the answer for an addition or a removal, `None` for a
+    /// role change, which the roles decide.
+    fn fixed_change(&self, actor: &[u8], change: &ParticipantChange) -> Option<Result<(), Denied>> {
+        let (from, target) = (change.from_role_index, change.target_role_index);
+        if from == NO_ROLE_INDEX {
+            let creating = change.user != actor
+                && self.is_being_created_by(actor)
+                && target != BANNED_ROLE_INDEX
+                && self.roles.role(target).is_some();
+            Some(if creating {
+                Ok(())
+            } else {
+                Err(Denied::FixedMembershipAdd)
+            })
+        } else if target == NO_ROLE_INDEX {
+            let abandoning = change.user == actor && self.is_being_created_by(actor);
+            Some(if abandoning {
+                Ok(())
+            } else {
+                Err(Denied::FixedMembershipRemoval)
+            })
+        } else {
+            None
+        }
+    }
+
     /// The user's role in the participant list, or 0 if it is not listed
     /// (room-policy-04 §3).
     fn role_of(&self, user: &[u8]) -> u32 {
@@ -464,6 +541,11 @@ impl RoomState {
         actor_role: u32,
         change: &ParticipantChange,
     ) -> Result<(), Denied> {
+        if self.is_fixed()
+            && let Some(answer) = self.fixed_change(actor, change)
+        {
+            return answer;
+        }
         let (from, target) = (change.from_role_index, change.target_role_index);
         if change.user != actor {
             let action = match (from, target) {
@@ -976,6 +1058,13 @@ pub fn authorize_commit(state: &RoomState, commit: &Commit) -> Result<PolicyOutc
                 for change in list.apply(&update)? {
                     if !by_reference {
                         state.authorize_change(&proposer, proposer_role, &change)?;
+                    } else if state.is_fixed()
+                        && let Some(answer) = state.fixed_change(&proposer, &change)
+                    {
+                        // room-policy-04 §5 for proposals by reference too,
+                        // the hub's own among them: a fixed-membership room
+                        // loses no participant (decision mimid-1wgh.89).
+                        answer?;
                     }
                     if change.from_role_index == NO_ROLE_INDEX {
                         added_by.insert(change.user.clone(), proposer.clone());
@@ -1183,13 +1272,24 @@ pub fn authorize_send(state: &RoomState, sending_user: &[u8]) -> Result<(), Deni
 /// Authorizes `requester` to fetch key material through the hub for a
 /// user to add to the room: a listed, not banned participant whose role
 /// holds `canAddParticipant` (protocol-07 §3.3 leaves the check undefined;
-/// decision mimid-1wgh.6.20).
+/// decision mimid-1wgh.6.20). In a fixed-membership room, only its
+/// creator while it is the only participant (room-policy-04 §5; decision
+/// mimid-1wgh.89).
 ///
 /// # Errors
 ///
-/// [`Denied::NotParticipant`], [`Denied::RemovedOrBanned`] or
-/// [`Denied::Capability`].
+/// [`Denied::NotParticipant`], [`Denied::RemovedOrBanned`],
+/// [`Denied::Capability`] or [`Denied::FixedMembershipAdd`].
 pub fn authorize_key_material(state: &RoomState, requester: &[u8]) -> Result<(), Denied> {
+    // room-policy-04 §5: in a fixed-membership room only its creator,
+    // specifying the participants, adds anyone (decision mimid-1wgh.89).
+    if state.is_fixed() {
+        return if state.is_being_created_by(requester) {
+            Ok(())
+        } else {
+            Err(Denied::FixedMembershipAdd)
+        };
+    }
     let role = state.role_of(requester);
     if role == NO_ROLE_INDEX {
         return Err(Denied::NotParticipant);
@@ -1222,6 +1322,11 @@ pub fn authorize_group_info(
     let role = state.role_of(requester);
     if role != NO_ROLE_INDEX {
         return state.authorize(role, MembershipAction::AddOwnClient);
+    }
+    // room-policy-04 §5: "other users cannot be added" to a
+    // fixed-membership room, by joining either (decision mimid-1wgh.89).
+    if state.is_fixed() {
+        return Err(Denied::FixedMembershipAdd);
     }
     let open_denied = match state.capability(NO_ROLE_INDEX, Capability::CAN_OPEN_JOIN) {
         Ok(()) => return Ok(()),

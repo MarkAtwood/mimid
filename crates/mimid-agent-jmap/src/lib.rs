@@ -35,11 +35,12 @@
 //!   Commit at each `sync` (`Agent::join_own_rooms`; decision
 //!   mimid-1wgh.61).
 //! - **Direct Chats** (docs/design/agent-frontends.md §7.29): a
-//!   one-to-one room (the store's `direct` flag) is a Chat of kind
+//!   one-to-one room (room-policy-04 §5 `fixed_membership` with
+//!   `max_users` 2; the store's `direct` flag) is a Chat of kind
 //!   `"direct"` whose `contactId` is the other participant's
-//!   ChatContact. `Chat/set` create of a direct Chat hosts an unnamed
-//!   room and invites that user, or is `alreadyExists` with the Chat of
-//!   the one-to-one room there is.
+//!   ChatContact. `Chat/set` create of a direct Chat hosts such a room
+//!   and adds that user in its first Commit, or is `alreadyExists` with
+//!   the Chat of the one-to-one room there is.
 //! - **members**: the room's participant list, mirrored at each `sync`.
 //!   The owner's entry is the accountId; every other participant is a
 //!   ChatContact whose `identity` and `login` are its MIMI user URI, made
@@ -188,10 +189,9 @@
 //!   (RFC 8620 §6); if the save after the destroy fails, all of them stay
 //!   until a save succeeds, and a restart before that leaves them to the
 //!   quota.
-//! - A direct Chat is a one-to-one room only as this agent marks it
-//!   (docs/design/agent-frontends.md §7.29): other members see an
-//!   ordinary unnamed room. Its `kind` stays `direct` if a third user
-//!   joins, and the room's own policy is not `fixed_membership`.
+//! - `Chat/set` destroy of a direct Chat fails: room-policy-04 §5 lets
+//!   no participant leave a fixed-membership room, and what it does
+//!   instead is open for Mark (docs/design/agent-frontends.md §7.29).
 //! - On a room-bound Chat, `name`, `description` and `avatarBlobId` are
 //!   `forbidden` (§Chat.roomId). Roles map only to "admin" and "member",
 //!   the room's roles of those names (draft-atwood-jmap-chat-mimi-00

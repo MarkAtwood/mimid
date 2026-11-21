@@ -25,6 +25,11 @@
 //! 6. The `From` domain must be the domain of the authenticated
 //!    committer's user (decision mimid-1wgh.6.9).
 //! 7. Room policy must allow the Commit ([`policy::authorize_commit`]).
+//!    In a fixed-membership room, a Commit that specifies its participants
+//!    must not give it the same set of participants as another
+//!    fixed-membership room this hub hosts: "Only a single
+//!    fixed-membership room can exist for any unique set of participants"
+//!    (room-policy-04 §5; decision mimid-1wgh.89).
 //! 8. The Commit must include every pending proposal (decision
 //!    mimid-1wgh.6.5).
 //! 9. The GroupInfo must not embed a ratchet_tree (decision
@@ -167,6 +172,7 @@ pub(super) async fn update(
         return success(accepted_at);
     }
 
+    let fixed_elsewhere = fixed_rooms_elsewhere(&rooms, room_id);
     let room = rooms.get_mut(room_id).ok_or(HubError::NoSuchRoom)?;
     let staged = match &decoded.bundle {
         HandshakeBundle::Commit {
@@ -182,6 +188,7 @@ pub(super) async fn update(
             proposal_or_commit,
             welcome.as_ref(),
             group_info_option,
+            &fixed_elsewhere,
         ),
         HandshakeBundle::Proposal {
             proposal_or_commit,
@@ -282,6 +289,43 @@ pub(super) async fn update(
 
 /// Rebuilds a room after an internal failure, logging a rebuild failure so
 /// that the original error is the one returned.
+/// The participant sets of the fixed-membership rooms this hub hosts
+/// other than `room_id`, if `room_id` is a fixed-membership room whose
+/// participants are not given yet (its participant list holds one
+/// entry); empty otherwise, since only such a room can take new
+/// participants (room-policy-04 §5; decision mimid-1wgh.89).
+fn fixed_rooms_elsewhere(
+    rooms: &std::collections::BTreeMap<String, Room>,
+    room_id: &str,
+) -> Vec<BTreeSet<Vec<u8>>> {
+    let fixed = |id: &str, room: &Room| {
+        room_state(&room.observer, id)
+            .ok()
+            .filter(|state| !state.open && bool::from(state.base.fixed_membership))
+    };
+    let being_created = rooms
+        .get(room_id)
+        .and_then(|room| fixed(room_id, room))
+        .is_some_and(|state| state.participants.participants.len() == 1);
+    if !being_created {
+        return Vec::new();
+    }
+    rooms
+        .iter()
+        .filter(|(id, _)| id.as_str() != room_id)
+        .filter_map(|(id, room)| fixed(id, room))
+        .map(|state| participant_set(&state.participants))
+        .collect()
+}
+
+/// The users of a participant list, as a set.
+fn participant_set(list: &mimi_protocol::ParticipantListData) -> BTreeSet<Vec<u8>> {
+    list.participants
+        .iter()
+        .map(|entry| entry.user.clone())
+        .collect()
+}
+
 async fn restore_after_error(
     hub: &Hub,
     rooms: &mut std::collections::BTreeMap<String, Room>,
@@ -428,6 +472,10 @@ fn check_epoch(
 }
 
 /// Runs the Commit steps 3 to 10 of the module documentation.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parts of one Room/update, each used once"
+)]
 fn stage_commit(
     hub: &Hub,
     room: &mut Room,
@@ -436,6 +484,7 @@ fn stage_commit(
     commit: &MLSMessage,
     welcome: Option<&Welcome>,
     group_info_option: &GroupInfoOption,
+    fixed_elsewhere: &[BTreeSet<Vec<u8>>],
 ) -> Result<Outcome, HubError> {
     if let Some(refused) = check_epoch(room, room_id, commit) {
         return refused;
@@ -520,18 +569,38 @@ fn stage_commit(
             return refused(room, "a field is over this hub's size limit");
         }
     }
-    if let Err(denied) = policy::authorize_commit(&state, &summary) {
-        tracing::debug!(
-            room_id,
-            denied = &denied as &dyn std::error::Error,
-            "commit refused by room policy"
-        );
-        room.observer.clear_pending_commit();
-        return refuse_with(
-            room_id,
-            "the commit is refused by room policy",
-            &denied,
-            false,
+    let outcome = match policy::authorize_commit(&state, &summary) {
+        Ok(outcome) => outcome,
+        Err(denied) => {
+            tracing::debug!(
+                room_id,
+                denied = &denied as &dyn std::error::Error,
+                "commit refused by room policy"
+            );
+            room.observer.clear_pending_commit();
+            return refuse_with(
+                room_id,
+                "the commit is refused by room policy",
+                &denied,
+                false,
+            );
+        }
+    };
+    // room-policy-04 §5: "Only a single fixed-membership room can exist
+    // for any unique set of participants"; decision mimid-1wgh.89.
+    if let Some(list) = outcome
+        .new_data
+        .get(&mimi_protocol::component_id::PARTICIPANT_LIST)
+        && let Ok(list) = components::decode::<mimi_protocol::ParticipantListData>(
+            mimi_protocol::component_id::PARTICIPANT_LIST,
+            list,
+        )
+        && state.participants.participants.len() == 1
+        && fixed_elsewhere.contains(&participant_set(&list))
+    {
+        return refused(
+            room,
+            "a fixed-membership room with these participants exists already",
         );
     }
     // Decision mimid-1wgh.4.76.2 (revising mimid-1wgh.6.74): under

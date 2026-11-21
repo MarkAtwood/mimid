@@ -536,15 +536,18 @@ async fn extensions_are_kept_sent_and_edited() {
     );
 }
 
-/// Oracle: docs/design/client-survey.md §10 S2 (a store-level `direct`
-/// flag); docs/design/agent-frontends.md §7.29 (an unnamed room of two,
-/// found again rather than made twice; one seen unnamed with two
-/// participants is direct, a named one is not).
+/// Oracle: room-policy-04 §5 ("Rooms with fixed_membership set to true
+/// (fixed-membership rooms) have the list of participants specified when
+/// they are created ... other users cannot be added ... Ordinary users
+/// cannot leave or be removed ... Only a single fixed-membership room can
+/// exist for any unique set of participants"); docs/design/agent-frontends.md
+/// §7.29 (one-to-one rooms are fixed_membership with max_users 2, found
+/// again rather than made twice; a named ordinary room is not direct).
 #[tokio::test]
 async fn one_to_one_rooms_are_made_once_and_recognised() {
     let dir = tempfile::tempdir().unwrap();
     let (mut alice, bob, _, lobby) = alice_and_bob(dir.path()).await;
-    assert!(!bob.state().rooms[&lobby].direct, "a named room");
+    assert!(!bob.state().rooms[&lobby].direct, "an ordinary room");
     assert_eq!(bob.direct_room(ALICE), None);
 
     let (made, new) = bob.open_direct(bob.new_key(), ALICE).await.unwrap();
@@ -557,7 +560,8 @@ async fn one_to_one_rooms_are_made_once_and_recognised() {
     assert_eq!(bob.direct_room(ALICE), Some(made.key.clone()));
     assert!(bob.open_direct(bob.new_key(), BOB).await.is_err());
 
-    // alice's agent sees an ordinary unnamed room of two.
+    // alice got the Welcome of bob's first Commit; joined, her agent sees
+    // a fixed-membership room of two with max_users 2.
     let mut invite = None;
     for _ in 0..100 {
         alice.poll().await.unwrap();
@@ -569,22 +573,28 @@ async fn one_to_one_rooms_are_made_once_and_recognised() {
     }
     let joined = alice.join(invite.expect("bob's invite")).unwrap();
     assert_eq!(joined, made.uri);
-    assert_eq!(alice.room_name(&joined).unwrap().unwrap_or_default(), "");
+    assert!(alice.is_direct(&joined).unwrap());
+    assert!(alice.is_fixed_membership(&joined).unwrap());
     assert_eq!(alice.participants(&joined).unwrap().len(), 2);
 
-    // A room alice hosts unnamed with bob is direct at bob's; it is not
-    // the one direct_room finds, which was made first.
+    // §5: no one leaves it; the hub refuses a second fixed room of the
+    // same two.
+    assert!(alice.leave(&joined).await.is_err());
+    let second = alice.host_room(&HostOptions::direct()).await.unwrap();
+    let refused = alice.invite(&second, BOB).await;
+    assert!(
+        matches!(refused, Err(mimid_agent_core::AgentError::Refused { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(alice.participants(&second).unwrap(), [ALICE]);
+
+    // An unnamed ordinary room of the two is not direct at bob's.
     let theirs = alice.host_room(&HostOptions::named("")).await.unwrap();
     alice.invite(&theirs, BOB).await.unwrap();
     until_store(&bob, |s| s.state().room_of_uri(&theirs).is_some()).await;
     let key = bob.state().room_of_uri(&theirs).cloned().unwrap();
-    let record = bob.state().rooms[&key].clone();
-    assert!(record.direct);
-    assert_eq!(record.direct_peer(BOB), Some(ALICE));
+    assert!(!bob.state().rooms[&key].direct);
     assert_eq!(bob.direct_room(ALICE), Some(made.key.clone()));
-    // Unmarked by hand, it is a group again.
-    assert!(bob.set_direct(&key, false));
-    assert_eq!(bob.state().rooms[&key].direct_peer(BOB), None);
 }
 
 /// The bodies of `page`.
