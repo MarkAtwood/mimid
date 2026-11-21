@@ -1,0 +1,7 @@
+{
+  "id": "1795240281017594252-1",
+  "issue_id": "mimid-1wgh.81",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-21: keep the 4 MiB cap and document the room-size limit (no GroupInfo cap raise); accept the epoch race (re-invite), the epoch question stays in WG note mimid-3hoq.",
+  "created_at": "2026-11-21T05:51:21.017594252Z"
+}
