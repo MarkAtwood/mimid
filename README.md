@@ -51,6 +51,10 @@ Not deliberate; each is being fixed:
 - A member removed because its app lacks AppDataUpdate gets an in-chat notice, but this is not yet tested end to end through a hub. Bead mimid-4lp4.4.
 - The server deletes every uploaded attachment 30 days after upload (`blob_lifetime_secs`), whether or not anyone has fetched it, since it can't read the messages that name it. Decision mimid-1wgh.67.
 
+## Limits
+
+- **Room size.** One provider sends another at most 4 MiB in a request or response body (`MAX_BODY_LEN` in `mimid-server`). A Welcome to a new member and a GroupInfo answer each carry the room's whole member tree, so the tree must fit that cap. Measured with `crates/mimid-server/tests/hub_welcome_tree.rs` at 65 and 257 leaves (BasicCredential, X25519 and Ed25519), the tree grows by 246 octets per leaf; with every parent node filled in (about 70 octets more each) it is nearer 315. 4 MiB is then about 13,000 to 17,000 leaves. Each device of a member is a leaf, so at three devices a member a room tops out at roughly 4,000 to 5,500 members, and fewer with did:webvh credentials, whose leaves carry the user's DID log. The hub refuses an add whose Welcome or GroupInfo could not reach the new members (`welcome_too_large` in its log). Mark's decision of 2026-11-21 keeps the 4 MiB cap; the gap in the drafts is noted for the working group in bead mimid-3hoq.
+
 Each crate documents its own limitations in the `# Limitations` section of its rustdoc.
 
 ## Crates

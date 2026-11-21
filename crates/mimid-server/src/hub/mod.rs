@@ -32,6 +32,19 @@
 //!   [`HubRequirements::room_policy`] on; the hub logs a warning
 //!   (`open_room_kept`) for each at start.
 //! - [`Hub::update`] has the limitations listed in `update.rs`.
+//! - Room size. A Welcome fanout body and a groupInfo response each carry
+//!   the room's whole ratchet tree, and each must fit
+//!   [`crate::http::MAX_BODY_LEN`] (4 MiB), the most one provider reads
+//!   from another (decisions mimid-1wgh.6.67, mimid-1wgh.81; Mark kept the
+//!   cap on 2026-11-21). A Commit whose Welcome cannot reach its new
+//!   members either way is refused (`welcome_too_large`). The tree grows by
+//!   246 octets per leaf with BasicCredential leaves, measured with
+//!   `tests/hub_welcome_tree.rs` at 65 and 257 leaves (15,976 and 63,210
+//!   octets), and by about 315 with every parent node filled in, so the
+//!   cap holds about 13,000 to 17,000 leaves: roughly 4,000 to 5,500
+//!   members at three devices each, fewer with did:webvh leaves, which
+//!   carry the user's DID log. The drafts give no way to fetch a tree in
+//!   parts (WG note, bead mimid-3hoq).
 //! - If a room cannot be rebuilt after a failed request, it is dropped from
 //!   memory, and requests for it get [`HubError::NoSuchRoom`] until the hub
 //!   restarts. Its stored state is kept (decision mimid-1wgh.6.58).
