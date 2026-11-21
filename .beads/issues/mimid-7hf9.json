@@ -1,11 +1,13 @@
 {
   "id": "mimid-7hf9",
   "title": "Store each message's arrival time; JMAP receivedAt uses it (decision 8b, Mark 2026-11-21)",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T06:00:34.829355056Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T06:00:34.829355056Z"
+  "updated_at": "2026-11-21T07:02:48.950727161Z",
+  "closed_at": "2026-11-21T07:02:48.950727161Z",
+  "close_reason": "Done in d42dd45 on branch agent-decisions (not pushed): record::Message::received_at (store time for received messages, hub acceptance time for own sends); JMAP receivedAt renders from it; store schema 4; jmap_seed.rs checks a message received with JMAP off. §7.18, §7.11 updated."
 }
