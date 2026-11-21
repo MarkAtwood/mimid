@@ -353,10 +353,11 @@ impl AgentChat {
     {
         let id = self.inner.mint_id();
         let mut value = serde_json::to_value(build(&id)).map_err(serde_failure)?;
+        if value["kind"] == "direct" {
+            return self.create_direct_chat(id, value).await;
+        }
         if value["kind"] != "group" {
-            return Err(forbidden(
-                "only a group Chat maps to a MIMI room; direct Chats are not supported",
-            ));
+            return Err(forbidden("only a group or direct Chat maps to a MIMI room"));
         }
         let name = value["name"].as_str().unwrap_or_default().to_owned();
         let members: Vec<ChatMember> =
@@ -376,6 +377,50 @@ impl AgentChat {
             .create_room(key(&id), &name, &users)
             .await
             .map_err(action_failure)?;
+        // Local (docs/design/agent-frontends.md §7.21).
+        if let Some(seconds) = value["messageExpirySeconds"].as_u64() {
+            self.store.set_message_expiry(&room.key, Some(seconds));
+        }
+        value[ROOM_ID] = json!(room.uri);
+        let chat = serde_json::from_value::<O>(value).map_err(serde_failure)?;
+        let chat = self.insert_shown(&id, chat).await?;
+        Ok((id, chat))
+    }
+
+    /// `Chat/set` create of a direct Chat (draft-atwood-jmap-chat-00
+    /// §Creating a Direct Chat; docs/design/agent-frontends.md §7.29):
+    /// the one-to-one room with the user of `contactId`
+    /// ([`Store::open_direct`]), hosted unnamed with them invited, or
+    /// `alreadyExists` naming the Chat of the one there is.
+    async fn create_direct_chat<O: SetObject + Send + Sync>(
+        &self,
+        id: Id,
+        mut value: Value,
+    ) -> Result<(Id, O), BackendSetError<MemoryError>> {
+        let contact: Id = serde_json::from_value(value["contactId"].clone()).map_err(|_| {
+            BackendSetError::SetError(Box::new(
+                set_error(SetErrorType::InvalidProperties, "contactId is required")
+                    .with_properties(["contactId"]),
+            ))
+        })?;
+        let users = self
+            .users_of(std::slice::from_ref(&contact), "contactId")
+            .await
+            .map_err(SetFailure::into_backend)?;
+        let Some(user) = users.first() else {
+            return Err(forbidden("contactId names no user"));
+        };
+        let (room, new) = self
+            .store
+            .open_direct(key(&id), user)
+            .await
+            .map_err(action_failure)?;
+        if !new {
+            return Err(BackendSetError::SetError(Box::new(
+                SetError::new(SetErrorType::AlreadyExists)
+                    .with_existing_id(Id::from(room.key.as_str())),
+            )));
+        }
         // Local (docs/design/agent-frontends.md §7.21).
         if let Some(seconds) = value["messageExpirySeconds"].as_u64() {
             self.store.set_message_expiry(&room.key, Some(seconds));

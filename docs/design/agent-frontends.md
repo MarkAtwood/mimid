@@ -1223,7 +1223,8 @@ These answer §6 and override the recommendations there and anything in
    a client that sends PART has the same effect.
 2. **No queries in v1.** v1 has channels only. A PRIVMSG to a nick
    answers with an error that tells the user to make a room and invite
-   them. No `direct` flag.
+   them. No `direct` flag. (Lifted for IRC v2 by S2, §7.25; the store's
+   `direct` flag is §7.29.)
 3. **Every nick carries its provider.** `<local>-<label>` for everyone,
    the user's own provider included. A nick never moves between people.
 4. **No attachments in v1.** Neither links nor a placeholder line are
@@ -1889,6 +1890,39 @@ Added on 2026-11-20:
     - Tests: mimid-agent-store `content::tests::on_behalf_of_reads_the_bridge_map`,
       `tests/groundwork.rs` `extensions_are_kept_sent_and_edited`;
       mimid-agent `tests/groundwork.rs` `on_behalf_of_through_jmap_and_irc`.
+
+29. **One-to-one rooms (epic mimid-qqtk, bead mimid-qqtk.4; Mark's
+    S2, docs/design/client-survey.md §10; decision mimid-1wgh.87).**
+    - **The flag.** `Room::direct` is local to the store and never sent.
+      `Room::direct_peer` names the other user while the room, banned
+      users left out, holds exactly the user and one other. A room first
+      seen with no name (or an empty one) and exactly two participants
+      is taken as direct (`Room::looks_direct`, INVENTED); `Store::set_direct`
+      marks or unmarks one by hand.
+    - **Finding and making.** `Store::direct_room` finds the active
+      one-to-one room with a user (the oldest by key if several).
+      `Store::open_direct` returns it, or hosts a new unnamed room and
+      invites the user (`Store::create_room`), flagged direct. IRC v2's
+      queries will call these (S2); v1 still has none (§7.2).
+    - **On MIMI.** The room is an ordinary room: no name, the default
+      room policy, the user and the one invited. room-policy-04 §5 names
+      `fixed_membership` rooms as the style for direct messages, but its
+      rules (participants set at creation, nobody added, ordinary users
+      unable to leave, one such room per set of participants) do not fit
+      how mimid hosts rooms (host, then invite) or §7.1 (PART leaves),
+      so it is not used; whether to adopt it, with `max_users` 2, is open
+      for Mark (decision mimid-1wgh.87). Other providers see nothing new.
+    - **JMAP Chat.** A direct room is a Chat of kind `direct` whose
+      `contactId` is the other participant's ChatContact, with no
+      `name` and no `members` (draft-atwood-jmap-chat-00 §Chat: "Group
+      chats only"). `Chat/set` create with `kind: "direct"` and
+      `contactId` is `Store::open_direct`; with a one-to-one room already
+      there it is `alreadyExists` with its `existingId`. A direct Chat
+      stays `direct` if a third user joins (`kind` is immutable).
+    - Schema version 9.
+    - Tests: mimid-agent-store `tests/groundwork.rs`
+      `one_to_one_rooms_are_made_once_and_recognised`; mimid-agent
+      `tests/groundwork.rs` `direct_chats_over_jmap`.
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

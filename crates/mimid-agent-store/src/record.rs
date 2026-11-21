@@ -137,9 +137,58 @@ pub struct Room {
     /// or 0: none. Not sent to anyone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_expiry_seconds: Option<u64>,
+    /// A one-to-one room (docs/design/client-survey.md §10 S2;
+    /// docs/design/agent-frontends.md §7.29): local to this store, never
+    /// sent. Set for a room [`crate::Store::open_direct`] made, and for a
+    /// room first seen unnamed with exactly two participants
+    /// ([`Room::looks_direct`]); [`Room::direct_peer`] says whom it is
+    /// with.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub direct: bool,
     /// Front-end extensions.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Ext,
+}
+
+impl Room {
+    /// The other user of a one-to-one room: for a [`Room::direct`] room
+    /// whose participants, the banned left out, are `user` and one other,
+    /// that other's URI. `None` for any other room, a direct one a third
+    /// user joined included.
+    #[must_use]
+    pub fn direct_peer(&self, user: &str) -> Option<&str> {
+        if !self.direct {
+            return None;
+        }
+        let others: Vec<&str> = self
+            .participants
+            .iter()
+            .filter(|p| p.user != user && !self.is_banned(p))
+            .map(|p| p.user.as_str())
+            .collect();
+        match others[..] {
+            [other] => Some(other),
+            _ => None,
+        }
+    }
+
+    /// Whether a room first seen with `name` and `participants` is taken
+    /// for a one-to-one room: no name (or an empty one) and exactly two
+    /// participants. INVENTED, NOT FROM SPEC: MIMI marks no room
+    /// one-to-one but by room-policy-04 §5 `fixed_membership`, which
+    /// mimid does not use (§7.29).
+    #[must_use]
+    pub fn looks_direct(name: Option<&str>, participants: &[Participant]) -> bool {
+        name.is_none_or(|n| n.trim().is_empty()) && participants.len() == 2
+    }
+
+    /// Whether `participant` holds the role named "banned".
+    fn is_banned(&self, participant: &Participant) -> bool {
+        participant
+            .role
+            .and_then(|r| self.role_names.get(&r))
+            .is_some_and(|name| name == "banned")
+    }
 }
 
 /// A change of a room's subject: the Commit that made it.

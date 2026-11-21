@@ -162,7 +162,7 @@ async fn alice_and_bob(dir: &Path) -> (Agent, Store, String, String) {
     bob.agent()
         .lock()
         .await
-        .publish_key_packages(1)
+        .publish_key_packages(4)
         .await
         .unwrap();
     let room = alice.host_room(&HostOptions::named("r")).await.unwrap();
@@ -408,4 +408,55 @@ async fn extensions_are_kept_sent_and_edited() {
         edit.content.mimi_extensions.other.get(&key),
         Some(&on_behalf_of)
     );
+}
+
+/// Oracle: docs/design/client-survey.md §10 S2 (a store-level `direct`
+/// flag); docs/design/agent-frontends.md §7.29 (an unnamed room of two,
+/// found again rather than made twice; one seen unnamed with two
+/// participants is direct, a named one is not).
+#[tokio::test]
+async fn one_to_one_rooms_are_made_once_and_recognised() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut alice, bob, _, lobby) = alice_and_bob(dir.path()).await;
+    assert!(!bob.state().rooms[&lobby].direct, "a named room");
+    assert_eq!(bob.direct_room(ALICE), None);
+
+    let (made, new) = bob.open_direct(bob.new_key(), ALICE).await.unwrap();
+    assert!(new && made.direct);
+    assert_eq!(made.name.as_deref().unwrap_or(""), "");
+    assert_eq!(made.direct_peer(BOB), Some(ALICE));
+    let (again, new) = bob.open_direct(bob.new_key(), ALICE).await.unwrap();
+    assert!(!new);
+    assert_eq!(again.key, made.key);
+    assert_eq!(bob.direct_room(ALICE), Some(made.key.clone()));
+    assert!(bob.open_direct(bob.new_key(), BOB).await.is_err());
+
+    // alice's agent sees an ordinary unnamed room of two.
+    let mut invite = None;
+    for _ in 0..100 {
+        alice.poll().await.unwrap();
+        invite = alice.invites().first().map(|i| i.number);
+        if invite.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let joined = alice.join(invite.expect("bob's invite")).unwrap();
+    assert_eq!(joined, made.uri);
+    assert_eq!(alice.room_name(&joined).unwrap().unwrap_or_default(), "");
+    assert_eq!(alice.participants(&joined).unwrap().len(), 2);
+
+    // A room alice hosts unnamed with bob is direct at bob's; it is not
+    // the one direct_room finds, which was made first.
+    let theirs = alice.host_room(&HostOptions::named("")).await.unwrap();
+    alice.invite(&theirs, BOB).await.unwrap();
+    until_store(&bob, |s| s.state().room_of_uri(&theirs).is_some()).await;
+    let key = bob.state().room_of_uri(&theirs).cloned().unwrap();
+    let record = bob.state().rooms[&key].clone();
+    assert!(record.direct);
+    assert_eq!(record.direct_peer(BOB), Some(ALICE));
+    assert_eq!(bob.direct_room(ALICE), Some(made.key.clone()));
+    // Unmarked by hand, it is a group again.
+    assert!(bob.set_direct(&key, false));
+    assert_eq!(bob.state().rooms[&key].direct_peer(BOB), None);
 }

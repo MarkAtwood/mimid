@@ -26,7 +26,7 @@
 //! | Record | JMAP object | Properties the store owns |
 //! |---|---|---|
 //! | Person | ChatContact | `identity`, `login`, `firstSeenAt`, `lastSeenAt` (made only), `did`, `didChangedAt` |
-//! | Room | Chat, kind `group` | `name`, `roomId` (made only), `members`, `messageExpirySeconds` |
+//! | Room | Chat, kind `group`, or `direct` with `contactId` for a one-to-one room (§7.29) | `name`, `roomId` (made only), `members` (a group Chat), `messageExpirySeconds` |
 //! | Message | Message | `senderMsgId`, `senderId`, `chatId`, `sentAt`, `receivedAt`, `replyTo`, `topicId`, `deliveryState`, `senderExpiresAt`, `burnOnRead`, `expiresAfterReadSeconds` (made only); `reactions`, `body`, `bodyType`, `attachments`, `actions` (the calls, §7.24), `editedAt`, `editHistory`, `deletedAt`, `deletedForAll` |
 //! | Ban | ChatBan | all, made only; destroyed when the record is gone |
 //!
@@ -541,6 +541,9 @@ impl JmapExt {
             }
             // A Chat a client is destroying.
             None => return Ok(()),
+            // A direct Chat has no members (draft-atwood-jmap-chat-00
+            // §Chat `members`: "Group chats only").
+            Some(chat) if chat.kind == jmap_chat_types::ChatKind::Direct => return Ok(()),
             Some(chat) => chat.members.unwrap_or_default(),
         };
         let mut after = if changed {

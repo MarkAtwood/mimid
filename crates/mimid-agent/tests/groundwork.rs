@@ -362,3 +362,61 @@ async fn on_behalf_of_through_jmap_and_irc() {
     assert_ne!(message["senderId"], json!(jmap.account));
     p.stop().await;
 }
+
+/// Oracle: draft-atwood-jmap-chat-00 §Chat (`kind` "direct", `contactId`
+/// "the ChatContact.id of the other participant") and §Creating a Direct
+/// Chat (`alreadyExists` with `existingId`); docs/design/agent-frontends.md
+/// §7.29.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_chats_over_jmap() {
+    let p = pair(&["message-tags"]).await;
+    let alice = p.alice.client().await;
+    let bob = p.bob.client().await;
+    let contacts = alice.get("ChatContact", None).await;
+    let bob_contact = contacts
+        .iter()
+        .find(|c| c["identity"] == json!(BOB))
+        .unwrap()["id"]
+        .clone();
+    let created = alice
+        .create("Chat", json!({"kind": "direct", "contactId": bob_contact}))
+        .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let chat = alice.get("Chat", Some(vec![&id])).await;
+    assert_eq!(chat[0]["kind"], json!("direct"));
+    assert_eq!(chat[0]["contactId"], bob_contact);
+    assert!(chat[0]["roomId"].as_str().unwrap().starts_with("mimi://"));
+    let again = alice
+        .call(
+            "Chat/set",
+            json!({"create": {"k": {"kind": "direct", "contactId": bob_contact}}}),
+        )
+        .await;
+    assert_eq!(again["notCreated"]["k"]["type"], json!("alreadyExists"));
+    assert_eq!(again["notCreated"]["k"]["existingId"], json!(id));
+
+    // bob's daemon joins it (invites = "any") and shows it direct too.
+    let mut seen = None;
+    for _ in 0..100 {
+        seen = bob
+            .get("Chat", None)
+            .await
+            .into_iter()
+            .find(|c| c["roomId"] == chat[0]["roomId"]);
+        if seen.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let seen = seen.expect("bob has the Chat");
+    assert_eq!(seen["kind"], json!("direct"));
+    let alice_contact = bob
+        .get("ChatContact", None)
+        .await
+        .into_iter()
+        .find(|c| c["identity"] == json!(ALICE))
+        .unwrap()["id"]
+        .clone();
+    assert_eq!(seen["contactId"], alice_contact);
+    p.stop().await;
+}

@@ -547,6 +547,8 @@ impl Store {
             }
         }
         let key = self.mint();
+        let participants = roles.participants(&participants);
+        let direct = Room::looks_direct(name.as_deref(), &participants);
         state.insert_room(Room {
             key: key.clone(),
             uri: uri.to_owned(),
@@ -554,9 +556,10 @@ impl Store {
             subject,
             subject_set: None,
             status: Status::Active,
-            participants: roles.participants(&participants),
+            participants,
             role_names: roles.names(),
             message_expiry_seconds: None,
+            direct,
             ext: BTreeMap::new(),
         });
         changes.push(Change::RoomAdded(key.clone()));

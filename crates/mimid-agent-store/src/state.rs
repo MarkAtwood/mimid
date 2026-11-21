@@ -565,6 +565,7 @@ mod tests {
             }],
             role_names: BTreeMap::new(),
             message_expiry_seconds: None,
+            direct: false,
             ext: Ext::new(),
         }
     }

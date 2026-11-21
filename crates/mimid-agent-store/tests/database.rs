@@ -100,6 +100,7 @@ fn state() -> State {
         ],
         role_names: BTreeMap::from([(1, "banned".to_owned()), (2, "member".to_owned())]),
         message_expiry_seconds: Some(86_400),
+        direct: true,
         ext: BTreeMap::from([("jmap".to_owned(), json!({"members": [], "unreadCount": 3}))]),
     });
     state.insert_person(Person {

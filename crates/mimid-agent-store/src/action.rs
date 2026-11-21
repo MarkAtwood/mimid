@@ -14,6 +14,7 @@
 //! | Action | Method | Agent |
 //! |---|---|---|
 //! | Host a room and invite | [`Store::create_room`] | `host_room`, `invite` |
+//! | One-to-one rooms | [`Store::open_direct`], [`Store::direct_room`], [`Store::set_direct`] | `host_room`, `invite` |
 //! | Invite, remove, change roles, leave | [`Store::change_members`] | `invite`, `remove`, `change_role`, `leave` |
 //! | Leave a room | [`Store::leave`] | `leave` |
 //! | Set a room's subject | [`Store::set_subject`] | `set_room_subject` |
@@ -99,6 +100,9 @@ pub enum ActionError {
     /// that another user sent.
     #[error("no reaction {0} of the user's")]
     NoSuchReaction(Key),
+    /// A one-to-one room with the user themselves.
+    #[error("a one-to-one room is with someone else")]
+    NotDirect,
     /// An edit or retraction of a message with [`MAX_ALIASES`] versions.
     #[error("the message has too many versions")]
     TooManyVersions,
@@ -343,12 +347,76 @@ impl Store {
             participants: roles.participants(&participants),
             role_names: roles.names(),
             message_expiry_seconds: None,
+            direct: false,
             ext: BTreeMap::new(),
         };
         self.state().insert_room(room.clone());
         self.record([Change::RoomAdded(room.key.clone())]);
         self.want_sync();
         Ok(room)
+    }
+
+    /// The key of the active one-to-one room with `user`
+    /// ([`Room::direct_peer`]), if there is one; the oldest, by key, if
+    /// there are several.
+    #[must_use]
+    pub fn direct_room(&self, user: &str) -> Option<Key> {
+        let state = self.state();
+        state
+            .rooms
+            .values()
+            .filter(|r| r.status == Status::Active)
+            .find(|r| r.direct_peer(&self.user) == Some(user))
+            .map(|r| r.key.clone())
+    }
+
+    /// The one-to-one room with `user` (docs/design/client-survey.md §10
+    /// S2; docs/design/agent-frontends.md §7.29): the one
+    /// [`Store::direct_room`] finds, or else a new room hosted with no
+    /// name and `user` invited ([`Store::create_room`]), under `key`,
+    /// flagged [`Room::direct`]. The second item is whether it is new.
+    /// What the hub and the other members see is an ordinary unnamed room
+    /// of two participants.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::NotDirect`] for the user themselves; those of
+    /// [`Store::create_room`].
+    pub async fn open_direct(&self, key: Key, user: &str) -> Result<(Room, bool), ActionError> {
+        if user == self.user {
+            return Err(ActionError::NotDirect);
+        }
+        if let Some(found) = self.direct_room(user)
+            && let Some(room) = self.state().rooms.get(&found).cloned()
+        {
+            return Ok((room, false));
+        }
+        let mut room = self
+            .create_room(key, "", std::slice::from_ref(&user.to_owned()))
+            .await?;
+        room.direct = true;
+        if let Some(record) = self.state().rooms.get_mut(&room.key) {
+            record.direct = true;
+        }
+        Ok((room, true))
+    }
+
+    /// Marks room `key` one-to-one or not ([`Room::direct`]); local, as
+    /// a [`Change::RoomChanged`]. False if there is no such room.
+    pub fn set_direct(&self, key: &str, direct: bool) -> bool {
+        let changed = {
+            let mut state = self.state();
+            let Some(room) = state.rooms.get_mut(key) else {
+                return false;
+            };
+            let changed = room.direct != direct;
+            room.direct = direct;
+            changed
+        };
+        if changed {
+            self.record([Change::RoomChanged(key.to_owned())]);
+        }
+        true
     }
 
     /// Makes `changes` in room `key` under one lock of the agent, in the

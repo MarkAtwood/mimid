@@ -187,15 +187,19 @@ impl Render<'_> {
         }
         let mut chat = Chat::new(
             Id::from(room.key.as_str()),
-            ChatKind::Group,
+            self.kind(room),
             created_at,
             0,
             vec![],
             false,
             true,
         );
-        chat.name = Some(room.name.clone().unwrap_or_default());
-        chat.members = Some(members);
+        if room.direct {
+            chat.contact_id = self.contact_of(room);
+        } else {
+            chat.name = Some(room.name.clone().unwrap_or_default());
+            chat.members = Some(members);
+        }
         chat.message_expiry_seconds = room.message_expiry_seconds;
         chat.extra.insert(ROOM_ID.to_owned(), json!(room.uri));
         chat
@@ -309,18 +313,46 @@ impl Render<'_> {
         Ok(object(normal::<ChatContact>(Value::Object(value))?))
     }
 
-    /// A room as a group Chat, without its `members`.
+    /// The kind of a room's Chat (draft-atwood-jmap-chat-00 §Chat):
+    /// `direct` for a one-to-one room ([`record::Room::direct`]), else
+    /// `group`.
+    pub(crate) fn kind(&self, room: &record::Room) -> ChatKind {
+        if room.direct {
+            ChatKind::Direct
+        } else {
+            ChatKind::Group
+        }
+    }
+
+    /// The `contactId` of a one-to-one room's Chat: the ChatContact of
+    /// its other participant ([`record::Room::direct_peer`]), else of the
+    /// first participant who is not the user.
+    pub(crate) fn contact_of(&self, room: &record::Room) -> Option<Id> {
+        let peer = room.direct_peer(self.user).or_else(|| {
+            room.participants
+                .iter()
+                .map(|p| p.user.as_str())
+                .find(|u| *u != self.user)
+        })?;
+        self.known_id(peer)
+    }
+
+    /// A room as a Chat, without the `members` of a group Chat.
     pub(crate) fn room(&self, room: &record::Room) -> Result<Map<String, Value>, String> {
         let mut chat = Chat::new(
             Id::from(room.key.as_str()),
-            ChatKind::Group,
+            self.kind(room),
             UTCDate::from(EPOCH),
             0,
             vec![],
             false,
             true,
         );
-        chat.name.clone_from(&room.name);
+        if room.direct {
+            chat.contact_id = self.contact_of(room);
+        } else {
+            chat.name.clone_from(&room.name);
+        }
         chat.message_expiry_seconds = room.message_expiry_seconds;
         chat.extra.insert(ROOM_ID.to_owned(), json!(room.uri));
         Ok(object(normal::<Chat>(
@@ -540,6 +572,7 @@ mod tests {
                 .into(),
             role_names: Default::default(),
             message_expiry_seconds: None,
+            direct: false,
             ext: Default::default(),
         });
         let message = |key: &str, seq, sender: &str, id: &str, body: &str| MessageRecord {

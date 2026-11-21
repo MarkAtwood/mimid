@@ -534,8 +534,10 @@ async fn two_accounts_chat_through_jmap() {
         )
         .await;
     assert_eq!(refused["type"], json!("tooLarge"), "{refused}");
+    // A direct Chat is a one-to-one room now (docs/design/agent-frontends.md
+    // §7.29; tests/groundwork.rs in mimid-agent); a channel stays refused.
     let refused = alice
-        .refused_create("Chat", json!({"kind": "direct", "contactId": bob_contact}))
+        .refused_create("Chat", json!({"kind": "channel", "name": "c"}))
         .await;
     assert_eq!(refused["type"], json!("forbidden"), "{refused}");
     let refused = alice.refused_create("Space", json!({"name": "s"})).await;
