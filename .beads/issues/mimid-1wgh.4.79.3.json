@@ -3,12 +3,12 @@
   "title": "Members send handshakes as SemiPrivateMessage when the room requires it; protocol accepts it",
   "description": "When mls_semiprivate_message is in required_wire_formats (§3 L173-179): Member commits and proposals go out as SemiPrivateMessage; mimi-protocol accepts it in UpdateRequest and FanoutMessage (protocol-07 §5.3, §5.5). Needs OpenMLS fork work for the sending side.",
   "status": "open",
-  "priority": 3,
+  "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T02:31:20.354677932Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-16T02:31:20.354677932Z",
+  "updated_at": "2026-11-21T01:20:12.92744147Z",
   "labels": [
     "feature"
   ],
