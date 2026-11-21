@@ -1,0 +1,15 @@
+{
+  "id": "mimid-rvqk",
+  "title": "Matrix client-server front end (no Element X at first)",
+  "description": "client-survey.md §3; S5: Matrix second, then XMPP. /v3/sync clients first (FluffyChat, Element Web, Cinny, Nheko, iamb); Element X (sliding sync, key store) later. Decisions (Mark, 2026-11-21) in /data/tmp/survey-decisions.txt, to be recorded in docs/design/client-survey.md §10 and agent-frontends.md §7.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:17:54.032515633Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:17:54.032515633Z",
+  "labels": [
+    "agent"
+  ]
+}
