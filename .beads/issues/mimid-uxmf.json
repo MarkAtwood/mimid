@@ -1,0 +1,15 @@
+{
+  "id": "mimid-uxmf",
+  "title": "IRC: TOPIC answers 482 'not operator' to an op; say why, or let TOPIC rename the room",
+  "description": "Found driving irssi 1.4.3 (2026-11-21). An op's TOPIC #c gets 482 'The agent changes no room metadata'. 482 means 'You're not channel operator', which is wrong for an op and confusing. Either answer with a fitting numeric/notice, or map TOPIC to a room name change (RoomMetaData name, room-policy canChangeRoomName) since the topic shows 'name | room URI'. Needs Mark's choice.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T02:58:49.059647785Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T02:58:49.059647785Z",
+  "labels": [
+    "irc"
+  ]
+}
