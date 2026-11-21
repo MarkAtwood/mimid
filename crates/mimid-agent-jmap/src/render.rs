@@ -510,6 +510,7 @@ mod tests {
             body: body.into(),
             body_type: Body::Plain,
             in_reply_to: None,
+            in_reply_to_id: None,
             topic_id: None,
             attachments: Vec::new(),
             calls: Vec::new(),

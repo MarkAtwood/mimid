@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 
 use crate::convert::utc_date;
 use crate::project::VTC;
-use mimid_agent_store::action::{MemberChanges, OutgoingFile, Role};
+use mimid_agent_store::action::{MemberChanges, OutgoingFile, Role, SendOptions};
 use mimid_agent_store::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
 use mimid_agent_store::convert::parse_utc_date;
 use mimid_agent_store::record::{Call, MessageExpiry};
@@ -498,6 +498,15 @@ impl AgentChat {
         }
         let expiry = requested_expiry(&message)?;
         if let Some(call) = requested_call(&message)? {
+            if message.reply_to.is_some() {
+                return Err(BackendSetError::SetError(Box::new(
+                    set_error(
+                        SetErrorType::Forbidden,
+                        "a call to join is not sent as a reply by this server",
+                    )
+                    .with_properties(["replyTo"]),
+                )));
+            }
             let sent = self
                 .store
                 .send_call(
@@ -520,14 +529,23 @@ impl AgentChat {
             .iter()
             .map(|a| OutgoingFile::new(a.blob_id.as_ref(), &a.content_type, &a.filename))
             .collect();
+        let mut options = SendOptions::new();
+        options.expiry = expiry;
+        if let Some(target) = &message.reply_to {
+            // §Message `replyTo`: it must name a Message of the same Chat.
+            if !self.store.state().messages.contains_key(target.as_ref()) {
+                return Err(action_failure(ActionError::NotReferable(key(target))));
+            }
+            options.in_reply_to = Some(key(target));
+        }
         let sent = self
             .store
-            .send_with(
+            .send_message(
                 key(&id),
                 message.chat_id.as_ref(),
                 &message.body,
                 &files,
-                expiry,
+                &options,
             )
             .await
             .map_err(action_failure)?;
@@ -702,9 +720,10 @@ fn unsupported_message_property(message: &Message) -> Option<&'static str> {
         Some("mentions")
     } else if !message.broadcast_mentions.is_empty() {
         Some("broadcastMentions")
-    } else if message.reply_to.is_some() {
-        Some("replyTo")
-    } else if message.thread_root_id.is_some() {
+    } else if message.thread_root_id.is_some() && message.reply_to.is_none() {
+        // crate-jmap derives threadRootId from replyTo itself
+        // (draft-atwood-jmap-chat-00 §Threads); one a client set without
+        // replyTo has no MIMI form.
         Some("threadRootId")
     } else if message.topic_id.is_some() {
         Some("topicId")
@@ -864,6 +883,15 @@ pub(crate) fn action_set_failure(e: ActionError) -> SetFailure {
             "no MIMI message ID is kept for this Message, so it cannot be edited or retracted",
         ),
         ActionError::TooManyVersions => forbidden("the Message has too many versions"),
+        // draft-atwood-jmap-chat-00 §Message `replyTo`: "Servers MUST
+        // validate that this ID exists in the same Chat before storing."
+        ActionError::NotReferable(_) => SetFailure::set(
+            set_error(
+                SetErrorType::InvalidProperties,
+                "replyTo names no Message of this Chat that MIMI can refer to",
+            )
+            .with_properties(["replyTo"]),
+        ),
         ActionError::NoBlobStore => match no_blob(None) {
             BackendSetError::SetError(e) => SetFailure::Set(e),
             _ => SetFailure::Other(MemoryError::new("no blob store")),

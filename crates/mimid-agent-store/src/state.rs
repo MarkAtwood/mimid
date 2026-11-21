@@ -405,6 +405,7 @@ mod tests {
             body: body.into(),
             body_type: BodyType::Plain,
             in_reply_to: None,
+            in_reply_to_id: None,
             topic_id: None,
             attachments: vec![crate::record::Attachment {
                 blob_id: "s00".into(),

@@ -43,13 +43,16 @@
 //!   `time`; an edit is a new line starting `(edited) `, a retraction a
 //!   server NOTICE. Attachments are not shown (§7.4), and nothing that
 //!   came before the connection is played back (§7.6).
+//! - **Replies** (§7.26): a reply is shown addressed `<nick>: ` to the
+//!   replied-to sender, with `+draft/reply` under message-tags; a
+//!   PRIVMSG with `+draft/reply` is sent as a reply.
 //!
 //! # Limitations
 //!
 //! - Plain TCP on loopback only; no TLS.
 //! - No private queries, attachments, history playback, chathistory,
-//!   labeled-response, batch, or sending edits, retractions or replies
-//!   from IRC (§4 "Sending", §7).
+//!   labeled-response, batch, or sending edits or retractions from IRC
+//!   (§4 "Sending", §7).
 //! - `KICK` removes the user's devices from the room (`Store::kick`); they
 //!   stay a participant, so the nick stays in the channel.
 //! - `JOIN 0` leaves every room for good, as IRC defines it (§7.12): each

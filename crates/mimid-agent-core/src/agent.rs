@@ -355,27 +355,33 @@ impl std::fmt::Debug for OutgoingAttachment {
 
 /// What a message to send carries besides its body
 /// ([`Agent::send_message_with`], [`Agent::send_edit_with`]): its
-/// mimi-content-10 §4.1 `expires`, and extensions beside `senderUri` and
-/// `roomUri` (§4.3). The default carries neither.
+/// mimi-content-10 §4.1 `expires` and `inReplyTo`, and extensions beside
+/// `senderUri` and `roomUri` (§4.3). The default carries none of them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ContentOptions {
     /// The message's `expires`.
     pub expires: Option<Expiration>,
+    /// The message's `inReplyTo` (mimi-content-10 §4.1, §5.2): the
+    /// message it replies to. An edit carries the one of the message it
+    /// edits (§9.3: an edit changes only the NestedPart).
+    pub in_reply_to: Option<MessageId>,
     /// Further extensions; keys 1 and 2 are refused by the encoder.
     pub extensions: BTreeMap<ExtensionKey, RawValue>,
 }
 
 impl ContentOptions {
-    /// Neither `expires` nor further extensions.
+    /// Neither `expires`, `inReplyTo` nor further extensions.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Sets `content`'s `expires` and adds the extensions.
+    /// Sets `content`'s `expires` and `inReplyTo` and adds the
+    /// extensions.
     fn apply(&self, content: &mut MimiContent) {
         content.expires = self.expires;
+        content.in_reply_to = self.in_reply_to;
         content
             .mimi_extensions
             .other
@@ -2342,7 +2348,8 @@ impl Agent {
     /// one `text/plain` part (mimi-content-10 §5.5). `replaces` names the
     /// first version of the message, however often it was edited. The
     /// edit has no `inReplyTo` or `topicId` (§9.3: an edit changes only
-    /// the NestedPart; the caller edits only messages sent without them).
+    /// the NestedPart); [`Agent::send_edit_with`] gives an edit of a reply
+    /// its `inReplyTo`.
     /// With `silent`, it goes with Room/send `silent`: recipients need it
     /// but need not be woken for it (draft-atwood-jmap-chat-mimi-00
     /// §Room/send).

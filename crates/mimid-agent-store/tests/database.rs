@@ -49,6 +49,7 @@ fn message(key: &str, room: &str, seq: u64, sender: Sender, n: u8) -> Message {
         body: format!("message {n}"),
         body_type: BodyType::Plain,
         in_reply_to: None,
+        in_reply_to_id: None,
         topic_id: None,
         attachments: Vec::new(),
         calls: Vec::new(),

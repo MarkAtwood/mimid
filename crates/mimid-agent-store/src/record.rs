@@ -350,9 +350,17 @@ pub struct Message {
     pub body: String,
     /// The text's type.
     pub body_type: BodyType,
-    /// What it replies to.
+    /// What it replies to, resolved in its room when stored
+    /// (draft-atwood-jmap-chat-mimi-00 §Message Identifiers): the stored
+    /// message whose first version or alias the reference octets of
+    /// [`Message::in_reply_to_id`] name, else those octets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_reply_to: Option<Reply>,
+    /// The message's mimi-content-10 `inReplyTo` exactly, all 32 octets,
+    /// as received or sent: the version replied or reacted to (§5.2,
+    /// §5.5), which an edit of this message sends again (§9.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_reply_to_id: Option<Octets<32>>,
     /// The MIMI `topicId` ([`crate::convert::topic_id`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topic_id: Option<String>,

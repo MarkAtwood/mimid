@@ -47,7 +47,9 @@
 //!   participant a room holds in its "banned" role has a ChatBan, made at
 //!   `sync` when the ban was made elsewhere.
 //! - **Message**: `Message/set` create sends `body` as one `text/plain`
-//!   part. Received messages with a `text/*` single part are stored with
+//!   part; with `replyTo`, naming a Message of the same Chat, as a reply
+//!   whose MIMI `inReplyTo` is that Message's first version
+//!   ([`mimid_agent_store::Store::send_message`]). Received messages with a `text/*` single part are stored with
 //!   `bodyType` `text/markdown` for `text/markdown` and `text/plain`
 //!   otherwise.
 //! - **Edits and retractions** ([`edits`]; §Edits, decision
@@ -181,9 +183,10 @@
 //!   a blob store. A `bodyType` other than `text/plain` is
 //!   `invalidProperties` and a longer body `tooLarge`, from crate-jmap's
 //!   checks against those limits.
-//! - `Message/set` create with `mentions`, `broadcastMentions`, `replyTo`,
+//! - `Message/set` create with `mentions`, `broadcastMentions`,
 //!   `threadRootId`, `topicId` or `subject` is `forbidden`, naming the
-//!   property.
+//!   property, and so is `replyTo` beside a call to join. A `replyTo` to a
+//!   notice, which has no MIMI message ID, is `invalidProperties`.
 //! - `burnOnRead` and `expiresAfterReadSeconds` reach only mimid
 //!   receivers (an INVENTED extension, decision mimid-1wgh.84); other
 //!   implementations keep such a Message. The `Chat/set` update of

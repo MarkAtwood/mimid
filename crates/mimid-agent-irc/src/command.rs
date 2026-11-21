@@ -16,7 +16,8 @@
 //!   shown to the user's other IRC connections of this daemon only: MIMI
 //!   carries no reason for a leave, so other members see "no longer in
 //!   this room" (§7.16).
-//! - `PRIVMSG #c`: sends the text; `/me` as ACTION text. To a nick:
+//! - `PRIVMSG #c`: sends the text; `/me` as ACTION text; with a
+//!   `+draft/reply` tag naming a message of the room, as a reply to it. To a nick:
 //!   refused with 404, since v1 has no private queries (§7.2); to
 //!   [`crate::names::SERVICE_NICK`]: the service ([`crate::service`]).
 //! - `NOTICE` is never answered with an error (docs/irc-lessons.md
@@ -35,7 +36,7 @@
 //!   `AWAY` (305, 306), `MOTD` (422), `PING`, `PONG`, `QUIT`, `CAP`; every
 //!   other command is 421.
 
-use mimid_agent_store::action::{MemberChanges, Role};
+use mimid_agent_store::action::{MemberChanges, Role, SendOptions};
 use mimid_agent_store::record::Key;
 
 use crate::conn::{Session, VERSION, one_line};
@@ -73,6 +74,17 @@ impl Session {
             Some(uri) => Who::User(uri),
             None => self.who(name),
         }
+    }
+
+    /// The key of the message of room `room` shown under `msgid`: its
+    /// `senderMsgId` or that of a later version.
+    pub(crate) fn message_of_msgid(&self, room: &str, msgid: &str) -> Option<Key> {
+        let reference = mimid_agent_store::reference_of(msgid)?;
+        self.shared
+            .store
+            .state()
+            .message_of_ref(room, &reference)
+            .cloned()
     }
 
     /// The room key of `channel`, if this connection shows it.
@@ -329,7 +341,16 @@ impl Session {
             let store = self.store();
             let message_key = store.new_key();
             self.own_sends.insert(message_key.clone());
-            match store.send(message_key.clone(), &key, &text, &[]).await {
+            let mut options = SendOptions::new();
+            // +draft/reply names the msgid (senderMsgId) of a message of
+            // this room; one not stored here is sent as a plain message.
+            options.in_reply_to = line
+                .tag("+draft/reply")
+                .and_then(|msgid| self.message_of_msgid(&key, msgid));
+            match store
+                .send_message(message_key.clone(), &key, &text, &[], &options)
+                .await
+            {
                 Ok(_) => self.save().await,
                 Err(error) => {
                     self.own_sends.remove(&message_key);

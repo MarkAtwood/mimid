@@ -11,7 +11,7 @@
 //! | Room deleted here | PART from the user, "deleted here" |
 //! | Message | PRIVMSG from the sender's hostmask, `msgid` and `time`; `/me ` text as ACTION |
 //! | Call to join (§7.24) | ACTION from the sender after the text: `call: <description> <<url>>`, or `(not a web link: <url>)` for a URL that is not `https` or `wss` |
-//! | Reply | `+draft/reply=<msgid>` of a stored message |
+//! | Reply | The text after `<nick>: `, the replied-to sender's nick, unless it starts so already; `+draft/reply=<msgid>` of a stored message |
 //! | Edit | PRIVMSG `(edited) <text>`, its own msgid, `+draft/reply` naming the first version |
 //! | Retraction | NOTICE from the server: `<nick> retracted a message` |
 //! | Notice of the agent's | NOTICE from the server, with the notice's text |
@@ -32,7 +32,8 @@
 //!   only) is not shown (§7.4).
 //! - An IRC client may make a link of any URL it sees, the ones shown as
 //!   `not a web link` too; the front end only does not mark them as links.
-//! - A reply to a message not stored here carries no `+draft/reply`.
+//! - A reply to a message not stored here carries no `+draft/reply` and
+//!   no nick.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -109,6 +110,26 @@ struct MessageShown {
     sender: Option<Identity>,
     /// The msgid of what it replies to, if stored.
     reply_to: Option<String>,
+    /// The nick of the sender of what it replies to, if stored and sent
+    /// by a user.
+    reply_nick: Option<String>,
+}
+
+/// The text of a reply to `nick`'s message as IRC shows it: `nick: text`,
+/// the usual way to address someone on IRC, unless the text already
+/// starts so (`nick:` or `nick,`, as the IRC user who sent it may have
+/// typed it).
+pub(crate) fn reply_text(nick: &str, text: &str) -> String {
+    let addressed = text
+        .strip_prefix(nick)
+        .is_some_and(|rest| rest.starts_with([':', ',']));
+    if addressed {
+        text.to_owned()
+    } else if let Some(action) = text.strip_prefix("/me ") {
+        format!("/me {nick}: {action}")
+    } else {
+        format!("{nick}: {text}")
+    }
 }
 
 impl Session {
@@ -343,22 +364,27 @@ impl Session {
         let state = self.shared.store.state();
         let record = state.messages.get(key)?.clone();
         let channel = self.channels.get(&record.room)?.name.clone();
-        let reply_to = match &record.in_reply_to {
-            Some(Reply::Message(target)) => {
-                state.messages.get(target).map(|m| m.sender_msg_id.clone())
-            }
+        let target = match &record.in_reply_to {
+            Some(Reply::Message(target)) => state.messages.get(target),
             _ => None,
         };
+        let reply_to = target.map(|m| m.sender_msg_id.clone());
+        let reply_user = target.and_then(|m| match &m.sender {
+            Sender::User(uri) => Some(uri.clone()),
+            _ => None,
+        });
         drop(state);
         let sender = match &record.sender {
             Sender::User(uri) => Some(self.shared.names().identity(uri)),
             _ => None,
         };
+        let reply_nick = reply_user.map(|uri| self.shared.names().identity(&uri).nick);
         Some(MessageShown {
             record,
             channel,
             sender,
             reply_to,
+            reply_nick,
         })
     }
 
@@ -394,11 +420,15 @@ impl Session {
                 let mask = sender.mask();
                 let mut tags = Some(tags);
                 if !m.record.body.is_empty() {
+                    let body = match &m.reply_nick {
+                        Some(nick) => reply_text(nick, &m.record.body),
+                        None => m.record.body.clone(),
+                    };
                     self.text_lines(
                         &mask,
                         "PRIVMSG",
                         &m.channel,
-                        &m.record.body,
+                        &body,
                         "",
                         tags.take().unwrap_or_default(),
                         time,
@@ -590,6 +620,17 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Oracle: the IRC custom of addressing a line to a nick (`bob: hi`),
+    /// and §4 "CTCP from the user" for `/me`.
+    #[test]
+    fn a_reply_is_addressed_to_the_nick_once() {
+        assert_eq!(reply_text("bob-a", "sure"), "bob-a: sure");
+        assert_eq!(reply_text("bob-a", "bob-a: sure"), "bob-a: sure");
+        assert_eq!(reply_text("bob-a", "bob-a, sure"), "bob-a, sure");
+        assert_eq!(reply_text("bob-a", "bob-ab: x"), "bob-a: bob-ab: x");
+        assert_eq!(reply_text("bob-a", "/me nods"), "/me bob-a: nods");
+    }
 
     #[test]
     fn server_time_always_has_milliseconds() {

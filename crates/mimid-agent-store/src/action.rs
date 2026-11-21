@@ -18,7 +18,7 @@
 //! | Leave a room | [`Store::leave`] | `leave` |
 //! | Set a room's subject | [`Store::set_subject`] | `set_room_subject` |
 //! | Delete a room here, with its messages | [`Store::forget_room`], [`Store::delete_blobs`] | none |
-//! | Send | [`Store::send`], [`Store::send_with`] | `send_message`, `send_message_with` |
+//! | Send, reply | [`Store::send`], [`Store::send_with`], [`Store::send_message`] | `send_message`, `send_message_with` |
 //! | Disappearing messages | [`Store::mark_read`], [`Store::set_message_expiry`], [`Store::expire_due`] | none |
 //! | Edit, retract | [`Store::edit`], [`Store::retract`] | `send_edit`, `send_retraction` |
 //! | Delete here | [`Store::mark_deleted`], [`Store::delete_message`] | none |
@@ -59,7 +59,7 @@ use crate::content::BodyType;
 use crate::convert::{message_ref, sender_msg_id};
 use crate::record::{
     Attachment, Ban, Call, Deletion, Key, Message, MessageExpiry, Octets, Person, ReadPosition,
-    Room, RoomStatus as Status, Sender,
+    Reply, Room, RoomStatus as Status, Sender,
 };
 use crate::state::RemovedRoom;
 use crate::store::Store;
@@ -90,6 +90,10 @@ pub enum ActionError {
     /// not kept (one stored before the IDs were kept, or a notice).
     #[error("no MIMI message ID is kept for message {0}, so it cannot be edited or retracted")]
     NotEditable(Key),
+    /// A reply or reaction to a message whose MIMI message ID is not kept
+    /// (a notice), or that is in another room.
+    #[error("message {0} cannot be replied or reacted to here")]
+    NotReferable(Key),
     /// An edit or retraction of a message with [`MAX_ALIASES`] versions.
     #[error("the message has too many versions")]
     TooManyVersions,
@@ -217,7 +221,60 @@ impl OutgoingFile {
     }
 }
 
+/// What an edit or retraction of a message needs ([`Store::editable`]).
+struct Editable {
+    uri: String,
+    first: mimi_content::MessageId,
+    expiry: MessageExpiry,
+    in_reply_to: Option<mimi_content::MessageId>,
+}
+
+/// What [`Store::send_message`] sends besides the text and attachments.
+/// The default is a plain message.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SendOptions {
+    /// How the message disappears ([`Store::send_with`]).
+    pub expiry: MessageExpiry,
+    /// The message it replies to, by key: a message of the same room
+    /// whose MIMI message ID is kept. Sent as mimi-content-10 `inReplyTo`
+    /// (§5.2), naming the target's first version.
+    pub in_reply_to: Option<Key>,
+}
+
+impl SendOptions {
+    /// A plain message.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 impl Store {
+    /// The reply to message `target` from room `room`: the record's
+    /// [`Reply`] and the `inReplyTo` to send, the target's first version
+    /// (its later versions keep only their reference octets, and every
+    /// receiver resolves the first: draft-atwood-jmap-chat-mimi-00
+    /// §Message Identifiers).
+    pub(crate) fn reply_to(
+        &self,
+        room: &str,
+        target: &str,
+    ) -> Result<(Reply, mimi_content::MessageId), ActionError> {
+        let state = self.state();
+        let message = state
+            .messages
+            .get(target)
+            .ok_or_else(|| ActionError::NoSuchMessage(target.to_owned()))?;
+        match message.mimi_id {
+            Some(id) if message.room == room => Ok((
+                Reply::Message(target.to_owned()),
+                mimi_content::MessageId(id.0),
+            )),
+            _ => Err(ActionError::NotReferable(target.to_owned())),
+        }
+    }
+
     /// The URI of room `key`.
     fn room_uri(&self, key: &str) -> Result<String, ActionError> {
         self.state()
@@ -501,9 +558,37 @@ impl Store {
         files: &[OutgoingFile],
         expiry: MessageExpiry,
     ) -> Result<Message, ActionError> {
-        let expiry = crate::expiry::to_whole_seconds(expiry);
+        let mut options = SendOptions::new();
+        options.expiry = expiry;
+        self.send_message(key, room, text, files, &options).await
+    }
+
+    /// [`Store::send`] with `options`: an expiry as for
+    /// [`Store::send_with`], and the message it replies to, sent as
+    /// `inReplyTo` and kept in the record ([`Message::in_reply_to`],
+    /// [`Message::in_reply_to_id`]).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Store::send_with`]; [`ActionError::NoSuchMessage`] for a
+    /// reply to a message the store does not hold, and
+    /// [`ActionError::NotReferable`] for one to a notice or to a message
+    /// of another room. Nothing is then sent.
+    pub async fn send_message(
+        &self,
+        key: Key,
+        room: &str,
+        text: &str,
+        files: &[OutgoingFile],
+        options: &SendOptions,
+    ) -> Result<Message, ActionError> {
+        let expiry = crate::expiry::to_whole_seconds(options.expiry);
         crate::expiry::check_outgoing(&expiry, now_ms())?;
         let uri = self.room_uri(room)?;
+        let reply = match &options.in_reply_to {
+            Some(target) => Some(self.reply_to(room, target)?),
+            None => None,
+        };
         let (outgoing, attachments) = self.read_files(files)?;
         // The agent stays locked until the record is in: the agent has
         // journaled the message as this user's own (docs/design/
@@ -511,9 +596,10 @@ impl Store {
         // store that entry before this record exists, and this one
         // again.
         let mut agent = self.agent.lock().await;
-        let options = crate::expiry::content_options(&expiry);
+        let mut content = crate::expiry::content_options(&expiry);
+        content.in_reply_to = reply.as_ref().map(|(_, id)| *id);
         let sent = agent
-            .send_message_with(&uri, text, &outgoing, &options)
+            .send_message_with(&uri, text, &outgoing, &content)
             .await?;
         let mut state = self.state();
         let seq = state.take_seq();
@@ -530,7 +616,8 @@ impl Store {
             sender_msg_id: sender_msg_id(sent.accepted_at, &sent.message_id),
             body: text.to_owned(),
             body_type: BodyType::Plain,
-            in_reply_to: None,
+            in_reply_to: reply.as_ref().map(|(r, _)| r.clone()),
+            in_reply_to_id: reply.map(|(_, id)| Octets(id.0)),
             topic_id: None,
             attachments,
             calls: Vec::new(),
@@ -617,6 +704,7 @@ impl Store {
             body: text.to_owned(),
             body_type: BodyType::Plain,
             in_reply_to: None,
+            in_reply_to_id: None,
             topic_id: None,
             attachments: Vec::new(),
             calls: vec![Call {
@@ -681,10 +769,7 @@ impl Store {
 
     /// The room URI and first MIMI message ID of message `key`, which the
     /// user may edit or retract.
-    fn editable(
-        &self,
-        key: &str,
-    ) -> Result<(String, mimi_content::MessageId, MessageExpiry), ActionError> {
+    fn editable(&self, key: &str) -> Result<Editable, ActionError> {
         let state = self.state();
         let message = state
             .messages
@@ -701,7 +786,14 @@ impl Store {
         if message.aliases.len() >= MAX_ALIASES {
             return Err(ActionError::TooManyVersions);
         }
-        Ok((uri, mimi_content::MessageId(first.0), message.expiry))
+        Ok(Editable {
+            uri,
+            first: mimi_content::MessageId(first.0),
+            expiry: message.expiry,
+            in_reply_to: message
+                .in_reply_to_id
+                .map(|id| mimi_content::MessageId(id.0)),
+        })
     }
 
     /// Edits the user's message `key` to `text` of `body_type`
@@ -723,10 +815,17 @@ impl Store {
         text: &str,
         body_type: BodyType,
     ) -> Result<Message, ActionError> {
-        let (uri, first, expiry) = self.editable(key)?;
-        // The edit carries the message's expiry, which it cannot change
-        // (mimi-content-10 §9.3; docs/design/agent-frontends.md §7.20).
-        let options = crate::expiry::content_options(&expiry);
+        let Editable {
+            uri,
+            first,
+            expiry,
+            in_reply_to,
+        } = self.editable(key)?;
+        // The edit carries the message's expiry and inReplyTo, which it
+        // cannot change (mimi-content-10 §9.3; docs/design/agent-frontends.md
+        // §7.20).
+        let mut options = crate::expiry::content_options(&expiry);
+        options.in_reply_to = in_reply_to;
         // Locked until the alias is in, as in Store::send.
         let mut agent = self.agent.lock().await;
         let sent = agent
@@ -752,7 +851,7 @@ impl Store {
     ///
     /// As [`Store::edit`].
     pub async fn retract(&self, key: &str) -> Result<Message, ActionError> {
-        let (uri, first, _) = self.editable(key)?;
+        let Editable { uri, first, .. } = self.editable(key)?;
         // Locked until the alias is in, as in Store::send.
         let mut agent = self.agent.lock().await;
         let sent = agent

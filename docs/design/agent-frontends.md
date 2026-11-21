@@ -1026,7 +1026,7 @@ never change, so logs and scripts keep working.
 | Channel modes | `CHANMODES=b,,,nt`; 324 answers `+nt`, which is true: only members send, and the room policy says who sets the topic (§7.14). No 329 (§7.15). 004 lists the same modes. |
 | Message | PRIVMSG from the sender's hostmask, with `time` (`accepted_at`) and `msgid` (`senderMsgId`). A body with newlines, or longer than one line, is split on line breaks and UTF-8 boundaries; only the first line carries `msgid`. |
 | Own message sent elsewhere (JMAP, another IRC connection) | PRIVMSG from the user's own hostmask. Whether every client shows those well without echo-message is *unverified*. |
-| Reply | `+draft/reply=<msgid of the target>` when message-tags is on; the text is unchanged. |
+| Reply | The text addressed `<nick>: ` to the replied-to sender, unless it starts so already, and `+draft/reply=<msgid of the target>` when message-tags is on (§7.26). |
 | Edit | A new PRIVMSG from the original sender, text `(edited) <new text>`, with its own msgid and `+draft/reply` naming the first version. |
 | Retraction | NOTICE to the channel from the server: `<nick> retracted a message`. With message-tags, `+draft/reply` names it. The text is not repeated. |
 | Reactions | mimid sends none and models none (crates/mimid-agent-jmap/src/lib.rs:165-168); a received one is a message like any other. A client's `+draft/react` TAGMSG is dropped. |
@@ -1050,9 +1050,9 @@ peer, so the client's version is not sent to strangers.
 **Sending.** PRIVMSG to a channel or query is `Store::send` with
 `text/plain`. One line is far under `MAX_TEXT_LEN`
 (crates/mimid-agent-core/src/agent.rs:67), and each PRIVMSG is one MIMI
-message. A `+draft/reply` tag on a PRIVMSG is dropped in v1: `Agent::send_message`
-takes no `inReplyTo` (agent.rs:1815-1820), and JMAP refuses `replyTo` for
-the same reason (backend.rs:635). IRC has no upload, so v1 sends no
+message. A `+draft/reply` tag on a PRIVMSG naming a message of the room
+sends it as a reply (§7.26; before that it was dropped, since
+`Agent::send_message` took no `inReplyTo`). IRC has no upload, so v1 sends no
 attachments. Edits and retractions are not sent from IRC in v1.
 
 **Echo.** With echo-message the sender's connection gets the same PRIVMSG
@@ -1781,6 +1781,37 @@ Added on 2026-11-20:
     lifts "No SASL" in §4 for IRC v2 (SASL PLAIN with the agent token,
     PASS kept). v1 stays as decided above until IRC v2 is built
     (epic mimid-i0id); the store groundwork for it is epic mimid-qqtk.
+
+26. **Replies (epic mimid-qqtk, bead mimid-qqtk.1; marmot-bridge.md §5
+    P1).** mimi-content-10 §5.2: a reply's `inReplyTo` is the message ID
+    replied to.
+    - **Store.** `Store::send_message` takes `SendOptions`, whose
+      `in_reply_to` names a message of the same room by key; the agent
+      sends it as `inReplyTo` (`ContentOptions::in_reply_to`). The record
+      keeps the reply resolved (`in_reply_to`, as before) and the
+      `inReplyTo` exactly (`in_reply_to_id`, all 32 octets), sent or
+      received. A message not stored here stays a reference. An edit of a
+      reply carries the same `inReplyTo` (§9.3: an edit changes only the
+      NestedPart; the §5.5 example keeps it). A notice, which has no MIMI
+      message ID, or a message of another room cannot be replied to
+      (`ActionError::NotReferable`).
+    - **Which version.** Only a message's first version keeps its whole
+      message ID; later versions keep their reference octets. A reply
+      names the first version, which every receiver that stored the
+      message resolves (draft-atwood-jmap-chat-mimi-00 §Message
+      Identifiers). INVENTED, NOT FROM SPEC: the choice of version.
+    - **JMAP Chat.** `replyTo` on `Message/set` create is sent; one that
+      names no Message of the Chat, or a notice, is `invalidProperties`
+      on `replyTo`. `replyTo` beside a call to join stays `forbidden`.
+    - **IRC.** A received reply is shown `<nick>: <text>`, the usual way
+      to address someone on IRC, unless the text already starts with
+      `<nick>:` or `<nick>,`; with message-tags it carries
+      `+draft/reply` too. A PRIVMSG with `+draft/reply` naming a message
+      of the room is sent as a reply to it; one naming nothing stored
+      here is sent as a plain message.
+    - Tests: mimid-agent-store `tests/groundwork.rs`
+      `replies_are_sent_kept_and_edited_with_their_target`; mimid-agent
+      `tests/groundwork.rs` `replies_through_jmap_and_irc`.
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

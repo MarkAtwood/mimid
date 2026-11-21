@@ -1,0 +1,241 @@
+//! The store groundwork for more front ends (epic mimid-qqtk;
+//! docs/design/client-survey.md §1.3; docs/design/marmot-bridge.md §5 P1
+//! to P3): replies, reactions, a received message's extensions,
+//! one-to-one rooms and history, between a store and a plain agent on
+//! one in-process mimid server.
+//!
+//! Oracle: the content the other side's plain agent decodes (the MIMI
+//! fields as mimi-content-10 §4.1 names them), and the records the store
+//! keeps of what that agent sent, compared with the values sent.
+
+#![forbid(unsafe_code)]
+
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use mimi_content::MessageId;
+use mimid_agent_core::{Agent, AgentConfig, Event, HostOptions, ReceivedMessage};
+use mimid_agent_store::action::SendOptions;
+use mimid_agent_store::content::BodyType;
+use mimid_agent_store::record::{Octets, Reply};
+use mimid_agent_store::{InvitePolicy, Store};
+use mimid_server::config::{BaseUrl, Domain};
+use mimid_server::directory::directory;
+use mimid_server::follower::Follower;
+use mimid_server::follower::key_packages::KeyPackages;
+use mimid_server::follower::relay::Relay;
+use mimid_server::http::router;
+use mimid_server::hub::fanout::Fanout;
+use mimid_server::hub::{Clock, Hub, SystemClock};
+use mimid_server::jmap::{self, JmapOptions};
+use mimid_server::peer::PeerClient;
+
+const ALICE: &str = "mimi://a.example/u/alice";
+const BOB: &str = "mimi://a.example/u/bob";
+
+/// A running server: its base URL and a token per user.
+struct Server {
+    base: String,
+    tokens: BTreeMap<&'static str, String>,
+}
+
+/// a.example's stack as mimid-server's `main.rs` wires it, on
+/// `127.0.0.1:0`, with an account for each of `users` (as
+/// mimid-agent-core's tests/common does).
+async fn server(dir: &Path, users: &[&'static str]) -> Server {
+    let domain = Domain::try_from("a.example".to_owned()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_text = format!("http://{}", listener.local_addr().unwrap());
+    let base = BaseUrl::try_from(base_text.clone()).unwrap();
+    let store = mimid_server::store::Store::open(&dir.join("mimid.sqlite"), &domain)
+        .await
+        .unwrap();
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let peers = || PeerClient::new(&domain, BTreeMap::new()).unwrap();
+    let key_packages = Arc::new(KeyPackages::new(
+        store.clone(),
+        domain.clone(),
+        Arc::clone(&clock),
+    ));
+    let follower = Arc::new(
+        Follower::new(domain.clone(), store.clone(), Arc::clone(&clock))
+            .with_peers(peers())
+            .with_key_packages(Arc::clone(&key_packages)),
+    );
+    let fanout = Fanout::new(
+        store.clone(),
+        domain.clone(),
+        peers(),
+        Arc::clone(&follower),
+        Arc::clone(&clock),
+    )
+    .spawn();
+    let hub = Arc::new(
+        Hub::open(store.clone(), domain.clone(), Arc::clone(&clock))
+            .await
+            .unwrap()
+            .with_fanout(fanout)
+            .with_peers(peers())
+            .with_local_key_material(Arc::clone(&key_packages) as _),
+    );
+    follower
+        .set_relay(Relay::new(Arc::clone(&hub), peers()))
+        .unwrap();
+    let mut tokens = BTreeMap::new();
+    for user in users {
+        let account = store.create_account(&domain, user, 1).await.unwrap();
+        let token = store.issue_token(&account, 2).await.unwrap();
+        tokens.insert(*user, token.expose_secret());
+    }
+    let jmap = jmap::router(&base, store, Arc::clone(&hub), Arc::clone(&follower), {
+        let mut options = JmapOptions::default();
+        options.live_stream = true;
+        options
+    })
+    .unwrap();
+    let app = router(directory(&base), hub, follower).merge(jmap);
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    Server {
+        base: base_text,
+        tokens,
+    }
+}
+
+async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
+    device(server, user, dir, user.rsplit('/').next().unwrap()).await
+}
+
+/// `user`'s device whose state directory is `name`.
+async fn device(server: &Server, user: &'static str, dir: &Path, name: &str) -> Agent {
+    Agent::open(AgentConfig {
+        server_url: server.base.clone(),
+        binding: mimid_agent_core::Binding::Jmap,
+        token: server.tokens[user].clone(),
+        user_uri: user.to_owned(),
+        state_dir: dir.join(name),
+        full_tree_hubs: Vec::new(),
+        did_webvh: Default::default(),
+    })
+    .await
+    .unwrap()
+}
+
+/// Polls `agent` until a message for which `wanted` holds arrives.
+async fn until_message(
+    agent: &mut Agent,
+    wanted: impl Fn(&ReceivedMessage) -> bool,
+) -> ReceivedMessage {
+    for _ in 0..100 {
+        for event in agent.poll().await.unwrap() {
+            if let Event::Message(m) = event
+                && wanted(&m)
+            {
+                return *m;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("the message never arrived");
+}
+
+/// Syncs `store` until `done` holds.
+async fn until_store(store: &Store, done: impl Fn(&Store) -> bool) {
+    for _ in 0..100 {
+        store.sync().await.unwrap();
+        if done(store) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("the store never got there");
+}
+
+/// alice as a plain agent and bob as a store, in one room alice hosts;
+/// the room's URI and its key in bob's store.
+async fn alice_and_bob(dir: &Path) -> (Agent, Store, String, String) {
+    let server = server(dir, &[ALICE, BOB]).await;
+    let mut alice = agent(&server, ALICE, dir).await;
+    let bob = Store::new(agent(&server, BOB, dir).await, InvitePolicy::Any);
+    bob.open_database().unwrap();
+    bob.agent()
+        .lock()
+        .await
+        .publish_key_packages(1)
+        .await
+        .unwrap();
+    let room = alice.host_room(&HostOptions::named("r")).await.unwrap();
+    alice.invite(&room, BOB).await.unwrap();
+    until_store(&bob, |s| s.state().room_of_uri(&room).is_some()).await;
+    let key = bob.state().room_of_uri(&room).cloned().unwrap();
+    (alice, bob, room, key)
+}
+
+/// The key of the message in `store` whose body is `body`.
+fn key_of(store: &Store, body: &str) -> Option<String> {
+    store
+        .state()
+        .messages
+        .values()
+        .find(|m| m.body == body)
+        .map(|m| m.key.clone())
+}
+
+/// Oracle: mimi-content-10 §5.2 (a reply's `inReplyTo` is the message ID
+/// replied to), §9.3 (an edit changes only the NestedPart, so an edit of
+/// a reply keeps its `inReplyTo`); draft-atwood-jmap-chat-mimi-00
+/// §Message Identifiers (a reference resolves by octets 1 to 10).
+#[tokio::test]
+async fn replies_are_sent_kept_and_edited_with_their_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut alice, bob, room, room_key) = alice_and_bob(dir.path()).await;
+    let first = alice.send_text(&room, "question?").await.unwrap();
+    until_store(&bob, |s| key_of(s, "question?").is_some()).await;
+    let target = key_of(&bob, "question?").unwrap();
+
+    // Received: kept exactly, and resolved to the stored message.
+    let mut options = SendOptions::new();
+    options.in_reply_to = Some(target.clone());
+    let sent = bob
+        .send_message(bob.new_key(), &room_key, "answer", &[], &options)
+        .await
+        .unwrap();
+    assert_eq!(sent.in_reply_to, Some(Reply::Message(target.clone())));
+    assert_eq!(sent.in_reply_to_id, Some(Octets(first.message_id.0)));
+    let got = until_message(&mut alice, |m| m.text.as_deref() == Some("answer")).await;
+    assert_eq!(got.content.in_reply_to, Some(first.message_id));
+
+    // An edit of the reply carries the same inReplyTo.
+    bob.edit(&sent.key, "answer, edited", BodyType::Plain)
+        .await
+        .unwrap();
+    let edit = until_message(&mut alice, |m| m.text.as_deref() == Some("answer, edited")).await;
+    assert!(edit.content.replaces.is_some());
+    assert_eq!(edit.content.in_reply_to, Some(first.message_id));
+
+    // A reply alice sends is kept exactly; one to a message bob never
+    // stored keeps its reference octets.
+    let mut content_id = [7u8; 32];
+    content_id[0] = 1;
+    let unknown = MessageId(content_id);
+    for (text, target) in [("re", first.message_id), ("re unknown", unknown)] {
+        let mut options = mimid_agent_core::ContentOptions::new();
+        options.in_reply_to = Some(target);
+        alice
+            .send_message_with(&room, text, &[], &options)
+            .await
+            .unwrap();
+    }
+    until_store(&bob, |s| key_of(s, "re unknown").is_some()).await;
+    let re_key = key_of(&bob, "re").unwrap();
+    let re = bob.state().messages[&re_key].clone();
+    assert_eq!(re.in_reply_to, Some(Reply::Message(target)));
+    assert_eq!(re.in_reply_to_id, Some(Octets(first.message_id.0)));
+    let other_key = key_of(&bob, "re unknown").unwrap();
+    let other = bob.state().messages[&other_key].clone();
+    let mut reference = [0u8; 10];
+    reference.copy_from_slice(&content_id[1..11]);
+    assert_eq!(other.in_reply_to, Some(Reply::Reference(Octets(reference))));
+    assert_eq!(other.in_reply_to_id, Some(Octets(content_id)));
+}
