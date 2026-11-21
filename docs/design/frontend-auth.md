@@ -50,6 +50,9 @@ paragraph, at the commit below.
 | iamb | 0.14.0-alpha.1 `fbc4700` |
 | Delta Chat core (chatmail/core) | 2.70.0-dev, `3027da4` |
 | tailscale | 1.105.0, `1db8e79` |
+| tailircd (github.com/MarkAtwood/tailircd) | `f218190` |
+| Headscale docs (`docs/about/features.md`) | `0c304b06` |
+| libtailscale (`tailscale.h`); crates.io | main on 2026-11-21; tailscale-localapi 0.6.0, libtailscale 0.2.2, tailscale (tailscale-rs) 0.7.1 |
 | crate-jmapchat-client; jmap-chat-js; gurk-to-jmap (local) | `74d32a8`; `7789c2b`; `6f05569` |
 | crates.io | instant-acme 0.8.5, rustls-acme 0.15.4, rcgen 0.14.10, argon2 0.6.0, rsasl 2.3.1 (2026-11-21) |
 | mimid | main at `ca712fe2`; S1 to S7 from branch `store-groundwork` (`aeb548f6`) |
@@ -85,6 +88,13 @@ today.
   when the user has a domain; (3) a local CA the agent makes,
   name-constrained, with a setup page, as a last resort. No self-signed
   certificate with warnings by default.
+- **Tailnet identity** (Mark, 2026-11-21, from tailircd). On a tailnet
+  listener the agent MAY ask tailscaled who is connecting (LocalAPI
+  `whois`) and let the owner's own devices in with no password: IRC with
+  the password left empty, XMPP and Matrix with a fixed word. JMAP keeps
+  its token, because ambient authority over HTTP lets any web page the
+  owner opens make calls. With `tailscale cert` this is the least
+  friction for a phone: install Tailscale, type the server name (§4.6).
 - **Onboarding.** `mimid-agent <config> setup <client> <device>` makes
   an app password and prints what that client needs: an `ircs://` URL,
   a Matrix homeserver URL, an XMPP address, a JMAP Session URL, with a
@@ -632,6 +642,150 @@ LOGIN and AUTHENTICATE PLAIN, after TLS, against the same credentials.
 The setup output would be a `dclogin:` URL carrying an app password,
 the one client in this note that takes a password by QR code (§2.5).
 
+### 4.6 Tailnet identity: the connection is the login
+
+Added at Mark's request (2026-11-21), from his tailircd
+(github.com/MarkAtwood/tailircd at `f218190`; irc-lessons.md, "The two
+servers"). There the server asks Tailscale who is on the other end of
+each connection, `lc.WhoIs(ctx, remoteAddr)`, and takes the answer's
+`UserProfile.LoginName` and `Node` as the user, with no password
+(`identity.go:29-60`). tailircd listens through tsnet on port 6667 with
+no TLS of its own (`main.go`, `srv.Listen("tcp", ":6667")`).
+
+**The rule for mimid-agent** (INVENTED, NOT FROM SPEC). When a
+connection arrives on a listener bound to a tailnet address and
+`[tailnet] identity = true`, the agent MAY identify the client by
+asking tailscaled who it is, and skip the password, if the answer
+matches:
+
+- the node's user's `LoginName` is in `owners` (default: the user who
+  owns the agent's own node, from LocalAPI `status`), **and** the node
+  is not tagged, not the agent's own node, and not advertising routes;
+  or
+- the node's name is in `nodes`, or one of its ACL tags is in `tags`;
+  both lists are empty by default.
+
+If the agent's own node is tagged, as servers often are, it has no
+owner to default to, and identity stays off until `owners` is set.
+
+Anything else, including a WhoIs error or tailscaled not answering,
+falls back to the password rules of §3. A failed WhoIs never lets a
+connection in.
+
+The three exclusions, each for a reason:
+
+- **Tagged nodes** have no user: Tailscale gives them a placeholder
+  profile (*from memory*: login name `tagged-devices`), and tags are
+  granted by whoever writes the ACL policy. A tag matches only if it is
+  listed by name.
+- **The agent's own node**: a connection from the host to its own
+  tailnet address is answered with the host's node and owner, so every
+  local account on the host would pass as the owner. Same-host clients
+  use loopback and the token, as today.
+- **Nodes advertising subnet routes or acting as exit nodes**: traffic
+  a subnet router forwards from its LAN is source-NATed to the
+  router's tailnet address by default (*from memory*), so a LAN device
+  behind the owner's router would pass as the owner's router.
+
+```toml
+[tailnet]                         # INVENTED names
+identity = true                   # off by default
+owners = ["alice@github"]         # Tailscale login names; default: the
+                                  # owner of the agent's own node
+nodes = []                        # extra node names, e.g. "pixel-8"
+tags = []                         # extra ACL tags, e.g. "tag:chat-client"
+socket = "/var/run/tailscale/tailscaled.sock"
+recheck_s = 300                   # re-ask WhoIs for open connections
+```
+
+**How it maps onto each protocol.** The agent knows the peer's
+address when it accepts the connection, before the first byte, so it
+can ask WhoIs then and tailor what it offers.
+
+| Front end | What a matched client sends | What the agent does | What the user types |
+|---|---|---|---|
+| IRC | nothing, or PASS or SASL PLAIN with anything | accepts registration with no credential; any PASS or SASL PLAIN succeeds (903, 900). It still offers `sasl=PLAIN` but **not** `soju.im/account-required`, so Goguma labels the field "Password (optional)" (§2.1) | server and nick; password empty |
+| XMPP | SCRAM or PLAIN | PLAIN with any password succeeds. SCRAM cannot accept "anything": the server must prove it knows the password's key. So the agent also accepts the fixed password `tailnet` (INVENTED) by SCRAM, from matched peers only, with verifiers made for that word. That keeps SASL2, SCRAM and -PLUS on offer, so Monal and Conversations' pinning are not disturbed (§2.3) | address; password `tailnet` |
+| Matrix | `m.login.password` with something in the field | any password succeeds; the device and its token belong to a pseudo-credential `tailnet:<node>`, and the token is accepted only from that node | server, username; any password (setup says `tailnet`) |
+| JMAP | — | **no change: Bearer or Basic still required** (below) | an app password |
+
+**Why not HTTP.** With no Authorization header, a request would be
+authorised by where it comes from. A web page open in a browser on the
+owner's laptop comes from the laptop, so any site the owner visits
+could POST JMAP calls to `https://<name>` (a simple cross-origin POST
+needs no preflight; CORS stops the page reading the answer, not the
+call happening). The Host check does not help: the page uses the real
+name. So JMAP keeps its token, and Matrix uses tailnet identity only at
+`/login`, where it mints a token that every later request must carry.
+Question 7.
+
+**Sessions.** A connection let in by WhoIs records the node, not a
+credential. Every `recheck_s` seconds (INVENTED: 300) the agent asks
+WhoIs again for each such connection and closes it if the node no
+longer matches (removed from the tailnet, key expired, tag removed).
+`/msg mimid tailnet` lists the matched nodes with their open sessions;
+`/msg mimid tailnet deny <node>` adds a node to a deny list kept in the
+agent's database, closes its sessions and deletes its Matrix devices
+(INVENTED). The real revocation is removing the node in the tailnet
+admin console.
+
+**Off the tailnet.** A phone with Tailscale switched off cannot reach a
+tailnet-only listener at all; turning Tailscale on fixes it. If the
+agent also listens on a LAN or public address, WhoIs has no answer for
+those peers and the password rules apply, so a client set up with no
+password fails there with the protocol's normal "password required"
+answer. `setup` says so, and offers an app password for that case.
+
+**TLS still runs.** WireGuard already encrypts tailnet traffic, and
+tailircd ran plain. But Goguma uses TLS by default, Conversations and
+Dino refuse to log in without it, and S1 says no non-loopback listener
+without TLS. So tailnet identity goes with `tailscale cert` (§5.2,
+rank 1): a trusted certificate and no password, nothing installed on
+the phone but Tailscale.
+
+**From Rust: tailscaled's LocalAPI, not tsnet.**
+
+- **LocalAPI** (recommended). HTTP/1.1 over the Unix socket
+  `/var/run/tailscale/tailscaled.sock`:
+  `GET /localapi/v0/whois?addr=<ip>:<port>` with `Host:
+  local-tailscaled.sock` and no `Origin` or `Referer`, which the
+  LocalAPI refuses (tailscale `ipn/localapi/localapi.go:250`,
+  `client/local/local.go:159-161`). WhoIs needs only read access, which
+  every local user gets on the Unix socket on Linux
+  (`ipn/ipnserver/server.go:336-353`); the certificate endpoint needs
+  write access (root or the operator user) or `TS_PERMIT_CERT_UID`
+  (§5.2). The answer is `{Node, UserProfile, CapMap}`
+  (`client/tailscale/apitype/apitype.go:35-42`); `Node.Tags`, and `Node.PrimaryRoutes` and `Node.AllowedIPs`
+  beyond the node's own `Addresses`, carry what the exclusions need. The crate
+  `tailscale-localapi` (0.6.0) does this; a client of our own over
+  hyper and `tokio::net::UnixStream` is about 150 to 250 lines
+  (*estimate*), with no new dependency beyond what reqwest already
+  pulls in. The agent binds the host's tailnet address; the host runs
+  tailscaled as usual.
+- **tsnet** is Go only: the program becomes its own tailnet node, with
+  its own name, state directory and auth key, in user-space
+  networking. tailircd uses it. From Rust it means libtailscale (C over
+  cgo, crate `libtailscale` 0.2.2), which puts a Go runtime in the agent
+  binary and reaches WhoIs and certificates through a LocalAPI loopback
+  server it starts (`tailscale_loopback` in `tailscale.h`). What it
+  buys: an agent node with its own name and ACL target, on a host that
+  is not otherwise on the tailnet. Tailscale's own Rust implementation
+  (crate `tailscale` 0.7.1, tailscale-rs) calls itself a work in
+  progress. Not for now.
+- macOS's App Store Tailscale exposes the LocalAPI differently
+  (*from memory*: a TCP port and a token file); Linux is the first
+  target.
+
+**Headscale.** WhoIs works the same: tailscaled answers it locally
+from the network map, and Headscale fills that with users, tags and ACL
+policy (Headscale `docs/about/features.md` at `0c304b06` lists tags,
+ACLs, grants and MagicDNS). Login names are Headscale's user names, so
+`owners` is written in that form (*unverified* exact format).
+`tailscale cert` does not work: HTTPS certificates are not in
+Headscale's feature list. MagicDNS under Headscale uses a base domain
+the operator owns, so the certificate comes from ACME DNS-01 on that
+domain (§5.2, rank 2) instead.
+
 ## 5. TLS
 
 S1 says a listener that is not loopback needs TLS, and the agent
@@ -688,10 +842,13 @@ pin. That is the ranking of §5.2.
      (`feature/acme/cert.go:171-250`). The agent asks again once a day
      (INVENTED) and swaps the certificate in without dropping
      connections.
-   - With the listener on the tailnet address the agent can learn which
-     tailnet node and user is connecting (LocalAPI `whois`), as
-     tailircd did (irc-lessons.md). That is not used for login here;
-     question 7.
+   - With the listener on the tailnet address the agent can also learn
+     which tailnet node and user is connecting, and let the owner's
+     devices in with no password (§4.6). **For phones on a tailnet,
+     `tailscale cert` plus tailnet identity is the least friction of
+     anything in this note**: nothing to install but Tailscale, which
+     the phone needs anyway to reach the agent, and nothing to type but
+     the server name.
 2. **ACME DNS-01, when the user has a domain.** A name such as
    `chat.example.org`, pointing at the agent's address, public or
    private: DNS-01 needs no inbound connection, so it works for a
@@ -821,6 +978,18 @@ The password is never put in a QR code or URL, because no client in
 §2 except Delta Chat reads one from there, and a URL ends up in browser
 history and screenshots.
 
+With `[tailnet] identity = true`, `setup` asks WhoIs nothing (the phone
+is not connected yet); it prints the tailnet variant first, "leave the
+password empty" for IRC and "password: `tailnet`" for XMPP and Matrix,
+and makes an app password only if asked (`--password`) or if the
+client is JMAP. The ranking for a phone, least friction first:
+
+1. On a tailnet: `tailscale cert` and tailnet identity. Server name
+   only.
+2. On a tailnet or with a domain: a trusted certificate and an app
+   password typed once.
+3. A local CA installed on the phone (§6.6) and an app password.
+
 ### 6.2 IRC
 
 | Client | What `setup` prints |
@@ -943,6 +1112,8 @@ Following AGENTS.md's "secrets never reach logs":
 |---|---|---|
 | Login succeeded on a network listener | INFO | front end, mechanism, credential name, peer address |
 | Login succeeded on loopback | DEBUG | same |
+| Login by tailnet identity | INFO | front end, node name, login name or matching tag, peer address |
+| A tailnet session closed because its node no longer matches | INFO | node name, why (gone, tag removed, denied) |
 | A JMAP request authenticated from the cache | TRACE | credential name |
 | Login failed | INFO for the first failure from a source in 10 minutes, then DEBUG | front end, mechanism, peer address, reason (`no-such-credential`, `bad-proof`, `username-mismatch` for XMPP, `revoked`) |
 | A source starts being slowed | WARN | peer address, failures counted |
@@ -972,6 +1143,29 @@ token file, and so can do anything the user can; that was true before
 this note. Browsers are kept off by the Host check for HTTP and by port
 6667 being on the Fetch standard's bad-port list for IRC
 (agent-frontends.md §4). Loopback stays plain, without TLS.
+
+**Tailnet address with tailnet identity (§4.6).** Here the gate is
+Tailscale's word about who is connecting, not a password. Who gets in:
+
+- **any device logged in to the tailnet as an owner**, including a lost
+  phone until its node is removed or its key expires. Removing the node
+  in the admin console is the revocation; the agent notices within
+  `recheck_s`;
+- **any node whose name or tag is listed.** Tags are granted by whoever
+  edits the tailnet's ACL policy, so listing a tag trusts every policy
+  editor;
+- **not** sharees of a shared node (they show up as their own users),
+  not tagged nodes unless listed, not the agent's host itself, and not
+  subnet routers or exit nodes (§4.6);
+- **whoever runs the control plane.** Tailscale Inc., or the Headscale
+  operator, says which user owns which node key; a control plane that
+  lies can add a node as the owner. Tailnet Lock (*from memory*: nodes
+  must be signed by trusted keys held on the user's devices) closes
+  that for Tailscale; Headscale has no equivalent that I know of.
+
+For a personal tailnet whose owner is its only admin, that is about as
+strong as an app password on a phone, with less typing. For a company
+tailnet, the tailnet admins can get in, and identity should stay off.
 
 **Tailnet or WireGuard address.** Every device on the tailnet, and
 anyone the tailnet admin shares the node with, can reach the port.
@@ -1017,6 +1211,11 @@ three commits and one child bead of mimid-e13m.
 | 9 | **Local CA.** `source = "local-ca"`, the name-constrained CA, leaf renewal, the setup page serving the CA for iOS and Android with fingerprints (§6.6). | 500 to 800 | none |
 | 10 | **XMPP SASL.** SASL1 SCRAM-SHA-1, SCRAM-SHA-256 and PLAIN; SASL2 with the same; FAST tokens; `tls-exporter` and -PLUS with XEP-0440. | 900 to 1,300 | XMPP |
 | 11 | **IRC SCRAM-SHA-256**, if question 3 says yes. | 150 to 250 | none |
+| 12 | **Tailnet identity.** LocalAPI client (`whois`, `status`) over the Unix socket, the `[tailnet]` table and matching rules with the three exclusions, the hooks in IRC (no `account-required` for matched peers), XMPP (the fixed SCRAM word) and Matrix `/login` (tokens bound to the node), the recheck timer, `/msg mimid tailnet` and `deny`, setup output. | 600 to 900 | none, but best with IRC v2 for Goguma; needs steps 1 and 3 |
+
+Step 12 is not required by anything, but with step 3's tailscale source
+it gives Goguma the easiest setup there is, so it is worth doing with
+IRC v2 if question 7 says yes.
 
 Steps 1 to 5 (about 2,600 to 3,800 lines) are the part IRC v2 needs:
 with them Goguma on either phone logs in with an app password, over a
@@ -1056,12 +1255,18 @@ trusted certificate and can go in any order after step 3.
    name and the machine name become public. Recommendation: make it the
    first choice anyway and say so in agent.md; a user who minds uses
    their own domain or the local CA.
-7. **Tailnet identity as a login.** On a tailnet the agent could ask
-   tailscaled who is connecting and skip the password for the user's
-   own nodes, as tailircd did. Recommendation: no, not now. Goguma
-   shows a password field only with SASL anyway, the rule would differ
-   between listeners, and a shared node would get in. Revisit if users
-   find typing a password once per device too much.
+7. **Tailnet identity (§4.6).** Choices that are Mark's:
+   (a) off or on by default when the listener is on a tailnet address;
+   (b) the default `owners` (the owner of the agent's node) and the
+   three exclusions (tagged, self, routers);
+   (c) the fixed word `tailnet` for XMPP SCRAM and Matrix, versus
+   letting those clients use an app password;
+   (d) JMAP staying on tokens, because over HTTP the source address is
+   ambient authority any web page can use.
+   Recommendation: (a) off by default, with `setup` offering it when it
+   sees a tailnet listener and the `tailscale` certificate source;
+   (b) yes; (c) yes, the word is no secret and says so; (d) yes, and
+   Matrix uses it only at `/login`.
 8. **Port 443 for Matrix.** Matrix clients turn a typed name into
    `https://name` on 443; any other port means typing it. Recommendation:
    default the Matrix (and JMAP) HTTPS listener to 443 on the tailnet
@@ -1090,9 +1295,15 @@ trusted certificate and can go in any order after step 3.
   name constraints.
 - Apple's 825-day certificate limit under a user-installed root, and
   the iOS menu names in §6.6 (from memory).
-- That `tailscale cert` warns about CT logs when turned on, and that
-  tailscaled's operator user may fetch certificates (from memory and
-  `PermitWrite`; not run).
+- That `tailscale cert` warns about CT logs when turned on (from
+  memory). The operator user's access is from source: root and the
+  operator get write access on the Unix socket
+  (`ipn/ipnserver/server.go:336-353`, `localapi/cert.go:48-51`); not run.
+- Tailnet identity: the placeholder profile of tagged nodes, source NAT
+  at subnet routers, Tailnet Lock's guarantee, Headscale's login-name
+  format, and the macOS app's LocalAPI transport, all from memory;
+  whether every Matrix client allows an empty password field (setup
+  says `tailnet` so it does not matter).
 - What Monal does if SASL2 `<success>` lacks `<authorization-identifier>`;
   the agent always sends it.
 - Whether Matrix clients show `429 M_LIMIT_EXCEEDED` on `/login` well.
