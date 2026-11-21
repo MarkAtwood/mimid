@@ -1,2 +1,3 @@
 {"id":"01a1fffd-ab06-7074-8823-eb40c73dca4b","issue_id":"mimid-qqtk.5","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-21T21:22:56.902031048Z"}
 {"id":"01a1fffd-ab09-7124-9403-863415535921","issue_id":"mimid-qqtk.5","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-21T21:22:56.905075865Z"}
+{"id":"01a20043-4142-7089-8ed8-b01f5714a5cb","issue_id":"mimid-qqtk.5","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Built in b27378ca on branch store-groundwork (epic mimid-qqtk), not yet merged or pushed","created_at":"2026-11-21T22:38:57.346036067Z"}
