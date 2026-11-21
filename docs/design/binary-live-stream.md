@@ -171,11 +171,24 @@ for the user to hubs. So these parts of Agora do not apply:
 
 WebSocket at `<server>/mimid/live`, where `<server>` is the agent's
 `server_url` with `http` turned into `ws` and `https` into `wss`
-(INVENTED, NOT FROM SPEC). The stream is not advertised in the JMAP
-Session: a client of the stream never reads JMAP, which is how the
-stream shows that it stands on its own. What the Session's mimi
-capability says (userUri, roomIdPrefix, hubSender, ...) the
-`ProviderHello` says (§5.11).
+(INVENTED, NOT FROM SPEC).
+
+A server with the stream on also advertises it in the JMAP Session,
+so that a JMAP client can find it (Mark 2026-11-21 on decision
+mimid-1wgh.77): the Session's `capabilities` has the vendor capability
+`tag:reviewcommit.com,2026:mimid:live` (INVENTED, NOT FROM SPEC; an
+RFC 4151 `tag:` URI under the same authority as mimid's problem types,
+which RFC 8620 §2 allows for a vendor capability), whose value is
+`{"url": "<the stream's ws or wss URL>"}`, built from the server's
+`base_url` as the agent builds it from `server_url`. A server with the
+stream off does not list it. The capability defines no methods; a JMAP
+request may name it in `using` while it is listed.
+
+The stream does not depend on it: a client that knows `server_url` opens
+the stream without reading JMAP, and once connected it needs nothing from
+JMAP, which is how the stream shows that it stands on its own. What the
+Session's mimi capability says (userUri, roomIdPrefix, hubSender, ...)
+the `ProviderHello` says (§5.11).
 
 ### 5.2 Configuration switch
 

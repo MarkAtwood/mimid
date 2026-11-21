@@ -64,6 +64,14 @@ pub const MAX_OUTSTANDING: usize = 16;
 /// mimid-1wgh.77). INVENTED, NOT FROM SPEC.
 pub const PATH: &str = "/mimid/live";
 
+/// The JMAP Session capability under which a server with the stream on
+/// also advertises it, so that a JMAP client can find it (Mark 2026-11-21
+/// on decision mimid-1wgh.77). Its value in the Session's `capabilities` is
+/// `{"url": <the stream's ws or wss URL>}`; it defines no methods. The
+/// stream does not depend on it. INVENTED, NOT FROM SPEC: an RFC 4151
+/// `tag:` URI under the authority of mimid's problem types.
+pub const SESSION_CAPABILITY: &str = "tag:reviewcommit.com,2026:mimid:live";
+
 /// The `Error` codes (decision mimid-1wgh.79). The stream's own codes, and
 /// those named as in RFC 8620 or draft-atwood-jmap-chat-mimi-00.
 pub mod code {

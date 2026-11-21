@@ -13,7 +13,10 @@
 //!    (`notJSON`);
 //! 6. the Request shape and at most [`MAX_CALLS_IN_REQUEST`] method calls
 //!    (`notRequest`, `limit` `maxCallsInRequest`);
-//! 7. every `using` URI is in [`CAPABILITIES`] (`unknownCapability`).
+//! 7. every `using` URI is one the Session lists
+//!    ([`CAPABILITIES`](super::session::CAPABILITIES), and the live
+//!    stream's while it is on)
+//!    (`unknownCapability`).
 //!
 //! Method calls then run in order through crate-jmap's dispatcher. A
 //! `/get` call naming more than [`MAX_OBJECTS_IN_GET`] ids, or a `/set`
@@ -45,7 +48,7 @@ use serde_json::Value;
 
 use super::JmapState;
 use super::auth::Account;
-use super::session::{CAPABILITIES, METADATA_CAPABILITY};
+use super::session::METADATA_CAPABILITY;
 use super::{MAX_MLS_OBJECT_SIZE, MAX_MLS_OBJECTS_PER_CALL};
 
 /// Room for the JSON around the largest base64url payload a request
@@ -308,7 +311,7 @@ pub(super) async fn post_api(
         Ok(request) => request,
         Err(error) => return problem(error),
     };
-    if let Err(error) = check_known_capabilities(&request, &CAPABILITIES) {
+    if let Err(error) = check_known_capabilities(&request, &state.0.session.capabilities()) {
         return problem(error);
     }
     let account = account

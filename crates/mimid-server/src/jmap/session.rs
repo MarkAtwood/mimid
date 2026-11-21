@@ -18,6 +18,14 @@
 //! draft-ietf-jmap-blobext-03's `urn:ietf:params:jmap:blob2`
 //! (`super::methods::blob`).
 //!
+//! With the live stream on ([`super::JmapOptions::live_stream`]), the
+//! Session's `capabilities` also has [`mimid_live::SESSION_CAPABILITY`],
+//! `{"url": <the stream's URL>}`: the `base_url` with `http` turned into
+//! `ws` and `https` into `wss`, then [`mimid_live::PATH`] (Mark 2026-11-21
+//! on decision mimid-1wgh.77; INVENTED, NOT FROM SPEC). A request may then
+//! name it in `using` (`SessionTemplate::capabilities`). With the stream
+//! off it is not listed.
+//!
 //! # Limitations
 //!
 //! - `maxAttachmentBytes` and `maxAttachmentsPerMessage` are `0`: the
@@ -129,6 +137,8 @@ pub(super) struct SessionTemplate {
     max_key_packages: u64,
     asset_lifetime: Option<u64>,
     blob: BlobAccountCapability,
+    /// The live stream's URL, if the stream is on.
+    live_url: Option<String>,
 }
 
 impl SessionTemplate {
@@ -137,7 +147,7 @@ impl SessionTemplate {
     /// `hub_sender`, which keeps a blob at `assetUrl` for
     /// `asset_lifetime` seconds after its upload (`None`: no limit), and
     /// whose accounts have the `urn:ietf:params:jmap:blob2` capability
-    /// `blob`.
+    /// `blob`, and which serves the live stream if `live_stream`.
     ///
     /// # Panics
     ///
@@ -151,6 +161,7 @@ impl SessionTemplate {
         max_key_packages: u64,
         asset_lifetime: Option<u64>,
         blob: BlobAccountCapability,
+        live_stream: bool,
     ) -> Self {
         Self {
             base_url: base_url.to_string(),
@@ -163,7 +174,19 @@ impl SessionTemplate {
             max_key_packages,
             asset_lifetime,
             blob,
+            live_url: live_stream.then(|| live_url(base_url)),
         }
+    }
+
+    /// Every capability the Session lists: [`CAPABILITIES`], and
+    /// [`mimid_live::SESSION_CAPABILITY`] while the live stream is on. The
+    /// only URIs a request may name in `using`.
+    pub(super) fn capabilities(&self) -> Vec<&'static str> {
+        let mut capabilities = CAPABILITIES.to_vec();
+        if self.live_url.is_some() {
+            capabilities.push(mimid_live::SESSION_CAPABILITY);
+        }
+        capabilities
     }
 
     /// The Session object `account` sees.
@@ -241,6 +264,7 @@ impl SessionTemplate {
                 i18n: Empty {},
                 metadata: Empty {},
                 blob: Empty {},
+                live: self.live_url.clone().map(|url| LiveCapability { url }),
             },
             primary_accounts: BTreeMap::from([
                 (JMAP_CHAT_URI, account_id.clone()),
@@ -338,6 +362,32 @@ struct SessionCapabilities {
     /// draft-ietf-jmap-blobext-03 §2.1: "MUST be an empty object".
     #[serde(rename = "urn:ietf:params:jmap:blob2")]
     blob: Empty,
+    /// [`mimid_live::SESSION_CAPABILITY`], only with the live stream on.
+    #[serde(
+        rename = "tag:reviewcommit.com,2026:mimid:live",
+        skip_serializing_if = "Option::is_none"
+    )]
+    live: Option<LiveCapability>,
+}
+
+/// The value of [`mimid_live::SESSION_CAPABILITY`]: where the live stream
+/// is (INVENTED, NOT FROM SPEC).
+#[derive(Debug, Serialize)]
+struct LiveCapability {
+    url: String,
+}
+
+/// The live stream's URL at `base_url`: `ws` for `http`, `wss` for
+/// `https`, then [`mimid_live::PATH`], as the agent builds it from its
+/// `server_url`.
+fn live_url(base_url: &BaseUrl) -> String {
+    let base = base_url.to_string();
+    let base = base.trim_end_matches('/');
+    match base.split_once("://") {
+        Some(("https", rest)) => format!("wss://{rest}{}", mimid_live::PATH),
+        Some((_, rest)) => format!("ws://{rest}{}", mimid_live::PATH),
+        None => format!("ws://{base}{}", mimid_live::PATH),
+    }
 }
 
 #[derive(Debug, Serialize)]

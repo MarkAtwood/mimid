@@ -213,6 +213,73 @@ async fn the_route_exists_only_when_switched_on() {
     on.open().await;
 }
 
+/// The Session lists the stream under its vendor capability, with the
+/// URL the stream answers at, only with the stream on (Mark 2026-11-21 on
+/// decision mimid-1wgh.77), and a request may name it in `using` only
+/// then. The stream itself needs no Session: the other tests here never
+/// read one.
+#[tokio::test]
+async fn the_session_lists_the_stream_only_when_switched_on() {
+    let client = reqwest::Client::new();
+    for on in [true, false] {
+        let server = server(on).await;
+        let session = client
+            .get(format!("{}/.well-known/jmap", server.base))
+            .bearer_auth(server.token.expose_secret())
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
+        let capability = &session["capabilities"][mimid_live::SESSION_CAPABILITY];
+        let api = client
+            .post(format!("{}/jmap/api", server.base))
+            .bearer_auth(server.token.expose_secret())
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({
+                    "using": ["urn:ietf:params:jmap:core", mimid_live::SESSION_CAPABILITY],
+                    "methodCalls": [],
+                })
+                .to_string(),
+            )
+            .send()
+            .await
+            .unwrap();
+        if on {
+            assert_eq!(
+                capability,
+                &serde_json::json!({"url": server.url()}),
+                "{session}"
+            );
+            assert_eq!(
+                mimid_live::SESSION_CAPABILITY,
+                "tag:reviewcommit.com,2026:mimid:live"
+            );
+            // The advertised URL is the one the stream answers at.
+            let url = capability["url"].as_str().unwrap().to_owned();
+            let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+            send(&mut socket, &hello(&server.token.expose_secret())).await;
+            assert!(matches!(
+                receive(&mut socket, None).await,
+                Some(ProviderMessage::Hello(_))
+            ));
+            assert_eq!(api.status(), 200);
+        } else {
+            assert!(capability.is_null(), "{session}");
+            assert_eq!(api.status(), 400);
+            let problem: serde_json::Value =
+                serde_json::from_slice(&api.bytes().await.unwrap()).unwrap();
+            assert_eq!(
+                problem["type"],
+                "urn:ietf:params:jmap:error:unknownCapability"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_wrong_malformed_or_revoked_token_is_refused_alike() {
     let server = server(true).await;

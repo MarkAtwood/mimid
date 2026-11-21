@@ -233,6 +233,7 @@ pub fn router(
         options.max_key_packages,
         options.asset_lifetime,
         methods::blob::blob_capability(&options.blob_quota),
+        options.live_stream,
     );
     let bus = ChangeBus::new();
     bus.forward(follower.subscribe());
