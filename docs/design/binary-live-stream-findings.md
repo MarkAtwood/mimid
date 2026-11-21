@@ -117,6 +117,8 @@ before one stored earlier for the same room (§5.5).
 
 **Decision.** Take as proposed. (Mark, 2026-11-20.)
 
+Built: verified that mimid's ids sort in storage order (follower_log.rs `next_message_id`); tests in crates/mimid-server/tests/jmap_room_create.rs (`Message/query` sorted by `id` equals `Message/get` order).
+
 ## F3. Room/send drops the hub's frank
 
 **Gap.** The hub's SubmitMessageResponse carries the frank of an
@@ -143,6 +145,8 @@ gave one, `frank` (Mark's answer, §9 question 3).
 > message: the hub's Frank ({{MIMI-PROTOCOL, Section 5.4}}).
 
 **Decision.** Take as proposed; mimid-server returns `frank`. (Mark, 2026-11-20.)
+
+Built: `Room/send` answers `frank` (unpadded base64url of the TLS-encoded Frank) when the hub franked the message (crates/mimid-server/src/jmap/methods/room_send.rs).
 
 ## F4. A client cannot tell whether its Chat is still bound
 
@@ -172,6 +176,8 @@ use it yet.
 
 **Decision.** Take as proposed; mimid-server exposes `roomBound`. (Mark, 2026-11-20.)
 
+Built: every Chat has `roomBound` (projection.rs `chat_object`); the stream's `ListChats` already had `bound`.
+
 ## F5. KeyMaterial/fetch takes the KeyMaterialResponse apart
 
 **Gap.** Every other answer from a hub that the client must reason
@@ -200,6 +206,8 @@ draft.
 > : The whole KeyMaterialResponse, unchanged.
 
 **Decision.** Take: add `response`, the KeyMaterialResponse bytes, and keep the split fields. (Mark, 2026-11-20.)
+
+Built: `KeyMaterial/fetch` adds `response`; the agent uses it when present and rebuilds from the fields otherwise (client.rs `key_material`).
 
 ## F6. The user's devices have nowhere to agree that a room was accepted
 
@@ -289,6 +297,8 @@ that leaves it out, and the agent against one that follows the draft.
 
 **Decision.** Take; the agent treats `status` as optional. (Mark, 2026-11-20.)
 
+Built: the agent's `ReportOutcome::Refused` has `status: Option<u16>`, on both bindings; the agent's JMAP front end leaves `status` out when it has none.
+
 ## F9. KeyPackage changes cannot be followed
 
 **Gap.** The draft tells a client to watch the KeyPackage state to learn
@@ -318,6 +328,8 @@ went.
 > handed out appears in `destroyed`.
 
 **Decision.** Take; mimid-server implements `KeyPackage/changes` and the agent uses it. (Mark, 2026-11-20.)
+
+Built: a `key_package_change` log written by triggers on `key_package` (migration 0013); the KeyPackage state is its highest number for the account; `KeyPackage/changes` is standard `/changes` with `maxChanges`. The agent keeps the ids of its own KeyPackages and drops those `destroyed` names (`Agent::refresh_key_packages`); on the stream, which has no counterpart, it lists them (`ListKeyPackages`).
 
 ## F10. Nothing bounds the size of the MLS objects a client sends
 
@@ -353,6 +365,8 @@ but not one JMAP request with another argument beside it.
 
 **Decision.** Take; mimid-server advertises 4 MiB, and both bindings use that one limit. (Mark, 2026-11-20.)
 
+Built: `maxMlsObjectSize` = 4 MiB in the mimi capability and in `ProviderHello`; the core functions refuse a larger argument with `invalidArguments` (a KeyPackage with SetError `tooLarge`) on both bindings; `maxSizeRequest` and the stream's `maxRequestBytes` were raised to fit two such objects (Room/create), so this is the limit a client meets. An object near 4 MiB still fails at the protocol relay, whose body cap (`MAX_BODY_LEN`, 4 MiB) must hold the object plus its SubmitMessageRequest or FanoutMessage envelope: see the open question in the report of bead mimid-e64f.12.
+
 ## F11. A lost answer to Room/send or Room/update cannot be retried safely
 
 **Gap.** If the connection drops after the hub accepted a message or
@@ -385,6 +399,8 @@ and the same for `request` in §Room/update.
 
 **Decision.** Take, with SHOULD; mimid-server answers a repeated `message` (Room/send) or `request` (Room/update) with the earlier response. (Mark, 2026-11-20.)
 
+Built: `accepted_request` (migration 0013, crates/mimid-server/src/store/accepted.rs): a request the hub accepted is answered again for the same user, room and bytes for 30 days (`ACCEPTED_RETENTION_MS`, INVENTED, NOT FROM SPEC) without reaching the hub, in `Follower::relay_submit_message` and `relay_update`, so both bindings have it.
+
 ## F12. Recovering from cannotCalculateChanges is undefined for an MLS client
 
 **Gap.** The base draft tells a client that cannot get changes to
@@ -415,6 +431,8 @@ replay of everything (note §5.5).
 anchor, which RFC 8620 §5.5 provides.)
 
 **Decision.** Take; mimid-server sorts `Message/query` by `id` with an `anchor`, and the agent uses it on `cannotCalculateChanges`. (Mark, 2026-11-20.)
+
+Built: `Message/query` sorts by `id`, and `anchor` with `anchorOffset` 1 gives the later Messages. The stream's counterpart is `Subscribe` with `after` (per Chat, the last Message handled) and no `since`. The agent uses them on `cannotCalculateChanges` and `cannotResume`. The proposed text says "with `anchor` set to the last Message it processed"; with RFC 8620's default `anchorOffset` of 0 the result starts at that Message itself, so the text should say `anchorOffset` 1 (or "the Messages after it").
 
 ## Push semantics (F13 to F17)
 
@@ -525,6 +543,8 @@ visible there either (see F4).
 
 **Decision.** Take; mimid-server moves the Chat state on unbinding. (Mark, 2026-11-20.)
 
+Built: the Chat state is `s.m.d.p.u`, u the account's latest leaving (a provider-wide counter, `follower_member.left_mod`); `Chat/changes` lists an unbound Chat as updated.
+
 ### F16. No promise that a pushed change is visible
 
 **Gap.** Nothing says that when a client receives a `StateChange` for
@@ -551,6 +571,8 @@ and the connection subscribes to the bus before its replay.
 
 **Decision.** Take, as the plain sentence. (Mark, 2026-11-20.)
 
+Built: already so; regression test `a_pushed_message_state_already_shows_the_message` (crates/mimid-server/tests/jmap_projection.rs).
+
 ### F17. Which types a pure MLS client watches
 
 **Gap.** An MLS client (one that never converts content) needs Message
@@ -575,6 +597,8 @@ and `Changed` for Chat, KeyPackage and Consent.
 > types; it MAY ask for only these in the event source's `types`.
 
 **Decision.** Take; the agent watches KeyPackage once F9 is in. (Mark, 2026-11-20.)
+
+Built: the agent asks for `types=Message,Chat,Consent,KeyPackage` (`push::SYNC_TYPES`) and tops its KeyPackages up after each sync from `KeyPackage/changes`.
 
 ## F18. A client cannot tell its own stored message from the answer
 
@@ -610,3 +634,5 @@ arguments:
 > it reads its Messages.
 
 **Decision.** Take; mimid-server returns `messageIds`, and the agent skips its own copies by id, with the digests as fallback. (Mark, 2026-11-20.)
+
+Built: `Room/send` and `Room/update` answer `messageIds`; the stream's `Send` and `Update` `Ack`s carry them. The agent keeps them (`State::own_ids`) and skips those Messages, with the digests as fallback.

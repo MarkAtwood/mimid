@@ -845,6 +845,77 @@ step runs the full check list in AGENTS.md before its commit.
      `tests/database.rs` reads the version from `schema_version`, and
      mimid-agent `tests/jmap_off.rs` looks for `DATABASE_FILE`.
 
+10. **Sending survives a crash** (bead mimid-e64f.16; Mark approved
+    2026-11-20). Step 9 made receiving safe; sending was not. The agent
+    encrypted a message (consuming a ratchet generation), sent it, and only
+    on the answer did the store record it; the digest that marks the
+    stored copy as the agent's own was saved after the network call too,
+    and a Commit was merged only after the answer. A crash after the hub
+    accepted lost the message for good, since MLS cannot decrypt the
+    sender's own message, and left the group at the old epoch with its own
+    Commit coming back as something it could not process.
+
+    Built (2026-11-20):
+
+    - The outbox (`outbox` table in `agent.sqlite`, part `agent` version
+      2; crates/mimid-agent-core/src/outbox.rs). `Agent::send_content`
+      encrypts, saves the MLSMessage's digest and writes an outbox entry
+      (room, the MLSMessage bytes, the mimi-content as encrypted) in one
+      transaction with OpenMLS's writes, before anything leaves. A member
+      Commit (`Agent::build_commit`: invite, moderation, a leave this
+      device commits, a credential update) is made pending and written as
+      an entry (the UpdateRequest bytes and the users it removes for lacking
+      AppDataUpdate) in one transaction.
+    - The answer, in one transaction. Accepted message: its plaintext goes
+      to the journal as `Event::Sent` (this user's own message), the
+      `messageIds` the provider named (findings log F18) are kept so the
+      stored copies are skipped, and the entry is removed. Accepted
+      Commit: merged, its events journaled, entry removed. Refused: the
+      entry is removed (a Commit cleared) and the refusal returned. No
+      answer (an error reaching the server): the entry stays, and with it
+      a Commit's pending state.
+    - Restart, or a lost answer. `Agent::receive` first sends every entry
+      again, oldest first, with the same bytes; it never encrypts again,
+      which would use a ratchet generation twice or skip one. The provider
+      answers a request its hub already accepted from its record, with the
+      earlier answer and the stored copies' ids (findings log F11;
+      mimid-server keeps the record 30 days, `ACCEPTED_RETENTION_MS`,
+      INVENTED, NOT FROM SPEC), so the hub sees it once. The entry then
+      ends as above; a Commit finished this way also journals a
+      `MembersChanged`, since no caller is left to report it. A refusal
+      now (the room moved on meanwhile) drops the entry with an
+      `Event::Problem`.
+    - The store. `Store::sync` stores an `Event::Sent` like a received
+      message, and a message it already has (by MIMI message ID or
+      alias) is not stored again. `Store::send`, `edit` and `retract`
+      keep the agent locked until their record or alias is in, so a sync
+      cannot store the journal's copy first.
+    - Proposals and external Commits do not go through the outbox: their
+      digests are saved before they leave (so their stored copies are
+      skipped after a crash), and what the agent does next (a room
+      marked as being left, a room joined) can still be lost; listed in
+      outbox.rs Limitations.
+    - Receiving: a Message is skipped if its id is among the kept
+      `messageIds`, if its digest is the agent's, or if its Chat's last
+      handled Message (`State::last_handled`) has an id that does not sort
+      before it (findings log F2). On `cannotCalculateChanges` (JMAP) the
+      agent reads, per Chat, `Message/query` sorted by `id` with that
+      Message as `anchor` and `anchorOffset` 1; on `cannotResume` (the
+      stream) it subscribes again with `after`, the same per Chat (findings
+      log F12).
+    - Tests: mimid-agent-store `tests/send_crash.rs` fails a send after
+      the outbox entry and before sending (`FailPoint::BeforeSend`), after
+      the hub accepted and before the answer is handled
+      (`FailPoint::AfterAccepted`), and after the answer and before the
+      store saved its record (a restart without a save), with a restart and
+      in the same run, and a Commit (an invite) at the first two; it
+      checks each message is stored once by alice's store, received once
+      by bob's agent with no Problem, and that the Commit ends merged at
+      the next epoch with bob at the same one. mimid-server
+      `jmap_room_create.rs` sends a message and a Commit twice and
+      requires the same answer and no second stored copy; `store::accepted`
+      tests the retention.
+
 Steps 3 and 5 are the large ones. Step 3 cannot be cut much smaller: the
 store has to be the only copy of inbound state before it can save it.
 Keeping format 1 on disk through step 3 is what keeps it reversible.
@@ -1305,16 +1376,18 @@ every 2 s and never listened to the EventSource mimid-server serves
 - **What wakes the sync.** `Store::sync_wanted()` stays the one trigger.
   A task of the daemon (crates/mimid-agent/src/push.rs) follows the
   Session's `eventSourceUrl` and notifies it for each StateChange that
-  names `Message`, `Chat` or `Consent` for the account
+  names `Message`, `Chat`, `Consent` or `KeyPackage` for the account
   (`mimid_agent_core::push::SYNC_TYPES`: what `Agent::receive`,
-  `Agent::join_own_rooms` and `Agent::consents` read), and once each time
+  `Agent::join_own_rooms`, `Agent::consents` and, after the sync,
+  `Agent::refresh_key_packages` read; `KeyPackage` added for findings log
+  F17, so a KeyPackage handed out leads to a top-up), and once each time
   a stream opens. The stream says only when; `Store::sync` alone reads
   what, so it is still the only caller of `Agent::receive` and
   `Agent::acknowledge`.
 - **The client.** `mimid_agent_core::push`: `Agent::push_source()` hands
   out a `PushSource` (template, account, token, its own reqwest client)
   that holds no agent state, so the task never takes the agent lock.
-  `PushSource::open` asks for `types=Message,Chat,Consent`,
+  `PushSource::open` asks for `types=Message,Chat,Consent,KeyPackage`,
   `closeafter=no`, `ping=30` and sends `Last-Event-ID` when the last
   stream set an ID. The client has no overall timeout but a 75 s read
   timeout, two pings and slack, so a silent dead connection is dropped.
