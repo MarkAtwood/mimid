@@ -576,3 +576,64 @@ impl Events {
         .is_ok()
     }
 }
+
+/// base64 of `bytes`.
+pub fn b64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// A SCRAM-SHA-256 client's proof and expected server signature, from RFC
+/// 5802 §3's formulas.
+pub fn scram_client(
+    password: &str,
+    client_first_bare: &str,
+    server_first: &str,
+    without_proof: &str,
+) -> (String, String) {
+    use base64::Engine;
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::{Digest, Sha256};
+    let mac = |key: &[u8], data: &[u8]| -> Vec<u8> {
+        let mut m = <Hmac<Sha256> as KeyInit>::new_from_slice(key).unwrap();
+        m.update(data);
+        m.finalize().into_bytes().to_vec()
+    };
+    let mut fields = server_first.split(',');
+    let _nonce = fields.next().unwrap();
+    let salt = base64::engine::general_purpose::STANDARD
+        .decode(fields.next().unwrap().strip_prefix("s=").unwrap())
+        .unwrap();
+    let iterations: u32 = fields
+        .next()
+        .unwrap()
+        .strip_prefix("i=")
+        .unwrap()
+        .parse()
+        .unwrap();
+    // Hi() of RFC 5802 §2.2.
+    let mut u = mac(
+        password.as_bytes(),
+        &[salt.as_slice(), &1u32.to_be_bytes()].concat(),
+    );
+    let mut salted = u.clone();
+    for _ in 1..iterations {
+        u = mac(password.as_bytes(), &u);
+        for (s, x) in salted.iter_mut().zip(&u) {
+            *s ^= x;
+        }
+    }
+    let auth = format!("{client_first_bare},{server_first},{without_proof}");
+    let client_key = mac(&salted, b"Client Key");
+    let signature = mac(&Sha256::digest(&client_key), auth.as_bytes());
+    let proof: Vec<u8> = client_key
+        .iter()
+        .zip(&signature)
+        .map(|(a, b)| a ^ b)
+        .collect();
+    let server_key = mac(&salted, b"Server Key");
+    (
+        b64(&proof),
+        format!("v={}", b64(&mac(&server_key, auth.as_bytes()))),
+    )
+}

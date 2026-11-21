@@ -21,6 +21,7 @@ use tokio::time::Instant;
 use crate::IrcOptions;
 use crate::line::{self, MAX_CLIENT_TAGS, MAX_LINE, Out};
 use crate::names::{Identity, Names};
+use mimid_agent_store::credentials::limits::LOGIN_WITHIN;
 use mimid_agent_store::credentials::{Credentials, Login};
 
 /// The longest line the reader keeps: tags and the rest at their limits.
@@ -113,6 +114,7 @@ enum Incoming {
 /// The capabilities a client turned on.
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct Caps {
+    pub(crate) sasl: bool,
     pub(crate) message_tags: bool,
     pub(crate) server_time: bool,
     pub(crate) echo_message: bool,
@@ -162,6 +164,15 @@ pub(crate) struct Session {
     pub(crate) pass: Option<Option<Login>>,
     /// The credential the connection logged in with, once registered.
     pub(crate) login: Option<Login>,
+    /// Where an AUTHENTICATE exchange stands.
+    pub(crate) sasl: crate::sasl::Sasl,
+    /// What SASL logged in as, before registration ends.
+    pub(crate) sasl_login: Option<Login>,
+    /// Whether a SASL exchange failed: then PASS is not looked at.
+    pub(crate) sasl_failures: bool,
+    /// The connection's place under the caps on connections not logged
+    /// in; dropped at login.
+    pub(crate) unauthenticated: Option<mimid_agent_store::credentials::limits::Unauthenticated>,
     /// The nick the client asked for.
     pub(crate) client_nick: Option<String>,
     pub(crate) got_user: bool,
@@ -198,6 +209,10 @@ impl Session {
             cap_negotiating: false,
             pass: None,
             login: None,
+            sasl: crate::sasl::Sasl::Idle,
+            sasl_login: None,
+            sasl_failures: false,
+            unauthenticated: None,
             client_nick: None,
             got_user: false,
             me: None,
@@ -413,6 +428,21 @@ pub(crate) async fn run<S>(
     let ping_after = shared.ping_after;
     let pong_within = shared.pong_within;
     let mut session = Session::new(shared, peer);
+    // docs/design/frontend-auth.md §7.1: connections not logged in are
+    // capped, and have LOGIN_WITHIN to log in.
+    match session.shared.credentials.limiter().admit(peer.ip()) {
+        Some(guard) => session.unauthenticated = Some(guard),
+        None => {
+            tracing::debug!(peer = %peer, "IRC connection refused: too many not logged in");
+            let _ = write
+                .write_all(b"ERROR :Closing Link (too many connections)\r\n")
+                .await;
+            let _ = write.shutdown().await;
+            reader.abort();
+            return;
+        }
+    }
+    let login_by = Instant::now() + LOGIN_WITHIN.min(ping_after + pong_within);
     let mut last_heard = Instant::now();
     let mut ping_sent: Option<Instant> = None;
     // docs/design/frontend-auth.md §3.7: a connection closes once the
@@ -420,7 +450,7 @@ pub(crate) async fn run<S>(
     let mut credentials = session.shared.credentials.changes();
     loop {
         let deadline = match (session.me.is_some(), ping_sent) {
-            (false, _) => last_heard + ping_after + pong_within,
+            (false, _) => login_by,
             (true, Some(sent)) => sent + pong_within,
             (true, None) => last_heard + ping_after,
         };

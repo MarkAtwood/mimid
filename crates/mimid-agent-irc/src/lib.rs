@@ -15,17 +15,25 @@
 //! # The server
 //!
 //! - **Authentication** (docs/design/frontend-auth.md §4.1): the client
-//!   sends a credential, the agent token or an app password, as its
-//!   server password (`PASS`); the daemon hands the front end its
+//!   sends a credential, the agent token or an app password, with SASL
+//!   PLAIN or SCRAM-SHA-256 (`sasl=PLAIN,SCRAM-SHA-256`, decision A3) or as
+//!   its server password (`PASS`); the daemon hands the front end its
 //!   credential table ([`mimid_agent_store::credentials::Credentials`]),
 //!   whose check is the one at this boundary. A wrong or missing one gets
-//!   464 and `ERROR :Closing Link`. The connection keeps which credential
-//!   it logged in with.
+//!   464 (or `FAIL * ACCOUNT_REQUIRED` to a client that turned `sasl` on
+//!   and sent nothing) and `ERROR :Closing Link`. If both PASS and SASL
+//!   come, SASL decides. The connection keeps which credential it logged
+//!   in with, and closes when that credential is revoked. Failed logins
+//!   are answered more slowly per source, and connections not logged in
+//!   are capped and must log in within 30 s
+//!   (`mimid_agent_store::credentials::limits`). The `soju.im/account-required`
+//!   capability and ISUPPORT `draft/ACCOUNTREQUIRED` say a login is needed.
 //!   Before registration only `CAP`, `PASS`, `NICK`, `USER`, `PING`,
 //!   `PONG` and `QUIT` are read, and a first line that looks like HTTP
-//!   closes the connection. No line is ever logged. There is no SASL.
+//!   closes the connection. No line is ever logged.
 //! - **Registration**: `CAP LS 302` (`message-tags`, `server-time`,
-//!   `echo-message`), `CAP REQ` acknowledged or refused as a whole; the
+//!   `echo-message`, `sasl`, `soju.im/account-required`), `CAP REQ`
+//!   acknowledged or refused as a whole; the
 //!   client's nick is replaced by the user's own (`<local>-<label>`), 001
 //!   to 005, 900 with the user URI, 422.
 //! - **Rooms are channels** (`#name`); the client is joined to every room
@@ -89,12 +97,14 @@ mod listen;
 pub mod names;
 mod register;
 mod render;
+mod sasl;
 mod service;
 
 use std::net::SocketAddr;
 use std::time::Duration;
 
 pub use listen::IrcFrontEnd;
+pub use sasl::MECHANISMS as SASL_MECHANISMS;
 
 /// How long a connection may be silent before the server sends PING.
 /// INVENTED VALUE, NOT FROM SPEC (docs/design/agent-frontends.md §4).

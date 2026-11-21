@@ -6,7 +6,7 @@
 mod common;
 
 use common::irc::Irc;
-use common::{ALICE, BOB, Running, config, server};
+use common::{ALICE, BOB, Running, b64, config, scram_client, server};
 
 /// `config` for alice with `[irc]` on a free loopback port.
 fn with_irc(dir: &std::path::Path, server: &common::Server) -> mimid_agent::Config {
@@ -420,4 +420,257 @@ fn setup_tls_asks_before_tailscale_cert() {
         &["host.tailnet.ts.net".to_owned()]
     ));
     assert!(run("").contains("Already agreed"));
+}
+
+/// Oracle: docs/design/frontend-auth.md §2.1 and §4.1, after Goguma
+/// (`lib/client.dart:510-546`): `CAP LS 302`, `CAP REQ :sasl` and
+/// `AUTHENTICATE PLAIN` sent at once, before any answer; the SASL
+/// username is the nick; no PASS. Over the TLS listener, with an app
+/// password. CAP LS offers `sasl=PLAIN,SCRAM-SHA-256` and
+/// `soju.im/account-required`; 005 carries `draft/ACCOUNTREQUIRED`;
+/// 900 and 903 come before 001.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn goguma_shaped_sasl_plain_over_tls() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc_tls(dir.path(), &server)).await;
+    let (_, password) = alice.store_credentials().add("goguma", "cli").unwrap();
+    let mut irc = Irc::connect_tls(alice.irc_tls.unwrap(), "localhost").await;
+    irc.send_raw(b"CAP LS 302\r\nCAP REQ :sasl\r\nAUTHENTICATE PLAIN\r\n")
+        .await;
+    let ls = irc.until_command("CAP").await;
+    assert!(
+        ls.text()
+            .split(' ')
+            .any(|c| c == "sasl=PLAIN,SCRAM-SHA-256"),
+        "{}",
+        ls.raw
+    );
+    assert!(
+        ls.text()
+            .split(' ')
+            .any(|c| c == "soju.im/account-required"),
+        "{}",
+        ls.raw
+    );
+    let ack = irc.until_command("CAP").await;
+    assert_eq!(ack.params[1], "ACK", "{}", ack.raw);
+    let go = irc.until_command("AUTHENTICATE").await;
+    assert_eq!(go.params, ["+"]);
+    // Goguma's PLAIN: empty authzid, the nick as authcid.
+    let payload = format!("\0alice\0{}", password.shown());
+    irc.send(&format!("AUTHENTICATE {}", b64(payload.as_bytes())))
+        .await;
+    let logged_in = irc.until_command("900").await;
+    assert!(
+        logged_in.text().contains("mimi://a.example/u/alice"),
+        "{}",
+        logged_in.raw
+    );
+    irc.until_command("903").await;
+    irc.send("NICK alice").await;
+    irc.send("USER alice 0 * :Goguma").await;
+    irc.send("CAP END").await;
+    irc.until_command("001").await;
+    let isupport: Vec<String> = {
+        let mut tokens = Vec::new();
+        loop {
+            let m = irc.line().await;
+            if m.command == "005" {
+                tokens.extend(m.params[1..].iter().cloned());
+            }
+            if m.command == "422" {
+                break tokens;
+            }
+        }
+    };
+    assert!(
+        isupport.contains(&"draft/ACCOUNTREQUIRED".to_owned()),
+        "{isupport:?}"
+    );
+    alice.stop().await;
+}
+
+/// Oracle: §2.1 (irc-framework sends the same secret as PASS and SASL
+/// PLAIN) and §4.1 (SASL decides; a wrong PASS beside a good SASL is no
+/// error).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pass_and_sasl_together_are_accepted() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc_tls(dir.path(), &server)).await;
+    let (_, password) = alice.store_credentials().add("lounge", "cli").unwrap();
+    for pass in [password.shown().to_owned(), "wrong-wrong-wrong".to_owned()] {
+        let mut irc = Irc::connect_tls(alice.irc_tls.unwrap(), "localhost").await;
+        irc.send(&format!("PASS {pass}")).await;
+        irc.send("CAP LS 302").await;
+        irc.send("NICK alice").await;
+        irc.send("USER alice 0 * :irc-framework").await;
+        irc.send("CAP REQ :sasl").await;
+        irc.send("AUTHENTICATE PLAIN").await;
+        irc.until_command("AUTHENTICATE").await;
+        let payload = format!("alice\0alice\0{}", password.shown());
+        irc.send(&format!("AUTHENTICATE {}", b64(payload.as_bytes())))
+            .await;
+        irc.until_command("903").await;
+        irc.send("CAP END").await;
+        irc.until_command("001").await;
+    }
+    alice.stop().await;
+}
+
+/// Oracle: decision A3, RFC 7677 and IRCv3 SASL 3.1: AUTHENTICATE
+/// SCRAM-SHA-256 with an app password in its shown form: the server's
+/// first message names the salt and 4,096 iterations, its final message
+/// carries the signature the client expects, then `+`, 900 and 903. A
+/// wrong password gets 904, and then, with no other credential, 464.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn scram_sha_256_over_irc() {
+    use base64::Engine;
+    let decode = |s: &str| {
+        String::from_utf8(base64::engine::general_purpose::STANDARD.decode(s).unwrap()).unwrap()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc_tls(dir.path(), &server)).await;
+    let (_, password) = alice.store_credentials().add("weechat", "cli").unwrap();
+    for (secret, good) in [
+        (password.shown().to_owned(), true),
+        ("abcd-efgh-ijkl-mnop".to_owned(), false),
+    ] {
+        let mut irc = Irc::connect_tls(alice.irc_tls.unwrap(), "localhost").await;
+        irc.send("CAP LS 302").await;
+        irc.send("CAP REQ :sasl").await;
+        irc.send("NICK alice").await;
+        irc.send("USER alice 0 * :WeeChat").await;
+        irc.send("AUTHENTICATE SCRAM-SHA-256").await;
+        assert_eq!(irc.until_command("AUTHENTICATE").await.params, ["+"]);
+        let bare = "n=alice,r=rOprNGfwEbeRWgbNEkqO";
+        irc.send(&format!(
+            "AUTHENTICATE {}",
+            b64(format!("n,,{bare}").as_bytes())
+        ))
+        .await;
+        let server_first = decode(irc.until_command("AUTHENTICATE").await.text());
+        assert!(
+            server_first.starts_with("r=rOprNGfwEbeRWgbNEkqO"),
+            "{server_first}"
+        );
+        assert!(server_first.ends_with(",i=4096"), "{server_first}");
+        let nonce = server_first.split(',').next().unwrap();
+        let without_proof = format!("c=biws,{nonce}");
+        let (proof, expected) = scram_client(&secret, bare, &server_first, &without_proof);
+        irc.send(&format!(
+            "AUTHENTICATE {}",
+            b64(format!("{without_proof},p={proof}").as_bytes())
+        ))
+        .await;
+        if good {
+            let last = irc.until_command("AUTHENTICATE").await;
+            assert_eq!(decode(last.text()), expected);
+            irc.send("AUTHENTICATE +").await;
+            irc.until_command("903").await;
+            irc.send("CAP END").await;
+            irc.until_command("001").await;
+        } else {
+            irc.until_command("904").await;
+            irc.send("CAP END").await;
+            irc.until_command("464").await;
+            assert!(irc.closes().await);
+        }
+    }
+    alice.stop().await;
+}
+
+/// Oracle: IRCv3 SASL 3.1 numerics (§4.1): 908 and 904 for another
+/// mechanism, 906 on `*`, 907 after success; a client that turned `sasl`
+/// on and sent no credential gets `FAIL * ACCOUNT_REQUIRED`, one that did
+/// not gets 464.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sasl_numerics_and_account_required() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(dir.path(), &server)).await;
+    let addr = alice.irc.unwrap();
+    let token = alice.token();
+
+    let mut irc = Irc::connect(addr).await;
+    irc.send("CAP REQ :sasl").await;
+    irc.send("AUTHENTICATE EXTERNAL").await;
+    let listed = irc.until_command("908").await;
+    assert_eq!(listed.params[1], "PLAIN,SCRAM-SHA-256", "{}", listed.raw);
+    irc.until_command("904").await;
+    irc.send("AUTHENTICATE PLAIN").await;
+    irc.until_command("AUTHENTICATE").await;
+    irc.send("AUTHENTICATE *").await;
+    irc.until_command("906").await;
+    irc.send("AUTHENTICATE PLAIN").await;
+    irc.until_command("AUTHENTICATE").await;
+    irc.send(&format!(
+        "AUTHENTICATE {}",
+        b64(format!("\0x\0{token}").as_bytes())
+    ))
+    .await;
+    irc.until_command("903").await;
+    irc.send("AUTHENTICATE PLAIN").await;
+    irc.until_command("907").await;
+
+    // A payload past the limit: 905. Full 400-octet chunks announce more.
+    let mut long = Irc::connect(addr).await;
+    long.send("AUTHENTICATE PLAIN").await;
+    long.until_command("AUTHENTICATE").await;
+    for _ in 0..6 {
+        long.send(&format!("AUTHENTICATE {}", "A".repeat(400)))
+            .await;
+    }
+    long.until_command("905").await;
+    // Bad base64, and a PLAIN payload whose authzid is someone else's.
+    long.send("AUTHENTICATE PLAIN").await;
+    long.until_command("AUTHENTICATE").await;
+    long.send("AUTHENTICATE !!!!").await;
+    long.until_command("904").await;
+    long.send("AUTHENTICATE PLAIN").await;
+    long.until_command("AUTHENTICATE").await;
+    long.send(&format!(
+        "AUTHENTICATE {}",
+        b64(format!("bob\0alice\0{token}").as_bytes())
+    ))
+    .await;
+    long.until_command("904").await;
+
+    let mut nothing = Irc::connect(addr).await;
+    nothing.send("CAP LS 302").await;
+    nothing.send("CAP REQ :sasl").await;
+    nothing.send("NICK alice").await;
+    nothing.send("USER alice 0 * :x").await;
+    nothing.send("CAP END").await;
+    let fail = nothing.until_command("FAIL").await;
+    assert_eq!(fail.params[..2], ["*", "ACCOUNT_REQUIRED"], "{}", fail.raw);
+    assert!(nothing.closes().await);
+
+    let mut old = Irc::connect(addr).await;
+    old.send("NICK alice").await;
+    old.send("USER alice 0 * :x").await;
+    old.until_command("464").await;
+    assert!(old.closes().await);
+    // §7.1: at most 8 connections not logged in from one source; the
+    // ones above have closed or logged in.
+    drop((irc, long));
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let mut waiting = Vec::new();
+    for _ in 0..8 {
+        let mut c = Irc::connect(addr).await;
+        c.send("CAP LS").await;
+        c.until_command("CAP").await;
+        waiting.push(c);
+    }
+    let mut refused = Irc::connect(addr).await;
+    let error = refused.until_command("ERROR").await;
+    assert!(
+        error.text().contains("too many connections"),
+        "{}",
+        error.raw
+    );
+    drop(waiting);
+    alice.stop().await;
 }

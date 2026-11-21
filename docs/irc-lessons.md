@@ -71,9 +71,17 @@ from Mark Atwood's two IRC servers in Go:
     CHANMODES must agree (meshIRCd's did not).
   - End the burst with 376 or 422. HexChat's perform, ZNC and bots wait for
     it before autojoin (*unverified*).
-- **No SASL:** users are authenticated out of band. Don't advertise sasl,
-  or clients will try it. Show the account with 900 at registration and
-  330 (or 307) in WHOIS.
+- **SASL** (client-survey.md decision S3, frontend-auth.md decision A3):
+  offer `sasl=PLAIN,SCRAM-SHA-256` as a CAP value, not a bare `sasl`, so
+  irc-framework and HexChat can read the list. Goguma shows its password
+  field only when PLAIN is offered, and uses the nick as the SASL
+  username. Accept AUTHENTICATE before the CAP LS reply has gone out
+  (Goguma pipelines it), keep PASS for HexChat's default, and accept
+  both arriving together (irc-framework sends the same secret twice).
+  With no credential, send `FAIL * ACCOUNT_REQUIRED` to a client that
+  turned `sasl` on, else 464. Advertise `soju.im/account-required` and
+  ISUPPORT `draft/ACCOUNTREQUIRED`. Show the account with 900 at
+  registration and 330 (or 307) in WHOIS.
 
 ### Keepalive
 
@@ -182,7 +190,8 @@ from Mark Atwood's two IRC servers in Go:
 
 ## Skip
 
-- SASL, OAUTHBEARER, GitHub and OIDC flows. The claims in meshIRCd's
+- SASL beyond PLAIN and SCRAM-SHA-256: EXTERNAL, OAUTHBEARER, GitHub
+  and OIDC flows. The claims in meshIRCd's
   GITHUB.md about which clients support OAUTHBEARER are unverified and
   likely wrong.
 - METADATA, DID tags and IDENTITY CHALLENGE.

@@ -15,7 +15,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use common::irc::Irc;
-use common::{ALICE, BOB, Running, config, server};
+use common::{ALICE, BOB, Running, b64, config, scram_client, server};
 use serde_json::json;
 
 /// A `tracing` writer into a shared buffer.
@@ -61,6 +61,7 @@ async fn no_token_reaches_the_log() {
     // An app password, used as PASS (spelled loudly) and as a bearer token.
     let (_, password) = alice.store_credentials().add("canary", "cli").unwrap();
     let password = password.shown().to_owned();
+    let mut scram_parts: Vec<String> = Vec::new();
     let loud = password.to_ascii_uppercase();
     let bearer = reqwest::Client::new()
         .get(format!("{}/.well-known/jmap", alice.base()))
@@ -71,6 +72,65 @@ async fn no_token_reaches_the_log() {
     assert_eq!(bearer.status(), 200);
     let (mut by_password, _) = Irc::register(alice.irc.unwrap(), &loud, "alice", &[]).await;
     by_password.send("QUIT").await;
+    // SASL PLAIN with the app password, a failed one, and a whole
+    // SCRAM-SHA-256 exchange.
+    let mut sasl = Irc::connect(alice.irc.unwrap()).await;
+    sasl.send("CAP REQ :sasl").await;
+    sasl.send("AUTHENTICATE PLAIN").await;
+    sasl.until_command("AUTHENTICATE").await;
+    sasl.send(&format!(
+        "AUTHENTICATE {}",
+        b64(format!("\0alice\0{password}").as_bytes())
+    ))
+    .await;
+    sasl.until_command("903").await;
+    let mut failed = Irc::connect(alice.irc.unwrap()).await;
+    failed.send("AUTHENTICATE PLAIN").await;
+    failed.until_command("AUTHENTICATE").await;
+    failed
+        .send(&format!(
+            "AUTHENTICATE {}",
+            b64(format!("\0{password}\0{loud}x").as_bytes())
+        ))
+        .await;
+    failed.until_command("904").await;
+    let mut scram = Irc::connect(alice.irc.unwrap()).await;
+    scram.send("AUTHENTICATE SCRAM-SHA-256").await;
+    scram.until_command("AUTHENTICATE").await;
+    let bare = "n=alice,r=canaryclientnonce";
+    scram
+        .send(&format!(
+            "AUTHENTICATE {}",
+            b64(format!("n,,{bare}").as_bytes())
+        ))
+        .await;
+    let server_first = {
+        use base64::Engine;
+        let text = scram.until_command("AUTHENTICATE").await.text().to_owned();
+        scram_parts.push(text.clone());
+        String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(text)
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let nonce = server_first.split(',').next().unwrap().to_owned();
+    let without_proof = format!("c=biws,{nonce}");
+    let (proof, expected) = scram_client(&password, bare, &server_first, &without_proof);
+    let client_final = b64(format!("{without_proof},p={proof}").as_bytes());
+    scram.send(&format!("AUTHENTICATE {client_final}")).await;
+    let last = scram.until_command("AUTHENTICATE").await.text().to_owned();
+    scram.send("AUTHENTICATE +").await;
+    scram.until_command("903").await;
+    scram_parts.extend([
+        server_first.clone(),
+        nonce.clone(),
+        proof,
+        expected,
+        client_final,
+        last,
+    ]);
     let client = alice.client().await;
     client.create("ChatContact", json!({"identity": BOB})).await;
     let refused = reqwest::Client::new()
@@ -131,6 +191,14 @@ async fn no_token_reaches_the_log() {
         );
     }
     assert!(!log.contains("PBKDF2"), "{log}");
+    for part in &scram_parts {
+        assert!(
+            !log.contains(part.as_str()),
+            "a SCRAM value is in the log: {part}"
+        );
+    }
+    let plain = b64(format!("\0alice\0{password}").as_bytes());
+    assert!(!log.contains(&plain), "a SASL payload is in the log");
     for scram in ["r=", "s=", "p=", "v="] {
         assert!(
             !log.lines().any(|l| l.contains(&format!(",{scram}"))),

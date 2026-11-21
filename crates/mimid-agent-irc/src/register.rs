@@ -18,10 +18,19 @@
 use crate::conn::{Session, VERSION, one_line};
 use crate::line::{Line, MAX_LINE, Out, pack_words};
 use crate::names::{CHANNELLEN, NICKLEN};
+use mimid_agent_store::credentials::Login;
 
 /// The capabilities offered: only those that are wired up
-/// (docs/irc-lessons.md "CAP").
-pub const CAPS: [&str; 3] = ["echo-message", "message-tags", "server-time"];
+/// (docs/irc-lessons.md "CAP"). `soju.im/account-required` only says that
+/// a login is needed (docs/design/frontend-auth.md §4.1); a REQ of it is
+/// acknowledged and changes nothing.
+pub const CAPS: [&str; 5] = [
+    "echo-message",
+    "message-tags",
+    "sasl",
+    "server-time",
+    "soju.im/account-required",
+];
 
 /// The 005 tokens (docs/design/agent-frontends.md §4 "Capabilities in
 /// v1"). 004 lists the same channel modes as `CHANMODES` and `PREFIX`.
@@ -38,6 +47,7 @@ pub fn isupport() -> Vec<String> {
         format!("LINELEN={MAX_LINE}"),
         "UTF8ONLY".to_owned(),
         "NETWORK=mimid".to_owned(),
+        "draft/ACCOUNTREQUIRED".to_owned(),
     ]
 }
 
@@ -69,11 +79,12 @@ pub fn cap_ls_lines(caps: &[String], overhead: usize, multiline: bool) -> Vec<(b
 }
 
 impl Session {
-    /// A line before registration: only CAP, PASS, NICK, USER, PING, PONG
-    /// and QUIT are read.
+    /// A line before registration: only CAP, AUTHENTICATE, PASS, NICK,
+    /// USER, PING, PONG and QUIT are read.
     pub(crate) async fn unregistered(&mut self, line: &Line) {
         match line.verb().as_str() {
             "CAP" => self.cap(line),
+            "AUTHENTICATE" => self.authenticate(line.param(0)).await,
             "PASS" => match line.param(0) {
                 Some(pass) => {
                     let login = self.shared.check_password(pass.as_bytes());
@@ -98,7 +109,57 @@ impl Session {
             _ => self.numeric("451", &["You have not registered"]),
         }
         if !self.closing {
-            self.try_register();
+            self.try_register().await;
+        }
+    }
+
+    /// Logs a login with `login` by `mechanism` (§7.2: INFO from the
+    /// network, DEBUG on loopback), records its use, and frees the
+    /// connection's place under the caps.
+    pub(crate) fn log_login(&mut self, login: &Login, mechanism: &str) {
+        if self.peer.ip().is_loopback() {
+            tracing::debug!(peer = %self.peer, mechanism, credential = %login.name, "IRC login");
+        } else {
+            tracing::info!(
+                name: "agent_login",
+                front_end = "irc",
+                peer = %self.peer,
+                mechanism,
+                credential = %login.name,
+                "IRC login"
+            );
+        }
+        self.shared
+            .credentials
+            .note_used(login.id, &format!("irc {}", self.peer));
+    }
+
+    /// Counts a failed login and waits the limiter's delay before the
+    /// answer (§7.1); logs it (§7.2).
+    pub(crate) async fn login_failed(&mut self, mechanism: &str, reason: &str) {
+        let failure = self.shared.credentials.limiter().failed(self.peer.ip());
+        if failure.slowing_starts {
+            tracing::warn!(
+                name: "agent_login_slowed",
+                front_end = "irc",
+                peer = %self.peer,
+                "failed logins from this source are now answered slowly"
+            );
+        }
+        if failure.first {
+            tracing::info!(
+                name: "agent_login_failed",
+                front_end = "irc",
+                peer = %self.peer,
+                mechanism,
+                reason,
+                "IRC login failed"
+            );
+        } else {
+            tracing::debug!(peer = %self.peer, mechanism, reason, "IRC login failed");
+        }
+        if !failure.delay.is_zero() {
+            tokio::time::sleep(failure.delay).await;
         }
     }
 
@@ -130,7 +191,14 @@ impl Session {
                     .param(1)
                     .and_then(|v| v.parse::<u32>().ok())
                     .is_some_and(|v| v >= 302);
-                let caps: Vec<String> = CAPS.iter().map(|c| (*c).to_owned()).collect();
+                // CAP 302 shows values (IRCv3 Capability Negotiation).
+                let caps: Vec<String> = CAPS
+                    .iter()
+                    .map(|c| match *c {
+                        "sasl" if multiline => format!("sasl={}", crate::sasl::MECHANISMS),
+                        _ => (*c).to_owned(),
+                    })
+                    .collect();
                 let overhead = format!(":{server} CAP {target} LS * :\r\n").len();
                 for (more, list) in cap_ls_lines(&caps, overhead, multiline) {
                     let mut params = vec![target.clone(), "LS".to_owned()];
@@ -146,6 +214,7 @@ impl Session {
                 for (cap, enabled) in [
                     ("echo-message", self.caps.echo_message),
                     ("message-tags", self.caps.message_tags),
+                    ("sasl", self.caps.sasl),
                     ("server-time", self.caps.server_time),
                 ] {
                     if enabled {
@@ -168,6 +237,8 @@ impl Session {
                     };
                     match name {
                         "echo-message" => caps.echo_message = on,
+                        "sasl" => caps.sasl = on,
+                        "soju.im/account-required" => {}
                         "message-tags" => caps.message_tags = on,
                         "server-time" => caps.server_time = on,
                         _ => known = false,
@@ -206,34 +277,51 @@ impl Session {
         self.send_raw(&wire);
     }
 
-    /// Ends registration if it can: NICK and USER came, and CAP is not
-    /// being negotiated.
-    fn try_register(&mut self) {
-        if self.me.is_some() || self.client_nick.is_none() || !self.got_user || self.cap_negotiating
+    /// Ends registration if it can: NICK and USER came, CAP is not being
+    /// negotiated and no SASL exchange is under way. The login is SASL's
+    /// if it succeeded; else, unless a SASL exchange failed, the PASS's
+    /// (§4.1: SASL decides). Without one: 464, or `FAIL * ACCOUNT_REQUIRED`
+    /// to a client that turned `sasl` on and sent no credential at all;
+    /// then `ERROR` and close.
+    async fn try_register(&mut self) {
+        if self.me.is_some()
+            || self.client_nick.is_none()
+            || !self.got_user
+            || self.cap_negotiating
+            || !matches!(self.sasl, crate::sasl::Sasl::Idle)
         {
             return;
         }
-        let Some(Some(login)) = self.pass.clone() else {
-            tracing::debug!(
-                peer = %self.peer,
-                mechanism = "PASS",
-                reason = if self.pass.is_some() { "no-such-credential" } else { "none-given" },
-                "IRC login failed"
-            );
-            self.numeric("464", &["Password incorrect"]);
+        let login = match (
+            self.sasl_login.clone(),
+            self.sasl_failures,
+            self.pass.clone(),
+        ) {
+            (Some(login), _, _) => Some(login),
+            (None, false, Some(Some(login))) => {
+                self.shared.credentials.limiter().succeeded(self.peer.ip());
+                self.log_login(&login, "PASS");
+                Some(login)
+            }
+            _ => None,
+        };
+        let Some(login) = login else {
+            let nothing = self.pass.is_none() && !self.sasl_failures;
+            if self.pass.is_some() && !self.sasl_failures {
+                self.login_failed("PASS", "no-such-credential").await;
+            }
+            if nothing && self.caps.sasl {
+                self.send_raw(
+                    "FAIL * ACCOUNT_REQUIRED :An account is required to use this server\r\n",
+                );
+            } else {
+                self.numeric("464", &["Password incorrect"]);
+            }
             self.close("Bad password");
             return;
         };
-        tracing::debug!(
-            peer = %self.peer,
-            mechanism = "PASS",
-            credential = %login.name,
-            "IRC login"
-        );
-        self.shared
-            .credentials
-            .note_used(login.id, &format!("irc {}", self.peer));
         self.login = Some(login);
+        self.unauthenticated = None;
         self.burst();
     }
 
@@ -344,6 +432,6 @@ mod tests {
         let mut from_004: Vec<char> = CHANNEL_MODES.chars().collect();
         from_004.sort_unstable();
         assert_eq!(from_004, from_005);
-        assert!(!tokens.iter().any(|t| t.contains("sasl")));
+        assert!(tokens.contains(&"draft/ACCOUNTREQUIRED".to_owned()));
     }
 }

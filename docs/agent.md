@@ -94,7 +94,9 @@ The IRC front end. Absent means no IRC. An empty `[irc]` table turns it on with 
 | `listen_tls` | socket address | none | Where the IRC server also listens with TLS, on any address: a tailnet or WireGuard address is the safe choice. Needs `[tls]`. Off by default. An address that may be reachable from the internet is allowed, with a WARN at start. |
 | `server_name` | string | `"mimid.invalid"` | The name the IRC server gives itself: at most 63 characters, letters, digits, `-` and `.`, with at least one dot and no empty label. |
 
-The client logs in with a credential (the token in `<state_dir>/agent-token`, or an app password) as its server password (`PASS`).
+The client logs in with a credential (the token in `<state_dir>/agent-token`, or an app password) by SASL PLAIN, SASL SCRAM-SHA-256 or as its server password (`PASS`). If both SASL and PASS come, SASL decides. A client that turned on the `sasl` capability and sent no credential gets `FAIL * ACCOUNT_REQUIRED`; others get 464.
+
+Failed logins are never locked out, but after 5 failures from one address in 10 minutes (20 from loopback; IPv6 counted per /64) each further failure is answered after a delay, 1 second doubling to 30, until a login from that address succeeds. At most 32 connections that have not logged in are open at once, 8 per address, and each must log in within 30 seconds.
 
 ### `[tls]`
 

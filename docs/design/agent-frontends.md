@@ -1783,6 +1783,10 @@ Added on 2026-11-20:
     lifts "No SASL" in §4 for IRC v2 (SASL PLAIN with the agent token,
     PASS kept). v1 stays as decided above until IRC v2 is built
     (epic mimid-i0id); the store groundwork for it is epic mimid-qqtk.
+    The SASL part is built (epic mimid-e13m, docs/design/frontend-auth.md
+    §4.1): SASL PLAIN and SCRAM-SHA-256 (decision A3) and PASS, against
+    app passwords and the agent token, on loopback and on the TLS
+    listener; "No SASL" in §4 no longer holds.
 
 26. **Replies (epic mimid-qqtk, bead mimid-qqtk.1; marmot-bridge.md §5
     P1).** mimi-content-10 §5.2: a reply's `inReplyTo` is the message ID

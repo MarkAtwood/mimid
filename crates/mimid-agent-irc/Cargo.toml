@@ -9,6 +9,8 @@ description = "The IRC front end of mimid-agent: a loopback IRC server over the 
 # No IRC library (docs/design/agent-frontends.md §4): the parser is small,
 # and docs/irc-lessons.md lists exact behaviour a library would hide.
 [dependencies]
+# AUTHENTICATE payloads (sasl.rs); the version mimid uses.
+base64 = "=0.22.1"
 mimid-agent-store = { path = "../mimid-agent-store" }
 # Names kept in a record's ext["irc"].
 serde_json.workspace = true

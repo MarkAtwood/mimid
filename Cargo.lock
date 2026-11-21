@@ -2640,6 +2640,7 @@ dependencies = [
 name = "mimid-agent-irc"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "mimid-agent-store",
  "serde_json",
  "sha2 0.11.1",

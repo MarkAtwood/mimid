@@ -169,7 +169,10 @@ async fn registration_queries_and_refusals() {
     let ls = irc.line().await;
     assert_eq!(
         ls.raw,
-        format!(":{SERVER} CAP * LS :echo-message message-tags server-time")
+        format!(
+            ":{SERVER} CAP * LS :echo-message message-tags sasl=PLAIN,SCRAM-SHA-256 \
+             server-time soju.im/account-required"
+        )
     );
     irc.send(&format!("PASS {token}")).await;
     irc.send("NICK wanted").await;

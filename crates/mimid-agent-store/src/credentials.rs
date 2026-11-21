@@ -49,6 +49,7 @@
 //! - The Bearer cache holds at most [`MAX_CACHED`] entries and is emptied
 //!   when full.
 
+pub mod limits;
 pub mod scram;
 
 use std::collections::HashMap;
@@ -375,6 +376,9 @@ pub struct Credentials {
     last_written: Mutex<HashMap<CredentialId, u64>>,
     /// Ticks when the set of unrevoked credentials changes.
     changes: watch::Sender<u64>,
+    /// Failed logins and unauthenticated connections (§7.1), shared by
+    /// the front ends.
+    limiter: std::sync::Arc<limits::Limiter>,
 }
 
 impl std::fmt::Debug for Credentials {
@@ -488,6 +492,7 @@ impl Credentials {
             cache: Mutex::new(HashMap::new()),
             last_written: Mutex::new(HashMap::new()),
             changes: watch::Sender::new(0),
+            limiter: std::sync::Arc::new(limits::Limiter::new()),
         };
         credentials.reload()?;
         Ok(credentials)
@@ -646,6 +651,13 @@ impl Credentials {
     #[must_use]
     pub fn changes(&self) -> watch::Receiver<u64> {
         self.changes.subscribe()
+    }
+
+    /// The failed-login slowdown and connection caps every front end
+    /// shares ([`limits`]).
+    #[must_use]
+    pub fn limiter(&self) -> &std::sync::Arc<limits::Limiter> {
+        &self.limiter
     }
 
     /// Whether credential `id` is unrevoked.
