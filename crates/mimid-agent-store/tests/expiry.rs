@@ -497,8 +497,8 @@ async fn a_message_past_its_time_is_not_stored_or_restored() {
     assert_eq!(key_of(&pair.alice, "no"), None);
 }
 
-/// §7.22: burn-on-read and delete-after-read reach a mimid receiver in
-/// the store's extension; a read deletes the receiver's copy at once, or
+/// §7.22: burn-on-read and delete-after-read reach a mimid receiver as
+/// a relative `expires`; a read deletes the receiver's copy at once, or
 /// so many seconds later, while the sender's copy stays; a read position
 /// past a message reads it.
 #[tokio::test]
@@ -557,6 +557,83 @@ async fn read_rules_delete_the_receivers_copy_only() {
         assert!(pair.alice.state().messages.contains_key(key));
     }
     assert_eq!(pair.alice.next_expiry(), None);
+}
+
+/// §7.22, decision mimid-1wgh.84: what alice's agent sends, decoded from
+/// the MLS application data bob's agent receives. A read rule alone is
+/// the standard relative `expires` (mimi-content-10 §4.1), `[true, 0]`
+/// for burn on read and `[true, N]` for N seconds after the read, with no
+/// extension; beside a sender's time, which takes `expires`, the read
+/// rule is in mimid's extension, `[burnOnRead, expiresAfterReadSeconds]`
+/// in deterministic CBOR (RFC 8949 §4.2.1, written out by hand).
+#[tokio::test]
+async fn read_rules_go_in_the_standard_expires_on_the_wire() {
+    use mimi_content::{ExtensionKey, MimiContent};
+    use mimid_agent_core::Event;
+    use mimid_agent_store::expiry::READ_EXPIRY_KEY;
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let pair = pair(&server, dir.path()).await;
+    let time = (now_ms() + 120_000) / 1000 * 1000;
+    send(
+        &pair,
+        "burn",
+        MessageExpiry {
+            burn_on_read: true,
+            ..MessageExpiry::default()
+        },
+    )
+    .await;
+    send(
+        &pair,
+        "after",
+        MessageExpiry {
+            expires_after_read_seconds: Some(300),
+            ..MessageExpiry::default()
+        },
+    )
+    .await;
+    send(
+        &pair,
+        "both",
+        MessageExpiry {
+            sender_expires_at: Some(time),
+            burn_on_read: false,
+            expires_after_read_seconds: Some(300),
+        },
+    )
+    .await;
+
+    // Bob's agent, past his store: what arrives is not acknowledged.
+    let mut wire: BTreeMap<String, MimiContent> = BTreeMap::new();
+    for _ in 0..100 {
+        let (events, _receipt) = pair.bob.agent().lock().await.receive().await.unwrap();
+        for event in events {
+            if let Event::Message(m) = event {
+                let content = MimiContent::decode(&m.application_data).unwrap();
+                wire.insert(m.text.clone().unwrap_or_default(), content);
+            }
+        }
+        if wire.len() >= 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let key = ExtensionKey::Text(READ_EXPIRY_KEY.to_owned());
+    assert_eq!(wire["burn"].expires, Some(Expiration::Relative(0)));
+    assert!(wire["burn"].mimi_extensions.other.is_empty());
+    assert_eq!(wire["after"].expires, Some(Expiration::Relative(300)));
+    assert!(wire["after"].mimi_extensions.other.is_empty());
+    assert_eq!(
+        wire["both"].expires,
+        Some(Expiration::Absolute(u32::try_from(time / 1000).unwrap()))
+    );
+    assert_eq!(
+        wire["both"].mimi_extensions.other[&key].as_bytes(),
+        // array(2), false, unsigned(300) in two bytes
+        [0x82, 0xf4, 0x19, 0x01, 0x2c]
+    );
 }
 
 /// §7.21: a room's policy is local: it deletes the messages older than

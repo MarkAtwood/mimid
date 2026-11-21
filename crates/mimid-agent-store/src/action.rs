@@ -480,15 +480,17 @@ impl Store {
     /// [`Store::send`] of a message that disappears as `expiry` asks
     /// ([`crate::expiry`]; docs/design/agent-frontends.md §7.20, §7.22):
     /// its `senderExpiresAt`, cut to the whole second, goes as the MIMI
-    /// `expires` and its read rule in [`crate::expiry::READ_EXPIRY_KEY`];
-    /// the record keeps the expiry, so the user's own copy goes at the
+    /// `expires`, and its read rule as a relative `expires` or, beside a
+    /// `senderExpiresAt`, in [`crate::expiry::READ_EXPIRY_KEY`]; the
+    /// record keeps the expiry, so the user's own copy goes at the
     /// sender's time too.
     ///
     /// # Errors
     ///
     /// Those of [`Store::send`], and [`ActionError::Expiry`] for a
-    /// `senderExpiresAt` not ahead of now or more than a year ahead;
-    /// nothing is then sent.
+    /// `senderExpiresAt` not ahead of now or more than a year ahead, or an
+    /// `expiresAfterReadSeconds` of more than a year; nothing is then
+    /// sent.
     pub async fn send_with(
         &self,
         key: Key,

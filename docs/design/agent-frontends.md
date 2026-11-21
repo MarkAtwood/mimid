@@ -1647,18 +1647,27 @@ Added on 2026-11-20:
     `tests/disappearing.rs`, `tests/irc.rs` `burn_and_expire_from_irc`.
 
 22. **Burn on read and delete after read (Mark, 2026-11-21).**
-    - **On the wire.** mimid sends `burnOnRead` and
-      `expiresAfterReadSeconds` in a mimiExtensions entry of its own,
-      text key `mimid-read-expiry`, value `[burnOnRead: bool,
-      expiresAfterReadSeconds: null / uint .size 4]` in deterministic
-      CBOR, only when one is set. INVENTED, NOT FROM SPEC (decision
-      mimid-1wgh.84). Only mimid receivers honour it; any other
-      implementation keeps the unknown extension and the message. A
-      value of any other form is ignored, with a sync problem; the
-      message is stored. A received mimi-content-10 `expires` with
-      `relative` true ("a relative amount of time after the receiving
-      client reads the message", §4.1) is honoured as
-      `expiresAfterReadSeconds`; with both, the earlier deadline wins.
+    - **On the wire (Mark, 2026-11-21; decision mimid-1wgh.84).** A read
+      rule goes in the standard field, so other implementations honour
+      it: mimi-content-10 §4.1 `expires` with `relative` true ("a
+      relative amount of time after the receiving client reads the
+      message"). `expiresAfterReadSeconds` N is `[true, N]`;
+      `burnOnRead` is `[true, 0]`, and with both set only `[true, 0]` is
+      sent, since burn wins. Whether 0 means burn on read is mimid's
+      reading; the WG has been asked
+      (github.com/ietf-wg-mimi/draft-ietf-mimi-content/issues/93). Only a
+      message that also has a `senderExpiresAt`, which then takes
+      `expires`, carries its read rule in a mimiExtensions entry of
+      mimid's own: text key `mimid-read-expiry`, value `[burnOnRead:
+      bool, expiresAfterReadSeconds: null / uint .size 4]` in
+      deterministic CBOR. INVENTED, NOT FROM SPEC. Only mimid receivers
+      honour that entry; any other implementation keeps the unknown
+      extension and the message, without the read rule.
+    - **Received.** A relative `expires` `[true, 0]` is `burnOnRead`;
+      `[true, N]` with N > 0 is `expiresAfterReadSeconds` N; more than a
+      year is discarded (§9.1). The `mimid-read-expiry` entry is honoured
+      too; with both, the earlier deadline wins. An entry of any other
+      form is ignored, with a sync problem; the message is stored.
     - **Whose copy.** The receiver's only; the sender's copy, on any of
       the sender's devices, is not affected (draft-atwood-jmap-chat-00
       §Message). `burnOnRead` deletes at the read,
@@ -1674,12 +1683,13 @@ Added on 2026-11-20:
       arrived while no IRC client was connected is not read on IRC, since
       IRC plays nothing back (§7.6).
     - **Sending.** JMAP: `burnOnRead` and `expiresAfterReadSeconds` on
-      `Message/set` create (a value past `uint .size 4` is
-      `invalidProperties`). IRC: `/msg mimid burn #c <text>` sends a
+      `Message/set` create (an `expiresAfterReadSeconds` of more than a
+      year, which receivers would discard, is `invalidProperties`). IRC: `/msg mimid burn #c <text>` sends a
       burn-on-read message; IRC has no way to send delete-after-read or a
       sender's time.
     - Tests: mimid-agent-store `tests/expiry.rs`
-      `read_rules_delete_the_receivers_copy_only`; `expiry::tests`;
+      `read_rules_delete_the_receivers_copy_only`,
+      `read_rules_go_in_the_standard_expires_on_the_wire`; `expiry::tests`;
       mimid-agent `tests/disappearing.rs`, `tests/irc.rs`
       `burn_and_expire_from_irc`, `tests/irc_two_providers.rs`
       `a_burn_on_read_line_across_providers`.

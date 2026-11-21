@@ -26,7 +26,7 @@ use mimid_agent_store::action::{MemberChanges, OutgoingFile, Role};
 use mimid_agent_store::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
 use mimid_agent_store::convert::parse_utc_date;
 use mimid_agent_store::record::MessageExpiry;
-use mimid_agent_store::{ActionError, Store};
+use mimid_agent_store::{ActionError, ExpiryError, Store};
 
 pub use mimid_agent_store::InvitePolicy;
 pub use mimid_agent_store::sync::MAX_ATTACHMENTS_PER_MESSAGE;
@@ -699,11 +699,12 @@ fn unsupported_message_property(message: &Message) -> Option<&'static str> {
 /// The expiry a `Message/set` create asks (draft-atwood-jmap-chat-00
 /// §Message; docs/design/agent-frontends.md §7.20, §7.22), or
 /// `invalidProperties` on the property that cannot be sent: an
-/// `expiresAfterReadSeconds` past `uint .size 4`, as
-/// [`mimid_agent_store::expiry::READ_EXPIRY_KEY`] carries it, or a date
+/// `expiresAfterReadSeconds` past `uint .size 4`, as `expires` and
+/// [`mimid_agent_store::expiry::READ_EXPIRY_KEY`] carry it, or a date
 /// that does not parse. crate-jmap has already refused a
-/// `senderExpiresAt` in the past; the store checks it again, and that it
-/// is at most a year ahead.
+/// `senderExpiresAt` in the past; the store checks it again, that it is
+/// at most a year ahead, and that `expiresAfterReadSeconds` is at most a
+/// year.
 fn requested_expiry(message: &Message) -> Result<MessageExpiry, BackendSetError<MemoryError>> {
     let invalid = |property: &str, why: &str| {
         BackendSetError::SetError(Box::new(
@@ -810,10 +811,16 @@ pub(crate) fn action_set_failure(e: ActionError) -> SetFailure {
         // draft-atwood-jmap-chat-00 §Message `senderExpiresAt`: "in
         // `Message/set` the rejection is an `invalidProperties` SetError
         // with `properties: ["senderExpiresAt"]`".
-        ActionError::Expiry(e) => SetFailure::set(
-            set_error(SetErrorType::InvalidProperties, e.to_string())
-                .with_properties(["senderExpiresAt"]),
-        ),
+        ActionError::Expiry(e) => {
+            let property = match e {
+                ExpiryError::ReadTooLong => "expiresAfterReadSeconds",
+                _ => "senderExpiresAt",
+            };
+            SetFailure::set(
+                set_error(SetErrorType::InvalidProperties, e.to_string())
+                    .with_properties([property]),
+            )
+        }
         e => SetFailure::Other(MemoryError::new(e.to_string())),
     }
 }

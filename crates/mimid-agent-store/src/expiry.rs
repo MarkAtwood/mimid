@@ -15,12 +15,15 @@
 //! - **The read** ([`MessageExpiry::burn_on_read`],
 //!   [`MessageExpiry::expires_after_read_seconds`]): a received copy goes
 //!   when the user reads it, or so many seconds after; the sender's copy
-//!   stays. mimid sends both in its own extension, [`READ_EXPIRY_KEY`]
-//!   (INVENTED, NOT FROM SPEC; decision mimid-1wgh.84), which only mimid
-//!   honours. A received mimi-content-10 `expires` with `relative` true
-//!   is the same rule ("a relative amount of time after the receiving
-//!   client reads the message", §4.1) and is honoured as
-//!   `expiresAfterReadSeconds`.
+//!   stays. On the wire the rule is mimi-content-10 §4.1 `expires` with
+//!   `relative` true ("a relative amount of time after the receiving
+//!   client reads the message"), so other implementations honour it:
+//!   `[true, N]` for delete after N seconds, `[true, 0]` for burn on
+//!   read. Only a message that also has the sender's time, which then
+//!   takes `expires`, carries its read rule in mimid's own extension,
+//!   [`READ_EXPIRY_KEY`] (INVENTED, NOT FROM SPEC; decision
+//!   mimid-1wgh.84), which only mimid honours. Both are honoured when
+//!   received; the earlier deadline wins.
 //!
 //! The deletion ([`crate::Store::expire_due`]) is the local delete's
 //! ([`crate::State::delete_message`]): the record goes, with a tombstone
@@ -47,7 +50,14 @@
 //! - What a front end showed before the deletion stays on the user's
 //!   screen: an IRC client keeps its lines.
 //! - Only mimid honours [`READ_EXPIRY_KEY`]; another implementation
-//!   keeps such a message as if it had no read rule.
+//!   keeps a message with both the sender's time and a read rule as if
+//!   it had no read rule.
+//! - `[true, 0]` as burn on read is mimid's reading of §4.1, which does
+//!   not say what zero seconds means; the WG has been asked
+//!   (draft-ietf-mimi-content issue 93).
+//! - A message with both `burnOnRead` and `expiresAfterReadSeconds` and
+//!   no sender's time is sent as `[true, 0]` alone: burn wins at the
+//!   receiver, which sees no `expiresAfterReadSeconds`.
 
 use std::collections::BTreeSet;
 
@@ -60,10 +70,11 @@ use crate::record::{Key, Message, MessageExpiry, Room, Sender};
 use crate::store::Store;
 use crate::sync::now_ms;
 
-/// The mimiExtensions key under which mimid sends a message's read rule:
-/// burn on read, and delete so many seconds after the read
-/// (mimi-content-10 §4.3 "private use" text key). INVENTED, NOT FROM
-/// SPEC (decision mimid-1wgh.84). Its value is
+/// The mimiExtensions key under which mimid sends a message's read rule
+/// (burn on read, and delete so many seconds after the read) when the
+/// message also has the sender's time, which takes the standard
+/// `expires` (mimi-content-10 §4.3 "private use" text key). INVENTED,
+/// NOT FROM SPEC (decision mimid-1wgh.84). Its value is
 ///
 /// ```cddl
 /// readExpiry = [
@@ -73,8 +84,8 @@ use crate::sync::now_ms;
 /// ```
 ///
 /// in deterministic encoding (§6.1); the extension is sent only when one
-/// of the two is set. Other implementations ignore it (§4.3: unknown
-/// extensions are kept, not acted on).
+/// of the two is set and `senderExpiresAt` is too. Other implementations
+/// ignore it (§4.3: unknown extensions are kept, not acted on).
 pub const READ_EXPIRY_KEY: &str = "mimid-read-expiry";
 
 /// mimi-content-10 §9.1 calls an `expires` "more than a year in the past"
@@ -95,6 +106,11 @@ pub enum ExpiryError {
     /// discard such a message (mimi-content-10 §9.1).
     #[error("senderExpiresAt is more than a year ahead; receivers discard such a message")]
     TooFarAhead,
+    /// `expiresAfterReadSeconds` is more than [`ONE_YEAR_SECS`]: sent as a
+    /// relative `expires`, receivers discard such a message
+    /// (mimi-content-10 §9.1).
+    #[error("expiresAfterReadSeconds is more than a year; receivers discard such a message")]
+    ReadTooLong,
 }
 
 /// What a received message's `expires` and extensions ask, or why the
@@ -137,7 +153,14 @@ pub(crate) fn received(content: &MimiContent, now: u64) -> Received {
                     "its expires is more than a year in the future (mimi-content-10 §9.1)".into(),
                 );
             }
-            expiry.expires_after_read_seconds = Some(seconds);
+            // mimi-content-10 §4.1; decision mimid-1wgh.84: zero seconds
+            // after the read is burn on read (asked of the WG in
+            // draft-ietf-mimi-content issue 93).
+            if seconds == 0 {
+                expiry.burn_on_read = true;
+            } else {
+                expiry.expires_after_read_seconds = Some(seconds);
+            }
         }
     }
     let key = ExtensionKey::Text(READ_EXPIRY_KEY.to_owned());
@@ -145,7 +168,7 @@ pub(crate) fn received(content: &MimiContent, now: u64) -> Received {
     if let Some(value) = content.mimi_extensions.other.get(&key) {
         match parse_read_expiry(value.as_bytes()) {
             Some((burn, after)) => {
-                expiry.burn_on_read = burn;
+                expiry.burn_on_read |= burn;
                 // The earlier rule wins, as for every deadline.
                 expiry.expires_after_read_seconds = match (expiry.expires_after_read_seconds, after)
                 {
@@ -221,7 +244,8 @@ fn uint(v: u32) -> Vec<u8> {
 }
 
 /// Checks that `expiry` may be sent at `now` (milliseconds): a
-/// `senderExpiresAt` after now and at most a year ahead.
+/// `senderExpiresAt` after now and at most a year ahead, and an
+/// `expiresAfterReadSeconds` of at most a year.
 ///
 /// # Errors
 ///
@@ -235,6 +259,12 @@ pub fn check_outgoing(expiry: &MessageExpiry, now: u64) -> Result<(), ExpiryErro
             return Err(ExpiryError::TooFarAhead);
         }
     }
+    if expiry
+        .expires_after_read_seconds
+        .is_some_and(|s| u64::from(s) > ONE_YEAR_SECS)
+    {
+        return Err(ExpiryError::ReadTooLong);
+    }
     Ok(())
 }
 
@@ -247,13 +277,24 @@ pub fn to_whole_seconds(mut expiry: MessageExpiry) -> MessageExpiry {
     expiry
 }
 
-/// What a message with `expiry` carries on the wire: `expires` for the
-/// sender's time (absolute), and [`READ_EXPIRY_KEY`] for a read rule.
+/// What a message with `expiry` carries on the wire (decision
+/// mimid-1wgh.84): `expires` absolute for the sender's time; without
+/// one, `expires` relative for a read rule, `[true, 0]` for burn on read
+/// and `[true, N]` for N seconds after it; with one, the read rule in
+/// [`READ_EXPIRY_KEY`].
 pub(crate) fn content_options(expiry: &MessageExpiry) -> ContentOptions {
     let mut options = ContentOptions::new();
-    options.expires = expiry
-        .sender_expires_at
-        .map(|at| Expiration::Absolute(u32::try_from(at / 1000).unwrap_or(u32::MAX)));
+    let Some(at) = expiry.sender_expires_at else {
+        options.expires = if expiry.burn_on_read {
+            Some(Expiration::Relative(0))
+        } else {
+            expiry.expires_after_read_seconds.map(Expiration::Relative)
+        };
+        return options;
+    };
+    options.expires = Some(Expiration::Absolute(
+        u32::try_from(at / 1000).unwrap_or(u32::MAX),
+    ));
     if expiry.counts_from_read() {
         let value = read_expiry_value(expiry.burn_on_read, expiry.expires_after_read_seconds);
         // The encoding above is one valid item by construction.
@@ -495,8 +536,9 @@ mod tests {
     }
 
     /// Oracle: mimi-content-10 §4.1 (absolute: seconds since the epoch;
-    /// relative: seconds after the read), §9.1 (a year either way is
-    /// discarded) and [`READ_EXPIRY_KEY`].
+    /// relative: seconds after the read, zero being burn on read by
+    /// decision mimid-1wgh.84), §9.1 (a year either way is discarded) and
+    /// [`READ_EXPIRY_KEY`].
     #[test]
     fn a_received_expiry_maps_to_the_record() {
         let now = 1_800_000_000_000; // ms
@@ -511,6 +553,21 @@ mod tests {
         let e = expiry(&content(Some(Expiration::Relative(30)), None));
         assert_eq!(e.expires_after_read_seconds, Some(30));
         assert!(!e.burn_on_read && e.sender_expires_at.is_none());
+        let e = expiry(&content(Some(Expiration::Relative(0)), None));
+        assert_eq!(
+            e,
+            MessageExpiry {
+                burn_on_read: true,
+                ..MessageExpiry::default()
+            }
+        );
+        // The extension cannot take back a burn the relative expires asks.
+        let e = expiry(&content(
+            Some(Expiration::Relative(0)),
+            Some(&[0x82, 0xf4, 0x0a]),
+        ));
+        assert!(e.burn_on_read);
+        assert_eq!(e.expires_after_read_seconds, Some(10));
         // A time already past is kept, so the store can drop the message
         // as expired.
         let e = expiry(&content(Some(Expiration::Absolute(secs - 10)), None));
@@ -543,11 +600,49 @@ mod tests {
         }
     }
 
-    /// Oracle: the sender's side of the same mapping: absolute `expires`
-    /// in whole seconds, the read rule in [`READ_EXPIRY_KEY`] only when
-    /// set; and what is sent reads back as what was asked.
+    /// Oracle: the sender's side of the same mapping (decision
+    /// mimid-1wgh.84): absolute `expires` in whole seconds; a read rule
+    /// alone as relative `expires`, `[true, 0]` for burn on read and
+    /// `[true, N]` for N seconds; beside a sender's time, the read rule in
+    /// [`READ_EXPIRY_KEY`]; and what is sent reads back as what was
+    /// asked.
     #[test]
     fn an_outgoing_expiry_maps_to_the_content_and_back() {
+        let sent = |options: &ContentOptions| {
+            let mut c = content(None, None);
+            c.expires = options.expires;
+            c.mimi_extensions.other = options.extensions.clone();
+            c
+        };
+        let burn = MessageExpiry {
+            burn_on_read: true,
+            ..MessageExpiry::default()
+        };
+        let after = MessageExpiry {
+            expires_after_read_seconds: Some(30),
+            ..MessageExpiry::default()
+        };
+        for (expiry, expires) in [
+            (burn, Expiration::Relative(0)),
+            (after, Expiration::Relative(30)),
+        ] {
+            let options = content_options(&expiry);
+            assert_eq!(options.expires, Some(expires));
+            assert!(options.extensions.is_empty(), "{expiry:?}");
+            assert_eq!(
+                received(&sent(&options), 1_800_000_000_000),
+                Received::Expiry(expiry, None)
+            );
+        }
+        // Burn wins, so it alone is sent.
+        let both = content_options(&MessageExpiry {
+            burn_on_read: true,
+            expires_after_read_seconds: Some(30),
+            ..MessageExpiry::default()
+        });
+        assert_eq!(both.expires, Some(Expiration::Relative(0)));
+        assert!(both.extensions.is_empty());
+
         let expiry = MessageExpiry {
             sender_expires_at: Some(1_800_000_600_000),
             burn_on_read: true,
@@ -555,11 +650,12 @@ mod tests {
         };
         let options = content_options(&expiry);
         assert_eq!(options.expires, Some(Expiration::Absolute(1_800_000_600)));
-        let mut sent = content(None, None);
-        sent.expires = options.expires;
-        sent.mimi_extensions.other = options.extensions.clone();
         assert_eq!(
-            received(&sent, 1_800_000_000_000),
+            options.extensions.keys().collect::<Vec<_>>(),
+            [&ExtensionKey::Text(READ_EXPIRY_KEY.to_owned())]
+        );
+        assert_eq!(
+            received(&sent(&options), 1_800_000_000_000),
             Received::Expiry(expiry, None)
         );
         let none = content_options(&MessageExpiry::default());
@@ -572,7 +668,8 @@ mod tests {
     }
 
     /// Oracle: draft-atwood-jmap-chat-00 §Message `senderExpiresAt` (a
-    /// past value is rejected) and mimi-content-10 §9.1 (a year ahead).
+    /// past value is rejected) and mimi-content-10 §9.1 (a year ahead,
+    /// absolute or relative).
     #[test]
     fn an_outgoing_time_must_be_ahead_and_within_a_year() {
         let now = 1_800_000_000_000;
@@ -593,6 +690,16 @@ mod tests {
             Err(ExpiryError::TooFarAhead)
         );
         assert_eq!(check_outgoing(&MessageExpiry::default(), now), Ok(()));
+        let read = |s| MessageExpiry {
+            expires_after_read_seconds: Some(s),
+            ..MessageExpiry::default()
+        };
+        let year = u32::try_from(ONE_YEAR_SECS).unwrap();
+        assert_eq!(check_outgoing(&read(year), now), Ok(()));
+        assert_eq!(
+            check_outgoing(&read(year + 1), now),
+            Err(ExpiryError::ReadTooLong)
+        );
         assert_eq!(to_whole_seconds(at(1_999)).sender_expires_at, Some(1_000));
     }
 
