@@ -28,9 +28,11 @@
 //!   the user is in. JOIN of an unknown name hosts a new room, PART leaves
 //!   the room for good (§7.1). People are nicks `<local>-<label>`
 //!   ([`names`]); there are no private queries (§7.2).
-//! - **Invites and consent** (§7.5): a pending invite is an `INVITE` to
-//!   `&invite-<number>`, which JOIN accepts; `/msg mimid allow <nick>` and
-//!   `deny <nick>` decide consent (`/msg mimid help`).
+//! - **Invites and consent** (§7.5, §7.13): a pending invite is an
+//!   `INVITE` to the channel name its room will have, which JOIN accepts
+//!   (or to `&invite-<number>` when its Welcome could not be read, which
+//!   JOIN also accepts); `/msg mimid allow <nick>` and `deny <nick>`
+//!   decide consent (`/msg mimid help`).
 //! - Messages are `PRIVMSG` with `msgid` (the store's `senderMsgId`) and
 //!   `time`; an edit is a new line starting `(edited) `, a retraction a
 //!   server NOTICE. Attachments are not shown (§7.4), and nothing that

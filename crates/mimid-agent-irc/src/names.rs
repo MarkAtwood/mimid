@@ -16,6 +16,13 @@
 //!   outside `[A-Za-z0-9_.-]`, at most [`CHANNELLEN`]; a room with no
 //!   usable name gets the id part of its URI. A collision gets `-` and 4
 //!   base32 characters of SHA-256 of the room URI.
+//! - **Pending invites** (§7.13): an invite whose Welcome could be read
+//!   is shown under the channel name its room will have, made by the same
+//!   rules from the room name and URI in the Welcome, and held from then
+//!   on: no room or other invite takes it, and the room takes it when it
+//!   arrives. A name is held by whichever comes first, a room or an
+//!   invite; the later one gets the collision suffix. An invite whose
+//!   Welcome could not be read is `&invite-<number>`.
 //!
 //! # Limitations
 //!
@@ -26,11 +33,14 @@
 //! - A room the user is no longer in gives its channel name up: it is not
 //!   shown, and JOIN of the name hosts a new room (§7.1).
 //! - Non-Latin room names come out as ids.
+//! - The name held for a room whose invite was accepted is given up only
+//!   when the room arrives; if the room never does, the name stays held
+//!   until the daemon restarts.
 
 use std::collections::BTreeMap;
 
 use mimid_agent_store::State;
-use mimid_agent_store::record::{Ext, Key, Person, Room, RoomStatus};
+use mimid_agent_store::record::{Ext, Invite, Key, Person, Room, RoomStatus};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -167,6 +177,41 @@ pub struct Names {
     channels: BTreeMap<Key, String>,
     /// Folded channel name to room key.
     rooms: BTreeMap<String, Key>,
+    /// Pending invite number to the name it is shown under.
+    invites: BTreeMap<u64, InviteName>,
+    /// Folded channel name to the hold on it for a room not shown yet.
+    held: BTreeMap<String, Hold>,
+}
+
+/// The name a pending invite is shown under.
+#[derive(Debug, Clone)]
+struct InviteName {
+    /// `#<name>`, held; or `&invite-<number>`, which is never a channel.
+    channel: String,
+    /// The room URI from the Welcome, if it could be read.
+    room: Option<String>,
+}
+
+/// A channel name held for a room not shown yet, which takes it when it
+/// arrives.
+#[derive(Debug, Clone)]
+struct Hold {
+    /// The name as shown.
+    channel: String,
+    /// The room URI.
+    room: String,
+    /// Whether the user accepted the invite: the room is being joined.
+    accepted: bool,
+}
+
+/// What a held channel name stands for ([`Names::held`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Held {
+    /// A pending invite, by number, which JOIN of the name accepts
+    /// (§7.13).
+    Invite(u64),
+    /// The room of an accepted invite, which has not arrived yet.
+    Joining,
 }
 
 impl Names {
@@ -189,6 +234,8 @@ impl Names {
             users: BTreeMap::new(),
             channels: BTreeMap::new(),
             rooms: BTreeMap::new(),
+            invites: BTreeMap::new(),
+            held: BTreeMap::new(),
         };
         names.users.insert(SERVICE_NICK.to_owned(), String::new());
         names.take_nick(own_uri, nick);
@@ -237,6 +284,9 @@ impl Names {
         }
         for room in state.rooms.values_mut() {
             self.note_room(room);
+        }
+        for invite in &state.invites {
+            self.invite_channel(invite);
         }
     }
 
@@ -310,33 +360,143 @@ impl Names {
         }
     }
 
-    /// The channel name of `room`, given now if it has none.
+    /// The channel name of `room`, given now if it has none: the one held
+    /// for its URI, if any, else a new one.
     fn channel_for(&mut self, room: &Room) -> String {
         if let Some(channel) = self.channels.get(&room.key) {
             return channel.clone();
         }
+        let channel = match self.hold_of(&room.uri) {
+            Some(folded) => self
+                .held
+                .remove(&folded)
+                .map_or(folded, |hold| hold.channel),
+            None => self.new_channel(room.name.as_deref(), &room.uri),
+        };
+        self.rooms.insert(fold(&channel), room.key.clone());
+        self.channels.insert(room.key.clone(), channel.clone());
+        channel
+    }
+
+    /// The folded name held for the room with URI `uri`.
+    fn hold_of(&self, uri: &str) -> Option<String> {
+        self.held
+            .iter()
+            .find(|(_, hold)| hold.room == uri)
+            .map(|(folded, _)| folded.clone())
+    }
+
+    /// A channel name that no room shown has and nothing holds, for a room
+    /// named `name` with URI `uri`: `#` and the name's channel characters,
+    /// else the URI's id part, with the collision suffix if taken.
+    fn new_channel(&self, name: Option<&str>, uri: &str) -> String {
         let clean = |text: &str| -> String { text.chars().filter(|c| channel_char(*c)).collect() };
-        let mut base = room.name.as_deref().map(clean).unwrap_or_default();
+        let mut base = name.map(clean).unwrap_or_default();
         if base.is_empty() {
-            base = clean(room.uri.rsplit('/').next().unwrap_or_default());
+            base = clean(uri.rsplit('/').next().unwrap_or_default());
         }
         if base.is_empty() {
             base = "room".to_owned();
         }
         let base = format!("#{}", cut(&base, CHANNELLEN - 1));
+        let taken = |channel: &str| {
+            let folded = fold(channel);
+            self.rooms.contains_key(&folded) || self.held.contains_key(&folded)
+        };
         let mut channel = base.clone();
         let mut n = 0;
-        while self.rooms.contains_key(&fold(&channel)) {
-            channel = format!(
-                "{}{}",
-                cut(&base, CHANNELLEN - SUFFIX_LEN),
-                suffix(&room.uri, n)
-            );
+        while taken(&channel) {
+            channel = format!("{}{}", cut(&base, CHANNELLEN - SUFFIX_LEN), suffix(uri, n));
             n += 1;
         }
-        self.rooms.insert(fold(&channel), room.key.clone());
-        self.channels.insert(room.key.clone(), channel.clone());
         channel
+    }
+
+    /// The name pending `invite` is shown under, given now if it has none
+    /// (§7.13): if its Welcome could be read, the channel name its room
+    /// will have, held from now on (another invite to the same room shares
+    /// it); else `&invite-<number>`.
+    pub fn invite_channel(&mut self, invite: &Invite) -> String {
+        if let Some(name) = self.invites.get(&invite.number) {
+            return name.channel.clone();
+        }
+        let channel = match invite.room.as_deref() {
+            Some(uri) => match self.hold_of(uri) {
+                Some(folded) => self.held[&folded].channel.clone(),
+                None => {
+                    let channel = self.new_channel(invite.room_name.as_deref(), uri);
+                    self.held.insert(
+                        fold(&channel),
+                        Hold {
+                            channel: channel.clone(),
+                            room: uri.to_owned(),
+                            accepted: false,
+                        },
+                    );
+                    channel
+                }
+            },
+            None => format!("&invite-{}", invite.number),
+        };
+        self.invites.insert(
+            invite.number,
+            InviteName {
+                channel: channel.clone(),
+                room: invite.room.clone(),
+            },
+        );
+        channel
+    }
+
+    /// What held channel name `channel` stands for, if it is held: a
+    /// pending invite to accept, or a room being joined.
+    #[must_use]
+    pub fn held(&self, channel: &str) -> Option<Held> {
+        let hold = self.held.get(&fold(channel))?;
+        if hold.accepted {
+            return Some(Held::Joining);
+        }
+        self.invites
+            .iter()
+            .find(|(_, name)| name.room.as_deref() == Some(hold.room.as_str()))
+            .map(|(number, _)| Held::Invite(*number))
+    }
+
+    /// Marks the name of pending invite `number`, if it holds one, as its
+    /// room's while the user accepts it, or, with `accepted` false, as the
+    /// invite's again (accepting failed). A room being joined keeps the
+    /// name until it arrives, though the invite is gone.
+    pub fn accepting(&mut self, number: u64, accepted: bool) {
+        let Some(uri) = self.invites.get(&number).and_then(|i| i.room.clone()) else {
+            return;
+        };
+        if let Some(folded) = self.hold_of(&uri)
+            && let Some(hold) = self.held.get_mut(&folded)
+        {
+            hold.accepted = accepted;
+        }
+    }
+
+    /// Forgets pending invite `number`, gone from the store, and gives up
+    /// its held name unless its room is being joined or another pending
+    /// invite to the room shares it.
+    pub fn forget_invite(&mut self, number: u64) {
+        let Some(gone) = self.invites.remove(&number) else {
+            return;
+        };
+        let Some(uri) = gone.room else {
+            return;
+        };
+        let shared = self
+            .invites
+            .values()
+            .any(|i| i.room.as_deref() == Some(uri.as_str()));
+        if let Some(folded) = self.hold_of(&uri)
+            && !shared
+            && !self.held[&folded].accepted
+        {
+            self.held.remove(&folded);
+        }
     }
 
     /// The channel name of room `key`, if it is shown.
@@ -495,6 +655,110 @@ mod tests {
         assert_eq!(names.room_of("#LoBbY"), Some(&"R2".to_owned()));
         names.forget_room("R2");
         assert_eq!(names.room_of("#lobby"), None);
+    }
+
+    fn invite(number: u64, uri: Option<&str>, name: Option<&str>) -> Invite {
+        Invite {
+            number,
+            inviter: Some("mimi://b.example/u/bob".to_owned()),
+            room: uri.map(str::to_owned),
+            room_name: name.map(str::to_owned),
+            refused: true,
+        }
+    }
+
+    /// Oracle: §7.13: a pending invite is shown under the channel its
+    /// room will get by the §4 "Names" rules, the name held; JOIN of it
+    /// accepts; the room takes it when it arrives; `&invite-<n>` when the
+    /// Welcome could not be read.
+    #[test]
+    fn a_pending_invite_holds_its_rooms_channel_name() {
+        let mut names = Names::new(ME);
+        let pending = invite(1, Some("mimi://b.example/r/q1"), Some("B side!"));
+        assert_eq!(names.invite_channel(&pending), "#Bside");
+        // Assigned once.
+        assert_eq!(names.invite_channel(&pending), "#Bside");
+        assert_eq!(names.held("#bside"), Some(Held::Invite(1)));
+        assert_eq!(names.held("#other"), None);
+        // No usable name: the id part of the URI, as for a room.
+        assert_eq!(
+            names.invite_channel(&invite(2, Some("mimi://b.example/r/q2"), Some("日本"))),
+            "#q2"
+        );
+        // Not read: the fallback, which holds nothing.
+        assert_eq!(names.invite_channel(&invite(3, None, None)), "&invite-3");
+        assert_eq!(names.held("&invite-3"), None);
+
+        // Accepted: the name stays held, for the room, after the invite
+        // is gone; then the room takes it.
+        names.accepting(1, true);
+        assert_eq!(names.held("#Bside"), Some(Held::Joining));
+        names.forget_invite(1);
+        assert_eq!(names.held("#Bside"), Some(Held::Joining));
+        let mut r = room("R1", "mimi://b.example/r/q1", Some("renamed since"));
+        names.note_room(&mut r);
+        assert_eq!(names.channel("R1"), Some("#Bside"));
+        assert_eq!(names.held("#Bside"), None);
+        assert_eq!(r.ext["irc"], json!({"channel": "#Bside"}));
+
+        // Accepting failed: the invite holds it again.
+        names.accepting(2, true);
+        names.accepting(2, false);
+        assert_eq!(names.held("#q2"), Some(Held::Invite(2)));
+        // Gone without being accepted (refused elsewhere): the name is
+        // free again.
+        names.forget_invite(2);
+        assert_eq!(names.held("#q2"), None);
+        assert_eq!(
+            names.invite_channel(&invite(4, Some("mimi://b.example/r/q4"), Some("q2"))),
+            "#q2"
+        );
+    }
+
+    /// Oracle: §7.13: whichever comes first, a room or an invite, keeps
+    /// the name; the later one gets the collision suffix of its own room
+    /// URI, as two rooms do.
+    #[test]
+    fn invite_and_room_names_collide_first_come_first_kept() {
+        let mut names = Names::new(ME);
+        // A room shown first: the invite gets the suffix.
+        let mut mine = room("R1", "mimi://a.example/r/mine", Some("bside"));
+        names.note_room(&mut mine);
+        let theirs = "mimi://b.example/r/theirs";
+        let shown = names.invite_channel(&invite(1, Some(theirs), Some("bside")));
+        assert_eq!(shown, format!("#bside{}", suffix(theirs, 0)));
+        // The room arrives under the name the invite showed.
+        let mut joined = room("R2", theirs, Some("bside"));
+        names.note_room(&mut joined);
+        assert_eq!(names.channel("R2"), Some(shown.as_str()));
+
+        // An invite first: a room the user hosts afterwards, before
+        // accepting, gets the suffix, and the invite keeps its name.
+        let mut names = Names::new(ME);
+        let pending = names.invite_channel(&invite(1, Some(theirs), Some("bside")));
+        assert_eq!(pending, "#bside");
+        let hosted = "mimi://a.example/r/hosted";
+        let mut r = room("R3", hosted, Some("bside"));
+        names.note_room(&mut r);
+        assert_eq!(
+            names.channel("R3"),
+            Some(format!("#bside{}", suffix(hosted, 0)).as_str())
+        );
+        assert_eq!(names.held("#bside"), Some(Held::Invite(1)));
+        // A second invite to the same room shares the name.
+        assert_eq!(
+            names.invite_channel(&invite(2, Some(theirs), Some("bside"))),
+            "#bside"
+        );
+        names.forget_invite(1);
+        assert_eq!(names.held("#bside"), Some(Held::Invite(2)));
+        // Joined by the invite policy: the room takes the name before the
+        // invite is forgotten.
+        let mut r = room("R4", theirs, Some("bside"));
+        names.note_room(&mut r);
+        assert_eq!(names.channel("R4"), Some("#bside"));
+        names.forget_invite(2);
+        assert_eq!(names.room_of("#bside"), Some(&"R4".to_owned()));
     }
 
     #[test]

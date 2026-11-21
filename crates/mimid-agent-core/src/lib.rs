@@ -168,9 +168,9 @@ pub mod uri;
 #[doc(hidden)]
 pub use agent::FailPoint;
 pub use agent::{
-    Agent, AgentConfig, DidWebvhApplied, Event, HostOptions, MAX_NOTE_LEN, MAX_REPORTED_MESSAGES,
-    MAX_TEXT_LEN, OutgoingAttachment, OwnRoomsJoined, PendingInvite, ReceivedMessage,
-    ReportOutcome, ReportedMessage, RoomInfo, Sent,
+    Agent, AgentConfig, DidWebvhApplied, Event, HostOptions, InviteDetails, MAX_NOTE_LEN,
+    MAX_REPORTED_MESSAGES, MAX_TEXT_LEN, OutgoingAttachment, OwnRoomsJoined, PendingInvite,
+    ReceivedMessage, ReportOutcome, ReportedMessage, RoomInfo, Sent,
 };
 pub use client::{ACCEPTED_NAMESPACE, ConsentRecord};
 pub use didwebvh::{DidWebvhConfig, RoomClient};

@@ -351,10 +351,11 @@ pub struct WelcomeJoin {
     pub inviter: Vec<u8>,
 }
 
-/// What a Welcome says of its group before the ratchet tree is at hand
-/// ([`Member::welcome_group`]): read from the GroupInfo the Welcome
+/// What a Welcome says of its group. From [`Member::welcome_group`],
+/// before the ratchet tree is at hand: read from the GroupInfo the Welcome
 /// carries, which is decrypted but not verified, since its signer's leaf is
-/// in the tree. [`Member::join_welcome`] verifies it all.
+/// in the tree. From [`Member::welcome_details`]: verified, as
+/// [`Member::join_welcome`] verifies it all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct WelcomeGroup {
@@ -365,6 +366,18 @@ pub struct WelcomeGroup {
     /// The GroupContext's `app_data_dictionary` entries (mls-extensions-11
     /// §4.6), by component id.
     pub components: std::collections::BTreeMap<ComponentId, Vec<u8>>,
+}
+
+/// What one staging of a Welcome says ([`Member::welcome_details`]),
+/// verified as [`Member::join_welcome`] verifies it, without joining.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WelcomeDetails {
+    /// The member identity of the leaf that signed the Welcome's
+    /// GroupInfo, as [`Member::welcome_sender`] gives it.
+    pub sender: Vec<u8>,
+    /// The Welcome's GroupContext: the group it joins.
+    pub group: WelcomeGroup,
 }
 
 /// The result of [`Member::join_external`].
@@ -849,6 +862,29 @@ impl Member {
         let (staged, _) = stage_welcome(identity, welcome, ratchet_tree)?;
         Ok(staged.group_context().group_id().as_slice().to_vec())
     }
+
+    /// The sender of a Welcome, as [`Member::welcome_sender`] gives it,
+    /// and what the Welcome's verified GroupContext says of its group (the
+    /// room metadata among its components), from one staging of the
+    /// Welcome without joining: nothing is stored and the KeyPackage stays
+    /// usable for a later [`Member::join_welcome`], since OpenMLS consumes
+    /// it only when a staged Welcome becomes a group. Lets a client show a
+    /// pending invite under the room's name.
+    ///
+    /// # Errors
+    ///
+    /// As [`Member::welcome_sender`].
+    pub fn welcome_details(
+        identity: &Identity,
+        welcome: &[u8],
+        ratchet_tree: Option<&[u8]>,
+    ) -> Result<WelcomeDetails, MemberError> {
+        let (staged, _) = stage_welcome(identity, welcome, ratchet_tree)?;
+        Ok(WelcomeDetails {
+            sender: welcome_signer(identity, &staged)?,
+            group: group_of_context(staged.group_context()),
+        })
+    }
 }
 
 impl Member {
@@ -878,22 +914,26 @@ impl Member {
         let builder = StagedWelcome::build_from_welcome(provider, &config, welcome)
             .map_err(|e| MemberError::Join(e.into()))?;
         let group_info = builder.processed_welcome().unverified_group_info();
-        let context = group_info.group_context();
-        Ok(WelcomeGroup {
-            group_id: context.group_id().as_slice().to_vec(),
-            epoch: context.epoch().as_u64(),
-            components: context
-                .extensions()
-                .app_data_dictionary()
-                .map(|extension| {
-                    extension
-                        .dictionary()
-                        .entries()
-                        .map(|entry| (entry.id(), entry.data().to_vec()))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        })
+        Ok(group_of_context(group_info.group_context()))
+    }
+}
+
+/// What `context` says of its group: its ID, epoch and components.
+fn group_of_context(context: &GroupContext) -> WelcomeGroup {
+    WelcomeGroup {
+        group_id: context.group_id().as_slice().to_vec(),
+        epoch: context.epoch().as_u64(),
+        components: context
+            .extensions()
+            .app_data_dictionary()
+            .map(|extension| {
+                extension
+                    .dictionary()
+                    .entries()
+                    .map(|entry| (entry.id(), entry.data().to_vec()))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

@@ -153,3 +153,48 @@ fn a_deleted_external_join_leaves_room_for_a_welcome() {
         group.epoch_authenticator()
     );
 }
+
+/// `Member::welcome_details`: one staging gives the sender and the
+/// GroupContext's components, the ones the creator set; it stores
+/// nothing, so it can be read twice and the KeyPackage still serves the
+/// join.
+#[test]
+fn welcome_details_read_the_components_and_leave_the_key_package() {
+    let alice = identity(b"alice");
+    let carol = identity(b"carol");
+    // mls-extensions-11 §7.5 app_components (0x0001), an empty
+    // ComponentsList, hand-encoded: its length octet, 0.
+    let component: (u16, Vec<u8>) = (0x0001, vec![0x00]);
+    let mut group = Member::create(
+        &alice,
+        b"room-welcome-details",
+        &[],
+        std::slice::from_ref(&component),
+    )
+    .expect("create");
+    let carol_kp = carol
+        .key_package(KeyPackageKind::OneTime)
+        .expect("KeyPackage");
+    let bundle = group
+        .commit(&alice, &[&carol_kp], &[], &[], no_components)
+        .expect("add carol");
+    group.merge_pending_commit(&alice).expect("merge");
+    let welcome = bundle.welcome.expect("Welcome");
+    let tree = group.ratchet_tree().expect("tree");
+    for _ in 0..2 {
+        let details = Member::welcome_details(&carol, &welcome, Some(&tree)).expect("details");
+        assert_eq!(details.sender, b"alice");
+        assert_eq!(details.group.group_id, b"room-welcome-details");
+        assert_eq!(details.group.epoch, 1);
+        assert_eq!(
+            details.group.components.get(&component.0),
+            Some(&component.1)
+        );
+    }
+    let joined = Member::join_welcome(&carol, &welcome, Some(&tree)).expect("carol joins");
+    assert_eq!(
+        joined.member.epoch_authenticator(),
+        group.epoch_authenticator()
+    );
+    assert!(Member::welcome_details(&carol, &welcome, Some(&tree)).is_err());
+}

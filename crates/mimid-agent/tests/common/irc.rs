@@ -186,3 +186,193 @@ impl Irc {
         (irc, burst)
     }
 }
+
+/// The two sides of the invite-name scenario ([`invite_names`]).
+pub struct Side<'a> {
+    pub irc: &'a mut Irc,
+    pub nick: &'a str,
+    pub mask: &'a str,
+    pub uri: &'a str,
+}
+
+/// Waits for the first JOIN from `mask`, which must be of `channel`, and
+/// the burst that follows; the nicks listed, with their prefixes.
+async fn first_join(irc: &mut Irc, mask: &str, channel: &str) -> Vec<String> {
+    let join = irc
+        .until("a JOIN", |m| m.command == "JOIN" && m.source == mask)
+        .await;
+    assert_eq!(join.params, [channel], "{}", join.raw);
+    let mut names = Vec::new();
+    loop {
+        let m = irc.line().await;
+        match m.command.as_str() {
+            "353" => {
+                assert_eq!(m.params[2], channel);
+                names.extend(m.text().split(' ').map(str::to_owned));
+            }
+            "366" => return names,
+            "332" | "333" => assert_eq!(m.params[1], channel),
+            other => panic!("unexpected {other} in the JOIN burst: {}", m.raw),
+        }
+    }
+}
+
+/// `host` JOINs `channel`, which hosts a room, and invites `guest` to it
+/// by URI.
+async fn host_and_invite(host: &mut Side<'_>, guest: &Side<'_>, channel: &str) {
+    host.irc.send(&format!("JOIN {channel}")).await;
+    first_join(host.irc, host.mask, channel).await;
+    host.irc
+        .send(&format!("INVITE {} {channel}", guest.uri))
+        .await;
+    host.irc.until_command("341").await;
+}
+
+/// `guest`'s pending INVITE from `host`; the name it is shown under.
+async fn invited(guest: &mut Side<'_>, host: &Side<'_>) -> String {
+    let invite = guest.irc.until_command("INVITE").await;
+    assert_eq!(invite.source, host.mask, "{}", invite.raw);
+    assert_eq!(invite.params[0], guest.nick, "{}", invite.raw);
+    invite.params[1].clone()
+}
+
+/// After `guest` sent JOIN for `channel`: the JOIN that follows is of `channel`,
+/// with `host` listed as its admin; then a line from `guest` to `channel`
+/// reaches `host` in `host_channel`, the host's name for the room.
+async fn accepted_into(
+    guest: &mut Side<'_>,
+    host: &mut Side<'_>,
+    channel: &str,
+    host_channel: &str,
+) {
+    let names = first_join(guest.irc, guest.mask, channel).await;
+    assert!(names.contains(&format!("@{}", host.nick)), "{names:?}");
+    assert!(names.contains(&guest.nick.to_owned()), "{names:?}");
+    let text = format!("hello {channel}");
+    guest.irc.send(&format!("PRIVMSG {channel} :{text}")).await;
+    let got = host
+        .irc
+        .until("the message", |m| {
+            m.command == "PRIVMSG" && m.source == guest.mask && m.params[0] == host_channel
+        })
+        .await;
+    assert_eq!(got.params, [host_channel, text.as_str()]);
+}
+
+/// The invite names of docs/design/agent-frontends.md §7.13 (bead
+/// mimid-br6m). bob hosts and invites alice, whose daemon leaves his
+/// invites pending (`invites = "from-allowed"`); `alice_store` is her
+/// daemon's store.
+///
+/// Oracles: §7.13: a pending invite is an INVITE to the channel name its
+/// room will have, by the §4 "Names" rules (`#` and the room name); JOIN
+/// of that name accepts it and the next JOIN is of the same name, so the
+/// client keeps no dead window (docs/irc-lessons.md "JOIN"); a name held
+/// first is kept, the later one getting `-` and 4 base32 characters; a
+/// Welcome that cannot be read is `&invite-<n>`, whose JOIN is answered
+/// with JOIN and PART of it before the room's JOIN.
+pub async fn invite_names(
+    mut alice: Side<'_>,
+    alice_store: &mimid_agent_store::Store,
+    mut bob: Side<'_>,
+) {
+    let suffixed = |shown: &str, base: &str| {
+        shown.len() == base.len() + 5
+            && shown.strip_prefix(base).is_some_and(|s| {
+                s.starts_with('-')
+                    && s[1..]
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c))
+            })
+    };
+
+    // The room's channel name: INVITE to #bside, and JOIN #bside accepts.
+    host_and_invite(&mut bob, &alice, "#bside").await;
+    assert_eq!(invited(&mut alice, &bob).await, "#bside");
+    alice.irc.send("PRIVMSG mimid :invites").await;
+    let listed = alice.irc.until_command("NOTICE").await;
+    assert!(
+        listed.text().contains("JOIN #bside or JOIN &invite-"),
+        "{}",
+        listed.raw
+    );
+    alice.irc.send("JOIN #bside").await;
+    accepted_into(&mut alice, &mut bob, "#bside", "#bside").await;
+    assert!(
+        !alice
+            .irc
+            .seen
+            .iter()
+            .any(|m| m.command != "NOTICE" && m.raw.contains("&invite")),
+        "{:#?}",
+        alice.irc.seen
+    );
+
+    // A channel alice shows already has the name: the invite gets the
+    // suffix, and JOIN of the suffixed name accepts it.
+    alice.irc.send("JOIN #cside").await;
+    first_join(alice.irc, alice.mask, "#cside").await;
+    host_and_invite(&mut bob, &alice, "#cside").await;
+    let shown = invited(&mut alice, &bob).await;
+    assert!(suffixed(&shown, "#cside"), "{shown}");
+    alice.irc.send(&format!("JOIN {shown}")).await;
+    accepted_into(&mut alice, &mut bob, &shown, "#cside").await;
+
+    // alice hosts a room of the same name (from another front end) while
+    // the invite waits: the invite keeps #dside, the new room gets the
+    // suffix, and JOIN #dside still accepts the invite.
+    host_and_invite(&mut bob, &alice, "#dside").await;
+    assert_eq!(invited(&mut alice, &bob).await, "#dside");
+    alice_store
+        .create_room(alice_store.new_key(), "dside", &[])
+        .await
+        .unwrap();
+    alice_store.save().await.unwrap();
+    let hosted = alice
+        .irc
+        .until("the hosted room's JOIN", |m| {
+            m.command == "JOIN" && m.source == alice.mask
+        })
+        .await;
+    assert!(suffixed(&hosted.params[0], "#dside"), "{}", hosted.raw);
+    alice.irc.send("JOIN #dside").await;
+    accepted_into(&mut alice, &mut bob, "#dside", "#dside").await;
+
+    // The Welcome cannot be read: `&invite-<n>`, and its JOIN is answered
+    // with JOIN and PART of it before the room's JOIN.
+    alice_store
+        .agent()
+        .lock()
+        .await
+        .fail_next(mimid_agent_core::FailPoint::ReadInvite);
+    host_and_invite(&mut bob, &alice, "#eside").await;
+    // Nothing of the Welcome was read, the inviter neither: the server
+    // invites.
+    let invite = alice.irc.until_command("INVITE").await;
+    assert_eq!(invite.source, "mimid.invalid", "{}", invite.raw);
+    let pending = invite.params[1].clone();
+    assert!(pending.starts_with("&invite-"), "{pending}");
+    alice.irc.send(&format!("JOIN {pending}")).await;
+    let join = alice
+        .irc
+        .until("the JOIN of the invite", |m| m.command == "JOIN")
+        .await;
+    assert_eq!(
+        (join.source.as_str(), &join.params[..]),
+        (alice.mask, &[pending.clone()][..])
+    );
+    let part = alice.irc.line().await;
+    assert_eq!(
+        (
+            part.source.as_str(),
+            part.command.as_str(),
+            &part.params[..]
+        ),
+        (
+            alice.mask,
+            "PART",
+            &[pending.clone(), "accepted".to_owned()][..]
+        )
+    );
+    accepted_into(&mut alice, &mut bob, "#eside", "#eside").await;
+}

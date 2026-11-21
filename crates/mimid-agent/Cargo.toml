@@ -52,6 +52,9 @@ futures = "0.3.34"
 jmap-base-client = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "e4d206ea400b7a65001bd62e393d9efbca744db8" }
 jmap-chat-client = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "e4d206ea400b7a65001bd62e393d9efbca744db8" }
 jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "e4d206ea400b7a65001bd62e393d9efbca744db8" }
+# The invite-name tests (tests/common/irc.rs) make reading a Welcome
+# fail once (Agent::fail_next), for the `&invite-<n>` fallback.
+mimid-agent-core = { path = "../mimid-agent-core", features = ["fail-points"] }
 mimid-server = { path = "../mimid-server" }
 # The version and features mimid-agent-core uses.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }

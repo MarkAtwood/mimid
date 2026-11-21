@@ -31,10 +31,11 @@ from Mark Atwood's two IRC servers in Go:
   b.example, each provider in the other's peer map, each user on IRC.
   Both directions work as on one provider, with no change to the front
   end or the agent: JOIN hosts on the user's own provider, INVITE by user
-  URI, a pending `&invite-<n>` accepted with JOIN, `allow` then an invite
-  joined at once, `deny` then NoConsent from the peer, PRIVMSG with exact
-  non-ASCII text, NAMES, WHO, WHOIS, MODE +o/-o of the remote user, PART,
-  and a new invite after PART. Nicks are `alice-a` and `bob-b` on both
+  URI, a pending invite accepted with JOIN (then `&invite-<n>`, since
+  §7.13 the room's channel name), `allow` then an invite joined at once,
+  `deny` then NoConsent from the peer, PRIVMSG with exact non-ASCII
+  text, NAMES, WHO, WHOIS, MODE +o/-o of the remote user, PART, and a
+  new invite after PART. Nicks are `alice-a` and `bob-b` on both
   sides (the label is the first DNS label). An invite needs no consent
   set up: the KeyPackage fetch is allowed unless the target refused
   (`deny`). bob's daemon joins by itself only with `invites = "any"` or
@@ -124,6 +125,17 @@ from Mark Atwood's two IRC servers in Go:
   meshIRCd 4a4382c, VIBED.md:269-282. RFC 2812 §3.2.3 never says this.
 - **JOIN:** echo the JOIN to the joiner, then send 332 and 333 (or 331),
   then 353 and 366.
+- **Answer a JOIN under the name it asked for.** irssi 1.4.3 opens a
+  window for each JOIN it sends and keeps it, active, until the server
+  answers with a JOIN of that same name. mimid-agent-irc first showed a
+  pending invite as `INVITE <nick> &invite-1` and answered `JOIN
+  &invite-1` with `JOIN #bside`: irssi kept a dead `&invite-1` window in
+  front, and the user's next line went out as `PRIVMSG &invite-1` and got
+  403 (checked 2026-11-21 across two providers, bead mimid-br6m). Name
+  what a client may JOIN as the channel it will become; where that
+  cannot be done, answer the JOIN with JOIN and PART of the name asked
+  for before the JOIN of the real channel (docs/design/agent-frontends.md
+  §7.13).
 - **Virtual users:** people who are not on this IRC server must appear in
   353, WHO and WHOIS 319, not only as JOIN lines. tailircd never listed its
   remote users in NAMES, so they spoke without being in the nick list.

@@ -8,7 +8,7 @@
 //! | `help` | lists these commands |
 //! | `allow <nick or user URI>` | consents to the user: their invites are joined from the next sync (`Store::allow`) |
 //! | `deny <nick or user URI>` | refuses the user: they may no longer fetch the user's KeyPackages to invite them, and their invites are not joined (`Store::deny`) |
-//! | `invites` | lists the pending invites, each joined by `JOIN &invite-<number>` |
+//! | `invites` | lists the pending invites, each accepted by JOIN of the channel name it is shown under (§7.13) or of `&invite-<number>` |
 //!
 //! # Limitations
 //!
@@ -21,13 +21,14 @@ use crate::command::Who;
 use crate::conn::{Session, one_line};
 use crate::line::Out;
 use crate::names::SERVICE_NICK;
+use mimid_agent_store::record::Invite;
 
 /// The help text, one NOTICE a line.
 const HELP: &[&str] = &[
     "mimid service commands:",
     "  allow <nick or user URI>  let this user's invites in (joined at the next sync)",
     "  deny <nick or user URI>   refuse this user: they can no longer invite you",
-    "  invites                   list pending invites; JOIN &invite-<number> accepts one",
+    "  invites                   list pending invites; JOIN of the invite's channel accepts it",
     "Rooms: JOIN #name hosts a new room; PART leaves a room for good;",
     "INVITE <nick or user URI> #channel invites someone. No private messages.",
 ];
@@ -78,28 +79,26 @@ impl Session {
                 self.service_says(&format!("usage: {command} <nick or user URI>"));
             }
             ("invites", _) => {
-                let invites: Vec<(u64, Option<String>)> = self
-                    .shared
-                    .store
-                    .state()
-                    .invites
-                    .iter()
-                    .map(|i| (i.number, i.inviter.clone()))
-                    .collect();
+                let invites: Vec<Invite> = self.shared.store.state().invites.clone();
                 if invites.is_empty() {
                     self.service_says("no pending invites");
                 }
-                for (number, inviter) in invites {
-                    let from = match inviter {
-                        Some(uri) => {
-                            let nick = self.shared.names().nick(&uri);
-                            format!("{nick} ({uri})")
-                        }
-                        None => "an unknown inviter".to_owned(),
+                for invite in invites {
+                    let number = invite.number;
+                    let (from, channel) = {
+                        let mut names = self.shared.names();
+                        let from = match &invite.inviter {
+                            Some(uri) => format!("{} ({uri})", names.nick(uri)),
+                            None => "an unknown inviter".to_owned(),
+                        };
+                        (from, names.invite_channel(&invite))
                     };
-                    self.service_says(&format!(
-                        "invite {number} from {from}: JOIN &invite-{number} to accept"
-                    ));
+                    let how = if channel.starts_with('#') {
+                        format!("JOIN {channel} or JOIN &invite-{number} to accept")
+                    } else {
+                        format!("JOIN &invite-{number} to accept")
+                    };
+                    self.service_says(&format!("invite {number} from {from}: {how}"));
                 }
             }
             _ => self.service_says(&format!("unknown command {command:?}; try help")),

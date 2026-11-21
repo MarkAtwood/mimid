@@ -190,6 +190,22 @@ pub struct PendingInvite {
     pub has_ratchet_tree: bool,
 }
 
+/// What the Welcome of a pending invite says ([`Agent::invite_details`]),
+/// read by staging it without joining.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct InviteDetails {
+    /// The inviter's user URI, as [`Agent::inviter`] gives it.
+    pub inviter: String,
+    /// The room URI: the room metadata's `room_uri`, else the group ID,
+    /// as [`Agent::join`] reads it; `None` if neither is a URI, and then
+    /// joining fails.
+    pub room: Option<String>,
+    /// The room metadata's `room_name` (room-policy-04 RoomMetaData), if
+    /// the group has room metadata.
+    pub room_name: Option<String>,
+}
+
 /// A decrypted application message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceivedMessage {
@@ -533,6 +549,9 @@ pub enum FailPoint {
     /// After the provider accepted an outgoing message or Commit, before
     /// its answer is handled: as a crash that loses the answer.
     AfterAccepted,
+    /// In [`Agent::invite_details`], before the Welcome is staged: as a
+    /// Welcome that cannot be read.
+    ReadInvite,
 }
 
 impl std::fmt::Debug for Agent {
@@ -1309,6 +1328,32 @@ impl Agent {
         let identity = Member::welcome_sender(&self.identity, &welcome, tree.as_deref())
             .map_err(|e| AgentError::mls("reading the Welcome", e))?;
         Ok(String::from_utf8_lossy(&identity).into_owned())
+    }
+
+    /// The inviter, room URI and room name of pending invite `number`,
+    /// from one staging of its Welcome (RFC 9420 §12.4.3.1), verified as
+    /// [`Agent::join`] verifies it. Read without joining, as
+    /// [`Agent::inviter`] is: OpenMLS consumes the KeyPackage only when a
+    /// staged Welcome becomes a group, so the invite stays pending and
+    /// [`Agent::join`] can still use it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Agent::inviter`].
+    pub fn invite_details(&mut self, number: u64) -> Result<InviteDetails, AgentError> {
+        #[cfg(feature = "fail-points")]
+        self.fail_at(FailPoint::ReadInvite)?;
+        let (welcome, tree) = self.invite_material(number)?;
+        let details = Member::welcome_details(&self.identity, &welcome, tree.as_deref())
+            .map_err(|e| AgentError::mls("reading the Welcome", e))?;
+        let metadata = details.group.components.get(&ROOM_METADATA);
+        Ok(InviteDetails {
+            inviter: String::from_utf8_lossy(&details.sender).into_owned(),
+            room: room_of_group(&details.group.group_id, metadata.map(Vec::as_slice)),
+            room_name: metadata
+                .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
+                .map(|metadata| metadata.room_name.as_str().to_owned()),
+        })
     }
 
     /// The Welcome and ratchet tree (if any) of pending invite `number`.

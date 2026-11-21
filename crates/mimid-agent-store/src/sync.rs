@@ -322,12 +322,14 @@ impl Store {
         let mut joined = 0;
         let mut pending = Vec::new();
         for invite in invites {
-            let inviter = agent.inviter(invite.number);
+            // One staging gives the inviter and the room's URI and name,
+            // which a front end shows the invite under (bead mimid-br6m).
+            let details = agent.invite_details(invite.number);
             let accept = match self.invites {
                 InvitePolicy::Any => true,
                 InvitePolicy::Never => false,
-                InvitePolicy::FromAllowed => match &inviter {
-                    Ok(inviter) => allowed.contains(inviter),
+                InvitePolicy::FromAllowed => match &details {
+                    Ok(details) => allowed.contains(&details.inviter),
                     Err(e) => {
                         report
                             .problems
@@ -338,9 +340,12 @@ impl Store {
             };
             if !accept {
                 report.pending_invites.push(invite.number);
+                let details = details.ok();
                 pending.push(crate::record::Invite {
                     number: invite.number,
-                    inviter: inviter.ok(),
+                    inviter: details.as_ref().map(|d| d.inviter.clone()),
+                    room: details.as_ref().and_then(|d| d.room.clone()),
+                    room_name: details.and_then(|d| d.room_name),
                     refused: true,
                 });
                 continue;

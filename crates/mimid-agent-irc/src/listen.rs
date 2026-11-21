@@ -31,8 +31,8 @@ impl std::fmt::Debug for IrcFrontEnd {
 }
 
 /// The front end's part of each save: names for the people and rooms the
-/// save's changes name, kept in their records' `ext["irc"]`
-/// ([`crate::names`]). It takes the state lock, then the names'.
+/// save's changes name, kept in their records' `ext["irc"]`, and for the
+/// pending invites ([`crate::names`]). It takes the state lock, then the names'.
 struct IrcExt {
     names: Arc<Mutex<Names>>,
 }
@@ -59,7 +59,20 @@ impl Frontend for IrcExt {
                         }
                     }
                     Change::RoomForgotten { key, .. } => names.forget_room(key),
+                    Change::InvitePending(number) => {
+                        if let Some(invite) = state.invites.iter().find(|i| i.number == *number) {
+                            names.invite_channel(invite);
+                        }
+                    }
                     _ => {}
+                }
+            }
+            // After the rooms: a room joined from an invite in this sync
+            // takes the name its invite held before the invite is
+            // forgotten (§7.13).
+            for change in changes {
+                if let Change::InviteGone(number) = change {
+                    names.forget_invite(*number);
                 }
             }
             Ok(())

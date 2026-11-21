@@ -6,7 +6,8 @@
 //!
 //! The scenario, both ways: one user JOINs a channel, which hosts a room
 //! on their provider, and INVITEs the other by user URI; the other
-//! accepts (a pending invite accepted with JOIN, or joined at once by the
+//! accepts (a pending invite, shown under the room's channel, accepted
+//! with JOIN, or joined at once by the
 //! invite policy or `allow`); both write, read exact text, and see each
 //! other in NAMES, WHO and WHOIS; one PARTs and the other sees it.
 //!
@@ -21,7 +22,7 @@
 
 mod common;
 
-use common::irc::{Irc, Msg};
+use common::irc::{Irc, Msg, Side};
 use common::{ALICE, BOB_B, Running, Server, config, two_providers};
 use mimid_agent::Config;
 use mimid_agent::config::IrcSetting;
@@ -216,9 +217,9 @@ async fn alice_on_a_hosts_and_bob_on_b_joins() {
     let invite = bi.until_command("INVITE").await;
     assert_eq!(invite.source, ALICE_MASK);
     assert_eq!(invite.params[0], BOB_NICK);
-    let pending = invite.params[1].clone();
-    assert!(pending.starts_with("&invite-"), "{}", invite.raw);
-    bi.send(&format!("JOIN {pending}")).await;
+    // Shown under the room's channel (§7.13), which JOIN accepts.
+    assert_eq!(invite.params[1], "#x", "{}", invite.raw);
+    bi.send("JOIN #x").await;
     let (topic, names) = joined(&mut bi, BOB_MASK, "#x").await;
     assert!(topic.starts_with("x | mimi://a.example/"), "{topic}");
     let mut names = names;
@@ -325,6 +326,38 @@ async fn alice_on_a_hosts_and_bob_on_b_joins() {
     let later = bi.sync().await;
     assert!(!later.iter().any(|m| m.command == "INVITE"), "{later:#?}");
 
+    drop((ai, bi));
+    bob.stop().await;
+    alice.stop().await;
+}
+
+/// bob on b.example hosts and invites alice on a.example, whose daemon
+/// leaves his invites pending: the invite names of §7.13
+/// (tests/common/irc.rs `invite_names`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pending_invites_across_providers_are_shown_under_their_rooms_channels() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = two_providers(dir.path(), &[ALICE], &[BOB_B]).await;
+    let alice = Running::start(&with_irc(&a, ALICE, dir.path(), "from-allowed")).await;
+    let bob = Running::start(&with_irc(&b, BOB_B, dir.path(), "any")).await;
+    let mut ai = register(&alice, ALICE_NICK, ALICE).await;
+    let mut bi = register(&bob, BOB_NICK, BOB_B).await;
+    common::irc::invite_names(
+        Side {
+            irc: &mut ai,
+            nick: ALICE_NICK,
+            mask: ALICE_MASK,
+            uri: ALICE,
+        },
+        &alice.store,
+        Side {
+            irc: &mut bi,
+            nick: BOB_NICK,
+            mask: BOB_MASK,
+            uri: BOB_B,
+        },
+    )
+    .await;
     drop((ai, bi));
     bob.stop().await;
     alice.stop().await;

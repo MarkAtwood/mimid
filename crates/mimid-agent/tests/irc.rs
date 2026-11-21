@@ -14,7 +14,7 @@ mod common;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use common::irc::{Irc, Msg};
+use common::irc::{Irc, Msg, Side};
 use common::{ALICE, BOB, PATIENCE, Running, Server, config, server};
 use mimid_agent::config::IrcSetting;
 use mimid_agent::{Config, Daemon};
@@ -630,9 +630,10 @@ async fn two_daemons_chat_over_irc_and_jmap() {
     alice.stop().await;
 }
 
-/// Oracle: §7.5: a pending invite is an INVITE to `&invite-<n>`, JOIN of
-/// it accepts, `allow` has the next invite joined at once, and `deny`
-/// revokes the consent, so the inviter can invite no more.
+/// Oracle: §7.5, §7.13: a pending invite is an INVITE to the channel its
+/// room will have, JOIN of it accepts, `allow` has the next invite joined
+/// at once, and `deny` revokes the consent, so the inviter can invite no
+/// more.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn invites_and_consent_from_irc() {
     let dir = tempfile::tempdir().unwrap();
@@ -652,16 +653,19 @@ async fn invites_and_consent_from_irc() {
         let invite = b.until_command("INVITE").await;
         assert_eq!(invite.source, ALICE_MASK);
         assert_eq!(invite.params[0], BOB_NICK);
-        let channel = invite.params[1].clone();
-        assert!(channel.starts_with("&invite-"), "{}", invite.raw);
-        channel
+        invite.params[1].clone()
     }
 
     host_and_invite(&mut a, "#one").await;
     let pending = invited(&mut b).await;
+    assert_eq!(pending, "#one");
     b.send("PRIVMSG mimid :invites").await;
     let listed = b.until_command("NOTICE").await;
-    assert!(listed.text().contains(&pending[1..]), "{}", listed.raw);
+    assert!(
+        listed.text().contains("JOIN #one or JOIN &invite-"),
+        "{}",
+        listed.raw
+    );
     assert!(listed.text().contains(ALICE_NICK), "{}", listed.raw);
     b.send(&format!("JOIN {pending}")).await;
     let names = joined(&mut b, BOB_MASK, "#one").await;
@@ -706,6 +710,43 @@ async fn invites_and_consent_from_irc() {
     let later = b.sync().await;
     assert!(!later.iter().any(|m| m.command == "INVITE"), "{later:#?}");
 
+    bob.stop().await;
+    alice.stop().await;
+}
+
+/// bob hosts and invites alice, whose daemon leaves his invites pending:
+/// the invite names of §7.13 (tests/common/irc.rs `invite_names`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pending_invites_are_shown_under_their_rooms_channels() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(config(
+        &server,
+        ALICE,
+        dir.path(),
+        "from-allowed",
+    )))
+    .await;
+    let bob = Running::start(&with_irc(config(&server, BOB, dir.path(), "any"))).await;
+    let (mut a, _) = Irc::register(alice.irc.unwrap(), alice.token().trim(), "alice", &[]).await;
+    let (mut b, _) = Irc::register(bob.irc.unwrap(), bob.token().trim(), "bob", &[]).await;
+    common::irc::invite_names(
+        Side {
+            irc: &mut a,
+            nick: ALICE_NICK,
+            mask: ALICE_MASK,
+            uri: ALICE,
+        },
+        &alice.store,
+        Side {
+            irc: &mut b,
+            nick: BOB_NICK,
+            mask: BOB_MASK,
+            uri: BOB,
+        },
+    )
+    .await;
+    drop((a, b));
     bob.stop().await;
     alice.stop().await;
 }

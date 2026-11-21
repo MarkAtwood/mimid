@@ -283,6 +283,8 @@ pub struct Running {
     /// The IRC front end's address, with `[irc]`.
     pub irc: Option<SocketAddr>,
     pub state_dir: PathBuf,
+    /// The daemon's store.
+    pub store: Arc<mimid_agent_store::Store>,
     stop: oneshot::Sender<()>,
     task: JoinHandle<std::io::Result<()>>,
 }
@@ -293,6 +295,7 @@ impl Running {
         let daemon = Daemon::start(config).await.unwrap();
         let addr = daemon.local_addr().expect("the daemon listens for HTTP");
         let irc = daemon.irc_addr();
+        let store = Arc::clone(daemon.store());
         let (stop, stopped) = oneshot::channel::<()>();
         let task = tokio::spawn(daemon.serve(async move {
             let _ = stopped.await;
@@ -301,6 +304,7 @@ impl Running {
             addr,
             irc,
             state_dir: config.state_dir.clone(),
+            store,
             stop,
             task,
         }

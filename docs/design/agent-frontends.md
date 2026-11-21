@@ -714,7 +714,8 @@ step runs the full check list in AGENTS.md before its commit.
    - PRIVMSG to a nick is 404 naming the nick ("JOIN a new channel and
      INVITE them", §7.2); to an unknown nick 401.
    - The service has `help`, `allow`, `deny` and `invites`. JOIN and PART
-     make and leave rooms (§7.1), and `JOIN &invite-<n>` accepts, so
+     make and leave rooms (§7.1), and JOIN of a pending invite's name
+     accepts it (§7.13), so
      `create`, `leave` and `join` are gone; `remove` and `report` are not
      in v1. `deny` revokes the consent record, so the inviter can no
      longer fetch the user's KeyPackages: their INVITE fails at their own
@@ -1026,7 +1027,7 @@ never change, so logs and scripts keep working.
 | Reactions | mimid sends none and models none (crates/mimid-agent-jmap/src/lib.rs:165-168); a received one is a message like any other. A client's `+draft/react` TAGMSG is dropped. |
 | Notices | NOTICE to the channel from the server name, with the store's notice text. IRC has a system sender, so the JMAP rule that the account sends them (sync.rs:446-452) does not apply. |
 | Attachments | One NOTICE line per attachment from the sender: file name, size, media type and an agent URL (question 4). Without the HTTP endpoint, no URL. |
-| Pending invite | `:<inviter> INVITE <nick> &invite-<number>`. JOIN of that name accepts it (`Agent::join` through the store); the client then gets JOIN for the real channel. The `&` channel never exists. |
+| Pending invite | `:<inviter> INVITE <nick> #<channel>`, the channel name the room will have, read from the Welcome before joining (§7.13). JOIN of that name accepts it (`Agent::join` through the store); the client then gets JOIN of the same name. Only when the Welcome cannot be read is it `&invite-<number>`, whose JOIN is answered with JOIN and PART of it before the room's JOIN. The `&` channel never exists. |
 | Invite someone | `INVITE <nick> #c` is `Store::invite`. A user URI in place of the nick is also taken, since a user never seen has no nick. |
 
 **Text from peers is data.** CR, LF and NUL in peer text are split or
@@ -1364,6 +1365,61 @@ Added on 2026-11-20:
       `left every room`; the record goes leaving at once and left when the
       hub has removed the user. With no channel shown it says nothing.
     - Test: mimid-agent `tests/irc.rs` `join_0_leaves_every_room`.
+
+13. **A pending invite under its room's channel name (Mark,
+    2026-11-21).** irssi 1.4.3 keeps a window for every JOIN it sends
+    until the server answers it under the same name. The first front end
+    showed a pending invite as `INVITE <nick> &invite-<n>` and answered
+    `JOIN &invite-<n>` with `JOIN #<room>`, so irssi kept a dead
+    `&invite-<n>` window active and the user's next line went to
+    `PRIVMSG &invite-<n>`, which got 403 (bead mimid-br6m). Of the two
+    ways out, Mark chose to show the invite under the room's real
+    channel name, with `&invite-<n>` only as a fallback:
+
+    - The store reads each pending invite's Welcome at the sync by
+      staging it without joining (`Agent::invite_details`, through
+      mimi-mls `Member::welcome_details`): the inviter, and from the
+      verified GroupContext the room URI and the RoomMetaData
+      `room_name`. Staging stores nothing; OpenMLS consumes the
+      KeyPackage only when a staged Welcome becomes a group
+      (`StagedWelcome::into_group`), so the later join still has it.
+      The inviter was already read this way for the invite policy; the
+      same staging now gives all three.
+    - The invite is shown as `INVITE <nick> #<channel>`, the channel
+      made from the name and URI by the §4 "Names" rules, against the
+      channels already shown and the names other invites hold. The name
+      is held from then on and the room takes it when it arrives.
+    - JOIN of that name accepts the invite. §7.1 says JOIN of an unknown
+      name hosts a new room; a name shown in a pending INVITE is not
+      unknown. While the accepted room has not arrived, JOIN of its name
+      does nothing; the room's JOIN, under that name, follows at the
+      next sync.
+    - Collisions: whichever comes first, a room shown or an invite,
+      keeps the name, and the later one gets `-` and 4 base32
+      characters of SHA-256 of its room URI, as two rooms do. A room the
+      user hosts by another front end while the invite waits is shown
+      as `#<name>-xxxx`, and JOIN `#<name>` still accepts the invite;
+      from IRC the user cannot host that name meanwhile, since JOIN of
+      it accepts. A second invite to the same room shares the name.
+    - Fallback: when the Welcome cannot be read, the invite is
+      `&invite-<n>`. JOIN of it accepts, and is answered with
+      `:<me> JOIN &invite-<n>` and `:<me> PART &invite-<n> :accepted`
+      before the room's `JOIN #<channel>`, so the client closes the
+      window it opened. `JOIN &invite-<n>` also accepts an invite shown
+      under a channel name, answered the same way.
+    - `/msg mimid invites` lists both forms: `JOIN #<channel> or JOIN
+      &invite-<n> to accept`, or only `&invite-<n>` in the fallback.
+    - Names held for an accepted invite are given up when the room
+      arrives; if it never does, the name stays held until the daemon
+      restarts.
+    - Tests: mimid-agent `tests/irc.rs`
+      `pending_invites_are_shown_under_their_rooms_channels` and
+      `tests/irc_two_providers.rs`
+      `pending_invites_across_providers_are_shown_under_their_rooms_channels`
+      (both through tests/common/irc.rs `invite_names`: the name, a
+      collision with a channel shown, a room hosted while the invite
+      waits, and the fallback); mimid-agent-irc `names` unit tests;
+      mimid-agent-core `two_agents`; mimi-mls `welcome_sender`.
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

@@ -13,7 +13,7 @@
 //! | Edit | PRIVMSG `(edited) <text>`, its own msgid, `+draft/reply` naming the first version |
 //! | Retraction | NOTICE from the server: `<nick> retracted a message` |
 //! | Notice of the agent's | NOTICE from the server, with the notice's text |
-//! | Pending invite | `:<inviter> INVITE <nick> &invite-<number>` |
+//! | Pending invite | `:<inviter> INVITE <nick> #<channel>`, the channel the room will have (§7.13); `&invite-<number>` if its Welcome could not be read |
 //!
 //! A front end is told of its own writes too: the user's own message comes
 //! back from the feed, and is shown to the connection that sent it only
@@ -33,7 +33,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use mimid_agent_store::Change;
-use mimid_agent_store::record::{Key, Message, Reply, Room, RoomStatus, Sender};
+use mimid_agent_store::record::{Invite, Key, Message, Reply, Room, RoomStatus, Sender};
 
 use crate::conn::{ChannelView, Session, ShownMessage};
 use crate::line::{Out, split_text};
@@ -489,30 +489,31 @@ impl Session {
         }
     }
 
-    /// Shows the pending invites not shown yet as INVITE lines to
-    /// `&invite-<number>`.
+    /// Shows the pending invites not shown yet as INVITE lines to the
+    /// channel name each room will have, or to `&invite-<number>` if its
+    /// Welcome could not be read (§7.13).
     pub(crate) fn show_invites(&mut self) {
-        let invites: Vec<(u64, Option<String>)> = self
+        let invites: Vec<Invite> = self
             .shared
             .store
             .state()
             .invites
             .iter()
             .filter(|i| !self.invites_shown.contains(&i.number))
-            .map(|i| (i.number, i.inviter.clone()))
+            .cloned()
             .collect();
         let me = self.me();
-        for (number, inviter) in invites {
-            self.invites_shown.insert(number);
-            let source = match inviter {
-                Some(uri) => self.shared.names().identity(&uri).mask(),
-                None => self.shared.server.clone(),
+        for invite in invites {
+            self.invites_shown.insert(invite.number);
+            let (source, channel) = {
+                let mut names = self.shared.names();
+                let source = match &invite.inviter {
+                    Some(uri) => names.identity(uri).mask(),
+                    None => self.shared.server.clone(),
+                };
+                (source, names.invite_channel(&invite))
             };
-            self.send(&Out::new(
-                &source,
-                "INVITE",
-                vec![me.nick.clone(), format!("&invite-{number}")],
-            ));
+            self.send(&Out::new(&source, "INVITE", vec![me.nick.clone(), channel]));
         }
     }
 

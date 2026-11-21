@@ -6,10 +6,12 @@
 //! from the feed, as every other connection does. A refused write is told
 //! as a numeric where IRC has one, else as a server NOTICE.
 //!
-//! - `JOIN #name`: a room the user is in is shown; any other name hosts a
-//!   new room named `name` (§7.1). `JOIN &invite-<n>` accepts pending
-//!   invite `n` (§7.5). `JOIN 0` leaves every room shown, each as `PART`
-//!   does (§7.12).
+//! - `JOIN #name`: a room the user is in is shown; the name a pending
+//!   invite is shown under accepts it (§7.13); any other name hosts a new
+//!   room named `name` (§7.1). `JOIN &invite-<n>` accepts pending invite
+//!   `n` (§7.5) and is answered with JOIN and PART of `&invite-<n>`, so
+//!   the client closes that window, before the room's own JOIN. `JOIN 0`
+//!   leaves every room shown, each as `PART` does (§7.12).
 //! - `PART #c`: leaves the room for good (§7.1).
 //! - `PRIVMSG #c`: sends the text; `/me` as ACTION text. To a nick:
 //!   refused with 404, since v1 has no private queries (§7.2); to
@@ -30,7 +32,7 @@ use mimid_agent_store::record::Key;
 
 use crate::conn::{Session, VERSION, one_line};
 use crate::line::{Line, Out};
-use crate::names::{SERVICE_NICK, fold, is_channel_name, parse_user_uri};
+use crate::names::{Held, SERVICE_NICK, fold, is_channel_name, parse_user_uri};
 
 /// Whom a nick or user URI names.
 pub(crate) enum Who {
@@ -135,20 +137,15 @@ impl Session {
                 self.numeric("403", &[target, "No such invite"]);
                 return;
             };
-            let store = self.store();
-            match store.accept_invite(number).await {
-                Ok(uri) => {
-                    self.server_notice(&format!(
-                        "mimid: joining {uri}; its channel follows once the room arrives"
-                    ));
-                    self.save().await;
-                }
-                Err(error) => {
-                    self.numeric(
-                        "403",
-                        &[target, &one_line(&format!("No such invite: {error}"))],
-                    );
-                }
+            if self.accept(number, target).await {
+                // irssi keeps a window for every JOIN it sent until the
+                // server answers it under the same name; without this the
+                // user types into a dead `&invite-<n>` (§7.13;
+                // docs/irc-lessons.md "Answer a JOIN under the name it
+                // asked for").
+                let me = self.me();
+                self.send(&Out::new(&me.mask(), "JOIN", vec![target.to_owned()]));
+                self.part_own(target, "accepted");
             }
             return;
         }
@@ -160,6 +157,18 @@ impl Session {
             // Shown by another connection's change before this one's.
             self.show_room(&key);
             return;
+        }
+        // §7.13: the name of a pending invite accepts it, rather than
+        // hosting a new room (§7.1); the room's JOIN follows when it
+        // arrives.
+        let held = self.shared.names().held(target);
+        match held {
+            Some(Held::Invite(number)) => {
+                self.accept(number, target).await;
+                return;
+            }
+            Some(Held::Joining) => return,
+            None => {}
         }
         if !is_channel_name(target) {
             self.numeric(
@@ -182,6 +191,31 @@ impl Session {
                     "403",
                     &[target, &one_line(&format!("Cannot host the room: {error}"))],
                 );
+            }
+        }
+    }
+
+    /// Accepts pending invite `number`, which the user sent JOIN for as
+    /// `target`; whether it was accepted. The room's JOIN comes when the
+    /// room arrives, under the name the invite held, if any (§7.13).
+    async fn accept(&mut self, number: u64, target: &str) -> bool {
+        self.shared.names().accepting(number, true);
+        let store = self.store();
+        match store.accept_invite(number).await {
+            Ok(uri) => {
+                self.server_notice(&format!(
+                    "mimid: joining {uri}; its channel follows once the room arrives"
+                ));
+                self.save().await;
+                true
+            }
+            Err(error) => {
+                self.shared.names().accepting(number, false);
+                self.numeric(
+                    "403",
+                    &[target, &one_line(&format!("No such invite: {error}"))],
+                );
+                false
             }
         }
     }

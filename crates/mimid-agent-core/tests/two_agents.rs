@@ -240,6 +240,14 @@ async fn two_agents_chat_through_their_server() {
     .await;
     assert_eq!(bob.invites().len(), 1);
     assert_eq!(bob.inviter(number).unwrap(), ALICE);
+    // The room's URI and name, from the staged Welcome, before joining;
+    // reading them uses nothing the join needs (bead mimid-br6m).
+    for _ in 0..2 {
+        let details = bob.invite_details(number).unwrap();
+        assert_eq!(details.inviter, ALICE);
+        assert_eq!(details.room.as_deref(), Some(room.as_str()));
+        assert_eq!(details.room_name.as_deref(), Some("planning"));
+    }
     assert_eq!(bob.join(number).unwrap(), room);
     assert!(bob.invites().is_empty());
     // findings log F9: the handed-out KeyPackage, by KeyPackage/changes.

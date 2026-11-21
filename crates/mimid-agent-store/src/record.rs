@@ -379,6 +379,12 @@ pub struct Invite {
     pub number: u64,
     /// The inviter's user URI, if the Welcome names one.
     pub inviter: Option<String>,
+    /// The room's URI, if the Welcome could be read
+    /// (`Agent::invite_details`).
+    pub room: Option<String>,
+    /// The room's name from the Welcome's room metadata, if it could be
+    /// read and has one.
+    pub room_name: Option<String>,
     /// The invite policy refused it.
     pub refused: bool,
 }
