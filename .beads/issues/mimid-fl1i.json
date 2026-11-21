@@ -2,13 +2,15 @@
   "id": "mimid-fl1i",
   "title": "Last-resort KeyPackages are never handed out (clean-room C7)",
   "description": "C7: contrary to the draft, last-resort KeyPackages are never handed out; noCompatibleMaterial when every client is exhausted. Do after air-impl (Client records) merges.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T19:50:54.397761784Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T19:50:54.397761784Z",
+  "updated_at": "2026-11-21T21:15:29.793453611Z",
+  "closed_at": "2026-11-21T21:15:29.793453611Z",
+  "close_reason": "cc8de774: reuse_last_resort_key_packages defaults to true (last-resort handed out and kept whenever a client has no other); all-exhausted answer is noCompatibleMaterial with each client keyMaterialExhausted (already so; now tested). Reverses mimid-gunw's default; the switch stays.",
   "labels": [
     "server",
     "cleanroom"
