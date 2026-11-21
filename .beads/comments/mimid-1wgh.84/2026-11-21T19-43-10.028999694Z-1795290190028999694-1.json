@@ -1,0 +1,7 @@
+{
+  "id": "1795290190028999694-1",
+  "issue_id": "mimid-1wgh.84",
+  "author": "Mark Atwood",
+  "text": "Mark, 2026-11-21, answering the open question: send read rules in the standard field so other implementations honour them. Delete after read N seconds is expires [true, N]; burn on read is expires [true, 0]; with both, [true, 0] alone (burn wins). Only a message that also has senderExpiresAt, which then takes expires, carries its read rule in the mimid-read-expiry extension. Receiving: relative [true, 0] is burnOnRead, [true, N\u003e0] is expiresAfterReadSeconds N; the extension is still honoured, earlier deadline wins. expiresAfterReadSeconds over a year is now refused at send (invalidProperties), since receivers discard a relative expires over a year (mimi-content-10 §9.1). Pending: whether relative 0 means burn on read is asked of the WG in github.com/ietf-wg-mimi/draft-ietf-mimi-content/issues/93. Code: crates/mimid-agent-store/src/expiry.rs content_options/received; doc: docs/design/agent-frontends.md §7.22; branch read-expires.",
+  "created_at": "2026-11-21T19:43:10.028999694Z"
+}
