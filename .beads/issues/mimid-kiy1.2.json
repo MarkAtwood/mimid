@@ -1,0 +1,22 @@
+{
+  "id": "mimid-kiy1.2",
+  "title": "Bridge step 2: reactions in the store (P2)",
+  "description": "Reactions in mimid-agent-store: receive, send, unreact; JMAP and IRC rendering. See docs/design/marmot-bridge.md (branch bridge-decisions, 1c2b6eba) §5 prerequisites P2, §9 step 2.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:21:01.204103113Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:21:01.204103113Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-kiy1.2",
+      "depends_on_id": "mimid-kiy1",
+      "type": "parent-child",
+      "created_at": "2026-11-21T21:21:01.241342943Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
