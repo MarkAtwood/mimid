@@ -452,7 +452,8 @@ impl Store {
     /// that has none, unless it was deleted here. A record that is leaving
     /// or left, of a room the agent is active in, was joined again (a new
     /// invite): it becomes active, with the room's participants and roles
-    /// as they are now (bead mimid-bmtk).
+    /// as they are now (bead mimid-bmtk). An active record of a room the
+    /// agent is leaving becomes leaving.
     fn reconcile_rooms(&self, agent: &Agent, changes: &mut Vec<Change>) {
         for room in agent.rooms() {
             if room.status == RoomStatus::Left {
@@ -463,6 +464,17 @@ impl Store {
             };
             if room.status == RoomStatus::Active {
                 self.rejoined(agent, &key, &room.uri, changes);
+            } else if room.status == RoomStatus::Leaving {
+                // A leave the agent finished from its outbox (after a crash,
+                // or a lost answer) while Store::leave returned an error
+                // (docs/design/agent-frontends.md §7.19).
+                let mut state = self.state();
+                if let Some(record) = state.rooms.get_mut(&key)
+                    && record.status == Status::Active
+                {
+                    record.status = Status::Leaving;
+                    changes.push(Change::RoomLeft(key.clone()));
+                }
             }
         }
     }

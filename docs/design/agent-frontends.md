@@ -892,11 +892,10 @@ step runs the full check list in AGENTS.md before its commit.
       alias) is not stored again. `Store::send`, `edit` and `retract`
       keep the agent locked until their record or alias is in, so a sync
       cannot store the journal's copy first.
-    - Proposals and external Commits do not go through the outbox: their
-      digests are saved before they leave (so their stored copies are
-      skipped after a crash), and what the agent does next (a room
-      marked as being left, a room joined) can still be lost; listed in
-      outbox.rs Limitations.
+    - Proposals and external Commits did not go through the outbox at
+      first: their digests were saved before they left, and what the agent
+      did next (a room marked as being left, a room joined) could be lost.
+      §7.19 puts them in the outbox too.
     - Receiving: a Message is skipped if its id is among the kept
       `messageIds`, if its digest is the agent's, or if its Chat's last
       handled Message (`State::last_handled`) has an id that does not sort
@@ -1531,6 +1530,55 @@ Added on 2026-11-20:
       bob's JMAP off, turns it on, and requires each Message's
       `receivedAt` to be the record's `received_at`, after the scenario
       began, before the restart and not before `sentAt`.
+
+19. **Proposals and external Commits survive a crash (Mark,
+    2026-11-21).** The send-side fix of §3 step 10 covers every
+    Room/update of the agent, not only member Commits:
+
+    - The outbox has two more kinds (`outbox` table, part `agent`
+      version 3; nothing is converted): `proposals` (a leave: the Remove
+      of this client, the Removes of the user's other clients and the
+      participant-list update; or a credential Update proposal) and
+      `external_commit` (a device joining one of its user's rooms,
+      decision mimid-1wgh.61). Beside the UpdateRequest bytes an entry
+      keeps what the agent records once the hub has them, `finish`: a
+      leave and whether the user was the last participant, or the group
+      ID of the room an external Commit joins.
+    - Before anything leaves, one transaction holds OpenMLS's writes (the
+      proposals it stores in the group; the group the external Commit
+      makes, which OpenMLS has already merged), the digests, and the
+      entry. An external join that fails its checks rolls back, so no
+      group is left behind.
+    - On the answer, one transaction ends the entry. Accepted: a leave
+      marks the room `Leaving` (left at once if the user was alone) and
+      withdraws the acceptance record; an external Commit loads the group,
+      makes the room active from its epoch, replays the messages held for
+      it and journals the membership. Refused: a Commit is cleared, an
+      external Commit's group deleted, proposals leave nothing to undo.
+      No answer: the entry stays, and the room stays as it was (active,
+      or not joined).
+    - On restart or a lost answer `Agent::receive` sends the same bytes
+      first, and the provider answers one its hub already accepted from
+      its record (findings log F11); nothing is built or encrypted again.
+      A second external Commit would put a second leaf of this device in
+      the group, and a second set of proposals would reach the other
+      members twice. `Agent::join_own_rooms` skips a room whose external
+      Commit waits in the outbox, and `Agent::leave` of a room whose
+      leave waits sends that one again.
+    - The store follows the agent: a room the agent is leaving is shown
+      as leaving at the next sync even when `Store::leave` returned an
+      error.
+    - Tests: mimid-agent-store `tests/send_crash.rs`
+      `a_crash_around_leaving_loses_and_repeats_nothing` and
+      `a_crash_around_an_external_join_loses_and_repeats_nothing` fail a
+      leave and an external join at `FailPoint::BeforeSend` and
+      `FailPoint::AfterAccepted`, each with a restart and in the same run.
+      They check that nothing is recorded before the answer; that the
+      leaving room is leaving, then left after bob's Commit, in the agent
+      and the store, with bob alone and no Problem; and that the joining
+      device is in the room at the epoch and epoch authenticator of alice's
+      other device and bob, with two leaves of alice and one of bob, and
+      that messages pass both ways.
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

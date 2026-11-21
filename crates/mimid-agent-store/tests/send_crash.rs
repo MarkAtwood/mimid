@@ -27,6 +27,10 @@
 //! no Problem; after each Commit, alice's and bob's groups are at the
 //! same epoch, one past the epoch before it, and a message sent in it
 //! reaches bob.
+//!
+//! A leave (proposals) and an external Commit fail at the first two
+//! boundaries too (§7.19), each on a server of its own; their oracles are
+//! on the tests.
 
 #![forbid(unsafe_code)]
 
@@ -35,8 +39,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mimid_agent_core::{Agent, AgentConfig, Event, FailPoint, HostOptions};
-use mimid_agent_store::{InvitePolicy, Store};
+use mimid_agent_core::{Agent, AgentConfig, Event, FailPoint, HostOptions, RoomStatus};
+use mimid_agent_store::{InvitePolicy, Store, record};
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
@@ -123,12 +127,17 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
 }
 
 async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
+    device(server, user, dir, user.rsplit('/').next().unwrap()).await
+}
+
+/// `user`'s device whose state directory is `name`.
+async fn device(server: &Server, user: &'static str, dir: &Path, name: &str) -> Agent {
     Agent::open(AgentConfig {
         server_url: server.base.clone(),
         binding: mimid_agent_core::Binding::Jmap,
         token: server.tokens[user].clone(),
         user_uri: user.to_owned(),
-        state_dir: dir.join(user.rsplit('/').next().unwrap()),
+        state_dir: dir.join(name),
         full_tree_hubs: Vec::new(),
         did_webvh: Default::default(),
     })
@@ -139,6 +148,13 @@ async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
 /// alice: her store over her agent, the records in the agent's database.
 async fn open_alice(server: &Server, dir: &Path) -> Store {
     let store = Store::new(agent(server, ALICE, dir).await, InvitePolicy::Any);
+    store.open_database().unwrap();
+    store
+}
+
+/// alice's second device "a2": a store over it, as `open_alice`.
+async fn open_a2(server: &Server, dir: &Path) -> Store {
+    let store = Store::new(device(server, ALICE, dir, "a2").await, InvitePolicy::Any);
     store.open_database().unwrap();
     store
 }
@@ -321,4 +337,213 @@ async fn a_crash_around_sending_loses_and_repeats_nothing() {
     let mut at_bob = received.texts.clone();
     at_bob.sort();
     assert_eq!(at_bob, expected);
+}
+
+/// Where `room` stands for the agent of `store`, and for its record.
+async fn standing(store: &Store, room: &str) -> (Option<RoomStatus>, Option<record::RoomStatus>) {
+    let agent = store
+        .agent()
+        .lock()
+        .await
+        .rooms()
+        .into_iter()
+        .find(|r| r.uri == room)
+        .map(|r| r.status);
+    let state = store.state();
+    let record = state
+        .room_of_uri(room)
+        .and_then(|key| state.rooms.get(key))
+        .map(|r| r.status);
+    (agent, record)
+}
+
+/// Polls `agent` until it is at `epoch` in `room`, for up to ten
+/// seconds; a Problem fails the test.
+async fn until_epoch(agent: &mut Agent, room: &str, epoch: u64, who: &str) {
+    for _ in 0..100 {
+        for event in agent.poll().await.unwrap() {
+            if let Event::Problem { description, .. } = event {
+                panic!("{who}: {description}");
+            }
+        }
+        if agent.epoch(room).ok() == Some(epoch) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("{who} never reached epoch {epoch}");
+}
+
+/// bob joins `room` from alice's invite.
+async fn bob_joins(bob: &mut Agent, received: &mut Received, room: &str) {
+    for _ in 0..100 {
+        received.poll(bob).await;
+        if let Some(invite) = bob.invites().first() {
+            assert_eq!(bob.join(invite.number).unwrap(), room);
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("bob never got the invite");
+}
+
+/// The boundaries of a Room/update: before it is sent, and after the hub
+/// accepted it and before the answer is handled; each with a restart and
+/// in the same run.
+const BOUNDARIES: [(FailPoint, bool); 4] = [
+    (FailPoint::BeforeSend, true),
+    (FailPoint::BeforeSend, false),
+    (FailPoint::AfterAccepted, true),
+    (FailPoint::AfterAccepted, false),
+];
+
+/// A leave (protocol-07 §3.5: proposals, not a Commit;
+/// docs/design/agent-frontends.md §7.19) fails at each boundary; the next
+/// sync sends the same proposals again or takes the provider's recorded
+/// answer (findings log F11), and the room goes leaving, then left when
+/// bob's member commits the leave.
+///
+/// Oracle: alice's agent and her store's record show the room active
+/// before the answer, leaving after the sync that finishes it, and left
+/// after bob's Commit; bob ends alone in the group, with no Problem, which
+/// he would get from a second set of the same proposals.
+#[tokio::test]
+async fn a_crash_around_leaving_loses_and_repeats_nothing() {
+    for (point, restart) in BOUNDARIES {
+        let dir = tempfile::tempdir().unwrap();
+        let server = server(dir.path(), &[ALICE, BOB]).await;
+        let mut bob = agent(&server, BOB, dir.path()).await;
+        bob.publish_key_packages(1).await.unwrap();
+        let mut alice = open_alice(&server, dir.path()).await;
+        let room = {
+            let mut agent = alice.agent().lock().await;
+            let room = agent.host_room(&HostOptions::named("leave")).await.unwrap();
+            agent.invite(&room, BOB).await.unwrap();
+            room
+        };
+        let mut received = Received::default();
+        bob_joins(&mut bob, &mut received, &room).await;
+        alice.sync().await.unwrap();
+        let key = alice.state().room_of_uri(&room).cloned().unwrap();
+
+        alice.agent().lock().await.fail_next(point);
+        assert!(alice.leave(&key).await.is_err(), "{point:?}");
+        assert_eq!(
+            standing(&alice, &room).await,
+            (Some(RoomStatus::Active), Some(record::RoomStatus::Active)),
+            "{point:?}: nothing recorded before the answer"
+        );
+        if restart {
+            drop(alice);
+            alice = open_alice(&server, dir.path()).await;
+        }
+        alice.sync().await.unwrap();
+        assert_eq!(
+            standing(&alice, &room).await,
+            (Some(RoomStatus::Leaving), Some(record::RoomStatus::Leaving)),
+            "{point:?} {restart}: leaving once the hub has the proposals"
+        );
+
+        // bob, the one member left, commits the leave.
+        for _ in 0..100 {
+            received.poll(&mut bob).await;
+            if bob.participants(&room).unwrap() == [BOB] {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(bob.participants(&room).unwrap(), [BOB], "{point:?}");
+        assert_eq!(bob.clients(&room).unwrap().len(), 1, "{point:?}: one leaf");
+        for _ in 0..100 {
+            alice.sync().await.unwrap();
+            if standing(&alice, &room).await.1 == Some(record::RoomStatus::Left) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            standing(&alice, &room).await,
+            (Some(RoomStatus::Left), Some(record::RoomStatus::Left)),
+            "{point:?} {restart}: left after bob's Commit"
+        );
+        received.poll(&mut bob).await;
+    }
+}
+
+/// An external Commit (a second device of alice joining her room,
+/// decision mimid-1wgh.61; docs/design/agent-frontends.md §7.19) fails at
+/// each boundary; the next sync sends the same Commit again or takes the
+/// provider's recorded answer, and the room is joined, never with a
+/// second external Commit.
+///
+/// Oracle: the new device has no room before the answer and the room
+/// after; it, alice's first device and bob reach the same epoch and epoch
+/// authenticator (RFC 9420 §8.7); the group holds two leaves of alice and
+/// one of bob; bob's message reaches the new device's store and the new
+/// device's reaches bob, with no Problem at bob.
+#[tokio::test]
+async fn a_crash_around_an_external_join_loses_and_repeats_nothing() {
+    for (point, restart) in BOUNDARIES {
+        let dir = tempfile::tempdir().unwrap();
+        let server = server(dir.path(), &[ALICE, BOB]).await;
+        let mut bob = agent(&server, BOB, dir.path()).await;
+        bob.publish_key_packages(1).await.unwrap();
+        let mut a1 = device(&server, ALICE, dir.path(), "a1").await;
+        let room = a1.host_room(&HostOptions::named("join")).await.unwrap();
+        a1.invite(&room, BOB).await.unwrap();
+        let mut received = Received::default();
+        bob_joins(&mut bob, &mut received, &room).await;
+        // Records that alice accepted the room (decision mimid-1wgh.63).
+        a1.join_own_rooms().await.unwrap();
+
+        let mut a2 = open_a2(&server, dir.path()).await;
+        a2.agent().lock().await.fail_next(point);
+        let report = a2.sync().await.unwrap();
+        assert!(
+            report.problems.iter().any(|p| p.contains("fail point")),
+            "{point:?}: {report:?}"
+        );
+        assert_eq!(standing(&a2, &room).await, (None, None), "{point:?}");
+        if restart {
+            drop(a2);
+            a2 = open_a2(&server, dir.path()).await;
+        }
+        for _ in 0..100 {
+            a2.sync().await.unwrap();
+            if standing(&a2, &room).await.1 == Some(record::RoomStatus::Active) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            standing(&a2, &room).await,
+            (Some(RoomStatus::Active), Some(record::RoomStatus::Active)),
+            "{point:?} {restart}: joined"
+        );
+        let (epoch, authenticator) = {
+            let agent = a2.agent().lock().await;
+            (
+                agent.epoch(&room).unwrap(),
+                agent.epoch_authenticator(&room).unwrap(),
+            )
+        };
+        until_epoch(&mut a1, &room, epoch, "a1").await;
+        until_epoch(&mut bob, &room, epoch, "bob").await;
+        assert_eq!(a1.epoch_authenticator(&room).unwrap(), authenticator);
+        assert_eq!(bob.epoch_authenticator(&room).unwrap(), authenticator);
+        let clients = bob.clients(&room).unwrap();
+        let of = |user: &str| clients.iter().filter(|c| c.user == user).count();
+        assert_eq!(
+            (of(ALICE), of(BOB)),
+            (2, 1),
+            "{point:?} {restart}: {clients:?}"
+        );
+
+        bob.send_text(&room, "from bob").await.unwrap();
+        sync_until_stored(&a2, "from bob").await;
+        let key = a2.state().room_of_uri(&room).cloned().unwrap();
+        let new_key = a2.new_key();
+        a2.send(new_key, &key, "from a2", &[]).await.unwrap();
+        received.until(&mut bob, "from a2").await;
+    }
 }

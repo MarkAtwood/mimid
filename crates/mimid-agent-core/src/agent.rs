@@ -557,11 +557,13 @@ pub enum FailPoint {
     /// In [`Agent::acknowledge_in`], before the journal entries are
     /// removed in the caller's transaction.
     Acknowledge,
-    /// After an outgoing message or Commit is in the outbox, before it is
-    /// sent: as a crash before the provider has it.
+    /// After an outgoing message, Commit, proposals or external Commit is
+    /// in the outbox, before it is sent: as a crash before the provider
+    /// has it.
     BeforeSend,
-    /// After the provider accepted an outgoing message or Commit, before
-    /// its answer is handled: as a crash that loses the answer.
+    /// After the provider accepted an outgoing message, Commit, proposals
+    /// or external Commit, before its answer is handled: as a crash that
+    /// loses the answer.
     AfterAccepted,
     /// In [`Agent::invite_details`], before the Welcome is staged: as a
     /// Welcome that cannot be read.
@@ -861,8 +863,8 @@ impl Agent {
         #[cfg(not(test))]
         let built = self.build_commit(room, &[], &[], &[], WHAT);
         match built {
-            Ok((request, entry)) => {
-                self.send_commit(room, &request, entry, WHAT).await?;
+            Ok(entry) => {
+                self.send_update(&entry, WHAT, false).await?;
                 Ok(Offered::Committed)
             }
             Err(error) => {
@@ -871,21 +873,29 @@ impl Agent {
                     error = &error as &dyn std::error::Error,
                     "the credential-update Commit cannot be built; proposing an Update instead"
                 );
-                let member = self
-                    .members
-                    .get_mut(room)
-                    .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
-                let proposal = member
-                    .propose_credential_update(&self.identity)
-                    .map_err(|e| AgentError::mls("building the credential Update proposal", e))?;
-                let request = UpdateRequest {
-                    bundle: HandshakeBundle::Proposal {
-                        proposal_or_commit: MLSMessage::tls_deserialize_exact(&proposal[..])
-                            .map_err(|e| AgentError::tls("own Update proposal", e))?,
-                        more_proposals: vec![],
-                    },
-                };
-                self.update_ok(room, &request, "credential Update proposal")
+                // One transaction: the proposal OpenMLS stores and its
+                // outbox entry (module outbox).
+                let entry = self.in_transaction(|agent| {
+                    let member = agent
+                        .members
+                        .get_mut(room)
+                        .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
+                    let proposal =
+                        member
+                            .propose_credential_update(&agent.identity)
+                            .map_err(|e| {
+                                AgentError::mls("building the credential Update proposal", e)
+                            })?;
+                    let request = UpdateRequest {
+                        bundle: HandshakeBundle::Proposal {
+                            proposal_or_commit: MLSMessage::tls_deserialize_exact(&proposal[..])
+                                .map_err(|e| AgentError::tls("own Update proposal", e))?,
+                            more_proposals: vec![],
+                        },
+                    };
+                    agent.queue_update(room, outbox::Kind::Proposals, &request, None)
+                })?;
+                self.send_update(&entry, "credential Update proposal", false)
                     .await?;
                 Ok(Offered::Proposed)
             }
@@ -1616,9 +1626,20 @@ impl Agent {
         let mut outcome = OwnRoomsJoined::default();
         let chats = self.provider.own_chats().await?;
         self.record_acceptance(&chats).await?;
+        // A room whose external Commit is waiting in the outbox for an
+        // answer is finished by the next Agent::receive, never joined again.
+        let waiting: std::collections::BTreeSet<String> = outbox::all(self.connection())
+            .map_err(|e| self.dir.database_error("reading the outbox", e))?
+            .into_iter()
+            .filter(|entry| entry.kind == outbox::Kind::ExternalCommit)
+            .map(|entry| entry.room)
+            .collect();
         let mut rooms = Vec::new();
         for chat in chats {
-            if self.state.rooms.contains_key(&chat.room) || self.not_joinable.contains(&chat.room) {
+            if self.state.rooms.contains_key(&chat.room)
+                || self.not_joinable.contains(&chat.room)
+                || waiting.contains(&chat.room)
+            {
                 continue;
             }
             // Decision mimid-1wgh.63; bead mimid-f2rn.
@@ -1823,34 +1844,54 @@ impl Agent {
             ))));
         }
         let group_info = [GROUP_INFO_HEADER.as_slice(), &group_info].concat();
-        let joined = Member::join_external(
-            &self.identity,
-            &group_info,
-            tbe.ratchet_tree_option.ratchet_tree(),
-        )
-        .map_err(|e| never(AgentError::mls("joining by external Commit", e)))?;
-        let member = joined.member;
-        let sent = match self.check_external_join(room, &member, &success.tbs().hub_sender) {
-            Ok(tree) => match commit_request(&joined.commit_bundle, tree.as_deref()) {
-                Ok(request) => self
-                    .update_ok(room, &request, "external join")
-                    .await
-                    .map_err(later),
-                Err(e) => Err(never(e)),
-            },
-            Err(e) => Err(e),
-        };
-        if let Err(e) = sent {
-            // Nothing of the group is kept, so a later join (a Welcome, or
-            // this again) can be made.
-            forget_group(&self.identity, member);
-            return Err(e);
-        }
+        // One transaction: the group OpenMLS makes and keeps, and the
+        // outbox entry with the external Commit and the room it joins
+        // (module outbox). On an error it is rolled back, so nothing of the
+        // group is kept and a later join (a Welcome, or this again) can be
+        // made.
+        let mut why = NotJoined::Never;
+        let entry = self
+            .in_transaction(|agent| {
+                let joined = Member::join_external(
+                    &agent.identity,
+                    &group_info,
+                    tbe.ratchet_tree_option.ratchet_tree(),
+                )
+                .map_err(|e| AgentError::mls("joining by external Commit", e))?;
+                let tree = agent
+                    .check_external_join(room, &joined.member, &success.tbs().hub_sender)
+                    .map_err(|(e, reason)| {
+                        why = reason;
+                        e
+                    })?;
+                let request = commit_request(&joined.commit_bundle, tree.as_deref())?;
+                let finish = outbox::Finish::Join {
+                    group_id: hex::encode(joined.member.group_id()),
+                };
+                agent.queue_update(room, outbox::Kind::ExternalCommit, &request, Some(&finish))
+            })
+            .map_err(|e| (e, why))?;
+        // The room is joined in the transaction that handles the answer
+        // (Agent::joined_externally); without an answer the entry stays
+        // and the next sync sends the same Commit again.
+        self.send_update(&entry, "external join", false)
+            .await
+            .map_err(later)
+    }
+
+    /// Inside a transaction: the hub accepted the external Commit that
+    /// made group `group_id` (hex) for `room`. The room is joined: the
+    /// group is loaded, the room is active from its epoch on, the messages
+    /// held for it are replayed, and its membership is journaled.
+    fn joined_externally(&mut self, room: &str, group_id: &str) -> Result<(), AgentError> {
+        let id = hex::decode(group_id)
+            .map_err(|_| AgentError::Invalid(format!("outbox group ID {group_id}")))?;
+        let member = Member::load(&self.identity, &id)
+            .map_err(|e| AgentError::mls("loading the group joined by external Commit", e))?;
         let epoch = member.epoch();
-        let group_id = member.group_id().to_vec();
         self.state
             .group_rooms
-            .insert(hex::encode(&group_id), room.to_owned());
+            .insert(group_id.to_owned(), room.to_owned());
         self.members.insert(room.to_owned(), member);
         self.state.rooms.insert(
             room.to_owned(),
@@ -1860,12 +1901,11 @@ impl Agent {
                 joined_epoch: Some(epoch),
             },
         );
-        let held_key = format!("group:{}", hex::encode(&group_id));
+        let held_key = format!("group:{group_id}");
         let (replay, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.state.held)
             .into_iter()
             .partition(|held| held.room == room || held.room == held_key);
         self.state.held = keep;
-        self.save().map_err(later)?;
         let mut events = self.check_contacts(room);
         events.push(Event::MembersChanged {
             room: room.to_owned(),
@@ -1882,7 +1922,7 @@ impl Agent {
         });
         self.replay(room, replay, &mut events);
         self.deliver(events);
-        self.save().map_err(later)
+        Ok(())
     }
 
     /// The checks of decision mimid-1wgh.61 item 3 on a group joined by
@@ -2214,6 +2254,7 @@ impl Agent {
                 &ciphertext,
                 Some(&bytes),
                 &[],
+                None,
             )
             .map_err(|e| agent.dir.database_error("writing the outbox", e))?;
             Ok((message, entry))
@@ -2248,13 +2289,31 @@ impl Agent {
     /// member commits them ([`Event::Left`]); if this user is the last
     /// participant the room is left at once.
     ///
+    /// The proposals go through the outbox (module outbox): they are
+    /// stored in the group and written there with the leave in one
+    /// transaction, and the room goes `Leaving` in the transaction that
+    /// handles the hub's answer. Without an answer the room stays active
+    /// and the next [`Agent::receive`], or the next call of this, sends the
+    /// same proposals again.
+    ///
     /// # Errors
     ///
-    /// [`AgentError::NoSuchRoom`] if the room is not active, and the hub's
-    /// refusal.
+    /// [`AgentError::NoSuchRoom`] if the room is not active, the hub's
+    /// refusal, and the errors of reaching the server.
     pub async fn leave(&mut self, room: &str) -> Result<(), AgentError> {
         if self.state.rooms.get(room).map(|r| r.status) != Some(RoomStatus::Active) {
             return Err(AgentError::NoSuchRoom(room.to_owned()));
+        }
+        // A leave an earlier call left without an answer is sent again,
+        // not built again.
+        let waiting = outbox::all(self.connection())
+            .map_err(|e| self.dir.database_error("reading the outbox", e))?
+            .into_iter()
+            .find(|entry| {
+                entry.room == room && matches!(entry.finish, Some(outbox::Finish::Leave { .. }))
+            });
+        if let Some(entry) = waiting {
+            return self.send_update(&entry, "leave", false).await;
         }
         let list = participants(self.member(room)?)?;
         let index = list
@@ -2264,6 +2323,24 @@ impl Agent {
         let alone = list.len() == 1;
         let index = u32::try_from(index)
             .map_err(|_| AgentError::Invalid("participant index".to_owned()))?;
+        // One transaction: the proposals OpenMLS stores and the outbox
+        // entry with the leave.
+        let entry = self.in_transaction(|agent| {
+            let request = agent.leave_request(room, index)?;
+            agent.queue_update(
+                room,
+                outbox::Kind::Proposals,
+                &request,
+                Some(&outbox::Finish::Leave { alone }),
+            )
+        })?;
+        self.send_update(&entry, "leave", false).await
+    }
+
+    /// The UpdateRequest of a leave of `room` (see [`Agent::leave`]), the
+    /// user at `index` in its participant list; the proposals are stored
+    /// in the group.
+    fn leave_request(&mut self, room: &str, index: u32) -> Result<UpdateRequest, AgentError> {
         let member = self
             .members
             .get_mut(room)
@@ -2302,20 +2379,7 @@ impl Agent {
                     .map_err(|e| AgentError::tls("own proposal", e))?,
             },
         };
-        self.update_ok(room, &request, "leave").await?;
-        if let Some(r) = self.state.rooms.get_mut(room) {
-            r.status = RoomStatus::Leaving;
-        }
-        self.withdraw(room);
-        self.save()?;
-        if alone {
-            self.finish_leaving(room);
-            self.deliver(vec![Event::Left {
-                room: room.to_owned(),
-            }]);
-            self.save()?;
-        }
-        Ok(())
+        Ok(request)
     }
 
     /// The participant list of an active room with each participant's
@@ -3087,33 +3151,31 @@ impl Agent {
         }
     }
 
-    /// Room/update with `request`, a proposal or an external Commit, whose
-    /// digests are saved before it leaves, so that its stored copy is
-    /// skipped even after a crash; anything but success is
-    /// [`AgentError::Refused`]. A Commit of a member goes through the
-    /// outbox instead ([`Agent::send_commit`]).
-    async fn update_ok(
+    /// Puts `request`, proposals or an external Commit of this device
+    /// (`kind`), in the outbox inside the caller's transaction, with what
+    /// to record once the hub has it (module outbox). Its digests are kept
+    /// with the state, so its stored copy is skipped.
+    fn queue_update(
         &mut self,
         room: &str,
+        kind: outbox::Kind,
         request: &UpdateRequest,
-        what: &str,
-    ) -> Result<(), AgentError> {
+        finish: Option<&outbox::Finish>,
+    ) -> Result<outbox::Pending, AgentError> {
+        let wire = encode(request)?;
         self.remember_request(request);
         self.state.sent = self.provider.sent_digests();
-        self.save()?;
-        let (response, ids) = self.provider.update(room, request).await?;
-        match response.result {
-            UpdateResult::Success { .. } => {
-                self.remember_ids(&ids);
-                self.save()
-            }
-            other => Err(AgentError::Refused {
-                what: format!("{what} in {room}"),
-                reason: format!("{other:?} {}", response.error_description.as_str())
-                    .trim()
-                    .to_owned(),
-            }),
-        }
+        let id = outbox::insert(self.connection(), room, kind, &wire, None, &[], finish)
+            .map_err(|e| self.dir.database_error("writing the outbox", e))?;
+        Ok(outbox::Pending {
+            id,
+            room: room.to_owned(),
+            kind,
+            wire,
+            content: None,
+            removed: Vec::new(),
+            finish: finish.cloned(),
+        })
     }
 
     /// A Commit with `adds`, `removes` and `updates`, sent and merged; on a
@@ -3126,14 +3188,14 @@ impl Agent {
         updates: &[AppDataUpdate],
         what: &str,
     ) -> Result<(), AgentError> {
-        let (request, entry) = self.build_commit(room, adds, removes, updates, what)?;
-        self.send_commit(room, &request, entry, what).await
+        let entry = self.build_commit(room, adds, removes, updates, what)?;
+        self.send_update(&entry, what, false).await
     }
 
     /// Builds a Commit with `adds`, `removes` and `updates`, left pending,
     /// as the UpdateRequest that carries it, and puts it in the outbox, in
-    /// one transaction (module outbox); returns the request and its
-    /// outbox entry. Nothing is pending on an error.
+    /// one transaction (module outbox); returns the outbox entry. Nothing
+    /// is pending on an error.
     fn build_commit(
         &mut self,
         room: &str,
@@ -3141,7 +3203,7 @@ impl Agent {
         removes: &[u32],
         updates: &[AppDataUpdate],
         what: &str,
-    ) -> Result<(UpdateRequest, i64), AgentError> {
+    ) -> Result<outbox::Pending, AgentError> {
         self.in_transaction(|agent| {
             let member = agent
                 .members
@@ -3165,49 +3227,89 @@ impl Agent {
             let wire = encode(&request)?;
             agent.remember_request(&request);
             agent.state.sent = agent.provider.sent_digests();
-            let entry = outbox::insert(
+            let id = outbox::insert(
                 agent.connection(),
                 room,
                 outbox::Kind::Commit,
                 &wire,
                 None,
                 &removed,
+                None,
             )
             .map_err(|e| agent.dir.database_error("writing the outbox", e))?;
-            Ok((request, entry))
+            Ok(outbox::Pending {
+                id,
+                room: room.to_owned(),
+                kind: outbox::Kind::Commit,
+                wire,
+                content: None,
+                removed,
+                finish: None,
+            })
         })
     }
 
-    /// Sends the pending Commit `request` built by [`Agent::build_commit`]
-    /// as outbox `entry`, and merges it when the hub accepts it; on a
-    /// refusal the pending Commit is cleared. When the outcome is unknown
-    /// (no answer), both stay, and the next sync sends the same bytes
-    /// again ([`Agent::finish_outbox`]).
-    async fn send_commit(
+    /// Sends outbox entry `entry`, a Room/update (a Commit, proposals or
+    /// an external Commit of this device), and ends it as the hub answers,
+    /// in one transaction: [`Agent::update_accepted`], or
+    /// [`Agent::update_refused`]. Without an answer (an error reaching the
+    /// server) the entry stays, with what it left in the group, and the
+    /// next sync sends the same bytes again ([`Agent::finish_outbox`]).
+    /// `again` is for an entry an earlier attempt left: a refusal is then
+    /// an [`Event::Problem`], not an error, and a finished Commit's new
+    /// membership is journaled, since no caller is left to report it.
+    async fn send_update(
         &mut self,
-        room: &str,
-        request: &UpdateRequest,
-        entry: i64,
+        entry: &outbox::Pending,
         what: &str,
+        again: bool,
     ) -> Result<(), AgentError> {
+        let Ok(request) = UpdateRequest::tls_deserialize_exact(&entry.wire[..]) else {
+            return self.in_transaction(|agent| {
+                agent.update_refused(entry)?;
+                agent.give_up(entry.id, &entry.room, "it does not decode")
+            });
+        };
         #[cfg(feature = "fail-points")]
-        self.fail_at(FailPoint::BeforeSend)?;
-        let (response, ids) = self.provider.update(room, request).await?;
+        if !again {
+            self.fail_at(FailPoint::BeforeSend)?;
+        }
+        let (response, ids) = self.provider.update(&entry.room, &request).await?;
         #[cfg(feature = "fail-points")]
-        self.fail_at(FailPoint::AfterAccepted)?;
-        match response.result {
-            UpdateResult::Success { accepted_timestamp } => self.in_transaction(|agent| {
-                agent.commit_accepted(entry, &ids, false, accepted_timestamp)
-            }),
-            other => {
-                self.in_transaction(|agent| agent.commit_refused(entry))?;
-                Err(AgentError::Refused {
-                    what: format!("{what} in {room}"),
-                    reason: format!("{other:?} {}", response.error_description.as_str())
-                        .trim()
-                        .to_owned(),
-                })
+        if !again {
+            self.fail_at(FailPoint::AfterAccepted)?;
+        }
+        if let UpdateResult::Success { accepted_timestamp } = &response.result {
+            let accepted_at = *accepted_timestamp;
+            return self
+                .in_transaction(|agent| agent.update_accepted(entry, &ids, again, accepted_at));
+        }
+        let reason = format!(
+            "{:?} {}",
+            response.result,
+            response.error_description.as_str()
+        )
+        .trim()
+        .to_owned();
+        self.in_transaction(|agent| {
+            agent.update_refused(entry)?;
+            if again {
+                agent.give_up(
+                    entry.id,
+                    &entry.room,
+                    &format!("the hub refused it: {reason}"),
+                )
+            } else {
+                Ok(())
             }
+        })?;
+        if again {
+            Ok(())
+        } else {
+            Err(AgentError::Refused {
+                what: format!("{what} in {}", entry.room),
+                reason,
+            })
         }
     }
 
@@ -3252,32 +3354,14 @@ impl Agent {
                         Err(e) => return Err(e),
                     }
                 }
-                outbox::Kind::Commit => {
-                    let Ok(request) = UpdateRequest::tls_deserialize_exact(&entry.wire[..]) else {
-                        self.in_transaction(|agent| {
-                            agent.commit_refused(id)?;
-                            agent.give_up(id, &entry.room, "it does not decode")
-                        })?;
-                        continue;
-                    };
-                    let (response, ids) = self.provider.update(&entry.room, &request).await?;
-                    if let UpdateResult::Success { accepted_timestamp } = response.result {
-                        self.in_transaction(|agent| {
-                            agent.commit_accepted(id, &ids, true, accepted_timestamp)
-                        })?;
-                    } else {
-                        let reason = format!("{:?}", response.result);
-                        self.in_transaction(|agent| {
-                            agent.commit_refused(id)?;
-                            agent.give_up(id, &entry.room, &format!("the hub refused it: {reason}"))
-                        })?;
-                    }
+                outbox::Kind::Commit | outbox::Kind::Proposals | outbox::Kind::ExternalCommit => {
+                    self.send_update(&entry, "a Room/update", true).await?;
                 }
             }
             tracing::info!(
                 name: "agent_outbox_finished",
                 room = entry.room,
-                "a message or Commit left by an earlier attempt was sent again"
+                "a message, Commit or proposals left by an earlier attempt was sent again"
             );
         }
         Ok(())
@@ -3351,17 +3435,76 @@ impl Agent {
         self.drop_outbox(entry)
     }
 
-    /// Inside a transaction: the hub refused the Commit of outbox entry
-    /// `entry`; it is cleared from its group, and the entry leaves the
-    /// outbox.
-    fn commit_refused(&mut self, entry: i64) -> Result<(), AgentError> {
-        if let Some(pending) = outbox::get(self.connection(), entry)
-            .map_err(|e| self.dir.database_error("reading the outbox", e))?
-            && let Some(member) = self.members.get_mut(&pending.room)
-        {
-            let _ = member.clear_pending_commit(&self.identity);
+    /// Inside a transaction: the hub accepted the Room/update of outbox
+    /// entry `entry`, whose stored copies have `ids`. A Commit is merged
+    /// ([`Agent::commit_accepted`]); after a leave's proposals the room is
+    /// being left, or left at once if the user was its last participant;
+    /// after an external Commit the room is joined
+    /// ([`Agent::joined_externally`]). The entry leaves the outbox.
+    /// `accepted_at` is the hub's `accepted_timestamp` (protocol-07 §5.3).
+    fn update_accepted(
+        &mut self,
+        entry: &outbox::Pending,
+        ids: &[String],
+        again: bool,
+        accepted_at: u64,
+    ) -> Result<(), AgentError> {
+        let room = entry.room.as_str();
+        match (entry.kind, &entry.finish) {
+            (outbox::Kind::Commit, _) => {
+                return self.commit_accepted(entry.id, ids, again, accepted_at);
+            }
+            (outbox::Kind::Proposals, Some(outbox::Finish::Leave { alone })) => {
+                if let Some(r) = self.state.rooms.get_mut(room)
+                    && r.status == RoomStatus::Active
+                {
+                    r.status = RoomStatus::Leaving;
+                    self.withdraw(room);
+                    if *alone {
+                        self.finish_leaving(room);
+                        self.deliver(vec![Event::Left {
+                            room: room.to_owned(),
+                        }]);
+                    }
+                }
+            }
+            (outbox::Kind::ExternalCommit, Some(outbox::Finish::Join { group_id })) => {
+                self.joined_externally(room, group_id)?;
+            }
+            // A credential Update proposal: nothing more to record.
+            (outbox::Kind::Proposals, _) => {}
+            (kind, finish) => {
+                return Err(AgentError::Invalid(format!(
+                    "outbox entry {} is {kind:?} with {finish:?}",
+                    entry.id
+                )));
+            }
         }
-        self.drop_outbox(entry)
+        self.remember_ids(ids);
+        self.drop_outbox(entry.id)
+    }
+
+    /// Inside a transaction: the hub refused the Room/update of outbox
+    /// entry `entry`, or it cannot be sent. A Commit is cleared from its
+    /// group, and the group an external Commit made is deleted; proposals
+    /// leave nothing to undo here. The entry leaves the outbox.
+    fn update_refused(&mut self, entry: &outbox::Pending) -> Result<(), AgentError> {
+        match (entry.kind, &entry.finish) {
+            (outbox::Kind::Commit, _) => {
+                if let Some(member) = self.members.get_mut(&entry.room) {
+                    let _ = member.clear_pending_commit(&self.identity);
+                }
+            }
+            (outbox::Kind::ExternalCommit, Some(outbox::Finish::Join { group_id })) => {
+                if let Ok(id) = hex::decode(group_id)
+                    && let Ok(member) = Member::load(&self.identity, &id)
+                {
+                    forget_group(&self.identity, member);
+                }
+            }
+            _ => {}
+        }
+        self.drop_outbox(entry.id)
     }
 
     /// Inside a transaction: outbox entry `entry` of `room` is given up,
