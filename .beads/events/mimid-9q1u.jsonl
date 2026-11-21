@@ -1,3 +1,4 @@
 {"id":"01a1ffa9-6485-7ef1-9fe0-87f394f4d641","issue_id":"mimid-9q1u","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-21T19:50:53.829979947Z"}
 {"id":"01a1ffa9-6489-7d3f-83ce-f64296e75b27","issue_id":"mimid-9q1u","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: server","created_at":"2026-11-21T19:50:53.833868564Z"}
 {"id":"01a1ffa9-648d-7bec-9f63-ceab2536941c","issue_id":"mimid-9q1u","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: cleanroom","created_at":"2026-11-21T19:50:53.837781678Z"}
+{"id":"01a1ffc8-8957-75fc-b9d2-4e76f738913c","issue_id":"mimid-9q1u","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Fixed in 12669fa (branch cleanroom-bugs): shutdown bounded by a 10 s grace; a stuck in-flight request held the process after SIGTERM/SIGINT. EventSource/live streams already ended at once.","created_at":"2026-11-21T20:24:54.871392875Z"}
