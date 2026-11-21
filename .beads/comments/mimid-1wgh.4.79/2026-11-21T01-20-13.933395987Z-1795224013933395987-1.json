@@ -1,0 +1,7 @@
+{
+  "id": "1795224013933395987-1",
+  "issue_id": "mimid-1wgh.4.79",
+  "author": "Mark Atwood",
+  "text": "2026-11-21 (Mark): we are adding SemiPrivateMessage, no longer 'adopt later'. At IETF 127 MLS (#mls 253967/253979) Mark told the WG mimid implements it; the chairs recorded 'draft-mahy-mls-semiprivatemessage: 1 implementation + mimid' and are sending a WG adoption call to mls@. Code today still rejects it (crates/mimi-mls/src/member.rs:16, crates/mimi-protocol/src/lib.rs:72, notify.rs:25). Split agreed with Jason Bolduc (Haven, 2026-11-20): mimid builds the member side (.79.1, .79.3, in MlsGroup); Haven builds the external receiver on PublicGroup and PRs it to mimid's OpenMLS fork; shared test vectors with key rotation; settle draft issue #2 (component, 0x0007 clash) first, then one OpenMLS issue before code. Spec gaps: mimid-1wgh.44.22.",
+  "created_at": "2026-11-21T01:20:13.933395987Z"
+}
