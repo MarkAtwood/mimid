@@ -1,0 +1,16 @@
+{
+  "id": "mimid-s4oy",
+  "title": "purple-mimi: a libpurple (Pidgin) protocol plugin for MIMI via mimid",
+  "description": "Mark 2026-11-21. A libpurple protocol plugin so Pidgin (and other libpurple clients: Finch, bitlbee, Spectrum2) can use MIMI rooms through mimid. Context: client-survey.md (XMPP front end mimid-wmdj also serves Pidgin via its XMPP plugin; IRC v2 mimid-i0id already works with Pidgin's IRC plugin). Note: the CBOR live stream (docs/design/binary-live-stream.md) is agent\u003c-\u003eprovider, not a local client protocol; the agent's local protocols today are JMAP Chat and IRC. The plugin's protocol is decided in step 2.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:31:40.459932442Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:31:40.459932442Z",
+  "labels": [
+    "client",
+    "purple"
+  ]
+}
