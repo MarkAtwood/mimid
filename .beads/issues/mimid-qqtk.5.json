@@ -1,0 +1,25 @@
+{
+  "id": "mimid-qqtk.5",
+  "title": "Attachment URLs for front ends: per-blob token URL with expiry on the agent's HTTP listener",
+  "description": "For IRC v2 and Matrix: a link a client can fetch without the bearer header.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-21T21:22:56.898818503Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-21T21:22:56.898818503Z",
+  "labels": [
+    "agent"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-qqtk.5",
+      "depends_on_id": "mimid-qqtk",
+      "type": "parent-child",
+      "created_at": "2026-11-21T21:22:56.96101934Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
