@@ -3,8 +3,9 @@
 //! and refused requests, IRC connections with a right and a wrong `PASS`,
 //! sync, the server's EventSource opened, lost, refused and opened again,
 //! and shutdown, contains neither the local token nor the user's
-//! token at the server, and has the start event with both listen
-//! addresses.
+//! token at the server, nor an app password in any spelling it was used
+//! in (as PASS and as a bearer token) or any SCRAM value, and has the
+//! start event with both listen addresses.
 
 #![forbid(unsafe_code)]
 
@@ -57,6 +58,19 @@ async fn no_token_reaches_the_log() {
     });
     let alice = Running::start(&alice_config).await;
     let token = alice.token();
+    // An app password, used as PASS (spelled loudly) and as a bearer token.
+    let (_, password) = alice.store_credentials().add("canary", "cli").unwrap();
+    let password = password.shown().to_owned();
+    let loud = password.to_ascii_uppercase();
+    let bearer = reqwest::Client::new()
+        .get(format!("{}/.well-known/jmap", alice.base()))
+        .bearer_auth(&password)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bearer.status(), 200);
+    let (mut by_password, _) = Irc::register(alice.irc.unwrap(), &loud, "alice", &[]).await;
+    by_password.send("QUIT").await;
     let client = alice.client().await;
     client.create("ChatContact", json!({"identity": BOB})).await;
     let refused = reqwest::Client::new()
@@ -105,6 +119,24 @@ async fn no_token_reaches_the_log() {
     assert!(log.contains("following the server's EventSource"), "{log}");
     assert!(log.contains("the server's EventSource is"), "{log}");
     assert!(!log.contains(&token), "the local token is in the log");
+    for spelling in [
+        &password,
+        &loud,
+        &password.replace('-', ""),
+        &loud.replace('-', ""),
+    ] {
+        assert!(
+            !log.contains(spelling.as_str()),
+            "the app password is in the log"
+        );
+    }
+    assert!(!log.contains("PBKDF2"), "{log}");
+    for scram in ["r=", "s=", "p=", "v="] {
+        assert!(
+            !log.lines().any(|l| l.contains(&format!(",{scram}"))),
+            "a SCRAM message is in the log"
+        );
+    }
     assert!(
         !log.contains(&server.tokens[ALICE]),
         "the server token is in the log"

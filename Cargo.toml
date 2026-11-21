@@ -51,3 +51,11 @@ openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev 
 openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
 openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
 openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
+
+# PBKDF2 of the agent's SCRAM verifiers (mimid-agent-store credentials,
+# 4,096 HMAC-SHA-256 rounds per login) takes about 0.2 s unoptimised;
+# the tests log in hundreds of times.
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3

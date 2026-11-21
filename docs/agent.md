@@ -33,6 +33,14 @@ On first start the agent writes a token of its own to `<state_dir>/agent-token` 
 
 A client running as the same user reads it from that file.
 
+The agent token is one credential among the agent's app passwords (see [App passwords](#app-passwords)); every front end takes either. The agent keeps, for each, only a SCRAM-SHA-256 verifier in `mimid.sqlite`.
+
+## App passwords
+
+An app password is a secret the agent makes for one device or client: 16 lowercase letters shown in four groups of four, `kqzv-trwm-hpaf-dnye`. It is shown once and the agent keeps no copy. Every front end takes it wherever it takes the agent token. When typed, case, spaces and hyphens do not matter (`KQZV TRWM HPAF DNYE` works), except with SCRAM, which needs the form shown, hyphens included.
+
+The agent stores each credential, the agent token included, as a SCRAM-SHA-256 verifier (4,096 iterations) in the `credentials` table of `mimid.sqlite`. At most 64 are unrevoked at once. A revoked one is listed for 30 days, then deleted. Design: docs/design/frontend-auth.md §3.
+
 ## The configuration file
 
 The file is TOML. Parsing is strict: an unknown key in any table is an error, and so is a missing required key. Put every top-level key before the first `[table]` line; in TOML a key written after `[irc]` belongs to `[irc]`.

@@ -310,6 +310,15 @@ impl Running {
         }
     }
 
+    /// The daemon's credential table through a connection of its own, as
+    /// the `app-password` CLI opens it.
+    pub fn store_credentials(&self) -> mimid_agent_store::credentials::Credentials {
+        mimid_agent_store::credentials::Credentials::open(
+            &self.state_dir.join(mimid_agent::DATABASE_FILE),
+        )
+        .unwrap()
+    }
+
     /// The local bearer token, read from the state directory as a client
     /// would.
     pub fn token(&self) -> String {

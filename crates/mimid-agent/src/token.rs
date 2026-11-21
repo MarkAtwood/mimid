@@ -107,6 +107,12 @@ impl LocalToken {
         mac.finalize().into_bytes().into()
     }
 
+    /// The token's octets, for the credential table
+    /// (`mimid_agent_store::credentials`, which keeps only its verifier).
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
     /// Whether `presented` is this token, compared in constant time (a
     /// length mismatch shows only that the length differs).
     pub fn matches(&self, presented: &[u8]) -> bool {

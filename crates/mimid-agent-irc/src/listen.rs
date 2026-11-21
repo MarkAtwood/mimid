@@ -13,7 +13,8 @@ use tokio::task::JoinSet;
 
 use crate::conn::{Shared, run, stopped};
 use crate::names::Names;
-use crate::{IrcError, IrcOptions, PasswordCheck};
+use crate::{IrcError, IrcOptions};
+use mimid_agent_store::credentials::Credentials;
 
 /// The IRC front end over one store, bound and not yet serving.
 pub struct IrcFrontEnd {
@@ -84,7 +85,8 @@ impl IrcFrontEnd {
     /// Binds `options.listen`, which must be loopback, and registers the
     /// front end on `store`: the names of every person and active room are
     /// read from the records, and those that have none are given one,
-    /// written at the next save. `password` checks a client's `PASS`.
+    /// written at the next save. A client logs in with one of
+    /// `credentials`.
     ///
     /// # Errors
     ///
@@ -92,7 +94,7 @@ impl IrcFrontEnd {
     pub async fn bind(
         store: Arc<Store>,
         options: IrcOptions,
-        password: PasswordCheck,
+        credentials: Arc<Credentials>,
     ) -> Result<Self, IrcError> {
         if !options.listen.ip().is_loopback() {
             return Err(IrcError::NotLoopback(options.listen));
@@ -109,7 +111,7 @@ impl IrcFrontEnd {
         store.add_frontend(Arc::new(IrcExt {
             names: Arc::clone(&names),
         }));
-        let shared = Arc::new(Shared::new(store, names, options, password));
+        let shared = Arc::new(Shared::new(store, names, options, credentials));
         Ok(Self {
             listener,
             local_addr,

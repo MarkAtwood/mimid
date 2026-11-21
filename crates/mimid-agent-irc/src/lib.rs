@@ -14,9 +14,13 @@
 //!
 //! # The server
 //!
-//! - **Authentication**: the client sends the agent's local token as its
-//!   server password (`PASS`); the check is the daemon's, in constant
-//!   time. A wrong or missing token gets 464 and `ERROR :Closing Link`.
+//! - **Authentication** (docs/design/frontend-auth.md §4.1): the client
+//!   sends a credential, the agent token or an app password, as its
+//!   server password (`PASS`); the daemon hands the front end its
+//!   credential table ([`mimid_agent_store::credentials::Credentials`]),
+//!   whose check is the one at this boundary. A wrong or missing one gets
+//!   464 and `ERROR :Closing Link`. The connection keeps which credential
+//!   it logged in with.
 //!   Before registration only `CAP`, `PASS`, `NICK`, `USER`, `PING`,
 //!   `PONG` and `QUIT` are read, and a first line that looks like HTTP
 //!   closes the connection. No line is ever logged. There is no SASL.
@@ -86,7 +90,6 @@ mod render;
 mod service;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 pub use listen::IrcFrontEnd;
@@ -99,10 +102,6 @@ pub const DEFAULT_PING_AFTER: Duration = Duration::from_secs(90);
 /// the connection; also how long a client has to register. INVENTED
 /// VALUE, NOT FROM SPEC.
 pub const DEFAULT_PONG_WITHIN: Duration = Duration::from_secs(90);
-
-/// The check of a client's `PASS`: whether the octets are the local
-/// token. The daemon's, so the check stays at one place per boundary.
-pub type PasswordCheck = Arc<dyn Fn(&[u8]) -> bool + Send + Sync>;
 
 /// How the IRC front end serves.
 #[derive(Debug, Clone, PartialEq, Eq)]

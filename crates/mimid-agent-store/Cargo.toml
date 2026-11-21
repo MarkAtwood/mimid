@@ -9,6 +9,11 @@ description = "The plaintext layer of mimid-agent, shared by its front ends: blo
 # No crate-jmap and no IRC code (docs/design/agent-frontends.md §2): the
 # front ends depend on this crate, never the other way.
 [dependencies]
+# SCRAM messages carry base64 (credentials::scram); the version mimid uses.
+base64 = "=0.22.1"
+# App passwords, the SCRAM salt and nonces (credentials); already in the
+# lockfile.
+getrandom = "=0.3.4"
 mimid-agent-core = { path = "../mimid-agent-core" }
 mimi-content = { path = "../mimi-content" }
 # The store's database: the rusqlite openmls_sqlite_storage (mimi-mls's
@@ -21,8 +26,11 @@ serde_json.workspace = true
 hmac.workspace = true
 # Blob ids and notice keys are SHA-256 digests.
 sha2.workspace = true
+# Constant-time comparison of SCRAM keys (credentials); already in the
+# lockfile.
+subtle = "=2.6.1"
 thiserror.workspace = true
-# Only the async Mutex around the Agent.
+# The async Mutex around the Agent, and the watch of credential changes.
 tokio = { version = "1.53.3", default-features = false, features = ["sync"] }
 tracing.workspace = true
 # The version mimid-server and mimid-agent-jmap use.

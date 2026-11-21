@@ -13,6 +13,7 @@ use mimid_agent_core::push::PushSource;
 use mimid_agent_core::{Agent, AgentConfig, AgentError};
 use mimid_agent_irc::{IrcFrontEnd, IrcOptions};
 use mimid_agent_jmap::{AgentChat, BlobStore, Options};
+use mimid_agent_store::credentials::Credentials;
 use mimid_agent_store::{Store, SyncReport};
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, broadcast, watch};
@@ -90,6 +91,9 @@ pub enum StartError {
     /// The local token could not be made or read.
     #[error("the local token")]
     LocalToken(#[from] TokenError),
+    /// The credential table (`mimid.sqlite`) could not be opened.
+    #[error("opening the credential table")]
+    Credentials(#[from] mimid_agent_store::credentials::CredentialError),
     /// The agent could not be opened (state directory, server Session).
     #[error("opening the agent")]
     Agent(#[from] AgentError),
@@ -150,6 +154,12 @@ impl Daemon {
         })
         .await?;
         top_up_key_packages(&mut agent, config.key_packages).await;
+        // docs/design/frontend-auth.md §3: the one credential check of
+        // every front end; the agent token is one credential (§3.4).
+        let credentials = Arc::new(Credentials::open(
+            &config.state_dir.join(mimid_agent_core::DATABASE_FILE),
+        )?);
+        credentials.set_agent_token(token.as_bytes())?;
         let push = agent.push_source()?;
         let stream_wake = agent.stream_wake();
         let listener = match config.listen {
@@ -201,7 +211,7 @@ impl Daemon {
                 ));
                 let (changes, _) = broadcast::channel(CHANGE_BUFFER);
                 let endpoint = Arc::new(Endpoint {
-                    token: token.clone(),
+                    credentials: Arc::clone(&credentials),
                     store: Arc::clone(&store),
                     jmap,
                     in_flight: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
@@ -224,15 +234,14 @@ impl Daemon {
         };
         let irc = match &config.irc {
             Some(setting) => {
-                // docs/design/agent-frontends.md §4: the IRC client's PASS
-                // is the local token, compared in constant time; the one
-                // check at the IRC boundary (AGENTS.md).
-                let token = token.clone();
+                // docs/design/frontend-auth.md §4.1: the IRC client's PASS
+                // is any credential; the one check at the IRC boundary
+                // (AGENTS.md).
                 Some(
                     IrcFrontEnd::bind(
                         Arc::clone(&store),
                         IrcOptions::new(setting.listen, setting.server_name.clone()),
-                        Arc::new(move |presented: &[u8]| token.matches(presented)),
+                        Arc::clone(&credentials),
                     )
                     .await?,
                 )

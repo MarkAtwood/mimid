@@ -37,8 +37,11 @@
 //!    `Access-Control-Allow-Credentials`: authentication is a bearer
 //!    header, not cookies.
 //! 3. **The bearer token**: every other request, on every path but an
-//!    attachment link's, must carry `Authorization: Bearer <local
-//!    token>`, or it is `401` with an RFC 7807 body. An attachment link
+//!    attachment link's, must carry `Authorization: Bearer <secret>`,
+//!    where the secret is any unrevoked credential: the agent token or an
+//!    app password (`mimid_agent_store::credentials`,
+//!    `Credentials::check_bearer`, docs/design/frontend-auth.md §4.2), or
+//!    it is `401` with an RFC 7807 body. An attachment link
 //!    (`GET /attachment/...`) is authorized by its own MAC instead, which
 //!    its route checks (`mimid_agent_store::links::AttachmentLinks::check`).
 //!
@@ -122,7 +125,7 @@ use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{Notify, Semaphore, broadcast, mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::token::LocalToken;
+use mimid_agent_store::credentials::Credentials;
 use mimid_agent_store::links::LINK_PATH;
 
 /// Resolves once `stop` is true (or its sender is gone). The `Ref`
@@ -228,7 +231,8 @@ const NOT_FOUND_BODY: &str = r#"{"type":"about:blank","title":"Not Found","statu
 
 /// What the routes share.
 pub(crate) struct Endpoint {
-    pub(crate) token: LocalToken,
+    /// The credentials a bearer token is checked against.
+    pub(crate) credentials: Arc<Credentials>,
     /// The plaintext store the front ends share.
     pub(crate) store: Arc<Store>,
     /// The JMAP Chat front end; `None` with `[jmap] enabled = false`.
@@ -399,9 +403,15 @@ async fn guard(State(endpoint): State<Arc<Endpoint>>, request: Request, next: Ne
     // (mimid_agent_store::links); it needs no bearer token.
     let link = request.method() == Method::GET
         && request.uri().path().starts_with(&format!("{LINK_PATH}/"));
-    let mut response = if link
-        || bearer_token(request.headers()).is_some_and(|token| endpoint.token.matches(token))
-    {
+    let login = if link {
+        None
+    } else {
+        bearer_token(request.headers()).and_then(|token| endpoint.credentials.check_bearer(token))
+    };
+    if let Some(login) = &login {
+        endpoint.credentials.note_used(login.id, "jmap");
+    }
+    let mut response = if link || login.is_some() {
         next.run(request).await
     } else {
         tracing::debug!("agent request refused: missing, malformed or wrong bearer token");

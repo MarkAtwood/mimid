@@ -76,8 +76,8 @@ impl Session {
             "CAP" => self.cap(line),
             "PASS" => match line.param(0) {
                 Some(pass) => {
-                    let ok = self.shared.password_matches(pass.as_bytes());
-                    self.pass_ok = Some(ok);
+                    let login = self.shared.check_password(pass.as_bytes());
+                    self.pass = Some(login);
                 }
                 None => self.numeric("461", &["PASS", "Not enough parameters"]),
             },
@@ -213,11 +213,27 @@ impl Session {
         {
             return;
         }
-        if self.pass_ok != Some(true) {
+        let Some(Some(login)) = self.pass.clone() else {
+            tracing::debug!(
+                peer = %self.peer,
+                mechanism = "PASS",
+                reason = if self.pass.is_some() { "no-such-credential" } else { "none-given" },
+                "IRC login failed"
+            );
             self.numeric("464", &["Password incorrect"]);
             self.close("Bad password");
             return;
-        }
+        };
+        tracing::debug!(
+            peer = %self.peer,
+            mechanism = "PASS",
+            credential = %login.name,
+            "IRC login"
+        );
+        self.shared
+            .credentials
+            .note_used(login.id, &format!("irc {}", self.peer));
+        self.login = Some(login);
         self.burst();
     }
 

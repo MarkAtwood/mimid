@@ -42,6 +42,7 @@ pub mod blobs;
 mod change;
 pub mod content;
 pub mod convert;
+pub mod credentials;
 pub mod db;
 pub mod expiry;
 pub mod feed;

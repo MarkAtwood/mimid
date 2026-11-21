@@ -19,9 +19,10 @@ use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Instant;
 
+use crate::IrcOptions;
 use crate::line::{self, MAX_CLIENT_TAGS, MAX_LINE, Out};
 use crate::names::{Identity, Names};
-use crate::{IrcOptions, PasswordCheck};
+use mimid_agent_store::credentials::{Credentials, Login};
 
 /// The longest line the reader keeps: tags and the rest at their limits.
 const MAX_READ: usize = MAX_CLIENT_TAGS + MAX_LINE;
@@ -37,7 +38,7 @@ pub(crate) struct Shared {
     pub(crate) store: Arc<Store>,
     pub(crate) names: Arc<Mutex<Names>>,
     pub(crate) server: String,
-    password: PasswordCheck,
+    pub(crate) credentials: Arc<Credentials>,
     ping_after: Duration,
     pong_within: Duration,
     /// When the front end started, for 003.
@@ -53,13 +54,13 @@ impl Shared {
         store: Arc<Store>,
         names: Arc<Mutex<Names>>,
         options: IrcOptions,
-        password: PasswordCheck,
+        credentials: Arc<Credentials>,
     ) -> Self {
         Self {
             store,
             names,
             server: options.server_name,
-            password,
+            credentials,
             ping_after: options.ping_after,
             pong_within: options.pong_within,
             created: mimid_agent_store::convert::utc_date(crate::render::now_ms()),
@@ -96,9 +97,9 @@ impl Shared {
         self.names.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Whether `presented` is the local token.
-    pub(crate) fn password_matches(&self, presented: &[u8]) -> bool {
-        (self.password)(presented)
+    /// The credential `presented` is, if any.
+    pub(crate) fn check_password(&self, presented: &[u8]) -> Option<Login> {
+        self.credentials.check_plain(presented)
     }
 }
 
@@ -157,8 +158,11 @@ pub(crate) struct Session {
     /// The client is past `CAP LS` or `CAP REQ` and has not sent `CAP
     /// END`.
     pub(crate) cap_negotiating: bool,
-    /// Whether the last PASS was the token; `None` before any.
-    pub(crate) pass_ok: Option<bool>,
+    /// What the last PASS logged in as: `None` before any, `Some(None)`
+    /// for a wrong one.
+    pub(crate) pass: Option<Option<Login>>,
+    /// The credential the connection logged in with, once registered.
+    pub(crate) login: Option<Login>,
     /// The nick the client asked for.
     pub(crate) client_nick: Option<String>,
     pub(crate) got_user: bool,
@@ -193,7 +197,8 @@ impl Session {
             out: Vec::new(),
             caps: Caps::default(),
             cap_negotiating: false,
-            pass_ok: None,
+            pass: None,
+            login: None,
             client_nick: None,
             got_user: false,
             me: None,
