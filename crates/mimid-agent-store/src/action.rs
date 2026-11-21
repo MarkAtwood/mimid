@@ -65,11 +65,6 @@ use crate::state::RemovedRoom;
 use crate::store::Store;
 use crate::sync::{MAX_ALIASES, RoomRoles, now_ms};
 
-/// The role index the agent gives the participants it adds and the ones
-/// it makes members again: "member" in its default role list (decision
-/// mimid-1wgh.56).
-pub const MEMBER_ROLE_INDEX: u32 = 2;
-
 /// Why a write was not made. Nothing was sent, except where a variant
 /// says otherwise.
 #[derive(Debug, thiserror::Error)]
@@ -146,7 +141,8 @@ impl ActionError {
 pub enum Role {
     /// The room's role named "admin".
     Admin,
-    /// [`MEMBER_ROLE_INDEX`].
+    /// The room's role named "member" (draft-atwood-jmap-chat-mimi-00
+    /// §Moderation; `Agent::member_role`).
     Member,
 }
 
@@ -322,7 +318,7 @@ impl Store {
                         .find(|(_, name)| name == "admin")
                         .map(|(index, _)| index)
                         .ok_or(ActionError::NoAdminRole)?,
-                    Role::Member => MEMBER_ROLE_INDEX,
+                    Role::Member => agent.member_role(&uri)?,
                 };
                 agent.change_role(&uri, user, index).await?;
             }

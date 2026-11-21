@@ -172,8 +172,9 @@
 //!   quota.
 //! - Direct Chats are `forbidden` (only group Chats map to rooms).
 //! - On a room-bound Chat, `name`, `description` and `avatarBlobId` are
-//!   `forbidden` (§Chat.roomId). Roles map only to "admin" (the room's
-//!   role of that name) and "member" (role 2); other roles of a room show
+//!   `forbidden` (§Chat.roomId). Roles map only to "admin" and "member",
+//!   the room's roles of those names (draft-atwood-jmap-chat-mimi-00
+//!   §Moderation); other roles of a room show
 //!   as `member`, and the owner's own role cannot be changed.
 //! - The account's limits are what the agent takes: `text/plain` only,
 //!   at most `MAX_TEXT_LEN` octets, no threads, and attachments only with

@@ -389,8 +389,8 @@ impl AgentChat {
     /// `Chat/set` update of a Chat bound to a room
     /// ([`Store::change_members`]): added members are invited, removed
     /// members are removed from the room (`Agent::remove`), a changed role
-    /// is a role change (`Agent::change_role`: "admin" is the room's role
-    /// named "admin", "member" role 2), and the owner's own removal leaves
+    /// is a role change (`Agent::change_role`: "admin" and "member" are the
+    /// room's roles of those names), and the owner's own removal leaves
     /// the room (decision mimid-1wgh.62 items 7, 8). The owner's own role
     /// cannot be changed.
     async fn update_room_chat(&self, chat_id: &Id, patch: &Value) -> Result<(), SetFailure> {

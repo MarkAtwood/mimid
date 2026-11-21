@@ -57,8 +57,10 @@ const WELCOME_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x03];
 const MAX_CONSUMED_WELCOMES: usize = 16;
 /// Messages kept for rooms not joined yet.
 const MAX_HELD: usize = 256;
-/// The role every participant this agent adds gets: 2, "member" in
-/// [`default_roles`] (room-policy-04 §8.1.3 reserves 1 for "banned").
+/// "member" in [`default_roles`] (room-policy-04 §8.1.3 reserves 1 for
+/// "banned"): the role this agent gives the users it adds in an open room;
+/// in a room with roles it is the one named "member"
+/// ([`Agent::member_role`]).
 const ROLE: u32 = 2;
 /// The role the creator of a room this agent hosts gets: 3, "admin" in
 /// [`default_roles`] (decision mimid-1wgh.56).
@@ -66,6 +68,10 @@ const ADMIN_ROLE: u32 = 3;
 /// room-policy-04 §8.1.3: role 1 must have this name for canBan and
 /// canUnban.
 const BANNED_ROLE_NAME: &str = "banned";
+/// draft-atwood-jmap-chat-mimi-00 §Moderation (jmap-chat-spec 735503c;
+/// clean-room finding C8): the role a member has is the room's role of
+/// this name, matched octet for octet.
+const MEMBER_ROLE_NAME: &str = "member";
 /// The longest text sent as one message, in octets. INVENTED, NOT FROM
 /// SPEC.
 pub const MAX_TEXT_LEN: usize = 16 * 1024;
@@ -1592,7 +1598,8 @@ impl Agent {
             });
         }
         let adds: Vec<&[u8]> = key_packages.iter().map(Vec::as_slice).collect();
-        let update = list_change(vec![], &[target.as_str()])?;
+        let role = self.member_role(room)?;
+        let update = list_change(vec![], &[target.as_str()], role)?;
         self.commit(room, &adds, &[], &[update], "invite").await
     }
 
@@ -2831,7 +2838,7 @@ impl Agent {
         }
         more.push(
             member
-                .propose_app_data_update(&self.identity, &list_change(vec![index], &[])?)
+                .propose_app_data_update(&self.identity, &list_change(vec![index], &[], ROLE)?)
                 .map_err(|e| AgentError::mls("building the leave proposal", e))?,
         );
         let request = UpdateRequest {
@@ -2883,6 +2890,30 @@ impl Agent {
                     .collect()
             })
             .unwrap_or_default())
+    }
+
+    /// The index of `room`'s role named "member", matched octet for octet
+    /// against `role_name` in its `roles_list` (draft-atwood-jmap-chat-mimi-00
+    /// §Moderation; clean-room finding C8): the role this agent gives the
+    /// users it adds and unbans. In a room without a `roles_list`, an open
+    /// room, it is 2, the index of "member" in the roles of the rooms this agent hosts.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`], and [`AgentError::Invalid`] if the room
+    /// has roles but none named "member".
+    pub fn member_role(&self, room: &str) -> Result<u32, AgentError> {
+        let roles = self.roles(room)?;
+        if roles.is_empty() {
+            return Ok(ROLE);
+        }
+        roles
+            .into_iter()
+            .find(|(_, name)| name.as_bytes() == MEMBER_ROLE_NAME.as_bytes())
+            .map(|(index, _)| index)
+            .ok_or_else(|| {
+                AgentError::Invalid(format!("{room} has no role named \"{MEMBER_ROLE_NAME}\""))
+            })
     }
 
     /// Removes every client of `user` from `room` without changing the
@@ -2953,21 +2984,22 @@ impl Agent {
         self.moderate(room, &target.leaves, &[update], "ban").await
     }
 
-    /// Unbans `user` in `room`: its role goes from 1, "banned", to 2, the
-    /// role this agent gives every participant it adds (room-policy-04
-    /// §8.1.3 `canUnban`; decision mimid-1wgh.62 item 4). No client is
-    /// added.
+    /// Unbans `user` in `room`: its role goes from 1, "banned", to the
+    /// room's role named "member" ([`Agent::member_role`];
+    /// room-policy-04 §8.1.3 `canUnban`; decision mimid-1wgh.62 item 4;
+    /// draft-atwood-jmap-chat-mimi-00 §Moderation). No client is added.
     ///
     /// # Errors
     ///
     /// As [`Agent::remove`], and [`AgentError::Invalid`] if the user is
-    /// not banned.
+    /// not banned or the room has no role named "member".
     pub async fn unban(&mut self, room: &str, user: &str) -> Result<(), AgentError> {
         let target = self.moderation_target(room, user)?;
         if target.role_index != BANNED_ROLE_INDEX {
             return Err(AgentError::Invalid(format!("{user} is not banned")));
         }
-        self.set_role(room, &target, ROLE, "unban").await
+        let member = self.member_role(room)?;
+        self.set_role(room, &target, member, "unban").await
     }
 
     /// Gives `user` role `role_index` in `room` (room-policy-04 §8.1.3
@@ -4710,12 +4742,12 @@ fn identifier(uri: &str) -> Result<IdentifierUri, AgentError> {
     IdentifierUri::new(uri).map_err(|e| AgentError::Invalid(format!("{uri:?} is not a URI: {e:?}")))
 }
 
-fn pairs(users: &[&str]) -> Vec<UserRolePair> {
+fn pairs(users: &[&str], role_index: u32) -> Vec<UserRolePair> {
     users
         .iter()
         .map(|u| UserRolePair {
             user: u.as_bytes().to_vec(),
-            role_index: ROLE,
+            role_index,
         })
         .collect()
 }
@@ -4771,13 +4803,17 @@ fn participant_list_of(member: &Member) -> Result<ParticipantListData, AgentErro
     }
 }
 
-fn list_change(removed_indices: Vec<u32>, added: &[&str]) -> Result<AppDataUpdate, AgentError> {
+fn list_change(
+    removed_indices: Vec<u32>,
+    added: &[&str],
+    role_index: u32,
+) -> Result<AppDataUpdate, AgentError> {
     Ok(AppDataUpdate::Update {
         component_id: PARTICIPANT_LIST,
         update: encode(&ParticipantListUpdate {
             changed_role_participants: vec![],
             removed_indices,
-            added_participants: pairs(added),
+            added_participants: pairs(added, role_index),
         })?,
     })
 }
