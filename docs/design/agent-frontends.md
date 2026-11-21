@@ -1943,8 +1943,8 @@ Added on 2026-11-20:
       link. INVENTED, NOT FROM SPEC.
     - **Making one.** `Store::attachment_link(message, blob, lifetime)`,
       for an attachment of a message that is not deleted; the lifetime
-      is at most `MAX_LINK_LIFETIME` (30 days), `DEFAULT_LINK_LIFETIME`
-      a day (both INVENTED). The daemon sets the links
+      is at most `MAX_LINK_LIFETIME` (one day), `DEFAULT_LINK_LIFETIME`
+      one hour (both INVENTED; Mark, 2026-11-21). The daemon sets the links
       (`Store::set_attachment_links`) once its HTTP listener is bound;
       without `listen` there are none.
     - **Serving.** The Host check first, as for every request. Then the

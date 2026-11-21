@@ -30,11 +30,13 @@ use sha2::Sha256;
 pub const LINK_PATH: &str = "/attachment";
 
 /// The lifetime a front end gives a link unless it has a reason to give
-/// another. INVENTED, NOT FROM SPEC.
-pub const DEFAULT_LINK_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+/// another: one hour (Mark, 2026-11-21, decision mimid-1wgh.88).
+/// INVENTED, NOT FROM SPEC.
+pub const DEFAULT_LINK_LIFETIME: Duration = Duration::from_secs(60 * 60);
 
-/// The longest lifetime a link may have. INVENTED, NOT FROM SPEC.
-pub const MAX_LINK_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+/// The longest lifetime a link may have: one day (Mark, 2026-11-21,
+/// decision mimid-1wgh.88). INVENTED, NOT FROM SPEC.
+pub const MAX_LINK_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// The octets of the MAC a link carries.
 const MAC_LEN: usize = 16;

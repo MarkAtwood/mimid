@@ -116,7 +116,7 @@ For the two loopback providers in [operating.md](operating.md#example-two-federa
 
 ## Attachment links
 
-With `listen` set, the agent can hand a front end's client a link to one attachment: `http://<listen>/attachment/<blobId>/<expires>/<mac>/<name>`. The link needs no token: whoever holds it can fetch that file, from a loopback address, until it expires (a day, by default) and while a message the agent keeps names the file. Treat a link like the file itself. A new `agent-token` file (delete it and restart) revokes every link. Design: docs/design/agent-frontends.md §7.30.
+With `listen` set, the agent can hand a front end's client a link to one attachment: `http://<listen>/attachment/<blobId>/<expires>/<mac>/<name>`. The link needs no token: whoever holds it can fetch that file, from a loopback address, until it expires (an hour by default, a day at most) and while a message the agent keeps names the file. Treat a link like the file itself. A new `agent-token` file (delete it and restart) revokes every link. Design: docs/design/agent-frontends.md §7.30.
 
 ## Files
 
