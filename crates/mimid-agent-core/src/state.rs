@@ -7,6 +7,8 @@
 //! - `agent_state`: one row, the user and the public bookkeeping
 //!   ([`State`]) as JSON;
 //! - `journal`: the delivery journal ([`crate::journal`]);
+//! - `outbox`: what this agent is sending, until the provider's answer is
+//!   handled ([`crate::outbox`]);
 //! - `schema_version`: one row per part of the database that keeps its
 //!   own schema, `agent` for this crate's tables ([`SCHEMA_VERSION`]); a
 //!   caller that keeps its own tables in the database (mimid-agent-store's
@@ -42,8 +44,9 @@ use crate::journal::Journaled;
 pub const DATABASE_FILE: &str = "agent.sqlite";
 
 /// The schema of this crate's tables. Version 1 (bead mimid-1vul.10) is
-/// the first in SQLite; the state was `state.json` before.
-pub const SCHEMA_VERSION: i64 = 1;
+/// the first in SQLite; the state was `state.json` before. Version 2 adds
+/// the outbox (docs/design/agent-frontends.md §3 step 10).
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// This crate's row in `schema_version`.
 const SCHEMA_PART: &str = "agent";
@@ -138,10 +141,14 @@ pub(crate) struct State {
     /// Welcomes (hex) already joined, newest last.
     #[serde(default)]
     pub consumed_welcomes: Vec<String>,
-    /// KeyPackages published and not yet used by a join of ours. An
-    /// estimate: the server does not say when one is claimed.
+    /// The KeyPackages this device published that the server still
+    /// holds, by id (the unpadded base64url KeyPackageRef), as of
+    /// `key_package_state` and the publishing since (findings log F9).
     #[serde(default)]
-    pub key_packages_outstanding: u32,
+    pub key_packages: Vec<String>,
+    /// The KeyPackage state `key_packages` was last checked at.
+    #[serde(default)]
+    pub key_package_state: Option<String>,
     /// Whether the server has accepted a KeyPackage of this identity, which
     /// binds its signature key to the account; Room/create refuses a leaf
     /// whose key is not bound (draft-atwood-jmap-chat-mimi-00 §KeyPackage/set).
@@ -166,9 +173,21 @@ pub(crate) struct State {
     #[serde(default)]
     pub in_progress: Option<(String, usize)>,
     /// Digests of the MLSMessages this user sent, newest last, so their
-    /// stored copies are skipped when polling (draft §Room/update).
+    /// stored copies are skipped when polling (draft §Room/update). Saved
+    /// before each one leaves.
     #[serde(default)]
     pub sent: Vec<u64>,
+    /// The ids of the Messages the provider stored for what this device
+    /// sent (`messageIds`, findings log F18), newest last: skipped when
+    /// receiving, before the digests are looked at.
+    #[serde(default)]
+    pub own_ids: Vec<String>,
+    /// Per Chat id, the id of the last Message handled in it: a Message
+    /// whose id does not sort after it is handled already (ids sort in
+    /// the order they were stored, findings log F2), and after
+    /// `cannotCalculateChanges` only the later ones are fetched (F12).
+    #[serde(default)]
+    pub last_handled: BTreeMap<String, String>,
     /// The number the next invite gets.
     #[serde(default = "one")]
     pub next_invite: u64,
@@ -314,6 +333,10 @@ impl StateDir {
         store.connection().execute_batch(SCHEMA).map_err(schema)?;
         store
             .connection()
+            .execute_batch(crate::outbox::SCHEMA)
+            .map_err(schema)?;
+        store
+            .connection()
             .execute(
                 "INSERT INTO schema_version (part, version) VALUES (?1, ?2)",
                 params![SCHEMA_PART, SCHEMA_VERSION],
@@ -330,13 +353,16 @@ impl StateDir {
             invites: Vec::new(),
             held: Vec::new(),
             consumed_welcomes: Vec::new(),
-            key_packages_outstanding: 0,
+            key_packages: Vec::new(),
+            key_package_state: None,
             signature_key_bound: false,
             group_rooms: BTreeMap::new(),
             message_state: None,
             handled: Vec::new(),
             in_progress: None,
             sent: Vec::new(),
+            own_ids: Vec::new(),
+            last_handled: BTreeMap::new(),
             next_invite: 1,
             did_webvh_credential: None,
             pinned_scids: BTreeMap::new(),

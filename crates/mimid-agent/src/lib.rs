@@ -161,8 +161,9 @@
 //! - The IRC front end has its own limits (mimid-agent-irc): channels
 //!   only, no attachments and no history (docs/design/agent-frontends.md
 //!   §7).
-//! - The KeyPackage count is the agent's estimate: it learns that one was
-//!   used only when it joins with it, so others may find none left.
+//! - The KeyPackages are topped up after each sync, and a hand-out
+//!   (the KeyPackage StateChange, findings log F17) wakes a sync; between
+//!   a hand-out and that sync, others may find none left.
 
 #![forbid(unsafe_code)]
 

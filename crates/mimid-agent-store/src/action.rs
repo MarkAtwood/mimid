@@ -435,12 +435,13 @@ impl Store {
     ) -> Result<Message, ActionError> {
         let uri = self.room_uri(room)?;
         let (outgoing, attachments) = self.read_files(files)?;
-        let sent = self
-            .agent
-            .lock()
-            .await
-            .send_message(&uri, text, &outgoing)
-            .await?;
+        // The agent stays locked until the record is in: the agent has
+        // journaled the message as this user's own (docs/design/
+        // agent-frontends.md §3 step 10), and a sync in between would
+        // store that entry before this record exists, and this one
+        // again.
+        let mut agent = self.agent.lock().await;
+        let sent = agent.send_message(&uri, text, &outgoing).await?;
         let mut state = self.state();
         let seq = state.take_seq();
         let message = Message {
@@ -466,6 +467,7 @@ impl Store {
         };
         state.insert_message(message.clone());
         drop(state);
+        drop(agent);
         self.record([Change::MessageAdded(message.key.clone())]);
         self.want_sync();
         Ok(message)
@@ -549,18 +551,16 @@ impl Store {
         body_type: BodyType,
     ) -> Result<Message, ActionError> {
         let (uri, first) = self.editable(key)?;
-        let sent = self
-            .agent
-            .lock()
-            .await
-            .send_edit(&uri, &first, text)
-            .await?;
+        // Locked until the alias is in, as in Store::send.
+        let mut agent = self.agent.lock().await;
+        let sent = agent.send_edit(&uri, &first, text).await?;
         let edited = {
             let mut state = self.state();
             state.edit_message(key, text.to_owned(), body_type, sent.accepted_at);
             state.add_alias(key, message_ref(&sent.message_id));
             state.messages.get(key).cloned()
         };
+        drop(agent);
         self.changed_message(key, edited)
     }
 
@@ -575,18 +575,16 @@ impl Store {
     /// As [`Store::edit`].
     pub async fn retract(&self, key: &str) -> Result<Message, ActionError> {
         let (uri, first) = self.editable(key)?;
-        let sent = self
-            .agent
-            .lock()
-            .await
-            .send_retraction(&uri, &first)
-            .await?;
+        // Locked until the alias is in, as in Store::send.
+        let mut agent = self.agent.lock().await;
+        let sent = agent.send_retraction(&uri, &first).await?;
         let retracted = {
             let mut state = self.state();
             state.retract_message(key, sent.accepted_at);
             state.add_alias(key, message_ref(&sent.message_id));
             state.messages.get(key).cloned()
         };
+        drop(agent);
         self.changed_message(key, retracted)
     }
 

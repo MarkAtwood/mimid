@@ -148,6 +148,7 @@ pub mod didwebvh;
 mod error;
 pub mod frank;
 mod journal;
+mod outbox;
 mod provider;
 pub mod push;
 mod state;

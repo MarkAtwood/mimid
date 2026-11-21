@@ -119,11 +119,15 @@ impl AgentChat {
             ReportOutcome::NotAllowed => "notAllowed",
             ReportOutcome::UnverifiedMessage => "unverifiedMessage",
             ReportOutcome::Refused { status } => {
-                return Ok(json!({
+                let mut answer = json!({
                     "accountId": self.account,
                     "responseCode": "refused",
-                    "status": status,
-                }));
+                });
+                // findings log F8: present only when the server gave it.
+                if let Some(status) = status {
+                    answer["status"] = json!(status);
+                }
+                return Ok(answer);
             }
             // ReportOutcome is #[non_exhaustive].
             _ => "refused",

@@ -8,10 +8,12 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_mls::wire::ProposalRef;
 use mimi_protocol::{
-    FanoutEvent, FanoutMessage, HandshakeBundle, KeyMaterialResponse, UpdateRequest, UpdateResult,
+    FanoutEvent, FanoutMessage, KeyMaterialResponse, UpdateRequest, UpdateResult,
     UpdateRoomResponse, Utf8String,
 };
 use mimid_live::{AckResult, Op, code};
@@ -19,7 +21,9 @@ use serde_json::json;
 
 use crate::AgentError;
 use crate::agent::ReportOutcome;
-use crate::client::{ConsentRecord, HubSender, Jmap, MAX_ASSET_LEN, MAX_SENT, OwnChat, digest};
+use crate::client::{
+    Accepted, ConsentRecord, Fetched, HubSender, Jmap, MAX_ASSET_LEN, MAX_SENT, OwnChat, digest,
+};
 use crate::stream::{Stream, method_error};
 
 /// Which binding the agent speaks to its provider (decision
@@ -187,6 +191,14 @@ impl Provider {
         }
     }
 
+    /// See [`Jmap::remember_sent`].
+    pub fn remember_sent(&self, message: &impl Serialize) {
+        match self {
+            Self::Jmap(j) => j.remember_sent(message),
+            Self::Stream(s) => s.sent.remember(message),
+        }
+    }
+
     /// See [`Jmap::is_own`].
     pub fn is_own(&self, body: &[u8]) -> bool {
         match self {
@@ -323,8 +335,9 @@ impl Provider {
         }
     }
 
-    /// See [`Jmap::publish_key_package`].
-    pub async fn publish_key_package(&self, key_package: &[u8]) -> Result<(), AgentError> {
+    /// See [`Jmap::publish_key_package`]: the KeyPackage's id, the
+    /// unpadded base64url of its KeyPackageRef.
+    pub async fn publish_key_package(&self, key_package: &[u8]) -> Result<String, AgentError> {
         match self {
             Self::Jmap(j) => j.publish_key_package(key_package).await,
             Self::Stream(s) => {
@@ -332,8 +345,47 @@ impl Provider {
                     key_package: key_package.to_vec(),
                     last_resort: None,
                 };
-                s.stream.ok("KeyPackage/set", op).await.map(drop)
+                match s.stream.ok("KeyPackage/set", op).await? {
+                    AckResult::PublishKeyPackage {
+                        key_package_ref, ..
+                    } => Ok(URL_SAFE_NO_PAD.encode(key_package_ref)),
+                    other => Err(unexpected("KeyPackage/set", &other)),
+                }
             }
+        }
+    }
+
+    /// See [`Jmap::key_package_changes`]. The stream has no
+    /// `KeyPackage/changes`: its `Changed` `KeyPackage` is followed by
+    /// `ListKeyPackages` ([`Provider::key_package_ids`]), so this is
+    /// `None` there.
+    pub async fn key_package_changes(
+        &self,
+        since: &str,
+    ) -> Result<Option<(Vec<String>, String)>, AgentError> {
+        match self {
+            Self::Jmap(j) => j.key_package_changes(since).await,
+            Self::Stream(_) => Ok(None),
+        }
+    }
+
+    /// See [`Jmap::key_package_ids`].
+    pub async fn key_package_ids(&self) -> Result<(String, Vec<String>), AgentError> {
+        match self {
+            Self::Jmap(j) => j.key_package_ids().await,
+            Self::Stream(s) => match s.stream.ok("KeyPackage/get", Op::ListKeyPackages).await? {
+                AckResult::ListKeyPackages {
+                    state,
+                    key_packages,
+                } => Ok((
+                    state,
+                    key_packages
+                        .iter()
+                        .map(|k| URL_SAFE_NO_PAD.encode(&k.key_package_ref))
+                        .collect(),
+                )),
+                other => Err(unexpected("KeyPackage/get", &other)),
+            },
         }
     }
 
@@ -441,10 +493,11 @@ impl Provider {
     pub async fn messages_since(
         &self,
         since: Option<&str>,
-    ) -> Result<(String, Vec<(String, Vec<u8>)>), AgentError> {
+        after: &std::collections::BTreeMap<String, String>,
+    ) -> Result<(String, Vec<Fetched>), AgentError> {
         match self {
-            Self::Jmap(j) => j.messages_since(since).await,
-            Self::Stream(s) => s.stream.messages_since(since).await,
+            Self::Jmap(j) => j.messages_since(since, after).await,
+            Self::Stream(s) => s.stream.messages_since(since, after).await,
         }
     }
 
@@ -453,26 +506,12 @@ impl Provider {
         &self,
         room: &str,
         request: &UpdateRequest,
-    ) -> Result<UpdateRoomResponse, AgentError> {
+    ) -> Result<(UpdateRoomResponse, Vec<String>), AgentError> {
         let s = match self {
             Self::Jmap(j) => return j.update(room, request).await,
             Self::Stream(s) => s,
         };
         const WHAT: &str = "Room/update";
-        match &request.bundle {
-            HandshakeBundle::Commit {
-                proposal_or_commit, ..
-            } => s.sent.remember(proposal_or_commit),
-            HandshakeBundle::Proposal {
-                proposal_or_commit,
-                more_proposals,
-            } => {
-                s.sent.remember(proposal_or_commit);
-                for proposal in more_proposals {
-                    s.sent.remember(proposal);
-                }
-            }
-        }
         let bytes = request
             .tls_serialize_detached()
             .map_err(|e| AgentError::tls("own UpdateRequest", e))?;
@@ -484,17 +523,21 @@ impl Provider {
             Utf8String::new(text.unwrap_or_default())
                 .map_err(|e| malformed(WHAT, format!("errorDescription: {e:?}")))
         };
+        let mut ids = Vec::new();
         let (result, text) = match s.stream.call(WHAT, op).await? {
             Ok(AckResult::Update {
                 accepted_at,
                 error_description,
-                ..
-            }) => (
-                UpdateResult::Success {
-                    accepted_timestamp: accepted_at,
-                },
-                error_description,
-            ),
+                message_ids,
+            }) => {
+                ids = message_ids.unwrap_or_default();
+                (
+                    UpdateResult::Success {
+                        accepted_timestamp: accepted_at,
+                    },
+                    error_description,
+                )
+            }
             Ok(other) => return Err(unexpected(WHAT, &other)),
             Err(error) => {
                 let result = match error.code.as_str() {
@@ -515,10 +558,13 @@ impl Provider {
                 (result, error.error_description)
             }
         };
-        Ok(UpdateRoomResponse {
-            error_description: description(text)?,
-            result,
-        })
+        Ok((
+            UpdateRoomResponse {
+                error_description: description(text)?,
+                result,
+            },
+            ids,
+        ))
     }
 
     /// See [`Jmap::report_abuse`].
@@ -541,11 +587,9 @@ impl Provider {
             Err(error) => match error.code.as_str() {
                 code::NOT_ALLOWED => Ok(ReportOutcome::NotAllowed),
                 code::UNVERIFIED_MESSAGE => Ok(ReportOutcome::UnverifiedMessage),
+                // findings log F8: `status` is optional.
                 code::REFUSED => Ok(ReportOutcome::Refused {
-                    status: error
-                        .status
-                        .and_then(|status| u16::try_from(status).ok())
-                        .ok_or_else(|| malformed(WHAT, "refused without a status"))?,
+                    status: error.status.and_then(|status| u16::try_from(status).ok()),
                 }),
                 _ => Err(method_error(WHAT, &error)),
             },
@@ -557,7 +601,7 @@ impl Provider {
         &self,
         room: &str,
         message: &mimi_mls::wire::MLSMessage,
-    ) -> Result<u64, AgentError> {
+    ) -> Result<Accepted, AgentError> {
         let s = match self {
             Self::Jmap(j) => return j.send(room, message).await,
             Self::Stream(s) => s,
@@ -566,13 +610,19 @@ impl Provider {
         let bytes = message
             .tls_serialize_detached()
             .map_err(|e| AgentError::tls("own message", e))?;
-        s.sent.remember(message);
         let op = Op::Send {
             room: room.to_owned(),
             message: bytes,
         };
         match s.stream.call(WHAT, op).await? {
-            Ok(AckResult::Send { accepted_at, .. }) => Ok(accepted_at),
+            Ok(AckResult::Send {
+                accepted_at,
+                message_ids,
+                ..
+            }) => Ok(Accepted {
+                accepted_at,
+                message_ids: message_ids.unwrap_or_default(),
+            }),
             Ok(other) => Err(unexpected(WHAT, &other)),
             // As Jmap::send: the hub's refusal is Refused, named by its
             // responseCode.

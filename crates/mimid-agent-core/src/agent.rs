@@ -33,10 +33,11 @@ use mimi_room_policy::{
 };
 
 use crate::AgentError;
-use crate::client::ConsentRecord;
+use crate::client::{Accepted, ConsentRecord, Fetched, MAX_SENT};
 use crate::didwebvh::{DidWebvhConfig, Pin, RoomClient, check_pin, required_capabilities};
 use crate::frank::{self, VerifiedFrank};
 use crate::journal::{self, Journaled, Receipt};
+use crate::outbox;
 use crate::provider::{Binding, Provider};
 use crate::state::{Held, Room, RoomStatus, State, StateDir};
 use crate::uri::{normalized_uri, user_uri_domain};
@@ -169,10 +170,12 @@ pub enum ReportOutcome {
     /// A reported message's frank did not verify at the hub (decision
     /// mimid-1wgh.6.65).
     UnverifiedMessage,
-    /// Another provider's hub refused the report with this HTTP status.
+    /// The hub refused the report for another reason: another provider's
+    /// hub with this HTTP status, when the server gives it (findings log
+    /// F8: `status` is optional).
     Refused {
-        /// The `4xx` status.
-        status: u16,
+        /// The `4xx` status, if the server gave one.
+        status: Option<u16>,
     },
 }
 
@@ -399,6 +402,12 @@ pub enum Event {
     },
     /// A message (boxed: it is far larger than the other events).
     Message(Box<ReceivedMessage>),
+    /// A message this device sent, which the hub accepted: its plaintext,
+    /// as it would read had another member sent it, `sender` this user.
+    /// Journaled in the transaction that ends its outbox entry (module
+    /// `outbox`), so a caller that records sent messages gets it after a
+    /// crash too; one that recorded it already skips it.
+    Sent(Box<ReceivedMessage>),
     /// A Commit changed the room; `participants` is the participant list
     /// after it.
     MembersChanged {
@@ -484,10 +493,6 @@ pub struct Agent {
     /// The room and leaf of a member whose leave proposals are stored and
     /// not yet committed.
     deferred_leaver: Option<(String, u32)>,
-    /// The users of the clients the pending Commit of a room removes for
-    /// lacking AppDataUpdate ([`Event::RemovedWithoutAppDataUpdate`]),
-    /// reported once the hub accepts it.
-    pending_removed: Option<(String, Vec<String>)>,
     /// [`AgentConfig::did_webvh`].
     did_webvh: DidWebvhConfig,
     /// Rooms [`Agent::join_own_rooms`] does not try again until a restart
@@ -520,6 +525,12 @@ pub enum FailPoint {
     /// In [`Agent::acknowledge_in`], before the journal entries are
     /// removed in the caller's transaction.
     Acknowledge,
+    /// After an outgoing message or Commit is in the outbox, before it is
+    /// sent: as a crash before the provider has it.
+    BeforeSend,
+    /// After the provider accepted an outgoing message or Commit, before
+    /// its answer is handled: as a crash that loses the answer.
+    AfterAccepted,
 }
 
 impl std::fmt::Debug for Agent {
@@ -566,7 +577,6 @@ impl Agent {
                 .map(|d| d.to_ascii_lowercase())
                 .collect(),
             deferred_leaver: None,
-            pending_removed: None,
             did_webvh: config.did_webvh.clone(),
             not_joinable: std::collections::BTreeSet::new(),
             undelivered: Vec::new(),
@@ -816,8 +826,8 @@ impl Agent {
         #[cfg(not(test))]
         let built = self.build_commit(room, &[], &[], &[], WHAT);
         match built {
-            Ok(request) => {
-                self.send_commit(room, &request, WHAT).await?;
+            Ok((request, entry)) => {
+                self.send_commit(room, &request, entry, WHAT).await?;
                 Ok(Offered::Committed)
             }
             Err(error) => {
@@ -977,9 +987,42 @@ impl Agent {
         Ok(self.member(room)?.epoch())
     }
 
-    /// How many published KeyPackages are thought unused (an estimate).
+    /// How many of the KeyPackages this device published are still on the
+    /// server, as of the last [`Agent::refresh_key_packages`] (findings
+    /// log F9) and the publishing since.
     pub fn key_packages_outstanding(&self) -> u32 {
-        self.state.key_packages_outstanding
+        u32::try_from(self.state.key_packages.len()).unwrap_or(u32::MAX)
+    }
+
+    /// Learns which of this device's KeyPackages the server still holds:
+    /// `KeyPackage/changes` from the KeyPackage state last seen, whose
+    /// `destroyed` names the ones handed out (findings log F9), or, with
+    /// no state yet, after `cannotCalculateChanges`, or on the live
+    /// stream, every KeyPackage of the account. Returns how many are left
+    /// ([`Agent::key_packages_outstanding`]).
+    ///
+    /// # Errors
+    ///
+    /// The errors of reaching the server, and [`AgentError::Database`] if
+    /// the state cannot be written.
+    pub async fn refresh_key_packages(&mut self) -> Result<u32, AgentError> {
+        let changes = match self.state.key_package_state.as_deref() {
+            Some(since) => self.provider.key_package_changes(since).await?,
+            None => None,
+        };
+        match changes {
+            Some((destroyed, state)) => {
+                self.state.key_packages.retain(|id| !destroyed.contains(id));
+                self.state.key_package_state = Some(state);
+            }
+            None => {
+                let (state, ids) = self.provider.key_package_ids().await?;
+                self.state.key_packages.retain(|id| ids.contains(id));
+                self.state.key_package_state = Some(state);
+            }
+        }
+        self.save()?;
+        Ok(self.key_packages_outstanding())
     }
 
     /// Publishes `n` one-time KeyPackages (KeyPackage/set).
@@ -993,8 +1036,8 @@ impl Agent {
                 .identity
                 .key_package(KeyPackageKind::OneTime)
                 .map_err(|e| AgentError::mls("minting a KeyPackage", e))?;
-            self.provider.publish_key_package(&bytes).await?;
-            self.state.key_packages_outstanding += 1;
+            let id = self.provider.publish_key_package(&bytes).await?;
+            self.state.key_packages.push(id);
             self.state.signature_key_bound = true;
             self.save()?;
         }
@@ -1356,7 +1399,6 @@ impl Agent {
                 joined_epoch: None,
             },
         );
-        self.state.key_packages_outstanding = self.state.key_packages_outstanding.saturating_sub(1);
         let (replay, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.state.held)
             .into_iter()
             .partition(|held| held.room == room || held.room == held_key);
@@ -1985,10 +2027,19 @@ impl Agent {
     /// salt random and sets
     /// `senderUri`/`roomUri` if it wants them.
     ///
+    /// The encrypted message is in the outbox before it leaves, and on the
+    /// hub's acceptance it goes to the journal as this user's own
+    /// [`Event::Sent`], in the transaction that ends the outbox entry
+    /// (module `outbox`; docs/design/agent-frontends.md §3 step 10): a
+    /// caller that records the message itself must hold the agent until
+    /// it has, and take the journal's copy as one it has.
+    ///
     /// # Errors
     ///
     /// [`AgentError::NoSuchRoom`], encoding or MLS errors, and the hub's
-    /// refusal.
+    /// refusal. An error reaching the server leaves the message in the
+    /// outbox: the next [`Agent::receive`] sends the same bytes again, and
+    /// the message then arrives through the journal.
     pub async fn send_content(
         &mut self,
         room: &str,
@@ -1999,21 +2050,50 @@ impl Agent {
             .map_err(|e| AgentError::encoding("encoding mimi-content", e))?;
         let message_id = MessageId::compute(&self.me, room, &bytes, &content.salt)
             .map_err(|e| AgentError::encoding("the message ID", e))?;
-        let member = self
-            .members
-            .get_mut(room)
-            .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
-        let safe_aad = frank_aad_items(member, &content.salt, &bytes);
-        let ciphertext = member
-            .send(&self.identity, &bytes, &safe_aad)
-            .map_err(|e| AgentError::mls("encrypting", e))?;
-        let message = MLSMessage::tls_deserialize_exact(&ciphertext[..])
-            .map_err(|e| AgentError::tls("own message", e))?;
-        let accepted_at = self.provider.send(room, &message).await?;
-        self.remember_sent()?;
+        // One transaction: the ratchet generation the encryption uses, the
+        // message's digest and its outbox entry (module outbox).
+        let (message, entry) = self.in_transaction(|agent| {
+            let member = agent
+                .members
+                .get_mut(room)
+                .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
+            let safe_aad = frank_aad_items(member, &content.salt, &bytes);
+            let ciphertext = member
+                .send(&agent.identity, &bytes, &safe_aad)
+                .map_err(|e| AgentError::mls("encrypting", e))?;
+            let message = MLSMessage::tls_deserialize_exact(&ciphertext[..])
+                .map_err(|e| AgentError::tls("own message", e))?;
+            agent.provider.remember_sent(&message);
+            agent.state.sent = agent.provider.sent_digests();
+            let entry = outbox::insert(
+                agent.connection(),
+                room,
+                outbox::Kind::Message,
+                &ciphertext,
+                Some(&bytes),
+                &[],
+            )
+            .map_err(|e| agent.dir.database_error("writing the outbox", e))?;
+            Ok((message, entry))
+        })?;
+        #[cfg(feature = "fail-points")]
+        self.fail_at(FailPoint::BeforeSend)?;
+        let accepted = match self.provider.send(room, &message).await {
+            Ok(accepted) => accepted,
+            Err(refused @ AgentError::Refused { .. }) => {
+                self.in_transaction(|agent| agent.drop_outbox(entry))?;
+                return Err(refused);
+            }
+            // The outcome is unknown: the entry stays, and the next sync
+            // sends the same bytes again (module outbox).
+            Err(e) => return Err(e),
+        };
+        #[cfg(feature = "fail-points")]
+        self.fail_at(FailPoint::AfterAccepted)?;
+        self.in_transaction(|agent| agent.message_accepted(entry, room, &bytes, &accepted))?;
         Ok(Sent {
             message_id,
-            accepted_at,
+            accepted_at: accepted.accepted_at,
         })
     }
 
@@ -2536,6 +2616,14 @@ impl Agent {
     /// application messages are decrypted. A member's leave proposals are
     /// committed by the remaining member with the lowest leaf index.
     ///
+    /// First it sends again what an earlier attempt left in the outbox
+    /// (module `outbox`). Messages this device sent are skipped, by the
+    /// ids the provider named for them (findings log F18) or by digest,
+    /// and so are Messages of a Chat up to the last one handled there.
+    /// When the provider cannot give the changes since the last poll, it
+    /// gives the Messages after the last one handled in each Chat
+    /// (findings log F12).
+    ///
     /// Returns every event not yet acknowledged, oldest first: those of
     /// earlier calls (and of [`Agent::join`] and [`Agent::leave`]) and the
     /// new ones. They are in the journal of the agent's database before
@@ -2555,10 +2643,27 @@ impl Agent {
     /// the database. An item that cannot be handled is an
     /// [`Event::Problem`], not an error.
     pub async fn receive(&mut self) -> Result<(Vec<Event>, Receipt), AgentError> {
+        // What a crash or a lost answer left in the outbox goes first, so
+        // a Commit of this device is merged before later Messages need its
+        // epoch.
+        self.finish_outbox().await?;
         let since = self.state.message_state.clone();
-        let (state, messages) = self.provider.messages_since(since.as_deref()).await?;
-        for (id, body) in &messages {
-            if self.state.handled.contains(id) {
+        let (state, messages) = self
+            .provider
+            .messages_since(since.as_deref(), &self.state.last_handled)
+            .await?;
+        for Fetched { id, chat, body } in &messages {
+            // Handled already: in this round, or in a Chat whose Messages
+            // up to a later id are (Message ids sort in the order they
+            // were stored, findings log F2), as when Messages come again
+            // after cannotCalculateChanges (F12).
+            if self.state.handled.contains(id)
+                || self
+                    .state
+                    .last_handled
+                    .get(chat)
+                    .is_some_and(|last| id <= last)
+            {
                 continue;
             }
             let mut from = match &self.state.in_progress {
@@ -2568,7 +2673,7 @@ impl Agent {
             // A leave Commit goes to the server between two transactions,
             // never inside one.
             while let Some((room, leaf, handled)) =
-                self.in_transaction(|agent| agent.handle_message(id, body, from))?
+                self.in_transaction(|agent| agent.handle_message(id, chat, body, from))?
             {
                 let mut events = Vec::new();
                 self.maybe_commit_leave(&room, leaf, &mut events).await;
@@ -2599,11 +2704,15 @@ impl Agent {
     fn handle_message(
         &mut self,
         id: &str,
+        chat: &str,
         body: &[u8],
         from: usize,
     ) -> Result<Option<(String, u32, usize)>, AgentError> {
         let mut events = Vec::new();
-        if !self.provider.is_own(body) {
+        // This device's own message or handshake: by the id the provider
+        // named when it accepted it (findings log F18), else by digest.
+        let own = self.state.own_ids.iter().any(|own| own == id) || self.provider.is_own(body);
+        if !own {
             match FanoutMessage::decode_all(body) {
                 Ok(fanouts) if !fanouts.is_empty() => {
                     for (i, fanout) in fanouts.into_iter().enumerate().skip(from) {
@@ -2634,6 +2743,17 @@ impl Agent {
         // Its events and that it was handled.
         self.deliver(events);
         self.state.handled.push(id.to_owned());
+        if !chat.is_empty()
+            && self
+                .state
+                .last_handled
+                .get(chat)
+                .is_none_or(|last| id > last.as_str())
+        {
+            self.state
+                .last_handled
+                .insert(chat.to_owned(), id.to_owned());
+        }
         self.state.in_progress = None;
         self.save()?;
         Ok(None)
@@ -2767,7 +2887,6 @@ impl Agent {
         let _ = self.connection().execute_batch("ROLLBACK");
         self.undelivered.clear();
         self.deferred_leaver = None;
-        self.pending_removed = None;
         match crate::state::read(self.connection(), &self.me) {
             Ok(state) => self.state = state,
             Err(why) => tracing::error!(
@@ -2822,18 +2941,26 @@ impl Agent {
         }
     }
 
-    /// Room/update with `request`; anything but success is
-    /// [`AgentError::Refused`].
+    /// Room/update with `request`, a proposal or an external Commit, whose
+    /// digests are saved before it leaves, so that its stored copy is
+    /// skipped even after a crash; anything but success is
+    /// [`AgentError::Refused`]. A Commit of a member goes through the
+    /// outbox instead ([`Agent::send_commit`]).
     async fn update_ok(
         &mut self,
         room: &str,
         request: &UpdateRequest,
         what: &str,
     ) -> Result<(), AgentError> {
-        let response = self.provider.update(room, request).await?;
-        self.remember_sent()?;
+        self.remember_request(request);
+        self.state.sent = self.provider.sent_digests();
+        self.save()?;
+        let (response, ids) = self.provider.update(room, request).await?;
         match response.result {
-            UpdateResult::Success { .. } => Ok(()),
+            UpdateResult::Success { .. } => {
+                self.remember_ids(&ids);
+                self.save()
+            }
             other => Err(AgentError::Refused {
                 what: format!("{what} in {room}"),
                 reason: format!("{other:?} {}", response.error_description.as_str())
@@ -2853,13 +2980,14 @@ impl Agent {
         updates: &[AppDataUpdate],
         what: &str,
     ) -> Result<(), AgentError> {
-        let request = self.build_commit(room, adds, removes, updates, what)?;
-        self.send_commit(room, &request, what).await
+        let (request, entry) = self.build_commit(room, adds, removes, updates, what)?;
+        self.send_commit(room, &request, entry, what).await
     }
 
     /// Builds a Commit with `adds`, `removes` and `updates`, left pending,
-    /// as the UpdateRequest that carries it. Nothing is pending on an
-    /// error.
+    /// as the UpdateRequest that carries it, and puts it in the outbox, in
+    /// one transaction (module outbox); returns the request and its
+    /// outbox entry. Nothing is pending on an error.
     fn build_commit(
         &mut self,
         room: &str,
@@ -2867,71 +2995,274 @@ impl Agent {
         removes: &[u32],
         updates: &[AppDataUpdate],
         what: &str,
-    ) -> Result<UpdateRequest, AgentError> {
-        let member = self
-            .members
-            .get_mut(room)
-            .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
-        let before = room_clients(member, &self.identity);
-        let bundle = member
-            .commit(&self.identity, adds, removes, updates, apply_commit_op)
-            .map_err(|e| AgentError::mls(format!("building the {what} Commit"), e))?;
-        self.pending_removed = Some((
-            room.to_owned(),
-            users_of(&before, &bundle.removed_without_app_data_update),
-        ));
-        let tree = if wants_full_tree(&self.full_tree_hubs, room) {
-            match member.pending_ratchet_tree(&self.identity) {
-                Ok(tree) => Some(tree),
-                Err(e) => {
-                    let _ = member.clear_pending_commit(&self.identity);
-                    return Err(AgentError::mls(format!("the {what} Commit's tree"), e));
-                }
-            }
-        } else {
-            None
-        };
-        match commit_request(&bundle, tree.as_deref()) {
-            Ok(request) => Ok(request),
-            Err(e) => {
-                let _ = member.clear_pending_commit(&self.identity);
-                Err(e)
-            }
-        }
+    ) -> Result<(UpdateRequest, i64), AgentError> {
+        self.in_transaction(|agent| {
+            let member = agent
+                .members
+                .get_mut(room)
+                .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
+            let before = room_clients(member, &agent.identity);
+            let bundle = member
+                .commit(&agent.identity, adds, removes, updates, apply_commit_op)
+                .map_err(|e| AgentError::mls(format!("building the {what} Commit"), e))?;
+            let removed = users_of(&before, &bundle.removed_without_app_data_update);
+            let tree = if wants_full_tree(&agent.full_tree_hubs, room) {
+                Some(
+                    member
+                        .pending_ratchet_tree(&agent.identity)
+                        .map_err(|e| AgentError::mls(format!("the {what} Commit's tree"), e))?,
+                )
+            } else {
+                None
+            };
+            let request = commit_request(&bundle, tree.as_deref())?;
+            let wire = encode(&request)?;
+            agent.remember_request(&request);
+            agent.state.sent = agent.provider.sent_digests();
+            let entry = outbox::insert(
+                agent.connection(),
+                room,
+                outbox::Kind::Commit,
+                &wire,
+                None,
+                &removed,
+            )
+            .map_err(|e| agent.dir.database_error("writing the outbox", e))?;
+            Ok((request, entry))
+        })
     }
 
     /// Sends the pending Commit `request` built by [`Agent::build_commit`]
-    /// and merges it; on a refusal the pending Commit is cleared.
+    /// as outbox `entry`, and merges it when the hub accepts it; on a
+    /// refusal the pending Commit is cleared. When the outcome is unknown
+    /// (no answer), both stay, and the next sync sends the same bytes
+    /// again ([`Agent::finish_outbox`]).
     async fn send_commit(
         &mut self,
         room: &str,
         request: &UpdateRequest,
+        entry: i64,
         what: &str,
     ) -> Result<(), AgentError> {
-        let removed = self
-            .pending_removed
-            .take()
-            .filter(|(r, _)| r == room)
-            .map(|(_, users)| users)
-            .unwrap_or_default();
-        if let Err(e) = self.update_ok(room, request, what).await {
-            if let Some(member) = self.members.get_mut(room) {
-                let _ = member.clear_pending_commit(&self.identity);
+        #[cfg(feature = "fail-points")]
+        self.fail_at(FailPoint::BeforeSend)?;
+        let (response, ids) = self.provider.update(room, request).await?;
+        #[cfg(feature = "fail-points")]
+        self.fail_at(FailPoint::AfterAccepted)?;
+        match response.result {
+            UpdateResult::Success { .. } => {
+                self.in_transaction(|agent| agent.commit_accepted(entry, &ids, false))
             }
-            return Err(e);
+            other => {
+                self.in_transaction(|agent| agent.commit_refused(entry))?;
+                Err(AgentError::Refused {
+                    what: format!("{what} in {room}"),
+                    reason: format!("{other:?} {}", response.error_description.as_str())
+                        .trim()
+                        .to_owned(),
+                })
+            }
         }
+    }
+
+    /// Sends again, with the same bytes, every outbox entry an earlier
+    /// attempt left (a crash, or no answer), oldest first, and ends each
+    /// as its answer says (module outbox). The provider answers a request
+    /// its hub already accepted with the earlier answer (findings log F11).
+    ///
+    /// # Errors
+    ///
+    /// The errors of reaching the server, with the entry kept for the next
+    /// sync, and [`AgentError::Database`].
+    async fn finish_outbox(&mut self) -> Result<(), AgentError> {
+        let pending = outbox::all(self.connection())
+            .map_err(|e| self.dir.database_error("reading the outbox", e))?;
+        for entry in pending {
+            let id = entry.id;
+            match entry.kind {
+                outbox::Kind::Message => {
+                    let Ok(message) = MLSMessage::tls_deserialize_exact(&entry.wire[..]) else {
+                        self.in_transaction(|agent| {
+                            agent.give_up(id, &entry.room, "it does not decode")
+                        })?;
+                        continue;
+                    };
+                    match self.provider.send(&entry.room, &message).await {
+                        Ok(accepted) => {
+                            let content = entry.content.clone().unwrap_or_default();
+                            self.in_transaction(|agent| {
+                                agent.message_accepted(id, &entry.room, &content, &accepted)
+                            })?;
+                        }
+                        Err(AgentError::Refused { reason, .. }) => {
+                            self.in_transaction(|agent| {
+                                agent.give_up(
+                                    id,
+                                    &entry.room,
+                                    &format!("the hub refused it: {reason}"),
+                                )
+                            })?;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                outbox::Kind::Commit => {
+                    let Ok(request) = UpdateRequest::tls_deserialize_exact(&entry.wire[..]) else {
+                        self.in_transaction(|agent| {
+                            agent.commit_refused(id)?;
+                            agent.give_up(id, &entry.room, "it does not decode")
+                        })?;
+                        continue;
+                    };
+                    let (response, ids) = self.provider.update(&entry.room, &request).await?;
+                    if matches!(response.result, UpdateResult::Success { .. }) {
+                        self.in_transaction(|agent| agent.commit_accepted(id, &ids, true))?;
+                    } else {
+                        let reason = format!("{:?}", response.result);
+                        self.in_transaction(|agent| {
+                            agent.commit_refused(id)?;
+                            agent.give_up(id, &entry.room, &format!("the hub refused it: {reason}"))
+                        })?;
+                    }
+                }
+            }
+            tracing::info!(
+                name: "agent_outbox_finished",
+                room = entry.room,
+                "a message or Commit left by an earlier attempt was sent again"
+            );
+        }
+        Ok(())
+    }
+
+    /// Inside a transaction: the hub accepted outbox entry `entry`, the
+    /// message with mimi-content `content` in `room`. Its plaintext goes to
+    /// the journal as this user's own message, the ids of its stored copies
+    /// are kept (findings log F18), and the entry leaves the outbox.
+    fn message_accepted(
+        &mut self,
+        entry: i64,
+        room: &str,
+        content: &[u8],
+        accepted: &Accepted,
+    ) -> Result<(), AgentError> {
+        match received(content, &self.me, room, accepted.accepted_at) {
+            Ok(message) => self.deliver(vec![Event::Sent(Box::new(message))]),
+            Err(why) => self.deliver(vec![Event::Problem {
+                room: Some(room.to_owned()),
+                description: format!("a message this device sent cannot be read back: {why}"),
+            }]),
+        }
+        self.remember_ids(&accepted.message_ids);
+        self.drop_outbox(entry)
+    }
+
+    /// Inside a transaction: the hub accepted the Commit of outbox entry
+    /// `entry`, whose stored copies have `ids`. It is merged, its events
+    /// journaled, and the entry leaves the outbox. `again` is for an entry
+    /// an earlier attempt left: no caller is there to report the new
+    /// membership, so a [`Event::MembersChanged`] is journaled too.
+    fn commit_accepted(
+        &mut self,
+        entry: i64,
+        ids: &[String],
+        again: bool,
+    ) -> Result<(), AgentError> {
+        let pending = outbox::get(self.connection(), entry)
+            .map_err(|e| self.dir.database_error("reading the outbox", e))?
+            .ok_or_else(|| AgentError::Invalid(format!("outbox entry {entry} is gone")))?;
+        let room = pending.room.as_str();
         let member = self
             .members
             .get_mut(room)
             .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
         member
             .merge_pending_commit(&self.identity)
-            .map_err(|e| AgentError::mls(format!("merging the {what} Commit"), e))?;
+            .map_err(|e| AgentError::mls("merging this device's Commit", e))?;
         let epoch = member.epoch();
-        let events = removed_events(room, removed, epoch);
-        if !events.is_empty() {
-            self.deliver(events);
-            self.save()?;
+        let mut events = removed_events(room, pending.removed, epoch);
+        if again {
+            events.push(Event::MembersChanged {
+                room: room.to_owned(),
+                epoch,
+                participants: participants(member)?,
+                committer: Some(self.me.clone()),
+            });
+        }
+        self.deliver(events);
+        self.remember_ids(ids);
+        self.drop_outbox(entry)
+    }
+
+    /// Inside a transaction: the hub refused the Commit of outbox entry
+    /// `entry`; it is cleared from its group, and the entry leaves the
+    /// outbox.
+    fn commit_refused(&mut self, entry: i64) -> Result<(), AgentError> {
+        if let Some(pending) = outbox::get(self.connection(), entry)
+            .map_err(|e| self.dir.database_error("reading the outbox", e))?
+            && let Some(member) = self.members.get_mut(&pending.room)
+        {
+            let _ = member.clear_pending_commit(&self.identity);
+        }
+        self.drop_outbox(entry)
+    }
+
+    /// Inside a transaction: outbox entry `entry` of `room` is given up,
+    /// with an [`Event::Problem`] saying `why`.
+    fn give_up(&mut self, entry: i64, room: &str, why: &str) -> Result<(), AgentError> {
+        tracing::warn!(
+            name: "agent_outbox_given_up",
+            room,
+            why,
+            "a message or Commit left by an earlier attempt is given up"
+        );
+        self.deliver(vec![Event::Problem {
+            room: Some(room.to_owned()),
+            description: format!("a message or Commit this device sent is given up: {why}"),
+        }]);
+        self.drop_outbox(entry)
+    }
+
+    /// Removes outbox entry `entry`.
+    fn drop_outbox(&mut self, entry: i64) -> Result<(), AgentError> {
+        outbox::remove(self.connection(), entry)
+            .map_err(|e| self.dir.database_error("writing the outbox", e))
+    }
+
+    /// Keeps the digests of the MLSMessages `request` carries, which this
+    /// agent is about to send.
+    fn remember_request(&self, request: &UpdateRequest) {
+        match &request.bundle {
+            HandshakeBundle::Commit {
+                proposal_or_commit, ..
+            } => self.provider.remember_sent(proposal_or_commit),
+            HandshakeBundle::Proposal {
+                proposal_or_commit,
+                more_proposals,
+            } => {
+                self.provider.remember_sent(proposal_or_commit);
+                for proposal in more_proposals {
+                    self.provider.remember_sent(proposal);
+                }
+            }
+        }
+    }
+
+    /// Keeps `ids`, the Messages the provider stored for something this
+    /// device sent (findings log F18), so that receiving skips them; the
+    /// newest [`MAX_SENT`] are kept.
+    fn remember_ids(&mut self, ids: &[String]) {
+        self.state.own_ids.extend(ids.iter().cloned());
+        let excess = self.state.own_ids.len().saturating_sub(MAX_SENT);
+        self.state.own_ids.drain(..excess);
+    }
+
+    /// Fails once at `point` if [`Agent::fail_next`] asked for it.
+    #[cfg(feature = "fail-points")]
+    fn fail_at(&mut self, point: FailPoint) -> Result<(), AgentError> {
+        if self.fail_point == Some(point) {
+            self.fail_point = None;
+            return Err(AgentError::Invalid(format!("fail point: {point:?}")));
         }
         Ok(())
     }

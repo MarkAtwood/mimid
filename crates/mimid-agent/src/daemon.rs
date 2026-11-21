@@ -425,9 +425,18 @@ fn read_server_token(path: &std::path::Path) -> Result<String, StartError> {
     Ok(token.to_owned())
 }
 
-/// Publishes KeyPackages until the agent thinks `target` are outstanding.
-/// A failure is logged.
+/// Learns which of the agent's KeyPackages were handed out
+/// ([`Agent::refresh_key_packages`]: `KeyPackage/changes`, findings log
+/// F9) and publishes KeyPackages until `target` are outstanding. A failure
+/// is logged; publishing then goes by what the agent knew before.
 async fn top_up_key_packages(agent: &mut Agent, target: u32) {
+    if let Err(error) = agent.refresh_key_packages().await {
+        tracing::warn!(
+            name: "agent_key_packages_unknown",
+            error = &error as &dyn std::error::Error,
+            "which KeyPackages were handed out could not be read"
+        );
+    }
     let have = agent.key_packages_outstanding();
     if have >= target {
         return;

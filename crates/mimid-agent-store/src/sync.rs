@@ -594,7 +594,10 @@ impl Store {
                     removal_notice,
                 );
             }
-            Event::Message(message) => {
+            // A message this device sent is stored as a received one: a
+            // record of it that Store::send made already has its MIMI
+            // message ID, so it is not stored twice.
+            Event::Message(message) | Event::Sent(message) => {
                 self.store_message(agent, *message, report, changes).await;
             }
             Event::MembersChanged {

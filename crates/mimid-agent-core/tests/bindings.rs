@@ -115,6 +115,9 @@ async fn scenario(a: Binding, b: Binding) -> Record {
     .await;
     record.note(format!("inviter {}", bob.inviter(number).unwrap()));
     assert_eq!(bob.join(number).unwrap(), room);
+    // findings log F9: KeyPackage/changes on JMAP, ListKeyPackages on the
+    // stream, the same count.
+    bob.refresh_key_packages().await.unwrap();
     record.note(format!(
         "bob joined: {:?}, name {:?}, outstanding {}",
         bob.participants(&room).unwrap(),
@@ -496,4 +499,67 @@ async fn a_membership_change_while_subscribed() {
         jmap_changes(&server, token, &position).await,
         (Vec::new(), position.clone())
     );
+}
+
+/// Findings log F12, on both bindings: an agent whose saved Message state
+/// the provider cannot follow (here written ahead of the account's, as a
+/// database restored from elsewhere would be) gets `cannotCalculateChanges`
+/// on JMAP and `cannotResume` on the stream, and then reads only the
+/// Messages after the last one it handled in each Chat: what it handled
+/// does not come again, the new message comes once, and MLS reports no
+/// Problem (`poll_until` fails on one).
+#[tokio::test]
+async fn a_lost_message_state_resumes_after_the_last_handled_message() {
+    for binding in [Binding::Jmap, Binding::Stream] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = stream_server(dir.path()).await;
+        let mut alice = device(&server, ALICE, dir.path(), Binding::Jmap).await;
+        let mut bob = device(&server, BOB, dir.path(), binding).await;
+        bob.publish_key_packages(1).await.unwrap();
+        let room = alice.host_room(&HostOptions::named("r")).await.unwrap();
+        alice.invite(&room, BOB).await.unwrap();
+        let number = poll_until(&mut bob, |e| match e {
+            Event::InviteArrived { number } => Some(*number),
+            _ => None,
+        })
+        .await;
+        bob.join(number).unwrap();
+        alice.send_text(&room, "before").await.unwrap();
+        poll_until(&mut bob, |e| match e {
+            Event::Message(m) if m.text.as_deref() == Some("before") => Some(()),
+            _ => None,
+        })
+        .await;
+
+        drop(bob);
+        let database = rusqlite::Connection::open(
+            dir.path().join("bob").join(mimid_agent_core::DATABASE_FILE),
+        )
+        .unwrap();
+        let changed = database
+            .execute(
+                "UPDATE agent_state SET record = json_set(record, '$.message_state', '99999.99')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(changed, 1);
+        drop(database);
+        alice.send_text(&room, "after").await.unwrap();
+        let mut bob = device(&server, BOB, dir.path(), binding).await;
+        let mut got = Vec::new();
+        for _ in 0..100 {
+            let events = bob.poll().await.unwrap();
+            for event in &events {
+                if let Event::Problem { description, .. } = event {
+                    panic!("{binding:?}: {description}");
+                }
+            }
+            got.extend(texts(&events));
+            if !got.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(got, [Some("after".to_owned())], "{binding:?}");
+    }
 }

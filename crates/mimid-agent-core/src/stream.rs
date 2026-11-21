@@ -24,7 +24,7 @@
 //! - Requests outstanding when the connection fails get an error; they
 //!   are not sent again, as on JMAP.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -39,6 +39,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::AgentError;
+use crate::client::Fetched;
 
 /// How long one request, or the hello, may take: as one JMAP request.
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -49,7 +50,11 @@ const OUT_BUFFER: usize = 64;
 /// One item of the receive feed.
 #[derive(Debug)]
 enum Item {
-    Deliver { id: String, fanout: Vec<u8> },
+    Deliver {
+        id: String,
+        chat: String,
+        fanout: Vec<u8>,
+    },
     Position(String),
 }
 
@@ -279,6 +284,7 @@ fn read(shared: &Shared, bytes: &[u8], wake: &Notify) -> bool {
         ProviderMessage::Deliver(deliver) => {
             lock(&shared.feed).items.push_back(Item::Deliver {
                 id: deliver.message_id,
+                chat: deliver.chat_id,
                 fanout: deliver.fanout,
             });
             wake.notify_one();
@@ -381,7 +387,8 @@ impl Stream {
     pub async fn messages_since(
         &self,
         since: Option<&str>,
-    ) -> Result<(String, Vec<(String, Vec<u8>)>), AgentError> {
+        after: &BTreeMap<String, String>,
+    ) -> Result<(String, Vec<Fetched>), AgentError> {
         const WHAT: &str = "Subscribe";
         let mut connection = self.connection().await?;
         let current = {
@@ -392,11 +399,14 @@ impl Stream {
             if lock(&connection.shared.feed).subscribed {
                 connection = self.reconnect().await?;
             }
-            match subscribe(&connection, since).await? {
+            let first_after = if since.is_none() { Some(after) } else { None };
+            match subscribe(&connection, since, first_after).await? {
                 Ok(()) => {}
+                // findings log F12: only what followed the last Message
+                // handled in each Chat.
                 Err(error) if error.code == code::CANNOT_RESUME && since.is_some() => {
                     connection = self.reconnect().await?;
-                    subscribe(&connection, None)
+                    subscribe(&connection, None, Some(after))
                         .await?
                         .map_err(|error| method_error(WHAT, &error))?;
                 }
@@ -415,7 +425,11 @@ impl Stream {
         let mut state = String::new();
         for item in feed.items.drain(..=last) {
             match item {
-                Item::Deliver { id, fanout } => messages.push((id, fanout)),
+                Item::Deliver { id, chat, fanout } => messages.push(Fetched {
+                    id,
+                    chat,
+                    body: fanout,
+                }),
                 Item::Position(position) => state = position,
             }
         }
@@ -424,11 +438,13 @@ impl Stream {
     }
 }
 
-/// Sends `Subscribe` from `since` on `connection` and waits for its `Ack`,
-/// after which the replay is in the feed.
+/// Sends `Subscribe` from `since`, or without it and with `after`, on
+/// `connection` and waits for its `Ack`, after which the replay is in the
+/// feed.
 async fn subscribe(
     connection: &Connection,
     since: Option<&str>,
+    after: Option<&BTreeMap<String, String>>,
 ) -> Result<Result<(), ErrorMessage>, AgentError> {
     {
         let mut feed = lock(&connection.shared.feed);
@@ -441,7 +457,7 @@ async fn subscribe(
             "Subscribe",
             Op::Subscribe {
                 since: since.map(str::to_owned),
-                after: None,
+                after: after.filter(|after| !after.is_empty()).cloned(),
             },
         )
         .await?;

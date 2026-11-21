@@ -242,6 +242,9 @@ async fn two_agents_chat_through_their_server() {
     assert_eq!(bob.inviter(number).unwrap(), ALICE);
     assert_eq!(bob.join(number).unwrap(), room);
     assert!(bob.invites().is_empty());
+    // findings log F9: the handed-out KeyPackage, by KeyPackage/changes.
+    assert_eq!(bob.key_packages_outstanding(), 2, "not refreshed yet");
+    assert_eq!(bob.refresh_key_packages().await.unwrap(), 1);
     assert_eq!(bob.key_packages_outstanding(), 1);
     assert_eq!(bob.participants(&room).unwrap(), [ALICE, BOB]);
     // Decision mimid-1wgh.56: the hub holds alice, who created the room,

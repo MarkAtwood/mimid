@@ -63,6 +63,10 @@ pub(crate) enum Journaled {
         content: String,
         text: Option<String>,
         frank: Option<(String, String)>,
+        /// A message this device sent ([`Event::Sent`]); absent for a
+        /// received one.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        own: bool,
     },
     MembersChanged {
         room: String,
@@ -106,9 +110,16 @@ impl Journaled {
             Event::InviteArrived { number } => Self::InviteArrived { number },
             Event::Message(message) => {
                 let room = message.room.clone();
-                message_of(*message).unwrap_or_else(|why| Self::Problem {
+                message_of(*message, false).unwrap_or_else(|why| Self::Problem {
                     room: Some(room),
                     description: format!("a received message could not be journaled: {why}"),
+                })
+            }
+            Event::Sent(message) => {
+                let room = message.room.clone();
+                message_of(*message, true).unwrap_or_else(|why| Self::Problem {
+                    room: Some(room),
+                    description: format!("a sent message could not be journaled: {why}"),
                 })
             }
             Event::MembersChanged {
@@ -147,7 +158,8 @@ impl Journaled {
     pub fn event(&self) -> Event {
         match self.clone() {
             Self::InviteArrived { number } => Event::InviteArrived { number },
-            Self::Message { room, .. } => match self.message() {
+            Self::Message { room, own, .. } => match self.message() {
+                Ok(message) if own => Event::Sent(Box::new(message)),
                 Ok(message) => Event::Message(Box::new(message)),
                 Err(why) => Event::Problem {
                     room: Some(room),
@@ -194,6 +206,7 @@ impl Journaled {
             content,
             text,
             frank,
+            ..
         } = self
         else {
             return Err("not a message".to_owned());
@@ -228,7 +241,7 @@ impl Journaled {
     }
 }
 
-fn message_of(message: ReceivedMessage) -> Result<Journaled, String> {
+fn message_of(message: ReceivedMessage, own: bool) -> Result<Journaled, String> {
     let frank = match &message.frank {
         None => None,
         Some(verified) => Some((
@@ -254,6 +267,7 @@ fn message_of(message: ReceivedMessage) -> Result<Journaled, String> {
         content: hex::encode(&message.application_data),
         text: message.text,
         frank,
+        own,
     })
 }
 

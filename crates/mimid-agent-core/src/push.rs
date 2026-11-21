@@ -36,10 +36,12 @@ use crate::AgentError;
 
 /// The data types whose changes [`crate::Agent`] reads when it syncs:
 /// `Message` ([`crate::Agent::receive`]), `Chat`
-/// ([`crate::Agent::join_own_rooms`]) and `Consent`
-/// ([`crate::Agent::consents`]). A StateChange naming any of them is
-/// worth a sync.
-pub const SYNC_TYPES: [&str; 3] = ["Message", "Chat", "Consent"];
+/// ([`crate::Agent::join_own_rooms`]), `Consent`
+/// ([`crate::Agent::consents`]) and `KeyPackage`
+/// ([`crate::Agent::refresh_key_packages`], which the daemon runs after
+/// each sync to top its KeyPackages up; findings log F9, F17). A
+/// StateChange naming any of them is worth a sync.
+pub const SYNC_TYPES: [&str; 4] = ["Message", "Chat", "Consent", "KeyPackage"];
 
 /// The `ping` interval asked for, in seconds. INVENTED, NOT FROM SPEC:
 /// long enough to cost nothing, short enough that a dead connection is
@@ -569,7 +571,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             source.url(&SYNC_TYPES),
-            "https://s.example/es?types=Message%2CChat%2CConsent&closeafter=no&ping=30"
+            "https://s.example/es?types=Message%2CChat%2CConsent%2CKeyPackage&closeafter=no&ping=30"
         );
         assert!(!format!("{source:?}").contains("secret"));
     }

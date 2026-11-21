@@ -13,6 +13,7 @@
 //! stores this user's own handshakes and messages; [`Jmap::is_own`]
 //! recognises those this agent sent, so they are skipped.
 
+use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -21,9 +22,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use mimi_mls::tls_codec::{Deserialize, Serialize, VLBytes};
 use mimi_mls::wire::{Capabilities, KeyPackage, ProposalRef};
 use mimi_protocol::{
-    ClientKeyMaterial, FanoutEvent, FanoutMessage, HandshakeBundle, IdentifierUri,
-    KeyMaterialRequest, KeyMaterialResponse, KeyMaterialUserCode, Protocol, UpdateRequest,
-    UpdateResult, UpdateRoomResponse, Utf8String,
+    ClientKeyMaterial, FanoutEvent, FanoutMessage, IdentifierUri, KeyMaterialRequest,
+    KeyMaterialResponse, KeyMaterialUserCode, Protocol, UpdateRequest, UpdateResult,
+    UpdateRoomResponse, Utf8String,
 };
 use serde_json::{Value, json};
 
@@ -371,18 +372,71 @@ impl Jmap {
     }
 
     /// KeyPackage/set create.
-    pub async fn publish_key_package(&self, key_package: &[u8]) -> Result<(), AgentError> {
+    pub async fn publish_key_package(&self, key_package: &[u8]) -> Result<String, AgentError> {
         let answer = self
             .set(
                 "KeyPackage/set",
                 json!({"create": {"k": {"keyPackage": URL_SAFE_NO_PAD.encode(key_package)}}}),
             )
             .await?;
-        if answer["created"]["k"].is_object() {
-            Ok(())
-        } else {
-            Err(AgentError::malformed("KeyPackage/set", "nothing created"))
+        answer["created"]["k"]["id"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| AgentError::malformed("KeyPackage/set", "nothing created"))
+    }
+
+    /// `KeyPackage/changes` from `since` to the end (findings log F9): the
+    /// ids of the KeyPackages destroyed (handed out, destroyed or replaced)
+    /// and the new state, or `None` for `cannotCalculateChanges`.
+    pub async fn key_package_changes(
+        &self,
+        since: &str,
+    ) -> Result<Option<(Vec<String>, String)>, AgentError> {
+        const WHAT: &str = "KeyPackage/changes";
+        let mut destroyed = Vec::new();
+        let mut state = since.to_owned();
+        loop {
+            let answer = match self.call(WHAT, json!({"sinceState": state})).await {
+                Ok(answer) => answer,
+                Err(AgentError::Method { kind, .. }) if kind == "cannotCalculateChanges" => {
+                    return Ok(None);
+                }
+                Err(e) => return Err(e),
+            };
+            destroyed.extend(
+                answer["destroyed"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| id.as_str().map(str::to_owned)),
+            );
+            state = answer["newState"]
+                .as_str()
+                .ok_or_else(|| AgentError::malformed(WHAT, "no newState"))?
+                .to_owned();
+            if answer["hasMoreChanges"] != true {
+                return Ok(Some((destroyed, state)));
+            }
         }
+    }
+
+    /// `KeyPackage/get` of every record's id: the state and the ids.
+    pub async fn key_package_ids(&self) -> Result<(String, Vec<String>), AgentError> {
+        const WHAT: &str = "KeyPackage/get";
+        let answer = self
+            .call(WHAT, json!({"ids": null, "properties": ["id"]}))
+            .await?;
+        let state = answer["state"]
+            .as_str()
+            .ok_or_else(|| AgentError::malformed(WHAT, "no state"))?
+            .to_owned();
+        let ids = answer["list"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|record| record["id"].as_str().map(str::to_owned))
+            .collect();
+        Ok((state, ids))
     }
 
     /// Room/create for the room `room_id`; returns the room ID.
@@ -491,6 +545,15 @@ impl Jmap {
                 json!({"roomId": room_id, "request": URL_SAFE_NO_PAD.encode(request)}),
             )
             .await?;
+        // findings log F5: the KeyMaterialResponse as the provider got it,
+        // when the server gives it; otherwise rebuilt from the fields.
+        if let Some(whole) = answer["response"].as_str() {
+            let bytes = URL_SAFE_NO_PAD
+                .decode(whole)
+                .map_err(|_| AgentError::malformed(WHAT, "response is not base64url"))?;
+            return KeyMaterialResponse::tls_deserialize_exact(&bytes[..])
+                .map_err(|e| AgentError::malformed(WHAT, format!("response: {e:?}")));
+        }
         let user_status = match answer["userStatus"].as_str() {
             Some("success") => KeyMaterialUserCode::Success,
             Some("partialSuccess") => KeyMaterialUserCode::PartialSuccess,
@@ -566,7 +629,9 @@ impl Jmap {
         })
     }
 
-    fn remember_sent(&self, message: &impl Serialize) {
+    /// Keeps the digest of `message`, which this agent is about to send,
+    /// so that its stored copy is recognised ([`Jmap::is_own`]).
+    pub fn remember_sent(&self, message: &impl Serialize) {
         if let Ok(bytes) = message.tls_serialize_detached() {
             let mut sent = self.sent.lock().unwrap_or_else(PoisonError::into_inner);
             sent.push(digest(&bytes));
@@ -608,48 +673,113 @@ impl Jmap {
         })
     }
 
-    /// The Messages stored since `since` (every Message when `None`, or
-    /// when the server cannot calculate the changes), as (id, body), and
-    /// the new Message state.
+    /// The Messages stored since `since`, in the order Message/get lists
+    /// them, and the new Message state. With no `since`, every Message.
+    /// When the server cannot calculate the changes from `since`, the
+    /// Messages after `after` instead ([`Jmap::messages_after`]).
     pub async fn messages_since(
         &self,
         since: Option<&str>,
-    ) -> Result<(String, Vec<(String, Vec<u8>)>), AgentError> {
-        let (state, ids) = match since {
-            None => (None, Value::Null),
-            Some(since) => {
-                let mut ids = Vec::new();
-                let mut state = since.to_owned();
-                loop {
-                    let changes = match self
-                        .call("Message/changes", json!({"sinceState": state}))
-                        .await
-                    {
-                        Ok(changes) => changes,
-                        Err(AgentError::Method { kind, .. })
-                            if kind == "cannotCalculateChanges" =>
-                        {
-                            return Box::pin(self.messages_since(None)).await;
-                        }
-                        Err(e) => return Err(e),
-                    };
-                    ids.extend(changes["created"].as_array().into_iter().flatten().cloned());
-                    state = changes["newState"]
-                        .as_str()
-                        .ok_or_else(|| AgentError::malformed("Message/changes", "no newState"))?
-                        .to_owned();
-                    if changes["hasMoreChanges"] != true {
-                        break;
-                    }
-                }
-                if ids.is_empty() {
-                    return Ok((state, Vec::new()));
-                }
-                (Some(state), Value::Array(ids))
-            }
+        after: &BTreeMap<String, String>,
+    ) -> Result<(String, Vec<Fetched>), AgentError> {
+        let Some(since) = since else {
+            return self.get_messages(None, Value::Null).await;
         };
+        let mut ids = Vec::new();
+        let mut state = since.to_owned();
+        loop {
+            let changes = match self
+                .call("Message/changes", json!({"sinceState": state}))
+                .await
+            {
+                Ok(changes) => changes,
+                Err(AgentError::Method { kind, .. }) if kind == "cannotCalculateChanges" => {
+                    return self.messages_after(after).await;
+                }
+                Err(e) => return Err(e),
+            };
+            ids.extend(changes["created"].as_array().into_iter().flatten().cloned());
+            state = changes["newState"]
+                .as_str()
+                .ok_or_else(|| AgentError::malformed("Message/changes", "no newState"))?
+                .to_owned();
+            if changes["hasMoreChanges"] != true {
+                break;
+            }
+        }
+        if ids.is_empty() {
+            return Ok((state, Vec::new()));
+        }
+        self.get_messages(Some(state), Value::Array(ids)).await
+    }
+
+    /// The recovery from `cannotCalculateChanges` (findings log F12): for
+    /// each Chat, `Message/query` sorted by `id`, which follows the order
+    /// the Messages were stored in (F2), with `anchor` the last Message
+    /// handled in it (`after`) and `anchorOffset` 1, or from the start for
+    /// a Chat not in `after` or whose anchor is gone; then `Message/get`
+    /// of those. The state is read first, so a Message stored meanwhile
+    /// comes again from the next `Message/changes`, and the agent skips it
+    /// by its id.
+    async fn messages_after(
+        &self,
+        after: &BTreeMap<String, String>,
+    ) -> Result<(String, Vec<Fetched>), AgentError> {
+        let state = self.call("Message/get", json!({"ids": []})).await?["state"]
+            .as_str()
+            .ok_or_else(|| AgentError::malformed("Message/get", "no state"))?
+            .to_owned();
+        let chats = self
+            .call("Chat/get", json!({"ids": null, "properties": ["id"]}))
+            .await?;
+        let mut ids: Vec<String> = Vec::new();
+        for chat in chats["list"].as_array().into_iter().flatten() {
+            let Some(chat) = chat["id"].as_str() else {
+                continue;
+            };
+            let query = json!({"filter": {"chatId": chat}, "sort": [{"property": "id"}]});
+            let anchored = after.get(chat).map(|last| {
+                let mut query = query.clone();
+                query["anchor"] = json!(last);
+                query["anchorOffset"] = json!(1);
+                query
+            });
+            let answer = match anchored {
+                Some(anchored) => match self.call("Message/query", anchored).await {
+                    Err(AgentError::Method { kind, .. }) if kind == "anchorNotFound" => {
+                        self.call("Message/query", query).await?
+                    }
+                    other => other?,
+                },
+                None => self.call("Message/query", query).await?,
+            };
+            ids.extend(
+                answer["ids"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| id.as_str().map(str::to_owned)),
+            );
+        }
+        if ids.is_empty() {
+            return Ok((state, Vec::new()));
+        }
+        // Message/get lists them in the order they were stored.
+        self.get_messages(Some(state), json!(ids)).await
+    }
+
+    /// `Message/get` of `ids` (every Message when null), with the state
+    /// to report: `state`, or the answer's.
+    async fn get_messages(
+        &self,
+        state: Option<String>,
+        ids: Value,
+    ) -> Result<(String, Vec<Fetched>), AgentError> {
         let answer = self
-            .call("Message/get", json!({"ids": ids, "properties": ["body"]}))
+            .call(
+                "Message/get",
+                json!({"ids": ids, "properties": ["body", "chatId"]}),
+            )
             .await?;
         let state = match state {
             Some(state) => state,
@@ -667,32 +797,22 @@ impl Jmap {
                 .ok_or_else(|| {
                     AgentError::malformed("Message/get", format!("Message {id} has no body"))
                 })?;
-            messages.push((id, body));
+            let chat = message["chatId"].as_str().unwrap_or_default().to_owned();
+            messages.push(Fetched { id, chat, body });
         }
         Ok((state, messages))
     }
 
-    /// Room/update, answered as the UpdateRoomResponse it describes.
+    /// Room/update, answered as the UpdateRoomResponse it describes, with
+    /// the ids of the Messages stored for an accepted handshake (findings
+    /// log F18; empty when the server names none). The caller remembers
+    /// what it sends ([`Jmap::remember_sent`]) first.
     pub async fn update(
         &self,
         room: &str,
         request: &UpdateRequest,
-    ) -> Result<UpdateRoomResponse, AgentError> {
+    ) -> Result<(UpdateRoomResponse, Vec<String>), AgentError> {
         const WHAT: &str = "Room/update";
-        match &request.bundle {
-            HandshakeBundle::Commit {
-                proposal_or_commit, ..
-            } => self.remember_sent(proposal_or_commit),
-            HandshakeBundle::Proposal {
-                proposal_or_commit,
-                more_proposals,
-            } => {
-                self.remember_sent(proposal_or_commit);
-                for proposal in more_proposals {
-                    self.remember_sent(proposal);
-                }
-            }
-        }
         let bytes = request
             .tls_serialize_detached()
             .map_err(|e| AgentError::tls("own UpdateRequest", e))?;
@@ -728,13 +848,16 @@ impl Jmap {
                 ));
             }
         };
-        Ok(UpdateRoomResponse {
-            error_description: Utf8String::new(
-                answer["errorDescription"].as_str().unwrap_or("").to_owned(),
-            )
-            .map_err(|e| AgentError::malformed(WHAT, format!("errorDescription: {e:?}")))?,
-            result,
-        })
+        Ok((
+            UpdateRoomResponse {
+                error_description: Utf8String::new(
+                    answer["errorDescription"].as_str().unwrap_or("").to_owned(),
+                )
+                .map_err(|e| AgentError::malformed(WHAT, format!("errorDescription: {e:?}")))?,
+                result,
+            },
+            message_ids(&answer),
+        ))
     }
 
     /// Room/reportAbuse (INVENTED, NOT FROM SPEC; decision mimid-1wgh.58)
@@ -756,11 +879,11 @@ impl Jmap {
             Some("accepted") => Ok(ReportOutcome::Accepted),
             Some("notAllowed") => Ok(ReportOutcome::NotAllowed),
             Some("unverifiedMessage") => Ok(ReportOutcome::UnverifiedMessage),
+            // findings log F8: `status` is optional.
             Some("refused") => Ok(ReportOutcome::Refused {
                 status: answer["status"]
                     .as_u64()
-                    .and_then(|status| u16::try_from(status).ok())
-                    .ok_or_else(|| AgentError::malformed(WHAT, "refused without a status"))?,
+                    .and_then(|status| u16::try_from(status).ok()),
             }),
             other => Err(AgentError::malformed(
                 WHAT,
@@ -770,17 +893,18 @@ impl Jmap {
     }
 
     /// Room/send of the MLSMessage `message`; the hub's accepted time in
-    /// milliseconds, or the refusal as an error.
+    /// milliseconds and the ids of the Messages stored for it (findings
+    /// log F18), or the refusal as an error. The caller remembers what it
+    /// sends ([`Jmap::remember_sent`]) first.
     pub async fn send(
         &self,
         room: &str,
         message: &mimi_mls::wire::MLSMessage,
-    ) -> Result<u64, AgentError> {
+    ) -> Result<Accepted, AgentError> {
         const WHAT: &str = "Room/send";
         let bytes = message
             .tls_serialize_detached()
             .map_err(|e| AgentError::tls("own message", e))?;
-        self.remember_sent(message);
         let answer = self
             .call(
                 WHAT,
@@ -788,8 +912,11 @@ impl Jmap {
             )
             .await?;
         match answer["responseCode"].as_str() {
-            Some("accepted") => utc_date_ms(answer["acceptedAt"].as_str().unwrap_or(""))
-                .map_err(|detail| AgentError::malformed(WHAT, detail)),
+            Some("accepted") => Ok(Accepted {
+                accepted_at: utc_date_ms(answer["acceptedAt"].as_str().unwrap_or(""))
+                    .map_err(|detail| AgentError::malformed(WHAT, detail))?,
+                message_ids: message_ids(&answer),
+            }),
             code => Err(AgentError::Refused {
                 what: WHAT.to_owned(),
                 reason: format!(
@@ -802,6 +929,37 @@ impl Jmap {
             }),
         }
     }
+}
+
+/// What the provider answered for a message the hub accepted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Accepted {
+    /// The hub's acceptance time, milliseconds.
+    pub accepted_at: u64,
+    /// The ids of the Messages the server stored for it in the account
+    /// (findings log F18); empty when it names none.
+    pub message_ids: Vec<String>,
+}
+
+/// One stored Message as the agent reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Fetched {
+    /// The Message id.
+    pub id: String,
+    /// The id of its Chat.
+    pub chat: String,
+    /// The FanoutMessage.
+    pub body: Vec<u8>,
+}
+
+/// `messageIds` of a Room/send or Room/update answer (findings log F18).
+fn message_ids(answer: &Value) -> Vec<String> {
+    answer["messageIds"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|id| id.as_str().map(str::to_owned))
+        .collect()
 }
 
 /// The JSON body of `response`, or its status as an error.
