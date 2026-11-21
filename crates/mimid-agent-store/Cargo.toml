@@ -17,6 +17,8 @@ rusqlite = { version = "=0.37.0", features = ["bundled"] }
 serde.workspace = true
 # The store file, and the front ends' extensions in it.
 serde_json.workspace = true
+# Attachment links carry an HMAC-SHA256 (links.rs).
+hmac.workspace = true
 # Blob ids and notice keys are SHA-256 digests.
 sha2.workspace = true
 thiserror.workspace = true

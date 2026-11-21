@@ -1229,7 +1229,8 @@ These answer §6 and override the recommendations there and anything in
    the user's own provider included. A nick never moves between people.
 4. **No attachments in v1.** Neither links nor a placeholder line are
    required; no `/irc/blob` route and no new authorization at the agent
-   boundary. A message's text is shown; its attachments are not.
+   boundary. A message's text is shown; its attachments are not. (For IRC v2 and the other front ends the store
+   now makes attachment links, §7.30.)
 5. **Invites and consent from IRC: yes.** A pending invite shows as an
    INVITE line and JOIN accepts it; `/msg mimid allow <nick>` and
    `/msg mimid deny <nick>` set consent.
@@ -1923,6 +1924,44 @@ Added on 2026-11-20:
     - Tests: mimid-agent-store `tests/groundwork.rs`
       `one_to_one_rooms_are_made_once_and_recognised`; mimid-agent
       `tests/groundwork.rs` `direct_chats_over_jmap`.
+
+30. **Attachment links (epic mimid-qqtk, bead mimid-qqtk.5; decision
+    mimid-1wgh.88).** For front ends whose clients cannot send the
+    bearer header JMAP download needs (IRC v2, Matrix, XMPP): a URL on
+    the agent's HTTP listener that gives one attachment's plaintext.
+    This is §6 question 4's per-blob link, with an expiry; it adds the
+    route and the second authorization at the agent boundary that §7.4
+    left out of IRC v1. IRC v1 still shows no attachments.
+    - **Form.** `GET /attachment/<blobId>/<expires>/<mac>/<name>`:
+      `expires` in seconds since the UNIX epoch; `mac` the first 16
+      octets, in hex, of HMAC-SHA256 under the link key over
+      `"mimid-attachment-link-v1" 0x00 blobId 0x00 expires`; `name`
+      percent-encoded, outside the MAC (it only names the download). The
+      link key is HMAC-SHA256 under the local token of
+      `"mimid-attachment-link-key-v1"` (`LocalToken::link_key`), so a
+      link shows nothing of the token, and a new token revokes every
+      link. INVENTED, NOT FROM SPEC.
+    - **Making one.** `Store::attachment_link(message, blob, lifetime)`,
+      for an attachment of a message that is not deleted; the lifetime
+      is at most `MAX_LINK_LIFETIME` (30 days), `DEFAULT_LINK_LIFETIME`
+      a day (both INVENTED). The daemon sets the links
+      (`Store::set_attachment_links`) once its HTTP listener is bound;
+      without `listen` there are none.
+    - **Serving.** The Host check first, as for every request. Then the
+      link is its own authorization, on GET of this path only
+      (AGENTS.md's table gains the row): `AttachmentLinks::check`, the
+      one place, compares the MAC (the hmac crate's check) and the
+      expiry. A message that is not deleted must still name the blob
+      (`Store::live_attachment`). The answer is the octets, with the
+      attachment's media type if valid, `Content-Disposition` from the
+      name, `nosniff`, `sandbox` and `no-store`. Every failure is the
+      same 404.
+    - **What it gives away.** Whoever reads a link (a chat log, a
+      client's link preview) can fetch the file from a loopback address
+      until it expires; the log holds the plaintext of the message
+      anyway (§6 question 4). docs/agent.md says so.
+    - Tests: mimid-agent-store `links::tests`; mimid-agent
+      `tests/groundwork.rs` `attachment_links_give_one_file_until_they_expire`.
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

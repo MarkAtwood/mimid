@@ -7,7 +7,8 @@
 //! retry policy of attachment fetches ([`retry`]), the identifiers every
 //! front end shows a message under ([`convert`]), the agent's own notices
 //! ([`notice`]), body types and safe file names ([`content`]), and what a
-//! message keeps for an abuse report ([`report`]). mimid-agent-jmap's JMAP
+//! message keeps for an abuse report ([`report`]), and attachment links a
+//! front end can hand any client ([`links`]). mimid-agent-jmap's JMAP
 //! Chat front end and mimid-agent-irc's IRC front end are built on it; it
 //! depends on neither crate-jmap nor any IRC code.
 //!
@@ -43,6 +44,7 @@ pub mod convert;
 pub mod db;
 pub mod expiry;
 pub mod feed;
+pub mod links;
 pub mod notice;
 pub mod record;
 pub mod report;

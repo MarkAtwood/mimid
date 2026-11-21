@@ -117,6 +117,7 @@ mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat cl
   | Boundary | Check |
   |---|---|
   | Agent (loopback HTTP) | Host is a loopback name for the port, then the local bearer token in a 0600 file (Mark 2026-11-16: loopback HTTP + token, not a socket) |
+  | Agent (attachment links) | `GET /attachment/...` on the loopback HTTP listener, after the Host check: the link's HMAC under a key derived from the local token, and its expiry, checked by `AttachmentLinks::check` (mimid-agent-store `links`; docs/design/agent-frontends.md §7.30); the bearer token is not asked for on this path only |
   | Agent (loopback IRC) | The same local token as the IRC server password (`PASS`), compared in constant time before registration ends (docs/design/agent-frontends.md §4); no SASL |
   | JMAP | Bearer token |
   | Live stream (`/mimid/live`, off by default) | The bearer token in `ClientHello`, through the JMAP `Account` extractor's code (`Authenticator::authenticate_token`, decision mimid-1wgh.73), again before each request and each run of `Deliver`s |

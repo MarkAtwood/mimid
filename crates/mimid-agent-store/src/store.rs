@@ -115,6 +115,9 @@ pub struct Store {
     /// Whether edits and retractions go with Room/send `silent`
     /// ([`Store::set_silent_edits`]).
     silent_edits: std::sync::atomic::AtomicBool,
+    /// Attachment links, once the daemon has an HTTP listener to serve
+    /// them ([`Store::set_attachment_links`]).
+    links: OnceLock<crate::links::AttachmentLinks>,
 }
 
 impl std::fmt::Debug for Store {
@@ -150,6 +153,7 @@ impl Store {
             expired_blobs: Mutex::new(Vec::new()),
             expiry_wake: Arc::new(Notify::new()),
             silent_edits: std::sync::atomic::AtomicBool::new(true),
+            links: OnceLock::new(),
         }
     }
 
@@ -499,6 +503,65 @@ impl Store {
     #[must_use]
     pub fn user(&self) -> &str {
         &self.user
+    }
+
+    /// Sets how attachment links are made ([`crate::links`]): the daemon
+    /// does, once its HTTP listener is bound. False if they were set
+    /// already.
+    pub fn set_attachment_links(&self, links: crate::links::AttachmentLinks) -> bool {
+        self.links.set(links).is_ok()
+    }
+
+    /// The attachment links, if set.
+    #[must_use]
+    pub fn attachment_links(&self) -> Option<&crate::links::AttachmentLinks> {
+        self.links.get()
+    }
+
+    /// A link to attachment `blob_id` of message `message`, valid for
+    /// `lifetime` (at most [`crate::links::MAX_LINK_LIFETIME`]) from now,
+    /// for a front end to hand its client (docs/design/agent-frontends.md
+    /// §7.30). `None` without links (no HTTP listener), or if the message
+    /// is not stored, is deleted, or has no such attachment.
+    #[must_use]
+    pub fn attachment_link(
+        &self,
+        message: &str,
+        blob_id: &str,
+        lifetime: std::time::Duration,
+    ) -> Option<String> {
+        let links = self.links.get()?;
+        let name = {
+            let state = self.state();
+            let record = state.messages.get(message)?;
+            if record.deleted.is_some() {
+                return None;
+            }
+            record
+                .attachments
+                .iter()
+                .find(|a| a.blob_id == blob_id)?
+                .file_name
+                .clone()
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs();
+        let expires = now.saturating_add(lifetime.min(crate::links::MAX_LINK_LIFETIME).as_secs());
+        Some(links.link(blob_id, &name, expires))
+    }
+
+    /// The attachment record of blob `blob_id` in a message that is not
+    /// deleted, if one names it: what an attachment link may still give.
+    #[must_use]
+    pub fn live_attachment(&self, blob_id: &str) -> Option<crate::record::Attachment> {
+        self.state()
+            .messages
+            .values()
+            .filter(|m| m.deleted.is_none())
+            .find_map(|m| m.attachments.iter().find(|a| a.blob_id == blob_id))
+            .cloned()
     }
 
     /// The blob store, if there is one.

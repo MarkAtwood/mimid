@@ -94,6 +94,19 @@ impl LocalToken {
         .then(|| Self(text.to_owned()))
     }
 
+    /// The key attachment links are made with
+    /// (mimid_agent_store::links): HMAC-SHA256 under the token of
+    /// `"mimid-attachment-link-key-v1"`, so a new token revokes every
+    /// link, and a link shows nothing of the token.
+    #[must_use]
+    pub fn link_key(&self) -> [u8; 32] {
+        use hmac::{Hmac, KeyInit, Mac};
+        let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(self.0.as_bytes())
+            .unwrap_or_else(|_| unreachable!("HMAC takes a key of any length"));
+        mac.update(b"mimid-attachment-link-key-v1");
+        mac.finalize().into_bytes().into()
+    }
+
     /// Whether `presented` is this token, compared in constant time (a
     /// length mismatch shows only that the length differs).
     pub fn matches(&self, presented: &[u8]) -> bool {

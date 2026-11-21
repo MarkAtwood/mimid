@@ -2581,6 +2581,7 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "getrandom 0.3.4",
+ "hmac 0.13.0",
  "jmap-base-client",
  "jmap-chat-client",
  "jmap-chat-types",
@@ -2687,6 +2688,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "hex",
+ "hmac 0.13.0",
  "mimi-content",
  "mimid-agent-core",
  "mimid-server",

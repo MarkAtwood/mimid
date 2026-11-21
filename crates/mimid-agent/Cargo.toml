@@ -33,6 +33,8 @@ mimid-agent-store = { path = "../mimid-agent-store" }
 serde.workspace = true
 serde_json.workspace = true
 # The Session state and the account id.
+# The attachment link key, from the local token (token.rs).
+hmac.workspace = true
 sha2.workspace = true
 # Constant-time comparison of the local bearer token; already in the
 # lockfile.

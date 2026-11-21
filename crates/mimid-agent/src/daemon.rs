@@ -23,6 +23,7 @@ use crate::http::{
     self, CHANGE_BUFFER, Endpoint, Jmap, MAX_CONCURRENT_REQUESTS, MAX_CONCURRENT_UPLOAD, stopped,
 };
 use crate::token::{LocalToken, TokenError};
+use mimid_agent_store::links::AttachmentLinks;
 
 /// A started daemon: the agent is open, its KeyPackages published and the
 /// listeners bound. [`Daemon::serve`] runs it.
@@ -192,6 +193,12 @@ impl Daemon {
                 } else {
                     None
                 };
+                // docs/design/agent-frontends.md §7.30: links any front
+                // end can hand its client, served on this listener.
+                store.set_attachment_links(AttachmentLinks::new(
+                    token.link_key(),
+                    format!("http://{local_addr}"),
+                ));
                 let (changes, _) = broadcast::channel(CHANGE_BUFFER);
                 let endpoint = Arc::new(Endpoint {
                     token: token.clone(),

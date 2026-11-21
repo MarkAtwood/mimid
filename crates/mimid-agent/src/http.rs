@@ -7,6 +7,10 @@
 //!   account's blob store (mimid-agent-jmap's `BlobStore`);
 //! - `GET /jmap/download/{accountId}/{blobId}/{name}?accept={type}`:
 //!   download (RFC 8620 §6.2) from it.
+//! - `GET /attachment/{blobId}/{expires}/{mac}/{name}`: an attachment
+//!   link (docs/design/agent-frontends.md §7.30), which a front end hands
+//!   a client that cannot send the bearer header; the link's MAC is its
+//!   authorization, in place of the bearer token;
 //! - `POST /mimid/did-webvh/log`: a newer did:webvh log for the agent
 //!   (INVENTED, NOT FROM SPEC; see the `didwebvh` module).
 //!
@@ -32,9 +36,11 @@
 //!    bearer token (a browser sends none on a preflight). Never `*`, and no
 //!    `Access-Control-Allow-Credentials`: authentication is a bearer
 //!    header, not cookies.
-//! 3. **The bearer token**, this endpoint's only authorization point:
-//!    every other request, on every path, must carry `Authorization:
-//!    Bearer <local token>`, or it is `401` with an RFC 7807 body.
+//! 3. **The bearer token**: every other request, on every path but an
+//!    attachment link's, must carry `Authorization: Bearer <local
+//!    token>`, or it is `401` with an RFC 7807 body. An attachment link
+//!    (`GET /attachment/...`) is authorized by its own MAC instead, which
+//!    its route checks (`mimid_agent_store::links::AttachmentLinks::check`).
 //!
 //! A response to a request whose `Origin` is in the list, the `401`
 //! included, carries `Access-Control-Allow-Origin` with that exact origin;
@@ -117,6 +123,7 @@ use tokio::sync::{Notify, Semaphore, broadcast, mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::token::LocalToken;
+use mimid_agent_store::links::LINK_PATH;
 
 /// Resolves once `stop` is true (or its sender is gone). The `Ref`
 /// `wait_for` gives is not `Send`, so it is dropped here.
@@ -355,6 +362,12 @@ pub(crate) fn router(endpoint: Arc<Endpoint>) -> Router {
         // DefaultBodyLimit applies only to extractors such as Bytes.
         .route("/jmap/upload/{accountId}/", post(upload))
         .route("/jmap/download/{accountId}/{blobId}/{name}", get(download))
+        // docs/design/agent-frontends.md §7.30: the link is its own
+        // authorization (guard).
+        .route(
+            "/attachment/{blobId}/{expires}/{mac}/{name}",
+            get(attachment_link),
+        )
         // INVENTED, NOT FROM SPEC (bead mimid-1wgh.4.81.28): see the
         // didwebvh module. It reads its body itself, capped.
         .route(
@@ -382,17 +395,22 @@ async fn guard(State(endpoint): State<Arc<Endpoint>>, request: Request, next: Ne
     {
         return preflight(origin.clone());
     }
-    let mut response =
-        if bearer_token(request.headers()).is_some_and(|token| endpoint.token.matches(token)) {
-            next.run(request).await
-        } else {
-            tracing::debug!("agent request refused: missing, malformed or wrong bearer token");
-            let mut response = problem_response(StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY);
-            response
-                .headers_mut()
-                .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
-            response
-        };
+    // An attachment link carries its own MAC, checked by the route
+    // (mimid_agent_store::links); it needs no bearer token.
+    let link = request.method() == Method::GET
+        && request.uri().path().starts_with(&format!("{LINK_PATH}/"));
+    let mut response = if link
+        || bearer_token(request.headers()).is_some_and(|token| endpoint.token.matches(token))
+    {
+        next.run(request).await
+    } else {
+        tracing::debug!("agent request refused: missing, malformed or wrong bearer token");
+        let mut response = problem_response(StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY);
+        response
+            .headers_mut()
+            .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+        response
+    };
     let headers = response.headers_mut();
     if !endpoint.allowed_origins.is_empty() {
         headers.append(header::VARY, HeaderValue::from_static("Origin"));
@@ -699,6 +717,67 @@ async fn download(
                 HeaderValue::from_static("sandbox"),
             ),
             (header::CACHE_CONTROL, HeaderValue::from_static(IMMUTABLE)),
+        ],
+        content,
+    )
+        .into_response()
+}
+
+/// `GET /attachment/{blobId}/{expires}/{mac}/{name}`: an attachment link
+/// (docs/design/agent-frontends.md §7.30; mimid_agent_store::links). The
+/// MAC must be the store's for the blob and expiry, the expiry not past,
+/// and a message that is not deleted must still name the blob; the
+/// answer is then its octets, with the attachment's media type if valid,
+/// and the download headers of `download`, but `no-store`. Anything else
+/// is `404`, the same for each failure.
+async fn attachment_link(
+    State(endpoint): State<Arc<Endpoint>>,
+    Path((blob_id, expires, mac, name)): Path<(String, String, String, String)>,
+) -> Response {
+    let not_found = || problem_response(StatusCode::NOT_FOUND, NOT_FOUND_BODY);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (Some(links), Some(blobs), Ok(expires)) = (
+        endpoint.store.attachment_links(),
+        endpoint.store.blobs().cloned(),
+        expires.parse::<u64>(),
+    ) else {
+        return not_found();
+    };
+    if !links.check(&blob_id, expires, &mac, now) {
+        tracing::debug!("agent attachment link refused");
+        return not_found();
+    }
+    let Some(attachment) = endpoint.store.live_attachment(&blob_id) else {
+        return not_found();
+    };
+    let content = match tokio::task::spawn_blocking(move || blobs.get(&blob_id)).await {
+        Ok(Ok(Some(content))) => content,
+        Ok(Ok(None)) => return not_found(),
+        Ok(Err(error)) => return blob_store_failed(&error),
+        Err(error) => return blob_store_failed(&error),
+    };
+    let content_type = Some(attachment.media_type.as_str())
+        .filter(|t| is_media_type(t))
+        .and_then(|t| HeaderValue::from_str(t).ok())
+        .unwrap_or(HeaderValue::from_static(OCTET_STREAM));
+    let disposition = HeaderValue::from_str(&content_disposition(&name))
+        .unwrap_or(HeaderValue::from_static("attachment"));
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_DISPOSITION, disposition),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static("sandbox"),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
         ],
         content,
     )

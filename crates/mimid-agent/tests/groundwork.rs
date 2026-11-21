@@ -420,3 +420,120 @@ async fn direct_chats_over_jmap() {
     assert_eq!(seen["contactId"], alice_contact);
     p.stop().await;
 }
+
+/// Oracle: docs/design/agent-frontends.md §7.30 and
+/// mimid_agent_store::links: a link gives the attachment's octets with no
+/// bearer token, with the attachment's media type, `nosniff`, `sandbox`
+/// and `no-store`; a link with another MAC, blob or expiry, an expired
+/// one, or one to a message deleted here, is 404; the Host check comes
+/// first (421), and only GET goes without the bearer token.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn attachment_links_give_one_file_until_they_expire() {
+    use mimid_agent_store::links::DEFAULT_LINK_LIFETIME;
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&config(&server, ALICE, dir.path(), "any")).await;
+    let jmap = alice.client().await;
+    let chat = jmap
+        .create(
+            "Chat",
+            json!({"kind": "group", "name": "files", "memberIds": []}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let content = b"%PDF-1.7 not really".to_vec();
+    let url = jmap.session["uploadUrl"]
+        .as_str()
+        .unwrap()
+        .replace("{accountId}", &jmap.account);
+    let uploaded = jmap
+        .http
+        .post(url)
+        .bearer_auth(alice.token())
+        .header("content-type", "application/pdf")
+        .body(content.clone())
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let uploaded: Value = serde_json::from_slice(&uploaded).unwrap();
+    let blob = uploaded["blobId"].as_str().unwrap().to_owned();
+    let sent = jmap
+        .create(
+            "Message",
+            json!({"chatId": chat, "body": "the report", "sentAt": "2026-11-21T12:00:00Z",
+                   "attachments": [{"blobId": blob, "filename": "report é.pdf",
+                   "contentType": "application/pdf", "size": content.len(),
+                   "sha256": blob.strip_prefix('s').unwrap()}]}),
+        )
+        .await;
+    let message = sent["id"].as_str().unwrap().to_owned();
+
+    let store = &alice.store;
+    let link = store
+        .attachment_link(&message, &blob, DEFAULT_LINK_LIFETIME)
+        .expect("a link");
+    let base = alice.base();
+    assert!(
+        link.starts_with(&format!("{base}/attachment/{blob}/")),
+        "{link}"
+    );
+    assert!(link.ends_with("/report%20%C3%A9.pdf"), "{link}");
+    let http = reqwest::Client::new();
+    let got = http.get(&link).send().await.unwrap();
+    assert_eq!(got.status(), 200);
+    assert_eq!(got.headers()["content-type"], "application/pdf");
+    assert_eq!(got.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(got.headers()["content-security-policy"], "sandbox");
+    assert_eq!(got.headers()["cache-control"], "no-store");
+    assert_eq!(got.bytes().await.unwrap().to_vec(), content);
+
+    // Another MAC, another expiry, an expired link: 404.
+    let parts: Vec<&str> = link.rsplitn(4, '/').collect();
+    let (name, mac, expires) = (parts[0], parts[1], parts[2]);
+    let prefix = format!("{base}/attachment/{blob}");
+    let mut wrong_mac = mac.to_owned();
+    wrong_mac.replace_range(0..1, if mac.starts_with('0') { "1" } else { "0" });
+    let later: u64 = expires.parse::<u64>().unwrap() + 1;
+    let links = store.attachment_links().unwrap();
+    for bad in [
+        format!("{prefix}/{expires}/{wrong_mac}/{name}"),
+        format!("{prefix}/{later}/{mac}/{name}"),
+        links.link(&blob, "x", 1_000),
+        format!(
+            "{base}/attachment/s{}/{expires}/{mac}/{name}",
+            "0".repeat(64)
+        ),
+    ] {
+        let status = http.get(&bad).send().await.unwrap().status();
+        assert_eq!(status, 404, "{bad}");
+    }
+    // A wrong Host is refused before anything else.
+    let status = http
+        .get(&link)
+        .header("host", "evil.example")
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, 421);
+    // Only GET of a link goes without the token.
+    let status = http.post(&link).send().await.unwrap().status();
+    assert_eq!(status, 401);
+    // A message deleted here takes its links with it.
+    let answer = jmap
+        .call("Message/set", json!({"destroy": [message]}))
+        .await;
+    assert!(
+        answer["destroyed"]
+            .as_array()
+            .is_some_and(|d| !d.is_empty()),
+        "{answer}"
+    );
+    assert_eq!(http.get(&link).send().await.unwrap().status(), 404);
+    alice.stop().await;
+}
