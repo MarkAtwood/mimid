@@ -126,11 +126,15 @@
 //! - The endpoint serves `Message/reportAbuse` (mimid-agent-jmap's
 //!   `report` module), a method no JMAP Chat draft defines (INVENTED, NOT
 //!   FROM SPEC), under the JMAP Chat capability.
-//! - Consent decisions (`Agent::allow`, `Agent::deny`) have no JMAP Chat
-//!   method, so a JMAP client cannot make them; an IRC client can
-//!   (`/msg mimid allow <nick>`). Which invites are joined is set by the
-//!   `invites` setting: `from-allowed` (the default) joins only invites
-//!   from users allowed.
+//! - Consent decisions are made with `Consent/get`, `Consent/query` and
+//!   `Consent/set` (mimid-agent-jmap's `consent` module, bead
+//!   mimid-1wgh.93), as on mimid-server's provider endpoint, and from
+//!   IRC with `/msg mimid allow <nick>`. The agent's EventSource does
+//!   not push the Consent type: consent is the provider's, so the agent
+//!   has no local record to compare (bead mimid-1wgh.95). A client
+//!   re-reads instead. Which invites are joined is set by the `invites`
+//!   setting: `from-allowed` (the default) joins only invites from users
+//!   allowed.
 //! - The client is authenticated by the local token alone, not by peer
 //!   credentials on a Unix socket (the AGENTS.md crate map's "agent
 //!   socket" check): any process that can read the token file can act as

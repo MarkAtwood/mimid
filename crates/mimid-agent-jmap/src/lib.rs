@@ -158,6 +158,11 @@
 //!   SPEC) reports Messages to the room's hub through the agent, unfranked
 //!   ones as unverified.
 //! - **Disappearing messages** (docs/design/agent-frontends.md §7.20 to
+//! - **Consent**: `Consent/get`, `Consent/query` and `Consent/set`
+//!   ([`consent`]) let a client see who has asked to fetch the user's
+//!   KeyPackages and decide, which is what `invites = from-allowed`
+//!   needs. Consent is the provider's, so each call reaches the server
+//!   and nothing is cached here.
 //!   §7.23; [`mimid_agent_store::expiry`]): `Message/set` create takes
 //!   `senderExpiresAt` (sent as the MIMI `expires`, absolute, in whole
 //!   seconds; refused with `invalidProperties` when past or more than a
@@ -260,6 +265,7 @@
 #![forbid(unsafe_code)]
 
 mod backend;
+pub mod consent;
 mod convert;
 pub mod edits;
 pub mod moderate;

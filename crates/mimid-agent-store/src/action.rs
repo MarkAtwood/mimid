@@ -1476,6 +1476,21 @@ impl Store {
         Ok(())
     }
 
+    /// The account's Consent records as the server holds them
+    /// (`Agent::consents`), so a front end can show who has asked and
+    /// what was decided (bead mimid-1wgh.93).
+    ///
+    /// The records are the server's, not the store's: consent is kept by
+    /// the provider, and nothing here caches it.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Agent`] if the server cannot be reached.
+    pub async fn consents(&self) -> Result<Vec<mimid_agent_core::ConsentRecord>, ActionError> {
+        let agent = self.agent.lock().await;
+        Ok(agent.consents().await?)
+    }
+
     /// The user's devices as the server lists them (`Agent::devices`;
     /// draft-atwood-jmap-chat-mimi-00 §Clients).
     ///

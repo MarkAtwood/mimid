@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.94",
+  "title": "Decide which of Mark's JMAP drafts mimid should ever serve, beyond Chat and MIMI",
+  "description": "Mark asked 2026-11-22 whether mimid's JMAP interface can push every type in his JMAP specs. It cannot, and the difference is scope, not a defect: it needs Mark's decision, so this is labelled human.\n\nWHAT MIMID PUSHES TODAY, verified in the code, six types:\n- Chat, Message, ChatContact: projected objects (mimid-server jmap/projection.rs, Kind::ALL)\n- KeyPackage: only when the server keeps KeyPackages (bead mimid-1wgh.12.40)\n- Client: same condition; its state changes when a signature key is bound or unbound (bead mimid-e64f.22)\n- Consent: the account's Consent records (bead mimid-1wgh.12.43)\nUnknown type names in the EventSource query are ignored, not refused, so a client may ask for more without breaking.\n\nWHAT THE DRAFTS DEFINE. ~/PROJECT/jmap-chat-spec holds about twenty drafts: jmap-chat, -calendars, -did, -federation, -filenode, -mimi, -push, -tasks, -wss, jmap-cid, jmap-did, jmap-object-uri, jmap-scene, and the graph family (jmap-graph, -edit, -projection, -provenance, -search). mimid implements types from jmap-chat and jmap-chat-mimi only. Calendars, tasks, filenode, scene, did and the graph drafts have no types in mimid, so there is nothing for it to push.\n\nALREADY DECIDED, not in question here: the C2S API is the JMAP Chat E2EE subset plus the MLS key-material capability (decision mimid-1wgh.9), and push is EventSource only with no PushSubscription (decision mimid-1wgh.12.30), which means no waking a client that is not connected.\n\nTHE QUESTION FOR MARK: which, if any, of the other drafts should mimid serve, and when? Candidates with an obvious bearing on chat are jmap-chat-push (a real push story for mobile, where the no-PushSubscription decision bites), jmap-chat-wss (a WebSocket binding beside the live stream), jmap-chat-federation and jmap-chat-did (which may overlap what MIMI and did:webvh already do). The rest look like separate products rather than parts of a MIMI reference implementation, and the reference-not-only rule says a second implementation is worth more than another mimid feature.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T21:31:52.772888326Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T21:31:52.772888326Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.94",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-22T21:31:52.818901979Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

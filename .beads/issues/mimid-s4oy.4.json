@@ -3,13 +3,15 @@
   "title": "purple-mimi 4: skeleton plugin",
   "description": "Skeleton (docs/design/purple-mimi.md §13 step 4), in the new repository MarkAtwood/purple-mimi (GPL-3.0-or-later; created only after Mark's review of the design): Cargo workspace (purple-mimi-core, safe; purple-mimi-ffi, staticlib, the only unsafe), CMake calling cargo, cbindgen header; core: tokio runtime on its own threads, the process-wide event queue and its pipe, accounts, the state lock and takeover (§6), the live-stream connection and its errors (§7); ffi: process and account functions with catch_unwind (§5.5); both the libpurple 2 and libpurple 3 glues load, connect, disconnect and report errors; CI on Linux and Homebrew macOS. About 3,600 to 4,900 lines (estimate).",
   "notes": "2026-11-22: step 4 landed in purple-mimi at b745894 (pushed). Built and verified: cbindgen header committed with ci/check-header.sh; CMake calling cargo, both plugins linking; purple2 and purple3 glues compiling clean with -Wall -Wextra against real headers (libpurple 2.14 from Debian trixie, libpurple 3 2.98.0 built from the Pidgin 3 alpha tarball in ci/purple3.Containerfile); symbol hiding verified by ci/check-exports.sh (only purple_init_plugin, only GPlugin's three, out of a 220 MB staticlib); headless smoke test passes, with a real libpurple loading prpl-mimi beside IRC and XMPP and unloading cleanly; ci/check-mimid-patch.sh; COPYING and NOTICE; .github/workflows/ci.yml.\n\nThree design corrections found by compiling, all recorded: mimi_account_info renamed to mimi_account_get_info (a C typedef and a function cannot share a name; §5.5 updated); libpurple 3 2.98.0 has no account username so the MIMI user is a 'user' account setting; libpurple 3's PurpleConnectionError lacks AUTHENTICATION_FAILED, NAME_IN_USE and INVALID_USERNAME so those map to CUSTOM_FATAL.\n\nNOT done, deliberately: THIRD-PARTY-LICENSES (cargo-about at release time per §10.2); the cargo-deny licence allow list; the libpurple 3 headless host and its smoke test (mimid-s4oy.10's scope); the CI workflow has not been run by GitHub yet. purple-mimi still pins mimid at 41babcc9.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T21:31:43.405263454Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-22T21:10:52.374833032Z",
+  "updated_at": "2026-11-22T21:16:41.868547965Z",
+  "closed_at": "2026-11-22T21:16:41.868547965Z",
+  "close_reason": "Landed in purple-mimi b745894 and pushed; verified by a real libpurple loading prpl-mimi (headless smoke test), symbol-export checks on both plugins, and clean -Wall -Wextra compiles against libpurple 2.14 and 3 2.98.0. THIRD-PARTY-LICENSES and the cargo-deny allow list are release-time (§10.2); the libpurple 3 headless host is mimid-s4oy.10's scope.",
   "labels": [
     "client",
     "purple"

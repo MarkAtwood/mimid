@@ -247,6 +247,7 @@ impl AgentChat {
     pub fn register(this: &Arc<Self>, dispatcher: &mut Dispatcher<()>) {
         jmap_chat_server::register_chat_handlers(dispatcher, Arc::clone(this));
         crate::report::register(this, dispatcher);
+        crate::consent::register(this, dispatcher);
     }
 
     /// The JMAP account id.
