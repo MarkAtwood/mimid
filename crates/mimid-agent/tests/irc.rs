@@ -352,10 +352,13 @@ async fn registration_queries_and_refusals() {
     irc.send("WHOIS mimid").await;
     let answers = irc.sync().await;
     let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    // alice's WHOIS now carries a 320 between 312 and 330: her DID, or
+    // that she has none, which is the BasicCredential case and must not
+    // be silent (bead mimid-i0id.11). The service nick has no 320.
     assert_eq!(
         codes,
         [
-            "315", "401", "318", "311", "312", "330", "318", "311", "312", "318"
+            "315", "401", "318", "311", "312", "320", "330", "318", "311", "312", "318"
         ],
         "{answers:#?}"
     );
@@ -363,9 +366,18 @@ async fn registration_queries_and_refusals() {
         answers[3].params,
         [ALICE_NICK, ALICE_NICK, "alice", "a.example", "*", ALICE]
     );
-    // §7.15: 330 gives the user URI as the account.
+    // The 320 line, then 330: index 5 is the DID line now.
     assert_eq!(
         answers[5].params,
+        [
+            ALICE_NICK,
+            ALICE_NICK,
+            "DID none (their provider vouches for this name)"
+        ]
+    );
+    // §7.15: 330 gives the user URI as the account.
+    assert_eq!(
+        answers[6].params,
         [ALICE_NICK, ALICE_NICK, ALICE, "is logged in as"]
     );
 
@@ -1310,6 +1322,74 @@ async fn service_says(irc: &mut Irc) -> String {
     .await
     .text()
     .to_owned()
+}
+
+/// Mark 2026-11-22: DIDs are exposed as meshIRCd exposes them (bead
+/// mimid-i0id.11) — WHOIS numeric 320 in its `DID <uri>` shape, and
+/// `METADATA <nick> GET identity` — while anything that would set one is
+/// refused, because in mimid a DID comes from the MLS leaf credential
+/// and not from the client (mimid-5ltz).
+///
+/// Oracle: meshIRCd's own shapes, read from its IDENTITY.md and
+/// main.go (RPL_WHOISIDENTITY 320, `handleMetadataGet`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dids_are_exposed_as_meshircd_exposes_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let addr = alice.irc.unwrap();
+    let token = alice.token();
+    let (mut a, _) = Irc::register(addr, &token, ALICE_NICK, &ALL_CAPS).await;
+
+    // WHOIS of oneself: alice has a BasicCredential, so 320 says there is
+    // no DID rather than staying silent about it.
+    a.send(&format!("WHOIS {ALICE_NICK}")).await;
+    let special = a.until("320", |m| m.command == "320").await;
+    assert!(
+        special.text().starts_with("DID "),
+        "meshIRCd's shape: {}",
+        special.raw
+    );
+    assert!(special.text().contains("none"), "{}", special.raw);
+    a.until("318", |m| m.command == "318").await;
+
+    // METADATA GET of a key we do not serve.
+    a.send("METADATA * GET nonsense").await;
+    let fail = a.until("FAIL", |m| m.command == "FAIL").await;
+    assert_eq!(fail.params[0], "METADATA", "{}", fail.raw);
+    assert_eq!(fail.params[1], "KEY_NOT_SUPPORTED", "{}", fail.raw);
+
+    // METADATA GET identity for a user with no DID: 766, then 762.
+    a.send("METADATA * GET identity").await;
+    let none = a.until("766", |m| m.command == "766").await;
+    assert_eq!(none.params[1], "identity", "{}", none.raw);
+    a.until("762", |m| m.command == "762").await;
+
+    // Anything that would set an identity is refused: it comes from the
+    // MLS credential.
+    for attempt in ["METADATA * SET identity :{}", "METADATA * CLEAR identity"] {
+        a.send(attempt).await;
+        let refused = a.until("FAIL", |m| m.command == "FAIL").await;
+        assert_eq!(
+            refused.params[1], "CANNOT_SET",
+            "{attempt}: {}",
+            refused.raw
+        );
+        assert!(
+            refused.text().contains("MLS credential"),
+            "{attempt}: the reason is said: {}",
+            refused.raw
+        );
+    }
+
+    // An unknown nick, and a missing argument.
+    a.send("METADATA nosuchnick GET identity").await;
+    a.until("401", |m| m.command == "401").await;
+    a.send("METADATA").await;
+    let short = a.until("461", |m| m.command == "461").await;
+    assert_eq!(short.params[1], "METADATA", "{}", short.raw);
+
+    alice.stop().await;
 }
 
 /// Mark 2026-11-22: the service's commands reach it both as `/msg mimid

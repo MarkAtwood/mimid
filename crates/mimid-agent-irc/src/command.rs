@@ -29,7 +29,9 @@
 //!   the user's own message; anyone else's is `FAIL REDACT
 //!   REDACT_FORBIDDEN`.
 //! - `CHATHISTORY` ([`crate::history`]), `MARKREAD` ([`crate::markread`])
-//!   and `WEBPUSH` ([`crate::webpush`]).
+//!   and `WEBPUSH` ([`crate::webpush`]), `METADATA` (identity, read
+//!   only, as meshIRCd shapes it) and `MIMID` (the service's commands as
+//!   a raw verb).
 //! - `+reply` is read where `+draft/reply` is absent.
 //! - `NOTICE` is never answered with an error (docs/irc-lessons.md
 //!   "NOTICE"); to a channel it is sent as a plain message.
@@ -196,6 +198,11 @@ impl Session {
             // nick stays the documented path, since its NOTICE replies
             // land in a query window a client renders and logs, which
             // `password add` depends on (it shows a secret once).
+            // IRCv3 METADATA, in the shapes meshIRCd uses, for the one
+            // reserved key it and mimid share (bead mimid-i0id.11).
+            // Reading only: in mimid a DID comes from the MLS leaf
+            // credential, so there is nothing for a client to assert.
+            "METADATA" => self.metadata(line),
             "MIMID" => {
                 // Both forms a client may send: `MIMID allow bob` as
                 // separate parameters, and `MIMID :allow bob` as one
@@ -980,8 +987,22 @@ impl Session {
                         .and_then(|k| state.people.get(k))
                         .and_then(|p| p.did.clone())
                 };
-                if let Some(did) = did {
-                    self.numeric("320", &[&who.nick, &format!("has the did:webvh DID {did}")]);
+                // 320 in meshIRCd's shape, so one convention covers both
+                // of Mark's servers and a script can parse either
+                // (meshIRCd main.go:50 RPL_WHOISIDENTITY; bead
+                // mimid-i0id.11). "Verified" is honest here: a did:webvh
+                // DID on a leaf was verified as a condition of
+                // membership, and its absence means the provider's word
+                // is all there is (decision mimid-1wgh.4.81).
+                match &did {
+                    Some(did) => {
+                        self.numeric("320", &[&who.nick, &format!("DID {did}")]);
+                        self.numeric("320", &[&who.nick, "Verified true"]);
+                    }
+                    None => self.numeric(
+                        "320",
+                        &[&who.nick, "DID none (their provider vouches for this name)"],
+                    ),
                 }
                 // §7.15: the account is the user URI.
                 self.numeric("330", &[&who.nick, &who.uri, "is logged in as"]);
@@ -991,6 +1012,97 @@ impl Session {
             _ => self.numeric("401", &[&nick, "No such nick/channel"]),
         }
         self.numeric("318", &[&nick, "End of /WHOIS list"]);
+    }
+
+    /// `METADATA <target> GET identity`, and a refusal for anything that
+    /// would set one (bead mimid-i0id.11; meshIRCd's `handleMetadataGet`).
+    ///
+    /// The value is a minimal DID document, `{"id":"<did>"}`: meshIRCd's
+    /// is the whole JSON-LD document its client set, while mimid has only
+    /// the DID, because the document lives in the did:webvh log the agent
+    /// verified and does not republish. INVENTED, NOT FROM SPEC: the
+    /// shape is chosen so a consumer written for meshIRCd can read it.
+    fn metadata(&mut self, line: &Line) {
+        let server = self.shared.server.clone();
+        let (Some(target), Some(verb)) = (line.param(0), line.param(1)) else {
+            self.numeric("461", &["METADATA", "Not enough parameters"]);
+            return;
+        };
+        let (target, verb) = (target.to_owned(), verb.to_ascii_uppercase());
+
+        if verb != "GET" {
+            // SET, CLEAR and the rest: the identity is the MLS
+            // credential's, not the client's (mimid-5ltz).
+            let out = Out::new(
+                &server,
+                "FAIL",
+                vec![
+                    "METADATA".to_owned(),
+                    "CANNOT_SET".to_owned(),
+                    target,
+                    "a MIMI identity comes from your MLS credential, not from the client"
+                        .to_owned(),
+                ],
+            );
+            self.send(&out);
+            return;
+        }
+
+        let Some(key) = line.param(2) else {
+            self.numeric("461", &["METADATA", "Not enough parameters"]);
+            return;
+        };
+        if !key.eq_ignore_ascii_case("identity") {
+            let out = Out::new(
+                &server,
+                "FAIL",
+                vec![
+                    "METADATA".to_owned(),
+                    "KEY_NOT_SUPPORTED".to_owned(),
+                    key.to_owned(),
+                    "only the identity key is served".to_owned(),
+                ],
+            );
+            self.send(&out);
+            return;
+        }
+
+        // `*` is the user themself, as in meshIRCd.
+        let uri = if target == "*" {
+            self.shared.store.user().to_owned()
+        } else {
+            match self.who(&target) {
+                Who::User(uri) => uri,
+                _ => {
+                    self.numeric("401", &[&target, "No such nick/channel"]);
+                    return;
+                }
+            }
+        };
+        let nick = self.shared.names().identity(&uri).nick;
+        let did = {
+            let state = self.shared.store.state();
+            state
+                .person_of_user(&uri)
+                .and_then(|k| state.people.get(k))
+                .and_then(|p| p.did.clone())
+        };
+        match did {
+            Some(did) => {
+                // Only `id`: see this function's documentation.
+                let value = format!("{{\"id\":\"{did}\"}}");
+                let out = Out::new(
+                    &server,
+                    "METADATA",
+                    vec![nick, "identity".to_owned(), "*".to_owned(), value],
+                );
+                self.send(&out);
+            }
+            // 766 is the metadata draft's "no matching key"; meshIRCd
+            // answers an empty value, so say it plainly instead.
+            None => self.numeric("766", &["identity", "no DID is known for that user"]),
+        }
+        self.numeric("762", &["end of metadata"]);
     }
 
     fn ison(&mut self, line: &Line) {
