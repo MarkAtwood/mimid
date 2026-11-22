@@ -1,16 +1,21 @@
 # purple-mimi: a libpurple protocol plugin for MIMI through mimid
 
-Design note, 2026-11-21, for Mark's review. Epic mimid-s4oy, steps 1
-(bead mimid-s4oy.1, §1) and 2 (bead mimid-s4oy.2, §2). Steps 3 to 8
-wait for Mark's answer to §2.
+Design note, 2026-11-21 and 2026-11-22, for Mark's review. Epic
+mimid-s4oy: step 1 (bead mimid-s4oy.1, §1), step 2 (bead mimid-s4oy.2,
+§2, decided by Mark in §3) and step 3 (bead mimid-s4oy.3, the design,
+§5 to §15). No code is written until Mark has reviewed §5 to §15.
 
 The plugin lets Pidgin, and the other programs built on libpurple
-(BitlBee, Spectrum2), use MIMI rooms through mimid. Step 2 asks what the
-plugin talks to. frontend-auth.md §2.4 and §6.5 assume it talks JMAP
-Chat to the agent; that is not decided, and §2 weighs it against four
-other shapes.
+(BitlBee, Spectrum2), use MIMI rooms through mimid. Step 2 asked what the
+plugin talks to. Mark chose option (b): the plugin embeds the agent's
+engine and is itself an MLS client of the user (§3). frontend-auth.md
+§2.4 and §6.5 assumed JMAP Chat to the agent; that no longer applies to
+purple-mimi (§12.2).
 
-Two things are fixed by earlier notes and are not reopened here:
+Two things were fixed by earlier notes when §1 and §2 were written. The
+second is changed by Mark's decision: purple-mimi, like the mobile app
+of decision mimid-1wgh.39, holds keys and plaintext in its own process
+(§12.1).
 
 - The CBOR live stream (binary-live-stream.md) is between the agent and
   its provider. It is not a local client protocol. The agent's local
@@ -50,7 +55,9 @@ Read on 2026-11-21.
 | lurch (OMEMO); carbons | `f4a886c` 2024-10-27; `2fa542d` 2020-12-25 |
 | bitlbee-discord | `607f988`, 2021-09-28 |
 | Spectrum2 | `d07c06c`, pushed 2026-10-24 |
-| mimid | main at `7b0d496a` |
+| mimid | main at `7b0d496a` (§1, §2); at `c060c22e` for §5 to §15 |
+| libpurple 2 source | 2.14.12-1 `libpurple/account.c` and `libpurple/connection.c` from sources.debian.org, read 2026-11-22 |
+| Debian 12 packages | `finch` 2.14.12-1, `libpurple0` 2.14.12-1 and `bitlbee-libpurple` 3.6-1.3, downloaded with `apt-get download` 2026-11-22, not installed |
 
 Statements marked *from memory* were not checked against a source
 today.
@@ -69,11 +76,19 @@ today.
   `edited`, `replying_to` and attachments, but there are no reactions or
   read receipts. The protocol API is meant to settle during alpha and
   freezes only at 3.0.0.
-- **Recommendation (§2.9):** option (a), a plugin that is a JMAP Chat
-  client of the user's mimid-agent, written in C against libpurple 2,
-  with the purple side kept thin so a libpurple 3 port replaces only
-  that. Meanwhile, document option (d), Pidgin's built-in IRC against
-  the agent's IRC front end, which works today.
+- **Decision (Mark, 2026-11-22, §3):** option (b). The plugin embeds
+  mimid-agent-core and is the MLS client, a new device per Pidgin
+  profile; it reaches the provider over mimid's live stream. One Rust
+  library with a C ABI, under thin C glue for libpurple 2.14 and for
+  libpurple 3, both from the start. Separate repository
+  MarkAtwood/purple-mimi under GPL-3.0-or-later. Linux and Homebrew
+  macOS first, Windows later. My recommendation in §2.9 was option (a)
+  and was not taken.
+- **Design (§5 to §15):** the library embeds mimid-agent-core and
+  mimid-agent-store and runs tokio on its own threads; the glue drains
+  one event queue on the GLib main loop. About 50 C functions, no
+  callbacks into C. A state lock per account with a takeover handshake
+  (§6).
 
 ## 1. libpurple 2 and 3 today
 
@@ -470,7 +485,14 @@ that changes slowly; (d) moves with nothing of ours.
 
 ### 2.9 Recommendation
 
-**(a), in C, against libpurple 2.14, with (d) documented now.**
+**Mark chose (b) on 2026-11-22 (§3).** What follows is the
+recommendation I made in step 2. It was not taken, and is kept as the
+record of what was weighed. The costs it names for (b) (keys inside
+Pidgin, a device per Pidgin, the binary size, the `unsafe` code, a
+plugin that moves with agent-core) are the costs §5 to §15 design for.
+
+My recommendation was **(a), in C, against libpurple 2.14, with (d)
+documented now.**
 
 - (a) needs nothing new in the agent, keeps the agent the only MLS end,
   lets Pidgin run beside every other client on one store, and packages
@@ -498,36 +520,29 @@ plugin is what Debian, Fedora and Windows users can install. Rust would
 bring crate-jmapchat-client's types, but also tokio inside Pidgin, a
 thread hand-off for every event, and vendoring.
 
-## 3. Open questions for Mark
+## 3. Decisions (Mark, 2026-11-22)
 
-1. **Which option.** (a) JMAP Chat to the agent, (b) embedded core, (c)
-   a new local protocol, (d) no plugin, (e) IRC inside.
-   Recommendation: (a), and write up (d) in agent.md now.
-2. **Which libpurple.** Pidgin 3 is at Alpha 4 and packaged nowhere
-   mainstream; 2.14.14 is everywhere. Recommendation: libpurple 2.14
-   only for the first version, the purple glue kept in its own files,
-   and a port to libpurple 3 when Pidgin 3 reaches beta.
-3. **Language.** C, or C glue over a Rust backend (a2).
-   Recommendation: C with json-glib, no Rust in the plugin.
-4. **Repository and licence.** Bead mimid-s4oy.4 says a separate
-   repository, MarkAtwood/purple-mimi. libpurple is GPL-2.0-or-later;
-   mimid is Apache-2.0. Recommendation: a separate repository under
-   GPL-2.0-or-later that shares no code with mimid (it only speaks JMAP
-   to it), so the licences never meet.
-5. **Login.** Loopback with the agent token, or an app password over the
-   S1 TLS listener. Recommendation: one account setting, the agent's
-   JMAP Session URL, with the password field holding the agent token or
-   an app password, sent as Bearer; loopback first, TLS once
-   frontend-auth.md steps 1 to 6 exist.
-6. **Starting the agent.** Should the plugin start mimid-agent if none is
-   running? Recommendation: no. The plugin connects to a running agent
-   and says plainly when it cannot; agent.md documents a systemd user
-   unit.
-7. **Windows.** Pidgin 2 on Windows needs a 32-bit DLL, and the agent
-   runs on Unix only (agent.md, "Starting and stopping").
-   Recommendation: ship the Windows DLL for users whose agent runs on
-   another machine, reached over S1's TLS listener; do not port the
-   agent to Windows for this.
+Recorded in a comment on bead mimid-s4oy.2, which is closed with them.
+They replace the seven open questions of step 2.
+
+- **P1. Option (b), embedded core.** The plugin embeds mimid-agent-core
+  through a C ABI and is the MLS client: each Pidgin profile is a new
+  device of the user.
+- **P2. Both libpurple 2.14 and libpurple 3, from the start.** Two glue
+  layers over one core.
+- **P3. Thin C glue over a Rust library with a C ABI**, one glue for
+  libpurple 2 and one for libpurple 3.
+- **P4. A separate repository, MarkAtwood/purple-mimi, under
+  GPL-3.0-or-later.** mimid stays Apache-2.0.
+- **P5. The plugin talks to the provider over the binary live stream**
+  (binary-live-stream.md), so it works with mimid providers only. The
+  provider's bearer token goes in the account's password field. Each
+  Pidgin is a device with its own Client record.
+- **P6. A state lock per profile.** A second instance takes over, and
+  the first disconnects cleanly. MLS state must not be corrupted: the
+  first instance releases the state before the second writes to it.
+- **P7. Linux and Homebrew macOS first.** The Windows i686 DLL is a
+  step of its own, later.
 
 ## 4. Uncertainties
 
@@ -539,7 +554,1179 @@ thread hand-off for every event, and vendoring.
 - Which IRCv3 capabilities Pidgin 2's IRC and Pidgin 3's `ircv3` and
   `soju` protocols request. Pidgin 2 was not run against the agent's
   IRC front end.
-- Whether libpurple 2 keeps passwords in plain text in `accounts.xml`
-  without a keyring plugin (from memory).
+- ~~Whether libpurple 2 keeps passwords in plain text in
+  `accounts.xml` without a keyring plugin.~~ Checked on 2026-11-22: it
+  does (§12.3).
 - Every line count and binary size is an estimate. The libpurple 3
   findings hold for 2.98.0 and may change with each monthly alpha.
+
+## 5. Architecture
+
+Sections 5 to 15 are the design of step 3 (bead mimid-s4oy.3). Values
+marked INVENTED are mine; line counts are *estimates*; statements marked
+*from memory* were not checked against a source on 2026-11-22. Nothing
+here was built.
+
+### 5.1 What the library embeds
+
+The Rust library embeds **mimid-agent-core and mimid-agent-store**, and
+nothing above them.
+
+- **mimid-agent-core** is the engine: MLS keys, groups, the journal, the
+  outbox, the provider binding (`Binding::Stream`). It was built to be
+  embedded: "no UI, no HTTP server and no runtime of its own" (its
+  `lib.rs`; decision mimid-1wgh.39).
+- **mimid-agent-store** is the plaintext layer every mimid front end
+  shares. It is taken whole, for these reasons:
+  - **Crash safety.** `Store::sync` is the agent's only journal
+    consumer, and a sync's records commit in the same SQLite transaction
+    as the agent's acknowledgement (`db.rs`, `Agent::acknowledge_in`).
+    A purple-side store would have to rebuild that rule, and getting it
+    wrong loses or doubles messages after a crash. Inside Pidgin crashes
+    are more likely than in the daemon (§2.4).
+  - **What the user sees.** History pages (`history.rs`), edits with
+    their revisions, retractions and tombstones, reactions, replies
+    (`inReplyTo` and its id), attachments (the blob store, fetch retries,
+    safe file names), the agent's notices, disappearing messages
+    (`expiry.rs`), direct rooms (`direct`, `open_direct`), read
+    positions, bans, the invite policy, and `join_own_rooms` at each
+    sync, which a new device needs. That is 9,400 lines of Rust already
+    tested against the daemon.
+  - **One behaviour.** The JMAP and IRC front ends sit on the same
+    store, so purple-mimi behaves as they do, and bugs are fixed once.
+  - **Its cost.** None beyond agent-core: the store adds `ulid`, `hmac`
+    and SQLite, which agent-core's MLS store already brings. It depends
+    on neither crate-jmap nor IRC code (its `Cargo.toml`).
+- **Not embedded:** mimid-agent-jmap, mimid-agent-irc and the mimid-agent
+  daemon (axum, jmap-server, the loopback listeners, the attachment-link
+  HTTP route). Pidgin serves nothing.
+
+What the daemon does around the store (about 200 lines of
+`crates/mimid-agent/src/daemon.rs`: `sync_loop`, `expiry_loop`,
+`top_up_key_packages`, `follow_stream`) purple-mimi needs too. Copying
+it would be one more copy that "must stay in step", as `uri.rs` already
+is. I propose moving it into mimid-agent-store as a runner that the
+daemon and purple-mimi both call (§13, step 3a).
+
+A thin purple-side store over agent-core alone was considered and is not
+proposed: it would save no binary size (agent-core already brings
+SQLite and OpenMLS), and it would redo the crash rules above for one
+client.
+
+### 5.2 Repositories and crates
+
+- **mimid** (Apache-2.0) is unchanged in shape. purple-mimi depends on
+  it by git revision: `mimid-agent-core` and `mimid-agent-store` from
+  `https://github.com/MarkAtwood/mimid` at a pinned `rev` (INVENTED: the
+  remote's URL is my guess; the crates are `publish = false`).
+  purple-mimi's workspace must repeat mimid's `[patch.crates-io]` for
+  the OpenMLS fork (Cargo applies only the top workspace's patches), at
+  the same revision; a CI check compares the two.
+- **MarkAtwood/purple-mimi** (GPL-3.0-or-later):
+
+  | Path | What | Language |
+  |---|---|---|
+  | `core/` (crate `purple-mimi-core`) | the runtime, accounts, the state lock and takeover (§6), the event queue, the purple front end over the store (§5.6), text forms and command parsing | Rust, `#![forbid(unsafe_code)]` |
+  | `ffi/` (crate `purple-mimi-ffi`, `staticlib`) | the C ABI (§5.5) and nothing else: argument checks, conversions, `catch_unwind` | Rust; the only `unsafe` |
+  | `include/purple-mimi.h` | the C header, generated by cbindgen (pinned) and committed; CI fails when it is stale | C |
+  | `purple2/` | the libpurple 2.14 glue (§8) | C |
+  | `purple3/` | the libpurple 3 glue (§9) | C |
+  | `tests/` | the C ABI test program, the libpurple 3 headless host, the end-to-end scripts (§11) | C, shell, Python |
+
+  One CMake build makes two plugins from the same static library:
+  `libpurple-mimi.so` for libpurple 2 and `libpurple3-mimi.so` for
+  libpurple 3 (names INVENTED). §10 has the build.
+
+### 5.3 Where state lives
+
+One state directory per MIMI account in a purple profile:
+
+- libpurple 2: `<purple_user_dir()>/mimi/<handle>/`, `~/.purple/mimi/alice@a.example/`
+  by default, or under the directory of `pidgin -c` / `finch -c`.
+- libpurple 3: `<purple_data_dir()>/mimi/<handle>/`. Which directory
+  `purple_data_dir()` names on each platform I did not check.
+- `<handle>` is the account's handle (§8.1), percent-encoded where a
+  file name cannot hold a character. The library computes the path from
+  the base directory and the user URI (`mimi_state_dir_for`, §5.5), so
+  both glues agree.
+
+The directory is mimid-agent-core's state directory, unchanged: mode
+0700, `mimid.sqlite` (0600) with the MLS keys, groups, journal, outbox
+and the store's records, and `blobs/`. purple-mimi adds three files
+(§6, §12.3): `lock`, `takeover` while a takeover is asked for, and
+`provider-token`.
+
+A purple 2 profile and a purple 3 profile are different directories,
+so a user running Pidgin 2 and Pidgin 3 has two devices. Two Pidgins on
+one profile share one device, which is what the lock of §6 is for.
+
+### 5.4 Threads
+
+libpurple is single-threaded: every libpurple call happens on the
+thread that runs its main loop, the GLib main loop in Pidgin and Finch,
+BitlBee's own loop in BitlBee. purple-presage and purple-gowhatsapp
+already run another runtime beside it and hand events over (§1.5).
+
+- **One tokio runtime per process**, multi-threaded with 2 worker
+  threads (INVENTED), named `mimi-rt`, started by `mimi_init` and shared
+  by every MIMI account in the process. Every async call into the store
+  and the agent runs there.
+- **The main thread never waits on the runtime.** User actions are
+  requests: the C call checks its arguments, queues the work, and
+  returns at once with a request id; the result comes back as an event.
+- **The main thread may read records directly.** The store keeps every
+  record in memory behind a `std::sync::Mutex` that is never held
+  across an await (`Store::state`, `store.rs`). Reading rooms, messages
+  and history from the main thread takes that lock for a copy and
+  nothing else. The agent's async lock is never taken from the main
+  thread: a sync can hold it for seconds.
+- **Events go one way, through one file descriptor.** The library has
+  one process-wide queue of events (§5.5). When it goes from empty to
+  not empty, the runtime writes one byte to a pipe (a non-blocking
+  `pipe(2)`; `eventfd(2)` on Linux MAY be used). The glue watches the
+  read end, `purple_input_add` on libpurple 2 and `g_unix_fd_add` on
+  libpurple 3, and on wake-up drains the pipe and takes every queued
+  event with `mimi_next_event`. The runtime never calls into C and never
+  touches libpurple.
+
+  I chose a descriptor over `purple_timeout_add(0, ...)` from a foreign
+  thread, which purple-presage uses (`src/c/bridge.c`), because
+  libpurple 2's event loop belongs to the UI: Pidgin's is GLib's, which
+  is thread-safe, but BitlBee's and other UIs' are not documented as
+  callable from another thread. Writing to a pipe is safe from any
+  thread, and `purple_input_add` is called once, on the main thread.
+  (Windows, §13 step 9, wakes through a loopback socket pair, since
+  libpurple 2 on Windows watches sockets only, *from memory*.)
+- **Logging.** A `tracing` layer turns the library's log events into
+  `MIMI_EV_LOG` events, which the glue writes with `purple_debug_*` on
+  the main thread. The level is set with `mimi_set_log_level`. Secrets
+  stay out of logs as mimid's rule says (AGENTS.md "Secrets never reach
+  logs"): a canary test captures the log of a full session and looks
+  for the token, a key and message text.
+- **Shutdown.** `mimi_shutdown` (plugin unload, which libpurple 2 does
+  at quit) closes every account by the release path of §6.3, waits up to
+  5 seconds (INVENTED) for them, then shuts the runtime down. A process
+  that exits sooner is a crash as far as the state is concerned, which
+  the state survives (§6.4).
+
+### 5.5 The C ABI
+
+Rules for every function:
+
+- **Thread.** Call it only on the thread that called `mimi_init`. A
+  call from another thread returns `MIMI_ERR_WRONG_THREAD` and does
+  nothing.
+- **No panics across the boundary.** Every exported function runs its
+  body inside `std::panic::catch_unwind` and returns `MIMI_ERR_PANIC`
+  if it panicked. A panic in a runtime task is caught at its
+  `JoinHandle`. After either, the account is poisoned: it is closed by
+  the release path (§6.3), the glue gets `MIMI_EV_DISCONNECTED` with
+  `MIMI_ERR_PANIC`, and its other calls return `MIMI_ERR_POISONED`. The
+  profile keeps `panic = "unwind"` (the default); `catch_unwind` does
+  nothing under `abort`.
+- **No callbacks.** No C function pointer crosses the ABI. The library
+  reports everything through events (§5.4).
+- **Strings in** are `const char *`, UTF-8, NUL-terminated, borrowed for
+  the call only; the library copies them. NULL where a string is
+  required, or invalid UTF-8, is `MIMI_ERR_INVALID_ARGUMENT`.
+- **Strings out** are UTF-8 and NUL-terminated. Text from peers can hold
+  U+0000; the library replaces it with U+FFFD before it reaches C.
+  Strings inside a returned struct belong to the struct and live until
+  the struct's free function. A standalone string is freed with
+  `mimi_string_free`. Nothing from the library is freed with `g_free`
+  or `free`, and the library never frees memory it did not allocate.
+- **Records are copies.** `mimi_room`, `mimi_message` and the others are
+  snapshots taken under the store's lock, with no pointer into Rust
+  state. The glue may keep them across main-loop iterations.
+- **Handles.** `mimi_account *` is opaque. It is valid from
+  `mimi_account_open` until `mimi_account_close`, after which no event
+  names it.
+- **Status codes.** Every fallible call returns `mimi_status` (`int32_t`)
+  and, where it says so, sets `char **error` to a text for the user,
+  freed with `mimi_string_free`. The codes are:
+
+  | Code | Meaning |
+  |---|---|
+  | `MIMI_OK` (0) | done, or queued for a request |
+  | `MIMI_ERR_ABI` | header and library versions differ |
+  | `MIMI_ERR_WRONG_THREAD` | not the `mimi_init` thread |
+  | `MIMI_ERR_INVALID_ARGUMENT` | NULL, invalid UTF-8, a value out of range |
+  | `MIMI_ERR_NOT_CONNECTED` | the account is not open |
+  | `MIMI_ERR_NO_SUCH_ROOM`, `_NO_SUCH_MESSAGE`, `_NO_SUCH_INVITE`, `_NO_SUCH_DEVICE` | as named |
+  | `MIMI_ERR_NOT_PERMITTED` | the room's policy refuses it (`AgentError::NotPermitted`) |
+  | `MIMI_ERR_REFUSED` | the hub refused it (`AgentError::Refused`) |
+  | `MIMI_ERR_TOO_LARGE` | text or file past a limit |
+  | `MIMI_ERR_NETWORK` | the provider could not be reached, or the stream failed |
+  | `MIMI_ERR_UNAUTHORIZED` | the provider refused the token |
+  | `MIMI_ERR_STREAM_OFF` | the provider does not serve the live stream (§7.1) |
+  | `MIMI_ERR_WRONG_USER` | the token belongs to another user (§7.2) |
+  | `MIMI_ERR_LOCKED` | another instance holds the state and did not release it (§6) |
+  | `MIMI_ERR_TAKEN_OVER` | another instance took this account over (§6) |
+  | `MIMI_ERR_LOCK_LOST` | the lock file was removed or replaced under us (§6.5) |
+  | `MIMI_ERR_STATE` | the state directory or database cannot be used |
+  | `MIMI_ERR_IO` | a local file could not be read or written |
+  | `MIMI_ERR_PANIC`, `MIMI_ERR_POISONED` | see above |
+  | `MIMI_ERR_INTERNAL` | anything else; the text says what |
+
+  The library maps `AgentError`, `ActionError` and `SyncError` to these
+  in one function, tested variant by variant.
+
+The functions. *Process* calls take no account:
+
+| Function | What it does |
+|---|---|
+| `uint32_t mimi_abi_version(void)` | the ABI version; the glue refuses to load on a mismatch with `MIMI_ABI_VERSION` from the header |
+| `const char *mimi_version(void)` | library version and mimid revision; static, not freed |
+| `mimi_status mimi_init(const mimi_init_options *, char **error)` | starts the runtime and the event queue; records the calling thread |
+| `void mimi_shutdown(void)` | §5.4 |
+| `int mimi_event_fd(void)` | the descriptor to watch for reading |
+| `mimi_event *mimi_next_event(void)` | the next event, or NULL; drains the descriptor |
+| `void mimi_event_free(mimi_event *)` | |
+| `void mimi_string_free(char *)` | |
+| `void mimi_set_log_level(int)` | |
+| `char *mimi_state_dir_for(const char *base, const char *user_uri)` | §5.3 |
+| `char *mimi_user_to_handle(const char *user_uri)`, `char *mimi_handle_to_user(const char *handle)` | §8.1; NULL when the form does not map |
+
+*Accounts:*
+
+| Function | What it does |
+|---|---|
+| `mimi_status mimi_account_open(const mimi_account_config *, mimi_account **out, char **error)` | checks the configuration and starts connecting in the background (§6.2, §7); the result is `MIMI_EV_CONNECTED` or `MIMI_EV_DISCONNECTED`. The config holds the base directory, user URI, provider URL, token (NULL: use the stored one, §12.3), invite policy, KeyPackage target, fallback sync interval, and `take_over` (§6.6) |
+| `void mimi_account_close(mimi_account *)` | starts the release path (§6.3); the handle is invalid on return |
+| `mimi_status mimi_account_info(mimi_account *, mimi_account_info **)` + free | user URI, handle, this device's Client id and key fingerprint, state directory |
+
+*Reads* (synchronous, from the store's records):
+
+| Function | What it does |
+|---|---|
+| `mimi_rooms(acct, mimi_room_list **)` + free | every room not forgotten, with status |
+| `mimi_room_get(acct, key, mimi_room **)` + free | name, subject (by, at), status, `direct` and the other user, participants with role names, local message expiry |
+| `mimi_message_get(acct, key, mimi_message **)` + free | §5.6 |
+| `mimi_history(acct, room, before_key, limit, mimi_message_list **)` + free | a page of `Store::history`, oldest first |
+| `mimi_invites(acct, mimi_invite_list **)` + free | pending invites: number, room name, inviter |
+| `mimi_person_get(acct, user_uri, mimi_person **)` + free | display name, DID if any |
+
+*Requests* (each returns `MIMI_OK` and a `uint64_t` request id at once;
+the result is `MIMI_EV_DONE` with that id):
+
+| Function | Store call |
+|---|---|
+| `mimi_send_text(acct, room, text, reply_to_key, expiry, &id)` | `send`/`send_with` (reply, burn-on-read, expiry) |
+| `mimi_send_file(acct, room, path, file_name, media_type, &id)` | reads the file on the runtime, then `send_message` with the attachment |
+| `mimi_edit(acct, message, text, &id)` | `edit` |
+| `mimi_retract(acct, message, &id)` | `retract` |
+| `mimi_react(acct, message, reaction, &id)`, `mimi_unreact(...)` | `react`, `unreact` |
+| `mimi_create_room(acct, name, users[], n, &id)` | `create_room`; result: the room key |
+| `mimi_open_direct(acct, user, &id)` | `direct_room`, else `open_direct`; result: the room key |
+| `mimi_change_members(acct, room, add[], n_add, remove[], n_remove, &id)` | `change_members` |
+| `mimi_leave(acct, room, &id)` | `leave` |
+| `mimi_set_subject(acct, room, subject, &id)` | `set_subject` |
+| `mimi_kick`, `mimi_ban`, `mimi_unban` | `kick`, `ban`, `unban` |
+| `mimi_accept_invite(acct, number, &id)` | `accept_invite`; result: the room key |
+| `mimi_decline_invite(acct, number, &id)` | needs a store call that does not exist yet (§13, step 3a) |
+| `mimi_allow(acct, user, &id)`, `mimi_deny(...)` | `allow`, `deny` |
+| `mimi_list_devices(acct, &id)` | `devices`; result: a device list |
+| `mimi_forget_device(acct, device_id, &id)` | `forget_device` |
+| `mimi_mark_shown(acct, room, message, &id)` | `set_read_position`, and `mark_read` for disappearing messages (§8.11) |
+| `mimi_save_attachment(acct, message, index, dest_path, &id)` | copies the blob to `dest_path` (0600, created new) on the runtime |
+| `mimi_command(acct, room, line, &id)` | parses one slash command (§8.10) and runs it |
+
+That is 51 functions, counting each free function. The header is about
+400 lines (*estimate*).
+
+*Events.* One struct, `mimi_event`: `kind`, `account` (NULL for
+process-wide), and the fields its kind uses:
+
+| Kind | Fields | When |
+|---|---|---|
+| `MIMI_EV_PROGRESS` | step, steps, text | while connecting (§7.3) |
+| `MIMI_EV_CONNECTED` | | the account is open and its stream subscribed |
+| `MIMI_EV_DISCONNECTED` | status, temporary (bool), text | connecting failed, the stream was lost (§7.4), takeover (§6), a panic |
+| `MIMI_EV_DONE` | request id, status, text, result key, result list | a request finished |
+| `MIMI_EV_ROOM` | change (added, changed, left, forgotten), room key | |
+| `MIMI_EV_MESSAGE` | change (new, edited, retracted, deleted, expired, attachment ready), message key, room key | §5.6 |
+| `MIMI_EV_REACTION` | added or removed, message key, reaction key, sender, reaction | §5.6 |
+| `MIMI_EV_INVITE` | pending or gone, number | |
+| `MIMI_EV_PERSON` | added or changed, user URI | |
+| `MIMI_EV_RESYNC` | | the glue fell behind the change log (`TooOld`); it redraws from the records |
+| `MIMI_EV_LOG` | level, text | §5.4 |
+
+### 5.6 The purple front end over the store
+
+purple-mimi-core registers one `Frontend` with the store
+(`Store::add_frontend`), as the JMAP and IRC front ends do. Its
+`before_save` turns the store's `Change`s into the events of §5.5. A
+`Change` names a record, not what moved in it (`change.rs`), so for
+`MessageChanged` the front end compares the record with what it last
+reported, and reports the difference: a new revision is `edited`, a new
+`deleted` is `retracted`, a reaction key not reported before is a
+`MIMI_EV_REACTION` added, one gone is removed, an attachment that
+became available is `attachment ready`. What it last reported is kept in
+the record's `ext["purple"]` (the store's per-front-end map), so it
+survives a restart and a takeover, and the second instance does not
+report old edits again.
+
+`ext["purple"]` also holds each message's number in its room (§8.7),
+given in arrival order, and each room's next number.
+
+`mimi_message` carries the record as the store has it (key, room,
+sender URI and display name, times, body, body type, reply target key,
+number, sender and an excerpt, revisions, deletion, notice kind,
+attachments, reactions, expiry), plus two strings made in Rust for the
+libpurple 2 glue:
+
+- `html`: the body as libpurple 2 HTML, escaped (§12.4);
+- `line_html`: the whole line libpurple 2 shows for the event, with the
+  text forms of §8.6 to §8.8.
+
+So the text forms, the escaping and the diffing are Rust, tested in
+Rust, and the C glue only places lines.
+
+### 5.7 What the library runs per account
+
+The library's account task, on the runtime, does what the daemon does
+(`Daemon::start` and `serve`), with the stream binding:
+
+1. Take the state lock (§6.2).
+2. `Agent::open` with `binding: Binding::Stream`, the provider URL, the
+   token, the user URI and the state directory; `did_webvh` at its
+   default (BasicCredential; §14 question 10).
+3. Top up KeyPackages (`refresh_key_packages`, `publish_key_packages`,
+   10 by default as in the daemon). The first publication makes this
+   device's Client record (§12.5).
+4. `Store::new(agent, invites)` with the blob store at
+   `<state>/blobs`, `open_database`, `add_frontend` (§5.6).
+5. Run the sync loop (`Store::sync`, which also runs
+   `join_own_rooms`), woken by the stream (`Agent::stream_wake`), by any
+   write, and every 30 s as a fallback; the expiry loop; the KeyPackage
+   top-up after each sync; the takeover watch (§6.3).
+
+Step 3a (§13) proposes moving step 5's loops out of the daemon into the
+store crate, so both run the same code.
+
+## 6. The state lock and takeover (P6)
+
+### 6.1 What can go wrong without it
+
+Two processes on one state directory each load the MLS groups into
+memory (`Agent::load_members`) and both write `mimid.sqlite`. SQLite's
+own locking keeps the file consistent, one transaction at a time, but
+it does not stop the two processes from disagreeing about MLS state.
+One process advances a group to epoch n+1 and deletes the secrets of
+epoch n; the other still holds epoch n in memory, decrypts with it,
+sends with it, or writes its view back. Both send under one leaf with
+diverging epochs. The journal and outbox then hold entries made under
+two different views. Some of this can be recovered by rejoining
+(`recover_gaps`), and some of it cannot, such as a used one-time
+KeyPackage private key or a Commit sent twice. So the rule is: **only
+one process at a time has `mimid.sqlite` open, through any
+connection**, and that process is the one holding the lock.
+
+Pidgin 2 itself refuses a second instance when D-Bus finds another
+libpurple client, unless started with `-m` (*from memory*). Finch,
+BitlBee, Pidgin with `-m`, Pidgin 2 beside Finch on one `-c` directory,
+and Pidgin 3 do not, so the lock is needed.
+
+### 6.2 The lock
+
+- The lock is an exclusive advisory lock on `<state>/lock` (created
+  0600 if missing, never deleted), taken with `std::fs::File::try_lock`.
+  On Unix, std implements it with `flock(2)` (*from memory*; std's file
+  locking is stable since Rust 1.89); on Windows with `LockFileEx`.
+  `flock` locks belong to the open file description, so two accounts in
+  one process (BitlBee with two users on one MIMI account) exclude each
+  other too.
+- After taking it, the library checks that the path still names the
+  file it locked (`fstat` of the descriptor against `stat` of the path:
+  same device and inode). If not, someone replaced the file between
+  open and lock; it closes and tries again.
+- Only the holder opens `mimid.sqlite`. In code, the only way to build
+  the account's `Agent` and `Store` is through a value of type
+  `StateLock` that owns the locked file, and the release path (§6.3)
+  drops every database connection before it drops the `StateLock`.
+- State directories on network file systems are not supported: `flock`
+  over NFS is emulated with byte-range locks on Linux (*from memory*),
+  and SQLite advises against network file systems anyway.
+
+I propose that the lock itself (the file, `try_lock`, the inode check)
+go into mimid-agent-core's `StateDir`, held for the life of the `Agent`
+and the `Store` (§14 question 2). Then the daemon and every embedder get
+it, and a user who points mimid-agent at Pidgin's state directory gets
+a clear refusal instead of corruption. The takeover protocol below stays
+in purple-mimi.
+
+### 6.3 Takeover
+
+Instance A holds the account; instance B starts and wants it. Mark
+asked that B take over and A disconnect cleanly, with A done before B
+writes.
+
+**B, connecting:**
+
+1. Open `<state>/lock` and `try_lock`. If that succeeds (first use, or A
+   has gone), go to item 5.
+2. Write a takeover request: `<state>/takeover`, holding B's process id,
+   the time and a random 128-bit nonce, written to a temporary file and
+   renamed into place. One request file; a newer request replaces an
+   older one.
+3. Poll `try_lock` every 100 ms (INVENTED) for up to 30 s (INVENTED).
+   Show progress "Waiting for another instance to release this account".
+4. If the 30 s run out: delete `takeover` if it still holds B's nonce,
+   and fail with `MIMI_ERR_LOCKED`: "This account is open in another
+   program that did not release it (process <pid> if known). Close it
+   there, or stop that program." B never breaks the lock, never deletes
+   `lock`, and never opens the database.
+5. With the lock: check the inode (§6.2); delete `takeover` if it holds
+   B's own nonce, and leave it if another nonce is there (a third
+   instance asked after B; the watch in item 6 hands over to it).
+   Then open the agent and the store (§5.7). SQLite rolls back any hot
+   journal A left by crashing; that needs nothing from us.
+
+**A, while it holds the lock:**
+
+6. A watch task looks at `<state>/takeover` every second (INVENTED) and
+   checks the lock file's inode at the same time (§6.5). A request with
+   a nonce other than one A wrote itself starts the release.
+
+**A, releasing** (also the path of `mimi_account_close`, plugin unload,
+and a poisoned account):
+
+7. Stop taking new work: requests for this account fail at once with
+   `MIMI_ERR_TAKEN_OVER` (or `MIMI_ERR_NOT_CONNECTED` on a close).
+8. Signal the account's loops to stop and wait up to 10 s (INVENTED) for
+   the work in flight: the current `Store::sync`, requests already
+   running, the expiry pass. Each of them ends at a transaction
+   boundary.
+9. When the 10 s run out, drop what is still running. Dropping a future
+   in the middle of an operation is a crash of that operation: an open
+   rusqlite `Transaction` rolls back when dropped, and the journal and
+   outbox are built so that any cut point is consistent (§6.4).
+10. One last `Store::save`, then drop the `Store`, the `Agent` and with
+    them both database connections (the agent's, which the MLS store
+    shares, and the store's own; `db.rs`). The library then checks that
+    it holds the last reference to each (`Arc::try_unwrap` in a short
+    loop). If some task still holds one, A does not release: it reports
+    `MIMI_ERR_INTERNAL` and keeps the lock, and B times out in item 4.
+    A late release would be worse than a failed takeover.
+11. `fsync` the state directory and `blobs/` (cheap; see §6.4).
+12. Drop the `StateLock`: the lock is released.
+13. Tell the glue: `MIMI_EV_DISCONNECTED` with `MIMI_ERR_TAKEN_OVER`
+    and the text "This account was opened by another program using the
+    same profile." The glue reports it to libpurple as a fatal error
+    (§6.6).
+
+A user action that was running when A released either finished (its
+result was reported), or was cut at item 9. A message cut after it
+entered the outbox is sent by B with the same bytes (the outbox rule,
+AGENTS.md mimid-agent row); one cut before it is not sent. A reports
+such requests as `MIMI_ERR_TAKEN_OVER` with the text "Not confirmed:
+it may still be sent from the other program."
+
+### 6.4 Why this keeps MLS state whole
+
+- **Mutual exclusion** comes from the lock alone: B opens no
+  connection to `mimid.sqlite` before it holds the lock (item 5), and A
+  has closed every connection before it releases it (items 10 and 12).
+- **No state lives only in A's memory.** `Agent::open` rebuilds
+  everything from the database: groups (`load_members`), the sent
+  digests (`restore_sent`), the Message state and the journal. What the
+  agent keeps only in memory (`not_joinable`, `chat_rooms`, a deferred
+  leaver) it also loses in a crash, which it is built to survive.
+- **Every cut point is consistent.** Each received Message is handled
+  in one transaction with its journal entries (`Agent::receive`, bead
+  mimid-1vul.10); a sync's records commit with the acknowledgement; an
+  outgoing message, Commit or external Commit is in the outbox before
+  it is sent and is resent with the same bytes. mimid's crash tests
+  (`mimid-agent-store/tests/crash.rs` and `send_crash.rs`, with the
+  `fail-points` feature) cover these cuts. So item 9 needs no new
+  recovery code: it is a crash of a few operations, which the state
+  already survives.
+- **Durability.** Between two processes on one host, B sees A's
+  committed writes through the shared page cache whether or not they
+  reached the disk, so the handoff itself needs no `fsync`. `fsync`
+  matters for power loss. SQLite in its default rollback-journal mode
+  with its default `synchronous = FULL` (the bundled build sets no other
+  default; `libsqlite3-sys` 0.35 `build.rs`) syncs at each commit. The
+  blob store syncs each blob before renaming it into place, but not the
+  directory after (`blobs.rs`, near line 470), so item 11 syncs the
+  directories once. A small mimid change MAY add the directory sync
+  after each rename.
+- **The provider sees one device.** A and B are the same device, with
+  the same keys and the same Client record. A's stream connection ends
+  when its `Agent` is dropped; B subscribes from the saved Message
+  state. If A's connection lingers for a moment (its reader task waits
+  for the server's close), it delivers to nothing. Step 3a (§13) proposes an
+  explicit close in agent-core so that the tasks end at item 10.
+
+### 6.5 When the lock is lost
+
+`flock` is not taken away from a running process. A loses its lock only
+if the lock file is deleted or replaced while A runs (by hand, by a
+backup tool restoring the directory, by a profile copied over a live
+one): B would then lock a new file at the same path while A still locks
+the old one, and both would run. The watch of item 6 catches this
+within a second: when the path no longer names A's locked inode, A
+stops at once, without the grace period of item 8 (every extra write is
+a risk now), drops the store and agent, and reports `MIMI_ERR_LOCK_LOST`:
+"The state lock of this account was removed while it was in use; the
+account was stopped. Check that no other program uses <path>." The
+glue reports it as fatal. A second's overlap is possible in this case;
+it needs someone deleting files under a running program, and the
+message says so.
+
+### 6.6 Not taking it back
+
+A taken-over instance must not take the account back by itself, or the
+two would alternate.
+
+- **libpurple 2:** the glue reports `MIMI_ERR_TAKEN_OVER` with
+  `purple_connection_error_reason(gc, PURPLE_CONNECTION_ERROR_NAME_IN_USE,
+  ...)`. `NAME_IN_USE` is fatal (`purple_connection_error_is_fatal`,
+  `connection.c` 2.14.12), so libpurple does not reconnect; the user
+  reconnects by hand, which takes the account back. That is the rule
+  Mark gave: the instance most recently connected by the user wins.
+- **libpurple 3** (2.98.0) schedules a reconnect one minute after any
+  disconnect of an enabled account, whatever the error
+  (`purple_account_manager_schedule_account_reconnect`,
+  `purpleaccountmanager.c`). So the library remembers, per state
+  directory and per process, that this account was taken over. Later
+  opens from this process then fail at once with `MIMI_ERR_TAKEN_OVER`,
+  without writing a takeover request, unless `take_over` is set in the
+  account config. The libpurple 3 glue sets it only from an account
+  action, "Use this account here" (INVENTED label). The glue does not
+  disable the account: the two instances share the profile's account
+  store, and disabling it in A would disable it for B on its next start.
+
+## 7. The live stream (P5)
+
+### 7.1 The provider must serve it
+
+purple-mimi uses `Binding::Stream` only. A provider serves the stream
+only with `live_stream = true` (binary-live-stream.md §5.2; operating.md
+`live_stream`, default `false`); without it, `/mimid/live` does not
+exist and the WebSocket upgrade gets `404`. There is no fallback to JMAP
+(§5.2 of that note).
+
+On a `404` at the upgrade, the library fails the connection with
+`MIMI_ERR_STREAM_OFF` and the text: "The provider at <url> does not
+serve mimid's live stream. purple-mimi needs a mimid provider with
+`live_stream = true`; ask its operator." It is fatal: reconnecting does
+not help. Today agent-core reports this as `AgentError::Stream` with the
+WebSocket library's text (`stream_error`, `stream.rs`); step 3a gives
+it a typed form so the library need not match text.
+
+The library does not read the JMAP Session first to look for the
+`tag:reviewcommit.com,2026:mimid:live` capability: the stream "does not
+depend on it" (§5.1 of that note), and it would add a JMAP client to the
+plugin.
+
+### 7.2 The hello
+
+`ClientHello` carries the token from the password field (or the stored
+one, §12.3). The `ProviderHello` answers with `userUri`, `roomIdPrefix`,
+`hubSender`, the limits and the asset flags (CDDL in §5.11 of that
+note). A bad token is `Error unauthorized` and a close: the library
+reports `MIMI_ERR_UNAUTHORIZED`, fatal, "The provider refused the
+token."
+
+agent-core does not compare the hello's `userUri` with the configured
+user (I found no check in `stream.rs`, `provider.rs` or `Agent::open`).
+A token of another user would then run that user's rooms under this
+account's state. Step 3a adds the check to `Agent::open`; the library
+reports `MIMI_ERR_WRONG_USER`, fatal.
+
+### 7.3 Connecting
+
+Progress steps shown in the account's connection dialog
+(`purple_connection_update_progress` on libpurple 2): "Locking state"
+(and "Waiting for another instance", §6.3), "Opening state", "Connecting
+to the provider", "Publishing keys", "Catching up". The account is
+`CONNECTED` once the store is open and the first `Subscribe` was
+answered; the first sync's messages then arrive as events.
+
+### 7.4 Resume and reconnect
+
+- **Resume** is the stream's: the agent subscribes from its saved
+  Message state, and falls back to `after` per Chat on `cannotResume`
+  (§5.5 of that note; `Stream::messages_since`). Nothing new in
+  purple-mimi.
+- **Loss of the connection while connected.** agent-core reopens the
+  stream on the next call after it failed (`Stream::connection`). The
+  sync loop makes that call at once (the loss wakes it). If the reopen
+  fails, the library reports `MIMI_EV_DISCONNECTED` with
+  `MIMI_ERR_NETWORK`, temporary, and closes the account by the release
+  path. libpurple then reconnects by its own rules: Pidgin 2 with its
+  increasing delay (*from memory*), Pidgin 3 after a minute. While
+  disconnected the user cannot send, which is the truth: sending needs
+  the hub.
+- **Rate limits** are the stream's: at most 16 requests outstanding per
+  connection, and `rateLimited` with or without `retryAfter`, waited out
+  by agent-core (1 s when absent, at most 30 s, three times;
+  `Stream::call`). The store serialises the agent behind one lock, so
+  purple-mimi has one request outstanding at a time in practice; it adds
+  no limit of its own.
+- **Limits stated in the hello** (`maxMessageBytes`, `maxRequestBytes`)
+  bound attachments: `mimi_send_file` refuses a file over the smaller
+  of the store's `MAX_ATTACHMENT_LEN` and `maxRequestBytes` before
+  reading it, with `MIMI_ERR_TOO_LARGE`.
+
+## 8. The libpurple 2 glue
+
+C against libpurple 2.14 (`prpl.h`), protocol id `prpl-mimi` (INVENTED),
+`PURPLE_INIT_PLUGIN`. About 2,500 to 3,000 lines (*estimate*).
+
+### 8.1 Accounts
+
+- **Username** is the user's handle, `alice@a.example`, which the
+  library maps to `mimi://a.example/u/alice` (`mimi_handle_to_user`;
+  INVENTED form: the part after the last `@` is the domain). A full
+  `mimi://` URI is accepted too. §14 question 4.
+- **Password** is the provider's bearer token, as `mimid admin ...
+  token` prints it, one token per Pidgin (§12.5). After a connection
+  succeeds the token is kept in the state directory and the remembered
+  password is cleared (§12.3). `OPT_PROTO_PASSWORD_OPTIONAL` is set, so
+  an account with a stored token connects with an empty password field.
+- **Account options** (`protocol_options`): "Provider URL" (default
+  `https://<domain>`, INVENTED default), "Join invites" (from allowed
+  users / always / never; default from allowed users, as the daemon),
+  "Show message numbers" (default on, §8.7), "Open rooms when a message
+  arrives" (default on, §8.3), "Add rooms to the buddy list" (default
+  on).
+- **Status types:** available and offline, both user-settable, as
+  purple-presage does (`src/c/status.c`); Pidgin shows an account
+  offline without them (§1.3). `set_status` does nothing: MIMI has no
+  presence.
+- **Account actions** (`actions` in the plugin info): "Devices..."
+  (§8.12), "Pending invites...", "About this device" (Client id, key
+  fingerprint, state directory).
+
+### 8.2 Connection state
+
+`login` calls `mimi_account_open` and `purple_connection_set_state(gc,
+PURPLE_CONNECTING)`; `MIMI_EV_PROGRESS` drives
+`purple_connection_update_progress`; `MIMI_EV_CONNECTED` sets
+`PURPLE_CONNECTED`. `MIMI_EV_DISCONNECTED` becomes
+`purple_connection_error_reason` with:
+
+| Status | `PurpleConnectionError` | Fatal in 2.14 |
+|---|---|---|
+| `MIMI_ERR_NETWORK` | `NETWORK_ERROR` | no |
+| `MIMI_ERR_UNAUTHORIZED` | `AUTHENTICATION_FAILED` | yes |
+| `MIMI_ERR_STREAM_OFF` | `INVALID_SETTINGS` | yes |
+| `MIMI_ERR_WRONG_USER` | `INVALID_USERNAME` | yes |
+| `MIMI_ERR_TAKEN_OVER` | `NAME_IN_USE` | yes |
+| `MIMI_ERR_LOCKED`, `_LOCK_LOST`, `_STATE`, `_PANIC` | `OTHER_ERROR` | yes |
+
+`close` calls `mimi_account_close`; the glue then forgets every map it
+keeps for the connection.
+
+### 8.3 Rooms as chats
+
+- A room that is not direct is a chat. `chat_info` has one field,
+  "Room" (a room name or room URI). `join_chat` with a room the store
+  has opens it; with a name the store does not have, it asks "Create a
+  new room named <name>?" (`purple_request_action`) and on yes calls
+  `mimi_create_room`.
+- `serv_got_joined_chat` opens the conversation with an int id the glue
+  hands out per connection and maps to the room key. The title is the
+  room's name (`purple_conversation_set_title`), the topic its subject
+  (`purple_conv_chat_set_topic`, with `OPT_PROTO_CHAT_TOPIC`), the users
+  its participants, with `PURPLE_CBFLAGS_OP` for holders of the admin
+  role.
+- **History on open:** messages since the room's read position, and up
+  to 20 before it (INVENTED), from `mimi_history`, written with
+  `PURPLE_MESSAGE_DELAYED` and the message's time.
+- **Rooms not open.** libpurple 2 delivers chat messages only to an open
+  chat. With "Open rooms when a message arrives" on, a new message opens
+  its room, which then plays back from the read position. With it off,
+  messages wait in the store, and the buddy-list entry shows nothing (I
+  found no unread mark for chat nodes).
+- `roomlist_get_list` lists the user's rooms (MIMI has no public
+  directory). With "Add rooms to the buddy list", each active room gets
+  a `PurpleChat` node in a group "MIMI" (INVENTED), as purple-discord
+  adds its channels.
+- **Closing is not leaving.** Pidgin 2 calls `chat_leave` when a chat
+  window closes. In MIMI, leaving removes every device of the user from
+  the room (`Agent::leave` limitations), so `chat_leave` only closes.
+  Leaving is the command `/leave` (§8.10), which asks for confirmation.
+- `RoomLeft` and `RoomForgotten` write a system line and mark the chat
+  left (`serv_got_chat_left`).
+
+### 8.4 Direct rooms as IMs
+
+A room with `direct` set is an IM with the other user: received
+messages through `serv_got_im` with `who` the other user's handle,
+`send_im` through `mimi_open_direct` then `mimi_send_text`. The other
+user is a buddy in the group "MIMI", alias their display name.
+Buddies show as available (§8.1), since MIMI has no presence. A direct
+room that gains a third member (MIMI allows it unless the room's policy
+fixes the membership) becomes a chat from then on.
+
+### 8.5 Messages
+
+- Received: `serv_got_chat_in` or `serv_got_im` with the message's
+  `line_html`, `PURPLE_MESSAGE_RECV`, and the hub's `acceptedAt` as the
+  time.
+- Own messages from another device of the user arrive as received
+  messages from the user's own handle with `PURPLE_MESSAGE_SEND`, so
+  Pidgin shows them as sent (*from memory*: `PURPLE_MESSAGE_SEND` on a
+  received line is how purple-discord shows messages sent elsewhere).
+- Sent: `chat_send` and `send_im` get HTML from the input box; the glue
+  strips it to text (`purple_markup_strip_html`, then unescape), sends
+  it as `text/plain`, and returns 0 so libpurple does not echo it; the
+  store's `MessageAdded` for the own message writes it, so the line
+  shown is the one stored.
+- Each line shown calls `mimi_mark_shown` for the room's read position.
+- A message over `MAX_TEXT_LEN` (16 KiB) is refused with a system line.
+
+### 8.6 Edits and retractions (text)
+
+libpurple 2 cannot change a line once written (§1.3). An edit is a new
+line `(edited #12) <new text>` from the original sender; a retraction a
+system line `#12 from bob was deleted.` Sending: `/edit 12 <text>` and
+`/delete 12` (§8.10), allowed only on own messages (the store refuses
+others').
+
+### 8.7 Replies, and message numbers
+
+To let the user name a message in a text-only window, each message gets
+a number in its room, shown as a prefix `[12]` (INVENTED form) when
+"Show message numbers" is on. Numbers start at 1 per room, follow
+arrival order, and are kept in `ext["purple"]` (§5.6), so they hold
+across restarts and takeovers. With numbers off, the commands still
+work and `/history` shows them.
+
+A received reply is shown `(reply to #12 bob: "first 60 characters...")
+<text>` (INVENTED length). `/reply 12 <text>` sends one. This is the
+IRC front end's idea with numbers instead of IRCv3 tags.
+
+### 8.8 Reactions (text)
+
+`MIMI_EV_REACTION` added becomes a system line `bob reacted 👍 to #12`,
+removed `bob took back 👍 on #12`. `/react 12 👍` and `/unreact 12 👍`
+send them (the store limits a reaction's length,
+`MAX_REACTION_LEN`).
+
+### 8.9 Attachments
+
+- **Received:** when `attachment ready` arrives, a line `[file] #12
+  report.pdf (120 KiB): /save 12` (INVENTED form). `/save 12 [n]` offers
+  the file through a receiving `PurpleXfer` (`purple_xfer_request`):
+  the user picks the destination, and the transfer's init function calls
+  `mimi_save_attachment` to copy the blob there. purple-presage does
+  the same with its own data (`src/c/receive_attachment.c`). The file
+  name offered is the store's safe name (`content.rs`). I do not offer
+  every file automatically: a busy room would open a dialog per file.
+- **Sent:** `send_file` (IMs) and `chat_send_file` (chats, in 2.14) make
+  a sending `PurpleXfer`; its init function hands the chosen path to
+  `mimi_send_file` and completes the transfer on `MIMI_EV_DONE`.
+- Inline images (imgstore, `<img id>`) are left for later.
+
+### 8.10 Commands
+
+Registered with `purple_cmd_register` for `prpl-mimi` only
+(`PURPLE_CMD_FLAG_PRPL_ONLY`), each forwarding its argument string to
+`mimi_command`, which parses it in Rust:
+
+| Command | Does |
+|---|---|
+| `/reply N text`, `/edit N text`, `/delete N` | §8.6, §8.7 |
+| `/react N r`, `/unreact N r` | §8.8 |
+| `/save N [i]` | §8.9 |
+| `/history [count]` | writes older messages, with numbers |
+| `/invite handle`, `/kick handle`, `/ban handle`, `/unban handle` | `change_members`, `kick`, `ban`, `unban`; `/invite` is also libpurple's own (`chat_invite`) |
+| `/leave` | leaves the room for every device, after a confirmation |
+| `/topic text` | libpurple's own; `set_chat_topic` calls `mimi_set_subject` |
+| `/allow handle`, `/deny handle` | consent |
+| `/burn text` | sends a burn-on-read message |
+| `/expire duration` or `/expire off` | the room's local message expiry, as the IRC front end's `expire` |
+| `/devices` | as the account action, as text |
+
+### 8.11 Invites, consent, disappearing messages, notices
+
+- **Invites.** `MIMI_EV_INVITE` pending becomes `serv_got_chat_invite`
+  with the room's name, the inviter's handle and components holding the
+  invite number. Accept calls `join_chat` with them: `mimi_accept_invite`.
+  Decline calls `reject_chat`: `mimi_decline_invite`, which needs a
+  store call that does not exist (step 3a). Invites the policy joins
+  open no dialog; their rooms appear.
+- **Consent.** The store surfaces no incoming consent request as a
+  change (only invites, `Change::InvitePending`), and agent-core lists
+  Consent records only on request (`Agent::consents`). The first version
+  has `/allow` and `/deny` and buddy menu entries "Allow invites from"
+  and "Deny" (`blist_node_menu`). Showing incoming requests as
+  `purple_account_request_authorization` dialogs, which suit them, needs
+  a store change and is left for later (§13).
+- **Disappearing messages.** A message with an expiry is written with
+  `PURPLE_MESSAGE_NO_LOG`, so Pidgin's conversation log does not keep
+  what the store deletes, and with a prefix `(disappears in 1 h)`.
+  Writing it to an open window counts as reading it, as in the IRC front
+  end: `mimi_mark_shown` lets the store delete a burn-on-read message
+  and start a delete-after-read clock. libpurple 2 cannot remove the
+  line; it stays in the open window until it closes.
+- **Notices** (lost messages, removals, identity changes; the store's
+  `notice` kinds) are system lines (`PURPLE_MESSAGE_SYSTEM`).
+
+### 8.12 Devices
+
+"Devices..." requests `mimi_list_devices` and shows the list in a
+`purple_request_fields` dialog: each Client record's id, its key's
+fingerprint (the first 8 octets in hex, INVENTED), and "this device".
+"Forget" on another device asks for confirmation, then calls
+`mimi_forget_device`, which destroys its Client record and removes its
+leaves from the rooms this device shares with it
+(`Agent::forget_device`). The result lists the rooms where removal
+failed. This device cannot be forgotten from itself.
+
+### 8.13 What libpurple 2 does not get
+
+Typing (MIMI has none; `send_typing` is NULL), presence, read receipts
+(not adopted, mimid-1wgh.11.11), room renames (agent-core edits only the
+subject), abuse reports (a later command), did:webvh credentials (§14
+question 10).
+
+## 9. The libpurple 3 glue
+
+C against libpurple 3 (2.98.0 headers today; it follows each monthly
+alpha), as a GPlugin native plugin registering a `PurpleProtocol`
+subclass, as `protocols/zulip` does. About 2,500 to 3,500 lines
+(*estimate*), more than libpurple 2 for the GObject boilerplate. The
+API may change in small ways each month until beta (§1.1); the glue
+tracks the latest alpha only.
+
+| Area | libpurple 3 |
+|---|---|
+| Account | `get_default_account_settings` with "Provider URL" and the options of §8.1; `validate_account` checks the handle; the token comes from the credential manager (`purple_account_request_password_async`), then lives in the state directory (§12.3) |
+| Connection | a `PurpleConnection` subclass whose connect starts `mimi_account_open`; errors as §8.2 with `PURPLE_CONNECTION_ERROR_NETWORK_ERROR`, `INVALID_SETTINGS` or `CUSTOM_FATAL`; the reconnect rule of §6.6 |
+| Rooms | `PurpleConversation` of type `CHANNEL`, title the room name, topic the subject with its author and time, members as `PurpleConversationMember`s, the admin role as a badge |
+| Direct rooms | type `DM` |
+| Create, join, leave | `create_conversation_async` (DM or room with members), `join_channel_async` (a room by name or URI), `leave_conversation_async` asks for confirmation before `mimi_leave` (whether Pidgin 3 calls it on closing a tab I did not check) |
+| Messages | `PurpleMessage` with `id` the store key, author, contents (plain text), timestamp; written with `purple_conversation_write_message` |
+| Edits | the glue keeps a map from message key to its `PurpleMessage` and sets `contents`, `edited` and `edited_at` on it; the UI shows "(edited)" (§1.3). Whether the view redraws the new contents I did not check |
+| Retractions | contents replaced with "(deleted)" and `purple_history_remove_message_async` for the old text |
+| Replies | `replying_to` set to the parent's key; Pidgin 3 does not show it yet (§1.3), so the contents also carry the text form of §8.7 until it does |
+| Reactions | none in libpurple 3 (§1.3): event messages with the text form of §8.8 |
+| Attachments | a `PurpleAttachment` on the message (name, type, size, local URI once saved), plus the text line of §8.9, since Pidgin 3 does not show attachments yet; sending through `PurpleProtocolFileTransfer` |
+| Commands | the same commands as `PurpleCommand`s, forwarded to `mimi_command` |
+| Invites | libpurple 3 has no chat-invite request in 2.98.0 (I found none in its headers): a pending invite becomes a `PurpleNotification` and a DM-like conversation "Invitation to <room>" with `/accept` and `/decline`, until libpurple has one |
+| Consent | later, as `PurpleAuthorizationRequest` notifications (accept is `allow`, deny is `deny`) once the store surfaces requests (§8.11) |
+| Typing, presence | not implemented (`send_typing` left NULL); contacts' presence available |
+| Disappearing messages | expiry removes the message from the history (`purple_history_remove_message_async`); whether a conversation can drop a message from its view I did not find (`PurpleMessages` has `add` only) |
+| Devices | an entry in the connection's action menu (`purple_connection_get_action_menu`), and `/devices` |
+
+## 10. Build and packaging
+
+### 10.1 Build
+
+- **CMake**, calling cargo directly with `add_custom_command` to build
+  `libpurple_mimi_ffi.a`, then compiling each glue into a shared module
+  linked with it. purple-presage uses CMake with Corrosion fetched at
+  configure time (`FetchContent`, `CMakeLists.txt`); I would call cargo
+  directly instead, about 40 lines of CMake (*estimate*), so a distro
+  build needs no network but `cargo --offline` with vendored crates.
+  libpurple 2 is found with `pkg-config purple`, libpurple 3 with
+  `pkg-config purple-3` (*from memory* for the name). Either glue is
+  optional: `-DPURPLE2=ON|OFF`, `-DPURPLE3=ON|OFF`. Meson, which Pidgin
+  3 uses, has weak cargo support; §14 question 8.
+- **Static linking.** The Rust library is a `staticlib` linked into
+  each `.so` (Linux) or `.so` bundle (Homebrew's libpurple loads `.so`
+  plugins on macOS too, *from memory*). The plugin then depends only on
+  libpurple, GLib and the C library. SQLite is bundled (rusqlite
+  `bundled`), TLS is rustls over aws-lc-rs (`aws-lc-sys` needs CMake and
+  a C compiler at build time).
+- **Symbol visibility.** A `staticlib` brings every exported Rust symbol
+  and its whole standard library. The plugin exports only its entry
+  point: `purple_init_plugin` for libpurple 2, GPlugin's `gplugin_query`,
+  `gplugin_load` and `gplugin_unload` for libpurple 3. A linker version
+  script on Linux (`-Wl,--version-script`) and
+  `-Wl,-exported_symbols_list` on macOS hide the rest, so two Rust
+  plugins in one Pidgin (purple-mimi beside purple-presage) do not
+  resolve each other's symbols. `-Wl,--gc-sections` and a stripped
+  release profile keep the size down.
+- **Size.** About 360 crates in the tree (`cargo metadata` of
+  mimid-agent-store, normal dependencies). 10 to 20 MB per plugin
+  (*estimate*, as §2.6).
+- **Toolchain.** Latest stable Rust, as mimid. Cargo.lock committed;
+  mimid pinned by revision (§5.2).
+
+### 10.2 Licences
+
+- purple-mimi is GPL-3.0-or-later (P4): `COPYING` with the GPL-3.0 text,
+  and a notice in each source file.
+- The plugin binary contains, statically: mimid (Apache-2.0; its
+  `NOTICE` must be carried, Apache-2.0 §4(d)), OpenMLS (MIT), SQLite
+  (public domain), aws-lc (ISC, Apache-2.0, MIT, BSD-3-Clause; the
+  `aws-lc-sys` 0.46 licence expression), `hpke-rs` (MPL-2.0, via
+  OpenMLS), `minicbor` (BlueOak-1.0.0), `webpki-roots` (CDLA-Permissive
+  2.0), and the rest under MIT or Apache-2.0 (counted from
+  `cargo metadata`, 2026-11-22). All of these can be combined into a
+  GPL-3.0 work (not legal advice). Whether any `hpke-rs` file carries
+  MPL-2.0's "Incompatible With Secondary Licenses" notice I did not
+  check.
+- A `THIRD-PARTY-LICENSES` file is generated from Cargo.lock with
+  cargo-about (pinned) at each release, and shipped beside the plugin;
+  CI fails on a licence outside an allow list (cargo-deny).
+
+### 10.3 Packages
+
+- **Linux:** release tarballs with the `.so` files for x86_64 and
+  aarch64 (as purple-discord ships), and a source tarball with vendored
+  crates (`cargo vendor`). No distro package yet: the mimid crates are
+  not on crates.io, which Debian and Fedora need. Later, once Mark
+  decides about publishing them.
+- **Homebrew macOS:** a formula in a tap of Mark's (INVENTED: a tap
+  `markatwood/tap`), building from source against Homebrew's `pidgin`
+  formula (which holds libpurple 2.14.14, §1.2). Homebrew has no
+  libpurple 3, so macOS gets the libpurple 2 plugin only.
+- **libpurple 3:** built from source by its users, who are on Pidgin 3
+  alphas (AUR `pidgin-hg`, Flathub Beta). A Flatpak extension for
+  Flathub Beta's Pidgin 3 is possible later.
+- **Windows:** step 9 (§13).
+
+## 11. Testing
+
+- **Rust unit tests** in purple-mimi-core: the text forms and HTML
+  escaping (hostile input per AGENTS.md: `<script>`, `&`, NUL, invalid
+  surrogates from the codec, bidi and zero-width characters, 16 KiB
+  lines), command parsing (every command, bad numbers, missing
+  arguments), the handle mapping, the diffing front end (an edit, two
+  reactions and a retraction in one save; a restart in between), error
+  mapping, and the log canary.
+- **Lock and takeover tests** across processes: a helper binary opens
+  the account the way the library does. Cases: takeover with a running
+  sync; takeover while a send is in the outbox (the message arrives
+  exactly once); the owner stopped with `SIGSTOP` (the newcomer times
+  out and never opens the database, which a test-only counter of
+  database opens checks); the owner killed with `SIGKILL` (immediate takeover, hot
+  journal rolled back); the lock file deleted under the owner (§6.5);
+  three instances racing.
+- **C ABI tests:** a C program calls every function with NULLs, invalid
+  UTF-8, a wrong thread and a closed account, under AddressSanitizer
+  and UndefinedBehaviorSanitizer, and under valgrind with Pidgin's
+  suppressions file.
+- **Providers:** two mimid providers with the live stream on, from
+  `acceptance_fixture --two-providers`. Its test providers already set
+  `live_stream = true` (`crates/mimid-agent/tests/common/mod.rs`), but
+  the fixture prints its daemons' local tokens, not provider tokens.
+  Step 3a adds a switch that starts the providers only and prints each
+  provider's URL and fresh tokens for alice (twice: two devices) and
+  bob (INVENTED name `--providers-only`).
+- **libpurple 2 end to end:**
+  - **BitlBee** (`bitlbee-libpurple` 3.6, in Debian 12) loads
+    purple-mimi from its plugin directory and speaks IRC, so a test
+    drives it with a scripted IRC client, no terminal needed: account
+    add, rooms as channels, messages both ways across the two providers,
+    invites, edits and reactions as text, `/save`.
+  - **Finch** (`finch` 2.14.12, in Debian 12) in tmux, as the irssi
+    checks were done (docs/irc-lessons.md): a smoke test of the UI
+    paths BitlBee does not use (invite dialog, file transfer, buddy
+    list), and the takeover test with two Finch processes on one `-c`
+    directory.
+  - **Pidgin 2** under Xvfb, by hand, once per release.
+  The libpurple 2 packages are not installed on this host; tests run
+  in a Debian podman container (podman is installed).
+- **libpurple 3 end to end:** a headless test host. libpurple 3 builds
+  without the GTK UI (`-Dgtkui=false`, `meson.options` of 2.98.0), and
+  its own tests run against a test UI (`libpurple/tests/test_ui.c`). The
+  host is a C program over that model: start the core, load
+  `libpurple3-mimi.so`, add accounts, connect, create and join rooms,
+  send and receive, and check `PurpleMessage` properties (`id`,
+  `edited`, `replying_to`, attachments). It runs in a Debian 13
+  container: libpurple 3 needs GLib 2.82, Debian 12 has 2.74, Debian 13
+  has 2.84 (*from memory* for both GLib versions); GPlugin, birb,
+  seagull and hasl come as meson subprojects. Not tried. Pidgin 3 from
+  Flathub Beta, by hand, for what the UI shows. Not AUR `pidgin-hg`,
+  after the AUR malware of 2026-06 (§1.2).
+- **CI:** Linux (x86_64) builds both plugins and runs the Rust, ABI,
+  BitlBee and headless libpurple 3 tests; macOS (Homebrew) builds the
+  libpurple 2 plugin and runs the Rust and ABI tests.
+
+## 12. Security
+
+### 12.1 Keys in the Pidgin process
+
+This is the price of (b), stated in §2.7. The MLS private keys, the
+KeyPackage private keys and every plaintext message are in Pidgin's
+memory and in `mimid.sqlite` under the profile:
+
+- Every other plugin Pidgin loads can read them; so can anything that
+  can attach a debugger to the user's processes.
+- A core dump holds them. The library does not change the process's
+  dump settings (`PR_SET_DUMPABLE`), since the process is Pidgin's.
+  The README says so.
+- BitlBee and Spectrum2 load one plugin for many users, so the host's
+  operator holds every user's keys. The README says that purple-mimi
+  on a shared BitlBee is end-to-end encrypted only as far as that host.
+- AGENTS.md's crate map says mimid-agent "is the only component that
+  sees" keys and plaintext. With purple-mimi, as with the mobile app of
+  decision mimid-1wgh.39, an embedder does too; step 3a updates that
+  row.
+
+### 12.2 Credentials
+
+The credential is the provider's bearer token, not an agent token or an
+app password: frontend-auth.md's model is for clients of the agent and
+does not apply. One token per Pidgin is advised (§12.5). The token goes
+only into `ClientHello` over `wss` (or `ws` to a loopback provider in
+tests); the library refuses a non-loopback `http://` provider URL
+(INVENTED rule, as jmap-chat-js does for HTTP).
+
+### 12.3 Where the token is kept
+
+libpurple 2 writes a remembered password into `accounts.xml` in clear
+text: `<password>` holds `purple_account_get_password` when "remember
+password" is set (`account.c` 2.14.12, near line 395); an encrypted
+password is only carried through from libpurple 3's format, never made
+(near lines 400 to 420 and 905 to 926). Keyring plugins exist outside
+libpurple.
+
+So, after the first successful connection, the library writes the token
+to `<state>/provider-token` (0600, like `mimid.sqlite` beside it, which
+already holds the keys), and the libpurple 2 glue clears the remembered
+password (`purple_account_set_remember_password(account, FALSE)` and an
+empty password). Later connections use the stored token. A non-empty
+password field that differs from the stored token replaces it (the user
+pasted a new one). BitlBee keeps its own copy of the password in its
+user files; that is BitlBee's, and nothing here changes it. On
+libpurple 3, which has a credential manager with libsecret and KWallet,
+the token is kept in the state directory the same way, so both glues
+behave alike (§14 question 3).
+
+### 12.4 What peers send
+
+The plugin is now the client that renders, so the rendering rules that
+AGENTS.md gives JMAP clients are purple-mimi's to keep:
+
+- libpurple 2 renders messages as HTML. Every string from a peer (body,
+  display name, room name, subject, file name, reaction) is escaped in
+  Rust before it reaches the glue (`html`, `line_html`, §5.6); the glue
+  passes no peer string to libpurple unescaped. Received bodies are
+  `text/plain` to us whatever the sender's body type says, except
+  `text/markdown`, which is shown as plain text too for now.
+- Names from peers are wrapped in Unicode isolates (U+2068, U+2069) so
+  a right-to-left name cannot reorder the line around it.
+- File names offered for saving are the store's safe names
+  (`content.rs`); the destination is the user's choice in the transfer
+  dialog, and `mimi_save_attachment` creates the file new, without
+  following a symlink at the last component.
+- The sender shown is always the store's sender, which is the
+  authenticated MLS sender (AGENTS.md).
+
+### 12.5 Devices and file permissions
+
+- Each Pidgin profile is a device with a Client record, made when its
+  first KeyPackage is published (P5; draft-atwood-jmap-chat-mimi-00
+  §Clients). It joins the user's accepted rooms by external Commit and
+  reads only messages from its join on (`join_own_rooms` limitations).
+  While Pidgin is closed it receives nothing and its KeyPackages may run
+  out; the provider keeps what arrives.
+- A lost laptop's device is forgotten from another device (§8.12). A
+  stolen token is revoked at the provider; `mimid admin` has no revoke
+  command today (it only issues, `token`), so one token per Pidgin
+  helps only once one exists (§14 question 7).
+- A provider MAY cap the clients per user (`maxClients` in the hello);
+  a Pidgin past the cap cannot publish KeyPackages, and the library
+  reports that the provider refused a new device.
+- Files: the state directory 0700 and every file in it 0600, enforced by
+  agent-core's `StateDir` (it refuses a directory others can reach);
+  `<base>/mimi/` is created 0700 by the library. libpurple 2 makes its
+  user directory 0700 (*from memory*).
+- Pidgin's own conversation logs (`~/.purple/logs`, if logging is on)
+  hold plaintext of what was shown; disappearing messages are kept out
+  (§8.11), the rest is the user's choice in Pidgin's preferences.
+
+## 13. Step plan
+
+Effort in lines (*estimates*), no calendar time.
+
+| Step | Bead | What | Lines |
+|---|---|---|---|
+| 3 | mimid-s4oy.3 | this design note | (docs) |
+| 3a | mimid-s4oy.9 | **mimid groundwork, in mimid (Apache-2.0):** a typed error for a `404` stream upgrade (§7.1); `Agent::open` compares the hello's `userUri` (§7.2); `Store::decline_invite` (§8.11); the state lock in `StateDir` if Mark agrees (§6.2); an explicit close of the stream tasks (§6.4); the daemon's loops moved into mimid-agent-store as a runner (§5.1); `acceptance_fixture --providers-only` (§11); AGENTS.md's mimid-agent row (§12.1); a tagged revision for purple-mimi to pin | 800 to 1,200 Rust with tests |
+| 4 | mimid-s4oy.4 | **Skeleton**, in the new repository MarkAtwood/purple-mimi: workspace, CMake, cbindgen header; core: runtime, event queue, accounts, lock and takeover (§6), the stream connection and its errors (§7); ffi: the account and process functions; both glues load, connect, disconnect and report errors; CI on Linux and macOS | core 1,500 to 2,000; ffi 500 to 700; purple 2 glue 600 to 800; purple 3 glue 700 to 1,000; build and CI 300 to 400 |
+| 5 | mimid-s4oy.5 | **Rooms and messages, libpurple 2:** the purple front end (§5.6), reads, requests, rooms as chats, direct rooms as IMs, history on open, invites, consent commands, topic, members, notices, devices, disappearing messages | core 1,200 to 1,600; purple 2 glue 1,200 to 1,600 |
+| 6 | mimid-s4oy.6 | **Edits, reactions, replies, attachments, libpurple 2:** numbers, text forms, commands, file transfers | core 800 to 1,200; purple 2 glue 800 to 1,200 |
+| 5b | mimid-s4oy.10 | **The libpurple 3 glue** for everything steps 5 and 6 have (§9), natively where libpurple 3 can; the headless test host | glue 2,000 to 2,800; host 500 to 800 |
+| 7 | mimid-s4oy.7 | **End-to-end tests** (§11): BitlBee and Finch for libpurple 2, the headless host for libpurple 3, two providers with the live stream, the takeover across processes | 1,000 to 1,500 |
+| 8 | mimid-s4oy.8 | **Packaging and release** for Linux and Homebrew macOS (§10.3), licence files, README; announce only with Mark's OK | 300 to 600, plus the README |
+| 9 | mimid-s4oy.11 | **Windows i686 DLL** for Pidgin 2.14 (P7): `i686-pc-windows-gnu` or `-msvc` (purple-presage uses MSVC x86), `aws-lc-sys` on i686, `LockFileEx` and the socket-pair wake-up, the state under `%APPDATA%\.purple`, CI | 400 to 800 |
+
+Order: 3a and 4 can run in parallel (4 pins a mimid revision from 3a
+before it needs the new calls); 5 needs 4 and 3a; 6 and 5b need 5 (5b
+needs the core of 5, and can run beside 6); 7 needs 5 and 5b for their
+halves; 8 needs 7; 9 needs 8. Step 6 also waits for epic mimid-qqtk (replies,
+reactions, attachment URLs), as its bead says.
+
+Total about 13,000 to 19,000 lines (*estimate*). §2.3 guessed 4,000 to
+5,000 for (b); that counted one libpurple 2 glue and no tests. The
+difference is the libpurple 3 glue, the takeover, and tests in three
+harnesses.
+
+## 14. Open questions for Mark
+
+1. **Store too, or agent-core only.** I chose agent-core and
+   mimid-agent-store (§5.1). Recommendation: both, as designed; a
+   purple-side store would redo the crash rules for one client.
+2. **Where the state lock lives.** In mimid-agent-core's `StateDir`, so
+   the daemon and every embedder have it, or in purple-mimi only.
+   Recommendation: the lock in agent-core (step 3a), the takeover
+   handshake in purple-mimi.
+3. **The token at rest.** Copy it into `<state>/provider-token` and clear
+   libpurple's remembered password, or leave it to libpurple
+   (`accounts.xml` in clear text on libpurple 2, a keyring on
+   libpurple 3). Recommendation: the state directory on both, since it
+   already holds the keys the token would protect (§12.3).
+4. **Account username.** The handle `alice@a.example`, or the full user
+   URI `mimi://a.example/u/alice`. Recommendation: the handle, with the
+   full URI accepted too; the Provider URL defaults to
+   `https://<domain>`.
+5. **Message numbers on libpurple 2.** Show `[12]` before each message
+   so that `/reply 12`, `/edit 12` and `/react 12` can name it.
+   Recommendation: yes, on by default, with an account option to hide
+   them.
+6. **Invites.** Keep the daemon's default, joining invites from allowed
+   users and asking for the rest, or ask for every invite now that
+   Pidgin has an invite dialog. Recommendation: the daemon's default,
+   as an account option.
+7. **Token revocation.** `mimid admin` issues tokens and cannot revoke
+   one. Recommendation: a mimid bead outside this epic for `mimid admin
+   revoke-token`, and one token per Pidgin in the README meanwhile.
+8. **Build system.** CMake calling cargo directly, CMake with Corrosion
+   (as purple-presage), or meson (as Pidgin 3). Recommendation: CMake
+   calling cargo directly, so a distro build needs no network.
+9. **Takeover back on libpurple 3.** A taken-over Pidgin 3 refuses its
+   own automatic reconnect and takes the account back only from an
+   account action (§6.6). Recommendation: yes; the alternative,
+   disabling the account, would disable it in the other instance too.
+10. **did:webvh.** The first version uses a BasicCredential, so the
+    devices of one user present one identity and cannot share a room
+    with an mls-rs member (agent-core limitation H1). Recommendation:
+    BasicCredential first; a `did_webvh` log file as an account option
+    in a later step.
+11. **Shared BitlBee hosts.** purple-mimi on a BitlBee that serves many
+    users puts every user's keys on that host. Recommendation: allow
+    it, and say so in the README; do not try to detect it.
+12. **mimid by git revision.** purple-mimi pins mimid by revision until
+    the crates are published, which blocks distro packages.
+    Recommendation: git revision and vendored source tarballs now;
+    decide about crates.io when a distro packager asks.
+
+## 15. Uncertainties in §5 to §14
+
+- Nothing in §5 to §14 was built. The ABI, the event set and the glue
+  mappings are designs; the libpurple 3 parts hold for 2.98.0.
+- *From memory*, not checked: std's file lock is `flock(2)` on Unix;
+  `flock` over NFS on Linux; Pidgin 2's single-instance check and `-m`;
+  Pidgin 2's reconnect delays; libpurple 2's user directory mode;
+  `PURPLE_MESSAGE_SEND` on received lines; the `purple-3` pkg-config
+  name; Homebrew's libpurple loading `.so` plugins on macOS; GLib
+  versions in Debian 12 and 13; libpurple 2 on Windows watching only
+  sockets.
+- Not checked in libpurple 3 (2.98.0): whether the conversation view
+  redraws an edited `PurpleMessage`; whether closing a tab calls
+  `leave_conversation_async`; where `purple_data_dir()` points; whether
+  a message can be removed from a conversation's view.
+- The mimid GitHub URL in §5.2 is a guess.
+- Every line count, size and timing marked INVENTED or *estimate* is a
+  guess. The takeover timings (1 s watch, 10 s grace, 30 s wait,
+  100 ms poll) are untested.
