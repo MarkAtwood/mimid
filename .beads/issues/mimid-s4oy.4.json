@@ -1,14 +1,14 @@
 {
   "id": "mimid-s4oy.4",
   "title": "purple-mimi 4: skeleton plugin",
-  "description": "Build system, plugin registration, account options, connect/disconnect to mimid via the chosen protocol (step 2), CI. Separate repo MarkAtwood/purple-mimi unless step 2 says otherwise.",
+  "description": "Skeleton (docs/design/purple-mimi.md §13 step 4), in the new repository MarkAtwood/purple-mimi (GPL-3.0-or-later; created only after Mark's review of the design): Cargo workspace (purple-mimi-core, safe; purple-mimi-ffi, staticlib, the only unsafe), CMake calling cargo, cbindgen header; core: tokio runtime on its own threads, the process-wide event queue and its pipe, accounts, the state lock and takeover (§6), the live-stream connection and its errors (§7); ffi: process and account functions with catch_unwind (§5.5); both the libpurple 2 and libpurple 3 glues load, connect, disconnect and report errors; CI on Linux and Homebrew macOS. About 3,600 to 4,900 lines (estimate).",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T21:31:43.405263454Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T21:31:43.405263454Z",
+  "updated_at": "2026-11-22T00:22:15.485101528Z",
   "labels": [
     "client",
     "purple"
