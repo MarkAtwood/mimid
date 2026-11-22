@@ -1,0 +1,7 @@
+{
+  "id": "1795305836450025849-1",
+  "issue_id": "mimid-s4oy.2",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-22: P1: (b) embedded core: plugin embeds mimid-agent-core via C ABI; plugin is the MLS client P2: both libpurple 2.14 and 3 from the start: two glue layers over one core P3: thin C glue (purple 2 and 3) over a Rust library with a C ABI P4: separate repo MarkAtwood/purple-mimi, GPL-3.0-or-later; mimid stays Apache-2.0 P5: plugin talks to provider over the binary stream (mimid-only); provider bearer token in password field; each Pidgin is a device with a Client record P6: per-profile state lock; a second instance takes over and the first disconnects cleanly (must not corrupt MLS state: first releases before second writes) P7: Linux and Homebrew macOS first; Windows i686 DLL as its own later step ",
+  "created_at": "2026-11-22T00:03:56.450025849Z"
+}
