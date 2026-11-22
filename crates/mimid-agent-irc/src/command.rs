@@ -25,6 +25,12 @@
 //! - `TAGMSG #c` (or to the nick of a query) with `+draft/react` or `+draft/unreact` and
 //!   `+draft/reply` reacts to a message or takes the reaction back
 //!   (§7.27); any other TAGMSG is dropped.
+//! - `REDACT <target> <msgid>` (draft/message-redaction, §7.36) retracts
+//!   the user's own message; anyone else's is `FAIL REDACT
+//!   REDACT_FORBIDDEN`.
+//! - `CHATHISTORY` ([`crate::history`]), `MARKREAD` ([`crate::markread`])
+//!   and `WEBPUSH` ([`crate::webpush`]).
+//! - `+reply` is read where `+draft/reply` is absent.
 //! - `NOTICE` is never answered with an error (docs/irc-lessons.md
 //!   "NOTICE"); to a channel it is sent as a plain message.
 //! - `MODE #c` and `MODE #c b|e|I` are queries, answered 324 (no 329,
@@ -48,6 +54,12 @@ use mimid_agent_store::record::Key;
 use crate::conn::{Session, VERSION, one_line};
 use crate::line::{Line, Out};
 use crate::names::{Held, SERVICE_NICK, fold, is_channel_name, parse_user_address, parse_user_uri};
+
+/// The message a line replies to: `+draft/reply`, or `+reply`, which
+/// Goguma sends beside it (goguma 5aa7baa5 `lib/client.dart:1359-1363`).
+fn reply_tag(line: &Line) -> Option<&str> {
+    line.tag("+draft/reply").or_else(|| line.tag("+reply"))
+}
 
 /// Whether CTCP `ctcp` (without its `\x01`s) is an ACTION.
 fn is_action(ctcp: &str) -> bool {
@@ -178,6 +190,7 @@ impl Session {
             "CHATHISTORY" => self.chathistory(line),
             "MARKREAD" => self.markread(line).await,
             "WEBPUSH" => self.webpush(line),
+            "REDACT" => self.redact(line).await,
             other => self.numeric("421", &[other, "Unknown command"]),
         }
     }
@@ -478,7 +491,7 @@ impl Session {
         let mut options = SendOptions::new();
         // +draft/reply names the msgid (senderMsgId) of a message of
         // this room; one not stored here is sent as a plain message.
-        if let Some(msgid) = line.tag("+draft/reply")
+        if let Some(msgid) = reply_tag(line)
             && let Some(target) = self.message_of_msgid(&key, msgid)
         {
             options.in_reply_to_version = self.version_shown(&target, msgid);
@@ -498,6 +511,82 @@ impl Session {
                     );
                 }
             }
+        }
+    }
+
+    /// `REDACT <target> <msgid> [reason]` (draft/message-redaction): the
+    /// user's own message is retracted (`Store::retract`; MIMI carries no
+    /// reason, so the reason goes nowhere); the REDACT line comes with the
+    /// change, to every connection. Someone else's message is
+    /// `REDACT_FORBIDDEN`: in MIMI only the sender retracts
+    /// (mimi-content-10 §9.3).
+    async fn redact(&mut self, line: &Line) {
+        let fail = |session: &mut Self, params: Vec<String>| {
+            let server = session.shared.server.clone();
+            let mut all = vec!["REDACT".to_owned()];
+            all.extend(params);
+            session.send_cut(Out::new(&server, "FAIL", all));
+        };
+        let (Some(target), Some(msgid)) = (line.param(0), line.param(1)) else {
+            self.numeric("461", &["REDACT", "Not enough parameters"]);
+            return;
+        };
+        let (target, msgid) = (target.to_owned(), msgid.to_owned());
+        let Some(room) = self.target_room(&target) else {
+            fail(
+                self,
+                vec![
+                    "INVALID_TARGET".into(),
+                    target.clone(),
+                    format!("You cannot delete messages from {target}"),
+                ],
+            );
+            return;
+        };
+        let Some(key) = self.message_of_msgid(&room, &msgid) else {
+            fail(
+                self,
+                vec![
+                    "UNKNOWN_MSGID".into(),
+                    target,
+                    msgid,
+                    "This message does not exist or is too old".into(),
+                ],
+            );
+            return;
+        };
+        let me = self.me();
+        let own = self
+            .shared
+            .store
+            .state()
+            .messages
+            .get(&key)
+            .is_some_and(|m| m.sender == mimid_agent_store::record::Sender::User(me.uri.clone()));
+        if !own {
+            fail(
+                self,
+                vec![
+                    "REDACT_FORBIDDEN".into(),
+                    target,
+                    msgid,
+                    "Only the sender of a message can delete it".into(),
+                ],
+            );
+            return;
+        }
+        let store = self.store();
+        match store.retract(&key).await {
+            Ok(_) => self.save().await,
+            Err(error) => fail(
+                self,
+                vec![
+                    "REDACT_FORBIDDEN".into(),
+                    target,
+                    msgid,
+                    one_line(&format!("The message was not deleted: {error}")),
+                ],
+            ),
         }
     }
 
@@ -531,7 +620,7 @@ impl Session {
             return;
         };
         let (react, unreact) = (line.tag("+draft/react"), line.tag("+draft/unreact"));
-        let Some(msgid) = line.tag("+draft/reply") else {
+        let Some(msgid) = reply_tag(line) else {
             return;
         };
         let Some(message) = self.message_of_msgid(&room, msgid) else {

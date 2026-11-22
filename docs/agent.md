@@ -174,7 +174,7 @@ What works:
 - **History.** Goguma fetches what came while it was away (`draft/chathistory`), from the agent's store: channels and queries, 1000 messages a request. Messages deleted or expired here are not served.
 - **Read markers.** What you read on the phone is read in every other client of this agent, JMAP Chat clients included, and the other way round (`draft/read-marker`).
 - **Push.** On by default; see below.
-- **Replies and reactions** show and can be sent. Edits show as a new line starting `(edited)`; a retraction as a notice.
+- **Replies and reactions** show and can be sent. Edits show as a new line starting `(edited)`. Deleting your own message in Goguma retracts it for everyone (`REDACT`); a message someone retracted disappears in Goguma, and shows as a notice in clients without that feature.
 
 Not there: attachments, sending edits, user presence (no `MONITOR` or away status: MIMI carries no presence), file upload (`soju.im/FILEHOST`), avatars and pinned or muted state on the server (`draft/metadata-2`; Goguma keeps them on the phone).
 

@@ -323,6 +323,20 @@ async fn private_queries_across_two_providers() {
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].params[1], peer);
     }
+    // alice takes her first line back; bob, without the capability, is
+    // told so in the query.
+    let mut redacting = register(&alice, &["message-tags", "draft/message-redaction"]).await;
+    redacting
+        .send(&format!("REDACT {BOB_B_NICK} {}", echo.tags["msgid"]))
+        .await;
+    let redact = redacting.until_command("REDACT").await;
+    assert_eq!(redact.params, [BOB_B_NICK, echo.tags["msgid"].as_str()]);
+    let told = bi
+        .until("the fallback", |m| {
+            m.command == "NOTICE" && m.params[0] == BOB_B_NICK
+        })
+        .await;
+    assert_eq!(told.text(), format!("{ALICE_NICK} retracted a message"));
     // The read marker of the query, local to each side.
     let mut marked = register(&bob, &["server-time", "draft/read-marker"]).await;
     let back = bi
@@ -958,6 +972,85 @@ async fn web_push_across_two_providers() {
     assert_eq!(msg.source, ALICE_MASK);
     assert_eq!(msg.params, [BOB_B_NICK, "from a.example"]);
     assert_eq!(msg.tags["msgid"], echo.tags["msgid"]);
+
+    alice.stop().await;
+    bob.stop().await;
+}
+
+/// Oracles: IRCv3 `message-redaction` (draft), written out by hand:
+/// `REDACT <target> <msgid>` of one's own message relayed as `REDACT` from
+/// the sender to clients with the capability, a fallback NOTICE to the
+/// others; `FAIL REDACT REDACT_FORBIDDEN` for someone else's message
+/// (mimi-content-10 §9.3: only the sender retracts), `UNKNOWN_MSGID`,
+/// `INVALID_TARGET`; chathistory leaves a redacted message out for a
+/// client with the capability. IRCv3 Message Tags "CLIENTTAGDENY": the
+/// tags the server reads. Goguma's `+reply` beside `+draft/reply`
+/// (goguma 5aa7baa5 `lib/client.dart:1359-1363`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn redaction_and_the_tags_goguma_sends() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let bob = Running::start(&with_irc(config(&server, BOB, dir.path(), "any"))).await;
+    let (mut g, _) = goguma(&alice, "alice").await;
+    assert_eq!(
+        isupport(&g, "CLIENTTAGDENY").as_deref(),
+        Some("*,-draft/reply,-reply,-draft/react,-draft/unreact")
+    );
+    let mut b = register(&bob, &CAPS).await;
+    g.send("JOIN #g").await;
+    g.until_command("366").await;
+    g.send(&format!("INVITE {BOB} #g")).await;
+    b.until_command("366").await;
+
+    g.send("PRIVMSG #g :oops").await;
+    let oops = privmsg_from(&mut g, ALICE_MASK).await;
+    privmsg_from(&mut b, ALICE_MASK).await;
+    let msgid = oops.tags["msgid"].clone();
+    g.send(&format!("REDACT #g {msgid} :typo")).await;
+    let redact = g.until_command("REDACT").await;
+    assert_eq!(redact.source, ALICE_MASK);
+    assert_eq!(redact.params, ["#g", msgid.as_str()]);
+    let fallback = b
+        .until("the fallback", |m| {
+            m.command == "NOTICE" && m.params[0] == "#g"
+        })
+        .await;
+    assert_eq!(fallback.text(), format!("{ALICE_NICK} retracted a message"));
+    assert_eq!(fallback.tags["+draft/reply"], msgid);
+
+    // Someone else's message, an unknown msgid, an unknown target.
+    b.send("PRIVMSG #g :mine").await;
+    let mine = privmsg_from(&mut g, BOB_MASK).await;
+    g.send(&format!("REDACT #g {}", mine.tags["msgid"])).await;
+    let fail = g.until_command("FAIL").await;
+    assert_eq!(fail.params[..3], ["REDACT", "REDACT_FORBIDDEN", "#g"]);
+    g.send("REDACT #g 01ARZ3NDEKTSV4RRFFQ69G5FAV").await;
+    let fail = g.until_command("FAIL").await;
+    assert_eq!(fail.params[..2], ["REDACT", "UNKNOWN_MSGID"]);
+    g.send(&format!("REDACT #nowhere {msgid}")).await;
+    let fail = g.until_command("FAIL").await;
+    assert_eq!(fail.params[..2], ["REDACT", "INVALID_TARGET"]);
+
+    // History: left out with the capability, a NOTICE without.
+    g.send("CHATHISTORY LATEST #g * 10").await;
+    let (_, lines) = batch(&mut g, "chathistory").await;
+    assert_eq!(texts(&lines), ["mine"]);
+    assert!(!lines.iter().any(|m| m.command == "NOTICE"), "{lines:#?}");
+    let mut plain = register(&bob, &["message-tags", "batch", "draft/chathistory"]).await;
+    plain.send("CHATHISTORY LATEST #g * 10").await;
+    let (_, lines) = batch(&mut plain, "chathistory").await;
+    assert_eq!(lines[0].command, "NOTICE");
+    assert_eq!(lines[0].tags["msgid"], msgid);
+
+    // A reply with only `+reply`, as a client may send it.
+    b.send(&format!(
+        "@+reply={} PRIVMSG #g :answering",
+        mine.tags["msgid"]
+    ))
+    .await;
+    let answer = privmsg_from(&mut g, BOB_MASK).await;
+    assert_eq!(answer.tags["+draft/reply"], mine.tags["msgid"]);
 
     alice.stop().await;
     bob.stop().await;

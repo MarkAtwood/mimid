@@ -34,7 +34,8 @@
 //! - **Registration**: `CAP LS 302` (`message-tags`, `server-time`,
 //!   `echo-message`, `sasl`, `soju.im/account-required`, `batch`,
 //!   `draft/chathistory`, `draft/event-playback`, `draft/read-marker`,
-//!   `soju.im/webpush` when push is on),
+//!   `draft/message-redaction`, `multi-prefix`, `soju.im/webpush` when
+//!   push is on),
 //!   `CAP REQ`
 //!   acknowledged or refused as a whole; the
 //!   client's nick is replaced by the user's own (`<local>-<label>`), 001
@@ -64,7 +65,9 @@
 //!   A line already shown stays in the client: IRC cannot take it back.
 //! - Messages are `PRIVMSG` with `msgid` (the store's `senderMsgId`) and
 //!   `time`; an edit is a new line starting `(edited) `, a retraction a
-//!   server NOTICE. Attachments are not shown (§7.4). Nothing that came
+//!   `REDACT` from the sender with `draft/message-redaction` (§7.36),
+//!   else a server NOTICE. `REDACT` of the user's own message retracts
+//!   it. Attachments are not shown (§7.4). Nothing that came
 //!   before the connection is played back unasked; a client asks with
 //!   `draft/chathistory` (§7.33, `history`), served from the store.
 //! - **Read markers** (§7.34, `markread`): `draft/read-marker`'s

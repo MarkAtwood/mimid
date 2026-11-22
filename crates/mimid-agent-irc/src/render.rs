@@ -585,6 +585,20 @@ impl Session {
         lines
     }
 
+    /// `:<sender> REDACT <target> <msgid>` (draft/message-redaction): the
+    /// sender of `m` retracted it.
+    pub(crate) fn redact_line(&self, m: &MessageShown) -> Out {
+        let source = m
+            .sender
+            .as_ref()
+            .map_or_else(|| self.shared.server.clone(), crate::names::Identity::mask);
+        Out::new(
+            &source,
+            "REDACT",
+            vec![m.target.clone(), m.record.sender_msg_id.clone()],
+        )
+    }
+
     /// The NOTICE that says the sender of `m` retracted it: from the
     /// server, `+draft/reply` naming it, with `every` (a `batch` tag).
     pub(crate) fn retraction_line(&self, m: &MessageShown, every: &[(String, String)]) -> Out {
@@ -611,7 +625,11 @@ impl Session {
         let after = |at: u64| at >= self.connected_at;
         if let Some(deleted) = m.record.deleted {
             if deleted.for_all && !seen.retracted && (since.is_some() || after(deleted.at)) {
-                let out = self.retraction_line(&m, &[]);
+                let out = if self.caps.message_redaction {
+                    self.redact_line(&m)
+                } else {
+                    self.retraction_line(&m, &[])
+                };
                 self.send(&out);
             }
             seen.retracted = true;

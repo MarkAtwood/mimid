@@ -131,6 +131,8 @@ pub(crate) struct Caps {
     pub(crate) event_playback: bool,
     pub(crate) read_marker: bool,
     pub(crate) webpush: bool,
+    pub(crate) message_redaction: bool,
+    pub(crate) multi_prefix: bool,
 }
 
 /// What the session showed of a channel.

@@ -18,7 +18,8 @@
 //!   there is nothing; `draft/chathistory-end` on the opening line when
 //!   there is no more in the page's direction. Messages are oldest first,
 //!   as the live lines would show them now (an edited message with its
-//!   latest text, a retracted one as the server's NOTICE), each with
+//!   latest text, a retracted one as the server's NOTICE, or left out
+//!   with `draft/message-redaction`), each with
 //!   `msgid` and, with server-time, `time`. With `draft/event-playback`
 //!   each message's reactions follow it as TAGMSG lines.
 //! - Errors are `FAIL CHATHISTORY INVALID_PARAMS` or `INVALID_TARGET`.
@@ -248,6 +249,10 @@ impl Session {
                 .caps
                 .server_time
                 .then(|| server_time(m.record.accepted_at));
+            if m.record.deleted.is_some() && self.caps.message_redaction {
+                // draft/message-redaction "Chat history": left out.
+                continue;
+            }
             if m.record.deleted.is_some() {
                 let mut out = self
                     .retraction_line(&m, &every)

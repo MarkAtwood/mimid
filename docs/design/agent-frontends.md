@@ -1076,7 +1076,10 @@ Only caps that are wired up (irc-lessons.md):
 Not in v1: `sasl`, `labeled-response`, `batch`, `draft/chathistory`,
 `draft/message-redaction`, `account-notify`, `invite-notify`, `chghost`,
 `setname`, `away-notify`, `multi-prefix`, `draft/read-marker`. Each needs
-work the lessons list, and none is needed to chat.
+work the lessons list, and none is needed to chat. (IRC v2 adds `sasl`, `batch`,
+`draft/chathistory`, `draft/event-playback`, `draft/read-marker`,
+`draft/message-redaction`, `multi-prefix` and `soju.im/webpush`: §7.25,
+§7.33 to §7.36.)
 
 ISUPPORT (005): `CASEMAPPING=ascii`, `CHANTYPES=#&`, `PREFIX=(o)@`,
 `CHANMODES=b,,,nt`, `NICKLEN=30`, `CHANNELLEN=64`, `TARGMAX=PRIVMSG:1,NOTICE:1,JOIN:,PART:,KICK:1,WHOIS:1`,
@@ -2282,6 +2285,43 @@ Added on 2026-11-20:
       dropping the subscription), `web_push_can_be_switched_off`,
       `web_push_across_two_providers`; `tests/no_token_in_logs.rs`
       (neither the endpoint's path nor the keys reach the log).
+
+36. **What else Goguma uses (epic mimid-i0id).** From Goguma's source
+    (codeberg.org/emersion/goguma at 5aa7baa5, 2026-11-19), only what it
+    sends or reads and the agent can honour:
+    - **`draft/message-redaction`.** Goguma's "Delete" sends `REDACT
+      <target> <msgid>` (`widget/message_sheet.dart:83,174`). The user's
+      own message is retracted (`Store::retract`); someone else's is
+      `FAIL REDACT REDACT_FORBIDDEN` (mimi-content-10 §9.3: a replacement
+      from anyone but the sender is refused), an unknown msgid
+      `UNKNOWN_MSGID`, an unknown target `INVALID_TARGET`. MIMI carries
+      no reason, so a reason goes nowhere. A retraction reaches clients
+      with the capability as `REDACT <target> <msgid>` from the sender,
+      the others as the NOTICE of §4; chathistory leaves a retracted
+      message out for a client with the capability (the draft's first
+      option).
+    - **`CLIENTTAGDENY=*,-draft/reply,-reply,-draft/react,-draft/unreact`**:
+      Goguma gates replies, reactions and `+typing` on it
+      (`composer.dart:403-411`), so it stops sending typing notices that
+      would go nowhere. `+reply`, which Goguma sends beside
+      `+draft/reply`, is read when `+draft/reply` is absent.
+    - **`multi-prefix`** is acknowledged: a member has one prefix at most
+      (`@`), so NAMES and WHO already list them all.
+    - **Not offered, and why.** `MONITOR` and `away-notify`: MIMI carries
+      no presence, and Goguma shows no indicator without MONITOR rather
+      than a wrong one. `labeled-response`: optional for Goguma, and
+      docs/irc-lessons.md says to offer it only when every reply carries
+      the label. `soju.im/bouncer-networks`: MIMI has one network
+      (client-survey.md §2). `draft/metadata-2`, `soju.im/FILEHOST`,
+      `draft/pre-away`, `setname`, `extended-join`,
+      `soju.im/no-implicit-names`: Goguma works without them (it keeps
+      pins and mutes on the phone, has no upload, sends AWAY after
+      registration, fills member lists from NAMES). Goguma's WHO of a
+      query's nick expects 0 or 1 replies (`client_controller.dart:287-312`),
+      which WHO already gives.
+    - Tests: mimid-agent `tests/irc_v2.rs`
+      `redaction_and_the_tags_goguma_sends`,
+      `private_queries_across_two_providers` (a REDACT across providers).
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 
