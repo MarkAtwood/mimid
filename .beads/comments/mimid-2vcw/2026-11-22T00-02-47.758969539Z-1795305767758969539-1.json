@@ -1,0 +1,7 @@
+{
+  "id": "1795305767758969539-1",
+  "issue_id": "mimid-2vcw",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-22: option B. PART and JMAP Chat destroy on a direct (fixed_membership) room hide it locally: IRC closes the query, JMAP deletes the local copy (§7.9) without leaving; devices stay and the next message brings it back. Option A (remove all own devices, stay a participant) may come later as a separate explicit action.",
+  "created_at": "2026-11-22T00:02:47.758969539Z"
+}
