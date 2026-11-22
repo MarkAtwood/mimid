@@ -1,0 +1,7 @@
+{
+  "id": "1795312764343663253-1",
+  "issue_id": "mimid-s4oy.3",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-22, design-note §14 answers: PQ1: embed agent-core + agent-store (both) PQ2: state lock in agent-core StateDir; takeover handshake in purple-mimi PQ3: token in state dir 0600, clear libpurple's remembered password, both versions PQ4: handle alice@a.example, full URI accepted; provider URL default https://\u003cdomain\u003e, override option PQ5: [n] message numbers on libpurple 2, on by default, hideable PQ6: invites follow daemon default, account option PQ7: build token list/revoke in mimid-server before purple-mimi (prerequisite) PQ8: CMake calling cargo directly PQ9: taken-over Pidgin 3 refuses auto-reconnect; take back only by account action PQ10: BasicCredential first; did:webvh later account option PQ11: allow shared bitlbee, document in README PQ12: pin mimid by git rev + vendored tarballs; crates.io later on demand ",
+  "created_at": "2026-11-22T01:59:24.343663253Z"
+}
