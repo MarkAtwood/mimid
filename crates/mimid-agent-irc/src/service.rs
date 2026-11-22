@@ -3,6 +3,14 @@
 //! The user sends it text (`/msg mimid <command>`) and it answers with
 //! NOTICEs from `mimid!mimid@<server>`.
 //!
+//! The same commands also reach it as a raw verb, `MIMID <command>`
+//! (`/quote MIMID ...`), which Mark asked for on 2026-11-22 for scripts
+//! and muscle memory; both forms call this one handler. The service nick
+//! stays the documented path, because its NOTICEs land in a query window
+//! that a client renders and logs, which `password add` depends on: it
+//! shows a secret once, and a raw-verb reply can land in a status window
+//! a client renders oddly or discards.
+//!
 //! | Command | Does |
 //! |---|---|
 //! | `help` | lists these commands |
@@ -17,6 +25,9 @@
 //! | `call <#channel> <url> [<description>]` | sends a call to join: `url`, which must be `https` or `wss`, as mimi-content-10 §5.10 has it (`Store::send_call`, §7.24) |
 //! | `devices` | lists the user's devices, the clients the server has bound to the account (`Store::devices`; draft-atwood-jmap-chat-mimi-00 §Clients) |
 //! | `forget-device <id>` | forgets another device, such as a lost one: the server unbinds it and its leaves leave every room this device shares with it (`Store::forget_device`) |
+//! | `identity <user>` | what is known of a user's identity: their did:webvh DID and when it last changed, or that they have none, which means their provider's word is all there is |
+//! | `rooms` | the user's rooms, by the channel name this client knows them under, with their state: in, leaving, or left |
+//! | `version` | this front end's version |
 //! | `passwords` | lists the credentials: names, kinds, when made and last used; never a secret (docs/design/frontend-auth.md §3.6) |
 //! | `password add <name>` | makes an app password and shows it once, with a warning that the client may log the line (decision A5) |
 //! | `password revoke <name>` | revokes an app password; its connections close, this one included if it used it |
@@ -29,10 +40,10 @@
 //!   no command in v1.
 
 use crate::command::Who;
-use crate::conn::{Session, one_line};
+use crate::conn::{Session, VERSION, one_line};
 use crate::line::Out;
 use crate::names::SERVICE_NICK;
-use mimid_agent_store::record::{Call, Invite, MessageExpiry};
+use mimid_agent_store::record::{Call, Invite, MessageExpiry, RoomStatus};
 
 /// The help text, one NOTICE a line.
 const HELP: &[&str] = &[
@@ -51,6 +62,11 @@ const HELP: &[&str] = &[
     "  passwords     list your app passwords and the agent token",
     "  password add <name>  make an app password for a device; shown once",
     "  password revoke <name>  revoke one; its connections close",
+    "  identity <user>  show what is known of a user's identity: their",
+    "                did:webvh DID if they have one, and when it last changed",
+    "  rooms         list your rooms and their state, this client's channels",
+    "                and the ones you have left included",
+    "  version       this agent's version",
     "A <user> is a nick, a user URI (mimi://domain/u/name) or name@domain,",
     "which stands for mimi://domain/u/name.",
     "Rooms: JOIN #name hosts a new room; PART leaves a room for good;",
@@ -133,6 +149,116 @@ impl Session {
             ("allow" | "deny", None) => {
                 self.service_says(&format!("usage: {command} <nick, user URI or name@domain>"));
             }
+            // §7.15's forms, and the Person record's DID: nothing else in
+            // IRC shows who a user is cryptographically. `did_changed_at`
+            // is what an identity-change notice is about, so it is shown.
+            ("identity", Some(name)) => {
+                let Who::User(user) = self.who_or_address(name) else {
+                    self.service_says(&format!(
+                        "{name} is no nick here; give the user URI (mimi://<domain>/u/<name>) or <name>@<domain>"
+                    ));
+                    return;
+                };
+                // Yourself is the first thing anyone asks, and there is
+                // no Person record for the user themself: the store makes
+                // those for others it has seen.
+                if user == self.shared.store.user() {
+                    self.service_says(&format!("{user} is you"));
+                    self.service_says("  your own devices and keys: devices");
+                    return;
+                }
+                let person = self
+                    .shared
+                    .store
+                    .state()
+                    .people
+                    .values()
+                    .find(|p| p.user == user)
+                    .cloned();
+                match person {
+                    None => {
+                        self.service_says(&format!("{user}: nobody of that name is known here yet"))
+                    }
+                    Some(person) => {
+                        self.service_says(&format!("{}:", person.user));
+                        if let Some(name) = &person.display_name {
+                            self.service_says(&format!("  name you gave them: {name}"));
+                        }
+                        match &person.did {
+                            Some(did) => {
+                                self.service_says(&format!("  did:webvh: {did}"));
+                                match person.did_changed_at {
+                                    Some(at) => self.service_says(&format!(
+                                        "  that DID last changed at {}",
+                                        crate::render::server_time(at)
+                                    )),
+                                    None => self.service_says(
+                                        "  that DID has not changed since first seen",
+                                    ),
+                                }
+                            }
+                            // The default, and the weakness worth saying
+                            // out loud: a BasicCredential is the
+                            // provider's word for who this is.
+                            None => self.service_says(
+                                "  no did:webvh DID: their provider vouches for this name,                                  nothing more",
+                            ),
+                        }
+                        self.service_says(&format!(
+                            "  first seen at {}",
+                            crate::render::server_time(person.first_seen)
+                        ));
+                    }
+                }
+            }
+            ("identity", None) => {
+                self.service_says("usage: identity <nick, user URI or name@domain>");
+            }
+            // A room the user has left, or is leaving, keeps its record
+            // and its channel in the client, so the state is worth
+            // showing: PART alone does not say which it is.
+            ("rooms", _) => {
+                // The channel name this client knows the room by, not the
+                // room's own name: in an IRC client the user knows
+                // #lobby, and the room is named "lobby".
+                let rooms: Vec<(String, Option<String>, RoomStatus)> = {
+                    let names = self.shared.names();
+                    self.shared
+                        .store
+                        .state()
+                        .rooms
+                        .values()
+                        .map(|room| {
+                            (
+                                room.uri.clone(),
+                                names.channel(&room.key).map(str::to_owned),
+                                room.status,
+                            )
+                        })
+                        .collect()
+                };
+                if rooms.is_empty() {
+                    self.service_says("no rooms; JOIN #name hosts one");
+                }
+                for (uri, name, status) in rooms {
+                    let state = match status {
+                        RoomStatus::Active => "in",
+                        RoomStatus::Leaving => "leaving (the hub has not removed you yet)",
+                        RoomStatus::Left => "left",
+                        _ => "in some state this version does not know",
+                    };
+                    match name {
+                        Some(channel) => {
+                            self.service_says(&format!("{channel}  {state}  {uri}"));
+                        }
+                        // A room with no channel here: left, or not shown.
+                        None => self.service_says(&format!("(no channel)  {state}  {uri}")),
+                    }
+                }
+            }
+            // There is no build-revision constant to show; the crate
+            // version is what the CTCP VERSION reply already carries.
+            ("version", _) => self.service_says(VERSION),
             ("invites", _) => {
                 let invites: Vec<Invite> = self.shared.store.state().invites.clone();
                 if invites.is_empty() {

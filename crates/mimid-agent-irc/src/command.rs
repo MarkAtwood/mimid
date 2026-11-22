@@ -190,6 +190,23 @@ impl Session {
             "CHATHISTORY" => self.chathistory(line),
             "MARKREAD" => self.markread(line).await,
             "WEBPUSH" => self.webpush(line),
+            // Mark 2026-11-22: the service's commands as a raw verb too,
+            // for `/quote MIMID <command>` and for scripts, dispatching
+            // to the same handler as `/msg mimid <command>`. The service
+            // nick stays the documented path, since its NOTICE replies
+            // land in a query window a client renders and logs, which
+            // `password add` depends on (it shows a secret once).
+            "MIMID" => {
+                // Both forms a client may send: `MIMID allow bob` as
+                // separate parameters, and `MIMID :allow bob` as one
+                // trailing parameter.
+                let text = line.params.join(" ");
+                if text.trim().is_empty() {
+                    self.numeric("461", &["MIMID", "Not enough parameters"]);
+                } else {
+                    self.service(&text).await;
+                }
+            }
             "REDACT" => self.redact(line).await,
             other => self.numeric("421", &[other, "Unknown command"]),
         }

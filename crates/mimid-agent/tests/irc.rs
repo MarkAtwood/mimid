@@ -1312,6 +1312,67 @@ async fn service_says(irc: &mut Irc) -> String {
     .to_owned()
 }
 
+/// Mark 2026-11-22: the service's commands reach it both as `/msg mimid
+/// <command>` and as the raw `MIMID <command>` verb, and the new
+/// commands answer. The service nick stays the documented path, so both
+/// must give the same answer for the same command.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_service_answers_the_nick_and_the_raw_verb() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let addr = alice.irc.unwrap();
+    let token = alice.token();
+    let (mut a, _) = Irc::register(addr, &token, ALICE_NICK, &ALL_CAPS).await;
+
+    // The same command, both ways, gives the same first line.
+    a.send("PRIVMSG mimid :version").await;
+    let by_nick = service_says(&mut a).await;
+    a.send("MIMID version").await;
+    let by_verb = service_says(&mut a).await;
+    assert_eq!(by_nick, by_verb, "both forms reach one handler");
+    assert!(by_nick.contains("mimid-agent-irc"), "{by_nick}");
+
+    // The trailing form a client may send instead.
+    a.send("MIMID :version").await;
+    assert_eq!(service_says(&mut a).await, by_nick);
+
+    // The verb with nothing after it is a parameter error, not silence.
+    a.send("MIMID").await;
+    let refused = a.until("461", |m| m.command == "461").await;
+    assert_eq!(refused.params[1], "MIMID", "{}", refused.raw);
+
+    // rooms: with none yet, it says so; then the room alice hosts.
+    a.send("MIMID rooms").await;
+    assert!(service_says(&mut a).await.contains("no rooms"));
+    a.send("JOIN #lobby").await;
+    joined(&mut a, ALICE_MASK, "#lobby").await;
+    a.send("MIMID rooms").await;
+    let listed = service_says(&mut a).await;
+    assert!(listed.contains("#lobby"), "{listed}");
+    assert!(listed.contains("in"), "{listed}");
+
+    // identity of yourself: there is no Person record for the user
+    // themself, so it says so and points at `devices` rather than
+    // claiming not to know them.
+    a.send(&format!("MIMID identity {ALICE_NICK}")).await;
+    let mine = service_says(&mut a).await;
+    assert_eq!(mine, format!("{ALICE} is you"), "{mine}");
+    assert!(service_says(&mut a).await.contains("devices"));
+
+    // A name nobody here knows.
+    a.send("MIMID identity nosuchnick").await;
+    assert!(service_says(&mut a).await.contains("no nick here"));
+
+    // An unknown service command is named back, pointing at help.
+    a.send("MIMID nonsense").await;
+    let unknown = service_says(&mut a).await;
+    assert!(unknown.contains("nonsense"), "{unknown}");
+    assert!(unknown.contains("help"), "{unknown}");
+
+    alice.stop().await;
+}
+
 /// Disappearing messages from IRC (docs/design/agent-frontends.md §7.21,
 /// §7.22): `/msg mimid burn` sends a burn-on-read message, which bob's
 /// daemon deletes once his IRC client got it, alice's copy staying; a
