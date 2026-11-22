@@ -2,13 +2,15 @@
   "id": "mimid-s4oy.9",
   "title": "purple-mimi 3a: mimid groundwork for the embedded plugin",
   "description": "In mimid (Apache-2.0), for purple-mimi (docs/design/purple-mimi.md §13 step 3a): a typed error for a 404 at the live-stream upgrade (§7.1); Agent::open compares ProviderHello userUri with the configured user (§7.2); Store::decline_invite (§8.11); the state lock (flock on \u003cstate\u003e/lock, inode check) in mimid-agent-core StateDir if Mark agrees (§6.2, §14 q2); an explicit close that ends the stream tasks (§6.4); the daemon's sync, expiry and KeyPackage loops moved into mimid-agent-store as a runner the daemon uses (§5.1); acceptance_fixture --providers-only printing provider URLs and provider tokens (§11); AGENTS.md mimid-agent row: embedders hold keys too (§12.1); a tagged revision. About 800 to 1,200 lines with tests (estimate). Waits for Mark's review of the design.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-22T00:21:27.227767959Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-22T00:21:27.227767959Z",
+  "updated_at": "2026-11-22T02:34:39.901607203Z",
+  "closed_at": "2026-11-22T02:34:39.901607203Z",
+  "close_reason": "Built in b8173275 (branch purple-prereqs), tagged purple-groundwork-1 (local tag, not pushed): AgentError::StreamOff for a 404 upgrade; Agent::open checks userUri (hello or Session) -\u003e AgentError::WrongUser before writing state; StateLock in agent-core StateDir (flock on \u003cstate\u003e/lock, inode check, AgentError::Locked, Agent::state_lock, StateLock::intact; Store holds a clone last; daemon uses it via Agent::open); Agent::close/Store::close end the stream tasks; Agent/Store::decline_invite; mimid-agent-store runner (sync, expiry, KeyPackage top-up, stream follower) used by the daemon with a BeforeSync hook for the did:webvh log watch; acceptance_fixture --providers-only; AGENTS.md rows. Tests: agent-core tests/groundwork.rs, lock.rs unit tests, agent-store tests/groundwork.rs.",
   "labels": [
     "client",
     "purple"
