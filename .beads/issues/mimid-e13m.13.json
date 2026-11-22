@@ -1,0 +1,28 @@
+{
+  "id": "mimid-e13m.13",
+  "title": "IRC plaintext on a verified tailnet address (decision mimid-1wgh.91)",
+  "description": "Implements decision mimid-1wgh.91: a plain IRC listener may bind a tailnet address when tailscaled confirms it is ours, with every connection's peer checked by Tailscale WhoIs. Fails closed: no tailscaled, no answer, or an answer that does not name our own tailnet means the plain listener does not bind.\n\nNOT YET PLANNED. Per AGENTS.md this needs a plan in this field, reviewed by Mark, before any sub-issues or code. Prior research to build on: frontend-auth.md around lines 800 to 830 already covers the tailscaled LocalAPI, WhoIs and the loopback LocalAPI server, and tls.rs already talks to the LocalAPI for source=\"tailscale\" certificates, so the client side exists.\n\nKnown scope from the decision: enforcement at mimid-agent config.rs:492 and mimid-agent-irc listen.rs:116; the accept loop's own is_loopback drop at listen.rs:224; tests config.rs:833 and front_end_auth.rs:262; documents AGENTS.md (crate-map row and the security-invariant table), frontend-auth.md:125, :533, :825, client-survey.md S1.\n\nOpen question for Mark, raised in the decision and not settled: whether the agent's HTTP listener for JMAP Chat (config.rs:464) gets the same exception or stays loopback-only.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T20:07:44.159326005Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T20:25:07.124665286Z",
+  "closed_at": "2026-11-22T20:25:07.124665286Z",
+  "close_reason": "Superseded unstarted by decision mimid-1wgh.92: the plain IRC listener may bind any address, so the tailnet-only WhoIs exception of mimid-1wgh.91 is moot.",
+  "labels": [
+    "agent",
+    "auth"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-e13m.13",
+      "depends_on_id": "mimid-e13m",
+      "type": "parent-child",
+      "created_at": "2026-11-22T20:07:44.319372863Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

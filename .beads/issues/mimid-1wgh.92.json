@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.92",
+  "title": "Decision: the plain IRC listener may bind any address; the operator controls exposure. Supersedes mimid-1wgh.91, amends client-survey.md S1 for IRC",
+  "description": "Mark, 2026-11-22: 'now, i want unencrypted irc to just work. i know how to run iptables and proxies myself.'\n\nSUPERSEDES mimid-1wgh.91 (same day), which allowed plaintext IRC only on a tailnet address verified by Tailscale WhoIs. That exception is moot: any address is now allowed, so a tailnet address is allowed without asking tailscaled anything. mimid-e13m.13, its implementation bead, is closed unstarted.\n\nAMENDS client-survey.md S1 for IRC only. S1 said a non-loopback listener 'refuses to start without TLS'. For [irc] listen that no longer holds. S1 stands unchanged for the agent's HTTP listener (JMAP Chat), which keeps ConfigError::NotLoopback: NOT decided here, and Mark has not asked for it.\n\nCHOSEN. [irc] listen accepts any address. The default is unchanged (127.0.0.1:6667), so nothing moves unless the operator writes another address. No opt-in flag, no acknowledgement prompt: 'just work' means no friction. listen_tls keeps working and still requires [tls].\n\nAUTHENTICATION IS UNCHANGED AND STILL MANDATORY. A credential (the local token or an app password) by SASL PLAIN, SASL SCRAM-SHA-256 or PASS, checked against the stored SCRAM-SHA-256 verifiers before registration ends, with per-source slowdown on failures. Unencrypted, not unauthenticated.\n\nRISK ACCEPTED, STATED ONCE. On a plain listener off loopback, message bodies are cleartext on the wire, and PASS and SASL PLAIN put the credential there too; SASL SCRAM-SHA-256 avoids the credential but not the bodies. Mark controls exposure with iptables and proxies and has accepted this explicitly. mimid must not claim otherwise anywhere: the agent is no longer 'plaintext only on loopback'.\n\nWHAT IT CHANGES. Enforcement removed: mimid-agent config.rs check() (ConfigError::IrcNotLoopback, variant deleted), mimid-agent-irc listen.rs bind (IrcError::NotLoopback, variant deleted) and the accept loop's is_loopback drop, which would otherwise refuse every connection to the new address. Tests that asserted refusal become tests that assert acceptance: front_end_auth.rs and config.rs. Documents restated: AGENTS.md (the mimid-agent and mimid-agent-irc crate-map rows, and the security-invariant table's agent IRC boundary), frontend-auth.md, client-survey.md S1, mimid-agent-irc lib.rs and listen.rs module docs, mimid-agent config.rs module docs.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T20:25:00.10163281Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T20:25:07.00683293Z",
+  "closed_at": "2026-11-22T20:25:07.00683293Z",
+  "close_reason": "Decided by Mark 2026-11-22.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.92",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-22T20:25:00.131009212Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

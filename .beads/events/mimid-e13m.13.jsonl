@@ -1,0 +1,4 @@
+{"id":"01a204df-2b36-7256-9798-f0e4cfd0987c","issue_id":"mimid-e13m.13","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-22T20:07:44.182154314Z"}
+{"id":"01a204df-2b52-70d8-98b1-63f7c9170001","issue_id":"mimid-e13m.13","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-22T20:07:44.210056839Z"}
+{"id":"01a204df-2b6f-7ace-8ade-b19b903c8561","issue_id":"mimid-e13m.13","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: auth","created_at":"2026-11-22T20:07:44.239709035Z"}
+{"id":"01a204ef-153a-70a0-bb16-9a1dd34ec73d","issue_id":"mimid-e13m.13","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Superseded unstarted by decision mimid-1wgh.92: the plain IRC listener may bind any address, so the tailnet-only WhoIs exception of mimid-1wgh.91 is moot.","created_at":"2026-11-22T20:25:07.130042199Z"}

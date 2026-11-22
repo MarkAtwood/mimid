@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.91",
+  "title": "Decision: a verified tailnet address may carry plaintext IRC, checked by Tailscale WhoIs; partly reverses client-survey.md S1",
+  "description": "Mark, 2026-11-22, walking through the open decisions.\n\nCONTEXT. Today plaintext never leaves loopback and it cannot be configured otherwise: mimid-agent config.rs:492 refuses a non-loopback [irc].listen with ConfigError::IrcNotLoopback, and mimid-agent-irc listen.rs:116 refuses the bind itself with IrcError::NotLoopback. Off-box IRC therefore always means TLS (IrcOptions::listen_tls plus [tls]), per client-survey.md decision S1: 'A listener that is not loopback: yes. The agent may open a TLS listener on an address the user names ... and it refuses to start without TLS. The docs suggest binding it to a WireGuard or Tailscale address.'\n\nTHE OBSERVATION. The documented example for listen_tls is 100.64.1.2:6697, a tailnet address. On a tailnet WireGuard already provides transport encryption AND peer identity, and bead mimid-e13m.12 proposes Tailscale WhoIs as a login. TLS there is a second lock on an already-locked door: certificates managed to protect traffic that cannot be read anyway.\n\nREADINGS CONSIDERED.\n(a) Leave the rule alone: plaintext loopback-only, no exceptions, off-box always TLS. Attractive because it cannot be misconfigured.\n(b) File the question and decide when mimid-e13m.12 is next on the critical path.\n(c) Allow a narrow exception: a plain listener may bind a tailnet address only when tailscaled confirms it is ours, with every peer checked by WhoIs.\n\nCHOSEN: (c).\n\nWHAT THIS REVERSES. S1's 'it refuses to start without TLS' no longer holds universally: it holds for every non-loopback address except a verified tailnet one. S1 is otherwise unchanged, and TLS remains the only way to serve any other off-box address.\n\nSCOPE. IRC only, as decided. The same argument applies to the agent's HTTP listener for JMAP Chat (config.rs:464, ConfigError::NotLoopback), and that is NOT decided here; whether to keep the two consistent is an open question for Mark.\n\nWHAT IT TOUCHES. Enforcement: config.rs:492 and listen.rs:116. Tests asserting refusal that would have to change: config.rs:833, front_end_auth.rs:262 (and config.rs:897 is the HTTP listener, out of scope). Documents stating the rule: AGENTS.md (the mimid-agent crate-map row, 'Serve plaintext anywhere except its loopback endpoints and its TLS listeners'), frontend-auth.md:125 'Every listener must be loopback', :533, :825, client-survey.md S1. The security-invariant table in AGENTS.md gains the tailnet case for the IRC boundary.\n\nRISK ACCEPTED. The agent takes tailscaled's word for both the local address and the peer identity, so a tailnet it is wrong about, or a compromised tailscaled, means plaintext on a network Mark did not intend. Implementation must fail closed: no tailscaled, no answer, or an answer that does not name our own tailnet means the plain listener does not bind at all.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T20:07:32.963022687Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T20:07:43.966605265Z",
+  "closed_at": "2026-11-22T20:07:43.966605265Z",
+  "close_reason": "Decided by Mark 2026-11-22. Implementation tracked separately under mimid-e13m.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.91",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-22T20:07:33.136468681Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

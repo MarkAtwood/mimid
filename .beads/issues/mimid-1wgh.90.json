@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.90",
+  "title": "Decision: the state lock names no holder; a refused agent is told only that the directory is in use",
+  "description": "Mark, 2026-11-22, working through the mimid-2vxv corrections.\n\nCONTEXT. docs/design/purple-mimi.md §6.3 item 4 had B fail a takeover with MIMI_ERR_LOCKED and the text 'This account is open in another program that did not release it (process \u003cpid\u003e if known)'. Nothing wrote the pid, so 'if known' was never known. Bead mimid-2vxv item 4 proposed having the holder write std::process::id() into \u003cstate_dir\u003e/lock and carrying it in AgentError::Locked as holder: Option\u003cu32\u003e.\n\nREADINGS CONSIDERED.\n(a) Write and display the pid, advisory only: never signalled, never read as proof an agent is live.\n(b) Write it and add a liveness check (kill(pid, 0)) purely to improve the message.\n(c) Do not expose a holder at all.\n\nCHOSEN: (c). The message stays 'the state directory is in use by another agent' with no process named.\n\nWHY. The pid buys nothing operationally. flock is released when its process dies, so a crashed holder never leaves a stuck lock: the account is simply free and the next agent takes it with no error. The pid is therefore only ever read while the lock is genuinely held, and it is only a label on an error the user already understands. Against that: it is a new file format for the lock (content where there was none), it can mislead whenever some non-mimid flock holder has the lock and the file still carries an older mimid's pid, and a pid in a message invites exactly the acting-on-it that (a) forbids.\n\nCONSEQUENCES. AgentError::Locked keeps only path, and the variant is left without #[non_exhaustive] as before. lock.rs writes nothing to the lock file and reads nothing from it; its Limitations say so. purple-mimi.md §6.3 item 4 drops the '(process \u003cpid\u003e if known)' clause. mimid-2vxv item 4 is closed as won't-do; items 1, 2 and 3 are unaffected.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T20:01:04.689860034Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T20:01:11.197274751Z",
+  "closed_at": "2026-11-22T20:01:11.197274751Z",
+  "close_reason": "Decided by Mark 2026-11-22; recorded in lock.rs Limitations and purple-mimi.md §6.3 item 4.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.90",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-22T20:01:04.723517744Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
