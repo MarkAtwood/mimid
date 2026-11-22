@@ -794,7 +794,7 @@ The functions. *Process* calls take no account:
 |---|---|
 | `mimi_status mimi_account_open(const mimi_account_config *, mimi_account **out, char **error)` | checks the configuration and starts connecting in the background (§6.2, §7); the result is `MIMI_EV_CONNECTED` or `MIMI_EV_DISCONNECTED`. The config holds the base directory, user URI, provider URL, token (NULL: use the stored one, §12.3), invite policy, KeyPackage target, fallback sync interval, and `take_over` (§6.6) |
 | `void mimi_account_close(mimi_account *)` | starts the release path (§6.3); the handle is invalid on return |
-| `mimi_status mimi_account_info(mimi_account *, mimi_account_info **)` + free | user URI, handle, this device's Client id and key fingerprint, state directory |
+| `mimi_status mimi_account_get_info(mimi_account *, mimi_account_info **)` + free | user URI, handle, this device's Client id and key fingerprint, state directory. Named `mimi_account_info` in this table until step 4 was built: C puts a typedef and a function in one namespace, so the name collided with the `mimi_account_info` struct and no glue could compile. Renamed 2026-11-22 |
 
 *Reads* (synchronous, from the store's records):
 
