@@ -1,14 +1,14 @@
 {
   "id": "mimid-s4oy.7",
-  "title": "purple-mimi 7: end-to-end tests with Finch or bitlbee driven in tmux",
-  "description": "Two mimid agents (acceptance_fixture --two-providers), Finch/bitlbee with purple-mimi on each, scripted via tmux like the irssi checks; record findings in docs/design/purple-mimi.md.",
+  "title": "purple-mimi 7: end-to-end tests (BitlBee, Finch, headless libpurple 3)",
+  "description": "§11 of docs/design/purple-mimi.md: two providers with the live stream on (acceptance_fixture --providers-only, from mimid-s4oy.9); libpurple 2 through BitlBee (bitlbee-libpurple, driven as an IRC client) and Finch in tmux; libpurple 3 through the headless host of mimid-s4oy.10; the takeover across processes (two Finch on one -c directory; SIGSTOP, SIGKILL, lock file removed). Record findings in docs/design/purple-mimi.md. About 1,000 to 1,500 lines (estimate).",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T21:31:46.061599695Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T21:31:46.061599695Z",
+  "updated_at": "2026-11-22T00:22:15.947665044Z",
   "labels": [
     "client",
     "purple"
