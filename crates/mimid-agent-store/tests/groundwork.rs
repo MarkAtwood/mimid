@@ -672,3 +672,130 @@ async fn history_pages_in_hub_order() {
             .is_empty()
     );
 }
+
+/// purple-mimi §8.11 (bead mimid-s4oy.9): an invite the policy keeps
+/// pending is declined: it leaves the records with `InviteGone`, the
+/// agent drops it, and the next sync does not bring it back.
+#[tokio::test]
+async fn a_pending_invite_is_declined() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut alice = agent(&server, ALICE, dir.path()).await;
+    let bob = Store::new(agent(&server, BOB, dir.path()).await, InvitePolicy::Never);
+    bob.open_database().unwrap();
+    bob.agent()
+        .lock()
+        .await
+        .publish_key_packages(2)
+        .await
+        .unwrap();
+    let room = alice.host_room(&HostOptions::named("no")).await.unwrap();
+    alice.invite(&room, BOB).await.unwrap();
+    until_store(&bob, |s| !s.state().invites.is_empty()).await;
+    let number = bob.state().invites[0].number;
+    let seq = bob.last_seq();
+
+    bob.decline_invite(number).await.unwrap();
+    assert!(bob.state().invites.is_empty());
+    assert!(bob.agent().lock().await.invites().is_empty());
+    bob.sync().await.unwrap();
+    assert!(bob.state().invites.is_empty(), "not back at the next sync");
+    assert!(bob.state().room_of_uri(&room).is_none(), "not joined");
+    let changes = bob.changes_since(seq).unwrap();
+    assert!(
+        changes
+            .iter()
+            .any(|(_, c)| *c == mimid_agent_store::Change::InviteGone(number)),
+        "{changes:?}"
+    );
+    assert!(bob.decline_invite(number).await.is_err());
+}
+
+/// The runner (purple-mimi §5.1): its sync loop joins what the policy
+/// allows and tops the KeyPackages up, and every loop ends on the stop
+/// signal.
+#[tokio::test]
+async fn the_runner_syncs_tops_up_and_stops() {
+    use mimid_agent_store::runner::{Runner, RunnerOptions};
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut alice = agent(&server, ALICE, dir.path()).await;
+    alice.publish_key_packages(1).await.unwrap();
+    let bob = Arc::new(Store::new(
+        agent(&server, BOB, dir.path()).await,
+        InvitePolicy::Any,
+    ));
+    bob.open_database().unwrap();
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let runner = Runner::start(
+        &bob,
+        RunnerOptions::new(Duration::from_millis(50), 3),
+        &stopped,
+        None,
+    );
+    for _ in 0..100 {
+        if bob.agent().lock().await.key_packages_outstanding() == 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(bob.agent().lock().await.key_packages_outstanding(), 3);
+    let room = alice.host_room(&HostOptions::named("run")).await.unwrap();
+    alice.invite(&room, BOB).await.unwrap();
+    for _ in 0..100 {
+        if bob.state().room_of_uri(&room).is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        bob.state().room_of_uri(&room).is_some(),
+        "joined by the sync loop"
+    );
+    // The handed-out KeyPackage is replaced after the sync.
+    for _ in 0..100 {
+        if bob.agent().lock().await.key_packages_outstanding() == 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(bob.agent().lock().await.key_packages_outstanding(), 3);
+    stop.send_replace(true);
+    tokio::time::timeout(Duration::from_secs(10), runner.join())
+        .await
+        .expect("every loop ends on the stop signal");
+}
+
+/// purple-mimi §6.2 and §6.3 item 10: the store holds the state lock as
+/// long as it has the database open, after `close` too, and releases it
+/// when dropped.
+#[tokio::test]
+async fn the_store_holds_the_state_lock_until_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Store::new(agent(&server, ALICE, dir.path()).await, InvitePolicy::Never);
+    alice.open_database().unwrap();
+    assert!(alice.state_lock().intact());
+    let reopen = || {
+        Agent::open(AgentConfig {
+            server_url: server.base.clone(),
+            binding: mimid_agent_core::Binding::Jmap,
+            token: server.tokens[ALICE].clone(),
+            user_uri: ALICE.to_owned(),
+            state_dir: dir.path().join("alice"),
+            full_tree_hubs: Vec::new(),
+            did_webvh: Default::default(),
+        })
+    };
+    assert!(matches!(
+        reopen().await,
+        Err(mimid_agent_core::AgentError::Locked { .. })
+    ));
+    alice.close().await.unwrap();
+    assert!(matches!(
+        reopen().await,
+        Err(mimid_agent_core::AgentError::Locked { .. })
+    ));
+    drop(alice);
+    reopen().await.unwrap();
+}

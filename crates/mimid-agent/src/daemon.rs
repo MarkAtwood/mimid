@@ -2,6 +2,8 @@
 //! store (JMAP Chat on the HTTP endpoint unless `[jmap] enabled = false`,
 //! IRC with `[irc]`), the sync loop, and the expiry loop that deletes
 //! messages at their time (docs/design/agent-frontends.md §7.20 to §7.23).
+//! The loops are mimid-agent-store's [`Runner`], which embedders run too;
+//! the daemon adds its did:webvh log watch before each sync.
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -13,9 +15,10 @@ use mimid_agent_core::push::PushSource;
 use mimid_agent_core::{Agent, AgentConfig, AgentError};
 use mimid_agent_irc::{IrcFrontEnd, IrcOptions};
 use mimid_agent_jmap::{AgentChat, BlobStore, Options};
+use mimid_agent_store::Store;
 use mimid_agent_store::credentials::Credentials;
 use mimid_agent_store::push::PushSubscriptions;
-use mimid_agent_store::{Store, SyncReport};
+use mimid_agent_store::runner::{BeforeSync, Runner, RunnerOptions, top_up_key_packages};
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, broadcast, watch};
 
@@ -379,14 +382,17 @@ impl Daemon {
                 stop.send_replace(true);
             }
         });
-        let sync = tokio::spawn(sync_loop(
-            Arc::clone(&self.store),
-            stop.subscribe(),
-            self.sync_interval,
-            self.key_packages,
-            self.log_watch,
-        ));
-        let expiry = tokio::spawn(expiry_loop(Arc::clone(&self.store), stop.subscribe()));
+        // The sync and expiry loops, and the live stream's wake-ups
+        // (each Deliver, Position, Changed or lost connection wakes the
+        // sync loop, which alone receives: Store::sync).
+        let runner = Runner::start(
+            &self.store,
+            RunnerOptions::new(self.sync_interval, self.key_packages)
+                .with_stream_wake(self.stream_wake.clone().filter(|_| self.push.is_none())),
+            &stop.subscribe(),
+            self.log_watch
+                .map(|watch| Box::new(watch) as Box<dyn BeforeSync>),
+        );
         let reload = self
             .tls
             .as_ref()
@@ -397,21 +403,15 @@ impl Daemon {
         ));
         // The server's EventSource wakes the sync loop; the interval is
         // the fallback.
-        let push = match (self.push, self.stream_wake) {
+        let push = match (self.push, self.stream_wake.is_some()) {
             (Some(source), _) => Some(tokio::spawn(crate::push::follow(
                 Arc::clone(&self.store),
                 source,
                 stop.subscribe(),
             ))),
-            // The live stream: each Deliver, Position, Changed or lost
-            // connection wakes the sync loop, which alone receives
-            // (Store::sync).
-            (None, Some(wake)) => Some(tokio::spawn(follow_stream(
-                Arc::clone(&self.store),
-                wake,
-                stop.subscribe(),
-            ))),
-            (None, None) => {
+            // The live stream: the runner follows it.
+            (None, true) => None,
+            (None, false) => {
                 tracing::warn!(
                     name: "agent_push_unavailable",
                     "the server's Session has no eventSourceUrl; polling only"
@@ -448,9 +448,8 @@ impl Daemon {
         // The HTTP server ends only once stopped, or on an error.
         stop.send_replace(true);
         signal.abort();
+        runner.join().await;
         for (name, task) in [
-            ("sync loop", Some(sync)),
-            ("expiry loop", Some(expiry)),
             ("credential recheck", Some(recheck)),
             ("certificate reload", reload),
             ("push", push),
@@ -492,21 +491,6 @@ async fn recheck_credentials(credentials: Arc<Credentials>, mut stop: watch::Rec
     }
 }
 
-/// Wakes the sync loop each time the live stream has something, until
-/// stopped.
-async fn follow_stream(
-    store: Arc<Store>,
-    wake: Arc<tokio::sync::Notify>,
-    mut stop: watch::Receiver<bool>,
-) {
-    loop {
-        tokio::select! {
-            () = wake.notified() => store.sync_wanted().notify_one(),
-            () = stopped(&mut stop) => return,
-        }
-    }
-}
-
 /// The trimmed contents of the server token file.
 fn read_server_token(path: &std::path::Path) -> Result<String, StartError> {
     let text = std::fs::read_to_string(path).map_err(|source| StartError::ServerToken {
@@ -521,109 +505,6 @@ fn read_server_token(path: &std::path::Path) -> Result<String, StartError> {
         });
     }
     Ok(token.to_owned())
-}
-
-/// Learns which of the agent's KeyPackages were handed out
-/// ([`Agent::refresh_key_packages`]: `KeyPackage/changes`, findings log
-/// F9) and publishes KeyPackages until `target` are outstanding. A failure
-/// is logged; publishing then goes by what the agent knew before.
-async fn top_up_key_packages(agent: &mut Agent, target: u32) {
-    if let Err(error) = agent.refresh_key_packages().await {
-        tracing::warn!(
-            name: "agent_key_packages_unknown",
-            error = &error as &dyn std::error::Error,
-            "which KeyPackages were handed out could not be read"
-        );
-    }
-    let have = agent.key_packages_outstanding();
-    if have >= target {
-        return;
-    }
-    let wanted = target - have;
-    match agent.publish_key_packages(wanted).await {
-        Ok(()) => tracing::info!(
-            name: "agent_key_packages_published",
-            count = wanted,
-            "KeyPackages published"
-        ),
-        Err(error) => tracing::warn!(
-            name: "agent_key_packages_failed",
-            error = &error as &dyn std::error::Error,
-            "publishing KeyPackages failed"
-        ),
-    }
-}
-
-/// Syncs the store at once ([`Store::sync`], the agent's only journal
-/// consumer), then when woken ([`Store::sync_wanted`]: a write of a front
-/// end, or a StateChange on the server's EventSource) or after `interval`
-/// without one, until `stop` is true; before each sync,
-/// takes a changed did:webvh log file (`log_watch`); after it, tops the
-/// KeyPackages up.
-async fn sync_loop(
-    store: Arc<Store>,
-    mut stop: watch::Receiver<bool>,
-    interval: Duration,
-    key_packages: u32,
-    mut log_watch: Option<LogWatch>,
-) {
-    let sync_now = Arc::clone(store.sync_wanted());
-    loop {
-        if let Some(watch) = log_watch.as_mut() {
-            watch.check(&store).await;
-        }
-        match store.sync().await {
-            Ok(report) => log_report(&report),
-            Err(error) => tracing::warn!(
-                name: "agent_sync_failed",
-                error = &error as &dyn std::error::Error,
-                "sync with the server failed"
-            ),
-        }
-        top_up_key_packages(&mut *store.agent().lock().await, key_packages).await;
-        tokio::select! {
-            () = stopped(&mut stop) => return,
-            () = tokio::time::sleep(interval) => {}
-            () = sync_now.notified() => {}
-        }
-    }
-}
-
-/// The longest the expiry loop sleeps without looking again, so a clock
-/// set forward is noticed. INVENTED VALUE, NOT FROM SPEC.
-const EXPIRY_RECHECK: Duration = Duration::from_secs(60);
-
-/// Deletes messages at their expiry (docs/design/agent-frontends.md §7.20
-/// to §7.23; [`Store::expire_now`]) until `stop` is true: at once, so what
-/// fell due while the agent was stopped goes at start, then at each next
-/// deadline ([`Store::next_expiry`]), when a new one may be nearer
-/// ([`Store::expiry_wanted`]), and at least every [`EXPIRY_RECHECK`].
-async fn expiry_loop(store: Arc<Store>, mut stop: watch::Receiver<bool>) {
-    let wanted = Arc::clone(store.expiry_wanted());
-    loop {
-        match store.expire_now().await {
-            Ok(0) => {}
-            Ok(count) => tracing::info!(
-                name: "agent_messages_expired",
-                count,
-                "messages deleted at their expiry"
-            ),
-            Err(error) => tracing::warn!(
-                name: "agent_expiry_save_failed",
-                error = &error as &dyn std::error::Error,
-                "messages deleted at their expiry were not saved; the next save writes them"
-            ),
-        }
-        let wait = store.next_expiry().map_or(EXPIRY_RECHECK, |at| {
-            let now = mimid_agent_store::sync::now_ms();
-            Duration::from_millis(at.saturating_sub(now)).min(EXPIRY_RECHECK)
-        });
-        tokio::select! {
-            () = stopped(&mut stop) => return,
-            () = tokio::time::sleep(wait) => {}
-            () = wanted.notified() => {}
-        }
-    }
 }
 
 /// Tells the EventSource streams to look whenever the store publishes
@@ -644,19 +525,4 @@ async fn forward_feed(store: Arc<Store>, endpoint: Arc<Endpoint>) {
             },
         }
     }
-}
-
-fn log_report(report: &SyncReport) {
-    for room in &report.joined {
-        tracing::info!(name: "agent_room_joined", room = %room, "joined a room");
-    }
-    for problem in &report.problems {
-        tracing::warn!(name: "agent_sync_problem", problem = %problem, "the agent reported a problem");
-    }
-    tracing::debug!(
-        messages = report.messages,
-        pending_invites = report.pending_invites.len(),
-        skipped = ?report.skipped,
-        "sync done"
-    );
 }

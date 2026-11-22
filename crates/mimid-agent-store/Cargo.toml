@@ -30,8 +30,9 @@ sha2.workspace = true
 # lockfile.
 subtle = "=2.6.1"
 thiserror.workspace = true
-# The async Mutex around the Agent, and the watch of credential changes.
-tokio = { version = "1.53.3", default-features = false, features = ["sync"] }
+# The async Mutex around the Agent, the watch of credential changes, and
+# the runner's tasks and timers.
+tokio = { version = "1.53.3", default-features = false, features = ["sync", "rt", "time", "macros"] }
 tracing.workspace = true
 # The version mimid-server and mimid-agent-jmap use.
 ulid = "=3.0.0"

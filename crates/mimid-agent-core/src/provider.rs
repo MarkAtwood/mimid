@@ -151,6 +151,24 @@ impl Provider {
         }
     }
 
+    /// The account owner the provider names: `userUri` of the mimi
+    /// account capability on JMAP, of `ProviderHello` on the stream.
+    pub fn user_uri(&self) -> &str {
+        match self {
+            Self::Jmap(j) => &j.user_uri,
+            Self::Stream(s) => &s.stream.hello.user_uri,
+        }
+    }
+
+    /// Ends the binding's connection: on the stream, closes it and waits
+    /// for its tasks ([`Stream::close`]); on JMAP, nothing is open between
+    /// requests.
+    pub async fn close(&self) {
+        if let Self::Stream(s) = self {
+            s.stream.close().await;
+        }
+    }
+
     /// `roomIdPrefix`.
     pub fn room_id_prefix(&self) -> &str {
         match self {

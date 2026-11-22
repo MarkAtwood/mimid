@@ -1112,9 +1112,9 @@ On a `404` at the upgrade, the library fails the connection with
 `MIMI_ERR_STREAM_OFF` and the text: "The provider at <url> does not
 serve mimid's live stream. purple-mimi needs a mimid provider with
 `live_stream = true`; ask its operator." It is fatal: reconnecting does
-not help. Today agent-core reports this as `AgentError::Stream` with the
-WebSocket library's text (`stream_error`, `stream.rs`); step 3a gives
-it a typed form so the library need not match text.
+not help. agent-core reports it as `AgentError::StreamOff` (built in
+step 3a; before, it was `AgentError::Stream` with the WebSocket
+library's text).
 
 The library does not read the JMAP Session first to look for the
 `tag:reviewcommit.com,2026:mimid:live` capability: the stream "does not
@@ -1130,11 +1130,11 @@ note). A bad token is `Error unauthorized` and a close: the library
 reports `MIMI_ERR_UNAUTHORIZED`, fatal, "The provider refused the
 token."
 
-agent-core does not compare the hello's `userUri` with the configured
-user (I found no check in `stream.rs`, `provider.rs` or `Agent::open`).
-A token of another user would then run that user's rooms under this
-account's state. Step 3a adds the check to `Agent::open`; the library
-reports `MIMI_ERR_WRONG_USER`, fatal.
+A token of another user would run that user's rooms under this
+account's state, so `Agent::open` compares the hello's `userUri` (the
+Session's on JMAP) with the configured user before it writes anything
+to the state directory, and fails with `AgentError::WrongUser` (built in
+step 3a); the library reports `MIMI_ERR_WRONG_USER`, fatal.
 
 ### 7.3 Connecting
 

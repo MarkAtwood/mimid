@@ -249,6 +249,16 @@ fn stamp(path: &Path) -> Stamp {
     Some((meta.len(), meta.modified().ok()?))
 }
 
+/// The daemon's sync loop takes a changed log file before each sync.
+impl mimid_agent_store::runner::BeforeSync for LogWatch {
+    fn before_sync<'a>(
+        &'a mut self,
+        store: &'a Store,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(self.check(store))
+    }
+}
+
 impl LogWatch {
     /// A watch of `log` and `witness`, starting from what is there now:
     /// `Agent::open` has just read it.

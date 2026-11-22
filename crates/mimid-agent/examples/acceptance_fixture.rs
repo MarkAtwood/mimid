@@ -12,7 +12,14 @@
 //!   try real IRC clients against it; bead mimid-vegk);
 //! - `--two-providers` starts two servers in the process, a.example and
 //!   b.example, each the other's peer, with alice on a.example and bob
-//!   (`mimi://b.example/u/bob`) on b.example (bead mimid-4jvf).
+//!   (`mimi://b.example/u/bob`) on b.example (bead mimid-4jvf);
+//! - `--providers-only` starts the server or servers and no daemon, for a
+//!   client that is its own agent, such as purple-mimi
+//!   (docs/design/purple-mimi.md §11). The live stream is on. The JSON
+//!   line is then `{"providers": [{"domain", "url"}, ...], "alice":
+//!   {"user", "provider", "url", "tokens": [t1, t2]}, "bob": {...}}`:
+//!   each user's provider URL and fresh provider bearer tokens, two for
+//!   alice (two devices) and one for bob.
 //!
 //! When the daemons listen, one line of JSON goes to stdout:
 //! `{"alice": {"url": ..., "token": ..., "user": ..., "provider": ..., "irc": ...}, "bob": {...}}`,
@@ -37,9 +44,10 @@ async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let irc = args.iter().any(|a| a == "--irc");
     let two = args.iter().any(|a| a == "--two-providers");
+    let providers_only = args.iter().any(|a| a == "--providers-only");
     let origins: Vec<String> = args
         .into_iter()
-        .filter(|a| a != "--irc" && a != "--two-providers")
+        .filter(|a| a != "--irc" && a != "--two-providers" && a != "--providers-only")
         .collect();
     let dir = tempfile::tempdir().expect("a temporary directory");
     let (alice_server, bob_server, bob) = if two {
@@ -48,6 +56,54 @@ async fn main() {
     } else {
         (server(dir.path(), &[ALICE, BOB]).await, None, BOB)
     };
+    if providers_only {
+        let servers: Vec<&common::Server> = std::iter::once(&alice_server)
+            .chain(bob_server.as_ref())
+            .collect();
+        let server_of = |user: &str| {
+            *servers
+                .iter()
+                .find(|s| user.starts_with(&format!("mimi://{}/", s.domain)))
+                .expect("each user is on a started provider")
+        };
+        let mut users = serde_json::Map::new();
+        for (name, user, count) in [("alice", ALICE, 2), ("bob", bob, 1)] {
+            let server = server_of(user);
+            let account = server
+                .store
+                .account_of_user(user)
+                .await
+                .expect("the provider's database")
+                .expect("the user's account");
+            let mut tokens = Vec::new();
+            for device in 1..=count {
+                let issued = server
+                    .store
+                    .issue_named_token(&account, Some(&format!("device {device}")), 3)
+                    .await
+                    .expect("a token");
+                tokens.push(issued.token.expose_secret());
+            }
+            users.insert(
+                name.to_owned(),
+                json!({
+                    "user": user,
+                    "provider": server.domain,
+                    "url": server.base,
+                    "tokens": tokens,
+                }),
+            );
+        }
+        let providers: Vec<_> = servers
+            .iter()
+            .map(|s| json!({"domain": s.domain, "url": s.base}))
+            .collect();
+        users.insert("providers".to_owned(), json!(providers));
+        println!("{}", serde_json::Value::Object(users));
+        let mut sink = Vec::new();
+        let _ = tokio::io::stdin().read_to_end(&mut sink).await;
+        return;
+    }
     let mut daemons = Vec::new();
     for (user, invites) in [(ALICE, "from-allowed"), (bob, "any")] {
         let server = match &bob_server {

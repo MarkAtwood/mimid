@@ -1440,4 +1440,24 @@ impl Store {
         self.want_sync();
         Ok(uri)
     }
+
+    /// Declines pending invite `number` (`Agent::decline_invite`): its
+    /// Welcome is dropped without joining, whatever the invite policy
+    /// says, and it is no longer pending ([`Change::InviteGone`]). Nothing
+    /// is sent; the inviter is not told, and this device's leaf stays in
+    /// the group until a member removes it. Declining a user's invites
+    /// for good is [`Store::deny`].
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Agent`] if there is no such invite or the agent's
+    /// state cannot be saved.
+    pub async fn decline_invite(&self, number: u64) -> Result<(), ActionError> {
+        self.agent.lock().await.decline_invite(number)?;
+        self.state().invites.retain(|i| i.number != number);
+        self.record([Change::InviteGone(number)]);
+        // The next save, the sync's, publishes the change.
+        self.want_sync();
+        Ok(())
+    }
 }

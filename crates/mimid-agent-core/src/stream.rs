@@ -16,6 +16,12 @@
 //!   the state was saved, subscribes again on a new connection.
 //! - Each `Deliver`, `Position` and `Changed`, and the loss of the
 //!   connection, notifies [`Stream::wake`], so a caller can sync at once.
+//! - A `404` at the upgrade is [`AgentError::StreamOff`]: the provider
+//!   does not serve the stream (note §5.2), and trying again does not
+//!   help.
+//! - [`Stream::close`] closes the connection and waits for its reader and
+//!   writer tasks to end (docs/design/purple-mimi.md §6.4); later calls
+//!   fail instead of connecting again.
 //!
 //! # Limitations
 //!
@@ -46,6 +52,17 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Frames queued for the writer.
 const OUT_BUFFER: usize = 64;
+
+/// How long [`Stream::close`] lets the writer send its close frame before
+/// the tasks are stopped. INVENTED, NOT FROM SPEC.
+const CLOSE_GRACE: Duration = Duration::from_secs(1);
+
+/// What the writer task sends.
+enum Out {
+    Frame(Vec<u8>),
+    /// A close frame, then the end of the writer.
+    Close,
+}
 
 /// One item of the receive feed.
 #[derive(Debug)]
@@ -81,8 +98,11 @@ struct Shared {
 /// One open connection.
 struct Connection {
     shared: Arc<Shared>,
-    out: mpsc::Sender<Vec<u8>>,
+    out: mpsc::Sender<Out>,
     next_id: AtomicU64,
+    /// The writer and reader tasks, until [`Connection::close`] takes
+    /// them.
+    tasks: Mutex<Option<(tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>)>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -123,7 +143,19 @@ impl Connection {
         )
         .await
         .map_err(|_| stream_error(WHAT, "timed out"))?
-        .map_err(|e| stream_error(WHAT, e.to_string()))?;
+        .map_err(|e| match e {
+            // Note §5.2: without `live_stream = true` the route does not
+            // exist.
+            tokio_tungstenite::tungstenite::Error::Http(response)
+                if response.status()
+                    == tokio_tungstenite::tungstenite::http::StatusCode::NOT_FOUND =>
+            {
+                AgentError::StreamOff {
+                    url: url.to_owned(),
+                }
+            }
+            e => stream_error(WHAT, e.to_string()),
+        })?;
         let (mut sink, mut source) = socket.split();
         let hello = ClientMessage::Hello(ClientHello {
             versions: vec![VERSION],
@@ -164,20 +196,24 @@ impl Connection {
             feed: Mutex::default(),
             alive: AtomicBool::new(true),
         });
-        let (out, mut queue) = mpsc::channel::<Vec<u8>>(OUT_BUFFER);
+        let (out, mut queue) = mpsc::channel::<Out>(OUT_BUFFER);
         let writer_shared = Arc::clone(&shared);
-        tokio::spawn(async move {
-            while let Some(frame) = queue.recv().await {
+        let writer = tokio::spawn(async move {
+            while let Some(out) = queue.recv().await {
+                let Out::Frame(frame) = out else {
+                    break;
+                };
                 if sink.send(Message::Binary(frame.into())).await.is_err() {
                     break;
                 }
             }
             writer_shared.alive.store(false, Ordering::SeqCst);
+            // Sends the close frame.
             let _ = sink.close().await;
         });
         let reader_shared = Arc::clone(&shared);
         let wake = Arc::clone(wake);
-        tokio::spawn(async move {
+        let reader = tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 let Ok(Message::Binary(bytes)) = frame else {
                     match frame {
@@ -199,6 +235,7 @@ impl Connection {
                 shared,
                 out,
                 next_id: AtomicU64::new(1),
+                tasks: Mutex::new(Some((writer, reader))),
             },
             hello,
         ))
@@ -206,6 +243,24 @@ impl Connection {
 
     fn alive(&self) -> bool {
         self.shared.alive.load(Ordering::SeqCst)
+    }
+
+    /// Sends a close frame, gives the writer [`CLOSE_GRACE`] to send it,
+    /// then stops both tasks and waits for them to end. Outstanding
+    /// requests fail. A second call does nothing.
+    async fn close(&self) {
+        let Some((writer, reader)) = lock(&self.tasks).take() else {
+            return;
+        };
+        self.shared.alive.store(false, Ordering::SeqCst);
+        let _ = self.out.try_send(Out::Close);
+        let writer_abort = writer.abort_handle();
+        if tokio::time::timeout(CLOSE_GRACE, writer).await.is_err() {
+            writer_abort.abort();
+        }
+        reader.abort();
+        let _ = reader.await;
+        lock(&self.shared.pending).clear();
     }
 
     /// Sends `op` and waits for its answer.
@@ -220,7 +275,7 @@ impl Connection {
             extra: Vec::new(),
         })
         .encode();
-        if self.out.send(frame).await.is_err() {
+        if self.out.send(Out::Frame(frame)).await.is_err() {
             lock(&self.shared.pending).remove(&id);
             return Err(stream_error(what, "the connection is closed"));
         }
@@ -314,6 +369,8 @@ pub(crate) struct Stream {
     pub hello: ProviderHello,
     connection: tokio::sync::Mutex<Arc<Connection>>,
     wake: Arc<Notify>,
+    /// Set by [`Stream::close`]: no connection is opened again.
+    closed: AtomicBool,
 }
 
 impl Stream {
@@ -337,7 +394,22 @@ impl Stream {
             hello,
             connection: tokio::sync::Mutex::new(Arc::new(connection)),
             wake,
+            closed: AtomicBool::new(false),
         })
+    }
+
+    /// Closes the connection and waits until its reader and writer tasks
+    /// have ended; every later call fails with [`AgentError::Stream`]
+    /// instead of connecting again. A request in flight fails.
+    pub async fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        let current = self.connection.lock().await;
+        current.close().await;
+    }
+
+    /// The error of a call after [`Stream::close`].
+    fn closed_error() -> AgentError {
+        stream_error("live stream", "the stream was closed")
     }
 
     /// Notified on each `Deliver`, `Position` and `Changed`, and when the
@@ -349,6 +421,9 @@ impl Stream {
     /// The current connection, opened again if it failed.
     async fn connection(&self) -> Result<Arc<Connection>, AgentError> {
         let mut current = self.connection.lock().await;
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(Self::closed_error());
+        }
         if !current.alive() {
             let (connection, _) = Connection::open(&self.url, &self.token, &self.wake).await?;
             *current = Arc::new(connection);
@@ -359,6 +434,9 @@ impl Stream {
     /// A new connection, replacing the current one.
     async fn reconnect(&self) -> Result<Arc<Connection>, AgentError> {
         let mut current = self.connection.lock().await;
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(Self::closed_error());
+        }
         let (connection, _) = Connection::open(&self.url, &self.token, &self.wake).await?;
         *current = Arc::new(connection);
         Ok(Arc::clone(&current))

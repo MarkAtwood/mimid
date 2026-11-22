@@ -27,7 +27,9 @@
 //! together, and the changes
 //! are logged under sequence numbers for any number of subscribers
 //! ([`Store::subscribe`], [`Store::changes_since`]). So several front ends
-//! can serve one store, each seeing what the others did.
+//! can serve one store, each seeing what the others did. The loops that
+//! run around a serving store (sync, expiry, KeyPackage top-up) are
+//! [`runner`]'s, shared by the daemon and embedders.
 //!
 //! # Limitations
 //!
@@ -53,6 +55,7 @@ pub mod push;
 pub mod record;
 pub mod report;
 pub mod retry;
+pub mod runner;
 mod state;
 mod store;
 pub mod sync;

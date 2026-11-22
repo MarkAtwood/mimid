@@ -128,6 +128,10 @@
 //! - The admin role has no minimum participant count, so if the creator
 //!   leaves, the room has no admin (decision mimid-1wgh.56 item 5; bead
 //!   mimid-f3bk).
+//! - One agent at a time per state directory: [`Agent::open`] takes the
+//!   directory's lock ([`StateLock`]) and refuses with
+//!   [`AgentError::Locked`] while another holds it. Asking the holder to
+//!   let go is the embedder's job.
 //! - Delivery to users of other providers is the server's job (fanout);
 //!   this crate talks only to its own server.
 //! - `uri` is a copy of mimid-server code, kept so this crate does not
@@ -158,6 +162,7 @@ pub mod didwebvh;
 mod error;
 pub mod frank;
 mod journal;
+mod lock;
 mod outbox;
 mod provider;
 pub mod push;
@@ -178,6 +183,7 @@ pub use client::{ACCEPTED_NAMESPACE, ConsentRecord};
 pub use didwebvh::{DidWebvhConfig, RoomClient};
 pub use error::{AgentError, Source};
 pub use journal::Receipt;
+pub use lock::{LOCK_FILE, StateLock};
 pub use mimi_content::{ExternalPart, MessageId, MimiContent};
 pub use mimi_mls::mls_didwebvh;
 pub use mimi_protocol::{AbuseType, AbusiveMessage, UnverifiedAbusiveMessage};

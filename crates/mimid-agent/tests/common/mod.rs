@@ -46,6 +46,8 @@ pub struct Server {
     pub base: String,
     pub tokens: BTreeMap<&'static str, String>,
     pub push: PushControl,
+    /// The provider's database, to issue more tokens.
+    pub store: Store,
 }
 
 /// What a test does to the server's EventSource (`/jmap/eventsource`),
@@ -234,7 +236,7 @@ async fn provider(
     options.live_stream = true;
     let jmap = jmap::router(
         &base,
-        store,
+        store.clone(),
         Arc::clone(&hub),
         Arc::clone(&follower),
         options,
@@ -250,6 +252,7 @@ async fn provider(
         base: base_text,
         tokens,
         push,
+        store,
     }
 }
 

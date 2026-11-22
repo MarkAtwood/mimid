@@ -49,6 +49,34 @@ pub enum AgentError {
         /// What went wrong.
         detail: String,
     },
+    /// The provider does not serve the live stream: the WebSocket upgrade
+    /// at `<server_url>/mimid/live` was answered `404`, as a mimid server
+    /// without `live_stream = true` answers it
+    /// (docs/design/binary-live-stream.md §5.2). Connecting again does
+    /// not help, and nothing falls back to JMAP.
+    #[error("the provider at {url} does not serve the live stream")]
+    StreamOff {
+        /// The stream's URL.
+        url: String,
+    },
+    /// The provider's account belongs to another user than the one
+    /// configured: its hello (`userUri` of `ProviderHello`) or Session
+    /// (`userUri` of the mimi account capability) names `provider`, so the
+    /// token is another user's (docs/design/purple-mimi.md §7.2).
+    #[error("the token is {provider}'s, not {configured}'s")]
+    WrongUser {
+        /// The configured user URI.
+        configured: String,
+        /// The user URI the provider named.
+        provider: String,
+    },
+    /// Another process, or another agent in this one, holds the state
+    /// directory's lock (`<state_dir>/lock`; [`crate::StateLock`]).
+    #[error("{}: the state directory is in use by another agent", .path.display())]
+    Locked {
+        /// The lock file.
+        path: PathBuf,
+    },
     /// The server's answer is not what the draft says it is.
     #[error("{what}: the server's answer is malformed: {detail}")]
     Malformed {

@@ -141,6 +141,9 @@ pub(crate) struct Jmap {
     account_id: String,
     pub hub_sender: HubSender,
     pub room_id_prefix: String,
+    /// The mimi capability's `userUri`: the account owner
+    /// (draft-atwood-jmap-chat-mimi-00 §Account-Level Capability Object).
+    pub user_uri: String,
     /// The Session's `uploadUrl`.
     upload_url: String,
     /// The mimi capability's `assetUrl` template, if the server stores
@@ -200,6 +203,10 @@ impl Jmap {
             .as_str()
             .ok_or_else(|| AgentError::malformed(what, "no roomIdPrefix"))?
             .to_owned();
+        let user_uri = mimi["userUri"]
+            .as_str()
+            .ok_or_else(|| AgentError::malformed(what, "no userUri"))?
+            .to_owned();
         let api_url = session["apiUrl"]
             .as_str()
             .map_or_else(|| format!("{base}/jmap/api"), str::to_owned);
@@ -227,6 +234,7 @@ impl Jmap {
             account_id,
             hub_sender,
             room_id_prefix,
+            user_uri,
             upload_url,
             asset_url,
             asset_lifetime,

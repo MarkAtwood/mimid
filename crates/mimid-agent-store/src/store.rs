@@ -118,6 +118,11 @@ pub struct Store {
     /// Attachment links, once the daemon has an HTTP listener to serve
     /// them ([`Store::set_attachment_links`]).
     links: OnceLock<crate::links::AttachmentLinks>,
+    /// The state directory's lock ([`Agent::state_lock`]). Last, so it is
+    /// dropped after the store's own database connection (`file`): the
+    /// lock goes only when nothing here has the database open
+    /// (docs/design/purple-mimi.md §6.2).
+    state_lock: Arc<mimid_agent_core::StateLock>,
 }
 
 impl std::fmt::Debug for Store {
@@ -134,7 +139,9 @@ impl Store {
     pub fn new(agent: Agent, invites: InvitePolicy) -> Self {
         let user = agent.user().to_owned();
         let database = agent.database_path().to_owned();
+        let state_lock = agent.state_lock();
         Self {
+            state_lock,
             database,
             agent: Arc::new(AsyncMutex::new(agent)),
             state: Mutex::new(State::new(user.clone())),
@@ -497,6 +504,29 @@ impl Store {
     #[must_use]
     pub fn agent(&self) -> &Arc<AsyncMutex<Agent>> {
         &self.agent
+    }
+
+    /// The state directory's lock, which the store holds as long as it
+    /// has the database open ([`Agent::state_lock`]).
+    #[must_use]
+    pub fn state_lock(&self) -> &Arc<mimid_agent_core::StateLock> {
+        &self.state_lock
+    }
+
+    /// Saves the records one last time and closes the agent's connection
+    /// to its server ([`Agent::close`]), waiting for its tasks to end:
+    /// the release path of an embedder handing the state directory over
+    /// (docs/design/purple-mimi.md §6.3 item 10). Stop whatever
+    /// calls [`Store::sync`] first. The database and the lock go when the
+    /// store and every [`Store::agent`] clone are dropped.
+    ///
+    /// # Errors
+    ///
+    /// The error of the last save; the connection is closed all the same.
+    pub async fn close(&self) -> Result<(), crate::FileError> {
+        let saved = self.save().await;
+        self.agent.lock().await.close().await;
+        saved
     }
 
     /// The user's URI.

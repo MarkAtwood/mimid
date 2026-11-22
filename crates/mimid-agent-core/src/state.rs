@@ -284,20 +284,34 @@ impl State {
     }
 }
 
-/// An open state directory.
+/// An open state directory, its lock held ([`crate::StateLock`]).
 pub(crate) struct StateDir {
     dir: PathBuf,
     path: PathBuf,
+    lock: std::sync::Arc<crate::StateLock>,
 }
 
 impl StateDir {
-    /// Opens (creating with mode 0700) `dir`.
+    /// Opens (creating with mode 0700) `dir` and takes its lock, before
+    /// anything opens the database.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Locked`] if another agent holds the lock, and
+    /// [`AgentError::State`] if the directory cannot be used.
     pub fn open(dir: &Path) -> Result<Self, AgentError> {
         private_dir(dir)?;
+        let lock = crate::StateLock::acquire(dir)?;
         Ok(Self {
             dir: dir.to_path_buf(),
             path: dir.join(DATABASE_FILE),
+            lock: std::sync::Arc::new(lock),
         })
+    }
+
+    /// The held lock.
+    pub fn lock(&self) -> &std::sync::Arc<crate::StateLock> {
+        &self.lock
     }
 
     /// The database file.

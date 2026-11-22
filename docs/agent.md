@@ -203,6 +203,9 @@ Everything is under `state_dir`:
 - `mimid.sqlite` (mode 0600): the user's MLS private keys, KeyPackage private keys and groups, the delivery journal, the outbox of messages being sent, the plaintext message, room and contact records, the credentials, and the Web Push subscriptions with the agent's VAPID key.
 - `agent-token` (mode 0600): the token for local clients.
 - `blobs/`: attachments, in plaintext.
+- `lock` (mode 0600, never deleted): while the agent runs it holds an exclusive lock on this file, so a second agent on the same directory (another `mimid-agent`, or purple-mimi pointed at it) refuses to start with "the state directory is in use by another agent" instead of corrupting the MLS state. Do not delete it while the agent runs.
+
+The agent also refuses to start when `token_file` holds another user's token: the server's Session names the token's user, and it must be `user_uri`.
 
 A directory that holds files of an older layout (`state.json`, `mls.sqlite`, `chat.sqlite` or `agent.sqlite`) is refused; nothing is converted. A database of another schema version is refused too.
 

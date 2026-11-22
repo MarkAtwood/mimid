@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use mimi_content::{
@@ -750,16 +751,23 @@ impl std::fmt::Debug for Agent {
 }
 
 impl Agent {
-    /// Opens the state directory (minting an identity on first use) and
-    /// reads the server's JMAP Session.
+    /// Takes the state directory's lock ([`crate::StateLock`]), connects
+    /// to the server (its JMAP Session, or the live stream's hello),
+    /// checks that the server's account is `user_uri`'s, then opens the
+    /// state (minting an identity on first use). Nothing is written to
+    /// the directory before the server's account is checked.
     ///
     /// # Errors
     ///
     /// [`AgentError::Invalid`] if `user_uri` is not a user URI,
+    /// [`AgentError::Locked`] if another agent holds the directory,
     /// [`AgentError::State`] if the state directory cannot be used, is
     /// another user's, holds a database of another schema version or the
     /// files of the older layout, [`AgentError::Database`] if its database
-    /// fails, and the errors of reading the Session.
+    /// fails, [`AgentError::StreamOff`] if the server does not serve the
+    /// live stream that `binding` asks for, [`AgentError::WrongUser`] if
+    /// the token is another user's, and the errors of reading the Session
+    /// or the hello.
     pub async fn open(config: AgentConfig) -> Result<Self, AgentError> {
         if user_uri_domain(&config.user_uri).is_none() {
             return Err(AgentError::Invalid(format!(
@@ -768,8 +776,18 @@ impl Agent {
             )));
         }
         let dir = StateDir::open(&config.state_dir)?;
-        let (identity, state) = dir.load_or_create(&config.user_uri, &config.did_webvh)?;
         let provider = Provider::open(config.binding, &config.server_url, &config.token).await?;
+        // docs/design/purple-mimi.md §7.2: another user's token would run
+        // that user's rooms under this state.
+        if normalized_uri(provider.user_uri()) != normalized_uri(&config.user_uri) {
+            let error = AgentError::WrongUser {
+                configured: config.user_uri.clone(),
+                provider: provider.user_uri().to_owned(),
+            };
+            provider.close().await;
+            return Err(error);
+        }
+        let (identity, state) = dir.load_or_create(&config.user_uri, &config.did_webvh)?;
         provider.restore_sent(&state.sent);
         let mut agent = Self {
             me: config.user_uri,
@@ -854,6 +872,59 @@ impl Agent {
                 }]),
             }
         }
+    }
+
+    /// The state directory's lock, held as long as this agent and every
+    /// clone of the returned handle. A caller that keeps its own
+    /// connection to [`Agent::database_path`] holds a clone until that
+    /// connection is closed, so the lock is released last
+    /// (docs/design/purple-mimi.md §6.2). [`crate::StateLock::intact`]
+    /// tells whether the lock file was replaced under it (§6.5).
+    #[must_use]
+    pub fn state_lock(&self) -> Arc<crate::StateLock> {
+        Arc::clone(self.dir.lock())
+    }
+
+    /// Ends the connection to the server: on the live stream, closes it
+    /// and waits for its reader and writer tasks to end, so nothing more
+    /// arrives for this agent (docs/design/purple-mimi.md §6.4). Every
+    /// later call that needs the stream fails. On JMAP nothing stays open
+    /// between requests, so this does nothing. The state is saved as it
+    /// is after each operation; dropping the agent after this releases
+    /// the state directory.
+    pub async fn close(&mut self) {
+        self.provider.close().await;
+        tracing::debug!("the agent's connection to its server is closed");
+    }
+
+    /// Declines pending invite `number`: its Welcome is dropped without
+    /// joining and is not taken again if the server delivers it again.
+    /// Nothing is sent: the inviter is not told, and this device's leaf,
+    /// which the inviter's Commit added, stays in the group until a
+    /// member removes it; the user stays in the participant list. A later
+    /// invite to the room is a new Welcome.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchInvite`], or the error of saving the state.
+    pub fn decline_invite(&mut self, number: u64) -> Result<(), AgentError> {
+        let index = self
+            .state
+            .invites
+            .iter()
+            .position(|i| i.number == number)
+            .ok_or(AgentError::NoSuchInvite(number))?;
+        let declined = self.state.invites.remove(index);
+        self.state.consumed_welcomes.push(declined.welcome);
+        let excess = self
+            .state
+            .consumed_welcomes
+            .len()
+            .saturating_sub(MAX_CONSUMED_WELCOMES);
+        self.state.consumed_welcomes.drain(..excess);
+        self.save()?;
+        tracing::info!(name: "invite_declined", number, "a pending invite was declined");
+        Ok(())
     }
 
     /// The agent's database, `mimid.sqlite` in the state directory
