@@ -1364,6 +1364,52 @@ async fn the_service_answers_the_nick_and_the_raw_verb() {
     a.send("MIMID identity nosuchnick").await;
     assert!(service_says(&mut a).await.contains("no nick here"));
 
+    // whoami: who, which binding, where the state lives; never a token.
+    a.send("MIMID whoami").await;
+    let who = service_says(&mut a).await;
+    assert_eq!(who, format!("you are {ALICE}"), "{who}");
+    let binding = service_says(&mut a).await;
+    assert!(binding.contains("JMAP"), "{binding}");
+    let state = service_says(&mut a).await;
+    assert!(state.contains("mimid.sqlite"), "{state}");
+    assert!(!state.contains(&token), "whoami must never show the token");
+    let front = service_says(&mut a).await;
+    assert!(front.contains("mimid-agent-irc"), "{front}");
+
+    // sync: runs one and reports it.
+    a.send("MIMID sync").await;
+    assert_eq!(service_says(&mut a).await, "syncing now");
+    let synced = service_says(&mut a).await;
+    assert!(synced.starts_with("synced:"), "{synced}");
+
+    // report and link both need a channel that exists here.
+    a.send("MIMID report #nosuch m1").await;
+    assert!(service_says(&mut a).await.contains("no such channel"));
+    a.send("MIMID link #nosuch m1").await;
+    assert!(service_says(&mut a).await.contains("no such channel"));
+
+    // With a real channel but no such message.
+    a.send("MIMID link #lobby notamsgid").await;
+    assert!(
+        service_says(&mut a).await.contains("is no message"),
+        "an unknown msgid is named back"
+    );
+    a.send("MIMID report #lobby notamsgid").await;
+    assert!(
+        service_says(&mut a)
+            .await
+            .contains("at least one message id"),
+        "a report with no resolvable id says so"
+    );
+
+    // Usage lines when the arguments are missing.
+    a.send("MIMID report").await;
+    assert!(service_says(&mut a).await.starts_with("usage: report"));
+    a.send("MIMID link").await;
+    assert!(service_says(&mut a).await.starts_with("usage: link"));
+    a.send("MIMID link #lobby").await;
+    assert!(service_says(&mut a).await.starts_with("usage: link"));
+
     // An unknown service command is named back, pointing at help.
     a.send("MIMID nonsense").await;
     let unknown = service_says(&mut a).await;

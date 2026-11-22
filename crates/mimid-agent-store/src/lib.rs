@@ -66,6 +66,7 @@ pub use db::FileError;
 pub use expiry::ExpiryError;
 pub use feed::TooOld;
 pub use history::{Direction, Page, Point};
+pub use mimid_agent_core::{AbuseType, Binding};
 pub use state::{RemovedRoom, State, accepted_at_of, reference_of};
 pub use store::{Frontend, Store};
 pub use sync::{InvitePolicy, SyncError, SyncReport};

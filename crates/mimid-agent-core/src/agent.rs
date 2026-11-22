@@ -3388,6 +3388,13 @@ impl Agent {
         })
     }
 
+    /// Which binding this agent reaches its provider over (bead
+    /// mimid-i0id.10).
+    #[must_use]
+    pub fn binding(&self) -> Binding {
+        self.provider.binding()
+    }
+
     /// Lets `requester` fetch this user's KeyPackages for any room
     /// (Consent/set `grant`; the server tells the requester's provider).
     ///

@@ -1,0 +1,25 @@
+{
+  "id": "mimid-i0id.7",
+  "title": "IRC service: report: abuse reports from IRC",
+  "description": "Mark asked for these four on 2026-11-22, after the MIMID raw verb landed (a59a7497).\n\nThe service's own Limitations say reports have no command in v1, and abuse reporting is otherwise JMAP-only (Message/reportAbuse). Store::report(keys, reason, note) already exists and returns Reported. Work: 'report \u003c#channel\u003e \u003cmsgid\u003e... [reason]'. Referencing a message from IRC is the only real work; REDACT already resolves a msgid to a store key, so copy that. A message that kept nothing (the user's own, or one stored before franks were kept) is ActionError::NotReportable and must be said plainly, not swallowed. Reason is the protocol-07 §5.9 AbuseType, 0 to 255, default 0 (no codes defined yet, decision mimid-1wgh.5.32); a trailing note is at most MAX_NOTE_LEN octets.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T22:01:35.068884739Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T22:01:35.068884739Z",
+  "labels": [
+    "irc"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-i0id.7",
+      "depends_on_id": "mimid-i0id",
+      "type": "parent-child",
+      "created_at": "2026-11-22T22:01:35.110506011Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

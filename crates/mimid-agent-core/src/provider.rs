@@ -151,6 +151,16 @@ impl Provider {
         }
     }
 
+    /// Which binding this is, so a front end can tell the user
+    /// (bead mimid-i0id.10).
+    #[must_use]
+    pub fn binding(&self) -> Binding {
+        match self {
+            Self::Jmap(_) => Binding::Jmap,
+            Self::Stream(_) => Binding::Stream,
+        }
+    }
+
     /// The account owner the provider names: `userUri` of the mimi
     /// account capability on JMAP, of `ProviderHello` on the stream.
     pub fn user_uri(&self) -> &str {

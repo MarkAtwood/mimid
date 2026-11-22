@@ -43,7 +43,13 @@ use crate::command::Who;
 use crate::conn::{Session, VERSION, one_line};
 use crate::line::Out;
 use crate::names::SERVICE_NICK;
+use mimid_agent_store::Binding;
 use mimid_agent_store::record::{Call, Invite, MessageExpiry, RoomStatus};
+
+/// How long a link from `link` is good for: long enough to switch to a
+/// browser and open it, short enough that a line left in a log is not a
+/// lasting key. INVENTED VALUE, NOT FROM SPEC.
+pub const LINK_LIFETIME: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// The help text, one NOTICE a line.
 const HELP: &[&str] = &[
@@ -67,6 +73,13 @@ const HELP: &[&str] = &[
     "  rooms         list your rooms and their state, this client's channels",
     "                and the ones you have left included",
     "  version       this agent's version",
+    "  whoami        which agent this is: your user, your provider, where its",
+    "                state lives, and which binding it speaks",
+    "  sync          sync now, and say what the last one did",
+    "  report #channel <msgid>... [<reason>]  report messages to the room's hub",
+    "                as abusive; <reason> is a number 0-255, then free text",
+    "  link #channel <msgid> [<n>]  a link to attachment <n> (default 1) of a",
+    "                message, to open in a browser; it expires",
     "A <user> is a nick, a user URI (mimi://domain/u/name) or name@domain,",
     "which stands for mimi://domain/u/name.",
     "Rooms: JOIN #name hosts a new room; PART leaves a room for good;",
@@ -259,6 +272,58 @@ impl Session {
             // There is no build-revision constant to show; the crate
             // version is what the CTCP VERSION reply already carries.
             ("version", _) => self.service_says(VERSION),
+            // Bead mimid-i0id.10: the first thing to ask when several
+            // agents run on one machine. Never the token.
+            ("whoami", _) => {
+                // Read everything first: service_says takes &mut self.
+                let user = self.shared.store.user().to_owned();
+                let state = self.shared.store.database_path().display().to_string();
+                let binding = match self.shared.store.binding().await {
+                    Binding::Jmap => "JMAP",
+                    Binding::Stream => "mimid's live stream",
+                    _ => "one this version does not name",
+                };
+                self.service_says(&format!("you are {user}"));
+                self.service_says(&format!("  binding: {binding}"));
+                self.service_says(&format!("  state: {state}"));
+                self.service_says(&format!("  this front end: {VERSION}"));
+            }
+            // Bead mimid-i0id.8: a room can sit out of sync with nothing
+            // telling the user (AGENTS.md: mark it out of sync and wait),
+            // so this is the one place that state is visible.
+            ("sync", _) => {
+                self.service_says("syncing now");
+                match self.shared.store.sync().await {
+                    Ok(report) => {
+                        self.service_says(&format!(
+                            "synced: {} message(s), {} room(s) joined, {} edit(s)",
+                            report.messages,
+                            report.joined.len(),
+                            report.edits
+                        ));
+                        if !report.pending_invites.is_empty() {
+                            self.service_says(&format!(
+                                "  {} invite(s) waiting; see invites",
+                                report.pending_invites.len()
+                            ));
+                        }
+                        // The problems are the whole point: a room out of
+                        // sync says so here and nowhere else.
+                        for problem in &report.problems {
+                            self.service_says(&format!("  problem: {problem}"));
+                        }
+                        for skipped in &report.skipped {
+                            self.service_says(&format!("  not stored: {skipped}"));
+                        }
+                    }
+                    Err(error) => {
+                        self.service_says(&format!("sync failed: {error}"));
+                        self.service_says(
+                            "  nothing is lost: what was not acknowledged comes again",
+                        );
+                    }
+                }
+            }
             ("invites", _) => {
                 let invites: Vec<Invite> = self.shared.store.state().invites.clone();
                 if invites.is_empty() {
@@ -306,6 +371,28 @@ impl Session {
                 self.service_says("usage: expire #channel [<duration> or off]");
             }
             ("burn", None) => self.service_says("usage: burn #channel <text>"),
+            // Bead mimid-i0id.7: the service's own Limitations said
+            // reports had no command in v1, so abuse reporting was
+            // JMAP-only.
+            ("report", Some(channel)) => {
+                let rest: Vec<String> = words.map(str::to_owned).collect();
+                self.report(channel, &rest).await;
+            }
+            ("report", None) => {
+                self.service_says("usage: report #channel <msgid>... [<reason 0-255>] [<note>]")
+            }
+            // Bead mimid-i0id.9: IRC has no attachment story, and DCC is
+            // not it; the agent already serves the blob over its loopback
+            // listener behind an HMAC link.
+            ("link", Some(channel)) => {
+                let msgid = words.next().map(str::to_owned);
+                let index = words.next().and_then(|n| n.parse::<usize>().ok());
+                match msgid {
+                    Some(msgid) => self.attachment_link(channel, &msgid, index).await,
+                    None => self.service_says("usage: link #channel <msgid> [<n>]"),
+                }
+            }
+            ("link", None) => self.service_says("usage: link #channel <msgid> [<n>]"),
             ("devices", _) => {
                 let devices = self.store().devices().await;
                 match devices {
@@ -412,6 +499,104 @@ impl Session {
 
     /// `burn #channel text` (docs/design/agent-frontends.md §7.22): sends
     /// `text` with burnOnRead.
+    /// `report #channel <msgid>... [<reason>] [<note>]`: the messages to
+    /// the room's hub as abusive (bead mimid-i0id.7).
+    ///
+    /// The words after the ids are the reason, if the first parses as a
+    /// number 0 to 255 (the protocol-07 §5.9 `AbuseType`; the draft
+    /// defines no codes yet, decision mimid-1wgh.5.32), and the rest a
+    /// note. A message that kept nothing cannot be reported, and says so.
+    async fn report(&mut self, channel: &str, rest: &[String]) {
+        let Some(room) = self.shown_room(channel) else {
+            self.service_says(&format!("{channel}: no such channel here"));
+            return;
+        };
+        // The ids come first; the first word that is not a known message
+        // of this room begins the reason and note.
+        let mut keys = Vec::new();
+        let mut tail = rest;
+        while let Some((word, more)) = tail.split_first() {
+            match self.message_of_msgid(&room, word) {
+                Some(key) => {
+                    keys.push(key);
+                    tail = more;
+                }
+                None => break,
+            }
+        }
+        if keys.is_empty() {
+            self.service_says(
+                "give at least one message id of that channel (the msgid tag of its line)",
+            );
+            return;
+        }
+        let (reason, note) = match tail.split_first() {
+            Some((first, more)) => match first.parse::<u8>() {
+                Ok(code) => (code, more.join(" ")),
+                Err(_) => (0, tail.join(" ")),
+            },
+            None => (0, String::new()),
+        };
+
+        let reason = mimid_agent_store::AbuseType(reason);
+        match self.store().report(&keys, reason, &note).await {
+            Ok(reported) => {
+                self.service_says(&format!(
+                    "reported {} message(s) to the room's hub: {reported:?}",
+                    keys.len()
+                ));
+            }
+            Err(error) => {
+                self.service_says(&format!("report failed: {error}"));
+                self.service_says(
+                    "  a message you sent, or one stored before franks were kept,                      cannot be reported",
+                );
+            }
+        }
+    }
+
+    /// `link #channel <msgid> [<n>]`: a link to the message's nth
+    /// attachment, default the first (bead mimid-i0id.9).
+    async fn attachment_link(&mut self, channel: &str, msgid: &str, index: Option<usize>) {
+        let Some(room) = self.shown_room(channel) else {
+            self.service_says(&format!("{channel}: no such channel here"));
+            return;
+        };
+        let Some(key) = self.message_of_msgid(&room, msgid) else {
+            self.service_says(&format!("{msgid} is no message of {channel}"));
+            return;
+        };
+        let nth = index.unwrap_or(1).max(1);
+        let attachment = {
+            let state = self.shared.store.state();
+            state
+                .messages
+                .get(&key)
+                .and_then(|m| m.attachments.get(nth - 1).cloned())
+        };
+        let Some(attachment) = attachment else {
+            self.service_says(&format!("that message has no attachment {nth}"));
+            return;
+        };
+        match self.shared.store.attachment_link(
+            &key,
+            &attachment.blob_id,
+            crate::service::LINK_LIFETIME,
+        ) {
+            Some(url) => {
+                self.service_says(&format!("{}: {url}", attachment.file_name));
+                self.service_says(
+                    "  that link carries its own authority and expires;                      do not paste it into a room",
+                );
+            }
+            // No links means no HTTP listener (`[jmap]` off and no
+            // `listen`), which is a configuration, not a failure.
+            None => self.service_says(
+                "no attachment links: this agent serves no HTTP listener to hand them out",
+            ),
+        }
+    }
+
     async fn burn(&mut self, channel: &str, text: &str) {
         let Some(key) = self.shown_room(channel) else {
             self.service_says(&format!("{channel}: no such channel here"));

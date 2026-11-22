@@ -1476,6 +1476,12 @@ impl Store {
         Ok(())
     }
 
+    /// Which binding the agent reaches its provider over, for a front
+    /// end to tell the user (bead mimid-i0id.10).
+    pub async fn binding(&self) -> mimid_agent_core::Binding {
+        self.agent.lock().await.binding()
+    }
+
     /// The account's Consent records as the server holds them
     /// (`Agent::consents`), so a front end can show who has asked and
     /// what was decided (bead mimid-1wgh.93).
