@@ -45,6 +45,49 @@ from Mark Atwood's two IRC servers in Go:
   a real client across providers (`acceptance_fixture --two-providers
   --irc` serves for that).
 
+## What IRC v2 changed (epic mimid-i0id, 2026-11-22)
+
+IRC v1 was channels only, with no history (agent-frontends.md §7.2,
+§7.6). Mark's S2 and S4 (client-survey.md §10) lifted that for Goguma,
+whose source (codeberg.org/emersion/goguma at 5aa7baa5, 2026-11-19) was
+read for what it sends and expects. Details are in agent-frontends.md
+§7.32 to §7.36.
+
+- **Private queries.** A one-to-one room is a query: PRIVMSG to a nick
+  opens or reuses it, and its lines are PRIVMSG to the user's nick or the
+  peer's, never a channel. A nick exists only once the user is seen, so a
+  first message names them as `user@domain`. `PART <nick>` hides the query
+  (bead mimid-2vcw, option B); a pending invite to a one-to-one room that
+  the user JOINs is answered with JOIN and PART of its name, as for
+  `&invite-<n>` (the lesson "Answer a JOIN under the name it asked for").
+- **chathistory.** `batch`, `draft/chathistory` and `draft/event-playback`
+  from the store. The earlier lesson holds: it needed a real store keyed
+  by room, not by nick pair. Goguma uses TARGETS, BETWEEN, BEFORE and
+  `LATEST *`, by timestamp only, and waits 30 s for a `chathistory` batch
+  naming the target, so an empty range must still be an empty batch.
+- **Read markers** (`draft/read-marker`), the same read positions JMAP
+  Chat shows. Goguma asks a query's marker with `MARKREAD <nick>` and
+  drops that query's backlog if no answer comes in 15 s.
+- **Web Push** (`soju.im/webpush`, on by default). Goguma answers a
+  registration only on a `WEBPUSH REGISTER <endpoint>` line, needs the
+  record size of the push body to equal its length, and shows no
+  notification of its own for live lines once it has a subscription: the
+  server must push whether or not the phone is connected, and must
+  filter channel messages itself, since Goguma shows every pushed channel
+  PRIVMSG as a highlight.
+- **Also from Goguma's source:** `draft/message-redaction` (its "Delete"),
+  `CLIENTTAGDENY` (so it sends no `+typing`), `+reply` beside
+  `+draft/reply`, `multi-prefix`.
+- **Still skipped:** `labeled-response` (the lesson below stands; Goguma
+  does not need it), `MONITOR` and `away-notify` (no presence in MIMI;
+  Goguma shows no indicator rather than a wrong one),
+  `soju.im/bouncer-networks`, `draft/metadata-2`, `soju.im/FILEHOST`.
+- **Registration as Goguma does it:** everything pipelined, one `CAP REQ`
+  per cap (a NAK of an unknown one is harmless), `AUTHENTICATE` before the
+  LS reply, a nick change after 001 accepted, but 432, 433, 436, 437 and
+  902 before 001 fatal. Tested in mimid-agent `tests/irc_v2.rs`; not yet
+  against the app itself.
+
 ## Must do
 
 ### Registration
@@ -172,9 +215,10 @@ from Mark Atwood's two IRC servers in Go:
   sent to others.
 - **labeled-response:** only offer it if every reply, numerics included,
   carries the label. meshIRCd's never did, so clients waited forever.
-- **chathistory:** it needs the label wiring and a real store. History
-  should key on the account, not the nick pair (meshIRCd keyed DMs by
-  nicks).
+- **chathistory:** it needs a real store; the label wiring is optional
+  (Goguma matches the batch by type and target). History should key on
+  the account, not the nick pair (meshIRCd keyed DMs by nicks). Built in
+  IRC v2 (above).
 
 ### Transport and flood control
 
