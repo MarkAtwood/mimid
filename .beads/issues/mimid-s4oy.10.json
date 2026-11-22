@@ -1,0 +1,26 @@
+{
+  "id": "mimid-s4oy.10",
+  "title": "purple-mimi 5b: the libpurple 3 glue",
+  "description": "The libpurple 3 glue (docs/design/purple-mimi.md §9) for everything steps 5 and 6 have, over the same Rust core: PurpleProtocol subclass, connection, rooms as CHANNEL and direct rooms as DM conversations, messages with ids, edits (edited, edited_at), replying_to, attachments, reactions and invites as text until libpurple 3 has them, commands, devices in the connection action menu, the takeover rule of §6.6. Plus the headless libpurple 3 test host (libpurple built with -Dgtkui=false in a Debian 13 podman container; §11). Tracks the latest Pidgin 3 alpha. About 2,000 to 2,800 lines of C for the glue and 500 to 800 for the host (estimate).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T00:21:33.405094075Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T00:21:33.405094075Z",
+  "labels": [
+    "client",
+    "purple"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-s4oy.10",
+      "depends_on_id": "mimid-s4oy",
+      "type": "parent-child",
+      "created_at": "2026-11-22T00:21:33.453173503Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
