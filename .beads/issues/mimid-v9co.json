@@ -1,0 +1,16 @@
+{
+  "id": "mimid-v9co",
+  "title": "mimid admin: list and revoke provider tokens (purple-mimi prerequisite)",
+  "description": "Mark 2026-11-22 (purple-mimi Q7): mimid admin issues bearer tokens but cannot list or revoke them. Add per-token names/ids and last-used, 'mimid admin \u003ccfg\u003e tokens \u003cuserUri\u003e', 'revoke-token \u003cid\u003e', local-route equivalents; revocation takes effect at once (cache invalidation) and closes that token's EventSource and live-stream connections. Prerequisite for purple-mimi (each Pidgin holds a provider token).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T01:55:59.861497722Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T01:55:59.861497722Z",
+  "labels": [
+    "server",
+    "auth"
+  ]
+}
