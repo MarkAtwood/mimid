@@ -187,6 +187,48 @@ async fn revoked_token_is_rejected() {
     f.store.close().await;
 }
 
+/// Bead mimid-v9co: a request records its token's last use with the
+/// authenticator's clock, and a revocation by id holds for the very next
+/// request (nothing caches a token's validity); the account names the
+/// token that authenticated it.
+#[tokio::test]
+async fn last_use_is_recorded_and_revocation_by_id_holds_at_once() {
+    let f = fixture().await;
+    let app = Router::new()
+        .route(
+            "/token",
+            get(|account: Account| async move { account.token_id().to_owned() }),
+        )
+        .with_state(
+            Authenticator::new(f.store.clone(), domain())
+                .with_clock(std::sync::Arc::new(common::FixedClock(123_456))),
+        );
+    let (status, _, token_id) = get_with(
+        &app,
+        "/token",
+        &[HeaderValue::from_str(&bearer(&f.alice_token)).unwrap()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let listed = f.store.tokens_of_user(ALICE).await.unwrap().unwrap();
+    assert_eq!(listed[0].id, token_id);
+    assert_eq!(listed[0].last_used_at, Some(123_456));
+    let bob = f.store.tokens_of_user(BOB).await.unwrap().unwrap();
+    assert_eq!(bob[0].last_used_at, None, "only the token used");
+
+    f.store.revoke_token_id(&token_id, 10).await.unwrap();
+    assert_unauthorized(
+        get_with(
+            &app,
+            "/token",
+            &[HeaderValue::from_str(&bearer(&f.alice_token)).unwrap()],
+        )
+        .await,
+        "revoked by id",
+    );
+    f.store.close().await;
+}
+
 /// The base64url alphabet (RFC 4648 §5), in value order.
 const BASE64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 

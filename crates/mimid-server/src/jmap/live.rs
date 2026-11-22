@@ -24,7 +24,10 @@
 //!    `Changed` when the Chat, KeyPackage or Consent state moved.
 //! 4. The token is checked again before each request and each run of
 //!    `Deliver`s; once it fails the provider sends `Error` `unauthorized`
-//!    without `id` and closes.
+//!    without `id` and closes. A revocation of the token
+//!    ([`Store::revoke_token_id`](crate::store::Store::revoke_token_id))
+//!    does the same at once, without waiting for the next request (bead
+//!    mimid-v9co).
 //!
 //! A text frame, a frame over the limits ([`MAX_MESSAGE_BYTES`],
 //! [`MAX_REQUEST_BYTES`]), a frame that does not decode before the hello
@@ -299,6 +302,14 @@ impl Connection {
             };
             tokio::select! {
                 () = stopping => return,
+                () = self.account.revoked(&self.state.0.store) => {
+                    tracing::debug!(
+                        account_id = self.account.account_id(),
+                        "live stream closed: token revoked"
+                    );
+                    self.sender.fail(code::UNAUTHORIZED).await;
+                    return;
+                }
                 frame = next_frame(source, &self.sender) => {
                     let Some(frame) = frame else { return };
                     if !self.frame(&frame, &mut subscription).await {

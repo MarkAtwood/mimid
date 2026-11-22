@@ -11,6 +11,13 @@
 //! request-level errors. Every refusal looks the same, so a client cannot
 //! tell a revoked token from one that never existed.
 //!
+//! Each successful check records the token's last use, to the minute
+//! ([`crate::store::LAST_USED_GRANULARITY_MS`]), and the [`Account`] it
+//! yields names the token's id, so the EventSource and the live stream
+//! can close when that token is revoked (bead mimid-v9co). Nothing caches
+//! a token's validity: every check reads the database, so a revocation
+//! holds for the next request at once.
+//!
 //! A method naming another account's `accountId` gets the RFC 8620 §3.6.2
 //! method-level error `accountNotFound` from [`Account::check_account_id`].
 //!
@@ -25,8 +32,11 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
+use std::sync::Arc;
+
 use crate::config::Domain;
 use crate::follower::relay::LocalUser;
+use crate::hub::{Clock, SystemClock};
 use crate::store::{BearerToken, Store};
 
 /// RFC 7807 media type for problem details.
@@ -40,16 +50,39 @@ const INTERNAL_ERROR_BODY: &str =
 
 /// What the [`Account`] extractor needs: the store holding token hashes and
 /// this provider's domain.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Authenticator {
     store: Store,
     provider: Domain,
+    /// Stamps each token's last use.
+    clock: Arc<dyn Clock>,
+}
+
+impl std::fmt::Debug for Authenticator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Authenticator")
+            .field("store", &self.store)
+            .field("provider", &self.provider)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Authenticator {
-    /// Authenticates tokens against `store` for users of `provider`.
+    /// Authenticates tokens against `store` for users of `provider`,
+    /// stamping their last use with the system clock.
     pub fn new(store: Store, provider: Domain) -> Self {
-        Self { store, provider }
+        Self {
+            store,
+            provider,
+            clock: Arc::new(SystemClock),
+        }
+    }
+
+    /// This authenticator, stamping last use with `clock`.
+    #[must_use]
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// The account `headers` authenticate.
@@ -103,11 +136,26 @@ impl Authenticator {
             );
             AuthRejection::Internal
         })?;
+        // A failure to record the last use does not refuse the request:
+        // the token is valid, and the next request tries again.
+        if let Err(error) = self
+            .store
+            .touch_token(&owner.token_id, owner.last_used_at, self.clock.now_ms())
+            .await
+        {
+            tracing::warn!(
+                name: "jmap_auth_last_used_failed",
+                error = &error as &dyn std::error::Error,
+                token_id = owner.token_id,
+                "could not record a token's last use"
+            );
+        }
         // At least as severe as a refusal, which is DEBUG (bead mimid-bfzm).
         tracing::debug!(account_id = %owner.account_id, "jmap request authenticated");
         Ok(Account {
             account_id: owner.account_id,
             user,
+            token_id: owner.token_id,
             i18n: false,
             metadata: false,
         })
@@ -138,6 +186,8 @@ fn bearer_token(headers: &HeaderMap) -> Option<BearerToken> {
 pub struct Account {
     account_id: String,
     user: LocalUser,
+    /// The id of the token that authenticated the request.
+    token_id: String,
     /// Whether the current request names `urn:ietf:params:jmap:i18n` in
     /// `using` (draft-atwood-jmap-updates-00 §3).
     i18n: bool,
@@ -155,6 +205,25 @@ impl Account {
     /// The authenticated local user.
     pub fn user(&self) -> &LocalUser {
         &self.user
+    }
+
+    /// The id of the bearer token that authenticated the request.
+    pub fn token_id(&self) -> &str {
+        &self.token_id
+    }
+
+    /// Resolves once the token that authenticated this account is
+    /// revoked ([`Store::subscribe_revocations`]), at once if it already
+    /// was; never if the store is gone.
+    pub(crate) async fn revoked(&self, store: &Store) {
+        let mut revoked = store.subscribe_revocations();
+        if revoked
+            .wait_for(|set| set.contains(&self.token_id))
+            .await
+            .is_err()
+        {
+            std::future::pending::<()>().await;
+        }
     }
 
     /// Whether the request opted in to localized display text

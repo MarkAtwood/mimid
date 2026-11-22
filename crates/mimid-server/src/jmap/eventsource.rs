@@ -230,7 +230,8 @@ pub(super) async fn states(
     Ok(states)
 }
 
-/// Sends events until the client goes away, the bus closes, or, with
+/// Sends events until the client goes away, the bus closes, the token
+/// that opened the stream is revoked (bead mimid-v9co), or, with
 /// `closeafter=state`, the first `state` event is sent. `changes` was
 /// subscribed before `last` was read, so no change falls between.
 async fn stream(
@@ -270,6 +271,10 @@ async fn stream(
         tokio::select! {
             () = sender.closed() => return,
             () = stopping => return,
+            () = account.revoked(&store) => {
+                tracing::debug!(account_id = account.account_id(), "eventsource closed: token revoked");
+                return;
+            }
             () = ping => {
                 let interval = params.ping.map_or(0, |p| p.as_secs());
                 let event = Event::default().event("ping").data(json!({"interval": interval}).to_string());

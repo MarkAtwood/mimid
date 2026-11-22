@@ -288,7 +288,8 @@ pub fn router(
     if let Some(key_packages) = &key_packages {
         bus.forward_key_packages(key_packages.subscribe_changes());
     }
-    let authenticator = Authenticator::new(store.clone(), hub.domain().clone());
+    let authenticator = Authenticator::new(store.clone(), hub.domain().clone())
+        .with_clock(Arc::clone(&options.clock));
     let projection = Arc::new(projection::Projection::new(store.clone(), Arc::clone(&hub)));
     let key_material_limiter = options
         .key_material_limit

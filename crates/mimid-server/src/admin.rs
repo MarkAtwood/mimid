@@ -13,7 +13,11 @@
 //!   proposes the user's removal or ban (it takes effect at the next
 //!   Commit);
 //! - `users`: every JMAP account; `add-user <userUri>`: create one;
-//!   `token <userUri>`: issue a bearer token for it;
+//!   `token <userUri> [name]`: issue a bearer token for it, optionally
+//!   named (one token per device, so that one can be revoked alone);
+//!   `tokens <userUri>`: its tokens, with their ids, names, creation, last
+//!   use and revocation; `revoke-token <id>`: revoke one at once, closing
+//!   its open connections (bead mimid-v9co);
 //! - `consent`: the consent entries other providers sent;
 //! - `provider-key`: this server's request-signing selector and public key,
 //!   and the provisional DNS record for it (bead mimid-75nk.1).
@@ -31,7 +35,7 @@ use crate::local::LocalToken;
 pub enum AdminError {
     /// The command line is not a known command with its argument.
     #[error(
-        "usage: mimid admin <config.toml> hub-sender | rooms | room <roomId> | remove <roomId> <userUri> | ban <roomId> <userUri> | users | add-user <userUri> | token <userUri> | consent | provider-key"
+        "usage: mimid admin <config.toml> hub-sender | rooms | room <roomId> | remove <roomId> <userUri> | ban <roomId> <userUri> | users | add-user <userUri> | token <userUri> [name] | tokens <userUri> | revoke-token <id> | consent | provider-key"
     )]
     Usage,
     /// The configuration has no `local_listen`.
@@ -69,7 +73,12 @@ enum Command {
     },
     Users,
     AddUser(String),
-    Token(String),
+    Token {
+        user: String,
+        name: Option<String>,
+    },
+    Tokens(String),
+    RevokeToken(String),
     Consent,
     ProviderKey,
 }
@@ -87,7 +96,16 @@ impl Command {
             }),
             [c] if c == "users" => Ok(Self::Users),
             [c, user] if c == "add-user" => Ok(Self::AddUser(user.clone())),
-            [c, user] if c == "token" => Ok(Self::Token(user.clone())),
+            [c, user] if c == "token" => Ok(Self::Token {
+                user: user.clone(),
+                name: None,
+            }),
+            [c, user, name] if c == "token" => Ok(Self::Token {
+                user: user.clone(),
+                name: Some(name.clone()),
+            }),
+            [c, user] if c == "tokens" => Ok(Self::Tokens(user.clone())),
+            [c, id] if c == "revoke-token" => Ok(Self::RevokeToken(id.clone())),
             [c] if c == "consent" => Ok(Self::Consent),
             [c] if c == "provider-key" => Ok(Self::ProviderKey),
             _ => Err(AdminError::Usage),
@@ -139,7 +157,17 @@ pub async fn run(
             .post(format!("{base}/users"))
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(serde_json::json!({ "user": user }).to_string()),
-        Command::Token(user) => client.post(format!("{base}/users/{}/tokens", segment(user))),
+        Command::Token { user, name } => {
+            let request = client.post(format!("{base}/users/{}/tokens", segment(user)));
+            match name {
+                Some(name) => request
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(serde_json::json!({ "name": name }).to_string()),
+                None => request,
+            }
+        }
+        Command::Tokens(user) => client.get(format!("{base}/users/{}/tokens", segment(user))),
+        Command::RevokeToken(id) => client.post(format!("{base}/tokens/{}/revoke", segment(id))),
         Command::Consent => client.get(format!("{base}/consent")),
         Command::ProviderKey => client.get(format!("{base}/provider-key")),
     };
@@ -174,13 +202,40 @@ mod tests {
         assert_eq!(Command::parse(&args(&["rooms"])).unwrap(), Command::Rooms);
         assert_eq!(
             Command::parse(&args(&["token", "mimi://a.example/u/alice"])).unwrap(),
-            Command::Token("mimi://a.example/u/alice".to_owned())
+            Command::Token {
+                user: "mimi://a.example/u/alice".to_owned(),
+                name: None
+            }
+        );
+        assert_eq!(
+            Command::parse(&args(&[
+                "token",
+                "mimi://a.example/u/alice",
+                "Pidgin at home"
+            ]))
+            .unwrap(),
+            Command::Token {
+                user: "mimi://a.example/u/alice".to_owned(),
+                name: Some("Pidgin at home".to_owned())
+            }
+        );
+        assert_eq!(
+            Command::parse(&args(&["tokens", "mimi://a.example/u/alice"])).unwrap(),
+            Command::Tokens("mimi://a.example/u/alice".to_owned())
+        );
+        assert_eq!(
+            Command::parse(&args(&["revoke-token", "00ff"])).unwrap(),
+            Command::RevokeToken("00ff".to_owned())
         );
         for bad in [
             &[][..],
             &["room"][..],
             &["rooms", "x"][..],
             &["drop-tables"][..],
+            &["tokens"][..],
+            &["revoke-token"][..],
+            &["revoke-token", "a", "b"][..],
+            &["token", "u", "n", "extra"][..],
         ] {
             assert!(
                 matches!(Command::parse(&args(bad)), Err(AdminError::Usage)),

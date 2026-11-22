@@ -50,9 +50,24 @@
 //!   `400` for a URI that is not a user of this provider, `409` if the user
 //!   has an account.
 //! - `POST /local/v1/users/{user}/tokens`: issues a new JMAP bearer token
-//!   for the user (URI percent-encoded as one path segment); `201` with
-//!   `{"token"}`, `404` if the user has no account. The token is shown
-//!   once, never stored in clear and never logged.
+//!   for the user (URI percent-encoded as one path segment), with an
+//!   optional body `{"name"}` (or `null`) naming it (1 to
+//!   [`MAX_TOKEN_NAME_CHARS`](crate::store::MAX_TOKEN_NAME_CHARS)
+//!   characters, no control characters); `201` with `{"token", "id",
+//!   "name"}`, `400` for a bad name or body, `404` if the user has no
+//!   account. The token is shown once, never stored in clear and never
+//!   logged; its `id` is what lists and revokes it.
+//! - `GET /local/v1/users/{user}/tokens`: the user's tokens, valid and
+//!   revoked, oldest first, as `{"tokens": [{"id", "name", "createdAt",
+//!   "lastUsedAt", "revokedAt"}, ...]}`, times in milliseconds,
+//!   `lastUsedAt` to the minute and `null` if never used, `revokedAt`
+//!   `null` while valid; `404` if the user has no account (bead
+//!   mimid-v9co).
+//! - `POST /local/v1/tokens/{id}/revoke`: revokes the token at once:
+//!   the next request with it is refused, and its open EventSource and
+//!   live-stream connections close. `200` with `{"id", "result"}`,
+//!   `result` `"revoked"`, or `"already-revoked"` for a token revoked
+//!   before; `404` (`no-such-token`) for an unknown id (bead mimid-v9co).
 //!
 //! - `GET /local/v1/consent`: the consent entries other providers sent
 //!   (protocol-07 §5.7), as `{"consent": [{"requester", "target", "room",
@@ -61,8 +76,8 @@
 //!   null for any room (bead mimid-1wgh.47.4). Read-only: consent is
 //!   written by the protocol endpoints.
 //!
-//! Account creation and token issuance log at INFO with the user and
-//! account. The caller is not identified beyond reaching the loopback
+//! Account creation, token issuance and revocation log at INFO with the
+//! user or account and the token's id. The caller is not identified beyond reaching the loopback
 //! listener (and, if set, holding `local_token`), so no peer address is
 //! logged: it would always be a loopback address.
 //!
@@ -92,7 +107,7 @@ use sha2::{Digest, Sha256};
 
 use crate::http::problem;
 use crate::hub::{Hub, HubError, RoomSummary};
-use crate::store::{ConsentDecision, JmapStoreError, Store};
+use crate::store::{ConsentDecision, JmapStoreError, Store, TokenRevocation};
 
 /// The fewest characters a `local_token` may have. INVENTED, NOT FROM
 /// SPEC: 32 characters of a random token are enough that guessing is not a
@@ -184,7 +199,11 @@ pub fn router_with_signer(
         .route("/local/v1/rooms/{room_id}", get(get_room))
         .route("/local/v1/rooms/{room_id}/remove", post(remove_user))
         .route("/local/v1/users", post(create_user).get(list_users))
-        .route("/local/v1/users/{user}/tokens", post(issue_token))
+        .route(
+            "/local/v1/users/{user}/tokens",
+            post(issue_token).get(list_tokens),
+        )
+        .route("/local/v1/tokens/{id}/revoke", post(revoke_token))
         .route("/local/v1/consent", get(list_consent))
         .with_state(LocalState { hub, store, signer });
     match token {
@@ -426,7 +445,30 @@ async fn create_user(State(state): State<LocalState>, body: Json<CreateUser>) ->
     }
 }
 
-async fn issue_token(State(store): State<Store>, Path(user): Path<String>) -> Response {
+/// The optional body of `POST /local/v1/users/{user}/tokens`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IssueToken {
+    name: Option<String>,
+}
+
+async fn issue_token(
+    State(store): State<Store>,
+    Path(user): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let name = if body.is_empty() {
+        None
+    } else {
+        // JSON `null` is no body, as callers from before names sent it.
+        match serde_json::from_slice::<Option<IssueToken>>(&body) {
+            Ok(body) => body.and_then(|IssueToken { name }| name),
+            Err(_) => {
+                tracing::debug!(user, "local token refused: undecodable body");
+                return problem(StatusCode::BAD_REQUEST, "undecodable-request");
+            }
+        }
+    };
     let account_id = match store.account_of_user(&user).await {
         Ok(Some(account_id)) => account_id,
         Ok(None) => {
@@ -435,22 +477,77 @@ async fn issue_token(State(store): State<Store>, Path(user): Path<String>) -> Re
         }
         Err(error) => return store_failure("find account", &error),
     };
-    match store.issue_token(&account_id, now_ms()).await {
-        Ok(token) => {
+    match store
+        .issue_named_token(&account_id, name.as_deref(), now_ms())
+        .await
+    {
+        Ok(issued) => {
             tracing::info!(
                 name: "local_token_issued",
                 user,
                 account_id,
+                token_id = issued.id,
                 "JMAP bearer token issued through the local control listener"
             );
             (
                 StatusCode::CREATED,
-                Json(serde_json::json!({ "token": token.expose_secret() })),
+                Json(serde_json::json!({
+                    "token": issued.token.expose_secret(),
+                    "id": issued.id,
+                    "name": name,
+                })),
             )
                 .into_response()
         }
+        Err(JmapStoreError::BadTokenName) => {
+            tracing::debug!(user, "local token refused: bad name");
+            problem(StatusCode::BAD_REQUEST, "bad-token-name")
+        }
         Err(error) => store_failure("issue token", &error),
     }
+}
+
+async fn list_tokens(State(store): State<Store>, Path(user): Path<String>) -> Response {
+    match store.tokens_of_user(&user).await {
+        Ok(Some(tokens)) => Json(serde_json::json!({
+            "tokens": tokens
+                .into_iter()
+                .map(|token| serde_json::json!({
+                    "id": token.id,
+                    "name": token.name,
+                    "createdAt": token.created_at,
+                    "lastUsedAt": token.last_used_at,
+                    "revokedAt": token.revoked_at,
+                }))
+                .collect::<Vec<_>>(),
+        }))
+        .into_response(),
+        Ok(None) => {
+            tracing::debug!(user, "local token list refused: no account");
+            problem(StatusCode::NOT_FOUND, "no-such-user")
+        }
+        Err(error) => store_failure("list tokens", &error),
+    }
+}
+
+async fn revoke_token(State(store): State<Store>, Path(id): Path<String>) -> Response {
+    let result = match store.revoke_token_id(&id, now_ms()).await {
+        Ok(TokenRevocation::Revoked) => {
+            tracing::info!(
+                name: "local_token_revoked",
+                token_id = id,
+                "JMAP bearer token revoked through the local control listener"
+            );
+            "revoked"
+        }
+        Ok(TokenRevocation::AlreadyRevoked) => "already-revoked",
+        Ok(TokenRevocation::NoSuchToken) => {
+            tracing::debug!(token_id = id, "local revocation refused: no such token");
+            return problem(StatusCode::NOT_FOUND, "no-such-token");
+        }
+        Err(error) => return store_failure("revoke token", &error),
+    };
+    Json(serde_json::json!({ "id": id, "result": result })).into_response()
 }
 
 /// The body of `POST /local/v1/rooms`.

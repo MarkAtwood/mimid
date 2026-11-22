@@ -2,7 +2,13 @@
 //! user, and its bearer tokens (mimid-1wgh.11.1; plan of mimid-1wgh.12 §3).
 //!
 //! Only SHA-256 of a token is stored. A token is shown once, when
-//! [`Store::issue_token`] returns it.
+//! [`Store::issue_token`] returns it. Each token also has an id, an
+//! optional name and the time it last authenticated a request, so an
+//! operator can list a user's tokens and revoke one by its id
+//! ([`Store::tokens_of_user`], [`Store::revoke_token_id`]; bead
+//! mimid-v9co). A revocation is announced to the open connections that
+//! authenticated with the token ([`Store::subscribe_revocations`]), which
+//! close.
 //!
 //! The JMAP read projection's queries of the follower log live here too
 //! (mimid-1wgh.11.3): [`Store::projection_chats`],
@@ -28,6 +34,19 @@ const TOKEN_TEXT_LEN: usize = 43;
 
 /// A ULID timestamp is 48 bits of milliseconds.
 const ULID_MAX_MS: u64 = (1 << 48) - 1;
+
+/// The longest token name, in characters. INVENTED, NOT FROM SPEC: room
+/// for a device and a place ("Pidgin on the laptop at home").
+pub const MAX_TOKEN_NAME_CHARS: usize = 64;
+
+/// How stale a token's stored last use may be before a request updates
+/// it, in milliseconds. INVENTED, NOT FROM SPEC: a minute's precision is
+/// enough to tell a token in use from a forgotten one, and it keeps the
+/// one write connection free of a write per request.
+pub const LAST_USED_GRANULARITY_MS: u64 = 60_000;
+
+/// The length of a token id: 16 random bytes in lowercase hex.
+const TOKEN_ID_LEN: usize = 32;
 
 /// A JMAP bearer token: 32 bytes from the OS CSPRNG, presented as unpadded
 /// base64url (RFC 4648 §5).
@@ -88,6 +107,48 @@ pub struct TokenOwner {
     pub account_id: String,
     /// The local user's URI.
     pub user_uri: String,
+    /// The token's id ([`TokenInfo::id`]).
+    pub token_id: String,
+    /// When the token last authenticated a request, as stored, in
+    /// milliseconds since the UNIX epoch.
+    pub last_used_at: Option<u64>,
+}
+
+/// A newly issued token and its id.
+#[derive(Debug, Clone)]
+pub struct IssuedToken {
+    /// The token's id, by which it is listed and revoked.
+    pub id: String,
+    /// The token itself, shown once.
+    pub token: BearerToken,
+}
+
+/// What an operator sees of a token: never the token itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenInfo {
+    /// The token's id: 32 lowercase hex characters, opaque.
+    pub id: String,
+    /// The name it was issued with, if any.
+    pub name: Option<String>,
+    /// When it was issued, in milliseconds since the UNIX epoch.
+    pub created_at: u64,
+    /// When it last authenticated a request, to within
+    /// [`LAST_USED_GRANULARITY_MS`]; `None` if never since it was issued.
+    pub last_used_at: Option<u64>,
+    /// When it was revoked; `None` while it is valid.
+    pub revoked_at: Option<u64>,
+}
+
+/// What [`Store::revoke_token_id`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TokenRevocation {
+    /// The token was valid and is now revoked.
+    Revoked,
+    /// The token was revoked before.
+    AlreadyRevoked,
+    /// No token has this id.
+    NoSuchToken,
 }
 
 /// An error creating a JMAP account or issuing a token.
@@ -103,6 +164,10 @@ pub enum JmapStoreError {
     /// No JMAP account has this id.
     #[error("no such JMAP account")]
     NoSuchAccount,
+    /// A token name is empty, longer than [`MAX_TOKEN_NAME_CHARS`] or
+    /// holds a control character.
+    #[error("a token name is 1 to {MAX_TOKEN_NAME_CHARS} characters without control characters")]
+    BadTokenName,
     /// The OS CSPRNG failed.
     #[error("no system randomness")]
     Random,
@@ -165,32 +230,170 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// Returns [`JmapStoreError::NoSuchAccount`] if the account does not
-    /// exist, [`JmapStoreError::Random`] if the CSPRNG fails, and
-    /// [`JmapStoreError::Store`] if a query fails.
+    /// As [`Store::issue_named_token`].
     pub async fn issue_token(
         &self,
         account_id: &str,
         now_ms: u64,
     ) -> Result<BearerToken, JmapStoreError> {
+        Ok(self
+            .issue_named_token(account_id, None, now_ms)
+            .await?
+            .token)
+    }
+
+    /// Issues a new bearer token for `account_id`, named `name`, and
+    /// stores its hash, id and name. The returned token is never stored
+    /// and cannot be recovered.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JmapStoreError::BadTokenName`] for a name that is empty,
+    /// too long or holds a control character,
+    /// [`JmapStoreError::NoSuchAccount`] if the account does not exist,
+    /// [`JmapStoreError::Random`] if the CSPRNG fails, and
+    /// [`JmapStoreError::Store`] if a query fails.
+    pub async fn issue_named_token(
+        &self,
+        account_id: &str,
+        name: Option<&str>,
+        now_ms: u64,
+    ) -> Result<IssuedToken, JmapStoreError> {
+        if let Some(name) = name
+            && !token_name_ok(name)
+        {
+            return Err(JmapStoreError::BadTokenName);
+        }
         let token = BearerToken(
             mimi_mls::label::random_array::<TOKEN_LEN>().map_err(|_| JmapStoreError::Random)?,
         );
+        let id: String = mimi_mls::label::random_array::<{ TOKEN_ID_LEN / 2 }>()
+            .map_err(|_| JmapStoreError::Random)?
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         let inserted = sqlx::query(
-            "INSERT INTO jmap_token (token_hash, account_id, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO jmap_token (token_hash, account_id, created_at, token_id, name) \
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(token.hash().as_slice())
         .bind(account_id)
         .bind(to_sql_int(now_ms)?)
+        .bind(&id)
+        .bind(name)
         .execute(&self.pool)
         .await;
         match inserted {
-            Ok(_) => Ok(token),
+            Ok(_) => Ok(IssuedToken { id, token }),
             Err(sqlx::Error::Database(error)) if error.is_foreign_key_violation() => {
                 Err(JmapStoreError::NoSuchAccount)
             }
             Err(error) => Err(error.into()),
         }
+    }
+
+    /// Every token of `user_uri`'s account, valid or revoked, oldest
+    /// first; `None` if the user has no account.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails and
+    /// [`StoreError::OutOfRange`] for a stored time below zero.
+    pub async fn tokens_of_user(
+        &self,
+        user_uri: &str,
+    ) -> Result<Option<Vec<TokenInfo>>, StoreError> {
+        let Some(account_id) = self.account_of_user(user_uri).await? else {
+            return Ok(None);
+        };
+        let rows: Vec<TokenRow> = sqlx::query_as(
+            "SELECT token_id, name, created_at, last_used_at, revoked_at FROM jmap_token \
+             WHERE account_id = ? ORDER BY created_at, rowid",
+        )
+        .bind(&account_id)
+        .fetch_all(&self.reader)
+        .await?;
+        let time = |value: Option<i64>| value.map(from_sql_int).transpose();
+        rows.into_iter()
+            .map(|(id, name, created, used, revoked)| {
+                Ok(TokenInfo {
+                    id,
+                    name,
+                    created_at: from_sql_int(created)?,
+                    last_used_at: time(used)?,
+                    revoked_at: time(revoked)?,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()
+            .map(Some)
+    }
+
+    /// Revokes the token with id `token_id` at `now_ms`, and announces it
+    /// to [`Store::subscribe_revocations`] so that the connections it
+    /// opened close. A token already revoked is announced again: a
+    /// connection that slipped in before is closed all the same.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails and
+    /// [`StoreError::OutOfRange`] if `now_ms` does not fit SQLite.
+    pub async fn revoke_token_id(
+        &self,
+        token_id: &str,
+        now_ms: u64,
+    ) -> Result<TokenRevocation, StoreError> {
+        let revoked: Option<String> = sqlx::query_scalar(
+            "UPDATE jmap_token SET revoked_at = ? WHERE token_id = ? AND revoked_at IS NULL \
+             RETURNING token_id",
+        )
+        .bind(to_sql_int(now_ms)?)
+        .bind(token_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let outcome = if revoked.is_some() {
+            TokenRevocation::Revoked
+        } else {
+            let known: Option<String> =
+                sqlx::query_scalar("SELECT token_id FROM jmap_token WHERE token_id = ?")
+                    .bind(token_id)
+                    .fetch_optional(&self.pool)
+                    .await?;
+            if known.is_none() {
+                return Ok(TokenRevocation::NoSuchToken);
+            }
+            TokenRevocation::AlreadyRevoked
+        };
+        self.announce_revoked(token_id.to_owned());
+        Ok(outcome)
+    }
+
+    /// Records that the token `token_id` authenticated a request at
+    /// `now_ms`, if its stored last use (`last_used_at`, as
+    /// [`Store::account_for_token`] read it) is unset or more than
+    /// [`LAST_USED_GRANULARITY_MS`] older.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails and
+    /// [`StoreError::OutOfRange`] if `now_ms` does not fit SQLite.
+    pub async fn touch_token(
+        &self,
+        token_id: &str,
+        last_used_at: Option<u64>,
+        now_ms: u64,
+    ) -> Result<(), StoreError> {
+        if last_used_at.is_some_and(|at| now_ms.saturating_sub(at) <= LAST_USED_GRANULARITY_MS) {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE jmap_token SET last_used_at = ?1 WHERE token_id = ?2 \
+             AND (last_used_at IS NULL OR last_used_at < ?1)",
+        )
+        .bind(to_sql_int(now_ms)?)
+        .bind(token_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     /// Every JMAP account, as (account id, user URI, created at in ms),
@@ -233,14 +436,19 @@ impl Store {
     /// Returns [`StoreError::Sqlx`] if the query fails and
     /// [`StoreError::OutOfRange`] if `now_ms` does not fit SQLite.
     pub async fn revoke_token(&self, token: &BearerToken, now_ms: u64) -> Result<bool, StoreError> {
-        let result = sqlx::query(
-            "UPDATE jmap_token SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
+        let revoked: Option<String> = sqlx::query_scalar(
+            "UPDATE jmap_token SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL \
+             RETURNING token_id",
         )
         .bind(to_sql_int(now_ms)?)
         .bind(token.hash().as_slice())
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
-        Ok(result.rows_affected() == 1)
+        let Some(token_id) = revoked else {
+            return Ok(false);
+        };
+        self.announce_revoked(token_id);
+        Ok(true)
     }
 
     /// The account `token` belongs to, or `None` if the token is unknown or
@@ -256,19 +464,34 @@ impl Store {
         let hash = token.hash();
         // The index lookup compares hashes in variable time. That leaks
         // nothing useful: the attacker picks the token, not its hash.
-        let row: Option<(String, String)> = sqlx::query_as(
-            "SELECT a.account_id, a.user_uri \
+        let row: Option<(String, String, String, Option<i64>)> = sqlx::query_as(
+            "SELECT a.account_id, a.user_uri, t.token_id, t.last_used_at \
              FROM jmap_token t JOIN jmap_account a ON a.account_id = t.account_id \
              WHERE t.token_hash = ? AND t.revoked_at IS NULL",
         )
         .bind(hash.as_slice())
         .fetch_optional(&self.reader)
         .await?;
-        Ok(row.map(|(account_id, user_uri)| TokenOwner {
-            account_id,
-            user_uri,
-        }))
+        row.map(|(account_id, user_uri, token_id, last_used_at)| {
+            Ok(TokenOwner {
+                account_id,
+                user_uri,
+                token_id,
+                last_used_at: last_used_at.map(from_sql_int).transpose()?,
+            })
+        })
+        .transpose()
     }
+}
+
+/// A `jmap_token` row as listed: id, name, created, last used, revoked.
+type TokenRow = (String, Option<String>, i64, Option<i64>, Option<i64>);
+
+/// Whether `name` may name a token: 1 to [`MAX_TOKEN_NAME_CHARS`]
+/// characters, none of them a control character.
+fn token_name_ok(name: &str) -> bool {
+    let chars = name.chars().count();
+    (1..=MAX_TOKEN_NAME_CHARS).contains(&chars) && !name.chars().any(char::is_control)
 }
 
 /// A new ULID of `ms` milliseconds since the UNIX epoch, with 80 bits
@@ -1048,14 +1271,53 @@ mod tests {
                 .unwrap();
         assert_eq!(
             columns,
-            ["token_hash", "account_id", "created_at", "revoked_at"]
+            [
+                "token_hash",
+                "account_id",
+                "created_at",
+                "revoked_at",
+                "token_id",
+                "name",
+                "last_used_at"
+            ]
         );
-        let rows: Vec<(Vec<u8>, String, i64, Option<i64>)> =
-            sqlx::query_as("SELECT token_hash, account_id, created_at, revoked_at FROM jmap_token")
-                .fetch_all(&store.reader)
-                .await
-                .unwrap();
-        assert_eq!(rows, [(Sha256::digest(&raw).to_vec(), id, 2, None)]);
+        #[allow(clippy::type_complexity, reason = "one row of the table under test")]
+        let rows: Vec<(
+            Vec<u8>,
+            String,
+            i64,
+            Option<i64>,
+            Option<String>,
+            Option<i64>,
+        )> = sqlx::query_as(
+            "SELECT token_hash, account_id, created_at, revoked_at, name, last_used_at \
+                 FROM jmap_token",
+        )
+        .fetch_all(&store.reader)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            [(Sha256::digest(&raw).to_vec(), id, 2, None, None, None)]
+        );
+        let token_id: String = sqlx::query_scalar("SELECT token_id FROM jmap_token")
+            .fetch_one(&store.reader)
+            .await
+            .unwrap();
+        assert_eq!(token_id.len(), TOKEN_ID_LEN);
+        assert!(
+            token_id
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "{token_id}"
+        );
+        assert!(
+            !raw.iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+                .contains(&token_id),
+            "the id is not taken from the token"
+        );
         store.close().await;
     }
 
@@ -1069,14 +1331,18 @@ mod tests {
             .unwrap();
         let token = store.issue_token(&id, 2).await.unwrap();
         let other = store.issue_token(&id, 2).await.unwrap();
+        let owner = store.account_for_token(&token).await.unwrap().unwrap();
         assert_eq!(
-            store.account_for_token(&token).await.unwrap(),
-            Some(TokenOwner {
-                account_id: id.clone(),
-                user_uri: ALICE.to_owned()
-            })
+            (owner.account_id.as_str(), owner.user_uri.as_str()),
+            (id.as_str(), ALICE)
         );
+        assert_eq!(owner.last_used_at, None);
+        let revocations = store.subscribe_revocations();
         assert!(store.revoke_token(&token, 3).await.unwrap());
+        assert!(
+            revocations.borrow().contains(&owner.token_id),
+            "the revocation is announced"
+        );
         assert!(
             !store.revoke_token(&token, 4).await.unwrap(),
             "already revoked"
@@ -1093,6 +1359,179 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(revoked_at, Some(3));
+        store.close().await;
+    }
+
+    /// Bead mimid-v9co: tokens are issued with a name, listed with their
+    /// ids, names and times, and revoked one by one by id; the outcome
+    /// tells a fresh revocation from a repeated one and an unknown id.
+    #[tokio::test]
+    async fn tokens_are_listed_and_revoked_by_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir).await;
+        let id = store
+            .create_account(&domain("a.example"), ALICE, 1)
+            .await
+            .unwrap();
+        assert_eq!(store.tokens_of_user(ALICE).await.unwrap(), Some(vec![]));
+        assert_eq!(
+            store
+                .tokens_of_user("mimi://a.example/u/nobody")
+                .await
+                .unwrap(),
+            None
+        );
+        let laptop = store
+            .issue_named_token(&id, Some("Pidgin, laptop"), 5)
+            .await
+            .unwrap();
+        let phone = store.issue_named_token(&id, None, 6).await.unwrap();
+        assert_ne!(laptop.id, phone.id);
+        assert_eq!(
+            store.tokens_of_user(ALICE).await.unwrap().unwrap(),
+            [
+                TokenInfo {
+                    id: laptop.id.clone(),
+                    name: Some("Pidgin, laptop".to_owned()),
+                    created_at: 5,
+                    last_used_at: None,
+                    revoked_at: None,
+                },
+                TokenInfo {
+                    id: phone.id.clone(),
+                    name: None,
+                    created_at: 6,
+                    last_used_at: None,
+                    revoked_at: None,
+                },
+            ]
+        );
+
+        let revocations = store.subscribe_revocations();
+        assert_eq!(
+            store.revoke_token_id(&laptop.id, 7).await.unwrap(),
+            TokenRevocation::Revoked
+        );
+        assert!(revocations.borrow().contains(&laptop.id));
+        assert!(!revocations.borrow().contains(&phone.id));
+        assert_eq!(
+            store.revoke_token_id(&laptop.id, 8).await.unwrap(),
+            TokenRevocation::AlreadyRevoked
+        );
+        assert_eq!(
+            store
+                .revoke_token_id("0".repeat(32).as_str(), 8)
+                .await
+                .unwrap(),
+            TokenRevocation::NoSuchToken
+        );
+        assert_eq!(store.account_for_token(&laptop.token).await.unwrap(), None);
+        assert!(
+            store
+                .account_for_token(&phone.token)
+                .await
+                .unwrap()
+                .is_some(),
+            "the other token stays valid"
+        );
+        let listed = store.tokens_of_user(ALICE).await.unwrap().unwrap();
+        assert_eq!(listed[0].revoked_at, Some(7), "the first revocation's time");
+        assert_eq!(listed[1].revoked_at, None);
+        store.close().await;
+    }
+
+    /// A name is 1 to 64 characters without control characters; a
+    /// refused one stores nothing.
+    #[tokio::test]
+    async fn token_names_are_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir).await;
+        let id = store
+            .create_account(&domain("a.example"), ALICE, 1)
+            .await
+            .unwrap();
+        let longest = "é".repeat(MAX_TOKEN_NAME_CHARS);
+        assert!(
+            store
+                .issue_named_token(&id, Some(&longest), 2)
+                .await
+                .is_ok()
+        );
+        for bad in [
+            String::new(),
+            "x".repeat(MAX_TOKEN_NAME_CHARS + 1),
+            "line\nbreak".to_owned(),
+            "nul\0".to_owned(),
+            "bell\u{7}".to_owned(),
+            "c1\u{85}".to_owned(),
+        ] {
+            assert!(
+                matches!(
+                    store.issue_named_token(&id, Some(&bad), 3).await,
+                    Err(JmapStoreError::BadTokenName)
+                ),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(store.tokens_of_user(ALICE).await.unwrap().unwrap().len(), 1);
+        store.close().await;
+    }
+
+    /// Last use is written when unset or older than the granularity, and
+    /// never moves back.
+    #[tokio::test]
+    async fn last_use_is_kept_to_the_minute() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&dir).await;
+        let id = store
+            .create_account(&domain("a.example"), ALICE, 1)
+            .await
+            .unwrap();
+        let issued = store.issue_named_token(&id, None, 2).await.unwrap();
+        let used = |store: &Store| {
+            let store = store.clone();
+            async move { store.tokens_of_user(ALICE).await.unwrap().unwrap()[0].last_used_at }
+        };
+        let owner = || async {
+            store
+                .account_for_token(&issued.token)
+                .await
+                .unwrap()
+                .unwrap()
+        };
+
+        let first = owner().await;
+        store
+            .touch_token(&first.token_id, first.last_used_at, 100_000)
+            .await
+            .unwrap();
+        assert_eq!(used(&store).await, Some(100_000));
+        let again = owner().await;
+        assert_eq!(again.last_used_at, Some(100_000));
+        store
+            .touch_token(
+                &again.token_id,
+                again.last_used_at,
+                100_000 + LAST_USED_GRANULARITY_MS,
+            )
+            .await
+            .unwrap();
+        assert_eq!(used(&store).await, Some(100_000), "within the minute");
+        store
+            .touch_token(
+                &again.token_id,
+                again.last_used_at,
+                100_001 + LAST_USED_GRANULARITY_MS,
+            )
+            .await
+            .unwrap();
+        assert_eq!(used(&store).await, Some(100_001 + LAST_USED_GRANULARITY_MS));
+        // A stale read with an earlier time does not move it back.
+        store
+            .touch_token(&again.token_id, None, 50_000)
+            .await
+            .unwrap();
+        assert_eq!(used(&store).await, Some(100_001 + LAST_USED_GRANULARITY_MS));
         store.close().await;
     }
 }

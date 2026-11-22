@@ -322,6 +322,50 @@ async fn a_wrong_malformed_or_revoked_token_is_refused_alike() {
     expect_error(&mut socket, None, code::UNAUTHORIZED, true).await;
 }
 
+/// Bead mimid-v9co: revoking a token by its id closes the connections it
+/// opened at once, with `Error` `unauthorized`, even an idle one with no
+/// request to refuse; a connection of another token of the same user
+/// stays open.
+#[tokio::test]
+async fn revoking_a_token_by_id_closes_its_idle_connections() {
+    let server = server(true).await;
+    let account = server
+        .store
+        .account_for_token(&server.token)
+        .await
+        .unwrap()
+        .unwrap();
+    let other = server
+        .store
+        .issue_named_token(&account.account_id, Some("other"), 3)
+        .await
+        .unwrap();
+    let mut first = server.open().await;
+    let mut second = server.open().await;
+    let mut kept = server.connect().await;
+    send(&mut kept, &hello(&other.token.expose_secret())).await;
+    assert!(matches!(
+        receive(&mut kept, None).await,
+        Some(ProviderMessage::Hello(_))
+    ));
+
+    assert_eq!(
+        server
+            .store
+            .revoke_token_id(&account.token_id, 4)
+            .await
+            .unwrap(),
+        mimid_server::store::TokenRevocation::Revoked
+    );
+    expect_error(&mut first, None, code::UNAUTHORIZED, true).await;
+    expect_error(&mut second, None, code::UNAUTHORIZED, true).await;
+    send(&mut kept, &request(1, Op::ListChats)).await;
+    assert!(matches!(
+        receive(&mut kept, Some(OpKind::ListChats)).await,
+        Some(ProviderMessage::Ack(_))
+    ));
+}
+
 #[tokio::test]
 async fn the_hello_comes_first_and_once() {
     let server = server(true).await;

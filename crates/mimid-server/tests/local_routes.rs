@@ -342,6 +342,122 @@ async fn accounts_and_tokens_are_issued_for_local_users() {
     );
 }
 
+/// Bead mimid-v9co: a token is issued with a name, listed with its id,
+/// name and times (never the token), and revoked by id; a repeated
+/// revocation says so, an unknown id is 404, and a bad name or body is
+/// 400.
+#[tokio::test]
+async fn tokens_are_named_listed_and_revoked() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let app = router(Arc::new(hub), store.clone(), None);
+    let alice = std::str::from_utf8(ALICE).unwrap();
+    store
+        .create_account(&common::domain(), alice, 1)
+        .await
+        .unwrap();
+    let tokens = format!(
+        "/local/v1/users/{}/tokens",
+        alice.replace(':', "%3A").replace('/', "%2F")
+    );
+    let post = |path: &str, body: Option<serde_json::Value>| {
+        let mut request = Request::post(path);
+        if body.is_some() {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+        }
+        request
+            .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+            .unwrap()
+    };
+    let get = |path: &str| Request::get(path).body(Body::empty()).unwrap();
+
+    let (status, body) = call(
+        &app,
+        post(&tokens, Some(serde_json::json!({"name": "Pidgin"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let named: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(named["name"], "Pidgin");
+    let named_id = named["id"].as_str().unwrap().to_owned();
+    let named_token = named["token"].as_str().unwrap().to_owned();
+    let (status, _) = call(&app, post(&tokens, Some(serde_json::Value::Null))).await;
+    assert_eq!(status, StatusCode::CREATED, "null is no body");
+    let (status, body) = call(&app, post(&tokens, None)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let plain: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(plain["name"], serde_json::Value::Null);
+    let plain_id = plain["id"].as_str().unwrap().to_owned();
+
+    for (body, kind) in [
+        (serde_json::json!({"name": ""}), "bad-token-name"),
+        (serde_json::json!({"name": "a\u{7}b"}), "bad-token-name"),
+        (serde_json::json!({"label": "x"}), "undecodable-request"),
+        (serde_json::json!({"name": 7}), "undecodable-request"),
+    ] {
+        let (status, answer) = call(&app, post(&tokens, Some(body.clone()))).await;
+        assert_eq!(
+            (status, problem_kind(&answer)),
+            (StatusCode::BAD_REQUEST, kind.to_owned()),
+            "{body}"
+        );
+    }
+
+    let (status, body) = call(&app, get(&tokens)).await;
+    assert_eq!(status, StatusCode::OK);
+    let text = String::from_utf8(body.clone()).unwrap();
+    assert!(!text.contains(&named_token), "the list never shows a token");
+    let list: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        list,
+        serde_json::json!({"tokens": [
+            {"id": named_id, "name": "Pidgin", "createdAt": list["tokens"][0]["createdAt"],
+             "lastUsedAt": null, "revokedAt": null},
+            {"id": list["tokens"][1]["id"], "name": null, "createdAt": list["tokens"][1]["createdAt"],
+             "lastUsedAt": null, "revokedAt": null},
+            {"id": plain_id, "name": null, "createdAt": list["tokens"][2]["createdAt"],
+             "lastUsedAt": null, "revokedAt": null},
+        ]})
+    );
+    assert!(list["tokens"][0]["createdAt"].as_u64().unwrap() > 0);
+
+    let revoke = format!("/local/v1/tokens/{named_id}/revoke");
+    let (status, body) = call(&app, post(&revoke, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!({"id": named_id, "result": "revoked"})
+    );
+    let (status, body) = call(&app, post(&revoke, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["result"],
+        "already-revoked"
+    );
+    let token = mimid_server::store::BearerToken::parse(&named_token).unwrap();
+    assert_eq!(store.account_for_token(&token).await.unwrap(), None);
+    let (status, body) = call(&app, get(&tokens)).await;
+    assert_eq!(status, StatusCode::OK);
+    let list: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(list["tokens"][0]["revokedAt"].as_u64().is_some());
+    assert_eq!(list["tokens"][2]["revokedAt"], serde_json::Value::Null);
+
+    let (status, body) = call(&app, post("/local/v1/tokens/nosuchid/revoke", None)).await;
+    assert_eq!(
+        (status, problem_kind(&body)),
+        (StatusCode::NOT_FOUND, "no-such-token".to_owned())
+    );
+    let (status, body) = call(
+        &app,
+        get("/local/v1/users/mimi%3A%2F%2Fa.example%2Fu%2Fnobody/tokens"),
+    )
+    .await;
+    assert_eq!(
+        (status, problem_kind(&body)),
+        (StatusCode::NOT_FOUND, "no-such-user".to_owned())
+    );
+}
+
 /// Bead mimid-1wgh.47.4: held consent requests and updates are listed,
 /// requests first, `room` null for any room.
 #[tokio::test]
@@ -426,6 +542,36 @@ async fn the_admin_cli_drives_a_running_listener() {
         .await
         .unwrap();
     assert!(users.contains(alice), "{users}");
+    let named = run(
+        Some(addr),
+        Some(&token),
+        &args(&["token", alice, "Pidgin at home"]),
+    )
+    .await
+    .unwrap();
+    let named: serde_json::Value = serde_json::from_str(&named).unwrap();
+    assert_eq!(named["name"], "Pidgin at home");
+    let id = named["id"].as_str().unwrap();
+    let listed = run(Some(addr), Some(&token), &args(&["tokens", alice]))
+        .await
+        .unwrap();
+    let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    assert_eq!(listed["tokens"].as_array().unwrap().len(), 2);
+    assert_eq!(listed["tokens"][1]["id"], id);
+    let revoked = run(Some(addr), Some(&token), &args(&["revoke-token", id]))
+        .await
+        .unwrap();
+    assert!(revoked.contains("\"revoked\""), "{revoked}");
+    match run(
+        Some(addr),
+        Some(&token),
+        &args(&["revoke-token", "nosuchid"]),
+    )
+    .await
+    {
+        Err(AdminError::Refused { status: 404, body }) => assert!(body.contains("no-such-token")),
+        other => panic!("{other:?}"),
+    }
 
     match run(Some(addr), None, &args(&["users"])).await {
         Err(AdminError::Refused { status: 401, body }) => assert!(body.contains("unauthorized")),

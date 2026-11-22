@@ -2084,6 +2084,45 @@ async fn a_pushed_message_state_already_shows_the_message() {
     f.close().await;
 }
 
+/// Bead mimid-v9co: revoking the token that opened an EventSource ends
+/// the stream at once, without waiting for a change or a ping; Bob's
+/// stream, opened with his own token, stays open.
+#[tokio::test]
+async fn revoking_the_token_ends_its_eventsource() {
+    let f = fixture().await;
+    let alice = eventsource(&f, Some(&f.alice_token), "types=*&closeafter=no&ping=0").await;
+    assert_eq!(alice.status(), StatusCode::OK);
+    let bob = eventsource(&f, Some(&f.bob_token), "types=*&closeafter=no&ping=0").await;
+    assert_eq!(bob.status(), StatusCode::OK);
+    let alice_body = tokio::spawn(to_bytes(alice.into_body(), usize::MAX));
+    let mut bob_body = bob.into_body().into_data_stream();
+    let token_id = f
+        .store
+        .account_for_token(&f.alice_token)
+        .await
+        .unwrap()
+        .unwrap()
+        .token_id;
+    assert_eq!(
+        f.store.revoke_token_id(&token_id, 6).await.unwrap(),
+        mimid_server::store::TokenRevocation::Revoked
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(10), alice_body)
+        .await
+        .expect("the revocation ends the stream")
+        .unwrap()
+        .unwrap();
+    use tokio_stream::StreamExt;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), bob_body.next())
+            .await
+            .is_err(),
+        "Bob's stream stays open and quiet"
+    );
+    drop(bob_body);
+    f.close().await;
+}
+
 /// RFC 8620 §7.3: with nothing to report, a `ping` event comes every
 /// interval, carrying the interval used, which mimid raises to its
 /// minimum. Real time: this test waits ten seconds.

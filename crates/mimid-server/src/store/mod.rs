@@ -24,10 +24,12 @@ mod outbox;
 mod retention;
 mod rooms;
 
+use std::collections::BTreeSet;
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use sqlx::SqlitePool;
@@ -46,8 +48,9 @@ pub use consent::{ConsentDecision, ConsentKey, ConsentRow, ReceivedConsent};
 pub use consent_record::{ConsentChanges, ConsentPatch, ConsentRecord};
 pub use follower_log::{AppendedFanout, FanoutKind, FollowerEvent, NewFanout, RoomAccess};
 pub use jmap::{
-    BearerToken, ChatRow, HubRow, JmapStoreError, MalformedToken, MessageChanges, MessageRow,
-    MetadataUpdate, ProjectionCursor, TOKEN_LEN, TokenOwner,
+    BearerToken, ChatRow, HubRow, IssuedToken, JmapStoreError, LAST_USED_GRANULARITY_MS,
+    MAX_TOKEN_NAME_CHARS, MalformedToken, MessageChanges, MessageRow, MetadataUpdate,
+    ProjectionCursor, TOKEN_LEN, TokenInfo, TokenOwner, TokenRevocation,
 };
 pub use key_packages::{
     ClaimCandidate, InsertOptions, KeyPackageChanges, KeyPackageClaim, KeyPackageInsert,
@@ -87,6 +90,11 @@ pub struct Store {
     pool: SqlitePool,
     /// Read-only connections for queries outside a write transaction.
     reader: SqlitePool,
+    /// The ids of the tokens revoked since the store was opened, for the
+    /// connections they opened to close (bead mimid-v9co). Every clone
+    /// shares it. Not persisted: after a restart no connection holds an
+    /// old token, and each new one is checked against the database.
+    revoked: Arc<tokio::sync::watch::Sender<BTreeSet<String>>>,
 }
 
 impl Store {
@@ -140,7 +148,27 @@ impl Store {
             });
         }
         let reader = SqlitePool::connect_with(options.read_only(true)).await?;
-        Ok(Self { pool, reader })
+        Ok(Self {
+            pool,
+            reader,
+            revoked: Arc::new(tokio::sync::watch::Sender::new(BTreeSet::new())),
+        })
+    }
+
+    /// The ids of the tokens revoked since the store was opened, updated as
+    /// each is revoked ([`Store::revoke_token_id`], [`Store::revoke_token`]).
+    /// A connection authenticated by a token waits for its id to appear,
+    /// then closes; an id already in the set ends it at once, so a token
+    /// revoked between its check and the subscription is not missed.
+    pub fn subscribe_revocations(&self) -> tokio::sync::watch::Receiver<BTreeSet<String>> {
+        self.revoked.subscribe()
+    }
+
+    /// Adds `token_id` to the revoked set and wakes every subscriber.
+    fn announce_revoked(&self, token_id: String) {
+        self.revoked.send_modify(|revoked| {
+            revoked.insert(token_id);
+        });
     }
 
     /// Closes all connections, waiting for in-flight queries to finish.
@@ -254,7 +282,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             applied,
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
         );
 
         let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, domain FROM provider")
