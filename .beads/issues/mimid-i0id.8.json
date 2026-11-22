@@ -2,13 +2,15 @@
   "id": "mimid-i0id.8",
   "title": "IRC service: sync: force a sync and show when the last one was",
   "description": "Mark asked for these four on 2026-11-22, after the MIMID raw verb landed (a59a7497).\n\nAGENTS.md: never delete group state because decryption fails; mark the group out of sync and wait. So a room can sit out of sync with nothing telling the user, from any client. Work: 'sync' runs Store::sync_wanted (or awaits a pass) and reports what the last pass did and when, including any SyncReport problems and rooms the agent knows are out of sync. This is the diagnostic that is missing everywhere, not just in IRC.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-22T22:01:35.192476852Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-22T22:01:35.192476852Z",
+  "updated_at": "2026-11-22T22:12:01.124126027Z",
+  "closed_at": "2026-11-22T22:12:01.124126027Z",
+  "close_reason": "Landed c68fb00e and pushed, with a test over both the service nick and the MIMID verb.",
   "labels": [
     "irc"
   ],
