@@ -674,3 +674,159 @@ async fn sasl_numerics_and_account_required() {
     drop(waiting);
     alice.stop().await;
 }
+
+/// The NOTICEs the `mimid` service sends until a PING round trip.
+async fn service_lines(irc: &mut Irc) -> Vec<String> {
+    irc.sync()
+        .await
+        .into_iter()
+        .filter(|m| m.command == "NOTICE" && m.source.starts_with("mimid!"))
+        .map(|m| m.text().to_owned())
+        .collect()
+}
+
+/// Oracle: docs/design/frontend-auth.md §3.6 and decision A5: from IRC,
+/// `passwords` lists without secrets, `password add` shows the new
+/// password once with a warning about client logs, the password then
+/// logs in, and `password revoke` closes its connections.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn app_passwords_from_irc() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(dir.path(), &server)).await;
+    let addr = alice.irc.unwrap();
+    let (mut irc, _) = Irc::register(addr, &alice.token(), "alice", &[]).await;
+
+    irc.send("PRIVMSG mimid :password add tablet").await;
+    let said = service_lines(&mut irc).await;
+    let shown = said
+        .iter()
+        .find_map(|l| l.strip_prefix("app password tablet made; it is shown once: "))
+        .unwrap_or_else(|| panic!("{said:?}"))
+        .to_owned();
+    assert!(said.iter().any(|l| l.contains("log")), "{said:?}");
+    assert!(pass_works(addr, &shown).await);
+
+    irc.send("PRIVMSG mimid :passwords").await;
+    let listed = service_lines(&mut irc).await;
+    assert!(
+        listed
+            .iter()
+            .any(|l| l.starts_with("tablet  app-password  made ")
+                && l.contains("by irc (agent-token)")),
+        "{listed:?}"
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|l| l.starts_with("agent-token  agent-token")),
+        "{listed:?}"
+    );
+    assert!(!listed.iter().any(|l| l.contains(&shown)), "{listed:?}");
+
+    let (mut tablet, _) = Irc::register(addr, &shown, "alice", &[]).await;
+    irc.send("PRIVMSG mimid :password revoke tablet").await;
+    assert!(
+        service_lines(&mut irc)
+            .await
+            .iter()
+            .any(|l| l.starts_with("revoked tablet"))
+    );
+    assert!(
+        tablet
+            .until_command("ERROR")
+            .await
+            .text()
+            .contains("credential revoked")
+    );
+    assert!(!pass_works(addr, &shown).await);
+    irc.send("PRIVMSG mimid :password revoke agent-token").await;
+    assert!(
+        service_lines(&mut irc)
+            .await
+            .iter()
+            .any(|l| l.contains("cannot be revoked"))
+    );
+    irc.send("PRIVMSG mimid :password add Bad Name").await;
+    assert!(
+        service_lines(&mut irc)
+            .await
+            .iter()
+            .any(|l| l.contains("not a credential name"))
+    );
+    alice.stop().await;
+}
+
+/// Oracle: §6.1 and §6.2: `setup goguma <device>` makes an app password
+/// and prints the server, the nickname (the URI's local part) and the
+/// password, and a QR code of `ircs://<nick>@<name>:<port>`, never with
+/// the password in it; `setup weechat` prints a `/server add` line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn setup_prints_what_the_client_needs() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let config = with_irc_tls(dir.path(), &server);
+    let alice = Running::start(&config).await;
+    // The configured listen_tls has port 0; setup prints the configured
+    // port, so give it the bound one.
+    let mut config = config.clone();
+    if let Some(irc) = config.irc.as_mut() {
+        irc.listen_tls = alice.irc_tls;
+    }
+    let port = alice.irc_tls.unwrap().port();
+    let run = |client: &str, device: &str| {
+        let mut out = Vec::new();
+        mimid_agent::cli::setup(
+            &config,
+            &[client.to_owned(), device.to_owned()],
+            &mut std::io::Cursor::new(Vec::new()),
+            &mut out,
+        )
+        .unwrap();
+        String::from_utf8(out).unwrap()
+    };
+    let goguma = run("goguma", "phone");
+    let password = goguma
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Password   "))
+        .unwrap_or_else(|| panic!("{goguma}"))
+        .to_owned();
+    assert!(
+        goguma.contains(&format!("Server     localhost:{port}")),
+        "{goguma}"
+    );
+    assert!(goguma.contains("Nickname   alice"), "{goguma}");
+    let url = format!("ircs://alice@localhost:{port}");
+    assert!(goguma.contains(&url), "{goguma}");
+    assert!(
+        goguma.contains('\u{2580}') || goguma.contains('\u{2584}'),
+        "a QR code: {goguma}"
+    );
+    assert_eq!(goguma.matches(&password).count(), 1, "{goguma}");
+    let mut irc = Irc::connect_tls(alice.irc_tls.unwrap(), "localhost").await;
+    irc.send("CAP REQ :sasl").await;
+    irc.send("AUTHENTICATE PLAIN").await;
+    irc.until_command("AUTHENTICATE").await;
+    irc.send(&format!(
+        "AUTHENTICATE {}",
+        b64(format!("\0alice\0{password}").as_bytes())
+    ))
+    .await;
+    irc.until_command("903").await;
+
+    let weechat = run("weechat", "laptop");
+    assert!(
+        weechat.contains(&format!("/server add mimid localhost/{port} -tls -sasl_mechanism=plain -sasl_username=alice -sasl_password=")),
+        "{weechat}"
+    );
+    assert!(matches!(
+        mimid_agent::cli::setup(
+            &config,
+            &["mirc".to_owned(), "pc".to_owned()],
+            &mut std::io::Cursor::new(Vec::new()),
+            &mut Vec::new(),
+        ),
+        Err(mimid_agent::cli::CliError::SetupUsage)
+    ));
+    alice.stop().await;
+}

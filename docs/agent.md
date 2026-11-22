@@ -48,9 +48,19 @@ mimid-agent <config.toml> app-password revoke <name>
 mimid-agent <config.toml> app-password rotate-token    # a new agent-token file
 ```
 
-These open `mimid.sqlite` themselves, so they work whether or not the agent runs. A running agent reads the table again every 2 seconds and before each login: revoking a credential, or replacing the agent token, closes every IRC connection and JMAP EventSource stream that logged in with it within that time, and its next request gets `401`. After `rotate-token`, attachment links made before keep working until the agent restarts.
+From an IRC client, `/msg mimid passwords` lists them, `/msg mimid password add <name>` makes one and `/msg mimid password revoke <name>` revokes one. The new password arrives in a NOTICE, and IRC clients usually write every line to a log on disk: delete it there, or make passwords with the command line instead.
+
+These commands open `mimid.sqlite` themselves, so they work whether or not the agent runs. A running agent reads the table again every 2 seconds and before each login: revoking a credential, or replacing the agent token, closes every IRC connection and JMAP EventSource stream that logged in with it within that time, and its next request gets `401`. After `rotate-token`, attachment links made before keep working until the agent restarts.
 
 The agent stores each credential, the agent token included, as a SCRAM-SHA-256 verifier (4,096 iterations) in the `credentials` table of `mimid.sqlite`. At most 64 are unrevoked at once. A revoked one is listed for 30 days, then deleted. Design: docs/design/frontend-auth.md §3.
+
+## Setting up a client
+
+```sh
+mimid-agent <config.toml> setup <client> <device>
+```
+
+makes an app password named `<device>` and prints what the IRC client `<client>` needs: `goguma`, `weechat`, `irssi`, `hexchat`, `halloy`, `thelounge`, or `generic`. It uses the TLS listener (`[irc] listen_tls`) and the first of `[tls] names`; without a TLS listener it prints the loopback address and says so. For Goguma it also prints a QR code of `ircs://<nick>@<name>:<port>`, which a phone's camera opens in Goguma with the server and nickname filled in; the password is never in the QR code, so type it. With `[tls] source = "tailscale"` it first asks the question of `setup tls` if that is due.
 
 ## The configuration file
 

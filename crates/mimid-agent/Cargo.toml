@@ -30,6 +30,9 @@ mimid-agent-irc = { path = "../mimid-agent-irc" }
 mimid-agent-jmap = { path = "../mimid-agent-jmap" }
 # The plaintext store the daemon builds first and its front ends share.
 mimid-agent-store = { path = "../mimid-agent-store" }
+# The terminal QR code of `setup goguma` (docs/design/frontend-auth.md
+# §6.1); no image or SVG output. 0.14.1 is from 2024.
+qrcode = { version = "=0.14.1", default-features = false }
 # TLS for the front ends' network listeners (docs/design/frontend-auth.md
 # §5), as mimid-server has it: aws-lc-rs (decision mimid-1wgh.26); already
 # in the lockfile.

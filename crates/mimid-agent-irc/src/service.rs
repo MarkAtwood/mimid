@@ -17,6 +17,9 @@
 //! | `call <#channel> <url> [<description>]` | sends a call to join: `url`, which must be `https` or `wss`, as mimi-content-10 §5.10 has it (`Store::send_call`, §7.24) |
 //! | `devices` | lists the user's devices, the clients the server has bound to the account (`Store::devices`; draft-atwood-jmap-chat-mimi-00 §Clients) |
 //! | `forget-device <id>` | forgets another device, such as a lost one: the server unbinds it and its leaves leave every room this device shares with it (`Store::forget_device`) |
+//! | `passwords` | lists the credentials: names, kinds, when made and last used; never a secret (docs/design/frontend-auth.md §3.6) |
+//! | `password add <name>` | makes an app password and shows it once, with a warning that the client may log the line (decision A5) |
+//! | `password revoke <name>` | revokes an app password; its connections close, this one included if it used it |
 //!
 //! # Limitations
 //!
@@ -45,6 +48,9 @@ const HELP: &[&str] = &[
     "                must be https:// or wss://",
     "  devices       list your devices (the clients bound to your account)",
     "  forget-device <id>  forget a lost device: it is unbound and removed from your rooms",
+    "  passwords     list your app passwords and the agent token",
+    "  password add <name>  make an app password for a device; shown once",
+    "  password revoke <name>  revoke one; its connections close",
     "A <user> is a nick, a user URI (mimi://domain/u/name) or name@domain,",
     "which stands for mimi://domain/u/name.",
     "Rooms: JOIN #name hosts a new room; PART leaves a room for good;",
@@ -53,6 +59,36 @@ const HELP: &[&str] = &[
 ];
 
 impl Session {
+    /// What made a credential from here: `irc (<credential>)`.
+    fn credential_label(&self) -> String {
+        match &self.login {
+            Some(login) => format!("irc ({})", login.name),
+            None => "irc".to_owned(),
+        }
+    }
+
+    /// `password add <name>` (docs/design/frontend-auth.md §3.6; decision
+    /// A5): the new secret in a NOTICE, with the warning that IRC clients
+    /// log what they are sent.
+    fn password_add(&mut self, name: &str) {
+        let by = self.credential_label();
+        match self.shared.credentials.add(name, &by) {
+            Ok((info, password)) => {
+                self.service_says(&format!(
+                    "app password {} made; it is shown once: {}",
+                    info.name,
+                    password.shown()
+                ));
+                self.service_says(
+                    "warning: your IRC client may have written that line to its log on \
+                     disk; delete it there, or make passwords with \
+                     `mimid-agent <config> app-password add` instead",
+                );
+            }
+            Err(error) => self.service_says(&format!("password add failed: {error}")),
+        }
+    }
+
     /// A NOTICE from the service to the user.
     fn service_says(&mut self, text: &str) {
         let me = self.me();
@@ -177,6 +213,33 @@ impl Session {
                 }
             }
             ("forget-device", None) => self.service_says("usage: forget-device <id>, from devices"),
+            ("passwords", _) | ("password", Some("list")) => {
+                for info in self.shared.credentials.list() {
+                    self.service_says(&mimid_agent_store::credentials::describe(&info));
+                }
+            }
+            ("password", Some("add")) => match words.next() {
+                Some(name) => self.password_add(name),
+                None => self.service_says("usage: password add <name>, e.g. password add phone"),
+            },
+            ("password", Some("revoke")) => match words.next() {
+                Some(name) => {
+                    let by = self.credential_label();
+                    match self.shared.credentials.revoke(name, &by) {
+                        Ok(info) => self.service_says(&format!(
+                            "revoked {}: its connections close now",
+                            info.name
+                        )),
+                        Err(error) => {
+                            self.service_says(&format!("password revoke failed: {error}"))
+                        }
+                    }
+                }
+                None => self.service_says("usage: password revoke <name>"),
+            },
+            ("password", _) => {
+                self.service_says("usage: passwords, password add <name>, password revoke <name>");
+            }
             _ => self.service_says(&format!("unknown command {command:?}; try help")),
         }
     }
