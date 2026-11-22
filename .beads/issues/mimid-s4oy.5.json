@@ -1,14 +1,14 @@
 {
   "id": "mimid-s4oy.5",
   "title": "purple-mimi 5: rooms and messages",
-  "description": "Room list, join/leave, send/receive text, history on join, invites and consent.",
+  "description": "Rooms and messages on libpurple 2 (§13 step 5): the purple front end over mimid-agent-store (§5.6), the read and request functions of §5.5, rooms as chats (closing is not leaving), direct rooms as IMs, history on open from the read position, invites through purple's invite dialog, /allow and /deny, topic, members and the admin flag, notices, the Devices dialog, disappearing messages with NO_LOG (§8). About 2,400 to 3,200 lines (estimate).",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T21:31:44.218259632Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T21:31:44.218259632Z",
+  "updated_at": "2026-11-22T00:22:15.647337471Z",
   "labels": [
     "client",
     "purple"
