@@ -14,6 +14,7 @@ use mimid_agent_core::{Agent, AgentConfig, AgentError};
 use mimid_agent_irc::{IrcFrontEnd, IrcOptions};
 use mimid_agent_jmap::{AgentChat, BlobStore, Options};
 use mimid_agent_store::credentials::Credentials;
+use mimid_agent_store::push::PushSubscriptions;
 use mimid_agent_store::{Store, SyncReport};
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, broadcast, watch};
@@ -122,6 +123,12 @@ pub enum StartError {
     /// The IRC front end could not start (`[irc].listen`).
     #[error("starting the IRC front end")]
     Irc(#[from] mimid_agent_irc::IrcError),
+    /// The IRC front end's Web Push could not start (`[irc] webpush`).
+    #[error("starting the IRC front end's Web Push")]
+    WebPush(#[from] mimid_agent_irc::WebPushError),
+    /// The push tables (`mimid.sqlite`) could not be opened.
+    #[error("opening the push subscriptions")]
+    Push(#[from] mimid_agent_store::push::PushError),
     /// The Session does not build (a crate-jmap type changed).
     #[error("building the Session")]
     Session(#[from] serde_json::Error),
@@ -263,15 +270,22 @@ impl Daemon {
                 if let Some(addr) = setting.listen_tls {
                     crate::tls::warn_if_public("irc", addr);
                 }
-                Some(
-                    IrcFrontEnd::bind(
-                        Arc::clone(&store),
-                        options,
-                        Arc::clone(&credentials),
-                        tls.as_ref().map(|t| t.server_config()),
-                    )
-                    .await?,
+                let irc = IrcFrontEnd::bind(
+                    Arc::clone(&store),
+                    options,
+                    Arc::clone(&credentials),
+                    tls.as_ref().map(|t| t.server_config()),
                 )
+                .await?;
+                // client-survey.md §10 S4: push on by default, with its own
+                // switch; the subscriptions in the agent's database.
+                if setting.webpush {
+                    let subscriptions = PushSubscriptions::open(
+                        &config.state_dir.join(mimid_agent_core::DATABASE_FILE),
+                    )?;
+                    irc.enable_web_push(Arc::new(subscriptions))?;
+                }
+                Some(irc)
             }
             None => None,
         };

@@ -177,6 +177,7 @@ impl Session {
             "INVITE" => self.invite(line).await,
             "CHATHISTORY" => self.chathistory(line),
             "MARKREAD" => self.markread(line).await,
+            "WEBPUSH" => self.webpush(line),
             other => self.numeric("421", &[other, "Unknown command"]),
         }
     }

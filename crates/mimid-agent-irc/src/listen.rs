@@ -15,7 +15,7 @@ use tokio_rustls::rustls::ServerConfig;
 
 use crate::conn::{Shared, run, stopped};
 use crate::names::Names;
-use crate::{IrcError, IrcOptions};
+use crate::{IrcError, IrcOptions, WebPushError};
 use mimid_agent_store::credentials::Credentials;
 
 /// The IRC front end over one store, bound and not yet serving.
@@ -158,10 +158,37 @@ impl IrcFrontEnd {
         self.tls.as_ref().map(|(_, addr, _)| *addr)
     }
 
+    /// Switches on soju.im/webpush (docs/design/client-survey.md §10 S4;
+    /// docs/design/agent-frontends.md §7.35) over `subscriptions`, the
+    /// push tables of the agent's database: the capability and ISUPPORT
+    /// `VAPID` are offered, the VAPID key is made if there is none, and
+    /// [`IrcFrontEnd::serve`] pushes to the subscriptions. Call before
+    /// serving; a second call changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`WebPushError`] if the key cannot be read or made, or the HTTP
+    /// client cannot be built.
+    pub fn enable_web_push(
+        &self,
+        subscriptions: Arc<mimid_agent_store::push::PushSubscriptions>,
+    ) -> Result<(), WebPushError> {
+        let push = crate::webpush::WebPush::new(subscriptions)?;
+        let _ = self.shared.web_push.set(Arc::new(push));
+        Ok(())
+    }
+
     /// Accepts connections until `stop` becomes true, then tells every
     /// connection the server is closing and waits for them to end.
     pub async fn serve(self, mut stop: watch::Receiver<bool>) {
         let mut connections = JoinSet::new();
+        if let Some(push) = self.shared.web_push() {
+            connections.spawn(crate::webpush::run(
+                Arc::clone(&self.shared),
+                push,
+                stop.clone(),
+            ));
+        }
         loop {
             tokio::select! {
                 accepted = accept_tls(self.tls.as_ref()) => match accepted {

@@ -47,6 +47,8 @@ pub(crate) struct Shared {
     /// by room key, for the PART the other connections show (§7.16). MIMI
     /// carries no reason for a leave, so it reaches no one else.
     part_reasons: Mutex<HashMap<Key, String>>,
+    /// The Web Push sender, once switched on (soju.im/webpush, §7.35).
+    pub(crate) web_push: std::sync::OnceLock<Arc<crate::webpush::WebPush>>,
 }
 
 impl Shared {
@@ -65,6 +67,7 @@ impl Shared {
             pong_within: options.pong_within,
             created: mimid_agent_store::convert::utc_date(crate::render::now_ms()),
             part_reasons: Mutex::new(HashMap::new()),
+            web_push: std::sync::OnceLock::new(),
         }
     }
 
@@ -89,6 +92,11 @@ impl Shared {
             .unwrap_or_else(PoisonError::into_inner)
             .get(key)
             .cloned()
+    }
+
+    /// The Web Push sender, if switched on.
+    pub(crate) fn web_push(&self) -> Option<Arc<crate::webpush::WebPush>> {
+        self.web_push.get().cloned()
     }
 
     /// The names, locked. Taken after the store's state lock, never
@@ -122,6 +130,7 @@ pub(crate) struct Caps {
     pub(crate) chathistory: bool,
     pub(crate) event_playback: bool,
     pub(crate) read_marker: bool,
+    pub(crate) webpush: bool,
 }
 
 /// What the session showed of a channel.

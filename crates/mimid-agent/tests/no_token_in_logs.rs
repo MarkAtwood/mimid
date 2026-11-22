@@ -147,6 +147,36 @@ async fn no_token_reaches_the_log() {
     irc.until_command("366").await;
     irc.send(&format!("PRIVMSG mimid :allow {token}")).await;
     irc.until_command("NOTICE").await;
+    // A Web Push subscription and a push (a moved read marker): neither
+    // the endpoint's path nor the keys reach the log.
+    let mut service = common::webpush::FakePushService::start(201).await;
+    let push_path = "/push/canary-capability-path";
+    let endpoint = format!("http://{}{push_path}", service.addr);
+    let keys = common::webpush::ClientKeys::new();
+    let register_keys = keys.register_keys();
+    let (mut pushing, _) = Irc::register(
+        irc_addr,
+        &token,
+        "alice",
+        &[
+            "message-tags",
+            "server-time",
+            "echo-message",
+            "draft/read-marker",
+            "soju.im/webpush",
+        ],
+    )
+    .await;
+    pushing
+        .send(&format!("WEBPUSH REGISTER {endpoint} {register_keys}"))
+        .await;
+    pushing.until_command("WEBPUSH").await;
+    pushing.send("PRIVMSG #canary :to be read").await;
+    let read = pushing.until_command("PRIVMSG").await;
+    pushing
+        .send(&format!("MARKREAD #canary timestamp={}", read.tags["time"]))
+        .await;
+    service.next().await;
     let mut wrong = Irc::connect(irc_addr).await;
     wrong.send(&format!("PASS {token}x")).await;
     wrong.send("NICK alice").await;
@@ -179,6 +209,11 @@ async fn no_token_reaches_the_log() {
     assert!(log.contains("following the server's EventSource"), "{log}");
     assert!(log.contains("the server's EventSource is"), "{log}");
     assert!(!log.contains(&token), "the local token is in the log");
+    assert!(!log.contains(push_path), "a push endpoint is in the log");
+    for part in register_keys.split(';') {
+        let value = part.split_once('=').unwrap().1.trim_end_matches('=');
+        assert!(!log.contains(value), "a push key is in the log");
+    }
     for spelling in [
         &password,
         &loud,

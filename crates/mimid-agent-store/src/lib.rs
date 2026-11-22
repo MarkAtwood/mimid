@@ -49,6 +49,7 @@ pub mod feed;
 pub mod history;
 pub mod links;
 pub mod notice;
+pub mod push;
 pub mod record;
 pub mod report;
 pub mod retry;

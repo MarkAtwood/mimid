@@ -33,7 +33,8 @@
 //!   closes the connection. No line is ever logged.
 //! - **Registration**: `CAP LS 302` (`message-tags`, `server-time`,
 //!   `echo-message`, `sasl`, `soju.im/account-required`, `batch`,
-//!   `draft/chathistory`, `draft/event-playback`, `draft/read-marker`),
+//!   `draft/chathistory`, `draft/event-playback`, `draft/read-marker`,
+//!   `soju.im/webpush` when push is on),
 //!   `CAP REQ`
 //!   acknowledged or refused as a whole; the
 //!   client's nick is replaced by the user's own (`<local>-<label>`), 001
@@ -69,6 +70,12 @@
 //! - **Read markers** (§7.34, `markread`): `draft/read-marker`'s
 //!   `MARKREAD` is the store's read position of the room, the one JMAP
 //!   Chat's ReadPosition shows, both ways.
+//! - **Web Push** (§7.35, `webpush`): with the push switched on
+//!   ([`IrcFrontEnd::enable_web_push`]), `soju.im/webpush` and ISUPPORT
+//!   `VAPID`; a registered client is pushed one line per private
+//!   message, mention, invite and moved read marker, encrypted to its
+//!   keys (RFC 8291), padded to one size, signed with the agent's VAPID
+//!   key (RFC 8292).
 //! - **Replies** (§7.26): a reply is shown addressed `<nick>: ` to the
 //!   replied-to sender, with `+draft/reply` under message-tags; a
 //!   PRIVMSG with `+draft/reply` is sent as a reply, naming the latest
@@ -112,16 +119,19 @@ pub mod line;
 mod listen;
 mod markread;
 pub mod names;
+mod push_crypto;
 mod register;
 mod render;
 mod sasl;
 mod service;
+mod webpush;
 
 use std::net::SocketAddr;
 use std::time::Duration;
 
 pub use listen::IrcFrontEnd;
 pub use sasl::MECHANISMS as SASL_MECHANISMS;
+pub use webpush::{PAD_TO as PUSH_PAD_TO, TTL_SECONDS as PUSH_TTL_SECONDS, WebPushError};
 
 /// How long a connection may be silent before the server sends PING.
 /// INVENTED VALUE, NOT FROM SPEC (docs/design/agent-frontends.md §4).

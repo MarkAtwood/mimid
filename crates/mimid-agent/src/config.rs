@@ -270,6 +270,12 @@ pub struct IrcSetting {
     /// A TLS listener on any address, off by default; needs `[tls]`.
     #[serde(default)]
     pub listen_tls: Option<SocketAddr>,
+    /// Whether IRC clients may register for Web Push (soju.im/webpush),
+    /// on by default (docs/design/client-survey.md §10 S4; the push
+    /// service sees only encrypted, fixed-size lines, docs/agent.md
+    /// "Push").
+    #[serde(default = "yes")]
+    pub webpush: bool,
 }
 
 impl Default for IrcSetting {
@@ -278,6 +284,7 @@ impl Default for IrcSetting {
             listen: DEFAULT_IRC_LISTEN,
             server_name: DEFAULT_IRC_SERVER_NAME.to_owned(),
             listen_tls: None,
+            webpush: true,
         }
     }
 }
@@ -740,7 +747,7 @@ mod tests {
     fn every_irc_and_jmap_key_parses() {
         let config = Config::parse(&format!(
             "{}\n[jmap]\nenabled = false\n[irc]\nlisten = \"[::1]:6697\"\n\
-             server_name = \"irc.alice.example\"\n",
+             server_name = \"irc.alice.example\"\nwebpush = false\n",
             config_with_listen("127.0.0.1:0")
         ))
         .unwrap();
@@ -751,6 +758,7 @@ mod tests {
                 listen: "[::1]:6697".parse().unwrap(),
                 server_name: "irc.alice.example".to_owned(),
                 listen_tls: None,
+                webpush: false,
             })
         );
         for name in [

@@ -12,7 +12,10 @@
 
 mod common;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use common::irc::{Irc, Msg};
+use common::webpush::{ClientKeys, FakePushService, check_vapid};
 use common::{ALICE, BOB, BOB_B, Running, config, server, two_providers};
 use mimid_agent::Config;
 use mimid_agent::config::IrcSetting;
@@ -731,6 +734,230 @@ async fn read_markers_are_the_read_positions() {
     a1.send("MARKREAD #nowhere *").await;
     let fail = a1.until_command("FAIL").await;
     assert_eq!(fail.params[..2], ["MARKREAD", "INVALID_PARAMS"]);
+
+    alice.stop().await;
+    bob.stop().await;
+}
+
+/// The ISUPPORT value `token` of `irc`'s burst, if any.
+fn isupport(irc: &Irc, token: &str) -> Option<String> {
+    irc.seen
+        .iter()
+        .filter(|m| m.command == "005")
+        .flat_map(|m| m.params.clone())
+        .find_map(|t| t.strip_prefix(&format!("{token}=")).map(str::to_owned))
+}
+
+/// Oracles: soju.im/webpush (codeberg.org/emersion/soju
+/// `doc/ext/webpush.md`), written out by hand: ISUPPORT `VAPID`; `WEBPUSH
+/// REGISTER <endpoint> <keys>` answered `WEBPUSH REGISTER <endpoint>`,
+/// `UNREGISTER` echoed, `FAIL WEBPUSH INVALID_PARAMS`; each push one IRC
+/// line without CR-LF, `msgid` kept. RFC 8291 (decrypted here by the
+/// test's own code, tests/common/webpush.rs), RFC 8292 §3 (the VAPID
+/// header verifies under the ISUPPORT key, `aud` the endpoint's origin),
+/// RFC 8030 §5.2 and §5.3 (`TTL`, `Urgency`), RFC 8030 §7.3 (a 410 drops
+/// the subscription). Goguma's push handling (goguma 5aa7baa5
+/// `lib/push.dart:33-128`): a query's PRIVMSG to the user's nick from the
+/// peer, a channel PRIVMSG only for a highlight, MARKREAD to clear.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn web_push_reaches_a_fake_push_service() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let bob = Running::start(&with_irc(config(&server, BOB, dir.path(), "any"))).await;
+    let mut service = FakePushService::start(201).await;
+    let endpoint = format!("http://{}/push/bob-phone", service.addr);
+    let keys = ClientKeys::new();
+
+    // Goguma registers at every connection (client_controller.dart:1291).
+    let (mut g, _) = goguma(&bob, "bob").await;
+    let vapid = isupport(&g, "VAPID").expect("VAPID in 005");
+    assert_eq!(URL_SAFE_NO_PAD.decode(&vapid).unwrap().len(), 65);
+    g.send(&format!(
+        "WEBPUSH REGISTER {endpoint} {}",
+        keys.register_keys()
+    ))
+    .await;
+    let answer = g.until_command("WEBPUSH").await;
+    assert_eq!(answer.params, ["REGISTER", endpoint.as_str()]);
+    // Again is a refresh, not a second subscription.
+    g.send(&format!(
+        "WEBPUSH REGISTER {endpoint} {}",
+        keys.register_keys()
+    ))
+    .await;
+    g.until_command("WEBPUSH").await;
+    drop(g);
+
+    // A query message from alice: one push, the line Goguma reads.
+    let mut a = register(&alice, &CAPS).await;
+    a.send("PRIVMSG bob@a.example :wake up é").await;
+    let echo = privmsg_from(&mut a, ALICE_MASK).await;
+    let pushed = service.next().await;
+    assert_eq!(pushed.path, "/push/bob-phone");
+    assert_eq!(pushed.headers["content-encoding"], "aes128gcm");
+    assert_eq!(pushed.headers["ttl"], "604800");
+    assert_eq!(pushed.headers["urgency"], "high");
+    check_vapid(&pushed, &vapid, &format!("http://{}", service.addr));
+    let line = String::from_utf8(keys.decrypt(&pushed.body)).unwrap();
+    let msg = Msg::parse(&line);
+    assert_eq!(msg.source, ALICE_MASK);
+    assert_eq!(msg.command, "PRIVMSG");
+    assert_eq!(msg.params, [BOB_NICK, "wake up é"]);
+    assert_eq!(msg.tags["msgid"], echo.tags["msgid"]);
+    assert_eq!(msg.tags["time"], echo.tags["time"]);
+    // Every push is the same size, whatever the text.
+    let size = pushed.body.len();
+    a.send(&format!("PRIVMSG {BOB_NICK} :{}", "x".repeat(300)))
+        .await;
+    assert_eq!(service.next().await.body.len(), size);
+
+    // A channel message pushes only when it names bob.
+    a.send("JOIN #p").await;
+    a.until_command("366").await;
+    a.send(&format!("INVITE {BOB} #p")).await;
+    a.until_command("341").await;
+    let mut b = register(&bob, &CAPS).await;
+    b.until("the JOIN of #p", |m| m.command == "JOIN").await;
+    a.send("PRIVMSG #p :nothing for bob here").await;
+    privmsg_from(&mut b, ALICE_MASK).await;
+    a.send(&format!("PRIVMSG #p :{BOB_NICK}: look")).await;
+    let pushed = service.next().await;
+    let msg = Msg::parse(&String::from_utf8(keys.decrypt(&pushed.body)).unwrap());
+    assert_eq!(msg.params, ["#p", &format!("{BOB_NICK}: look")]);
+
+    // A read marker moved on another device clears notifications.
+    let seen = privmsg_from(&mut b, ALICE_MASK).await;
+    b.send(&format!("MARKREAD #p timestamp={}", seen.tags["time"]))
+        .await;
+    let pushed = service.next().await;
+    assert_eq!(pushed.headers["urgency"], "normal");
+    let msg = Msg::parse(&String::from_utf8(keys.decrypt(&pushed.body)).unwrap());
+    assert_eq!(msg.command, "MARKREAD");
+    assert_eq!(
+        msg.params,
+        ["#p", &format!("timestamp={}", seen.tags["time"])]
+    );
+
+    // UNREGISTER: echoed, nothing pushed any more; again is still echoed.
+    b.send(&format!("WEBPUSH UNREGISTER {endpoint}")).await;
+    assert_eq!(
+        b.until_command("WEBPUSH").await.params,
+        ["UNREGISTER", endpoint.as_str()]
+    );
+    b.send(&format!("WEBPUSH UNREGISTER {endpoint}")).await;
+    assert_eq!(
+        b.until_command("WEBPUSH").await.params,
+        ["UNREGISTER", endpoint.as_str()]
+    );
+    a.send(&format!("PRIVMSG {BOB_NICK} :no push")).await;
+    privmsg_from(&mut b, ALICE_MASK).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(service.received.try_recv().is_err());
+
+    // Refusals.
+    for bad in [
+        format!(
+            "WEBPUSH REGISTER http://push.example/x {}",
+            keys.register_keys()
+        ),
+        format!("WEBPUSH REGISTER {endpoint} p256dh=AAAA;auth=AAAA"),
+        format!("WEBPUSH REGISTER {endpoint}"),
+    ] {
+        b.send(&bad).await;
+        let fail = b.until_command("FAIL").await;
+        assert_eq!(
+            fail.params[..3],
+            ["WEBPUSH", "INVALID_PARAMS", "REGISTER"],
+            "{bad}"
+        );
+    }
+
+    // A push service's 410 drops the subscription.
+    let mut gone = FakePushService::start(410).await;
+    let endpoint = format!("http://{}/push/old-phone", gone.addr);
+    b.send(&format!(
+        "WEBPUSH REGISTER {endpoint} {}",
+        keys.register_keys()
+    ))
+    .await;
+    b.until_command("WEBPUSH").await;
+    a.send(&format!("PRIVMSG {BOB_NICK} :once")).await;
+    gone.next().await;
+    let subscriptions = mimid_agent_store::push::PushSubscriptions::open(
+        &bob.state_dir.join(mimid_agent_core::DATABASE_FILE),
+    )
+    .unwrap();
+    let start = std::time::Instant::now();
+    while !subscriptions.list("irc").unwrap().is_empty() {
+        assert!(
+            start.elapsed() < common::PATIENCE,
+            "the subscription is dropped"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    alice.stop().await;
+    bob.stop().await;
+}
+
+/// Oracles: client-survey.md §10 S4 (each front end has its own off
+/// switch): with `[irc] webpush = false` neither the capability nor
+/// `VAPID` is offered, and `WEBPUSH` is an unknown command (421).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn web_push_can_be_switched_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let mut config = with_irc(config(&server, ALICE, dir.path(), "any"));
+    config.irc.as_mut().unwrap().webpush = false;
+    let alice = Running::start(&config).await;
+    let (mut g, burst) = goguma(&alice, "alice").await;
+    assert!(
+        !burst
+            .iter()
+            .any(|m| m.command == "CAP" && m.raw.contains("webpush") && m.params[1] != "NAK"),
+        "{burst:#?}"
+    );
+    assert!(isupport(&g, "VAPID").is_none());
+    g.send("WEBPUSH REGISTER https://push.example/x p256dh=x;auth=y")
+        .await;
+    let answer = g.sync().await;
+    assert!(answer.iter().any(|m| m.command == "421"), "{answer:#?}");
+    alice.stop().await;
+}
+
+/// Oracles: as [`web_push_reaches_a_fake_push_service`], across two
+/// providers: a private message from alice on a.example wakes bob's
+/// phone, registered with his daemon on b.example, with the line his
+/// connection would show.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn web_push_across_two_providers() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = two_providers(dir.path(), &[ALICE], &[BOB_B]).await;
+    let alice = Running::start(&with_irc(config(&a, ALICE, dir.path(), "any"))).await;
+    let bob = Running::start(&with_irc(config(&b, BOB_B, dir.path(), "any"))).await;
+    let mut service = FakePushService::start(201).await;
+    let endpoint = format!("http://{}/push/bob", service.addr);
+    let keys = ClientKeys::new();
+    let (mut g, _) = goguma(&bob, "bob").await;
+    let vapid = isupport(&g, "VAPID").expect("VAPID in 005");
+    g.send(&format!(
+        "WEBPUSH REGISTER {endpoint} {}",
+        keys.register_keys()
+    ))
+    .await;
+    g.until_command("WEBPUSH").await;
+    drop(g);
+
+    let mut ai = register(&alice, &CAPS).await;
+    ai.send("PRIVMSG bob@b.example :from a.example").await;
+    let echo = privmsg_from(&mut ai, ALICE_MASK).await;
+    let pushed = service.next().await;
+    check_vapid(&pushed, &vapid, &format!("http://{}", service.addr));
+    let msg = Msg::parse(&String::from_utf8(keys.decrypt(&pushed.body)).unwrap());
+    assert_eq!(msg.source, ALICE_MASK);
+    assert_eq!(msg.params, [BOB_B_NICK, "from a.example"]);
+    assert_eq!(msg.tags["msgid"], echo.tags["msgid"]);
 
     alice.stop().await;
     bob.stop().await;

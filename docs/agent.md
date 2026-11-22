@@ -103,6 +103,7 @@ The IRC front end. Absent means no IRC. An empty `[irc]` table turns it on with 
 | `listen` | socket address, loopback | `127.0.0.1:6667` | Where the IRC server listens, without TLS. It must be a loopback address. Browsers refuse to connect to port 6667, which blocks web pages from sending HTTP to it. |
 | `listen_tls` | socket address | none | Where the IRC server also listens with TLS, on any address: a tailnet or WireGuard address is the safe choice. Needs `[tls]`. Off by default. An address that may be reachable from the internet is allowed, with a WARN at start. |
 | `server_name` | string | `"mimid.invalid"` | The name the IRC server gives itself: at most 63 characters, letters, digits, `-` and `.`, with at least one dot and no empty label. |
+| `webpush` | boolean | `true` | Whether IRC clients may register for Web Push (the `soju.im/webpush` capability). See [Push](#push-what-the-push-service-sees). |
 
 The client logs in with a credential (the token in `<state_dir>/agent-token`, or an app password) by SASL PLAIN, SASL SCRAM-SHA-256 or as its server password (`PASS`). If both SASL and PASS come, SASL decides. A client that turned on the `sasl` capability and sent no credential gets `FAIL * ACCOUNT_REQUIRED`; others get 464.
 
@@ -161,7 +162,34 @@ For the two loopback providers in [operating.md](operating.md#example-two-federa
 ## How clients connect
 
 - **JMAP Chat**: the Session is at `http://127.0.0.1:<port>/.well-known/jmap`, with `Authorization: Bearer <agent-token>`. The request's `Host` must be `127.0.0.1:<port>`, `[::1]:<port>` or `localhost:<port>`; any other gets `421`. This blocks DNS rebinding.
-- **IRC**: connect to the `[irc]` `listen` address, or with TLS to `listen_tls`, and send a credential with `PASS`.
+- **IRC**: connect to the `[irc]` `listen` address, or with TLS to `listen_tls`, and send a credential with SASL or `PASS`.
+
+## Goguma
+
+Goguma (Android and iOS) is the phone client the IRC front end is built for. Run `setup goguma <device>` (above) and add the server in Goguma from the QR code, with the app password it printed. It needs the TLS listener: Goguma offers no password field without TLS and SASL PLAIN. A self-signed or tailnet certificate is fine; Goguma asks once and pins it.
+
+What works:
+
+- **Channels and private queries.** Each room is a channel. A one-to-one room is a private query with the other user's nick; to write to someone you have never seen, start the query with `bob@b.example` as the nick. Closing a query in Goguma only archives it on the phone; `/part` in a query hides it from the agent's list of conversations until the next message. Neither leaves the room.
+- **History.** Goguma fetches what came while it was away (`draft/chathistory`), from the agent's store: channels and queries, 1000 messages a request. Messages deleted or expired here are not served.
+- **Read markers.** What you read on the phone is read in every other client of this agent, JMAP Chat clients included, and the other way round (`draft/read-marker`).
+- **Push.** On by default; see below.
+- **Replies and reactions** show and can be sent. Edits show as a new line starting `(edited)`; a retraction as a notice.
+
+Not there: attachments, sending edits, user presence (no `MONITOR` or away status: MIMI carries no presence), file upload (`soju.im/FILEHOST`), avatars and pinned or muted state on the server (`draft/metadata-2`; Goguma keeps them on the phone).
+
+## Push: what the push service sees
+
+With `[irc] webpush = true` (the default) an IRC client can register a Web Push subscription (`WEBPUSH REGISTER`). Goguma does this at every connection. The agent then pushes the client one IRC line for each private message from someone else, each channel message from someone else that names your nick or replies to you, each pending invite, and each read marker moved on another device (so the phone clears notifications you have read elsewhere). Goguma shows no notification of its own while it has a push subscription, so the agent pushes whether or not the phone is connected.
+
+The push goes to the endpoint the client registered: for Goguma, its own relay (`pushgarden.emersion.fr`, which passes it to Google's or Apple's push service) or a UnifiedPush distributor you chose. Each push is encrypted to keys the phone made (RFC 8291) and signed with the agent's VAPID key (RFC 8292). What the relay and the push service see:
+
+- that this agent sent a push to this endpoint, and when;
+- a body of the same size every time (1024 bytes of padded plaintext): no text, sender, room or length;
+- the `Urgency` (`high` for a message or invite, `normal` for a read marker), a `TTL` of 7 days, and the agent's VAPID public key, the same for every push of this agent;
+- the agent's address, as any HTTP client shows it.
+
+They can count your messages and see when they come. Set `webpush = false` to send nothing; the phone then only learns of messages when Goguma connects. An endpoint must be `https`, or `http` on loopback. A subscription is dropped when the client unregisters it or the push service answers 404 or 410. Design: docs/design/agent-frontends.md §7.35.
 
 ## Attachment links
 
@@ -172,7 +200,7 @@ With `listen` set, the agent can hand a front end's client a link to one attachm
 Everything is under `state_dir`:
 
 - The directory is created with mode 0700. An existing directory or file that group or others can reach is refused.
-- `mimid.sqlite` (mode 0600): the user's MLS private keys, KeyPackage private keys and groups, the delivery journal, the outbox of messages being sent, and the plaintext message, room and contact records.
+- `mimid.sqlite` (mode 0600): the user's MLS private keys, KeyPackage private keys and groups, the delivery journal, the outbox of messages being sent, the plaintext message, room and contact records, the credentials, and the Web Push subscriptions with the agent's VAPID key.
 - `agent-token` (mode 0600): the token for local clients.
 - `blobs/`: attachments, in plaintext.
 

@@ -71,3 +71,9 @@ mimid-server = { path = "../mimid-server" }
 # The version and features mimid-agent-core uses.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 tempfile = "=3.23.0"
+# The fake Web Push client of tests/common/webpush.rs decrypts pushes
+# (RFC 8291) and checks VAPID (RFC 8292) with the crates and versions
+# mimid-agent-irc uses.
+aes-gcm = "=0.10.3"
+hkdf = "=0.13.0"
+p256 = { version = "=0.13.2", features = ["ecdh", "ecdsa"] }

@@ -2211,6 +2211,78 @@ Added on 2026-11-20:
       `read_markers_are_the_read_positions` (both ways with JMAP Chat),
       `private_queries_across_two_providers`.
 
+35. **Web Push in IRC v2 (epic mimid-i0id; Mark's S4: push on by
+    default, minimal payloads, a switch per front end, the docs say what
+    the relay sees).** soju.im/webpush (codeberg.org/emersion/soju
+    `doc/ext/webpush.md`), RFC 8291 encryption, RFC 8292 VAPID.
+    - **Switch.** `[irc] webpush`, on by default. Off: no capability, no
+      `VAPID`, `WEBPUSH` is 421.
+    - **Crypto.** Written over the RustCrypto crates already in the
+      build (p256 0.13.2, hkdf 0.13.0, aes-gcm 0.10.3), not a Web Push
+      crate: `web-push` 0.11.0 (2025-02) takes `ece` with its default
+      OpenSSL backend, `http` 0.2 and `jwt-simple`, and the code is one
+      HKDF chain, one AES-GCM record and one ES256 JWT, checked byte for
+      byte against RFC 8291 §5's example. One record, its size the body's
+      length (Goguma refuses anything else, goguma 5aa7baa5
+      `lib/webpush.dart:67-70`). RFC 8291 §5 prints `Content-Length: 145`
+      for a 144-octet body; the test checks the body.
+    - **Keys and subscriptions** live in the agent's database, in tables
+      of their own (`push_subscriptions`, `push_keys`) with their own
+      `schema_version` row, `push` version 1 (mimid-agent-store
+      `push`), as the credential table does; the store's records and
+      schema version do not change. The VAPID key is a P-256 key made
+      once. A subscription keeps the client's keys and whether its
+      connection had message-tags and server-time, since a push "follows
+      the same capabilities ... as when the client registered". At most
+      64 per front end, endpoints at most 2048 octets (both INVENTED).
+    - **Registration.** `WEBPUSH REGISTER <endpoint> <keys>`: the keys in
+      the message-tag format, `p256dh` an uncompressed P-256 point and
+      `auth` 16 octets, base64url padded or not (Goguma pads). The
+      endpoint must be `https`, or `http` to a loopback address
+      (INVENTED: the agent POSTs wherever the client says). Answered
+      `WEBPUSH REGISTER <endpoint>`; the same endpoint again replaces
+      the subscription. `UNREGISTER` is echoed, there or not.
+    - **What is pushed** (INVENTED: soju.im/webpush leaves the set to the
+      server; soju's choices were the model): a message from the other
+      user of a private query; a channel message from another user that
+      names the user's nick as a word or replies to the user's message;
+      a pending invite (INVITE); a read position moved (MARKREAD, so the
+      phone clears notifications read elsewhere). Goguma handles exactly
+      PRIVMSG, INVITE and MARKREAD in a push and shows channel PRIVMSGs as
+      highlights, so the server must filter (`lib/push.dart:33-128`).
+      Each push is one line as the client's connection would show it,
+      the message's first line cut to 400 octets, tags only `msgid` and
+      `time`. At most 20 per subscription for one save's changes.
+    - **Connected or not.** The epic's brief said to push while the
+      client is disconnected; the survey said "while no client is
+      attached". Goguma shows no notification of its own for lines it
+      reads live once it holds a push subscription
+      (`lib/client_controller.dart:1137-1141`), so pushing only while it
+      is away would lose every notification while its connection lives
+      in the background. The agent pushes to every subscription whether
+      a client is connected or not, as soju does. This is a choice about
+      when, inside S4's "on by default"; it changes no decision.
+    - **Minimal payloads.** The plaintext is padded to 1024 octets, so
+      every push is the same size; the relay sees the endpoint, the
+      time, the urgency (`high` for a message or invite, `normal` for a
+      marker), `TTL` 604800 (soju's 7 days) and the VAPID key. The VAPID
+      JWT has `aud` and `exp` (12 hours) and no `sub`: RFC 8292 §2.1
+      says SHOULD, but a contact would name the user to every push
+      service. docs/agent.md "Push: what the push service sees" says
+      this for users.
+    - **Failures.** 404 or 410 drops the subscription (RFC 8030 §7.3);
+      anything else is logged by host only (the endpoint's path is a
+      capability) and not retried.
+    - Tests: mimid-agent-irc `push_crypto::tests` (RFC 8291 §5, padding,
+      key checks, a VAPID token verified), `webpush::tests`;
+      mimid-agent-store `push::tests`; mimid-agent `tests/irc_v2.rs`
+      `web_push_reaches_a_fake_push_service` (Goguma's registration, a
+      query push and a mention decrypted by the test's own RFC 8291 code,
+      VAPID verified under the ISUPPORT key, MARKREAD, UNREGISTER, a 410
+      dropping the subscription), `web_push_can_be_switched_off`,
+      `web_push_across_two_providers`; `tests/no_token_in_logs.rs`
+      (neither the endpoint's path nor the keys reach the log).
+
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 
 Mark decided on 2026-11-20 that JMAP (draft-atwood-jmap-chat-mimi) is

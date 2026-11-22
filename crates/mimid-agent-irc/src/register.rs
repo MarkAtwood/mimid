@@ -24,7 +24,7 @@ use mimid_agent_store::credentials::Login;
 /// (docs/irc-lessons.md "CAP"). `soju.im/account-required` only says that
 /// a login is needed (docs/design/frontend-auth.md §4.1); a REQ of it is
 /// acknowledged and changes nothing.
-pub const CAPS: [&str; 9] = [
+pub const CAPS: [&str; 10] = [
     "batch",
     "draft/chathistory",
     "draft/event-playback",
@@ -34,6 +34,7 @@ pub const CAPS: [&str; 9] = [
     "sasl",
     "server-time",
     "soju.im/account-required",
+    "soju.im/webpush",
 ];
 
 /// The 005 tokens (docs/design/agent-frontends.md §4 "Capabilities in
@@ -203,8 +204,10 @@ impl Session {
                     .and_then(|v| v.parse::<u32>().ok())
                     .is_some_and(|v| v >= 302);
                 // CAP 302 shows values (IRCv3 Capability Negotiation).
+                let push = self.shared.web_push().is_some();
                 let caps: Vec<String> = CAPS
                     .iter()
+                    .filter(|c| push || **c != "soju.im/webpush")
                     .map(|c| match *c {
                         "sasl" if multiline => format!("sasl={}", crate::sasl::MECHANISMS),
                         _ => (*c).to_owned(),
@@ -227,6 +230,7 @@ impl Session {
                     ("draft/chathistory", self.caps.chathistory),
                     ("draft/event-playback", self.caps.event_playback),
                     ("draft/read-marker", self.caps.read_marker),
+                    ("soju.im/webpush", self.caps.webpush),
                     ("echo-message", self.caps.echo_message),
                     ("message-tags", self.caps.message_tags),
                     ("sasl", self.caps.sasl),
@@ -256,6 +260,9 @@ impl Session {
                         "draft/chathistory" => caps.chathistory = on,
                         "draft/event-playback" => caps.event_playback = on,
                         "draft/read-marker" => caps.read_marker = on,
+                        "soju.im/webpush" if self.shared.web_push().is_some() => {
+                            caps.webpush = on;
+                        }
                         "sasl" => caps.sasl = on,
                         "soju.im/account-required" => {}
                         "message-tags" => caps.message_tags = on,
@@ -374,7 +381,11 @@ impl Session {
             "004",
             &[&server, VERSION, "i", CHANNEL_MODES, PARAMETER_MODES],
         );
-        let tokens = isupport();
+        let mut tokens = isupport();
+        // soju.im/webpush: the VAPID public key, which never changes.
+        if let Some(push) = self.shared.web_push() {
+            tokens.push(format!("VAPID={}", push.vapid_public));
+        }
         let overhead = format!(
             ":{server} 005 {} :are supported by this server\r\n",
             me.nick

@@ -2576,11 +2576,13 @@ dependencies = [
 name = "mimid-agent"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "axum",
  "base64 0.22.1",
  "futures",
  "getrandom 0.3.4",
+ "hkdf 0.13.0",
  "hmac 0.13.0",
  "jmap-base-client",
  "jmap-chat-client",
@@ -2593,6 +2595,7 @@ dependencies = [
  "mimid-agent-jmap",
  "mimid-agent-store",
  "mimid-server",
+ "p256",
  "qrcode",
  "reqwest 0.13.5",
  "rustls",
@@ -2641,8 +2644,13 @@ dependencies = [
 name = "mimid-agent-irc"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "base64 0.22.1",
+ "getrandom 0.3.4",
+ "hkdf 0.13.0",
  "mimid-agent-store",
+ "p256",
+ "reqwest 0.13.5",
  "serde_json",
  "sha2 0.11.1",
  "thiserror",

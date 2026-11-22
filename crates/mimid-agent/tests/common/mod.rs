@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 pub mod irc;
+pub mod webpush;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
