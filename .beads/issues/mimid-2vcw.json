@@ -2,13 +2,15 @@
   "id": "mimid-2vcw",
   "title": "Mark: what IRC PART and JMAP Chat destroy do in a fixed_membership one-to-one room (§7.1 vs room-policy-04 §5)",
   "description": "room-policy-04 §5: 'Ordinary users cannot leave or be removed, however a user can remove all its clients from the associated MLS group.' §7.1: PART leaves for real, every device leaves, only a new invite brings them back. In a fixed room nobody can re-invite (the user stays a participant, no adds) and the user can return alone (canAddOwnClient). Options: (A) PART/destroy remove all the user's clients (SelfRemove + own Removes, no list change), forget locally; the peer keeps writing into a room the user has no client in; open_direct rejoins by external Commit. (B) PART/destroy hide the room locally only (IRC: close the query; JMAP: forget_room without leaving, §7.9 tombstone), devices stay; the next message brings it back. (C) keep refusing (current). Recommendation: (B) for PART and destroy, with (A) as a separate explicit action later. Until decided Agent::leave refuses a fixed room. agent-frontends.md §7.29; bead mimid-qrbe.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T23:48:42.003153794Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T23:48:42.003153794Z",
+  "updated_at": "2026-11-22T02:46:40.458178432Z",
+  "closed_at": "2026-11-22T02:46:40.458178432Z",
+  "close_reason": "Option B (Mark 2026-11-22) built for both front ends. IRC half: 32790fbb (irc-v2). JMAP half: cbe1158f (branch purple-prereqs): Chat/set destroy of an active direct Chat calls Store::hide_room (no leave, devices stay, nothing sent); a hiddenRoom tombstone keeps syncs from remaking it; the next new message accepted after the newest one it held brings it back at once as a new record/Chat; open_direct revives it; store schema 12. Tests: agent-store groundwork a_hidden_direct_room_comes_back_with_its_next_message, state unit test, mimid-agent groundwork destroying_a_direct_chat_hides_it_until_the_next_message, direct_two_providers updated.",
   "labels": [
     "agent",
     "human"
