@@ -39,7 +39,15 @@
 //! - **Rooms are channels** (`#name`); the client is joined to every room
 //!   the user is in. JOIN of an unknown name hosts a new room, PART leaves
 //!   the room for good (§7.1). People are nicks `<local>-<label>`
-//!   ([`names`]); there are no private queries (§7.2).
+//!   ([`names`]).
+//! - **One-to-one rooms are private queries** (docs/design/client-survey.md
+//!   §10 S2; §7.32): a message in one is a PRIVMSG to the user's nick from
+//!   the other user, or to theirs from the user. PRIVMSG to a nick (or a
+//!   user URI, or `user@domain`) opens the one-to-one room with them
+//!   (`Store::open_direct`, their consent applying as to any invite) or
+//!   writes into the one there is. `PART <nick>` closes the query: the
+//!   room stays, hidden from chathistory `TARGETS` until the next message
+//!   (bead mimid-2vcw, option B).
 //! - **Invites and consent** (§7.5, §7.13): a pending invite is an
 //!   `INVITE` to the channel name its room will have, which JOIN accepts
 //!   (or to `&invite-<number>` when its Welcome could not be read, which
@@ -72,9 +80,10 @@
 //! - The plain listener is loopback only; the TLS listener
 //!   ([`IrcOptions::listen_tls`]) takes any address. A TLS handshake must
 //!   end within [`HANDSHAKE_WITHIN`].
-//! - No private queries, attachments, history playback, chathistory,
-//!   labeled-response, batch, or sending edits or retractions from IRC
-//!   (§4 "Sending", §7).
+//! - No attachments, history playback without chathistory,
+//!   labeled-response, or sending edits from IRC (§4 "Sending", §7).
+//! - A user not seen yet has no nick: a first private message to them
+//!   names them by user URI or `user@domain`.
 //! - `KICK` removes the user's devices from the room (`Store::kick`); they
 //!   stay a participant, so the nick stays in the channel.
 //! - `JOIN 0` leaves every room for good, as IRC defines it (§7.12): each

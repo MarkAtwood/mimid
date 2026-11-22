@@ -289,7 +289,7 @@ impl Names {
             }
         }
         for room in state.rooms.values_mut() {
-            if room.status != RoomStatus::Active {
+            if room.status != RoomStatus::Active || room.direct {
                 continue;
             }
             if let Some(channel) = kept(&room.ext, "channel")
@@ -367,11 +367,31 @@ impl Names {
 
     /// Gives active `room` its channel name, if it has none, and keeps it
     /// in the record's `ext["irc"]`; a room no longer active gives its
-    /// name up.
+    /// name up. A one-to-one room ([`Room::direct`]) is a private query,
+    /// not a channel (docs/design/client-survey.md §10 S2): it gets no
+    /// channel name, gives up any name held for it by its invite, and
+    /// keeps only when its query was closed ([`hidden_at`]).
     pub fn note_room(&mut self, room: &mut Room) {
         if room.status != RoomStatus::Active {
             self.forget_room(&room.key);
             room.ext.remove(EXT_KEY);
+            return;
+        }
+        if room.direct {
+            self.forget_room(&room.key);
+            if let Some(folded) = self.hold_of(&room.uri) {
+                self.held.remove(&folded);
+            }
+            let hidden = hidden_at(room);
+            match hidden {
+                Some(at) => {
+                    room.ext
+                        .insert(EXT_KEY.to_owned(), json!({ "hiddenAt": at }));
+                }
+                None => {
+                    room.ext.remove(EXT_KEY);
+                }
+            }
             return;
         }
         let channel = self.channel_for(room);
@@ -538,6 +558,24 @@ impl Names {
             self.rooms.remove(&fold(&channel));
         }
     }
+}
+
+/// When the user last closed the private query of one-to-one room
+/// `room` (`PART <nick>`; bead mimid-2vcw, option B), in milliseconds: the
+/// query is hidden until a message newer than this. Kept in
+/// `ext["irc"]["hiddenAt"]`. INVENTED, NOT FROM SPEC: the field.
+#[must_use]
+pub fn hidden_at(room: &Room) -> Option<u64> {
+    room.ext
+        .get(EXT_KEY)
+        .and_then(|v| v.get("hiddenAt"))
+        .and_then(Value::as_u64)
+}
+
+/// Marks one-to-one room `room`'s query closed at `at` ([`hidden_at`]).
+pub fn set_hidden_at(room: &mut Room, at: u64) {
+    room.ext
+        .insert(EXT_KEY.to_owned(), json!({ "hiddenAt": at }));
 }
 
 /// The text kept under `field` in `ext["irc"]`.

@@ -185,6 +185,11 @@ pub(crate) struct Session {
     pub(crate) channels: BTreeMap<Key, ChannelView>,
     pub(crate) shown: HashMap<Key, ShownMessage>,
     pub(crate) invites_shown: BTreeSet<u64>,
+    /// The name this connection sent JOIN for to accept an invite, by the room's
+    /// URI, until the room arrives: a one-to-one room is a query, so the
+    /// name is answered with JOIN and PART (docs/irc-lessons.md "Answer
+    /// a JOIN under the name it asked for").
+    pub(crate) accepted_names: HashMap<String, String>,
     /// Messages and reactions this connection sent, not yet seen on the
     /// feed.
     pub(crate) own_sends: HashSet<Key>,
@@ -221,6 +226,7 @@ impl Session {
             channels: BTreeMap::new(),
             shown: HashMap::new(),
             invites_shown: BTreeSet::new(),
+            accepted_names: HashMap::new(),
             own_sends: HashSet::new(),
             connected_at: 0,
             delivered: Vec::new(),

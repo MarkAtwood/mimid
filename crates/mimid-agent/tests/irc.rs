@@ -610,11 +610,6 @@ async fn two_daemons_chat_over_irc_and_jmap() {
         assert_eq!(gone.tags["+draft/reply"], jmap_id);
     }
 
-    // No private queries in v1 (§7.2): 404 naming the nick.
-    a.send(&format!("PRIVMSG {BOB_NICK} :psst")).await;
-    let refused = a.until_command("404").await;
-    assert_eq!(refused.params[1], BOB_NICK);
-    assert!(refused.text().contains("INVITE"), "{}", refused.raw);
     // WHOIS lists bob's channel.
     a.send(&format!("WHOIS {BOB_NICK}")).await;
     let answers = a.sync().await;

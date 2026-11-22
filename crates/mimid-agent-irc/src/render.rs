@@ -10,6 +10,7 @@
 //! | The user out of a room | PART from the user, with the reason the user gave on another connection of this daemon, else "no longer in this room" (§7.16) |
 //! | Room deleted here | PART from the user, "deleted here" |
 //! | Message | PRIVMSG from the sender's hostmask, `msgid` and `time`; `/me ` text as ACTION |
+//! | Message in a one-to-one room | PRIVMSG to the user's nick from the other user, or to the other user's nick from the user: a private query (§7.32) |
 //! | Call to join (§7.24) | ACTION from the sender after the text: `call: <description> <<url>>`, or `(not a web link: <url>)` for a URL that is not `https` or `wss` |
 //! | On behalf of (§7.28) | `<name> (via <sender>): <text>`, unless the text starts with the name |
 //! | Reply | The text after `<nick>: `, the replied-to sender's nick, unless it starts so already; `+draft/reply=<msgid>` of a stored message |
@@ -130,11 +131,14 @@ pub(crate) struct RoomShown {
 }
 
 /// A message as a connection shows it.
-struct MessageShown {
-    record: Message,
-    channel: String,
+pub(crate) struct MessageShown {
+    pub(crate) record: Message,
+    /// Where its lines go: the channel, or for a private query the user's
+    /// own nick (a message from the other user) or the other user's (one
+    /// from the user).
+    pub(crate) target: String,
     /// The sender, `None` for the agent's notice.
-    sender: Option<Identity>,
+    pub(crate) sender: Option<Identity>,
     /// The msgid of what it replies to, if stored.
     reply_to: Option<String>,
     /// The nick of the sender of what it replies to, if stored and sent
@@ -184,6 +188,7 @@ impl Session {
     pub(crate) fn apply(&mut self, change: &Change) {
         match change {
             Change::RoomAdded(key) | Change::RoomChanged(key) | Change::RoomLeft(key) => {
+                self.answer_accepted_query(key);
                 self.show_room(key);
             }
             Change::RoomForgotten { key, .. } => {
@@ -201,6 +206,37 @@ impl Session {
             Change::InvitePending(_) => self.show_invites(),
             _ => {}
         }
+    }
+
+    /// If room `key` is a one-to-one room whose invite this connection
+    /// accepted with JOIN of a channel name, answers that JOIN with JOIN
+    /// and PART of the name: the room is a private query, not a channel
+    /// (docs/irc-lessons.md "Answer a JOIN under the name it asked for").
+    fn answer_accepted_query(&mut self, key: &str) {
+        let (uri, peer) = {
+            let state = self.shared.store.state();
+            let Some(room) = state.rooms.get(key) else {
+                return;
+            };
+            if !room.direct || room.status != RoomStatus::Active {
+                return;
+            }
+            let me = self.me();
+            (
+                room.uri.clone(),
+                room.direct_peer(&me.uri).map(str::to_owned),
+            )
+        };
+        let Some(name) = self.accepted_names.remove(&uri) else {
+            return;
+        };
+        let me = self.me();
+        self.send(&Out::new(&me.mask(), "JOIN", vec![name.clone()]));
+        let why = match peer {
+            Some(peer) => format!("a private query with {}", self.shared.names().nick(&peer)),
+            None => "a private query".to_owned(),
+        };
+        self.part_own(&name, &why);
     }
 
     /// Room `key` as this connection shows it, if the user is in it.
@@ -386,11 +422,46 @@ impl Session {
         ));
     }
 
-    /// Message `key` with what showing it needs, if its room is shown.
-    fn message_shown(&self, key: &str) -> Option<MessageShown> {
+    /// Message `key` with what showing it needs, if its room is shown as
+    /// a channel or is a private query.
+    pub(crate) fn message_shown(&self, key: &str) -> Option<MessageShown> {
+        let record = self.shared.store.state().messages.get(key)?.clone();
+        self.shown_record(record)
+    }
+
+    /// Where the lines of room `key` go for a message from `sender`: its
+    /// channel, if shown, or for a one-to-one room with another user the
+    /// user's own nick (from the other user) or the other user's nick
+    /// (from the user or the agent); `None` for any other room.
+    pub(crate) fn target_of(&self, key: &str, sender: Option<&str>) -> Option<String> {
+        if let Some(view) = self.channels.get(key) {
+            return Some(view.name.clone());
+        }
+        let me = self.me();
+        let peer = {
+            let state = self.shared.store.state();
+            let room = state.rooms.get(key)?;
+            if room.status != RoomStatus::Active {
+                return None;
+            }
+            room.direct_peer(&me.uri)?.to_owned()
+        };
+        if sender.is_some_and(|s| s == peer) {
+            Some(me.nick)
+        } else {
+            Some(self.shared.names().nick(&peer))
+        }
+    }
+
+    /// `record` with what showing it needs, if its room is shown as a
+    /// channel or is a private query.
+    pub(crate) fn shown_record(&self, record: Message) -> Option<MessageShown> {
+        let sender_uri = match &record.sender {
+            Sender::User(uri) => Some(uri.as_str()),
+            _ => None,
+        };
+        let channel = self.target_of(&record.room, sender_uri)?;
         let state = self.shared.store.state();
-        let record = state.messages.get(key)?.clone();
-        let channel = self.channels.get(&record.room)?.name.clone();
         let target = match &record.in_reply_to {
             Some(Reply::Message(target)) => state.messages.get(target),
             _ => None,
@@ -408,7 +479,7 @@ impl Session {
         let reply_nick = reply_user.map(|uri| self.shared.names().identity(&uri).nick);
         Some(MessageShown {
             record,
-            channel,
+            target: channel,
             sender,
             reply_to,
             reply_nick,
@@ -424,31 +495,34 @@ impl Session {
         let Some(m) = self.message_shown(key) else {
             return;
         };
-        self.shown.insert(
-            key.to_owned(),
-            ShownMessage {
-                edited_at: m.record.edited_at,
-                version: latest_ref(&m.record),
-                retracted: m.record.deleted.is_some(),
-                reactions: m
-                    .record
-                    .reactions
-                    .iter()
-                    .map(|r| (r.key.clone(), (r.sender.clone(), r.reaction.clone())))
-                    .collect(),
-            },
-        );
+        self.shown.insert(key.to_owned(), shown_now(&m.record));
         if m.record.deleted.is_some() || (own_send && !self.caps.echo_message) {
             return;
         }
+        if m.record.expiry.counts_from_read() {
+            self.delivered.push(key.to_owned());
+        }
+        for out in self.message_lines(&m, &[]) {
+            self.send(&out);
+        }
+    }
+
+    /// The lines of message `m`, not retracted: its text from the sender
+    /// (split to fit, `/me ` as ACTION), then each call as an ACTION line
+    /// (§7.24); a notice of the agent's as a NOTICE from the server. The
+    /// first line carries `msgid` and `+draft/reply`, every line `time`
+    /// with server-time and `every` (a `batch` tag).
+    pub(crate) fn message_lines(
+        &mut self,
+        m: &MessageShown,
+        every: &[(String, String)],
+    ) -> Vec<Out> {
         let mut tags = vec![("msgid".to_owned(), m.record.sender_msg_id.clone())];
         if let Some(reply) = &m.reply_to {
             tags.push(("+draft/reply".to_owned(), reply.clone()));
         }
         let time = m.record.accepted_at;
-        if m.record.expiry.counts_from_read() {
-            self.delivered.push(key.to_owned());
-        }
+        let mut lines = Vec::new();
         match &m.sender {
             Some(sender) => {
                 let mask = sender.mask();
@@ -462,43 +536,61 @@ impl Session {
                         Some(o) => via_text(&o, &sender.nick, &body),
                         None => body,
                     };
-                    self.text_lines(
+                    lines.extend(self.text_lines(
                         &mask,
                         "PRIVMSG",
-                        &m.channel,
+                        &m.target,
                         &body,
                         "",
                         tags.take().unwrap_or_default(),
+                        every,
                         time,
-                    );
+                    ));
                 }
                 // Each call as an ACTION line of its own (§7.24); the
                 // first line of the message carries its tags.
                 for call in &m.record.calls {
-                    self.text_lines(
+                    lines.extend(self.text_lines(
                         &mask,
                         "PRIVMSG",
-                        &m.channel,
+                        &m.target,
                         &format!("/me {}", call.text()),
                         "",
                         tags.take().unwrap_or_default(),
+                        every,
                         time,
-                    );
+                    ));
                 }
             }
             None => {
                 let server = self.shared.server.clone();
-                self.text_lines(
+                lines.extend(self.text_lines(
                     &server,
                     "NOTICE",
-                    &m.channel,
+                    &m.target,
                     &m.record.body,
                     "",
                     tags,
+                    every,
                     time,
-                );
+                ));
             }
         }
+        lines
+    }
+
+    /// The NOTICE that says the sender of `m` retracted it: from the
+    /// server, `+draft/reply` naming it, with `every` (a `batch` tag).
+    pub(crate) fn retraction_line(&self, m: &MessageShown, every: &[(String, String)]) -> Out {
+        let nick = m.sender.as_ref().map_or("mimid", |s| s.nick.as_str());
+        let mut out = Out::new(
+            &self.shared.server,
+            "NOTICE",
+            vec![m.target.clone(), format!("{nick} retracted a message")],
+        )
+        .tag("+draft/reply", &m.record.sender_msg_id);
+        out.tags.extend(every.iter().cloned());
+        out
     }
 
     /// Shows a message changed now: an edit or a retraction made since
@@ -513,14 +605,7 @@ impl Session {
         let after = |at: u64| at >= self.connected_at;
         if let Some(deleted) = m.record.deleted {
             if deleted.for_all && !seen.retracted && (since.is_some() || after(deleted.at)) {
-                let nick = m.sender.as_ref().map_or("mimid", |s| s.nick.as_str());
-                let server = self.shared.server.clone();
-                let out = Out::new(
-                    &server,
-                    "NOTICE",
-                    vec![m.channel.clone(), format!("{nick} retracted a message")],
-                )
-                .tag("+draft/reply", &m.record.sender_msg_id);
+                let out = self.retraction_line(&m, &[]);
                 self.send(&out);
             }
             seen.retracted = true;
@@ -548,15 +633,18 @@ impl Session {
                 Some(sender) => sender.mask(),
                 None => self.shared.server.clone(),
             };
-            self.text_lines(
+            for out in self.text_lines(
                 &source,
                 "PRIVMSG",
-                &m.channel,
+                &m.target,
                 &m.record.body,
                 "(edited) ",
                 tags,
+                &[],
                 edited_at,
-            );
+            ) {
+                self.send(&out);
+            }
         }
         self.shown.insert(key.to_owned(), seen);
     }
@@ -610,7 +698,7 @@ impl Session {
                 } else {
                     "+draft/unreact"
                 };
-                Out::new(&who.mask(), "TAGMSG", vec![m.channel.clone()])
+                Out::new(&who.mask(), "TAGMSG", vec![m.target.clone()])
                     .tag(tag, &reaction)
                     .tag("+draft/reply", &m.record.sender_msg_id)
             } else {
@@ -619,7 +707,7 @@ impl Session {
                 } else {
                     format!("\x01ACTION took back {reaction} from {target}\x01")
                 };
-                Out::new(&who.mask(), "PRIVMSG", vec![m.channel.clone(), text])
+                Out::new(&who.mask(), "PRIVMSG", vec![m.target.clone(), text])
             };
             if let Some(time) = time {
                 out = out.tag("time", &time);
@@ -628,21 +716,22 @@ impl Session {
         }
     }
 
-    /// `body` as `command` lines from `source` to `channel`, split on line
+    /// `body` as `command` lines from `source` to `target`, split on line
     /// breaks and to fit the line limit, `prefix` before the first. Only
-    /// the first line carries `tags`; every line carries `time` with
-    /// server-time.
+    /// the first line carries `tags`; every line carries `every` and, with
+    /// server-time, `time`.
     #[allow(clippy::too_many_arguments)]
     fn text_lines(
-        &mut self,
+        &self,
         source: &str,
         command: &str,
-        channel: &str,
+        target: &str,
         body: &str,
         prefix: &str,
         tags: Vec<(String, String)>,
+        every: &[(String, String)],
         time: u64,
-    ) {
+    ) -> Vec<Out> {
         let text = data(body);
         let lines: Vec<&str> = text
             .split('\n')
@@ -650,7 +739,11 @@ impl Session {
             .flat_map(|l| l.split('\r'))
             .filter(|l| !l.is_empty())
             .collect();
-        let time = self.caps.server_time.then(|| server_time(time));
+        let mut common: Vec<(String, String)> = every.to_vec();
+        if self.caps.server_time {
+            common.push(("time".to_owned(), server_time(time)));
+        }
+        let mut out_lines = Vec::new();
         let mut first = true;
         for (i, line) in lines.iter().enumerate() {
             let (action, line) = match line.strip_prefix("/me ") {
@@ -662,11 +755,9 @@ impl Session {
             } else {
                 (*line).to_owned()
             };
-            let mut probe = Out::new(source, command, vec![channel.to_owned(), String::new()]);
+            let mut probe = Out::new(source, command, vec![target.to_owned(), String::new()]);
             probe.tags.clone_from(&tags);
-            if let Some(time) = &time {
-                probe.tags.push(("time".to_owned(), time.clone()));
-            }
+            probe.tags.extend(common.iter().cloned());
             let mut room = probe.room_for_trailing(self.caps.message_tags);
             if action {
                 room = room.saturating_sub("\x01ACTION \x01".len());
@@ -677,17 +768,16 @@ impl Session {
                 } else {
                     piece.to_owned()
                 };
-                let mut out = Out::new(source, command, vec![channel.to_owned(), text]);
+                let mut out = Out::new(source, command, vec![target.to_owned(), text]);
                 if first {
                     out.tags.clone_from(&tags);
                 }
-                if let Some(time) = &time {
-                    out.tags.push(("time".to_owned(), time.clone()));
-                }
-                self.send(&out);
+                out.tags.extend(common.iter().cloned());
+                out_lines.push(out);
                 first = false;
             }
         }
+        out_lines
     }
 
     /// Shows the pending invites not shown yet as INVITE lines to the
@@ -721,6 +811,20 @@ impl Session {
     /// The store, for the commands.
     pub(crate) fn store(&self) -> Arc<mimid_agent_store::Store> {
         Arc::clone(&self.shared.store)
+    }
+}
+
+/// What a connection keeps of `record` once it showed it.
+pub(crate) fn shown_now(record: &Message) -> ShownMessage {
+    ShownMessage {
+        edited_at: record.edited_at,
+        version: latest_ref(record),
+        retracted: record.deleted.is_some(),
+        reactions: record
+            .reactions
+            .iter()
+            .map(|r| (r.key.clone(), (r.sender.clone(), r.reaction.clone())))
+            .collect(),
     }
 }
 

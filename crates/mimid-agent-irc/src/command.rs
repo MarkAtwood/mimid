@@ -15,12 +15,14 @@
 //! - `PART #c [reason]`: leaves the room for good (§7.1). The reason is
 //!   shown to the user's other IRC connections of this daemon only: MIMI
 //!   carries no reason for a leave, so other members see "no longer in
-//!   this room" (§7.16).
+//!   this room" (§7.16). `PART <nick>` closes the private query with that
+//!   user: hidden until the next message (bead mimid-2vcw, option B).
 //! - `PRIVMSG #c`: sends the text; `/me` as ACTION text; with a
-//!   `+draft/reply` tag naming a message of the room, as a reply to it. To a nick:
-//!   refused with 404, since v1 has no private queries (§7.2); to
+//!   `+draft/reply` tag naming a message of the room, as a reply to it. To
+//!   a nick, a user URI or `user@domain`: the same into the one-to-one room
+//!   with that user, opened if there is none (client-survey.md §10 S2); to
 //!   [`crate::names::SERVICE_NICK`]: the service ([`crate::service`]).
-//! - `TAGMSG #c` with `+draft/react` or `+draft/unreact` and
+//! - `TAGMSG #c` (or to the nick of a query) with `+draft/react` or `+draft/unreact` and
 //!   `+draft/reply` reacts to a message or takes the reaction back
 //!   (§7.27); any other TAGMSG is dropped.
 //! - `NOTICE` is never answered with an error (docs/irc-lessons.md
@@ -46,6 +48,12 @@ use mimid_agent_store::record::Key;
 use crate::conn::{Session, VERSION, one_line};
 use crate::line::{Line, Out};
 use crate::names::{Held, SERVICE_NICK, fold, is_channel_name, parse_user_address, parse_user_uri};
+
+/// Whether CTCP `ctcp` (without its `\x01`s) is an ACTION.
+fn is_action(ctcp: &str) -> bool {
+    ctcp.split_once(' ')
+        .is_some_and(|(verb, _)| verb.eq_ignore_ascii_case("ACTION"))
+}
 
 /// Whom a nick or user URI names.
 pub(crate) enum Who {
@@ -110,6 +118,19 @@ impl Session {
             .iter()
             .find(|(_, v)| fold(&v.name) == folded)
             .map(|(k, _)| k.clone())
+    }
+
+    /// The room `target` names: a channel this connection shows, or the
+    /// one-to-one room with the user a nick, user URI or `user@domain`
+    /// names, if there is one (a private query).
+    pub(crate) fn target_room(&self, target: &str) -> Option<Key> {
+        if target.starts_with(['#', '&']) {
+            return self.shown_room(target);
+        }
+        match self.who_or_address(target) {
+            Who::User(uri) => self.shared.store.direct_room(&uri),
+            _ => None,
+        }
     }
 
     /// A command of a registered client.
@@ -246,6 +267,19 @@ impl Session {
     /// room arrives, under the name the invite held, if any (§7.13).
     async fn accept(&mut self, number: u64, target: &str) -> bool {
         self.shared.names().accepting(number, true);
+        let room = self
+            .shared
+            .store
+            .state()
+            .invites
+            .iter()
+            .find(|i| i.number == number)
+            .and_then(|i| i.room.clone());
+        if let Some(room) = room
+            && !target.starts_with("&invite-")
+        {
+            self.accepted_names.insert(room, target.to_owned());
+        }
         let store = self.store();
         match store.accept_invite(number).await {
             Ok(uri) => {
@@ -273,12 +307,41 @@ impl Session {
         };
         let reason = line.param(1).unwrap_or("left the room").to_owned();
         for target in targets.split(',').filter(|t| !t.is_empty()) {
+            if !target.starts_with(['#', '&']) {
+                self.close_query(target).await;
+                continue;
+            }
             let Some(key) = self.shown_room(target) else {
                 self.numeric("442", &[target, "You're not on that channel"]);
                 continue;
             };
             self.part_room(&key, &reason).await;
         }
+    }
+
+    /// `PART <nick>`: closes the private query with that user (bead
+    /// mimid-2vcw, option B; docs/design/agent-frontends.md §7.32). A
+    /// one-to-one room cannot be left (room-policy-04 §5), so it is only
+    /// hidden here: chathistory `TARGETS` leaves it out until a message
+    /// newer than the close, and the user's devices stay in it. The
+    /// next message, either way, opens it again. Answered with a server
+    /// NOTICE.
+    async fn close_query(&mut self, target: &str) {
+        let Some(key) = self.target_room(target) else {
+            self.server_notice(&format!("mimid: there is no private query with {target}"));
+            return;
+        };
+        let at = crate::render::now_ms();
+        {
+            let mut state = self.shared.store.state();
+            if let Some(room) = state.rooms.get_mut(&key) {
+                crate::names::set_hidden_at(room, at);
+            }
+        }
+        self.save().await;
+        self.server_notice(&format!(
+            "mimid: the query with {target} is closed here; their next message opens it again"
+        ));
     }
 
     /// Leaves room `key`, shown by this connection, for good (§7.1): PART
@@ -336,55 +399,36 @@ impl Session {
         let ctcp = text
             .strip_prefix('\x01')
             .map(|t| t.strip_suffix('\x01').unwrap_or(t));
-        if target.starts_with(['#', '&']) {
+        let room = if target.starts_with(['#', '&']) {
             let Some(key) = self.shown_room(target) else {
                 if !notice {
                     self.numeric("403", &[target, "No such channel"]);
                 }
                 return;
             };
-            let text = match ctcp {
-                None => text.to_owned(),
-                Some(ctcp) => match ctcp.split_once(' ') {
-                    Some((verb, rest)) if verb.eq_ignore_ascii_case("ACTION") && !notice => {
-                        format!("/me {rest}")
-                    }
-                    // Other CTCP never reaches a peer (§4 "CTCP from the
-                    // user").
-                    _ => return,
-                },
-            };
-            let store = self.store();
-            let message_key = store.new_key();
-            self.own_sends.insert(message_key.clone());
-            let mut options = SendOptions::new();
-            // +draft/reply names the msgid (senderMsgId) of a message of
-            // this room; one not stored here is sent as a plain message.
-            if let Some(msgid) = line.tag("+draft/reply")
-                && let Some(target) = self.message_of_msgid(&key, msgid)
-            {
-                options.in_reply_to_version = self.version_shown(&target, msgid);
-                options.in_reply_to = Some(target);
-            }
-            match store
-                .send_message(message_key.clone(), &key, &text, &[], &options)
-                .await
-            {
-                Ok(_) => self.save().await,
-                Err(error) => {
-                    self.own_sends.remove(&message_key);
-                    if !notice {
-                        self.numeric(
-                            "404",
-                            &[target, &one_line(&format!("Cannot send: {error}"))],
-                        );
+            Some(key)
+        } else {
+            None
+        };
+        // A private query (docs/design/client-survey.md §10 S2): the
+        // one-to-one room with the user, opened if there is none.
+        let room = match (room, self.who_or_address(target)) {
+            (Some(key), _) => key,
+            (None, Who::User(uri)) if ctcp.is_none_or(is_action) => {
+                match self.direct_for(&uri).await {
+                    Ok(key) => key,
+                    Err(error) => {
+                        if !notice {
+                            self.numeric(
+                                "404",
+                                &[target, &one_line(&format!("Cannot send: {error}"))],
+                            );
+                        }
+                        return;
                     }
                 }
             }
-            return;
-        }
-        match self.who(target) {
-            Who::Service => {
+            (None, Who::Service) => {
                 if notice {
                     return;
                 }
@@ -401,17 +445,75 @@ impl Session {
                     Some(_) => {}
                     None => self.service(text).await,
                 }
+                return;
             }
-            _ if notice || ctcp.is_some() => {}
-            Who::User(_) => self.numeric(
-                "404",
-                &[
-                    target,
-                    "No private messages in mimid: JOIN a new channel and INVITE them",
-                ],
-            ),
-            Who::Unknown => self.numeric("401", &[target, "No such nick/channel"]),
+            // Other CTCP to a user never reaches them (§4 "CTCP from the
+            // user").
+            (None, Who::User(_)) => return,
+            (None, Who::Unknown) => {
+                if !notice {
+                    self.numeric("401", &[target, "No such nick/channel"]);
+                }
+                return;
+            }
+        };
+        let key = room;
+        let text = match ctcp {
+            None => text.to_owned(),
+            Some(ctcp) => match ctcp.split_once(' ') {
+                Some((verb, rest)) if verb.eq_ignore_ascii_case("ACTION") && !notice => {
+                    format!("/me {rest}")
+                }
+                // Other CTCP never reaches a peer (§4 "CTCP from the
+                // user").
+                _ => return,
+            },
+        };
+        let store = self.store();
+        let message_key = store.new_key();
+        self.own_sends.insert(message_key.clone());
+        let mut options = SendOptions::new();
+        // +draft/reply names the msgid (senderMsgId) of a message of
+        // this room; one not stored here is sent as a plain message.
+        if let Some(msgid) = line.tag("+draft/reply")
+            && let Some(target) = self.message_of_msgid(&key, msgid)
+        {
+            options.in_reply_to_version = self.version_shown(&target, msgid);
+            options.in_reply_to = Some(target);
         }
+        match store
+            .send_message(message_key.clone(), &key, &text, &[], &options)
+            .await
+        {
+            Ok(_) => self.save().await,
+            Err(error) => {
+                self.own_sends.remove(&message_key);
+                if !notice {
+                    self.numeric(
+                        "404",
+                        &[target, &one_line(&format!("Cannot send: {error}"))],
+                    );
+                }
+            }
+        }
+    }
+
+    /// The one-to-one room with `user` (a private query): the one there
+    /// is ([`mimid_agent_store::Store::direct_room`]), or a new one
+    /// ([`mimid_agent_store::Store::open_direct`]: their consent applies
+    /// as to any invite). A query this user closed is open again once
+    /// this message is stored (bead mimid-2vcw, option B).
+    async fn direct_for(
+        &mut self,
+        user: &str,
+    ) -> Result<Key, mimid_agent_store::action::ActionError> {
+        let store = self.store();
+        if let Some(key) = store.direct_room(user) {
+            return Ok(key);
+        }
+        let (room, _new) = store.open_direct(store.new_key(), user).await?;
+        self.save().await;
+        Ok(room.key)
     }
 
     /// TAGMSG to a channel (§7.27): `+draft/react` with `+draft/reply`
@@ -422,7 +524,7 @@ impl Session {
         let Some(target) = line.param(0) else {
             return;
         };
-        let Some(room) = self.shown_room(target) else {
+        let Some(room) = self.target_room(target) else {
             return;
         };
         let (react, unreact) = (line.tag("+draft/react"), line.tag("+draft/unreact"));

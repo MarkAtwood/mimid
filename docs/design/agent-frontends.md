@@ -1224,7 +1224,7 @@ These answer §6 and override the recommendations there and anything in
 2. **No queries in v1.** v1 has channels only. A PRIVMSG to a nick
    answers with an error that tells the user to make a room and invite
    them. No `direct` flag. (Lifted for IRC v2 by S2, §7.25; the store's
-   `direct` flag is §7.29.)
+   `direct` flag is §7.29; IRC v2's queries are §7.32.)
 3. **Every nick carries its provider.** `<local>-<label>` for everyone,
    the user's own provider included. A nick never moves between people.
 4. **No attachments in v1.** Neither links nor a placeholder line are
@@ -2026,6 +2026,12 @@ Added on 2026-11-20:
       on their own (`canAddOwnClient`). Until Mark decides, `Agent::leave`
       refuses a fixed room, so IRC PART and JMAP Chat destroy of a direct
       Chat fail with that error and change nothing.
+      Mark decided on 2026-11-22 (bead mimid-2vcw): option B. PART and
+      JMAP Chat destroy on a direct room hide it locally, the devices
+      stay, and the next message brings it back; option A (remove all
+      the user's own devices, staying a participant) may come later as a
+      separate explicit action. IRC's half is built (§7.32); JMAP Chat
+      destroy still fails as above.
     - **JMAP Chat.** A direct room is a Chat of kind `direct` whose
       `contactId` is the other participant's ChatContact, with no
       `name` and no `members` (draft-atwood-jmap-chat-00 §Chat: "Group
@@ -2099,6 +2105,42 @@ Added on 2026-11-20:
     - Tests: mimid-agent-store `tests/groundwork.rs`
       `history_pages_in_hub_order`. No front end uses it yet: IRC v2's
       chathistory and the Matrix front end will.
+
+32. **Private queries in IRC v2 (epic mimid-i0id; Mark's S2; bead
+    mimid-2vcw option B).** A one-to-one room (§7.29) is a private
+    query, not a channel.
+    - **Showing.** It gets no channel name, and a name its invite held
+      is given up when it arrives. A message from the other user is a
+      PRIVMSG to the user's nick, one from the user (echo, or sent from
+      another front end) a PRIVMSG to the other user's nick; edits,
+      retractions and reactions go to the same target. A one-to-one room
+      whose other user has not been added yet is not shown.
+    - **Opening.** PRIVMSG (or NOTICE, TAGMSG, `/me`) to a nick, a user
+      URI or `user@domain` writes into `Store::direct_room` with that
+      user, or opens one with `Store::open_direct`, so consent and the
+      invite policy apply as for any invite (§7.5). A user never seen
+      has no nick yet (§4 "Names"), so a first message to them names
+      them by URI or `user@domain`. PRIVMSG to oneself is 404.
+    - **A pending invite to a one-to-one room** is shown as any pending
+      invite (§7.13), under the channel name its room would have had.
+      JOIN of that name accepts it; the room then arrives as a query, so
+      the JOIN is answered with JOIN and PART of the name (reason "a
+      private query with <nick>"), as for `&invite-<n>`, and the client
+      keeps no dead window. INVENTED, NOT FROM SPEC.
+    - **Closing** (option B). `PART <nick>` hides the query: the room
+      and the user's devices stay, nothing is sent, and the time is kept
+      in the room's `ext["irc"]["hiddenAt"]` (INVENTED, NOT FROM SPEC).
+      chathistory `TARGETS` (§7.33) leaves a hidden query out until a
+      message newer than that; live messages are shown as always, which
+      is what "the next message brings it back" means on IRC. Goguma's
+      own "close" sends only `MONITOR -` and archives the buffer locally;
+      its `/part` sends `PART <nick>` (goguma 5aa7baa5
+      `page/buffer.dart:645-652`, `commands.dart:128-139`). Answered with
+      a server NOTICE.
+    - Tests: mimid-agent `tests/irc_v2.rs`
+      `private_queries_are_one_to_one_rooms`,
+      `a_query_from_a_stranger_waits_as_an_invite`,
+      `private_queries_across_two_providers`.
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 
