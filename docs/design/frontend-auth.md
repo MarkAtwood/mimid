@@ -531,9 +531,12 @@ Their lifetimes are in §4.
 | IMAP (not planned) | LOGIN, AUTHENTICATE PLAIN | any | the connection |
 
 Everywhere: no login before TLS on a listener that is not loopback (on
-loopback, as today, no TLS). PLAIN, PASS, Basic and Matrix password
-login carry the secret itself, which is fine inside TLS and is what
-every client in §2 can do.
+loopback, as today, no TLS), with one exception: the plain IRC listener
+takes any address, the operator keeping it off the wrong network
+(decision mimid-1wgh.92). PLAIN, PASS, Basic and Matrix password login
+carry the secret itself, which is fine inside TLS and is what every
+client in §2 can do; on a plain IRC listener off loopback they put the
+credential on the wire, and SASL SCRAM-SHA-256 is what avoids that.
 
 ### 4.1 IRC
 
@@ -823,8 +826,11 @@ domain (§5.2, rank 2) instead.
 ## 5. TLS
 
 S1 says a listener that is not loopback needs TLS, and the agent
-refuses to start without it. The question here is where the
-certificate comes from, so that clients accept it without a warning.
+refuses to start without it. Decision mimid-1wgh.92 amends that for the
+plain IRC listener alone, which takes any address with no TLS; every
+other listener, the agent's HTTP endpoint included, still obeys S1. The
+question here is where the certificate comes from, so that clients
+accept it without a warning.
 
 ### 5.1 What clients do with a certificate they do not trust
 

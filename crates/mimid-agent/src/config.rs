@@ -19,7 +19,7 @@
 //! enabled = true                          # the default
 //!
 //! [irc]                                   # optional; absent means no IRC
-//! listen = "127.0.0.1:6667"               # the default; loopback only
+//! listen = "127.0.0.1:6667"               # the default; any address allowed
 //! listen_tls = "100.64.1.2:6697"          # optional; needs [tls]
 //! server_name = "mimid.invalid"           # the default
 //!
@@ -92,8 +92,8 @@
 //! left out with JMAP off: then there is no HTTP listener at all, and no
 //! did:webvh log endpoint (the log file is still watched).
 //!
-//! `[irc]` configures the IRC front end: a local IRC server on `listen`
-//! (loopback only, default `127.0.0.1:6667`, a port browsers refuse to
+//! `[irc]` configures the IRC front end: an IRC server on `listen`
+//! (any address, default `127.0.0.1:6667`, a port browsers refuse to
 //! connect to) whose clients give the agent's local token
 //! (`<state_dir>/agent-token`) as the server password (`PASS`).
 //! `server_name` is the name the server gives itself, at most
@@ -103,17 +103,26 @@
 //! `[irc] listen_tls` adds a TLS listener for IRC on any address the user
 //! names, off by default (client-survey.md decision S1); it needs `[tls]`,
 //! which says where the certificate comes from (the `tls` module;
-//! docs/design/frontend-auth.md §5). The plain `listen` addresses stay
-//! loopback only. A TLS listener on a public address is allowed and gets
-//! a WARN at start (decision A9).
+//! docs/design/frontend-auth.md §5). A TLS listener on a public address is
+//! allowed and gets a WARN at start (decision A9).
+//!
+//! The plain `[irc] listen` takes any address too (decision
+//! mimid-1wgh.92, which amends S1 for IRC). Off loopback its traffic is
+//! cleartext: message bodies, and the credential itself with `PASS` or
+//! SASL PLAIN, though not with SASL SCRAM-SHA-256. Keeping it off the
+//! wrong network is the operator's, with a firewall or a proxy. A
+//! credential is still required on every listener. The agent's HTTP
+//! listener (`listen`, for JMAP Chat) is unchanged and stays loopback
+//! only.
 //!
 //! With `[jmap] enabled = false` and no `[irc]`, the daemon would serve
 //! nothing, and the configuration is refused.
 //!
 //! Parsing is strict: unknown keys are rejected rather than ignored, in
-//! every table, and a `listen` address that is not loopback is refused,
-//! `[irc]`'s included, since the agent serves plaintext (AGENTS.md: the
-//! agent serves plaintext nowhere except its local endpoint).
+//! every table, and a top-level `listen` address that is not loopback is
+//! refused, since the agent serves JMAP Chat in plaintext there.
+//! `[irc] listen` is the exception and takes any address (decision
+//! mimid-1wgh.92).
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -443,7 +452,6 @@ impl Config {
     /// [`ConfigError::Parse`] for malformed TOML or unknown or missing
     /// keys, [`ConfigError::NotLoopback`] if `listen` is not a loopback
     /// address, [`ConfigError::NoListen`] with JMAP on and no `listen`,
-    /// [`ConfigError::IrcNotLoopback`] if `[irc].listen` is not,
     /// [`ConfigError::ServerUrl`] if `server_url` is not an `http` or
     /// `https` URL, [`ConfigError::OutOfRange`] for a `sync_interval_ms` or
     /// `key_packages` outside its bounds, [`ConfigError::Origin`] for a bad
@@ -488,13 +496,13 @@ impl Config {
             return Err(ConfigError::OutOfRange("did_webvh"));
         }
         if let Some(irc) = &self.irc {
-            if !irc.listen.ip().is_loopback() {
-                return Err(ConfigError::IrcNotLoopback(irc.listen));
-            }
+            // `[irc] listen` takes any address: the operator controls
+            // exposure (decision mimid-1wgh.92, which amends
+            // client-survey.md S1 for IRC). The default is still
+            // loopback, so nothing moves unless it is written.
             if !is_irc_server_name(&irc.server_name) {
                 return Err(ConfigError::IrcServerName(irc.server_name.clone()));
             }
-            // S1: no listener off loopback without TLS.
             if irc.listen_tls.is_some() && self.tls.is_none() {
                 return Err(ConfigError::NoTls("[irc] listen_tls"));
             }
@@ -592,11 +600,6 @@ pub enum ConfigError {
     /// origin.
     #[error("allowed_origins entry {0:?} is not an http or https origin")]
     Origin(String),
-    /// `[irc].listen` is not a loopback address.
-    #[error(
-        "[irc] listen address {0} is not loopback; the agent serves plaintext only on loopback"
-    )]
-    IrcNotLoopback(SocketAddr),
     /// `[irc].server_name` is not a usable IRC server name.
     #[error(
         "[irc] server_name {0:?} must be letters, digits, '-' and '.', with a dot, at most 63 characters"
@@ -817,25 +820,35 @@ mod tests {
         );
     }
 
+    /// Decision mimid-1wgh.92: `[irc] listen` takes any address, the
+    /// operator controlling exposure. The agent's own HTTP `listen` is
+    /// unchanged and still refuses one.
     #[test]
-    fn a_non_loopback_irc_listen_address_is_refused() {
+    fn any_irc_listen_address_is_accepted() {
         for listen in [
+            "127.0.0.1:6667",
             "0.0.0.0:6667",
             "[::]:6667",
             "192.168.1.10:6667",
             "[2001:db8::1]:6667",
             "[::ffff:127.0.0.1]:6667",
+            "100.64.1.2:6667",
         ] {
-            match Config::parse(&format!(
+            let config = Config::parse(&format!(
                 "{}\n[irc]\nlisten = \"{listen}\"\n",
                 config_with_listen("127.0.0.1:0")
-            )) {
-                Err(ConfigError::IrcNotLoopback(addr)) => {
-                    assert_eq!(addr, listen.parse().unwrap());
-                }
-                other => panic!("{listen}: {other:?}"),
-            }
+            ))
+            .unwrap_or_else(|e| panic!("{listen}: {e:?}"));
+            assert_eq!(
+                config.irc.expect("[irc] parsed").listen,
+                listen.parse().unwrap()
+            );
         }
+        // The HTTP listener keeps its own rule.
+        assert!(matches!(
+            Config::parse(&config_with_listen("192.168.1.10:8484")),
+            Err(ConfigError::NotLoopback(_))
+        ));
     }
 
     #[test]

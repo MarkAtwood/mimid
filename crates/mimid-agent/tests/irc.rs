@@ -125,6 +125,55 @@ async fn joined(irc: &mut Irc, mask: &str, channel: &str) -> Vec<String> {
     }
 }
 
+/// Decision mimid-1wgh.92: the plain listener binds an address that is
+/// not loopback and serves a client there, with the credential still
+/// required. Before it, `[irc] listen` was refused by the config check
+/// and again by the bind, and the accept loop dropped every peer that
+/// was not loopback.
+///
+/// Limitation: the peer here is still loopback, since a test that is
+/// fully offline (AGENTS.md) has no second interface to connect from.
+/// What this pins is the bind and the accept loop no longer refusing;
+/// the removed peer check has no code left to exercise.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_plain_listener_off_loopback_serves_a_client() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let mut config = config(&server, ALICE, dir.path(), "any");
+    // Every interface, which is not a loopback address.
+    config.irc = Some(IrcSetting {
+        listen: "0.0.0.0:0".parse().unwrap(),
+        ..IrcSetting::default()
+    });
+    assert!(
+        config
+            .irc
+            .as_ref()
+            .is_some_and(|i| !i.listen.ip().is_loopback())
+    );
+    let alice = Running::start(&config).await;
+    let addr = alice.irc.expect("[irc] listens off loopback");
+    assert!(!addr.ip().is_loopback(), "bound {addr}");
+    let token = alice.token();
+
+    // A client reaching that port is served, and still has to log in.
+    let reach = SocketAddr::from(([127, 0, 0, 1], addr.port()));
+    let (mut irc, _burst) = Irc::register(reach, &token, ALICE_NICK, &ALL_CAPS).await;
+    irc.send("PING :off-loopback").await;
+    let pong = irc.until_command("PONG").await;
+    assert_eq!(pong.text(), "off-loopback");
+
+    // The credential is still mandatory on this listener.
+    let mut wrong = Irc::connect(reach).await;
+    wrong.send(&format!("PASS {token}x")).await;
+    wrong.send("NICK intruder").await;
+    wrong.send("USER intruder 0 * :no").await;
+    wrong.until_command("464").await;
+    assert!(wrong.closes().await, "a wrong credential is cut off");
+
+    alice.stop().await;
+}
+
 /// Oracle: docs/irc-lessons.md "Registration", "Keepalive", "Line length
 /// and encoding", "Channel state", "Messages"; §4 "Loopback and
 /// authentication".

@@ -1,4 +1,4 @@
-//! [`IrcFrontEnd`]: the loopback listener, the accept loop, and the front
+//! [`IrcFrontEnd`]: the plain listener, the accept loop, and the front
 //! end's part of every save.
 
 use std::future::Future;
@@ -96,25 +96,28 @@ async fn accept_tls(
 }
 
 impl IrcFrontEnd {
-    /// Binds `options.listen`, which must be loopback, and registers the
+    /// Binds `options.listen`, an address of any kind, and registers the
     /// front end on `store`: the names of every person and active room are
     /// read from the records, and those that have none are given one,
     /// written at the next save. A client logs in with one of
-    /// `credentials`. With `options.listen_tls`, also binds that address,
-    /// of any kind, for TLS with `tls`.
+    /// `credentials`, on this listener as on the TLS one. With
+    /// `options.listen_tls`, also binds that address, of any kind, for
+    /// TLS with `tls`.
+    ///
+    /// Off loopback this listener's traffic is cleartext and the operator
+    /// protects it (decision mimid-1wgh.92); nothing here refuses such an
+    /// address.
     ///
     /// # Errors
     ///
-    /// [`IrcError::NotLoopback`], and [`IrcError::Bind`].
+    /// [`IrcError::Bind`], and [`IrcError::NoTls`] for `listen_tls`
+    /// without `tls`.
     pub async fn bind(
         store: Arc<Store>,
         options: IrcOptions,
         credentials: Arc<Credentials>,
         tls: Option<Arc<ServerConfig>>,
     ) -> Result<Self, IrcError> {
-        if !options.listen.ip().is_loopback() {
-            return Err(IrcError::NotLoopback(options.listen));
-        }
         let bind = |source| IrcError::Bind {
             addr: options.listen,
             source,
@@ -221,11 +224,10 @@ impl IrcFrontEnd {
                 () = stopped(&mut stop) => break,
                 accepted = self.listener.accept() => match accepted {
                     Ok((stream, peer)) => {
-                        if !peer.ip().is_loopback() {
-                            // The listener is on loopback; nothing else
-                            // can reach it.
-                            continue;
-                        }
+                        // Any peer that can reach the address is served;
+                        // the credential check before registration ends
+                        // is what guards the account (decision
+                        // mimid-1wgh.92).
                         tracing::debug!(peer = %peer, "IRC connection");
                         connections.spawn(run(Arc::clone(&self.shared), stream, peer, stop.clone()));
                     }

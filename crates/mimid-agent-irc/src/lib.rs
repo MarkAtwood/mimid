@@ -93,9 +93,14 @@
 //!
 //! # Limitations
 //!
-//! - The plain listener is loopback only; the TLS listener
-//!   ([`IrcOptions::listen_tls`]) takes any address. A TLS handshake must
-//!   end within [`HANDSHAKE_WITHIN`].
+//! - Both listeners take any address: the plain one
+//!   ([`IrcOptions::listen`], loopback by default) and the TLS one
+//!   ([`IrcOptions::listen_tls`]). On a plain listener off loopback the
+//!   wire is cleartext — message bodies, and the credential itself with
+//!   `PASS` or SASL PLAIN, though not with SASL SCRAM-SHA-256 — and
+//!   keeping it off the wrong network is the operator's, with a firewall
+//!   or a proxy (decision mimid-1wgh.92). A credential is still required
+//!   either way. A TLS handshake must end within [`HANDSHAKE_WITHIN`].
 //! - No attachments, history playback without chathistory,
 //!   labeled-response, or sending edits from IRC (§4 "Sending", §7).
 //! - A user not seen yet has no nick: a first private message to them
@@ -153,7 +158,9 @@ pub const HANDSHAKE_WITHIN: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct IrcOptions {
-    /// The loopback address to listen on, plain.
+    /// The address to listen on, plain. Any address: loopback keeps the
+    /// cleartext local, and anything else is the operator's to protect
+    /// (decision mimid-1wgh.92).
     pub listen: SocketAddr,
     /// An address of any kind to listen on with TLS; `None` for none.
     pub listen_tls: Option<SocketAddr>,
@@ -184,10 +191,6 @@ impl IrcOptions {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum IrcError {
-    /// The listen address is not loopback: the agent serves plaintext only
-    /// on loopback.
-    #[error("IRC listen address {0} is not loopback")]
-    NotLoopback(SocketAddr),
     /// A TLS listener without a TLS configuration.
     #[error("IRC listen_tls {0} has no certificate")]
     NoTls(SocketAddr),

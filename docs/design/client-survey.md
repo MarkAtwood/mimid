@@ -635,6 +635,13 @@ mimid-rvqk (Matrix), mimid-wmdj (XMPP), mimid-qqtk (store groundwork).
   listener on an address the user names, off by default, with the same
   token, and it refuses to start without TLS. The docs suggest binding it
   to a WireGuard or Tailscale address.
+
+  Amended for IRC by decision mimid-1wgh.92 (Mark, 2026-11-22): the plain
+  `[irc] listen` takes any address and does not refuse to start without
+  TLS, because the operator controls exposure with a firewall or a proxy.
+  Authentication is unchanged and still required. S1 stands as written for
+  every other listener, including the agent's HTTP endpoint for JMAP
+  Chat.
 - **S2. Queries and history in IRC: lift agent-frontends.md §7.2 and
   §7.6 for IRC v2.** Queries are one-to-one rooms, marked by a
   store-level `direct` flag; chathistory is served from the store.

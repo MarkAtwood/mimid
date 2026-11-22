@@ -255,12 +255,15 @@ fn a_tls_listener_needs_tls_and_plain_stays_loopback() {
         matches!(refused, Err(mimid_agent::ConfigError::NoTls(_))),
         "{refused:?}"
     );
-    let refused =
-        mimid_agent::Config::parse(&format!("{base}\n[irc]\nlisten = \"100.64.1.2:6667\"\n"));
-    assert!(matches!(
-        refused,
-        Err(mimid_agent::ConfigError::IrcNotLoopback(_))
-    ));
+    // Decision mimid-1wgh.92: a plain IRC listener takes any address;
+    // the operator controls exposure with a firewall or a proxy.
+    let accepted =
+        mimid_agent::Config::parse(&format!("{base}\n[irc]\nlisten = \"100.64.1.2:6667\"\n"))
+            .expect("a plain IRC listener off loopback is accepted");
+    assert_eq!(
+        accepted.irc.expect("[irc] parsed").listen,
+        "100.64.1.2:6667".parse().unwrap()
+    );
     let tailscale_without_name = mimid_agent::Config::parse(&format!(
         "{base}\n[irc]\nlisten_tls = \"100.64.1.2:6697\"\n[tls]\nsource = \"tailscale\"\n"
     ));
