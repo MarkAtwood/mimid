@@ -1,0 +1,7 @@
+{
+  "id": "1795311987163779346-1",
+  "issue_id": "mimid-i0id",
+  "author": "Mark Atwood",
+  "text": "Mark 2026-11-22: push on every notable message whether or not a client is connected (as soju), since Goguma shows no own notifications once subscribed.",
+  "created_at": "2026-11-22T01:46:27.163779346Z"
+}
