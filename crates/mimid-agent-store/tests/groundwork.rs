@@ -716,7 +716,7 @@ async fn a_pending_invite_is_declined() {
 /// signal.
 #[tokio::test]
 async fn the_runner_syncs_tops_up_and_stops() {
-    use mimid_agent_store::runner::{Runner, RunnerOptions};
+    use mimid_agent_store::runner::{Runner, RunnerHooks, RunnerOptions};
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
     let mut alice = agent(&server, ALICE, dir.path()).await;
@@ -731,7 +731,7 @@ async fn the_runner_syncs_tops_up_and_stops() {
         &bob,
         RunnerOptions::new(Duration::from_millis(50), 3),
         &stopped,
-        None,
+        RunnerHooks::new(),
     );
     for _ in 0..100 {
         if bob.agent().lock().await.key_packages_outstanding() == 3 {
@@ -760,6 +760,216 @@ async fn the_runner_syncs_tops_up_and_stops() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(bob.agent().lock().await.key_packages_outstanding(), 3);
+    stop.send_replace(true);
+    tokio::time::timeout(Duration::from_secs(10), runner.join())
+        .await
+        .expect("every loop ends on the stop signal");
+}
+
+/// `join_within` waits the grace period out and then aborts the loops
+/// still running, naming them, so an embedder releasing an account holds
+/// the last reference to the store (purple-mimi §6.3 items 8 to 10).
+/// Bead mimid-2vxv.
+#[tokio::test]
+async fn a_loop_past_the_grace_period_is_aborted_and_named() {
+    use std::future::Future;
+    use std::pin::Pin;
+
+    use mimid_agent_store::runner::{BeforeSync, Runner, RunnerHooks, RunnerOptions};
+
+    /// A hook that never returns, so the sync loop cannot reach the stop
+    /// signal: what §6.3 item 9 has to drop. It says when it has been
+    /// entered, so the test stops the runner while the loop is in it
+    /// rather than before the loop has run at all.
+    struct Stuck(Arc<tokio::sync::Notify>);
+
+    impl BeforeSync for Stuck {
+        fn before_sync<'a>(
+            &'a mut self,
+            _store: &'a Store,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+            let entered = Arc::clone(&self.0);
+            Box::pin(async move {
+                entered.notify_one();
+                std::future::pending().await
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let store = Arc::new(Store::new(
+        agent(&server, ALICE, dir.path()).await,
+        InvitePolicy::Any,
+    ));
+    store.open_database().unwrap();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let runner = Runner::start(
+        &store,
+        RunnerOptions::new(Duration::from_millis(50), 1),
+        &stopped,
+        RunnerHooks::new().before(Box::new(Stuck(Arc::clone(&entered)))),
+    );
+    tokio::time::timeout(Duration::from_secs(10), entered.notified())
+        .await
+        .expect("the sync loop reaches the hook");
+    stop.send_replace(true);
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(10),
+        runner.join_within(Duration::from_millis(200)),
+    )
+    .await
+    .expect("join_within returns after the grace period, it does not wait forever");
+    assert_eq!(
+        outcome.aborted,
+        vec!["sync loop"],
+        "the stuck loop is aborted and named; the expiry loop ended on its own"
+    );
+    assert!(!outcome.clean());
+    // §6.3 item 10: with every loop gone, this is the last reference, so
+    // the store and its state lock can be dropped.
+    assert_eq!(Arc::strong_count(&store), 1, "every loop let the store go");
+
+    // A runner whose loops all end on their own reports nothing aborted.
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let runner = Runner::start(
+        &store,
+        RunnerOptions::new(Duration::from_millis(50), 1),
+        &stopped,
+        RunnerHooks::new(),
+    );
+    stop.send_replace(true);
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(10),
+        runner.join_within(Duration::from_secs(5)),
+    )
+    .await
+    .expect("every loop ends on the stop signal");
+    assert!(outcome.clean(), "{outcome:?}");
+}
+
+/// The sync loop hands each pass's outcome to the `AfterSync` hook, a
+/// failed one included: the runner only logs a failure, so an embedder
+/// that must report it (purple-mimi §7.4: `MIMI_ERR_NETWORK`) learns of
+/// it here. Bead mimid-2vxv.
+#[tokio::test]
+async fn the_runner_reports_each_sync_outcome_to_the_hook() {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use mimid_agent_store::runner::{AfterSync, Runner, RunnerHooks, RunnerOptions};
+    use mimid_agent_store::{Change, Frontend, SyncError, SyncReport};
+
+    /// Each outcome the hook saw: the messages stored, or the failure.
+    type Seen = Arc<Mutex<Vec<Result<usize, String>>>>;
+
+    struct Watcher(Seen);
+
+    impl AfterSync for Watcher {
+        fn after_sync<'a>(
+            &'a mut self,
+            _store: &'a Store,
+            outcome: Result<&'a SyncReport, &'a SyncError>,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+            let entry = outcome.map(|r| r.messages).map_err(ToString::to_string);
+            let seen = Arc::clone(&self.0);
+            Box::pin(async move {
+                seen.lock().unwrap().push(entry);
+            })
+        }
+    }
+
+    /// A front end that refuses the save once `fail` is set, so the sync
+    /// fails with `SyncError::Save` without touching the network.
+    struct Fussy(Arc<AtomicBool>);
+
+    impl Frontend for Fussy {
+        fn before_save<'a>(
+            &'a self,
+            _store: &'a Store,
+            _changes: &'a [Change],
+        ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+            let fail = self.0.load(Ordering::Relaxed);
+            Box::pin(async move {
+                if fail {
+                    Err("the front end refuses".to_owned())
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut alice = agent(&server, ALICE, dir.path()).await;
+    let bob = Arc::new(Store::new(
+        agent(&server, BOB, dir.path()).await,
+        InvitePolicy::Any,
+    ));
+    bob.open_database().unwrap();
+    let fail = Arc::new(AtomicBool::new(false));
+    bob.add_frontend(Arc::new(Fussy(Arc::clone(&fail))));
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let runner = Runner::start(
+        &bob,
+        RunnerOptions::new(Duration::from_millis(50), 1),
+        &stopped,
+        RunnerHooks::new().after(Box::new(Watcher(Arc::clone(&seen)))),
+    );
+
+    // Never hold the lock across a format argument: `assert!` keeps the
+    // condition's guard alive while it builds the failure message, which
+    // would deadlock on this same mutex.
+    let snapshot = {
+        let seen = Arc::clone(&seen);
+        move || seen.lock().unwrap().clone()
+    };
+    let wait_for = async |wanted: fn(&Result<usize, String>) -> bool| {
+        for _ in 0..200 {
+            if snapshot().iter().any(wanted) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        false
+    };
+
+    // A pass that succeeds is reported as one.
+    assert!(
+        wait_for(Result::is_ok).await,
+        "a successful pass is reported: {:?}",
+        snapshot()
+    );
+
+    // With the front end refusing, a pass that has something to save
+    // fails, and that is reported too.
+    fail.store(true, Ordering::Relaxed);
+    let room = alice
+        .host_room(&HostOptions::named("outcome"))
+        .await
+        .unwrap();
+    alice.invite(&room, BOB).await.unwrap();
+    alice.send_text(&room, "hello").await.unwrap();
+    assert!(
+        wait_for(Result::is_err).await,
+        "a failed pass is reported: {:?}",
+        snapshot()
+    );
+    let outcomes = snapshot();
+    let failure = outcomes
+        .iter()
+        .find_map(|outcome| outcome.as_ref().err())
+        .expect("a failure was just seen");
+    assert!(
+        failure.contains("the front end refuses"),
+        "the hook is given why: {failure}"
+    );
+
     stop.send_replace(true);
     tokio::time::timeout(Duration::from_secs(10), runner.join())
         .await

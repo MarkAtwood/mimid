@@ -18,7 +18,9 @@ use mimid_agent_jmap::{AgentChat, BlobStore, Options};
 use mimid_agent_store::Store;
 use mimid_agent_store::credentials::Credentials;
 use mimid_agent_store::push::PushSubscriptions;
-use mimid_agent_store::runner::{BeforeSync, Runner, RunnerOptions, top_up_key_packages};
+use mimid_agent_store::runner::{
+    BeforeSync, Runner, RunnerHooks, RunnerOptions, top_up_key_packages,
+};
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, broadcast, watch};
 
@@ -390,8 +392,9 @@ impl Daemon {
             RunnerOptions::new(self.sync_interval, self.key_packages)
                 .with_stream_wake(self.stream_wake.clone().filter(|_| self.push.is_none())),
             &stop.subscribe(),
-            self.log_watch
-                .map(|watch| Box::new(watch) as Box<dyn BeforeSync>),
+            self.log_watch.map_or_else(RunnerHooks::new, |watch| {
+                RunnerHooks::new().before(Box::new(watch) as Box<dyn BeforeSync>)
+            }),
         );
         let reload = self
             .tls

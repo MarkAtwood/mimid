@@ -970,13 +970,32 @@ writes.
    the time and a random 128-bit nonce, written to a temporary file and
    renamed into place. One request file; a newer request replaces an
    older one.
+
+   A request is **fresh** for the wait of item 3 plus 5 s (INVENTED), 35 s
+   in all. A request older than that is stale and is ignored and deleted,
+   by whoever finds it. Without that rule a request left behind by a B
+   that was killed between items 2 and 4 stays in the directory forever,
+   and every later holder reads it as a live demand and releases the
+   account the moment it takes it: one dead instance would make the
+   account unusable for everyone after it. Found while building step 4
+   (bead mimid-2vxv item 3); the rule is purple-mimi's own, since the
+   takeover protocol is.
 3. Poll `try_lock` every 100 ms (INVENTED) for up to 30 s (INVENTED).
    Show progress "Waiting for another instance to release this account".
 4. If the 30 s run out: delete `takeover` if it still holds B's nonce,
    and fail with `MIMI_ERR_LOCKED`: "This account is open in another
-   program that did not release it (process <pid> if known). Close it
-   there, or stop that program." B never breaks the lock, never deletes
-   `lock`, and never opens the database.
+   program that did not release it. Close it there, or stop that
+   program." B never breaks the lock, never deletes `lock`, and never
+   opens the database.
+
+   The message names no process. An earlier draft of this item said
+   "(process <pid> if known)", and bead mimid-2vxv item 4 proposed having
+   the holder write its pid into the lock file to fill that in; Mark
+   decided against it (decision mimid-1wgh.90). A pid buys nothing here:
+   `flock` is released when its process dies, so a crashed holder leaves
+   no stuck lock and the account is simply free, which means the pid
+   would only ever label an error the user already understands — while
+   inviting exactly the acting-on-it that a reused pid makes unsafe.
 5. With the lock: check the inode (§6.2); delete `takeover` if it holds
    B's own nonce, and leave it if another nonce is there (a third
    instance asked after B; the watch in item 6 hands over to it).
@@ -987,7 +1006,8 @@ writes.
 
 6. A watch task looks at `<state>/takeover` every second (INVENTED) and
    checks the lock file's inode at the same time (§6.5). A request with
-   a nonce other than one A wrote itself starts the release.
+   a nonce other than one A wrote itself, and fresh by item 2, starts the
+   release; a stale one is deleted and nothing else happens.
 
 **A, releasing** (also the path of `mimi_account_close`, plugin unload,
 and a poisoned account):
@@ -1002,6 +1022,15 @@ and a poisoned account):
    in the middle of an operation is a crash of that operation: an open
    rusqlite `Transaction` rolls back when dropped, and the journal and
    outbox are built so that any cut point is consistent (§6.4).
+
+   Items 8 and 9 are one call: `Runner::join_within(10 s)`, which waits
+   the grace period out, aborts the loops still running and names them,
+   and awaits each aborted task so that every loop has dropped its
+   reference to the store before it returns — which is what item 10 then
+   counts on. `Runner::join` waits for ever and is the daemon's; it was
+   the only choice when step 4 was built, so the store and its lock were
+   kept until the process exited (bead mimid-2vxv item 2). A loop stuck
+   in a synchronous call cannot be cut even so, and item 10 reports it.
 10. One last `Store::save`, then drop the `Store`, the `Agent` and with
     them both database connections (the agent's, which the MLS store
     shares, and the store's own; `db.rs`). The library then checks that
@@ -1156,7 +1185,16 @@ answered; the first sync's messages then arrive as events.
   sync loop makes that call at once (the loss wakes it). If the reopen
   fails, the library reports `MIMI_EV_DISCONNECTED` with
   `MIMI_ERR_NETWORK`, temporary, and closes the account by the release
-  path. libpurple then reconnects by its own rules: Pidgin 2 with its
+  path.
+
+  The library learns of it from the `AfterSync` hook it installs on the
+  runner (`RunnerHooks::after`), which is handed each pass's
+  `Result<&SyncReport, &SyncError>`. The runner itself only logs a failed
+  sync, so before that hook existed nothing could report this at all
+  (bead mimid-2vxv item 1). A single failure is not a lost connection:
+  the sync retries at the next turn and nothing is lost either way, so
+  whether to report one failure or a run of them is the library's, not
+  the runner's. libpurple then reconnects by its own rules: Pidgin 2 with its
   increasing delay (*from memory*), Pidgin 3 after a minute. While
   disconnected the user cannot send, which is the truth: sending needs
   the hub.

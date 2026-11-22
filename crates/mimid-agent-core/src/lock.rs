@@ -30,6 +30,9 @@
 //! - A lock file deleted or replaced while held leaves the holder locking
 //!   a file no longer at the path, so a second agent could lock the new
 //!   one; [`StateLock::intact`] tells the holder, which should stop.
+//! - The file's content is unused and the lock names no holder: a
+//!   refused agent is told only that the directory is in use, never by
+//!   which process (Mark 2026-11-22, decision mimid-1wgh.90).
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
