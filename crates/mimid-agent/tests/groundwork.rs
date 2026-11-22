@@ -421,6 +421,116 @@ async fn direct_chats_over_jmap() {
     p.stop().await;
 }
 
+/// Bead mimid-2vcw, option B, JMAP Chat's half (docs/design/
+/// agent-frontends.md §7.29): `Chat/set` destroy of a direct Chat
+/// succeeds without leaving the room; the Chat and its Messages go and
+/// stay gone across syncs, and the other user's next message makes a new
+/// direct Chat of the same room holding only that message.
+#[tokio::test]
+async fn destroying_a_direct_chat_hides_it_until_the_next_message() {
+    let p = pair(&["message-tags"]).await;
+    let alice = p.alice.client().await;
+    let bob = p.bob.client().await;
+    let bob_contact = alice
+        .get("ChatContact", None)
+        .await
+        .into_iter()
+        .find(|c| c["identity"] == json!(BOB))
+        .unwrap()["id"]
+        .clone();
+    let id = alice
+        .create("Chat", json!({"kind": "direct", "contactId": bob_contact}))
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let room = alice.get("Chat", Some(vec![&id])).await[0]["roomId"].clone();
+    let bob_chat = async || {
+        for _ in 0..100 {
+            if let Some(chat) = bob
+                .get("Chat", None)
+                .await
+                .into_iter()
+                .find(|c| c["roomId"] == room)
+            {
+                return chat["id"].as_str().unwrap().to_owned();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!("bob never had the Chat");
+    };
+    let bob_id = bob_chat().await;
+    let say = async |body: &str| {
+        bob.create(
+            "Message",
+            json!({"chatId": bob_id, "body": body, "sentAt": "2026-11-22T12:00:00Z"}),
+        )
+        .await;
+    };
+    let alice_chat = async |body: &str| {
+        for _ in 0..100 {
+            for chat in alice.get("Chat", None).await {
+                if chat["roomId"] == room
+                    && let Some(id) = chat["id"].as_str()
+                    && alice
+                        .messages(id)
+                        .await
+                        .iter()
+                        .any(|m| m["body"] == json!(body))
+                {
+                    return id.to_owned();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!("alice never saw {body}");
+    };
+    say("before").await;
+    assert_eq!(alice_chat("before").await, id);
+
+    let destroyed = alice.call("Chat/set", json!({"destroy": [id]})).await;
+    assert_eq!(destroyed["destroyed"], json!([id]), "{destroyed}");
+    // Several of the daemon's syncs (every 100 ms) bring nothing back.
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    assert!(
+        alice
+            .get("Chat", None)
+            .await
+            .iter()
+            .all(|c| c["roomId"] != room),
+        "hidden"
+    );
+    assert!(
+        p.alice
+            .store
+            .agent()
+            .lock()
+            .await
+            .rooms()
+            .iter()
+            .any(|r| r.uri == room.as_str().unwrap()
+                && r.status == mimid_agent_core::RoomStatus::Active),
+        "not left"
+    );
+    // bob's side is untouched.
+    assert_eq!(bob.messages(&bob_id).await.len(), 1);
+
+    say("after").await;
+    let back = alice_chat("after").await;
+    assert_ne!(back, id, "a new Chat");
+    let chat = alice.get("Chat", Some(vec![&back])).await;
+    assert_eq!(chat[0]["kind"], json!("direct"));
+    assert_eq!(chat[0]["contactId"], bob_contact);
+    let bodies: Vec<Value> = alice
+        .messages(&back)
+        .await
+        .into_iter()
+        .map(|m| m["body"].clone())
+        .collect();
+    assert_eq!(bodies, [json!("after")]);
+    p.stop().await;
+}
+
 /// Oracle: docs/design/agent-frontends.md §7.30 and
 /// mimid_agent_store::links: a link gives the attachment's octets with no
 /// bearer token, with the attachment's media type, `nosniff`, `sandbox`

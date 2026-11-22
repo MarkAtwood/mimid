@@ -439,9 +439,17 @@ impl Store {
     /// event of it is in this delivery or acknowledged before, so its
     /// tombstone may go once this round is acknowledged; those are
     /// returned. A room still being left keeps its tombstone.
+    ///
+    /// A one-to-one room hidden here ([`Store::hide_room`]) is one the
+    /// agent stays active in: its tombstone stays until a new message
+    /// brings the room back ([`State::reveal_hidden_room`]). Once the agent
+    /// is out of it, it settles as a deleted room does.
     fn settle_forgotten_rooms(&self, agent: &Agent) -> Vec<String> {
-        let forgotten = self.state().forgotten_rooms();
-        if forgotten.is_empty() {
+        let (forgotten, hidden) = {
+            let state = self.state();
+            (state.forgotten_rooms(), state.hidden_rooms())
+        };
+        if forgotten.is_empty() && hidden.is_empty() {
             return forgotten;
         }
         let rooms = agent.rooms();
@@ -452,6 +460,11 @@ impl Store {
                 Some(RoomStatus::Active) => rejoined.push(uri),
                 Some(RoomStatus::Leaving) => {}
                 _ => settled.push(uri),
+            }
+        }
+        for uri in hidden {
+            if !matches!(status(&uri), Some(RoomStatus::Active | RoomStatus::Leaving)) {
+                settled.push(uri);
             }
         }
         self.state().clear_room_tombstones(&rejoined);
@@ -909,6 +922,18 @@ impl Store {
         report: &mut SyncReport,
         changes: &mut Vec<Change>,
     ) {
+        // Bead mimid-2vcw, option B: a new message (not an edit, a
+        // retraction or a reaction) in a one-to-one room hidden here,
+        // newer than every message it held, brings the room back at once,
+        // as a new record.
+        if received.content.replaces.is_none()
+            && received.reactions().is_none()
+            && self
+                .state()
+                .reveal_hidden_room(&received.room, received.accepted_at)
+        {
+            tracing::debug!(room = %received.room, "a new message brings a hidden room back");
+        }
         let Some(room) = self.room_for(agent, &received.room, changes) else {
             return;
         };

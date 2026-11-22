@@ -296,6 +296,77 @@ impl State {
     /// ([`State::is_forgotten`]). Returns what was deleted, or `None` if
     /// there is no such room.
     pub fn remove_room(&mut self, key: &str) -> Option<RemovedRoom> {
+        let uri = self.rooms.get(key)?.uri.clone();
+        self.remove_room_leaving(
+            key,
+            Tombstone::Room {
+                key: key.to_owned(),
+                uri,
+            },
+        )
+    }
+
+    /// Hides one-to-one room `key` here without leaving it (bead
+    /// mimid-2vcw, option B): its record goes with everything in it, as
+    /// [`State::remove_room`] deletes them, and a [`Tombstone::HiddenRoom`]
+    /// keeps a record from being made for it again, until a new message
+    /// newer than every message it held comes
+    /// ([`State::reveal_hidden_room`]) or the user opens it again.
+    /// `None` if there is no such room.
+    pub fn hide_room(&mut self, key: &str) -> Option<RemovedRoom> {
+        let uri = self.rooms.get(key)?.uri.clone();
+        let after = self
+            .messages
+            .values()
+            .filter(|m| m.room == key)
+            .map(|m| m.accepted_at)
+            .max()
+            .unwrap_or(0);
+        self.remove_room_leaving(
+            key,
+            Tombstone::HiddenRoom {
+                key: key.to_owned(),
+                uri,
+                after,
+            },
+        )
+    }
+
+    /// Whether room `uri` is hidden here ([`State::hide_room`]).
+    #[must_use]
+    pub fn is_hidden(&self, uri: &str) -> bool {
+        self.tombstones
+            .iter()
+            .any(|t| matches!(t, Tombstone::HiddenRoom { uri: u, .. } if u == uri))
+    }
+
+    /// The URIs of the rooms hidden here ([`State::hide_room`]).
+    #[must_use]
+    pub fn hidden_rooms(&self) -> Vec<String> {
+        self.tombstones
+            .iter()
+            .filter_map(|t| match t {
+                Tombstone::HiddenRoom { uri, .. } => Some(uri.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Ends the hiding of room `uri` if a message the hub accepted at
+    /// `accepted_at` is newer than every message it held when it was
+    /// hidden; a record may then be made for it. Whether it did.
+    pub fn reveal_hidden_room(&mut self, uri: &str, accepted_at: u64) -> bool {
+        let before = self.tombstones.len();
+        self.tombstones.retain(|t| {
+            !matches!(t, Tombstone::HiddenRoom { uri: u, after, .. }
+                if u == uri && accepted_at > *after)
+        });
+        self.tombstones.len() != before
+    }
+
+    /// Removes record `key` and what is in it, as [`State::remove_room`]
+    /// describes, leaving `tombstone` in its place.
+    fn remove_room_leaving(&mut self, key: &str, tombstone: Tombstone) -> Option<RemovedRoom> {
         let room = self.rooms.remove(key)?;
         let messages: BTreeMap<Key, Message> =
             self.messages.extract_if(.., |_, m| m.room == key).collect();
@@ -309,10 +380,7 @@ impl State {
             .retain(|p| p.room != room.uri && !messages.contains_key(&p.message));
         self.tombstones
             .retain(|t| !matches!(t, Tombstone::Message { room, .. } if room == key));
-        self.tombstones.insert(Tombstone::Room {
-            key: key.to_owned(),
-            uri: room.uri.clone(),
-        });
+        self.tombstones.insert(tombstone);
         self.reindex();
         // Blobs are content-addressed: one another message names stays.
         let named: BTreeSet<&str> = self
@@ -341,13 +409,15 @@ impl State {
         })
     }
 
-    /// Whether room `uri` was deleted here ([`State::remove_room`]) and
-    /// its tombstone is still kept.
+    /// Whether room `uri` was deleted ([`State::remove_room`]) or hidden
+    /// ([`State::hide_room`]) here and its tombstone is still kept: no
+    /// record is made for it.
     #[must_use]
     pub fn is_forgotten(&self, uri: &str) -> bool {
-        self.tombstones
-            .iter()
-            .any(|t| matches!(t, Tombstone::Room { uri: u, .. } if u == uri))
+        self.tombstones.iter().any(|t| {
+            matches!(t, Tombstone::Room { uri: u, .. } | Tombstone::HiddenRoom { uri: u, .. }
+                if u == uri)
+        })
     }
 
     /// The URIs of the rooms deleted here whose tombstones are kept.
@@ -357,7 +427,7 @@ impl State {
             .iter()
             .filter_map(|t| match t {
                 Tombstone::Room { uri, .. } => Some(uri.clone()),
-                Tombstone::Message { .. } => None,
+                Tombstone::Message { .. } | Tombstone::HiddenRoom { .. } => None,
             })
             .collect()
     }
@@ -365,8 +435,10 @@ impl State {
     /// Forgets the tombstones of the rooms `uris`: records for them may be
     /// made again.
     pub fn clear_room_tombstones(&mut self, uris: &[String]) {
-        self.tombstones
-            .retain(|t| !matches!(t, Tombstone::Room { uri, .. } if uris.contains(uri)));
+        self.tombstones.retain(|t| {
+            !matches!(t, Tombstone::Room { uri, .. } | Tombstone::HiddenRoom { uri, .. }
+                if uris.contains(uri))
+        });
     }
 
     /// Whether the message in room `room` that `reference` names was
@@ -724,5 +796,29 @@ mod tests {
         assert!(state.remove_person("P1").is_some());
         assert_eq!(state.person_of_user("mimi://a.example/u/bob"), None);
         assert!(state.remove_person("P1").is_none());
+    }
+
+    /// Bead mimid-2vcw: a hidden room is kept out until a message newer
+    /// than every one it held; one delivered again is not newer.
+    #[test]
+    fn a_hidden_room_is_revealed_only_by_a_newer_message() {
+        const ONE: &str = "mimi://a.example/r/one";
+        const TWO: &str = "mimi://a.example/r/two";
+        let mut state = State::new("mimi://a.example/u/bob".to_owned());
+        state.hide_room("missing");
+        assert!(state.hidden_rooms().is_empty());
+        state.tombstones.insert(Tombstone::HiddenRoom {
+            key: "k".to_owned(),
+            uri: ONE.to_owned(),
+            after: 500,
+        });
+        assert!(state.is_hidden(ONE) && state.is_forgotten(ONE));
+        assert!(state.forgotten_rooms().is_empty(), "not a deleted room");
+        assert!(!state.reveal_hidden_room(ONE, 499));
+        assert!(!state.reveal_hidden_room(ONE, 500), "delivered again");
+        assert!(!state.reveal_hidden_room(TWO, 501), "another room");
+        assert!(state.is_hidden(ONE));
+        assert!(state.reveal_hidden_room(ONE, 501));
+        assert!(!state.is_hidden(ONE) && !state.is_forgotten(ONE));
     }
 }

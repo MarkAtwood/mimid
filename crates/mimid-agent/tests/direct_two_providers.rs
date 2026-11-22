@@ -7,7 +7,9 @@
 //! its first Commit; b.example relays bob's KeyPackage, so bob's consent
 //! applies; bob's daemon joins from the Welcome. Both see a direct Chat
 //! naming the other, and write to each other. Neither can open a second
-//! one, and leaving (Chat/set destroy) is refused. The hub's refusal of a
+//! one. Chat/set destroy hides the Chat at alice's without leaving, and
+//! bob's next message brings it back as a new Chat (bead mimid-2vcw,
+//! option B). The hub's refusal of a
 //! third user is mimid-server tests/hub_policy.rs `fixed_membership_rooms`
 //! and mimid-agent-store tests/groundwork.rs.
 //!
@@ -141,12 +143,27 @@ async fn a_direct_room_across_two_providers() {
         assert!(got, "{text} never arrived");
     }
 
-    // §5: neither can leave. Destroying the direct Chat is refused and
-    // changes nothing (what it should do instead is open for Mark,
-    // §7.29).
+    // §5: neither can leave. Destroying the direct Chat hides it at
+    // alice's (bead mimid-2vcw, option B): bob's next message, across the
+    // providers, brings it back as a new Chat of the same room.
     let destroyed = ac.call("Chat/set", json!({"destroy": [id]})).await;
-    assert!(destroyed["notDestroyed"][&id].is_object(), "{destroyed}");
-    assert_eq!(ac.get("Chat", Some(vec![&id])).await.len(), 1);
+    assert_eq!(destroyed["destroyed"], json!([id]), "{destroyed}");
+    assert!(ac.get("Chat", Some(vec![&id])).await.is_empty());
+    bc.create(
+        "Message",
+        json!({"chatId": seen["id"], "body": "still here", "sentAt": "2026-11-21T00:01:00Z"}),
+    )
+    .await;
+    let back = chat_of(&ac, &room).await;
+    assert_ne!(back["id"], json!(id), "a new Chat");
+    assert_eq!(back["kind"], json!("direct"));
+    let bodies: Vec<Value> = ac
+        .messages(back["id"].as_str().unwrap())
+        .await
+        .into_iter()
+        .map(|m| m["body"].clone())
+        .collect();
+    assert_eq!(bodies, [json!("still here")]);
 
     bob.stop().await;
     alice.stop().await;

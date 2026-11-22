@@ -100,8 +100,9 @@ pub enum ActionError {
     /// that another user sent.
     #[error("no reaction {0} of the user's")]
     NoSuchReaction(Key),
-    /// A one-to-one room with the user themselves.
-    #[error("a one-to-one room is with someone else")]
+    /// A one-to-one room with the user themselves, or a room to hide
+    /// ([`Store::hide_room`]) that is not an active one-to-one room.
+    #[error("not a one-to-one room with someone else")]
     NotDirect,
     /// An edit or retraction of a message with [`MAX_ALIASES`] versions.
     #[error("the message has too many versions")]
@@ -414,6 +415,10 @@ impl Store {
     ///
     /// [`ActionError::NotDirect`] for the user themselves; those of
     /// [`Store::create_room`].
+    ///
+    /// A one-to-one room with `user` hidden here ([`Store::hide_room`])
+    /// is that room: it comes back as a new record, empty, and is not
+    /// new.
     pub async fn open_direct(&self, key: Key, user: &str) -> Result<(Room, bool), ActionError> {
         if user == self.user {
             return Err(ActionError::NotDirect);
@@ -421,6 +426,9 @@ impl Store {
         if let Some(found) = self.direct_room(user)
             && let Some(room) = self.state().rooms.get(&found).cloned()
         {
+            return Ok((room, false));
+        }
+        if let Some(room) = self.reveal_direct(user).await {
             return Ok((room, false));
         }
         let room = self
@@ -431,6 +439,30 @@ impl Store {
             )
             .await?;
         Ok((room, true))
+    }
+
+    /// The one-to-one room with `user` hidden here, brought back as a new
+    /// record: one the agent is active in, direct, with `user` among its
+    /// participants. `None` if there is none.
+    async fn reveal_direct(&self, user: &str) -> Option<Room> {
+        let agent = self.agent.lock().await;
+        let hidden = self.state().hidden_rooms();
+        let uri = hidden.into_iter().find(|uri| {
+            agent
+                .rooms()
+                .iter()
+                .any(|r| r.uri == *uri && r.status == RoomStatus::Active)
+                && agent.is_direct(uri).unwrap_or(false)
+                && agent
+                    .participants(uri)
+                    .is_ok_and(|p| p.iter().any(|u| u == user))
+        })?;
+        self.state()
+            .clear_room_tombstones(std::slice::from_ref(&uri));
+        let mut changes = Vec::new();
+        let key = self.room_for(&agent, &uri, &mut changes)?;
+        self.record(changes);
+        self.state().rooms.get(&key).cloned()
     }
 
     /// Makes `changes` in room `key` under one lock of the agent, in the
@@ -563,6 +595,53 @@ impl Store {
         }]);
         self.delete_blobs_after_save(forgotten.clone());
         Some(forgotten)
+    }
+
+    /// Hides one-to-one room `key` here without leaving it (bead
+    /// mimid-2vcw, option B; docs/design/agent-frontends.md §7.29): what a
+    /// JMAP Chat destroy of a direct Chat does. The record goes with
+    /// everything in it, as [`Store::forget_room`] deletes them, but the
+    /// agent stays in the room with every device, and nothing is sent. No
+    /// sync makes a record for it again; its next new message does, at
+    /// once, as a new record holding that message
+    /// ([`crate::State::reveal_hidden_room`]), and so does
+    /// [`Store::open_direct`] with the other user. Events of the room
+    /// other than new messages are dropped while it is hidden.
+    ///
+    /// The deletion is a [`Change::RoomForgotten`], and the blobs go as
+    /// [`Store::forget_room`] says. Takes the agent lock.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::NoSuchRoom`] if there is no such room record, and
+    /// [`ActionError::NotDirect`] if it is not an active one-to-one room.
+    pub async fn hide_room(&self, key: &str) -> Result<ForgottenRoom, ActionError> {
+        let _agent = self.agent.lock().await;
+        let removed = {
+            let mut state = self.state();
+            let room = state
+                .rooms
+                .get(key)
+                .ok_or_else(|| ActionError::NoSuchRoom(key.to_owned()))?;
+            if !room.direct || room.status != Status::Active {
+                return Err(ActionError::NotDirect);
+            }
+            state
+                .hide_room(key)
+                .ok_or_else(|| ActionError::NoSuchRoom(key.to_owned()))?
+        };
+        let forgotten = ForgottenRoom {
+            removed,
+            at: std::time::SystemTime::now(),
+        };
+        self.record([Change::RoomForgotten {
+            key: key.to_owned(),
+            messages: forgotten.removed.messages.clone(),
+            bans: forgotten.removed.bans.clone(),
+        }]);
+        self.delete_blobs_after_save(forgotten.clone());
+        tracing::debug!(room = %forgotten.removed.room.uri, "a one-to-one room was hidden here");
+        Ok(forgotten)
     }
 
     /// Deletes from the blob store the blobs of the attachments of a room

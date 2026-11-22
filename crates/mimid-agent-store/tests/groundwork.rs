@@ -799,3 +799,84 @@ async fn the_store_holds_the_state_lock_until_dropped() {
     drop(alice);
     reopen().await.unwrap();
 }
+
+/// Bead mimid-2vcw, option B (docs/design/agent-frontends.md §7.29): a
+/// one-to-one room hidden here goes with its messages but is not left;
+/// no sync brings it back, its next new message does, at once, as a new
+/// record with only that message; `open_direct` brings it back too. An
+/// ordinary room cannot be hidden.
+#[tokio::test]
+async fn a_hidden_direct_room_comes_back_with_its_next_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut alice, bob, _, lobby) = alice_and_bob(dir.path()).await;
+    assert!(matches!(
+        bob.hide_room(&lobby).await,
+        Err(mimid_agent_store::ActionError::NotDirect)
+    ));
+    let (direct, _) = bob.open_direct(bob.new_key(), ALICE).await.unwrap();
+    let mut invite = None;
+    for _ in 0..100 {
+        alice.poll().await.unwrap();
+        invite = alice.invites().first().map(|i| i.number);
+        if invite.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    alice.join(invite.expect("bob's invite")).unwrap();
+    alice.send_text(&direct.uri, "before").await.unwrap();
+    until_store(&bob, |s| key_of(s, "before").is_some()).await;
+
+    let seq = bob.last_seq();
+    let hidden = bob.hide_room(&direct.key).await.unwrap();
+    assert_eq!(hidden.removed.room.uri, direct.uri);
+    assert!(!bob.state().rooms.contains_key(&direct.key));
+    assert!(key_of(&bob, "before").is_none(), "its messages go");
+    assert_eq!(bob.direct_room(ALICE), None);
+    for _ in 0..3 {
+        bob.sync().await.unwrap();
+    }
+    assert!(
+        bob.state().room_of_uri(&direct.uri).is_none(),
+        "no sync brings it back"
+    );
+    assert!(
+        bob.agent()
+            .lock()
+            .await
+            .rooms()
+            .iter()
+            .any(|r| r.uri == direct.uri && r.status == mimid_agent_core::RoomStatus::Active),
+        "not left: the devices stay"
+    );
+    assert!(
+        bob.changes_since(seq).unwrap().iter().any(
+            |(_, c)| matches!(c, mimid_agent_store::Change::RoomForgotten { key, .. } if *key == direct.key)
+        )
+    );
+
+    alice.send_text(&direct.uri, "after").await.unwrap();
+    until_store(&bob, |s| key_of(s, "after").is_some()).await;
+    let back = bob.state().room_of_uri(&direct.uri).cloned().unwrap();
+    assert_ne!(back, direct.key, "a new record");
+    assert!(bob.state().rooms[&back].direct);
+    assert_eq!(bob.direct_room(ALICE), Some(back.clone()));
+    let bodies: Vec<String> = bob
+        .state()
+        .messages
+        .values()
+        .filter(|m| m.room == back)
+        .map(|m| m.body.clone())
+        .collect();
+    assert_eq!(bodies, ["after"], "only the new message");
+
+    // Hidden again, then opened by the user: the same room, not a new one.
+    bob.hide_room(&back).await.unwrap();
+    let (again, new) = bob.open_direct(bob.new_key(), ALICE).await.unwrap();
+    assert!(!new);
+    assert_eq!(again.uri, direct.uri);
+    assert!(again.direct);
+    assert_eq!(bob.direct_room(ALICE), Some(again.key.clone()));
+    bob.sync().await.unwrap();
+    assert_eq!(bob.state().room_of_uri(&direct.uri), Some(&again.key));
+}

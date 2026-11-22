@@ -754,6 +754,22 @@ pub enum Tombstone {
         /// The room URI, which a record made for it again would share.
         uri: String,
     },
+    /// A one-to-one room hidden here (destroyed as a JMAP Chat) while the
+    /// agent stays in it ([`crate::State::hide_room`]; bead mimid-2vcw,
+    /// option B; docs/design/agent-frontends.md §7.29): no record is made
+    /// for it until a new message accepted after `after` arrives, which
+    /// makes it a new record ([`crate::State::reveal_hidden_room`]).
+    #[serde(rename_all = "camelCase")]
+    HiddenRoom {
+        /// The key of the record it had.
+        key: Key,
+        /// The room URI.
+        uri: String,
+        /// The hub's acceptance time, in milliseconds, of the newest
+        /// message the record held, or 0: a message the journal delivers
+        /// again is no newer, so it does not bring the room back.
+        after: u64,
+    },
 }
 
 /// A pending invite, as the agent holds it. Not saved: it is read from

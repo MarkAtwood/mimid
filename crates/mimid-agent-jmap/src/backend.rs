@@ -26,7 +26,7 @@ use crate::project::VTC;
 use mimid_agent_store::action::{MemberChanges, OutgoingFile, Role, SendOptions};
 use mimid_agent_store::blobs::{BlobError, BlobQuota, BlobStore, MAX_ATTACHMENT_LEN};
 use mimid_agent_store::convert::parse_utc_date;
-use mimid_agent_store::record::{Call, MessageExpiry};
+use mimid_agent_store::record::{Call, MessageExpiry, RoomStatus};
 use mimid_agent_store::{ActionError, ExpiryError, Store};
 
 pub use mimid_agent_store::InvitePolicy;
@@ -612,13 +612,25 @@ impl AgentChat {
     /// the blobs of its attachments that nothing names any more
     /// ([`Store::save`]). The history of the room's other members is
     /// theirs: nothing is sent but the leave.
+    ///
+    /// A direct Chat, an active one-to-one room, is not left (bead
+    /// mimid-2vcw, option B; room-policy-04 §5: "Ordinary users cannot
+    /// leave"): it is hidden here ([`Store::hide_room`]), every device
+    /// stays in the room, nothing is sent, and the next new message in it
+    /// makes a new Chat. Its Messages go as above.
     async fn destroy_chat<O: SetObject + Send + Sync>(
         &self,
         caller: &(),
         account_id: &Id,
         id: &Id,
     ) -> Result<(), BackendSetError<MemoryError>> {
-        if self.room_of_chat(id).is_some() {
+        let direct = self
+            .store
+            .state()
+            .rooms
+            .get(id.as_ref())
+            .is_some_and(|room| room.direct && room.status == RoomStatus::Active);
+        if !direct && self.room_of_chat(id).is_some() {
             self.store
                 .leave(id.as_ref())
                 .await
@@ -627,7 +639,19 @@ impl AgentChat {
         self.inner
             .destroy_object::<O>(caller, account_id, id)
             .await?;
-        self.store.forget_room(id.as_ref()).await;
+        if direct {
+            // The room was checked just now; a sync between that made it
+            // something else leaves it as it is.
+            if let Err(error) = self.store.hide_room(id.as_ref()).await {
+                tracing::warn!(
+                    name: "agent_direct_chat_not_hidden",
+                    error = &error as &dyn std::error::Error,
+                    "a destroyed direct Chat's room could not be hidden"
+                );
+            }
+        } else {
+            self.store.forget_room(id.as_ref()).await;
+        }
         // The blobs stay if this fails: the database still names them.
         self.save_or_log().await;
         Ok(())

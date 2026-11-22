@@ -2033,8 +2033,18 @@ Added on 2026-11-20:
       JMAP Chat destroy on a direct room hide it locally, the devices
       stay, and the next message brings it back; option A (remove all
       the user's own devices, staying a participant) may come later as a
-      separate explicit action. IRC's half is built (§7.32); JMAP Chat
-      destroy still fails as above.
+      separate explicit action. IRC's half is built (§7.32). JMAP Chat's
+      half is built too: `Chat/set` destroy of a direct Chat whose room
+      is active calls `Store::hide_room` instead of `Store::leave`. The
+      record goes with its messages, as §7.9 deletes them, and a
+      `hiddenRoom` tombstone keeps every sync from making it again, while
+      the agent stays in the room with every device and sends nothing.
+      The next new message in the room (not an edit, retraction or
+      reaction) whose hub acceptance time is later than every message
+      the record held brings it back at once, in the sync that stores
+      it, as a new record (a new Chat) holding that message;
+      `Store::open_direct` with the other user brings it back too, empty.
+      Other events of the room are dropped while it is hidden.
     - **JMAP Chat.** A direct room is a Chat of kind `direct` whose
       `contactId` is the other participant's ChatContact, with no
       `name` and no `members` (draft-atwood-jmap-chat-00 §Chat: "Group
@@ -2042,11 +2052,14 @@ Added on 2026-11-20:
       `contactId` is `Store::open_direct`; with a one-to-one room already
       there it is `alreadyExists` with its `existingId`.
     - Schema version 9 (the `direct` flag); version 11 (`direct` read
-      from the policy).
+      from the policy); version 12 (the `hiddenRoom` tombstone).
     - Tests: mimid-server `tests/hub_policy.rs` `fixed_membership_rooms`;
       mimid-agent-store `tests/groundwork.rs`
       `one_to_one_rooms_are_made_once_and_recognised`; mimid-agent
-      `tests/groundwork.rs` `direct_chats_over_jmap`, and
+      `tests/groundwork.rs` `direct_chats_over_jmap` and
+      `destroying_a_direct_chat_hides_it_until_the_next_message`;
+      mimid-agent-store `tests/groundwork.rs`
+      `a_hidden_direct_room_comes_back_with_its_next_message`; and
       `tests/direct_two_providers.rs` (a.example and b.example).
 
 30. **Attachment links (epic mimid-qqtk, bead mimid-qqtk.5; decision
