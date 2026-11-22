@@ -2103,8 +2103,8 @@ Added on 2026-11-20:
       store has not deleted it yet. A retracted message stays, emptied,
       for the placeholder front ends show.
     - Tests: mimid-agent-store `tests/groundwork.rs`
-      `history_pages_in_hub_order`. No front end uses it yet: IRC v2's
-      chathistory and the Matrix front end will.
+      `history_pages_in_hub_order`. IRC v2's chathistory uses it
+      (§7.33); the Matrix front end will.
 
 32. **Private queries in IRC v2 (epic mimid-i0id; Mark's S2; bead
     mimid-2vcw option B).** A one-to-one room (§7.29) is a private
@@ -2140,6 +2140,44 @@ Added on 2026-11-20:
     - Tests: mimid-agent `tests/irc_v2.rs`
       `private_queries_are_one_to_one_rooms`,
       `a_query_from_a_stranger_waits_as_an_invite`,
+      `private_queries_across_two_providers`.
+
+33. **chathistory in IRC v2 (epic mimid-i0id; Mark's S2, which lifts
+    §7.6).** IRCv3 `draft/chathistory` (work in progress, read from
+    github.com/ircv3/ircv3-specifications `extensions/chathistory.md`)
+    over `Store::history` (§7.31), with `batch` and
+    `draft/event-playback`.
+    - **Commands.** BEFORE, AFTER, LATEST, AROUND, BETWEEN and TARGETS,
+      references by `timestamp=` and `msgid=` (`MSGREFTYPES=timestamp,msgid`),
+      at most 1000 a page (`CHATHISTORY=1000`, the store's
+      `MAX_HISTORY_PAGE`). A target is a channel the connection shows or
+      the nick of a private query (§7.32); anything else is `FAIL
+      CHATHISTORY INVALID_TARGET`. Goguma uses only TARGETS, BETWEEN,
+      BEFORE and `LATEST *`, all by timestamp (goguma 5aa7baa5
+      `lib/client.dart:881-920`).
+    - **Choices the draft leaves open** (INVENTED, NOT FROM SPEC):
+      a timestamp excludes every message of its millisecond on the side
+      it bounds, the store's hub order (time, then sequence) breaking
+      ties; AROUND takes half the limit before, the msgid's message
+      itself, and the rest after; TARGETS lists oldest latest message
+      first, the first `limit` from the first timestamp's side; a query
+      closed with `PART <nick>` is not a target until a message newer
+      than the close (§7.32). `draft/chathistory-end` is set when the
+      store says there is no more in the page's direction.
+    - **What a page shows.** The lines a live connection would show now,
+      batch-tagged: an edited message once, with its latest text and its
+      first msgid; a retracted one as the server's NOTICE "<nick>
+      retracted a message" with its msgid; with event-playback, each
+      reaction as a TAGMSG after its message. What the store leaves out
+      of history (deleted here, expired) is not shown. A message shown
+      from history counts as read, as a live one does (§7.22).
+    - **No automatic playback.** Without chathistory nothing is replayed
+      on connect, as in v1; the draft asks a server not to replay to a
+      client that negotiated it, and the others keep §7.6's behaviour.
+    - Tests: mimid-agent `tests/irc_v2.rs`
+      `chathistory_pages_channels_and_queries`,
+      `goguma_catches_up_after_a_reconnect` (Goguma's CAP set, SASL PLAIN,
+      TARGETS then BETWEEN over the time it was away),
       `private_queries_across_two_providers`.
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)

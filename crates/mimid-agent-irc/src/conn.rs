@@ -118,6 +118,9 @@ pub(crate) struct Caps {
     pub(crate) message_tags: bool,
     pub(crate) server_time: bool,
     pub(crate) echo_message: bool,
+    pub(crate) batch: bool,
+    pub(crate) chathistory: bool,
+    pub(crate) event_playback: bool,
 }
 
 /// What the session showed of a channel.
@@ -199,6 +202,8 @@ pub(crate) struct Session {
     /// written to the client, they are read (docs/design/agent-frontends.md
     /// §7.22).
     pub(crate) delivered: Vec<Key>,
+    /// The batches opened so far, for the next batch's reference.
+    pub(crate) batches: u64,
     /// Close after writing what is queued.
     pub(crate) closing: bool,
     seen_first_line: bool,
@@ -230,6 +235,7 @@ impl Session {
             own_sends: HashSet::new(),
             connected_at: 0,
             delivered: Vec::new(),
+            batches: 0,
             closing: false,
             seen_first_line: false,
         }

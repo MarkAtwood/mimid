@@ -175,6 +175,7 @@ impl Session {
             "MOTD" => self.numeric("422", &["MOTD File is missing"]),
             "KICK" => self.kick(line).await,
             "INVITE" => self.invite(line).await,
+            "CHATHISTORY" => self.chathistory(line),
             other => self.numeric("421", &[other, "Unknown command"]),
         }
     }

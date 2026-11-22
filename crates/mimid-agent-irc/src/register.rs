@@ -24,7 +24,10 @@ use mimid_agent_store::credentials::Login;
 /// (docs/irc-lessons.md "CAP"). `soju.im/account-required` only says that
 /// a login is needed (docs/design/frontend-auth.md §4.1); a REQ of it is
 /// acknowledged and changes nothing.
-pub const CAPS: [&str; 5] = [
+pub const CAPS: [&str; 8] = [
+    "batch",
+    "draft/chathistory",
+    "draft/event-playback",
     "echo-message",
     "message-tags",
     "sasl",
@@ -48,6 +51,13 @@ pub fn isupport() -> Vec<String> {
         "UTF8ONLY".to_owned(),
         "NETWORK=mimid".to_owned(),
         "draft/ACCOUNTREQUIRED".to_owned(),
+        // draft/chathistory: the most messages one command returns, and
+        // both kinds of reference.
+        format!(
+            "CHATHISTORY={}",
+            mimid_agent_store::history::MAX_HISTORY_PAGE
+        ),
+        "MSGREFTYPES=timestamp,msgid".to_owned(),
     ]
 }
 
@@ -212,6 +222,9 @@ impl Session {
             "LIST" => {
                 let mut on = Vec::new();
                 for (cap, enabled) in [
+                    ("batch", self.caps.batch),
+                    ("draft/chathistory", self.caps.chathistory),
+                    ("draft/event-playback", self.caps.event_playback),
                     ("echo-message", self.caps.echo_message),
                     ("message-tags", self.caps.message_tags),
                     ("sasl", self.caps.sasl),
@@ -237,6 +250,9 @@ impl Session {
                     };
                     match name {
                         "echo-message" => caps.echo_message = on,
+                        "batch" => caps.batch = on,
+                        "draft/chathistory" => caps.chathistory = on,
+                        "draft/event-playback" => caps.event_playback = on,
                         "sasl" => caps.sasl = on,
                         "soju.im/account-required" => {}
                         "message-tags" => caps.message_tags = on,

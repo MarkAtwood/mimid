@@ -32,7 +32,8 @@
 //!   `PONG` and `QUIT` are read, and a first line that looks like HTTP
 //!   closes the connection. No line is ever logged.
 //! - **Registration**: `CAP LS 302` (`message-tags`, `server-time`,
-//!   `echo-message`, `sasl`, `soju.im/account-required`), `CAP REQ`
+//!   `echo-message`, `sasl`, `soju.im/account-required`, `batch`,
+//!   `draft/chathistory`, `draft/event-playback`), `CAP REQ`
 //!   acknowledged or refused as a whole; the
 //!   client's nick is replaced by the user's own (`<local>-<label>`), 001
 //!   to 005, 900 with the user URI, 422.
@@ -61,8 +62,9 @@
 //!   A line already shown stays in the client: IRC cannot take it back.
 //! - Messages are `PRIVMSG` with `msgid` (the store's `senderMsgId`) and
 //!   `time`; an edit is a new line starting `(edited) `, a retraction a
-//!   server NOTICE. Attachments are not shown (§7.4), and nothing that
-//!   came before the connection is played back (§7.6).
+//!   server NOTICE. Attachments are not shown (§7.4). Nothing that came
+//!   before the connection is played back unasked; a client asks with
+//!   `draft/chathistory` (§7.33, `history`), served from the store.
 //! - **Replies** (§7.26): a reply is shown addressed `<nick>: ` to the
 //!   replied-to sender, with `+draft/reply` under message-tags; a
 //!   PRIVMSG with `+draft/reply` is sent as a reply, naming the latest
@@ -101,6 +103,7 @@
 
 mod command;
 mod conn;
+mod history;
 pub mod line;
 mod listen;
 pub mod names;
