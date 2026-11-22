@@ -3,7 +3,8 @@
 Design note, 2026-11-21 and 2026-11-22, for Mark's review. Epic
 mimid-s4oy: step 1 (bead mimid-s4oy.1, §1), step 2 (bead mimid-s4oy.2,
 §2, decided by Mark in §3) and step 3 (bead mimid-s4oy.3, the design,
-§5 to §15). No code is written until Mark has reviewed §5 to §15.
+§5 to §15). Mark answered the design's open questions on 2026-11-22
+(§14, decisions PQ1 to PQ12).
 
 The plugin lets Pidgin, and the other programs built on libpurple
 (BitlBee, Spectrum2), use MIMI rooms through mimid. Step 2 asked what the
@@ -890,7 +891,7 @@ The library's account task, on the runtime, does what the daemon does
 1. Take the state lock (§6.2).
 2. `Agent::open` with `binding: Binding::Stream`, the provider URL, the
    token, the user URI and the state directory; `did_webvh` at its
-   default (BasicCredential; §14 question 10).
+   default (BasicCredential; decision PQ10).
 3. Top up KeyPackages (`refresh_key_packages`, `publish_key_packages`,
    10 by default as in the daemon). The first publication makes this
    device's Client record (§12.5).
@@ -948,9 +949,9 @@ and Pidgin 3 do not, so the lock is needed.
   over NFS is emulated with byte-range locks on Linux (*from memory*),
   and SQLite advises against network file systems anyway.
 
-I propose that the lock itself (the file, `try_lock`, the inode check)
-go into mimid-agent-core's `StateDir`, held for the life of the `Agent`
-and the `Store` (§14 question 2). Then the daemon and every embedder get
+The lock itself (the file, `try_lock`, the inode check) goes into
+mimid-agent-core's `StateDir`, held for the life of the `Agent` and the
+`Store` (decision PQ2). The daemon takes it too, so every embedder has
 it, and a user who points mimid-agent at Pidgin's state directory gets
 a clear refusal instead of corruption. The takeover protocol below stays
 in purple-mimi.
@@ -1180,14 +1181,14 @@ C against libpurple 2.14 (`prpl.h`), protocol id `prpl-mimi` (INVENTED),
 - **Username** is the user's handle, `alice@a.example`, which the
   library maps to `mimi://a.example/u/alice` (`mimi_handle_to_user`;
   INVENTED form: the part after the last `@` is the domain). A full
-  `mimi://` URI is accepted too. §14 question 4.
+  `mimi://` URI is accepted too (decision PQ4).
 - **Password** is the provider's bearer token, as `mimid admin ...
   token` prints it, one token per Pidgin (§12.5). After a connection
   succeeds the token is kept in the state directory and the remembered
   password is cleared (§12.3). `OPT_PROTO_PASSWORD_OPTIONAL` is set, so
   an account with a stored token connects with an empty password field.
 - **Account options** (`protocol_options`): "Provider URL" (default
-  `https://<domain>`, INVENTED default), "Join invites" (from allowed
+  `https://<domain>`, decision PQ4), "Join invites" (from allowed
   users / always / never; default from allowed users, as the daemon),
   "Show message numbers" (default on, §8.7), "Open rooms when a message
   arrives" (default on, §8.3), "Add rooms to the buddy list" (default
@@ -1382,8 +1383,8 @@ failed. This device cannot be forgotten from itself.
 
 Typing (MIMI has none; `send_typing` is NULL), presence, read receipts
 (not adopted, mimid-1wgh.11.11), room renames (agent-core edits only the
-subject), abuse reports (a later command), did:webvh credentials (§14
-question 10).
+subject), abuse reports (a later command), did:webvh credentials (a
+later account option, decision PQ10).
 
 ## 9. The libpurple 3 glue
 
@@ -1427,7 +1428,8 @@ tracks the latest alpha only.
   libpurple 2 is found with `pkg-config purple`, libpurple 3 with
   `pkg-config purple-3` (*from memory* for the name). Either glue is
   optional: `-DPURPLE2=ON|OFF`, `-DPURPLE3=ON|OFF`. Meson, which Pidgin
-  3 uses, has weak cargo support; §14 question 8.
+  3 uses, has weak cargo support. Mark chose CMake calling cargo
+  directly (decision PQ8).
 - **Static linking.** The Rust library is a `staticlib` linked into
   each `.so` (Linux) or `.so` bundle (Homebrew's libpurple loads `.so`
   plugins on macOS too, *from memory*). The plugin then depends only on
@@ -1590,7 +1592,7 @@ pasted a new one). BitlBee keeps its own copy of the password in its
 user files; that is BitlBee's, and nothing here changes it. On
 libpurple 3, which has a credential manager with libsecret and KWallet,
 the token is kept in the state directory the same way, so both glues
-behave alike (§14 question 3).
+behave alike (decision PQ3).
 
 ### 12.4 What peers send
 
@@ -1621,9 +1623,12 @@ AGENTS.md gives JMAP clients are purple-mimi's to keep:
   While Pidgin is closed it receives nothing and its KeyPackages may run
   out; the provider keeps what arrives.
 - A lost laptop's device is forgotten from another device (§8.12). A
-  stolen token is revoked at the provider; `mimid admin` has no revoke
-  command today (it only issues, `token`), so one token per Pidgin
-  helps only once one exists (§14 question 7).
+  stolen token is revoked at the provider: `mimid admin <cfg> tokens
+  <userUri>` lists a user's tokens with their ids, names and last use,
+  and `revoke-token <id>` revokes one at once and closes its
+  connections. mimid builds this before purple-mimi, as a prerequisite
+  (bead mimid-v9co, decision PQ7), so one token per Pidgin lets one
+  device's token be revoked without touching the others.
 - A provider MAY cap the clients per user (`maxClients` in the hello);
   a Pidgin past the cap cannot publish KeyPackages, and the library
   reports that the provider refused a new device.
@@ -1642,7 +1647,8 @@ Effort in lines (*estimates*), no calendar time.
 | Step | Bead | What | Lines |
 |---|---|---|---|
 | 3 | mimid-s4oy.3 | this design note | (docs) |
-| 3a | mimid-s4oy.9 | **mimid groundwork, in mimid (Apache-2.0):** a typed error for a `404` stream upgrade (§7.1); `Agent::open` compares the hello's `userUri` (§7.2); `Store::decline_invite` (§8.11); the state lock in `StateDir` if Mark agrees (§6.2); an explicit close of the stream tasks (§6.4); the daemon's loops moved into mimid-agent-store as a runner (§5.1); `acceptance_fixture --providers-only` (§11); AGENTS.md's mimid-agent row (§12.1); a tagged revision for purple-mimi to pin | 800 to 1,200 Rust with tests |
+| 3p | mimid-v9co | **Provider token list and revoke, in mimid-server** (decision PQ7, §12.5): token ids, names and last use; `mimid admin <cfg> tokens <userUri>` and `revoke-token <id>` and their local routes; revocation at once, closing the token's EventSource and live-stream connections | (mimid) |
+| 3a | mimid-s4oy.9 | **mimid groundwork, in mimid (Apache-2.0):** a typed error for a `404` stream upgrade (§7.1); `Agent::open` compares the hello's `userUri` (§7.2); `Store::decline_invite` (§8.11); the state lock in `StateDir`, which the daemon takes too (§6.2, decision PQ2); an explicit close of the stream tasks (§6.4); the daemon's loops moved into mimid-agent-store as a runner (§5.1); `acceptance_fixture --providers-only` (§11); AGENTS.md's mimid-agent row (§12.1); a tagged revision for purple-mimi to pin | 800 to 1,200 Rust with tests |
 | 4 | mimid-s4oy.4 | **Skeleton**, in the new repository MarkAtwood/purple-mimi: workspace, CMake, cbindgen header; core: runtime, event queue, accounts, lock and takeover (§6), the stream connection and its errors (§7); ffi: the account and process functions; both glues load, connect, disconnect and report errors; CI on Linux and macOS | core 1,500 to 2,000; ffi 500 to 700; purple 2 glue 600 to 800; purple 3 glue 700 to 1,000; build and CI 300 to 400 |
 | 5 | mimid-s4oy.5 | **Rooms and messages, libpurple 2:** the purple front end (§5.6), reads, requests, rooms as chats, direct rooms as IMs, history on open, invites, consent commands, topic, members, notices, devices, disappearing messages | core 1,200 to 1,600; purple 2 glue 1,200 to 1,600 |
 | 6 | mimid-s4oy.6 | **Edits, reactions, replies, attachments, libpurple 2:** numbers, text forms, commands, file transfers | core 800 to 1,200; purple 2 glue 800 to 1,200 |
@@ -1651,7 +1657,7 @@ Effort in lines (*estimates*), no calendar time.
 | 8 | mimid-s4oy.8 | **Packaging and release** for Linux and Homebrew macOS (§10.3), licence files, README; announce only with Mark's OK | 300 to 600, plus the README |
 | 9 | mimid-s4oy.11 | **Windows i686 DLL** for Pidgin 2.14 (P7): `i686-pc-windows-gnu` or `-msvc` (purple-presage uses MSVC x86), `aws-lc-sys` on i686, `LockFileEx` and the socket-pair wake-up, the state under `%APPDATA%\.purple`, CI | 400 to 800 |
 
-Order: 3a and 4 can run in parallel (4 pins a mimid revision from 3a
+Order: 3p comes first, before 4 (decision PQ7). 3a and 4 can run in parallel (4 pins a mimid revision from 3a
 before it needs the new calls); 5 needs 4 and 3a; 6 and 5b need 5 (5b
 needs the core of 5, and can run beside 6); 7 needs 5 and 5b for their
 halves; 8 needs 7; 9 needs 8. Step 6 also waits for epic mimid-qqtk (replies,
@@ -1662,54 +1668,43 @@ Total about 13,000 to 19,000 lines (*estimate*). §2.3 guessed 4,000 to
 difference is the libpurple 3 glue, the takeover, and tests in three
 harnesses.
 
-## 14. Open questions for Mark
+## 14. Decisions (Mark, 2026-11-22)
 
-1. **Store too, or agent-core only.** I chose agent-core and
-   mimid-agent-store (§5.1). Recommendation: both, as designed; a
-   purple-side store would redo the crash rules for one client.
-2. **Where the state lock lives.** In mimid-agent-core's `StateDir`, so
-   the daemon and every embedder have it, or in purple-mimi only.
-   Recommendation: the lock in agent-core (step 3a), the takeover
-   handshake in purple-mimi.
-3. **The token at rest.** Copy it into `<state>/provider-token` and clear
-   libpurple's remembered password, or leave it to libpurple
-   (`accounts.xml` in clear text on libpurple 2, a keyring on
-   libpurple 3). Recommendation: the state directory on both, since it
-   already holds the keys the token would protect (§12.3).
-4. **Account username.** The handle `alice@a.example`, or the full user
-   URI `mimi://a.example/u/alice`. Recommendation: the handle, with the
-   full URI accepted too; the Provider URL defaults to
-   `https://<domain>`.
-5. **Message numbers on libpurple 2.** Show `[12]` before each message
-   so that `/reply 12`, `/edit 12` and `/react 12` can name it.
-   Recommendation: yes, on by default, with an account option to hide
-   them.
-6. **Invites.** Keep the daemon's default, joining invites from allowed
-   users and asking for the rest, or ask for every invite now that
-   Pidgin has an invite dialog. Recommendation: the daemon's default,
-   as an account option.
-7. **Token revocation.** `mimid admin` issues tokens and cannot revoke
-   one. Recommendation: a mimid bead outside this epic for `mimid admin
-   revoke-token`, and one token per Pidgin in the README meanwhile.
-8. **Build system.** CMake calling cargo directly, CMake with Corrosion
-   (as purple-presage), or meson (as Pidgin 3). Recommendation: CMake
-   calling cargo directly, so a distro build needs no network.
-9. **Takeover back on libpurple 3.** A taken-over Pidgin 3 refuses its
-   own automatic reconnect and takes the account back only from an
-   account action (§6.6). Recommendation: yes; the alternative,
-   disabling the account, would disable it in the other instance too.
-10. **did:webvh.** The first version uses a BasicCredential, so the
-    devices of one user present one identity and cannot share a room
-    with an mls-rs member (agent-core limitation H1). Recommendation:
-    BasicCredential first; a `did_webvh` log file as an account option
-    in a later step.
-11. **Shared BitlBee hosts.** purple-mimi on a BitlBee that serves many
-    users puts every user's keys on that host. Recommendation: allow
-    it, and say so in the README; do not try to detect it.
-12. **mimid by git revision.** purple-mimi pins mimid by revision until
-    the crates are published, which blocks distro packages.
-    Recommendation: git revision and vendored source tarballs now;
-    decide about crates.io when a distro packager asks.
+Recorded in a comment on bead mimid-s4oy.3, which is closed with them.
+They replace the twelve open questions of the design. Each but PQ7 is
+the recommendation the question made.
+
+- **PQ1. Embed both mimid-agent-core and mimid-agent-store** (§5.1).
+- **PQ2. The state lock lives in mimid-agent-core's `StateDir`**
+  (§6.2), so the daemon and every embedder take it. The takeover
+  handshake (§6.3) is purple-mimi's.
+- **PQ3. The token is kept in `<state>/provider-token` (0600)**, and
+  libpurple's remembered password is cleared, on libpurple 2 and 3
+  alike (§12.3).
+- **PQ4. The account username is the handle `alice@a.example`**; a full
+  `mimi://` URI is accepted too. The Provider URL defaults to
+  `https://<domain>`, with an account option to override it (§8.1).
+- **PQ5. `[n]` message numbers on libpurple 2**, on by default, with an
+  account option to hide them (§8.7).
+- **PQ6. Invites follow the daemon's default** (join invites from
+  allowed users, ask for the rest), with an account option (§8.1,
+  §8.11).
+- **PQ7. Token listing and revocation are built in mimid-server before
+  purple-mimi, as a prerequisite** (bead mimid-v9co, step 3p in §13;
+  §12.5). The question had proposed a bead outside the epic with no
+  order, and one token per Pidgin in the README meanwhile; there is no
+  meanwhile now.
+- **PQ8. CMake calling cargo directly** (§10.1), so a distro build
+  needs no network.
+- **PQ9. A taken-over Pidgin 3 refuses its own automatic reconnect** and
+  takes the account back only by an account action (§6.6).
+- **PQ10. BasicCredential first**; a `did_webvh` log file as an account
+  option in a later step (§5.7, §8.13).
+- **PQ11. Shared BitlBee hosts are allowed**, and the README says what
+  that means for the keys; purple-mimi does not try to detect them
+  (§12.1).
+- **PQ12. purple-mimi pins mimid by git revision**, with vendored source
+  tarballs; crates.io is decided when a distro packager asks (§5.2).
 
 ## 15. Uncertainties in §5 to §14
 
