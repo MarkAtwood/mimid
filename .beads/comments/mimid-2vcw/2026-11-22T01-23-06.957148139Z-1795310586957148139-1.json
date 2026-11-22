@@ -1,0 +1,7 @@
+{
+  "id": "1795310586957148139-1",
+  "issue_id": "mimid-2vcw",
+  "author": "Mark Atwood",
+  "text": "IRC half of option B built on branch irc-v2 (32790fbb, agent-frontends.md §7.32): PART \u003cnick\u003e hides the query via ext[irc].hiddenAt, TARGETS skips it until a newer message. JMAP Chat destroy of a direct Chat still refuses (Agent::leave); needs store work so a forgotten direct room comes back on the next message rather than at the next sync.",
+  "created_at": "2026-11-22T01:23:06.957148139Z"
+}
