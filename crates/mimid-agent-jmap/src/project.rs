@@ -29,12 +29,15 @@
 //! | Room | Chat, kind `group`, or `direct` with `contactId` for a one-to-one room (§7.29) | `name`, `roomId` (made only), `members` (a group Chat), `messageExpirySeconds` |
 //! | Message | Message | `senderMsgId`, `senderId`, `chatId`, `sentAt`, `receivedAt`, `replyTo`, `topicId`, `deliveryState`, `senderExpiresAt`, `burnOnRead`, `expiresAfterReadSeconds` (made only); `reactions`, `body`, `bodyType`, `attachments`, `actions` (the calls, §7.24), `editedAt`, `editHistory`, `deletedAt`, `deletedForAll` |
 //! | Ban | ChatBan | all, made only; destroyed when the record is gone |
+//! | Read position | ReadPosition | `chatId` (made only), `lastReadMessageId`, `lastReadAt`; destroyed when the record is gone |
 //!
 //! A record deleted (a forgotten person, a deleted message, a room
 //! deleted with its messages and bans) destroys its object, if there is
 //! one; a message deleted at its expiry is hard-deleted
-//! (`ChatMessageLifecycle::expire_message`). Invites and read positions have no projection: JMAP Chat has no
-//! object for an invite, and only JMAP writes read positions.
+//! (`ChatMessageLifecycle::expire_message`). Invites have no projection:
+//! JMAP Chat has no object for an invite. A read position another front
+//! end moved (IRC's `MARKREAD`, docs/design/agent-frontends.md §7.34) is
+//! the ReadPosition of the same key, made if there is none.
 //!
 //! # Limitations
 //!
@@ -54,7 +57,7 @@ use jmap_chat_server::{ChatMessageLifecycle, ChatStore};
 /// What [`JmapExt::project`] lists for a Message hard-deleted at its
 /// expiry, beside the type names of the objects it destroys.
 const EXPIRED: &str = "expired Message";
-use jmap_chat_types::{BodyType, Chat, ChatBan, ChatContact, Message};
+use jmap_chat_types::{BodyType, Chat, ChatBan, ChatContact, Message, ReadPosition};
 use jmap_server::{
     BackendSetError, GetObject, Id, JmapObject, JmapReads, SetErrorType, SetObject, now_utc_string,
 };
@@ -178,6 +181,9 @@ const MESSAGE_CONTENT: [&str; 9] = [
 
 /// The ChatContact properties the store owns after the contact is made.
 const CONTACT_DID: [&str; 2] = ["did", "didChangedAt"];
+
+/// The ReadPosition properties the store owns after it is made.
+const POSITION: [&str; 2] = ["lastReadMessageId", "lastReadAt"];
 
 /// The JSON of a record's attachment as a JMAP Attachment.
 fn attachment_json(a: &record::Attachment) -> Value {
@@ -323,7 +329,8 @@ impl JmapExt {
     /// Writes the records `changes` name into the backend (see the module
     /// documentation).
     pub(crate) async fn project(&self, store: &Store, changes: &[Change]) -> Result<(), SyncError> {
-        let (mut people, mut rooms, mut messages, mut bans) = (
+        let (mut people, mut rooms, mut messages, mut bans, mut positions) = (
+            Named::default(),
             Named::default(),
             Named::default(),
             Named::default(),
@@ -353,8 +360,9 @@ impl JmapExt {
                 Change::MessageExpired(key) => gone.push((EXPIRED, key)),
                 Change::BanAdded(key) => bans.added(key),
                 Change::BanChanged(key) | Change::BanLifted(key) => bans.changed(key),
-                // Invites and read positions have no projection; Change is
-                // #[non_exhaustive].
+                Change::ReadPositionMoved(key) => positions.changed(key),
+                Change::ReadPositionForgotten(key) => gone.push((ReadPosition::TYPE_NAME, key)),
+                // Invites have no projection; Change is #[non_exhaustive].
                 _ => {}
             }
         }
@@ -379,13 +387,55 @@ impl JmapExt {
         for key in &bans.keys {
             self.project_ban(store, key).await?;
         }
+        for key in &positions.keys {
+            self.project_read_position(store, key).await?;
+        }
         for (type_name, key) in gone {
             match type_name {
                 "ChatContact" => self.destroy_unheld::<ChatContact>(&key).await,
                 "Chat" => self.destroy_unheld::<Chat>(&key).await,
                 "ChatBan" => self.destroy_unheld::<ChatBan>(&key).await,
+                "ReadPosition" => self.destroy_unheld::<ReadPosition>(&key).await,
                 EXPIRED => self.expire(&key).await,
                 _ => self.destroy_unheld::<Message>(&key).await,
+            }
+        }
+        Ok(())
+    }
+
+    /// A read position as its ReadPosition: made if absent, else its
+    /// `lastReadMessageId` and `lastReadAt` written where they differ. A
+    /// JMAP write shows it already, so writes nothing.
+    async fn project_read_position(&self, store: &Store, key: &str) -> Result<(), SyncError> {
+        let Some(position) = store.state().read_positions.get(key).cloned() else {
+            return Ok(());
+        };
+        let rendered = self
+            .render(&store.state())
+            .read_position(&position)
+            .map_err(SyncError::Store)?;
+        let id = Id::from(key);
+        match self.stored::<ReadPosition>(&id).await? {
+            None => {
+                self.inner
+                    .insert_object(
+                        &self.account,
+                        from_json::<ReadPosition>(Value::Object(rendered))?,
+                    )
+                    .await?;
+            }
+            Some(existing) => {
+                let patch = patch_of(&to_json(&existing)?, &Value::Object(rendered), &POSITION);
+                if !patch.is_empty() {
+                    self.inner
+                        .update_object::<ReadPosition>(
+                            &(),
+                            &self.account,
+                            &id,
+                            from_json(Value::Object(patch))?,
+                        )
+                        .await?;
+                }
             }
         }
         Ok(())

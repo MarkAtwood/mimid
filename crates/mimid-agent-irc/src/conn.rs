@@ -121,6 +121,7 @@ pub(crate) struct Caps {
     pub(crate) batch: bool,
     pub(crate) chathistory: bool,
     pub(crate) event_playback: bool,
+    pub(crate) read_marker: bool,
 }
 
 /// What the session showed of a channel.

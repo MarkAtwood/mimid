@@ -204,6 +204,7 @@ impl Session {
                 self.shown.remove(key);
             }
             Change::InvitePending(_) => self.show_invites(),
+            Change::ReadPositionMoved(key) => self.show_read_position(key),
             _ => {}
         }
     }
@@ -355,6 +356,11 @@ impl Session {
         // In the room again: a reason for leaving it before is spent.
         self.shared.set_part_reason(key, None);
         self.send(&Out::new(&me.mask(), "JOIN", vec![channel.clone()]));
+        // draft/read-marker: after the JOIN, before the end of the names.
+        if self.caps.read_marker {
+            let out = self.marker_line(&channel, key);
+            self.send(&out);
+        }
         self.topic_reply(shown);
         let members: Vec<(String, bool)> = shown
             .members

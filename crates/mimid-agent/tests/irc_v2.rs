@@ -303,6 +303,44 @@ async fn private_queries_across_two_providers() {
         );
     }
 
+    // chathistory of the query on either side.
+    let history = ["message-tags", "server-time", "batch", "draft/chathistory"];
+    for (daemon, peer) in [(&bob, ALICE_NICK), (&alice, BOB_B_NICK)] {
+        let mut irc = register(daemon, &history).await;
+        irc.send(&format!("CHATHISTORY LATEST {peer} * 10")).await;
+        let (open, lines) = batch(&mut irc, "chathistory").await;
+        assert_eq!(open.params[2], peer);
+        assert_eq!(texts(&lines), ["across é", "back"]);
+        let far = "timestamp=2100-01-01T00:00:00.000Z";
+        irc.send(&format!(
+            "CHATHISTORY TARGETS timestamp=2000-01-01T00:00:00.000Z {far} 10"
+        ))
+        .await;
+        let (_, lines) = batch(&mut irc, "draft/chathistory-targets").await;
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].params[1], peer);
+    }
+    // The read marker of the query, local to each side.
+    let mut marked = register(&bob, &["server-time", "draft/read-marker"]).await;
+    let back = bi
+        .seen
+        .iter()
+        .rfind(|m| m.command == "PRIVMSG")
+        .unwrap()
+        .tags["time"]
+        .clone();
+    marked
+        .send(&format!("MARKREAD {ALICE_NICK} timestamp={back}"))
+        .await;
+    let got = marked.until_command("MARKREAD").await;
+    assert_eq!(got.params, [ALICE_NICK, &format!("timestamp={back}")]);
+    let mut other = register(&alice, &["server-time", "draft/read-marker"]).await;
+    other.send(&format!("MARKREAD {BOB_B_NICK}")).await;
+    assert_eq!(
+        other.until_command("MARKREAD").await.params,
+        [BOB_B_NICK, "*"]
+    );
+
     alice.stop().await;
     bob.stop().await;
 }
@@ -575,6 +613,124 @@ async fn goguma_catches_up_after_a_reconnect() {
     .await;
     let (_, lines) = batch(&mut g, "chathistory").await;
     assert!(lines.is_empty());
+
+    alice.stop().await;
+    bob.stop().await;
+}
+
+/// Oracles: IRCv3 `read-marker` (draft), written out by hand: MARKREAD
+/// after the JOIN and before 366 (`*` with no marker); a set answered
+/// with MARKREAD to every connection of the user; a set older than the
+/// marker answered with the marker unchanged; the get form; a query's
+/// marker by nick; `FAIL MARKREAD NEED_MORE_PARAMS` and `INVALID_PARAMS`.
+/// The marker is the store's read position, the one JMAP Chat's
+/// ReadPosition shows (draft-atwood-jmap-chat-00 §ReadPosition), both
+/// ways.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn read_markers_are_the_read_positions() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let bob = Running::start(&with_irc(config(&server, BOB, dir.path(), "any"))).await;
+    let caps = ["message-tags", "server-time", "draft/read-marker"];
+    let mut a1 = register(&alice, &caps).await;
+    let mut a2 = register(&alice, &caps).await;
+    let mut b = register(&bob, &CAPS).await;
+
+    a1.send("JOIN #r").await;
+    let join = a1.until_command("JOIN").await;
+    assert_eq!(join.params, ["#r"]);
+    let marker = a1.line().await;
+    assert_eq!(marker.raw, ":mimid.invalid MARKREAD #r *");
+    a1.until_command("366").await;
+    a2.until_command("366").await;
+    a1.send(&format!("INVITE {BOB} #r")).await;
+    b.until_command("366").await;
+    let mut times = Vec::new();
+    for i in 0..3 {
+        b.send(&format!("PRIVMSG #r :line {i}")).await;
+        let got = privmsg_from(&mut a1, BOB_MASK).await;
+        privmsg_from(&mut a2, BOB_MASK).await;
+        times.push(got.tags["time"].clone());
+    }
+
+    // A set reaches both of alice's connections.
+    a1.send(&format!("MARKREAD #r timestamp={}", times[1]))
+        .await;
+    let want = format!(":mimid.invalid MARKREAD #r timestamp={}", times[1]);
+    for irc in [&mut a1, &mut a2] {
+        let got = irc.until_command("MARKREAD").await;
+        assert_eq!(got.raw, want);
+    }
+    // An older one changes nothing and is answered with the marker.
+    a1.send(&format!("MARKREAD #r timestamp={}", times[0]))
+        .await;
+    assert_eq!(a1.until_command("MARKREAD").await.raw, want);
+    a1.send("MARKREAD #r").await;
+    assert_eq!(a1.until_command("MARKREAD").await.raw, want);
+    let answers = a2.sync().await;
+    assert!(
+        !answers.iter().any(|m| m.command == "MARKREAD"),
+        "{answers:#?}"
+    );
+
+    // JMAP Chat reads the same position, and moves it.
+    let jmap = alice.client().await;
+    let positions = jmap.get("ReadPosition", None).await;
+    assert_eq!(positions.len(), 1, "{positions:#?}");
+    let chat = positions[0]["chatId"].as_str().unwrap().to_owned();
+    let messages = jmap.messages(&chat).await;
+    let by_text = |text: &str| -> serde_json::Value {
+        messages
+            .iter()
+            .find(|m| m["body"] == text)
+            .unwrap_or_else(|| panic!("{text} in {messages:#?}"))
+            .clone()
+    };
+    assert_eq!(positions[0]["lastReadMessageId"], by_text("line 1")["id"]);
+    let position = positions[0]["id"].as_str().unwrap().to_owned();
+    let answer = jmap
+        .call(
+            "ReadPosition/set",
+            serde_json::json!({"update": {&position: {"lastReadMessageId": by_text("line 2")["id"]}}}),
+        )
+        .await;
+    assert!(answer["updated"].get(&position).is_some(), "{answer}");
+    let got = a2.until_command("MARKREAD").await;
+    assert_eq!(
+        got.raw,
+        format!(":mimid.invalid MARKREAD #r timestamp={}", times[2])
+    );
+
+    // A query's marker by nick; a user with no query has none.
+    b.send(&format!("PRIVMSG {ALICE_NICK} :private")).await;
+    let dm = privmsg_from(&mut a1, BOB_MASK).await;
+    a1.send(&format!("MARKREAD {BOB_NICK}")).await;
+    assert_eq!(
+        a1.until_command("MARKREAD").await.raw,
+        format!(":mimid.invalid MARKREAD {BOB_NICK} *")
+    );
+    a1.send(&format!(
+        "MARKREAD {BOB_NICK} timestamp={}",
+        dm.tags["time"]
+    ))
+    .await;
+    let got = a2.until_command("MARKREAD").await;
+    assert_eq!(
+        got.params,
+        [BOB_NICK, &format!("timestamp={}", dm.tags["time"])]
+    );
+
+    // Errors.
+    a1.send("MARKREAD").await;
+    let fail = a1.until_command("FAIL").await;
+    assert_eq!(fail.params[..2], ["MARKREAD", "NEED_MORE_PARAMS"]);
+    a1.send("MARKREAD #r yesterday").await;
+    let fail = a1.until_command("FAIL").await;
+    assert_eq!(fail.params[..2], ["MARKREAD", "INVALID_PARAMS"]);
+    a1.send("MARKREAD #nowhere *").await;
+    let fail = a1.until_command("FAIL").await;
+    assert_eq!(fail.params[..2], ["MARKREAD", "INVALID_PARAMS"]);
 
     alice.stop().await;
     bob.stop().await;

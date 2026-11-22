@@ -33,7 +33,8 @@
 //!   closes the connection. No line is ever logged.
 //! - **Registration**: `CAP LS 302` (`message-tags`, `server-time`,
 //!   `echo-message`, `sasl`, `soju.im/account-required`, `batch`,
-//!   `draft/chathistory`, `draft/event-playback`), `CAP REQ`
+//!   `draft/chathistory`, `draft/event-playback`, `draft/read-marker`),
+//!   `CAP REQ`
 //!   acknowledged or refused as a whole; the
 //!   client's nick is replaced by the user's own (`<local>-<label>`), 001
 //!   to 005, 900 with the user URI, 422.
@@ -65,6 +66,9 @@
 //!   server NOTICE. Attachments are not shown (§7.4). Nothing that came
 //!   before the connection is played back unasked; a client asks with
 //!   `draft/chathistory` (§7.33, `history`), served from the store.
+//! - **Read markers** (§7.34, `markread`): `draft/read-marker`'s
+//!   `MARKREAD` is the store's read position of the room, the one JMAP
+//!   Chat's ReadPosition shows, both ways.
 //! - **Replies** (§7.26): a reply is shown addressed `<nick>: ` to the
 //!   replied-to sender, with `+draft/reply` under message-tags; a
 //!   PRIVMSG with `+draft/reply` is sent as a reply, naming the latest
@@ -106,6 +110,7 @@ mod conn;
 mod history;
 pub mod line;
 mod listen;
+mod markread;
 pub mod names;
 mod register;
 mod render;

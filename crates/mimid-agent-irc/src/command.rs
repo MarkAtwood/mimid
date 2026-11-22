@@ -176,6 +176,7 @@ impl Session {
             "KICK" => self.kick(line).await,
             "INVITE" => self.invite(line).await,
             "CHATHISTORY" => self.chathistory(line),
+            "MARKREAD" => self.markread(line).await,
             other => self.numeric("421", &[other, "Unknown command"]),
         }
     }

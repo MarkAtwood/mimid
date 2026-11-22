@@ -24,10 +24,11 @@ use mimid_agent_store::credentials::Login;
 /// (docs/irc-lessons.md "CAP"). `soju.im/account-required` only says that
 /// a login is needed (docs/design/frontend-auth.md §4.1); a REQ of it is
 /// acknowledged and changes nothing.
-pub const CAPS: [&str; 8] = [
+pub const CAPS: [&str; 9] = [
     "batch",
     "draft/chathistory",
     "draft/event-playback",
+    "draft/read-marker",
     "echo-message",
     "message-tags",
     "sasl",
@@ -225,6 +226,7 @@ impl Session {
                     ("batch", self.caps.batch),
                     ("draft/chathistory", self.caps.chathistory),
                     ("draft/event-playback", self.caps.event_playback),
+                    ("draft/read-marker", self.caps.read_marker),
                     ("echo-message", self.caps.echo_message),
                     ("message-tags", self.caps.message_tags),
                     ("sasl", self.caps.sasl),
@@ -253,6 +255,7 @@ impl Session {
                         "batch" => caps.batch = on,
                         "draft/chathistory" => caps.chathistory = on,
                         "draft/event-playback" => caps.event_playback = on,
+                        "draft/read-marker" => caps.read_marker = on,
                         "sasl" => caps.sasl = on,
                         "soju.im/account-required" => {}
                         "message-tags" => caps.message_tags = on,

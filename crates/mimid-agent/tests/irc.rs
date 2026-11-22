@@ -170,8 +170,9 @@ async fn registration_queries_and_refusals() {
     assert_eq!(
         ls.raw,
         format!(
-            ":{SERVER} CAP * LS :batch draft/chathistory draft/event-playback echo-message \
-             message-tags sasl=PLAIN,SCRAM-SHA-256 server-time soju.im/account-required"
+            ":{SERVER} CAP * LS :batch draft/chathistory draft/event-playback draft/read-marker \
+             echo-message message-tags sasl=PLAIN,SCRAM-SHA-256 server-time \
+             soju.im/account-required"
         )
     );
     irc.send(&format!("PASS {token}")).await;

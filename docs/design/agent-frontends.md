@@ -2180,6 +2180,37 @@ Added on 2026-11-20:
       TARGETS then BETWEEN over the time it was away),
       `private_queries_across_two_providers`.
 
+34. **Read markers in IRC v2 (epic mimid-i0id).** IRCv3
+    `draft/read-marker` (work in progress, `extensions/read-marker.md`)
+    over the store's read positions, which JMAP Chat shows as
+    ReadPosition.
+    - **The marker** of a room is the hub's time of the message its read
+      position names (`ReadPosition::message`); with no position, or none
+      naming a message, it is `*`. A room with several positions (JMAP
+      allows that) takes the first by key. INVENTED, NOT FROM SPEC.
+    - **Set.** `MARKREAD <target> timestamp=<t>` moves the position to
+      the latest message of the room accepted at or before `t`, if that
+      is past the current one (the marker "MUST only ever increase");
+      the position's `at` is when it was set. `Store::set_read_position`
+      then reads every message up to it, as a JMAP write does (§7.22).
+      The new marker reaches every IRC connection with the capability
+      from the change feed; an older or equal one is answered with the
+      marker as it stands. A position IRC makes is a new record, which
+      JMAP shows as a new ReadPosition: the JMAP projection now writes
+      read positions other front ends move (made if absent, else
+      `lastReadMessageId` and `lastReadAt`), and destroys one whose
+      record is forgotten.
+    - **Shown.** After each JOIN, before 353 and 366; whenever a position
+      moves, from IRC or JMAP; for a private query by the other user's
+      nick (§7.32), which Goguma asks for with `MARKREAD <nick>` and waits
+      15 s for (goguma 5aa7baa5 `lib/client.dart:1025-1030`). A nick with
+      no query is `*`.
+    - **Errors.** `FAIL MARKREAD NEED_MORE_PARAMS`, `INVALID_PARAMS` for
+      a bad timestamp or an unknown target.
+    - Tests: mimid-agent `tests/irc_v2.rs`
+      `read_markers_are_the_read_positions` (both ways with JMAP Chat),
+      `private_queries_across_two_providers`.
+
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 
 Mark decided on 2026-11-20 that JMAP (draft-atwood-jmap-chat-mimi) is
