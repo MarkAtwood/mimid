@@ -356,6 +356,65 @@ pub enum Refusal {
     Certificate(&'static str),
 }
 
+impl Refusal {
+    /// A stable token for the `reason` member of the 403's problem
+    /// details, or `None` to say nothing beyond the problem type.
+    ///
+    /// draft-atwood-mimi-provider-auth-00 §9 lets a target provider
+    /// "include a problem details body saying why authentication
+    /// failed", and limits that to "what the source provider needs to
+    /// fix its configuration". So this reports only what is the SOURCE
+    /// provider's own configuration -- its DNS key record, its
+    /// signature, its certificate -- and never what is the target's,
+    /// such as whether a key or anchor is configured for that peer.
+    /// Withholding the latter is also what keeps this from being an
+    /// oracle for probing a target's trust list.
+    ///
+    /// The tokens are a stable part of the wire contract: add, but do
+    /// not rename. The match has no catch-all, so a new
+    /// [`Refusal`] variant does not compile until it is classified.
+    pub fn public_reason(&self) -> Option<&'static str> {
+        match self {
+            // Nothing was presented. The peer knows what it sent, so
+            // this tells it only that nothing was recognised.
+            Self::NoCredentials => Some("no-credentials"),
+
+            // The peer's own DNS, which it can read and fix.
+            Self::NoKeyRecord => Some("no-key-record"),
+            Self::KeyRevoked => Some("key-revoked"),
+            Self::BadKeyRecord(_) => Some("unusable-key-record"),
+            Self::DnssecBogus => Some("key-record-dnssec-bogus"),
+            Self::NotSecure => Some("key-record-not-dnssec-secure"),
+
+            // The peer's own signature.
+            Self::NoKeyId => Some("signature-no-keyid"),
+            Self::BadSelector => Some("keyid-not-a-selector"),
+            Self::UnknownKey => Some("unknown-keyid"),
+            Self::NotCovered(_) => Some("signature-incomplete"),
+            Self::Digest => Some("content-digest-mismatch"),
+            Self::Signature(_) => Some("signature-invalid"),
+            Self::Nonce(_) => Some("nonce-refused"),
+
+            // The peer's own certificate. This is the case that
+            // prompted the change: a certificate without a dNSName for
+            // its domain is one line away from working, and the peer
+            // could not previously learn that.
+            Self::Certificate(_) => Some("certificate-rejected"),
+            Self::CertificatePath(_) => Some("certificate-path-rejected"),
+
+            // The TARGET's configuration: that no key is configured for
+            // this peer is ours to know, not theirs. Say nothing.
+            Self::NoTrustedKey => None,
+
+            // A transient fault here, not the peer's configuration.
+            Self::DnsFailure => None,
+            // Deliberately no catch-all: a new Refusal variant must fail
+            // to compile here until someone decides which side's
+            // configuration it is about.
+        }
+    }
+}
+
 /// What an authenticator makes of a request.
 #[derive(Debug)]
 pub enum Outcome {
@@ -786,7 +845,7 @@ pub async fn check(
                     status = StatusCode::FORBIDDEN.as_u16(),
                     "request refused: provider not authenticated"
                 );
-                return refuse();
+                return refuse(Some(&refusal));
             }
             AuthMode::Observe => {
                 crate::telemetry::metrics()
@@ -825,10 +884,29 @@ pub const ACCEPT_SIGNATURE: &str = "mimi=(\"@method\" \"@target-uri\" \"content-
 /// [`ACCEPT_SIGNATURE`] and the RFC 9457 problem type
 /// `provider-authentication`. Not `401`: RFC 9110 §15.5.2 requires a 401
 /// to carry a `WWW-Authenticate` challenge, and RFC 9421 is not an HTTP
-/// authentication scheme. The reason stays in the log (the draft's
-/// SHOULD NOT on saying why each mechanism failed).
-pub fn refuse() -> Response {
-    let mut response = crate::http::problem(StatusCode::FORBIDDEN, "provider-authentication");
+/// authentication scheme.
+///
+/// The body carries a `reason` member when
+/// [`Refusal::public_reason`] gives one. An earlier version of this
+/// function sent no reason at all, reading the draft's SHOULD NOT on
+/// saying why each mechanism failed as a blanket prohibition. It is
+/// not: §9 says a target provider "MAY include a problem details body
+/// saying why authentication failed", and the SHOULD NOT is bounded by
+/// "beyond what the source provider needs to fix its configuration".
+/// Without a reason a peer whose certificate is one dNSName away from
+/// working reads the `Accept-Signature` field as "use signatures
+/// instead" and never learns the certificate was nearly right
+/// (bead mimid-75nk.12).
+pub fn refuse(why: Option<&Refusal>) -> Response {
+    let reason = why.and_then(Refusal::public_reason);
+    let mut response = match reason {
+        Some(reason) => crate::http::problem_with(
+            StatusCode::FORBIDDEN,
+            "provider-authentication",
+            &[("reason", reason.into())],
+        ),
+        None => crate::http::problem(StatusCode::FORBIDDEN, "provider-authentication"),
+    };
     response.headers_mut().insert(
         HeaderName::from_static("accept-signature"),
         HeaderValue::from_static(ACCEPT_SIGNATURE),

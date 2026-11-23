@@ -646,3 +646,92 @@ fn the_logged_endpoint_is_the_path_segment_after_v1() {
         assert_eq!(endpoint_name(path), endpoint, "{path}");
     }
 }
+
+/// The `reason` a refusal shows a peer (bead mimid-75nk.12).
+///
+/// draft-atwood-mimi-provider-auth-00 §9 allows a problem details body
+/// "saying why authentication failed", bounded by "what the source
+/// provider needs to fix its configuration". So the split under test is
+/// which side's configuration a refusal is about: the source's own DNS,
+/// signature or certificate is reported; the target's trust list is not.
+#[test]
+fn a_refusal_reports_only_the_sources_own_configuration() {
+    // The peer's own DNS, signature or certificate: say so.
+    for (refusal, reason) in [
+        (Refusal::NoCredentials, "no-credentials"),
+        (Refusal::NoKeyRecord, "no-key-record"),
+        (Refusal::KeyRevoked, "key-revoked"),
+        (Refusal::BadKeyRecord("no k"), "unusable-key-record"),
+        (Refusal::DnssecBogus, "key-record-dnssec-bogus"),
+        (Refusal::NotSecure, "key-record-not-dnssec-secure"),
+        (Refusal::NoKeyId, "signature-no-keyid"),
+        (Refusal::BadSelector, "keyid-not-a-selector"),
+        (Refusal::UnknownKey, "unknown-keyid"),
+        (Refusal::NotCovered("from"), "signature-incomplete"),
+        (Refusal::Digest, "content-digest-mismatch"),
+        // The case that prompted this: one dNSName away from working.
+        (
+            Refusal::Certificate("no dNSName for the domain"),
+            "certificate-rejected",
+        ),
+        (
+            Refusal::CertificatePath("unknown issuer".to_owned()),
+            "certificate-path-rejected",
+        ),
+    ] {
+        assert_eq!(
+            refusal.public_reason(),
+            Some(reason),
+            "{refusal:?} should report {reason}"
+        );
+    }
+
+    // The TARGET's own configuration, and a transient fault: say nothing,
+    // so a peer cannot probe our trust list.
+    for refusal in [Refusal::NoTrustedKey, Refusal::DnsFailure] {
+        assert_eq!(
+            refusal.public_reason(),
+            None,
+            "{refusal:?} must not be disclosed"
+        );
+    }
+}
+
+/// A reason reaches the body, and `type`/`status` stay intact.
+#[tokio::test]
+async fn the_403_body_carries_the_reason() {
+    let body = |response: Response| async {
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+    };
+
+    let response = refuse(Some(&Refusal::Certificate("no dNSName for the domain")));
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response.headers().get("accept-signature").unwrap(),
+        ACCEPT_SIGNATURE,
+        "the Accept-Signature field is still offered"
+    );
+    let json = body(response).await;
+    assert_eq!(json["reason"], "certificate-rejected");
+    assert_eq!(json["status"], 403);
+    assert!(
+        json["type"]
+            .as_str()
+            .unwrap()
+            .ends_with("provider-authentication"),
+        "{json}"
+    );
+
+    // A refusal that discloses nothing carries no reason member at all,
+    // rather than an empty or null one.
+    let json = body(refuse(Some(&Refusal::NoTrustedKey))).await;
+    assert_eq!(json.get("reason"), None, "{json}");
+    assert_eq!(json["status"], 403);
+
+    // And no refusal at all is still a well-formed problem.
+    let json = body(refuse(None)).await;
+    assert_eq!(json.get("reason"), None, "{json}");
+}

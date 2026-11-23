@@ -701,12 +701,27 @@ pub const PROBLEM_TYPE_PREFIX: &str = "tag:reviewcommit.com,2026:mimid:problem:"
 /// (bead mimid-1wgh.50). The reason is logged instead. `kind` is the
 /// lowercase-hyphenated tail of the type URI.
 pub(crate) fn problem(status: StatusCode, kind: &str) -> Response {
+    problem_with(status, kind, &[])
+}
+
+/// [`problem`] with extra RFC 9457 members. A member named `type` or
+/// `status` is ignored, so an extension cannot restate either.
+pub(crate) fn problem_with(
+    status: StatusCode,
+    kind: &str,
+    extra: &[(&str, serde_json::Value)],
+) -> Response {
     let mut body = serde_json::Map::new();
     body.insert(
         "type".to_owned(),
         format!("{PROBLEM_TYPE_PREFIX}{kind}").into(),
     );
     body.insert("status".to_owned(), status.as_u16().into());
+    for (name, value) in extra {
+        if *name != "type" && *name != "status" {
+            body.insert((*name).to_owned(), value.clone());
+        }
+    }
     (
         status,
         [(header::CONTENT_TYPE, "application/problem+json")],
