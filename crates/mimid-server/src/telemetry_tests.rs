@@ -96,3 +96,53 @@ fn the_exporters_own_crates_are_not_exported_as_logs() {
         assert!(exported(target), "{target}");
     }
 }
+
+/// The composition `main.rs` actually builds: a global `EnvFilter` and an
+/// `fmt` layer beside the telemetry layers, rather than the registry and
+/// the layers alone.
+///
+/// Regression test for bead mimid-1wgh.46.20.1.1. On the live host this
+/// shape exported metrics and log records but not one span, while
+/// `spans_and_named_events_are_exported` above passed, because that test
+/// omits the filter and the `fmt` layer.
+#[test]
+fn spans_survive_a_global_filter_and_an_fmt_layer() {
+    let spans = InMemorySpanExporter::default();
+    let logs = InMemoryLogExporter::default();
+    let telemetry = Telemetry::from_providers(
+        Some(
+            SdkTracerProvider::builder()
+                .with_simple_exporter(spans.clone())
+                .build(),
+        ),
+        Some(
+            SdkLoggerProvider::builder()
+                .with_simple_exporter(logs.clone())
+                .build(),
+        ),
+        None,
+    );
+    // As main.rs: EnvFilter at info, then fmt, then the telemetry layers.
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("info"))
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::sink))
+        .with(telemetry.layers());
+    tracing::subscriber::with_default(subscriber, || {
+        let span = tracing::info_span!("protocol_request", endpoint = "identifierQuery");
+        let _entered = span.enter();
+        tracing::info!(name: "served", "served");
+    });
+
+    let finished = spans.get_finished_spans().unwrap();
+    assert_eq!(
+        finished.len(),
+        1,
+        "an info span must still be exported with a global filter present"
+    );
+    assert_eq!(finished[0].name, "protocol_request");
+    assert_eq!(
+        logs.get_emitted_logs().unwrap().len(),
+        1,
+        "and the log record too"
+    );
+}
