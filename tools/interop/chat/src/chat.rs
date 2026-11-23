@@ -43,6 +43,7 @@ use mimi_mls::wire::{
 };
 use mimi_mls::{Identity, KeyPackageKind};
 use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
+use mimi_protocol::components::apply_commit_op;
 use mimi_protocol::{
     AbuseReport, AbuseType, AbusiveMessage, ClientKeyMaterial, ConsentEntry, ConsentOperation,
     FanoutEvent, FanoutMessage, Frank, FrankingAgentData, GroupInfoOption, HandshakeBundle,
@@ -54,7 +55,6 @@ use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{
     BaseRoomPolicy, Bool, Capability, Role, RoleData, SingleSourceRoleChangeTargets,
 };
-use mimid_server::hub::components::apply_commit_op;
 use mimid_server::hub::normalized_uri;
 use serde_json::json;
 

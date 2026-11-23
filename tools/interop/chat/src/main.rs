@@ -5,7 +5,7 @@
 //! mimid-agent (bead mimid-1wgh.13). One process is one user,
 //! `mimi://<own-domain>/u/<name>`, whose MLS state lives in a state
 //! directory and survives restarts. It talks to one hub, mimi-hubd at
-//! `haven.reviewcommit.com` by default, over the protocol-07 wire lane
+//! `mimi.havenmessenger.com` by default, over the protocol-07 wire lane
 //! (keyMaterial, update, submitMessage, updateConsent) and mimi-hubd's
 //! JSON lane (room set-up, KeyPackage publication, Welcome relay, and the
 //! per-user queues it pulls, since the hub never dials out). See `chat.rs`
@@ -14,9 +14,9 @@
 //! Usage:
 //!
 //! ```text
-//! mimid-chat --user alice --state-dir DIR [--hub haven.reviewcommit.com]
+//! mimid-chat --user alice --state-dir DIR [--hub mimi.havenmessenger.com]
 //!            [--hub-url https://HUB] [--lane-url https://HUB:8443]
-//!            [--own-domain mimid.reviewcommit.com] [--poll-ms 2000]
+//!            [--own-domain mimi.reviewcommit.com] [--poll-ms 2000]
 //!            [--script FILE]
 //! ```
 //!
@@ -68,8 +68,14 @@ use crate::chat::{Client, valid_name};
 use crate::hub::Hub;
 use crate::state::StateDir;
 
-const DEFAULT_HUB: &str = "haven.reviewcommit.com";
-const DEFAULT_OWN_DOMAIN: &str = "mimid.reviewcommit.com";
+// Both defaults were dead when checked on 2026-11-22.
+// haven.reviewcommit.com answered nothing (its EC2 instance is
+// terminated; the DNS record outlived it), and mimid.reviewcommit.com
+// has no A record at all: mimid's provider was renamed to
+// mimi.reviewcommit.com, whose name is permanent because protocol-07
+// §5.6 puts the hub's identity in every roomId it makes.
+const DEFAULT_HUB: &str = "mimi.havenmessenger.com";
+const DEFAULT_OWN_DOMAIN: &str = "mimi.reviewcommit.com";
 /// The longest `/expect` wait without an explicit timeout.
 const DEFAULT_EXPECT_SECS: u64 = 60;
 
@@ -114,7 +120,7 @@ struct Args {
     #[arg(long, value_name = "URL")]
     local_url: Option<String>,
     /// Talk to your own mimid server over JMAP at URL (its base, e.g.
-    /// https://mimid.reviewcommit.com) instead of the wire and JSON lanes
+    /// https://mimi.reviewcommit.com) instead of the wire and JSON lanes
     /// (bead mimid-1wgh.12.41). Needs --jmap-token-file; implies --no-lane,
     /// but KeyPackages are still published, with KeyPackage/set.
     #[arg(long, value_name = "URL", requires = "jmap_token_file")]

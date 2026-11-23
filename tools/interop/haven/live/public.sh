@@ -10,6 +10,18 @@
 # proxy's wire log for the run. Nothing on either host is configured or
 # restarted.
 #
+# STALE as of 2026-11-22, and kept only as a record of how the IETF 127
+# run was driven. Every host it names is gone: MIMID_HOST and HUB_HOST
+# are private addresses of terminated EC2 instances, HAVEN_DOMAIN
+# (haven.reviewcommit.com) resolves but answers nothing, and OWN_DOMAIN
+# (mimid.reviewcommit.com) has no A record at all -- mimid's provider is
+# now mimi.reviewcommit.com, on dokr behind joumon's Caddy, which this
+# script's shape (ssh to the mimid host, outbound proxy for mTLS) does
+# not match. Updating one variable would not make it run.
+#
+# For the January interop day use tools/interop/chat (mimid-chat) or
+# tools/interop/haven/probe, both of which default to the live hosts.
+#
 # Usage: DRIVER=... KP=... ./public.sh [log dir]
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)

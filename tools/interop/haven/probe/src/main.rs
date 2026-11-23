@@ -25,8 +25,8 @@ use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::peer::{PeerClient, PeerError};
 
 const HUB: &str = "mimi.havenmessenger.com";
-const OWN: &str = "mimid.reviewcommit.com";
-const ALICE: &str = "mimi://mimid.reviewcommit.com/u/alice";
+const OWN: &str = "mimi.reviewcommit.com";
+const ALICE: &str = "mimi://mimi.reviewcommit.com/u/alice";
 const ROOM: &str = "mimi://mimi.havenmessenger.com/r/table";
 const SEED: [u8; 32] = [0x11; 32];
 const PUB: [u8; 32] = [
@@ -68,7 +68,9 @@ async fn key_material(client: &PeerClient, hub: &Domain, step: &str, target: &st
         requester_signature_key: SignaturePublicKey::tls_deserialize_exact(&key).unwrap(),
         requester_credential: Credential::tls_deserialize_exact(&credential).unwrap(),
     }
-    .sign(&mimi_mls::label::SignatureKeyPair::from_raw(&SEED, &PUB).expect("SEED and PUB are a pair"))
+    .sign(
+        &mimi_mls::label::SignatureKeyPair::from_raw(&SEED, &PUB).expect("SEED and PUB are a pair"),
+    )
     .expect("sign")
     .tls_serialize_detached()
     .expect("encode");
@@ -138,7 +140,8 @@ async fn identifier(client: &PeerClient, hub: &Domain, step: &str, handle: &str)
 }
 
 /// Haven's identifierQuery URL from its directory, for this provider.
-const IQ_URL: &str = "https://mimi.havenmessenger.com:8443/mimi/pl/identifierQuery/mimi.havenmessenger.com";
+const IQ_URL: &str =
+    "https://mimi.havenmessenger.com:8443/mimi/pl/identifierQuery/mimi.havenmessenger.com";
 
 /// `sign-iq`: see the module documentation.
 fn sign_iq(seed_file: &str, out: &str) {
@@ -160,7 +163,7 @@ fn sign_iq(seed_file: &str, out: &str) {
     let mut headers = http::HeaderMap::new();
     headers.insert(
         http::header::FROM,
-        http::HeaderValue::from_static("mimi@mimid.reviewcommit.com"),
+        http::HeaderValue::from_static("mimi@mimi.reviewcommit.com"),
     );
     headers.insert(
         http::header::CONTENT_TYPE,
