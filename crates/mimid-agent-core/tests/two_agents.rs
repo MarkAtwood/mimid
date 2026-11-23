@@ -434,6 +434,7 @@ async fn a_room_without_metadata_and_a_lone_leave() {
             open: false,
             roles: None,
             direct: false,
+            parent: None,
         })
         .await
         .unwrap();
@@ -471,6 +472,7 @@ async fn a_welcome_without_room_metadata_joins_by_the_chats_room_id() {
             open: false,
             roles: None,
             direct: false,
+            parent: None,
         })
         .await
         .unwrap();

@@ -197,6 +197,74 @@ pub(super) fn check_group(
     Ok(())
 }
 
+/// Checks room-policy-04 §5's rules for a parent-dependent room, on a
+/// group this hub is about to host.
+///
+/// A parent-dependent room "is always hosted on the same Hub as the
+/// parent room", so its `parent_room` must be a room this hub holds, and
+/// its participant list must be a subset of the parent's (decision
+/// mimid-1wgh.110). Both are checked here rather than left to the room's
+/// first membership Commit, which would otherwise be refused in a room
+/// the hub had already agreed to host.
+///
+/// A group with no `base_room_policy` is an open room (decision
+/// mimid-1wgh.52) and cannot be parent-dependent. A `base_room_policy`
+/// that does not decode is [`check_group`]'s to refuse, so it passes
+/// here.
+///
+/// # Errors
+///
+/// [`HubError::ParentNotHosted`] if the parent is not a room of this hub
+/// or its own state cannot be read, [`HubError::NotInParent`] if the
+/// participants are not a subset of the parent's, and
+/// [`HubError::InvalidParticipantList`] if this group's list does not
+/// decode.
+pub(super) fn check_parent(
+    rooms: &std::collections::BTreeMap<String, super::Room>,
+    observer: &Observer,
+) -> Result<(), HubError> {
+    let Some(base) = observer
+        .component(BASE_ROOM_POLICY)
+        .and_then(|base| decode::<BaseRoomPolicy>(BASE_ROOM_POLICY, base).ok())
+    else {
+        return Ok(());
+    };
+    if !bool::from(base.parent_dependant) {
+        return Ok(());
+    }
+    // Decoding enforces §5's rule that a parent-dependent room names
+    // exactly one non-empty parent (`BaseRoomPolicy::validate`).
+    let parent_id = base
+        .parent_room
+        .first()
+        .map(|parent| parent.as_str().to_owned())
+        .unwrap_or_default();
+    let parent = rooms
+        .get(&parent_id)
+        .and_then(|room| super::state::room_state(&room.observer, &parent_id).ok())
+        .ok_or_else(|| HubError::ParentNotHosted {
+            parent_id: parent_id.clone(),
+        })?;
+    let users = |list: &ParticipantListData| -> std::collections::BTreeSet<Vec<u8>> {
+        list.participants
+            .iter()
+            .map(|pair| pair.user.clone())
+            .collect()
+    };
+    let participants = observer
+        .component(component_id::PARTICIPANT_LIST)
+        .ok_or(HubError::MissingParticipantList)?;
+    let participants = ParticipantListData::tls_deserialize_exact(participants)
+        .map_err(HubError::InvalidParticipantList)?;
+    match super::policy::participants_outside_parent(
+        &users(&participants),
+        &users(&parent.participants),
+    ) {
+        0 => Ok(()),
+        outside => Err(HubError::NotInParent { outside }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -36,6 +36,9 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+# A call room's exported media secret is zeroized when dropped
+# (src/media.rs); the version mimi-mls uses.
+zeroize = "1.9.1"
 
 [features]
 # Tests only: Agent::fail_next, which makes one step of receiving or

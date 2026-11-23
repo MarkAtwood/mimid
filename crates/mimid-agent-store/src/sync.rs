@@ -564,6 +564,8 @@ impl Store {
         let participants = roles.participants(&participants);
         // room-policy-04 §5 fixed_membership with max_users 2 (§7.29).
         let direct = agent.is_direct(uri).unwrap_or(false);
+        // §5 parent_dependant: a call room names the chat it is under.
+        let parent = agent.parent_room(uri).unwrap_or_default();
         state.insert_room(Room {
             key: key.clone(),
             uri: uri.to_owned(),
@@ -575,6 +577,7 @@ impl Store {
             role_names: roles.names(),
             message_expiry_seconds: None,
             direct,
+            parent,
             ext: BTreeMap::new(),
         });
         changes.push(Change::RoomAdded(key.clone()));

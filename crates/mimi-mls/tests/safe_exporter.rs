@@ -145,3 +145,27 @@ fn a_removed_member_cannot_export() {
         "a removed member has no epoch to export from"
     );
 }
+/// A component's secret can be exported once in an epoch: §4.4's
+/// exporter is forward-secure because the Exporter Tree leaf is
+/// punctured when it is read, so the caller that needs the secret for the
+/// life of the epoch keeps it rather than asking again (the agent's
+/// `media_secret` does).
+#[test]
+fn a_component_exports_once_in_an_epoch() {
+    let (alice, mut alice_group, _bob, _bob_group) = pair();
+
+    let first = alice_group
+        .safe_export_secret(&alice, MEDIA)
+        .expect("the first export of the epoch");
+    assert!(
+        alice_group.safe_export_secret(&alice, MEDIA).is_err(),
+        "the leaf is consumed, so the epoch has no second secret for the \
+         component"
+    );
+
+    // Another component is another leaf, and is still there.
+    let other = alice_group
+        .safe_export_secret(&alice, OTHER)
+        .expect("another component in the same epoch");
+    assert_ne!(first, other);
+}

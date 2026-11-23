@@ -2407,3 +2407,62 @@ every 2 s and never listened to the EventSource mimid-server serves
   refused, a 100 ms poll carries messages and no stream opens.
   `tests/no_token_in_logs.rs` now opens, loses, is refused and reopens
   the stream, and neither token appears in the log.
+
+## 9. A call is a room (bead mimid-1wgh.108)
+
+A call has its own MIMI room, parent-dependent on the chat it belongs to
+(room-policy-04 §5), and its media key is that room's own
+`SafeExportSecret(media_keys)` (mls-extensions-11 §4.4;
+draft-atwood-mimi-calls). Nothing is sent to key it: every member of the
+call's group derives the same secret from the epoch it is already in.
+That is the whole reason the call needs a room of its own, because §4.4's
+secret belongs to the entire group and confines nothing to a subset of
+it. Decisions mimid-1wgh.110 to mimid-1wgh.113.
+
+- **The primitive.** `HostOptions::parent` (and `HostOptions::child_of`)
+  asks for a parent-dependent room: `parent_dependant` with the parent's
+  room ID in `parent_room`. The agent refuses a parent it is not in or
+  that another provider hosts, because §5 keeps the two rooms on one hub
+  and a hub that does not host the parent cannot check the subset rule.
+  An open room cannot be one: it has no `base_room_policy` to say it in
+  (decision mimid-1wgh.52).
+- **The convenience.** `Store::start_call(key, parent, among)` hosts such
+  a room under the chat `parent` and invites the others. `among` is
+  `None` for everyone in the chat, which §5 allows as mimid reads it
+  (decision mimid-1wgh.110: a subset, not a strict one), or a subset of
+  the chat's participants. It is written over the primitive, not beside
+  it: one code path to the room, so a client that knows what a
+  parent-dependent room is gets the same room from `create_room`'s
+  options (decision mimid-1wgh.113).
+- **The call room is not `fixed_membership`,** though §5 offers that for
+  "a room used for a multi-media call of clients in a Group DM": §5 also
+  says "only a single fixed-membership room can exist for any unique set
+  of participants", so a fixed-membership call room would be the only
+  call that chat could ever have. Open for Mark.
+- **The key.** `Store::media_secret(key)` and `Agent::media_secret(room)`
+  give the room's secret for the epoch its group is in, as a
+  `MediaSecret` that redacts its `Debug` and zeroizes on drop. §4.4's
+  exporter can be read once per epoch (the Exporter Tree leaf is
+  punctured), so the agent keeps what it read for as long as that epoch
+  lasts and answers again from memory; a new epoch is a new secret, so a
+  call's key rolls whenever its membership changes. Nothing is written to
+  the database.
+- **The record.** `Room::parent` holds the parent's URI, read from the
+  room's policy when the record is made (`Agent::parent_room`), as
+  `Room::direct` is. That is how a front end tells a call from a chat.
+- **At the hub.** A parent-dependent room is hosted only if its parent is
+  a room of this hub and its participants are a subset of the parent's,
+  and a Commit that would take them outside is refused. When a user
+  leaves the parent, the hub proposes their removal from each
+  parent-dependent room of it, through the operator-removal path; it
+  cannot remove them, not being an MLS member, so they are in the call
+  until a member of it next commits (decision mimid-1wgh.111).
+- **Not built: the front-end surface.** No JMAP or IRC front end offers a
+  call yet, so only an embedder reaches this. That is the step a stock
+  client needs (bead mimid-1wgh.108 step 4).
+- Tests: mimid-agent-core `tests/call_rooms.rs` (both sides of a call
+  derive the same secret through a real hub; the refusals), mimid-agent-store
+  `tests/calls.rs` (`start_call`'s defaults and its subset rule, the
+  record's parent on both sides), mimid-server `tests/hub_parent_rooms.rs`
+  (the hub's §5 rules and the cascade), mimi-mls `tests/safe_exporter.rs`
+  (§4.4 itself).

@@ -19,6 +19,12 @@
 //!
 //! This is an operator power outside the drafts: room-policy-04 gives the
 //! room's own roles alone the right to kick or ban.
+//!
+//! room-policy-04 §5's cascade uses the same path, for the same reason:
+//! when a user leaves a parent room the hub must take them out of its
+//! parent-dependent rooms, and cannot (decision mimid-1wgh.111). What a
+//! removal was asked for is in its log event, so an operator reading the
+//! log does not find a removal nobody asked them for ([`Cause`]).
 
 use mimi_mls::member::AppDataUpdate;
 use mimi_mls::tls_codec::{Deserialize, Serialize};
@@ -35,6 +41,28 @@ use super::{Hub, HubError};
 
 /// room-policy-04 §8.1.3: the banned role.
 const BANNED_ROLE: u32 = 1;
+
+/// What a hub-proposed removal was asked for, which is all that
+/// distinguishes them: the proposals are the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Cause {
+    /// The operator asked, through the admin API (decision
+    /// mimid-1wgh.6.46 as amended 2026-11-15).
+    Operator,
+    /// The user left the room's parent, and room-policy-04 §5 takes them
+    /// out of its parent-dependent rooms (decision mimid-1wgh.111).
+    ParentDependent,
+}
+
+impl Cause {
+    /// A stable token for the log.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Operator => "operator",
+            Self::ParentDependent => "parent_dependent",
+        }
+    }
+}
 
 impl Hub {
     /// Removes `user` from the hosted room `room_id`, or with `ban` bans
@@ -54,6 +82,22 @@ impl Hub {
         room_id: &str,
         user: &[u8],
         ban: bool,
+    ) -> Result<Vec<u8>, HubError> {
+        self.propose_removal(room_id, user, ban, Cause::Operator)
+            .await
+    }
+
+    /// [`Hub::remove_user`], saying what asked for it.
+    ///
+    /// # Errors
+    ///
+    /// [`Hub::remove_user`]'s.
+    pub(super) async fn propose_removal(
+        &self,
+        room_id: &str,
+        user: &[u8],
+        ban: bool,
+        cause: Cause,
     ) -> Result<Vec<u8>, HubError> {
         let request = {
             let rooms = self.rooms.lock().await;
@@ -134,15 +178,21 @@ impl Hub {
             .is_ok_and(|answer| matches!(answer.result, UpdateResult::Success { .. }));
         if accepted {
             tracing::info!(
-                name: "operator_user_removed",
+                name: "hub_removal_proposed",
                 room_id,
                 user = %String::from_utf8_lossy(user),
                 ban,
-                "hub proposed the operator's removal of a user"
+                cause = cause.as_str(),
+                "hub proposed a user's removal"
             );
         } else {
             // Hub::update logged the reason at DEBUG.
-            tracing::debug!(room_id, ban, "the hub refused its own removal proposals");
+            tracing::debug!(
+                room_id,
+                ban,
+                cause = cause.as_str(),
+                "the hub refused its own removal proposals"
+            );
         }
         Ok(response)
     }

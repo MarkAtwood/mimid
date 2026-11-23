@@ -960,18 +960,6 @@ impl Occupancy for After<'_> {
     }
 }
 
-/// Authorizes a staged Commit that MLS has already found valid
-/// (protocol-07 §5.3; decision mimid-1wgh.6.5).
-///
-/// See the module documentation for the rules. The proposals are taken in
-/// `commit.proposals` order, which must be the order MLS applies them;
-/// participant list updates are applied in that order, all indexing the
-/// list at the start of the epoch (mls-extensions-11 §4.7; protocol-07
-/// §7.5; decision mimid-1wgh.6.75).
-///
-/// # Errors
-///
-/// The first check that fails.
 /// room-policy-04 §5: a parent-dependent room's participants against its
 /// parent's.
 ///
@@ -993,14 +981,36 @@ pub fn parent_dependent_participants(
     child: &std::collections::BTreeSet<Vec<u8>>,
     parent: &std::collections::BTreeSet<Vec<u8>>,
 ) -> Result<(), Denied> {
-    let outside = child.difference(parent).count();
-    if outside == 0 {
-        Ok(())
-    } else {
-        Err(Denied::NotInParent { outside })
+    match participants_outside_parent(child, parent) {
+        0 => Ok(()),
+        outside => Err(Denied::NotInParent { outside }),
     }
 }
 
+/// How many of `child`'s participants its `parent` does not list: zero if
+/// room-policy-04 §5's subset rule holds. The rule itself is
+/// [`parent_dependent_participants`]; this is for the caller that reports
+/// a failure as something other than a [`Denied`], as the hub does when
+/// it refuses to host such a room at all.
+pub fn participants_outside_parent(
+    child: &std::collections::BTreeSet<Vec<u8>>,
+    parent: &std::collections::BTreeSet<Vec<u8>>,
+) -> usize {
+    child.difference(parent).count()
+}
+
+/// Authorizes a staged Commit that MLS has already found valid
+/// (protocol-07 §5.3; decision mimid-1wgh.6.5).
+///
+/// See the module documentation for the rules. The proposals are taken in
+/// `commit.proposals` order, which must be the order MLS applies them;
+/// participant list updates are applied in that order, all indexing the
+/// list at the start of the epoch (mls-extensions-11 §4.7; protocol-07
+/// §7.5; decision mimid-1wgh.6.75).
+///
+/// # Errors
+///
+/// The first check that fails.
 pub fn authorize_commit(state: &RoomState, commit: &Commit) -> Result<PolicyOutcome, Denied> {
     if commit.path_identity_changed {
         return Err(Denied::IdentityChange);

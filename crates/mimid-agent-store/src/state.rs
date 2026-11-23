@@ -645,6 +645,7 @@ mod tests {
             role_names: BTreeMap::new(),
             message_expiry_seconds: None,
             direct: false,
+            parent: None,
             ext: Ext::new(),
         }
     }

@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.109",
+  "title": "room-policy §5: say who removes a user from a parent-dependent room",
+  "description": "Mark 2026-11-23: \"i also sounds like room-policy §5 has a mistake that\nneeds to be PRed\". Found while deciding mimid-1wgh.111.\n\nTHE TEXT, room-policy-04 §5: \"If a user leaves or is removed from the\nparent room, that user is automatically removed from any parent-dependent\nrooms of that parent.\"\n\nTHE MISTAKE. Passive voice, no actor, and the only party that sees the\nparent change cannot do it. Removing a user from a room is a Commit in\nthat room's MLS group, and only a member of the group can send one. A Hub\nis not a member (mimid's hub/operator.rs says so plainly). So §5 as\nwritten requires an action no specified party can perform, and a reader\nimplementing it finds no way to.\n\nIt is not only editorial: the timing is a security property. A\nparent-dependent room's exported secret is what draft-atwood-mimi-calls\nkeys a call from, so the gap between the parent change and the child\nCommit is a window in which a departed user still derives the call's\nmedia secret. §5 as written says there is no window.\n\nPREPARED LOCALLY, NOT POSTED: ~/PROJECT/mimi-room-policy branch\ncascade-needs-a-committer, commit 4b0d277, off main rather than off the\n#59 branch so the two changes stay separable. It names the actor and the\ntiming in four lines:\n\n  If a user leaves or is removed from the parent room, that user MUST\n  also be removed from any parent-dependent rooms of that parent.\n  A removal from a room is a Commit in its MLS group, which only a member\n  of that group can send, so a Hub that is not a member cannot perform\n  the removal itself.\n  Such a Hub proposes the removal instead, and it takes effect when a\n  member of the parent-dependent room next commits.\n  Until then the departed user is still a member of that room, and can\n  still derive secrets its MLS group exports.\n\nNEEDS MARK'S OK to push, to open the PR, and to file the issue that goes\nwith it, as every upstream post does. No JMAP in either (memory\nno-jmap-to-the-mimi-wg).\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T21:44:12.90391808Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T21:44:12.90391808Z",
+  "labels": [
+    "human",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.109",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-23T21:44:13.074637411Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

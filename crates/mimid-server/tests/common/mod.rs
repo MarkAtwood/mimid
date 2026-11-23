@@ -147,7 +147,7 @@ pub fn participant_list(users: &[&[u8]]) -> Vec<u8> {
 /// A valid `BaseRoomPolicy` (room-policy-04 §5): open membership, multiple
 /// devices, no limits. Every hosted room needs one (decision
 /// mimid-1wgh.6.57).
-pub fn base_room_policy() -> Vec<u8> {
+pub fn base_policy() -> BaseRoomPolicy {
     BaseRoomPolicy {
         fixed_membership: false.into(),
         parent_dependant: false.into(),
@@ -159,6 +159,21 @@ pub fn base_room_policy() -> Vec<u8> {
         persistent_room: true.into(),
         discoverable: false.into(),
         policy_component_ids: vec![],
+    }
+}
+
+/// [`base_policy`], encoded.
+pub fn base_room_policy() -> Vec<u8> {
+    base_policy().tls_serialize_detached().unwrap()
+}
+
+/// [`base_policy`] for a parent-dependent room (room-policy-04 §5), with
+/// `parent_id` as its parent, encoded.
+pub fn child_room_policy(parent_id: &str) -> Vec<u8> {
+    BaseRoomPolicy {
+        parent_dependant: true.into(),
+        parent_room: vec![mimi_room_policy::Uri::new(parent_id).unwrap()],
+        ..base_policy()
     }
     .tls_serialize_detached()
     .unwrap()

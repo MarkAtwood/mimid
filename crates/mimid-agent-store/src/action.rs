@@ -14,6 +14,8 @@
 //! | Action | Method | Agent |
 //! |---|---|---|
 //! | Host a room and invite | [`Store::create_room`] | `host_room`, `invite` |
+//! | Start a call | [`Store::start_call`] | `host_room` (`HostOptions::child_of`), `invite` |
+//! | A call's media key | [`Store::media_secret`] | `media_secret` |
 //! | One-to-one rooms | [`Store::open_direct`], [`Store::direct_room`] | `host_room` (`HostOptions::direct`), `invite` |
 //! | Invite, remove, change roles, leave | [`Store::change_members`] | `invite`, `remove`, `change_role`, `leave` |
 //! | Leave a room | [`Store::leave`] | `leave` |
@@ -50,8 +52,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mimid_agent_core::frank::{decode_abusive_message, decode_unverified_message};
 use mimid_agent_core::{
-    AbuseType, AgentError, HostOptions, OutgoingAttachment, ReportOutcome, ReportedMessage,
-    RoomStatus,
+    AbuseType, AgentError, HostOptions, MediaSecret, OutgoingAttachment, ReportOutcome,
+    ReportedMessage, RoomStatus,
 };
 use sha2::{Digest, Sha256};
 
@@ -100,6 +102,10 @@ pub enum ActionError {
     /// that another user sent.
     #[error("no reaction {0} of the user's")]
     NoSuchReaction(Key),
+    /// A call was asked for among a user the parent room does not have,
+    /// which room-policy-04 §5's subset rule forbids.
+    #[error("{0} is not in the parent room")]
+    NotInParent(String),
     /// A one-to-one room with the user themselves, or a room to hide
     /// ([`Store::hide_room`]) that is not an active one-to-one room.
     #[error("not a one-to-one room with someone else")]
@@ -364,6 +370,7 @@ impl Store {
         let participants = agent.participants(&uri).unwrap_or_default();
         let roles = RoomRoles::of(&agent, &uri);
         let direct = agent.is_direct(&uri).unwrap_or(false);
+        let parent = agent.parent_room(&uri).unwrap_or_default();
         let room = Room {
             key,
             name: agent.room_name(&uri).ok().flatten(),
@@ -375,12 +382,106 @@ impl Store {
             role_names: roles.names(),
             message_expiry_seconds: None,
             direct,
+            parent,
             ext: BTreeMap::new(),
         };
         self.state().insert_room(room.clone());
         self.record([Change::RoomAdded(room.key.clone())]);
         self.want_sync();
         Ok(room)
+    }
+
+    /// Starts a call among the people in room `parent`
+    /// (draft-atwood-mimi-calls §4.1; decision mimid-1wgh.113): hosts a
+    /// room-policy-04 §5 parent-dependent room under `key` with `parent`
+    /// as its parent, and invites the others. The call's media key comes
+    /// from that room's own MLS group ([`Store::media_secret`]), so the
+    /// people in the call are the people in the room.
+    ///
+    /// `among` names whom to call, and must be participants of `parent`:
+    /// §5 keeps a parent-dependent room's participants inside its
+    /// parent's, and the hub refuses a room that breaks it. `None` calls
+    /// everyone in `parent`, which §5 allows as mimid reads it (decision
+    /// mimid-1wgh.110: a subset, not a strict one). The user themselves is
+    /// left out of either: they are the one hosting it.
+    ///
+    /// This is the convenience of decision mimid-1wgh.113, written over
+    /// the primitive rather than beside it: a client that knows what a
+    /// parent-dependent room is can pass the same `HostOptions` itself
+    /// and get the same room.
+    ///
+    /// The call room is not a `fixed_membership` room, though §5 offers
+    /// that for "a room used for a multi-media call of clients in a Group
+    /// DM": §5 also says "only a single fixed-membership room can exist
+    /// for any unique set of participants", so a fixed-membership call
+    /// room would be the only call that chat could ever have (bead
+    /// mimid-1wgh.108).
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::NoSuchRoom`] if `parent` is not a room of this
+    /// store, [`ActionError::NotInParent`] for a user in `among` that
+    /// `parent` does not have, and [`ActionError::Agent`] if hosting or
+    /// an invite fails, as for [`Store::create_room`].
+    pub async fn start_call(
+        &self,
+        key: Key,
+        parent: &str,
+        among: Option<&[String]>,
+    ) -> Result<Room, ActionError> {
+        let parent_room = self
+            .state()
+            .rooms
+            .get(parent)
+            .cloned()
+            .ok_or_else(|| ActionError::NoSuchRoom(parent.to_owned()))?;
+        let in_parent = parent_room.others(&self.user);
+        let invite: Vec<String> = match among {
+            Some(users) => {
+                for user in users {
+                    if *user != self.user && !in_parent.contains(&user.as_str()) {
+                        return Err(ActionError::NotInParent(user.clone()));
+                    }
+                }
+                users
+                    .iter()
+                    .filter(|user| **user != self.user)
+                    .cloned()
+                    .collect()
+            }
+            None => in_parent.iter().map(|user| (*user).to_owned()).collect(),
+        };
+        self.host(
+            key,
+            &HostOptions::child_of(parent_room.uri.clone(), String::new()),
+            &invite,
+        )
+        .await
+    }
+
+    /// The media secret of the call room `key` for the epoch its MLS
+    /// group is in: `SafeExportSecret(media_keys)` (mls-extensions-11
+    /// §4.4; draft-atwood-mimi-calls §4.2), which every member of that
+    /// room derives for itself, so nothing is sent to key the media.
+    ///
+    /// Any room can be asked, not only one [`Store::start_call`] made:
+    /// what keeps a call's media to the people in the call is which room
+    /// it is in. A new epoch -- anyone joining or leaving -- gives a new
+    /// secret, and the same epoch gives the same one however often it is
+    /// asked for.
+    ///
+    /// Nothing is recorded and nothing is sent: this is a read of the
+    /// room's own key schedule.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::NoSuchRoom`], and [`ActionError::Agent`] if the
+    /// export fails: in a room the agent has been removed from, or one
+    /// whose group carries no Exporter Tree.
+    pub async fn media_secret(&self, key: &str) -> Result<MediaSecret, ActionError> {
+        let uri = self.room_uri(key)?;
+        let mut agent = self.agent.lock().await;
+        Ok(agent.media_secret(&uri)?)
     }
 
     /// The key of the active one-to-one room with `user`

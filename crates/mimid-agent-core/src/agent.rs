@@ -21,7 +21,9 @@ use mimi_mls::wire::{
     Welcome,
 };
 use mimi_mls::{Identity, KeyPackageKind};
-use mimi_protocol::component_id::{FRANK_AAD, FRANKING_AGENT, PARTICIPANT_LIST, ROOM_METADATA};
+use mimi_protocol::component_id::{
+    FRANK_AAD, FRANKING_AGENT, MEDIA_KEYS, PARTICIPANT_LIST, ROOM_METADATA,
+};
 use mimi_protocol::{
     AbuseReport, AbuseType, AbusiveMessage, ClientKeyMaterial, FanoutEvent, FanoutMessage, Frank,
     FrankingAgentData, GroupInfoOption, GroupInfoRequestTbs, GroupInfoResponse, HandshakeBundle,
@@ -33,7 +35,7 @@ use mimi_protocol::{
 use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{
     BANNED_ROLE_INDEX, BaseRoomPolicy, Bool, Capability, Role, RoleData,
-    SingleSourceRoleChangeTargets,
+    SingleSourceRoleChangeTargets, Uri,
 };
 
 use crate::AgentError;
@@ -41,6 +43,7 @@ use crate::client::{Accepted, ConsentRecord, Fetched, MAX_SENT};
 use crate::didwebvh::{DidWebvhConfig, Pin, RoomClient, check_pin, required_capabilities};
 use crate::frank::{self, VerifiedFrank};
 use crate::journal::{self, Journaled, Receipt};
+use crate::media::MediaSecret;
 use crate::outbox;
 use crate::provider::{Binding, Provider};
 use crate::state::{Held, Room, RoomStatus, State, StateDir};
@@ -138,6 +141,18 @@ pub struct HostOptions {
     /// `canAddParticipant`. The other user is added by the first Commit,
     /// [`Agent::invite`]; nobody can be added after it. Not with `open`.
     pub direct: bool,
+    /// The room URI of this room's parent, making it a parent-dependent
+    /// room (room-policy-04 §5): its participants must stay a subset of
+    /// the parent's, and a user who leaves the parent is removed from
+    /// this room too. A call among the members of a chat is the case it
+    /// is for (draft-atwood-mimi-calls §4.1; decision mimid-1wgh.113).
+    ///
+    /// The parent must be a room this agent is in, on the same provider:
+    /// §5 puts a parent-dependent room "always ... on the same Hub as the
+    /// parent room", and a hub that does not host the parent cannot check
+    /// the subset rule, so mimid's refuses to host the room at all.
+    /// Not with `open`, which has no room policy to put it in.
+    pub parent: Option<String>,
 }
 
 impl HostOptions {
@@ -150,6 +165,17 @@ impl HostOptions {
             open: false,
             roles: None,
             direct: false,
+            parent: None,
+        }
+    }
+
+    /// A parent-dependent room ([`HostOptions::parent`]) named `name`,
+    /// whose parent is the room `parent`: a call room over a chat, for
+    /// instance. Otherwise as [`HostOptions::named`].
+    pub fn child_of(parent: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            parent: Some(parent.into()),
+            ..Self::named(name)
         }
     }
 
@@ -704,6 +730,12 @@ pub struct Agent {
     /// Events delivered since the last save, which the next save appends
     /// to the journal with the state.
     undelivered: Vec<Journaled>,
+    /// The media secret of each room it has been asked for, for the epoch
+    /// it was exported in (`crate::media`). In memory only: never
+    /// written to the database, and dropped with the agent. mls-extensions-11
+    /// §4.4's exporter can be read only once per epoch, so this is what
+    /// makes [`Agent::media_secret`] answerable more than once.
+    media_secrets: BTreeMap<String, MediaSecret>,
     /// [`Agent::fail_next`].
     #[cfg(feature = "fail-points")]
     fail_point: Option<FailPoint>,
@@ -796,6 +828,7 @@ impl Agent {
             dir,
             provider,
             members: BTreeMap::new(),
+            media_secrets: BTreeMap::new(),
             full_tree_hubs: config
                 .full_tree_hubs
                 .iter()
@@ -1516,6 +1549,27 @@ impl Agent {
                 "a one-to-one room has a room policy; it cannot be open".to_owned(),
             ));
         }
+        if let Some(parent) = &options.parent {
+            if options.open {
+                return Err(AgentError::Invalid(
+                    "a parent-dependent room has a room policy; it cannot be open".to_owned(),
+                ));
+            }
+            // room-policy-04 §5 puts the two rooms on one hub, and the
+            // hub checks the subset rule against a parent it hosts, so a
+            // parent this agent is not in is one it cannot keep to.
+            if !self.state.rooms.contains_key(parent) {
+                return Err(AgentError::Invalid(format!(
+                    "{parent} is not a room of this agent, so it cannot be a parent room"
+                )));
+            }
+            if !parent.starts_with(self.provider.room_id_prefix()) {
+                return Err(AgentError::Invalid(format!(
+                    "{parent} is not hosted by this provider, which room-policy-04 §5 requires \
+                     of a parent room"
+                )));
+            }
+        }
         if !self.state.signature_key_bound {
             self.publish_key_packages(1).await?;
         }
@@ -1580,14 +1634,7 @@ impl Agent {
                         }
                     }))?,
                 ),
-                (
-                    BASE_ROOM_POLICY,
-                    encode(&if options.direct {
-                        direct_base_policy()
-                    } else {
-                        default_base_policy()
-                    })?,
-                ),
+                (BASE_ROOM_POLICY, encode(&base_policy(options)?)?),
             ]
         };
         if options.metadata {
@@ -2230,6 +2277,7 @@ impl Agent {
                 // A rollback reads the groups again, the old one included.
                 if rejoin && let Some(old) = agent.members.remove(room) {
                     forget_group(&agent.identity, old);
+                    agent.media_secrets.remove(room);
                 }
                 let joined = Member::join_external(
                     &agent.identity,
@@ -3187,6 +3235,25 @@ impl Agent {
             .is_some_and(|base| bool::from(base.fixed_membership) && base.max_users == Some(2)))
     }
 
+    /// The room URI of `room`'s parent room, if `room` is a
+    /// parent-dependent room (room-policy-04 §5 `parent_room`); `None`
+    /// for any other room, one without a `base_room_policy`, or one whose
+    /// policy does not decode.
+    ///
+    /// A call room made by [`HostOptions::child_of`] names the chat it
+    /// belongs to here, which is how a front end tells the two apart.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`].
+    pub fn parent_room(&self, room: &str) -> Result<Option<String>, AgentError> {
+        Ok(self.base_room_policy(room)?.and_then(|base| {
+            bool::from(base.parent_dependant)
+                .then(|| base.parent_room.first().map(|uri| uri.as_str().to_owned()))
+                .flatten()
+        }))
+    }
+
     /// The `base_room_policy` of an active room, `None` if it has none or
     /// it does not decode.
     fn base_room_policy(&self, room: &str) -> Result<Option<BaseRoomPolicy>, AgentError> {
@@ -3841,6 +3908,50 @@ impl Agent {
         self.fail_point = Some(point);
     }
 
+    /// The media secret of room `room` for the epoch its MLS group is in:
+    /// `SafeExportSecret(media_keys)` (mls-extensions-11 §4.4;
+    /// [`mimi_protocol::component_id::MEDIA_KEYS`];
+    /// draft-atwood-mimi-calls §4.2). Every member of that epoch derives
+    /// the same bytes without anything being sent, which is how a call
+    /// gets its key; see [`crate::media`] for what the secret is and is
+    /// not.
+    ///
+    /// §4.4's exporter can be read only once per epoch, so the agent
+    /// keeps what it read: asking again in the same epoch gives the same
+    /// secret, and the first ask in a new epoch gives a new one. The
+    /// secret is held in memory and never written to the database.
+    ///
+    /// Any room the agent is in can be asked. Keeping the media to the
+    /// people in a call is a matter of which room the call is in, since
+    /// the whole group derives this ([`HostOptions::parent`], decision
+    /// mimid-1wgh.113); it is not something this call can do.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`] if the agent holds no group for `room`,
+    /// and [`AgentError::Mls`] if the export fails: in a room the agent
+    /// has been removed from, or one whose group does not carry the
+    /// Exporter Tree extension, which a room made by another
+    /// implementation may not.
+    pub fn media_secret(&mut self, room: &str) -> Result<MediaSecret, AgentError> {
+        let member = self
+            .members
+            .get_mut(room)
+            .ok_or_else(|| AgentError::NoSuchRoom(room.to_owned()))?;
+        let epoch = member.epoch();
+        if let Some(held) = self.media_secrets.get(room)
+            && held.epoch() == epoch
+        {
+            return Ok(held.clone());
+        }
+        let secret = member
+            .safe_export_secret(&self.identity, MEDIA_KEYS)
+            .map_err(|e| AgentError::mls("exporting the media secret", e))?;
+        let secret = MediaSecret::new(secret, epoch);
+        self.media_secrets.insert(room.to_owned(), secret.clone());
+        Ok(secret)
+    }
+
     // ---- internals ----
 
     fn member(&self, room: &str) -> Result<&Member, AgentError> {
@@ -4222,6 +4333,15 @@ impl Agent {
             .merge_pending_commit(&self.identity)
             .map_err(|e| AgentError::mls("merging this device's Commit", e))?;
         let epoch = member.epoch();
+        // As in `incoming_mls`: the secret of the epoch this Commit
+        // ended is of no further use (`crate::media`).
+        if self
+            .media_secrets
+            .get(room)
+            .is_some_and(|held| held.epoch() != epoch)
+        {
+            self.media_secrets.remove(room);
+        }
         let mut events = removed_events(room, pending.removed, epoch);
         if again {
             events.push(Event::MembersChanged {
@@ -4381,6 +4501,7 @@ impl Agent {
         if let Some(member) = self.members.remove(room) {
             forget_group(&self.identity, member);
         }
+        self.media_secrets.remove(room);
         if let Some(r) = self.state.rooms.get_mut(room) {
             r.status = RoomStatus::Left;
         }
@@ -4759,6 +4880,17 @@ impl Agent {
         let out_of_sync = member.out_of_sync().map(|o| (o.epoch, o.reason.clone()));
         if let Some(r) = self.state.rooms.get_mut(&room) {
             r.out_of_sync = out_of_sync;
+        }
+        // A Commit moves the epoch, and leaves a secret of an epoch that
+        // is over (`crate::media`). The current epoch's is kept:
+        // mls-extensions-11 §4.4 cannot be asked for it twice.
+        let epoch_now = member.epoch();
+        if self
+            .media_secrets
+            .get(&room)
+            .is_some_and(|held| held.epoch() != epoch_now)
+        {
+            self.media_secrets.remove(&room);
         }
         match result {
             Ok(Incoming::Application {
@@ -5277,6 +5409,31 @@ fn default_base_policy() -> BaseRoomPolicy {
         // (room-policy-04 §5; bead mimid-hpg8).
         policy_component_ids: vec![ROLES_LIST],
     }
+}
+
+/// The base_room_policy of a room [`Agent::host_room`] is making:
+/// [`direct_base_policy`] or [`default_base_policy`], and
+/// `parent_dependant` with the parent named if the caller asked for one
+/// (room-policy-04 §5).
+///
+/// # Errors
+///
+/// [`AgentError::Invalid`] if the parent's room URI is not an RFC 3986
+/// URI, which §5's `parent_room` must hold.
+fn base_policy(options: &HostOptions) -> Result<BaseRoomPolicy, AgentError> {
+    let mut base = if options.direct {
+        direct_base_policy()
+    } else {
+        default_base_policy()
+    };
+    if let Some(parent) = &options.parent {
+        base.parent_dependant = Bool::True;
+        base.parent_room = vec![
+            Uri::new(parent)
+                .map_err(|_| AgentError::Invalid(format!("{parent} is not a room URI")))?,
+        ];
+    }
+    Ok(base)
 }
 
 /// The base_room_policy of a one-to-one room ([`HostOptions::direct`]):

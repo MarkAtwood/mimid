@@ -29,7 +29,8 @@
 //!    must not give it the same set of participants as another
 //!    fixed-membership room this hub hosts: "Only a single
 //!    fixed-membership room can exist for any unique set of participants"
-//!    (room-policy-04 §5; decision mimid-1wgh.89).
+//!    (room-policy-04 §5; decision mimid-1wgh.89). Parent-dependent
+//!    rooms are not counted, on either side (decision mimid-1wgh.110).
 //! 8. The Commit must include every pending proposal (decision
 //!    mimid-1wgh.6.5).
 //! 9. The GroupInfo must not embed a ratchet_tree (decision
@@ -53,6 +54,12 @@
 //!     is longer than that, the tree cannot reach them, and the Commit is
 //!     refused before anything is written: the room has outgrown the
 //!     transport.
+//!
+//! 12. If the Commit took a user out of the participant list, and a room
+//!     hosted here names this one as its `parent_room`, the hub proposes
+//!     that user's removal from the child too (room-policy-04 §5),
+//!     through `operator.rs`. It cannot do more: it is not a member and
+//!     cannot commit (decision mimid-1wgh.111).
 //!
 //! A refused Commit is dropped, and the epoch stays open for the next
 //! valid and allowed Commit (decision mimid-1wgh.6.5). A refusal or failure
@@ -96,6 +103,11 @@
 //! - Only `proposalOrCommit`'s sender is checked against `From`; each
 //!   `moreProposals` entry is authorized for its own sender (decision
 //!   mimid-1wgh.6.56).
+//! - §5's cascade is a proposal, so a user who left the parent is still
+//!   in its parent-dependent rooms, and can still derive their exported
+//!   secrets, until a member of the child next commits (decision
+//!   mimid-1wgh.111). A cascade that fails is logged and dropped: the
+//!   parent's Commit is not undone for it.
 //! - A room with a malformed policy component refuses every Commit and
 //!   proposal; [`Hub::create_room`] already refuses such a group, so this
 //!   is defence in depth (decision mimid-1wgh.6.51). A room without a
@@ -174,6 +186,18 @@ pub(super) async fn update(
 
     let fixed_elsewhere = fixed_rooms_elsewhere(&rooms, room_id);
     let parent = parent_participants(&rooms, room_id);
+    // room-policy-04 §5's cascade: only a Commit can change who is in
+    // this room, and the set is only needed if a room hosted here depends
+    // on it as its parent (decision mimid-1wgh.111).
+    let children = match kind {
+        EventKind::Commit => parent_dependent_children(&rooms, room_id),
+        _ => Vec::new(),
+    };
+    let listed_before = if children.is_empty() {
+        BTreeSet::new()
+    } else {
+        listed_participants(&rooms, room_id)
+    };
     let room = rooms.get_mut(room_id).ok_or(HubError::NoSuchRoom)?;
     let staged = match &decoded.bundle {
         HandshakeBundle::Commit {
@@ -285,17 +309,119 @@ pub(super) async fn update(
             );
         }
     }
+    // room-policy-04 §5: a user who left the parent leaves its
+    // parent-dependent rooms too. The hub proposes it; it cannot commit
+    // (decision mimid-1wgh.111).
+    let departed: Vec<Vec<u8>> = listed_before
+        .difference(&listed_participants(&rooms, room_id))
+        .cloned()
+        .collect();
+    let cascade = if departed.is_empty() {
+        Vec::new()
+    } else {
+        cascade_removals(&rooms, &children, &departed)
+    };
+    drop(rooms);
     hub.wake_fanout();
+    // Boxed: this re-enters `update` for the child room, where the
+    // proposal path takes no cascade of its own.
+    Box::pin(propose_cascade(hub, room_id, cascade)).await;
     success(accepted.accepted_at)
 }
 
-/// Rebuilds a room after an internal failure, logging a rebuild failure so
-/// that the original error is the one returned.
-/// The participant sets of the fixed-membership rooms this hub hosts
-/// other than `room_id`, if `room_id` is a fixed-membership room whose
-/// participants are not given yet (its participant list holds one
-/// entry); empty otherwise, since only such a room can take new
-/// participants (room-policy-04 §5; decision mimid-1wgh.89).
+/// The users a hosted room's participant list names, empty if the room is
+/// not hosted here or its list does not decode.
+fn listed_participants(
+    rooms: &std::collections::BTreeMap<String, Room>,
+    room_id: &str,
+) -> BTreeSet<Vec<u8>> {
+    rooms
+        .get(room_id)
+        .and_then(|room| room_state(&room.observer, room_id).ok())
+        .map(|state| participant_set(&state.participants))
+        .unwrap_or_default()
+}
+
+/// The rooms this hub hosts that name `room_id` as their parent
+/// (room-policy-04 §5). A parent-dependent room elsewhere is not one this
+/// hub can act on, and §5 forbids it anyway: such a room "is always hosted
+/// on the same Hub as the parent room".
+fn parent_dependent_children(
+    rooms: &std::collections::BTreeMap<String, Room>,
+    room_id: &str,
+) -> Vec<String> {
+    rooms
+        .iter()
+        .filter(|(id, _)| id.as_str() != room_id)
+        .filter(|(id, room)| {
+            room_state(&room.observer, id).is_ok_and(|state| {
+                bool::from(state.base.parent_dependant)
+                    && state
+                        .base
+                        .parent_room
+                        .first()
+                        .is_some_and(|parent| parent.as_str() == room_id)
+            })
+        })
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
+/// For each of `children`, the users among `departed` that it still
+/// lists. A child that lists none of them needs nothing.
+fn cascade_removals(
+    rooms: &std::collections::BTreeMap<String, Room>,
+    children: &[String],
+    departed: &[Vec<u8>],
+) -> Vec<(String, Vec<Vec<u8>>)> {
+    children
+        .iter()
+        .filter_map(|child| {
+            let listed = listed_participants(rooms, child);
+            let users: Vec<Vec<u8>> = departed
+                .iter()
+                .filter(|user| listed.contains(*user))
+                .cloned()
+                .collect();
+            (!users.is_empty()).then(|| (child.clone(), users))
+        })
+        .collect()
+}
+
+/// Proposes each cascaded removal, through the same path as an operator's
+/// (`operator.rs`), and so with the same caveat: the hub is not a member
+/// and cannot commit, so a departed user stays in the child room, and can
+/// still derive its exported secrets, until a member of it next commits
+/// (decision mimid-1wgh.111; bead mimid-1wgh.37.108.1).
+///
+/// A failure is logged and dropped. The parent's Commit was accepted
+/// already and is not undone by it: §5's cascade is a consequence of that
+/// Commit, not a condition on it.
+async fn propose_cascade(hub: &Hub, parent_id: &str, cascade: Vec<(String, Vec<Vec<u8>>)>) {
+    for (child, users) in cascade {
+        for user in users {
+            // The proposals are logged by `propose_removal`, with the
+            // cause; this logs only a failure, which it does not.
+            if let Err(error) = hub
+                .propose_removal(
+                    &child,
+                    &user,
+                    false,
+                    super::operator::Cause::ParentDependent,
+                )
+                .await
+            {
+                tracing::warn!(
+                    room_id = %child,
+                    parent_id,
+                    error = &error as &dyn std::error::Error,
+                    "the cascaded removal from a parent-dependent room failed"
+                );
+            }
+        }
+    }
+}
+
 /// A parent-dependent room's parent, as this hub holds it.
 struct ParentRoom {
     /// The parent's participants, for the subset rule of room-policy-04
@@ -330,14 +456,29 @@ fn parent_participants(
     })
 }
 
+/// The participant sets of the fixed-membership rooms this hub hosts
+/// other than `room_id`, if `room_id` is a fixed-membership room whose
+/// participants are not given yet (its participant list holds one
+/// entry); empty otherwise, since only such a room can take new
+/// participants (room-policy-04 §5; decision mimid-1wgh.89).
+///
+/// Parent-dependent rooms are left out of both sides of the comparison:
+/// §5's "only a single fixed-membership room can exist for any unique
+/// set of participants" does not count them (decision mimid-1wgh.110,
+/// proposed as ietf-wg-mimi/mimi-room-policy#59). Counting them would
+/// forbid the example §5 itself gives two paragraphs later, a call room
+/// among the clients of a Group DM, since such a room has the DM's own
+/// participant set; and it would let a chat have one call, ever.
 fn fixed_rooms_elsewhere(
     rooms: &std::collections::BTreeMap<String, Room>,
     room_id: &str,
 ) -> Vec<BTreeSet<Vec<u8>>> {
     let fixed = |id: &str, room: &Room| {
-        room_state(&room.observer, id)
-            .ok()
-            .filter(|state| !state.open && bool::from(state.base.fixed_membership))
+        room_state(&room.observer, id).ok().filter(|state| {
+            !state.open
+                && bool::from(state.base.fixed_membership)
+                && !bool::from(state.base.parent_dependant)
+        })
     };
     let being_created = rooms
         .get(room_id)
@@ -362,6 +503,8 @@ fn participant_set(list: &mimi_protocol::ParticipantListData) -> BTreeSet<Vec<u8
         .collect()
 }
 
+/// Rebuilds a room after an internal failure, logging a rebuild failure so
+/// that the original error is the one returned.
 async fn restore_after_error(
     hub: &Hub,
     rooms: &mut std::collections::BTreeMap<String, Room>,

@@ -105,9 +105,18 @@
 //!     "ordinary users" is every user, and its participants are those its
 //!     creator's first Commits name. "Only a single fixed-membership room
 //!     can exist for any unique set of participants" is checked among the
-//!     rooms this hub hosts only. The §5 `parent_dependant` subset rule and
-//!     `pseudonyms_allowed` are not checked: the hub has no parent room
-//!     state and BasicCredential has no notion of a pseudonym.
+//!     rooms this hub hosts only. `pseudonyms_allowed` is not checked:
+//!     BasicCredential has no notion of a pseudonym.
+//!   - The room-policy-04 §5 rules of a parent-dependent room are
+//!     enforced over the parent this hub hosts, since §5 puts the two on
+//!     one hub: such a room is hosted only if its `parent_room` is a room
+//!     here and its participants are a subset of the parent's, and a
+//!     Commit that would take them outside the parent's is refused
+//!     (decision mimid-1wgh.110, which reads §5's "strict subset" as a
+//!     subset). When a user leaves the parent, the hub proposes their
+//!     removal from each parent-dependent room of it; it cannot remove
+//!     them, not being an MLS member, so they are in the room until a
+//!     member of it next commits (decision mimid-1wgh.111).
 //!   - `canDestroyRoom` is not enforced: the hub offers no way to destroy a
 //!     room.
 //!   - The hub is a hosted room's only MLS external sender (decision

@@ -111,6 +111,16 @@ pub fn members_list(users: &[&[u8]]) -> ParticipantListData {
 /// requiring frank_aad (bead mimid-1wgh.6.74), the hub's `franking_agent`,
 /// `participants`, the roles and the base policy.
 pub fn components(hub: &Hub, participants: &ParticipantListData) -> Vec<(u16, Vec<u8>)> {
+    components_with_base(hub, participants, base_room_policy())
+}
+
+/// [`components`], with `base` as the room's `base_room_policy`: a
+/// parent-dependent room's, for instance (`child_room_policy`).
+pub fn components_with_base(
+    hub: &Hub,
+    participants: &ParticipantListData,
+    base: Vec<u8>,
+) -> Vec<(u16, Vec<u8>)> {
     let key = *hub.signature_public_key();
     vec![
         // mls-extensions-11 §5; first, since app_data_dictionary keeps entries in
@@ -123,7 +133,7 @@ pub fn components(hub: &Hub, participants: &ParticipantListData) -> Vec<(u16, Ve
             participants.tls_serialize_detached().unwrap(),
         ),
         (ROLES_LIST, roles_list()),
-        (BASE_ROOM_POLICY, base_room_policy()),
+        (BASE_ROOM_POLICY, base),
     ]
 }
 
@@ -350,6 +360,34 @@ pub struct MemberRoom {
 /// bob, and hosts it on `hub` as `room_id` in epoch 1; bob joins from the
 /// Welcome.
 pub async fn member_room(hub: &Hub, room_id: &str, group_id: &[u8]) -> MemberRoom {
+    member_room_with_base(hub, room_id, group_id, base_room_policy()).await
+}
+
+/// [`member_room`], with a `base_room_policy` of the caller's.
+pub async fn member_room_with_base(
+    hub: &Hub,
+    room_id: &str,
+    group_id: &[u8],
+    base: Vec<u8>,
+) -> MemberRoom {
+    let (room, group_info, tree) = member_group(hub, group_id, &members_list(&[ALICE, BOB]), base);
+    hub.create_room(room_id, ALICE, &group_info, &tree)
+        .await
+        .unwrap();
+    room
+}
+
+/// The epoch-1 group [`member_room`] hosts, before it is hosted: alice
+/// creates it listing `participants` under `base`, adds bob, and bob
+/// joins from the Welcome. Returns the two Members with the GroupInfo
+/// and ratchet tree to offer `Hub::create_room`, so that a test can see
+/// how the hub answers.
+pub fn member_group(
+    hub: &Hub,
+    group_id: &[u8],
+    participants: &ParticipantListData,
+    base: Vec<u8>,
+) -> (MemberRoom, Vec<u8>, Vec<u8>) {
     let key = *hub.signature_public_key();
     let alice = Identity::generate(ALICE, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
     let bob = Identity::generate(BOB, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
@@ -357,7 +395,7 @@ pub async fn member_room(hub: &Hub, room_id: &str, group_id: &[u8]) -> MemberRoo
         signature_key: key.to_vec(),
         identity: HUB_IDENTITY.to_vec(),
     }];
-    let components = components(hub, &members_list(&[ALICE, BOB]));
+    let components = components_with_base(hub, participants, base);
     let mut alice_group = Member::create(&alice, group_id, &senders, &components).unwrap();
     let key_package = bob.key_package(KeyPackageKind::OneTime).unwrap();
     let bundle = alice_group
@@ -368,15 +406,16 @@ pub async fn member_room(hub: &Hub, room_id: &str, group_id: &[u8]) -> MemberRoo
     let bob_group = Member::join_welcome(&bob, bundle.welcome.as_deref().unwrap(), Some(&tree))
         .unwrap()
         .member;
-    hub.create_room(room_id, ALICE, &bundle.group_info, &tree)
-        .await
-        .unwrap();
-    MemberRoom {
-        alice,
-        alice_group,
-        bob,
-        bob_group,
-    }
+    (
+        MemberRoom {
+            alice,
+            alice_group,
+            bob,
+            bob_group,
+        },
+        bundle.group_info,
+        tree,
+    )
 }
 
 /// A writable connection to the database at `path`.

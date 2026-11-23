@@ -5,6 +5,7 @@
 //! Observer) and mls-rs (an independent MLS implementation, decision
 //! mimid-1wgh.4.13) supply the expected ratchet tree and GroupContext bytes.
 
+#[allow(dead_code, reason = "each test binary uses part of the helpers")]
 mod common;
 #[path = "fixtures/suite/generate.rs"]
 mod generate;

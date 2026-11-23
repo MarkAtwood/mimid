@@ -634,7 +634,9 @@ impl Hub {
     /// [`HubError::MissingParticipantList`],
     /// [`HubError::InvalidParticipantList`],
     /// [`HubError::CreatorNotListed`] or [`HubError::MemberNotListed`] if
-    /// it breaks a hub rule, and [`HubError::MlsStore`], [`HubError::Mls`],
+    /// it breaks a hub rule, [`HubError::ParentNotHosted`] or
+    /// [`HubError::NotInParent`] if it is a parent-dependent room this hub
+    /// cannot host under room-policy-04 §5, and [`HubError::MlsStore`], [`HubError::Mls`],
     /// [`HubError::GroupContext`] or [`HubError::Store`] for internal
     /// failures. Nothing is stored on
     /// error.
@@ -680,6 +682,7 @@ impl Hub {
             self.requirements,
             &self.limits,
         )?;
+        room::check_parent(&rooms, &observer)?;
 
         let snapshot = RoomSnapshot {
             room_id: room_id.to_owned(),
@@ -1188,6 +1191,21 @@ pub enum HubError {
     /// The participant list does not list the creating user.
     #[error("the creator is not in the participant list")]
     CreatorNotListed,
+    /// A parent-dependent room names a `parent_room` this hub does not
+    /// host, which room-policy-04 §5 forbids: such a room "is always
+    /// hosted on the same Hub as the parent room".
+    #[error("the parent room {parent_id} is not hosted here")]
+    ParentNotHosted {
+        /// The `parent_room` the group named.
+        parent_id: String,
+    },
+    /// A parent-dependent room's participants are not a subset of its
+    /// parent's (room-policy-04 §5; decision mimid-1wgh.110).
+    #[error("{outside} of the participants are not in the parent room")]
+    NotInParent {
+        /// How many of them the parent does not list.
+        outside: usize,
+    },
     /// A member's credential identity is not in the participant list
     /// (decision mimid-1wgh.6.1).
     #[error("the member at leaf {leaf_index} is not in the participant list")]

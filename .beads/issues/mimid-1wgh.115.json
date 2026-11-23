@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.115",
+  "title": "Open for Mark: should a call room be fixed_membership?",
+  "description": "Raised while building bead mimid-1wgh.108 step 3 (Store::start_call).\n\nTHE TEXT. room-policy-04 §5's note: \"A room can be both fixed_membership\nand parent_dependent, for example, for room used for a multi-media call\nof clients in a Group DM.\" So §5 itself offers the fixed-membership shape\nfor a call room, and draft-atwood-mimi-calls §4.1 repeats it.\n\nWHAT STORE::START_CALL DOES TODAY: it does NOT set fixed_membership. The\ncall room has the default open membership and the default roles, so a\nparticipant can be added to a call in progress.\n\nTHE ARGUMENT FOR FIXED: §5 names it, and a call whose membership cannot\nchange is a call whose media key cannot leak to a late joiner by a\nmember's mistake. It is also the only way to say \"these people and no\nothers\" in room policy.\n\nTHE ARGUMENT AGAINST, which is why it is not set: §5 also says \"only a\nsingle fixed-membership room can exist for any unique set of\nparticipants\". mimid does not count parent-dependent rooms in that rule\n(decision mimid-1wgh.110, proposed upstream as #59), so a fixed call room\nIS constructible here and the test\na_fixed_call_room_may_hold_the_same_pair_as_its_direct_room proves two\nof them can exist in one DM. But that is mimid's reading of a rule the WG\nhas not changed yet. On a hub that reads §5 as published, a\nfixed-membership call room in a DM would be the only call that DM could\never have, because the second one duplicates the first's participant set.\nNot setting the flag is the reading that interoperates with both.\n\nSecondary: a call among a subset cannot add the people it left out, and\n\"let me pull Carol in\" is a thing people do on calls.\n\nWHAT A DECISION WOULD CHANGE: one field in Store::start_call, plus\nwhether it takes an argument for it. Nothing in the keying: the media\nsecret comes from the group's epoch either way.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T21:43:58.705288382Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T21:43:58.705288382Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.115",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T21:43:59.148883021Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

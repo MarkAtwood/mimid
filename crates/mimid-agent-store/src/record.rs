@@ -154,6 +154,14 @@ pub struct Room {
     /// [`Room::direct_peer`] says whom it is with.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub direct: bool,
+    /// The URI of this room's parent room, if it is a parent-dependent
+    /// room (room-policy-04 §5 `parent_room`; `Agent::parent_room`), read
+    /// from the room's policy when the record is made. A call made by
+    /// [`crate::Store::start_call`] is such a room, with the chat it was
+    /// started from as its parent, which is how a front end tells a call
+    /// from a chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
     /// Front-end extensions.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Ext,
@@ -169,16 +177,22 @@ impl Room {
         if !self.direct {
             return None;
         }
-        let others: Vec<&str> = self
-            .participants
-            .iter()
-            .filter(|p| p.user != user && !self.is_banned(p))
-            .map(|p| p.user.as_str())
-            .collect();
-        match others[..] {
+        match self.others(user)[..] {
             [other] => Some(other),
             _ => None,
         }
+    }
+
+    /// The room's participants other than `user`, the banned left out, in
+    /// the order the record lists them: who a call started from this room
+    /// is among ([`crate::Store::start_call`]).
+    #[must_use]
+    pub fn others(&self, user: &str) -> Vec<&str> {
+        self.participants
+            .iter()
+            .filter(|p| p.user != user && !self.is_banned(p))
+            .map(|p| p.user.as_str())
+            .collect()
     }
 
     /// Whether `participant` holds the role named "banned".

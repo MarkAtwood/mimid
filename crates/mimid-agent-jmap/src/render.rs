@@ -573,6 +573,7 @@ mod tests {
             role_names: Default::default(),
             message_expiry_seconds: None,
             direct: false,
+            parent: None,
             ext: Default::default(),
         });
         let message = |key: &str, seq, sender: &str, id: &str, body: &str| MessageRecord {
