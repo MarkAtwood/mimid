@@ -404,14 +404,43 @@ async fn main() {
     }
 
     let haven = Domain::try_from(N.haven.to_owned()).expect("domain");
-    let client = PeerClient::new(
-        &Domain::try_from(N.own.to_owned()).expect("domain"),
-        BTreeMap::from([(
-            haven.clone(),
-            BaseUrl::try_from(N.base_url.clone()).expect("base"),
-        )]),
-    )
-    .expect("PeerClient");
+    let own = Domain::try_from(N.own.to_owned()).expect("domain");
+    let peers = BTreeMap::from([(
+        haven.clone(),
+        BaseUrl::try_from(N.base_url.clone()).expect("base"),
+    )]);
+    // With MIMID_CLIENT_CERT and MIMID_CLIENT_KEY set, mimid presents its
+    // OWN client certificate instead of relying on the harness's socat
+    // proxy to add one (bead mimid-6x2f). That is the half that had never
+    // been tested against a non-mimid peer: up.sh has socat hold the
+    // certificate, so the default path proves only that mimi-hubd accepts
+    // a proxy's certificate, not mimid's. MIMID_PEER_ROOTS adds a CA for
+    // the peer's SERVER certificate, which the harness's throwaway CA
+    // needs since it is not in the system store.
+    let tls = match (
+        std::env::var("MIMID_CLIENT_CERT"),
+        std::env::var("MIMID_CLIENT_KEY"),
+    ) {
+        (Ok(cert), Ok(key)) => mimid_server::tls::PeerTlsConfig {
+            roots: std::env::var("MIMID_PEER_ROOTS")
+                .ok()
+                .into_iter()
+                .map(std::path::PathBuf::from)
+                .collect(),
+            identity: Some(mimid_server::tls::TlsConfig {
+                cert: std::path::PathBuf::from(cert),
+                key: std::path::PathBuf::from(key),
+            }),
+        },
+        _ => mimid_server::tls::PeerTlsConfig::default(),
+    };
+    let presenting = tls.identity.is_some();
+    let client = PeerClient::with_tls(&own, peers, &tls).expect("PeerClient");
+    eprintln!(
+        "driver: own={} peer={} client certificate presented by mimid: {presenting}",
+        own.as_str(),
+        haven.as_str()
+    );
 
     if args.get(1).map(String::as_str) == Some("unicode") {
         unicode::run(&client, &haven).await;

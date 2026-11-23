@@ -5,6 +5,22 @@ external peer (Haven, Rohan Mahy, Konrad Kohbrok) on the interop day.
 Bead mimid-6x2f. The local half, two mimid binaries on loopback, is in
 `crates/mimid-server/tests/mtls_binaries.rs`.
 
+**Tested against a non-mimid peer, 2026-11-22.** Our own instance of
+mimi-hubd at 34eae7e, run by `tools/interop/haven/live/run.sh`, with the
+driver pointed straight at it and socat out of the path:
+
+| mimid presents | Result |
+|---|---|
+| nothing | `received fatal alert: CertificateRequired` |
+| `[peer_tls.identity]` | TLS completes; identifierQuery 200, reportAbuse 200 |
+
+Set `MIMID_CLIENT_CERT`, `MIMID_CLIENT_KEY` and `MIMID_PEER_ROOTS` on the
+driver to make mimid present its own certificate; without them the
+harness's socat holds one instead, which tests the proxy rather than
+mimid. Still untested: the inbound direction, a non-mimid peer presenting
+a certificate to mimid, which needs the peer's cooperation. No
+conformance claim is made for protocol-07 §4.1.
+
 ## What mimid does
 
 Inbound, every `/v1/` request is authenticated against the domain in its
