@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.88",
   "title": "Decision: attachment links: a per-blob HMAC URL with expiry on the agent's HTTP listener (agent choice, epic mimid-qqtk)",
   "description": "Epic mimid-qqtk item 5. GET /attachment/\u003cblobId\u003e/\u003cexpires\u003e/\u003cmac\u003e/\u003cname\u003e; mac = first 16 octets of HMAC-SHA256(link key, 'mimid-attachment-link-v1' 0 blobId 0 expires), hex; link key = HMAC-SHA256(local token, 'mimid-attachment-link-key-v1'), so a new token revokes all links. Host check as for every request; the link's MAC replaces the bearer token on this path only: a second authorization at the agent boundary (AGENTS.md table row added). Default lifetime 24 h, max 30 days (INVENTED). Served only while a non-deleted message names the blob. Supersedes for IRC v2 the no-new-authorization part of agent-frontends.md §7.4 (v1 IRC still shows no attachments). Doc: agent-frontends.md §7.30.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T22:13:34.986215885Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T22:13:34.986215885Z",
+  "updated_at": "2026-11-23T01:34:22.868934122Z",
+  "closed_at": "2026-11-23T01:34:22.868934122Z",
+  "close_reason": "Closed",
   "labels": [
     "agent"
   ],

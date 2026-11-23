@@ -2,3 +2,4 @@
 {"id":"01a2002b-f815-7ba2-ac15-c7b13755164e","issue_id":"mimid-1wgh.85","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-21T22:13:31.285763635Z"}
 {"id":"01a2002b-f823-776b-9356-1bac7c3762d7","issue_id":"mimid-1wgh.85","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-21T22:13:31.299487092Z"}
 {"id":"01a20047-323e-7045-9fec-b7a69bf4edfe","issue_id":"mimid-1wgh.85","event_type":"label_removed","actor":"Mark Atwood","comment":"Removed label: human","created_at":"2026-11-21T22:43:15.646018629Z"}
+{"id":"01a2060a-3726-70d9-8b49-b9ffdb729117","issue_id":"mimid-1wgh.85","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Closed","created_at":"2026-11-23T01:34:22.502056608Z"}

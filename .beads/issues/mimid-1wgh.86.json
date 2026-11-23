@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.86",
   "title": "Decision: reactions: what counts as one, and the B.2 example without inReplyTo (agent choice, epic mimid-qqtk)",
   "description": "mimi-content-10 §5.3, §5.7, Appendix B.2. Chosen: a received message is a reaction when its top disposition is reaction (2), it has inReplyTo and no replaces, and its body is one text/* part or a processAll MultiPart of text/* parts each of disposition reaction, each at most MAX_REACTION_LEN = 64 octets (INVENTED). Anything else (media reactions, too long) stays a message (jmap-chat-mimi-00 §Reactions carries media reactions as replies). Appendix B.2's example has inReplyTo null, so it names nothing to react to: kept as a message; possible WG erratum (label wg candidate). An unlike is any NullPart replacing a reaction message, from its sender; an edit of a reaction is not applied. A reaction to a message not stored is skipped. MAX_REACTIONS_PER_MESSAGE = 1024 INVENTED. Doc: agent-frontends.md §7.27.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T22:13:32.738561199Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T22:13:32.738561199Z",
+  "updated_at": "2026-11-23T01:34:22.622987349Z",
+  "closed_at": "2026-11-23T01:34:22.622987349Z",
+  "close_reason": "Closed",
   "labels": [
     "agent"
   ],

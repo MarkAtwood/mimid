@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.85",
   "title": "Decision: a reply or reaction names its target's first version (agent choice, epic mimid-qqtk)",
   "description": "mimi-content-10 §5.2, §5.3, §5.5 note: a reply or reaction refers to a specific message ID, i.e. a version. Readings: (a) the version the user saw (the latest edit), (b) the first version. The store keeps only the first version's whole 32-octet ID; later versions keep their 10 reference octets (draft-atwood-jmap-chat-mimi-00 §Message Identifiers resolves by those octets, and records aliases). Chosen: (b), the first version, which every receiver that stored the message resolves. INVENTED choice. Code: mimid-agent-store action.rs Store::reply_to. Doc: agent-frontends.md §7.26, §7.27.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-21T22:13:31.278571381Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T22:13:31.278571381Z",
+  "updated_at": "2026-11-23T01:34:22.495029008Z",
+  "closed_at": "2026-11-23T01:34:22.495029008Z",
+  "close_reason": "Closed",
   "labels": [
     "agent"
   ],
