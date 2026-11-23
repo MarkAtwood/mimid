@@ -1,0 +1,12 @@
+{
+  "id": "mimid-gn2v",
+  "title": "Test suite wall clock is link time, not test time: 184 test binaries, default linker",
+  "description": "Mark noticed 2026-11-22: \"this is a long test suite.\" Measured it rather\nthan guessed.\n\nTHE NUMBERS, from a full `cargo test --workspace --all-features` run:\n- 210 test targets, all passing.\n- Total time INSIDE the tests: about 336 seconds, by summing every\n  \"finished in Ns\" line. The slowest single target was 43s; everything\n  else was under 15s.\n- Wall clock: roughly 25 minutes.\n\nSo about four fifths of the wall clock is not running tests. It is\ncompiling and linking.\n\nTHE CAUSE: 184 integration test files across the workspace, each of\nwhich cargo builds as its own binary, each statically linking the whole\ndependency graph (openmls, axum, sqlx, tokio, hickory). Per crate:\n\n    mimid-server      61\n    mimi-mls          27\n    mimid-agent       18\n    mimi-protocol     16\n    mimi-room-policy  16\n    mimid-agent-core  13\n    mimid-agent-jmap  11\n    mimi-content       9\n    mimid-agent-store  7\n    mimid-live         3\n    mls-didwebvh       3\n\nAnd `.cargo/config.toml` sets no linker, so this is 184 links with the\ndefault bfd linker.\n\nWHAT NOT TO DO: merging the test files. One file per concern is why the\ntests are readable and why a bead's regression test is easy to find, and\nAGENTS.md's one-subagent-per-bead workflow depends on agents not editing\nthe same file. The file count is a feature.\n\nWHAT TO TRY, cheapest first:\n1. A faster linker. `mold` (apt candidate 2.30.0) or `lld` (18.0),\n   selected in .cargo/config.toml. Link-bound builds typically improve\n   several-fold, no code or test changes, and it is one file. Neither is\n   installed on the dev box yet; gold is, and is better than bfd but\n   well behind mold.\n2. Measure before and after on a clean target dir, so the claim is a\n   measurement rather than folklore. Also check CI, where the win may be\n   larger or smaller depending on the runner.\n3. cargo-nextest would parallelise the RUNNING, which is only the 336\n   seconds, so expect little from it here. Worth knowing so it is not\n   reached for first.\n\nNot urgent. Filed because the cost is paid on every full run and the\nfirst fix is a one-line config change.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T04:03:04.315309039Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T04:03:04.315309039Z"
+}
