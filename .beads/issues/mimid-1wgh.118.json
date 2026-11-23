@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.118",
+  "title": "Decision: the keyed call extends draft-atwood-jmap-vtc rather than a fresh document",
+  "description": "Mark decided 2026-11-23, for bead mimid-1wgh.114.2.\n\nTHE QUESTION. The agent needs a client-facing surface for a keyed call:\nstart one, see one, get the epoch's media secret. Extend\ndraft-atwood-jmap-vtc, or write something fresh?\n\nI FIRST ANSWERED FROM A REMEMBERED NOTE and stopped, because that is the\nmistake that produced the §5.10 misdesign an hour earlier (bead\nmimid-1wgh.114.1). Reading the draft changed the answer from a guess to\nevidence.\n\nWHAT THE DRAFT ACTUALLY IS: ~/PROJECT/jmap-chat-spec/\ndraft-atwood-jmap-vtc-00.md, 2394 lines, a complete object model, not a\nsketch. VTCCall, VTCParticipant, VTCGateway, VTCMediaState, VTCCallPolicy,\nVTCRecording, VTCLivestream; three call types (ring, room, scheduled)\nwith a server-enforced state machine; methods, push, a Capability\nsection, and a \"# End-to-End Encrypted Calls\" section.\n\nTHE THREE FINDINGS THAT SETTLE IT:\n\n1. IT LEAVES KEYING TO THE MEDIA LAYER, deliberately. Of e2eeEnabled:\n   \"The mechanism (WebRTC Encoded Transform, SFrame, or other) is\n   media-layer-defined; this field is the state signal for client UI\n   (e.g., displaying a lock icon).\" So the draft is signalling, with a\n   seam exactly where draft-atwood-mimi-calls' media_secret belongs.\n   Nothing has to be displaced.\n2. ITS COMPANION GUIDE ALREADY SAYS MLS. jmap-vtc-e2ee-guide.md §3 is\n   titled \"Key management: MLS is the answer for groups\", and its\n   \"Mapping MLS to VTC participant lifecycle\" table reads: participant\n   joins -\u003e MLS Add + Commit, leaves or kicked -\u003e MLS Remove + Commit,\n   \"Call ends -\u003e MLS group destroyed\". §6 is \"Breakout rooms and key\n   isolation\", which is the same conclusion as bead mimid-96tt's: a call\n   among a subset needs its own group. The design was written down\n   already; bead mimid-1wgh.108 is its MIMI-side realisation.\n3. chatId IS AN OPTIONAL BINDING FIELD, as decision mimid-1wgh.113\n   assumed when it chose both a primitive and a convenience. §\"Optional\n   Binding Fields\": \"the id of a Chat associated with this call. null if\n   the call has no chat binding.\" That assumption was made from a note\n   and is now checked.\n\nCHOSEN: extend it. The gap is narrow and nameable -- how a VTCCall\nrelates to a MIMI call room, and how a client gets media_secret -- not a\nnew object model. Writing fresh would duplicate 2394 lines to add two\nthings.\n\nTHE NUANCE THAT MUST BE RECORDED, because it cuts against decision\nmimid-1wgh.117 on its face: the draft's state machine is server-enforced\nand authoritative, \"active\" -\u003e \"ended\" on \"All participants leave or a\nmoderator ends the call\", with \"ended\" terminal. Decision mimid-1wgh.117\nsays liveness is not knowable remotely. Both are true, of different\npeople:\n\n- A PARTICIPANT's agent is a member of the call room, sees its\n  membership, and can hold authoritative state. The draft's state\n  machine is right for them.\n- SOMEONE WHO READ THE CHAT ANNOUNCEMENT AND NEVER JOINED has an agent\n  that is not in the call room and can learn nothing about it. A VTCCall\n  object on their agent cannot carry a trustworthy state, only what the\n  announcement said.\n\nSo mimid DOES model call state, for calls it is in. Decision\nmimid-1wgh.117 is about the cross-provider announcement, not a claim that\nmimid never models liveness. The surface must not present a VTCCall state\nfor a call the agent has not joined as though it were observed.\n\nWRITING IT NEEDS MARK'S PER-WRITE OK: AGENTS.md requires it for every\nwrite to ~/PROJECT/jmap-chat-spec, one approval per write. And no JMAP\nreaches the MIMI working group (memory no-jmap-to-the-mimi-wg):\ndraft-atwood-mimi-calls says where the secret comes from and must stay\nsilent about this surface.\n",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T23:49:26.050719953Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T23:49:26.225820593Z",
+  "closed_at": "2026-11-23T23:49:26.225820593Z",
+  "close_reason": "Mark 2026-11-23: extend draft-atwood-jmap-vtc; the draft already leaves keying to the media layer and its guide already names MLS.",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.118",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T23:49:26.094605302Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
