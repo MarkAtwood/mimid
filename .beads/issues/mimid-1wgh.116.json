@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.116",
+  "title": "Decision: a call announcement is a private-use text extension key, \"draft-atwood-mimi-calls/call\"",
+  "description": "Mark decided 2026-11-23, for bead mimid-1wgh.114.1.\n\nTHE QUESTION. A call is a parent-dependent room with its own MLS group\nand its own exported media secret (bead mimid-1wgh.108). Nothing in MIMI\nsays a call is LIVE (bead mimid-1wgh.37.111). So how does a message in\nthe parent chat announce one?\n\nTHE TEXT. mimi-content-10 §4.3: \"Each extension has a CBOR map key which\nis a positive integer, negative integer, or text string containing\nbetween 1 and 255 octets of UTF-8. The value can be any CBOR (including\ncombinations of maps and arrays).\" And: \"An IANA registry Section 8.2.1\nis defined for positive integer keys. Negative integer and text string\nkeys are only for private use.\"\n\n§8.2.1 adds, of the registry's Type column: \"Applications with multiple,\nrelated data items are encouraged to register a map type that contains\nall the related fields.\"\n\nREJECTED FIRST, and it is why this bead exists: carrying the call room's\nURI in a §5.10 session part. §5.10 is about EXTERNAL conference URLs in\nits own prose, and a mimi:// room URI has no defined join behaviour\nanywhere, so the field would have carried a private extension that looked\nstandard. Bead mimid-1wgh.114.1 has the reasoning.\n\nCOMPETING SPELLINGS, both private use under §4.3:\n(a) A negative integer, e.g. -1.\n(b) A text string, domain-qualified: \"reviewcommit.com/call\", the\n    convention IRC uses (soju.im/webpush).\n(c) A text string naming the defining document:\n    \"draft-atwood-mimi-calls/call\".\n\nCHOSEN: (c), the text string \"draft-atwood-mimi-calls/call\", with a map\nvalue. INVENTED, NOT FROM SPEC.\n\nWHY:\n- (a) collides. Two implementations each reaching for a private negative\n  integer both pick something small and obvious. Two picking text strings\n  do not, because a string carries its own namespace. There is no\n  coordination between us and Haven on this.\n- (a) also tells a reader of the wire nothing. A key is visible; it\n  should name itself.\n- (c) over (b): a domain says WHO defined it, the draft name says WHERE\n  IT IS WRITTEN DOWN, and for a provisional key the second is what a\n  reader needs. The draft carries Mark's name either way.\n- 28 octets, against §4.3's limit of 255, and an announcement is one\n  message per call, so the size does not matter.\n- It is meant to be thrown away. When §8.2.1 assigns a positive integer\n  the string goes, and naming the draft makes that transition legible:\n  the string and the registry entry point at the same document. Same\n  shape as the provisional ComponentID of decision mimid-1wgh.112.\n\nTHE VALUE: a CBOR map with text keys, one entry to begin with:\n\n  \"draft-atwood-mimi-calls/call\": { \"room\": \"mimi://a.example/r/\u003ccall\u003e\" }\n\nA map rather than a bare URI string because §8.2.1 encourages one for\nrelated fields, and because whatever a call announcement turns out to\nneed next -- who started it, when, whether it ended -- goes in without\nburning a second key.\n\nIMPLEMENTATION COST is near zero: mimi_content::extension::ExtensionKey\nalready has a Text(String) variant with §4.3's 1-to-255-octet bound, and\nits own comment says \"for private use\", so the codec round-trips this\ntoday. A map at that position is nesting level 2, inside\nMAX_EXTENSION_DEPTH of 4.\n\nNOT DECIDED HERE, and it is the next question: how a client learns the\ncall ENDED. Without an answer a client shows \"call in progress\" forever.\nThe room cannot answer it for someone who never joined the call -- they\nare in the parent chat, not the call room, so they cannot see its\nmembership. That points at a second announcement, which can be lost if\nthe announcer crashes, which means a client must treat it as advisory.\nIts own decision.\n",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T23:22:11.154386205Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T23:22:19.524386718Z",
+  "closed_at": "2026-11-23T23:22:19.524386718Z",
+  "close_reason": "Mark 2026-11-23: the text key \"draft-atwood-mimi-calls/call\" with a map value, marked INVENTED NOT FROM SPEC.",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.116",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T23:22:11.188206582Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

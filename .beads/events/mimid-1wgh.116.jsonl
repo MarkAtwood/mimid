@@ -1,0 +1,3 @@
+{"id":"01a20ab7-8d55-7156-92bb-c17b0d3eb90d","issue_id":"mimid-1wgh.116","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-23T23:22:11.157088743Z"}
+{"id":"01a20ab7-8d58-70ec-a03f-b00a422926b4","issue_id":"mimid-1wgh.116","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-23T23:22:11.160061461Z"}
+{"id":"01a20ab7-ae09-7d9e-85f2-5b2442f4fa85","issue_id":"mimid-1wgh.116","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Mark 2026-11-23: the text key \"draft-atwood-mimi-calls/call\" with a map value, marked INVENTED NOT FROM SPEC.","created_at":"2026-11-23T23:22:19.529893593Z"}
