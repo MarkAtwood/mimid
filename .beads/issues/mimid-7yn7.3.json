@@ -1,0 +1,25 @@
+{
+  "id": "mimid-7yn7.3",
+  "title": "Ciphersuites, including a post-quantum hybrid, which lands on the OpenMLS fork",
+  "description": "Mark, 2026-11-22, hard blocker and a genuine unknown.\n\nHaven advertises mls_ciphersuites [1] only, confirmed from its live\ndirectory this session. By 2028 a hybrid ML-KEM suite is plausibly\nmandatory.\n\nThe point Mark makes: this is an OpenMLS question, not a mimid one. It\nlands on the fork, so the beads that matter are mimid-m12g (upstream the\nremaining fork commits, retire superseded ones) and mimid-1wgh.4.69\n(rebase mimid-0.9.1 onto upstream main). A fork carrying unmerged\npatches is a bad place to be standing when a new ciphersuite has to be\nadopted on someone else's schedule.\n\nUnknown, and recorded as unknown: whether OpenMLS will have a hybrid\nsuite by then, whether it will be the one a regulator names, and whether\nmimid's fork will have been retired by then. Nothing to implement yet;\nthe actionable part is keeping the fork debt down so that adopting a\nsuite is a dependency bump rather than a port.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T03:51:37.989545884Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T03:51:37.989545884Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-7yn7.3",
+      "depends_on_id": "mimid-7yn7",
+      "type": "parent-child",
+      "created_at": "2026-11-23T03:51:38.204837803Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

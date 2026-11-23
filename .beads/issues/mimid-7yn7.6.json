@@ -1,0 +1,25 @@
+{
+  "id": "mimid-7yn7.6",
+  "title": "The regulatory surface: abuse reporting across E2EE, and cross-provider consent",
+  "description": "Mark, 2026-11-22. DSA-style obligations mean franking and reportAbuse\nstop being optional.\n\nABUSE REPORTING ACROSS E2EE. mimid has franking and the endpoints\n(`/v1/reportAbuse/{roomId}`, `Message/reportAbuse` on the agent, and\nwhat a message keeps for a report in mimid-agent-store). The problem is\nthat the path is UNPROVEN between even two implementations: Haven's live\ndirectory lists `reportAbuse_with_abusive_messages` under `unsupported`,\nconfirmed from its directory this session. So the part that carries the\nactual reported messages has never been exercised cross-implementation.\nReporting abuse across E2EE without the messages is close to useless to\na regulator, since franking is what makes a report verifiable rather\nthan an accusation.\n\nThis is the one the conformance path (mimid-7yn7.1 option B) arguably\ncares about MOST: whether a gatekeeper's abuse path really works across\nE2EE is exactly the claim a regulator cannot check for itself.\n\nCROSS-PROVIDER CONSENT. mimid has Consent/get, /query and /set on both\nthe provider and the agent endpoint (the latter added this session, bead\nmimid-1wgh.93), and `invites = from-allowed` as the default. The hard\npart is not the mechanism: every gatekeeper arrives with its own spam\nmodel, and cross-provider consent SEMANTICS is where that gets ugly.\nConcretely, and none of it settled by protocol-07:\n\n- whose consent decision wins when two providers disagree about whether\n  contact was allowed;\n- whether a consent granted to a user follows them across providers;\n- what a provider may infer from a consent request it refuses, which is\n  a privacy question, and what it may tell its user about one;\n- rate limits, since a consent request is an unsolicited message of a\n  kind, and that is exactly the vector a hostile peer would use.\n\nNothing to implement yet beyond proving reportAbuse with messages works\nagainst a second implementation, which needs Haven to support it. Worth\nraising with Jason; posting needs Mark's OK.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T03:53:27.68013415Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T03:53:27.68013415Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-7yn7.6",
+      "depends_on_id": "mimid-7yn7",
+      "type": "parent-child",
+      "created_at": "2026-11-23T03:53:27.752908741Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

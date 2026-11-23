@@ -1,0 +1,25 @@
+{
+  "id": "mimid-7yn7.1",
+  "title": "Decide: is mimid a full provider or the independent conformance implementation?",
+  "description": "Mark, 2026-11-22. The decision that should come BEFORE the hard\nblockers are finished, because the two paths diverge sharply after them.\n\nHis own framing: '\"Plug into all of them\" reads as a feature-\ncompleteness problem and isn't.' mimid has interop-tested with ONE\nimplementation, cooperatively, with its author answering email. The work\nis interop testing and it does not compress.\n\nOPTION A: full provider. mimid is a provider people use, federating\nwith gatekeepers. Needs the whole content list (read receipts, AV\nmetadata, calls, typing, polls, location, stickers, attachments at\nvolume), multi-device under load, discovery past a configured peer map,\nand a working abuse path across E2EE. This is where mandated interop\nVISIBLY fails for users: not refused messages, but messages arriving as\n\"unsupported content\".\n\nOPTION B: the independent conformance implementation. If the EU mandates\nMIMI, someone has to be able to CHECK whether the gatekeepers' claims\nare true. That is a conformance target, and mimid is already closer to\nfilling it than any gatekeeper's internal stack: strict decoding, the\nfixture-test direction fixed, every ambiguity a decision bead, a\nfindings log, offline tests. It needs far LESS of the content list,\nbecause a conformance tool has to parse and judge content, not render\nit.\n\nWhat each path makes of the same work:\n- The hard blockers are needed either way: catch-up, provider auth,\n  ciphersuites, identity. Both paths cross them.\n- Content coverage is almost entirely A. A conformance tool needs to\n  decode and check content-10, which mimid largely does, not to show a\n  sticker.\n- Multi-device at volume is mostly A.\n- Discovery past the peer map is mostly A. A conformance checker is\n  pointed at a target deliberately.\n- Franking and reportAbuse are BOTH, and arguably more important to B:\n  checking that a gatekeeper's abuse path actually works across E2EE is\n  exactly the sort of claim a regulator cannot verify itself.\n- The decision-bead discipline and the findings log are B's product.\n  Under A they are internal hygiene.\n\nNOT DECIDED. This is Mark's to make, and it is a strategy question, not\na technical one. Recorded so the hard-blocker work is not finished\nbefore it is asked.\n\nWorth noting for either answer: B does not require giving up being a\nusable provider, and A does not forbid publishing conformance vectors.\nThe question is which one sets the priority order when they disagree,\nand they disagree about the whole content list.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T03:51:10.326631754Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T03:51:10.326631754Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-7yn7.1",
+      "depends_on_id": "mimid-7yn7",
+      "type": "parent-child",
+      "created_at": "2026-11-23T03:51:10.589866117Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

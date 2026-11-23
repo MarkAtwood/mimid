@@ -1,0 +1,25 @@
+{
+  "id": "mimid-7yn7.7",
+  "title": "Operational at scale: discovery past the peer map, retention as a contract, machine-readable refusals",
+  "description": "Mark, 2026-11-22: \"operational, not protocol.\"\n\nDISCOVERY, the quiet one. mimid finds peers through a CONFIGURED PEER\nMAP, not DNS: config.rs says \"It replaces DNS discovery (decision\nmimid-1wgh.17)\", and the live host proves the shape, with Haven added by\nhand this session as one line of TOML. That is fine for one Haven and\nuntenable for \"all of them\". The work is bead mimid-1wgh.37.94 (which\nhost serves a provider's directory, raised with the WG and unsent) plus\nreal §5.1 discovery. Note the mandate makes this worse than a\nconvenience problem: a configured map means a human decision per peer,\nand an obligation to interoperate with all comers does not allow one.\n\nRETENTION BECOMES A CONTRACT. Today `message_retention_secs` is an\noperator setting, 7 days by default (decision mimid-1wgh.82). Follower\ncatch-up (mimid-1wgh.37.104) turns it into a promise to other\nproviders: the design note ties the catch-up window to exactly that\nsetting, so shortening retention shortens what a peer can recover, and\na peer that was down longer loses messages permanently. Under a mandate\nthat is a term someone will want written down, and §6 of the design note\nproposes only a SHOULD with a stated minimum.\n\nMACHINE-READABLE REFUSALS. Epic mimid-1wgh.55 (mimi-protocol #190):\nstructured refusal reasons, retry hints, request extension points. With\none friendly peer a human reads a log; with a hundred peers a refusal\nhas to be something software can act on. Related and now shipped:\nmimid-75nk.12 gives a 403 from provider authentication a `reason`\nmember, which is the same idea one layer down.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T03:53:27.850593295Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T03:53:27.850593295Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-7yn7.7",
+      "depends_on_id": "mimid-7yn7",
+      "type": "parent-child",
+      "created_at": "2026-11-23T03:53:28.114569248Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

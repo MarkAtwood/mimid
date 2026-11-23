@@ -1,0 +1,25 @@
+{
+  "id": "mimid-7yn7.4",
+  "title": "Identity past BasicCredential becomes an exploitable asymmetry, not a documented weakness",
+  "description": "Mark, 2026-11-22, hard blocker.\n\nAGENTS.md lists this as a deliberate weakness: \"BasicCredential by\ndefault, so a provider can claim any identity for its own users unless\nthey use the did:webvh credential (mimid-1wgh.4.81).\"\n\nMark's point is that the weakness changes character under a mandate.\nToday it is a documented limitation among cooperating implementations.\nWith competitors FORCED to carry each other's traffic, a provider that\ncan mint any identity for its own users holds an exploitable asymmetry\nagainst a competitor obliged to accept it. The incentive to abuse it\nexists precisely because the parties are not friendly.\n\nThe remedy exists: mls-didwebvh (draft-atwood-mls-didwebvh-credential,\nepic mimid-1wgh.4.81), which mimid implements. The problem is that a\ncredential only helps if the OTHER side checks it, so this needs the WG\nto settle identity, not just mimid to ship it. Same shape as catch-up:\nthe specification work matters more than the implementation.\n\nRelated open work: mimid-1wgh.4.81.38 (read and show the did:key entries\nof a verified did:webvh log), and the IANA code points are still\nunassigned (mimid-1wgh.4.81.18), which is itself a sign of how unsettled\nthis is.\n\nNothing to build here beyond what .4.81 already tracks. The bead exists\nto record WHY its priority changes if interop is mandated, so it is not\nleft as \"a deliberate weakness\" in a world where that is no longer a\nsafe thing to be.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T03:52:05.803519782Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T03:52:05.803519782Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-7yn7.4",
+      "depends_on_id": "mimid-7yn7",
+      "type": "parent-child",
+      "created_at": "2026-11-23T03:52:05.939109947Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

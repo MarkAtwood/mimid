@@ -1,0 +1,25 @@
+{
+  "id": "mimid-7yn7.2",
+  "title": "Provider auth a gatekeeper would accept: a federation or regulator CA, tested at the edges",
+  "description": "Mark, 2026-11-22, hard blocker.\n\nThree mechanisms exist (epic mimid-75nk): RFC 9421 DNS keys, DANE, and\nPKIX from configured anchors. But AGENTS.md is explicit that mutually\nauthenticated TLS has never been completed with a NON-MIMID peer, and\nsays mimid must not claim conformance to protocol-07 §4.1 without\nMark's OK.\n\nA mandated regime almost certainly means a regulator or federation CA.\nThat is `pkix_anchors` shaped, and it is the mechanism least tested at\nits edges. What \"the edges\" means concretely, and none of it is\nexercised today:\n\n- intermediates. A federation CA will not issue leaves from its root.\n  Note tls.rs's own Limitation: through a reverse proxy only the LEAF\n  certificate arrives, so intermediates must be in mimid's trust\n  configuration rather than arriving in the handshake. mimi.reviewcommit.com\n  is deployed exactly that way (Caddy on joumon), so this is live, not\n  theoretical.\n- revocation. No CRL, no OCSP, no story. Against a friendly peer this\n  never comes up; under a mandate, a revoked gatekeeper certificate that\n  mimid keeps accepting is a compliance failure.\n- name constraints and path length, policy OIDs, and whatever else a\n  regulator's CA puts in its certificates.\n- cross-signing and CA rotation, which a long-lived federation will do.\n\nWHY mimid-75nk.12 STOPS BEING A NICETY HERE, in Mark's words: \"against\na peer with no incentive to help you debug, a bare 403 is the difference\nbetween an afternoon and a quarter.\" That bead is now CLOSED, implemented\nthis session: a 403 carries a `reason` naming the source provider's own\nDNS record, signature or certificate, while saying nothing about our\ntrust list. The value of that lands here.\n\nRelated and unfinished: mimid-6x2f (mTLS tested with a real peer, both\nhalves, and an interop-day test plan) is the concrete next step and was\npromised to Rohan Mahy and Konrad Kohbrok in Mark's email of 2026-11-18.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T03:51:37.502043576Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T03:51:37.502043576Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-7yn7.2",
+      "depends_on_id": "mimid-7yn7",
+      "type": "parent-child",
+      "created_at": "2026-11-23T03:51:37.756371337Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

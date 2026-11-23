@@ -1,0 +1,15 @@
+{
+  "id": "mimid-7yn7",
+  "title": "EPIC: what mimid needs if MIMI interop is mandated (DMA Article 7)",
+  "description": "Mark's analysis, 2026-11-22. Beaded out at his instruction. The premise\nis not hypothetical: DMA Article 7 already obliges gatekeeper messaging\nto interoperate, and that obligation is the lever that would make MIMI\nthe NAMED protocol rather than each gatekeeper shipping its own spec.\n\nTHE ONE-LINE FINDING: the feature list is mostly done. What is missing\nis everything that only matters when the peer is not friendly and the\nvolume is real.\n\nToday mimid has interop-tested against ONE implementation (Haven),\ncooperatively, with its author answering email. That is the thing that\ndoes not generalise, and it does not compress: the work is interop\ntesting.\n\nCAVEAT recorded with the analysis: it is written against protocol-07,\ncontent-10 and room-policy-04. Nobody here knows what a June 2028\ndocument says. The per-ambiguity decision-bead discipline is what makes\nretargeting to a final RFC tractable at all, and is worth keeping for\nthat reason alone.\n\nSTRUCTURE. Children of this epic, grouped as Mark grouped them:\n\nHard blockers (the peer is not friendly, the volume is real)\n- follower catch-up: mimid-1wgh.37.104, designed this session. At one\n  friendly peer it is a design note; at twenty commercial peers it is a\n  daily occurrence, and today the failure is permanent ciphertext loss\n  with no notification. This is the one item where the WG work matters\n  MORE than the implementation: if it is not in the final spec, every\n  provider improvises.\n- provider auth a gatekeeper actually accepts: see .1\n- ciphersuites including post-quantum: see .2\n- multi-device at real volume: mimid-4lp4\n- identity past BasicCredential: see .3\n\nContent coverage, the user-facing half, and thinner than the transport\nhalf: see .4\n\nThe regulatory surface, where abuse reporting and consent stop being\noptional: see .5\n\nOperational, not protocol: discovery past the configured peer map\n(mimid-1wgh.37.94), retention as a contract rather than a setting, and\nmachine-readable refusals (mimid-1wgh.55): see .6\n\nAND THE DECISION THAT COMES FIRST: conformance target or full provider.\nSee .7. Mark's own push-back is that \"plug into all of them\" reads as a\nfeature-completeness problem and is not one; the better position may be\nto be the independent implementation that can CHECK whether the\ngatekeepers' claims are true. That needs far less of the content list.\nThe two paths diverge sharply after the hard blockers, so the choice\nshould be made before the hard blockers are finished, not after.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T03:50:52.503961854Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T03:50:52.503961854Z",
+  "labels": [
+    "human"
+  ]
+}

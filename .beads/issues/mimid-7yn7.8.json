@@ -1,0 +1,25 @@
+{
+  "id": "mimid-7yn7.8",
+  "title": "Interop testing is the work, and it does not compress: more than one implementation",
+  "description": "Mark, 2026-11-22, and the part he would actually push back on:\n\n'\"Plug into all of them\" reads as a feature-completeness problem and\nisn't. mimid has interop-tested with ONE implementation, cooperatively,\nwith Jason answering email. The work is interop testing, and it doesn't\ncompress.'\n\nRecorded as its own bead because it is the thing a feature backlog\nhides. Every other child of this epic can be completed and this one\nwould still be open.\n\nWHAT \"ONE IMPLEMENTATION, COOPERATIVELY\" HAS MEANT IN PRACTICE, from\nthis session alone, as evidence that the cooperation is load-bearing:\n- Haven publishes an `unsupported` list in its directory, so we know\n  what not to try. A hostile or merely indifferent peer would not.\n- Jason posted his client certificate and root CA in zulip, so inbound\n  PKIX needed nothing from him.\n- Mark can email him and get an answer, which is how several\n  ambiguities were settled.\n- Three \"findings\" about Haven dissolved on checking this session alone,\n  because their implementation was already correct and ours was looking\n  at the wrong name. With an uncooperative peer those become disputes\n  rather than corrections.\n\nWHAT IS KNOWN ABOUT OTHER IMPLEMENTATIONS: coland does not use TLS\nclient certificates at all and requires RFC 9421 signatures with DID\nkeys (bead mimid-1wgh.46.11.2, a deviation from protocol-07 §4's MUST),\nwhich is a useful second data point and already shows that the\nmandatory transport is not what implementations actually do. mls-rs\nappears as a test oracle (mimid-4lp4, mimid-orjg) but not as a provider.\n\nSO THE CONCRETE ASK: a second and third provider implementation to test\nagainst, and at least one that is not run by someone who answers our\nemail. Until then every claim about mandated interop readiness is\nextrapolation from one friendly peer.\n\nThis bead is also the strongest argument for option B on mimid-7yn7.1:\nif being the independent implementation that can CHECK gatekeepers is\nthe role, then \"interop testing is the work\" stops being an obstacle and\nbecomes the product.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T03:53:50.272791818Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T03:53:50.272791818Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-7yn7.8",
+      "depends_on_id": "mimid-7yn7",
+      "type": "parent-child",
+      "created_at": "2026-11-23T03:53:50.675508078Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
