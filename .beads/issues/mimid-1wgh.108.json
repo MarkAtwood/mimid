@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.108",
   "title": "mimid: parent-dependent rooms are parsed but not implemented, so no call room can be hosted",
   "description": "Found 2026-11-23 (bead mimid-1wgh.37.106).\n\nroom-policy-04 §5 L542 names the call room: \"A room can be both\nfixed_membership and parent_dependent, for example, for room used for a\nmulti-media call of clients in a Group DM\". mimid cannot host one.\n\nWHAT MIMID DOES TODAY: it PARSES the field. limits.rs:150 checks the\n`parent_room` URI against the URI limits, and hub/state.rs:246 and\nagent.rs:5269 both set `parent_room: vec![]`. Nothing enforces or uses\nit.\n\nWHAT §5 REQUIRES and mimid does not do:\n- a parent-dependent room's participants MUST be a strict subset of the\n  parent's;\n- a user removed from the parent is automatically removed from every\n  parent-dependent room of that parent;\n- a parent-dependent room is always hosted on the same hub as its\n  parent;\n- `parent_room` MUST be set when the flag is true, and zero-length\n  otherwise.\n\nThe second one is the interesting one to implement: it is a cascade the\nhub has to run on every removal from a parent room, which is new hub\nbehaviour rather than a validation rule.\n\nAND IT CANNOT BE IMPLEMENTED AS WRITTEN for the obvious case, which is\nour own open issue ietf-wg-mimi/mimi-room-policy#40: a call containing\neveryone in the Group DM is not a STRICT subset of it, so the rule\nforbids exactly the example the note gives. Implementing this means\nchoosing a reading, which per AGENTS.md is a decision bead citing the\nsection and the competing readings. The candidate readings are \"strict\"\nas written (and the note's example is simply impossible), or \"subset\" as\n#40 suggests.\n\nSo this bead is blocked on nothing technically, but its first step is\nthat decision, and #40 being answered upstream would settle it. Low\npriority until calls matter.",
+  "notes": "PROMOTED in importance 2026-11-23 by the keying analysis on mimid-96tt. Working out where a MIMI-backed call's media keys come from shows that room-policy §5's call room is not an incidental example: MLS key material is group-scoped, and mls-extensions §4.4's exported secret is computable by every group member, so a call keyed from a room's exporter is readable by every member of that room rather than only the participants. Making the call its own group is what makes entitlement structural. So parent-dependent rooms are the prerequisite for keyed calls, not a nice-to-have, and the strict-subset problem in our own ietf-wg-mimi/mimi-room-policy#40 blocks the commonest case -- a call with everyone in the Group DM.",
   "status": "open",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-23T18:55:53.457020566Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-23T18:55:53.457020566Z",
+  "updated_at": "2026-11-23T19:17:04.886663798Z",
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.108",
