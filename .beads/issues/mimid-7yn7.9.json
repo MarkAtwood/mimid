@@ -1,0 +1,25 @@
+{
+  "id": "mimid-7yn7.9",
+  "title": "Before publishing a finding about another implementation, rule out our own bug first",
+  "description": "The one real cost of mimid acting as a conformance implementation, kept\nfrom decision mimid-7yn7.1 (closed: provider and referee are not a\ntrade). Not engineering hours: accuracy.\n\nDecision mimid-1wgh.52 item 2 already has mimid telling peers they are\nwrong and citing the section, and that is how several Haven fixes\nhappened. It works because Jason answers email and a mistake costs an\nexchange. Under a mandate, a published finding about a gatekeeper that\nturns out to be our own bug is a retraction, and the asymmetry is\nagainst us: they have lawyers and we have a bead tracker.\n\nEVIDENCE THAT THIS IS A REAL RISK, all from one session, 2026-11-22,\nall mine:\n\n1. \"No mimid1._mimi TXT record exists for mimi.reviewcommit.com.\"\n   False. dig was not installed after the machine move and the checks\n   ran with 2\u003e/dev/null, so \"command not found\" read as NXDOMAIN. The\n   record existed, resolved on every nameserver, and was DNSSEC-valid.\n2. \"Haven publishes no MIMI key record.\" False. I queried\n   mimid1._mimi.havenmessenger.com: our selector, and missing the extra\n   \"mimi.\" label. Theirs is haven1._mimi.mimi.havenmessenger.com and is\n   DNSSEC-signed.\n3. \"Haven's client certificate needs a dNSName SAN, not just a CN.\"\n   Already compliant. I had tested with a certificate I generated\n   myself with only a CN, and read its correct rejection as a finding\n   about them. Their cert has SAN DNS:mimi.havenmessenger.com and EKU\n   clientAuth, and tools/interop/haven/certs/PROVENANCE recorded that\n   when Jason posted it.\n4. \"Haven's directory is malformed / names `message` where we use\n   `submitMessage`.\" Overstated. All nine protocol-07 §5.1 top-level\n   templates are present and match ours; the `endpoints` object is an\n   additional vendor member, not a conflict.\n\nFour for four, in one day, against a cooperative peer. Every one would\nhave reached Jason if the email had been sent before checking.\n\nTHE RULE, which is what this bead is for: before a finding about\nanother implementation leaves this repo, rule out our own bug.\nConcretely, and each of these would have caught one of the above:\n\n- Prove the tool ran. Never read empty output as a negative result;\n  check the exit status or run once without silencing stderr. Already a\n  memory: empty-output-is-not-a-finding.\n- Check the identifier against THEIR published spelling, not ours. A\n  selector, a label, a port and a path are all theirs to choose.\n- When a test fixture is involved, verify the fixture is valid before\n  blaming the peer. A self-signed certificate missing a SAN proves\n  nothing about anyone else.\n- Confirm by a second, independent path. Listing Epik's zone caught\n  finding 1; reading their PROVENANCE file caught finding 3.\n- Say what was observed and what was inferred, separately.\n\nThis is also why the existing rules are load-bearing and should not be\nrelaxed: every upstream post needs Mark's per-action OK\n(peer-contributing-rules), and each finding is a bead with the draft\nsection cited. Those are the backstop that caught all four here.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T04:11:21.128438145Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T04:11:21.128438145Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-7yn7.9",
+      "depends_on_id": "mimid-7yn7",
+      "type": "parent-child",
+      "created_at": "2026-11-23T04:11:21.174975868Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
