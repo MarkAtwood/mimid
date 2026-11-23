@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.20.8",
+  "title": "Haven's client certificate must carry a dNSName SAN for its provider domain, not just a CN",
+  "description": "Found 2026-11-22 while verifying the mTLS proxy path on\nmimi.reviewcommit.com (bead mimid-1wgh.46.20.1).\n\nmimid refuses a peer client certificate that does not assert the\nprovider's domain in a dNSName subjectAltName. A Subject CN is not\naccepted. The refusal is:\n\n    request refused: provider not authenticated\n    reason=certificate refused: no dNSName for the domain\n\nThis is correct behaviour -- CN-as-hostname is deprecated, and\ndraft-atwood-mimi-provider-auth-00 §7 is about the domain a certificate\nasserts -- but it will fail interop silently if Haven's certificate\ncarries only a CN. Both sides would see a 403 with no hint about why.\n\nACTION: confirm with Jason before the interop day that Haven's client\ncertificate for its provider domain has a dNSName SAN for that domain.\nTelling him needs Mark's OK, like any upstream contact.\n\nSecond, smaller finding from the same test: a client certificate must\nuse a signature algorithm the TLS CertificateRequest offers. An Ed25519\ntest certificate was silently not sent by curl/OpenSSL against Caddy;\nECDSA P-256 was sent. Ordinary RSA or ECDSA certificates are fine, but\nif Haven uses Ed25519 the handshake will present no certificate at all\nand mimid will report \"no credentials\" rather than anything about the\ncertificate -- a confusing failure worth knowing in advance.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T02:01:51.196720699Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T02:01:51.196720699Z",
+  "labels": [
+    "interop"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.20.8",
+      "depends_on_id": "mimid-1wgh.46.20",
+      "type": "parent-child",
+      "created_at": "2026-11-23T02:01:51.237214218Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
