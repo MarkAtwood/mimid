@@ -1,0 +1,3 @@
+{"id":"01a20aba-33a5-75a3-97f7-ab8c118d5d67","issue_id":"mimid-1wgh.117","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-23T23:25:04.805370489Z"}
+{"id":"01a20aba-33a7-711f-85e9-00246e3b6f51","issue_id":"mimid-1wgh.117","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-23T23:25:04.807074115Z"}
+{"id":"01a20aba-343a-787d-b6b8-3d75890dab7c","issue_id":"mimid-1wgh.117","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Mark 2026-11-23: the announcement is an invitation; liveness comes from joining the call room, and an ended message is advisory.","created_at":"2026-11-23T23:25:04.954557518Z"}
