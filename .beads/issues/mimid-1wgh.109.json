@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.109",
+  "title": "Decision: a call I-D, not a PR to mimi-content; issue first, then the #40 PR",
+  "description": "Mark asked 2026-11-23 whether to PR the MIMI I-D or write one.\n\nDECIDED: write an I-D for call keying, and do not PR mimi-content for\nit. Order: the mimi-content issue first, then the room-policy#40 PR,\nthen the I-D.\n\nWHY NOT A PR TO MIMI-CONTENT:\n1. It would be declined on scope rather than merit. §5.10 says \"Further\n   discussion of calling and conferencing functionality is out-of-scope\n   of this document\", so a PR adding call keying contradicts the\n   document's own stated boundary and the editor need not weigh it.\n2. The subject spans four documents: the session part in mimi-content,\n   the exporter and Safe HPKE in mls-extensions (a different working\n   group), the call room in mimi-room-policy, and a component id needing\n   mimi-protocol's registry and an IANA action. No single PR carries\n   that.\n3. We have the precedent and it worked.\n   draft-atwood-mimi-provider-auth is the same move -- a cross-cutting\n   mechanism the WG drafts did not cover, written as its own I-D, with a\n   \"Replacement Text for the MIMI Protocol\" section carrying the patch\n   it wants in protocol §4.1. Jason engaged with it and an\n   Implementation Status section is planned (bead mimid-75nk.10). The\n   call I-D should take the same shape: its own document, with a\n   replacement-text section for mimi-content §5.10.\n\nTHE ORDER, and why each step earns its place:\n\n1. POST THE MIMI-CONTENT ISSUE (bead mimid-1wgh.37.106). It is nearly\n   free and it is the cheapest available signal on whether the WG wants\n   calling in scope at all. Writing a full I-D first risks weeks spent\n   on something the WG declines on scope, which is the same objection as\n   the PR, only more expensive.\n2. PR ROOM-POLICY #40, and this one happens regardless of the answer.\n   Strict subset to subset is a one-line fix, already filed as our own\n   issue, squarely in scope for that document, and it blocks the\n   call-room shape the keying analysis on mimid-96tt concludes we need.\n   Cheap, correct, and useful even if calls never go further.\n3. WRITE THE I-D once the appetite is known, or anyway if mimid needs\n   keyed calls for its own sake.\n\nNothing is posted. Each upstream action still needs Mark's own per-action\nOK, per AGENTS.md and the peer-contributing rules.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T19:19:51.966619994Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T19:20:11.354677951Z",
+  "closed_at": "2026-11-23T19:20:11.354677951Z",
+  "close_reason": "Closed",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.109",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T19:19:52.001216168Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
