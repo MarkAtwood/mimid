@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.4.81.38",
+  "title": "Read and show the did:key entries of a verified did:webvh log (decision mimid-1wgh.97)",
+  "description": "Implements decision mimid-1wgh.97. No credential, codec or verifier change is needed: mimi_user_uri already ignores every alsoKnownAs entry that is not the one 'mimi:' URI, so a did:key entry passes verification unread today.\n\nWORK.\n- A reader in mimi-mls beside mimi_user_uri for the did:key entries of a VerifiedLog's head document. Unlike the mimi: URI, which is one or none, a person may publish several keys, so it returns all of them in document order and does not refuse a log for having many. Non-string entries are skipped as head_also_known_as already skips them.\n- Keep it on the Person record beside did, so a front end can show it without re-verifying a log.\n- Show it: WHOIS 320 gains an 'AKA did:key:...' line, which is meshIRCd's own shape for alsoKnownAs (its IDENTITY.md); the IRC service's 'identity \u003cuser\u003e' command lists them; METADATA's identity value can carry them beside id once the shape question of mimid-i0id.11 is settled.\n\nWHY IT MATTERS: it is what makes a person present on meshIRCd and in a MIMI room recognisably one person, which is the whole point of the shared identity story. The did:key carries no MLS authority and the display must not imply it does.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T22:42:20.187234472Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T22:42:20.187234472Z",
+  "labels": [
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.81.38",
+      "depends_on_id": "mimid-1wgh.4.81",
+      "type": "parent-child",
+      "created_at": "2026-11-22T22:42:20.216171719Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

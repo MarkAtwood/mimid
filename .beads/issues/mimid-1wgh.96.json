@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.96",
+  "title": "Decision: the IRC channel is a window onto a MIMI room, not a mirror; the bridge announces membership and never enforces it",
+  "description": "Mark, 2026-11-22, working through the decisions the bridge ordering analysis raised (bead mimid-prex).\n\nA CONSTRAINT FIRST, not a choice: the bridge cannot make an IRC user a MIMI member. Adding someone to an MLS group needs their KeyPackage, and a plain IRC user has no MLS keys. Only someone already running a MIMI agent could be a member, and they would not need the bridge for it. So IRC-to-MIMI membership was never on the table; an earlier note of mine wrongly presented it as a decision.\n\nTHE DECISION is the other direction: what the bridge does to the IRC channel when the MIMI room's membership changes.\n\nREADINGS.\n(a) Window: announce only. The bridge says someone joined or was removed and never kicks or invites a real IRC user.\n(b) Mirror: enforce, kicking and inviting so the channel reflects the room.\n(c) Mirror on a single IRC server, window on a mesh.\n\nCHOSEN: (a).\n\nWHY. Enforcement in a mesh is a feedback loop. A kick the bridge issues is a new mesh event that converges across meshIRCd's peers, and a concurrent join on another server can undo it, and the bridge then kicks again: a mesh is the one topology where that oscillates. It would also require the bridge to hold channel operator privileges, which is authority it does not otherwise need. (c) buys faithfulness where it is safe but costs two behaviours to build, document and test, and requires the bridge to know what kind of network it is on, which it cannot reliably tell.\n\nCONSEQUENCES. The channel's membership is whatever the IRC network says; it is not a statement about the room. IRC users' words still reach the room, spoken by the bridge's own leaf and labelled with their nick, by the existing marmot-bridge.md §3.2 pattern (a content prefix plus the mimid-on-behalf-of extension, the MLS sender remaining the bridge, as AGENTS.md requires). The bridge needs no operator privileges. Anyone wanting real membership runs an agent.",
+  "status": "closed",
+  "priority": 3,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T22:40:33.549880904Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T22:40:41.622728752Z",
+  "closed_at": "2026-11-22T22:40:41.622728752Z",
+  "close_reason": "Decided by Mark 2026-11-22: window, announce only.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.96",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-22T22:40:33.584499803Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

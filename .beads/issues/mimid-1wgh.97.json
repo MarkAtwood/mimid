@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.97",
+  "title": "Decision: a did:key may be an alsoKnownAs inside a did:webvh log; mimid never accepts one as a credential",
+  "description": "Mark, 2026-11-22, decision 2 of the five the bridge and identity work raised (bead mimid-5ltz, which holds the three readings in full).\n\nCONTEXT. meshIRCd's identities are mostly did:key; mimid's are did:webvh (draft-atwood-mls-didwebvh-credential). A did:key proves possession of a key now and nothing about who held it over time, because there is no log to replay; the log is the whole point of did:webvh.\n\nCHOSEN: a did:key may appear as an alsoKnownAs entry inside a did:webvh log. The log remains the only authority. The did:key is a second name the same person publishes, signed by the user's own update keys like everything else in the log, so a provider cannot put one there. mimid never accepts a did:key as an MLS credential in its own right.\n\nWHY NOT THE OTHERS. Refusing outright would leave the two systems sharing only a display convention, and a person present in both unrecognisable as one person. Accepting did:key as a peer of did:webvh in a credential would change the scope of Mark's own draft, need a place in the credential codec, and need a rule for what a room's policy makes of an identity with no log and no witnesses — a weaker identity in the same slot as a stronger one.\n\nIT ALREADY WORKS AT THE CREDENTIAL LAYER. mimi_mls::didwebvh::mimi_user_uri takes the one alsoKnownAs entry whose scheme is 'mimi:' and ignores every other entry (crates/mimi-mls/src/didwebvh.rs), so a did:key entry passes verification today, untouched and unread. No change to the credential, the codec or the verifier.\n\nWHAT IS LEFT, filed separately: a reader beside mimi_user_uri for the did:key entries of a verified log, and somewhere to show them, so a meshIRCd identity and a mimid one are recognisably the same person. The reader must not assume one entry: unlike the mimi: URI, which is one or none, a person may publish several keys.",
+  "status": "closed",
+  "priority": 3,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T22:42:06.756764714Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T22:42:19.983955863Z",
+  "closed_at": "2026-11-22T22:42:19.983955863Z",
+  "close_reason": "Decided by Mark 2026-11-22.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.97",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-22T22:42:06.790467398Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.103",
+  "title": "Decision: mimid's provider serves metadata-only chatPush, configurable, on by default",
+  "description": "Mark, 2026-11-22. Reverses decision mimid-1wgh.12.30 (no PushSubscription) for the push draft, under the scope change of mimid-1wgh.98.\n\nA CORRECTION FIRST. An earlier note of mine said jmap-chat-push conflicts with end-to-end encryption as written and that the draft might need a paragraph about it. That was wrong, and it was drawn from the introduction alone. The draft already handles E2EE explicitly: an 'encrypted' flag that is true when the server cannot produce a plaintext snippet, with bodySnippet, hasMention and mentionScopes all MUST-absent in that case, and a §e2ee section. Its design principles already say that in E2EE deployments the encrypted flag and metadata-only mode give enough context, and that a deployment where the push operator must not learn who messaged whom omits chatPush and relies on StateChange.\n\nTHE REAL QUESTION was therefore privacy, not encryption: to wake a phone, the payload passes through Apple's, Google's or Mozilla's push service, and that operator sees whatever is in it. MLS means it can never see the message. It can see which chat, from whom, and when.\n\nCHOSEN: mimid's provider serves chatPush in metadata-only mode — encrypted=true, no bodySnippet, and no mention fields, which the provider could not compute from ciphertext anyway — and it is configurable, with the default ON.\n\nWHY ON BY DEFAULT. Without it the phone must wake, connect, authenticate, call Message/changes and then Message/get, which the draft says routinely exceeds mobile background budgets and yields missed or throttled notifications. That is most of the reason a phone client exists, so the useful behaviour is the default and the private behaviour is a setting, not the other way round.\n\nWHAT MUST BE WRITTEN DOWN WHERE A USER SEES IT: with chatPush on, the push operator learns who messaged whom and when. That belongs in the configuration documentation beside the switch, not only in a design note. Turning it off leaves RFC 8620 StateChange, which carries no message metadata.\n\nNOT DECIDED HERE: whether a user's own always-on agent should also send richer pushes with plaintext, as the IRC front end already does over soju.im/webpush. That stays available and is a separate question.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T22:54:22.747857595Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T22:54:36.473607314Z",
+  "closed_at": "2026-11-22T22:54:36.473607314Z",
+  "close_reason": "Decided by Mark 2026-11-22: metadata-only, configurable, default on.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.103",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-22T22:54:22.776884119Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

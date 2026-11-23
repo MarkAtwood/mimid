@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.103",
+  "title": "wg: METADATA pass-through in bouncers (soju, ZNC), the cheapest useful PR",
+  "description": "Mark, 2026-11-22. Separated from the identity-key proposal because it carries no identity opinion and so is far likelier to be accepted.\n\nA bouncer sits between a client and a server; for the identity convention of mimid-i0id.11 to be usable through one, the bouncer need only relay METADATA and its numerics (761 RPL_KEYVALUE, 762 RPL_METADATAEND, 766 ERR_NOMATCHINGKEY) and the FAIL METADATA forms, in both directions, without interpreting them. Pure plumbing.\n\nTargets, in order of likely acceptance: soju (Go, by emersion, who also wrote Goguma, which mimid's IRC v2 already targets, so there is an existing connection) and then ZNC.\n\nCheck first, per the peer-contributing-rules memory: each project's CONTRIBUTING and templates, and whether it already relays METADATA, which would make this a no-op. Nothing is posted without Mark's per-action OK.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T22:31:31.847666507Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T22:31:31.847666507Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.103",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-22T22:31:31.877642726Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

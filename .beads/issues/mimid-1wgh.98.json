@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.98",
+  "title": "Decision: mimid's JMAP scope grows to chat-push, chat-wss, chat-federation and chat-did; amends mimid-1wgh.9",
+  "description": "Mark, 2026-11-22, decision 4 of five (bead mimid-1wgh.94, now closed).\n\nmimid serves six JMAP types today, all from jmap-chat and jmap-chat-mimi: Chat, Message, ChatContact (projected), and KeyPackage, Client, Consent (pushed). Decision mimid-1wgh.9 scoped the C2S API to the JMAP Chat E2EE subset plus the MLS key-material capability. Mark has about twenty JMAP drafts; the rest have no types in mimid.\n\nCHOSEN: four of them come into scope — jmap-chat-push, jmap-chat-wss, jmap-chat-federation and jmap-chat-did. The others (calendars, tasks, filenode, scene, cid, object-uri and the five graph drafts) stay out: they are a different product, and the reference-not-only rule says effort goes to being the MIMI conformance target and to helping second implementations exist.\n\nThis amends mimid-1wgh.9's 'JMAP Chat E2EE subset' and reverses mimid-1wgh.12.30 ('no PushSubscription') for the push draft.\n\nEACH HAS A TENSION WITH MIMID THAT THE WORK MUST FACE, and each is filed as its own bead rather than planned here:\n\n- chat-push extends PushSubscription with chatPush, delivering a ChatMessagePush payload carrying message metadata and an optional body snippet so a phone renders a notification with no follow-up request. mimid's provider CANNOT do the snippet: it holds ciphertext, and that is the point. The agent can, which is how the IRC front end's Web Push already works. So the likely shape is the agent serving chatPush, not the provider, and the draft may need to say what an E2EE deployment omits.\n- chat-wss is RFC 8887 WebSocket transport plus ChatTypingEvent and ChatPresenceEvent. It overlaps mimid's own live stream (binary-live-stream.md), and MIMI has no presence at all, so one of its two event types has nothing to carry here.\n- chat-federation defines peer discovery, peer authentication and peer-role access for a topology where each participant runs their own JMAP server. mimid already federates, but over MIMI protocol-07 with RFC 9421 signatures (epic mimid-75nk), not by JMAP peering. Whether these are complementary or competing is the first question, not an implementation detail.\n- chat-did defines a capability signalling DID support, the DID methods a server must resolve, optional ChatContact DID binding, and DID-bound verification for a peer whose identity is a DID without a host. This is the natural home for today's identity decision (mimid-1wgh.97: a did:key may be an alsoKnownAs inside a did:webvh log) and should be read against it.",
+  "notes": "CORRECTION, 2026-11-22: the chat-push bullet in this decision's description says the draft 'may need to say what an E2EE deployment omits'. It already does — an 'encrypted' flag, bodySnippet/hasMention/mentionScopes MUST-absent when it is set, a §e2ee section, and a design principle naming metadata-only mode and the omit-chatPush option. The claim came from reading only the draft's introduction and should not be relied on. The rest of that bullet stands: the provider cannot produce a snippet, and the agent can.\n\nThe push question is now settled by decision mimid-1wgh.103.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-22T22:46:43.565769794Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-22T22:54:36.610656161Z",
+  "closed_at": "2026-11-22T22:47:05.868853729Z",
+  "close_reason": "Decided by Mark 2026-11-22.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.98",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-22T22:46:43.596093808Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

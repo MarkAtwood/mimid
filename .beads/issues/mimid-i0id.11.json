@@ -2,13 +2,15 @@
   "id": "mimid-i0id.11",
   "title": "IRC: expose DIDs as meshIRCd does, by WHOIS 320 and METADATA GET",
   "description": "Mark, 2026-11-22: expose DIDs the same way meshIRCd does. Consuming its did:key identities is the separate question on mimid-5ltz.\n\nWORK, matching meshIRCd's shapes so one convention covers both servers:\n- WHOIS numeric 320, which needs no client support at all: 'DID \u003curi\u003e' for a user whose Person record has a did:webvh DID, and a line saying plainly when they have none, since then their provider's word is all there is (the BasicCredential weakness of mimid-1wgh.4.81). A 'Verified' line is honest for mimid: a did:webvh DID on a leaf was verified as a condition of membership.\n- 'METADATA \u003cnick|*\u003e GET identity', answered as ':\u003cserver\u003e METADATA \u003cnick\u003e identity * :\u003cvalue\u003e'. An unsupported key is 'FAIL METADATA KEY_NOT_SUPPORTED', an unknown nick ERR_NOSUCHNICK.\n- 'METADATA * SET identity' and CLEAR are REFUSED with 'FAIL METADATA CANNOT_SET': in mimid the DID comes from the MLS credential, not from the client (see mimid-5ltz).\n- The existing 'identity \u003cuser\u003e' service command becomes the long form of the same facts.\n\nOPEN, to settle while building: meshIRCd's METADATA value is the full JSON-LD DID document the client set. mimid has only the DID URI, because the document lives in the did:webvh log the agent verified and does not republish. Emitting a minimal '{\"id\":\"\u003cdid\u003e\"}' keeps the shape a meshIRCd-shaped consumer expects while saying only what mimid knows; that is an INVENTED choice and must be labelled as one in the code.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-22T22:15:12.884277873Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-22T22:15:12.884277873Z",
+  "updated_at": "2026-11-22T22:29:24.930882971Z",
+  "closed_at": "2026-11-22T22:29:24.930882971Z",
+  "close_reason": "Landed with WHOIS 320 in meshIRCd's shape, METADATA GET identity, and SET/CLEAR refused. Consuming did:key stays open on mimid-5ltz.",
   "labels": [
     "irc"
   ],
