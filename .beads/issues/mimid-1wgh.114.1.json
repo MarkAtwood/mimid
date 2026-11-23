@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.114.1",
+  "title": "Send a call as a mimi-content §5.10 session part, so any client shows it",
+  "description": "Route (a) of decision mimid-1wgh.114. The small half.\n\nWHAT EXISTS: the receive side. mimid-agent-store content.rs turns a\n§5.10 `session` part into a Call record (url, description, expires, and\nis_link for whether it may be shown as a link), the front ends render it\n(docs/design/agent-frontends.md §7.24), and mimid-agent-core\ntests/session_parts.rs covers it.\n\nWHAT IS MISSING: sending one. There is no Session disposition anywhere in\naction.rs or convert.rs, so the agent can decode a call invitation and\ncannot make one.\n\nSCOPE: a Store action that sends a session part into a room, and the\nfront-end paths to call it. The content rules are mimi-content-10 §5.10\nand the limits already in content.rs (MAX_CALL_URL_LEN,\nMAX_CALL_DESCRIPTION_CHARS).\n\nOPEN, AND NEEDS MARK BEFORE ANY CODE: what URI goes in it. mimid runs no\nmedia service, so the URI points at something else, and the choice is\nvisible to every recipient. Candidates: a URI the caller supplies, so the\ndecision is the user's; a configured service per deployment; or nothing\nuntil there is a service to name. Decision mimid-1wgh.114 recorded that\nwhatever sits behind this URI is NOT keyed by the call room's MLS group,\nso this route does not inherit today's keying, and a user should not be\nled to think it does.\n\nDO NOT let this route quietly become the answer to calls. It is the reach\nhalf. The keyed half is the sibling bead.\n",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T22:26:12.362497623Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T22:26:12.362497623Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.114.1",
+      "depends_on_id": "mimid-1wgh.114",
+      "type": "parent-child",
+      "created_at": "2026-11-23T22:26:12.419671385Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
