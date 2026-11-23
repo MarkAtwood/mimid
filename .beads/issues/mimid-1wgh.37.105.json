@@ -1,0 +1,33 @@
+{
+  "id": "mimid-1wgh.37.105",
+  "title": "Design peer-to-peer backlog: a follower fills a gap from another follower, not the hub",
+  "description": "Promoted from a parked idea to a real design item by Mark, 2026-11-22\n(docs/design/mimi-catchup.md §7, which was written as \"not proposed,\nrecorded because it is the first thing anyone will ask\").\n\nTHE IDEA. A follower missing sequences 400-450 asks a PEER follower that\nalready holds them, instead of the hub.\n\nWHY IT IS WORTH DESIGNING, and the argument that promoted it: it spreads\nread load off the hub, and it keeps working when the hub is down. The\nsecond is a real resilience property, not an optimisation. A hub outage\nstops the room accepting NEW messages, because the hub is the only\nwriter and its identity is in the roomId -- but READING backlog does not\nneed the hub at all if someone else holds the bytes. Today a hub outage\ntakes both.\n\nIt depends on follower catch-up existing first (mimid-1wgh.37.104): the\nsequence is what makes \"who holds 400 to 450\" a question that can be\nasked at all.\n\nTHIS IS ALSO WHERE A VECTOR CLOCK EARNS ITS PLACE. The catch-up design\nconcluded MIMI wants a scalar sequence, not a vector clock, because a\nroom has one writer (§3). That conclusion holds for the room's order and\nis not reopened here. But once several followers hold overlapping\nPIECES of one hub-ordered stream, \"who has what\" is genuinely a\nper-origin holdings question, and a vector clock or an interval set is\nthe right shape for it. The hub's sequence stays the single authority on\nORDER; the clock describes AVAILABILITY.\n\nOPEN DESIGN QUESTIONS, in the order they block each other:\n\n1. Policy, and it gates everything else: may a follower serve a room's\n   fanout to another follower at all? That is a question about who may\n   hold and redistribute a room's history, not a transport question. It\n   plausibly wants a say from the room's policy (room-policy-04) or a\n   hub-published permission, because \"my provider may hand my room's\n   history to a provider of its choosing\" is a thing a room might\n   refuse.\n\n2. Authenticity, and the piece the current design does NOT have. A\n   receiver taking bytes from a peer rather than the hub needs to verify\n   both the message AND its position. Franking covers hub acceptance\n   where it applies, but nothing today binds a sequence to a message in\n   a way a third party can check, so a relaying peer could renumber or\n   omit. The natural fix is for the hub to sign a running hash over the\n   fanout stream -- a hash chain, each entry over (previous, sequence,\n   message digest) -- so any holder can prove a message's position and a\n   gap cannot be hidden. That is a real addition to the catch-up design\n   and would want to be in protocol-08 text alongside it, because\n   retrofitting verifiability later is much harder than designing it in.\n   Consider whether mimid-1wgh.37.104.1 should assign the chain entry at\n   the same time as the sequence, even before peer-to-peer exists.\n\n3. Discovery: how does a follower learn which peers hold 400-450, and\n   does it learn that from the hub, from a peer, or by asking around?\n   (See the vector clock note above.)\n\n4. Privacy: asking a peer reveals your gap to a third party, where\n   asking the hub reveals it only to a party that already knew it fanned\n   out to you (§9). That is a genuine widening and must be stated.\n\n5. Abuse: a peer that serves backlog can be used to amplify, and a peer\n   that asks can probe which rooms another provider follows. Needs rate\n   limits and a reason to refuse.\n\nNOT STARTED. No text, no implementation, no WG proposal. Blocked on\nmimid-1wgh.37.104 landing, and on question 1, which is Mark's or the\nWG's to answer and not an implementation detail.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T01:30:09.21884854Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T01:30:09.21884854Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.105",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-23T01:30:09.26720506Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.37.105",
+      "depends_on_id": "mimid-1wgh.37.104",
+      "type": "blocks",
+      "created_at": "2026-11-23T01:30:16.039116706Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

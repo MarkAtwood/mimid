@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.37.104.3",
   "title": "catch-up 3: serve the catchUp primitive, bounded by retention and entitlement",
   "description": "docs/design/mimi-catchup.md §5, §5.1, §6. Serve catchUp for a room: take the sequence the requester holds and a limit (mimid asks for 256, INVENTED; a hub may return fewer), answer with fanouts in hub order each carrying its sequence, plus the hub's current highest so the requester knows whether to ask again.\n\nPublish the template in the directory beside notify, update, reportAbuse and proxyDownload (directory.rs): a provider that does not publish it does not support it, which is what makes this safe to add without version negotiation.\n\nBound the answer by catch-up 2's entitlement and by retention: mimid offers catch-up over exactly message_retention_secs (7 days by default) so that shortening retention shortens catch-up and the two cannot drift. A request older than the window MUST be answered DISTINCTLY and not with the oldest still held, which would look complete and hide the loss.\n\nAuthenticate with the provider auth that already exists (epic mimid-75nk). Tests: an in-window request returns the exact range; an out-of-window request is refused distinctly; limit is honoured; an unauthenticated or unentitled request is refused.",
+  "notes": "Bound by two windows: retention (§6, message_retention_secs) and the requester's participation window (§8, a SHOULD per decision mimid-1wgh.107). The MUST that remains is §5.1: an out-of-window request MUST be answered distinctly, never by returning the oldest fanout still held, because that looks like a complete answer and hides the loss. That one is observable by the requester and belongs in a test.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-23T01:12:49.413447072Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-23T01:12:49.413447072Z",
+  "updated_at": "2026-11-23T01:29:17.80873934Z",
   "labels": [
     "wg"
   ],

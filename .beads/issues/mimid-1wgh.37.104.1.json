@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.37.104.1",
   "title": "catch-up 1: the hub's per-room fanout sequence",
   "description": "docs/design/mimi-catchup.md §4. Assign and persist a monotonic per-room sequence, from 1, one per fanout, covering handshakes as well as application messages, never reused or renumbered. It is not a timestamp, not an MLS epoch, not a message id: accepted_timestamp is milliseconds and is not an ordering key (collisions, and no monotonicity across a clock adjustment).\n\nCarry it BESIDE the message in the POST /notify/{roomId} envelope, not inside FanoutMessage (§4 reading 2, the note's recommendation, subject to Mark settling open question 1). That keeps a structure other implementations already parse unchanged, and the sequence is a property of the delivery rather than of the message.\n\nStore it with the hub's fanout so §3's catch-up can serve by sequence. Fixture tests: a sequence is assigned per fanout in hub order; it survives a restart; it does not restart or skip; two fanouts in the same millisecond get distinct increasing sequences.",
+  "design": "Assign and persist a monotonic per-room fanout sequence on the hub.\n\nStarts at 1 for a room's first fanout, increases by one, per room, never\nreused or renumbered. It numbers every fanout -- handshake and\napplication alike -- because a follower that missed a handshake needs it\nas much as a message. It is not a timestamp, not an MLS epoch and not a\nmessage id: an epoch covers many application messages.\n\nWIRE PLACEMENT, decided by Mark 2026-11-22 (decision mimid-1wgh.104):\nbeside the message, in the POST /notify/{roomId} envelope, NOT inside\nFanoutMessage. So no other implementation's parser changes, a proxy\ncannot strip it without its absence being visible, and the sequence\nmodels the delivery rather than the content.\n\nStill to settle when this is written: whether the envelope carries it as\nan HTTP header or as a wrapper object around FanoutMessage. Prefer a\nheader if franking does not need to cover it; if it must be covered,\na wrapper. Check what the hub signs today in peer.rs before choosing,\nand record the choice on this bead.\n\nThe sequence must be assigned in the same transaction that records the\nfanout, so a crash cannot leave a gap or a duplicate.",
+  "notes": "Consider from mimid-1wgh.37.105 question 2: peer-to-peer backlog needs a third party to verify a message's POSITION, and nothing today binds a sequence to a message checkably. If the hub assigned a hash-chain entry over (previous, sequence, message digest) at the same moment it assigns the sequence, that verifiability comes almost free now and is much harder to retrofit later. Decide when writing this bead whether to include the chain entry, and record the choice here either way.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-23T01:12:49.183791932Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-23T01:12:49.183791932Z",
+  "updated_at": "2026-11-23T01:30:16.134376651Z",
   "labels": [
     "wg"
   ],

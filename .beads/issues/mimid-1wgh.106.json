@@ -1,0 +1,28 @@
+{
+  "id": "mimid-1wgh.106",
+  "title": "Decide when follower catch-up is implemented, relative to the January 2027 Haven interop day",
+  "description": "docs/design/mimi-catchup.md §12.3.\n\nThe note's own framing of this question was WRONG and was corrected\nbefore Mark decided. It said catch-up was \"new protocol surface six\nweeks out\" and that \"the interop-day scope has to shrink to pay for\nit\". Reading mimid-1wgh.46.20:\n\n- that bead says \"mimid needs no new features for them\": the interop\n  day runs cross-hub delivery, committer authority, the room-policy\n  cross-check and refusal codes, all of which already exist. Catch-up\n  was never competing with interop-day features.\n- the date is NOT set, and the day is gated on Haven first delivering\n  messages and Commits from rooms on other hubs and keeping the ratchet\n  tree (Jason Bolduc's list, #mimi 238476). \"Six weeks out\" was an\n  assumption, not a fact.\n\nSo the real trade was narrower: regression risk in the hub's fanout\nwrite path, which mimid-1wgh.46.20.2 (cross-hub delivery both ways, no\n422) exercises.\n\nOptions offered: implement now but inert (template unpublished);\nimplement after the interop day; implement now fully live; or land only\n.1 and .2 now.\n\nDECIDED by Mark, 2026-11-22: implement now, FULLY LIVE. The catchUp\ndirectory template is published and the endpoint is reachable by peers.\n\nWhy: it gives Haven something concrete to react to in January and makes\nthe protocol-08 proposal (decision mimid-1wgh.105) evidence-backed\nrather than theoretical.\n\nCONSEQUENCES, which the implementation beads must honour:\n\n- §8's participation-window MUST is a live authorization boundary from\n  the first deploy, not a design aspiration. mimid-1wgh.37.104.3 MUST\n  NOT be deployed before .2 exists; the dependency is wired so bd will\n  not offer it first.\n- The endpoint is peer-reachable, so it is untrusted input: it gets the\n  same provider authentication as the rest of the peer surface (epic\n  mimid-75nk) and the same strict decoding and named limits as any\n  other wire surface.\n- The fanout write path changes before mimid-1wgh.46.20.2 runs. A new\n  outbound header is additive and Haven ignores unknown headers, so the\n  wire change itself costs interop nothing; the exposure is our own\n  regression risk, covered by mimid-1wgh.37.104.5's two-provider test.",
+  "notes": "Superseded in part by decision mimid-1wgh.107 (same day): this bead's consequence list said §8's participation-window MUST becomes a live authorization boundary on the first deploy. It is now a SHOULD, and an efficiency and metadata-hygiene bound rather than an authorization boundary, because a provider holds no MLS group keys. The rest of this bead stands: the endpoint is peer-reachable untrusted input from the first deploy and gets provider authentication, strict decoding and named limits, and .2 still precedes .3.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T01:26:39.020041681Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T01:29:26.082623337Z",
+  "closed_at": "2026-11-23T01:26:46.327399756Z",
+  "close_reason": "Closed",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.106",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T01:26:39.06133642Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

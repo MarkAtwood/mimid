@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.107",
+  "title": "Decision: the catch-up participation-window bound is a SHOULD, not a MUST",
+  "description": "docs/design/mimi-catchup.md §8, §8.1.\n\nAn earlier draft of the note made the participation-window bound a MUST\nand said a loose bound was \"a worse hole than the one being fixed\".\n\nDECIDED by Mark, 2026-11-22: SHOULD, not MUST. \"Getting it wrong is just\nan efficiency problem not an interop problem.\"\n\nHe is right, and the MUST framing was wrong:\n\n- A provider is not a member of the MLS group. It holds no group keys\n  and never decrypts application content; only its users' clients do.\n  Fanout from sequences when it had nobody in the room is ciphertext it\n  cannot read. A loose bound wastes the hub's bandwidth and the\n  follower's storage; it does not hand over message content.\n- A loose bound is also undetectable. The requester cannot tell whether\n  what it got was bounded correctly, and a correct hub and a sloppy one\n  are indistinguishable to every other implementation. A MUST whose\n  violation no peer can observe and no test can catch buys conformance\n  language and nothing else.\n\nRecorded in §8.2 so the SHOULD is not read as \"does not matter\": a loose\nbound still leaks that fanouts occurred, when, and how large they were,\nplus whatever handshakes carry outside the ciphertext -- an MLS\nPublicMessage handshake is authenticated, not encrypted, so membership\nchanges from periods the requester was absent for would be readable.\nmimid follows the SHOULD. It is just not a thing to fail a peer over.\n\nThe test this establishes, applied to the note's other keywords: §5.1\nand §6's \"a hub MUST answer an out-of-window request distinctly\" stays\na MUST, because a follower behaves differently depending on the answer\n(it surfaces a gap instead of showing a silent hole), so a violation is\nobservable on the wire and testable by the requester. That is\ncorrectness, not bandwidth.\n\nCarried into mimid-1wgh.37.104.2 and .3.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T01:29:07.052901602Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T01:29:17.657007503Z",
+  "closed_at": "2026-11-23T01:29:17.657007503Z",
+  "close_reason": "Closed",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.107",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T01:29:07.091976955Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

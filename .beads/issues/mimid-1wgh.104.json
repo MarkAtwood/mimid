@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.104",
+  "title": "Decide where the hub's per-room fanout sequence rides on the wire",
+  "description": "Catch-up (docs/design/mimi-catchup.md §4, bead mimid-1wgh.37.104) needs\nthe hub to put a monotonic per-room sequence on every fanout. Three\nplacements were weighed:\n\n1. A new field in FanoutMessage. Plainest to read, but changes a wire\n   structure other implementations already parse, and ties into the\n   extension-point work of bead mimid-1wgh.55.\n2. Beside the message, in the POST /notify/{roomId} envelope: a header\n   or a thin wrapper.\n3. In an AppDataDictionary extension, if fanout ever gains one.\n\nDECIDED by Mark, 2026-11-22: (2), beside the message.\n\nWhy: no other implementation's parser changes, so an implementation that\ndoes not know the sequence is unaffected; a proxy cannot strip it\nwithout the receiver noticing its absence; and it models the number\ncorrectly. The sequence is a property of the DELIVERY, not of the\nmessage: the same MLSMessage fanned out to five followers is one message\nat one sequence, and if it were ever re-sent the sequence would be the\nthing that said so. Putting it inside FanoutMessage would imply it\ndescribes the content, which it does not.\n\nINVENTED, NOT FROM SPEC: protocol-07 defines no sequence on fanout at\nall (that is the gap bead mimid-1wgh.37.104 exists to close), so both\nthe sequence and its placement are ours until the working group accepts\ntext.\n\nImplemented by mimid-1wgh.37.104.1.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T01:23:23.440897383Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T01:23:33.639474741Z",
+  "closed_at": "2026-11-23T01:23:33.639474741Z",
+  "close_reason": "Closed",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.104",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T01:23:23.489200025Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.105",
+  "title": "Decide the vehicle for taking follower catch-up to the MIMI working group",
+  "description": "docs/design/mimi-catchup.md §12.2. Two vehicles were weighed for the\ncatch-up primitive once mimid implements it:\n\n1. Text proposed for protocol-08, patching the WG's own draft.\n2. A separate extension draft, draft-atwood-mimi-catchup.\n   (A third option, raising the gap on the list with no text and letting\n   the WG pick the vehicle, was also offered.)\n\nDECIDED by Mark, 2026-11-22: (1), text for protocol-08, with mimid's\nimplementation as the evidence.\n\nWhy: the hole is in the WG's own draft. A follower provider that is\nunreachable during fanout permanently loses an MLS application\nciphertext -- the hub cannot regenerate it and no other party can mint\nit -- and protocol-07 does not even tell the follower it should say so.\nThat is a correctness gap in the base protocol, not an optional\nfeature, and the argument is weakened by filing it as an optional\nadd-on: proposing it as an extension concedes that it is optional. In\nthe base draft every implementation gets it and nothing has to be\nnegotiated.\n\nCost accepted: protocol-08 text moves on the WG's schedule rather than\nMark's.\n\nNOT AUTHORIZATION TO POST. Per AGENTS.md and the peer-contributing\nrules, every upstream post needs Mark's own per-action OK, and the\ntarget's CONTRIBUTING/SECURITY text is read first. This bead settles\nonly which container the work aims at.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T01:25:18.190212136Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T01:25:25.619756545Z",
+  "closed_at": "2026-11-23T01:25:25.619756545Z",
+  "close_reason": "Closed",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.105",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T01:25:18.228501551Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
