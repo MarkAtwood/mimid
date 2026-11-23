@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.6.17",
+  "title": "haven: mimi-hubd requires a client certificate in the TLS handshake at 34eae7e, so a peer gets no HTTP answer",
+  "description": "Verified 2026-11-22 against our own copy of mimi-hubd at 34eae7e, run by\ntools/interop/haven/live/run.sh. Mark authorized running our own Haven\ninstances, which is what made this checkable without touching Jason's\nhub.\n\nOBSERVED, and ruled out as our bug first (bead mimid-7yn7.9):\n\n  POST https://localhost:8443/mimi/pl/update/x, From: mimi@b.example\n    without a client certificate -\u003e curl code 000, TLS handshake fails\n    with the harness client certificate -\u003e 404, i.e. TLS completed and\n      the request was routed (404 only because the path was invented)\n\nSo the handshake itself is refused when no client certificate is\npresented. The pair is what makes it conclusive: the same URL, the same\nCA, differing only by the client certificate.\n\nRuled out on our side before concluding:\n- hostname mismatch. mimi-hubd's server certificate is CN=localhost with\n  SAN DNS:localhost, IP:127.0.0.1, and the selftest connects to\n  localhost:8443, so the name matches. (A diagnostic of mine used\n  haven.localhost:8443, which did NOT match and produced the same 000\n  for an unrelated reason; certs.sh now also names haven.localhost so\n  that confusion does not recur.)\n- CA trust. openssl s_client reports \"Verify return code: 0 (ok)\".\n- a wrong client certificate path. An earlier run of mine used\n  client.crt/client.key, which do not exist; the files are\n  client.pem/client-key.pem.\n\nWHY IT MATTERS. Our own selftest comment recorded that at d750a8d\nmimi-hubd completed TLS without a client certificate and refused at the\nHTTP layer with 403, because a request could carry a signature instead.\nAt 34eae7e it does not. Both are defensible, and handshake enforcement\nis arguably MORE conformant to protocol-07 §4.1's \"MUST be mutually\nauthenticated\" -- but the consequence for a peer is different:\n\nA handshake refusal carries no reason. A peer whose certificate is\nmissing, expired or issued by the wrong CA learns only that TLS failed.\nCompare mimid, which since mimid-75nk.12 answers 403 with a `reason`\nmember naming the peer's own DNS record, signature or certificate. On an\ninterop day, \"TLS failed\" against a peer with no obligation to help\ncosts hours.\n\nALSO WORTH KNOWING: it means mimid cannot talk to a hub in this mode at\nall without [peer_tls.identity] configured, since there is no\nsignature-only fallback. That is exactly the half still blocked on Jason\n(mimid-1wgh.46.20.1 item 4), so it moves from optional to required if\nJason's hub behaves as our copy does. Check his before the interop day;\nasking him needs Mark's OK.\n\nselftest.sh now accepts either shape and says which, rather than\nasserting the one Haven happened to do at d750a8d.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T04:32:44.868603528Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T04:32:44.868603528Z",
+  "labels": [
+    "interop"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.6.17",
+      "depends_on_id": "mimid-1wgh.46.6",
+      "type": "parent-child",
+      "created_at": "2026-11-23T04:32:44.91334377Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -9,7 +9,12 @@ leaf() { # name CN SAN
   q openssl x509 -req -in "$1.csr" -CA ca.pem -CAkey ca-key.pem -CAcreateserial -days 2 \
     -out "$1.pem" -extfile <(printf 'subjectAltName=%s\n' "$3")
 }
-leaf hub localhost "DNS:localhost,IP:127.0.0.1"
+# haven.localhost as well as localhost, because mimi-hubd runs as
+# domain=haven.localhost and anything poking at it directly reaches for
+# that name first. selftest.sh uses localhost:8443 and does not need
+# this; it was added after a diagnostic session spent time on a hostname
+# mismatch that looked like the hub refusing a request.
+leaf hub localhost "DNS:localhost,DNS:haven.localhost,IP:127.0.0.1"
 leaf proxy haven.localhost "DNS:haven.localhost"
 # The client certificate names mimid's provider domain (b.example in the
 # driver): mimi-hubd 07ce96f refuses a From header the certificate does not
