@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.4.82",
+  "title": "mimi-mls: implement the mls-extensions §4.4 safe exporter, not just RFC 9420 §8.5",
+  "description": "Found 2026-11-23 reading the call-keying machinery (bead\nmimid-1wgh.37.106).\n\nWHAT MIMID HAS: mimi-mls member.rs:2149 `export_secret`, documented as\n\"MLS-Exporter(label, context, length) for the current epoch (RFC 9420\n§8.5)\". That is the plain exporter.\n\nWHAT IT DOES NOT HAVE: the forward-secure exporter of\ndraft-ietf-mls-extensions-11 §4.4 \"Exported Secrets\". §4.4 exists\nBECAUSE the RFC 9420 one is not forward-secure: \"The MLS Exporter\nfunctionality described in Section 8.5 of [RFC9420] does not provide\nforward security for exported secrets, because the exporter_secret is\nnot deleted after a secret has been derived.\"\n\nThe safe exporter instead:\n- derives `application_export_secret` from the epoch secret with the\n  label \"application_export\", as the other Table 4 secrets are derived;\n- builds an Exporter Tree of 2^16 leaves, one per ComponentID, with the\n  structure of RFC 9420 §9's Secret Tree;\n- gives SafeExportSecret(ComponentID) = the leaf's tree_node_secret;\n- and on generating one, \"the MLS implementation MUST regard that\n  component's exported secret as 'consumed', and delete any source key\n  material according to the deletion schedule in Section 9.2\".\n\nWHY IT MATTERS HERE AND NOT ONLY IN THEORY: this is the mechanism an\nMLS-keyed call would use for its media keys, one secret per app\ncomponent. mimid cannot key a call from the group without it, and the\nRFC 9420 exporter is the wrong tool because a leaked exporter_secret\nretroactively exposes every derived media key.\n\nIt also has a use beyond calls: any future app component that needs key\nmaterial gets it this way rather than inventing a label.\n\nCHECK FIRST whether OpenMLS implements §4.4; if it does, this is a\nwiring job in mimi-mls, and if not it is a fork patch and lands with the\nfork debt of mimid-m12g and mimid-1wgh.4.69. The deletion MUST is the\npart to get right: a consumed secret must take its source material with\nit, which is a storage question as much as a crypto one.\n\nNot started.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T18:55:53.344181549Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T18:55:53.344181549Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.82",
+      "depends_on_id": "mimid-1wgh.4",
+      "type": "parent-child",
+      "created_at": "2026-11-23T18:55:53.377355056Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
