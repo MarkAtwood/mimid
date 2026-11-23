@@ -150,7 +150,7 @@ async fn a_call_room_cannot_be_open() {
 /// participants" would forbid it, and would let a chat have one call
 /// ever; mimid does not count parent-dependent rooms in that rule
 /// (decision mimid-1wgh.110, proposed as
-/// ietf-wg-mimi/mimi-room-policy#59).
+/// ietf-wg-mimi/mimi-room-policy#43).
 #[tokio::test]
 async fn a_fixed_call_room_may_hold_the_same_pair_as_its_direct_room() {
     let dir = tempfile::tempdir().unwrap();

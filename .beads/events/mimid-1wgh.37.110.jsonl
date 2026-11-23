@@ -1,3 +1,4 @@
 {"id":"01a20a7b-0f5b-7abb-ab39-ee4c6aafa27f","issue_id":"mimid-1wgh.37.110","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-23T22:16:06.747704118Z"}
 {"id":"01a20a7b-0f5e-762f-a223-166ecb3547ab","issue_id":"mimid-1wgh.37.110","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-23T22:16:06.750405685Z"}
 {"id":"01a20a7b-0f61-7333-82ad-54a28bcdb253","issue_id":"mimid-1wgh.37.110","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: wg","created_at":"2026-11-23T22:16:06.753210039Z"}
+{"id":"01a20a7d-8810-758b-a482-8bf2f566d135","issue_id":"mimid-1wgh.37.110","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Mark's call: #59 closed as a duplicate, #43 kept. The five code pointers and three bead pointers now cite #43.","created_at":"2026-11-23T22:18:48.720364426Z"}

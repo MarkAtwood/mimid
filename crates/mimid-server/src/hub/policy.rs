@@ -966,7 +966,7 @@ impl Occupancy for After<'_> {
 /// §5 says "the list of participants of the room MUST be a strict subset
 /// of the participants of the parent room". mimid takes it as a subset,
 /// not a strict one: decision mimid-1wgh.110, raised upstream as
-/// ietf-wg-mimi/mimi-room-policy#40 and proposed as #59. Under the
+/// ietf-wg-mimi/mimi-room-policy#40 and proposed as #43. Under the
 /// strict reading §5's own example is not constructible, since a call
 /// among everyone in a Group DM has the parent's participant set.
 ///

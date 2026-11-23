@@ -2356,7 +2356,7 @@ fn open_room_grants_metadata_changes_but_not_room_uri() {
 /// room used for a multi-media call of clients in a Group DM" -- a call
 /// with everyone in the DM has the parent's participant set, so the
 /// strict reading forbids the documented example. mimid accepts it, and
-/// asked upstream: ietf-wg-mimi/mimi-room-policy#40, PR #59.
+/// asked upstream: ietf-wg-mimi/mimi-room-policy#40, PR #43.
 #[test]
 fn a_parent_dependent_room_takes_a_subset_of_its_parent() {
     let users =

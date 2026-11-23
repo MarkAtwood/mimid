@@ -465,7 +465,7 @@ fn parent_participants(
 /// Parent-dependent rooms are left out of both sides of the comparison:
 /// §5's "only a single fixed-membership room can exist for any unique
 /// set of participants" does not count them (decision mimid-1wgh.110,
-/// proposed as ietf-wg-mimi/mimi-room-policy#59). Counting them would
+/// proposed as ietf-wg-mimi/mimi-room-policy#43). Counting them would
 /// forbid the example §5 itself gives two paragraphs later, a call room
 /// among the clients of a Group DM, since such a room has the DM's own
 /// participant set; and it would let a chat have one call, ever.
@@ -787,7 +787,7 @@ fn stage_commit(
     // subset of its parent's, and a user removed from the parent is
     // removed from the child. The subset is not a STRICT subset, which
     // is a deliberate departure from -04 as written: decision
-    // mimid-1wgh.110, and ietf-wg-mimi/mimi-room-policy#59.
+    // mimid-1wgh.110, and ietf-wg-mimi/mimi-room-policy#43.
     if bool::from(state.base.parent_dependant)
         && let Some(list) = outcome
             .new_data
