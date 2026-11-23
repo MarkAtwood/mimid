@@ -9,14 +9,10 @@ description = "The IRC front end of mimid-agent: a loopback IRC server over the 
 # No IRC library (docs/design/agent-frontends.md §4): the parser is small,
 # and docs/irc-lessons.md lists exact behaviour a library would hide.
 [dependencies]
-# soju.im/webpush: RFC 8291 message encryption (push_crypto.rs), with
-# the RustCrypto crates and versions already in the build (aes-gcm as
-# mimid-agent-core, hkdf for sha2 0.11, p256 as pkix-path).
-aes-gcm = "=0.10.3"
-# The push key pairs and salts; the version mimid uses.
+# The push key pairs and salts; the version mimid uses. The RFC 8291
+# encryption itself moved to mimid-agent-store's push_crypto, beside the
+# subscriptions and the VAPID key, so more than one front end can push.
 getrandom = "=0.3.4"
-hkdf = "=0.13.0"
-p256 = { version = "=0.13.2", features = ["ecdh", "ecdsa"] }
 # POSTs to push services; the version and features mimid-agent-core uses.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 # AUTHENTICATE payloads (sasl.rs); the version mimid uses.

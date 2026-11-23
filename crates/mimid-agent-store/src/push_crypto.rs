@@ -1,7 +1,18 @@
 //! Web Push message encryption (RFC 8291, the `aes128gcm` content coding
-//! of RFC 8188) and VAPID (RFC 8292), for soju.im/webpush
-//! ([`crate::webpush`]). Built on the RustCrypto P-256, HKDF and AES-GCM
-//! crates already in the build; no Web Push crate.
+//! of RFC 8188) and VAPID (RFC 8292). Built on the RustCrypto P-256,
+//! HKDF and AES-GCM crates already in the build; no Web Push crate.
+//!
+//! It lives here, beside [`crate::push`], which keeps the subscriptions
+//! and the VAPID key, because more than one front end pushes: the IRC
+//! front end's `soju.im/webpush` (`mimid-agent-irc`'s `webpush`), and
+//! `chatPush` of draft-atwood-jmap-chat-push-00 on the agent's JMAP
+//! endpoint (bead mimid-1wgh.99). Nothing in it is specific to either.
+//!
+//! # Limitations
+//!
+//! - Only the `aes128gcm` content coding, not the older `aesgcm`.
+//! - A VAPID token is minted per delivery rather than cached for its
+//!   lifetime.
 //!
 //! # Limitations
 //!
@@ -20,7 +31,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hkdf::Hkdf;
 use p256::ecdsa::signature::Signer as _;
 use p256::ecdsa::{Signature, SigningKey};
-use p256::{PublicKey, SecretKey};
+// Public: these appear in this module's signatures, so a front end
+// that pushes needs them without depending on p256 itself.
+pub use p256::{PublicKey, SecretKey};
 use sha2::Sha256;
 
 /// The length of an uncompressed P-256 point (X9.62), `0x04` first.

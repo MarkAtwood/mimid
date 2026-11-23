@@ -1,7 +1,7 @@
 //! soju.im/webpush (docs/design/client-survey.md §10 S4;
 //! docs/design/agent-frontends.md §7.35): the client registers a Web Push
 //! subscription, and the agent pushes it one IRC line, encrypted to the
-//! client's keys (RFC 8291, [`crate::push_crypto`]) and signed with the
+//! client's keys (RFC 8291, [`mimid_agent_store::push_crypto`]) and signed with the
 //! agent's VAPID key (RFC 8292), for each message the user would want to
 //! be woken for.
 //!
@@ -50,14 +50,14 @@ use std::time::Duration;
 use mimid_agent_store::Change;
 use mimid_agent_store::push::{PushError, PushSubscriptions, Subscription};
 use mimid_agent_store::record::{Message, Reply, RoomStatus, Sender};
-use p256::SecretKey;
+
 use serde_json::json;
 use tokio::sync::{broadcast, watch};
 
 use crate::conn::{Session, Shared, stopped};
 use crate::line::{Line, Out, unescape_tag_value};
-use crate::push_crypto::{self, ClientKeys};
 use crate::render::{data, server_time};
+use mimid_agent_store::push_crypto::{self, ClientKeys, SecretKey};
 
 /// The front end's name on its subscriptions.
 pub(crate) const FRONT_END: &str = "irc";

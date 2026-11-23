@@ -2289,7 +2289,7 @@ Added on 2026-11-20:
     - **Failures.** 404 or 410 drops the subscription (RFC 8030 §7.3);
       anything else is logged by host only (the endpoint's path is a
       capability) and not retried.
-    - Tests: mimid-agent-irc `push_crypto::tests` (RFC 8291 §5, padding,
+    - Tests: mimid-agent-store `push_crypto::tests` (RFC 8291 §5, padding,
       key checks, a VAPID token verified), `webpush::tests`;
       mimid-agent-store `push::tests`; mimid-agent `tests/irc_v2.rs`
       `web_push_reaches_a_fake_push_service` (Goguma's registration, a

@@ -52,6 +52,7 @@ pub mod history;
 pub mod links;
 pub mod notice;
 pub mod push;
+pub mod push_crypto;
 pub mod record;
 pub mod report;
 pub mod retry;

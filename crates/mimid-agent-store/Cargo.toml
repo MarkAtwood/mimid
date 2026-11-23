@@ -10,7 +10,14 @@ description = "The plaintext layer of mimid-agent, shared by its front ends: blo
 # front ends depend on this crate, never the other way.
 [dependencies]
 # SCRAM messages carry base64 (credentials::scram); the version mimid uses.
+# RFC 8291 Web Push encryption and RFC 8292 VAPID (push_crypto), beside
+# the subscriptions and VAPID key the push module already keeps. The
+# RustCrypto crates and versions already in the build: aes-gcm as
+# mimid-agent-core, hkdf for sha2 0.11, p256 as pkix-path.
+aes-gcm = "=0.10.3"
 base64 = "=0.22.1"
+hkdf = "=0.13.0"
+p256 = { version = "=0.13.2", features = ["ecdh", "ecdsa"] }
 # App passwords, the SCRAM salt and nonces (credentials); already in the
 # lockfile.
 getrandom = "=0.3.4"

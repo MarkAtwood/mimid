@@ -127,7 +127,6 @@ pub mod line;
 mod listen;
 mod markread;
 pub mod names;
-mod push_crypto;
 mod register;
 mod render;
 mod sasl;
