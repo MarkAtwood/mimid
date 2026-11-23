@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.111",
+  "title": "Decision: the parent-dependent cascade is a hub proposal, not a hub removal",
+  "description": "Needed by bead mimid-1wgh.108. Mark decided 2026-11-23.\n\nTHE TEXT. room-policy-04 §5: \"If a user leaves or is removed from the\nparent room, that user is automatically removed from any\nparent-dependent rooms of that parent.\"\n\nTHE PROBLEM. mimid's hub cannot do that. hub/operator.rs states it\nplainly: \"The hub is not a member and cannot commit\". Removing a user\nfrom an MLS group needs a Commit, and only a member makes one. §5 asks\nfor an action from a party that cannot perform it.\n\nOPTIONS WEIGHED:\n(a) Propose the removal, reusing the existing operator-removal path.\n(b) Act only by refusing: deny a Commit that would leave the child's\n    participants outside the parent's, which the subset check of\n    decision mimid-1wgh.110 already does.\n(c) Do nothing and raise it upstream as unimplementable by a non-member\n    hub.\n(d) Propose AND refuse everything in the child until it lands.\n\nCHOSEN: (a), propose it.\n\nWHY:\n- The machinery exists and is already trusted for exactly this shape.\n  hub/operator.rs feeds a removal \"through Hub::update as one proposal\n  bundle from its own domain, so they are checked, stored as pending and\n  fanned out like any member's proposals\", and documents the\n  consequence: \"the removal takes effect with the next Commit, which\n  must include every pending proposal (decision mimid-1wgh.6.5). Until\n  then the user is still in the room.\" The cascade inherits that\n  sentence rather than inventing a new caveat.\n- It is the closest thing to §5 a non-member hub can do, so mimid\n  implements the intent without claiming an ability it lacks.\n- (b) is weaker than it looks and was nearly chosen by mistake: the\n  subset check fires only when a Commit CARRIES a participant list, so\n  the departed user keeps media access and the room keeps working until\n  someone changes membership. Worth recording, because it reads like\n  enforcement and is not.\n- (d) was rejected on a denial-of-service ground: refusing everything in\n  the child until the removal commits lets one departed user stall a\n  whole call room, and a hostile member of the parent could trigger it\n  deliberately by leaving.\n\nWHAT IT MEANS FOR THE KEYING, which is the reason any of this matters:\nmedia keys come from the child group's epoch (draft-atwood-mimi-calls\n§4.3), so a departed user keeps media access until the removal commits.\nThat is the same window operator removal already has. The draft's claim\nthat \"a participant removed from the call loses access to subsequent\nmedia at once\" holds for a removal FROM THE CALL, which is a Commit; it\ndoes not hold for a cascade from the parent, and §4.4 of the draft should\nsay so rather than leave the reader to work it out.\n\nNOTE FOR THE DRAFT: that last paragraph is a correction to\ndraft-atwood-mimi-calls, not just a mimid note. Filed as a follow-up.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T20:58:03.983775807Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T20:58:23.598625316Z",
+  "closed_at": "2026-11-23T20:58:23.598625316Z",
+  "close_reason": "Closed",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.111",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T20:58:04.016436033Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
