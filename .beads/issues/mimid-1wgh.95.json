@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.95",
   "title": "Decide whether the agent should keep Consent records locally, so its EventSource can push them",
   "description": "Split out of mimid-1wgh.93 on 2026-11-22, because it is a design question rather than a missing method.\n\nmimid-agent-jmap now serves Consent/get, Consent/query and Consent/set (bead mimid-1wgh.93), but the agent's own EventSource does not push the Consent type, so a client that is looking at a consent list does not learn when a decision is made from another front end (IRC, or another device) and must re-read.\n\nWHY IT IS NOT A SMALL CHANGE. The agent's states() (mimid-agent/src/http.rs) recomputes every served type's state string on each change of the store, and consent is not in the store: it lives at the provider, read through Agent::consents(). Adding it the obvious way would put a network call to the provider on every store change, which is wrong.\n\nTHE READINGS.\n(a) Leave it: a client re-reads Consent when it cares. The methods already say canCalculateChanges is false. Nothing to build.\n(b) Keep Consent records in the agent's store, synced like the rest, and push the type from the local records. Then the EventSource costs nothing extra, Consent/changes becomes possible, and a decision from IRC reaches a JMAP client at once. The cost is another record type, its migration, and deciding what happens when the provider and the store disagree.\n(c) Push the type on a timer or only while a client is subscribed to it, which bounds the network cost without new records but makes the state string lie between polls.\n\nmimid-server already projects and pushes Consent from its own store (bead mimid-1wgh.12.43), so (b) would make the two endpoints alike. Needs Mark.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-22T21:37:06.848330383Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-22T21:37:06.848330383Z",
+  "updated_at": "2026-11-22T22:44:18.056245707Z",
+  "closed_at": "2026-11-22T22:44:18.056245707Z",
+  "close_reason": "Decided by Mark 2026-11-22: leave it. No local copy of consent; a client re-reads. Consent/query already reports canCalculateChanges false, so a client is told not to trust a change feed, and the agent's EventSource does not push the Consent type. The cost accepted is a briefly stale consent screen after a decision made from another front end; what is avoided is a new record type, its migration, and a rule for what happens when the store and the provider disagree about a decision that is the provider's to hold.",
   "labels": [
     "human"
   ],

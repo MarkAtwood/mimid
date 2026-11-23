@@ -131,10 +131,12 @@
 //!   mimid-1wgh.93), as on mimid-server's provider endpoint, and from
 //!   IRC with `/msg mimid allow <nick>`. The agent's EventSource does
 //!   not push the Consent type: consent is the provider's, so the agent
-//!   has no local record to compare (bead mimid-1wgh.95). A client
-//!   re-reads instead. Which invites are joined is set by the `invites`
-//!   setting: `from-allowed` (the default) joins only invites from users
-//!   allowed.
+//!   has no local record to compare, and Mark decided on 2026-11-22
+//!   (bead mimid-1wgh.95) not to keep one: a client re-reads instead,
+//!   which `Consent/query` tells it to do by reporting
+//!   `canCalculateChanges` false. Which invites are joined is set by
+//!   the `invites` setting: `from-allowed` (the default) joins only
+//!   invites from users allowed.
 //! - The client is authenticated by the local token alone, not by peer
 //!   credentials on a Unix socket (the AGENTS.md crate map's "agent
 //!   socket" check): any process that can read the token file can act as
