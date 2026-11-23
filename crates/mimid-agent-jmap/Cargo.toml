@@ -10,6 +10,8 @@ description = "JMAP Chat over mimid-agent-core: a user's MIMI rooms as Chats and
 # mimid-1wgh.13.9; decision mimid-1wgh.39): the daemon (A3) or an app
 # serves the dispatcher and drives sync.
 [dependencies]
+# Subscription ids and verification codes (push.rs); the version mimid uses.
+getrandom = "=0.3.4"
 mimid-agent-core = { path = "../mimid-agent-core" }
 mimid-agent-store = { path = "../mimid-agent-store" }
 # The crate-jmap revision mimid-server uses.

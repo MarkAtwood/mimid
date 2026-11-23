@@ -107,6 +107,9 @@ pub struct AgentChat {
     /// front ends.
     pub(crate) store: Arc<Store>,
     pub(crate) options: Options,
+    /// The push subscriptions, when the daemon enabled push
+    /// ([`AgentChat::enable_push`]; crate::push).
+    pub(crate) push: Option<Arc<mimid_agent_store::push::PushSubscriptions>>,
 }
 
 impl std::fmt::Debug for AgentChat {
@@ -177,6 +180,7 @@ impl AgentChat {
             user,
             store,
             options,
+            push: None,
         }
     }
 
@@ -191,6 +195,24 @@ impl AgentChat {
     /// # Errors
     ///
     /// The [`BlobError`] of [`BlobStore::open`].
+    /// Offers RFC 8620 push subscriptions, with the `chatPush` extension
+    /// of draft-atwood-jmap-chat-push-00, over `subscriptions` (bead
+    /// mimid-1wgh.99; [`crate::push`]).
+    ///
+    /// Without this the endpoint registers no `PushSubscription` method
+    /// at all, so a client sees the type as unsupported rather than as
+    /// present and broken. The same store backs the IRC front end's
+    /// `soju.im/webpush`; rows are keyed by front end, so one store can
+    /// be shared.
+    #[must_use]
+    pub fn enable_push(
+        mut self,
+        subscriptions: Arc<mimid_agent_store::push::PushSubscriptions>,
+    ) -> Self {
+        self.push = Some(subscriptions);
+        self
+    }
+
     pub fn with_blobs(self, dir: impl Into<std::path::PathBuf>) -> Result<Self, BlobError> {
         let blobs = BlobStore::open(dir)?.with_quota(self.options.blob_quota);
         if self.store.set_blobs(blobs).is_err() {
@@ -248,6 +270,12 @@ impl AgentChat {
         jmap_chat_server::register_chat_handlers(dispatcher, Arc::clone(this));
         crate::report::register(this, dispatcher);
         crate::consent::register(this, dispatcher);
+        // Only with a subscription store: a client should see the type
+        // as unsupported rather than as present and failing
+        // ([`AgentChat::enable_push`]).
+        if this.push.is_some() {
+            jmap_server::register_push_subscription_handlers(dispatcher, Arc::clone(this));
+        }
     }
 
     /// The JMAP account id.
