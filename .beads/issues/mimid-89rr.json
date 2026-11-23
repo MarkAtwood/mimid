@@ -1,0 +1,15 @@
+{
+  "id": "mimid-89rr",
+  "title": "Stale DNS: haven.reviewcommit.com points at a terminated EC2 instance",
+  "description": "Found 2026-11-22 while fixing the interop tools' defaults.\n\n  haven.reviewcommit.com  A  18.116.164.157  -\u003e connection fails (curl 000)\n\nThe A record outlived the EC2 instance it named. mimid-1wgh.46.20.1's\nnotes say \"The old hosts are terminated\", so this is a leftover from\nthat teardown, the same class as the stale records deleted earlier in\nthe week.\n\nTwo reasons to remove it rather than leave it:\n\n1. It is worse than no record. A name that resolves but never answers\n   produces a hang and a timeout; NXDOMAIN fails immediately and says\n   why. It cost time here: it was mimid-chat's default --hub, so the\n   tool appeared to work and then stalled.\n2. 18.116.164.157 is an AWS address that is no longer ours. It will be\n   reassigned to someone else, and a record of Mark's would then point\n   at a stranger's host. That is a dangling-DNS takeover, and the name\n   \"haven\" makes it worse: anything still pointing there would be\n   talking to whoever holds the address next.\n\nACTION: delete the A record for haven.reviewcommit.com at Epik. From\njoumon, over IPv4 (curl -4: the signature is registered to joumon's v4\nand it egresses v6 by default), key from rbw, and the v2 endpoint --\nnever v1 SetHostRecords, which replaces the whole record set.\n\nWhile there, check for other records left from the terminated hosts.\nThe zone listing of 2026-11-22 also showed www, social, irc, mimi and\nmimid1._mimi.mimi; mimi and irc are live, and mimid.reviewcommit.com\ncorrectly has no record at all.\n\nNot done in this session: it is a destructive change to live DNS and\nMark had not asked for it.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T03:03:12.042637439Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T03:03:12.042637439Z",
+  "labels": [
+    "human"
+  ]
+}
