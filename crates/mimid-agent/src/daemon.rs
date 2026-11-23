@@ -215,6 +215,17 @@ impl Daemon {
         // its acknowledgement commit together (bead mimid-1vul.10).
         store.open_database()?;
         let store = Arc::new(store);
+        // One subscription store for every front end that pushes: the
+        // rows are keyed by front end and the VAPID key is the agent's,
+        // so IRC's soju.im/webpush and JMAP's chatPush share it (bead
+        // mimid-1wgh.99).
+        let pushes = if config.jmap.webpush || config.irc.as_ref().is_some_and(|irc| irc.webpush) {
+            Some(Arc::new(PushSubscriptions::open(
+                &config.state_dir.join(mimid_agent_core::DATABASE_FILE),
+            )?))
+        } else {
+            None
+        };
         let (stop, stop_receiver) = watch::channel(false);
         let http = match listener {
             Some((listener, local_addr)) => {
@@ -222,11 +233,15 @@ impl Daemon {
                     let account = http::account_id(&config.user_uri);
                     let (session, session_state) =
                         http::session(&format!("http://{local_addr}"), &config.user_uri, &account)?;
-                    let chat = Arc::new(AgentChat::over(
-                        Arc::clone(&store),
-                        account,
-                        Options::default(),
-                    )?);
+                    let mut chat =
+                        AgentChat::over(Arc::clone(&store), account, Options::default())?;
+                    // One subscription store for every front end that
+                    // pushes: the rows are keyed by front end, and the
+                    // VAPID key is the agent's (bead mimid-1wgh.99).
+                    if let Some(pushes) = &pushes {
+                        chat = chat.enable_push(Arc::clone(pushes));
+                    }
+                    let chat = Arc::new(chat);
                     Some(Jmap {
                         dispatcher: http::dispatcher(&chat),
                         chat,
@@ -284,11 +299,10 @@ impl Daemon {
                 .await?;
                 // client-survey.md §10 S4: push on by default, with its own
                 // switch; the subscriptions in the agent's database.
-                if setting.webpush {
-                    let subscriptions = PushSubscriptions::open(
-                        &config.state_dir.join(mimid_agent_core::DATABASE_FILE),
-                    )?;
-                    irc.enable_web_push(Arc::new(subscriptions))?;
+                if setting.webpush
+                    && let Some(subscriptions) = &pushes
+                {
+                    irc.enable_web_push(Arc::clone(subscriptions))?;
                 }
                 Some(irc)
             }
@@ -433,6 +447,20 @@ impl Daemon {
                     Arc::clone(&http.endpoint),
                 ))
             });
+        // chatPush delivery, when the endpoint has a subscription store
+        // (bead mimid-1wgh.99). It follows the same change feed the
+        // EventSource does, and ends with `stop`.
+        let pushing = self
+            .http
+            .as_ref()
+            .and_then(|http| http.endpoint.jmap.as_ref())
+            .filter(|jmap| jmap.chat.push_store().is_some())
+            .map(|jmap| {
+                tokio::spawn(mimid_agent_jmap::push::deliver(
+                    Arc::clone(&jmap.chat),
+                    stop.subscribe(),
+                ))
+            });
         let irc = self
             .irc
             .map(|irc| tokio::spawn(irc.serve(stop.subscribe())));
@@ -456,6 +484,7 @@ impl Daemon {
             ("credential recheck", Some(recheck)),
             ("certificate reload", reload),
             ("push", push),
+            ("chatPush delivery", pushing),
             ("feed", feed),
             ("IRC front end", irc),
         ] {

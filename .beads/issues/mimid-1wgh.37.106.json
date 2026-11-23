@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.106",
+  "title": "wg: mimi-content has no call-endpoint semantics, and we have never raised it",
+  "description": "Mark, 2026-11-23: \"the ietf mimi specs are pretty weak about vtc\nendpoints, i cant remember if we raised emails, issues, or PRs against\nthe mimi IDs about it.\"\n\nCHECKED THE RECORD: we have not. Nothing was raised.\n- Beads: the only VTC mentions are mimid-bcji (our own binding draft,\n  filed today), mimid-7yn7.5 (content coverage, which lists\n  \"Voice/video calls | Largely outside mimi-content; a core feature of\n  every app on the list\"), and two coland interop beads that mention it\n  only in passing. No bead labelled `wg` about it, and nothing under\n  epic mimid-1wgh.37 before this one.\n- IETF notes (/data/PROJECT/IETF/notes): the only matches for `vtc` or\n  `teleconference` are inside an IETF 127 **aipref** meeting transcript,\n  a different working group, where the words are coincidental. No mimi\n  list post, no GitHub issue, no PR.\n\nSo this is unraised, and Mark's reading that the specs are weak here\nmatches what the code had to invent.\n\nWHAT MIMI GIVES US, as far as the drafts go: mimi-content has a\n`session` disposition and §4.5 ExternalPart, and that is about all. The\ndrafts say nothing about:\n- what a receiver does with a `session` part it cannot join (no scheme\n  negotiation, no capability advertisement, no refusal shape);\n- whether a `session` part is content to be fetched or a live endpoint\n  to be dialled -- mimid decided the latter and never fetches one, but\n  nothing says so;\n- lifetime: whether the endpoint is still live, who ends it, whether a\n  later message supersedes it. An ExternalPart has `expires`, which is\n  about the URL's availability rather than a call's;\n- which URL schemes are meaningful. mimid takes https and wss and puts\n  anything else in the body, which is a guess;\n- ringing, declining, joining, or who is already in the call -- the\n  states every app on Mark's gatekeeper list has.\n\nWHAT MIMID DID ABOUT IT, which is the evidence for a WG post: it mapped\nthe `session` disposition to a JMAP MessageAction of type\n`urn:ietf:params:jmap:chat:cap:vtc` in both directions\n(project.rs:202-210, backend.rs:872-893), choosing the scheme set and\nthe never-fetch rule itself. That is an implementation report the WG can\nuse: here is what one implementation had to decide because the draft did\nnot.\n\nPROPOSED, and it needs Mark's OK before anything is posted, per\nAGENTS.md and the peer-contributing rules:\n1. A mimi-content issue or list post asking what a receiver is expected\n   to do with a `session` part, with mimid's choices as the concrete\n   case. That is a question, not a proposal, and is the cheapest first\n   move.\n2. If the WG is interested, a draft section or a separate extension for\n   call signalling. Note bead mimid-7yn7.5's observation that calls are\n   \"largely outside mimi-content\", so this may be a separate document\n   rather than a patch.\n3. Either way, specify the mapping in our own\n   draft-atwood-jmap-chat-mimi-00 first (bead mimid-bcji), so our\n   implementation stops being ahead of its own specification.\n\nDoing (3) before (1) is the better order: it makes the question concrete\nand shows we have implemented something rather than only asking.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T18:15:14.084037478Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T18:15:14.084037478Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.106",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-23T18:15:14.784189346Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

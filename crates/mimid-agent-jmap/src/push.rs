@@ -55,6 +55,10 @@ use crate::backend::AgentChat;
 /// the IRC front end's own (`irc`).
 pub const FRONT_END: &str = "jmap";
 
+/// The `PushSubscription` property the draft adds, and the key it is
+/// stored under inside a row's `ext.extra`.
+pub const CHAT_PUSH_PROPERTY: &str = "chatPush";
+
 /// The capability a request must name in `using` to get or set
 /// `chatPush` (draft-atwood-jmap-chat-push-00 §capability).
 pub const CHAT_PUSH_CAPABILITY: &str = "urn:ietf:params:jmap:chat:push";
@@ -137,9 +141,19 @@ fn set_error(error: PushError) -> BackendSetError<MemoryError> {
     }
 }
 
+/// Runs the delivery loop until `stop` is set: each new inbound message
+/// becomes a `ChatMessagePush` to every subscription whose `chatPush`
+/// covers the account. Returns at once when
+/// push is not enabled.
+pub async fn deliver(chat: Arc<AgentChat>, stop: tokio::sync::watch::Receiver<bool>) {
+    crate::push_deliver::run(chat, stop).await;
+}
+
 impl AgentChat {
-    /// The subscription store, when the daemon gave this endpoint one.
-    pub(crate) fn push_store(&self) -> Option<&Arc<PushSubscriptions>> {
+    /// The subscription store, when the daemon gave this endpoint one
+    /// ([`AgentChat::enable_push`]). The daemon reads it to decide
+    /// whether to spawn [`deliver`].
+    pub fn push_store(&self) -> Option<&Arc<PushSubscriptions>> {
         self.push.as_ref()
     }
 

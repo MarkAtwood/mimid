@@ -258,11 +258,23 @@ pub struct JmapSetting {
     /// Whether the daemon serves JMAP Chat at `listen`; the default.
     #[serde(default = "yes")]
     pub enabled: bool,
+    /// Whether a JMAP client may register for Web Push and be sent
+    /// `chatPush` payloads (draft-atwood-jmap-chat-push-00; bead
+    /// mimid-1wgh.99). On by default, as for the IRC front end: without
+    /// it the endpoint registers no `PushSubscription` method at all, so
+    /// a client sees the type as unsupported rather than present and
+    /// failing. The subscriptions and the VAPID key are shared with the
+    /// IRC front end, in the agent's own database.
+    #[serde(default = "yes")]
+    pub webpush: bool,
 }
 
 impl Default for JmapSetting {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            webpush: true,
+        }
     }
 }
 
