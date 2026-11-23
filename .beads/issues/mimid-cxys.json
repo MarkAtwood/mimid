@@ -2,13 +2,16 @@
   "id": "mimid-cxys",
   "title": "crate-jmap's chatPush implements the pre-fix draft: it filters 'encrypted' out of an entry",
   "description": "Found 2026-11-23, immediately after fixing the draft (jmap-chat-spec\n377bddb). Needs Mark's approval to fix: AGENTS.md requires asking before\nany write to ~/PROJECT/crate-jmap, per write.\n\ncrate-jmap-chat-server/src/push.rs implements the TEXT AS IT WAS, which\nthis repo's review found unsatisfiable and which Mark then had corrected:\n\n- line 296-297, the doc comment: \"The entry holds exactly the fields in\n  `cfg.properties`, or the default set when it is absent. §`ChatPushConfig`:\n  'The `properties` list is authoritative...'\" -- quoting the sentence\n  that is now removed from the draft.\n- line 396, the behaviour and the part that matters:\n      entry.encrypted = entry.encrypted.take().filter(|_| wanted(\"encrypted\"));\n  so a client that does not name `encrypted` in `properties` gets an\n  entry without it. That is exactly the hazard the draft fix removes: the\n  client then cannot tell a `bodySnippet`, `hasMention` or\n  `mentionScopes` absent BECAUSE THE MESSAGE IS ENCRYPTED from one it\n  simply did not request, and `encrypted` is the field every other field\n  is read against.\n- lines 49 and 64 list \"encrypted\" in both the MUST-support set and the\n  default set, which the corrected draft no longer does, since the field\n  is unconditional.\n\nPROPOSED FIX, small:\n- Stop filtering `encrypted`: delete the line 396 filter so the field is\n  always present.\n- Remove \"encrypted\" from the MUST-support and default property lists,\n  since it is no longer governed by `properties`.\n- Update the doc comments at 296-297 and 301-303 to the new wording:\n  `properties` is an upper bound, and a named field appears only where\n  its own rules allow.\n\nWorth doing before mimid wires itself to these functions (bead\nmimid-1wgh.99), because mimid would otherwise ship the old behaviour and\nthe draft and the implementation would disagree in the one place that is\nsecurity-relevant.",
-  "status": "open",
+  "notes": "FIXED 2026-11-23 in crate-jmap commit 20ec225b, Mark approved the write. The filter at push.rs:396 is gone, so 'encrypted' is present in every entry; it is also out of the MUST-support and default property lists since it is no longer governed by 'properties'; and the doc comments now carry the corrected wording. Five tests moved to the new semantics: three gained 'encrypted' in their expected key sets, properties_message_id_only_gives_exactly_one_key became properties_names_one_field_and_encrypted_comes_anyway, and space_name_absent_for_group_even_when_requested kept its assertion with a note that it is the evidence the old wording could not account for -- it asks for spaceName and asserts absence, which 'exactly the requested fields' could never have described. jmap-chat-server: 113 of 113 with cargo exit 0; fmt, clippy, typos clean. mimid can now wire delivery to build_chat_message_push without shipping the behaviour the draft removed.",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-23T16:50:00.36187385Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-23T16:50:00.36187385Z",
+  "updated_at": "2026-11-23T17:57:24.721053829Z",
+  "closed_at": "2026-11-23T17:57:24.721053829Z",
+  "close_reason": "Closed",
   "labels": [
     "human"
   ]
