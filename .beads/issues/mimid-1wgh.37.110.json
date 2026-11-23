@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.110",
+  "title": "PR 59 duplicates PR 43 in mimi-room-policy; one should be closed",
+  "description": "Found 2026-11-23 while opening the cascade PR, by listing the repo's open\nPRs before posting a third one into the same section.\n\nietf-wg-mimi/mimi-room-policy#43 \"Allow parent-dependent rooms with the\nparent's members\", branch MarkAtwood:issue-40, has been open since\n2026-10-21. Its body: \"A parent-dependent room's participants now need\nonly be a subset of the parent's, not a strict subset ... Parent-dependent\nrooms are also exempt from the one-fixed-membership-room-per-set rule.\"\n\nThat is exactly what I opened as #59 today, both halves of it. #59 is a\nduplicate of a PR that was already there, and both say \"Fixes #40\" /\n\"Closes #40\".\n\nMY ERROR: I checked issue #40 before writing #59 and did not list the\nopen PULL REQUESTS, so I did not see that Mark had already proposed the\nfix a month earlier. The lesson generalises past this repo: list the open\nPRs, not only the issues, before proposing a change upstream.\n\nWHAT TO DO, Mark's call: close #59 as a duplicate of #43 and leave the\nolder one, which is the usual courtesy and keeps the discussion where any\nearlier review sits; or close #43 and keep #59 if its wording is better.\nThe two differ in wording only. Related in the same area and NOT\nduplicates: #44 (who enforces the single-room rule), #45\n(canCreateSubgroup, canJoinFromParent), and the new #60 (who performs the\ncascade).\n\nNothing in mimid depends on which survives: decision mimid-1wgh.110 cites\n#40 and #59, and the code comments cite #59. If #59 is closed, those\npointers should move to #43.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T22:16:06.744470284Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T22:16:06.744470284Z",
+  "labels": [
+    "human",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.110",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-23T22:16:06.785693102Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
