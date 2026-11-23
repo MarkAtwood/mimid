@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.119",
+  "title": "Decision: the agent's VTC capability is opt-in, and the default is revisited when a client exists",
+  "description": "Mark decided 2026-11-23, for bead mimid-1wgh.114.2, after decision\nmimid-1wgh.118 settled which document the surface extends.\n\nTHE QUESTION. The capability hands a client the call room's media secret\n(draft-atwood-mimi-calls §4.3). Is it on by default like the rest of the\nagent's JMAP front end, or off unless configured?\n\nTHE HOUSE STYLE IT IS MEASURED AGAINST: [jmap] is on by default and\nloopback only; [irc] is off by default, and takes any address only\nbecause the operator controls exposure (decision mimid-1wgh.92). On by\ndefault when loopback-only and needed for the main job; off when it\nwidens exposure.\n\nTHE ARGUMENT THAT IT CHANGES NOTHING: the agent already serves PLAINTEXT\nover this endpoint to anyone holding the local token or an app password\n(docs/design/frontend-auth.md §3). That credential already reads every\nmessage the user can read, and a media secret for a room the user is a\nmember of is something their own device legitimately computes.\n\nTHE ARGUMENT THAT IT DOES, which was taken as the stronger: plaintext and\nkey material leak differently. A client given plaintext can read only\nwhat the agent already decrypted for it. A client given media_secret can\ndecrypt media the agent never saw, including media captured off the wire\nelsewhere, and holds that for the whole epoch. And it goes to EVERY JMAP\nclient on the machine, including one the user installed for chat and\nnever thought about for calls.\n\nWHAT ACTUALLY DECIDED IT: nothing implements the extension yet. On by\ndefault today would hand out call keys for a feature no client can use.\nOpt-in costs the demo deployment one config line and costs everyone else\nnothing.\n\nCHOSEN: opt-in. Off unless configured, and NOT advertised in the Session\nobject when off, so a client learns not to try rather than being refused\nmid-call.\n\nNOT CHOSEN:\n- On by default, loopback only. The product argument for it is real --\n  mimid exists to serve stock clients and Mark 2026-11-23 called VTC \"the\n  feature that normies will demand\" -- but it is not real YET: nobody\n  gets calls by default today whatever is chosen, because no client\n  implements the extension.\n- A credential of its own, an app password scoped to calls rather than\n  the general local token. Strongest separation and the right shape if\n  this ever needs it, but a new credential concept to design and\n  document for a surface with no users.\n\nREVISIT WHEN: a client implements the extension. Then flipping the\ndefault is one line, decided with evidence rather than a guess. This\nbead is the record of what the guess would have been.\n",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T23:54:56.528990099Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T23:54:56.691811026Z",
+  "closed_at": "2026-11-23T23:54:56.691811026Z",
+  "close_reason": "Mark 2026-11-23: opt-in, not advertised when off; revisit the default once a client implements the extension.",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.119",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T23:54:56.569508599Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
