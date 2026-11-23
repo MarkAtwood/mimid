@@ -1,0 +1,27 @@
+{
+  "id": "mimid-75nk.14",
+  "title": "Presenting a client certificate a peer does not trust destroys signature auth: make [peer_tls.identity] per-peer",
+  "description": "Found the hard way on the live host, 2026-11-22, and reverted within the\nhour. This is a trap, not a configuration mistake.\n\nWHAT HAPPENED. Configured [peer_tls.identity] on mimi.reviewcommit.com\nwith a freshly minted client certificate (SAN DNS:mimi.reviewcommit.com,\nEKU clientAuth, our own root). mimid loaded it, client_certificate=true.\nThen, against Haven's public hub, same signed request both ways:\n\n  signature only                -\u003e HTTP 200, handle resolved\n  signature + our client cert   -\u003e 000, \"tlsv1 alert unknown ca\"\n\nSo enabling our own client certificate took a WORKING peer and made it\nunreachable.\n\nWHY. The chain is all defensible behaviour and still produces a\nregression:\n1. mimid presents tls.identity on EVERY connection -- peer.rs's own\n   documentation says \"presenting `tls.identity` as this provider's\n   client certificate on every connection\".\n2. Haven's hub requests a client certificate (verified: exactly one\n   CertificateRequest in the handshake) but does not require one.\n3. Offered a certificate from a CA it does not know, Haven rejects it at\n   the TLS layer with unknown_ca.\n4. The handshake dies before HTTP, so the RFC 9421 signature -- the\n   mechanism that works -- is never seen.\n\nOffering an untrusted certificate is therefore strictly WORSE than\noffering none. Presenting nothing leaves the peer happy to fall back to\nthe signature; presenting something unknown is fatal.\n\nMIMID CHANGE PROPOSED: make the client identity per-peer, not global.\n[peer_tls.identity] is one certificate for all peers, which forces an\nall-or-nothing choice between \"no peer can authenticate us by\ncertificate\" and \"any peer that does not trust our root becomes\nunreachable\". A per-peer setting -- [provider_auth.peers.\"\u003cdomain\u003e\"] or a\n[peer_tls.peers.\"\u003cdomain\u003e\"] identity -- lets mimid present a certificate\nonly to the peers that asked for it, which is the only safe shape once\nthere is more than one peer. Note the symmetry: pkix_anchors is ALREADY\nper-peer for the inbound direction (PeerAuthConfig.pkix_anchors), so the\noutbound direction is the odd one out.\n\nDRAFT IMPLICATION, worth raising for provider-auth -01 or -02: §7 says a\nprovider \"MAY present a client certificate\" and says nothing about the\nconsequence of presenting one the target does not trust. A sentence is\nwarranted, because the failure is silent, total, and looks like the peer\nbeing down. Something like: a source provider SHOULD NOT present a\nclient certificate to a target that has not indicated it trusts the\nissuer, since a target that rejects the certificate at the TLS layer\ndenies itself the other mechanisms. Posting needs Mark's OK.\n\nLIVE STATE: reverted. /etc/mimid/mimid.toml carries a comment saying\n[peer_tls.identity] is deliberately unset and why. The certificate and\nroot remain at /etc/mimid/identity/ (root fingerprint sha256\n66:C6:D9:00:E4:73:97:D1:B5:8B:96:CA:56:73:DF:9B:B3:AE:08:03:81:67:48:\n58:8D:5E:16:A5:5D:74:58:64), ready to turn on for a peer that confirms\nit trusts that root. Haven reachable again: signed identifierQuery\nreturns 200.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T05:09:19.070155358Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T05:09:19.070155358Z",
+  "labels": [
+    "interop",
+    "design",
+    "security"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-75nk.14",
+      "depends_on_id": "mimid-75nk",
+      "type": "parent-child",
+      "created_at": "2026-11-23T05:09:19.107208944Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
