@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.46.20.1.1",
+  "title": "[telemetry] exports metrics and logs but no spans, while reporting traces=true",
+  "description": "Found 2026-11-22 while turning on OpenTelemetry for the interop host.\nmimid starts, logs \"OpenTelemetry export configured ... traces=true\",\nand exports metrics and logs but NOT ONE span.\n\nMEASURED, with a collector on loopback writing every signal to a file:\n\n  batches:     {'resourceMetrics': 10, 'resourceLogs': 7, 'resourceSpans': 1}\n  log records: 44\n  spans:       [('handmade', 1)]\n\n'handmade' is a span I POSTed to the collector by hand as a control, so\nthe only span in the file is the one mimid did not send. Metrics and\nlogs arrive continuously; spans never do.\n\nRULED OUT, in this order:\n- The collector. A hand-made POST to http://127.0.0.1:4318/v1/traces\n  returns 200 and lands in the file, so the receiver, the traces\n  pipeline and the file exporter all work.\n- The endpoint and transport. telemetry.rs builds all three exporters\n  with .with_http() and the standard paths (/v1/traces, /v1/logs,\n  /v1/metrics) against the same base URL. Metrics and logs on that base\n  URL work, so the base URL and HTTP transport are right.\n- The log filter level. Spans are at default INFO\n  (#[tracing::instrument(name = \"protocol_request\", ...)] in http.rs with\n  no `level =` anywhere in the file), and RUST_LOG is unset so the\n  filter is \"info\". Setting RUST_LOG=info,mimid_server=trace changed\n  nothing: still no spans.\n- A missing flush. Restarting mimid runs Telemetry::shutdown, which\n  calls tracer.shutdown(), and no spans appeared across several\n  restarts.\n\nWHERE THAT POINTS. Metrics go through a separate path (the global meter\nand the Metrics struct), while traces and logs BOTH come from\nTelemetry::layers() into the tracing subscriber. Logs work, so the layer\nstack is installed and reaching the subscriber. So the fault is specific\nto the traces half: tracing_opentelemetry::layer().with_tracer(\nprovider.tracer(\"mimid\")), composed by Layer::and_then(traces, logs) in\ntelemetry.rs layers().\n\nNot chased further here, because logs plus metrics already give the\ninterop day what it needs and this is a code investigation rather than a\ndeployment step. Worth looking at whether the Option\u003cOpenTelemetryLayer\u003e\nin that and_then is being applied, and whether the SdkTracerProvider\nneeds to be installed globally for the layer's tracer to record.\n\nWHY IT MATTERS BEYOND TIDINESS: spans are the signal that makes a failed\ninterop exchange legible -- which endpoint, which peer, how long, and\nthe `peer` field each protocol_request span records. Logs give the\nevents but not the correlation. Also, the startup line says traces=true\nwhen nothing is exported, so an operator has no way to notice.\n\nLIVE STATE, and it is useful as it stands: a collector runs on dokr\n(docker container otelcol-mimid, OTLP on 127.0.0.1:4318 only, no UI, no\noutbound network) writing every signal to\n/var/log/otelcol-mimid/mimid-telemetry.jsonl, rotating at 64 MB with 5\nbackups. mimid's [telemetry] points at it. So the interop day will leave\na greppable record of metrics and log events; only spans are missing.\n\nTwo deployment notes for anyone redoing this:\n- The collector image runs as uid 10001. The output directory must be\n  owned by it; root-owned 755 fails with \"can't open new logfile ...\n  permission denied\" and the collector drops every batch while looking\n  healthy.\n- Those errors appear only in `docker logs otelcol-mimid`, not in\n  mimid's journal, because mimid's exporter considers a buffered send\n  successful.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T05:17:59.60136893Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T05:17:59.60136893Z",
+  "labels": [
+    "interop"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.20.1.1",
+      "depends_on_id": "mimid-1wgh.46.20.1",
+      "type": "parent-child",
+      "created_at": "2026-11-23T05:17:59.636235877Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
