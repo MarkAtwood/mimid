@@ -252,6 +252,17 @@ pub mod component_id {
     /// the private-use range 0x8000 to 0xFFFF of mls-extensions-11 §7.5;
     /// protocol-07 §10 does not register it.
     pub const UNVERIFIED_ABUSIVE_MESSAGES: u16 = 0xf020;
+    /// `media_keys`, the app component whose exported secret keys a
+    /// call's media (draft-atwood-mimi-calls §4.2).
+    ///
+    /// INVENTED, NOT FROM SPEC (decision mimid-1wgh.112): a provisional
+    /// value in the private-use range 0x8000 to 0xFFFF of
+    /// mls-extensions-11 §7.5, because no media component is registered
+    /// and protocol-07 §10 does not define one. The draft asks IANA for
+    /// a low value; until one is assigned this is not interoperable,
+    /// and two implementations keying a call together must agree on it
+    /// out of band.
+    pub const MEDIA_KEYS: u16 = 0xf021;
 }
 
 /// End-to-end protocol selector (protocol-07 §5).
