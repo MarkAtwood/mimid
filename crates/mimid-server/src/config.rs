@@ -28,6 +28,11 @@
 //! [provider_auth]
 //! mode = "enforce"        # the default for every provider
 //! selector = "mimid1"     # the keyid of this server's request signatures
+//! key_file = "/etc/mimid/provider-key"  # the signing key, 32 raw octets
+//!                         # or 64 hex characters; generated into the
+//!                         # database on first start when absent. Read it
+//!                         # back with `mimid admin <config> provider-key
+//!                         # --private`.
 //! dns_keys = true         # look up <selector>._mimi.<domain> keys in DNS
 //! dane = true             # check client certificates against _mimi._client.<domain> TLSA
 //! require_dnssec = false  # accept a key from an unsigned zone

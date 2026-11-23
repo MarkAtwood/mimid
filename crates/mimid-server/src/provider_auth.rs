@@ -184,6 +184,16 @@ pub struct ProviderAuthConfig {
     /// of its DNS key record (`<selector>._mimi.<domain>`).
     #[serde(default = "default_selector")]
     pub selector: String,
+    /// A file holding this provider's request-signing key: the 32-byte
+    /// RFC 8032 seed, either raw or as 64 hex characters (bead
+    /// mimid-75nk.13). The operator holds, backs up and rotates it with
+    /// ordinary file tools, and mimid never writes it to the database.
+    ///
+    /// When unset, mimid generates a key on first start and keeps it in
+    /// its own database, which is what every existing deployment does.
+    /// Either way `provider-key --private` can read it back out.
+    #[serde(default)]
+    pub key_file: Option<std::path::PathBuf>,
     /// Whether to look up keys in DNS (mechanism 2, mimid-75nk.3). On by
     /// default: an open provider accepts DNS keys from anyone
     /// (draft-atwood-mimi-provider-auth-00 §10).
@@ -222,6 +232,7 @@ impl Default for ProviderAuthConfig {
         Self {
             mode: AuthMode::default(),
             selector: default_selector(),
+            key_file: None,
             dns_keys: true,
             dane: true,
             require_dnssec: false,
@@ -914,6 +925,55 @@ pub fn refuse(why: Option<&Refusal>) -> Response {
     response
 }
 
+/// The 32-byte request-signing seed in `path`: either the raw 32 octets
+/// or 64 hex characters, with surrounding whitespace ignored so a file
+/// written by `echo` works (`[provider_auth] key_file`, bead
+/// mimid-75nk.13).
+///
+/// The seed never reaches the log, and an error says only what shape was
+/// wrong, never the contents.
+///
+/// # Errors
+///
+/// [`SeedFileError::Read`] if the file cannot be read, and
+/// [`SeedFileError::Shape`] if it is neither 32 raw octets nor 64 hex
+/// characters.
+pub fn read_signing_seed(
+    path: &std::path::Path,
+) -> Result<zeroize::Zeroizing<[u8; 32]>, SeedFileError> {
+    let bytes = zeroize::Zeroizing::new(std::fs::read(path).map_err(SeedFileError::Read)?);
+    if let Ok(raw) = <[u8; 32]>::try_from(bytes.as_slice()) {
+        return Ok(zeroize::Zeroizing::new(raw));
+    }
+    let text = std::str::from_utf8(&bytes)
+        .map(str::trim)
+        .map_err(|_| SeedFileError::Shape(bytes.len()))?;
+    if text.len() != 64 {
+        return Err(SeedFileError::Shape(bytes.len()));
+    }
+    let (pairs, rest) = text.as_bytes().as_chunks::<2>();
+    debug_assert!(rest.is_empty(), "64 characters is 32 pairs");
+    let mut seed = zeroize::Zeroizing::new([0u8; 32]);
+    for (byte, pair) in seed.iter_mut().zip(pairs) {
+        let pair = std::str::from_utf8(pair).map_err(|_| SeedFileError::Shape(bytes.len()))?;
+        *byte = u8::from_str_radix(pair, 16).map_err(|_| SeedFileError::Shape(bytes.len()))?;
+    }
+    Ok(seed)
+}
+
+/// Why `[provider_auth] key_file` could not be used.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum SeedFileError {
+    /// The file could not be read.
+    #[error("reading the key file")]
+    Read(#[source] std::io::Error),
+    /// The contents are neither 32 raw octets nor 64 hex characters. The
+    /// field is the length found, never the contents.
+    #[error("expected 32 raw octets or 64 hex characters, found {0} octets")]
+    Shape(usize),
+}
+
 /// Signs outbound requests with this server's key (see the module
 /// documentation).
 #[derive(Debug)]
@@ -936,6 +996,13 @@ impl RequestSigner {
     /// The selector.
     pub fn selector(&self) -> &str {
         &self.selector
+    }
+
+    /// The signing key's 32-byte seed, for backing up or moving this
+    /// provider's identity (bead mimid-75nk.13). See
+    /// [`SigningKey::seed`] for what it is and is not.
+    pub fn seed(&self) -> zeroize::Zeroizing<[u8; 32]> {
+        self.key.seed()
     }
 
     /// Adds `Content-Digest` for `body` and the signature to `headers`,

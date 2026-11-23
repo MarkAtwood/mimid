@@ -647,6 +647,66 @@ fn the_logged_endpoint_is_the_path_segment_after_v1() {
     }
 }
 
+/// `[provider_auth] key_file` takes the seed raw or as hex, and refuses
+/// anything else without saying what it held (bead mimid-75nk.13).
+#[test]
+fn a_key_file_is_32_raw_octets_or_64_hex_characters() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, bytes: &[u8]| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    };
+    let expected = [0xabu8; 32];
+
+    // Raw octets.
+    let raw = read_signing_seed(&write("raw", &expected)).unwrap();
+    assert_eq!(*raw, expected);
+
+    // The same key as hex, with and without a trailing newline, so a file
+    // written by `echo` works. Upper case too.
+    for text in [
+        "ab".repeat(32),
+        format!("{}\n", "ab".repeat(32)),
+        "AB".repeat(32),
+    ] {
+        let hex = read_signing_seed(&write("hex", text.as_bytes())).unwrap();
+        assert_eq!(*hex, expected, "{text:?}");
+    }
+
+    // A signer built from either spelling has the same public key, which
+    // is what makes the DNS record keep matching after a migration.
+    assert_eq!(
+        SigningKey::from_seed(&expected).verifying_key().to_bytes(),
+        SigningKey::from_seed(&read_signing_seed(&write("again", &expected)).unwrap())
+            .verifying_key()
+            .to_bytes()
+    );
+
+    // Refused: too short, too long, 64 characters that are not hex, and
+    // invalid UTF-8 of the wrong length.
+    for (name, bytes) in [
+        ("short", &b"ab"[..]),
+        ("long", &[0u8; 33][..]),
+        ("empty", &b""[..]),
+        ("not-hex", "zz".repeat(32).as_bytes()),
+        ("bad-utf8", &[0xff, 0xfe, 0xfd][..]),
+    ] {
+        let error = read_signing_seed(&write(name, bytes)).unwrap_err();
+        assert!(
+            matches!(error, SeedFileError::Shape(_)),
+            "{name}: {error:?}"
+        );
+        // The message says the length, never the contents.
+        let message = error.to_string();
+        assert!(!message.contains("ab"), "{name}: {message}");
+    }
+
+    // A missing file is a read error, not a shape one.
+    let missing = read_signing_seed(&dir.path().join("nope")).unwrap_err();
+    assert!(matches!(missing, SeedFileError::Read(_)), "{missing:?}");
+}
+
 /// The `reason` a refusal shows a peer (bead mimid-75nk.12).
 ///
 /// draft-atwood-mimi-provider-auth-00 §9 allows a problem details body

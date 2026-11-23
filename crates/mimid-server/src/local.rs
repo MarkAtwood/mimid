@@ -194,6 +194,7 @@ pub fn router_with_signer(
 ) -> Router {
     let routes = Router::new()
         .route("/local/v1/provider-key", get(provider_key))
+        .route("/local/v1/provider-key/private", get(provider_key_private))
         .route("/local/v1/hub-sender", get(hub_sender))
         .route("/local/v1/rooms", post(create_room).get(list_rooms))
         .route("/local/v1/rooms/{room_id}", get(get_room))
@@ -259,6 +260,40 @@ async fn provider_key(State(state): State<LocalState>) -> Response {
         "publicKey": base64::engine::general_purpose::STANDARD.encode(signer.public_key().to_bytes()),
         "dnsName": format!("{}._mimi.{}", signer.selector(), state.hub.domain()),
         "dnsTxt": signer.dns_record(),
+    }))
+    .into_response()
+}
+
+/// This server's request-signing **private** key, as the 32-byte RFC 8032
+/// seed in lower-case hex, so an operator can back this provider's
+/// identity up, move it to another host, or sign with it outside mimid
+/// (bead mimid-75nk.13; Mark 2026-11-22). `404` when the server signs
+/// nothing.
+///
+/// mimid is a reference and prototype implementation, and Agora is being
+/// built on it: the operator who runs a provider can take its identity
+/// out again. The listener this is served on is loopback and takes the
+/// local token, which is the same authorization as creating users or
+/// minting their tokens.
+///
+/// The answer is deliberately not logged, and the key is the provider's
+/// request-signing key: it authenticates provider-to-provider requests
+/// and decrypts no message.
+async fn provider_key_private(State(state): State<LocalState>) -> Response {
+    let Some(signer) = state.signer else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let seed = signer.seed();
+    let hex: String = seed.iter().map(|byte| format!("{byte:02x}")).collect();
+    tracing::info!(
+        name: "provider_key_exported",
+        selector = signer.selector(),
+        "the provider's private signing key was read through the local listener"
+    );
+    Json(serde_json::json!({
+        "selector": signer.selector(),
+        "privateKeyHex": hex,
+        "publicKey": base64::engine::general_purpose::STANDARD.encode(signer.public_key().to_bytes()),
     }))
     .into_response()
 }

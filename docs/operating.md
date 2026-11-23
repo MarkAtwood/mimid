@@ -106,7 +106,13 @@ Rules:
 
 How peers prove which provider they are, and how this server proves its own identity. Without the table, every provider is held to `enforce` with no configured keys, DNS keys and DANE on.
 
-mimid signs every request it sends to a peer with its own Ed25519 key (RFC 9421 HTTP message signatures). The key is made on first start and kept in the database. `mimid admin <config.toml> provider-key` prints its public half and the DNS record to publish for it.
+mimid signs every request it sends to a peer with its own Ed25519 key (RFC 9421 HTTP message signatures). `mimid admin <config.toml> provider-key` prints its public half and the DNS record to publish for it.
+
+The key comes from one of two places. Set `key_file` and mimid signs with the 32-byte seed in that file — 32 raw octets or 64 hex characters, whitespace trimmed — and never writes it to the database, so you hold, back up and rotate the provider's identity with ordinary file tools. Leave `key_file` unset and mimid makes a key on first start and keeps it in the database.
+
+Either way `mimid admin <config.toml> provider-key --private` prints the seed as hex, so a provider's identity can be backed up or moved to another host. Treat its output as you would a TLS private key: anything holding it can sign requests as this provider. It cannot read any message — this key authenticates provider-to-provider requests and is not MLS key material.
+
+To move a provider to a new host, keeping its identity and so its rooms: take the seed with `provider-key --private` on the old host, write it to a file mode 0600 on the new one, point `key_file` at it, and leave the published `<selector>._mimi.<domain>` record alone. Check `provider-key` reports the same `publicKey` on both before cutting over.
 
 On each request to a protocol endpoint (`/v1/...`), mimid tries these mechanisms, and the first that succeeds authenticates the peer named in the `From` header:
 
@@ -123,6 +129,7 @@ A client certificate reaches mimid only through `[tls]` or `[trusted_proxy]`. Wi
 |---|---|---|---|
 | `mode` | `"enforce"` or `"observe"` | `"enforce"` | The mode for every provider without a `mode` of its own. `observe` lets unauthenticated requests through; it is meant for rollout and testing only. |
 | `selector` | string | `"mimid1"` | The `keyid` of this server's own request signatures, and the selector of its DNS key record, `<selector>._mimi.<domain>`. |
+| `key_file` | path | unset | A file holding this server's request-signing key: the 32-byte seed as 32 raw octets or 64 hex characters. When set, the key is never written to the database. When unset, mimid makes one on first start and keeps it there. |
 | `dns_keys` | boolean | `true` | Look up peers' signing keys in DNS. Lookups validate DNSSEC. |
 | `require_dnssec` | boolean | `false` | Refuse a DNS key whose record is not DNSSEC-secure. |
 | `dns_servers` | list of IP addresses | `[]` (the system's resolvers) | The resolvers used for DNS keys and TLSA records. They must pass DNSSEC records through; some cloud resolvers, such as AWS's VPC resolver, do not. |
@@ -394,6 +401,7 @@ The whole file must parse, so `mimid admin` needs read access to it, including t
 | `revoke-token` | `<id>` | `{"id", "result"}`, `result` `"revoked"`, or `"already-revoked"` for a token revoked before. The revocation holds at once: the next request with the token is refused, and its open EventSource and live-stream connections close. | `404` `no-such-token` for an unknown id. |
 | `consent` | none | `{"consent": [{"requester", "target", "room", "decision", "from", "receivedAt"}, ...]}`, the consent entries other providers sent: held requests first (`decision` is `null`), then updates (`"grant"` or `"revoke"`). `room` is `null` for any room. | |
 | `provider-key` | none | `{"selector", "publicKey", "dnsName", "dnsTxt"}`: this server's request-signing selector, its Ed25519 public key in standard base64, the DNS name to publish it at (`<selector>._mimi.<domain>`), and the TXT record (`v=MIMI1; k=ed25519; p=<key>`). The record format is provisional. | |
+| `provider-key --private` | none | `{"selector", "privateKeyHex", "publicKey"}`: the 32-byte signing seed as hex, for backing up or moving this provider's identity. Logs `provider_key_exported` with the selector, never the key. Anything holding the seed can sign as this provider; it reads no message. | |
 
 A room summary is `{"roomId", "groupId", "epoch", "members", "participants", "roles"}`. `groupId` is base64url without padding. `members` is a list of `{"leaf", "identity"}`. `participants` is a list of `{"user", "role"}` and `roles` a list of `{"index", "name"}`; each is `null` when the room has no such component or it does not decode. Identities, users and role names are JSON strings when they are UTF-8, else `{"base64url": ...}`.
 

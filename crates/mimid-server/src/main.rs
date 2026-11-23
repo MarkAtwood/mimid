@@ -160,14 +160,23 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("opening database {}", config.database.display()))?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    // This server's key for signing requests to peers (bead mimid-75nk.1),
-    // made on first start.
-    let seed = store
-        .provider_signing_seed_or_insert(|| {
-            mimi_mls::label::random_array::<32>()
-                .map_err(|e| anyhow::anyhow!("generating the request-signing key: {e}"))
-        })
-        .await?;
+    // This server's key for signing requests to peers (bead mimid-75nk.1).
+    // From `[provider_auth] key_file` when the operator supplies one, so
+    // they hold the provider's identity and can back it up or move it
+    // (bead mimid-75nk.13); otherwise made on first start and kept in the
+    // database.
+    let seed = match config.provider_auth.key_file.as_deref() {
+        Some(path) => mimid_server::provider_auth::read_signing_seed(path)
+            .with_context(|| format!("reading the request-signing key {}", path.display()))?,
+        None => {
+            store
+                .provider_signing_seed_or_insert(|| {
+                    mimi_mls::label::random_array::<32>()
+                        .map_err(|e| anyhow::anyhow!("generating the request-signing key: {e}"))
+                })
+                .await?
+        }
+    };
     let signer = Arc::new(RequestSigner::new(
         SigningKey::from_seed(&seed),
         config.provider_auth.selector.clone(),

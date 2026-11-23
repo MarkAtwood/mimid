@@ -35,7 +35,7 @@ use crate::local::LocalToken;
 pub enum AdminError {
     /// The command line is not a known command with its argument.
     #[error(
-        "usage: mimid admin <config.toml> hub-sender | rooms | room <roomId> | remove <roomId> <userUri> | ban <roomId> <userUri> | users | add-user <userUri> | token <userUri> [name] | tokens <userUri> | revoke-token <id> | consent | provider-key"
+        "usage: mimid admin <config.toml> hub-sender | rooms | room <roomId> | remove <roomId> <userUri> | ban <roomId> <userUri> | users | add-user <userUri> | token <userUri> [name] | tokens <userUri> | revoke-token <id> | consent | provider-key [--private]"
     )]
     Usage,
     /// The configuration has no `local_listen`.
@@ -81,6 +81,9 @@ enum Command {
     RevokeToken(String),
     Consent,
     ProviderKey,
+    /// `provider-key --private`: the signing key's seed, for backup and
+    /// migration (bead mimid-75nk.13).
+    ProviderKeyPrivate,
 }
 
 impl Command {
@@ -108,6 +111,7 @@ impl Command {
             [c, id] if c == "revoke-token" => Ok(Self::RevokeToken(id.clone())),
             [c] if c == "consent" => Ok(Self::Consent),
             [c] if c == "provider-key" => Ok(Self::ProviderKey),
+            [c, f] if c == "provider-key" && f == "--private" => Ok(Self::ProviderKeyPrivate),
             _ => Err(AdminError::Usage),
         }
     }
@@ -170,6 +174,7 @@ pub async fn run(
         Command::RevokeToken(id) => client.post(format!("{base}/tokens/{}/revoke", segment(id))),
         Command::Consent => client.get(format!("{base}/consent")),
         Command::ProviderKey => client.get(format!("{base}/provider-key")),
+        Command::ProviderKeyPrivate => client.get(format!("{base}/provider-key/private")),
     };
     let request = match token {
         Some(token) => request.bearer_auth(token.secret()),
@@ -236,6 +241,32 @@ mod tests {
             &["revoke-token"][..],
             &["revoke-token", "a", "b"][..],
             &["token", "u", "n", "extra"][..],
+        ] {
+            assert!(
+                matches!(Command::parse(&args(bad)), Err(AdminError::Usage)),
+                "{bad:?}"
+            );
+        }
+    }
+
+    /// `provider-key` and `provider-key --private` are different
+    /// commands, and only that one flag is accepted (bead mimid-75nk.13).
+    #[test]
+    fn the_private_provider_key_is_its_own_command() {
+        assert_eq!(
+            Command::parse(&args(&["provider-key"])).unwrap(),
+            Command::ProviderKey
+        );
+        assert_eq!(
+            Command::parse(&args(&["provider-key", "--private"])).unwrap(),
+            Command::ProviderKeyPrivate
+        );
+        // Nothing else stands in for the flag, so a typo asks rather
+        // than quietly printing the public key.
+        for bad in [
+            &["provider-key", "private"][..],
+            &["provider-key", "--public"][..],
+            &["provider-key", "--private", "extra"][..],
         ] {
             assert!(
                 matches!(Command::parse(&args(bad)), Err(AdminError::Usage)),

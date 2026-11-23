@@ -109,6 +109,23 @@ impl SigningKey {
     pub fn verifying_key(&self) -> VerifyingKey {
         VerifyingKey(self.0.verifying_key())
     }
+
+    /// The 32-byte private key (RFC 8032 seed), so an operator can back
+    /// the provider's identity up, move it to another host, or sign with
+    /// it outside mimid (bead mimid-75nk.13; Mark 2026-11-22).
+    ///
+    /// mimid is a reference and prototype implementation, and Agora is
+    /// being built on it: its state is meant to be inspectable and
+    /// reproducible by the operator who owns it. This hands out a
+    /// provider's identity, so the paths that reach it are
+    /// administrative ones behind the local control listener.
+    ///
+    /// This is the provider's *request-signing* key, which authenticates
+    /// provider-to-provider requests. It is not MLS key material and
+    /// decrypts nothing.
+    pub fn seed(&self) -> zeroize::Zeroizing<[u8; 32]> {
+        zeroize::Zeroizing::new(self.0.to_bytes())
+    }
 }
 
 impl fmt::Debug for SigningKey {
