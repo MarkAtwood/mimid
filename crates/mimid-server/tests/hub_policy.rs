@@ -30,7 +30,7 @@ use mimi_room_policy::{
 use mimid_server::hub::policy::{
     AppDataOp, Commit, Committer, Denied, Origin, Proposal, ProposalKind as K, ProposalSender,
     RoomState, authorize_commit, authorize_group_info, authorize_key_material, authorize_proposal,
-    authorize_send,
+    authorize_send, parent_dependent_participants,
 };
 
 const ALICE: &[u8] = b"mimi://a.example/u/alice";
@@ -2345,4 +2345,57 @@ fn open_room_grants_metadata_changes_but_not_room_uri() {
         ),
         Err(Denied::RoomUriChange)
     );
+}
+
+/// room-policy-04 §5 on a parent-dependent room's participants, as
+/// decision mimid-1wgh.110 reads it: a subset of the parent's, not a
+/// strict subset.
+///
+/// The second case is the one the decision exists for. §5 says "strict
+/// subset" and its own note two paragraphs later gives as an example "a
+/// room used for a multi-media call of clients in a Group DM" -- a call
+/// with everyone in the DM has the parent's participant set, so the
+/// strict reading forbids the documented example. mimid accepts it, and
+/// asked upstream: ietf-wg-mimi/mimi-room-policy#40, PR #59.
+#[test]
+fn a_parent_dependent_room_takes_a_subset_of_its_parent() {
+    let users =
+        |names: &[&[u8]]| -> BTreeSet<Vec<u8>> { names.iter().map(|name| name.to_vec()).collect() };
+    let parent = users(&[ALICE, BOB, CAROL]);
+
+    // A proper subset: a call among two of three.
+    assert_eq!(
+        parent_dependent_participants(&users(&[ALICE, BOB]), &parent),
+        Ok(())
+    );
+
+    // The whole parent set. The strict reading would refuse this, and it
+    // is §5's own example.
+    assert_eq!(
+        parent_dependent_participants(&users(&[ALICE, BOB, CAROL]), &parent),
+        Ok(()),
+        "a call among everyone in the parent is §5's own example"
+    );
+
+    // One participant.
+    assert_eq!(
+        parent_dependent_participants(&users(&[CAROL]), &parent),
+        Ok(())
+    );
+
+    // Someone who is not in the parent at all.
+    assert_eq!(
+        parent_dependent_participants(&users(&[ALICE, DAVE]), &parent),
+        Err(Denied::NotInParent { outside: 1 })
+    );
+
+    // The count is of participants the parent does not have.
+    assert_eq!(
+        parent_dependent_participants(&users(&[DAVE, b"mimi://e.example/u/erin"]), &parent),
+        Err(Denied::NotInParent { outside: 2 })
+    );
+
+    // An empty child is vacuously a subset; §5 bounds it by nothing, and
+    // max_users and the roles decide whether such a room is useful.
+    assert_eq!(parent_dependent_participants(&users(&[]), &parent), Ok(()));
 }

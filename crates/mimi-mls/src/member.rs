@@ -2159,6 +2159,39 @@ impl Member {
             .map_err(|e| MemberError::Export(e.into()))
     }
 
+    /// `SafeExportSecret(component_id)` for the current epoch
+    /// (draft-ietf-mls-extensions-11 §4.4), the forward-secure exporter.
+    ///
+    /// Prefer this to [`Member::export_secret`] for anything a component
+    /// keeps or derives from. §4.4 exists because RFC 9420 §8.5 "does not
+    /// provide forward security for exported secrets, because the
+    /// exporter_secret is not deleted after a secret has been derived":
+    /// this one is consumed, and the source key material goes with it.
+    ///
+    /// The secret belongs to the whole group. Every member can compute
+    /// it, so it confines nothing to a subset of the group; see
+    /// draft-atwood-mimi-calls §3, where that decides the shape of a
+    /// call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Export`] if the export fails: after this
+    /// member was removed, if this component's secret for the epoch was
+    /// already consumed, or if the group has no Exporter Tree because it
+    /// does not carry the extension.
+    pub fn safe_export_secret(
+        &mut self,
+        identity: &Identity,
+        component_id: u16,
+    ) -> Result<Vec<u8>, MemberError> {
+        self.check_identity(identity)?;
+        let provider = identity.provider();
+        self.group
+            .safe_export_secret(provider.crypto(), provider.storage(), component_id)
+            .map(|secret| secret.as_slice().to_vec())
+            .map_err(|e| MemberError::Export(e.into()))
+    }
+
     /// The TLS-encoded ratchet tree (RFC 9420 §12.4.3.3), for joiners whose
     /// Welcome has no `ratchet_tree` extension.
     ///

@@ -368,6 +368,13 @@ pub enum Denied {
         /// The count after the commit.
         actual: u32,
     },
+    /// A parent-dependent room's participants are not a subset of its
+    /// parent's (room-policy-04 §5; decision mimid-1wgh.110).
+    #[error("{outside} participants are not in the parent room")]
+    NotInParent {
+        /// How many participants the parent does not have.
+        outside: usize,
+    },
     /// The participant list would have more non-banned entries than
     /// `max_users` (room-policy-04 §5).
     #[error("{actual} non-banned participants exceed max_users {maximum}")]
@@ -965,6 +972,35 @@ impl Occupancy for After<'_> {
 /// # Errors
 ///
 /// The first check that fails.
+/// room-policy-04 §5: a parent-dependent room's participants against its
+/// parent's.
+///
+/// §5 says "the list of participants of the room MUST be a strict subset
+/// of the participants of the parent room". mimid takes it as a subset,
+/// not a strict one: decision mimid-1wgh.110, raised upstream as
+/// ietf-wg-mimi/mimi-room-policy#40 and proposed as #59. Under the
+/// strict reading §5's own example is not constructible, since a call
+/// among everyone in a Group DM has the parent's participant set.
+///
+/// The parent's participant list is not in [`RoomState`], which is one
+/// room's, so the caller supplies it.
+///
+/// # Errors
+///
+/// [`Denied::NotInParent`] with the number of participants the parent
+/// does not have.
+pub fn parent_dependent_participants(
+    child: &std::collections::BTreeSet<Vec<u8>>,
+    parent: &std::collections::BTreeSet<Vec<u8>>,
+) -> Result<(), Denied> {
+    let outside = child.difference(parent).count();
+    if outside == 0 {
+        Ok(())
+    } else {
+        Err(Denied::NotInParent { outside })
+    }
+}
+
 pub fn authorize_commit(state: &RoomState, commit: &Commit) -> Result<PolicyOutcome, Denied> {
     if commit.path_identity_changed {
         return Err(Denied::IdentityChange);

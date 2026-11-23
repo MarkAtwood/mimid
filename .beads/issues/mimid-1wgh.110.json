@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.110",
+  "title": "Decision: parent-dependent rooms take the subset reading, not room-policy-04's strict subset",
+  "description": "Needed before implementing bead mimid-1wgh.108. AGENTS.md requires a\ndecision bead citing the draft, the section, the competing readings, the\nchosen reading and why.\n\nTHE TEXT. room-policy-04 §5 (txt L532-534): \"In rooms with\nparent_dependent set to true (a parent-dependent room), the list of\nparticipants of the room MUST be a strict subset of the participants of\nthe parent room.\" And L530: \"Only a single fixed-membership room can\nexist for any unique set of participants.\"\n\nThen L542-544, two paragraphs later: \"Note: A room can be both\nfixed_membership and parent_dependent, for example, for room used for a\nmulti-media call of clients in a Group DM.\"\n\nTHE CONTRADICTION. A call with everyone in the Group DM has the parent's\nparticipant set, which is not a STRICT subset of it, so L533 forbids the\ncase L542 gives as its example. L530 forbids it a second way, since such\na call room would have the same participant set as the DM.\n\nCOMPETING READINGS:\n(a) Strict, as written. The note's example is simply not constructible,\n    and a call room must always omit at least one member of its parent.\n(b) Subset. The note's example works, and the single-room rule does not\n    count parent-dependent rooms.\n\nCHOSEN: (b), subset.\n\nWHY, and the first reason is the strongest:\n- Reading (a) makes the specification's own example impossible. A\n  reading under which the draft contradicts itself is weaker evidence of\n  intent than one under which it does not.\n- A call among everyone in a small room is the commonest call there is.\n  Under (a), three people in a three-person DM cannot have a call room,\n  which is absurd on its face.\n- The keying analysis (bead mimid-96tt) concludes a call MUST have its\n  own group, because mls-extensions §4.4's exported secret is computable\n  by every member of the group it comes from. Under (a) a small room can\n  never give a call its own group, so its calls cannot be confined at\n  all. That is a security consequence of a wording choice, which argues\n  it was not intended.\n- We have asked. ietf-wg-mimi/mimi-room-policy#40 raised it and PR #59\n  proposes exactly this change. mimid implements what it asked for and\n  will change if the WG says otherwise.\n\nDEVIATION ACKNOWLEDGED. AGENTS.md says to implement the drafts as\nwritten and to file a `wg` bead when the spec looks wrong. The `wg` part\nis done (#40, #59). This is a deliberate departure from -04 as written,\nand it is cheap to reverse: it is the difference between `is_subset` and\na strict-subset test in one place. The code cites this bead, and the\ntest suite carries a case documenting that reading (a) would forbid the\ndocumented example, so the choice stays visible.\n\nWHERE IT LANDS: mimid-server hub/update.rs already does cross-room\nchecks for the single-room rule (`fixed_rooms_elsewhere`), because\n`RoomState` is per-room and the parent's participant list is not in it.\nThe parent check follows that pattern.",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-23T20:03:19.806890056Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-23T20:08:00.681475103Z",
+  "closed_at": "2026-11-23T20:08:00.681475103Z",
+  "close_reason": "Closed",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.110",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-23T20:03:19.849401733Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -173,6 +173,7 @@ pub(super) async fn update(
     }
 
     let fixed_elsewhere = fixed_rooms_elsewhere(&rooms, room_id);
+    let parent = parent_participants(&rooms, room_id);
     let room = rooms.get_mut(room_id).ok_or(HubError::NoSuchRoom)?;
     let staged = match &decoded.bundle {
         HandshakeBundle::Commit {
@@ -189,6 +190,7 @@ pub(super) async fn update(
             welcome.as_ref(),
             group_info_option,
             &fixed_elsewhere,
+            parent.as_ref(),
         ),
         HandshakeBundle::Proposal {
             proposal_or_commit,
@@ -294,6 +296,40 @@ pub(super) async fn update(
 /// participants are not given yet (its participant list holds one
 /// entry); empty otherwise, since only such a room can take new
 /// participants (room-policy-04 §5; decision mimid-1wgh.89).
+/// A parent-dependent room's parent, as this hub holds it.
+struct ParentRoom {
+    /// The parent's participants, for the subset rule of room-policy-04
+    /// §5.
+    participants: BTreeSet<Vec<u8>>,
+}
+
+/// The parent of `room_id`, when `room_id` names a parent-dependent room
+/// whose `parent_room` this hub hosts.
+///
+/// `None` when the room is not parent-dependent, when it names no
+/// parent, or when the parent is not a room of this hub: §5 requires a
+/// parent-dependent room to be "always hosted on the same Hub as the
+/// parent room", so a parent elsewhere is not a parent this hub can
+/// check against.
+fn parent_participants(
+    rooms: &std::collections::BTreeMap<String, Room>,
+    room_id: &str,
+) -> Option<ParentRoom> {
+    let state = rooms
+        .get(room_id)
+        .and_then(|room| room_state(&room.observer, room_id).ok())?;
+    if !bool::from(state.base.parent_dependant) {
+        return None;
+    }
+    let parent_id = state.base.parent_room.first()?.as_str().to_owned();
+    let parent = rooms
+        .get(&parent_id)
+        .and_then(|room| room_state(&room.observer, &parent_id).ok())?;
+    Some(ParentRoom {
+        participants: participant_set(&parent.participants),
+    })
+}
+
 fn fixed_rooms_elsewhere(
     rooms: &std::collections::BTreeMap<String, Room>,
     room_id: &str,
@@ -485,6 +521,7 @@ fn stage_commit(
     welcome: Option<&Welcome>,
     group_info_option: &GroupInfoOption,
     fixed_elsewhere: &[BTreeSet<Vec<u8>>],
+    parent: Option<&ParentRoom>,
 ) -> Result<Outcome, HubError> {
     if let Some(refused) = check_epoch(room, room_id, commit) {
         return refused;
@@ -602,6 +639,38 @@ fn stage_commit(
             room,
             "a fixed-membership room with these participants exists already",
         );
+    }
+    // room-policy-04 §5: a parent-dependent room's participants are a
+    // subset of its parent's, and a user removed from the parent is
+    // removed from the child. The subset is not a STRICT subset, which
+    // is a deliberate departure from -04 as written: decision
+    // mimid-1wgh.110, and ietf-wg-mimi/mimi-room-policy#59.
+    if bool::from(state.base.parent_dependant)
+        && let Some(list) = outcome
+            .new_data
+            .get(&mimi_protocol::component_id::PARTICIPANT_LIST)
+        && let Ok(list) = components::decode::<mimi_protocol::ParticipantListData>(
+            mimi_protocol::component_id::PARTICIPANT_LIST,
+            list,
+        )
+    {
+        let Some(parent) = parent else {
+            return refused(room, "a parent-dependent room's parent is not hosted here");
+        };
+        if let Err(denied) = crate::hub::policy::parent_dependent_participants(
+            &participant_set(&list),
+            &parent.participants,
+        ) {
+            tracing::debug!(
+                room_id,
+                denied = &denied as &dyn std::error::Error,
+                "commit refused: parent-dependent participants"
+            );
+            return refused(
+                room,
+                "a parent-dependent room's participants are not a subset of its parent's",
+            );
+        }
     }
     // Decision mimid-1wgh.4.76.2 (revising mimid-1wgh.6.74): under
     // mls-extensions-11 §5.1 an AppDataUpdate can change safe_aad, so a
