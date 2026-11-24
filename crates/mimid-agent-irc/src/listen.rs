@@ -181,6 +181,14 @@ impl IrcFrontEnd {
         Ok(())
     }
 
+    /// Switches on tailnet identity (docs/design/frontend-auth.md §4.6):
+    /// `identity` says who a peer is before any credential, and the
+    /// rules behind it are the daemon's. Called once, before
+    /// [`IrcFrontEnd::serve`]; a second call changes nothing.
+    pub fn enable_peer_identity(&self, identity: Arc<dyn crate::PeerIdentity>) {
+        let _ = self.shared.peer_identity.set(identity);
+    }
+
     /// Accepts connections until `stop` becomes true, then tells every
     /// connection the server is closing and waits for them to end.
     pub async fn serve(self, mut stop: watch::Receiver<bool>) {

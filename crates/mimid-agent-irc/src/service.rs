@@ -14,6 +14,7 @@
 //! | Command | Does |
 //! |---|---|
 //! | `help` | lists these commands |
+//! | `tailnet` | whether the tailnet node let this connection in (docs/design/frontend-auth.md §4.6) |
 //! | `allow <nick, user URI or user@domain>` | consents to the user: their invites are joined from the next sync (`Store::allow`) |
 //! | `deny <nick, user URI or user@domain>` | refuses the user: they may no longer fetch the user's KeyPackages to invite them, and their invites are not joined (`Store::deny`) |
 //!
@@ -66,6 +67,8 @@ const HELP: &[&str] = &[
     "  devices       list your devices (the clients bound to your account)",
     "  forget-device <id>  forget a lost device: it is unbound and removed from your rooms",
     "  passwords     list your app passwords and the agent token",
+    "  tailnet       whether this connection was let in by its tailnet node,",
+    "                and which node and rule matched",
     "  password add <name>  make an app password for a device; shown once",
     "  password revoke <name>  revoke one; its connections close",
     "  identity <user>  show what is known of a user's identity: their",
@@ -90,9 +93,12 @@ const HELP: &[&str] = &[
 impl Session {
     /// What made a credential from here: `irc (<credential>)`.
     fn credential_label(&self) -> String {
-        match &self.login {
-            Some(login) => format!("irc ({})", login.name),
-            None => "irc".to_owned(),
+        match (&self.login, &self.tailnet) {
+            (Some(login), _) => format!("irc ({})", login.name),
+            // A tailnet session has no credential, so the node is what
+            // made this one (docs/design/frontend-auth.md §4.6).
+            (None, Some(matched)) => format!("irc (tailnet {})", matched.node),
+            (None, None) => "irc".to_owned(),
         }
     }
 
@@ -454,6 +460,24 @@ impl Session {
             ("password", _) => {
                 self.service_says("usage: passwords, password add <name>, password revoke <name>");
             }
+            // docs/design/frontend-auth.md §4.6. Only this connection:
+            // listing every matched node and its sessions needs a
+            // registry of open sessions (bead mimid-e13m.18).
+            ("tailnet", _) => match (&self.tailnet, self.by_tailnet) {
+                (Some(matched), true) => self.service_says(&format!(
+                    "tailnet identity let this connection in: node {}, matched {}",
+                    matched.node, matched.matched
+                )),
+                (Some(matched), false) => self.service_says(&format!(
+                    "node {} matches tailnet identity ({}), but this connection \
+                     logged in with a credential",
+                    matched.node, matched.matched
+                )),
+                (None, _) => self.service_says(
+                    "tailnet identity did not match this connection: it logged in \
+                     with a credential",
+                ),
+            },
             _ => self.service_says(&format!("unknown command {command:?}; try help")),
         }
     }

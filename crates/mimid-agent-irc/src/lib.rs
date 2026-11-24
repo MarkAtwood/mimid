@@ -186,6 +186,47 @@ impl IrcOptions {
     }
 }
 
+/// Who the daemon says is on the other end of a connection, before any
+/// credential: tailnet identity (docs/design/frontend-auth.md §4.6,
+/// decision A7).
+///
+/// The rules and the LocalAPI call are the daemon's (mimid-agent's
+/// `tailnet` module). This crate only asks and acts on the answer, so it
+/// still checks no secret of its own (AGENTS.md's crate map).
+pub trait PeerIdentity: std::fmt::Debug + Send + Sync {
+    /// Who `peer` is, if it may register with no credential; `None` if
+    /// the password rules apply, which is also the answer to any failure.
+    fn identify(
+        &self,
+        peer: std::net::SocketAddr,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Option<PeerName>> + Send + '_>>;
+
+    /// How often an accepted connection is asked about again, so that a
+    /// node removed from the tailnet loses its sessions (§4.6).
+    fn recheck(&self) -> Duration;
+}
+
+/// A peer [`PeerIdentity`] let in: what is logged and shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PeerName {
+    /// The node's name.
+    pub node: String,
+    /// What matched it: a login name, a node name or a tag.
+    pub matched: String,
+}
+
+impl PeerName {
+    /// A peer matched by `matched` on node `node`.
+    #[must_use]
+    pub fn new(node: impl Into<String>, matched: impl Into<String>) -> Self {
+        Self {
+            node: node.into(),
+            matched: matched.into(),
+        }
+    }
+}
+
 /// Why the IRC front end could not start.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

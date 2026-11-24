@@ -115,6 +115,34 @@ The client logs in with a credential (the token in `<state_dir>/agent-token`, or
 
 Failed logins are never locked out, but after 5 failures from one address in 10 minutes (20 from loopback; IPv6 counted per /64) each further failure is answered after a delay, 1 second doubling to 30, until a login from that address succeeds. At most 32 connections that have not logged in are open at once, 8 per address, and each must log in within 30 seconds.
 
+### `[tailnet]`
+
+Tailnet identity: a connection from a Tailscale node this agent recognises needs no password, because the connection itself is the login (docs/design/frontend-auth.md §4.6). **Off by default.** It applies to **IRC only** — the HTTP endpoint keeps its credential on purpose, see below.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `identity` | boolean | `false` | Whether a matching node may register with no credential. |
+| `owners` | list of Tailscale login names | the owner of this node | Whose own devices are let in. Read from tailscaled at start when left empty. |
+| `nodes` | list of node names | `[]` | Extra nodes let in whoever owns them, e.g. `pixel-8.tailnet.ts.net`. |
+| `tags` | list of ACL tags | `[]` | Extra tags let in, e.g. `tag:chat-client`. Each must start with `tag:`. |
+| `socket` | path | `/var/run/tailscale/tailscaled.sock` | tailscaled's LocalAPI socket. |
+| `recheck_s` | integer, at least 10 | `300` | How often an open session's node is checked again. |
+
+A node is let in when its user's login name is in `owners` **and** it is not tagged, is not this agent's own node, and advertises no routes; or when its name is in `nodes` or one of its tags is in `tags`. Each exclusion closes a hole: a tagged node has no user and its tags come from whoever writes the ACL policy; this agent's own node answers for connections from this host, so every local account would pass as the owner; and a subnet router or exit node source-NATs the traffic it forwards, so a device on its LAN would pass as the router's owner.
+
+Anything else falls back to the password rules, including tailscaled not answering: a failed lookup never lets a connection in. On IRC a matched client is not told `soju.im/account-required`, so Goguma labels its password field optional; any password it does send is accepted and decides nothing.
+ `/msg mimid tailnet` says what matched.
+
+The agent reads tailscaled's `status` at start and **refuses to start** if it cannot — serving the password rules while you believe otherwise would be worse. It also refuses if this node is tagged and `owners` is empty (a tagged node has no owner to default to), so set `owners` on a tagged host.
+
+**Revocation is the tailnet admin console.** Removing the node, letting its key expire or taking its tag away ends its sessions within `recheck_s`. There is no deny list yet.
+
+**Why not JMAP.** With no `Authorization` header a request would be authorized by where it comes from, and a web page open in a browser on your laptop comes from your laptop — so any site you visit could POST JMAP calls to the agent. CORS stops such a page reading the answer, not the call happening. So JMAP keeps its credential.
+
+With `tailscale cert` as the `[tls] source`, this is the least-friction phone setup there is: nothing to install but Tailscale, which the phone needs anyway to reach the agent, and nothing to type but the server name.
+
+Linux only: macOS's App Store Tailscale exposes the LocalAPI differently.
+
 ### `[tls]`
 
 Where the certificate of the TLS listeners comes from (docs/design/frontend-auth.md §5). Needed by any `listen_tls`; absent by default.
@@ -169,7 +197,7 @@ For the two loopback providers in [operating.md](operating.md#example-two-federa
 
 - **JMAP Chat**: the Session is at `http://127.0.0.1:<port>/.well-known/jmap`, with `Authorization: Bearer <credential>` or `Authorization: Basic <base64(any-username:credential)>`, where the credential is the agent token or an app password. With Basic the username is ignored: the agent serves one user, so the secret alone picks the credential, and that is what a "username and password" client (Pidgin-shaped, purple-mimi) needs. A `401` offers `Basic` back only to a request that used it, so a browser that sent a bearer token is not given its own login box. The request's `Host` must be `127.0.0.1:<port>`, `[::1]:<port>` or `localhost:<port>`; any other gets `421`. This blocks DNS rebinding.
 - **JMAP Chat over TLS**, with `[jmap] listen_tls`: the Session is at `https://<name>:<port>/.well-known/jmap`, where `<name>` is a `[tls] names` entry. The Host check takes those names and the listener's own address at that port, and the loopback names too; anything else is `421`. Failed credentials are slowed per source address exactly as IRC's are (see `[irc]` below).
-- **IRC**: connect to the `[irc]` `listen` address, or with TLS to `listen_tls`, and send a credential with SASL or `PASS`.
+- **IRC**: connect to the `[irc]` `listen` address, or with TLS to `listen_tls`, and send a credential with SASL or `PASS`. With `[tailnet] identity = true`, a connection from a tailnet node the agent recognises needs no credential at all (see `[tailnet]`).
 
 ## Goguma
 

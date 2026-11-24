@@ -24,6 +24,13 @@
 //! listen_tls = "100.64.1.2:6697"          # optional; needs [tls]
 //! server_name = "mimid.invalid"           # the default
 //!
+//! [tailnet]                               # optional; off by default
+//! identity = true                         # no password from a matching node
+//! owners = ["alice@github"]                # default: this node's owner
+//! nodes = []                              # extra node names
+//! tags = []                               # extra ACL tags
+//! recheck_s = 300                         # re-ask about open sessions
+//!
 //! [tls]                                   # needed by any listen_tls
 //! source = "files"                        # or "tailscale"
 //! names = ["chat.example.org"]            # the first is what setup prints
@@ -111,6 +118,17 @@
 //! `server_name` is the name the server gives itself, at most
 //! [`MAX_IRC_SERVER_NAME_LEN`] letters, digits, `-` and `.`, with at least
 //! one dot so that clients do not read it as a nick (mimid-agent-irc).
+//!
+//! `[tailnet]` turns on tailnet identity: a connection from a tailnet
+//! node the rules match needs no credential (the `tailnet` module;
+//! docs/design/frontend-auth.md §4.6, decision A7). It is off by default,
+//! applies to IRC alone — the HTTP endpoint keeps its credential on
+//! purpose, so `identity = true` without `[irc]` is refused rather than
+//! left to do nothing. With `identity = true`
+//! the daemon reads tailscaled's `status` at start, for the agent's own
+//! node and, with no `owners` configured, its owner; it refuses to start
+//! if tailscaled cannot be reached, rather than quietly serving the
+//! password rules.
 //!
 //! `[irc] listen_tls` adds a TLS listener for IRC on any address the user
 //! names, off by default (client-survey.md decision S1); it needs `[tls]`,
@@ -261,6 +279,10 @@ pub struct Config {
     /// `listen_tls`.
     #[serde(default)]
     pub tls: Option<crate::tls::TlsSetting>,
+    /// Tailnet identity (docs/design/frontend-auth.md §4.6, decision A7);
+    /// off by default.
+    #[serde(default)]
+    pub tailnet: crate::tailnet::TailnetSetting,
 }
 
 /// The `[jmap]` table.
@@ -553,6 +575,16 @@ impl Config {
         if let Some(tls) = &self.tls {
             tls.check().map_err(ConfigError::Tls)?;
         }
+        self.tailnet.check().map_err(ConfigError::Tailnet)?;
+        // docs/design/frontend-auth.md §4.6: identity applies to IRC
+        // alone, so with no [irc] it would do nothing. Refusing says so
+        // instead of leaving the operator to wonder.
+        if self.tailnet.identity && self.irc.is_none() {
+            return Err(ConfigError::Tailnet(
+                "[tailnet] identity = true needs [irc]: it applies to IRC alone, \
+                 because the HTTP endpoint keeps its credential",
+            ));
+        }
         Ok(())
     }
 
@@ -662,6 +694,9 @@ pub enum ConfigError {
     /// A JMAP listener is configured with `[jmap] enabled = false`.
     #[error("{0} needs [jmap] enabled = true")]
     JmapOff(&'static str),
+    /// `[tailnet]` is wrong.
+    #[error("{0}")]
+    Tailnet(&'static str),
 }
 
 #[cfg(test)]

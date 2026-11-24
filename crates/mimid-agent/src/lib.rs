@@ -146,6 +146,16 @@
 //!   `canCalculateChanges` false. Which invites are joined is set by
 //!   the `invites` setting: `from-allowed` (the default) joins only
 //!   invites from users allowed.
+//! - With `[tailnet] identity = true` an IRC connection from a Tailscale
+//!   node the rules match registers with no credential (the [`tailnet`]
+//!   module; docs/design/frontend-auth.md §4.6, decision A7). Off by
+//!   default, and IRC only: the HTTP endpoint keeps its credential,
+//!   because with no `Authorization` header a request would be
+//!   authorized by where it comes from, and a page in a browser on the
+//!   owner's laptop comes from the laptop. There is no deny list, and
+//!   `/msg mimid tailnet` answers for the asking connection alone (bead
+//!   mimid-e13m.18); revocation is removing the node in the tailnet,
+//!   which ends its sessions within `recheck_s`.
 //! - The client is authenticated by the local token alone, not by peer
 //!   credentials on a Unix socket (the AGENTS.md crate map's "agent
 //!   socket" check): any process that can read the token file can act as
@@ -202,6 +212,7 @@ pub mod didwebvh;
 mod http;
 mod https;
 mod push;
+pub mod tailnet;
 pub mod tls;
 pub mod token;
 

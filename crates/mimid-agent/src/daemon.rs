@@ -44,6 +44,9 @@ pub struct Daemon {
     irc: Option<IrcFrontEnd>,
     /// The TLS certificate source, with `[tls]`.
     tls: Option<Arc<crate::tls::Tls>>,
+    /// Whether tailnet identity is on (`[tailnet] identity`), for the
+    /// start event; the rules themselves went to the front end.
+    tailnet: bool,
     /// The plaintext store the front ends share; its sync is the loop's.
     store: Arc<Store>,
     /// The credentials every front end checks logins against.
@@ -353,6 +356,18 @@ impl Daemon {
             }),
             _ => None,
         };
+        // docs/design/frontend-auth.md §4.6, decision A7: off unless
+        // `[tailnet] identity = true`. Reading `status` now means a
+        // tailscaled that cannot be reached is a start failure, rather
+        // than the agent quietly serving the password rules while the
+        // operator believes a node needs none.
+        let tailnet = if config.tailnet.identity {
+            Some(Arc::new(
+                crate::tailnet::Tailnet::start(&config.tailnet).await?,
+            ))
+        } else {
+            None
+        };
         let irc = match &config.irc {
             Some(setting) => {
                 // docs/design/frontend-auth.md §4.1: the IRC client's PASS
@@ -370,6 +385,13 @@ impl Daemon {
                     tls.as_ref().map(|t| t.server_config()),
                 )
                 .await?;
+                // §4.6: the rules are the daemon's (the `tailnet`
+                // module); the front end only asks who a peer is.
+                if let Some(tailnet) = &tailnet {
+                    irc.enable_peer_identity(
+                        Arc::clone(tailnet) as Arc<dyn mimid_agent_irc::PeerIdentity>
+                    );
+                }
                 // client-survey.md §10 S4: push on by default, with its own
                 // switch; the subscriptions in the agent's database.
                 if setting.webpush
@@ -385,6 +407,7 @@ impl Daemon {
             http,
             https,
             irc,
+            tailnet: tailnet.is_some(),
             tls,
             store,
             credentials,
@@ -464,6 +487,9 @@ impl Daemon {
             irc = self.irc.is_some(),
             irc_listen = %self.irc_addr().map_or_else(|| "none".to_owned(), |a| a.to_string()),
             irc_listen_tls = %self.irc_tls_addr().map_or_else(|| "none".to_owned(), |a| a.to_string()),
+            // docs/design/frontend-auth.md §4.6: an operator reading the
+            // log should see that a node can log in with no credential.
+            tailnet = self.tailnet,
             user = %self.user_uri,
             server_url = %self.server_url,
             "mimid-agent listening"

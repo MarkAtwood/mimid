@@ -232,6 +232,19 @@ pub fn setup(
             let password = password.shown();
             writeln!(out, "App password {:?} made. It is shown once.", info.name)?;
             writeln!(out)?;
+            // docs/design/frontend-auth.md §4.6: with identity on, a
+            // matched node needs no password at all, so say so rather
+            // than let the user wonder why the field may be left empty.
+            if config.tailnet.identity {
+                writeln!(
+                    out,
+                    "Tailnet identity is on ([tailnet]). From a tailnet node this agent \
+                     recognises, the password may be left empty: the node is the login. \
+                     Keep this password for anywhere else, and off the tailnet it is what \
+                     works."
+                )?;
+                writeln!(out)?;
+            }
             if !tls {
                 writeln!(
                     out,

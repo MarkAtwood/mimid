@@ -210,9 +210,15 @@ impl Session {
                     .is_some_and(|v| v >= 302);
                 // CAP 302 shows values (IRCv3 Capability Negotiation).
                 let push = self.shared.web_push().is_some();
+                // docs/design/frontend-auth.md §4.6: a matched tailnet
+                // node needs no credential, so `account-required` is not
+                // offered to it; Goguma then labels its password field
+                // "Password (optional)" instead of demanding one.
+                let account_required = self.tailnet.is_none();
                 let caps: Vec<String> = CAPS
                     .iter()
                     .filter(|c| push || **c != "soju.im/webpush")
+                    .filter(|c| account_required || **c != "soju.im/account-required")
                     .map(|c| match *c {
                         "sasl" if multiline => format!("sasl={}", crate::sasl::MECHANISMS),
                         _ => (*c).to_owned(),
@@ -343,6 +349,28 @@ impl Session {
             _ => None,
         };
         let Some(login) = login else {
+            // docs/design/frontend-auth.md §4.6: a matched tailnet node
+            // registers with no credential, and any credential it did
+            // send is not held against it (the user may have left an old
+            // password in the client). The node, not a credential, is
+            // what authorized it, so the connection closes when the node
+            // stops matching rather than when a credential is revoked.
+            if let Some(matched) = self.tailnet.clone() {
+                self.shared.credentials.limiter().succeeded(self.peer.ip());
+                tracing::info!(
+                    name: "agent_login",
+                    front_end = "irc",
+                    peer = %self.peer,
+                    mechanism = "tailnet",
+                    node = %matched.node,
+                    matched = %matched.matched,
+                    "IRC login by tailnet identity"
+                );
+                self.by_tailnet = true;
+                self.unauthenticated = None;
+                self.burst();
+                return;
+            }
             let nothing = self.pass.is_none() && !self.sasl_failures;
             if self.pass.is_some() && !self.sasl_failures {
                 self.login_failed("PASS", "no-such-credential").await;
@@ -393,6 +421,11 @@ impl Session {
             &[&server, VERSION, "i", CHANNEL_MODES, PARAMETER_MODES],
         );
         let mut tokens = isupport();
+        // §4.6: the ISUPPORT token says the same as the capability, so it
+        // goes too for a matched tailnet node.
+        if self.tailnet.is_some() {
+            tokens.retain(|token| token != "draft/ACCOUNTREQUIRED");
+        }
         // soju.im/webpush: the VAPID public key, which never changes.
         if let Some(push) = self.shared.web_push() {
             tokens.push(format!("VAPID={}", push.vapid_public));

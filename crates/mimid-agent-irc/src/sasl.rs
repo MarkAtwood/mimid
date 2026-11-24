@@ -158,8 +158,43 @@ impl Session {
         }
         match self.shared.credentials.check_plain(password) {
             Some(login) => self.sasl_succeeded(login, "PLAIN"),
+            // docs/design/frontend-auth.md §4.6: from a matched tailnet
+            // node, "any PASS or SASL PLAIN succeeds". The client is told
+            // 900 and 903 so that it finishes SASL and registers; what
+            // it put in the field, right or wrong, decides nothing, and
+            // the node is what authorized the connection
+            // (`Session::by_tailnet`, set when registration ends).
+            None if self.tailnet.is_some() => self.tailnet_succeeded("PLAIN"),
             None => self.sasl_failed("no-such-credential").await,
         }
+    }
+
+    /// 900 and 903 to a matched tailnet node whose credential, if it sent
+    /// one, was not one of the agent's (§4.6). No `Login` is recorded:
+    /// `try_register` sees `self.sasl_login` still empty and takes the
+    /// tailnet path, so the session closes with the node and not with a
+    /// credential.
+    fn tailnet_succeeded(&mut self, mechanism: &str) {
+        let Some(matched) = self.tailnet.clone() else {
+            return;
+        };
+        self.shared.credentials.limiter().succeeded(self.peer.ip());
+        tracing::debug!(
+            peer = %self.peer,
+            mechanism,
+            node = %matched.node,
+            "SASL from a tailnet node succeeded without a credential"
+        );
+        let me = self.shared.names().own().clone();
+        self.numeric(
+            "900",
+            &[
+                &me.mask(),
+                &me.nick,
+                &format!("You are now logged in as {}", me.uri),
+            ],
+        );
+        self.numeric("903", &["SASL authentication successful"]);
     }
 
     /// Sends `payload` as AUTHENTICATE chunks, ending with `+` if the last

@@ -49,6 +49,9 @@ pub(crate) struct Shared {
     part_reasons: Mutex<HashMap<Key, String>>,
     /// The Web Push sender, once switched on (soju.im/webpush, §7.35).
     pub(crate) web_push: std::sync::OnceLock<Arc<crate::webpush::WebPush>>,
+    /// Tailnet identity, once switched on (docs/design/frontend-auth.md
+    /// §4.6): who the daemon says a peer is, before any credential.
+    pub(crate) peer_identity: std::sync::OnceLock<Arc<dyn crate::PeerIdentity>>,
 }
 
 impl Shared {
@@ -68,6 +71,7 @@ impl Shared {
             created: mimid_agent_store::convert::utc_date(crate::render::now_ms()),
             part_reasons: Mutex::new(HashMap::new()),
             web_push: std::sync::OnceLock::new(),
+            peer_identity: std::sync::OnceLock::new(),
         }
     }
 
@@ -97,6 +101,11 @@ impl Shared {
     /// The Web Push sender, if switched on.
     pub(crate) fn web_push(&self) -> Option<Arc<crate::webpush::WebPush>> {
         self.web_push.get().cloned()
+    }
+
+    /// Tailnet identity, if the daemon switched it on.
+    pub(crate) fn peer_identity(&self) -> Option<Arc<dyn crate::PeerIdentity>> {
+        self.peer_identity.get().cloned()
     }
 
     /// The names, locked. Taken after the store's state lock, never
@@ -179,6 +188,16 @@ pub(crate) struct Session {
     pub(crate) pass: Option<Option<Login>>,
     /// The credential the connection logged in with, once registered.
     pub(crate) login: Option<Login>,
+    /// Who the daemon said this peer is, asked once when the connection
+    /// arrived (docs/design/frontend-auth.md §4.6). `Some` means the
+    /// connection may register with no credential, and that any
+    /// credential it does send succeeds.
+    pub(crate) tailnet: Option<crate::PeerName>,
+    /// Whether the node, and not a credential, is what let this
+    /// connection register: then it closes when the node stops matching
+    /// (§4.6). A connection that sent a credential that checked out is
+    /// an ordinary session and lives by §3.7 instead.
+    pub(crate) by_tailnet: bool,
     /// Where an AUTHENTICATE exchange stands.
     pub(crate) sasl: crate::sasl::Sasl,
     /// What SASL logged in as, before registration ends.
@@ -231,6 +250,8 @@ impl Session {
             cap_negotiating: false,
             pass: None,
             login: None,
+            tailnet: None,
+            by_tailnet: false,
             sasl: crate::sasl::Sasl::Idle,
             sasl_login: None,
             sasl_failures: false,
@@ -466,6 +487,31 @@ pub(crate) async fn run<S>(
             return;
         }
     }
+    // docs/design/frontend-auth.md §4.6: who the daemon says this peer
+    // is, asked once, before the client speaks, so CAP LS can leave out
+    // `soju.im/account-required` for a matched node. A failure is no
+    // answer, which is the password rules.
+    let identity = session.shared.peer_identity();
+    if let Some(identity) = &identity {
+        session.tailnet = identity.identify(peer).await;
+        if let Some(matched) = &session.tailnet {
+            tracing::info!(
+                name: "agent_login_tailnet",
+                front_end = "irc",
+                peer = %peer,
+                node = %matched.node,
+                matched = %matched.matched,
+                "a tailnet node may register with no credential"
+            );
+        }
+    }
+    // §4.6: the node is asked about again while the connection is open,
+    // so a node removed from the tailnet, or whose key expired or whose
+    // tag was taken away, loses its session.
+    let mut tailnet_recheck = match (&identity, &session.tailnet) {
+        (Some(identity), Some(_)) => Some(Instant::now() + identity.recheck()),
+        _ => None,
+    };
     let login_by = Instant::now() + LOGIN_WITHIN.min(ping_after + pong_within);
     let mut last_heard = Instant::now();
     let mut ping_sent: Option<Instant> = None;
@@ -487,6 +533,40 @@ pub(crate) async fn run<S>(
         tokio::select! {
             () = stopped(&mut stop) => {
                 session.close("mimid-agent is stopping");
+            }
+            // §4.6: every recheck, the node is asked about again.
+            () = async {
+                match tailnet_recheck {
+                    Some(due) => tokio::time::sleep_until(due).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(identity) = &identity {
+                    // A connection that registered with a credential of
+                    // its own is an ordinary session: the node is not
+                    // what authorized it, so it is left alone and asked
+                    // about no more. It lives by §3.7, like any other.
+                    if session.me.is_some() && !session.by_tailnet {
+                        tailnet_recheck = None;
+                    } else {
+                        let before = session.tailnet.clone();
+                        let now = identity.identify(session.peer).await;
+                        if now.is_none() {
+                            let node = before.map(|p| p.node).unwrap_or_default();
+                            tracing::info!(
+                                name: "agent_tailnet_session_closed",
+                                front_end = "irc",
+                                node = %node,
+                                peer = %session.peer,
+                                "an IRC connection closed: its tailnet node no longer matches"
+                            );
+                            session.close("tailnet node no longer matches");
+                        } else {
+                            session.tailnet = now;
+                            tailnet_recheck = Some(Instant::now() + identity.recheck());
+                        }
+                    }
+                }
             }
             Ok(()) = credentials.changed() => {
                 if let Some(login) = &session.login
