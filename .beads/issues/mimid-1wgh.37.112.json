@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.112",
+  "title": "room-policy §5 spells parent_dependant two ways, and the prose spelling is not the wire field",
+  "description": "Found 2026-11-23 while writing the parent-dependent conditions into\ndraft-atwood-jmap-chat-mimi-00 §Room/create (bead mimid-1wgh.114.4).\n\nTHE INCONSISTENCY, in draft-ietf-mimi-room-policy-04:\n- prose, txt L532: \"In rooms with parent_dependent set to true (a\n  parent-dependent room)\";\n- prose, txt L542: \"A room can be both fixed_membership and\n  parent_dependent\";\n- the TLS presentation language, txt L572 and L3678: \"bool\n  parent_dependant;\".\n\nSo the field is named one way in the struct and another in every prose\nmention of it. \"dependent\" is the correct English adjective, which is\npresumably why the prose has it, but the struct is what is normative for\nthe wire.\n\nWHY IT IS NOT ONLY COSMETIC: an implementer who writes a schema, a code\ngenerator, or a test fixture from the prose gets a field name that does\nnot exist, and one who greps the document for the struct's name misses\nevery sentence that explains what the field means. mimid hit the second\nhalf: our code uses parent_dependant, with comments noting the spelling,\nand our own prose in beads and docs drifts to parent_dependent.\n\nPROPOSED: one spelling throughout. Changing the struct to\nparent_dependent is the better English and the breaking change; changing\nthe prose to parent_dependant keeps the wire stable and looks like a typo\nforever. Either is better than both. The WG should pick, and -04 is\npre-adoption enough that the struct could still move.\n\nWHAT WE DID MEANWHILE: draft-atwood-jmap-chat-mimi-00 §Room/create\nconditions 8 and 9 use the STRUCT spelling, parent_dependant, because\nthat is the field an implementation reads, even though it disagrees with\nroom-policy's own prose. If the WG settles on the other spelling, that\ntext follows.\n\nLow priority: it costs nobody correctness today, only grep. Filing it so\nit is not rediscovered a third time.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T00:08:19.382291898Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T00:08:19.382291898Z",
+  "labels": [
+    "human",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.112",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-24T00:08:19.415821014Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
