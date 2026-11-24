@@ -326,6 +326,9 @@ pub struct Running {
     pub irc_tls: Option<SocketAddr>,
     /// The HTTPS endpoint's address, with `[jmap] listen_tls`.
     pub https: Option<SocketAddr>,
+    /// The CA bootstrap listener's address, with `[tls.local-ca]
+    /// bootstrap`.
+    pub ca_bootstrap: Option<SocketAddr>,
     pub state_dir: PathBuf,
     /// The daemon's store.
     pub store: Arc<mimid_agent_store::Store>,
@@ -341,6 +344,7 @@ impl Running {
         let irc = daemon.irc_addr();
         let irc_tls = daemon.irc_tls_addr();
         let https = daemon.https_addr();
+        let ca_bootstrap = daemon.ca_bootstrap_addr();
         let store = Arc::clone(daemon.store());
         let (stop, stopped) = oneshot::channel::<()>();
         let task = tokio::spawn(daemon.serve(async move {
@@ -351,6 +355,7 @@ impl Running {
             irc,
             irc_tls,
             https,
+            ca_bootstrap,
             state_dir: config.state_dir.clone(),
             store,
             stop,

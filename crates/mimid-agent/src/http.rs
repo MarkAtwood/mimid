@@ -288,6 +288,10 @@ pub(crate) struct Endpoint {
     pub(crate) allowed_origins: Vec<String>,
     /// The listening port, for the Host check.
     pub(crate) port: u16,
+    /// The local certificate authority, with `[tls] source = "local-ca"`:
+    /// the setup page at `/mimid/ca` serves it (docs/design/
+    /// frontend-auth.md §6.6; decision mimid-1wgh.127).
+    pub(crate) local_ca: Option<Arc<CaPage>>,
     /// The names `[tls] names` gives, which the Host check accepts at
     /// this listener's port besides the loopback ones; empty on the plain
     /// loopback listener (docs/design/frontend-auth.md §5.3).
@@ -301,6 +305,103 @@ pub(crate) struct Jmap {
     /// The Session, `state` included.
     pub(crate) session: Value,
     pub(crate) session_state: String,
+}
+
+/// The CA setup page and its two downloads, built once at start so the
+/// routes copy bytes and nothing else (docs/design/frontend-auth.md §6.6).
+pub(crate) struct CaPage {
+    /// The HTML page.
+    pub(crate) html: String,
+    /// The CA certificate, PEM, as `.crt`.
+    pub(crate) crt: Vec<u8>,
+    /// The Apple configuration profile.
+    pub(crate) mobileconfig: String,
+}
+
+impl CaPage {
+    /// Builds the page for `ca` over `names`.
+    ///
+    /// # Errors
+    ///
+    /// The profile needs identifiers from the OS random number generator.
+    pub(crate) fn new(
+        ca: &crate::local_ca::LocalCa,
+        names: &[String],
+    ) -> Result<Self, crate::tls::TlsError> {
+        let name = names.first().map_or("this agent", String::as_str);
+        Ok(Self {
+            html: crate::local_ca::setup_page(&ca.fingerprint(), names),
+            crt: ca.ca_pem.clone(),
+            mobileconfig: crate::local_ca::mobileconfig(&ca.ca_der, name)?,
+        })
+    }
+}
+
+/// The three CA paths, over the page itself as state: the page, the
+/// certificate and the Apple profile. Used by the endpoint's router and,
+/// on its own, by the bootstrap listener (decision mimid-1wgh.127).
+pub(crate) fn ca_router(page: Arc<CaPage>) -> Router {
+    Router::new()
+        .route(
+            crate::local_ca::CA_PATH,
+            get(|State(page): State<Arc<CaPage>>| async move {
+                (
+                    [(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("text/html; charset=utf-8"),
+                    )],
+                    page.html.clone(),
+                )
+                    .into_response()
+            }),
+        )
+        .route(
+            &format!("{}/mimid-local-ca.crt", crate::local_ca::CA_PATH),
+            get(|State(page): State<Arc<CaPage>>| async move {
+                ca_download(
+                    page.crt.clone(),
+                    // The media type every browser and Android expect for
+                    // a PEM certificate.
+                    "application/x-x509-ca-cert",
+                    "mimid-local-ca.crt",
+                )
+            }),
+        )
+        .route(
+            &format!("{}/mimid-local-ca.mobileconfig", crate::local_ca::CA_PATH),
+            get(|State(page): State<Arc<CaPage>>| async move {
+                ca_download(
+                    page.mobileconfig.clone().into_bytes(),
+                    // What iOS opens in Settings rather than showing as
+                    // text (*unverified* across iOS versions).
+                    "application/x-apple-aspen-config",
+                    "mimid-local-ca.mobileconfig",
+                )
+            }),
+        )
+        .with_state(page)
+}
+
+/// One CA download: the bytes, its type, and a filename, with no caching
+/// so a renewed CA is not served from a browser's cache.
+fn ca_download(bytes: Vec<u8>, content_type: &'static str, name: &str) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            (
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_str(&format!("attachment; filename=\"{name}\""))
+                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static(NO_CACHE)),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 /// The answer on a JMAP path with JMAP off.
@@ -435,7 +536,7 @@ pub(crate) fn session(
 
 /// The endpoint's routes.
 pub(crate) fn router(endpoint: Arc<Endpoint>) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/.well-known/jmap", get(get_session))
         .route("/jmap/api", post(post_api))
         .route("/jmap/eventsource", get(get_eventsource))
@@ -458,7 +559,14 @@ pub(crate) fn router(endpoint: Arc<Endpoint>) -> Router {
         )
         .layer(DefaultBodyLimit::max(MAX_SIZE_REQUEST))
         .layer(middleware::from_fn_with_state(Arc::clone(&endpoint), guard))
-        .with_state(endpoint)
+        .with_state(Arc::clone(&endpoint));
+    match &endpoint.local_ca {
+        // docs/design/frontend-auth.md §6.6: the CA setup page, on every
+        // listener of this endpoint, so it can be fetched over the HTTPS
+        // listener a phone will use and read locally with curl.
+        Some(page) => router.merge(ca_router(Arc::clone(page))),
+        None => router,
+    }
 }
 
 /// The Host check, the CORS preflight and the bearer token, in that order
@@ -486,13 +594,21 @@ async fn guard(State(endpoint): State<Arc<Endpoint>>, request: Request, next: Ne
     // (mimid_agent_store::links); it needs no bearer token.
     let link = request.method() == Method::GET
         && request.uri().path().starts_with(&format!("{LINK_PATH}/"));
+    // The CA setup page needs no credential either (decision
+    // mimid-1wgh.127): its content is the CA certificate, which this
+    // listener already sends in every handshake, and a device that does
+    // not trust it yet cannot complete one to send a credential. The
+    // Host check above still applies.
+    let ca = request.method() == Method::GET
+        && endpoint.local_ca.is_some()
+        && request.uri().path().starts_with(crate::local_ca::CA_PATH);
     // The peer, with `into_make_service_with_connect_info`, for the
     // per-source slowdown and the logs (docs/design/frontend-auth.md §7).
     let peer = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|ConnectInfo(peer)| *peer);
-    let presented = if link {
+    let presented = if link || ca {
         None
     } else {
         credential(request.headers())
@@ -504,7 +620,7 @@ async fn guard(State(endpoint): State<Arc<Endpoint>>, request: Request, next: Ne
         login_succeeded(&endpoint, login, presented.as_ref(), peer);
     }
     let mut request = request;
-    let authorized = link || login.is_some();
+    let authorized = link || ca || login.is_some();
     if let Some(login) = login {
         request.extensions_mut().insert(login);
     }
@@ -513,7 +629,7 @@ async fn guard(State(endpoint): State<Arc<Endpoint>>, request: Request, next: Ne
     } else {
         // §7.1: the refusal is the protocol's normal one, after the
         // source's delay; never a silent drop.
-        if !link {
+        if !link && !ca {
             login_failed(&endpoint, presented.as_ref(), peer).await;
         }
         let mut response = problem_response(StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY);

@@ -32,7 +32,7 @@
 //! recheck_s = 300                         # re-ask about open sessions
 //!
 //! [tls]                                   # needed by any listen_tls
-//! source = "files"                        # or "tailscale"
+//! source = "files"                        # or "tailscale", "local-ca"
 //! names = ["chat.example.org"]            # the first is what setup prints
 //! [tls.files]
 //! cert = "/etc/ssl/chat/fullchain.pem"
@@ -586,6 +586,15 @@ impl Config {
             ));
         }
         Ok(())
+    }
+
+    /// The `[tls] names`, or none without `[tls]`.
+    #[must_use]
+    pub fn tls_names(&self) -> Vec<String> {
+        self.tls
+            .as_ref()
+            .map(|tls| tls.names.clone())
+            .unwrap_or_default()
     }
 
     /// [`Config::sync_interval_ms`] as a duration.

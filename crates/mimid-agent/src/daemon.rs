@@ -47,6 +47,9 @@ pub struct Daemon {
     /// Whether tailnet identity is on (`[tailnet] identity`), for the
     /// start event; the rules themselves went to the front end.
     tailnet: bool,
+    /// The plain-HTTP listener that serves the CA setup page and nothing
+    /// else, with `[tls.local-ca] bootstrap` (decision mimid-1wgh.127).
+    ca_bootstrap: Option<(TcpListener, SocketAddr, Arc<http::CaPage>)>,
     /// The plaintext store the front ends share; its sync is the loop's.
     store: Arc<Store>,
     /// The credentials every front end checks logins against.
@@ -280,6 +283,12 @@ impl Daemon {
         let (changes, _) = broadcast::channel(CHANGE_BUFFER);
         let in_flight = Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS));
         let uploads = Arc::new(Semaphore::new(MAX_CONCURRENT_UPLOAD));
+        // docs/design/frontend-auth.md §6.6: with `source = "local-ca"`
+        // the endpoint serves the CA setup page, built once here.
+        let ca_page = match tls.as_ref().and_then(|tls| tls.local_ca()) {
+            Some(ca) => Some(Arc::new(http::CaPage::new(ca, &config.tls_names())?)),
+            None => None,
+        };
         let endpoint_for = |base: &str, port: u16, names: Vec<String>| {
             let jmap = match &chat {
                 Some(chat) => {
@@ -304,6 +313,7 @@ impl Daemon {
                 sync_now: Arc::clone(store.sync_wanted()),
                 stop: stop_receiver.clone(),
                 allowed_origins: config.allowed_origins.clone(),
+                local_ca: ca_page.clone(),
                 port,
                 names,
             }))
@@ -368,6 +378,28 @@ impl Daemon {
         } else {
             None
         };
+        // docs/design/frontend-auth.md §6.6, decision mimid-1wgh.127: a
+        // device that does not trust the CA yet cannot fetch it over
+        // TLS, so this one listener serves it in the clear — and serves
+        // nothing else. Off unless `[tls.local-ca] bootstrap` names an
+        // address.
+        let ca_bootstrap = match (
+            &ca_page,
+            config
+                .tls
+                .as_ref()
+                .and_then(|tls| tls.local_ca.as_ref())
+                .and_then(|local| local.bootstrap),
+        ) {
+            (Some(page), Some(addr)) => {
+                crate::tls::warn_if_public("ca-bootstrap", addr);
+                let bind = |source| StartError::Bind { addr, source };
+                let listener = TcpListener::bind(addr).await.map_err(bind)?;
+                let local_addr = listener.local_addr().map_err(bind)?;
+                Some((listener, local_addr, Arc::clone(page)))
+            }
+            _ => None,
+        };
         let irc = match &config.irc {
             Some(setting) => {
                 // docs/design/frontend-auth.md §4.1: the IRC client's PASS
@@ -408,6 +440,7 @@ impl Daemon {
             https,
             irc,
             tailnet: tailnet.is_some(),
+            ca_bootstrap,
             tls,
             store,
             credentials,
@@ -438,6 +471,12 @@ impl Daemon {
     /// `[jmap] listen_tls`.
     pub fn https_addr(&self) -> Option<SocketAddr> {
         self.https.as_ref().map(|https| https.local_addr)
+    }
+
+    /// The address the CA bootstrap listener answers on; `None` without
+    /// `[tls.local-ca] bootstrap`.
+    pub fn ca_bootstrap_addr(&self) -> Option<SocketAddr> {
+        self.ca_bootstrap.as_ref().map(|(_, addr, _)| *addr)
     }
 
     /// The address the IRC front end listens on; `None` without `[irc]`.
@@ -490,6 +529,7 @@ impl Daemon {
             // docs/design/frontend-auth.md §4.6: an operator reading the
             // log should see that a node can log in with no credential.
             tailnet = self.tailnet,
+            ca_bootstrap = %self.ca_bootstrap_addr().map_or_else(|| "none".to_owned(), |a| a.to_string()),
             user = %self.user_uri,
             server_url = %self.server_url,
             "mimid-agent listening"
@@ -593,6 +633,16 @@ impl Daemon {
                 .await
             })
         });
+        // The CA bootstrap listener: plain HTTP, the three CA paths and a
+        // 404 on everything else (decision mimid-1wgh.127).
+        let serving_ca = self.ca_bootstrap.map(|(listener, _, page)| {
+            let mut stopping = stop.subscribe();
+            tokio::spawn(async move {
+                axum::serve(listener, http::ca_router(page))
+                    .with_graceful_shutdown(async move { stopped(&mut stopping).await })
+                    .await
+            })
+        });
         let served = match self.http {
             Some(http) => {
                 let mut stopping = stop.subscribe();
@@ -616,6 +666,21 @@ impl Daemon {
         stop.send_replace(true);
         signal.abort();
         runner.join().await;
+        let served_ca = match serving_ca {
+            Some(task) => match task.await {
+                Ok(result) => result,
+                Err(error) => {
+                    tracing::error!(
+                        name: "agent_task_panicked",
+                        task = "CA bootstrap listener",
+                        error = &error as &dyn std::error::Error,
+                        "a task of the daemon ended abnormally"
+                    );
+                    Ok(())
+                }
+            },
+            None => Ok(()),
+        };
         let served_tls = match serving_tls {
             Some(task) => match task.await {
                 Ok(result) => result,
@@ -653,7 +718,7 @@ impl Daemon {
         tracing::info!(name: "agent_stopped", "mimid-agent stopped");
         // Either listener's failure is the daemon's; the plain one first,
         // since it is the one that always exists.
-        served.and(served_tls)
+        served.and(served_tls).and(served_ca)
     }
 }
 

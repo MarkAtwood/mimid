@@ -34,6 +34,14 @@ mimid-agent-irc = { path = "../mimid-agent-irc" }
 mimid-agent-jmap = { path = "../mimid-agent-jmap" }
 # The plaintext store the daemon builds first and its front ends share.
 mimid-agent-store = { path = "../mimid-agent-store" }
+# `[tls] source = "local-ca"` (docs/design/frontend-auth.md §5.2 rank 4,
+# §6.6; bead mimid-e13m.9): the name-constrained CA and its leaf. aws-lc-rs
+# and not ring, as decision mimid-1wgh.26 picked for rustls, so the binary
+# carries one crypto backend.
+rcgen = { version = "=0.14.5", default-features = false, features = ["aws_lc_rs", "pem"] }
+# rcgen's certificate validity dates are `time::OffsetDateTime`; already in
+# the lockfile.
+time = { version = "=0.3.55", default-features = false, features = ["std"] }
 # The terminal QR code of `setup goguma` (docs/design/frontend-auth.md
 # §6.1); no image or SVG output. 0.14.1 is from 2024.
 qrcode = { version = "=0.14.1", default-features = false }
@@ -78,6 +86,10 @@ mimid-server = { path = "../mimid-server" }
 # The version and features mimid-agent-core uses.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 tempfile = "=3.23.0"
+# The local CA's name constraint is the security property of bead
+# mimid-e13m.9, so a real path verifier checks it rather than a look at
+# the DER. The version rustls already pulls in.
+webpki = { package = "rustls-webpki", version = "=0.103.15", default-features = false, features = ["std", "aws-lc-rs"] }
 # The fake Web Push client of tests/common/webpush.rs decrypts pushes
 # (RFC 8291) and checks VAPID (RFC 8292) with the crates and versions
 # mimid-agent-irc uses.

@@ -156,6 +156,16 @@
 //!   `/msg mimid tailnet` answers for the asking connection alone (bead
 //!   mimid-e13m.18); revocation is removing the node in the tailnet,
 //!   which ends its sessions within `recheck_s`.
+//! - With `[tls] source = "local-ca"` the agent is its own certificate
+//!   authority (the [`local_ca`] module; docs/design/frontend-auth.md
+//!   §5.2 rank 4, §6.6), name-constrained to the `[tls] names`, and
+//!   serves it for installing at `/mimid/ca` with no credential (decision
+//!   mimid-1wgh.127) — on every listener of the endpoint and, with
+//!   `[tls.local-ca] bootstrap`, in the clear on an address of its own
+//!   that answers nothing else, since a device that does not trust the
+//!   authority yet cannot fetch it over TLS. Renewal is by file age
+//!   rather than by reading the certificate back, there is no CRL, and
+//!   the key is ECDSA P-256 with no option for RSA.
 //! - The client is authenticated by the local token alone, not by peer
 //!   credentials on a Unix socket (the AGENTS.md crate map's "agent
 //!   socket" check): any process that can read the token file can act as
@@ -211,6 +221,7 @@ mod daemon;
 pub mod didwebvh;
 mod http;
 mod https;
+pub mod local_ca;
 mod push;
 pub mod tailnet;
 pub mod tls;

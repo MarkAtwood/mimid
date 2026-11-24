@@ -9,6 +9,7 @@
 //! | `app-password revoke <name>` | revokes it: a running daemon closes its sessions within [`crate::CREDENTIAL_RECHECK`] |
 //! | `app-password rotate-token` | writes a new `agent-token` file; a running daemon closes the old token's sessions |
 //! | `setup tls` | with `[tls] source = "tailscale"`, explains that the names go into public Certificate Transparency logs and asks before the agent may use `tailscale cert` (decision A6) |
+//! | `setup ca` | with `[tls] source = "local-ca"`: the authority's SHA-256 fingerprint and where a device fetches it (docs/design/frontend-auth.md §6.6) |
 //! | `setup <client> <device>` | asks the `setup tls` question if it is due, makes an app password named `<device>`, and prints what the IRC client needs, with a terminal QR code of the `ircs://` URL for Goguma (docs/design/frontend-auth.md §6.1, §6.2); the password never goes into the QR code |
 //!
 //! The commands open `<state_dir>/mimid.sqlite` themselves, so they work
@@ -41,7 +42,7 @@ pub enum CliError {
     Usage,
     /// The arguments are not a `setup` command.
     #[error(
-        "usage: mimid-agent <config.toml> setup tls | setup <goguma|weechat|irssi|hexchat|halloy|thelounge|generic> <device name>"
+        "usage: mimid-agent <config.toml> setup tls | setup ca | setup <goguma|weechat|irssi|hexchat|halloy|thelounge|generic> <device name>"
     )]
     SetupUsage,
     /// The credential table refused or failed.
@@ -53,6 +54,10 @@ pub enum CliError {
     /// The output could not be written.
     #[error("writing the output")]
     Output(#[from] std::io::Error),
+    /// The local certificate authority could not be read or made
+    /// (`setup ca`).
+    #[error(transparent)]
+    Tls(#[from] crate::tls::TlsError),
 }
 
 /// The credential table of `config`'s agent, opened as the CLI opens it.
@@ -203,6 +208,7 @@ pub fn setup(
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
     match words.as_slice() {
         ["tls"] => setup_tls(config, input, out),
+        ["ca"] => setup_ca(config, out),
         [client, device] if SETUP_CLIENTS.contains(client) => {
             if !tailscale_consent(config, input, out)? {
                 return Ok(());
@@ -355,6 +361,76 @@ pub fn setup(
 }
 
 /// `setup tls`.
+/// `setup ca` (docs/design/frontend-auth.md §6.6): the local
+/// authority's fingerprint, and where a device fetches it. The
+/// fingerprint is the only thing that tells a user the page they open is
+/// their own agent's, so it is printed here and shown there.
+fn setup_ca(config: &Config, out: &mut dyn Write) -> Result<(), CliError> {
+    let Some(tls) = config
+        .tls
+        .as_ref()
+        .filter(|t| t.source == TlsSource::LocalCa)
+    else {
+        writeln!(out, "Nothing to show: [tls] source is not \"local-ca\".")?;
+        return Ok(());
+    };
+    // Reads what the daemon made, or makes it, so the fingerprint is the
+    // one a device will be offered whether or not the daemon has run.
+    let ca = crate::local_ca::ensure(&config.state_dir, &tls.names)?;
+    writeln!(out, "The agent's own certificate authority")?;
+    writeln!(out)?;
+    writeln!(out, "  Covers      {}", tls.names.join(", "))?;
+    writeln!(out, "  Fingerprint {}", ca.fingerprint())?;
+    writeln!(out)?;
+    let bootstrap = tls.local_ca.as_ref().and_then(|local| local.bootstrap);
+    match (config.jmap.listen_tls, bootstrap) {
+        (_, Some(addr)) => {
+            writeln!(
+                out,
+                "  Open http://{addr}{} on each device and follow the page.",
+                crate::local_ca::CA_PATH
+            )?;
+        }
+        (Some(addr), None) => {
+            let host = tls
+                .names
+                .first()
+                .map_or_else(|| addr.ip().to_string(), std::clone::Clone::clone);
+            writeln!(
+                out,
+                "  Open https://{host}:{}{} on each device and follow the page.",
+                addr.port(),
+                crate::local_ca::CA_PATH
+            )?;
+            writeln!(out)?;
+            writeln!(
+                out,
+                "  A device that does not trust the authority yet cannot open that\n                   page over TLS. Set [tls.local-ca] bootstrap to an address to serve\n                   the same page in the clear, or copy {} across by hand.",
+                config
+                    .state_dir
+                    .join(crate::local_ca::CA_CERT_FILE)
+                    .display()
+            )?;
+        }
+        (None, None) => {
+            writeln!(
+                out,
+                "  No listener serves the page: set [jmap] listen_tls, or\n                   [tls.local-ca] bootstrap, or copy {} across by hand.",
+                config
+                    .state_dir
+                    .join(crate::local_ca::CA_CERT_FILE)
+                    .display()
+            )?;
+        }
+    }
+    writeln!(out)?;
+    writeln!(
+        out,
+        "Compare the fingerprint above with the one the page shows before trusting it."
+    )?;
+    Ok(())
+}
+
 fn setup_tls(
     config: &Config,
     input: &mut dyn BufRead,

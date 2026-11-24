@@ -22,6 +22,7 @@ fn with_https(dir: &std::path::Path, server: &common::Server) -> mimid_agent::Co
             key: fixture("server.key"),
         }),
         tailscale: None,
+        local_ca: None,
     });
     config
 }

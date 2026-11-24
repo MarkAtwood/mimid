@@ -59,6 +59,7 @@ The agent stores each credential, the agent token included, as a SCRAM-SHA-256 v
 ## Setting up a client
 
 ```sh
+mimid-agent <config.toml> setup ca                     # with source = "local-ca": the fingerprint to compare
 mimid-agent <config.toml> setup <client> <device>
 ```
 
@@ -149,7 +150,7 @@ Where the certificate of the TLS listeners comes from (docs/design/frontend-auth
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `source` | `"files"` or `"tailscale"` | required | `files`: a PEM certificate chain and key you already have. `tailscale`: tailscaled's certificate for the machine's MagicDNS name, fetched over its LocalAPI. |
+| `source` | `"files"`, `"tailscale"` or `"local-ca"` | required | `files`: a PEM certificate chain and key you already have. `tailscale`: tailscaled's certificate for the machine's MagicDNS name, fetched over its LocalAPI. `local-ca`: an authority the agent makes itself, which you install on each device (see below). |
 | `names` | list of DNS names | `[]` | The names the certificate covers. The first is the name setup prints, and with `tailscale` the one asked for, which must then be the machine's `<machine>.<tailnet>.ts.net`. Required with `tailscale`. |
 
 `[tls.files]` has `cert` and `key`, PEM paths. The agent reads them at start, and again within a minute of either changing; open connections keep the certificate they started with.
@@ -159,6 +160,29 @@ Where the certificate of the TLS listeners comes from (docs/design/frontend-auth
 **`tailscale cert` makes your names public.** Every certificate a public CA issues is published in Certificate Transparency logs, which anyone can search, so the tailnet's name and the machine's name become public. The agent therefore asks first: run `mimid-agent <config.toml> setup tls`, which explains this and asks. A yes is kept in `<state_dir>/tailscale-cert-consent` with the names; without it, or after the names change, the agent refuses to start with `source = "tailscale"`. If you do not want the names public, use your own certificate with `source = "files"`.
 
 No warning is logged before the certificate expires; a client's refusal is what shows it.
+
+#### `source = "local-ca"`
+
+For a user with neither a domain nor a tailnet. The agent makes its own certificate authority, signs a certificate for the `[tls] names` with it, and you install the authority on each device; after that your clients trust it with no warning. This is the last resort of the four, and the most work for you, which is why it is last — but the alternative is a self-signed certificate that Element X, Monal and Dino refuse outright and that warns on every other client, every time.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `bootstrap` | socket address | none | A plain-HTTP address serving the install page and nothing else. Off by default. |
+
+In the state directory: `local-ca.key` (0600) and `local-ca.pem`, the authority; `local-ca-leaf.key` (0600) and `local-ca-leaf.pem`, the listener's; `local-ca.names`, what they were made for.
+
+- **The authority is name-constrained** to exactly the `[tls] names`, as DNS-name and IP-address permitted subtrees with a path length of 0. A device that trusts it trusts nothing else it could sign — not another name, and not another authority under it.
+- **The certificate lasts 90 days** and is made again once its file is 60 days old. The authority lasts 10 years and nothing renews it: at that point the agent makes a new one and you install it again.
+- **The certificate is kept** across restarts, not made fresh each time, because Goguma and Conversations remember the one they first saw and would ask again otherwise.
+- **Changing `[tls] names` remakes both**, since neither the constraint nor the certificate would cover the new names, and you install the new authority.
+
+To install it, run `mimid-agent <config.toml> setup ca`, which prints the authority's SHA-256 fingerprint and the address to open. The page at `/mimid/ca` offers the certificate as `.crt` and as an Apple configuration profile, and shows the same fingerprint: **compare the two before trusting it.** The page needs no credential — its content is the authority certificate, which the TLS listener already sends in every handshake.
+
+A device that does not trust the authority yet cannot open that page over TLS, which is what `bootstrap` is for: it serves the same page in the clear, on an address you name, and answers 404 on every other path. It is off by default; the other way is to copy `local-ca.pem` across by hand.
+
+Per-device steps are on the page: on iOS, install the profile and then turn it on in Certificate Trust Settings (it is not trusted until that second step); on Android, install the `.crt` and accept the warning, though Goguma and Conversations do not need it; on a computer, add the `.crt` to the system store or point the client at it.
+
+There is no revocation: a certificate expires rather than being revoked, which for one listener on one host is all there is to want.
 
 ### `[did_webvh]`
 

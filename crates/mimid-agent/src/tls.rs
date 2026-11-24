@@ -85,6 +85,9 @@ pub struct TlsSetting {
     /// `[tls.tailscale]`, optional with `source = "tailscale"`.
     #[serde(default)]
     pub tailscale: Option<TailscaleSetting>,
+    /// `[tls.local-ca]`, optional with `source = "local-ca"`.
+    #[serde(default, rename = "local-ca")]
+    pub local_ca: Option<crate::local_ca::LocalCaSetting>,
 }
 
 /// `[tls] source`.
@@ -96,6 +99,11 @@ pub enum TlsSource {
     Files,
     /// tailscaled's LocalAPI.
     Tailscale,
+    /// A certificate authority of the agent's own, which the user
+    /// installs on each device (the [`crate::local_ca`] module;
+    /// docs/design/frontend-auth.md §5.2 rank 4).
+    #[serde(rename = "local-ca")]
+    LocalCa,
 }
 
 /// `[tls.files]`.
@@ -142,6 +150,11 @@ impl TlsSetting {
             }
             TlsSource::Tailscale if self.names.is_empty() => {
                 Err("[tls] source = \"tailscale\" needs names, the machine's MagicDNS name first")
+            }
+            // The CA is name-constrained to them, so there is nothing to
+            // make without them (docs/design/frontend-auth.md §5.2).
+            TlsSource::LocalCa if self.names.is_empty() => {
+                Err("[tls] source = \"local-ca\" needs names: the CA is constrained to them")
             }
             _ => Ok(()),
         }
@@ -205,6 +218,19 @@ pub enum TlsError {
         /// The configured names.
         names: String,
     },
+    /// A file could not be written (the local CA's own files).
+    #[error("cannot write {}", path.display())]
+    Write {
+        /// The file.
+        path: PathBuf,
+        /// Why.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The local certificate authority could not be made or read
+    /// (`source = "local-ca"`; the [`crate::local_ca`] module).
+    #[error("[tls] source = \"local-ca\": {0}")]
+    LocalCa(String),
 }
 
 /// The certificate in use, swapped when a new one arrives.
@@ -402,6 +428,13 @@ pub struct Tls {
     setting: TlsSetting,
     certificates: Arc<Certificates>,
     config: Arc<ServerConfig>,
+    /// With `source = "local-ca"`: the authority, for the setup page
+    /// (§6.6). Its leaf is renewed while the agent runs; the CA itself
+    /// does not change, because its name constraints are the configured
+    /// names and those are read once.
+    local_ca: Option<crate::local_ca::LocalCa>,
+    /// The state directory, for making a leaf again.
+    state_dir: PathBuf,
 }
 
 impl Tls {
@@ -412,6 +445,7 @@ impl Tls {
     ///
     /// [`TlsError`].
     pub async fn start(setting: &TlsSetting, state_dir: &Path) -> Result<Self, TlsError> {
+        let mut local_ca = None;
         let key = match setting.source {
             TlsSource::Files => {
                 let files = setting.files.as_ref().ok_or_else(|| TlsError::Pem {
@@ -428,6 +462,15 @@ impl Tls {
                 }
                 load_tailscale(&setting.tailscale_socket(), &setting.names[0]).await?
             }
+            TlsSource::LocalCa => {
+                let ca = crate::local_ca::ensure(state_dir, &setting.names)?;
+                local_ca = Some(ca.clone());
+                certified_key(
+                    &ca.chain_pem,
+                    &ca.key_pem,
+                    "the local certificate authority's certificate",
+                )?
+            }
         };
         let certificates = Arc::new(Certificates {
             current: RwLock::new(Arc::new(key)),
@@ -437,11 +480,28 @@ impl Tls {
             .map_err(TlsError::Key)?
             .with_no_client_auth()
             .with_cert_resolver(Arc::clone(&certificates) as Arc<dyn ResolvesServerCert>);
+        if let Some(ca) = &local_ca {
+            tracing::info!(
+                name: "agent_local_ca_in_use",
+                names = %setting.names.join(", "),
+                fingerprint = %ca.fingerprint(),
+                "the local certificate authority is in use; install it on each device"
+            );
+        }
         Ok(Self {
             setting: setting.clone(),
             certificates,
             config: Arc::new(config),
+            local_ca,
+            state_dir: state_dir.to_owned(),
         })
+    }
+
+    /// The local certificate authority, with `source = "local-ca"`: what
+    /// the setup page at [`crate::local_ca::CA_PATH`] serves (§6.6).
+    #[must_use]
+    pub fn local_ca(&self) -> Option<&crate::local_ca::LocalCa> {
+        self.local_ca.as_ref()
     }
 
     /// The rustls configuration every TLS listener shares.
@@ -459,7 +519,7 @@ impl Tls {
                 RELOAD_FILES_EVERY,
                 self.setting.files.as_ref().and_then(files_changed_at),
             ),
-            TlsSource::Tailscale => (RELOAD_TAILSCALE_EVERY, None),
+            TlsSource::Tailscale | TlsSource::LocalCa => (RELOAD_TAILSCALE_EVERY, None),
         };
         loop {
             tokio::select! {
@@ -478,6 +538,18 @@ impl Tls {
                 (TlsSource::Files, None) => continue,
                 (TlsSource::Tailscale, _) => {
                     load_tailscale(&self.setting.tailscale_socket(), &self.setting.names[0]).await
+                }
+                // `ensure` makes a new leaf once the old one is past
+                // `RENEW_AFTER_DAYS` and otherwise hands back what is
+                // there, so this is both the renewal and a no-op.
+                (TlsSource::LocalCa, _) => {
+                    crate::local_ca::ensure(&self.state_dir, &self.setting.names).and_then(|ca| {
+                        certified_key(
+                            &ca.chain_pem,
+                            &ca.key_pem,
+                            "the local certificate authority's certificate",
+                        )
+                    })
                 }
             };
             match loaded {
