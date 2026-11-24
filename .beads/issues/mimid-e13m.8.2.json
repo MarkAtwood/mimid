@@ -1,0 +1,26 @@
+{
+  "id": "mimid-e13m.8.2",
+  "title": "ACME DNS-01 through acme-dns, so any DNS provider works after one CNAME",
+  "description": "Split out of bead mimid-e13m.8, which built the ACME core and\n`dns = \"hook\"`. docs/design/frontend-auth.md §5.2 rank 2 names acme-dns as\nthe third way to write the DNS-01 TXT record, and the one that \"turns any\nprovider into one that works, after one CNAME by hand\".\n\nHOW IT WORKS. acme-dns is a small DNS server made for exactly this. The\nuser registers once, gets a subdomain and credentials, and puts a CNAME\nfrom `_acme-challenge.chat.example.org` at it. From then on the agent\nPOSTs the challenge value to the acme-dns instance's `/update` with its\ncredentials, and acme-dns serves the TXT record. The agent never touches\nthe real zone, and the credentials can only write that one subdomain,\nwhich is why §5.2 ranks it as it does.\n\nWHAT IT NEEDS. An HTTP POST with two headers (`X-Api-User`,\n`X-Api-Key`) and a JSON body of the subdomain and the value. That is\nsmall: the agent already has an HTTP client, and the `acme` module already\nhas the seam (`write_record`, which the hook method goes through).\nEstimate 100 lines with tests, which is why this is worth doing and bead\nmimid-e13m.8.1 (RFC 2136) may not be.\n\nCONFIGURATION, extending §5.3:\n\n    [tls.acme]\n    dns = \"acme-dns\"\n    acme-dns = { url = \"https://auth.acme-dns.io\", username = \"...\",\n                 password = \"...\", subdomain = \"...\" }\n\nThe password is a secret: redacted in Debug, never logged, and the table\nis better read from a file the registration wrote than pasted into the\nconfiguration -- decide which when writing it.\n\nTESTS, OFFLINE. A fake acme-dns over the same hand-rolled HTTPS server\ntests/acme.rs already has for the fake ACME authority, asserting the two\nheaders and the body, and that a refusal fails the order rather than\nletting it go on to a challenge the authority will fail.\n\nDEPENDS ON mimid-e13m.8's core, which is built.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T20:46:25.295605643Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T20:46:25.295605643Z",
+  "labels": [
+    "agent",
+    "auth"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-e13m.8.2",
+      "depends_on_id": "mimid-e13m.8",
+      "type": "parent-child",
+      "created_at": "2026-11-24T20:46:25.340423987Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

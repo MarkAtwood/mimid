@@ -34,6 +34,7 @@ fn with_local_ca(
         local_ca: Some(mimid_agent::local_ca::LocalCaSetting {
             bootstrap: bootstrap.then(|| "127.0.0.1:0".parse().unwrap()),
         }),
+        acme: None,
     });
     config
 }

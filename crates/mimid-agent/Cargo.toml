@@ -34,6 +34,16 @@ mimid-agent-irc = { path = "../mimid-agent-irc" }
 mimid-agent-jmap = { path = "../mimid-agent-jmap" }
 # The plaintext store the daemon builds first and its front ends share.
 mimid-agent-store = { path = "../mimid-agent-store" }
+# `[tls] source = "acme"` (docs/design/frontend-auth.md §5.2 rank 2; bead
+# mimid-e13m.8): the ACME client. It takes any challenge type, so DNS-01
+# is mimid's code. aws-lc-rs for the one crypto backend (decision
+# mimid-1wgh.26), and `rcgen` so it builds the CSR with the rcgen below
+# rather than pulling a second copy.
+instant-acme = { version = "=0.8.5", default-features = false, features = [
+    "aws-lc-rs",
+    "hyper-rustls",
+    "rcgen",
+] }
 # `[tls] source = "local-ca"` (docs/design/frontend-auth.md §5.2 rank 4,
 # §6.6; bead mimid-e13m.9): the name-constrained CA and its leaf. aws-lc-rs
 # and not ring, as decision mimid-1wgh.26 picked for rustls, so the binary

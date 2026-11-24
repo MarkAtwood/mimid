@@ -188,6 +188,7 @@ fn with_irc_tls(dir: &std::path::Path, server: &common::Server) -> mimid_agent::
         }),
         tailscale: None,
         local_ca: None,
+        acme: None,
     });
     config
 }
@@ -334,6 +335,7 @@ async fn tailscale_cert_is_used_only_after_the_user_agreed() {
             socket: socket.clone(),
         }),
         local_ca: None,
+        acme: None,
     });
     let refused = mimid_agent::Daemon::start(&config).await;
     assert!(

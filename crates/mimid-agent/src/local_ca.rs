@@ -534,14 +534,23 @@ fn read(path: &Path) -> Result<Vec<u8>, TlsError> {
     })
 }
 
-/// Writes `bytes` to `path` with mode 0600: a private key.
-fn write_secret(path: &PathBuf, bytes: &[u8]) -> Result<(), TlsError> {
+/// Writes `bytes` to `path` with mode 0600: a private key. Shared with
+/// the [`crate::acme`] module, which keeps its files beside these.
+///
+/// # Errors
+///
+/// [`TlsError::Write`].
+pub(crate) fn write_secret(path: &PathBuf, bytes: &[u8]) -> Result<(), TlsError> {
     write_with_mode(path, bytes, 0o600)
 }
 
 /// Writes `bytes` to `path` with mode 0644: a certificate, which is
 /// public (decision mimid-1wgh.127).
-fn write_public(path: &PathBuf, bytes: &[u8]) -> Result<(), TlsError> {
+///
+/// # Errors
+///
+/// [`TlsError::Write`].
+pub(crate) fn write_public(path: &PathBuf, bytes: &[u8]) -> Result<(), TlsError> {
     write_with_mode(path, bytes, 0o644)
 }
 

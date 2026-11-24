@@ -23,6 +23,7 @@ fn with_https(dir: &std::path::Path, server: &common::Server) -> mimid_agent::Co
         }),
         tailscale: None,
         local_ca: None,
+        acme: None,
     });
     config
 }

@@ -151,7 +151,7 @@ Where the certificate of the TLS listeners comes from (docs/design/frontend-auth
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `source` | `"files"`, `"tailscale"` or `"local-ca"` | required | `files`: a PEM certificate chain and key you already have. `tailscale`: tailscaled's certificate for the machine's MagicDNS name, fetched over its LocalAPI. `local-ca`: an authority the agent makes itself, which you install on each device (see below). |
+| `source` | `"files"`, `"tailscale"`, `"acme"` or `"local-ca"` | required | `files`: a PEM certificate chain and key you already have. `tailscale`: tailscaled's certificate for the machine's MagicDNS name, fetched over its LocalAPI. `acme`: a publicly trusted certificate from an ACME authority over DNS-01, if you have a domain. `local-ca`: an authority the agent makes itself, which you install on each device (see below). |
 | `names` | list of DNS names | `[]` | The names the certificate covers. The first is the name setup prints, and with `tailscale` the one asked for, which must then be the machine's `<machine>.<tailnet>.ts.net`. Required with `tailscale`. |
 
 `[tls.files]` has `cert` and `key`, PEM paths. The agent reads them at start, and again within a minute of either changing; open connections keep the certificate they started with.
@@ -161,6 +161,32 @@ Where the certificate of the TLS listeners comes from (docs/design/frontend-auth
 **`tailscale cert` makes your names public.** Every certificate a public CA issues is published in Certificate Transparency logs, which anyone can search, so the tailnet's name and the machine's name become public. The agent therefore asks first: run `mimid-agent <config.toml> setup tls`, which explains this and asks. A yes is kept in `<state_dir>/tailscale-cert-consent` with the names; without it, or after the names change, the agent refuses to start with `source = "tailscale"`. If you do not want the names public, use your own certificate with `source = "files"`.
 
 No warning is logged before the certificate expires; a client's refusal is what shows it.
+
+#### `source = "acme"`
+
+A publicly trusted certificate from an ACME authority, renewed without you, for a user who has a domain. Nothing is installed on any device. `[tls] names` are the names it is ordered for, all in one certificate, and they have to be names you control the DNS for.
+
+**DNS-01 only.** HTTP-01 and TLS-ALPN-01 need the agent reachable on port 80 or 443 from the internet, which a personal agent usually is not. DNS-01 needs no inbound connection, so it works for a name pointing at a tailnet or WireGuard address — but something has to write a TXT record at `_acme-challenge.<name>`, which `dns` picks.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `directory` | https URL | required | The authority's directory, e.g. `https://acme-v02.api.letsencrypt.org/directory`. |
+| `contact` | string | none | A contact URI for the account, e.g. `mailto:you@example.org`. |
+| `dns` | `"hook"` | `"hook"` | How the TXT record is written. |
+| `hook` | path | required with `dns = "hook"` | A command called with the record's name and value. |
+| `root` | path | none | A PEM root to trust for the directory instead of the public roots, for a private authority (Boulder, Pebble, step-ca). |
+
+The hook is your command, the way lego's, acme.sh's and certbot's manual hooks work: the agent runs it with two arguments, the record's name and its value, and takes a zero exit as "the record is live". **It does not look the record up to confirm**, so a hook that returns before its provider has published leaves the authority to fail the challenge, and the order starts over. Give it up to two minutes.
+
+```sh
+#!/bin/sh
+# $1 is _acme-challenge.chat.example.org, $2 is the value
+your-dns-tool txt set "$1" "$2" && sleep 10
+```
+
+In the state directory: `acme-account.json` (0600), the account, so the same one is used at every start; `acme-cert.pem` and `acme-key.pem` (0600), the certificate. A new certificate is ordered once two thirds of the assumed 90-day lifetime has passed, which is Let's Encrypt's advice.
+
+**Not here yet:** the other two ways §5.2 names of writing the record — an RFC 2136 dynamic update with a TSIG key, and acme-dns. Only `dns = "hook"` works today. If you would rather not write a hook, `source = "files"` with certbot and a cron line does the same job.
 
 #### `source = "local-ca"`
 

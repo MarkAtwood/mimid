@@ -88,6 +88,9 @@ pub struct TlsSetting {
     /// `[tls.local-ca]`, optional with `source = "local-ca"`.
     #[serde(default, rename = "local-ca")]
     pub local_ca: Option<crate::local_ca::LocalCaSetting>,
+    /// `[tls.acme]`, required with `source = "acme"`.
+    #[serde(default)]
+    pub acme: Option<crate::acme::AcmeSetting>,
 }
 
 /// `[tls] source`.
@@ -104,6 +107,9 @@ pub enum TlsSource {
     /// docs/design/frontend-auth.md §5.2 rank 4).
     #[serde(rename = "local-ca")]
     LocalCa,
+    /// An ACME authority over DNS-01, for a user with a domain (the
+    /// [`crate::acme`] module; §5.2 rank 2).
+    Acme,
 }
 
 /// `[tls.files]`.
@@ -156,6 +162,13 @@ impl TlsSetting {
             TlsSource::LocalCa if self.names.is_empty() => {
                 Err("[tls] source = \"local-ca\" needs names: the CA is constrained to them")
             }
+            TlsSource::Acme if self.names.is_empty() => {
+                Err("[tls] source = \"acme\" needs names: they are what the order is for")
+            }
+            TlsSource::Acme => match &self.acme {
+                Some(acme) => acme.check(),
+                None => Err("[tls] source = \"acme\" needs [tls.acme] directory"),
+            },
             _ => Ok(()),
         }
     }
@@ -231,6 +244,10 @@ pub enum TlsError {
     /// (`source = "local-ca"`; the [`crate::local_ca`] module).
     #[error("[tls] source = \"local-ca\": {0}")]
     LocalCa(String),
+    /// The ACME authority, or the DNS method answering its challenge,
+    /// refused (`source = "acme"`; the [`crate::acme`] module).
+    #[error("[tls] source = \"acme\": {0}")]
+    Acme(String),
 }
 
 /// The certificate in use, swapped when a new one arrives.
@@ -471,6 +488,17 @@ impl Tls {
                     "the local certificate authority's certificate",
                 )?
             }
+            TlsSource::Acme => {
+                let acme = setting.acme.as_ref().ok_or_else(|| {
+                    TlsError::Acme("[tls] source = \"acme\" needs [tls.acme]".to_owned())
+                })?;
+                let got = crate::acme::ensure(acme, state_dir, &setting.names).await?;
+                certified_key(
+                    &got.chain_pem,
+                    &got.key_pem,
+                    "the ACME authority's certificate",
+                )?
+            }
         };
         let certificates = Arc::new(Certificates {
             current: RwLock::new(Arc::new(key)),
@@ -519,7 +547,9 @@ impl Tls {
                 RELOAD_FILES_EVERY,
                 self.setting.files.as_ref().and_then(files_changed_at),
             ),
-            TlsSource::Tailscale | TlsSource::LocalCa => (RELOAD_TAILSCALE_EVERY, None),
+            TlsSource::Tailscale | TlsSource::LocalCa | TlsSource::Acme => {
+                (RELOAD_TAILSCALE_EVERY, None)
+            }
         };
         loop {
             tokio::select! {
@@ -551,6 +581,24 @@ impl Tls {
                         )
                     })
                 }
+                // `ensure` asks the authority only once the certificate
+                // is past two thirds of its life, and otherwise hands
+                // back what is there, so this is both the renewal and a
+                // no-op (the `acme` module).
+                (TlsSource::Acme, _) => match &self.setting.acme {
+                    Some(acme) => {
+                        match crate::acme::ensure(acme, &self.state_dir, &self.setting.names).await
+                        {
+                            Ok(got) => certified_key(
+                                &got.chain_pem,
+                                &got.key_pem,
+                                "the ACME authority's certificate",
+                            ),
+                            Err(error) => Err(error),
+                        }
+                    }
+                    None => continue,
+                },
             };
             match loaded {
                 Ok(key) => {

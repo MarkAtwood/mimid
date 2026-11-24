@@ -32,7 +32,7 @@
 //! recheck_s = 300                         # re-ask about open sessions
 //!
 //! [tls]                                   # needed by any listen_tls
-//! source = "files"                        # or "tailscale", "local-ca"
+//! source = "files"                        # or "tailscale", "acme", "local-ca"
 //! names = ["chat.example.org"]            # the first is what setup prints
 //! [tls.files]
 //! cert = "/etc/ssl/chat/fullchain.pem"
