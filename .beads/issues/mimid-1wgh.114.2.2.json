@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.114.2.2",
   "title": "Bump mimid's crate-jmap pin: MemoryBackend's CallerCtx is now an Id, not ()",
   "description": "Measured 2026-11-23, on a throwaway branch, because the VTC surface of\nbead mimid-1wgh.114.2 needs jmap-vtc-types and mimid cannot see it.\n\nWHERE MIMID IS: six manifests pin crate-jmap at\ne4d206ea400b7a65001bd62e393d9efbca744db8, 18 dependency entries in all.\nThat is 288 commits behind, across the 0.6.2 release, and the\nworkspace's own changelog says \"a minor bump may break the API\".\n\nWHAT THE BUMP COSTS, measured rather than guessed: `cargo check\n--workspace --all-features` against 166aa504 gives 28 errors, all in\nmimid-agent-jmap, and all ONE root cause:\n\n  error[E0271]: type mismatch resolving\n    `\u003cMemoryBackend as JmapAccounts\u003e::CallerCtx == ()`\n    expected `()`, found `Id`\n\njmap-server's MemoryBackend now takes the caller as an `Id` rather than\n`()`. mimid-agent-jmap passes `()` everywhere, because its clients are\nauthenticated before they reach the dispatcher and there was nothing to\ncarry.\n\nTHE SHAPE OF THE MIGRATION:\n- AgentChat's `type CallerCtx = ()` becomes `Id` (one declaration).\n- 34 `\u0026()` call sites in mimid-agent-jmap/src.\n- 18 `Dispatcher\u003c()\u003e` sites across mimid-agent-jmap's src and tests and\n  mimid-agent's http.rs.\n- mimid-agent's loopback HTTP layer must supply the caller's Id. It\n  already authenticates the bearer credential before dispatch\n  (docs/design/frontend-auth.md §3), so the value is in hand: the\n  account's user URI. What needs deciding is whether the Id is the user\n  URI or the account id, and the two are different strings in mimid.\n\nNOT A BLOCKER FOR THE DEMO IF IT HAS TO WAIT: signalling and the media\nsecret are built and tested at the store level (bead mimid-1wgh.114.5),\nand mimid's VtcOptions with ParlorVTC's relays is written. What the bump\nunblocks is serving them over JMAP, which is what a stock client needs.\n\nDO IT AS ITS OWN COMMIT, before any VtcBackend work, so that a\ndependency upgrade and a feature are not tangled in one diff.\n",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-24T01:28:24.188152372Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-24T01:28:24.188152372Z",
+  "updated_at": "2026-11-24T03:37:31.262894403Z",
+  "closed_at": "2026-11-24T03:37:31.262894403Z",
+  "close_reason": "Done: mimid commit e701a60e. CallerCtx is an Id, 19 pins moved, 34 call sites plus the trait signatures, twelve test files and the agent's HTTP dispatch. Full suite 215 suites / 2045 tests green.",
   "labels": [
     "human"
   ],
