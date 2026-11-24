@@ -2,13 +2,15 @@
   "id": "mimid-6ux4",
   "title": "Rotate mimid's local_token on mimi.reviewcommit.com (printed into a session transcript)",
   "description": "2026-11-22: while auditing the interop host I dumped\n/etc/mimid/mimid.toml wholesale to inspect its sections, and the\nlocal_token value was printed into the session transcript. AGENTS.md:\n\"Secrets never reach logs\". My error; reported rather than left quiet.\n\nWhat it is: the provider's loopback bearer credential for\nlocal_listen = 127.0.0.1:8099 on dokr. Reaching it needs code execution\non the host or an SSH session, so this is not remotely exploitable on\nits own, but it is a live credential now sitting in a transcript.\n\nRotate it: generate a new 32-octet hex value, write it to\n/etc/mimid/mimid.toml (0600, root), restart mimid, and update anything\nholding the old one. Note the agent's own token is separate\n(/etc/mimid-agent/agent.toml) and was not exposed.\n\nAlso worth doing while there: the attachment link key is derived from\nthe AGENT's local token (HMAC-SHA256(local token,\n'mimid-attachment-link-key-v1'), decision mimid-1wgh.88), so rotating\nan agent token revokes every outstanding attachment link. That is the\nagent's token, not this one, so this rotation does not invalidate links.\n\nProcedure for next time, already adopted: read only section names and\nkey names from a remote config (grep '^\\[' and the key names), never the\nwhole file.",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-23T01:39:06.269441419Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-23T01:39:06.269441419Z",
+  "updated_at": "2026-11-24T01:22:37.260297454Z",
+  "closed_at": "2026-11-24T01:22:37.260297454Z",
+  "close_reason": "Mark is handling the rotation himself (2026-11-23). Closed at his instruction, not because the credential has been rotated: the local_token printed into the 2026-11-22 transcript is live until he changes it on dokr. The procedure and the scope are in the description above if anyone needs them later.",
   "labels": [
     "human"
   ]
