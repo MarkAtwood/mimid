@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.114.5",
+  "title": "VTC in mimid: carry the SDP in the call room, which authenticates it and makes the 1:1 demo need no media key",
+  "description": "From reading MarkAtwood/ParlorVTC on 2026-11-23 at Mark's suggestion.\nParlor is a 1:1 asymmetric voice queue: two HTML files, no server, no\nbuild step, ~1100 lines of ES modules, WebRTC P2P voice, and signalling\nover public Nostr relays.\n\nTHE IDEA WORTH TAKING. Parlor carries the WebRTC offer, answer and ICE\ncandidates inside NIP-04 encrypted direct messages (NIP-PARLOR.md\n\"Queue and Signaling Messages (kind:4)\"): the relay carries signalling it\ncannot read, and the media never touches it. The analogue for mimid is\nexact and better: carry the SDP as MIMI messages IN THE CALL ROOM. The\ncall room stops being only a key source and becomes the signalling\nchannel, which it is already suited to -- E2EE, ordered by the hub,\nfanned out to exactly the call's members and nobody else.\n\nWHAT MIMI GETS THAT PARLOR CANNOT HAVE. Parlor's SPEC §Authentication\nsays \"All Nostr events are signed with sender's Ed25519 key... No\nadditional authentication layer needed\", but a supplicant's key is\nephemeral and generated per session, and §Impersonation concedes\n\"Supplicants are anonymous by design\". So the host cannot know who\ncalled. In MIMI the SDP travels inside the MLS group, so THE DTLS\nFINGERPRINTS IN IT ARE AUTHENTICATED BY MLS, bound to the sender's\ncredential identity. No short authentication string, no reading a\nfingerprint aloud. draft-atwood-jmap-vtc's e2eeFingerprint field and\njmap-vtc-e2ee-guide.md §8 \"Fingerprint verification\" are both\nunnecessary for a MIMI-backed call, because MLS has already done it.\nThat is a demonstrable advantage and belongs in the draft.\n\nAND IT REORDERS THE BUILD. WebRTC peer-to-peer is DTLS-SRTP, which is\nalready end-to-end encrypted between two peers. So a 1:1 call needs NO\nmedia_secret, NO SFrame and NO SFU: SDP over MIMI messages plus WebRTC is\na working, authenticated, end-to-end encrypted call. media_secret is\nneeded when media passes through an SFU, which is the GROUP case.\n\nThat means the shortest path to the demo is SIGNALLING, not keying, and\nwe built keying first (bead mimid-1wgh.108). Not wasted -- it is what\nmakes the group case work and it is what draft-atwood-mimi-calls is\nabout -- but the 1:1 demo is reachable sooner than the build order on\ndecision mimid-1wgh.113 implies.\n\nWHERE THE SDP GOES, and it is spec-correct rather than a repurposing.\nmimi-content-10 §5.10: \"a description of a multimedia session, or a URI\nused to join one\". Everything so far has used the SECOND half, the join\nURI (bead mimid-1wgh.114.3). The FIRST half is the slot for SDP, and\nnobody has used it. mimid already anticipates it and declines: our\ncontent.rs says \"Any other inline session description (SDP, say) is left\nout\", and draft-atwood-jmap-chat-mimi-00 §Calls says such a part \"maps to\nno MessageAction, because JMAP Chat has no field for one\". So the\ncontainer exists, we already parse around it, and using it is the\nopposite of the mimi:// mistake of bead mimid-1wgh.114.1.\n\nTHE PART THAT CANNOT BE PEER-TO-PEER: TURN. Parlor hardcodes Jami's\npublic servers with the credentials ring/ring, and its SPEC is straight\nabout the consequence -- \"TURN servers know: IP addresses of call\nparticipants, that encrypted bytes are flowing\". For mimid that is a\ndeployment configuration item and a Security Considerations line, and it\nis the one third party no amount of MLS removes.\n\nSHAPE WORTH COPYING: no build step, no dependencies, no npm, runs from\nfile://. A mimid demo client could be the same -- a static page speaking\nJMAP to the local agent and WebRTC to the peer. That does not breach\ndecision mimid-1wgh.38 (mimid ships no UI) if it lives in its own repo or\nas a test fixture rather than inside mimid.\n\nWHAT PARLOR DOES NOT SOLVE: groups. It is one host and a queue of\nvisitors, one call at a time, so it never needs a group key and never\nfaces the problem draft-atwood-mimi-calls exists for. The MLS work is\nexactly where Parlor stops.\n\nDECISION FOR MARK: whether signalling goes before keying in the build\norder, and whether the SDP-in-§5.10 mapping goes into\ndraft-atwood-jmap-chat-mimi §Calls, which currently says we map no\nsession description at all.\n",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T00:18:50.285701336Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T00:18:50.285701336Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.114.5",
+      "depends_on_id": "mimid-1wgh.114",
+      "type": "parent-child",
+      "created_at": "2026-11-24T00:18:50.322840658Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
