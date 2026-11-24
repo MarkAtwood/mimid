@@ -52,9 +52,11 @@
 //!
 //! Renewal is the certificate's own schedule: the agent asks again once
 //! the certificate is past [`RENEW_AFTER`] of its lifetime, which is Let's
-//! Encrypt's advice and what tailscaled follows. As with `local-ca`, the
-//! agent does not read its own certificate back, so "past two thirds" is
-//! measured from the file's age against [`ASSUMED_LIFETIME`].
+//! Encrypt's advice and what tailscaled follows. The lifetime is the
+//! certificate's own, read from its leaf ([`crate::validity`]), so a
+//! short-lived profile renews on its own schedule; [`ASSUMED_LIFETIME`]
+//! against the file's age is only the fallback for a certificate whose
+//! dates cannot be read.
 //!
 //! # Limitations
 //!
@@ -65,12 +67,11 @@
 //!   the record itself, so there is no provider to propagate through, but
 //!   the CNAME the user set up by hand is not checked and a missing one
 //!   shows only as the authority failing the challenge.
-//! - **Renewal is by file age**, not by the certificate's own `notAfter`
-//!   nor by ARI (`instant-acme`'s `renewal_info`, which needs its `time`
-//!   feature). A certificate issued for an unusual lifetime is therefore
-//!   renewed on the wrong schedule, and the first attempt after a failure
-//!   waits [`RETRY_AFTER`] rather than backing off per RFC 8555's
-//!   `Retry-After`.
+//! - **No ARI** (`instant-acme`'s `renewal_info`, which needs its `time`
+//!   feature): renewal is at [`RENEW_AFTER`] of the certificate's own
+//!   lifetime, not at the window the authority suggests. The first
+//!   attempt after a failure also waits [`RETRY_AFTER`] rather than
+//!   backing off per RFC 8555's `Retry-After`.
 //! - **The hook is trusted completely.** It runs as the agent, with the
 //!   record name and value as arguments, and its zero exit is taken as
 //!   proof the record is live. The agent does not look up the record to
@@ -108,8 +109,8 @@ pub const KEY_FILE: &str = "acme-key.pem";
 /// follows (§5.2).
 pub const RENEW_AFTER: f64 = 2.0 / 3.0;
 
-/// The lifetime a certificate is assumed to have, since the agent does
-/// not read its own certificate back. Let's Encrypt issues 90 days.
+/// The lifetime a certificate is assumed to have when its own dates
+/// cannot be read. Let's Encrypt's classic profile issues 90 days.
 /// INVENTED.
 pub const ASSUMED_LIFETIME: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 
@@ -281,17 +282,53 @@ pub async fn ensure(
     Ok(fresh)
 }
 
-/// Whether `path`'s certificate is far enough through [`ASSUMED_LIFETIME`]
-/// to ask for another, or cannot be read, which also wants a new one.
+/// Whether `path`'s certificate is far enough through its lifetime to ask
+/// for another, or cannot be read, which also wants a new one.
+///
+/// The lifetime is the certificate's own, from the `notBefore` and
+/// `notAfter` of its leaf ([`crate::validity`]), so a short-lived
+/// certificate renews on its own schedule rather than a 90-day one. Let's
+/// Encrypt's six-day profile is the case that matters: measured against
+/// [`ASSUMED_LIFETIME`] it would renew 54 days after it had expired.
+/// The file's age against [`ASSUMED_LIFETIME`] stays as the fallback for
+/// a certificate whose dates cannot be read.
 fn past_renewal(path: &Path) -> bool {
+    let now = SystemTime::now();
+    if let Some(validity) = leaf_validity(path) {
+        // Past `notAfter` is past renewal whatever the lifetime says.
+        let Ok(left) = validity.not_after.duration_since(now) else {
+            return true;
+        };
+        if let Some(lifetime) = validity.lifetime() {
+            // `RENEW_AFTER` of the way through is the same as having
+            // less than the remaining fraction left, and comparing what
+            // is left avoids trusting the clock against `notBefore`,
+            // which a certificate issued with backdating moves.
+            return left.as_secs_f64() < lifetime.as_secs_f64() * (1.0 - RENEW_AFTER);
+        }
+        // `notAfter` before `notBefore`: nothing sensible to measure
+        // against, so fall through to the file's age.
+    }
     let Ok(modified) = std::fs::metadata(path).and_then(|meta| meta.modified()) else {
         return true;
     };
-    let Ok(age) = SystemTime::now().duration_since(modified) else {
+    let Ok(age) = now.duration_since(modified) else {
         // A file from the future: leave it alone rather than churn.
         return false;
     };
     age.as_secs_f64() > ASSUMED_LIFETIME.as_secs_f64() * RENEW_AFTER
+}
+
+/// The validity of the leaf in the PEM chain at `path`, or `None` if the
+/// file or the certificate cannot be read.
+fn leaf_validity(path: &Path) -> Option<crate::validity::Validity> {
+    use rustls::pki_types::pem::PemObject;
+
+    let pem = std::fs::read(path).ok()?;
+    // The leaf is first in the chain (RFC 8555 §7.4.2 hands it back that
+    // way, as does every authority).
+    let leaf = rustls::pki_types::CertificateDer::from_pem_slice(&pem).ok()?;
+    crate::validity::validity(&leaf).ok()
 }
 
 /// The whole order, from the account to the certificate.
@@ -595,6 +632,51 @@ mod tests {
         }
     }
 
+    /// A PEM leaf with `days` of life left, written to `path`. rcgen
+    /// encodes it, so the dates the parser reads back come from another
+    /// implementation.
+    fn leaf_with(path: &Path, lifetime_days: i64, left_days: i64) {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(vec!["mimid.example".to_owned()]).unwrap();
+        let now = time::OffsetDateTime::now_utc();
+        params.not_after = now + time::Duration::days(left_days);
+        params.not_before = params.not_after - time::Duration::days(lifetime_days);
+        let issued = params.self_signed(&key).unwrap();
+        std::fs::write(path, issued.pem()).unwrap();
+    }
+
+    /// Oracle: §5.2 rank 2 and §5.4: renewal at [`RENEW_AFTER`] of the
+    /// certificate's **own** lifetime. Measured against
+    /// [`ASSUMED_LIFETIME`] instead, a short-lived certificate would be
+    /// renewed long after it had expired, which is the bug this reads
+    /// the dates to avoid: Let's Encrypt's six-day profile needs renewing
+    /// after four days, not after sixty.
+    #[test]
+    fn renewal_is_two_thirds_through_the_certificate_s_own_lifetime() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cert.pem");
+
+        // The classic 90-day profile: due with 20 days left, not with 40.
+        leaf_with(&path, 90, 40);
+        assert!(!past_renewal(&path), "40 of 90 days left is not yet due");
+        leaf_with(&path, 90, 20);
+        assert!(past_renewal(&path), "20 of 90 days left is past two thirds");
+
+        // The six-day profile, whose whole life is inside the 60 days a
+        // file-age rule would have waited.
+        leaf_with(&path, 6, 3);
+        assert!(!past_renewal(&path), "3 of 6 days left is not yet due");
+        leaf_with(&path, 6, 1);
+        assert!(past_renewal(&path), "1 of 6 days left is past two thirds");
+
+        // Already expired: due, however new the file is.
+        leaf_with(&path, 90, -1);
+        assert!(
+            past_renewal(&path),
+            "an expired certificate is past renewal"
+        );
+    }
+
     /// Oracle: the `[tls.acme]` table: a directory has to be https, and
     /// the hook method has to have a hook.
     #[test]
@@ -661,10 +743,12 @@ mod tests {
         );
     }
 
-    /// Oracle: §5.2 rank 2: a certificate is renewed once two thirds of
-    /// its life has passed, and kept until then.
+    /// Oracle: the fallback for a certificate whose own dates cannot be
+    /// read, which is the file's age against [`ASSUMED_LIFETIME`]. The
+    /// `b"x"` here is deliberately not a certificate, so the `validity`
+    /// path gives up and this one is what runs.
     #[test]
-    fn renewal_waits_two_thirds_of_the_lifetime() {
+    fn renewal_falls_back_to_the_file_s_age_for_a_certificate_it_cannot_read() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cert.pem");
         std::fs::write(&path, b"x").unwrap();

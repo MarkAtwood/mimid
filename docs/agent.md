@@ -160,7 +160,7 @@ Where the certificate of the TLS listeners comes from (docs/design/frontend-auth
 
 **`tailscale cert` makes your names public.** Every certificate a public CA issues is published in Certificate Transparency logs, which anyone can search, so the tailnet's name and the machine's name become public. The agent therefore asks first: run `mimid-agent <config.toml> setup tls`, which explains this and asks. A yes is kept in `<state_dir>/tailscale-cert-consent` with the names; without it, or after the names change, the agent refuses to start with `source = "tailscale"`. If you do not want the names public, use your own certificate with `source = "files"`.
 
-No warning is logged before the certificate expires; a client's refusal is what shows it.
+**The agent warns before the certificate expires.** Whatever `source` it came from, the agent reads the certificate's own `notAfter` and logs `agent_certificate_expiring` at WARN from 14 days before, at ERROR from 3 days before, and `agent_certificate_expired` at ERROR every hour once it has expired. Each carries `names`, `source` and `days_left`. An expired certificate keeps being served rather than closing the listener: clients will refuse it, and the log says why. With `source = "files"` this is the only sign you get that your own certbot or `tailscale cert` timer has stopped working, so it is worth alerting on. A certificate the agent cannot parse is served with no expiry check, which it says once at DEBUG.
 
 #### `source = "acme"`
 
@@ -186,7 +186,7 @@ The hook is your command, the way lego's, acme.sh's and certbot's manual hooks w
 your-dns-tool txt set "$1" "$2" && sleep 10
 ```
 
-In the state directory: `acme-account.json` (0600), the account, so the same one is used at every start; `acme-cert.pem` and `acme-key.pem` (0600), the certificate. A new certificate is ordered once two thirds of the assumed 90-day lifetime has passed, which is Let's Encrypt's advice.
+In the state directory: `acme-account.json` (0600), the account, so the same one is used at every start; `acme-cert.pem` and `acme-key.pem` (0600), the certificate. A new certificate is ordered once two thirds of the certificate's own lifetime has passed, which is Let's Encrypt's advice. The lifetime is read from the certificate, so a short-lived profile (Let's Encrypt's six-day one, for instance) renews on its own schedule; a certificate the agent cannot parse falls back to the file's age against an assumed 90 days.
 
 ##### `dns = "acme-dns"`
 
@@ -213,7 +213,7 @@ For a user with neither a domain nor a tailnet. The agent makes its own certific
 In the state directory: `local-ca.key` (0600) and `local-ca.pem`, the authority; `local-ca-leaf.key` (0600) and `local-ca-leaf.pem`, the listener's; `local-ca.names`, what they were made for.
 
 - **The authority is name-constrained** to exactly the `[tls] names`, as DNS-name and IP-address permitted subtrees with a path length of 0. A device that trusts it trusts nothing else it could sign — not another name, and not another authority under it.
-- **The certificate lasts 90 days** and is made again once its file is 60 days old. The authority lasts 10 years and nothing renews it: at that point the agent makes a new one and you install it again.
+- **The certificate lasts 90 days** and is made again once it is 60 days into that life, judged by its own `notAfter` so that a certificate copied in with a fresh timestamp is still renewed when it is due. The authority lasts 10 years and nothing renews it: at that point the agent makes a new one and you install it again.
 - **The certificate is kept** across restarts, not made fresh each time, because Goguma and Conversations remember the one they first saw and would ask again otherwise.
 - **Changing `[tls] names` remakes both**, since neither the constraint nor the certificate would cover the new names, and you install the new authority.
 

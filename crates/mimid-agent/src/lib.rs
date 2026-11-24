@@ -239,6 +239,7 @@ mod push;
 pub mod tailnet;
 pub mod tls;
 pub mod token;
+pub mod validity;
 
 pub use config::{Config, ConfigError, Invites, IrcSetting, JmapSetting};
 pub use daemon::{BLOBS_DIR, CREDENTIAL_RECHECK, Daemon, StartError};

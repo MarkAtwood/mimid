@@ -2,17 +2,17 @@
   "id": "mimid-036n",
   "title": "Daemon::serve can return while a connection task still holds the store, so reopening the state directory fails",
   "description": "FOUND 2026-11-24 in bead mimid-e13m.6, by the failure it caused in crates/mimid-agent/tests/jmap_seed.rs (records_kept_with_jmap_off_are_shown_when_jmap_is_on_again): the test stops bob's daemon, awaits Daemon::serve to completion, and starts a daemon again on the same state directory, which fails with Agent(Locked { path: \".../bob-state/lock\" }). A 500 ms sleep between the two makes it pass, so it is a teardown race and not a lock that is never released.\n\nWHERE IT COMES FROM. axum 0.8.9 src/serve/mod.rs: the graceful-shutdown loop ends with close_tx.closed().await, which returns once every per-connection task has dropped its close_rx. But handle_connection's task does drop(close_rx) as its LAST STATEMENT, and the connection's own service clone (the Router, holding Arc\u003cEndpoint\u003e and so Arc\u003cStore\u003e and the Agent that owns the lock file) is only dropped when the task's future is dropped, after that. So serve returning does not mean every service clone is gone, and for a moment an Arc\u003cStore\u003e survives.\n\nWHY IT MATTERS BEYOND THE TEST. Daemon::serve's contract is that everything has stopped when it returns. The programs that embed mimid-agent-core and mimid-agent-store in their own process (purple-mimi, the mobile app of decision mimid-1wgh.39) are exactly the callers that would stop a daemon and start another on the same state directory, and they would see this as an intermittent Locked.\n\nWHAT MADE IT SHOW. Adding Router::into_make_service_with_connect_info to get the peer address widens the window from unlikely to deterministic: there is an AddExtension layer and a map_request wrapper per connection to tear down after the close_rx drop. Bead mimid-e13m.6 therefore left the loopback HTTP listener without ConnectInfo and uses it only on the TLS listener ([jmap] listen_tls), where the peer address is needed for §7's per-source slowdown. The window is still there on that listener, and on the plain one it is merely narrower, so this is not fixed.\n\nPOSSIBLE FIXES, none chosen: (a) have serve wait for the store to be releasable, which cannot be an Arc::strong_count check because a caller legitimately holds its own Arc (the test does); (b) release the agent's lock explicitly at the end of serve rather than by Arc drop, which needs something like Agent::close in mimid-agent-core; (c) have the Endpoint hold a Weak\u003cStore\u003e upgraded per request, which is invasive across http.rs; (d) retry Agent::open briefly on Locked, which papers over it. (b) looks best: the lock is the thing with the contract, so it should be released on purpose rather than by drop order.",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "issue_type": "bug",
   "assignee": "Mark Atwood",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-24T18:23:04.036954126Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-24T21:14:17.422459099Z",
+  "updated_at": "2026-11-24T23:03:38.331003706Z",
   "started_at": "2026-11-24T21:14:17.422459099Z",
-  "lease_expires_at": "2026-11-24T21:19:17.422459099Z",
-  "heartbeat_at": "2026-11-24T21:14:17.422459099Z",
+  "closed_at": "2026-11-24T23:03:38.331003706Z",
+  "close_reason": "Fixed in a9367b3d: StateLock::release, called at the end of Daemon::serve; ConnectInfo restored on the plain listener.",
   "labels": [
     "agent"
   ]

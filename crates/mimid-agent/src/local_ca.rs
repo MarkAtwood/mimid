@@ -29,10 +29,10 @@
 //! client honours name constraints is *unverified*; the constraint costs
 //! nothing and the clients that do honour it are the point.
 //!
-//! The leaf lasts [`LEAF_VALID_DAYS`] days and is made again once its file
-//! is older than [`RENEW_AFTER_DAYS`], well inside Apple's limit for a TLS
-//! server certificate (*from memory*; whether that limit applies under a
-//! user-installed root is *unverified*). The leaf is **kept** rather than
+//! The leaf lasts [`LEAF_VALID_DAYS`] days and is made again once it is
+//! [`RENEW_AFTER_DAYS`] days into that life, well inside Apple's limit
+//! for a TLS server certificate (*from memory*; whether that limit
+//! applies under a user-installed root is *unverified*). The leaf is **kept** rather than
 //! made at each start, because Goguma and Conversations pin the leaf they
 //! first saw (§5.1) and would ask again on every restart.
 //!
@@ -43,11 +43,11 @@
 //!
 //! # Limitations
 //!
-//! - **Renewal is by file age, not by reading the certificate back.** The
-//!   agent does not parse its own leaf: an operator who copies the files
-//!   with their timestamps, or writes one by hand, can leave a leaf that
-//!   outlives [`LEAF_VALID_DAYS`] in place. A client's refusal is what
-//!   shows it, as with the `files` source.
+//! - **Renewal looks at the leaf's `notAfter`** ([`crate::validity`]),
+//!   falling back to the file's age for a leaf that cannot be read. A
+//!   leaf copied in with an old timestamp is therefore judged by what it
+//!   says, but one written by a tool this agent cannot parse is still
+//!   judged by its file.
 //! - **No CRL.** Nothing revokes a leaf early; it expires. For one
 //!   listener on one host there is nothing to revoke it to.
 //! - The key is ECDSA P-256, as rcgen's default and what every client in
@@ -180,7 +180,7 @@ pub fn ensure(state_dir: &Path, names: &[String]) -> Result<LocalCa, TlsError> {
     let fresh_leaf = have_ca
         && at(LEAF_KEY_FILE).exists()
         && at(LEAF_CERT_FILE).exists()
-        && !older_than(&at(LEAF_CERT_FILE), RENEW_AFTER_DAYS);
+        && !needs_renewal(&at(LEAF_CERT_FILE), RENEW_AFTER_DAYS);
     let (leaf_key_pem, leaf_pem) = if fresh_leaf {
         (read(&at(LEAF_KEY_FILE))?, read(&at(LEAF_CERT_FILE))?)
     } else {
@@ -516,15 +516,45 @@ fn ca_failed(error: rcgen::Error) -> TlsError {
     TlsError::LocalCa(error.to_string())
 }
 
-/// Whether `path`'s last change is more than `days` ago, or cannot be
-/// read, which also means a new one is wanted.
-fn older_than(path: &Path, days: u64) -> bool {
+/// Whether the leaf at `path` should be made again, a leaf being renewed
+/// once it is `days` days into its [`LEAF_VALID_DAYS`] life. A leaf that
+/// cannot be read at all wants a new one.
+fn needs_renewal(path: &Path, days: u64) -> bool {
+    let renew_within = Duration::from_secs(
+        u64::try_from(LEAF_VALID_DAYS)
+            .unwrap_or(0)
+            .saturating_sub(days)
+            * 24
+            * 60
+            * 60,
+    );
+    // The certificate's own `notAfter` when it can be read, so a leaf
+    // copied in with an old timestamp, or written by hand, is judged by
+    // what it says rather than by its file (the `validity` module). A
+    // leaf with less than `LEAF_VALID_DAYS - days` left is as old as one
+    // whose file is `days` old.
+    if let Some(validity) = leaf_validity(path) {
+        return !validity
+            .not_after
+            .duration_since(SystemTime::now())
+            .is_ok_and(|left| left > renew_within);
+    }
     let Ok(modified) = std::fs::metadata(path).and_then(|meta| meta.modified()) else {
         return true;
     };
     SystemTime::now()
         .duration_since(modified)
         .is_ok_and(|age| age > Duration::from_secs(days * 24 * 60 * 60))
+}
+
+/// The validity of the leaf in the PEM file at `path`, or `None` if the
+/// file or the certificate cannot be read.
+fn leaf_validity(path: &Path) -> Option<crate::validity::Validity> {
+    use rustls::pki_types::pem::PemObject;
+
+    let pem = std::fs::read(path).ok()?;
+    let leaf = rustls::pki_types::CertificateDer::from_pem_slice(&pem).ok()?;
+    crate::validity::validity(&leaf).ok()
 }
 
 fn read(path: &Path) -> Result<Vec<u8>, TlsError> {
@@ -724,5 +754,66 @@ mod tests {
         let one = mobileconfig(&[0], "x").unwrap();
         let two = mobileconfig(&[0], "x").unwrap();
         assert_ne!(one, two);
+    }
+
+    /// Oracle: §5.2 rank 4's renewal, and the limitation this replaced:
+    /// a leaf is judged by its own `notAfter`, so a leaf copied in with a
+    /// fresh timestamp is still renewed when it is due. The file-age rule
+    /// this had before would have called the last case fresh.
+    #[test]
+    fn a_leaf_is_renewed_on_its_own_notafter_not_its_file_s_age() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("leaf.pem");
+        let write = |left_days: i64| {
+            let key = rcgen::KeyPair::generate().unwrap();
+            let mut params = CertificateParams::new(vec!["chat.example.org".to_owned()]).unwrap();
+            let now = time::OffsetDateTime::now_utc();
+            params.not_after = now + time::Duration::days(left_days);
+            params.not_before = params.not_after - time::Duration::days(LEAF_VALID_DAYS);
+            std::fs::write(&path, params.self_signed(&key).unwrap().pem()).unwrap();
+        };
+        // A leaf is renewed once it is RENEW_AFTER_DAYS into its
+        // LEAF_VALID_DAYS life, so with 30 days left of 90 it is due.
+        let keep = LEAF_VALID_DAYS - i64::try_from(RENEW_AFTER_DAYS).unwrap();
+        write(keep + 1);
+        assert!(
+            !needs_renewal(&path, RENEW_AFTER_DAYS),
+            "{} days left",
+            keep + 1
+        );
+        write(keep);
+        assert!(needs_renewal(&path, RENEW_AFTER_DAYS), "{keep} days left");
+        // The case the file's age got wrong: the file was written a
+        // moment ago, but the certificate in it has already expired.
+        write(-1);
+        assert!(
+            needs_renewal(&path, RENEW_AFTER_DAYS),
+            "an expired leaf in a brand-new file is still renewed"
+        );
+    }
+
+    /// A leaf this agent cannot parse falls back to the file's age, and a
+    /// leaf that is not there at all wants a new one.
+    #[test]
+    fn an_unreadable_leaf_falls_back_to_the_file_s_age() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("leaf.pem");
+        assert!(needs_renewal(&path, RENEW_AFTER_DAYS), "no file at all");
+        std::fs::write(&path, b"not a certificate").unwrap();
+        assert!(
+            !needs_renewal(&path, RENEW_AFTER_DAYS),
+            "a file written a moment ago is young"
+        );
+        let old = SystemTime::now() - Duration::from_secs((RENEW_AFTER_DAYS + 1) * 24 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert!(
+            needs_renewal(&path, RENEW_AFTER_DAYS),
+            "an old file is renewed"
+        );
     }
 }

@@ -11,7 +11,8 @@
   "updated_at": "2026-11-24T20:46:25.157950134Z",
   "labels": [
     "agent",
-    "auth"
+    "auth",
+    "human"
   ],
   "dependencies": [
     {
