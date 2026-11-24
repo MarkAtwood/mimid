@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.120",
+  "title": "Decision: a parent-dependent room gets no Chat, because no Chat.kind describes a call",
+  "description": "Mark decided 2026-11-23, found by reading the JMAP specs against what\nbead mimid-1wgh.108 built.\n\nTHE PROBLEM, and it is specified behaviour rather than an oversight.\ndraft-atwood-jmap-chat-mimi-00 §Room/create: \"On success the server\ncreates a Chat bound to the room, with roomId set to the room ID\". And\ndraft-atwood-jmap-chat-00 §Chat Object Fields: \"kind (String,\nimmutable): \\\"direct\\\", \\\"group\\\", or \\\"channel\\\"\".\n\nThere is no kind for a call. So every call a user starts creates a Chat,\nand a stock JMAP Chat client renders it in the conversation list: an\nunnamed group chat that appears when you make a call and never receives a\nmessage. mimid exists to serve stock clients (decision mimid-1wgh.38), so\nthis would have shipped as the first thing a user saw of the feature.\n\nCHOSEN: a parent-dependent room gets no Chat.\n\nWHY:\n- It is the smaller change. One sentence in the binding draft, no new\n  field, and nothing in the base chat draft, whose kind is immutable with\n  three values.\n- It matches the model. A call is a VTCCall (decision mimid-1wgh.118);\n  the call room is the keying substrate underneath it, not a\n  conversation. What a human sees of a call is the announcement in the\n  PARENT chat (decisions mimid-1wgh.116, mimid-1wgh.117).\n- A fourth kind value would have to be handled by every client, and a\n  client that did not know it would most likely ignore the Chat, which is\n  the outcome this gets without the churn.\n\nNOT CHOSEN:\n- A Chat.kind value for calls. Honest, and would let a client badge or\n  hide it, but it is a base-draft change with a compatibility cost for a\n  benefit this gets for free.\n- Leaving it. Maximally conservative and the feature looks broken in\n  exactly the clients it is for.\n\nTHE WRINKLE TO GET RIGHT, found while recording this: §Room/create's\nresponse declares \"chatId (Id): The id of the new Chat\". With no Chat\nthere is no id, so for a parent-dependent room chatId must be absent or\nnull, and the draft must say which. mimid-server's room_create.rs returns\nit unconditionally today (it reads the Chat back out of\nprojection_chats), so this is a response-shape change and not only a\nsuppressed write.\n\nWHAT IT TOUCHES:\n- draft-atwood-jmap-chat-mimi-00 §Room/create: no Chat for a\n  parent-dependent room, and what chatId is then. NEEDS MARK'S PER-WRITE\n  OK (AGENTS.md).\n- mimid-server jmap/methods/room_create.rs: skip the Chat binding, and\n  answer without a chatId.\n- The agent's own JMAP front end, by the same reasoning: it projects the\n  agent's rooms as Chats, and a call room should not become one there\n  either. Room::parent already marks it (bead mimid-1wgh.108).\n",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T00:05:03.071963515Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T00:05:03.227858433Z",
+  "closed_at": "2026-11-24T00:05:03.227858433Z",
+  "close_reason": "Mark 2026-11-23: no Chat for a parent-dependent room; the call is a VTCCall and the announcement lives in the parent chat.",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.120",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-24T00:05:03.108333405Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
