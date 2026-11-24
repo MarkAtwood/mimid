@@ -41,6 +41,24 @@ pub enum Change {
         /// Its bans' keys.
         bans: Vec<Key>,
     },
+    /// One call signal arrived in a call's room (bead mimid-1wgh.114.5;
+    /// draft-atwood-jmap-chat-mimi-00 §Calls). No record is kept for it:
+    /// signalling is not content, and a front end that holds calls acts
+    /// on it as it arrives. A front end that does not ignores it.
+    ///
+    /// This is the one change that carries its payload rather than a
+    /// record key, because there is no record to read it from.
+    CallSignal {
+        /// The key of the room the signal arrived in: the call's own
+        /// room, whose [`crate::record::Room::parent`] names the chat.
+        room: Key,
+        /// The authenticated MLS sender's user URI.
+        sender: String,
+        /// Which signal it is.
+        kind: mimid_agent_core::SignalKind,
+        /// The session description, or the candidate fragment.
+        sdp: String,
+    },
     /// A message or notice was stored.
     MessageAdded(Key),
     /// A message was edited, retracted or deleted here (its record keeps

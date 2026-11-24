@@ -107,6 +107,9 @@ pub struct SyncReport {
     pub joined: Vec<String>,
     /// Invites left pending by the invite policy, by number.
     pub pending_invites: Vec<u64>,
+    /// Call signals delivered to the front ends ([`Change::CallSignal`]).
+    /// Not messages: no record is kept for them.
+    pub signals: usize,
     /// Edits and retractions applied to stored messages ([`replace`]).
     pub edits: usize,
     /// Received messages not stored, with why: neither text nor
@@ -949,6 +952,20 @@ impl Store {
             {
                 return;
             }
+        }
+        // Call signalling is not content: it goes to the front ends as a
+        // change, and no Message record is kept for it (bead
+        // mimid-1wgh.114.5). Before the edit and reaction paths, which a
+        // signal never takes.
+        if let Some(signal) = mimid_agent_core::CallSignal::of_content(&received.content) {
+            changes.push(Change::CallSignal {
+                room,
+                sender: received.sender.clone(),
+                kind: signal.kind,
+                sdp: signal.sdp,
+            });
+            report.signals += 1;
+            return;
         }
         if let Some(replaces) = &received.content.replaces {
             let reaction = self

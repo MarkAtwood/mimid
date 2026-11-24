@@ -157,6 +157,7 @@
 
 mod agent;
 pub mod asset;
+pub mod call_signal;
 mod client;
 pub mod didwebvh;
 mod error;
@@ -180,6 +181,7 @@ pub use agent::{
     MAX_TEXT_LEN, OutgoingAttachment, OwnRoomsJoined, PendingInvite, ReceivedMessage,
     ReportOutcome, ReportedMessage, RoomInfo, Sent,
 };
+pub use call_signal::{CallSignal, SignalKind};
 pub use client::{ACCEPTED_NAMESPACE, ConsentRecord};
 pub use didwebvh::{DidWebvhConfig, RoomClient};
 pub use error::{AgentError, Source};

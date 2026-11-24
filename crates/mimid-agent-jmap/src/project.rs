@@ -563,6 +563,10 @@ impl JmapExt {
         let Some(room) = store.state().rooms.get(key).cloned() else {
             return Ok(());
         };
+        // A call's own room gets no Chat (crate::render::Render::is_call_room).
+        if crate::render::Render::is_call_room(&room) {
+            return Ok(());
+        }
         let id = Id::from(key);
         let existing = self.stored::<Chat>(&id).await?;
         // The room's local expiry policy, which another front end may set
@@ -629,6 +633,16 @@ impl JmapExt {
         let Some(message) = store.state().messages.get(key).cloned() else {
             return Ok(());
         };
+        // A room with no Chat has nowhere to put a Message
+        // (crate::render::Render::is_call_room).
+        if store
+            .state()
+            .rooms
+            .get(&message.room)
+            .is_some_and(crate::render::Render::is_call_room)
+        {
+            return Ok(());
+        }
         let id = Id::from(key);
         match self.stored::<Message>(&id).await? {
             None if added => {

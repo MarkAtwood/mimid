@@ -175,6 +175,22 @@ impl Render<'_> {
         members
     }
 
+    /// Whether `room` is a call's own room, which this front end does
+    /// not show as a Chat: `kind` (draft-atwood-jmap-chat-00 §Chat) has
+    /// no value describing a call, so a Chat for one appears among the
+    /// user's conversations, where it is not one (decision
+    /// mimid-1wgh.120 as corrected by bead mimid-1wgh.121).
+    ///
+    /// A Chat here is a projection of the record, not the room's message
+    /// container as it is at the provider
+    /// (draft-atwood-jmap-chat-mimi-00 §Chat.roomId), so leaving one out
+    /// loses nothing: the store keeps the room, and the call is reached
+    /// through the VTC surface.
+    #[must_use]
+    pub(crate) fn is_call_room(room: &record::Room) -> bool {
+        room.parent.is_some()
+    }
+
     /// A room as the group Chat made for it when first shown, created and
     /// its members joined at `created_at`: named by the room's name (empty
     /// without one), `unreadCount` 0 (crate-jmap computes it at each

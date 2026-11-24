@@ -179,6 +179,10 @@ fn seeds(render: &Render<'_>, now: &UTCDate) -> Vec<(&'static str, String, Seed)
         out.push((ChatContact::TYPE_NAME, p.key.clone(), object));
     }
     for r in state.rooms.values() {
+        // A call's own room is not a conversation (Render::is_call_room).
+        if crate::render::Render::is_call_room(r) {
+            continue;
+        }
         let fresh = || json_of(&render.new_chat(r, now.clone()));
         let object = seed::<Chat>(&r.ext, || render.room(r), fresh);
         out.push((Chat::TYPE_NAME, r.key.clone(), object));
@@ -189,6 +193,14 @@ fn seeds(render: &Render<'_>, now: &UTCDate) -> Vec<(&'static str, String, Seed)
         out.push((ChatBan::TYPE_NAME, b.key.clone(), object));
     }
     for m in state.messages.values() {
+        // A Message of a room that has no Chat has nowhere to be.
+        if state
+            .rooms
+            .get(&m.room)
+            .is_some_and(crate::render::Render::is_call_room)
+        {
+            continue;
+        }
         let fresh = || json_of(&render.new_message(m)?);
         let object = seed::<Message>(&m.ext, || render.message(m), fresh);
         out.push((Message::TYPE_NAME, m.key.clone(), object));

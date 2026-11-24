@@ -17,9 +17,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use mimid_agent_core::SignalKind;
 use mimid_agent_core::{Agent, AgentConfig};
 use mimid_agent_store::action::ActionError;
-use mimid_agent_store::{InvitePolicy, Store};
+use mimid_agent_store::{Change, InvitePolicy, Store};
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::directory;
 use mimid_server::follower::Follower;
@@ -256,5 +257,73 @@ async fn a_call_needs_a_chat() {
     assert!(
         matches!(&refused, Err(ActionError::NoSuchRoom(key)) if key == "nope"),
         "{refused:?}"
+    );
+}
+
+/// Signalling round-trips through the call room: the sender's SDP arrives
+/// at the other side as a CallSignal change, with the authenticated
+/// sender, and no Message record is kept for it either side.
+#[tokio::test]
+async fn a_call_signal_arrives_as_a_change_and_not_as_a_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let (alice, bob, _chat_uri, chat_key, _bob_chat) = alice_and_bob(dir.path()).await;
+    let call = alice
+        .start_call(alice.new_key(), &chat_key, None)
+        .await
+        .unwrap();
+    alice.save().await.unwrap();
+    until_store(&bob, |s| s.state().room_of_uri(&call.uri).is_some()).await;
+    let bob_call = bob.state().room_of_uri(&call.uri).cloned().unwrap();
+    let messages_before = bob.state().messages.len();
+
+    const OFFER: &str = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n";
+    alice
+        .send_call_signal(&call.key, SignalKind::Offer, OFFER)
+        .await
+        .unwrap();
+    alice.save().await.unwrap();
+
+    // bob's store sees it as a change, not a message.
+    let mut from = bob.last_seq();
+    let mut signals: Vec<Change> = Vec::new();
+    for _ in 0..100 {
+        bob.sync().await.unwrap();
+        bob.save().await.unwrap();
+        let batch = bob.changes_since(from).unwrap();
+        if let Some((seq, _)) = batch.last() {
+            from = *seq;
+        }
+        signals.extend(
+            batch
+                .into_iter()
+                .map(|(_, change)| change)
+                .filter(|c| matches!(c, Change::CallSignal { .. })),
+        );
+        if !signals.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let [
+        Change::CallSignal {
+            room,
+            sender,
+            kind,
+            sdp,
+        },
+    ] = &signals[..]
+    else {
+        panic!("one call signal, got {signals:?}");
+    };
+    assert_eq!(room, &bob_call);
+    assert_eq!(sender, ALICE, "the authenticated MLS sender");
+    assert_eq!(*kind, SignalKind::Offer);
+    assert_eq!(sdp, OFFER);
+
+    assert_eq!(
+        bob.state().messages.len(),
+        messages_before,
+        "signalling is not content, so no Message record is kept"
     );
 }

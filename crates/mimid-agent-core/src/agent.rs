@@ -39,6 +39,7 @@ use mimi_room_policy::{
 };
 
 use crate::AgentError;
+use crate::call_signal::CallSignal;
 use crate::client::{Accepted, ConsentRecord, Fetched, MAX_SENT};
 use crate::didwebvh::{DidWebvhConfig, Pin, RoomClient, check_pin, required_capabilities};
 use crate::frank::{self, VerifiedFrank};
@@ -2548,6 +2549,45 @@ impl Agent {
             },
         };
         options.apply(&mut content);
+        self.send_content(room, &content).await
+    }
+
+    /// Sends one call signal in `room`: a message whose body is an
+    /// inline `session` part carrying `signal`'s SDP, with the kind of
+    /// signal in one extension key (`crate::call_signal`;
+    /// draft-atwood-jmap-chat-mimi-00 §Calls).
+    ///
+    /// The room is the call's own room, so the signal reaches exactly
+    /// its members, in the order the hub accepted them, from an
+    /// authenticated MLS sender. Nothing checks here that `room` IS a
+    /// call room: a caller that signals in a chat has told its members
+    /// about a call they are not in, which is a mistake rather than a
+    /// breach.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Invalid`] if the SDP is empty or over
+    /// [`call_signal::MAX_SDP_LEN`](crate::call_signal::MAX_SDP_LEN),
+    /// and the errors of sending a message.
+    pub async fn send_call_signal(
+        &mut self,
+        room: &str,
+        signal: &CallSignal,
+    ) -> Result<Sent, AgentError> {
+        let (extensions, nested_part) = signal.to_content()?;
+        let content = MimiContent {
+            salt: random()?,
+            replaces: None,
+            topic_id: vec![],
+            expires: None,
+            in_reply_to: None,
+            mimi_extensions: Extensions {
+                sender_uri: Some(self.me.clone()),
+                room_uri: Some(room.to_owned()),
+                other: extensions,
+            },
+            nested_part,
+        };
         self.send_content(room, &content).await
     }
 

@@ -1173,3 +1173,104 @@ async fn the_store_keeps_a_bounded_change_log_and_records_no_events() {
         .await;
     assert_eq!(answer["created"], json!(late_ids), "{answer}");
 }
+
+/// A call's own room gets no Chat, on either side, and the signalling in
+/// it never becomes a Message: `kind` (draft-atwood-jmap-chat-00 §Chat)
+/// has no value describing a call, so a Chat for one would sit among the
+/// user's conversations (decision mimid-1wgh.120 as corrected by bead
+/// mimid-1wgh.121). The room itself is there, and the call is reached
+/// through the VTC surface rather than as a conversation.
+#[tokio::test]
+async fn a_call_room_is_not_a_chat() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Client::new(&server, ALICE, "alice", dir.path()).await;
+    let bob = Client::new(&server, BOB, "bob", dir.path()).await;
+
+    let bob_contact = alice.create("ChatContact", json!({"identity": BOB})).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let created = alice
+        .create(
+            "Chat",
+            json!({"kind": "group", "name": "planning", "memberIds": [bob_contact]}),
+        )
+        .await;
+    let chat_a = created["id"].as_str().unwrap().to_owned();
+    bob.chat.agent().lock().await.allow(ALICE).await.unwrap();
+    bob.chat.sync().await.unwrap();
+    assert_eq!(bob.get("Chat", None).await.len(), 1, "the chat itself");
+
+    // The call: a parent-dependent room of the chat, with bob in it.
+    let store = alice.chat.store();
+    let call = store
+        .start_call(store.new_key(), &chat_a, None)
+        .await
+        .unwrap();
+    store.save().await.unwrap();
+    alice.chat.sync().await.unwrap();
+    assert!(
+        store.state().rooms.contains_key(&call.key),
+        "the store keeps the call's room"
+    );
+    assert_eq!(
+        alice.get("Chat", None).await.len(),
+        1,
+        "alice's call room is not a Chat"
+    );
+
+    // bob joins the call room and likewise sees no second Chat.
+    for _ in 0..50 {
+        bob.chat.sync().await.unwrap();
+        if bob.chat.store().state().room_of_uri(&call.uri).is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let bob_call = bob
+        .chat
+        .store()
+        .state()
+        .room_of_uri(&call.uri)
+        .cloned()
+        .expect("bob joined the call room");
+    assert_eq!(
+        bob.get("Chat", None).await.len(),
+        1,
+        "bob's call room is not a Chat either"
+    );
+    assert_eq!(
+        bob.chat.store().state().rooms[&bob_call].parent.as_deref(),
+        Some(created["roomId"].as_str().unwrap()),
+        "and it knows which chat the call is under"
+    );
+
+    // Signalling in it reaches bob and becomes no Message for either.
+    let before = (
+        alice.get("Message", None).await.len(),
+        bob.get("Message", None).await.len(),
+    );
+    alice
+        .chat
+        .store()
+        .send_call_signal(&call.key, mimid_agent_core::SignalKind::Offer, "v=0\r\n")
+        .await
+        .unwrap();
+    alice.chat.store().save().await.unwrap();
+    for _ in 0..50 {
+        let report = bob.chat.sync().await.unwrap();
+        if report.signals > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        (
+            alice.get("Message", None).await.len(),
+            bob.get("Message", None).await.len()
+        ),
+        before,
+        "signalling is not content"
+    );
+}

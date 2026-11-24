@@ -16,6 +16,7 @@
 //! | Host a room and invite | [`Store::create_room`] | `host_room`, `invite` |
 //! | Start a call | [`Store::start_call`] | `host_room` (`HostOptions::child_of`), `invite` |
 //! | A call's media key | [`Store::media_secret`] | `media_secret` |
+//! | Call signalling | [`Store::send_call_signal`] | `send_call_signal` |
 //! | One-to-one rooms | [`Store::open_direct`], [`Store::direct_room`] | `host_room` (`HostOptions::direct`), `invite` |
 //! | Invite, remove, change roles, leave | [`Store::change_members`] | `invite`, `remove`, `change_role`, `leave` |
 //! | Leave a room | [`Store::leave`] | `leave` |
@@ -457,6 +458,35 @@ impl Store {
             &invite,
         )
         .await
+    }
+
+    /// Sends one call signal in the call room `key`: an SDP offer or
+    /// answer, or one ICE candidate as an SDP fragment
+    /// (`mimid_agent_core::call_signal`; draft-atwood-jmap-chat-mimi-00
+    /// §Calls). It reaches exactly that room's members, in the order its
+    /// hub accepts them, from an authenticated MLS sender.
+    ///
+    /// No record is kept of a signal sent or received: signalling is not
+    /// content. An arriving one is [`Change::CallSignal`].
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::NoSuchRoom`], and [`ActionError::Agent`] if the SDP
+    /// is empty or too long, or sending fails.
+    pub async fn send_call_signal(
+        &self,
+        key: &str,
+        kind: mimid_agent_core::SignalKind,
+        sdp: &str,
+    ) -> Result<(), ActionError> {
+        let uri = self.room_uri(key)?;
+        let signal = mimid_agent_core::CallSignal {
+            kind,
+            sdp: sdp.to_owned(),
+        };
+        let mut agent = self.agent.lock().await;
+        agent.send_call_signal(&uri, &signal).await?;
+        Ok(())
     }
 
     /// The media secret of the call room `key` for the epoch its MLS
