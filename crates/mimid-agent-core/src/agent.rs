@@ -913,7 +913,9 @@ impl Agent {
     /// connection to [`Agent::database_path`] holds a clone until that
     /// connection is closed, so the lock is released last
     /// (docs/design/purple-mimi.md §6.2). [`crate::StateLock::intact`]
-    /// tells whether the lock file was replaced under it (§6.5).
+    /// tells whether the lock file was replaced under it (§6.5), and
+    /// [`crate::StateLock::release`] lets a caller that has stopped free
+    /// the directory without waiting for the last clone to drop.
     #[must_use]
     pub fn state_lock(&self) -> Arc<crate::StateLock> {
         Arc::clone(self.dir.lock())

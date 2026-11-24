@@ -347,6 +347,52 @@ async fn app_passwords_are_listed_added_and_revoked_over_jmap() {
     alice.stop().await;
 }
 
+/// Oracle: bead mimid-036n, and `Daemon::serve`'s contract: when `serve`
+/// returns, everything has stopped, so the state directory can be opened
+/// again at once. The programs that embed mimid-agent-store in their own
+/// process (purple-mimi, the mobile app of decision mimid-1wgh.39) are
+/// exactly the callers that stop a daemon and start another on the same
+/// directory, and an intermittent `Locked` is what they would see.
+///
+/// This is a contract test, not a regression test: the bug it belongs to
+/// is a race, and on a healthy machine it does not lose. It was seen
+/// twice, both times on a volume with no free space, where the I/O under
+/// teardown widened the window; without the fix this test passes anyway.
+/// The failing proof is in axum 0.8.9's source instead: `handle_connection`
+/// drops its `close_rx` as its last statement, but the connection's
+/// service clone, which holds the store and so the lock, drops with the
+/// task's future, after `close_tx.closed()` has already let `serve`
+/// return. `StateLock::release` makes the contract hold whatever the drop
+/// order turns out to be. No test fails before that fix, which AGENTS.md
+/// asks for: the mechanism in axum's source is the whole evidence, and
+/// this test and `mimid_agent_core::lock`'s
+/// `releasing_frees_the_lock_while_a_clone_is_still_alive` guard the
+/// contract from here on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_state_directory_can_be_reopened_as_soon_as_serve_returns() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let config = config(&server, ALICE, dir.path(), "from-allowed");
+    let alice = Running::start(&config).await;
+    // A client whose connection is still pooled and open when the daemon
+    // stops, which is the shape the failure was first seen in
+    // (tests/jmap_seed.rs): the connection task is then alive at
+    // shutdown and tears down in the window.
+    let client = alice.client().await;
+    client.get("Chat", None).await;
+    client.get("Message", None).await;
+    alice.stop().await;
+
+    // No sleep: `serve` has returned, so the lock is free. The daemon is
+    // dropped at once, so nothing here holds a lock of its own.
+    match mimid_agent::Daemon::start(&config).await {
+        Ok(daemon) => drop(daemon),
+        Err(error) => {
+            panic!("the state directory was still locked after serve returned: {error:?}")
+        }
+    }
+}
+
 /// Oracle: docs/design/frontend-auth.md §7.1: on the network listener, a
 /// source that keeps getting it wrong is answered more slowly, and the
 /// answer is still the protocol's own `401` rather than a silent drop. A

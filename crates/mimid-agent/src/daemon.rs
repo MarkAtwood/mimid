@@ -507,6 +507,11 @@ impl Daemon {
     /// module), whenever a front end writes, and every `sync_interval_ms`
     /// as a fallback.
     ///
+    /// When this returns, the state directory is free: the lock is
+    /// released here rather than when the last clone of it drops, so a
+    /// caller can open the same directory again at once (bead
+    /// mimid-036n, [`mimid_agent_core::StateLock::release`]).
+    ///
     /// # Errors
     ///
     /// The HTTP listener's I/O error.
@@ -646,16 +651,12 @@ impl Daemon {
         let served = match self.http {
             Some(http) => {
                 let mut stopping = stop.subscribe();
-                // No `ConnectInfo` here, unlike the TLS listener: this
-                // one is loopback only, so §7's per-source slowdown has
-                // no source worth counting, and axum's per-connection
-                // service clone outlives `serve` by a moment when one is
-                // added (bead mimid-036n), which would stop an embedder
-                // reopening the state directory straight after a stop.
-                // The guard reads the peer as `None` and logs at DEBUG.
-                axum::serve(http.listener, http::router(http.endpoint))
-                    .with_graceful_shutdown(async move { stopped(&mut stopping).await })
-                    .await
+                axum::serve(
+                    http.listener,
+                    http::router(http.endpoint).into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .with_graceful_shutdown(async move { stopped(&mut stopping).await })
+                .await
             }
             None => {
                 stopped(&mut stop.subscribe()).await;
@@ -715,6 +716,15 @@ impl Daemon {
                 );
             }
         }
+        // The daemon has stopped: every loop of its own is joined and
+        // both servers have returned. A clone of the store can still sit
+        // in a connection task that is being torn down, though, and with
+        // it a clone of the state lock, so the lock is released here
+        // rather than left to the last clone's drop. `Daemon::serve`
+        // returning then means the state directory is free, which is
+        // what an embedder stopping one agent and starting another on the
+        // same directory needs (bead mimid-036n).
+        self.store.state_lock().release();
         tracing::info!(name: "agent_stopped", "mimid-agent stopped");
         // Either listener's failure is the daemon's; the plain one first,
         // since it is the one that always exists.

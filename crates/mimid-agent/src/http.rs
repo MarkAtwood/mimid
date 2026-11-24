@@ -56,20 +56,19 @@
 //!    MAC instead, which its route checks
 //!    (`mimid_agent_store::links::AttachmentLinks::check`).
 //!
-//!    On the HTTPS listener a failed credential is counted against its
+//!    On either listener a failed credential is counted against its
 //!    source address and the `401` is delayed by what the shared limiter
 //!    says (`mimid_agent_store::credentials::limits`,
 //!    docs/design/frontend-auth.md §7.1), the same counters the IRC front
 //!    end uses; a success forgets them. The answer is always the
-//!    protocol's own `401`, never a silent drop.
+//!    protocol's own `401`, never a silent drop. Both listeners are
+//!    served with axum's `ConnectInfo`, which is where the source address
+//!    comes from; a request that somehow arrives without one is counted
+//!    against no source and logged at DEBUG.
 //!
-//!    The plain listener is loopback only and carries no source address:
-//!    it is served without axum's `ConnectInfo` (bead mimid-036n), so
-//!    there is **no slowdown and no peer in the log** there, and a login
-//!    is logged at DEBUG. §7.1 would have counted loopback with a higher
-//!    threshold; nothing is lost by not counting it, because any process
-//!    that can reach the port can also read the token file, which is a
-//!    limitation of this boundary already.
+//!    §7.1 counts loopback like any other address, with a higher
+//!    threshold (`limits::LOOPBACK_FAILURES`), so a local script in a
+//!    loop does not slow the user's own clients for long.
 //!
 //! A response to a request whose `Origin` is in the list, the `401`
 //! included, carries `Access-Control-Allow-Origin` with that exact origin;

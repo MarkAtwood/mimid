@@ -20,6 +20,11 @@
 //! process (a handshake that asks the holder to let go) is the
 //! embedder's: this module only refuses.
 //!
+//! A holder that has finished with the directory but cannot be sure every
+//! clone of the handle is gone calls [`StateLock::release`], which drops
+//! the lock through a shared reference, so the directory can be opened
+//! again at once instead of when the last clone happens to drop.
+//!
 //! # Limitations
 //!
 //! - Advisory: a program that opens `mimid.sqlite` without taking the lock
@@ -33,6 +38,9 @@
 //! - The file's content is unused and the lock names no holder: a
 //!   refused agent is told only that the directory is in use, never by
 //!   which process (Mark 2026-11-22, decision mimid-1wgh.90).
+//! - [`StateLock::release`] is taken on the caller's word that it has
+//!   stopped. Nothing stops a clone of the handle being used afterwards,
+//!   and a write through one then happens with no lock held.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -47,7 +55,9 @@ pub const LOCK_FILE: &str = "lock";
 /// replaced between opening and locking. INVENTED, NOT FROM SPEC.
 const LOCK_ATTEMPTS: usize = 3;
 
-/// The held lock of one state directory. Dropping it releases the lock.
+/// The held lock of one state directory. Dropping it releases the lock,
+/// and so does [`StateLock::release`], for a holder that cannot wait for
+/// the last clone of it to drop.
 #[derive(Debug)]
 pub struct StateLock {
     file: File,
@@ -109,6 +119,39 @@ impl StateLock {
             detail: "the state lock file keeps being replaced".to_owned(),
             source: None,
         })
+    }
+
+    /// Releases the lock now, through a shared reference, leaving the
+    /// file in place. Later calls do nothing, and dropping the lock
+    /// afterwards is harmless.
+    ///
+    /// This exists because the lock is held behind an
+    /// [`std::sync::Arc`] ([`crate::Agent::state_lock`]), so dropping it
+    /// means dropping the last clone, and a holder that has stopped
+    /// cannot always tell when that happens: a clone can sit in a task
+    /// that is being torn down, outliving the stop by a moment (bead
+    /// mimid-036n). Releasing makes the lock free when the holder says
+    /// it is finished rather than when the last clone drops, which is
+    /// what an embedder stopping one agent and opening the directory
+    /// with another needs.
+    ///
+    /// The caller promises it has stopped: every loop of its own has
+    /// ended, so no clone can begin work on the database again. A write
+    /// through a clone after this would be a write with no lock held,
+    /// which is what the lock exists to prevent, so release only when
+    /// nothing can still write.
+    pub fn release(&self) {
+        // `flock(2)` with `LOCK_UN`: unlocking an unlocked open file
+        // description succeeds, so this needs no state of its own. A
+        // failure leaves the lock held, which is the safe side.
+        if let Err(error) = self.file.unlock() {
+            tracing::warn!(
+                name: "agent_state_lock_not_released",
+                path = %self.path.display(),
+                error = &error as &dyn std::error::Error,
+                "the state lock could not be released; it is freed when the holder exits"
+            );
+        }
     }
 
     /// Whether `<state_dir>/lock` is still the file this lock holds: same
@@ -191,6 +234,33 @@ mod tests {
         let newcomer = StateLock::acquire(dir.path()).unwrap();
         assert!(newcomer.intact());
         assert!(!held.intact(), "replaced");
+    }
+
+    /// Bead mimid-036n: a holder behind an `Arc` frees the directory when
+    /// it says it is finished, not when the last clone drops.
+    #[test]
+    fn releasing_frees_the_lock_while_a_clone_is_still_alive() {
+        let dir = private_dir();
+        let held = std::sync::Arc::new(StateLock::acquire(dir.path()).unwrap());
+        let clone = std::sync::Arc::clone(&held);
+        assert!(matches!(
+            StateLock::acquire(dir.path()),
+            Err(AgentError::Locked { .. })
+        ));
+        clone.release();
+        let newcomer = StateLock::acquire(dir.path()).unwrap();
+        assert!(newcomer.intact());
+        assert!(dir.path().join(LOCK_FILE).exists(), "never deleted");
+        // Releasing again, and dropping afterwards, do not disturb the
+        // newcomer's lock: each is on its own open file description.
+        clone.release();
+        drop(clone);
+        drop(held);
+        assert!(newcomer.intact());
+        assert!(matches!(
+            StateLock::acquire(dir.path()),
+            Err(AgentError::Locked { .. })
+        ));
     }
 
     #[test]
