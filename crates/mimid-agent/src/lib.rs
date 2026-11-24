@@ -152,10 +152,12 @@
 //!   default, and IRC only: the HTTP endpoint keeps its credential,
 //!   because with no `Authorization` header a request would be
 //!   authorized by where it comes from, and a page in a browser on the
-//!   owner's laptop comes from the laptop. There is no deny list, and
-//!   `/msg mimid tailnet` answers for the asking connection alone (bead
-//!   mimid-e13m.18); revocation is removing the node in the tailnet,
-//!   which ends its sessions within `recheck_s`.
+//!   owner's laptop comes from the laptop. `/msg mimid tailnet` lists
+//!   the nodes let in with their open sessions, and `tailnet deny
+//!   <node>` refuses one here and closes what it has open; the real
+//!   revocation is removing the node in the tailnet, which ends its
+//!   sessions within `recheck_s`. A denial is undone only by editing
+//!   `tailnet-denied` in the state directory.
 //! - With `[tls] source = "local-ca"` the agent is its own certificate
 //!   authority (the [`local_ca`] module; docs/design/frontend-auth.md
 //!   §5.2 rank 4, §6.6), name-constrained to the `[tls] names`, and

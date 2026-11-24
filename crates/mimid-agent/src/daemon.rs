@@ -373,7 +373,7 @@ impl Daemon {
         // operator believes a node needs none.
         let tailnet = if config.tailnet.identity {
             Some(Arc::new(
-                crate::tailnet::Tailnet::start(&config.tailnet).await?,
+                crate::tailnet::Tailnet::start(&config.tailnet, &config.state_dir).await?,
             ))
         } else {
             None

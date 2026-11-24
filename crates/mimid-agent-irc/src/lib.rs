@@ -204,6 +204,24 @@ pub trait PeerIdentity: std::fmt::Debug + Send + Sync {
     /// How often an accepted connection is asked about again, so that a
     /// node removed from the tailnet loses its sessions (§4.6).
     fn recheck(&self) -> Duration;
+
+    /// Refuses `node` from now on, and says whether it was not refused
+    /// already. Its open sessions close, because [`PeerIdentity::changes`]
+    /// ticks and [`PeerIdentity::identify`] then answers `None` for it
+    /// (§4.6, `/msg mimid tailnet deny`).
+    ///
+    /// # Errors
+    ///
+    /// Whatever the daemon could not do, as a line to show the user; the
+    /// node is then not refused at all.
+    fn deny(&self, node: &str) -> Result<bool, String>;
+
+    /// The nodes refused so far, for `/msg mimid tailnet`.
+    fn denied(&self) -> Vec<String>;
+
+    /// Ticks whenever the refused nodes change, so a session of a node
+    /// just refused ends at once rather than at the next recheck.
+    fn changes(&self) -> tokio::sync::watch::Receiver<u64>;
 }
 
 /// A peer [`PeerIdentity`] let in: what is logged and shown.

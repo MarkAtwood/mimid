@@ -132,11 +132,12 @@ Tailnet identity: a connection from a Tailscale node this agent recognises needs
 A node is let in when its user's login name is in `owners` **and** it is not tagged, is not this agent's own node, and advertises no routes; or when its name is in `nodes` or one of its tags is in `tags`. Each exclusion closes a hole: a tagged node has no user and its tags come from whoever writes the ACL policy; this agent's own node answers for connections from this host, so every local account would pass as the owner; and a subnet router or exit node source-NATs the traffic it forwards, so a device on its LAN would pass as the router's owner.
 
 Anything else falls back to the password rules, including tailscaled not answering: a failed lookup never lets a connection in. On IRC a matched client is not told `soju.im/account-required`, so Goguma labels its password field optional; any password it does send is accepted and decides nothing.
- `/msg mimid tailnet` says what matched.
+
+`/msg mimid tailnet` says what matched for this connection, then lists every node with a connection open and the sessions from it, and the nodes denied. `/msg mimid tailnet deny <node>` refuses a node from now on and closes its sessions at once; the list is kept in `tailnet-denied` in the state directory, so it survives a restart, and the only way to undo a denial is to edit that file — an undeny typed from a client the denied node might be holding would be a way back in.
 
 The agent reads tailscaled's `status` at start and **refuses to start** if it cannot — serving the password rules while you believe otherwise would be worse. It also refuses if this node is tagged and `owners` is empty (a tagged node has no owner to default to), so set `owners` on a tagged host.
 
-**Revocation is the tailnet admin console.** Removing the node, letting its key expire or taking its tag away ends its sessions within `recheck_s`. There is no deny list yet.
+**Real revocation is the tailnet admin console.** Removing the node, letting its key expire or taking its tag away ends its sessions within `recheck_s`. A `tailnet deny` here refuses the node at this agent only: it keeps its place in the tailnet and everything else on it.
 
 **Why not JMAP.** With no `Authorization` header a request would be authorized by where it comes from, and a web page open in a browser on your laptop comes from your laptop — so any site you visit could POST JMAP calls to the agent. CORS stops such a page reading the answer, not the call happening. So JMAP keeps its credential.
 

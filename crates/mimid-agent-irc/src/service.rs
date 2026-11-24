@@ -67,8 +67,9 @@ const HELP: &[&str] = &[
     "  devices       list your devices (the clients bound to your account)",
     "  forget-device <id>  forget a lost device: it is unbound and removed from your rooms",
     "  passwords     list your app passwords and the agent token",
-    "  tailnet       whether this connection was let in by its tailnet node,",
-    "                and which node and rule matched",
+    "  tailnet       whether tailnet identity is on, the nodes it has let in",
+    "                with their open sessions, and the nodes denied",
+    "  tailnet deny <node>  refuse a node from now on; its sessions close",
     "  password add <name>  make an app password for a device; shown once",
     "  password revoke <name>  revoke one; its connections close",
     "  identity <user>  show what is known of a user's identity: their",
@@ -460,25 +461,94 @@ impl Session {
             ("password", _) => {
                 self.service_says("usage: passwords, password add <name>, password revoke <name>");
             }
-            // docs/design/frontend-auth.md §4.6. Only this connection:
-            // listing every matched node and its sessions needs a
-            // registry of open sessions (bead mimid-e13m.18).
-            ("tailnet", _) => match (&self.tailnet, self.by_tailnet) {
-                (Some(matched), true) => self.service_says(&format!(
-                    "tailnet identity let this connection in: node {}, matched {}",
-                    matched.node, matched.matched
-                )),
-                (Some(matched), false) => self.service_says(&format!(
-                    "node {} matches tailnet identity ({}), but this connection \
-                     logged in with a credential",
-                    matched.node, matched.matched
-                )),
-                (None, _) => self.service_says(
-                    "tailnet identity did not match this connection: it logged in \
-                     with a credential",
-                ),
+            // docs/design/frontend-auth.md §4.6, bead mimid-e13m.18.
+            ("tailnet", Some("deny")) => match words.next() {
+                Some(node) => self.tailnet_deny(node),
+                None => self
+                    .service_says("usage: tailnet deny <node>, from the node column of `tailnet`"),
             },
+            ("tailnet", _) => self.tailnet(),
             _ => self.service_says(&format!("unknown command {command:?}; try help")),
+        }
+    }
+
+    /// `tailnet` (docs/design/frontend-auth.md §4.6): whether tailnet
+    /// identity is on, every node it has let in with the sessions open
+    /// from it, and the nodes denied.
+    fn tailnet(&mut self) {
+        let Some(identity) = self.shared.peer_identity() else {
+            self.service_says(
+                "tailnet identity is off: every connection logs in with a credential",
+            );
+            return;
+        };
+        match (&self.tailnet, self.by_tailnet) {
+            (Some(matched), true) => self.service_says(&format!(
+                "this connection was let in by its node {} ({})",
+                matched.node, matched.matched
+            )),
+            (Some(matched), false) => self.service_says(&format!(
+                "this connection's node {} matches ({}), but it logged in with a credential",
+                matched.node, matched.matched
+            )),
+            (None, _) => self.service_says(
+                "this connection's peer matches no node: it logged in with a credential",
+            ),
+        }
+        // Every registered connection, which is what makes this a listing
+        // and not a statement about the asking one alone.
+        let sessions = self.shared.sessions();
+        let mut nodes: std::collections::BTreeMap<&str, Vec<&crate::conn::SessionInfo>> =
+            std::collections::BTreeMap::new();
+        for session in &sessions {
+            if let Some(node) = session.node.as_deref() {
+                nodes.entry(node).or_default().push(session);
+            }
+        }
+        if nodes.is_empty() {
+            self.service_says("no connection is open from a tailnet node");
+        }
+        for (node, open) in nodes {
+            let by_node = open.iter().filter(|s| s.by_tailnet).count();
+            self.service_says(&format!(
+                "  {node}  {} session(s), {by_node} let in by the node",
+                open.len()
+            ));
+            for session in open {
+                self.service_says(&format!(
+                    "    {} since {}{}",
+                    session.peer,
+                    crate::render::server_time(session.since_ms),
+                    match &session.credential {
+                        Some(name) => format!(" (credential {name})"),
+                        None => String::new(),
+                    }
+                ));
+            }
+        }
+        let denied = identity.denied();
+        if denied.is_empty() {
+            self.service_says("no node is denied; `tailnet deny <node>` refuses one");
+        } else {
+            self.service_says(&format!("denied: {}", denied.join(", ")));
+        }
+    }
+
+    /// `tailnet deny <node>` (§4.6): refuses the node from now on and
+    /// closes its sessions. The real revocation is removing the node in
+    /// the tailnet, which this does not do.
+    fn tailnet_deny(&mut self, node: &str) {
+        let Some(identity) = self.shared.peer_identity() else {
+            self.service_says("tailnet identity is off: there is nothing to deny");
+            return;
+        };
+        match identity.deny(node) {
+            Ok(true) => self.service_says(&format!(
+                "denied {node}: its sessions close now. This agent refuses it; \
+                 remove the node in the tailnet to revoke it everywhere."
+            )),
+            Ok(false) => self.service_says(&format!("{node} was denied already")),
+            Err(why) => self.service_says(&format!("tailnet deny {node} failed: {why}")),
         }
     }
 

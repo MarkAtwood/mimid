@@ -57,10 +57,15 @@
 //!
 //! # Limitations
 //!
-//! - **No deny list.** `/msg mimid tailnet deny <node>` and the stored
-//!   list §4.6 describes are not here (bead mimid-e13m.18): revocation is
-//!   removing the node in the tailnet admin console, which this module
-//!   notices within `recheck_s`.
+//! - **A denial is this agent's own, not the tailnet's.** `/msg mimid
+//!   tailnet deny <node>` refuses a node here and closes its sessions
+//!   (bead mimid-e13m.18), and the list survives a restart in
+//!   [`DENIED_FILE`], but the node keeps its place in the tailnet and can
+//!   still reach every other service on it. The real revocation is
+//!   removing the node in the admin console, which this module notices
+//!   within `recheck_s`. Nothing takes a node off the deny list but
+//!   editing that file, which is deliberate: an undeny from a client the
+//!   denied node might be holding would be a way back in.
 //! - **XMPP and Matrix** have no mapping yet, because neither front end
 //!   exists (beads mimid-wmdj, mimid-rvqk). §4.6's table says what they
 //!   will do: a fixed SCRAM word for XMPP, node-bound tokens for Matrix.
@@ -93,6 +98,22 @@ pub const DEFAULT_RECHECK_SECS: u64 = 300;
 /// The least `recheck_s` accepted, so a configuration cannot make the
 /// agent ask tailscaled constantly.
 pub const MIN_RECHECK_SECS: u64 = 10;
+
+/// The nodes the user denied, one a line, in the state directory
+/// (§4.6; bead mimid-e13m.18). INVENTED.
+///
+/// It is a file rather than a table in `mimid.sqlite`, which §4.6's
+/// wording suggests: it is a short list of names written only by the
+/// running daemon, so it needs no transaction and no schema, and the
+/// `tailscale cert` consent of §5.2 is already kept this way beside it
+/// ([`crate::tls::consented_names`]). Nothing else in the agent reads it,
+/// so no other crate has to know about it.
+pub const DENIED_FILE: &str = "tailnet-denied";
+
+/// The most nodes the deny list holds, so the file cannot grow without
+/// bound. INVENTED. Past it the oldest denial is dropped: the real
+/// revocation is removing the node in the tailnet (§4.6).
+pub const MAX_DENIED: usize = 256;
 
 /// The `[tailnet]` table. INVENTED names.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -249,6 +270,14 @@ pub struct Tailnet {
     owners: Vec<String>,
     /// The agent's own node's id, which never matches.
     own_node: String,
+    /// The nodes the user denied with `/msg mimid tailnet deny`, read
+    /// from [`DENIED_FILE`] at start (§4.6).
+    denied: std::sync::Mutex<Vec<String>>,
+    /// Where [`DENIED_FILE`] lives.
+    state_dir: PathBuf,
+    /// Ticks whenever the deny list changes, so a session of a node just
+    /// denied is asked about at once rather than at the next recheck.
+    changes: tokio::sync::watch::Sender<u64>,
 }
 
 impl Tailnet {
@@ -264,7 +293,7 @@ impl Tailnet {
     /// answer cannot be read, since starting with identity on and no way
     /// to ask would serve the password rules while the operator believes
     /// otherwise.
-    pub async fn start(setting: &TailnetSetting) -> Result<Self, TlsError> {
+    pub async fn start(setting: &TailnetSetting, state_dir: &Path) -> Result<Self, TlsError> {
         let status: Status = fetch(&setting.socket, "/localapi/v0/status").await?;
         let this = status.this.unwrap_or_default();
         let mut owners = setting.owners.clone();
@@ -309,10 +338,21 @@ impl Tailnet {
                     .to_owned(),
             });
         }
+        let denied = read_denied(state_dir);
+        if !denied.is_empty() {
+            tracing::info!(
+                name: "agent_tailnet_denied",
+                nodes = %denied.join(", "),
+                "these tailnet nodes are denied"
+            );
+        }
         Ok(Self {
             setting: setting.clone(),
             owners,
             own_node: this.id,
+            denied: std::sync::Mutex::new(denied),
+            state_dir: state_dir.to_owned(),
+            changes: tokio::sync::watch::Sender::new(0),
         })
     }
 
@@ -342,9 +382,73 @@ impl Tailnet {
         self.matches(&who)
     }
 
+    /// Whether `node` is on the deny list.
+    #[must_use]
+    pub fn is_denied(&self, node: &str) -> bool {
+        self.denied
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .any(|denied| denied == node)
+    }
+
+    /// The nodes the user denied, in the order they were denied.
+    #[must_use]
+    pub fn denied(&self) -> Vec<String> {
+        self.denied
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Adds `node` to the deny list and writes it; `false` if it was
+    /// there already. [`Tailnet::changes`] then ticks, which is what ends
+    /// that node's open sessions.
+    ///
+    /// # Errors
+    ///
+    /// [`TlsError::Write`] if the file cannot be written. The node is
+    /// then not denied at all, rather than denied only until a restart.
+    pub fn deny(&self, node: &str) -> Result<bool, TlsError> {
+        let mut denied = self
+            .denied
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if denied.iter().any(|listed| listed == node) {
+            return Ok(false);
+        }
+        let mut wanted = denied.clone();
+        wanted.push(node.to_owned());
+        if wanted.len() > MAX_DENIED {
+            wanted.remove(0);
+        }
+        write_denied(&self.state_dir, &wanted)?;
+        *denied = wanted;
+        drop(denied);
+        self.changes.send_modify(|count| *count += 1);
+        tracing::info!(
+            name: "agent_tailnet_deny",
+            node,
+            "a tailnet node was denied; its sessions close now"
+        );
+        Ok(true)
+    }
+
+    /// Ticks whenever the deny list changes.
+    #[must_use]
+    pub fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+
     /// [`Tailnet::identify`]'s rules over an answer already read.
     fn matches(&self, who: &WhoIs) -> Option<TailnetPeer> {
         let node = who.node.name.trim_end_matches('.').to_owned();
+        // A denied node is refused before any rule, the listed ones
+        // included: the user said no to this node by name (§4.6).
+        if !node.is_empty() && self.is_denied(&node) {
+            tracing::debug!(node = %node, "a denied tailnet node is refused");
+            return None;
+        }
         let peer = |matched: &str| {
             Some(TailnetPeer {
                 node: node.clone(),
@@ -415,6 +519,61 @@ impl mimid_agent_irc::PeerIdentity for Tailnet {
     fn recheck(&self) -> Duration {
         self.recheck()
     }
+
+    fn deny(&self, node: &str) -> Result<bool, String> {
+        self.deny(node).map_err(|error| error.to_string())
+    }
+
+    fn denied(&self) -> Vec<String> {
+        self.denied()
+    }
+
+    fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes()
+    }
+}
+
+/// The denied node names from [`DENIED_FILE`]; empty if it cannot be
+/// read, which includes the first start.
+fn read_denied(state_dir: &Path) -> Vec<String> {
+    std::fs::read_to_string(state_dir.join(DENIED_FILE))
+        .map(|text| {
+            text.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .map(str::to_owned)
+                .take(MAX_DENIED)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Writes `nodes` to [`DENIED_FILE`], mode 0600 as the consent file is.
+fn write_denied(state_dir: &Path, nodes: &[String]) -> Result<(), TlsError> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = state_dir.join(DENIED_FILE);
+    let fail = |source| TlsError::Write {
+        path: path.clone(),
+        source,
+    };
+    let mut text = String::from(
+        "# Tailnet nodes denied with `/msg mimid tailnet deny`. They are\n\
+         # refused even when the rules in [tailnet] would let them in. The\n\
+         # real revocation is removing the node in the tailnet.\n",
+    );
+    for node in nodes {
+        text.push_str(node);
+        text.push('\n');
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(fail)?;
+    file.write_all(text.as_bytes()).map_err(fail)
 }
 
 /// A LocalAPI `GET` whose JSON body is `T`.
@@ -437,6 +596,9 @@ mod tests {
             setting,
             owners: owners.iter().map(|o| (*o).to_owned()).collect(),
             own_node: own_node.to_owned(),
+            denied: std::sync::Mutex::new(Vec::new()),
+            state_dir: PathBuf::from("/nonexistent"),
+            changes: tokio::sync::watch::Sender::new(0),
         }
     }
 

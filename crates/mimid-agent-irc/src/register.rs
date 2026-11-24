@@ -395,6 +395,16 @@ impl Session {
         let me = self.shared.names().own().clone();
         self.me = Some(me.clone());
         self.connected_at = crate::render::now_ms();
+        // docs/design/frontend-auth.md §4.6: the connection joins the
+        // registry now that it is registered, and leaves it when the
+        // guard drops with the session.
+        self.registered = Some(self.shared.register(crate::conn::SessionInfo {
+            peer: self.peer,
+            node: self.tailnet.as_ref().map(|matched| matched.node.clone()),
+            by_tailnet: self.by_tailnet,
+            credential: self.login.as_ref().map(|login| login.name.clone()),
+            since_ms: self.connected_at,
+        }));
         let server = self.shared.server.clone();
         self.numeric(
             "001",

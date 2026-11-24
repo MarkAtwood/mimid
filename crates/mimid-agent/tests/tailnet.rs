@@ -331,7 +331,7 @@ async fn an_unknown_node_falls_back_to_the_password() {
     let (mut good, _) = Irc::register(addr, &alice.token(), "alice", &[]).await;
     good.send("PRIVMSG mimid :tailnet").await;
     let notice = good.until_command("NOTICE").await;
-    assert!(notice.raw.contains("did not match"), "{}", notice.raw);
+    assert!(notice.raw.contains("matches no node"), "{}", notice.raw);
     alice.stop().await;
 }
 
@@ -358,6 +358,85 @@ async fn identity_without_tailscaled_refuses_to_start() {
         "{:?}",
         failed.map(|_| ())
     );
+}
+
+/// Oracle: §4.6 and bead mimid-e13m.18: `/msg mimid tailnet` lists every
+/// node with its open sessions, not just the asking connection's, and
+/// `tailnet deny <node>` refuses a node from now on and closes what it
+/// has open. The denial outlives a restart, because the real revocation
+/// is in the admin console and this is the agent's own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_denied_node_loses_its_sessions_and_stays_denied() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscaled::start(dir.path(), status(), Some(alices_phone())).await;
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let config = with_tailnet(dir.path(), &server, &fake, 3600);
+    let alice = Running::start(&config).await;
+    let addr = alice.irc.unwrap();
+
+    // Two connections from the node, so the listing has something to
+    // count and the deny has more than one session to close.
+    let mut first = Irc::connect(addr).await;
+    first.send("NICK alice").await;
+    first.send("USER alice 0 * :x").await;
+    first.until_command("001").await;
+    let mut second = Irc::connect(addr).await;
+    second.send("NICK alice").await;
+    second.send("USER alice 0 * :x").await;
+    second.until_command("001").await;
+
+    // The listing names the node and counts both sessions.
+    first.send("PRIVMSG mimid :tailnet").await;
+    let mut listing = String::new();
+    for _ in 0..6 {
+        listing.push_str(&first.until_command("NOTICE").await.raw);
+        if listing.contains("no node is denied") {
+            break;
+        }
+    }
+    assert!(
+        listing.contains("pixel-8.tailnet.ts.net") && listing.contains("2 session(s)"),
+        "{listing}"
+    );
+
+    // Denied: both sessions close, including the one that asked.
+    first
+        .send("PRIVMSG mimid :tailnet deny pixel-8.tailnet.ts.net")
+        .await;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(10), second.closes())
+            .await
+            .expect("the other session closes"),
+        "the other session closed"
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(10), first.closes())
+            .await
+            .expect("the asking session closes too"),
+        "the asking session closed"
+    );
+
+    // A new connection from the denied node is refused: the node no
+    // longer matches, so the password rules apply and it has none.
+    let mut again = Irc::connect(addr).await;
+    again.send("CAP REQ :sasl").await;
+    again.send("CAP END").await;
+    again.send("NICK alice").await;
+    again.send("USER alice 0 * :x").await;
+    let refused = again.until_command("FAIL").await;
+    assert!(refused.raw.contains("ACCOUNT_REQUIRED"), "{}", refused.raw);
+    alice.stop().await;
+
+    // The denial is written, so a restart keeps it.
+    let denied =
+        std::fs::read_to_string(config.state_dir.join(mimid_agent::tailnet::DENIED_FILE)).unwrap();
+    assert!(denied.contains("pixel-8.tailnet.ts.net"), "{denied}");
+    let restarted = Running::start(&config).await;
+    let mut after = Irc::connect(restarted.irc.unwrap()).await;
+    after.send("NICK alice").await;
+    after.send("USER alice 0 * :x").await;
+    assert!(after.closes().await, "still refused after a restart");
+    restarted.stop().await;
 }
 
 /// Oracle: §4.6 and the `[tailnet]` table: the setting is checked before
@@ -426,7 +505,7 @@ async fn a_tagged_or_nameless_own_node_refuses_to_start() {
             ..mimid_agent::tailnet::TailnetSetting::default()
         };
         assert!(
-            mimid_agent::tailnet::Tailnet::start(&setting)
+            mimid_agent::tailnet::Tailnet::start(&setting, fake_dir.path())
                 .await
                 .is_err(),
             "{status} should refuse to start"
@@ -447,5 +526,9 @@ async fn a_tagged_or_nameless_own_node_refuses_to_start() {
         socket: fake.socket.clone(),
         ..mimid_agent::tailnet::TailnetSetting::default()
     };
-    assert!(mimid_agent::tailnet::Tailnet::start(&setting).await.is_ok());
+    assert!(
+        mimid_agent::tailnet::Tailnet::start(&setting, fake_dir.path())
+            .await
+            .is_ok()
+    );
 }

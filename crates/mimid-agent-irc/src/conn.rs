@@ -52,6 +52,44 @@ pub(crate) struct Shared {
     /// Tailnet identity, once switched on (docs/design/frontend-auth.md
     /// §4.6): who the daemon says a peer is, before any credential.
     pub(crate) peer_identity: std::sync::OnceLock<Arc<dyn crate::PeerIdentity>>,
+    /// Every registered connection, so `/msg mimid tailnet` can list the
+    /// matched nodes with their open sessions (§4.6; bead
+    /// mimid-e13m.18). A connection adds itself when registration ends
+    /// and takes itself out when it closes.
+    sessions: Mutex<BTreeMap<u64, SessionInfo>>,
+    /// The next session id; ids are never reused.
+    next_session: std::sync::atomic::AtomicU64,
+}
+
+/// One registered connection, as `/msg mimid tailnet` lists it.
+#[derive(Debug, Clone)]
+pub(crate) struct SessionInfo {
+    /// Where it came from.
+    pub(crate) peer: SocketAddr,
+    /// The tailnet node the daemon matched, if any.
+    pub(crate) node: Option<String>,
+    /// Whether that node, rather than a credential, let it in.
+    pub(crate) by_tailnet: bool,
+    /// The credential that let it in, if one did.
+    pub(crate) credential: Option<String>,
+    /// When it registered, in milliseconds.
+    pub(crate) since_ms: u64,
+}
+
+/// A connection's place in [`Shared::sessions`], taken out when dropped.
+pub(crate) struct Registered {
+    shared: Arc<Shared>,
+    id: u64,
+}
+
+impl Drop for Registered {
+    fn drop(&mut self) {
+        self.shared
+            .sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.id);
+    }
 }
 
 impl Shared {
@@ -72,6 +110,8 @@ impl Shared {
             part_reasons: Mutex::new(HashMap::new()),
             web_push: std::sync::OnceLock::new(),
             peer_identity: std::sync::OnceLock::new(),
+            sessions: Mutex::new(BTreeMap::new()),
+            next_session: std::sync::atomic::AtomicU64::new(1),
         }
     }
 
@@ -106,6 +146,32 @@ impl Shared {
     /// Tailnet identity, if the daemon switched it on.
     pub(crate) fn peer_identity(&self) -> Option<Arc<dyn crate::PeerIdentity>> {
         self.peer_identity.get().cloned()
+    }
+
+    /// Every registered connection, oldest first.
+    pub(crate) fn sessions(&self) -> Vec<SessionInfo> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    /// Adds `info` to the registry; the place is taken out when the
+    /// returned guard drops.
+    pub(crate) fn register(self: &Arc<Self>, info: SessionInfo) -> Registered {
+        let id = self
+            .next_session
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id, info);
+        Registered {
+            shared: Arc::clone(self),
+            id,
+        }
     }
 
     /// The names, locked. Taken after the store's state lock, never
@@ -198,6 +264,9 @@ pub(crate) struct Session {
     /// (§4.6). A connection that sent a credential that checked out is
     /// an ordinary session and lives by §3.7 instead.
     pub(crate) by_tailnet: bool,
+    /// This connection's place in the registry, from registration until
+    /// it closes (§4.6).
+    pub(crate) registered: Option<Registered>,
     /// Where an AUTHENTICATE exchange stands.
     pub(crate) sasl: crate::sasl::Sasl,
     /// What SASL logged in as, before registration ends.
@@ -252,6 +321,7 @@ impl Session {
             login: None,
             tailnet: None,
             by_tailnet: false,
+            registered: None,
             sasl: crate::sasl::Sasl::Idle,
             sasl_login: None,
             sasl_failures: false,
@@ -512,6 +582,10 @@ pub(crate) async fn run<S>(
         (Some(identity), Some(_)) => Some(Instant::now() + identity.recheck()),
         _ => None,
     };
+    // `/msg mimid tailnet deny <node>` must not wait for that recheck,
+    // so a change to the denied nodes brings the next one forward
+    // (bead mimid-e13m.18).
+    let mut denied = identity.as_ref().map(|identity| identity.changes());
     let login_by = Instant::now() + LOGIN_WITHIN.min(ping_after + pong_within);
     let mut last_heard = Instant::now();
     let mut ping_sent: Option<Instant> = None;
@@ -566,6 +640,17 @@ pub(crate) async fn run<S>(
                             tailnet_recheck = Some(Instant::now() + identity.recheck());
                         }
                     }
+                }
+            }
+            // A node was denied: ask about this connection's node now.
+            Ok(()) = async {
+                match denied.as_mut() {
+                    Some(denied) => denied.changed().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if session.tailnet.is_some() {
+                    tailnet_recheck = Some(Instant::now());
                 }
             }
             Ok(()) = credentials.changed() => {
