@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.121",
+  "title": "Decision mimid-1wgh.120 is wrong at the provider: suppressing the Chat removes the room's messages",
+  "description": "Found 2026-11-23 while implementing decision mimid-1wgh.120, by reading\nthe code before changing it. The decision, and the spec text pushed for\nit (jmap-chat-spec 0f187aa), are wrong about WHERE the Chat is\nsuppressed.\n\nWHAT I CHECKED. In mimid-server, every JMAP message projection INNER\nJOINs follower_chat:\n\n  store/jmap.rs message_columns!(): \"FROM follower_event e JOIN\n  follower_chat c ON c.room_id = e.room_id AND c.user_uri = ?1\"\n\nand the per-Chat message id query does the same. So a room with no\nfollower_chat row has no messages visible through the provider's JMAP API\nat all. The agent would never receive anything sent in a call room,\nincluding the SDP signalling of bead mimid-1wgh.114.5. Suppressing the\nChat does not hide a conversation; it deletes the channel.\n\nAND THE DRAFT SAYS SO, in the section next to the one I edited.\n§Chat.roomId: \"A Chat with a roomId has kind group. Its participant list,\nroles, and metadata are MLS group state ... and its messages are sent\nwith Room/send\". The Chat IS the room's message container and the MLS\nclient's handle on it. I edited §Room/create without reading\n§Chat.roomId, which is the second time today that reading one section and\nnot its neighbour produced a wrong answer.\n\nALSO WRONG EVEN IF IT WORKED: a follower cannot tell. §5 puts a\nparent-dependent room on the same hub as its parent, so the CREATOR's\nprovider is the hub and can read the policy. Every other participant's\nprovider is a follower, holds no group state, and cannot decrypt the\nWelcome, so it cannot know the room is parent-dependent. The rule was\nunenforceable for every participant but one.\n\nWHERE THE RULE ACTUALLY BELONGS. mimid has two JMAP endpoints with\ndifferent audiences:\n\n- THE PROVIDER'S (mimid-server), consumed by the AGENT, which is an MLS\n  member and knows what the room is. The Chat here is addressing. It must\n  stay.\n- THE AGENT'S OWN (mimid-agent-jmap), consumed by a STOCK HUMAN CLIENT.\n  Here a Chat is a PROJECTION of the store's record::Room\n  (render.rs new_chat, keyed by room.key), and the store keeps the room\n  and its messages whether or not a Chat is projected. Omitting one loses\n  nothing, and this is the endpoint where the mystery-empty-chat problem\n  actually appears.\n\nSo: the provider keeps binding a Chat, and the agent's front end does not\nproject a call room as one. Room::parent already marks which rooms.\n\nWHAT TO FIX IN THE PUSHED DRAFT (needs Mark's OK, like any write there):\nrevert the no-Chat sentence and the chatId (Id|null) change of 0f187aa in\n§Room/create, and instead give the Chat a way to SAY what it is, so a\nclient can tell rather than the server hiding it: a parentRoomId field\nbeside roomId in §Chat.roomId, null for an ordinary room. A client that\nknows the field hides or badges the Chat; mimid's agent front end filters\non it. Say plainly why the Chat cannot simply be omitted: it is the\nroom's message container.\n\nDECISION mimid-1wgh.120 SHOULD BE REOPENED OR SUPERSEDED. Its reasoning\n(\"a call is a VTCCall; the call room is its keying substrate, not a\nconversation\") survives; its mechanism does not.\n",
+  "status": "closed",
+  "priority": 0,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T00:34:00.563223105Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T00:41:33.81377111Z",
+  "closed_at": "2026-11-24T00:41:33.81377111Z",
+  "close_reason": "Specs fixed and pushed (jmap-chat-spec a756342): the Chat stays, parentRoomId tells a client what it is, and the suppression moves to the agent's front end.",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.121",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-24T00:34:00.597792752Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
