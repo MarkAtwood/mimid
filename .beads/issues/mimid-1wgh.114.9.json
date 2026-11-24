@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.114.9",
+  "title": "A demo client for mimid, in ParlorVTC's shape",
+  "description": "Mark 2026-11-23: \"we might have to write somethign like Parler jsut for\nmimid demo\".\n\nWHY IT IS NEEDED. mimid ships no UI (decision mimid-1wgh.38) and no\nstock JMAP Chat client implements draft-atwood-jmap-vtc, so nothing can\nshow the call work: the room, the signalling, the keying and the JMAP\nsurface are all built and no human can see them.\n\nTHE SHAPE TO COPY, from MarkAtwood/ParlorVTC: two HTML files with inline\nCSS and JS, ~1100 lines of ES modules, no build step, no dependencies,\nno npm, runs from file://. Separate repo, so decision mimid-1wgh.38\nstands: mimid still ships no UI.\n\nWHAT IT DOES, in order:\n1. authenticates to the agent's loopback endpoint with the local token\n   or an app password (docs/design/frontend-auth.md §3);\n2. reads the Session's urn:ietf:params:jmap:vtc capability for\n   iceServers and supportsMimiCalls (commit c46f9dba);\n3. starts a call with VTCCall/set create, callType \"room\" and the\n   chatId of the chat to call;\n4. sends offer, answer and candidates with VTCCall/signal;\n5. RECEIVES them -- which is bead mimid-1wgh.114.8 and does not exist\n   yet. BLOCKED on that;\n6. does the media with WebRTC, lifting Parlor's web/webrtc.js nearly\n   unchanged: the ICE servers from step 2, Opus constrained to 24kbps\n   mono, an explicit audio transceiver so renegotiation works.\n\nTHE SHORTEST DEMO NEEDS NO MEDIA SECRET. A 1:1 WebRTC call is\nDTLS-SRTP, already end to end encrypted, and the session descriptions\ncarrying those fingerprints are authenticated by MLS, so no fingerprint\ncomparison is needed either (bead mimid-1wgh.114.5). SFrame, an SFU and\nVTCCall/exportMediaSecret are what the GROUP case needs. Do the 1:1\nfirst: it is the demo, and it is reachable.\n\nWHAT TO TAKE FROM PARLOR BESIDES THE WEBRTC, each of which it learned\nthe hard way and commented:\n- buffer candidates until the remote description is set, both sides\n  (pendingIce), because arrival order is not processing order;\n- an idempotency guard on the offer (\"if (state.pc) return\");\n- a bounded seen-ids set with signature-verify-before-insert, so a\n  duplicate cannot poison the cache;\n- validate every field's type before using it.\nmimid does not need Parlor's sender check (ev.pubkey comparison \"to\nprevent injection attacks\"): participantId is server-set from the\nauthenticated MLS sender, which is the one place this design is\nstronger than Parlor's.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T03:20:27.015869245Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T03:20:27.015869245Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.114.9",
+      "depends_on_id": "mimid-1wgh.114",
+      "type": "parent-child",
+      "created_at": "2026-11-24T03:20:27.059068811Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
