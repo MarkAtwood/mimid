@@ -10,7 +10,14 @@
 //! What that buys, and neither comes from anything here:
 //!
 //! - the room's hub orders the messages it accepts, so an offer and its
-//!   answer arrive in that order with no sequence numbers of ours;
+//!   answer arrive in that order with no sequence numbers of ours.
+//!   ARRIVAL ORDER IS NOT PROCESSING ORDER: applying a session
+//!   description waits on the user's permission to use a microphone and
+//!   on the media layer, so a candidate that arrived after the offer can
+//!   reach a client still applying it. A client holds such a candidate
+//!   until the remote description is set and then applies what it held
+//!   (draft-atwood-jmap-vtc-00 §VTCCallSignal). Nothing here can do that
+//!   for it: the media layer is the client's;
 //! - the sender is the authenticated MLS sender, so the certificate
 //!   fingerprints (RFC 8122) a session description carries are bound to
 //!   that sender's credential. A call signalled this way needs no
@@ -23,6 +30,10 @@
 //!   for a forwarding unit that is itself a member; in a mesh call among
 //!   three or more, the description meant for one peer is readable by
 //!   all of them, and nothing here makes it otherwise.
+//! - A signal may be delivered more than once, because the agent's
+//!   journal is replayed after a crash. Nothing here dedupes: a second
+//!   copy of an offer a client has applied is the client's to ignore,
+//!   and a repeated candidate is harmless to apply again.
 //! - The extension key is private use (mimi-content-10 §4.3) and
 //!   provisional: decision mimid-1wgh.116 for the key's shape, and
 //!   INVENTED, NOT FROM SPEC until a MIMI Content Extension Key is

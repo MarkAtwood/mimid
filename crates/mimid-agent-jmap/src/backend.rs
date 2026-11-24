@@ -54,6 +54,9 @@ pub struct Options {
     /// The quota of unreferenced blobs ([`BlobQuota::default`] by
     /// default; decision mimid-1wgh.68).
     pub blob_quota: BlobQuota,
+    /// The VTC surface: off by default, with the relays of
+    /// [`crate::vtc::demo_ice_servers`] (decision mimid-1wgh.119).
+    pub vtc: crate::vtc::VtcOptions,
 }
 
 impl Default for Options {
@@ -62,6 +65,7 @@ impl Default for Options {
             invites: InvitePolicy::default(),
             change_log_limit: CHANGE_LOG_LIMIT,
             blob_quota: BlobQuota::default(),
+            vtc: crate::vtc::VtcOptions::default(),
         }
     }
 }
@@ -82,6 +86,12 @@ impl Options {
     /// Options holding unreferenced blobs to `quota`.
     pub fn with_blob_quota(mut self, quota: BlobQuota) -> Self {
         self.blob_quota = quota;
+        self
+    }
+
+    /// Options with the VTC surface configured as `vtc`.
+    pub fn with_vtc(mut self, vtc: crate::vtc::VtcOptions) -> Self {
+        self.vtc = vtc;
         self
     }
 }
@@ -276,6 +286,12 @@ impl AgentChat {
         if this.push.is_some() {
             jmap_server::register_push_subscription_handlers(dispatcher, Arc::clone(this));
         }
+        crate::vtc_backend::register(this, dispatcher);
+    }
+
+    /// How the VTC surface is configured ([`crate::vtc::VtcOptions`]).
+    pub fn vtc_options(&self) -> &crate::vtc::VtcOptions {
+        &self.options.vtc
     }
 
     /// The JMAP account id.

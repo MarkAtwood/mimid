@@ -279,6 +279,7 @@ pub mod report;
 pub mod retry;
 mod sync;
 pub mod vtc;
+mod vtc_backend;
 
 pub use backend::{
     AgentChat, CHANGE_LOG_LIMIT, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, Options,

@@ -2073,6 +2073,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jmap-vtc-server"
+version = "0.6.2"
+source = "git+https://github.com/MarkAtwood/crate-jmap?rev=1a58c94f#1a58c94fa429b02e8dc9aff682d330c6b601dd56"
+dependencies = [
+ "base64 0.22.1",
+ "jmap-object-history-server",
+ "jmap-object-history-types",
+ "jmap-server",
+ "jmap-types",
+ "jmap-vtc-types",
+ "serde",
+ "serde_json",
+ "ulid 1.2.1",
+]
+
+[[package]]
 name = "jmap-vtc-types"
 version = "0.6.2"
 source = "git+https://github.com/MarkAtwood/crate-jmap?rev=1a58c94f#1a58c94fa429b02e8dc9aff682d330c6b601dd56"
@@ -2694,6 +2710,7 @@ dependencies = [
  "jmap-chat-types",
  "jmap-server",
  "jmap-types",
+ "jmap-vtc-server",
  "jmap-vtc-types",
  "mimi-content",
  "mimi-mls",

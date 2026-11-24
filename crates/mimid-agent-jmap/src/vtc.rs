@@ -18,7 +18,7 @@
 //!   it and that encrypted bytes flow between them; it never learns the
 //!   media, which is why a relay is acceptable at all.
 //! - The default relay is a PUBLIC THIRD PARTY's
-//!   ([`DEMO_ICE_SERVERS`]). It makes a call work out of the box, which
+//!   ([`demo_ice_servers`]). It makes a call work out of the box, which
 //!   is why Mark chose it, and it is the arrangement
 //!   draft-atwood-jmap-vtc-00 §NAT Traversal Is Not Negotiated warns
 //!   about: when both ends use the same third party's relay, that party
@@ -101,6 +101,46 @@ impl VtcOptions {
     }
 }
 
+/// What this agent advertises as `urn:ietf:params:jmap:vtc`
+/// (draft-atwood-jmap-vtc-00 §Account-Level Capability Object).
+///
+/// Narrow on purpose. mimid has no media plane of its own: it hosts the
+/// call's MIMI room, carries its signalling and exports its media
+/// secret, and the client does the media. So it advertises ROOM CALLS
+/// only, and nothing that would need a server-side media pipeline.
+///
+/// Each `false` here closes a path in the handlers that mimid could not
+/// honour: no ring call, so no ring targets to notify and no ring
+/// timeout; no scheduled call, so no clock to fire; no breakout rooms,
+/// no recording, no livestream, no lobby, since every one of those wants
+/// a server that can see or compose media.
+#[must_use]
+pub fn capability(options: &VtcOptions) -> jmap_vtc_types::VtcCapability {
+    serde_json::from_value(serde_json::json!({
+        "mayCreateCall": true,
+        "supportsRingCalls": false,
+        "supportsRoomCalls": true,
+        "supportsScheduledCalls": false,
+        "supportsRecording": false,
+        "supportsLivestream": false,
+        "livestreamModes": [],
+        "supportsRecordingPause": false,
+        "livestreamPushSchemes": [],
+        "layouts": [],
+        "supportsLobby": false,
+        "supportsBreakoutRooms": false,
+        "supportedMediaTypes": ["audio", "video", "screen"],
+        "maxParticipantsPerCall": serde_json::Value::Null,
+        "maxConcurrentCalls": serde_json::Value::Null,
+        "iceServers": options.ice_servers,
+        // The agent keys a call from the call room's MLS group and
+        // signals it through that room's messages, which is what
+        // supportsMimiCalls says (draft-atwood-jmap-vtc-00 §Capability).
+        "supportsMimiCalls": true,
+    }))
+    .expect("a VtcCapability of our own making")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,6 +175,29 @@ mod tests {
                 .with_ice_servers(Vec::new())
                 .ice_servers
                 .is_empty()
+        );
+    }
+
+    /// The capability advertises what the handlers will honour, and nothing
+    /// more: every `false` closes a path that would need a media plane
+    /// mimid does not have.
+    #[test]
+    fn the_capability_offers_only_room_calls() {
+        let cap = capability(&VtcOptions::enabled());
+        assert!(cap.supports_room_calls, "the one shape mimid can host");
+        assert!(!cap.supports_ring_calls, "no ring targets to notify");
+        assert!(!cap.supports_scheduled_calls, "no clock to fire");
+        assert!(!cap.supports_recording && !cap.supports_livestream);
+        assert!(!cap.supports_breakout_rooms && !cap.supports_lobby);
+        assert!(cap.may_create_call);
+        // The relays reach the client through the capability, which is the
+        // channel they belong on.
+        assert_eq!(cap.ice_servers.as_deref(), Some(&demo_ice_servers()[..]));
+        // And the MIMI keying is advertised, since it is what the agent does
+        // that a plain VTC server does not.
+        assert_eq!(
+            cap.extra.get("supportsMimiCalls"),
+            Some(&serde_json::Value::Bool(true))
         );
     }
 }

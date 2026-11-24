@@ -25,6 +25,9 @@ jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f
 # VtcIceServer, for the relays the agent advertises to its own client
 # (src/vtc.rs). The VTC surface itself is bead mimid-1wgh.114.2.
 jmap-vtc-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
+# The VTC method handlers; AgentChat implements their VtcBackend over the
+# store (bead mimid-1wgh.114.2).
+jmap-vtc-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f", features = ["memory"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
