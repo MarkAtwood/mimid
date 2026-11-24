@@ -1,0 +1,26 @@
+{
+  "id": "mimid-hb5z.2",
+  "title": "AS and resource discovery: RFC 8414 metadata, RFC 9728 protected-resource metadata, and the 401 on /.well-known/jmap",
+  "description": "What a JMAP client needs to find the AS without being told: RFC 9728 protected-resource metadata on the provider's JMAP endpoint naming its AS, RFC 8414 AS metadata at the AS, and a 401 from /.well-known/jmap that points at both. The ecosystem convention (Fastmail, Stalwart) is exactly this, and RFC 8620 itself puts authentication out of scope. Nothing here issues a token; this is the discovery half, and it is what makes the rest reachable by a stock client.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T16:33:11.179545465Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T16:33:11.179545465Z",
+  "labels": [
+    "auth",
+    "server"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-hb5z.2",
+      "depends_on_id": "mimid-hb5z",
+      "type": "parent-child",
+      "created_at": "2026-11-24T16:33:11.219322375Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

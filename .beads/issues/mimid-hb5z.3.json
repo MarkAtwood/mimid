@@ -1,0 +1,26 @@
+{
+  "id": "mimid-hb5z.3",
+  "title": "Authorization code with mandatory PKCE and audience-bound access tokens (RFC 7636, RFC 8707)",
+  "description": "The one grant for anything that can host a redirect: authorization code with PKCE (RFC 7636) required, no implicit grant, no password grant. The access token's audience is the provider's JMAP endpoint, requested with RFC 8707 resource indicators, so a token minted for mimid is not usable anywhere else and a Google token is never accepted in its place. Includes how the token is checked on each request, beside today's `mimid admin ... token` bearer tokens, which do not go away.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T16:33:11.297261646Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T16:33:11.297261646Z",
+  "labels": [
+    "auth",
+    "server"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-hb5z.3",
+      "depends_on_id": "mimid-hb5z",
+      "type": "parent-child",
+      "created_at": "2026-11-24T16:33:11.338345619Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "id": "mimid-hb5z.6",
+  "title": "Dynamic client registration (RFC 7591): every JMAP client that might show up cannot be pre-registered",
+  "description": "A personal provider cannot hold a list of approved JMAP clients, so RFC 7591 dynamic client registration is how an unknown client becomes one the AS will talk to. Needs its own limits: what a registration may claim, how many a provider keeps, and what an operator can turn off. Also the question of what the consent screen says when the client registered itself minutes ago.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T16:33:11.676134481Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T16:33:11.676134481Z",
+  "labels": [
+    "auth",
+    "server"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-hb5z.6",
+      "depends_on_id": "mimid-hb5z",
+      "type": "parent-child",
+      "created_at": "2026-11-24T16:33:11.720380312Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "id": "mimid-e13m.15",
+  "title": "auth 15: a social login at the provider mints an app password the agent already accepts",
+  "description": "Decision mimid-1wgh.125: the agent's boundary gains no mechanism. The provider's browser session (epic mimid-hb5z) ends by minting a named app password, which every front end already takes -- SASL PLAIN, SASL SCRAM-SHA-256, PASS, HTTP Basic, Bearer. What this bead builds is the hand-off: how a credential minted at the provider reaches the agent's credential table, which is the agent's own database and not the provider's, and what the setup output says. The naive reading, the provider writing into the agent's table, is wrong: the agent is on the user's machine and the provider must never hold a credential for it. So the shape is more likely a code the user carries, as `setup \u003cclient\u003e \u003cdevice\u003e` already prints one. That question is this bead's first job.",
+  "notes": "Mark 2026-11-24: this is the cheap path and needs no authorization server, only an OIDC relying party against Google (and the GitHub half of mimid-hb5z.4). See the correction note on epic mimid-hb5z. It does NOT depend on the rest of that epic, only on mimid-hb5z.4 and mimid-hb5z.5.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T16:33:49.496997056Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T17:40:21.039508447Z",
+  "labels": [
+    "auth",
+    "agent"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-e13m.15",
+      "depends_on_id": "mimid-e13m",
+      "type": "parent-child",
+      "created_at": "2026-11-24T16:33:49.55485546Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-e13m.15",
+      "depends_on_id": "mimid-hb5z.4",
+      "type": "blocks",
+      "created_at": "2026-11-24T17:40:31.639144983Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-e13m.15",
+      "depends_on_id": "mimid-hb5z.5",
+      "type": "blocks",
+      "created_at": "2026-11-24T17:40:31.941931892Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

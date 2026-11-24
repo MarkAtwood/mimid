@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.125",
+  "title": "Decision: no OAuth or OIDC at the agent's boundary; social login belongs at the provider and arrives as an app password",
+  "description": "DECIDED (Mark 2026-11-24). No OAuth and no OIDC at the agent's boundary. Social\nlogin is a provider matter (epic mimid-hb5z), and what reaches the agent is an\nordinary named app password.\n\nWHY. \"Create account with Google\" at the agent is close to meaningless:\n\n- The agent serves exactly one user and has no account to create. It is already\n  theirs, keyed to their MIMI URI.\n- The first credential has to exist before any browser flow could run, so the\n  flow cannot be how a user gets in.\n- It would make logging in to a daemon on your own laptop depend on an internet\n  round trip to Google, and hand Google a lockout lever over your own chat\n  history.\n- The agent holds MLS keys and plaintext. An IdP-authenticated session may mint\n  a credential; it must never be able to extract key material.\n- Linking Google must not make Google an authority over an MLS identity.\n  Credential type (BasicCredential today, did:webvh, X.509) is a separate\n  question from how a user logs in.\n\nSo docs/design/frontend-auth.md §4.2's \"No OAuth\" for JMAP and §4.1's \"Not\noffered: ... OAUTHBEARER\" for IRC are confirmed, and this bead is why, not just\nthat.\n\nWHAT SOCIAL LOGIN LOOKS LIKE INSTEAD, at the agent: token exchange, which is\nwhat mimid already does. The user authenticates with Google at the PROVIDER in a\nbrowser; the result of that session is a named app password; the client then uses\nit with SASL PLAIN, SASL SCRAM-SHA-256, HTTP Basic or Bearer. This is the\nFastmail IMAP app-password pattern, and `mimid-agent \u003cconfig\u003e setup \u003cclient\u003e\n\u003cdevice\u003e` with its QR code is already the delivery mechanism. Social login\nbecomes one more route into credential minting rather than a new mechanism at\nthe boundary. Beads mimid-e13m.15 and mimid-e13m.16.\n\nON SASL OAUTHBEARER (RFC 7628). It is the correct IRC mechanism and IRCv3 SASL\ncarries it fine. The blocker is client support: Goguma, HexChat and WeeChat do\nnot implement it (*from memory, verify before relying on this*). Offering only\nOAUTHBEARER would mean no stock IRC client could log in, which is the opposite\nof what epic mimid-e13m is for.\n",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T16:33:28.686990341Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T16:33:55.22310905Z",
+  "closed_at": "2026-11-24T16:33:55.22310905Z",
+  "close_reason": "Decided and recorded.",
+  "labels": [
+    "auth"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.125",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-24T16:33:28.736458233Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
