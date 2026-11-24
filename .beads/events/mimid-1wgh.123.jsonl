@@ -1,0 +1,3 @@
+{"id":"01a20b95-181b-7b1f-b1cb-6b90b6ed477e","issue_id":"mimid-1wgh.123","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-24T03:24:10.139729892Z"}
+{"id":"01a20b95-1821-772f-a9ad-a71b54281f2b","issue_id":"mimid-1wgh.123","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-24T03:24:10.145471688Z"}
+{"id":"01a20b95-18c9-7942-a4bc-8f14ba4575a4","issue_id":"mimid-1wgh.123","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Mark 2026-11-23: a link-joined call is its own call with its own minted secret, authenticating nobody; two kinds of call named differently.","created_at":"2026-11-24T03:24:10.313607952Z"}
