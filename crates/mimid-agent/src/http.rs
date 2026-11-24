@@ -319,6 +319,18 @@ pub(crate) fn session(
         "supportsThreads": false,
     }))?;
     let account = account.as_ref();
+    // RFC 8887 §3: "the URL MUST use the wss: scheme" for a TLS
+    // endpoint, ws: otherwise. The agent's endpoint is loopback and
+    // plain unless the operator configures TLS, so the scheme follows
+    // the base URL it was given rather than being assumed.
+    let ws_base = base
+        .strip_prefix("https://")
+        .map(|rest| format!("wss://{rest}"))
+        .or_else(|| {
+            base.strip_prefix("http://")
+                .map(|rest| format!("ws://{rest}"))
+        })
+        .unwrap_or_else(|| base.to_owned());
     let mut session = json!({
         "capabilities": {
             CORE_CAPABILITY: {
@@ -332,6 +344,16 @@ pub(crate) fn session(
                 "collationAlgorithms": [],
             },
             CHAT_CAPABILITY: {},
+            // RFC 8887 §3: the capability carries the URL and whether
+            // the server takes a push subscription on the socket. mimid
+            // does not: a client that wants StateChange push uses the
+            // EventSource, and what the socket is for here is the
+            // ephemeral events an EventSource cannot carry (bead
+            // mimid-1wgh.100).
+            jmap_websocket::CAPABILITY: {
+                "url": format!("{ws_base}/jmap/ws"),
+                "supportsPush": false,
+            },
         },
         "accounts": {
             account: {
@@ -362,6 +384,7 @@ pub(crate) fn router(endpoint: Arc<Endpoint>) -> Router {
         .route("/.well-known/jmap", get(get_session))
         .route("/jmap/api", post(post_api))
         .route("/jmap/eventsource", get(get_eventsource))
+        .route("/jmap/ws", get(get_websocket))
         // The upload reads its body itself, capped at MAX_SIZE_UPLOAD;
         // DefaultBodyLimit applies only to extractors such as Bytes.
         .route("/jmap/upload/{accountId}/", post(upload))
@@ -976,6 +999,87 @@ impl Params {
 }
 
 /// `GET /jmap/eventsource`.
+/// `GET /jmap/ws`: the JMAP WebSocket subprotocol (RFC 8887).
+///
+/// What it is for, and why the EventSource is not enough: an ephemeral
+/// event has no record to re-fetch, so a `StateChange` cannot carry one.
+/// A call signal is the case that forced it (bead mimid-1wgh.100,
+/// mimid-1wgh.114.8).
+///
+/// The bearer credential was checked by the layer over every route
+/// (docs/design/frontend-auth.md §3) before the upgrade, so the socket
+/// is authenticated from its first frame and carries the account the
+/// credential named. RFC 8887 §4 also allows a token in the
+/// subprotocol; the agent does not take one, because its credential is
+/// already on the request that upgrades.
+async fn get_websocket(
+    State(endpoint): State<Arc<Endpoint>>,
+    upgrade: axum::extract::WebSocketUpgrade,
+) -> Response {
+    let Some(jmap) = &endpoint.jmap else {
+        return jmap_off();
+    };
+    let chat = Arc::clone(&jmap.chat);
+    let state = jmap.session_state.clone();
+    upgrade
+        .protocols(["jmap"])
+        .max_message_size(MAX_SIZE_REQUEST)
+        .max_frame_size(MAX_SIZE_REQUEST)
+        .on_upgrade(move |socket| websocket(chat, state, socket))
+}
+
+/// One JMAP WebSocket connection: the dispatcher behind
+/// [`jmap_websocket::server::Connection`], with the call-signal stream
+/// as its extension.
+async fn websocket(chat: Arc<AgentChat>, state: String, socket: axum::extract::ws::WebSocket) {
+    use axum::extract::ws::Message;
+    use futures_util::{SinkExt, StreamExt};
+    use jmap_websocket::server::{Connection, DispatcherHandler, Inbound, Outbound};
+
+    let (sink, source) = socket.split();
+    // axum's frames in, the crate's frames out. A binary frame is not
+    // JMAP (RFC 8887 §4.1 is text), and an oversized one is told apart
+    // from a close so the crate can answer each as the RFC says.
+    let inbound = source.map(|frame| {
+        Ok::<Inbound, std::convert::Infallible>(match frame {
+            Ok(Message::Text(text)) => Inbound::Text(text.to_string()),
+            Ok(Message::Binary(_)) => Inbound::Binary,
+            Ok(Message::Close(_)) | Err(_) => Inbound::Close,
+            // Ping and Pong are the transport's; axum answers a Ping
+            // itself, so neither reaches JMAP.
+            Ok(_) => return Ok(Inbound::Text(String::new())),
+        })
+    });
+    let outbound = sink.with(|out: Outbound| async move {
+        Ok::<Message, axum::Error>(match out {
+            Outbound::Text(text) => Message::Text(text.into()),
+            Outbound::Close { code, reason } => {
+                Message::Close(Some(axum::extract::ws::CloseFrame {
+                    code,
+                    reason: reason.into(),
+                }))
+            }
+            _ => Message::Close(None),
+        })
+    });
+    // A dispatcher of this connection's own: registration is routing
+    // rather than state, and the shared one is held by value in
+    // `Jmap` for the HTTP path.
+    let handler = Arc::new(DispatcherHandler::new(
+        Arc::new(dispatcher(&chat)),
+        chat.account_id().clone(),
+        move || state.as_str().into(),
+    ));
+    let connection = Connection::new(handler)
+        .with_extension(mimid_agent_jmap::call_signal_stream(Arc::clone(&chat)));
+    if let Err(error) = connection.run(Box::pin(inbound), Box::pin(outbound)).await {
+        tracing::debug!(
+            error = &error as &dyn std::error::Error,
+            "the JMAP WebSocket closed"
+        );
+    }
+}
+
 async fn get_eventsource(
     State(endpoint): State<Arc<Endpoint>>,
     login: Option<axum::Extension<Login>>,

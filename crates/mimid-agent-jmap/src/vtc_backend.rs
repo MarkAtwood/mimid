@@ -80,6 +80,42 @@ impl AgentChat {
         })
     }
 
+    /// The id of the `VTCCall` whose `mimiRoomId` names the room
+    /// `room_key`, or `None` when no call of this account has that room:
+    /// a chat, or a call room this agent is in without a VTCCall of its
+    /// own, which is what a call hosted by another of the user's clients
+    /// looks like until its records are projected.
+    ///
+    /// The store key is resolved to the room's URI first, because
+    /// `mimiRoomId` holds the URI: it crosses providers, and a store key
+    /// is local (decision mimid-1wgh.124 says the same of the
+    /// announcement).
+    pub(crate) async fn call_of_room(&self, room_key: &str) -> Option<Id> {
+        let uri = self
+            .store()
+            .state()
+            .rooms
+            .get(room_key)
+            .map(|room| room.uri.clone())?;
+        let (calls, _) = jmap_vtc_server::VtcBackend::get_objects_unscoped::<VtcCall>(
+            self,
+            self.account_id(),
+            self.account_id(),
+            None,
+        )
+        .await
+        .ok()?;
+        calls
+            .into_iter()
+            .find(|call| {
+                call.extra
+                    .get(MIMI_ROOM_ID)
+                    .and_then(serde_json::Value::as_str)
+                    == Some(uri.as_str())
+            })
+            .map(|call| call.id)
+    }
+
     /// The `VTCCall` of `call_id` as this caller may see it, or a
     /// `notFound` refusal: the read path is the access check
     /// ([`VtcBackend`]'s §Per-call access).

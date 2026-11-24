@@ -280,6 +280,7 @@ pub mod retry;
 mod sync;
 pub mod vtc;
 mod vtc_backend;
+mod vtc_stream;
 
 pub use backend::{
     AgentChat, CHANGE_LOG_LIMIT, InvitePolicy, MAX_ATTACHMENTS_PER_MESSAGE, Options,
@@ -291,3 +292,4 @@ pub use mimid_agent_store::blobs::{
 pub use persist::PersistError;
 pub use sync::{SyncError, SyncReport};
 pub use vtc::{VtcOptions, demo_ice_servers};
+pub use vtc_stream::call_signal_stream;

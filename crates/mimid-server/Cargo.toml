@@ -21,20 +21,20 @@ futures-util = { version = "0.3.34", default-features = false, features = ["sink
 base64 = "=0.22.1"
 # JMAP request parsing and method dispatch (RFC 8620), and the JMAP Chat
 # capability types; exact rev pin (decision mimid-1wgh.12.21).
-jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
-jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
+jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "a28bf508" }
+jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "a28bf508" }
 # draft-atwood-jmap-updates-00 language tags and localizations (bead
 # mimid-nb5n); same rev.
-jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
+jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "a28bf508" }
 # draft-ietf-jmap-metadata-05 helpers for Chat.privateMetadata (decision
 # mimid-1wgh.63); same rev.
-jmap-metadata-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
-jmap-metadata-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
-jmap-chat-mimi-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
+jmap-metadata-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "a28bf508" }
+jmap-metadata-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "a28bf508" }
+jmap-chat-mimi-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "a28bf508" }
 # draft-ietf-jmap-blobext-03 Blob/get, set, lookup and convert (bead
 # mimid-1wgh.14.7).
-jmap-blob-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
-jmap-blob-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
+jmap-blob-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "a28bf508" }
+jmap-blob-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "a28bf508" }
 # RFC 9421 Ed25519 request signatures (bead mimid-75nk.2); already in
 # the lockfile through OpenMLS.
 ed25519-dalek = "=2.2.0"
