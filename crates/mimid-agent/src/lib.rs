@@ -160,10 +160,12 @@
 //!   `tailnet-denied` in the state directory.
 //! - With `[tls] source = "acme"` the agent orders a publicly trusted
 //!   certificate over DNS-01 and renews it (the [`acme`] module;
-//!   docs/design/frontend-auth.md §5.2 rank 2). Only `dns = "hook"` is
-//!   built: the RFC 2136 and acme-dns methods §5.2 also names are not
-//!   (bead mimid-e13m.8). The hook's zero exit is taken as proof the
-//!   record is live, with no lookup to confirm; renewal is by file age
+//!   docs/design/frontend-auth.md §5.2 rank 2). The TXT record is
+//!   written by a hook of the operator's or by an acme-dns instance; the
+//!   RFC 2136 method §5.2 also names is not built (bead
+//!   mimid-e13m.8.1). A hook's zero exit, and a 2xx from acme-dns, are
+//!   taken as proof the record is live, with no lookup to confirm;
+//!   renewal is by file age
 //!   against an assumed 90-day lifetime rather than the certificate's own
 //!   `notAfter` or ARI; and nothing revokes a certificate.
 //! - With `[tls] source = "local-ca"` the agent is its own certificate

@@ -24,11 +24,16 @@
 //! record is live". It covers everyone who can script their own DNS, and
 //! it needs nothing of mimid's beyond running a process.
 //!
-//! §5.2 names two more, neither of which is here yet (bead mimid-e13m.8
-//! records why they are separate work): an **RFC 2136** dynamic update
+//! `dns = "acme-dns"` posts the value to an acme-dns instance instead:
+//! the user registers there once and points a CNAME from
+//! `_acme-challenge.<name>` at the subdomain it gave them, after which
+//! the agent never touches the real zone and the credentials it holds can
+//! write nothing else. §5.2 calls this the one that "turns any provider
+//! into one that works, after one CNAME by hand".
+//!
+//! §5.2 names one more that is not here: an **RFC 2136** dynamic update
 //! with a TSIG key, which is a DNS wire-format implementation of its own
-//! rather than a flag on this module, and **acme-dns**, which is small
-//! but waits on this.
+//! rather than a flag on this module (bead mimid-e13m.8.1).
 //!
 //! # The order, step by step
 //!
@@ -53,8 +58,13 @@
 //!
 //! # Limitations
 //!
-//! - **No RFC 2136 and no acme-dns**, as above: `dns = "hook"` is the only
-//!   method.
+//! - **No RFC 2136** (bead mimid-e13m.8.1): `hook` and `acme-dns` are the
+//!   methods here.
+//! - **The acme-dns update is not read back either.** A 2xx is taken as
+//!   proof the record is live, as a hook's zero exit is. acme-dns serves
+//!   the record itself, so there is no provider to propagate through, but
+//!   the CNAME the user set up by hand is not checked and a missing one
+//!   shows only as the authority failing the challenge.
 //! - **Renewal is by file age**, not by the certificate's own `notAfter`
 //!   nor by ARI (`instant-acme`'s `renewal_info`, which needs its `time`
 //!   feature). A certificate issued for an unusual lifetime is therefore
@@ -109,6 +119,10 @@ pub const RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
 /// How long a DNS hook may take before it is given up on. INVENTED.
 pub const HOOK_WITHIN: Duration = Duration::from_secs(120);
 
+/// How long an acme-dns update may take. INVENTED; it is one small POST,
+/// so this is generous.
+pub const ACME_DNS_WITHIN: Duration = Duration::from_secs(30);
+
 /// `[tls.acme]`. INVENTED names.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -127,6 +141,9 @@ pub struct AcmeSetting {
     /// as its two arguments.
     #[serde(default)]
     pub hook: Option<PathBuf>,
+    /// `[tls.acme.acme-dns]`, required with `dns = "acme-dns"`.
+    #[serde(default, rename = "acme-dns")]
+    pub acme_dns: Option<AcmeDnsSetting>,
     /// A PEM root to trust for the directory instead of the system roots,
     /// for a private authority (Boulder, Pebble or step-ca behind a CA of
     /// your own). Absent means the usual public roots.
@@ -142,6 +159,46 @@ pub enum DnsMethod {
     /// A command of the operator's, called with the name and the value.
     #[default]
     Hook,
+    /// An acme-dns instance, which serves the record on the agent's
+    /// behalf (§5.2 rank 2; bead mimid-e13m.8.2).
+    #[serde(rename = "acme-dns")]
+    AcmeDns,
+}
+
+/// `[tls.acme.acme-dns]`: an acme-dns instance and the credentials its
+/// registration gave (§5.2 rank 2). INVENTED names.
+///
+/// acme-dns is a small DNS server made for this one job. The user
+/// registers once, puts a CNAME from `_acme-challenge.<name>` at the
+/// subdomain it gave them, and from then on the agent posts the challenge
+/// value here. **The agent never touches the real zone**, and these
+/// credentials can write nothing but that one subdomain, which is why
+/// §5.2 ranks it where it does.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcmeDnsSetting {
+    /// The instance, e.g. `https://auth.acme-dns.io`.
+    pub url: String,
+    /// `X-Api-User`, from the registration.
+    pub username: String,
+    /// `X-Api-Key`, from the registration. A secret: it is redacted in
+    /// [`Debug`] output and never logged (AGENTS.md).
+    pub password: String,
+    /// The subdomain the registration gave, which the CNAME points at.
+    pub subdomain: String,
+}
+
+impl std::fmt::Debug for AcmeDnsSetting {
+    /// Redacted: `password` is a secret, and this struct is printed
+    /// whenever `[tls]` is (AGENTS.md's "secrets never reach logs").
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AcmeDnsSetting")
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .field("password", &"..")
+            .field("subdomain", &self.subdomain)
+            .finish()
+    }
 }
 
 impl AcmeSetting {
@@ -162,6 +219,16 @@ impl AcmeSetting {
                 Err("[tls.acme] dns = \"hook\" needs a hook command")
             }
             DnsMethod::Hook => Ok(()),
+            DnsMethod::AcmeDns => match &self.acme_dns {
+                None => Err("[tls.acme] dns = \"acme-dns\" needs [tls.acme.acme-dns]"),
+                Some(acme_dns) if !acme_dns.url.starts_with("https://") => {
+                    Err("[tls.acme.acme-dns] url must be an https URL")
+                }
+                Some(acme_dns) if acme_dns.subdomain.is_empty() => {
+                    Err("[tls.acme.acme-dns] needs the subdomain the registration gave")
+                }
+                Some(_) => Ok(()),
+            },
         }
     }
 }
@@ -385,7 +452,83 @@ async fn write_record(setting: &AcmeSetting, record: &str, value: &str) -> Resul
             };
             run_hook(hook, record, value).await
         }
+        DnsMethod::AcmeDns => {
+            let Some(acme_dns) = &setting.acme_dns else {
+                return Err(TlsError::Acme(
+                    "[tls.acme] dns = \"acme-dns\" needs [tls.acme.acme-dns]".to_owned(),
+                ));
+            };
+            update_acme_dns(acme_dns, setting.root.as_deref(), record, value).await
+        }
     }
+}
+
+/// Posts `value` to the acme-dns instance, which then serves the TXT
+/// record the authority will look up.
+///
+/// The record's own name is not sent: acme-dns serves the subdomain the
+/// registration gave, and the user's CNAME is what points
+/// `_acme-challenge.<name>` at it. `record` is logged so an operator can
+/// see which challenge this was for.
+async fn update_acme_dns(
+    setting: &AcmeDnsSetting,
+    root: Option<&Path>,
+    record: &str,
+    value: &str,
+) -> Result<(), TlsError> {
+    let mut client = reqwest::Client::builder();
+    if let Some(root) = root {
+        let pem = read(root)?;
+        let certificate = reqwest::Certificate::from_pem(&pem).map_err(|error| {
+            TlsError::Acme(format!(
+                "the root {} could not be read: {error}",
+                root.display()
+            ))
+        })?;
+        client = client.add_root_certificate(certificate);
+    }
+    let client = client
+        .timeout(ACME_DNS_WITHIN)
+        .build()
+        .map_err(|error| TlsError::Acme(format!("no HTTP client could be built: {error}")))?;
+    let url = format!("{}/update", setting.url.trim_end_matches('/'));
+    // acme-dns's own API: the two headers from the registration, and a
+    // body of the subdomain and the value (*unverified* against a
+    // running instance; its README is the source).
+    let answer = client
+        .post(&url)
+        .header("X-Api-User", &setting.username)
+        .header("X-Api-Key", &setting.password)
+        // Built by hand rather than with reqwest's `json` feature, so
+        // the dependency's surface stays as mimid-agent-core has it.
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(
+            serde_json::json!({
+                "subdomain": setting.subdomain,
+                "txt": value,
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .map_err(|error| {
+            // The error may carry the URL but never a header, so there is
+            // no credential in it.
+            TlsError::Acme(format!("acme-dns at {url} could not be reached: {error}"))
+        })?;
+    let status = answer.status();
+    if !status.is_success() {
+        // The body says what acme-dns objected to, usually a value that
+        // is not 43 characters or a subdomain the credentials cannot
+        // write. It carries no credential of ours.
+        let said = answer.text().await.unwrap_or_default();
+        return Err(TlsError::Acme(format!(
+            "acme-dns at {url} refused the record for {record}: {status} {}",
+            said.trim()
+        )));
+    }
+    tracing::debug!(record, subdomain = %setting.subdomain, "a dns-01 record was given to acme-dns");
+    Ok(())
 }
 
 /// Runs the operator's hook with the record's name and value, and takes a
@@ -447,6 +590,7 @@ mod tests {
             contact: None,
             dns: DnsMethod::Hook,
             hook: Some(PathBuf::from("/bin/true")),
+            acme_dns: None,
             root: None,
         }
     }

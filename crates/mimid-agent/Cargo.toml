@@ -44,6 +44,10 @@ instant-acme = { version = "=0.8.5", default-features = false, features = [
     "hyper-rustls",
     "rcgen",
 ] }
+# `[tls.acme] dns = "acme-dns"` posts the challenge value to an acme-dns
+# instance (bead mimid-e13m.8.2); the version and features
+# mimid-agent-core already uses.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 # `[tls] source = "local-ca"` (docs/design/frontend-auth.md §5.2 rank 4,
 # §6.6; bead mimid-e13m.9): the name-constrained CA and its leaf. aws-lc-rs
 # and not ring, as decision mimid-1wgh.26 picked for rustls, so the binary
@@ -93,8 +97,6 @@ mimid-agent-core = { path = "../mimid-agent-core", features = ["fail-points"] }
 # The calls test sends mimi-content-10 §5.10's conferencing example.
 mimi-content = { path = "../mimi-content" }
 mimid-server = { path = "../mimid-server" }
-# The version and features mimid-agent-core uses.
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 tempfile = "=3.23.0"
 # The local CA's name constraint is the security property of bead
 # mimid-e13m.9, so a real path verifier checks it rather than a look at

@@ -172,9 +172,11 @@ A publicly trusted certificate from an ACME authority, renewed without you, for 
 |---|---|---|---|
 | `directory` | https URL | required | The authority's directory, e.g. `https://acme-v02.api.letsencrypt.org/directory`. |
 | `contact` | string | none | A contact URI for the account, e.g. `mailto:you@example.org`. |
-| `dns` | `"hook"` | `"hook"` | How the TXT record is written. |
+| `dns` | `"hook"` or `"acme-dns"` | `"hook"` | How the TXT record is written. |
 | `hook` | path | required with `dns = "hook"` | A command called with the record's name and value. |
-| `root` | path | none | A PEM root to trust for the directory instead of the public roots, for a private authority (Boulder, Pebble, step-ca). |
+| `root` | path | none | A PEM root to trust for the directory and the acme-dns instance instead of the public roots, for a private authority (Boulder, Pebble, step-ca). |
+
+`[tls.acme.acme-dns]`, with `dns = "acme-dns"`: `url`, `username`, `password` and `subdomain`, all from the one-time registration at that instance.
 
 The hook is your command, the way lego's, acme.sh's and certbot's manual hooks work: the agent runs it with two arguments, the record's name and its value, and takes a zero exit as "the record is live". **It does not look the record up to confirm**, so a hook that returns before its provider has published leaves the authority to fail the challenge, and the order starts over. Give it up to two minutes.
 
@@ -186,7 +188,19 @@ your-dns-tool txt set "$1" "$2" && sleep 10
 
 In the state directory: `acme-account.json` (0600), the account, so the same one is used at every start; `acme-cert.pem` and `acme-key.pem` (0600), the certificate. A new certificate is ordered once two thirds of the assumed 90-day lifetime has passed, which is Let's Encrypt's advice.
 
-**Not here yet:** the other two ways §5.2 names of writing the record — an RFC 2136 dynamic update with a TSIG key, and acme-dns. Only `dns = "hook"` works today. If you would rather not write a hook, `source = "files"` with certbot and a cron line does the same job.
+##### `dns = "acme-dns"`
+
+[acme-dns](https://github.com/joohoi/acme-dns) is a small DNS server made for this one job, and it turns any DNS provider into one that works. Register once at an instance (your own, or the public `auth.acme-dns.io`), which gives you a username, a password and a subdomain; then put a CNAME in your zone, by hand, once:
+
+```
+_acme-challenge.chat.example.org.  CNAME  <subdomain>.auth.acme-dns.io.
+```
+
+From then on the agent posts each challenge value to that instance and it serves the record. **The agent never touches your real zone**, and the credentials it holds can write nothing but that one subdomain — which is why this ranks above a hook with full DNS access. The password is a secret: it is redacted wherever the configuration is printed and never logged.
+
+As with the hook, a 2xx is taken as proof the record is live; the CNAME is not checked, so a missing one shows up only as the authority failing the challenge.
+
+**Not here yet:** the third way §5.2 names, an RFC 2136 dynamic update with a TSIG key. If you run your own nameserver, a hook calling `nsupdate` does the same thing today. And if you would rather not configure any of this, `source = "files"` with certbot and a cron line does the whole job.
 
 #### `source = "local-ca"`
 

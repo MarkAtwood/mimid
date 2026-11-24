@@ -30,6 +30,10 @@ struct Seen {
     paths: Vec<String>,
     /// Whether `finalize` has been posted, which moves the order on.
     finalized: bool,
+    /// The `/update` requests, as (headers, body): the acme-dns half.
+    updates: Vec<(String, String)>,
+    /// Whether `/update` refuses, so the refusal path can be tested.
+    refuse_updates: bool,
 }
 
 /// A fake ACME authority: its base URL and what it was asked.
@@ -111,6 +115,24 @@ impl Authority {
             .paths
             .clone()
     }
+
+    /// The `/update` requests it was sent, as (headers, body).
+    fn updates(&self) -> Vec<(String, String)> {
+        self.seen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .updates
+            .clone()
+    }
+
+    /// Makes `/update` answer 401, as acme-dns does for credentials that
+    /// may not write the subdomain.
+    fn refuse_updates(&self) {
+        self.seen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .refuse_updates = true;
+    }
 }
 
 /// Reads one request and answers it; `false` once the connection is done.
@@ -141,27 +163,46 @@ where
         })
         .and_then(|value| value.trim().parse().ok())
         .unwrap_or(0);
+    let mut body = String::new();
     if length > 0 {
-        let mut body = vec![0u8; length];
-        if stream.read_exact(&mut body).await.is_err() {
+        let mut bytes = vec![0u8; length];
+        if stream.read_exact(&mut bytes).await.is_err() {
             return false;
         }
+        body = String::from_utf8_lossy(&bytes).to_string();
     }
     let mut words = request.split(' ');
     let method = words.next().unwrap_or_default().to_owned();
     let path = words.next().unwrap_or_default().to_owned();
+    let refuse;
     {
         let mut seen = seen.lock().unwrap_or_else(PoisonError::into_inner);
         seen.paths.push(format!("{method} {path}"));
         if path == "/finalize" {
             seen.finalized = true;
         }
+        if path == "/update" {
+            seen.updates.push((text.clone(), body.clone()));
+        }
+        refuse = seen.refuse_updates;
     }
     let finalized = seen
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .finalized;
-    let (status, extra, body) = answer(&path, base, finalized);
+    let (status, extra, body) = if path == "/update" {
+        if refuse {
+            (
+                "401 Unauthorized",
+                String::new(),
+                "{\"error\": \"forbidden\"}".to_owned(),
+            )
+        } else {
+            ("200 OK", String::new(), "{\"txt\": \"stored\"}".to_owned())
+        }
+    } else {
+        answer(&path, base, finalized)
+    };
     let answer = format!(
         "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
          Replay-Nonce: {nonce}\r\nContent-Length: {len}\r\n{extra}\r\n{body}",
@@ -298,6 +339,7 @@ fn setting(authority: &Authority, script: &std::path::Path) -> mimid_agent::acme
         contact: Some("mailto:alice@example.org".to_owned()),
         dns: mimid_agent::acme::DnsMethod::Hook,
         hook: Some(script.to_owned()),
+        acme_dns: None,
         // The fake serves the test certificate, so the test CA is what
         // the client has to trust. An operator uses this for a private
         // authority of their own.
@@ -411,6 +453,100 @@ async fn a_refusing_hook_fails_the_order() {
     assert!(state.join(mimid_agent::acme::ACCOUNT_FILE).exists());
 }
 
+/// Oracle: docs/design/frontend-auth.md §5.2 rank 2 and bead
+/// mimid-e13m.8.2: with `dns = "acme-dns"` the agent posts the challenge
+/// value to the acme-dns instance with the two headers its registration
+/// gave, and the body names the subdomain rather than the record, since
+/// acme-dns serves that subdomain and the user's CNAME is what points
+/// the record at it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn acme_dns_is_given_the_value_with_its_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let authority = Authority::start().await;
+    let mut setting = setting(&authority, &dir.path().join("unused-hook"));
+    setting.dns = mimid_agent::acme::DnsMethod::AcmeDns;
+    setting.hook = None;
+    setting.acme_dns = Some(mimid_agent::acme::AcmeDnsSetting {
+        // The same fake serves `/update`, so the instance is its base.
+        url: authority
+            .directory
+            .trim_end_matches("/directory")
+            .to_owned(),
+        username: "a-user".to_owned(),
+        password: "a-secret".to_owned(),
+        subdomain: "deadbeef-dead-beef-dead-beefdeadbeef".to_owned(),
+    });
+
+    mimid_agent::acme::ensure(&setting, &state, &["chat.example.org".to_owned()])
+        .await
+        .expect("the order completes through acme-dns");
+
+    let updates = authority.updates();
+    assert_eq!(updates.len(), 1, "one record, one update: {updates:?}");
+    let (headers, body) = &updates[0];
+    // RFC 9110 §5.1: a field name is case-insensitive, and reqwest sends
+    // them lowercased, which is what Go's net/http canonicalises anyway.
+    let headers = headers.to_ascii_lowercase();
+    assert!(headers.contains("x-api-user: a-user"), "{headers}");
+    assert!(headers.contains("x-api-key: a-secret"), "{headers}");
+    let sent: serde_json::Value = serde_json::from_str(body).expect("JSON body");
+    assert_eq!(sent["subdomain"], "deadbeef-dead-beef-dead-beefdeadbeef");
+    let txt = sent["txt"].as_str().expect("a txt value");
+    // The challenge's value, not the token, and the 43 characters
+    // acme-dns insists on for a DNS-01 value.
+    assert_ne!(txt, "a-token");
+    assert_eq!(txt.len(), 43, "{txt}");
+    assert!(
+        state.join(mimid_agent::acme::CERT_FILE).exists(),
+        "and the certificate was kept"
+    );
+
+    // A refusal fails the order rather than going on to a challenge the
+    // authority would fail.
+    let second = dir.path().join("second");
+    std::fs::create_dir_all(&second).unwrap();
+    authority.refuse_updates();
+    let refused =
+        mimid_agent::acme::ensure(&setting, &second, &["chat.example.org".to_owned()]).await;
+    let message = format!("{:?}", refused.as_ref().err());
+    assert!(refused.is_err(), "a refused update stops the order");
+    // The message says what happened without carrying the credential.
+    assert!(message.contains("401"), "{message}");
+    assert!(!message.contains("a-secret"), "{message}");
+}
+
+/// Oracle: AGENTS.md's "secrets never reach logs": `[tls]` is printed
+/// whenever a configuration is, so the acme-dns password is redacted in
+/// `Debug` output, which is the only way it could get there.
+#[test]
+fn the_acme_dns_password_is_redacted() {
+    let setting = mimid_agent::acme::AcmeDnsSetting {
+        url: "https://auth.acme-dns.io".to_owned(),
+        username: "a-user".to_owned(),
+        password: "a-very-secret-key".to_owned(),
+        subdomain: "sub".to_owned(),
+    };
+    let printed = format!("{setting:?}");
+    assert!(!printed.contains("a-very-secret-key"), "{printed}");
+    assert!(printed.contains("a-user"), "{printed}");
+    assert!(printed.contains("auth.acme-dns.io"), "{printed}");
+    // And through the table that holds it, which is what gets printed.
+    let outer = mimid_agent::acme::AcmeSetting {
+        directory: "https://acme.example/d".to_owned(),
+        contact: None,
+        dns: mimid_agent::acme::DnsMethod::AcmeDns,
+        hook: None,
+        acme_dns: Some(setting),
+        root: None,
+    };
+    assert!(
+        !format!("{outer:?}").contains("a-very-secret-key"),
+        "{outer:?}"
+    );
+}
+
 /// Oracle: the `[tls]` table: `source = "acme"` needs `[tls.acme]`, an
 /// https directory, names to order for, and a hook for `dns = "hook"`.
 #[test]
@@ -448,6 +584,28 @@ fn the_source_is_checked() {
             "{bad:?}"
         );
     }
+    // dns = "acme-dns" with no table, a url that is not https, and no
+    // subdomain.
+    for bad in [
+        "directory = \"https://acme.example/d\"\ndns = \"acme-dns\"\n",
+        "directory = \"https://acme.example/d\"\ndns = \"acme-dns\"\n         [tls.acme.acme-dns]\nurl = \"http://auth.example\"\nusername = \"u\"\n         password = \"p\"\nsubdomain = \"s\"\n",
+        "directory = \"https://acme.example/d\"\ndns = \"acme-dns\"\n         [tls.acme.acme-dns]\nurl = \"https://auth.example\"\nusername = \"u\"\n         password = \"p\"\nsubdomain = \"\"\n",
+    ] {
+        let refused = acme(bad);
+        assert!(
+            matches!(refused, Err(mimid_agent::ConfigError::Tls(_))),
+            "{bad:?} gave {refused:?}"
+        );
+    }
+    let through_acme_dns = acme(
+        "directory = \"https://acme.example/d\"\ndns = \"acme-dns\"\n         [tls.acme.acme-dns]\nurl = \"https://auth.example\"\nusername = \"u\"\n         password = \"p\"\nsubdomain = \"s\"\n",
+    )
+    .expect("a complete [tls.acme.acme-dns] is accepted");
+    assert_eq!(
+        through_acme_dns.tls.unwrap().acme.unwrap().dns,
+        mimid_agent::acme::DnsMethod::AcmeDns
+    );
+
     let ok = acme("directory = \"https://acme.example/d\"\nhook = \"/bin/true\"\n")
         .expect("a complete [tls.acme] is accepted");
     let acme = ok.tls.expect("[tls]").acme.expect("[tls.acme]");
