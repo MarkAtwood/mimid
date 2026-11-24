@@ -1,0 +1,27 @@
+{
+  "id": "mimid-1wgh.126",
+  "title": "The id and object shape of an AppPassword over JMAP, which the design note does not specify",
+  "description": "docs/design/frontend-auth.md §3.6 names AppPassword/get and AppPassword/set and says the response carries the secret once, and nothing else. INVENTED, NOT FROM SPEC, chosen in bead mimid-e13m.6 (crates/mimid-agent/src/app_password.rs, whose rustdoc carries the table):\n\n- The id is `c` and the row's integer id. Integer ids are never reused, so the id stays unique after a name is given to another credential; the name alone would collide, because a revoked row is kept 30 days (§3.1).\n- The object is one row of the credential table as the CLI and /msg mimid passwords show it: id, name, kind, createdAt, createdBy, lastUsedAt, lastUsedBy, revokedAt. Never a secret and never a verifier.\n- create takes only name; the agent makes the secret, which appears once as `secret` on the created object.\n- update is forbidden: no property is writable. destroy revokes.\n- state is a digest of the listing with the last use left OUT, so a login does not look like a change to every other client.\n- Revoked rows are listed, as the CLI lists them, so a client can show that a device was revoked.",
+  "status": "closed",
+  "priority": 3,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T16:33:49.871428869Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T16:33:55.357195532Z",
+  "closed_at": "2026-11-24T16:33:55.357195532Z",
+  "close_reason": "Decided and recorded; implemented in bead mimid-e13m.6.",
+  "labels": [
+    "auth"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.126",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-24T16:33:49.922426914Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

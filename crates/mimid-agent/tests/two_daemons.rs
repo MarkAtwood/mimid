@@ -117,9 +117,18 @@ async fn two_daemons_chat_over_http() {
         .keys()
         .collect();
     capabilities.sort();
+    // Spelled out rather than taken from `CAPABILITIES`, so that adding a
+    // capability has to be meant. RFC 8887's is the WebSocket at
+    // /jmap/ws; the agent's own is its AppPassword methods (bead
+    // mimid-e13m.6).
     assert_eq!(
         capabilities,
-        ["urn:ietf:params:jmap:chat", "urn:ietf:params:jmap:core"]
+        [
+            "tag:reviewcommit.com,2026:mimid:app-passwords",
+            "urn:ietf:params:jmap:chat",
+            "urn:ietf:params:jmap:core",
+            "urn:ietf:params:jmap:websocket"
+        ]
     );
     let accounts = a.session["accounts"].as_object().unwrap();
     assert_eq!(accounts.len(), 1);

@@ -70,6 +70,21 @@ async fn no_token_reaches_the_log() {
         .await
         .unwrap();
     assert_eq!(bearer.status(), 200);
+    // The same app password as HTTP Basic, right and wrong, which puts
+    // base64 of `user:secret` through the guard (§7.2 asks for it).
+    for secret in [&password, &format!("{password}x")] {
+        use base64::Engine;
+        let header = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("alice:{secret}"))
+        );
+        reqwest::Client::new()
+            .get(format!("{}/.well-known/jmap", alice.base()))
+            .header(reqwest::header::AUTHORIZATION, header)
+            .send()
+            .await
+            .unwrap();
+    }
     let (mut by_password, _) = Irc::register(alice.irc.unwrap(), &loud, "alice", &[]).await;
     by_password.send("QUIT").await;
     // SASL PLAIN with the app password, a failed one, and a whole

@@ -25,8 +25,11 @@
 //!    one `Host` header, or the URI's authority) must be a loopback name
 //!    for the listening port: `127.0.0.1:<port>`, `[::1]:<port>` or
 //!    `localhost:<port>` (`localhost` in any case; the bare names too when
-//!    the port is 80). Anything else is `421 Misdirected Request` with an
-//!    RFC 7807 body.
+//!    the port is 80). On the HTTPS listener (`[jmap] listen_tls`) the
+//!    `[tls] names` are accepted at its port as well, and bare when the
+//!    port is 443; they are the names the certificate covers, which a
+//!    rebinding page cannot present. Anything else is `421 Misdirected
+//!    Request` with an RFC 7807 body.
 //! 2. **CORS preflight.** With `allowed_origins` configured, an `OPTIONS`
 //!    request carrying `Access-Control-Request-Method` from an `Origin` in
 //!    the list is answered `204` with `Access-Control-Allow-Origin: <that
@@ -36,14 +39,37 @@
 //!    bearer token (a browser sends none on a preflight). Never `*`, and no
 //!    `Access-Control-Allow-Credentials`: authentication is a bearer
 //!    header, not cookies.
-//! 3. **The bearer token**: every other request, on every path but an
-//!    attachment link's, must carry `Authorization: Bearer <secret>`,
-//!    where the secret is any unrevoked credential: the agent token or an
-//!    app password (`mimid_agent_store::credentials`,
+//! 3. **The credential**: every other request, on every path but an
+//!    attachment link's, must carry `Authorization: Bearer <secret>` or
+//!    `Authorization: Basic <base64(any-username:secret)>`, where the
+//!    secret is any unrevoked credential: the agent token or an app
+//!    password (`mimid_agent_store::credentials`,
 //!    `Credentials::check_bearer`, docs/design/frontend-auth.md §4.2), or
-//!    it is `401` with an RFC 7807 body. An attachment link
-//!    (`GET /attachment/...`) is authorized by its own MAC instead, which
-//!    its route checks (`mimid_agent_store::links::AttachmentLinks::check`).
+//!    it is `401` with an RFC 7807 body. Basic is there for the
+//!    "username and password" clients (Pidgin-shaped, purple-mimi) that
+//!    cannot send a bearer header; the username is ignored, since the
+//!    agent serves one user and the secret alone picks the credential
+//!    (§3.5). The `401` carries `WWW-Authenticate: Bearer`, and
+//!    `Basic realm="mimid"` as well only when the request used Basic, so
+//!    a browser that did not is not given its own login box. An
+//!    attachment link (`GET /attachment/...`) is authorized by its own
+//!    MAC instead, which its route checks
+//!    (`mimid_agent_store::links::AttachmentLinks::check`).
+//!
+//!    On the HTTPS listener a failed credential is counted against its
+//!    source address and the `401` is delayed by what the shared limiter
+//!    says (`mimid_agent_store::credentials::limits`,
+//!    docs/design/frontend-auth.md §7.1), the same counters the IRC front
+//!    end uses; a success forgets them. The answer is always the
+//!    protocol's own `401`, never a silent drop.
+//!
+//!    The plain listener is loopback only and carries no source address:
+//!    it is served without axum's `ConnectInfo` (bead mimid-036n), so
+//!    there is **no slowdown and no peer in the log** there, and a login
+//!    is logged at DEBUG. §7.1 would have counted loopback with a higher
+//!    threshold; nothing is lost by not counting it, because any process
+//!    that can reach the port can also read the token file, which is a
+//!    limitation of this boundary already.
 //!
 //! A response to a request whose `Origin` is in the list, the `401`
 //! included, carries `Access-Control-Allow-Origin` with that exact origin;
@@ -96,6 +122,7 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -103,7 +130,7 @@ use axum::Json;
 use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::extract::rejection::BytesRejection;
-use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, Sse};
@@ -145,7 +172,18 @@ pub const CHAT_CAPABILITY: &str = jmap_chat_types::JMAP_CHAT_URI;
 /// `capabilities`, and the only URIs a request may name in `using`. The
 /// MIMI capability is not among them: the agent does the MLS, and its
 /// clients see plaintext Chats.
-pub const CAPABILITIES: [&str; 2] = [CORE_CAPABILITY, CHAT_CAPABILITY];
+///
+/// RFC 8887's capability is here because the Session advertises it, and
+/// so a request may name it in `using` whether it arrived over the socket
+/// or not. It adds no methods: it only says `/jmap/ws` is there. The
+/// agent's own app-password capability is here for the opposite reason:
+/// it is nothing but its two methods (the `app_password` module).
+pub const CAPABILITIES: [&str; 4] = [
+    CORE_CAPABILITY,
+    CHAT_CAPABILITY,
+    jmap_websocket::CAPABILITY,
+    crate::app_password::CAPABILITY,
+];
 
 /// `maxSizeRequest`: RFC 8620 §2's suggested minimum.
 pub const MAX_SIZE_REQUEST: usize = 10_000_000;
@@ -250,6 +288,10 @@ pub(crate) struct Endpoint {
     pub(crate) allowed_origins: Vec<String>,
     /// The listening port, for the Host check.
     pub(crate) port: u16,
+    /// The names `[tls] names` gives, which the Host check accepts at
+    /// this listener's port besides the loopback ones; empty on the plain
+    /// loopback listener (docs/design/frontend-auth.md §5.3).
+    pub(crate) names: Vec<String>,
 }
 
 /// The JMAP Chat front end's part of the endpoint.
@@ -267,12 +309,20 @@ fn jmap_off() -> Response {
     problem_response(StatusCode::NOT_FOUND, NOT_FOUND_BODY)
 }
 
-/// A dispatcher with `Core/echo` and mimid-agent-jmap's methods over
-/// `chat`.
-pub(crate) fn dispatcher(chat: &Arc<AgentChat>) -> Dispatcher<Id> {
+/// A dispatcher with `Core/echo`, mimid-agent-jmap's methods over `chat`,
+/// and the agent's own `AppPassword` methods over `credentials` for
+/// account `account`.
+pub(crate) fn dispatcher(
+    chat: &Arc<AgentChat>,
+    credentials: &Arc<Credentials>,
+    account: &Id,
+) -> Dispatcher<Id> {
     let mut dispatcher = Dispatcher::new();
     dispatcher.register(CORE_ECHO, Arc::new(Echo));
     AgentChat::register(chat, &mut dispatcher);
+    // The agent's own methods, over the same credential table every
+    // front end checks logins against (bead mimid-e13m.6).
+    crate::app_password::register(credentials, account, &mut dispatcher);
     dispatcher
 }
 
@@ -354,6 +404,11 @@ pub(crate) fn session(
                 "url": format!("{ws_base}/jmap/ws"),
                 "supportsPush": false,
             },
+            // The agent's own: its credentials, managed from a JMAP
+            // client as from the CLI and IRC (docs/design/
+            // frontend-auth.md §3.6; the `app_password` module). It
+            // carries no properties.
+            crate::app_password::CAPABILITY: {},
         },
         "accounts": {
             account: {
@@ -409,8 +464,13 @@ pub(crate) fn router(endpoint: Arc<Endpoint>) -> Router {
 /// The Host check, the CORS preflight and the bearer token, in that order
 /// (see the module documentation); the CORS headers on the response.
 async fn guard(State(endpoint): State<Arc<Endpoint>>, request: Request, next: Next) -> Response {
-    if !host_allowed(request.headers(), request.uri(), endpoint.port) {
-        tracing::debug!("agent request refused: Host is not a loopback name for the port");
+    if !host_allowed(
+        request.headers(),
+        request.uri(),
+        endpoint.port,
+        &endpoint.names,
+    ) {
+        tracing::debug!("agent request refused: Host is not a name for the port");
         return problem_response(StatusCode::MISDIRECTED_REQUEST, MISDIRECTED_BODY);
     }
     let origin = allowed_origin(request.headers(), &endpoint.allowed_origins);
@@ -426,13 +486,22 @@ async fn guard(State(endpoint): State<Arc<Endpoint>>, request: Request, next: Ne
     // (mimid_agent_store::links); it needs no bearer token.
     let link = request.method() == Method::GET
         && request.uri().path().starts_with(&format!("{LINK_PATH}/"));
-    let login = if link {
+    // The peer, with `into_make_service_with_connect_info`, for the
+    // per-source slowdown and the logs (docs/design/frontend-auth.md §7).
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(peer)| *peer);
+    let presented = if link {
         None
     } else {
-        bearer_token(request.headers()).and_then(|token| endpoint.credentials.check_bearer(token))
+        credential(request.headers())
     };
+    let login = presented
+        .as_ref()
+        .and_then(|presented| endpoint.credentials.check_bearer(presented.secret()));
     if let Some(login) = &login {
-        endpoint.credentials.note_used(login.id, "jmap");
+        login_succeeded(&endpoint, login, presented.as_ref(), peer);
     }
     let mut request = request;
     let authorized = link || login.is_some();
@@ -442,11 +511,23 @@ async fn guard(State(endpoint): State<Arc<Endpoint>>, request: Request, next: Ne
     let mut response = if authorized {
         next.run(request).await
     } else {
-        tracing::debug!("agent request refused: missing, malformed or wrong bearer token");
+        // §7.1: the refusal is the protocol's normal one, after the
+        // source's delay; never a silent drop.
+        if !link {
+            login_failed(&endpoint, presented.as_ref(), peer).await;
+        }
         let mut response = problem_response(StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY);
-        response
-            .headers_mut()
-            .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+        let headers = response.headers_mut();
+        headers.insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+        // §4.2: `Basic` is offered back only to a request that used it.
+        // Sending it to a browser that did not makes the browser pop up
+        // its own login box over the client's.
+        if matches!(presented, Some(Presented::Basic(_))) {
+            headers.append(
+                header::WWW_AUTHENTICATE,
+                HeaderValue::from_static(BASIC_CHALLENGE),
+            );
+        }
         response
     };
     let headers = response.headers_mut();
@@ -511,8 +592,14 @@ fn allowed_origin(headers: &HeaderMap, allowed: &[String]) -> Option<HeaderValue
 }
 
 /// Whether the request's authority (its one `Host` header, else the URI's
-/// authority, as in HTTP/2) is a loopback name for `port`.
-fn host_allowed(headers: &HeaderMap, uri: &axum::http::Uri, port: u16) -> bool {
+/// authority, as in HTTP/2) is a name this listener answers to: a
+/// loopback name for `port`, or one of `names` at `port`
+/// (docs/design/frontend-auth.md §5.3).
+///
+/// This is the DNS-rebinding check, and `names` does not weaken it: they
+/// are the names the listener's certificate covers, and a rebinding page
+/// cannot present one.
+fn host_allowed(headers: &HeaderMap, uri: &axum::http::Uri, port: u16, names: &[String]) -> bool {
     let mut values = headers.get_all(header::HOST).iter();
     let host = match (values.next(), values.next()) {
         (Some(value), None) => match value.to_str() {
@@ -526,19 +613,73 @@ fn host_allowed(headers: &HeaderMap, uri: &axum::http::Uri, port: u16) -> bool {
         (Some(_), Some(_)) => return false,
     };
     let host = host.to_ascii_lowercase();
-    let mut names = vec![
+    let mut allowed = vec![
         format!("127.0.0.1:{port}"),
         format!("[::1]:{port}"),
         format!("localhost:{port}"),
     ];
     if port == 80 {
-        names.extend(["127.0.0.1", "[::1]", "localhost"].map(str::to_owned));
+        allowed.extend(["127.0.0.1", "[::1]", "localhost"].map(str::to_owned));
     }
-    names.contains(&host)
+    for name in names {
+        let name = name.to_ascii_lowercase();
+        if port == 443 {
+            allowed.push(name.clone());
+        }
+        allowed.push(format!("{name}:{port}"));
+    }
+    allowed.contains(&host)
 }
 
-/// The token octets of the request's one `Authorization: Bearer` header.
-fn bearer_token(headers: &HeaderMap) -> Option<&[u8]> {
+/// The `WWW-Authenticate` challenge added to a `401` whose request used
+/// HTTP Basic (docs/design/frontend-auth.md §4.2). The realm is INVENTED.
+const BASIC_CHALLENGE: &str = r#"Basic realm="mimid", charset="UTF-8""#;
+
+/// What a request put in its `Authorization` header: either scheme
+/// carries the credential itself (docs/design/frontend-auth.md §4.2).
+enum Presented {
+    /// `Bearer <secret>`, the agent's own form and every JMAP client's.
+    Bearer(Vec<u8>),
+    /// `Basic <base64(any-username:secret)>`, which Pidgin-shaped
+    /// "username and password" clients and purple-mimi want. The
+    /// username is ignored (§3.5): the agent serves one user, so the
+    /// secret alone picks the credential.
+    Basic(Vec<u8>),
+}
+
+impl Presented {
+    /// The secret itself, to check against the credential table.
+    fn secret(&self) -> &[u8] {
+        match self {
+            Self::Bearer(secret) => secret,
+            Self::Basic(secret) => secret,
+        }
+    }
+
+    /// What to log it as. Never the secret (§7.2).
+    fn mechanism(&self) -> &'static str {
+        match self {
+            Self::Bearer(_) => "bearer",
+            Self::Basic(_) => "basic",
+        }
+    }
+}
+
+/// The credential in the request's one `Authorization` header, under
+/// either scheme the agent takes.
+fn credential(headers: &HeaderMap) -> Option<Presented> {
+    let (scheme, rest) = authorization(headers)?;
+    if scheme.eq_ignore_ascii_case(b"Bearer") {
+        return (!rest.is_empty()).then(|| Presented::Bearer(rest.to_vec()));
+    }
+    if scheme.eq_ignore_ascii_case(b"Basic") {
+        return basic_secret(rest).map(Presented::Basic);
+    }
+    None
+}
+
+/// The scheme and the rest of the request's one `Authorization` header.
+fn authorization(headers: &HeaderMap) -> Option<(&[u8], &[u8])> {
     let mut values = headers.get_all(header::AUTHORIZATION).iter();
     let value = values.next()?;
     if values.next().is_some() {
@@ -546,11 +687,111 @@ fn bearer_token(headers: &HeaderMap) -> Option<&[u8]> {
     }
     let bytes = value.as_bytes();
     let space = bytes.iter().position(|b| *b == b' ')?;
-    let (scheme, token) = (&bytes[..space], &bytes[space + 1..]);
-    scheme
-        .eq_ignore_ascii_case(b"Bearer")
-        .then_some(token)
-        .filter(|token| !token.is_empty())
+    Some((&bytes[..space], &bytes[space + 1..]))
+}
+
+/// The password of a `Basic` credential (RFC 7617 §2): base64 of
+/// `user-id ":" password`, of which everything after the first colon is
+/// the secret. The user-id is not looked at and is never logged, because
+/// people paste passwords into username fields (§3.5, §7.2).
+fn basic_secret(encoded: &[u8]) -> Option<Vec<u8>> {
+    use base64::Engine;
+    // A credential is at most 64 octets as typed (`credentials::normalize`),
+    // so anything far past that is not one: decode nothing.
+    if encoded.len() > MAX_BASIC_LEN {
+        return None;
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
+    let colon = decoded.iter().position(|b| *b == b':')?;
+    let secret = decoded[colon + 1..].to_vec();
+    (!secret.is_empty()).then_some(secret)
+}
+
+/// The most base64 octets a `Basic` header may carry before it is refused
+/// without being decoded: enough for a long username and either
+/// credential form, and no more.
+const MAX_BASIC_LEN: usize = 512;
+
+/// Notes a successful login: the limiter forgets the source's failures,
+/// the credential records the use with its peer, and §7.2's line is
+/// logged (INFO from the network, DEBUG on loopback).
+fn login_succeeded(
+    endpoint: &Endpoint,
+    login: &Login,
+    presented: Option<&Presented>,
+    peer: Option<SocketAddr>,
+) {
+    let mechanism = presented.map_or("bearer", Presented::mechanism);
+    match peer {
+        Some(peer) => {
+            endpoint.credentials.limiter().succeeded(peer.ip());
+            endpoint
+                .credentials
+                .note_used(login.id, &format!("jmap {peer}"));
+            if peer.ip().is_loopback() {
+                tracing::debug!(peer = %peer, mechanism, credential = %login.name, "JMAP login");
+            } else {
+                tracing::info!(
+                    name: "agent_login",
+                    front_end = "jmap",
+                    peer = %peer,
+                    mechanism,
+                    credential = %login.name,
+                    "JMAP login"
+                );
+            }
+        }
+        None => {
+            endpoint.credentials.note_used(login.id, "jmap");
+            tracing::debug!(mechanism, credential = %login.name, "JMAP login");
+        }
+    }
+}
+
+/// Counts a failed login and waits the source's delay before the `401`
+/// (§7.1); logs it (§7.2). A request with no `Authorization` header at
+/// all is counted too: it is how a wrong-password client retries.
+async fn login_failed(
+    endpoint: &Endpoint,
+    presented: Option<&Presented>,
+    peer: Option<SocketAddr>,
+) {
+    let mechanism = presented.map_or("none", Presented::mechanism);
+    let reason = if presented.is_none() {
+        "no-credential"
+    } else {
+        "no-such-credential"
+    };
+    let Some(peer) = peer else {
+        tracing::debug!(mechanism, reason, "JMAP login failed");
+        return;
+    };
+    let failure = endpoint.credentials.limiter().failed(peer.ip());
+    if failure.slowing_starts {
+        tracing::warn!(
+            name: "agent_login_slowed",
+            front_end = "jmap",
+            peer = %peer,
+            "failed logins from this source are now answered slowly"
+        );
+    }
+    if failure.first {
+        tracing::info!(
+            name: "agent_login_failed",
+            front_end = "jmap",
+            peer = %peer,
+            mechanism,
+            reason,
+            "JMAP login failed"
+        );
+    } else {
+        tracing::debug!(peer = %peer, mechanism, reason, "JMAP login failed");
+    }
+    if !failure.delay.is_zero() {
+        tokio::time::sleep(failure.delay).await;
+    }
 }
 
 /// `GET /.well-known/jmap`.
@@ -1020,18 +1261,24 @@ async fn get_websocket(
         return jmap_off();
     };
     let chat = Arc::clone(&jmap.chat);
+    let credentials = Arc::clone(&endpoint.credentials);
     let state = jmap.session_state.clone();
     upgrade
         .protocols(["jmap"])
         .max_message_size(MAX_SIZE_REQUEST)
         .max_frame_size(MAX_SIZE_REQUEST)
-        .on_upgrade(move |socket| websocket(chat, state, socket))
+        .on_upgrade(move |socket| websocket(chat, credentials, state, socket))
 }
 
 /// One JMAP WebSocket connection: the dispatcher behind
 /// [`jmap_websocket::server::Connection`], with the call-signal stream
 /// as its extension.
-async fn websocket(chat: Arc<AgentChat>, state: String, socket: axum::extract::ws::WebSocket) {
+async fn websocket(
+    chat: Arc<AgentChat>,
+    credentials: Arc<Credentials>,
+    state: String,
+    socket: axum::extract::ws::WebSocket,
+) {
     use axum::extract::ws::Message;
     use futures_util::{SinkExt, StreamExt};
     use jmap_websocket::server::{Connection, DispatcherHandler, Inbound, Outbound};
@@ -1065,9 +1312,10 @@ async fn websocket(chat: Arc<AgentChat>, state: String, socket: axum::extract::w
     // A dispatcher of this connection's own: registration is routing
     // rather than state, and the shared one is held by value in
     // `Jmap` for the HTTP path.
+    let account = chat.account_id().clone();
     let handler = Arc::new(DispatcherHandler::new(
-        Arc::new(dispatcher(&chat)),
-        chat.account_id().clone(),
+        Arc::new(dispatcher(&chat, &credentials, &account)),
+        account,
         move || state.as_str().into(),
     ));
     let connection = Connection::new(handler)
@@ -1280,22 +1528,101 @@ mod tests {
         }
     }
 
+    /// The secret and mechanism of one `Authorization` header, as the
+    /// guard reads them.
+    fn presented(values: &[&str]) -> Option<(&'static str, Vec<u8>)> {
+        let mut headers = HeaderMap::new();
+        for value in values {
+            headers.append(header::AUTHORIZATION, value.parse().unwrap());
+        }
+        credential(&headers).map(|presented| (presented.mechanism(), presented.secret().to_vec()))
+    }
+
     #[test]
     fn bearer_tokens_are_read_from_one_header() {
-        let with = |values: &[&str]| {
-            let mut headers = HeaderMap::new();
-            for value in values {
-                headers.append(header::AUTHORIZATION, value.parse().unwrap());
-            }
-            bearer_token(&headers).map(<[u8]>::to_vec)
-        };
-        assert_eq!(with(&["Bearer abc"]), Some(b"abc".to_vec()));
-        assert_eq!(with(&["bearer abc"]), Some(b"abc".to_vec()));
+        let with = |values: &[&str]| presented(values);
+        assert_eq!(with(&["Bearer abc"]), Some(("bearer", b"abc".to_vec())));
+        assert_eq!(with(&["bearer abc"]), Some(("bearer", b"abc".to_vec())));
         assert_eq!(with(&[]), None);
-        assert_eq!(with(&["Basic abc"]), None);
         assert_eq!(with(&["Bearer "]), None);
         assert_eq!(with(&["Bearerabc"]), None);
         assert_eq!(with(&["Bearer abc", "Bearer abc"]), None);
+        // Neither scheme the agent takes.
+        assert_eq!(with(&["Digest abc"]), None);
+    }
+
+    /// docs/design/frontend-auth.md §4.2: Basic carries any username and
+    /// the credential as the password, and the username is ignored (§3.5).
+    #[test]
+    fn basic_credentials_take_the_password_and_ignore_the_username() {
+        use base64::Engine;
+        let encode = |text: &str| {
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD.encode(text)
+            )
+        };
+        for (header, secret) in [
+            (encode("alice:kqzv-trwm-hpaf-dnye"), "kqzv-trwm-hpaf-dnye"),
+            // Any username, including none and one that is itself a
+            // password someone pasted into the wrong field.
+            (encode(":kqzv-trwm-hpaf-dnye"), "kqzv-trwm-hpaf-dnye"),
+            (encode("kqzv-trwm-hpaf-dnye:secret"), "secret"),
+            // RFC 7617: the password may hold colons.
+            (encode("alice:a:b"), "a:b"),
+        ] {
+            assert_eq!(
+                presented(&[&header]),
+                Some(("basic", secret.as_bytes().to_vec())),
+                "{header}"
+            );
+        }
+        assert_eq!(presented(&[&encode("alice:")]), None, "empty password");
+        assert_eq!(presented(&[&encode("no-colon")]), None, "no colon");
+        assert_eq!(presented(&["Basic not-base64!"]), None);
+        assert_eq!(presented(&["basic "]), None);
+        // Too long to be either credential form: refused undecoded.
+        let long = format!("Basic {}", "A".repeat(MAX_BASIC_LEN + 1));
+        assert_eq!(presented(&[&long]), None);
+    }
+
+    /// docs/design/frontend-auth.md §5.3: the HTTPS listener answers to
+    /// the names its certificate covers, and the loopback names stay.
+    #[test]
+    fn configured_names_pass_the_host_check_at_the_tls_port() {
+        let names = ["chat.example.org".to_owned(), "100.64.1.2".to_owned()];
+        let check = |host: &str, port| {
+            let mut headers = HeaderMap::new();
+            headers.append(header::HOST, host.parse().unwrap());
+            host_allowed(&headers, &"/jmap/api".parse().unwrap(), port, &names)
+        };
+        for good in [
+            "chat.example.org:8448",
+            "Chat.Example.ORG:8448",
+            "100.64.1.2:8448",
+            // The loopback names are still there, so a local client may
+            // use the TLS port too.
+            "localhost:8448",
+            "127.0.0.1:8448",
+        ] {
+            assert!(check(good, 8448), "{good}");
+        }
+        for bad in [
+            // A name the certificate does not cover, which is what a
+            // rebinding page would present.
+            "evil.example:8448",
+            "chat.example.org.evil.example:8448",
+            // The right name at the wrong port.
+            "chat.example.org:8449",
+            // Bare, which only port 443 allows.
+            "chat.example.org",
+        ] {
+            assert!(!check(bad, 8448), "{bad}");
+        }
+        // RFC 3986 §3.2.3: on 443 the port is left out, so both forms
+        // have to pass.
+        assert!(check("chat.example.org", 443));
+        assert!(check("chat.example.org:443", 443));
     }
 
     #[test]
@@ -1305,7 +1632,7 @@ mod tests {
             for host in hosts {
                 headers.append(header::HOST, host.parse().unwrap());
             }
-            host_allowed(&headers, &"/jmap/api".parse().unwrap(), port)
+            host_allowed(&headers, &"/jmap/api".parse().unwrap(), port, &[])
         };
         for good in [
             "127.0.0.1:8484",
@@ -1332,9 +1659,9 @@ mod tests {
         assert!(check(&["localhost"], 80));
         // HTTP/2: the URI's authority.
         let uri = "http://localhost:8484/jmap/api".parse().unwrap();
-        assert!(host_allowed(&HeaderMap::new(), &uri, 8484));
+        assert!(host_allowed(&HeaderMap::new(), &uri, 8484, &[]));
         let uri = "http://evil.example:8484/jmap/api".parse().unwrap();
-        assert!(!host_allowed(&HeaderMap::new(), &uri, 8484));
+        assert!(!host_allowed(&HeaderMap::new(), &uri, 8484, &[]));
     }
 
     #[test]

@@ -50,6 +50,8 @@ mimid-agent <config.toml> app-password rotate-token    # a new agent-token file
 
 From an IRC client, `/msg mimid passwords` lists them, `/msg mimid password add <name>` makes one and `/msg mimid password revoke <name>` revokes one. The new password arrives in a NOTICE, and IRC clients usually write every line to a log on disk: delete it there, or make passwords with the command line instead.
 
+From a JMAP client, the agent's own capability `tag:reviewcommit.com,2026:mimid:app-passwords` has `AppPassword/get` (every credential: name, kind, when made, last used, and whether revoked — never a secret) and `AppPassword/set` (`create` with a `name`, whose answer carries the new secret once; `destroy` to revoke). No property is writable, and the agent token cannot be destroyed, only replaced with `rotate-token`.
+
 These commands open `mimid.sqlite` themselves, so they work whether or not the agent runs. A running agent reads the table again every 2 seconds and before each login: revoking a credential, or replacing the agent token, closes every IRC connection and JMAP EventSource stream that logged in with it within that time, and its next request gets `401`. After `rotate-token`, attachment links made before keep working until the agent restarts.
 
 The agent stores each credential, the agent token included, as a SCRAM-SHA-256 verifier (4,096 iterations) in the `credentials` table of `mimid.sqlite`. At most 64 are unrevoked at once. A revoked one is listed for 30 days, then deleted. Design: docs/design/frontend-auth.md §3.
@@ -90,9 +92,13 @@ The JMAP Chat front end. On by default.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `enabled` | boolean | `true` | Serve JMAP Chat at `listen`. With `false`, the HTTP listener, if `listen` is set, still serves the did:webvh log endpoint and answers `404` on the JMAP paths after the Host and token checks. |
+| `enabled` | boolean | `true` | Serve JMAP Chat at `listen`. With `false`, the HTTP listener, if `listen` is set, still serves the did:webvh log endpoint and answers `404` on the JMAP paths after the Host and credential checks. |
+| `listen_tls` | socket address | none | Where the endpoint also listens with HTTPS, on any address: a tailnet or WireGuard address is the safe choice. Needs `[tls]` and `enabled = true`. Off by default. An address that may be reachable from the internet is allowed, with a WARN at start. |
+| `webpush` | boolean | `true` | Whether a JMAP client may register for Web Push (`chatPush`). See [Push](#push-what-the-push-service-sees). |
 
 With `[jmap] enabled = false` and no `[irc]`, the agent would serve nothing, and the configuration is refused.
+
+`listen` itself stays loopback only, because it is plaintext; `listen_tls` is how a client on another device reaches the endpoint. Its Session is its own: `apiUrl`, `uploadUrl`, `downloadUrl`, `eventSourceUrl` and the WebSocket URL all name the first `[tls] names` entry over `https:` (`wss:` for the socket), so a client is given URLs it can reach and whose certificate matches. With no configured name the address itself is used. One certificate serves every front end, each on its own port; there is no HTTP/2.
 
 ### `[irc]`
 
@@ -161,7 +167,8 @@ For the two loopback providers in [operating.md](operating.md#example-two-federa
 
 ## How clients connect
 
-- **JMAP Chat**: the Session is at `http://127.0.0.1:<port>/.well-known/jmap`, with `Authorization: Bearer <agent-token>`. The request's `Host` must be `127.0.0.1:<port>`, `[::1]:<port>` or `localhost:<port>`; any other gets `421`. This blocks DNS rebinding.
+- **JMAP Chat**: the Session is at `http://127.0.0.1:<port>/.well-known/jmap`, with `Authorization: Bearer <credential>` or `Authorization: Basic <base64(any-username:credential)>`, where the credential is the agent token or an app password. With Basic the username is ignored: the agent serves one user, so the secret alone picks the credential, and that is what a "username and password" client (Pidgin-shaped, purple-mimi) needs. A `401` offers `Basic` back only to a request that used it, so a browser that sent a bearer token is not given its own login box. The request's `Host` must be `127.0.0.1:<port>`, `[::1]:<port>` or `localhost:<port>`; any other gets `421`. This blocks DNS rebinding.
+- **JMAP Chat over TLS**, with `[jmap] listen_tls`: the Session is at `https://<name>:<port>/.well-known/jmap`, where `<name>` is a `[tls] names` entry. The Host check takes those names and the listener's own address at that port, and the loopback names too; anything else is `421`. Failed credentials are slowed per source address exactly as IRC's are (see `[irc]` below).
 - **IRC**: connect to the `[irc]` `listen` address, or with TLS to `listen_tls`, and send a credential with SASL or `PASS`.
 
 ## Goguma
@@ -193,7 +200,7 @@ They can count your messages and see when they come. Set `webpush = false` to se
 
 ## Attachment links
 
-With `listen` set, the agent can hand a front end's client a link to one attachment: `http://<listen>/attachment/<blobId>/<expires>/<mac>/<name>`. The link needs no token: whoever holds it can fetch that file, from a loopback address, until it expires (an hour by default, a day at most) and while a message the agent keeps names the file. Treat a link like the file itself. A new `agent-token` file (delete it and restart) revokes every link. Design: docs/design/agent-frontends.md §7.30.
+With `listen` set, the agent can hand a front end's client a link to one attachment: `http://<listen>/attachment/<blobId>/<expires>/<mac>/<name>`. With `[jmap] listen_tls` the links are its `https://<name>:<port>/attachment/...` instead, since a client on another device can reach only that listener. The link needs no credential: whoever holds it can fetch that file until it expires (an hour by default, a day at most) and while a message the agent keeps names the file. Treat a link like the file itself. A new `agent-token` file (delete it and restart) revokes every link. Design: docs/design/agent-frontends.md §7.30.
 
 ## Files
 

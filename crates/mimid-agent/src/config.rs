@@ -17,6 +17,7 @@
 //!
 //! [jmap]                                  # optional
 //! enabled = true                          # the default
+//! listen_tls = "100.64.1.2:8448"          # optional; needs [tls]
 //!
 //! [irc]                                   # optional; absent means no IRC
 //! listen = "127.0.0.1:6667"               # the default; any address allowed
@@ -83,6 +84,17 @@
 //! call the endpoint from a browser (CORS); it defaults to none. `*` and
 //! `null` are refused.
 //!
+//! `[jmap] listen_tls` adds an HTTPS listener for the JMAP endpoint on
+//! any address the operator names, off by default (client-survey.md
+//! decision S1; docs/design/frontend-auth.md §4.2, §5.3). It needs
+//! `[tls]` and `enabled = true`, and serves the same routes as `listen`,
+//! with the Session's URLs under the first `[tls] names` entry so that a
+//! client reading the Session over TLS is given URLs it can reach. It is
+//! what lets a JMAP Chat client on another device talk to the agent at
+//! all: `listen` itself stays loopback only, and a credential is required
+//! on either listener. A TLS listener on a public address is allowed and
+//! gets a WARN at start (decision A9).
+//!
 //! `[jmap]` turns the JMAP Chat front end on or off (docs/design/
 //! agent-frontends.md §5). It is on by default. With `enabled = false` the
 //! daemon builds no JMAP Chat account: the HTTP listener at `listen` still
@@ -111,9 +123,9 @@
 //! cleartext: message bodies, and the credential itself with `PASS` or
 //! SASL PLAIN, though not with SASL SCRAM-SHA-256. Keeping it off the
 //! wrong network is the operator's, with a firewall or a proxy. A
-//! credential is still required on every listener. The agent's HTTP
+//! credential is still required on every listener. The agent's plain HTTP
 //! listener (`listen`, for JMAP Chat) is unchanged and stays loopback
-//! only.
+//! only; off-loopback JMAP goes over `[jmap] listen_tls`, which is TLS.
 //!
 //! With `[jmap] enabled = false` and no `[irc]`, the daemon would serve
 //! nothing, and the configuration is refused.
@@ -258,6 +270,12 @@ pub struct JmapSetting {
     /// Whether the daemon serves JMAP Chat at `listen`; the default.
     #[serde(default = "yes")]
     pub enabled: bool,
+    /// An HTTPS listener on any address, off by default; needs `[tls]`
+    /// and `enabled` (docs/design/frontend-auth.md §4.2, §5.3; bead
+    /// mimid-e13m.6). It serves the same routes as `listen`, with the
+    /// Session's URLs under the first `[tls] names` entry.
+    #[serde(default)]
+    pub listen_tls: Option<SocketAddr>,
     /// Whether a JMAP client may register for Web Push and be sent
     /// `chatPush` payloads (draft-atwood-jmap-chat-push-00; bead
     /// mimid-1wgh.99). On by default, as for the IRC front end: without
@@ -273,6 +291,7 @@ impl Default for JmapSetting {
     fn default() -> Self {
         Self {
             enabled: true,
+            listen_tls: None,
             webpush: true,
         }
     }
@@ -468,8 +487,10 @@ impl Config {
     /// `https` URL, [`ConfigError::OutOfRange`] for a `sync_interval_ms` or
     /// `key_packages` outside its bounds, [`ConfigError::Origin`] for a bad
     /// `allowed_origins` entry, [`ConfigError::IrcServerName`] for a bad
-    /// `[irc].server_name`, and [`ConfigError::NothingServed`] with JMAP
-    /// off and no `[irc]`.
+    /// `[irc].server_name`, [`ConfigError::NothingServed`] with JMAP
+    /// off and no `[irc]`, [`ConfigError::NoTls`] for a `listen_tls`
+    /// without `[tls]`, and [`ConfigError::JmapOff`] for
+    /// `[jmap] listen_tls` with JMAP off.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let config: Self = toml::from_str(text)?;
         config.check()?;
@@ -506,6 +527,14 @@ impl Config {
         }
         if self.did_webvh.to_agent().is_err() {
             return Err(ConfigError::OutOfRange("did_webvh"));
+        }
+        if self.jmap.listen_tls.is_some() {
+            if self.tls.is_none() {
+                return Err(ConfigError::NoTls("[jmap] listen_tls"));
+            }
+            if !self.jmap.enabled {
+                return Err(ConfigError::JmapOff("[jmap] listen_tls"));
+            }
         }
         if let Some(irc) = &self.irc {
             // `[irc] listen` takes any address: the operator controls
@@ -630,6 +659,9 @@ pub enum ConfigError {
     /// `[tls]` is incomplete.
     #[error("{0}")]
     Tls(&'static str),
+    /// A JMAP listener is configured with `[jmap] enabled = false`.
+    #[error("{0} needs [jmap] enabled = true")]
+    JmapOff(&'static str),
 }
 
 #[cfg(test)]

@@ -1,0 +1,37 @@
+{
+  "id": "mimid-e13m.17",
+  "title": "AppPassword/set records createdBy as plain `jmap`, without the credential that asked",
+  "description": "docs/design/frontend-auth.md §3.1 wants created_by to name the front end AND the credential that asked, as IRC's `irc (\u003ccredential\u003e)` does. The JMAP path records plain `jmap`: the guard puts the Login in the request's extensions, but jmap_server's Dispatcher carries one caller context (Id, the account) and spawns each call on its own task, so the handler cannot see it. Fixing it means widening the dispatcher's caller context to carry the login, which touches mimid-agent-jmap's register signature, or threading it some other way. Small, and worth doing when something else makes the dispatcher's caller context change anyway.",
+  "notes": "TRIED 2026-11-24 AND BACKED OUT. The bead called this small. It is not, and\nthe reason is worth recording so the next attempt does not repeat it.\n\nTHE OBVIOUS FIX, which does work as far as it goes: crate-jmap's\n`Dispatcher\u003cCallerCtx\u003e` carries one value of the caller's choosing to every\nhandler, and the agent passes the account `Id`. Nothing in mimid reads\n`cx.caller` at all (grep: zero uses), so widening it to a\n`Caller { account: Id, login: Option\u003cLogin\u003e }` looked like a handful of\nsignatures plus the two dispatch sites.\n\nWHY IT IS NOT SMALL. `AgentChat` implements crate-jmap's `JmapAccounts`,\n`ChatStore` and `DelegateJmapReads` with `type CallerCtx = Id`, and\n`register_chat_handlers` takes `Dispatcher\u003cB::CallerCtx\u003e`. So changing the\ndispatcher's context forces `AgentChat::CallerCtx` to change, and with it\n`caller: \u0026Id` in every `ChatStore` and `JmapAccounts` method in\ncrates/mimid-agent-jmap/src/backend.rs. Worse, those methods delegate to an\ninner `MemoryBackend`, whose `CallerCtx` IS `Id` and cannot change (it is\ncrate-jmap's), so every delegation would have to translate `Caller` back to\n`\u0026Id`. That is dozens of signatures in the heart of the chat backend, for a\n`created_by` string.\n\nWHAT IT IS WORTH. The field reads `jmap` instead of `jmap (phone)`. The\nfront end is already recorded, the CLI records `cli`, and IRC records\n`irc (\u003ccredential\u003e)`, so the only thing missing is WHICH DEVICE asked over\nJMAP, in a listing that already shows last-used time and peer.\n\nWHAT WOULD NOT WORK, so nobody tries it: a task-local (the dispatcher spawns\neach call on its own task, which does not inherit one); passing the login\nthrough `args` (they are the client's); or putting something other than the\naccount id in the caller context (crate-jmap's MemoryBackend uses it for its\nown permission checks).\n\nDO IT WHEN something else makes `AgentChat::CallerCtx` change anyway — the\nMatrix front end (bead mimid-e13m.7) wants per-device tokens and may well\nneed the credential in a handler, and that is the moment to widen it once for\nboth.",
+  "status": "open",
+  "priority": 4,
+  "issue_type": "task",
+  "assignee": "Mark Atwood",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-24T16:33:50.019611459Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-24T19:02:53.33140682Z",
+  "started_at": "2026-11-24T19:01:40.852227132Z",
+  "labels": [
+    "auth",
+    "agent"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-e13m.17",
+      "depends_on_id": "mimid-e13m",
+      "type": "parent-child",
+      "created_at": "2026-11-24T16:33:50.079033883Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-e13m.17",
+      "depends_on_id": "mimid-e13m.7",
+      "type": "blocks",
+      "created_at": "2026-11-24T19:02:56.836392036Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -324,6 +324,8 @@ pub struct Running {
     pub irc: Option<SocketAddr>,
     /// The IRC front end's TLS address, with `[irc] listen_tls`.
     pub irc_tls: Option<SocketAddr>,
+    /// The HTTPS endpoint's address, with `[jmap] listen_tls`.
+    pub https: Option<SocketAddr>,
     pub state_dir: PathBuf,
     /// The daemon's store.
     pub store: Arc<mimid_agent_store::Store>,
@@ -338,6 +340,7 @@ impl Running {
         let addr = daemon.local_addr().expect("the daemon listens for HTTP");
         let irc = daemon.irc_addr();
         let irc_tls = daemon.irc_tls_addr();
+        let https = daemon.https_addr();
         let store = Arc::clone(daemon.store());
         let (stop, stopped) = oneshot::channel::<()>();
         let task = tokio::spawn(daemon.serve(async move {
@@ -347,6 +350,7 @@ impl Running {
             addr,
             irc,
             irc_tls,
+            https,
             state_dir: config.state_dir.clone(),
             store,
             stop,
@@ -371,6 +375,15 @@ impl Running {
 
     pub fn base(&self) -> String {
         format!("http://{}", self.addr)
+    }
+
+    /// The HTTPS endpoint's base URL under the name the test certificate
+    /// covers; panics without `[jmap] listen_tls`.
+    pub fn https_base(&self) -> String {
+        format!(
+            "https://localhost:{}",
+            self.https.expect("the daemon listens for HTTPS").port()
+        )
     }
 
     /// A client of this daemon.
@@ -445,11 +458,19 @@ impl Client {
 
     /// One method call; its response arguments. Panics on a method-level
     /// error.
-    pub async fn call(&self, method: &str, mut args: Value) -> Value {
+    pub async fn call(&self, method: &str, args: Value) -> Value {
+        self.call_using(&[], method, args).await
+    }
+
+    /// [`Client::call`] with `capabilities` named in `using` as well, for
+    /// a method outside core and chat.
+    pub async fn call_using(&self, capabilities: &[&str], method: &str, mut args: Value) -> Value {
+        let mut using = vec!["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat"];
+        using.extend_from_slice(capabilities);
         args["accountId"] = json!(self.account);
         let (status, response) = self
             .post(&json!({
-                "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat"],
+                "using": using,
                 "methodCalls": [[method, args, "c0"]],
             }))
             .await;

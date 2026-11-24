@@ -1,5 +1,6 @@
 //! The `mimid-agent` daemon (bead mimid-1wgh.13.10): one user's MIMI rooms
-//! as a JMAP Chat endpoint on the loopback interface, so a standard JMAP
+//! as a JMAP Chat endpoint on the loopback interface, and with
+//! `[jmap] listen_tls` over TLS on any address, so a standard JMAP
 //! Chat client can be a MIMI client (decision mimid-1wgh.38: mimid ships
 //! no UI of its own), and with `[irc]` as a loopback IRC server, so a
 //! stock IRC client can be one too (mimid-agent-irc).
@@ -75,21 +76,29 @@
 //!
 //! # Configuration and the local token
 //!
-//! [`Config`] is the TOML file (see the `config` module). The plain listen
-//! addresses must be loopback, or the daemon refuses to start: they serve
-//! plaintext. IRC can also listen with TLS on any address
-//! (`[irc] listen_tls`), with the certificate `[tls]` names ([`tls`];
-//! client-survey.md decision S1). On first start the daemon makes a random local bearer
-//! token in `<state_dir>/agent-token` ([`token::TOKEN_FILE`], mode 0600)
-//! and reuses it afterwards; every request, on every path, must carry
-//! `Authorization: Bearer <that token>` and is otherwise `401`. Clients
-//! running as the user read it from the file.
+//! [`Config`] is the TOML file (see the `config` module). The plain HTTP
+//! listen address must be loopback, or the daemon refuses to start: it
+//! serves plaintext. Both front ends can also listen with TLS on any
+//! address — `[jmap] listen_tls` for the HTTP endpoint and
+//! `[irc] listen_tls` for IRC — with the certificate `[tls]` names
+//! ([`tls`]; client-survey.md decision S1). On first start the daemon
+//! makes a random local bearer token in `<state_dir>/agent-token`
+//! ([`token::TOKEN_FILE`], mode 0600) and reuses it afterwards; every
+//! request, on every path, must carry a credential — that token or an app
+//! password, as `Authorization: Bearer <secret>` or
+//! `Authorization: Basic <base64(any-username:secret)>` — and is
+//! otherwise `401`. Clients running as the user read the token from the
+//! file; a client on another device is given an app password
+//! (docs/design/frontend-auth.md §3, §4.2).
 //!
 //! # Browsers: the Host check and CORS
 //!
 //! Against DNS rebinding, a request whose `Host` is not `127.0.0.1:<port>`,
 //! `[::1]:<port>` or `localhost:<port>` for the listening port is refused
-//! with `421`, before anything else. A browser client on another origin
+//! with `421`, before anything else. On the HTTPS listener the `[tls]
+//! names` and the listener's own address are accepted at its port as
+//! well: they are what its certificate covers, which is what a rebinding
+//! page cannot present. A browser client on another origin
 //! (a web app served elsewhere) needs that origin in `allowed_origins`:
 //! its CORS preflights are then answered without the token (methods `GET,
 //! POST, OPTIONS`; headers `Authorization, Content-Type`; no credentials
@@ -141,7 +150,17 @@
 //!   credentials on a Unix socket (the AGENTS.md crate map's "agent
 //!   socket" check): any process that can read the token file can act as
 //!   the user.
-//! - The endpoint is plain HTTP on loopback; there is no TLS.
+//! - The endpoint is plain HTTP on `listen`, which is loopback only.
+//!   `[jmap] listen_tls` adds an HTTPS listener on any address, with its
+//!   own Session whose URLs name the certificate's first `[tls] name`, so
+//!   a client on another device has URLs it can reach; there is no ALPN
+//!   or SNI routing and no HTTP/2 (the `https` module).
+//! - The agent's own `AppPassword/get` and `AppPassword/set`, under the
+//!   capability `tag:reviewcommit.com,2026:mimid:app-passwords`
+//!   (INVENTED, NOT FROM SPEC; the [`app_password`] module, decision
+//!   mimid-1wgh.126), let a JMAP client list, add and revoke credentials,
+//!   as the CLI and `/msg mimid passwords` do. `createdBy` is plain
+//!   `jmap`, without the credential that asked (bead mimid-e13m.17).
 //! - An allowed origin gets the same access as any holder of the token;
 //!   the token, not the origin, is what authorizes. A page from an allowed
 //!   origin still has to obtain the token from the user.
@@ -175,11 +194,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod app_password;
 pub mod cli;
 pub mod config;
 mod daemon;
 pub mod didwebvh;
 mod http;
+mod https;
 mod push;
 pub mod tls;
 pub mod token;

@@ -37,6 +37,9 @@ use mimid_agent_store::links::AttachmentLinks;
 pub struct Daemon {
     /// The HTTP endpoint, unless `listen` is left out.
     http: Option<Http>,
+    /// The HTTPS endpoint, with `[jmap] listen_tls`: the same routes over
+    /// TLS on any address, with its own Session (bead mimid-e13m.6).
+    https: Option<Https>,
     /// The IRC front end, with `[irc]`.
     irc: Option<IrcFrontEnd>,
     /// The TLS certificate source, with `[tls]`.
@@ -64,6 +67,16 @@ pub struct Daemon {
 struct Http {
     listener: TcpListener,
     local_addr: SocketAddr,
+    endpoint: Arc<Endpoint>,
+}
+
+/// The HTTPS endpoint: the bound socket, the certificate every TLS
+/// listener shares, and the routes' state. Its handshakes start in
+/// [`Daemon::serve`], so a bind failure is still a start failure.
+struct Https {
+    listener: TcpListener,
+    local_addr: SocketAddr,
+    config: Arc<rustls::ServerConfig>,
     endpoint: Arc<Endpoint>,
 }
 
@@ -204,6 +217,18 @@ impl Daemon {
             }
             None => None,
         };
+        // Config::check refuses [jmap] listen_tls without [tls] and with
+        // JMAP off, so both are present here when it is.
+        let tls_listener = match config.jmap.listen_tls {
+            Some(addr) => {
+                crate::tls::warn_if_public("jmap", addr);
+                let bind = |source| StartError::Bind { addr, source };
+                let listener = TcpListener::bind(addr).await.map_err(bind)?;
+                let local_addr = listener.local_addr().map_err(bind)?;
+                Some((listener, local_addr))
+            }
+            None => None,
+        };
         // The store first, the front ends over it (docs/design/
         // agent-frontends.md §3 step 6): the decrypted records, kept across
         // restarts (bead mimid-1wgh.13.12), with the attachments (bead
@@ -227,58 +252,106 @@ impl Daemon {
             None
         };
         let (stop, stop_receiver) = watch::channel(false);
-        let http = match listener {
-            Some((listener, local_addr)) => {
-                let jmap = if config.jmap.enabled {
-                    let account = http::account_id(&config.user_uri);
-                    let (session, session_state) =
-                        http::session(&format!("http://{local_addr}"), &config.user_uri, &account)?;
-                    let mut chat =
-                        AgentChat::over(Arc::clone(&store), account, Options::default())?;
-                    // One subscription store for every front end that
-                    // pushes: the rows are keyed by front end, and the
-                    // VAPID key is the agent's (bead mimid-1wgh.99).
-                    if let Some(pushes) = &pushes {
-                        chat = chat.enable_push(Arc::clone(pushes));
-                    }
-                    let chat = Arc::new(chat);
+        // One AgentChat over the store for both endpoints: the plain one
+        // and, with `[jmap] listen_tls`, the TLS one. Each gets its own
+        // Session and dispatcher, because their URLs differ, but the
+        // account, its states and its push store are one (bead
+        // mimid-e13m.6).
+        let account = http::account_id(&config.user_uri);
+        let chat = if config.jmap.enabled && listener.is_some() {
+            let mut chat =
+                AgentChat::over(Arc::clone(&store), account.clone(), Options::default())?;
+            // One subscription store for every front end that pushes: the
+            // rows are keyed by front end, and the VAPID key is the
+            // agent's (bead mimid-1wgh.99).
+            if let Some(pushes) = &pushes {
+                chat = chat.enable_push(Arc::clone(pushes));
+            }
+            Some(Arc::new(chat))
+        } else {
+            None
+        };
+        // What the endpoints share: one change channel, so the states are
+        // recomputed once for both, and the request and upload limits are
+        // the agent's rather than each listener's.
+        let (changes, _) = broadcast::channel(CHANGE_BUFFER);
+        let in_flight = Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS));
+        let uploads = Arc::new(Semaphore::new(MAX_CONCURRENT_UPLOAD));
+        let endpoint_for = |base: &str, port: u16, names: Vec<String>| {
+            let jmap = match &chat {
+                Some(chat) => {
+                    let (session, session_state) = http::session(base, &config.user_uri, &account)?;
                     Some(Jmap {
-                        dispatcher: http::dispatcher(&chat),
-                        chat,
+                        dispatcher: http::dispatcher(chat, &credentials, &account),
+                        chat: Arc::clone(chat),
                         session,
                         session_state,
                     })
-                } else {
-                    None
-                };
+                }
+                None => None,
+            };
+            Ok::<_, StartError>(Arc::new(Endpoint {
+                credentials: Arc::clone(&credentials),
+                store: Arc::clone(&store),
+                jmap,
+                in_flight: Arc::clone(&in_flight),
+                uploads: Arc::clone(&uploads),
+                changes: changes.clone(),
+                // The store's own: its write methods wake the loop too.
+                sync_now: Arc::clone(store.sync_wanted()),
+                stop: stop_receiver.clone(),
+                allowed_origins: config.allowed_origins.clone(),
+                port,
+                names,
+            }))
+        };
+        let http = match &listener {
+            Some((_, local_addr)) => {
                 // docs/design/agent-frontends.md §7.30: links any front
-                // end can hand its client, served on this listener.
-                store.set_attachment_links(AttachmentLinks::new(
-                    token.link_key(),
-                    format!("http://{local_addr}"),
-                ));
-                let (changes, _) = broadcast::channel(CHANGE_BUFFER);
-                let endpoint = Arc::new(Endpoint {
-                    credentials: Arc::clone(&credentials),
-                    store: Arc::clone(&store),
-                    jmap,
-                    in_flight: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
-                    uploads: Arc::new(Semaphore::new(MAX_CONCURRENT_UPLOAD)),
-                    changes,
-                    // The store's own: its write methods wake the loop too.
-                    sync_now: Arc::clone(store.sync_wanted()),
-                    stop: stop_receiver,
-                    allowed_origins: config.allowed_origins.clone(),
-                    port: local_addr.port(),
-                });
-                Some(Http {
-                    listener,
-                    local_addr,
-                    endpoint,
-                })
+                // end can hand its client. A client off this machine
+                // reaches only the TLS listener, so with one the links are
+                // its https URLs; a loopback link would be useless to the
+                // remote clients that TLS is there for.
+                let link_base = match &tls_listener {
+                    Some((_, tls_addr)) => https_endpoint(config.tls.as_ref(), *tls_addr).0,
+                    None => format!("http://{local_addr}"),
+                };
+                store.set_attachment_links(AttachmentLinks::new(token.link_key(), link_base));
+                let endpoint = endpoint_for(
+                    &format!("http://{local_addr}"),
+                    local_addr.port(),
+                    Vec::new(),
+                )?;
+                Some(endpoint)
             }
             // Config::check refuses JMAP on without listen.
             None => None,
+        };
+        let https = match &tls_listener {
+            Some((_, local_addr)) => {
+                let (base, names) = https_endpoint(config.tls.as_ref(), *local_addr);
+                Some(endpoint_for(&base, local_addr.port(), names)?)
+            }
+            None => None,
+        };
+        let http = match (listener, http) {
+            (Some((listener, local_addr)), Some(endpoint)) => Some(Http {
+                listener,
+                local_addr,
+                endpoint,
+            }),
+            _ => None,
+        };
+        // Config::check refuses [jmap] listen_tls without [tls], so the
+        // certificate is here whenever the listener is.
+        let https = match (tls_listener, https, &tls) {
+            (Some((listener, local_addr)), Some(endpoint), Some(tls)) => Some(Https {
+                listener,
+                local_addr,
+                config: tls.server_config(),
+                endpoint,
+            }),
+            _ => None,
         };
         let irc = match &config.irc {
             Some(setting) => {
@@ -310,6 +383,7 @@ impl Daemon {
         };
         Ok(Self {
             http,
+            https,
             irc,
             tls,
             store,
@@ -335,6 +409,12 @@ impl Daemon {
     /// the port filled in if it was 0); `None` without `listen`.
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.http.as_ref().map(|http| http.local_addr)
+    }
+
+    /// The address the HTTPS endpoint listens on; `None` without
+    /// `[jmap] listen_tls`.
+    pub fn https_addr(&self) -> Option<SocketAddr> {
+        self.https.as_ref().map(|https| https.local_addr)
     }
 
     /// The address the IRC front end listens on; `None` without `[irc]`.
@@ -379,6 +459,7 @@ impl Daemon {
         tracing::info!(
             name: "agent_listening",
             listen = %self.local_addr().map_or_else(|| "none".to_owned(), |a| a.to_string()),
+            listen_tls = %self.https_addr().map_or_else(|| "none".to_owned(), |a| a.to_string()),
             jmap,
             irc = self.irc.is_some(),
             irc_listen = %self.irc_addr().map_or_else(|| "none".to_owned(), |a| a.to_string()),
@@ -464,9 +545,38 @@ impl Daemon {
         let irc = self
             .irc
             .map(|irc| tokio::spawn(irc.serve(stop.subscribe())));
+        // The HTTPS endpoint, with `[jmap] listen_tls`: the same routes
+        // over TLS, its handshakes in their own tasks (the `https`
+        // module). `ConnectInfo` carries the peer to the guard, for the
+        // per-source slowdown and the logs of §7.
+        let serving_tls = self.https.map(|https| {
+            let mut stopping = stop.subscribe();
+            let listener = crate::https::TlsListener::spawn(
+                https.listener,
+                https.local_addr,
+                https.config,
+                stop.subscribe(),
+            );
+            tokio::spawn(async move {
+                axum::serve(
+                    axum::serve::ListenerExt::tap_io(listener, |_| {}),
+                    http::router(https.endpoint)
+                        .into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .with_graceful_shutdown(async move { stopped(&mut stopping).await })
+                .await
+            })
+        });
         let served = match self.http {
             Some(http) => {
                 let mut stopping = stop.subscribe();
+                // No `ConnectInfo` here, unlike the TLS listener: this
+                // one is loopback only, so §7's per-source slowdown has
+                // no source worth counting, and axum's per-connection
+                // service clone outlives `serve` by a moment when one is
+                // added (bead mimid-036n), which would stop an embedder
+                // reopening the state directory straight after a stop.
+                // The guard reads the peer as `None` and logs at DEBUG.
                 axum::serve(http.listener, http::router(http.endpoint))
                     .with_graceful_shutdown(async move { stopped(&mut stopping).await })
                     .await
@@ -480,6 +590,21 @@ impl Daemon {
         stop.send_replace(true);
         signal.abort();
         runner.join().await;
+        let served_tls = match serving_tls {
+            Some(task) => match task.await {
+                Ok(result) => result,
+                Err(error) => {
+                    tracing::error!(
+                        name: "agent_task_panicked",
+                        task = "HTTPS endpoint",
+                        error = &error as &dyn std::error::Error,
+                        "a task of the daemon ended abnormally"
+                    );
+                    Ok(())
+                }
+            },
+            None => Ok(()),
+        };
         for (name, task) in [
             ("credential recheck", Some(recheck)),
             ("certificate reload", reload),
@@ -500,7 +625,9 @@ impl Daemon {
             }
         }
         tracing::info!(name: "agent_stopped", "mimid-agent stopped");
-        served
+        // Either listener's failure is the daemon's; the plain one first,
+        // since it is the one that always exists.
+        served.and(served_tls)
     }
 }
 
@@ -521,6 +648,35 @@ async fn recheck_credentials(credentials: Arc<Credentials>, mut stop: watch::Rec
             );
         }
     }
+}
+
+/// The HTTPS endpoint's base URL and the names its Host check accepts
+/// besides the loopback ones (docs/design/frontend-auth.md §5.3).
+///
+/// The base URL names the first `[tls] names` entry, which is the name
+/// the certificate is for and the one setup output prints, so the Session
+/// hands a client URLs it can reach and whose certificate matches. With
+/// no configured name, which `source = "files"` allows, it is the address
+/// itself. The address is accepted as a Host either way, because a client
+/// that connects by address sends it; that is no rebinding hole, since a
+/// page served from another name cannot make a browser send an address as
+/// its Host.
+fn https_endpoint(tls: Option<&crate::tls::TlsSetting>, addr: SocketAddr) -> (String, Vec<String>) {
+    let mut names: Vec<String> = tls.map(|tls| tls.names.clone()).unwrap_or_default();
+    let base = match names.first() {
+        // RFC 3986 §3.2.3: the port is left out when it is the scheme's.
+        Some(name) if addr.port() == 443 => format!("https://{name}"),
+        Some(name) => format!("https://{name}:{}", addr.port()),
+        None => format!("https://{addr}"),
+    };
+    let literal = match addr.ip() {
+        std::net::IpAddr::V4(ip) => ip.to_string(),
+        std::net::IpAddr::V6(ip) => format!("[{ip}]"),
+    };
+    if !names.contains(&literal) {
+        names.push(literal);
+    }
+    (base, names)
 }
 
 /// The trimmed contents of the server token file.
