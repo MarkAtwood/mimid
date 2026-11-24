@@ -179,7 +179,7 @@ async fn deliver(chat: &Arc<AgentChat>, client: &reqwest::Client, vapid: &Secret
     for (subscription, config) in configs(chat).await {
         let allowed = jmap_chat_server::should_push(
             chat.as_ref(),
-            &(),
+            chat.account_id(),
             chat.account_id(),
             &config,
             &caps,
@@ -244,7 +244,12 @@ where
 {
     match chat
         .inner
-        .get_objects::<O>(&(), chat.account_id(), Some(std::slice::from_ref(id)), None)
+        .get_objects::<O>(
+            chat.account_id(),
+            chat.account_id(),
+            Some(std::slice::from_ref(id)),
+            None,
+        )
         .await
     {
         Ok((mut found, _)) => found.pop(),

@@ -146,7 +146,7 @@ impl AgentChat {
         let after: Vec<ChatMember> = members.into_iter().filter(|m| m.id != *user).collect();
         let patch = serde_json::from_value(json!({ "members": after })).map_err(serde_failure)?;
         self.inner
-            .update_object::<Chat>(&(), &self.account, chat, patch)
+            .update_object::<Chat>(&self.account, &self.account, chat, patch)
             .await?;
         Ok(())
     }
@@ -169,7 +169,7 @@ impl AgentChat {
         }
         // The store's notFound when there is no ChatBan.
         self.inner
-            .destroy_object::<ChatBan>(&(), &self.account, id)
+            .destroy_object::<ChatBan>(&self.account, &self.account, id)
             .await
     }
 

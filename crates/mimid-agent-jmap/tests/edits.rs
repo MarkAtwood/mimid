@@ -138,7 +138,7 @@ async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
 /// One user's JMAP Chat account, kept in its agent's database.
 struct Client {
     chat: Arc<AgentChat>,
-    dispatcher: Dispatcher<()>,
+    dispatcher: Dispatcher<Id>,
 }
 
 impl Client {
@@ -165,7 +165,7 @@ impl Client {
         .unwrap();
         let response = self
             .dispatcher
-            .dispatch(request, (), State::from("0"))
+            .dispatch(request, self.chat.account_id().clone(), State::from("0"))
             .await;
         let response = serde_json::to_value(response).unwrap();
         let [name, args, _] = &response["methodResponses"][0].as_array().unwrap()[..] else {

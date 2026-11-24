@@ -441,7 +441,7 @@ impl JmapExt {
         let failed = |e: &dyn std::fmt::Display| format!("reading the objects to store: {e}");
         let (objects, _) = self
             .inner
-            .get_objects::<O>(&(), &self.account, None, None)
+            .get_objects::<O>(&self.account, &self.account, None, None)
             .await
             .map_err(|e| failed(&e))?;
         objects

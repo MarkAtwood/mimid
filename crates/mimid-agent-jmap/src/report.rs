@@ -62,14 +62,14 @@ use crate::backend::AgentChat;
 pub const METHOD: &str = "Message/reportAbuse";
 
 /// Registers [`METHOD`] on `dispatcher`, served by `chat`.
-pub(crate) fn register(chat: &Arc<AgentChat>, dispatcher: &mut Dispatcher<()>) {
+pub(crate) fn register(chat: &Arc<AgentChat>, dispatcher: &mut Dispatcher<Id>) {
     dispatcher.register(METHOD, Arc::new(Handler(Arc::clone(chat))));
 }
 
 struct Handler(Arc<AgentChat>);
 
-impl JmapHandler<()> for Handler {
-    fn call(&self, cx: CallContext<()>) -> HandlerFuture {
+impl JmapHandler<Id> for Handler {
+    fn call(&self, cx: CallContext<Id>) -> HandlerFuture {
         let chat = Arc::clone(&self.0);
         Box::pin(async move { chat.report_abuse(cx.args).await.map(HandlerOutput::new) })
     }

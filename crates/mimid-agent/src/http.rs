@@ -255,7 +255,7 @@ pub(crate) struct Endpoint {
 /// The JMAP Chat front end's part of the endpoint.
 pub(crate) struct Jmap {
     pub(crate) chat: Arc<AgentChat>,
-    pub(crate) dispatcher: Dispatcher<()>,
+    pub(crate) dispatcher: Dispatcher<Id>,
     /// The Session, `state` included.
     pub(crate) session: Value,
     pub(crate) session_state: String,
@@ -269,7 +269,7 @@ fn jmap_off() -> Response {
 
 /// A dispatcher with `Core/echo` and mimid-agent-jmap's methods over
 /// `chat`.
-pub(crate) fn dispatcher(chat: &Arc<AgentChat>) -> Dispatcher<()> {
+pub(crate) fn dispatcher(chat: &Arc<AgentChat>) -> Dispatcher<Id> {
     let mut dispatcher = Dispatcher::new();
     dispatcher.register(CORE_ECHO, Arc::new(Echo));
     AgentChat::register(chat, &mut dispatcher);
@@ -279,8 +279,8 @@ pub(crate) fn dispatcher(chat: &Arc<AgentChat>) -> Dispatcher<()> {
 /// RFC 8620 §4: `Core/echo` returns its arguments unchanged.
 struct Echo;
 
-impl JmapHandler<()> for Echo {
-    fn call(&self, cx: CallContext<()>) -> HandlerFuture {
+impl JmapHandler<Id> for Echo {
+    fn call(&self, cx: CallContext<Id>) -> HandlerFuture {
         let args = cx.args;
         Box::pin(async move { Ok(HandlerOutput::new(args)) })
     }
@@ -872,7 +872,11 @@ async fn post_api(
         .any(|call| call.name == "Chat/set" || call.name == "Message/set");
     let response = jmap
         .dispatcher
-        .dispatch(request, (), jmap.session_state.as_str().into())
+        .dispatch(
+            request,
+            jmap.chat.account_id().clone(),
+            jmap.session_state.as_str().into(),
+        )
         .await;
     // No receiver only means no stream is open.
     let _ = endpoint.changes.send(());
@@ -1008,10 +1012,10 @@ async fn states(
     let mut states = BTreeMap::new();
     for name in types {
         let state = match *name {
-            Chat::TYPE_NAME => chat.get_state::<Chat>(&(), account).await,
-            Message::TYPE_NAME => chat.get_state::<Message>(&(), account).await,
-            ChatContact::TYPE_NAME => chat.get_state::<ChatContact>(&(), account).await,
-            ReadPosition::TYPE_NAME => chat.get_state::<ReadPosition>(&(), account).await,
+            Chat::TYPE_NAME => chat.get_state::<Chat>(account, account).await,
+            Message::TYPE_NAME => chat.get_state::<Message>(account, account).await,
+            ChatContact::TYPE_NAME => chat.get_state::<ChatContact>(account, account).await,
+            ReadPosition::TYPE_NAME => chat.get_state::<ReadPosition>(account, account).await,
             _ => continue,
         }
         .map_err(|e| e.to_string())?;

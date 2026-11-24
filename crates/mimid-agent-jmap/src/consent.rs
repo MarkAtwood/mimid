@@ -47,7 +47,9 @@
 
 use std::sync::Arc;
 
-use jmap_server::{CallContext, Dispatcher, HandlerFuture, HandlerOutput, JmapError, JmapHandler};
+use jmap_server::{
+    CallContext, Dispatcher, HandlerFuture, HandlerOutput, Id, JmapError, JmapHandler,
+};
 use mimid_agent_core::ConsentRecord;
 use mimid_agent_store::ActionError;
 use serde_json::{Map, Value, json};
@@ -67,7 +69,7 @@ const GRANT: &str = "grant";
 const REVOKE: &str = "revoke";
 
 /// Registers the three methods on `dispatcher`, served by `chat`.
-pub(crate) fn register(chat: &Arc<AgentChat>, dispatcher: &mut Dispatcher<()>) {
+pub(crate) fn register(chat: &Arc<AgentChat>, dispatcher: &mut Dispatcher<Id>) {
     dispatcher.register(GET, Arc::new(Handler(Arc::clone(chat), Which::Get)));
     dispatcher.register(QUERY, Arc::new(Handler(Arc::clone(chat), Which::Query)));
     dispatcher.register(SET, Arc::new(Handler(Arc::clone(chat), Which::Set)));
@@ -82,8 +84,8 @@ enum Which {
 
 struct Handler(Arc<AgentChat>, Which);
 
-impl JmapHandler<()> for Handler {
-    fn call(&self, cx: CallContext<()>) -> HandlerFuture {
+impl JmapHandler<Id> for Handler {
+    fn call(&self, cx: CallContext<Id>) -> HandlerFuture {
         let chat = Arc::clone(&self.0);
         let which = self.1;
         Box::pin(async move {

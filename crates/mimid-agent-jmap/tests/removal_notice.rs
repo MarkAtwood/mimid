@@ -236,7 +236,7 @@ async fn poll_to_epoch(agent: &mut Agent, room: &str, epoch: u64) {
 /// plaintext store in the agent's database in `dir/bob`.
 struct Bob {
     chat: Arc<AgentChat>,
-    dispatcher: Dispatcher<()>,
+    dispatcher: Dispatcher<Id>,
 }
 
 impl Bob {
@@ -264,7 +264,7 @@ impl Bob {
         .unwrap();
         let response = self
             .dispatcher
-            .dispatch(request, (), State::from("0"))
+            .dispatch(request, self.chat.account_id().clone(), State::from("0"))
             .await;
         let response = serde_json::to_value(response).unwrap();
         assert_eq!(response["methodResponses"][0][0], method, "{response}");

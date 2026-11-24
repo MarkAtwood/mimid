@@ -429,7 +429,7 @@ impl JmapExt {
                 if !patch.is_empty() {
                     self.inner
                         .update_object::<ReadPosition>(
-                            &(),
+                            &self.account,
                             &self.account,
                             &id,
                             from_json(Value::Object(patch))?,
@@ -445,7 +445,12 @@ impl JmapExt {
     async fn stored<O: GetObject + Send + Sync>(&self, id: &Id) -> Result<Option<O>, SyncError> {
         let (mut found, _) = self
             .inner
-            .get_objects::<O>(&(), &self.account, Some(std::slice::from_ref(id)), None)
+            .get_objects::<O>(
+                &self.account,
+                &self.account,
+                Some(std::slice::from_ref(id)),
+                None,
+            )
             .await?;
         Ok(found.pop())
     }
@@ -456,7 +461,7 @@ impl JmapExt {
     async fn destroy_unheld<O: SetObject + Send + Sync>(&self, key: &str) {
         match self
             .inner
-            .destroy_object::<O>(&(), &self.account, &Id::from(key))
+            .destroy_object::<O>(&self.account, &self.account, &Id::from(key))
             .await
         {
             Ok(()) => {}
@@ -478,7 +483,7 @@ impl JmapExt {
     async fn expire(&self, key: &str) {
         if let Err(error) = self
             .inner
-            .expire_message(&(), &self.account, &Id::from(key))
+            .expire_message(&self.account, &self.account, &Id::from(key))
             .await
         {
             tracing::error!(
@@ -535,7 +540,7 @@ impl JmapExt {
                 if !patch.is_empty() {
                     self.inner
                         .update_object::<ChatContact>(
-                            &(),
+                            &self.account,
                             &self.account,
                             &id,
                             from_json(Value::Object(patch))?,
@@ -577,7 +582,7 @@ impl JmapExt {
         {
             self.inner
                 .update_object::<Chat>(
-                    &(),
+                    &self.account,
                     &self.account,
                     &id,
                     from_json(json!({ "messageExpirySeconds": room.message_expiry_seconds }))?,
@@ -611,7 +616,7 @@ impl JmapExt {
         if after != members {
             self.inner
                 .update_object::<Chat>(
-                    &(),
+                    &self.account,
                     &self.account,
                     &id,
                     from_json(json!({ "members": after }))?,
@@ -677,7 +682,7 @@ impl JmapExt {
                 if !patch.is_empty() {
                     self.inner
                         .update_object::<Message>(
-                            &(),
+                            &self.account,
                             &self.account,
                             &id,
                             from_json(Value::Object(patch))?,
@@ -707,7 +712,7 @@ impl JmapExt {
             }
             (None, Some(_)) => {
                 self.inner
-                    .destroy_object::<ChatBan>(&(), &self.account, &id)
+                    .destroy_object::<ChatBan>(&self.account, &self.account, &id)
                     .await?;
             }
             _ => {}

@@ -266,7 +266,7 @@ impl AgentChat {
     /// `ChatContact/*`, `ChatBan/*` and the rest of crate-jmap's set) and
     /// `Message/reportAbuse` ([`crate::report`]) on `dispatcher`, served
     /// by `this`.
-    pub fn register(this: &Arc<Self>, dispatcher: &mut Dispatcher<()>) {
+    pub fn register(this: &Arc<Self>, dispatcher: &mut Dispatcher<Id>) {
         jmap_chat_server::register_chat_handlers(dispatcher, Arc::clone(this));
         crate::report::register(this, dispatcher);
         crate::consent::register(this, dispatcher);
@@ -327,7 +327,12 @@ impl AgentChat {
     ) -> Result<Option<O>, MemoryError> {
         let (mut found, _) = self
             .inner
-            .get_objects::<O>(&(), &self.account, Some(std::slice::from_ref(id)), None)
+            .get_objects::<O>(
+                &self.account,
+                &self.account,
+                Some(std::slice::from_ref(id)),
+                None,
+            )
             .await?;
         Ok(found.pop())
     }
@@ -649,7 +654,7 @@ impl AgentChat {
     /// makes a new Chat. Its Messages go as above.
     async fn destroy_chat<O: SetObject + Send + Sync>(
         &self,
-        caller: &(),
+        caller: &Id,
         account_id: &Id,
         id: &Id,
     ) -> Result<(), BackendSetError<MemoryError>> {
@@ -710,7 +715,7 @@ impl AgentChat {
             .collect();
         let patch = serde_json::from_value(Value::Object(patch)).map_err(serde_failure)?;
         self.inner
-            .update_object::<O>(&(), &self.account, id, patch)
+            .update_object::<O>(&self.account, &self.account, id, patch)
             .await?;
         serde_json::from_value(value).map_err(serde_failure)
     }
@@ -1057,9 +1062,9 @@ fn room_bound(chat: &Chat) -> bool {
 
 impl JmapAccounts for AgentChat {
     type Error = MemoryError;
-    type CallerCtx = ();
+    type CallerCtx = Id;
 
-    async fn account_exists(&self, caller: &(), account_id: &Id) -> Result<bool, MemoryError> {
+    async fn account_exists(&self, caller: &Id, account_id: &Id) -> Result<bool, MemoryError> {
         Ok(*account_id == self.account && self.inner.account_exists(caller, account_id).await?)
     }
 }
@@ -1075,7 +1080,7 @@ impl DelegateJmapReads for AgentChat {
 impl ChatStore for AgentChat {
     async fn create_object<O, F>(
         &self,
-        caller: &(),
+        caller: &Id,
         account_id: &Id,
         create_id: &str,
         build: F,
@@ -1105,7 +1110,7 @@ impl ChatStore for AgentChat {
 
     async fn create_message<F>(
         &self,
-        _caller: &(),
+        _caller: &Id,
         account_id: &Id,
         _create_id: &str,
         build: F,
@@ -1121,7 +1126,7 @@ impl ChatStore for AgentChat {
 
     async fn update_object<O: SetObject + Send + Sync>(
         &self,
-        caller: &(),
+        caller: &Id,
         account_id: &Id,
         id: &Id,
         patch: O::Patch,
@@ -1181,7 +1186,7 @@ impl ChatStore for AgentChat {
 
     async fn destroy_object<O: SetObject + Send + Sync>(
         &self,
-        caller: &(),
+        caller: &Id,
         account_id: &Id,
         id: &Id,
     ) -> Result<(), BackendSetError<MemoryError>> {
@@ -1203,7 +1208,7 @@ impl ChatStore for AgentChat {
         self.saved(result).await
     }
 
-    fn supports_type<O: JmapObject>(&self, _caller: &(), account_id: &Id) -> bool {
+    fn supports_type<O: JmapObject>(&self, _caller: &Id, account_id: &Id) -> bool {
         *account_id == self.account && served(O::TYPE_NAME)
     }
 }
@@ -1223,7 +1228,7 @@ impl ChatRestrictions for AgentChat {
     /// roles go to the room (`update_room_chat`; decision mimid-1wgh.62).
     async fn may_update_chat(
         &self,
-        _caller: &(),
+        _caller: &Id,
         _account_id: &Id,
         chat: &Chat,
         patch_keys: &[&str],
@@ -1253,7 +1258,7 @@ impl ChatRestrictions for AgentChat {
     /// not sent over MIMI here.
     async fn may_update_message(
         &self,
-        _caller: &(),
+        _caller: &Id,
         _account_id: &Id,
         _chat: &Chat,
         _message: &Message,
@@ -1289,7 +1294,7 @@ impl ChatModeration for AgentChat {
     /// `removeMembers` update.
     async fn create_chat_ban<F>(
         &self,
-        _caller: &(),
+        _caller: &Id,
         account_id: &Id,
         _create_id: &str,
         build: F,
@@ -1307,7 +1312,7 @@ impl ChatModeration for AgentChat {
     /// ([`crate::moderate`]).
     async fn update_chat_ban(
         &self,
-        caller: &(),
+        caller: &Id,
         account_id: &Id,
         id: &Id,
         patch: jmap_types::PatchObject,
@@ -1337,7 +1342,7 @@ impl ChatModeration for AgentChat {
     /// `Agent::unban`, never adding a client ([`crate::moderate`]).
     async fn destroy_chat_ban(
         &self,
-        _caller: &(),
+        _caller: &Id,
         account_id: &Id,
         id: &Id,
     ) -> Result<(), BackendSetError<MemoryError>> {
@@ -1351,7 +1356,7 @@ impl ChatModeration for AgentChat {
     /// `Agent::kick` of each user ([`crate::moderate`]).
     async fn kick_chat_members(
         &self,
-        _caller: &(),
+        _caller: &Id,
         account_id: &Id,
         chat: &Chat,
         user_ids: &[Id],
@@ -1374,7 +1379,7 @@ impl ChatSettings for AgentChat {
     /// [`MAX_ATTACHMENTS_PER_MESSAGE`] attachments of at most
     /// [`MAX_ATTACHMENT_LEN`] octets each; without one, none. The JMAP
     /// layer checks a create against these before it reaches the agent.
-    fn limits(&self, caller: &(), account_id: &Id) -> ChatLimits {
+    fn limits(&self, caller: &Id, account_id: &Id) -> ChatLimits {
         let (count, bytes) = match self.store.blobs() {
             Some(_) => (
                 MAX_ATTACHMENTS_PER_MESSAGE as u64,
@@ -1403,7 +1408,7 @@ impl ChatSettings for AgentChat {
 
     async fn owner_user_id(
         &self,
-        _caller: &(),
+        _caller: &Id,
         account_id: &Id,
     ) -> Result<Option<String>, MemoryError> {
         Ok((*account_id == self.account).then(|| self.user.clone()))
@@ -1416,7 +1421,7 @@ impl ChatResolvers for AgentChat {
     /// `invalidProperties` on `attachments`.
     async fn attachment_blob(
         &self,
-        _caller: &(),
+        _caller: &Id,
         account_id: &Id,
         blob_id: &Id,
     ) -> Result<Result<Option<AttachmentBlob>, SetError>, MemoryError> {
@@ -1474,7 +1479,7 @@ impl ChatMessageLifecycle for AgentChat {
     /// saves.
     async fn read_and_burn_message(
         &self,
-        caller: &(),
+        caller: &Id,
         account_id: &Id,
         message_id: &Id,
         patch: jmap_types::PatchObject,
@@ -1502,7 +1507,7 @@ impl ChatMessageLifecycle for AgentChat {
     /// its expiry, then the backend the Message.
     async fn expire_message(
         &self,
-        caller: &(),
+        caller: &Id,
         account_id: &Id,
         message_id: &Id,
     ) -> Result<(), MemoryError> {

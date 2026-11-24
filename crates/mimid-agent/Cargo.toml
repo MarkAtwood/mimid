@@ -22,8 +22,8 @@ base64 = "=0.22.1"
 # lockfile.
 getrandom = "=0.3.4"
 # The crate-jmap revision mimid-agent-jmap uses.
-jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "e4d206ea400b7a65001bd62e393d9efbca744db8" }
-jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "e4d206ea400b7a65001bd62e393d9efbca744db8" }
+jmap-chat-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
+jmap-server = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
 mimid-agent-core = { path = "../mimid-agent-core" }
 # The IRC front end over the store, with [irc].
 mimid-agent-irc = { path = "../mimid-agent-irc" }
@@ -59,9 +59,9 @@ tracing-subscriber.workspace = true
 # with (bead mimid-1wgh.13.11), at the crate-jmap revision above; it
 # brings its own reqwest 0.12.
 futures = "0.3.34"
-jmap-base-client = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "e4d206ea400b7a65001bd62e393d9efbca744db8" }
-jmap-chat-client = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "e4d206ea400b7a65001bd62e393d9efbca744db8" }
-jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "e4d206ea400b7a65001bd62e393d9efbca744db8" }
+jmap-base-client = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
+jmap-chat-client = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
+jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "1a58c94f" }
 # The invite-name tests (tests/common/irc.rs) make reading a Welcome
 # fail once (Agent::fail_next), for the `&invite-<n>` fallback.
 mimid-agent-core = { path = "../mimid-agent-core", features = ["fail-points"] }
