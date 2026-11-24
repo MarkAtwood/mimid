@@ -214,7 +214,8 @@ impl Session {
                             // out loud: a BasicCredential is the
                             // provider's word for who this is.
                             None => self.service_says(
-                                "  no did:webvh DID: their provider vouches for this name,                                  nothing more",
+                                "  no did:webvh DID: their provider vouches for this name, \
+                                 nothing more",
                             ),
                         }
                         self.service_says(&format!(
@@ -549,7 +550,8 @@ impl Session {
             Err(error) => {
                 self.service_says(&format!("report failed: {error}"));
                 self.service_says(
-                    "  a message you sent, or one stored before franks were kept,                      cannot be reported",
+                    "  a message you sent, or one stored before franks were kept, \
+                     cannot be reported",
                 );
             }
         }
