@@ -102,6 +102,11 @@ mimid-agent-core = { path = "../mimid-agent-core", features = ["fail-points"] }
 mimi-content = { path = "../mimi-content" }
 mimid-server = { path = "../mimid-server" }
 tempfile = "=3.23.0"
+# A JMAP WebSocket client for the call-negotiation test (bead
+# mimid-1wgh.114.10): the agent's `/jmap/ws` is the only way an ephemeral
+# VTCCallSignal reaches a client, so a test of a call has to speak it. The
+# version mimid-server's live-stream tests already use.
+tokio-tungstenite = "=0.29.0"
 # The local CA's name constraint is the security property of bead
 # mimid-e13m.9, so a real path verifier checks it rather than a look at
 # the DER. The version rustls already pulls in.

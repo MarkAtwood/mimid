@@ -353,6 +353,11 @@ pub(crate) struct JmapExt {
     pub(crate) inner: MemoryBackend,
     pub(crate) account: Id,
     pub(crate) user: String,
+    /// Whether the VTC surface is on (`[jmap] vtc`): a call room is
+    /// projected as a `VTCCall` only then, since with it off no client
+    /// can see the type (decision mimid-1wgh.119; bead
+    /// mimid-1wgh.114.11).
+    pub(crate) vtc: bool,
 }
 
 impl Frontend for JmapExt {

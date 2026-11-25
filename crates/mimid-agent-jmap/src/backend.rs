@@ -183,6 +183,7 @@ impl AgentChat {
             inner: inner.clone(),
             account: account_id.clone(),
             user: user.clone(),
+            vtc: options.vtc.enabled,
         }));
         Self {
             inner,

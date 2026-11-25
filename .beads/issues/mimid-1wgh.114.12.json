@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.114.12",
+  "title": "Every VTCStreamEnable is refused: the handler deserializes a tagged enum from a body with no @type",
+  "design": "FOUND 2026-11-25 by bead mimid-1wgh.114.10's test, which is its\nregression test.\n\nWHAT HAPPENED. A client opening /jmap/ws and sending the correct frame\n\n    {\"@type\": \"VTCStreamEnable\"}\n\ngot back\n\n    {\"@type\":\"RequestError\",\"status\":400,\n     \"type\":\"urn:ietf:params:jmap:error:notRequest\",\n     \"detail\":\"Malformed VTCStreamEnable: missing field `@type`\"}\n\nso no subscription was ever enabled and no call signal was ever\ndelivered, to anyone, ever.\n\nTHE MECHANISM. crates/mimid-agent-jmap/src/vtc_stream.rs's\nExtensionHandler::handle did\n\n    match message.deserialize::\u003cVtcStreamMessage\u003e()? { ... }\n\njmap-websocket's ExtensionMessage documents `body` as \"Every member of\nthe message except `@type`\", and `deserialize` deserializes that body.\nVtcStreamMessage is internally tagged on `@type`. So the tag is removed\nby the transport and then required by the type: the call could not\nsucceed for any input. The error text even says so, and nothing read it.\n\nWHY NO TEST CAUGHT IT. vtc_stream.rs's three unit tests cover\n`candidate_of`, the SDP-fragment decoder, and nothing else. Nothing\nopened a socket. The handler compiled, linted and looked right.\n\nTHE FIX. Dispatch on `message.message_type`, which is what the transport\nalready routed on (`message_types()`), and deserialize the one frame\ntype: VtcStreamEnable for \"VTCStreamEnable\", reset for\n\"VTCStreamDisable\". ENABLE and DISABLE become named constants so the\nlist the transport is given and the arms that handle it cannot drift.\n\nLESSON WORTH KEEPING: `deserialize::\u003cT\u003e()` on an ExtensionMessage must be\nthe INNER frame type, never the tagged envelope. Any other extension\nhandler mimid adds has the same trap waiting.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-25T03:33:13.089363529Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-25T03:33:13.089363529Z",
+  "labels": [
+    "agent",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.114.12",
+      "depends_on_id": "mimid-1wgh.114",
+      "type": "parent-child",
+      "created_at": "2026-11-25T03:33:13.138223276Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

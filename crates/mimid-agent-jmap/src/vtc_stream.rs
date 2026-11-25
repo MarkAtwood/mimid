@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use jmap_types::JmapError;
 use jmap_vtc_server::VtcEphemeralSubscription;
-use jmap_vtc_types::{CallSignalKind, VtcCallSignal, VtcEventType, VtcStreamMessage};
+use jmap_vtc_types::{CallSignalKind, VtcCallSignal, VtcEventType, VtcStreamEnable};
 use jmap_websocket::server::{ExtensionHandler, ExtensionMessage, ExtensionSender};
 use mimid_agent_store::Change;
 
@@ -40,7 +40,13 @@ use crate::backend::AgentChat;
 /// The RFC 8887 extension message types this handler takes: the
 /// subscribe and unsubscribe controls of
 /// draft-atwood-jmap-vtc-wss-00.
-const MESSAGE_TYPES: &[&str] = &["VTCStreamEnable", "VTCStreamDisable"];
+const MESSAGE_TYPES: &[&str] = &[ENABLE, DISABLE];
+
+/// draft-atwood-jmap-vtc-wss-00 §`VTCStreamEnable`.
+const ENABLE: &str = "VTCStreamEnable";
+
+/// draft-atwood-jmap-vtc-wss-00 §`VTCStreamDisable`.
+const DISABLE: &str = "VTCStreamDisable";
 
 /// The `@type` of what this handler sends.
 const CALL_SIGNAL: &str = "VTCCallSignal";
@@ -180,18 +186,51 @@ fn signal_of(
     };
     // The sender is the authenticated MLS sender the store recorded, not
     // anything the sender asserted (draft-atwood-jmap-vtc-00
-    // §VTCCallSignal), so a participant cannot signal as another.
-    serde_json::from_value(serde_json::json!({
+    // §VTCCallSignal), so a participant cannot signal as another. It is
+    // carried as the Id a client already has for that person, because
+    // `participantId` is a JMAP Id: a user URI is not one (RFC 8620 §1.2
+    // allows no `:` or `/`), so putting the URI there made every event
+    // fail to build.
+    let participant = participant_id(chat, sender)?;
+    let event = serde_json::json!({
         "@type": CALL_SIGNAL,
         "accountId": chat.account_id().as_ref(),
         "callId": call.as_ref(),
-        "participantId": sender,
+        "participantId": participant.as_ref(),
         "signal": kind.as_str(),
         "sdp": sdp,
         "candidate": candidate,
         "timestamp": serde_json::to_value(jmap_server::now_utc_string()).ok()?,
-    }))
-    .ok()
+    });
+    match serde_json::from_value(event) {
+        Ok(signal) => Some(signal),
+        // Never silently: an event that will not build is a call that
+        // does not connect, and the client has nothing to go on.
+        Err(error) => {
+            tracing::error!(
+                name: "agent_call_signal_undeliverable",
+                error = &error as &dyn std::error::Error,
+                "a call signal could not be built into a VTCCallSignal"
+            );
+            None
+        }
+    }
+}
+
+/// The Id a client already has for `user` in this account: the account's
+/// own id for this user, else the person's store key, which is what
+/// `ChatMember.id` carries (`crate::render::Render::known_id`).
+///
+/// `None` for a sender this agent has no person record for, which is a
+/// signal from someone it has never seen in a room.
+fn participant_id(chat: &AgentChat, user: &str) -> Option<jmap_types::Id> {
+    if user == chat.store().user() {
+        return Some(chat.account_id().clone());
+    }
+    chat.store()
+        .state()
+        .person_of_user(user)
+        .map(|key| jmap_types::Id::from(key.as_str()))
 }
 
 /// The `RTCIceCandidateInit` a client needs, read out of the SDP
@@ -235,24 +274,31 @@ impl ExtensionHandler for CallSignals {
     }
 
     async fn handle(&mut self, message: ExtensionMessage) -> Result<(), JmapError> {
-        match message.deserialize::<VtcStreamMessage>()? {
-            VtcStreamMessage::Enable(enable) => {
+        // `ExtensionMessage::body` is "every member of the message except
+        // `@type`", and `VtcStreamMessage` is tagged on `@type`, so
+        // deserializing the enum from the body can never succeed: it
+        // always fails with "missing field `@type`" and the client gets a
+        // `RequestError` for a frame that was correct. The type name is
+        // what the transport already dispatched on, so it is what this
+        // dispatches on too, deserializing the one frame type.
+        match message.message_type.as_str() {
+            ENABLE => {
+                let enable = message.deserialize::<VtcStreamEnable>()?;
                 let mut subscription = self.subscription.take().unwrap_or_default();
                 subscription.replace_with(&enable)?;
                 self.subscription = Some(subscription);
                 self.follow();
             }
-            VtcStreamMessage::Disable(_) => {
+            DISABLE => {
                 self.subscription = None;
                 if let Some(pump) = self.pump.take() {
                     pump.abort();
                 }
             }
             // A control message this version does not know is ignored,
-            // as the draft requires of an unrecognized value.
-            VtcStreamMessage::Unknown { .. } => {}
-            // VtcStreamMessage is #[non_exhaustive]: a control message
-            // added later is one this version does not know either.
+            // as the draft requires of an unrecognized value. The
+            // transport only routes `message_types()` here, so this is
+            // unreachable until that list grows.
             _ => {}
         }
         Ok(())
