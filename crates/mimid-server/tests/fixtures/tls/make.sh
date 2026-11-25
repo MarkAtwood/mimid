@@ -15,6 +15,13 @@ issue() { # name subjectAltName extendedKeyUsage
     -extfile "$1.ext" -out "$1.pem"
   rm "$1.csr" "$1.ext"
 }
+# A second root that signs nothing here, so a verifier anchored to it
+# refuses the client certificate above. It is how tests/peer_client_tls.rs
+# reproduces the failure of bead mimid-75nk.14: a peer that asks for a
+# client certificate, does not require one, and does not trust our issuer.
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days $days \
+  -subj "/CN=mimid test CA (other)" -keyout other-ca.key -out other-ca.pem \
+  -addext "basicConstraints=critical,CA:true" -addext "keyUsage=critical,keyCertSign,cRLSign"
 issue server "DNS:localhost,IP:127.0.0.1" serverAuth
 issue client "DNS:a.example" clientAuth
 # An asset server under the peer domain b.example (proxyDownload tests).

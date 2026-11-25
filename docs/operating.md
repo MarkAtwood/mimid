@@ -201,12 +201,23 @@ TLS toward peers, when `mimid` connects to their `https` base URLs.
 |---|---|---|---|
 | `roots` | list of paths | `[]` | PEM files of CA certificates trusted for peers' server certificates, in addition to the system's. |
 
-`[peer_tls.identity]` (optional): this provider's client certificate, presented to every peer. Without it, `mimid` presents no client certificate.
+`[peer_tls.identity]` (optional): this provider's client certificate. **Naming it here presents it to nobody.**
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `cert` | path | required in the table | PEM certificate chain, leaf first. Its SAN dNSName should be this provider's domain. |
 | `key` | path | required in the table | PEM private key. |
+
+`[peer_tls.peers."<domain>"]` (optional) says which peers it goes to. The domain must also be in `[peers]`.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `client_certificate` | bool | `false` | Present `[peer_tls.identity]` to this peer. |
+| `identity` | table | none | A `cert`/`key` pair for this peer alone, instead of `[peer_tls.identity]`, for a peer that trusts a different CA. Presented whether or not `client_certificate` is set. |
+
+**Turn `client_certificate` on only after the peer has confirmed it trusts your issuer.** Offering a client certificate a peer does not trust is strictly worse than offering none, and the failure looks like the peer being down. A peer that asks for a client certificate without requiring one — which is a common and correct configuration — rejects an untrusted one at the TLS layer, so the handshake dies before any HTTP request is sent and the RFC 9421 signature that would have authenticated you is never seen. This happened on a live host on 2026-11-22: enabling `[peer_tls.identity]` turned a working peer into `tlsv1 alert unknown ca` on every request, and removing it restored `200`. That is why the setting is per peer (bead mimid-75nk.14).
+
+If `[peer_tls.identity]` is set and no peer asks for it, `mimid` logs `peer_tls_identity_unused` at WARN at startup: the certificate is configured and doing nothing. The startup event `provider_auth_configured` carries `client_certificate_peers`, the number of peers it is presented to.
 
 protocol-07 calls for mutually authenticated TLS between providers. mimid has both halves (`[tls]` or `[trusted_proxy]` inbound, `[peer_tls.identity]` outbound), but they have not been deployed or tested with another implementation, and mimid does not claim conformance to that part of protocol-07.
 

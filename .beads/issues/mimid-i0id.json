@@ -10,7 +10,8 @@
   "created_by": "Mark Atwood",
   "updated_at": "2026-11-21T21:17:53.009303815Z",
   "labels": [
-    "irc"
+    "irc",
+    "human"
   ],
   "dependencies": [
     {

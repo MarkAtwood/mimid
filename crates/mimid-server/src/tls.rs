@@ -26,6 +26,7 @@
 //! - On shutdown the TLS listener stops accepting; connections in flight
 //!   are not waited for.
 
+use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,6 +48,8 @@ use rustls::{DistinguishedName, ServerConfig, SignatureScheme};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
+
+use crate::config::Domain;
 use tower::ServiceExt;
 
 /// `[tls]`: mimid serves HTTPS itself.
@@ -83,8 +86,67 @@ pub struct PeerTlsConfig {
     /// addition to the system's.
     #[serde(default)]
     pub roots: Vec<PathBuf>,
-    /// This provider's client certificate, presented to every peer
+    /// This provider's client certificate
     /// (draft-atwood-mimi-provider-auth-00 §6 and §7, protocol-07 §4.1).
+    ///
+    /// Naming it here does **not** present it to anyone. It is presented
+    /// only to the peers that ask for it in
+    /// [`PeerTlsConfig::peers`], because offering a certificate a peer
+    /// does not trust is worse than offering none: a peer that asks for
+    /// one but does not require one kills the handshake with
+    /// `unknown_ca`, and the RFC 9421 signature that would have worked is
+    /// never seen (bead mimid-75nk.14, found against a live peer).
+    pub identity: Option<TlsConfig>,
+    /// Per-peer settings, by domain.
+    #[serde(default)]
+    pub peers: BTreeMap<Domain, PeerTlsPeer>,
+}
+
+impl PeerTlsConfig {
+    /// The client certificate to present to `domain`, or `None` to
+    /// present none: the peer's own [`PeerTlsPeer::identity`] if it has
+    /// one, else [`PeerTlsConfig::identity`] if the peer asked for it
+    /// with `client_certificate = true`.
+    #[must_use]
+    pub fn identity_for(&self, domain: &Domain) -> Option<&TlsConfig> {
+        let peer = self.peers.get(domain)?;
+        match (&peer.identity, peer.client_certificate) {
+            (Some(own), _) => Some(own),
+            (None, true) => self.identity.as_ref(),
+            (None, false) => None,
+        }
+    }
+
+    /// The peers a client certificate would be presented to, in order.
+    #[must_use]
+    pub fn presenting_to(&self) -> Vec<&Domain> {
+        self.peers
+            .keys()
+            .filter(|domain| self.identity_for(domain).is_some())
+            .collect()
+    }
+}
+
+/// `[peer_tls.peers."<domain>"]`: what mimid presents to one peer (bead
+/// mimid-75nk.14).
+///
+/// The inbound direction is already per-peer
+/// (`provider_auth.peers."<domain>".pkix_anchors`); this is the outbound
+/// direction catching up, and it has to be per-peer for the same reason:
+/// with one global setting the operator chooses between "no peer can
+/// authenticate us by certificate" and "any peer that does not trust our
+/// root becomes unreachable".
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerTlsPeer {
+    /// Present [`PeerTlsConfig::identity`] to this peer. Off by default,
+    /// and turn it on only once the peer has said it trusts the issuer.
+    #[serde(default)]
+    pub client_certificate: bool,
+    /// A client certificate for this peer alone, instead of
+    /// [`PeerTlsConfig::identity`]: for a peer that trusts a different
+    /// CA. Presented whether or not `client_certificate` is set.
+    #[serde(default)]
     pub identity: Option<TlsConfig>,
 }
 

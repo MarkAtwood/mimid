@@ -165,6 +165,12 @@ async fn without_a_certificate_or_as_another_domain_the_request_is_refused() {
 
 /// a.example's peer client toward `b`, trusting the test CA, presenting
 /// the test client certificate if `identity`.
+///
+/// `identity` sets both `[peer_tls.identity]` and b.example's
+/// `client_certificate = true`, because since bead mimid-75nk.14 the
+/// certificate is presented only to the peers that ask for it; naming it
+/// alone presents it to nobody. tests/peer_client_tls.rs covers that
+/// rule, and why it exists.
 fn a_client(b: &Target, identity: bool) -> PeerClient {
     let peers = BTreeMap::from([(
         domain("b.example"),
@@ -176,6 +182,17 @@ fn a_client(b: &Target, identity: bool) -> PeerClient {
             cert: format!("{FIXTURES}/client.pem").into(),
             key: format!("{FIXTURES}/client.key").into(),
         }),
+        peers: if identity {
+            BTreeMap::from([(
+                domain("b.example"),
+                mimid_server::tls::PeerTlsPeer {
+                    client_certificate: true,
+                    identity: None,
+                },
+            )])
+        } else {
+            BTreeMap::new()
+        },
     };
     PeerClient::with_tls(&domain("a.example"), peers, &tls).unwrap()
 }
@@ -203,6 +220,7 @@ fn an_unreadable_peer_tls_file_is_an_error() {
     let tls = PeerTlsConfig {
         roots: vec!["/nonexistent/roots.pem".into()],
         identity: None,
+        peers: BTreeMap::new(),
     };
     let error = PeerClient::with_tls(&domain("a.example"), BTreeMap::new(), &tls).unwrap_err();
     assert!(matches!(error, PeerError::TlsFile { .. }), "{error:?}");

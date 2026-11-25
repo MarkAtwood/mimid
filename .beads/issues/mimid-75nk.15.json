@@ -1,0 +1,28 @@
+{
+  "id": "mimid-75nk.15",
+  "title": "provider-auth -01 §7: say that presenting a client certificate the target does not trust denies you the other mechanisms",
+  "design": "FROM bead mimid-75nk.14, which fixed mimid's half. The draft's half is a\nsentence that is not there.\n\nWHAT -00 §7 SAYS. A provider \"MAY present a client certificate\", and\nnothing about the consequence of presenting one the target does not\ntrust. That reads as a free choice. It is not: it is a choice that can\ntake a working peer offline.\n\nWHAT HAPPENS, verified against Haven's public hub on 2026-11-22 and\nreproduced offline in crates/mimid-server/tests/peer_client_tls.rs:\n\n  signature only                -\u003e 200, handle resolved\n  signature + our client cert   -\u003e tlsv1 alert unknown ca, no HTTP at all\n\nEvery link is defensible. The target asks for a client certificate but\ndoes not require one, which is the correct configuration for a provider\nthat wants PKIX from the peers that have it and signatures from the rest.\nOffered a certificate from a CA it does not know, it rejects it at the\nTLS layer. The handshake then dies before any HTTP request is sent, so\nthe RFC 9421 signature -- the mechanism that would have authenticated the\nrequest -- is never seen. The source provider cannot tell this apart from\nthe target being down.\n\nSo presenting an untrusted client certificate is strictly WORSE than\npresenting none, and the draft should say so, because an implementer\nreading §7's \"MAY\" will not guess it.\n\nPROPOSED TEXT, for §7, to be shortened by whoever edits it:\n\n  A source provider SHOULD NOT present a client certificate to a target\n  provider unless it has reason to believe the target trusts the issuer.\n  A target that requests but does not require client certificates will\n  reject an untrusted certificate during the TLS handshake, which denies\n  the source provider the other authentication mechanisms in this\n  document: the handshake fails before any HTTP request is sent, so a\n  request signature (Section 5) is never evaluated. A source provider\n  therefore SHOULD make the decision per target provider rather than\n  globally, and a target provider MAY advertise the issuers it trusts.\n\nThe last clause is the weakest and may be worth dropping: there is no\nmechanism here for advertising issuers, and TLS's own\ncertificate_authorities extension exists but Haven does not send it\n(verified: exactly one CertificateRequest in the handshake, no CA list).\nRaising the question may be better than answering it.\n\nWORTH ASKING THE WG rather than only asserting: whether a target that\nrequests client certificates SHOULD send certificate_authorities, since\nthat would let a source decide correctly without configuration. That is\nthe real fix and it belongs in the draft rather than in each\nimplementation's configuration file.\n\nPosting needs Mark's OK, like any upstream post. This blocks\nmimid-75nk.11 (posting -01), so the draft does not go out without it.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-25T00:56:44.672117155Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-25T00:56:44.672117155Z",
+  "labels": [
+    "wg",
+    "interop",
+    "design",
+    "security"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-75nk.15",
+      "depends_on_id": "mimid-75nk",
+      "type": "parent-child",
+      "created_at": "2026-11-25T00:56:44.739791103Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

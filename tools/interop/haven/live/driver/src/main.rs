@@ -431,10 +431,25 @@ async fn main() {
                 cert: std::path::PathBuf::from(cert),
                 key: std::path::PathBuf::from(key),
             }),
+            // Since bead mimid-75nk.14 the certificate is presented only
+            // to the peers that ask for it, so the one peer here has to
+            // ask. Setting the environment variables IS that ask: it is
+            // what the whole run is for. Note what that bead found with
+            // these same variables — Haven asks for a client certificate
+            // and does not trust our root, so this is the configuration
+            // that makes the handshake fail, and the run is the test of
+            // it.
+            peers: BTreeMap::from([(
+                haven.clone(),
+                mimid_server::tls::PeerTlsPeer {
+                    client_certificate: true,
+                    identity: None,
+                },
+            )]),
         },
         _ => mimid_server::tls::PeerTlsConfig::default(),
     };
-    let presenting = tls.identity.is_some();
+    let presenting = !tls.presenting_to().is_empty();
     let client = PeerClient::with_tls(&own, peers, &tls).expect("PeerClient");
     eprintln!(
         "driver: own={} peer={} client certificate presented by mimid: {presenting}",

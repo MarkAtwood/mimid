@@ -376,6 +376,9 @@ async fn main() -> anyhow::Result<()> {
         global_anchors,
         peer_anchors,
         client_certificate = config.peer_tls.identity.is_some(),
+        // Which peers it is actually presented to, which is none unless
+        // they asked (bead mimid-75nk.14).
+        client_certificate_peers = config.peer_tls.presenting_to().len(),
         peer_roots = config.peer_tls.roots.len(),
         public_key = %base64::engine::general_purpose::STANDARD.encode(signer.public_key().to_bytes()),
         trusted_peers = config.provider_auth.peers.values().filter(|p| !p.keys.is_empty()).count(),

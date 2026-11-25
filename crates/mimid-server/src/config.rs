@@ -80,6 +80,12 @@
 //! [peer_tls.identity]                    # this provider's client certificate
 //! cert = "/etc/mimid/client.pem"          # SAN dNSName: this provider's domain
 //! key = "/etc/mimid/client-key.pem"
+//! # Naming it presents it to nobody. Name each peer that has confirmed
+//! # it trusts the issuer (bead mimid-75nk.14): offering a certificate a
+//! # peer does not trust kills the handshake before HTTP, and the
+//! # signature that would have worked is never seen.
+//! [peer_tls.peers."haven.example"]
+//! client_certificate = true
 //! ```
 //!
 //! Parsing is strict: unknown keys, malformed domains and malformed base
@@ -350,6 +356,8 @@ impl Config {
     /// [`ConfigError::OwnDomainInPeers`] if the peer map lists this
     /// provider's own domain, [`ConfigError::WireProfileForUnknownPeer`]
     /// if `[wire_profiles]` names a domain not in `peers`, and
+    /// [`ConfigError::PeerTlsForUnknownPeer`] if `[peer_tls.peers]` does,
+    /// and
     /// [`ConfigError::BlobLifetimeTooShort`] for a `blob_lifetime_secs`
     /// under [`crate::store::MIN_BLOB_LIFETIME_SECS`], and
     /// [`ConfigError::MessageRetentionTooShort`] for a
@@ -384,6 +392,18 @@ impl Config {
             .find(|domain| !config.peers.contains_key(*domain))
         {
             return Err(ConfigError::WireProfileForUnknownPeer(domain.clone()));
+        }
+        // A typo here would mean "present no client certificate to that
+        // peer", which is silent and looks exactly like the peer being
+        // down — the failure bead mimid-75nk.14 is about. So it is a
+        // refusal to start, as `[wire_profiles]` already is.
+        if let Some(domain) = config
+            .peer_tls
+            .peers
+            .keys()
+            .find(|domain| !config.peers.contains_key(*domain))
+        {
+            return Err(ConfigError::PeerTlsForUnknownPeer(domain.clone()));
         }
         Ok(config)
     }
@@ -431,6 +451,9 @@ pub enum ConfigError {
     /// `[wire_profiles]` names a domain that is not in `peers`.
     #[error("wire_profiles names {0}, which is not a configured peer")]
     WireProfileForUnknownPeer(Domain),
+    /// `[peer_tls.peers]` names a domain that is not in `peers`.
+    #[error("peer_tls.peers names {0}, which is not a configured peer")]
+    PeerTlsForUnknownPeer(Domain),
     /// `blob_lifetime_secs` is under RFC 8620 §6's one hour.
     #[error(
         "blob_lifetime_secs = {0} is under {min}: RFC 8620 §6 keeps a blob at least an hour",
@@ -671,13 +694,30 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(config.peer_tls.roots, [PathBuf::from("/etc/r.pem")]);
-        let identity = config.peer_tls.identity.unwrap();
+        let identity = config.peer_tls.identity.clone().unwrap();
         assert_eq!(identity.cert, PathBuf::from("/etc/c.pem"));
         assert_eq!(identity.key, PathBuf::from("/etc/k.pem"));
         assert_eq!(
             Config::parse(VALID).unwrap().peer_tls,
             crate::tls::PeerTlsConfig::default()
         );
+        // The identity goes only to the peers that ask (bead
+        // mimid-75nk.14), so the per-peer table is what decides.
+        assert!(config.peer_tls.presenting_to().is_empty());
+        let asked = Config::parse(&format!(
+            "{VALID}\n[peer_tls.identity]\ncert = \"/etc/c.pem\"\nkey = \"/etc/k.pem\"\n\
+             [peer_tls.peers.\"b.example\"]\nclient_certificate = true\n"
+        ))
+        .unwrap();
+        assert_eq!(asked.peer_tls.presenting_to(), [&domain("b.example")]);
+        // A typo in the domain would silently mean "no certificate", so
+        // it is a refusal to start, as `[wire_profiles]` already is.
+        let unknown =
+            format!("{VALID}\n[peer_tls.peers.\"z.example\"]\nclient_certificate = true\n");
+        assert!(matches!(
+            Config::parse(&unknown),
+            Err(ConfigError::PeerTlsForUnknownPeer(domain)) if domain.as_str() == "z.example"
+        ));
     }
 
     #[test]

@@ -232,7 +232,14 @@ pub enum RetryAfter {
 /// Sends requests to the configured peer providers.
 #[derive(Debug)]
 pub struct PeerClient {
+    /// The client used for every peer that gets no client certificate,
+    /// which is every peer unless `[peer_tls.peers."<domain>"]` asks for
+    /// one (bead mimid-75nk.14).
     http: reqwest::Client,
+    /// A client per peer that does get one. Offering a certificate a peer
+    /// does not trust is fatal to the whole connection, so this is never
+    /// the default: see [`crate::tls::PeerTlsConfig::identity`].
+    identified: BTreeMap<Domain, reqwest::Client>,
     from: HeaderValue,
     peers: BTreeMap<Domain, BaseUrl>,
     /// ponytail: a directory is cached for the life of the process; the
@@ -280,9 +287,23 @@ impl PeerClient {
     }
 
     /// [`PeerClient::new`], trusting `tls.roots` for peers' server
-    /// certificates besides the system's, and presenting `tls.identity`
-    /// as this provider's client certificate on every connection
-    /// (bead mimid-75nk.5).
+    /// certificates besides the system's, and presenting a client
+    /// certificate **only** to the peers that ask for one in
+    /// `[peer_tls.peers."<domain>"]` (beads mimid-75nk.5 and
+    /// mimid-75nk.14).
+    ///
+    /// Naming `[peer_tls.identity]` alone presents it to nobody. That is
+    /// deliberate and was found the hard way against a live peer: a peer
+    /// that asks for a client certificate without requiring one rejects
+    /// an untrusted one at the TLS layer, so the handshake dies before
+    /// HTTP and the RFC 9421 signature that would have authenticated the
+    /// request is never seen. Offering an untrusted certificate is
+    /// strictly worse than offering none, and only the operator knows
+    /// which peers trust the issuer.
+    ///
+    /// One `reqwest::Client` is built per distinct certificate, not per
+    /// peer, so peers sharing `[peer_tls.identity]` share a connection
+    /// pool.
     ///
     /// # Errors
     ///
@@ -293,26 +314,57 @@ impl PeerClient {
         peers: BTreeMap<Domain, BaseUrl>,
         tls: &crate::tls::PeerTlsConfig,
     ) -> Result<Self, PeerError> {
-        let mut builder = reqwest::Client::builder()
-            .redirect(redirect::Policy::none())
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT);
-        if !tls.roots.is_empty() {
-            let mut roots = Vec::new();
-            for path in &tls.roots {
-                roots.extend(
-                    reqwest::Certificate::from_pem_bundle(&read(path)?).map_err(PeerError::Http)?,
-                );
+        // The roots are the same for every client; only the identity
+        // differs, so they are read once.
+        let mut roots = Vec::new();
+        for path in &tls.roots {
+            roots.extend(
+                reqwest::Certificate::from_pem_bundle(&read(path)?).map_err(PeerError::Http)?,
+            );
+        }
+        let build = |identity: Option<&crate::tls::TlsConfig>| -> Result<_, PeerError> {
+            let mut builder = reqwest::Client::builder()
+                .redirect(redirect::Policy::none())
+                .timeout(REQUEST_TIMEOUT)
+                .connect_timeout(CONNECT_TIMEOUT);
+            if !roots.is_empty() {
+                builder = builder.tls_certs_merge(roots.clone());
             }
-            builder = builder.tls_certs_merge(roots);
+            if let Some(identity) = identity {
+                let pem = [read(&identity.cert)?, read(&identity.key)?].join(&b"\n"[..]);
+                builder =
+                    builder.identity(reqwest::Identity::from_pem(&pem).map_err(PeerError::Http)?);
+            }
+            builder.build().map_err(PeerError::Http)
+        };
+        let http = build(None)?;
+        // One client per distinct certificate, keyed by its two paths.
+        let mut by_identity: BTreeMap<(PathBuf, PathBuf), reqwest::Client> = BTreeMap::new();
+        let mut identified = BTreeMap::new();
+        for domain in tls.presenting_to() {
+            let Some(identity) = tls.identity_for(domain) else {
+                continue;
+            };
+            let key = (identity.cert.clone(), identity.key.clone());
+            let client = match by_identity.get(&key) {
+                Some(client) => client.clone(),
+                None => {
+                    let client = build(Some(identity))?;
+                    by_identity.insert(key, client.clone());
+                    client
+                }
+            };
+            identified.insert(domain.clone(), client);
         }
-        if let Some(identity) = &tls.identity {
-            let pem = [read(&identity.cert)?, read(&identity.key)?].join(&b"\n"[..]);
-            builder = builder.identity(reqwest::Identity::from_pem(&pem).map_err(PeerError::Http)?);
+        if tls.identity.is_some() && identified.is_empty() {
+            tracing::warn!(
+                name: "peer_tls_identity_unused",
+                "[peer_tls.identity] names a client certificate that is presented to no peer;                  add `client_certificate = true` under [peer_tls.peers.\"<domain>\"] for each                  peer that has confirmed it trusts the issuer (bead mimid-75nk.14)"
+            );
         }
-        let http = builder.build().map_err(PeerError::Http)?;
         Ok(Self {
             http,
+            identified,
             from: header_value(&format!("mimi@{own_domain}"))?,
             peers,
             directories: Mutex::new(BTreeMap::new()),
@@ -320,6 +372,19 @@ impl PeerClient {
             signer: None,
             profiles: BTreeMap::new(),
         })
+    }
+
+    /// The HTTP client for `domain`: the one carrying a client
+    /// certificate if the operator asked for one for this peer, else the
+    /// one carrying none (bead mimid-75nk.14).
+    fn client(&self, domain: &Domain) -> &reqwest::Client {
+        self.identified.get(domain).unwrap_or(&self.http)
+    }
+
+    /// Whether a client certificate is presented to `domain`.
+    #[must_use]
+    pub fn presents_certificate_to(&self, domain: &Domain) -> bool {
+        self.identified.contains_key(domain)
     }
 
     /// Checks the clock of each peer that answers a call against `clocks`
@@ -790,7 +855,7 @@ impl PeerClient {
         }
         let sent = SystemTime::now();
         let mut request = self
-            .http
+            .client(domain)
             .request(endpoint.method(), url)
             .headers(headers)
             .timeout(endpoint.timeout());
@@ -875,7 +940,7 @@ impl PeerClient {
         let url = format!("{base}{DIRECTORY_PATH}");
         let headers = self.headers(domain, &url)?;
         let response = self
-            .http
+            .client(domain)
             .get(url)
             .headers(headers)
             .send()

@@ -6,7 +6,8 @@
 //!
 //! - **PKIX, both directions, mimid terminating TLS.** a.example and
 //!   b.example each serve HTTPS (`[tls]`), present a client certificate
-//!   (`[peer_tls.identity]`) and trust the test CA for the other's
+//!   (`[peer_tls.identity]`, with the other named in
+//!   `[peer_tls.peers]`) and trust the test CA for the other's
 //!   (a.example per peer, b.example for every peer). A JMAP-driven room
 //!   exercises b → a `updateConsent`, `submitMessage`, `groupInfo` and
 //!   `update`, and a → b `keyMaterial` and `notify`. Each side logs every
@@ -679,10 +680,15 @@ fn assert_decrypts(identity: &Identity, member: &mut Member, message: &FanoutMes
 
 /// The `[tls]`, `[peer_tls]` and `[provider_auth]` tables of a server that
 /// terminates TLS with the test server certificate, presents
-/// `identity` (certificate, key) to peers, trusts the test CA for peers'
+/// `identity` (certificate, key) to `to`, trusts the test CA for peers'
 /// server certificates, and enforces with only PKIX on, anchored as
 /// `anchors` says.
-fn mtls_tables(identity: (&str, &str), anchors: &str) -> String {
+///
+/// `to` is there because since bead mimid-75nk.14 a client certificate
+/// goes only to the peers that ask for it: `[peer_tls.identity]` alone
+/// is presented to nobody. These tests are the mTLS tests, so their one
+/// peer asks.
+fn mtls_tables(identity: (&str, &str), to: &str, anchors: &str) -> String {
     format!(
         "[tls]\n\
          cert = \"{TLS}/server.pem\"\n\
@@ -694,6 +700,9 @@ fn mtls_tables(identity: (&str, &str), anchors: &str) -> String {
          [peer_tls.identity]\n\
          cert = \"{}\"\n\
          key = \"{}\"\n\
+         \n\
+         [peer_tls.peers.\"{to}\"]\n\
+         client_certificate = true\n\
          \n\
          [provider_auth]\n\
          mode = \"enforce\"\n\
@@ -726,6 +735,7 @@ async fn pkix_mtls_both_directions_between_two_binaries() {
              pkix_anchors = [\"{TLS}/ca.pem\"]\n",
             mtls_tables(
                 (&format!("{TLS}/client.pem"), &format!("{TLS}/client.key")),
+                "b.example",
                 ""
             ),
         ),
@@ -743,6 +753,7 @@ async fn pkix_mtls_both_directions_between_two_binaries() {
                     &format!("{MTLS}/b-client.pem"),
                     &format!("{MTLS}/b-client.key")
                 ),
+                "a.example",
                 &format!("pkix_anchors = [\"{TLS}/ca.pem\"]\n"),
             ),
         ),
@@ -1005,6 +1016,7 @@ async fn pkix_refuses_missing_wrong_domain_untrusted_and_expired_certificates() 
              pkix_anchors = [\"{TLS}/ca.pem\"]\n",
             mtls_tables(
                 (&format!("{TLS}/client.pem"), &format!("{TLS}/client.key")),
+                "b.example",
                 ""
             ),
         ),
@@ -1191,6 +1203,9 @@ async fn pkix_through_a_trusted_proxy() {
              [peer_tls.identity]\n\
              cert = \"{MTLS}/b-client.pem\"\n\
              key = \"{MTLS}/b-client.key\"\n\
+             \n\
+             [peer_tls.peers.\"a.example\"]\n\
+             client_certificate = true\n\
              \n\
              [provider_auth]\n\
              dns_keys = false\n\
@@ -1400,6 +1415,9 @@ async fn dane_authenticates_a_binary_by_its_tlsa_records() {
              [peer_tls.identity]\n\
              cert = \"{}\"\n\
              key = \"{MTLS}/b-client.key\"\n\
+             \n\
+             [peer_tls.peers.\"a.example\"]\n\
+             client_certificate = true\n\
              \n\
              [provider_auth]\n\
              dns_keys = false\n\

@@ -12,7 +12,7 @@ driver pointed straight at it and socat out of the path:
 | mimid presents | Result |
 |---|---|
 | nothing | `received fatal alert: CertificateRequired` |
-| `[peer_tls.identity]` | TLS completes; identifierQuery 200, reportAbuse 200 |
+| `[peer_tls.identity]`, with the peer's `client_certificate = true` | TLS completes; identifierQuery 200, reportAbuse 200 |
 
 Set `MIMID_CLIENT_CERT`, `MIMID_CLIENT_KEY` and `MIMID_PEER_ROOTS` on the
 driver to make mimid present its own certificate; without them the
@@ -62,9 +62,16 @@ sends no list of acceptable CAs. It checks only that the client holds the
 key. A connection without a certificate still works; its requests are
 refused in enforce mode.
 
-Outbound, mimid presents `[peer_tls.identity]` to every peer, and
+Outbound, mimid presents `[peer_tls.identity]` only to the peers named
+in `[peer_tls.peers."<domain>"]` with `client_certificate = true`, and
 trusts the system roots plus `[peer_tls] roots` for peers' server
-certificates.
+certificates. It used to present it to every peer, which is why that
+changed: a peer that asks for a client certificate without requiring one
+rejects an untrusted one at the TLS layer, so enabling the certificate
+made a working peer unreachable and hid the RFC 9421 signature that was
+authenticating us (bead mimid-75nk.14, seen against Haven on
+2026-11-22). Each peer in this plan therefore needs its own
+`client_certificate = true`.
 
 ## What each side sets up
 
@@ -151,6 +158,10 @@ Outbound and the test settings:
 [peer_tls.identity]
 cert = "/etc/mimid/client/chain.pem"   # leaf first
 key = "/etc/mimid/client/key.pem"
+
+# Without this the certificate above is presented to nobody.
+[peer_tls.peers."<the peer's domain>"]
+client_certificate = true
 
 [provider_auth]
 mode = "enforce"
