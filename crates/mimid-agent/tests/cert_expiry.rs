@@ -140,6 +140,10 @@ async fn the_daemon_complains_about_a_certificate_near_expiry_and_past_it() {
     assert!(line.contains("names=127.0.0.1"), "{line}");
     assert!(line.contains("source=\"files\""), "{line}");
     assert!(line.contains("days_left=-1"), "{line}");
+    // §7.2 asks the certificate lines to carry not-after; RFC 3339, so
+    // an operator can read it and a log pipeline can parse it.
+    assert!(line.contains("not_after=20"), "{line}");
+    assert!(line.contains('T') && line.contains('Z'), "{line}");
     // Said once at start, not once per check: the hourly cadence is
     // `EXPIRED_ERROR_EVERY`, and this daemon did not run for an hour.
     assert_eq!(

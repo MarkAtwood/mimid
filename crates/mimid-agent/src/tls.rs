@@ -130,6 +130,15 @@ pub fn expiry(not_after: SystemTime, now: SystemTime) -> Expiry {
     }
 }
 
+/// `at` as an RFC 3339 timestamp, which §7.2 asks the certificate lines
+/// to carry, or `"unknown"` for a time that cannot be written as one.
+#[must_use]
+pub fn rfc3339(at: SystemTime) -> String {
+    time::OffsetDateTime::from(at)
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "unknown".to_owned())
+}
+
 /// Keeps §5.4's complaints to one per state change, and then one per
 /// [`EXPIRED_ERROR_EVERY`] while expired or [`EXPIRY_REPEAT_EVERY`]
 /// while near expiry. A renewal that puts the certificate back to
@@ -796,6 +805,11 @@ impl Tls {
                     tracing::info!(
                         name: "agent_certificate_renewed",
                         names = %self.setting.names.join(","),
+                        source = self.setting.source.as_str(),
+                        not_after = %self
+                            .certificates
+                            .not_after()
+                            .map_or_else(|| "unknown".to_owned(), rfc3339),
                         "a new TLS certificate is in use"
                     );
                     // A renewal that did not move `notAfter` forward far
@@ -803,11 +817,38 @@ impl Tls {
                     // that did clears the earlier complaints.
                     self.complain_about_expiry(&mut complaints);
                 }
-                Err(error) => tracing::warn!(
-                    name: "agent_certificate_renewal_failed",
-                    error = &error as &dyn std::error::Error,
-                    "the TLS certificate could not be read again; the old one stays in use"
-                ),
+                // §7.2: WARN, but an ERROR once the certificate in use is
+                // near expiry, because then a failed renewal is on its
+                // way to an outage rather than a blip.
+                Err(error) => {
+                    let close = matches!(
+                        self.certificates
+                            .not_after()
+                            .map(|at| expiry(at, SystemTime::now())),
+                        Some(Expiry::Error | Expiry::Expired)
+                    );
+                    let names = self.setting.names.join(",");
+                    let source = self.setting.source.as_str();
+                    let message =
+                        "the TLS certificate could not be read again; the old one stays in use";
+                    if close {
+                        tracing::error!(
+                            name: "agent_certificate_renewal_failed",
+                            names = %names,
+                            source,
+                            error = &error as &dyn std::error::Error,
+                            message
+                        );
+                    } else {
+                        tracing::warn!(
+                            name: "agent_certificate_renewal_failed",
+                            names = %names,
+                            source,
+                            error = &error as &dyn std::error::Error,
+                            message
+                        );
+                    }
+                }
             }
         }
     }
@@ -838,6 +879,7 @@ impl Tls {
         let days_left = days(now, not_after) - days(not_after, now);
         let names = self.setting.names.join(",");
         let source = self.setting.source.as_str();
+        let not_after = rfc3339(not_after);
         match state {
             // `due` never returns this.
             Expiry::Fine => {}
@@ -845,6 +887,7 @@ impl Tls {
                 name: "agent_certificate_expiring",
                 names = %names,
                 source,
+                not_after = %not_after,
                 days_left,
                 "the TLS certificate expires soon; it should have been renewed by now"
             ),
@@ -852,6 +895,7 @@ impl Tls {
                 name: "agent_certificate_expiring",
                 names = %names,
                 source,
+                not_after = %not_after,
                 days_left,
                 "the TLS certificate expires in days; clients will refuse it once it has"
             ),
@@ -859,6 +903,7 @@ impl Tls {
                 name: "agent_certificate_expired",
                 names = %names,
                 source,
+                not_after = %not_after,
                 days_left,
                 "the TLS certificate has expired and is still being served; clients will refuse it"
             ),
