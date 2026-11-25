@@ -14,8 +14,8 @@ use jmap_chat_types::{
     ReadPosition,
 };
 use jmap_server::{
-    BackendSetError, DelegateJmapReads, Dispatcher, GetObject, Id, JmapAccounts, JmapObject,
-    JmapReads, SetError, SetErrorType, SetObject, UTCDate,
+    BackendSetError, Dispatcher, GetObject, Id, JmapAccounts, JmapObject, JmapReads, SetError,
+    SetErrorType, SetObject, UTCDate,
 };
 use mimid_agent_core::{Agent, AgentError, MAX_TEXT_LEN};
 use serde_json::{Value, json};
@@ -120,23 +120,7 @@ pub struct AgentChat {
     /// The push subscriptions, when the daemon enabled push
     /// ([`AgentChat::enable_push`]; crate::push).
     pub(crate) push: Option<Arc<mimid_agent_store::push::PushSubscriptions>>,
-    /// The call rooms a `VTCCall/set` is minting a call for right now,
-    /// by store key, shared with the `JmapExt` that runs the projection
-    /// (`vtc_backend::Starting`).
-    pub(crate) starting_calls: StartingCalls,
 }
-
-/// The call rooms a `VTCCall/set` is minting a call for right now, by
-/// store key.
-///
-/// `Store::start_call` records the room before it returns, so any save
-/// from then until the new `VTCCall` names the room would project a
-/// second call for it -- and the save that does it is the runner's, on
-/// its own task, so no ordering inside `create_call` can rule it out.
-/// The key is claimed before the room is made and released when the
-/// call names it, which closes the window rather than narrowing it
-/// (`crate::vtc_backend::Starting`, `project_call_room`).
-pub(crate) type StartingCalls = Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>;
 
 impl std::fmt::Debug for AgentChat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -173,10 +157,6 @@ impl AgentChat {
     /// [`crate::PersistError::Malformed`] if the records are another
     /// account's, or a record, with what `ext["jmap"]` keeps of it, does
     /// not make a JMAP object.
-    ///
-    /// With `[jmap] vtc` on, await [`AgentChat::restore_calls`] after
-    /// this and before serving: a live call is put back there, not here
-    /// (bead mimid-1wgh.114.14).
     pub fn over(
         store: Arc<Store>,
         account_id: Id,
@@ -199,13 +179,10 @@ impl AgentChat {
         let user = store.user().to_owned();
         // Every save, whoever asks for it, shows its changes and rebuilds
         // ext["jmap"] first.
-        let starting_calls = StartingCalls::default();
         store.add_frontend(Arc::new(crate::persist::JmapExt {
             inner: inner.clone(),
             account: account_id.clone(),
             user: user.clone(),
-            vtc: options.vtc.enabled,
-            starting_calls: Arc::clone(&starting_calls),
         }));
         Self {
             inner,
@@ -214,7 +191,6 @@ impl AgentChat {
             store,
             options,
             push: None,
-            starting_calls,
         }
     }
 
@@ -1109,11 +1085,82 @@ impl JmapAccounts for AgentChat {
     }
 }
 
-impl DelegateJmapReads for AgentChat {
-    type Target = MemoryBackend;
+/// Reads go to the object store, except a `VTCCall`, which is DERIVED
+/// from the room it is a call of rather than stored (Mark 2026-11-25;
+/// `crate::render::Render::new_call`).
+///
+/// This is why the impl is written out instead of delegating: a call has
+/// no stored object to read, so `get_objects` computes it, and the three
+/// methods that depend on a change log say they cannot calculate one.
+/// Everything else forwards unchanged.
+impl JmapReads for AgentChat {
+    async fn get_objects<O: GetObject + Send + Sync>(
+        &self,
+        caller: &Id,
+        account_id: &Id,
+        ids: Option<&[Id]>,
+        properties: Option<&[String]>,
+    ) -> Result<(Vec<O>, Vec<Id>), MemoryError> {
+        if O::TYPE_NAME == jmap_vtc_types::VtcCall::TYPE_NAME {
+            return self.derived_calls(ids);
+        }
+        self.inner
+            .get_objects::<O>(caller, account_id, ids, properties)
+            .await
+    }
 
-    fn jmap_reads(&self) -> &MemoryBackend {
-        &self.inner
+    async fn get_state<O: JmapObject + Send + Sync>(
+        &self,
+        caller: &Id,
+        account_id: &Id,
+    ) -> Result<jmap_server::State, MemoryError> {
+        if O::TYPE_NAME == jmap_vtc_types::VtcCall::TYPE_NAME {
+            // The live calls themselves, so the token moves when a call
+            // starts or ends and a client knows to re-fetch.
+            return Ok(jmap_server::State::from(self.calls_state().as_str()));
+        }
+        self.inner.get_state::<O>(caller, account_id).await
+    }
+
+    async fn get_changes<O: JmapObject + Send + Sync>(
+        &self,
+        caller: &Id,
+        account_id: &Id,
+        params: jmap_server::ChangesParams<'_>,
+    ) -> Result<jmap_server::ChangesResult, jmap_server::BackendChangesError<MemoryError>> {
+        if O::TYPE_NAME == jmap_vtc_types::VtcCall::TYPE_NAME {
+            // A derived collection has no change log, so there is no
+            // honest incremental answer: RFC 8620 §5.6's
+            // `cannotCalculateChanges` tells the client to re-fetch,
+            // which is what the state token above makes it do anyway.
+            return Err(jmap_server::BackendChangesError::CannotCalculate);
+        }
+        self.inner
+            .get_changes::<O>(caller, account_id, params)
+            .await
+    }
+
+    async fn query_objects<O: jmap_server::QueryObject + Send + Sync>(
+        &self,
+        caller: &Id,
+        account_id: &Id,
+        params: jmap_server::QueryParams<'_, O>,
+    ) -> Result<jmap_server::QueryResult, jmap_server::BackendQueryError<MemoryError>> {
+        self.inner
+            .query_objects::<O>(caller, account_id, params)
+            .await
+    }
+
+    async fn query_changes<O: jmap_server::QueryObject + Send + Sync>(
+        &self,
+        caller: &Id,
+        account_id: &Id,
+        params: jmap_server::QueryChangesParams<'_, O>,
+    ) -> Result<jmap_server::QueryChangesResult, jmap_server::BackendChangesError<MemoryError>>
+    {
+        self.inner
+            .query_changes::<O>(caller, account_id, params)
+            .await
     }
 }
 

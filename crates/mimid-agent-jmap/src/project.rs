@@ -552,90 +552,6 @@ impl JmapExt {
         Ok(())
     }
 
-    /// The stored `VTCCall` whose `mimiRoomId` is `uri`, if this account
-    /// has one. The mirror of `AgentChat::call_of_room`, on the side that
-    /// projects rather than the side that serves.
-    async fn call_naming_room(
-        &self,
-        uri: &str,
-    ) -> Result<Option<jmap_vtc_types::VtcCall>, SyncError> {
-        let (calls, _) = self
-            .inner
-            .get_objects::<jmap_vtc_types::VtcCall>(&self.account, &self.account, None, None)
-            .await
-            .map_err(|e| SyncError::Store(format!("reading the calls: {e}")))?;
-        Ok(calls.into_iter().find(|call| {
-            call.extra
-                .get(crate::vtc_backend::MIMI_ROOM_ID)
-                .and_then(serde_json::Value::as_str)
-                == Some(uri)
-        }))
-    }
-
-    /// A call's own room as a `VTCCall`, for the side that did not start
-    /// the call (bead mimid-1wgh.114.11).
-    ///
-    /// `Store::start_call` invites the chat's people to the call room, so
-    /// both sides get its signals as messages; but only the agent that
-    /// ran `VTCCall/set` had a `VTCCall`, and
-    /// `crate::vtc_stream`'s pump drops a signal it cannot name a call
-    /// for. Without this a call could not connect in either direction:
-    /// the other side opened the socket, subscribed, and received
-    /// nothing.
-    ///
-    /// The object itself is [`Render::new_call`], which is also what a
-    /// record keeping no `VTCCall` gives back at open (bead
-    /// mimid-1wgh.114.14); its rustdoc has the id and the limitations.
-    async fn project_call_room(
-        &self,
-        store: &Store,
-        room: &record::Room,
-        added: bool,
-    ) -> Result<(), SyncError> {
-        // With `[jmap] vtc` off no VTCCall type is served, so a record
-        // here would be invisible to every client and misleading to
-        // anything that read the store (decision mimid-1wgh.119).
-        if !self.vtc {
-            return Ok(());
-        }
-        // The agent that started the call already has a VTCCall of its
-        // own, with the id `VTCCall/set` minted; this must not make a
-        // second one for the same room. It is matched on `mimiRoomId`
-        // rather than on the id, exactly because that id is not the
-        // room's key (`AgentChat::call_of_room` does the same).
-        if self.call_naming_room(&room.uri).await?.is_some() {
-            return Ok(());
-        }
-        // A `VTCCall/set` making the call for this room right now: it
-        // claimed the key before the room was recorded, because its own
-        // object cannot name the room until the room exists
-        // (`crate::vtc_backend::Starting`). Without this, a save landing
-        // in that window -- the runner's, on its own task -- left the
-        // client two calls in one room.
-        if self
-            .starting_calls
-            .lock()
-            .is_ok_and(|starting| starting.contains(room.key.as_str()))
-        {
-            return Ok(());
-        }
-        if !added {
-            return Ok(());
-        }
-        // A call whose parent room this agent is not in gets no record:
-        // there would be no chat for a client to show it against.
-        let Some(object) = self.render(&store.state()).new_call(room, &now()) else {
-            return Ok(());
-        };
-        let call: jmap_vtc_types::VtcCall = from_json(object)?;
-        self.inner.insert_object(&self.account, call).await?;
-        tracing::debug!(
-            room = %room.uri,
-            "a call room was projected as a VTCCall"
-        );
-        Ok(())
-    }
-
     /// A room record as its Chat: made when `added` and absent, named by
     /// the room's name; else, when `changed`, its `members` shown again
     /// from the participants, and, when `left`, the accountId taken out of
@@ -652,12 +568,11 @@ impl JmapExt {
         let Some(room) = store.state().rooms.get(key).cloned() else {
             return Ok(());
         };
-        // A call's own room gets no Chat
-        // (crate::render::Render::is_call_room): it gets a VTCCall, so
-        // that a client on the receiving side has the record a call
-        // signal is addressed to (bead mimid-1wgh.114.11).
+        // A call's own room gets no Chat and no object of its own: the
+        // call IS the room, derived on read (Render::new_call), so
+        // there is nothing to project.
         if crate::render::Render::is_call_room(&room) {
-            return self.project_call_room(store, &room, added).await;
+            return Ok(());
         }
         let id = Id::from(key);
         let existing = self.stored::<Chat>(&id).await?;

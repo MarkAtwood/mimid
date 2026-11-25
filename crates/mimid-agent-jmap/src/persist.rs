@@ -59,16 +59,14 @@ use std::pin::Pin;
 use jmap_chat_server::memory::MemoryBackend;
 use jmap_chat_types::{Chat, ChatBan, ChatContact, Message, ReadPosition};
 use jmap_server::{GetObject, Id, JmapObject, JmapReads, UTCDate, now_utc_string};
-use jmap_vtc_types::VtcCall;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 
-use mimid_agent_store::record::{self, Ext, RoomStatus};
+use mimid_agent_store::record::Ext;
 use mimid_agent_store::{Change, FileError, Frontend, State, Store};
 
 use crate::backend::AgentChat;
 use crate::render::{JMAP, Render, laid_over, not_rendered};
-use crate::vtc_backend::MIMI_ROOM_ID;
 
 /// Why the plaintext store could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -98,11 +96,6 @@ pub enum PersistError {
 
 /// The backend's objects by type name and id.
 type Objects = BTreeMap<&'static str, BTreeMap<String, Map<String, Value>>>;
-
-/// One call to put back at open ([`AgentChat::restore_calls`]): the call
-/// room's store key, and the `VTCCall` it gives back or why it does not
-/// make one.
-type RestoredCall = (String, Result<Map<String, Value>, String>);
 
 fn malformed(path: &Path, reason: impl Into<String>) -> PersistError {
     PersistError::Malformed {
@@ -179,55 +172,6 @@ fn object_of(value: Value) -> Map<String, Value> {
 
 fn json_of<T: Serialize>(value: &T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|e| e.to_string())
-}
-
-/// Whether a call's own room has a `VTCCall` to keep and to give back:
-/// one the user is still in. A call room they are leaving or have left
-/// has no live call, so it is not restored at open and its stored object
-/// is dropped at the next save (bead mimid-1wgh.114.14).
-fn live_call_room(room: &record::Room) -> bool {
-    Render::is_call_room(room) && room.status == RoomStatus::Active
-}
-
-/// The `VTCCall` a call's own room gives back, or `None` for a room
-/// that has none (bead mimid-1wgh.114.14).
-///
-/// A `VTCCall` is kept whole, where every other object is kept as what
-/// the record does not render, for two reasons that both come from the
-/// hosting side. Its id was minted by `VTCCall/set`, not taken from the
-/// room, so re-deriving it would hand the client a different id for the
-/// call it is in; and `mediaTypes` and `subject` are the client's
-/// choices, which the room does not carry. Keeping the object is what
-/// makes the id and those choices survive.
-///
-/// A record with no `ext["jmap"]` was written before this, or while JMAP
-/// was off: it is projected from the room instead
-/// ([`Render::new_call`]), which gives the same object the receiving
-/// side gets, with the same gaps.
-fn call_object(
-    render: &Render<'_>,
-    room: &record::Room,
-    now: &UTCDate,
-) -> Option<Result<Map<String, Value>, String>> {
-    if !live_call_room(room) {
-        return None;
-    }
-    // The chat the call hangs under has to be in the store, kept object
-    // or not: the call's `chatId` names it, and a client shows the call
-    // against it.
-    render.state.room_of_uri(room.parent.as_deref()?)?;
-    match jmap_ext(&room.ext) {
-        Some(ext) => Some(laid_over::<VtcCall>(Map::new(), ext)),
-        None => {
-            let fresh = render.new_call(room, now)?;
-            Some(
-                serde_json::from_value::<VtcCall>(fresh)
-                    .and_then(serde_json::to_value)
-                    .map_err(|e| e.to_string())
-                    .map(object_of),
-            )
-        }
-    }
 }
 
 /// The JMAP object of every record of `state`: (type name, key, object).
@@ -323,9 +267,6 @@ impl AgentChat {
     /// database fails, and [`PersistError::Malformed`] if it is not a
     /// store this version reads for this account. A store that cannot be
     /// read is never replaced.
-    ///
-    /// With `[jmap] vtc` on, await [`AgentChat::restore_calls`] after
-    /// this and before serving: a live call is put back there, not here.
     pub fn persisted(self) -> Result<Self, PersistError> {
         let path = self.store.database_path().to_owned();
         self.store
@@ -389,101 +330,6 @@ impl AgentChat {
         Ok(())
     }
 
-    /// Puts back the `VTCCall` of every live call room the records keep,
-    /// so a call survives a restart of the agent under the id the client
-    /// holds (bead mimid-1wgh.114.14).
-    ///
-    /// This is a step of its own, awaited once after [`AgentChat::over`]
-    /// or [`AgentChat::persisted`] and before the account answers a
-    /// request. It cannot be part of either: a `VTCCall` goes into the
-    /// backend through the logged create, which is async, where the
-    /// records of the chat types are seeded synchronously. **An account
-    /// with `[jmap] vtc` on that never awaits this serves no call it had
-    /// before the restart.** With the surface off it does nothing
-    /// (decision mimid-1wgh.119: no client can see the type, so an
-    /// object for one would be unreadable and misleading to anything
-    /// that read the store).
-    ///
-    /// It is idempotent: a room whose call the backend already holds is
-    /// left alone, matched on `mimiRoomId` as every other call lookup
-    /// is.
-    ///
-    /// A call room the user is leaving or has left is not restored, and
-    /// neither is one whose parent room is not in the store: in the
-    /// first case there is no live call to join, and in the second no
-    /// chat to show it against. The call room itself stays in the store
-    /// either way.
-    ///
-    /// A call this cannot put back is **skipped and counted**, not an
-    /// error: it never stops the agent from opening. A record written
-    /// before decision mimid-1wgh.120 was corrected (bead
-    /// mimid-1wgh.121) keeps a Chat for its call room, which is not a
-    /// `VTCCall` and never will be, and one stale row of a call nobody
-    /// is in must not cost the user every chat they have.
-    pub async fn restore_calls(&self) {
-        if !self.options.vtc.enabled {
-            return;
-        }
-        let now = now_utc_string();
-        let objects: Vec<RestoredCall> = {
-            let state = self.store.state();
-            let render = Render {
-                state: &state,
-                account: &self.account,
-                user: &self.user,
-            };
-            state
-                .rooms
-                .values()
-                .filter_map(|room| Some((room.key.clone(), call_object(&render, room, &now)?)))
-                .collect()
-        };
-        let mut restored = 0usize;
-        let mut skipped = 0usize;
-        for (key, object) in objects {
-            if self.call_of_room(&key).await.is_some() {
-                continue;
-            }
-            let call = object.and_then(|object| {
-                serde_json::from_value::<VtcCall>(Value::Object(object)).map_err(|e| e.to_string())
-            });
-            let call = match call {
-                Ok(call) => call,
-                Err(error) => {
-                    skipped += 1;
-                    tracing::warn!(
-                        name: "agent_chat_call_not_restored",
-                        room = key,
-                        error,
-                        "what the record keeps of this room's call is not a VTCCall; \
-                         the call is not shown and the room is left alone"
-                    );
-                    continue;
-                }
-            };
-            if let Err(error) = self.inner.insert_object(&self.account, call).await {
-                skipped += 1;
-                tracing::warn!(
-                    name: "agent_chat_call_not_restored",
-                    room = key,
-                    error = format!("{error:?}"),
-                    "this room's call was refused by the backend; the call is \
-                     not shown and the room is left alone"
-                );
-                continue;
-            }
-            restored += 1;
-        }
-        if restored > 0 || skipped > 0 {
-            tracing::info!(
-                name: "agent_chat_calls_restored",
-                restored,
-                skipped,
-                "live calls were put back from the records"
-            );
-        }
-    }
-
     /// Writes what changed in the records to the store's database, if there
     /// is one ([`Store::save`]), which first has the JMAP front end rebuild
     /// `ext["jmap"]` from the objects the backend holds now (see the module
@@ -521,15 +367,6 @@ pub(crate) struct JmapExt {
     pub(crate) inner: MemoryBackend,
     pub(crate) account: Id,
     pub(crate) user: String,
-    /// Whether the VTC surface is on (`[jmap] vtc`): a call room is
-    /// projected as a `VTCCall` only then, since with it off no client
-    /// can see the type (decision mimid-1wgh.119; bead
-    /// mimid-1wgh.114.11).
-    pub(crate) vtc: bool,
-    /// The call rooms a `VTCCall/set` is minting a call for right now
-    /// (`backend::StartingCalls`): the projection makes no second call
-    /// for one of them.
-    pub(crate) starting_calls: crate::backend::StartingCalls,
 }
 
 impl Frontend for JmapExt {
@@ -546,20 +383,13 @@ impl Frontend for JmapExt {
                 return Ok(());
             }
             let mut objects = Objects::new();
-            let mut held: Vec<(&'static str, Vec<Value>)> = vec![
+            for (type_name, values) in [
                 (ChatContact::TYPE_NAME, self.all::<ChatContact>().await?),
                 (Chat::TYPE_NAME, self.all::<Chat>().await?),
                 (ChatBan::TYPE_NAME, self.all::<ChatBan>().await?),
                 (Message::TYPE_NAME, self.all::<Message>().await?),
                 (ReadPosition::TYPE_NAME, self.all::<ReadPosition>().await?),
-            ];
-            // Only with the surface on: with it off there is no VTCCall
-            // to read, and a stored one is left alone rather than
-            // thrown away (`keep_objects`).
-            if self.vtc {
-                held.push((VtcCall::TYPE_NAME, self.all::<VtcCall>().await?));
-            }
-            for (type_name, values) in held {
+            ] {
                 let by_id = objects.entry(type_name).or_default();
                 for value in values {
                     if let Value::Object(object) = value
@@ -647,19 +477,12 @@ impl JmapExt {
             .insert(JMAP.to_owned(), serde_json::json!({ "account": account }));
         for (&type_name, by_id) in objects {
             let unheld = by_id
-                .iter()
-                .filter(|(id, object)| match type_name {
+                .keys()
+                .filter(|id| match type_name {
                     "ChatContact" => !state.people.contains_key(*id),
                     "Chat" => !state.rooms.contains_key(*id),
                     "ChatBan" => !state.bans.contains_key(*id),
                     "Message" => !state.messages.contains_key(*id),
-                    // A VTCCall is matched by the room its `mimiRoomId`
-                    // names, not by its id, which `VTCCall/set` minted
-                    // (`call_object`).
-                    "VTCCall" => !object
-                        .get(MIMI_ROOM_ID)
-                        .and_then(Value::as_str)
-                        .is_some_and(|uri| state.room_of_uri(uri).is_some()),
                     _ => !state.read_positions.contains_key(*id),
                 })
                 .count();
@@ -674,18 +497,6 @@ impl JmapExt {
         }
         let empty = BTreeMap::new();
         let of = |type_name: &str, key: &str| objects.get(type_name).unwrap_or(&empty).get(key);
-        // The calls by the room each one names, since a VTCCall's id is
-        // not its room's key (`call_object`).
-        let calls: BTreeMap<&str, &Map<String, Value>> = objects
-            .get(VtcCall::TYPE_NAME)
-            .unwrap_or(&empty)
-            .values()
-            .filter_map(|object| {
-                let uri = object.get(MIMI_ROOM_ID).and_then(Value::as_str)?;
-                Some((uri, object))
-            })
-            .collect();
-        let vtc = self.vtc;
         let mut inexact = 0;
         let (people, rooms, bans, messages, positions) = {
             let render = Render {
@@ -707,28 +518,9 @@ impl JmapExt {
             let rooms: Vec<_> = state
                 .rooms
                 .values()
-                .filter_map(|r| {
-                    if Render::is_call_room(r) {
-                        // With the surface off there is no VTCCall to
-                        // keep, and a stored one must not be thrown
-                        // away: an IRC-only run leaves it alone.
-                        if !vtc {
-                            return None;
-                        }
-                        // A call room the user is leaving or has left
-                        // keeps no call (`live_call_room`).
-                        if !live_call_room(r) {
-                            return Some((r.key.clone(), None));
-                        }
-                        // Kept whole, over an empty rendering, and
-                        // found by the room its `mimiRoomId` names
-                        // (`call_object`).
-                        let o = calls.get(r.uri.as_str()).copied();
-                        let kept = kept::<VtcCall>(o, Ok(Map::new()), &mut inexact);
-                        return Some((r.key.clone(), kept));
-                    }
+                .map(|r| {
                     let o = of(Chat::TYPE_NAME, &r.key);
-                    Some((r.key.clone(), kept::<Chat>(o, render.room(r), &mut inexact)))
+                    (r.key.clone(), kept::<Chat>(o, render.room(r), &mut inexact))
                 })
                 .collect();
             let bans: Vec<_> = state

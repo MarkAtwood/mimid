@@ -274,11 +274,6 @@ impl Daemon {
                 options.vtc = mimid_agent_jmap::VtcOptions::enabled();
             }
             let mut chat = AgentChat::over(Arc::clone(&store), account.clone(), options)?;
-            // The call rooms the records keep, back as VTCCalls, so a
-            // call survives a restart under the id its client holds
-            // (bead mimid-1wgh.114.14). A step of its own because it is
-            // async, and a no-op with `[jmap] vtc` off.
-            chat.restore_calls().await;
             // One subscription store for every front end that pushes: the
             // rows are keyed by front end, and the VAPID key is the
             // agent's (bead mimid-1wgh.99).

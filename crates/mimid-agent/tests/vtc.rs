@@ -233,16 +233,26 @@ async fn a_call_survives_a_restart_and_comes_back_at_a_new_epoch() {
     let calls = listed["list"].as_array().expect("a list");
     assert_eq!(calls.len(), 1, "one call should come back: {listed}");
     let restored = &calls[0];
-    assert_eq!(restored["id"], json!(call), "the same id: {listed}");
+    assert_eq!(
+        restored["id"],
+        json!(call),
+        "the same id, because a call's id is its ROOM's key and the room \
+         survived: nothing about the call was stored to be lost: {listed}"
+    );
     assert_eq!(restored["state"], json!("active"), "{listed}");
-    assert_eq!(restored["subject"], json!("standup"), "{listed}");
+    assert_eq!(restored["chatId"], json!(chat.key), "{listed}");
+    assert_eq!(
+        restored["createdAt"],
+        json!("1970-01-01T00:00:00Z"),
+        "a derived call has no creation time to report: the room keeps \
+         none, and a derived object must read the same every time"
+    );
     assert_eq!(
         restored["mediaTypes"],
-        json!(["audio", "video"]),
-        "the client's media kinds survive, which a projection from the \
-         room alone could not give: {listed}"
+        json!([]),
+        "and the client's media kinds went no further than its own \
+         object, with the announcement that used to carry them: {listed}"
     );
-    assert_eq!(restored["chatId"], json!(chat.key), "{listed}");
 
     // The epoch the client was in is gone, and it is told which one is
     // current rather than handed a secret nobody else is using.
@@ -518,28 +528,22 @@ async fn a_call_room_the_user_has_left_is_not_restored() {
     restarted.stop().await;
 }
 
-/// Starting a call makes one `VTCCall`, and the call room's record
-/// keeps that one.
+/// Starting a call makes one `VTCCall`, and its id is its room's store
+/// key.
 ///
-/// `Store::start_call` records the call's own room before it returns,
-/// and any save from then until the new `VTCCall` names the room
-/// projects a second call for it (`project_call_room`, which is what
-/// gives the receiving side its call, bead mimid-1wgh.114.11). The save
-/// that does it is the runner's, on its own task, which is why the
-/// room's key is claimed rather than the writes ordered
-/// (`vtc_backend::Starting`).
+/// That identity is the whole of the design (Mark 2026-11-25). A call is
+/// DERIVED from its room rather than stored, so there is nothing to keep
+/// in step: a create and a read compute the same object by the same
+/// rule, two writers cannot make two calls for one room, and a restart
+/// loses nothing because nothing was kept.
 ///
-/// Oracles:
+/// Before this, `VTCCall/set` minted an id while the receiving side
+/// projected one from the room key, and the whole projection layer
+/// existed to reconcile the two.
 ///
-/// - RFC 8620 §5.1, a `/get` of all ids: one call was started, so one
-///   object names it. Two would be two calls in one room to every
-///   client, with only one of them the id `VTCCall/set` returned.
-/// - The record is the deterministic half, and the half a restart
-///   depends on (bead mimid-1wgh.114.14): whichever object won, the
-///   call room's `ext["jmap"]` is what comes back, so it has to be the
-///   call `/set` returned, with the `mediaTypes` the client asked for.
+/// Oracle: RFC 8620 §5.1, a `/get` of all ids.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn starting_a_call_makes_one_and_the_record_keeps_it() {
+async fn starting_a_call_makes_one_under_its_rooms_key() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
     let alice = Running::start(&with_vtc(dir.path(), &server)).await;
@@ -580,148 +584,29 @@ async fn starting_a_call_makes_one_and_the_record_keeps_it() {
     assert_eq!(
         ids,
         vec![call.as_str()],
-        "one call started, one VTCCall, under the id /set returned: {listed}"
+        "one call started, one VTCCall, and /get agrees with /set: {listed}"
     );
 
-    // A save of this agent's own, so the record is written from what the
-    // backend holds now.
-    alice.store.save().await.unwrap();
-    let kept = {
+    // And that id IS the call room's store key.
+    let room = {
         let state = alice.store.state();
         state
             .rooms
             .values()
             .find(|room| room.parent.as_deref() == Some(chat.uri.as_str()))
-            .and_then(|room| room.ext.get("jmap").cloned())
-            .expect("the call room keeps a JMAP object")
-    };
-    assert_eq!(kept["id"], json!(call), "the record keeps the call: {kept}");
-    assert_eq!(
-        kept["mediaTypes"],
-        json!(["audio"]),
-        "with what the client asked for: {kept}"
-    );
-
-    alice.stop().await;
-}
-
-/// A call the records keep that is not a `VTCCall` does not stop the
-/// agent, and a call room that keeps nothing still gives its call back.
-///
-/// Both halves are the upgrade path. A store written before decision
-/// mimid-1wgh.120 was corrected (bead mimid-1wgh.121) gave a call room a
-/// Chat, which will never be a `VTCCall`; a store written after that
-/// correction and before bead mimid-1wgh.114.14 gave it nothing at all.
-/// Neither may cost the user their agent, and the second should give the
-/// call back as the receiving side's projection makes it
-/// (`Render::new_call`), with the media kinds and subject it cannot know.
-///
-/// A run with `[jmap] vtc` off is what plants them: with the surface off
-/// a save leaves a call room's `ext["jmap"]` exactly as it is, the same
-/// property `a_run_with_the_surface_off_does_not_lose_the_call` rests on.
-///
-/// Oracle: `AgentChat::restore_calls`, which skips and counts a call it
-/// cannot put back rather than refusing to open. One stale row of a call
-/// nobody is in must not cost the user every chat they have.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_stored_call_that_is_not_a_call_does_not_stop_the_agent() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = server(dir.path(), &[ALICE, BOB]).await;
-    let off = config(&server, ALICE, dir.path(), "from-allowed");
-    let on = with_vtc(dir.path(), &server);
-    let vtc = mimid_agent_jmap::vtc::CAPABILITY;
-
-    // Two chats with a call each, made with the surface off, so no
-    // VTCCall exists for either and the records keep what is put there.
-    let alice = Running::start(&off).await;
-    let mut chats = Vec::new();
-    for name in ["planning", "standup"] {
-        let chat = alice
-            .store
-            .create_room(alice.store.new_key(), name, &[])
-            .await
-            .unwrap();
-        alice.store.save().await.unwrap();
-        alice
-            .store
-            .start_call_with(
-                alice.store.new_key(),
-                &chat.key,
-                &mimid_agent_store::action::CallOptions::default(),
-            )
-            .await
-            .unwrap();
-        chats.push(chat);
-    }
-    alice.store.save().await.unwrap();
-
-    let call_room_of = |chat: &str| {
-        let state = alice.store.state();
-        state
-            .rooms
-            .values()
-            .find(|room| room.parent.as_deref() == Some(chat))
             .map(|room| room.key.clone())
-            .expect("each chat has a call room")
+            .expect("the call room")
     };
-    let spoiled = call_room_of(&chats[0].uri);
-    let bare = call_room_of(&chats[1].uri);
+    assert_eq!(call, room, "the call is the room");
 
-    // The first keeps a Chat, as a store from before bead mimid-1wgh.121
-    // does. The second keeps nothing, which is what a store from after
-    // it and before mimid-1wgh.114.14 has.
-    {
-        let mut state = alice.store.state();
-        let room = state.rooms.get_mut(&spoiled).expect("the call room");
-        room.ext.insert(
-            "jmap".to_owned(),
-            json!({"createdAt": "2026-11-25T12:00:00Z", "members": []}),
-        );
-    }
-    alice.store.save().await.unwrap();
-    {
-        let state = alice.store.state();
-        assert!(
-            !state.rooms[&bare].ext.contains_key("jmap"),
-            "a run with calls off writes no JMAP object for a call room"
-        );
-    }
-    alice.stop().await;
-
-    // The agent opens, which is the first half.
-    let restarted = Running::start(&on).await;
-    let client = restarted.client().await;
-    let listed = client
-        .call_using(&[vtc], "VTCCall/get", json!({"ids": null}))
-        .await;
-    let ids: Vec<&str> = listed["list"]
-        .as_array()
-        .expect("a list")
-        .iter()
-        .filter_map(|call| call["id"].as_str())
-        .collect();
-    assert_eq!(
-        ids,
-        vec![bare.as_str()],
-        "the call that is not a call is skipped, and the one projected \
-         from its room comes back under the room's key: {listed}"
-    );
-    assert_eq!(
-        listed["list"][0]["mediaTypes"],
-        json!([]),
-        "a call projected from the room alone knows no media kinds: {listed}"
-    );
-    assert_eq!(listed["list"][0]["chatId"], json!(chats[1].key), "{listed}");
-
-    // And the room whose object was wrong is still in the store: this
-    // skips showing a call, it does not forget a room.
+    // Nothing of the call is in the record: there is no object to store.
     let kept = {
-        let state = restarted.store.state();
-        state.rooms.contains_key(&spoiled)
+        let state = alice.store.state();
+        state.rooms[&room].ext.get("jmap").cloned()
     };
-    assert!(kept, "the call room itself stays in the store");
+    assert!(kept.is_none(), "a call room keeps no JMAP object: {kept:?}");
 
-    restarted.stop().await;
+    alice.stop().await;
 }
 
 /// The capability says a call here is between two people, and a call in

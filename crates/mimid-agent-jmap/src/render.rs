@@ -191,38 +191,40 @@ impl Render<'_> {
         room.parent.is_some()
     }
 
-    /// A call's own room as the `VTCCall` projected for it, created at
-    /// `created_at`: what the side that did not start the call is shown
-    /// ([`crate::project::JmapExt::project_call_room`], bead
-    /// mimid-1wgh.114.11), and what a record that keeps no `VTCCall` of
-    /// its own gives back at open (bead mimid-1wgh.114.14).
+    /// A call's own room AS the `VTCCall` for it: the call is the room,
+    /// and this is derived on every read rather than stored (Mark
+    /// 2026-11-25).
     ///
-    /// The id is the room's store key, as a Chat's is, so a projection
-    /// gives the same id every time; `mimiRoomId` is the room's URI,
-    /// which is what crosses providers. A call this agent hosted has an
-    /// id `VTCCall/set` minted instead, which is why its record keeps
-    /// the whole object rather than being projected again
-    /// ([`crate::persist`]).
+    /// There is no stored call object and so nothing to keep in step.
+    /// The id is the room's store key, which is what makes that
+    /// possible: a call created here and a call this agent was invited
+    /// to get the same id by the same rule, so a read and a create
+    /// cannot disagree and a restart loses nothing.
     ///
     /// `None` for a room with no parent, or one whose parent room this
     /// agent is not in: there would be no chat for a client to show the
-    /// call against.
+    /// call against. Also `None` for a room the user is leaving or has
+    /// left, which is how a call ends here.
     ///
     /// # Limitations
     ///
-    /// - `mediaTypes` is empty, and `subject` and `joinUri` are empty or
-    ///   absent: the room carries none of them, and the creator's
-    ///   choices do not cross with it. They belong in the announcement
-    ///   of bead mimid-1wgh.114.1, which is what a client should read
-    ///   them from. Signalling does not depend on them: the SDP is what
-    ///   says which media a call carries.
+    /// - `createdAt` is [`EPOCH`], because `record::Room` keeps no
+    ///   creation time and a derived object must be the same on every
+    ///   read. Answering `now()` instead would change the object each
+    ///   time a client fetched it.
+    /// - `endedAt` and `endReason` are absent. Nothing in the room says
+    ///   why a call stopped, and a call that has stopped is a room the
+    ///   user is no longer in, which this returns `None` for.
+    /// - `mediaTypes` is empty and `subject` absent: the room carries
+    ///   neither, and the announcement that used to carry them is gone.
+    ///   The SDP is what says which media a call carries.
     /// - `initiatorId` is the call room's admin by the role naming this
-    ///   module already uses, not a recorded "who pressed call", which
-    ///   the room does not keep. With no admin it is the first
-    ///   participant.
-    /// - `createdAt` is `created_at`, when the room was first projected
-    ///   here, not when the call started.
-    pub(crate) fn new_call(&self, room: &record::Room, created_at: &UTCDate) -> Option<Value> {
+    ///   module already uses, not a recorded "who pressed call". With no
+    ///   admin it is the first participant.
+    pub(crate) fn new_call(&self, room: &record::Room) -> Option<Value> {
+        if room.status != RoomStatus::Active {
+            return None;
+        }
         let parent = room.parent.as_deref()?;
         let chat = self.state.room_of_uri(parent)?;
         let initiator = room
@@ -241,7 +243,7 @@ impl Render<'_> {
             "accountId": self.account,
             "callType": "room",
             "state": "active",
-            "createdAt": created_at,
+            "createdAt": EPOCH,
             "endedAt": Value::Null,
             "endReason": Value::Null,
             "initiatorId": initiator,

@@ -38,50 +38,13 @@ use jmap_vtc_server::{CallSignalRequest, EpochMoved, MediaSecret, StatefulObject
 use jmap_vtc_types::{VtcCall, VtcCapability};
 
 use jmap_chat_server::memory::MemoryError;
+use sha2::{Digest, Sha256};
 
 use crate::backend::AgentChat;
 
 /// The `VTCCall` property naming the call's own MIMI room
 /// (draft-atwood-jmap-vtc-00 §Optional Binding Fields `mimiRoomId`).
 pub(crate) const MIMI_ROOM_ID: &str = "mimiRoomId";
-
-/// One call room claimed while its `VTCCall` is being made, so the
-/// projection does not make a second call for it
-/// (`crate::backend::StartingCalls` says why a claim and not an order).
-/// The claim is released when this is dropped, on the way out of
-/// `create_call` whether it succeeded or not: a room left behind by a
-/// failed create is then projected by the next sync, like any other call
-/// room this agent is in without a call of its own.
-///
-/// A poisoned lock is taken anyway (`into_inner`), because the set holds
-/// nothing that a panic could leave half-written and a lock nobody can
-/// take would turn one panic into a duplicate call for every later one.
-struct Starting {
-    rooms: crate::backend::StartingCalls,
-    key: String,
-}
-
-impl Starting {
-    fn claim(rooms: &crate::backend::StartingCalls, key: &str) -> Self {
-        rooms
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(key.to_owned());
-        Self {
-            rooms: std::sync::Arc::clone(rooms),
-            key: key.to_owned(),
-        }
-    }
-}
-
-impl Drop for Starting {
-    fn drop(&mut self) {
-        self.rooms
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&self.key);
-    }
-}
 
 /// Which VTC types this backend stores.
 fn served(type_name: &str) -> bool {
@@ -95,63 +58,126 @@ fn refuse(kind: SetErrorType, why: impl Into<String>) -> BackendSetError<MemoryE
 }
 
 impl AgentChat {
-    /// The store key of the room `call`'s `mimiRoomId` names, or a
-    /// refusal naming why there is none: a call this agent did not host,
-    /// or one whose room it has left.
+    /// The store key of `call`'s own room, or a refusal naming why there
+    /// is none: a call this agent is not in the room of.
+    ///
+    /// The call's id IS the room's store key, because a call is derived
+    /// from its room (`Render::new_call`), so this is a lookup and not a
+    /// search. `mimiRoomId` is on the object too, for the wire
+    /// (draft-atwood-jmap-vtc-00 §Optional Binding Fields), but it is
+    /// not what identifies the room here.
     async fn call_room_key(&self, call: &VtcCall) -> Result<String, BackendSetError<MemoryError>> {
-        let uri = call
-            .extra
-            .get(MIMI_ROOM_ID)
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                refuse(
-                    SetErrorType::NotFound,
-                    "this call has no MIMI room of its own",
-                )
-            })?;
-        let key = self.store().state().room_of_uri(uri).cloned();
-        key.ok_or_else(|| {
-            refuse(
-                SetErrorType::NotFound,
-                "this agent is not in the call's room",
-            )
-        })
+        let key = call.id.as_ref().to_owned();
+        if self.store().state().rooms.contains_key(&key) {
+            return Ok(key);
+        }
+        Err(refuse(
+            SetErrorType::NotFound,
+            "this agent is not in the call's room",
+        ))
     }
 
-    /// The id of the `VTCCall` whose `mimiRoomId` names the room
-    /// `room_key`, or `None` when no call of this account has that room:
-    /// a chat, or a call room this agent is in without a VTCCall of its
-    /// own, which is what a call hosted by another of the user's clients
-    /// looks like until its records are projected.
+    /// The `VTCCall` of the room `room_key`, derived from the room, or
+    /// `None` when that room is not a live call of this user's
+    /// ([`crate::render::Render::new_call`]).
+    pub(crate) fn call_in_room(&self, room_key: &str) -> Option<VtcCall> {
+        let state = self.store().state();
+        let room = state.rooms.get(room_key)?;
+        let render = crate::render::Render {
+            state: &state,
+            account: &self.account,
+            user: &self.user,
+        };
+        serde_json::from_value(render.new_call(room)?).ok()
+    }
+
+    /// The derived calls as a `/get` answers them: those of `ids`, with
+    /// the ids that name no live call reported missing, or all of them
+    /// when `ids` is `None`.
     ///
-    /// The store key is resolved to the room's URI first, because
-    /// `mimiRoomId` holds the URI: it crosses providers, and a store key
-    /// is local (decision mimid-1wgh.124 says the same of the
-    /// announcement).
-    pub(crate) async fn call_of_room(&self, room_key: &str) -> Option<Id> {
-        let uri = self
-            .store()
-            .state()
-            .rooms
-            .get(room_key)
-            .map(|room| room.uri.clone())?;
-        let (calls, _) = jmap_vtc_server::VtcBackend::get_objects_unscoped::<VtcCall>(
-            self,
-            self.account_id(),
-            self.account_id(),
-            None,
-        )
-        .await
-        .ok()?;
-        calls
+    /// The detour through JSON is how a concrete `VtcCall` becomes the
+    /// caller's generic `O`; `JmapObject` requires Serialize and
+    /// Deserialize, so it cannot fail for an object this built.
+    pub(crate) fn derived_calls<O: jmap_server::GetObject + Send + Sync>(
+        &self,
+        ids: Option<&[Id]>,
+    ) -> Result<(Vec<O>, Vec<Id>), MemoryError> {
+        let calls = self.calls();
+        let (found, missing) = match ids {
+            Some(ids) => {
+                let mut found = Vec::new();
+                let mut missing = Vec::new();
+                for id in ids {
+                    match calls.iter().find(|call| call.id == *id) {
+                        Some(call) => found.push(call.clone()),
+                        None => missing.push(id.clone()),
+                    }
+                }
+                (found, missing)
+            }
+            None => (calls, Vec::new()),
+        };
+        let as_o = found
             .into_iter()
-            .find(|call| {
-                call.extra
-                    .get(MIMI_ROOM_ID)
-                    .and_then(serde_json::Value::as_str)
-                    == Some(uri.as_str())
+            .map(|call| {
+                serde_json::to_value(call)
+                    .and_then(serde_json::from_value::<O>)
+                    .map_err(|e| MemoryError::new(format!("a derived VTCCall: {e}")))
             })
-            .map(|call| call.id)
+            .collect::<Result<Vec<O>, _>>()?;
+        Ok((as_o, missing))
+    }
+
+    /// A state token over the live calls, so it moves when a call starts
+    /// or ends. There is no change log for a derived collection, so this
+    /// is what tells a client to re-fetch.
+    pub(crate) fn calls_state(&self) -> String {
+        let mut ids: Vec<String> = self
+            .calls()
+            .into_iter()
+            .map(|call| call.id.as_ref().to_owned())
+            .collect();
+        ids.sort_unstable();
+        Sha256::digest(ids.join(",").as_bytes())
+            .iter()
+            .fold(String::new(), |mut out, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(out, "{byte:02x}");
+                out
+            })
+    }
+
+    /// Every `VTCCall` of this account: one per live call room, derived.
+    ///
+    /// This is the whole of the call store. There is no stored object to
+    /// keep in step with the room, so a restart loses nothing, two
+    /// writers cannot make two calls for one room, and a read and a
+    /// create cannot disagree (Mark 2026-11-25).
+    pub(crate) fn calls(&self) -> Vec<VtcCall> {
+        let state = self.store().state();
+        let render = crate::render::Render {
+            state: &state,
+            account: &self.account,
+            user: &self.user,
+        };
+        state
+            .rooms
+            .values()
+            .filter_map(|room| serde_json::from_value(render.new_call(room)?).ok())
+            .collect()
+    }
+
+    /// The id of the `VTCCall` of the room `room_key`, or `None` when
+    /// that room is not a call's own room.
+    ///
+    /// A call's id is its room's store key, so this is the identity on a
+    /// call room and nothing on anything else. It stays a function
+    /// because callers ask the question, not because the answer is hard
+    /// (`crate::vtc_stream`'s pump asks it of a signal's room).
+    pub(crate) fn call_of_room(&self, room_key: &str) -> Option<Id> {
+        let state = self.store().state();
+        let room = state.rooms.get(room_key)?;
+        crate::render::Render::is_call_room(room).then(|| Id::from(room_key))
     }
 
     /// The `VTCCall` of `call_id` as this caller may see it, or a
@@ -175,31 +201,6 @@ impl AgentChat {
             .into_iter()
             .next()
             .ok_or_else(|| refuse(SetErrorType::NotFound, "no such call"))
-    }
-}
-
-impl AgentChat {
-    /// [`VtcBackend::create_object`] by another name, so that
-    /// [`VtcBackend::create_call`] can call it without naming the trait
-    /// beside [`jmap_chat_server::ChatStore`]'s method of the same name.
-    async fn create_vtc_object<O, F>(
-        &self,
-        caller: &Id,
-        account_id: &Id,
-        create_id: &str,
-        build: F,
-    ) -> Result<(Id, O), BackendSetError<MemoryError>>
-    where
-        O: SetObject + Send + Sync,
-        F: FnOnce(&Id) -> O + Send,
-    {
-        ChatStore::create_object(self.inner_backend(), caller, account_id, create_id, build).await
-    }
-
-    /// The object store the VTC records live in, beside the Chats and
-    /// Messages: the agent's own.
-    fn inner_backend(&self) -> &jmap_chat_server::memory::MemoryBackend {
-        &self.inner
     }
 }
 
@@ -355,7 +356,7 @@ impl VtcBackend for AgentChat {
     /// would be nothing to join.
     async fn create_call<F>(
         &self,
-        caller: &Id,
+        _caller: &Id,
         account_id: &Id,
         build: F,
         _ring_targets: &[String],
@@ -363,9 +364,12 @@ impl VtcBackend for AgentChat {
     where
         F: FnOnce(&Id) -> VtcCall + Send,
     {
-        let (id, mut call) = self
-            .create_vtc_object::<VtcCall, _>(caller, account_id, "vtc-call", build)
-            .await?;
+        // Built but NOT stored: the client's properties are read off it
+        // and then it is thrown away, because the call a client reads
+        // back is derived from the room. The id handed to `build` is a
+        // placeholder for the same reason -- the real one is the room's
+        // store key, which does not exist yet.
+        let call = build(account_id);
         let Some(chat) = call.chat_id.clone().flatten() else {
             // Nothing to undo: the handler drops a refused create.
             return Err(refuse(
@@ -411,36 +415,27 @@ impl VtcBackend for AgentChat {
         // client that joins a call it did not start learns neither, and
         // the SDP is what says which media the call carries.
         let options = mimid_agent_store::action::CallOptions { among: None };
-        // Claimed before the room is made, because `start_call_with`
-        // records it before it returns and the runner saves on its own
-        // task (`Starting`).
-        let key = self.store().new_key();
-        let _starting = Starting::claim(&self.starting_calls, &key);
+        // The room is the call, so it is made first and then DERIVED
+        // (`Render::new_call`): the object returned here is the object a
+        // later `VTCCall/get` computes, which is why nothing is stored
+        // and a restart loses nothing (Mark 2026-11-25).
         let room = self
             .store()
-            .start_call_with(key, chat.as_ref(), &options)
+            .start_call_with(self.store().new_key(), chat.as_ref(), &options)
             .await
             .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?;
-        // The room goes on the call before the save, so the record of
-        // the call room is written with the object this method is
-        // returning (bead mimid-1wgh.114.14) and the projection has the
-        // `mimiRoomId` it matches on once the claim is released.
-        call.extra.insert(
-            MIMI_ROOM_ID.to_owned(),
-            serde_json::Value::String(room.uri.clone()),
-        );
-        let patch = serde_json::from_value(serde_json::json!({
-            MIMI_ROOM_ID: room.uri,
-        }))
-        .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?;
-        VtcBackend::update_object::<VtcCall>(self, caller, account_id, &id, patch).await?;
-        // A crash before this loses the call's room, which the
-        // refusal says; one after it is a room the next sync projects a
-        // call for.
         self.store()
             .save()
             .await
             .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?;
+        let Some(call) = self.call_in_room(&room.key) else {
+            // start_call_with made it, so this is unreachable short of a
+            // concurrent leave; the refusal is better than a panic.
+            return Err(refuse(
+                SetErrorType::Forbidden,
+                "the call's room went away while it was being made",
+            ));
+        };
         Ok(call)
     }
 
@@ -522,6 +517,17 @@ impl VtcBackend for AgentChat {
         account_id: &Id,
         ids: Option<&[Id]>,
     ) -> Result<(Vec<O>, Vec<Id>), MemoryError> {
+        // A VTCCall is DERIVED from its room rather than stored, so it
+        // is computed here instead of read out of the backend. Every
+        // other VTC type is stored as usual.
+        //
+        // The typed detour through JSON is how a generic `O` is
+        // produced from a concrete VtcCall; `JmapObject` requires
+        // Serialize and Deserialize, so it always succeeds for the
+        // object this built.
+        if O::TYPE_NAME == VtcCall::TYPE_NAME {
+            return self.derived_calls(ids);
+        }
         // The agent serves one user their own records, so there is no
         // call a caller may not see: the ordinary read is the unscoped
         // one (VtcBackend's §Per-call access).

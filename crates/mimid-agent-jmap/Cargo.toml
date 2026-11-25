@@ -38,6 +38,8 @@ thiserror.workspace = true
 tokio = { version = "1.53.3", default-features = false, features = ["sync"] }
 tracing.workspace = true
 
+sha2.workspace = true
+
 [dev-dependencies]
 axum.workspace = true
 base64 = "=0.22.1"

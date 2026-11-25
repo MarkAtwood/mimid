@@ -125,7 +125,7 @@ impl CallSignals {
                     // Resolved here rather than in signal_of, because
                     // the lookup reads the object store and this is the
                     // only async context the pump has.
-                    let Some(call) = chat.call_of_room(&room).await else {
+                    let Some(call) = chat.call_of_room(&room) else {
                         continue;
                     };
                     let Some(signal) = signal_of(&chat, &subscription, &call, &who, kind, &sdp)
