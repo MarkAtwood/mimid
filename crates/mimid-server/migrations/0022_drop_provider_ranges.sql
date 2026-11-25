@@ -1,0 +1,27 @@
+-- The participation ranges go (Mark 2026-11-25).
+--
+-- room_provider_range recorded, per room and per provider, runs of
+-- fanout sequences that provider was a destination of, so a catch-up
+-- answer could be bounded by §8's participation window
+-- (0019_participation_ranges.sql, bead mimid-1wgh.37.104.2). The
+-- delivered-fanout table of 0021 then made it almost entirely
+-- redundant: a room_fanout row exists for a (sequence, domain) exactly
+-- when that provider was a destination, so the rows answer the same
+-- questions exactly rather than in summary, and the bound holds without
+-- being re-derived.
+--
+-- WHAT IS LOST, and it is the reason this is a judgement and not a
+-- cleanup: room_fanout rows die with their event by the trigger in
+-- 0021, and these rows had no retention at all. So for a provider whose
+-- fanouts are all pruned, the ranges could still say "you were here for
+-- 100 to 200 and I hold from 500" where the rows can only say "you have
+-- nothing here". Both are refusals, so §5.1's MUST -- never a short
+-- answer that looks complete -- holds either way, and a follower acts
+-- the same on both.
+--
+-- WHAT IS GAINED is that an unbounded table goes away. This one grew a
+-- row per provider per membership run, for the life of the room, with
+-- nothing ever deleting it. Against a §8 bound that decision
+-- mimid-1wgh.107 makes a SHOULD and that no peer can check, that is the
+-- worse of the two problems.
+DROP TABLE room_provider_range;

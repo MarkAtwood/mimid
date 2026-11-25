@@ -309,22 +309,32 @@ what it does not keep is the mapping from those changes to sequences.
 That is the main new state this design needs, and it is the part to
 design carefully before writing code.
 
-**mimid records what was fanned out, not what membership says** (bead
-mimid-1wgh.37.104.2, table `room_provider_range`). A provider is a
-destination of a fanout exactly when it had a member in the room, so the
-ranges are written from the destination set in the same transaction that
-records the fanout. Two things follow, and both are why this is better
-than mapping the membership changes:
+**mimid keeps the fanouts themselves, per destination, and reads the
+bound off them** (table `room_fanout`). A provider is a destination of a
+fanout exactly when it had a member in the room, so a row exists for a
+(sequence, domain) exactly when that provider was sent that fanout.
+Nothing separate records who was in the room when.
 
-- The ranges and the deliveries cannot disagree. Catch-up can never
-  serve a provider a sequence it was not originally sent, which is the
-  property §8 is really about. Re-deriving the window from Commits would
-  be a second answer to the same question, free to drift from the first.
-- Presence is runs of *consecutive* sequences, because between joining
-  and leaving every fanout of the room reaches the provider. So a run is
-  extended exactly when it ends at the previous sequence, and a provider
-  that left and rejoined gets two runs rather than a widened one. A
-  single first/last pair per provider would quietly serve the gap.
+Two things follow, and both are why this beats mapping the membership
+changes:
+
+- The bound and the deliveries cannot disagree, because they are the
+  same rows. Catch-up can never serve a provider a sequence it was not
+  originally sent, which is the property §8 is really about. Re-deriving
+  the window from Commits would be a second answer to the same question,
+  free to drift from the first.
+- A gap is an absent row, so a provider that left and rejoined is served
+  neither the gap nor anything from it, exactly rather than in summary.
+
+mimid first kept a separate table of participation *runs*
+(`room_provider_range`, bead mimid-1wgh.37.104.2) and dropped it once
+the fanout rows existed. It bought one thing: because it had no
+retention, it could still say "you were here for 100 to 200 and I hold
+from 500" for a provider whose fanouts are all pruned, where the rows
+can only say "you have nothing here". Both are refusals, so §5.1's MUST
+holds either way. Against that it grew a row per provider per membership
+run for the life of the room with nothing ever deleting it, which is the
+worse of the two problems for a bound this section makes a SHOULD.
 
 ## 9. Privacy
 

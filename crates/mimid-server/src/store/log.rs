@@ -95,39 +95,6 @@ impl Store {
         Ok(seq)
     }
 
-    /// The fanout sequences of `room_id` that `domain` was a destination
-    /// of, as inclusive `(first, last)` runs in order
-    /// (docs/design/mimi-catchup.md §8): what a catch-up answer to that
-    /// provider may be bounded by. Empty for a provider that was never a
-    /// destination.
-    ///
-    /// These record what was fanned out, not what the participant list
-    /// says, so they cannot disagree with the deliveries: a provider is
-    /// a destination exactly when it had a member in the room
-    /// (`crate::hub::submit`).
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::Sqlx`] if the query fails and
-    /// [`StoreError::OutOfRange`] if a stored sequence is negative.
-    pub async fn provider_ranges(
-        &self,
-        room_id: &str,
-        domain: &str,
-    ) -> Result<Vec<(u64, u64)>, StoreError> {
-        let rows: Vec<(i64, i64)> = sqlx::query_as(
-            "SELECT first_seq, last_seq FROM room_provider_range \
-             WHERE room_id = ? AND domain = ? ORDER BY first_seq",
-        )
-        .bind(room_id)
-        .bind(domain)
-        .fetch_all(&self.reader)
-        .await?;
-        rows.into_iter()
-            .map(|(first, last)| Ok((from_sql_int(first)?, from_sql_int(last)?)))
-            .collect()
-    }
-
     /// The fanouts of `room_id` that went to `domain` after
     /// `from`, in hub order, at most `limit` of them: the entries of a
     /// catch-up answer (docs/design/mimi-catchup.md §5).
@@ -135,9 +102,9 @@ impl Store {
     /// A row exists for a (sequence, domain) exactly when that provider
     /// was a destination of that fanout, so this cannot return a
     /// sequence the provider was not sent. That is §8's bound without
-    /// re-deriving it; [`Store::provider_ranges`] is for saying what
-    /// window a provider could ask about, which is what §5.1's refusal
-    /// needs.
+    /// re-deriving it; [`Store::fanout_window_for`] reads the same rows
+    /// to say what window a provider may ask about, which is what
+    /// §5.1's refusal needs.
     ///
     /// Bounded by retention as the hub log is, because a fanout is
     /// deleted with its event by a trigger rather than by a second
@@ -171,40 +138,6 @@ impl Store {
             .collect()
     }
 
-    /// Whether `room_id`'s fanout at `fanout_seq` may be served to
-    /// `domain`: whether that provider was a destination of it
-    /// ([`Store::provider_ranges`]).
-    ///
-    /// This is the §8 bound, which decision mimid-1wgh.107 makes a
-    /// SHOULD rather than a MUST: a provider holds no MLS group keys, so
-    /// a loose bound costs bandwidth and leaks metadata but never
-    /// message content, and no peer can detect the difference. mimid
-    /// follows it anyway.
-    ///
-    /// # Errors
-    ///
-    /// As [`Store::provider_ranges`], and [`StoreError::OutOfRange`] if
-    /// `fanout_seq` exceeds `i64::MAX`.
-    pub async fn serves(
-        &self,
-        room_id: &str,
-        domain: &str,
-        fanout_seq: u64,
-    ) -> Result<bool, StoreError> {
-        let wanted = to_sql_int(fanout_seq)?;
-        let found: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM room_provider_range \
-             WHERE room_id = ? AND domain = ? AND first_seq <= ? AND last_seq >= ? LIMIT 1",
-        )
-        .bind(room_id)
-        .bind(domain)
-        .bind(wanted)
-        .bind(wanted)
-        .fetch_optional(&self.reader)
-        .await?;
-        Ok(found.is_some())
-    }
-
     /// The window of `room_id`'s fanout sequences catch-up could serve:
     /// the oldest still held and the highest assigned
     /// (docs/design/mimi-catchup.md §5, §6). `None` for the oldest when
@@ -216,11 +149,8 @@ impl Store {
     /// `message_retention_secs`): shortening retention shortens
     /// catch-up and the two cannot drift apart. The highest is the
     /// counter, so it counts a fanout whose events have since been
-    /// pruned.
-    ///
-    /// An event from before the sequence existed (`fanout_seq` 0,
-    /// migration 0018) is not part of the window: it was delivered
-    /// without a sequence and catch-up cannot name it.
+    /// pruned, which is what lets §5.1's refusal say there is more to
+    /// have rather than nothing.
     ///
     /// # Errors
     ///
@@ -243,6 +173,48 @@ impl Store {
             None => 0,
         };
         Ok((oldest.map(from_sql_int).transpose()?, highest))
+    }
+
+    /// The window of `room_id`'s fanout that `domain` may be served: the
+    /// oldest and highest sequences it was a destination of and that the
+    /// hub still holds, or `None` when it has none.
+    ///
+    /// This is §8's participation bound, read off the deliveries
+    /// themselves. A [`Store::fanout_since`] row exists for a
+    /// (sequence, domain) exactly when that provider was sent that
+    /// fanout, so the bound needs no separate record of who was in the
+    /// room when: a table of participation runs used to keep one and was
+    /// dropped as redundant (`migrations/0022_drop_provider_ranges.sql`).
+    ///
+    /// What that costs is one distinction. These rows are pruned with
+    /// their events, so a provider whose fanouts are all gone looks the
+    /// same as one that was never a destination. Both are refusals, so
+    /// §5.1's MUST -- never a short answer that looks complete -- holds
+    /// either way, and [`Store::fanout_window`]'s counter is what says
+    /// whether the room has moved on at all.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::fanout_window`].
+    pub async fn fanout_window_for(
+        &self,
+        room_id: &str,
+        domain: &str,
+    ) -> Result<Option<(u64, u64)>, StoreError> {
+        let row: Option<(Option<i64>, Option<i64>)> = sqlx::query_as(
+            "SELECT MIN(fanout_seq), MAX(fanout_seq) FROM room_fanout \
+             WHERE room_id = ? AND domain = ?",
+        )
+        .bind(room_id)
+        .bind(domain)
+        .fetch_optional(&self.reader)
+        .await?;
+        match row {
+            Some((Some(oldest), Some(highest))) => {
+                Ok(Some((from_sql_int(oldest)?, from_sql_int(highest)?)))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Appends the proposal `event` to its room's log, stores every message
@@ -426,10 +398,6 @@ async fn insert_event(
         .bind(fanout_seq)
         .execute(&mut **tx)
         .await?;
-        // In the same transaction as the fanout it describes, so the
-        // window and the deliveries cannot disagree
-        // (docs/design/mimi-catchup.md §8).
-        record_participation(tx, event.room_id, entry.domain, fanout_seq).await?;
         keep_fanout(tx, event.room_id, entry.domain, fanout_seq, entry.body).await?;
     }
     from_sql_int(seq)
@@ -462,50 +430,6 @@ pub(super) async fn keep_fanout(
     .bind(fanout_seq)
     .bind(domain)
     .bind(bytes)
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
-}
-
-/// Notes that `domain` was a destination of `room_id`'s fanout at
-/// `fanout_seq`, extending its open run or opening a new one
-/// (docs/design/mimi-catchup.md §8; bead mimid-1wgh.37.104.2).
-///
-/// Presence is runs of consecutive sequences, because between joining
-/// and leaving every fanout of the room reaches the provider. So a run
-/// is extended exactly when it ends at the sequence before this one, and
-/// a provider that left and rejoined gets a second run rather than a
-/// widened first one.
-pub(super) async fn record_participation(
-    tx: &mut Transaction<'_, Sqlite>,
-    room_id: &str,
-    domain: &str,
-    fanout_seq: i64,
-) -> Result<(), StoreError> {
-    let extended = sqlx::query(
-        "UPDATE room_provider_range SET last_seq = ? \
-         WHERE room_id = ? AND domain = ? AND last_seq = ?",
-    )
-    .bind(fanout_seq)
-    .bind(room_id)
-    .bind(domain)
-    .bind(fanout_seq - 1)
-    .execute(&mut **tx)
-    .await?;
-    if extended.rows_affected() > 0 {
-        return Ok(());
-    }
-    // A fanout the provider already has, which only a replay could
-    // produce, must not open a run of its own: `INSERT OR IGNORE`
-    // against the (room, domain, first_seq) key.
-    sqlx::query(
-        "INSERT OR IGNORE INTO room_provider_range (room_id, domain, first_seq, last_seq) \
-         VALUES (?, ?, ?, ?)",
-    )
-    .bind(room_id)
-    .bind(domain)
-    .bind(fanout_seq)
-    .bind(fanout_seq)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -776,89 +700,52 @@ mod tests {
 
     const ROOM: &str = "mimi://a.example/r/one";
 
-    /// Oracle: docs/design/mimi-catchup.md §8 — a provider may receive
-    /// the sequences during which it had a participant. b.example was
-    /// there for every fanout, so it gets one unbroken run and every
-    /// sequence in it.
+    /// Oracle: docs/design/mimi-catchup.md §8 -- a provider may receive
+    /// the sequences it was a destination of, nothing before its first
+    /// and nothing after its last. The bound is read off the deliveries
+    /// now, not from a separate record of who was in the room when: a
+    /// table of participation runs kept one and was dropped as
+    /// redundant (migrations/0022_drop_provider_ranges.sql).
+    ///
+    /// The window is a SPAN, so c.example's gap at 5 is not in it. That
+    /// is the one thing the runs said and this does not, and it costs
+    /// nothing: `fanout_since` returns rows, and there is no row at 5,
+    /// so the gap is never served. The span is for deciding whether a
+    /// request is answerable at all.
     #[tokio::test]
-    async fn a_provider_that_never_left_gets_every_sequence() {
+    async fn the_window_a_provider_may_ask_about_comes_from_what_it_was_sent() {
         let dir = tempfile::tempdir().unwrap();
         let store = store_with_fanouts(&dir).await;
+
         assert_eq!(
-            store.provider_ranges(ROOM, "b.example").await.unwrap(),
-            vec![(1, 6)]
+            store.fanout_window_for(ROOM, "b.example").await.unwrap(),
+            Some((1, 6)),
+            "b was a destination of every fanout"
         );
-        for seq in 1..=6 {
-            assert!(store.serves(ROOM, "b.example", seq).await.unwrap(), "{seq}");
-        }
-    }
-
-    /// Oracle: §8 — "SHOULD NOT receive anything from before its first
-    /// participant joined". c.example's first fanout was 3.
-    #[tokio::test]
-    async fn a_provider_is_refused_the_sequences_before_it_joined() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = store_with_fanouts(&dir).await;
-        for seq in [1, 2] {
-            assert!(
-                !store.serves(ROOM, "c.example", seq).await.unwrap(),
-                "c joined at 3 and must be refused {seq}"
-            );
-        }
-        assert!(store.serves(ROOM, "c.example", 3).await.unwrap());
-    }
-
-    /// Oracle: §8 — "SHOULD NOT receive anything from after its last
-    /// participant left". c.example's last fanout was 6.
-    #[tokio::test]
-    async fn a_provider_is_refused_the_sequences_after_it_left() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = store_with_fanouts(&dir).await;
-        assert!(store.serves(ROOM, "c.example", 6).await.unwrap());
-        for seq in [7, 8, 1_000] {
-            assert!(
-                !store.serves(ROOM, "c.example", seq).await.unwrap(),
-                "nothing after the last fanout it received: {seq}"
-            );
-        }
-    }
-
-    /// Oracle: §8, and the case a first/last pair would quietly paper
-    /// over. Presence is runs of CONSECUTIVE sequences, because between
-    /// joining and leaving every fanout of the room reaches the
-    /// provider. c.example left after 4 and was back at 6, so it gets
-    /// two runs and must not be served the gap at 5.
-    #[tokio::test]
-    async fn a_provider_that_rejoined_gets_both_runs_and_not_the_gap() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = store_with_fanouts(&dir).await;
         assert_eq!(
-            store.provider_ranges(ROOM, "c.example").await.unwrap(),
-            vec![(3, 4), (6, 6)],
-            "two runs, not one widened to (3, 6)"
+            store.fanout_window_for(ROOM, "c.example").await.unwrap(),
+            Some((3, 6)),
+            "c joined at 3 and was last sent 6"
         );
-        assert!(
-            !store.serves(ROOM, "c.example", 5).await.unwrap(),
-            "the gap between the runs is not served"
-        );
-    }
-
-    /// Oracle: §8 — a provider that was never represented in the room
-    /// may receive nothing of it.
-    #[tokio::test]
-    async fn a_provider_that_was_never_there_is_refused_everything() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = store_with_fanouts(&dir).await;
         assert_eq!(
-            store.provider_ranges(ROOM, "d.example").await.unwrap(),
-            Vec::<(u64, u64)>::new()
+            store.fanout_window_for(ROOM, "d.example").await.unwrap(),
+            None,
+            "a provider that was never a destination has no window"
         );
-        for seq in 1..=7 {
-            assert!(
-                !store.serves(ROOM, "d.example", seq).await.unwrap(),
-                "d was never a destination: {seq}"
-            );
-        }
+
+        // The gap is excluded by the rows, not by the span.
+        let served: Vec<u64> = store
+            .fanout_since(ROOM, "c.example", 0, 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(seq, _)| seq)
+            .collect();
+        assert_eq!(
+            served,
+            vec![3, 4, 6],
+            "5 went to b alone, so c is not served it"
+        );
     }
 
     /// Oracle: docs/design/mimi-catchup.md §5 and §6. The answer must
