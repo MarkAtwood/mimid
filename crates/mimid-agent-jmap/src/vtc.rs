@@ -13,6 +13,21 @@
 //!
 //! # Limitations
 //!
+//! - TWO PARTIES. A call of three or more cannot complete negotiation:
+//!   a signal reaches every member of the call's room, because that is
+//!   the granularity at which its MLS group encrypts, and nothing in
+//!   the signal says which peer it is for
+//!   (`jmap_vtc_server::CallSignalRequest`,
+//!   `mimid_agent_core::call_signal::CallSignal`). A mesh needs one
+//!   offer per peer and they are indistinguishable to the receivers.
+//!   draft-atwood-jmap-vtc-00 §`VTCCallSignal` means the broadcast: it
+//!   is what a two-party call wants, and what a call through a
+//!   selective forwarding unit that is itself a participant wants. That
+//!   unit is bead mimid-1wgh.114.7 and does not exist yet, so until it
+//!   does a call here is between two. [`capability`] still advertises
+//!   `maxParticipantsPerCall` as null, "no server-imposed limit", and
+//!   [`mimid_agent_store::Store::start_call`] still invites the whole
+//!   parent chat: bead mimid-1wgh.114.15 is what to do about that.
 //! - NAT traversal is the one part of a call no amount of MLS makes
 //!   peer-to-peer. A relay learns the addresses of the clients that use
 //!   it and that encrypted bytes flow between them; it never learns the
