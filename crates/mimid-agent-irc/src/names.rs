@@ -770,6 +770,9 @@ mod tests {
             inviter: Some("mimi://b.example/u/bob".to_owned()),
             room: uri.map(str::to_owned),
             room_name: name.map(str::to_owned),
+            // A call's own room is not what these name rules are about
+            // (bead mimid-1wgh.114.16 decides what IRC shows for one).
+            parent: None,
             refused: true,
         }
     }

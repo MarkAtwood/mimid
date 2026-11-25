@@ -800,6 +800,17 @@ pub struct Invite {
     /// The room's name from the Welcome's room metadata, if it could be
     /// read and has one.
     pub room_name: Option<String>,
+    /// The URI of the room's parent, if the invite is to a
+    /// parent-dependent room (room-policy-04 §5 `parent_room`), read
+    /// from the Welcome before joining (`Agent::invite_details`).
+    ///
+    /// A call's own room is such a room, with the chat it belongs to as
+    /// its parent ([`Store::start_call`](crate::Store::start_call)), so
+    /// this is how a front end tells an invite to a call from an invite
+    /// to a chat and says which it is asking about (bead
+    /// mimid-1wgh.130). `None` for an ordinary room, and for an invite
+    /// whose Welcome could not be read.
+    pub parent: Option<String>,
     /// The invite policy refused it.
     pub refused: bool,
 }

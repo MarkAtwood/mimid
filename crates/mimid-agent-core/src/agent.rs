@@ -257,6 +257,16 @@ pub struct InviteDetails {
     /// The room metadata's `room_name` (room-policy-04 RoomMetaData), if
     /// the group has room metadata.
     pub room_name: Option<String>,
+    /// The URI of the room's parent, if the invite is to a
+    /// parent-dependent room (room-policy-04 §5 `parent_room`), read
+    /// from the Welcome's `base_room_policy` -- the same bytes
+    /// [`Agent::parent_room`] reads after joining.
+    ///
+    /// A call's own room is such a room, with the chat it belongs to as
+    /// its parent ([`HostOptions::child_of`]), which is how a caller
+    /// tells an invite to a call from an invite to a chat WITHOUT
+    /// joining it (bead mimid-1wgh.130).
+    pub parent: Option<String>,
 }
 
 /// A decrypted application message.
@@ -1853,6 +1863,18 @@ impl Agent {
         let details = Member::welcome_details(&self.identity, &welcome, tree.as_deref())
             .map_err(|e| AgentError::mls("reading the Welcome", e))?;
         let metadata = details.group.components.get(&ROOM_METADATA);
+        // room-policy-04 §5, as `Agent::base_room_policy` reads it from
+        // a joined room: the Welcome carries the same component.
+        let parent = details
+            .group
+            .components
+            .get(&BASE_ROOM_POLICY)
+            .and_then(|data| BaseRoomPolicy::tls_deserialize_exact(data).ok())
+            .and_then(|base| {
+                bool::from(base.parent_dependant)
+                    .then(|| base.parent_room.first().map(|uri| uri.as_str().to_owned()))
+                    .flatten()
+            });
         let chat_room = self
             .state
             .invites
@@ -1869,6 +1891,7 @@ impl Agent {
             room_name: metadata
                 .and_then(|data| RoomMetaData::tls_deserialize_exact(data).ok())
                 .map(|metadata| metadata.room_name.as_str().to_owned()),
+            parent,
         })
     }
 

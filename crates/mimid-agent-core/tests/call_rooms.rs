@@ -306,3 +306,79 @@ async fn a_fixed_call_room_may_hold_the_same_pair_as_its_direct_room() {
         "a second DM with the same pair: {refused:?}"
     );
 }
+
+/// An invite to a call's own room names the chat it is under, and an
+/// invite to an ordinary room names nothing (bead mimid-1wgh.130).
+///
+/// Oracle: room-policy-04 §5. A parent-dependent room's
+/// `base_room_policy` carries `parent_room`, and the Welcome carries
+/// that policy -- the same bytes [`Agent::parent_room`] reads after
+/// joining. So the parent is knowable BEFORE joining, from one staging
+/// of the Welcome, and `Agent::invite_details` is where a caller that
+/// has not joined asks.
+///
+/// Why a front end needs it: a call is a room of its own and
+/// `Store::start_call` invites the chat's people into it (decision
+/// mimid-1wgh.113). Under a strict invite policy that is a pending
+/// invite to a room the user cannot usefully enter -- on IRC it gets no
+/// channel even once joined (bead mimid-1wgh.114.6) -- and without this
+/// the prompt cannot say which invite is a call. The announcement of
+/// bead mimid-1wgh.114.1 does not answer it: that is a message in the
+/// PARENT chat, and the invite arrives on its own path, possibly first
+/// or alone.
+#[tokio::test]
+async fn an_invite_to_a_call_room_names_the_chat_it_is_under() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut alice = device(&server, ALICE, dir.path(), "alice").await;
+    let mut bob = device(&server, BOB, dir.path(), "bob").await;
+    bob.publish_key_packages(4).await.unwrap();
+
+    // The chat. Its invite names no parent: it is not a call.
+    let chat = alice
+        .host_room(&HostOptions::named("planning"))
+        .await
+        .unwrap();
+    alice.invite(&chat, BOB).await.unwrap();
+    let invite = poll_until(&mut bob, |e| match e {
+        Event::InviteArrived { number } => Some(*number),
+        _ => None,
+    })
+    .await;
+    let details = bob.invite_details(invite).unwrap();
+    assert_eq!(details.room.as_deref(), Some(chat.as_str()));
+    assert_eq!(
+        details.parent, None,
+        "an ordinary room's invite names no parent"
+    );
+    assert_eq!(bob.join(invite).unwrap(), chat);
+
+    // The call under it. Its invite names the chat, before bob joins it.
+    let call = alice
+        .host_room(&HostOptions::child_of(&chat, ""))
+        .await
+        .unwrap();
+    alice.invite(&call, BOB).await.unwrap();
+    let invite = poll_until(&mut bob, |e| match e {
+        Event::InviteArrived { number } => Some(*number),
+        _ => None,
+    })
+    .await;
+    let details = bob.invite_details(invite).unwrap();
+    assert_eq!(details.room.as_deref(), Some(call.as_str()));
+    assert_eq!(
+        details.parent.as_deref(),
+        Some(chat.as_str()),
+        "a call room's invite names the chat it is under"
+    );
+
+    // And reading the invite did not spend it: the Welcome is staged,
+    // not joined (Agent::invite_details), so the join still works and
+    // agrees about the parent.
+    assert_eq!(bob.join(invite).unwrap(), call);
+    assert_eq!(
+        bob.parent_room(&call).unwrap().as_deref(),
+        Some(chat.as_str()),
+        "what the invite said is what the joined room says"
+    );
+}

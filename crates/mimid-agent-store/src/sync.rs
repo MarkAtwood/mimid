@@ -339,8 +339,10 @@ impl Store {
         let mut joined = 0;
         let mut pending = Vec::new();
         for invite in invites {
-            // One staging gives the inviter and the room's URI and name,
-            // which a front end shows the invite under (bead mimid-br6m).
+            // One staging gives the inviter, the room's URI and name,
+            // which a front end shows the invite under (bead
+            // mimid-br6m), and its parent when it has one, which says
+            // the invite is to a call (bead mimid-1wgh.130).
             let details = agent.invite_details(invite.number);
             let accept = match self.invites {
                 InvitePolicy::Any => true,
@@ -362,7 +364,8 @@ impl Store {
                     number: invite.number,
                     inviter: details.as_ref().map(|d| d.inviter.clone()),
                     room: details.as_ref().and_then(|d| d.room.clone()),
-                    room_name: details.and_then(|d| d.room_name),
+                    room_name: details.as_ref().and_then(|d| d.room_name.clone()),
+                    parent: details.and_then(|d| d.parent),
                     refused: true,
                 });
                 continue;
