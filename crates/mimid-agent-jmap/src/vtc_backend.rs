@@ -300,9 +300,28 @@ impl VtcBackend for AgentChat {
                  room under that chat's room",
             ));
         };
+        // The media kinds and the subject travel in the announcement,
+        // because the call room carries neither and the receiving side
+        // projects the call from the room (bead mimid-1wgh.114.11;
+        // decision mimid-1wgh.128). A kind this library does not know is
+        // sent as the string the client gave, since it is the client's
+        // and another implementation may know it.
+        let options = mimid_agent_store::action::CallOptions {
+            among: None,
+            media: call
+                .media_types
+                .iter()
+                .map(|kind| match serde_json::to_value(kind) {
+                    Ok(serde_json::Value::String(text)) => text,
+                    _ => String::new(),
+                })
+                .filter(|kind| !kind.is_empty())
+                .collect(),
+            subject: call.subject.clone().unwrap_or_default(),
+        };
         let room = self
             .store()
-            .start_call(self.store().new_key(), chat.as_ref(), None)
+            .start_call_with(self.store().new_key(), chat.as_ref(), &options)
             .await
             .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?;
         self.store()

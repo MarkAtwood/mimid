@@ -19,7 +19,8 @@ use std::time::Duration;
 
 use mimid_agent_core::SignalKind;
 use mimid_agent_core::{Agent, AgentConfig};
-use mimid_agent_store::action::ActionError;
+use mimid_agent_store::action::{ActionError, CallOptions};
+use mimid_agent_store::call::Announcement;
 use mimid_agent_store::{Change, InvitePolicy, Store};
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::directory;
@@ -326,4 +327,89 @@ async fn a_call_signal_arrives_as_a_change_and_not_as_a_message() {
         messages_before,
         "signalling is not content, so no Message record is kept"
     );
+}
+
+/// The announcement a call sends into its parent chat (bead
+/// mimid-1wgh.114.1; decision mimid-1wgh.128): an ordinary message in
+/// the CHAT, whose text any client renders and whose extension names the
+/// call room, its media kinds and its subject.
+///
+/// Oracle: decision mimid-1wgh.128's map, read back through
+/// `mimid_agent_store::call::in_record`, which is the receiving side a
+/// front end uses. The point under test is that it reaches BOB: alice
+/// knowing what she sent proves nothing.
+#[tokio::test]
+async fn a_call_is_announced_in_the_parent_chat() {
+    let dir = tempfile::tempdir().unwrap();
+    let (alice, bob, _chat_uri, chat_key, bob_chat) = alice_and_bob(dir.path()).await;
+
+    let options = CallOptions {
+        among: None,
+        media: vec!["audio".to_owned(), "video".to_owned()],
+        subject: "standup".to_owned(),
+    };
+    let call = alice
+        .start_call_with(alice.new_key(), &chat_key, &options)
+        .await
+        .unwrap();
+    alice.save().await.unwrap();
+
+    // It is in the CHAT, not in the call room: a client that is not in
+    // the call has to be able to see it.
+    until_store(&bob, |store| announced(store, &bob_chat).is_some()).await;
+    let (text, found) = announced(&bob, &bob_chat).expect("bob has the announcement");
+
+    assert_eq!(found.room, call.uri, "it names the call room to join");
+    assert_eq!(found.media, ["audio", "video"]);
+    assert_eq!(found.subject, "standup");
+    assert!(!found.ended, "a call that just started is not an ended one");
+
+    // The text is what a client with no knowledge of the key shows. It
+    // does not name alice: she is already the message's sender.
+    assert_eq!(text, "started a video call: standup");
+
+    // And nothing was announced in the call room itself.
+    let bob_call = bob.state().room_of_uri(&call.uri).cloned();
+    if let Some(bob_call) = bob_call {
+        assert!(
+            announced(&bob, &bob_call).is_none(),
+            "the announcement belongs in the chat, not in the call"
+        );
+    }
+
+    // Ending it is a NEW message rather than an edit of the first
+    // (decision mimid-1wgh.124), so bob ends up with two.
+    alice.announce_call_ended(&call.key).await;
+    alice.save().await.unwrap();
+    until_store(&bob, |store| {
+        announcements(store, &bob_chat).iter().any(|(_, a)| a.ended)
+    })
+    .await;
+    let all = announcements(&bob, &bob_chat);
+    assert_eq!(all.len(), 2, "a new message, not an edit: {all:?}");
+    assert_eq!(all[1].1, Announcement::ended(call.uri.clone()));
+    assert_eq!(all[1].0, "ended the call");
+    assert_eq!(all[0].1.room, all[1].1.room, "both name the same call room");
+}
+
+/// Every call announcement in `room` of `store`, oldest first, with the
+/// message's text.
+fn announcements(store: &Store, room: &str) -> Vec<(String, Announcement)> {
+    let state = store.state();
+    let mut found: Vec<(u64, String, Announcement)> = state
+        .messages
+        .values()
+        .filter(|message| message.room == room)
+        .filter_map(|message| {
+            mimid_agent_store::call::in_record(&message.extensions)
+                .map(|a| (message.received_at, message.body.clone(), a))
+        })
+        .collect();
+    found.sort_by_key(|(at, _, _)| *at);
+    found.into_iter().map(|(_, text, a)| (text, a)).collect()
+}
+
+/// The one call announcement in `room`, if there is exactly one so far.
+fn announced(store: &Store, room: &str) -> Option<(String, Announcement)> {
+    announcements(store, room).into_iter().next()
 }
