@@ -27,14 +27,17 @@
 //!   dropped when the room's epoch moves past it or the agent leaves the
 //!   room. A secret of an epoch that is over can outlive it by that much:
 //!   until the agent next handles something in that room.
-//! - A restart inside an epoch loses it for good. The secret was only
-//!   ever in memory, and §4.4's leaf was punctured when it was read, with
-//!   the puncture written to the store -- which is §4.4 working as
-//!   specified, not a defect. So an agent that restarts during a call
-//!   cannot key that call's media again until the epoch moves, and a
-//!   member who was in the call before the restart is no better off than
-//!   one who was not. What a call should do about it is bead
-//!   mimid-1wgh.129.
+//! - A restart inside an epoch loses THAT EPOCH'S secret for good. The
+//!   secret was only ever in memory, and §4.4's leaf was punctured when
+//!   it was read, with the puncture written to the store -- which is §4.4
+//!   working as specified, not a defect. The way out is a new epoch:
+//!   [`Agent::rekey`](crate::Agent::rekey) commits an empty Commit so
+//!   every member derives a fresh secret, and
+//!   [`AgentError::SecretConsumed`](crate::AgentError::SecretConsumed) is
+//!   the one export failure that says so (bead mimid-1wgh.129). A JMAP
+//!   client cannot reach that yet, because a restart also loses the
+//!   `VTCCall` it would name (bead mimid-1wgh.114.14); an embedder of
+//!   this crate can, since it holds its own call state.
 //! - It is the whole group's: every member of the call's room derives it,
 //!   so it confines media to the room's members and to nobody smaller. A
 //!   call among fewer people is a smaller room, not a smaller key.

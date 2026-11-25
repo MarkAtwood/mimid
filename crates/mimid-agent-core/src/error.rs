@@ -10,6 +10,22 @@ pub type Source = Box<dyn StdError + Send + Sync + 'static>;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum AgentError {
+    /// This room's media secret for the epoch it is in was already
+    /// exported and is no longer held: mls-extensions-11 §4.4's exporter
+    /// gives it once, and the agent keeps it only in memory, so a
+    /// restart inside an epoch loses it for good. A new epoch gives a
+    /// new secret, which is what [`crate::Agent::rekey`] is for
+    /// (bead mimid-1wgh.129).
+    ///
+    /// It is its own variant and not an [`AgentError::Mls`] because it
+    /// is the one export failure a caller can do something about.
+    #[error("the media secret for this epoch was already exported and is no longer held")]
+    SecretConsumed {
+        /// The room.
+        room: String,
+        /// The epoch whose secret is gone.
+        epoch: u64,
+    },
     /// The server could not be reached, or the connection failed.
     #[error("{what}: the server could not be reached")]
     Http {

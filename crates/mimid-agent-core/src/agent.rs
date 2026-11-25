@@ -3974,10 +3974,14 @@ impl Agent {
     /// and [`AgentError::Mls`] if the export fails: in a room the agent
     /// has been removed from, one whose group does not carry the Exporter
     /// Tree extension, which a room made by another implementation may
-    /// not, or one whose secret for this epoch this agent already read
-    /// and no longer holds. The last is what a restart inside an epoch
-    /// leaves behind, since the puncture is in the store and the secret
-    /// was not (bead mimid-1wgh.129).
+    /// not.
+    ///
+    /// [`AgentError::SecretConsumed`] if this agent already read this
+    /// epoch's secret and no longer holds it, which is what a restart
+    /// inside an epoch leaves behind: the puncture is in the store and
+    /// the secret was not. It is its own variant because it is the one
+    /// failure here a caller can act on -- [`Agent::rekey`] moves the
+    /// epoch and the next export succeeds (bead mimid-1wgh.129).
     pub fn media_secret(&mut self, room: &str) -> Result<MediaSecret, AgentError> {
         let member = self
             .members
@@ -3991,10 +3995,50 @@ impl Agent {
         }
         let secret = member
             .safe_export_secret(&self.identity, MEDIA_KEYS)
-            .map_err(|e| AgentError::mls("exporting the media secret", e))?;
+            .map_err(|e| match e {
+                // The one export failure a caller can act on: a new
+                // epoch has an unread leaf (bead mimid-1wgh.129).
+                mimi_mls::member::MemberError::SecretConsumed => AgentError::SecretConsumed {
+                    room: room.to_owned(),
+                    epoch,
+                },
+                other => AgentError::mls("exporting the media secret", other),
+            })?;
         let secret = MediaSecret::new(secret, epoch);
         self.media_secrets.insert(room.to_owned(), secret.clone());
         Ok(secret)
+    }
+
+    /// Moves `room` to a new epoch with an empty Commit, so every member
+    /// derives a fresh media secret (bead mimid-1wgh.129).
+    ///
+    /// This is the recovery from [`AgentError::SecretConsumed`]: a
+    /// restart inside an epoch loses the media secret for good, because
+    /// mls-extensions-11 §4.4's exporter gives it once and the puncture
+    /// is in the store while the secret was only in memory. A new epoch
+    /// has an unread leaf, and a media key rolling when the room's epoch
+    /// moves is already the designed behaviour
+    /// ([`media`](crate::media)).
+    ///
+    /// It is an ordinary Commit, so every member sees it and rekeys. Two
+    /// members recovering at once both commit; MLS takes the first valid
+    /// Commit per epoch in hub order and the loser rekeys from the epoch
+    /// that lands, one round trip later.
+    ///
+    /// Nothing calls this on a timer. A caller that gets an error from it
+    /// tells the user the call cannot continue rather than retrying,
+    /// because a restart loop must not become a Commit loop.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::NoSuchRoom`] if the agent holds no group for `room`,
+    /// and the errors of any Commit: the room's policy may not let this
+    /// member commit, and the hub may refuse or race it.
+    pub async fn rekey(&mut self, room: &str) -> Result<(), AgentError> {
+        // Checked first so a room this agent does not hold is not a
+        // Commit attempt.
+        self.member(room)?;
+        self.commit(room, &[], &[], &[], "rekey").await
     }
 
     // ---- internals ----

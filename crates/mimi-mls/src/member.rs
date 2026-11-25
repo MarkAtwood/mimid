@@ -548,6 +548,15 @@ pub enum MemberError {
     /// A secret could not be exported.
     #[error("cannot export a secret")]
     Export(#[source] ErrorSource),
+    /// This component's exported secret for the current epoch was
+    /// already read. draft-ietf-mls-extensions-11 §4.4's exporter gives
+    /// it once: the Exporter Tree leaf is punctured when it is read, and
+    /// the puncture is in the store, so a restart does not bring it
+    /// back. The caller that needs the secret for the life of the epoch
+    /// keeps what it read; one that lost it must move the epoch to get
+    /// another (bead mimid-1wgh.129).
+    #[error("this component's secret for the current epoch was already exported")]
+    SecretConsumed,
     /// A structure could not be TLS-encoded.
     #[error("cannot encode an MLS structure")]
     Encode(#[source] ErrorSource),
@@ -2189,7 +2198,16 @@ impl Member {
         self.group
             .safe_export_secret(provider.crypto(), provider.storage(), component_id)
             .map(|secret| secret.as_slice().to_vec())
-            .map_err(|e| MemberError::Export(e.into()))
+            .map_err(|e| match e {
+                // §4.4's puncture, told apart from every other failure
+                // because it is the one a new epoch fixes: a removed
+                // member, a group with no Exporter Tree and a storage
+                // failure are all unchanged by one (bead mimid-1wgh.129).
+                openmls::prelude::SafeExportSecretError::ApplicationExportTree(
+                    openmls::schedule::PprfError::PuncturedInput,
+                ) => MemberError::SecretConsumed,
+                other => MemberError::Export(other.into()),
+            })
     }
 
     /// The TLS-encoded ratchet tree (RFC 9420 §12.4.3.3), for joiners whose

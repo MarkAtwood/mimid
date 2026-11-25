@@ -156,3 +156,118 @@ async fn a_call_without_a_chat_is_refused() {
 
     alice.stop().await;
 }
+
+/// A call does not survive a restart of the agent: the `VTCCall` is held
+/// in the backend's memory, is not among the types `JmapExt` keeps in
+/// `ext["jmap"]`, and nothing re-projects an existing call room, because
+/// `project` runs on the store's changes and a restart produces none for
+/// a room already in state.
+///
+/// This test pins TODAY'S BEHAVIOUR rather than the behaviour anyone
+/// wants, and it is here because it is the blocker for the JMAP-visible
+/// half of bead mimid-1wgh.129: the media-secret recovery that bead adds
+/// works (crates/mimid-agent-core/tests/call_rooms.rs
+/// `a_rekey_gives_the_call_a_media_secret_again`), but a client cannot
+/// reach it, because after a restart it cannot name the call at all.
+/// Restoring a call across a restart is bead mimid-1wgh.114.14; when that
+/// lands this test is the one to rewrite, into the `epochMoved` answer
+/// the surface already has the shape for.
+///
+/// Oracle: the five types `persist.rs` lists in `before_save`
+/// (`ChatContact`, `Chat`, `ChatBan`, `Message`, `ReadPosition`), which
+/// is where a sixth would have to be, and `project_call_room`'s own
+/// rustdoc, which says its id "is the same at every projection and
+/// across restarts" -- true, and never used, because nothing projects it
+/// again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_call_does_not_survive_a_restart_yet() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let config = with_vtc(dir.path(), &server);
+
+    let alice = Running::start(&config).await;
+    let client = alice.client().await;
+    let vtc = mimid_agent_jmap::vtc::CAPABILITY;
+
+    // A chat, then a call in it.
+    let chat = alice
+        .store
+        .create_room(alice.store.new_key(), "planning", &[])
+        .await
+        .unwrap();
+    alice.store.save().await.unwrap();
+    let created = client
+        .call_using(
+            &[vtc],
+            "VTCCall/set",
+            json!({"create": {"k": {
+                "callType": "room",
+                "mediaTypes": ["audio"],
+                "chatId": chat.key,
+            }}}),
+        )
+        .await;
+    let call = created["created"]["k"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the call should be created: {created}"))
+        .to_owned();
+
+    let first = client
+        .call_using(&[vtc], "VTCCall/exportMediaSecret", json!({"callId": call}))
+        .await;
+    let epoch = first["epoch"].as_u64().expect("an epoch");
+    let secret = first["mediaSecret"].as_str().expect("a secret").to_owned();
+    alice.stop().await;
+
+    // The same state directory, as after a crash or an upgrade. The
+    // secret was in memory and is gone; §4.4's leaf is punctured in the
+    // store, so it cannot be derived again for this epoch.
+    let restarted = Running::start(&config).await;
+    let client = restarted.client().await;
+
+    // The call is gone. Not "under another id": gone.
+    let listed = client
+        .call_using(&[vtc], "VTCCall/get", json!({"ids": null}))
+        .await;
+    assert_eq!(
+        listed["list"],
+        json!([]),
+        "today a restart loses every VTCCall: {listed}"
+    );
+
+    // So the id the client holds names nothing, and the media-secret
+    // recovery of bead mimid-1wgh.129 is unreachable from here: the
+    // refusal is "no such call" rather than anything about epochs.
+    let (status, answer) = client
+        .post(&json!({
+            "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat", vtc],
+            "methodCalls": [[
+                "VTCCall/exportMediaSecret",
+                {"accountId": client.account, "callId": call, "epoch": epoch},
+                "c0",
+            ]],
+        }))
+        .await;
+    assert_eq!(status, 200, "{answer}");
+    let response = &answer["methodResponses"][0];
+    assert_eq!(response[0], json!("error"), "{answer}");
+    assert_eq!(response[1]["type"], json!("invalidArguments"), "{answer}");
+
+    // The call ROOM is still there, which is why bead mimid-1wgh.114.14 is
+    // a projection problem and not a loss of state: everything needed to
+    // rebuild the call survived.
+    let has_call_room = {
+        let state = restarted.store.state();
+        state.rooms.values().any(|room| room.parent.is_some())
+    };
+    assert!(
+        has_call_room,
+        "the call room persists; only its projection is gone"
+    );
+    // And its media secret is gone for this epoch, which is what
+    // mimid-1wgh.129 recovers once a client can name the call again.
+    assert!(!secret.is_empty());
+    let _ = epoch;
+
+    restarted.stop().await;
+}

@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.114.14",
+  "title": "A restart loses every VTCCall: the object is in memory and nothing re-projects the call room",
+  "design": "Found 2026-11-25 building bead mimid-1wgh.129, by a test that failed for\na reason I did not expect: after a restart the agent answered \"no such\ncall\" rather than anything about epochs.\n\nWHAT HAPPENS. A restart loses every VTCCall. Not under another id --\ngone. Pinned by crates/mimid-agent/tests/vtc.rs\na_call_does_not_survive_a_restart_yet, which asserts VTCCall/get returns\nan empty list and that the id the client holds names nothing.\n\nWHY, and both halves have to be fixed or neither does:\n\n  1. The object is in memory. crates/mimid-agent-jmap/src/persist.rs\n     JmapExt::before_save keeps five types in each record's ext[\"jmap\"]\n     -- ChatContact, Chat, ChatBan, Message, ReadPosition -- and VtcCall\n     is not among them. keep_objects then maps type to record with a\n     hardcoded five-way match and a five-tuple, so a sixth type is not a\n     one-line addition there.\n  2. Nothing re-projects. project() runs over the store's Changes, and a\n     restart produces no RoomAdded for a room already in state, so\n     project_call_room never runs again.\n\nNOTHING IS LOST THAT MATTERS, which is why this is a projection problem\nand not a state problem: the call ROOM persists, with its parent, its\nparticipants and its MLS group. The same test asserts that. Everything\nneeded to rebuild the VTCCall is on disk.\n\nWHERE THE FIX BELONGS. AgentChat::over already calls load_records, which\nis what restores the other types from ext[\"jmap\"]. project_call_room's\nown rustdoc says its id \"is the same at every projection and across\nrestarts\" -- which is true, and never used, because nothing projects it\nagain. So the smaller fix is probably to re-project call rooms at\nload_records time rather than to add a sixth persisted type: a projection\nthat is already idempotent by design, run once more at open.\n\nCheck while doing it:\n\n  - Decision mimid-1wgh.119: with [jmap] vtc off, no call room may be\n    projected at all. JmapExt::vtc already carries the switch; whatever\n    runs at open must read it too.\n  - A call room the agent has LEFT or that is inactive should not come\n    back as a live VTCCall.\n  - mediaTypes and subject are empty on a projection from the room, which\n    is why the announcement of bead mimid-1wgh.114.1 carries them; a\n    restored call has the same gap and the same answer.\n\nWHY IT MATTERS NOW. It is the blocker for the JMAP-visible half of bead\nmimid-1wgh.129. That bead's recovery is built and works -- a restart\nloses the epoch's media secret, and Agent::rekey moves the epoch so\nevery member derives a fresh one (crates/mimid-agent-core/tests/\ncall_rooms.rs a_rekey_gives_the_call_a_media_secret_again) -- but a JMAP\nclient cannot reach it, because it cannot name the call. An embedder of\nmimid-agent-core (purple-mimi, the mobile app of decision mimid-1wgh.39)\ncan, since it holds its own call state.\n\nIt also matters on its own: a client that reconnects after an agent\nupgrade sees no calls, and has no way to tell \"no call is running\" from\n\"the agent forgot\".\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-25T08:26:39.772590588Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-25T08:26:39.772590588Z",
+  "labels": [
+    "feature",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.114.14",
+      "depends_on_id": "mimid-1wgh.114",
+      "type": "parent-child",
+      "created_at": "2026-11-25T08:26:39.820442785Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -251,13 +251,49 @@ impl VtcBackend for AgentChat {
     ) -> Result<Result<MediaSecret, EpochMoved>, BackendSetError<MemoryError>> {
         let call = self.vtc_call(caller, account_id, call_id).await?;
         let room = self.call_room_key(&call).await?;
-        let secret = self
-            .store()
-            .media_secret(&room)
-            .await
-            .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?;
+        let secret = match self.store().media_secret(&room).await {
+            Ok(secret) => secret,
+            // A restart inside the epoch: §4.4's leaf was punctured when
+            // this agent read the secret, and the secret itself was only
+            // ever in memory. The epoch has not moved, so there is no
+            // truthful EpochMoved to send and no way to serve the one
+            // the client is asking about -- a state this surface cannot
+            // express. Moving the epoch makes it expressible: afterwards
+            // the current epoch really has moved on, the ordinary check
+            // below says so, and the client re-asks for the new one
+            // through code it already has (bead mimid-1wgh.129, decision
+            // recorded there).
+            //
+            // Only this failure. A removed member, a group with no
+            // Exporter Tree and a storage failure are all unchanged by a
+            // new epoch, so they are refusals as before. And no retry
+            // beyond the one: a restart loop must not become a Commit
+            // loop.
+            Err(mimid_agent_store::action::ActionError::Agent(
+                mimid_agent_core::AgentError::SecretConsumed { epoch: lost, .. },
+            )) => {
+                tracing::info!(
+                    name: "agent_call_rekeyed_after_restart",
+                    room = room,
+                    lost_epoch = lost,
+                    "this epoch's media secret was already read and is no longer held; \
+                     moving the call to a new epoch so every member rekeys"
+                );
+                self.store()
+                    .rekey(&room)
+                    .await
+                    .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?;
+                self.store()
+                    .media_secret(&room)
+                    .await
+                    .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?
+            }
+            Err(e) => return Err(refuse(SetErrorType::Forbidden, e.to_string())),
+        };
         // The client named an epoch that has ended: tell it which one is
         // current rather than hand it a secret nobody else is using.
+        // After a rekey above, this is what tells the client the epoch
+        // moved.
         if let Some(wanted) = epoch
             && wanted != secret.epoch()
         {

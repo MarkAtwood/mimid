@@ -630,12 +630,41 @@ impl Store {
     /// # Errors
     ///
     /// [`ActionError::NoSuchRoom`], and [`ActionError::Agent`] if the
-    /// export fails: in a room the agent has been removed from, or one
-    /// whose group carries no Exporter Tree.
+    /// export fails: in a room the agent has been removed from, one
+    /// whose group carries no Exporter Tree, or one whose secret for
+    /// this epoch this agent already read and no longer holds, which is
+    /// `AgentError::SecretConsumed` and is what a restart inside an
+    /// epoch leaves behind. A caller that can act on the last one calls
+    /// [`Store::rekey`] (bead mimid-1wgh.129); this method sends
+    /// nothing.
     pub async fn media_secret(&self, key: &str) -> Result<MediaSecret, ActionError> {
         let uri = self.room_uri(key)?;
         let mut agent = self.agent.lock().await;
         Ok(agent.media_secret(&uri)?)
+    }
+
+    /// Moves the room `key` to a new epoch with an empty Commit, so
+    /// every member derives a fresh media secret
+    /// (`Agent::rekey`; bead mimid-1wgh.129).
+    ///
+    /// This is the recovery from `AgentError::SecretConsumed`, and the
+    /// only thing that recovers it: mls-extensions-11 §4.4's exporter
+    /// gives a component's secret once per epoch, so the epoch has to
+    /// move. Every member sees the Commit and rekeys, which is what a
+    /// membership change already does.
+    ///
+    /// Not to be called on a timer. A failure means the call cannot
+    /// continue, not that it should be tried again.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::NoSuchRoom`], and [`ActionError::Agent`] if the
+    /// Commit is refused or races another.
+    pub async fn rekey(&self, key: &str) -> Result<(), ActionError> {
+        let uri = self.room_uri(key)?;
+        let mut agent = self.agent.lock().await;
+        agent.rekey(&uri).await?;
+        Ok(())
     }
 
     /// The key of the active one-to-one room with `user`

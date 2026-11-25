@@ -97,15 +97,14 @@ async fn a_call_room_keys_itself_from_its_own_group() {
 
 /// An agent that restarts inside an epoch cannot get that epoch's media
 /// secret back: §4.4's leaf was punctured and the puncture is in the
-/// store, while the secret itself was only ever in memory. The call's
-/// media cannot be keyed again until the epoch moves.
+/// store, while the secret itself was only ever in memory.
 ///
 /// Oracle: mls-extensions-11 §4.4's deletion MUST, which is the whole
 /// point of the forward-secure exporter -- a restart that could re-derive
 /// the secret would mean the source key material had not been deleted.
-/// This test pins the consequence rather than wishing it away: it is the
-/// behaviour, it is what §4.4 asks for, and what a call should do about it
-/// is bead mimid-1wgh.129.
+/// So this failure is correct and stays: what bead mimid-1wgh.129 adds
+/// is a way OUT of it, which is the next test. The error is its own
+/// variant, because it is the one export failure a caller can act on.
 #[tokio::test]
 async fn an_agent_that_restarts_inside_an_epoch_loses_the_media_secret() {
     let dir = tempfile::tempdir().unwrap();
@@ -129,14 +128,81 @@ async fn an_agent_that_restarts_inside_an_epoch_loses_the_media_secret() {
     let mut restarted = device(&server, ALICE, dir.path(), "alice").await;
     let error = restarted.media_secret(&call).unwrap_err();
     assert!(
-        matches!(error, AgentError::Mls { .. }),
-        "the exporter is consumed for this epoch, so this must fail: {error:?}"
+        matches!(&error, AgentError::SecretConsumed { room, epoch: lost }
+            if room == &call && *lost == epoch),
+        "the exporter is consumed for this epoch, so this must fail, and \
+         say which room and epoch: {error:?}"
     );
 
     // The epoch has not moved, so there is nothing else to read; another
     // room's group is untouched, which shows the failure is this
     // component's leaf in this group and not a broken reload.
     assert_eq!(restarted.media_secret(&chat).unwrap().epoch(), epoch);
+}
+
+/// `Agent::rekey` is the way out: it moves the call to a new epoch, whose
+/// Exporter Tree leaf is unread, so the media secret can be derived again
+/// (bead mimid-1wgh.129).
+///
+/// Oracle: §4.4 again. The new secret must be DIFFERENT, because it
+/// descends from a different epoch secret -- a rekey that gave the old
+/// bytes back would mean the epoch had not really moved. And the epoch
+/// number must have advanced, which is what the JMAP surface reports to
+/// the client as `EpochMoved`.
+#[tokio::test]
+async fn a_rekey_gives_the_call_a_media_secret_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let mut alice = device(&server, ALICE, dir.path(), "alice").await;
+
+    let chat = alice
+        .host_room(&HostOptions::named("planning"))
+        .await
+        .unwrap();
+    let call = alice
+        .host_room(&HostOptions::child_of(&chat, ""))
+        .await
+        .unwrap();
+    let before = alice.media_secret(&call).unwrap();
+    let (was, bytes) = (before.epoch(), before.expose_secret().to_vec());
+    drop(before);
+    drop(alice);
+
+    let mut restarted = device(&server, ALICE, dir.path(), "alice").await;
+    assert!(
+        restarted.media_secret(&call).is_err(),
+        "the precondition: the epoch's secret is gone"
+    );
+
+    restarted.rekey(&call).await.unwrap();
+    let after = restarted
+        .media_secret(&call)
+        .expect("a new epoch has an unread leaf");
+    assert!(
+        after.epoch() > was,
+        "the epoch moved: {was} -> {}",
+        after.epoch()
+    );
+    assert_ne!(
+        after.expose_secret(),
+        bytes.as_slice(),
+        "a new epoch's secret is a new secret"
+    );
+
+    // And the new epoch's secret is itself read once, so the recovery
+    // does not quietly make the exporter re-readable.
+    let again = restarted.media_secret(&call).unwrap();
+    assert_eq!(
+        again.expose_secret(),
+        after.expose_secret(),
+        "the same epoch gives the held secret, not a second export"
+    );
+
+    // A rekey of a room the agent does not hold is not a Commit attempt.
+    assert!(matches!(
+        restarted.rekey("mimi://a.example/r/nothing").await,
+        Err(AgentError::NoSuchRoom(_))
+    ));
 }
 
 /// The hub refuses a parent-dependent room whose parent it does not host,
