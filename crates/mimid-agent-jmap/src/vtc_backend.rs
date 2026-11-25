@@ -45,6 +45,44 @@ use crate::backend::AgentChat;
 /// (draft-atwood-jmap-vtc-00 §Optional Binding Fields `mimiRoomId`).
 pub(crate) const MIMI_ROOM_ID: &str = "mimiRoomId";
 
+/// One call room claimed while its `VTCCall` is being made, so the
+/// projection does not make a second call for it
+/// (`crate::backend::StartingCalls` says why a claim and not an order).
+/// The claim is released when this is dropped, on the way out of
+/// `create_call` whether it succeeded or not: a room left behind by a
+/// failed create is then projected by the next sync, like any other call
+/// room this agent is in without a call of its own.
+///
+/// A poisoned lock is taken anyway (`into_inner`), because the set holds
+/// nothing that a panic could leave half-written and a lock nobody can
+/// take would turn one panic into a duplicate call for every later one.
+struct Starting {
+    rooms: crate::backend::StartingCalls,
+    key: String,
+}
+
+impl Starting {
+    fn claim(rooms: &crate::backend::StartingCalls, key: &str) -> Self {
+        rooms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.to_owned());
+        Self {
+            rooms: std::sync::Arc::clone(rooms),
+            key: key.to_owned(),
+        }
+    }
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        self.rooms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.key);
+    }
+}
+
 /// Which VTC types this backend stores.
 fn served(type_name: &str) -> bool {
     matches!(type_name, "VTCCall" | "VTCParticipant")
@@ -355,15 +393,20 @@ impl VtcBackend for AgentChat {
                 .collect(),
             subject: call.subject.clone().unwrap_or_default(),
         };
+        // Claimed before the room is made, because `start_call_with`
+        // records it before it returns and the runner saves on its own
+        // task (`Starting`).
+        let key = self.store().new_key();
+        let _starting = Starting::claim(&self.starting_calls, &key);
         let room = self
             .store()
-            .start_call_with(self.store().new_key(), chat.as_ref(), &options)
+            .start_call_with(key, chat.as_ref(), &options)
             .await
             .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?;
-        self.store()
-            .save()
-            .await
-            .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?;
+        // The room goes on the call before the save, so the record of
+        // the call room is written with the object this method is
+        // returning (bead mimid-1wgh.114.14) and the projection has the
+        // `mimiRoomId` it matches on once the claim is released.
         call.extra.insert(
             MIMI_ROOM_ID.to_owned(),
             serde_json::Value::String(room.uri.clone()),
@@ -373,6 +416,13 @@ impl VtcBackend for AgentChat {
         }))
         .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?;
         VtcBackend::update_object::<VtcCall>(self, caller, account_id, &id, patch).await?;
+        // A crash before this loses the call's room, which the
+        // refusal says; one after it is a room the next sync projects a
+        // call for.
+        self.store()
+            .save()
+            .await
+            .map_err(|e| refuse(SetErrorType::Forbidden, e.to_string()))?;
         Ok(call)
     }
 

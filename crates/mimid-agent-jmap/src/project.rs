@@ -583,24 +583,9 @@ impl JmapExt {
     /// the other side opened the socket, subscribed, and received
     /// nothing.
     ///
-    /// The id is the room's store key, as a Chat's is, so it is the same
-    /// at every projection and across restarts; `mimiRoomId` is the
-    /// room's URI, which is what crosses providers.
-    ///
-    /// # Limitations
-    ///
-    /// - `mediaTypes` is empty, and `subject` and `joinUri` are empty or
-    ///   absent: the room carries none of them, and the creator's choices
-    ///   do not cross with it. They belong in the announcement of bead
-    ///   mimid-1wgh.114.1, which is what a client should read them from.
-    ///   Signalling does not depend on them: the SDP is what says which
-    ///   media a call carries.
-    /// - `initiatorId` is the call room's admin by the role naming
-    ///   `crate::render` already uses, not a recorded "who pressed call",
-    ///   which the room does not keep. With no admin it is the first
-    ///   participant.
-    /// - `createdAt` is when this agent first projected the room, not
-    ///   when the call started.
+    /// The object itself is [`Render::new_call`], which is also what a
+    /// record keeping no `VTCCall` gives back at open (bead
+    /// mimid-1wgh.114.14); its rustdoc has the id and the limitations.
     async fn project_call_room(
         &self,
         store: &Store,
@@ -621,50 +606,28 @@ impl JmapExt {
         if self.call_naming_room(&room.uri).await?.is_some() {
             return Ok(());
         }
+        // A `VTCCall/set` making the call for this room right now: it
+        // claimed the key before the room was recorded, because its own
+        // object cannot name the room until the room exists
+        // (`crate::vtc_backend::Starting`). Without this, a save landing
+        // in that window -- the runner's, on its own task -- left the
+        // client two calls in one room.
+        if self
+            .starting_calls
+            .lock()
+            .is_ok_and(|starting| starting.contains(room.key.as_str()))
+        {
+            return Ok(());
+        }
         if !added {
             return Ok(());
         }
-        // The chat the call hangs under, by the parent room's store key,
-        // which is the Chat's id. A call whose parent this agent is not
-        // in gets no record: there would be no chat for a client to show
-        // it against.
-        let Some(parent) = room.parent.as_deref() else {
+        // A call whose parent room this agent is not in gets no record:
+        // there would be no chat for a client to show it against.
+        let Some(object) = self.render(&store.state()).new_call(room, &now()) else {
             return Ok(());
         };
-        let Some(chat) = store.state().room_of_uri(parent).cloned() else {
-            return Ok(());
-        };
-        let initiator = room
-            .participants
-            .iter()
-            .find(|p| {
-                p.role
-                    .and_then(|index| room.role_names.get(&index))
-                    .is_some_and(|name| name == "admin")
-            })
-            .or_else(|| room.participants.first())
-            .map(|p| p.user.clone())
-            .unwrap_or_default();
-        let call: jmap_vtc_types::VtcCall = from_json(json!({
-            "id": room.key,
-            "accountId": self.account,
-            "callType": "room",
-            "state": "active",
-            "createdAt": now(),
-            "endedAt": Value::Null,
-            "endReason": Value::Null,
-            "initiatorId": initiator,
-            "subject": Value::Null,
-            "joinUri": "",
-            "joinPassword": Value::Null,
-            "mediaTypes": [],
-            "activeParticipantCount": room.participants.len(),
-            "parentCallId": Value::Null,
-            "scheduledStartAt": Value::Null,
-            "gatewayPin": Value::Null,
-            "chatId": chat,
-            crate::vtc_backend::MIMI_ROOM_ID: room.uri,
-        }))?;
+        let call: jmap_vtc_types::VtcCall = from_json(object)?;
         self.inner.insert_object(&self.account, call).await?;
         tracing::debug!(
             room = %room.uri,

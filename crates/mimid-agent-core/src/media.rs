@@ -34,10 +34,10 @@
 //!   [`Agent::rekey`](crate::Agent::rekey) commits an empty Commit so
 //!   every member derives a fresh secret, and
 //!   [`AgentError::SecretConsumed`](crate::AgentError::SecretConsumed) is
-//!   the one export failure that says so (bead mimid-1wgh.129). A JMAP
-//!   client cannot reach that yet, because a restart also loses the
-//!   `VTCCall` it would name (bead mimid-1wgh.114.14); an embedder of
-//!   this crate can, since it holds its own call state.
+//!   the one export failure that says so (bead mimid-1wgh.129). The
+//!   JMAP front end rolls on it, since a restart also puts back the
+//!   `VTCCall` the client names (bead mimid-1wgh.114.14); an embedder of
+//!   this crate does it itself, holding its own call state.
 //! - It is the whole group's: every member of the call's room derives it,
 //!   so it confines media to the room's members and to nobody smaller. A
 //!   call among fewer people is a smaller room, not a smaller key.

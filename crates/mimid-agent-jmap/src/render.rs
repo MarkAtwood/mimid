@@ -191,6 +191,73 @@ impl Render<'_> {
         room.parent.is_some()
     }
 
+    /// A call's own room as the `VTCCall` projected for it, created at
+    /// `created_at`: what the side that did not start the call is shown
+    /// ([`crate::project::JmapExt::project_call_room`], bead
+    /// mimid-1wgh.114.11), and what a record that keeps no `VTCCall` of
+    /// its own gives back at open (bead mimid-1wgh.114.14).
+    ///
+    /// The id is the room's store key, as a Chat's is, so a projection
+    /// gives the same id every time; `mimiRoomId` is the room's URI,
+    /// which is what crosses providers. A call this agent hosted has an
+    /// id `VTCCall/set` minted instead, which is why its record keeps
+    /// the whole object rather than being projected again
+    /// ([`crate::persist`]).
+    ///
+    /// `None` for a room with no parent, or one whose parent room this
+    /// agent is not in: there would be no chat for a client to show the
+    /// call against.
+    ///
+    /// # Limitations
+    ///
+    /// - `mediaTypes` is empty, and `subject` and `joinUri` are empty or
+    ///   absent: the room carries none of them, and the creator's
+    ///   choices do not cross with it. They belong in the announcement
+    ///   of bead mimid-1wgh.114.1, which is what a client should read
+    ///   them from. Signalling does not depend on them: the SDP is what
+    ///   says which media a call carries.
+    /// - `initiatorId` is the call room's admin by the role naming this
+    ///   module already uses, not a recorded "who pressed call", which
+    ///   the room does not keep. With no admin it is the first
+    ///   participant.
+    /// - `createdAt` is `created_at`, when the room was first projected
+    ///   here, not when the call started.
+    pub(crate) fn new_call(&self, room: &record::Room, created_at: &UTCDate) -> Option<Value> {
+        let parent = room.parent.as_deref()?;
+        let chat = self.state.room_of_uri(parent)?;
+        let initiator = room
+            .participants
+            .iter()
+            .find(|p| {
+                p.role
+                    .and_then(|index| room.role_names.get(&index))
+                    .is_some_and(|name| name == "admin")
+            })
+            .or_else(|| room.participants.first())
+            .map(|p| p.user.clone())
+            .unwrap_or_default();
+        Some(json!({
+            "id": room.key,
+            "accountId": self.account,
+            "callType": "room",
+            "state": "active",
+            "createdAt": created_at,
+            "endedAt": Value::Null,
+            "endReason": Value::Null,
+            "initiatorId": initiator,
+            "subject": Value::Null,
+            "joinUri": "",
+            "joinPassword": Value::Null,
+            "mediaTypes": [],
+            "activeParticipantCount": room.participants.len(),
+            "parentCallId": Value::Null,
+            "scheduledStartAt": Value::Null,
+            "gatewayPin": Value::Null,
+            "chatId": chat,
+            crate::vtc_backend::MIMI_ROOM_ID: room.uri,
+        }))
+    }
+
     /// A room as the group Chat made for it when first shown, created and
     /// its members joined at `created_at`: named by the room's name (empty
     /// without one), `unreadCount` 0 (crate-jmap computes it at each

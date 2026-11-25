@@ -120,7 +120,23 @@ pub struct AgentChat {
     /// The push subscriptions, when the daemon enabled push
     /// ([`AgentChat::enable_push`]; crate::push).
     pub(crate) push: Option<Arc<mimid_agent_store::push::PushSubscriptions>>,
+    /// The call rooms a `VTCCall/set` is minting a call for right now,
+    /// by store key, shared with the `JmapExt` that runs the projection
+    /// (`vtc_backend::Starting`).
+    pub(crate) starting_calls: StartingCalls,
 }
+
+/// The call rooms a `VTCCall/set` is minting a call for right now, by
+/// store key.
+///
+/// `Store::start_call` records the room before it returns, so any save
+/// from then until the new `VTCCall` names the room would project a
+/// second call for it -- and the save that does it is the runner's, on
+/// its own task, so no ordering inside `create_call` can rule it out.
+/// The key is claimed before the room is made and released when the
+/// call names it, which closes the window rather than narrowing it
+/// (`crate::vtc_backend::Starting`, `project_call_room`).
+pub(crate) type StartingCalls = Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>;
 
 impl std::fmt::Debug for AgentChat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -157,6 +173,10 @@ impl AgentChat {
     /// [`crate::PersistError::Malformed`] if the records are another
     /// account's, or a record, with what `ext["jmap"]` keeps of it, does
     /// not make a JMAP object.
+    ///
+    /// With `[jmap] vtc` on, await [`AgentChat::restore_calls`] after
+    /// this and before serving: a live call is put back there, not here
+    /// (bead mimid-1wgh.114.14).
     pub fn over(
         store: Arc<Store>,
         account_id: Id,
@@ -179,11 +199,13 @@ impl AgentChat {
         let user = store.user().to_owned();
         // Every save, whoever asks for it, shows its changes and rebuilds
         // ext["jmap"] first.
+        let starting_calls = StartingCalls::default();
         store.add_frontend(Arc::new(crate::persist::JmapExt {
             inner: inner.clone(),
             account: account_id.clone(),
             user: user.clone(),
             vtc: options.vtc.enabled,
+            starting_calls: Arc::clone(&starting_calls),
         }));
         Self {
             inner,
@@ -192,6 +214,7 @@ impl AgentChat {
             store,
             options,
             push: None,
+            starting_calls,
         }
     }
 
