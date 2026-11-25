@@ -58,6 +58,22 @@
 //! peer, the protocol endpoint (`endpoint`, the path segment after `/v1/`)
 //! and the mechanism or the reason.
 //!
+//! Each of those outcomes also opens a `provider_auth` span at INFO over
+//! the authentication, with `peer`, `endpoint`, `outcome`
+//! (`authenticated`, `refused` or `observed`) and then `mechanism` or
+//! `reason` (bead mimid-1wgh.46.20.1.1). The span, not the event, is what
+//! an OpenTelemetry collector receives: this layer runs outside the
+//! router's `http_request` span and a refusal returns from here, so
+//! without it a refused request produced no span at all, and the refusals
+//! are the events an interop exchange is read from. INFO because a server
+//! started with no `RUST_LOG` filters at `info`; the events stay at DEBUG,
+//! so a flood of correct refusals still logs nothing (bead mimid-bfzm).
+//! The span covers this layer, so its duration is the cost of reading the
+//! body and of the mechanisms (a DNS or TLSA lookup, when one happens) and
+//! not the handler's. A body past
+//! [`MAX_BODY_LEN`](crate::http::MAX_BODY_LEN) is `refused` in it too, so
+//! every refusal this layer makes is in a span.
+//!
 //! # Limitations
 //!
 //! - A signature without a `nonce` can be replayed within
@@ -83,6 +99,7 @@ use axum::response::Response;
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde::Deserialize;
+use tracing::Instrument;
 
 use crate::config::{BaseUrl, Domain};
 use crate::httpsig::{self, SignatureParams, SigningKey, TimePolicy, VerifyingKey};
@@ -796,7 +813,36 @@ pub async fn check(
         return next.run(request).await;
     };
     let (mut parts, body) = request.into_parts();
-    let Ok(body) = to_bytes(body, crate::http::MAX_BODY_LEN).await else {
+    let path = parts
+        .uri
+        .path_and_query()
+        .map_or("/", |p| p.as_str())
+        .to_owned();
+    let endpoint = endpoint_name(parts.uri.path());
+    // Every outcome of this layer is a span, including the refusals,
+    // because it sits outside the router's `http_request` span and a
+    // refusal returns from here: without one, the event a trace most needs
+    // -- a peer turned away, and why -- has no span at all (bead
+    // mimid-1wgh.46.20.1.1). At INFO, so a server started with no
+    // `RUST_LOG` still exports it; the events inside it stay at DEBUG, so
+    // the log of a refusal flood stays quiet (bead mimid-bfzm). Opened
+    // before the body is read, so an oversized body is a refusal with a
+    // span like any other.
+    let span = tracing::info_span!(
+        "provider_auth",
+        peer = from.as_str(),
+        endpoint,
+        outcome = tracing::field::Empty,
+        mechanism = tracing::field::Empty,
+        reason = tracing::field::Empty,
+    );
+    let read = to_bytes(body, crate::http::MAX_BODY_LEN)
+        .instrument(span.clone())
+        .await;
+    let Ok(body) = read else {
+        let _entered = span.enter();
+        span.record("outcome", "refused");
+        span.record("reason", "request body too large");
         tracing::debug!(
             reason = "request body too large",
             status = StatusCode::PAYLOAD_TOO_LARGE.as_u16(),
@@ -804,13 +850,10 @@ pub async fn check(
         );
         return crate::http::problem(StatusCode::PAYLOAD_TOO_LARGE, "too-large");
     };
-    let path = parts
-        .uri
-        .path_and_query()
-        .map_or("/", |p| p.as_str())
-        .to_owned();
-    let endpoint = endpoint_name(parts.uri.path());
     let Ok(uri) = format!("{}{path}", auth.base_url).parse::<Uri>() else {
+        let _entered = span.enter();
+        span.record("outcome", "refused");
+        span.record("reason", "target URI not absolute");
         return crate::http::problem(StatusCode::BAD_REQUEST, "bad-target");
     };
     let now = i64::try_from(auth.clock.now_ms() / 1_000).unwrap_or(i64::MAX);
@@ -824,8 +867,17 @@ pub async fn check(
         now,
         certificate: certificate.as_ref(),
     };
-    match auth.authenticate(&request).await {
+    let outcome = auth.authenticate(&request).instrument(span.clone()).await;
+    // Entered for the events below, so each carries the span: a log line
+    // names it, and an exported log record carries its trace id, which is
+    // what correlates a refusal with the peer's own view. Dropped before
+    // the handler runs, since a span guard must not be held across an
+    // `await`, and the handler has `protocol_request` of its own.
+    let entered = span.enter();
+    match outcome {
         Ok(provider) => {
+            span.record("outcome", "authenticated");
+            span.record("mechanism", provider.mechanism.name());
             // No peer label: a provider with a DNS key can be anyone.
             crate::telemetry::metrics().provider_auth.add(
                 1,
@@ -846,6 +898,8 @@ pub async fn check(
         }
         Err(refusal) => match auth.mode(&from) {
             AuthMode::Enforce => {
+                span.record("outcome", "refused");
+                span.record("reason", tracing::field::display(&refusal));
                 crate::telemetry::metrics()
                     .provider_auth
                     .add(1, &[opentelemetry::KeyValue::new("outcome", "refused")]);
@@ -859,6 +913,8 @@ pub async fn check(
                 return refuse(Some(&refusal));
             }
             AuthMode::Observe => {
+                span.record("outcome", "observed");
+                span.record("reason", tracing::field::display(&refusal));
                 crate::telemetry::metrics()
                     .provider_auth
                     .add(1, &[opentelemetry::KeyValue::new("outcome", "observed")]);
@@ -881,6 +937,7 @@ pub async fn check(
             }
         },
     }
+    drop(entered);
     next.run(Request::from_parts(parts, Body::from(body))).await
 }
 

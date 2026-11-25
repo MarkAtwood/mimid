@@ -1,12 +1,19 @@
-//! A JSON capture of `tracing` events, through the server's own JSON
-//! output, for tests of what the server logs (bead mimid-bfzm).
+//! Captures of what the server reports to `tracing`: [`JsonCapture`] for
+//! its events, through the server's own JSON output (bead mimid-bfzm), and
+//! [`SpanCapture`] for the spans it opens, which are what an OpenTelemetry
+//! collector receives as traces (bead mimid-1wgh.46.20.1.1).
 
+use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::io::Write;
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex, Once, PoisonError};
 
+use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::subscriber::Interest;
-use tracing::{Event, Metadata, Subscriber};
+use tracing::{Event, Level, Metadata, Subscriber};
+use tracing_subscriber::layer::{Context, SubscriberExt};
+use tracing_subscriber::registry::LookupSpan;
 
 struct Writer(Arc<Mutex<Vec<u8>>>);
 
@@ -69,13 +76,18 @@ pub struct JsonCapture {
     _guard: tracing::subscriber::DefaultGuard,
 }
 
+/// Installs [`Undecided`] as the test binary's global subscriber, once.
+fn undecided_global() {
+    static GLOBAL: Once = Once::new();
+    GLOBAL.call_once(|| {
+        tracing::subscriber::set_global_default(Undecided)
+            .expect("no other global subscriber in this test binary");
+    });
+}
+
 impl JsonCapture {
     pub fn start() -> Self {
-        static GLOBAL: Once = Once::new();
-        GLOBAL.call_once(|| {
-            tracing::subscriber::set_global_default(Undecided)
-                .expect("no other global subscriber in this test binary");
-        });
+        undecided_global();
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let writer = Arc::clone(&buffer);
         let subscriber = mimid_server::logging::json_subscriber(
@@ -112,4 +124,134 @@ pub fn span_fields<'a>(line: &'a serde_json::Value, name: &str) -> &'a serde_jso
         .and_then(|spans| spans.iter().find(|span| span["name"] == name))
         .map(|span| &span["fields"])
         .unwrap_or_else(|| panic!("no {name} span in {line}"))
+}
+
+/// One span opened while a [`SpanCapture`] lived: what a trace exporter
+/// would send, as a name, a level and the fields set at creation or
+/// recorded later.
+#[derive(Debug, Clone)]
+pub struct CapturedSpan {
+    pub name: &'static str,
+    pub level: Level,
+    pub fields: BTreeMap<String, String>,
+}
+
+impl CapturedSpan {
+    /// The value of `field`, or `None` if it was never set. A field
+    /// declared `Empty` and never recorded reads as absent.
+    pub fn field(&self, field: &str) -> Option<&str> {
+        self.fields.get(field).map(String::as_str)
+    }
+}
+
+/// Collects each field into a map, with `Display` and `Debug` values as
+/// the text they print.
+struct Fields<'a>(&'a mut BTreeMap<String, String>);
+
+impl Visit for Fields<'_> {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0.insert(field.name().to_owned(), value.to_owned());
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        self.0.insert(field.name().to_owned(), format!("{value:?}"));
+    }
+}
+
+#[derive(Default)]
+struct Opened {
+    spans: Vec<CapturedSpan>,
+    /// Span id to its index in `spans`. An id is reused after its span
+    /// closes, so the last span with an id is the one a later `record`
+    /// belongs to; a test reads `spans`, which keeps them all.
+    index: HashMap<u64, usize>,
+}
+
+/// The `tracing-subscriber` layer behind [`SpanCapture`].
+struct Opener(Arc<Mutex<Opened>>);
+
+impl<S> tracing_subscriber::Layer<S> for Opener
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_new_span(&self, attributes: &Attributes<'_>, id: &Id, _: Context<'_, S>) {
+        let mut fields = BTreeMap::new();
+        attributes.record(&mut Fields(&mut fields));
+        let mut opened = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let at = opened.spans.len();
+        opened.spans.push(CapturedSpan {
+            name: attributes.metadata().name(),
+            level: *attributes.metadata().level(),
+            fields,
+        });
+        opened.index.insert(id.into_u64(), at);
+    }
+
+    fn on_record(&self, id: &Id, values: &Record<'_>, _: Context<'_, S>) {
+        let mut opened = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(at) = opened.index.get(&id.into_u64()).copied() else {
+            return;
+        };
+        let mut fields = std::mem::take(&mut opened.spans[at].fields);
+        values.record(&mut Fields(&mut fields));
+        opened.spans[at].fields = fields;
+    }
+}
+
+/// Every span opened on this thread while the capture lives, under an
+/// `EnvFilter` the caller gives: a capture with `"info"` sees what a
+/// collector sees from a server started with no `RUST_LOG`, which is the
+/// question bead mimid-1wgh.46.20.1.1 is about.
+///
+/// It shares [`JsonCapture`]'s global [`Undecided`] subscriber, for the
+/// same reason, so a binary using either cannot also use
+/// `common::capture_logs`.
+pub struct SpanCapture {
+    opened: Arc<Mutex<Opened>>,
+    _guard: tracing::subscriber::DefaultGuard,
+}
+
+impl SpanCapture {
+    pub fn start(filter: &str) -> Self {
+        undecided_global();
+        let opened = Arc::new(Mutex::new(Opened::default()));
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new(filter))
+            .with(Opener(Arc::clone(&opened)));
+        Self {
+            opened,
+            _guard: tracing::subscriber::set_default(subscriber),
+        }
+    }
+
+    /// The spans named `name`, in the order they were opened.
+    pub fn named(&self, name: &str) -> Vec<CapturedSpan> {
+        self.opened
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .spans
+            .iter()
+            .filter(|span| span.name == name)
+            .cloned()
+            .collect()
+    }
+
+    /// The one span named `name`, or a panic saying what was opened
+    /// instead.
+    pub fn only(&self, name: &str) -> CapturedSpan {
+        let mut found = self.named(name);
+        assert_eq!(
+            found.len(),
+            1,
+            "expected one {name} span, got {found:?}; opened: {:?}",
+            self.opened
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .spans
+                .iter()
+                .map(|span| span.name)
+                .collect::<Vec<_>>()
+        );
+        found.remove(0)
+    }
 }

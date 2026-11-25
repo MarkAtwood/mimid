@@ -250,6 +250,15 @@ OpenTelemetry export over OTLP/HTTP with protobuf bodies. Off when the table is 
 
 No trace context is sent to or accepted from peers. If telemetry cannot be flushed at shutdown, `mimid` logs `telemetry_flush_failed`.
 
+**Which spans you get depends on `RUST_LOG`,** because `traces = true` exports the spans the log filter keeps and nothing more. With `RUST_LOG` unset the filter is `info`, and the spans at INFO are:
+
+| Span | Opened for | Fields |
+|---|---|---|
+| `provider_auth` | every `/v1/` request carrying a `From` header | `peer`, `endpoint`, `outcome` (`authenticated`, `refused` or `observed`), then `mechanism` or `reason` |
+| `protocol_request` | every `/v1/` request that reaches its handler | `endpoint`, `peer`, and the path value under its own key (`room_id`, `target_user`, …) |
+
+`http_request`, which carries `method`, `route`, `status` and `elapsed_ms`, is at DEBUG, so a collector sees it only with `RUST_LOG=debug` (or `RUST_LOG=info,mimid_server=debug`). A request refused by provider authentication never reaches a handler, so its only span is `provider_auth`; that span is why a refusal is visible in a trace at all.
+
 ### `[did_webvh]`
 
 The code points of draft-atwood-mls-didwebvh-credential, which IANA has not assigned. The hub uses them to apply the draft's rules to KeyPackage uploads and keyMaterial answers. Every member of a room must use the same values, so the agents' `[did_webvh]` settings must match the server's.
