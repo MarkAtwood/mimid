@@ -822,3 +822,133 @@ async fn a_call_in_a_chat_of_more_than_two_is_refused() {
 
     alice.stop().await;
 }
+
+/// `participantIds` says who to call, so the ceiling counts the named
+/// people and not the whole chat (decision on bead mimid-1wgh.131, Mark
+/// 2026-11-25).
+///
+/// INVENTED, NOT FROM SPEC: draft-atwood-jmap-vtc-00 defines no such
+/// field. It carries user URIs, as `VTCParticipant.userId` does, and
+/// rides in `VtcCall`'s flattened `extra`, which is the same route
+/// `mimiRoomId` travels, so crate-jmap needs no change.
+///
+/// The first half is INDIRECT and says so. A happy path needs the named
+/// person to be a real agent with key packages published, which this
+/// harness has no second daemon for; what it can show is that the
+/// CEILING no longer refuses, by checking the refusal is not the ceiling
+/// refusal. The real membership is held down at the store level by
+/// `a_call_among_named_people_holds_only_them` in
+/// crates/mimid-agent-store/tests/calls.rs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn naming_who_to_call_is_counted_instead_of_the_whole_chat() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_vtc(dir.path(), &server)).await;
+    let client = alice.client().await;
+    let vtc = mimid_agent_jmap::vtc::CAPABILITY;
+
+    let chat = alice
+        .store
+        .create_room(alice.store.new_key(), "planning", &[])
+        .await
+        .unwrap();
+    alice.store.save().await.unwrap();
+    let carol = "mimi://a.example/u/carol";
+    let dave = "mimi://a.example/u/dave";
+    {
+        let mut state = alice.store.state();
+        let room = state.rooms.get_mut(&chat.key).expect("the chat");
+        for user in [carol, dave] {
+            room.participants
+                .push(mimid_agent_store::record::Participant {
+                    user: user.to_owned(),
+                    role: None,
+                });
+        }
+    }
+
+    let create = |participants: Option<Vec<&str>>| {
+        let mut object = json!({
+            "callType": "room",
+            "mediaTypes": ["audio"],
+            "chatId": chat.key,
+        });
+        if let Some(participants) = participants {
+            object["participantIds"] = json!(participants);
+        }
+        let client = &client;
+        async move {
+            let (status, answer) = client
+                .post(&json!({
+                    "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat", vtc],
+                    "methodCalls": [[
+                        "VTCCall/set",
+                        {"accountId": client.account, "create": {"k": object}},
+                        "c0",
+                    ]],
+                }))
+                .await;
+            assert_eq!(status, 200, "{answer}");
+            answer["methodResponses"][0][1]["notCreated"]["k"].clone()
+        }
+    };
+
+    // Whether a refusal is the ceiling's, which names "two".
+    let is_ceiling = |refusal: &serde_json::Value| {
+        refusal["type"] == json!("invalidProperties")
+            && refusal["description"]
+                .as_str()
+                .is_some_and(|why| why.contains("two"))
+    };
+
+    // Naming nobody calls the whole chat of three, which is refused.
+    let refusal = create(None).await;
+    assert!(
+        is_ceiling(&refusal),
+        "a call on the whole chat is still refused: {refusal}"
+    );
+
+    // Naming two others is three people, which is refused the same way.
+    let refusal = create(Some(vec![carol, dave])).await;
+    assert!(
+        is_ceiling(&refusal),
+        "naming two others is three people: {refusal}"
+    );
+
+    // Naming one other is two people, so the ceiling does not refuse it.
+    // It fails later, because carol has no key packages in this harness,
+    // which is what makes this half indirect.
+    let refusal = create(Some(vec![carol])).await;
+    assert!(
+        !is_ceiling(&refusal),
+        "naming one other person is within the ceiling: {refusal}"
+    );
+
+    // And the field has to be a list of strings.
+    for bad in [json!("carol"), json!([7]), json!({"a": 1})] {
+        let (status, answer) = client
+            .post(&json!({
+                "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat", vtc],
+                "methodCalls": [[
+                    "VTCCall/set",
+                    {"accountId": client.account, "create": {"k": {
+                        "callType": "room",
+                        "mediaTypes": ["audio"],
+                        "chatId": chat.key,
+                        "participantIds": bad,
+                    }}},
+                    "c0",
+                ]],
+            }))
+            .await;
+        assert_eq!(status, 200, "{answer}");
+        let refusal = &answer["methodResponses"][0][1]["notCreated"]["k"];
+        assert_eq!(
+            refusal["type"],
+            json!("invalidProperties"),
+            "{bad} must be refused: {answer}"
+        );
+    }
+
+    alice.stop().await;
+}

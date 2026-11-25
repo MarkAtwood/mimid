@@ -580,3 +580,90 @@ async fn a_call_under_a_one_to_one_chat_holds_two() {
         room.participants
     );
 }
+
+/// A call among a named subset of a group chat holds only those people,
+/// and hangs under the chat it was started from (decision on bead
+/// mimid-1wgh.131, Mark 2026-11-25).
+///
+/// Oracles:
+///
+/// - room-policy-04 §5: a parent-dependent room's participants are a
+///   subset of its parent's, which the hub enforces at creation, so a
+///   call among two of three is a room the hub agrees to host.
+/// - The ceiling of decision mimid-1wgh.114.15 counts the NAMED set, so
+///   naming one other person in a chat of three is within it while the
+///   chat itself is not.
+///
+/// The point of naming them is the parent: this call is announced in the
+/// chat it was started from, which is what a call in the DM with that
+/// person cannot do. So the test checks the parent as well as the
+/// membership.
+#[tokio::test]
+async fn a_call_among_named_people_holds_only_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB, CAROL]).await;
+    let alice = Store::new(agent(&server, ALICE, dir.path()).await, InvitePolicy::Any);
+    alice.open_database().unwrap();
+    let bob = Store::new(agent(&server, BOB, dir.path()).await, InvitePolicy::Any);
+    bob.open_database().unwrap();
+    let carol = Store::new(agent(&server, CAROL, dir.path()).await, InvitePolicy::Any);
+    carol.open_database().unwrap();
+    for store in [&alice, &bob, &carol] {
+        store
+            .agent()
+            .lock()
+            .await
+            .publish_key_packages(4)
+            .await
+            .unwrap();
+    }
+
+    // A chat of three.
+    let chat = alice
+        .create_room(
+            alice.new_key(),
+            "planning",
+            &[BOB.to_owned(), CAROL.to_owned()],
+        )
+        .await
+        .unwrap();
+    alice.save().await.unwrap();
+    for store in [&bob, &carol] {
+        until_store(store, |s| s.state().room_of_uri(&chat.uri).is_some()).await;
+    }
+    let in_chat = {
+        let state = alice.state();
+        state.rooms[&chat.key].others(ALICE).len()
+    };
+    assert_eq!(in_chat, 2, "alice and two others");
+
+    // A call among alice and bob only.
+    let call = alice
+        .start_call(alice.new_key(), &chat.key, Some(&[BOB.to_owned()]))
+        .await
+        .unwrap();
+    alice.save().await.unwrap();
+    until_store(&bob, |s| s.state().room_of_uri(&call.uri).is_some()).await;
+
+    let state = alice.state();
+    let room = state
+        .rooms
+        .values()
+        .find(|r| r.uri == call.uri)
+        .expect("the call room");
+    let mut people: Vec<&str> = room.others(ALICE);
+    people.sort_unstable();
+    assert_eq!(people, vec![BOB], "carol is not on the call");
+    assert_eq!(
+        1 + people.len(),
+        2,
+        "two people, which is the ceiling: {:?}",
+        room.participants
+    );
+    assert_eq!(
+        room.parent.as_deref(),
+        Some(chat.uri.as_str()),
+        "and it hangs under the chat it was started from, which is why \
+         naming people beats calling in the DM: the chat sees it"
+    );
+}
