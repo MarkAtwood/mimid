@@ -63,15 +63,6 @@
 //!   in every front end; `/msg mimid burn #c <text>` sends one, and
 //!   `/msg mimid expire #c <duration|off>` sets the room's local policy.
 //!   A line already shown stays in the client: IRC cannot take it back.
-//! - A keyed call announced in a chat is a server NOTICE naming who
-//!   started it and saying this client cannot join, not a `PRIVMSG`
-//!   (bead mimid-1wgh.114.6; decision mimid-1wgh.117). A stock IRC
-//!   client has no media stack and no way to exchange SDP, so the
-//!   sentence as an ordinary message would offer something that silently
-//!   does nothing, and showing nothing would leave the user wondering
-//!   why people went quiet. The call's own room gets no channel at all
-//!   ([`names`]), so there is nothing to join by mistake, and `call`
-//!   without a URL says a URL is required and why.
 //! - Messages are `PRIVMSG` with `msgid` (the store's `senderMsgId`) and
 //!   `time`; an edit is a new line starting `(edited) `, a retraction a
 //!   `REDACT` from the sender with `draft/message-redaction` (§7.36),

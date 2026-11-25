@@ -45,30 +45,6 @@ use crate::backend::AgentChat;
 /// (draft-atwood-jmap-vtc-00 §Optional Binding Fields `mimiRoomId`).
 pub(crate) const MIMI_ROOM_ID: &str = "mimiRoomId";
 
-/// The `VTCCall/set` create property naming who to call: the user URIs
-/// to invite into the call's own room, which must be people of the chat
-/// the call is started from.
-///
-/// INVENTED, NOT FROM SPEC (decision on bead mimid-1wgh.131, Mark
-/// 2026-11-25): draft-atwood-jmap-vtc-00 defines no such field. It
-/// echoes `VTCParticipant`, the type a client reads to see who is on a
-/// call, and like `VTCParticipant.userId` it carries USER URIs and not
-/// JMAP ids, which is unlike most JMAP properties whose name ends in
-/// `Ids`.
-///
-/// Absent, the whole parent chat is called, which
-/// [`crate::vtc::MAX_PARTICIPANTS`] then refuses for a chat of more than
-/// two. Naming people is what lets a two-person call hang under a larger
-/// chat, so that chat sees the announcement of bead mimid-1wgh.114.1,
-/// which a call in a direct chat cannot do.
-///
-/// It rides in `VtcCall`'s flattened `extra`, as [`MIMI_ROOM_ID`] does,
-/// so crate-jmap needs no change to carry it. It is kept there on the
-/// stored object: it records who the call was STARTED with, not who is
-/// on it now, for which the call room and `VTCParticipant` are
-/// authoritative.
-pub(crate) const PARTICIPANT_IDS: &str = "participantIds";
-
 /// One call room claimed while its `VTCCall` is being made, so the
 /// projection does not make a second call for it
 /// (`crate::backend::StartingCalls` says why a claim and not an order).
@@ -398,54 +374,25 @@ impl VtcBackend for AgentChat {
                  room under that chat's room",
             ));
         };
-        // Who to call ([`PARTICIPANT_IDS`]), or the whole parent chat
-        // when the client names nobody.
-        let named = match call.extra.get(PARTICIPANT_IDS) {
-            None | Some(serde_json::Value::Null) => None,
-            Some(serde_json::Value::Array(items)) => {
-                let mut users = std::collections::BTreeSet::new();
-                for item in items {
-                    let Some(user) = item.as_str() else {
-                        return Err(refuse(
-                            SetErrorType::InvalidProperties,
-                            "participantIds holds user URIs, each a string",
-                        ));
-                    };
-                    // The caller is in their own call either way, so
-                    // naming themselves is not an extra participant.
-                    if user != self.store().user() {
-                        users.insert(user.to_owned());
-                    }
-                }
-                Some(users.into_iter().collect::<Vec<_>>())
-            }
-            Some(_) => {
-                return Err(refuse(
-                    SetErrorType::InvalidProperties,
-                    "participantIds is a list of user URIs",
-                ));
-            }
-        };
         // Refused BEFORE the room is hosted, so a refused create leaves
         // no call room behind and announces nothing: an announcement for
         // a call nobody can join is worse than a refusal that says why
         // (decision on bead mimid-1wgh.114.15).
         //
-        // Counted over the NAMED people when the client named any, and
-        // otherwise over the parent chat, which is what
-        // `start_call_with` invites when `among` is None.
-        let would_hold = match &named {
-            Some(users) => 1 + users.len() as u64,
-            None => {
-                let state = self.store().state();
-                let Some(parent) = state.rooms.get(chat.as_ref()) else {
-                    return Err(refuse(
-                        SetErrorType::InvalidProperties,
-                        "this chat is not a room this agent is in",
-                    ));
-                };
-                1 + parent.others(self.store().user()).len() as u64
-            }
+        // The parent chat's participants are what `start_call_with`
+        // invites, so they are what the call room would hold. A client
+        // cannot name a subset: `participantIds` was removed (Mark
+        // 2026-11-25), so calling one person means calling in the direct
+        // chat with them.
+        let would_hold = {
+            let state = self.store().state();
+            let Some(parent) = state.rooms.get(chat.as_ref()) else {
+                return Err(refuse(
+                    SetErrorType::InvalidProperties,
+                    "this chat is not a room this agent is in",
+                ));
+            };
+            1 + parent.others(self.store().user()).len() as u64
         };
         if would_hold > crate::vtc::MAX_PARTICIPANTS {
             return Err(refuse(
@@ -458,25 +405,12 @@ impl VtcBackend for AgentChat {
                 ),
             ));
         }
-        // The media kinds and the subject travel in the announcement,
-        // because the call room carries neither and the receiving side
-        // projects the call from the room (bead mimid-1wgh.114.11;
-        // decision mimid-1wgh.128). A kind this library does not know is
-        // sent as the string the client gave, since it is the client's
-        // and another implementation may know it.
-        let options = mimid_agent_store::action::CallOptions {
-            among: named,
-            media: call
-                .media_types
-                .iter()
-                .map(|kind| match serde_json::to_value(kind) {
-                    Ok(serde_json::Value::String(text)) => text,
-                    _ => String::new(),
-                })
-                .filter(|kind| !kind.is_empty())
-                .collect(),
-            subject: call.subject.clone().unwrap_or_default(),
-        };
+        // The client's mediaTypes and subject go no further than this
+        // object: the call room carries neither, and the announcement
+        // that used to carry them is gone (Mark 2026-11-25). So a
+        // client that joins a call it did not start learns neither, and
+        // the SDP is what says which media the call carries.
+        let options = mimid_agent_store::action::CallOptions { among: None };
         // Claimed before the room is made, because `start_call_with`
         // records it before it returns and the runner saves on its own
         // task (`Starting`).

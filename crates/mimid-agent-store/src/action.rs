@@ -277,22 +277,14 @@ pub struct CallOptions {
     /// Who to invite: everyone in the parent when `None`, and otherwise
     /// a subset of the parent's people.
     pub among: Option<Vec<String>>,
-    /// The media kinds, as draft-atwood-jmap-vtc-00 spells them
-    /// (`"audio"`, `"video"`). They go in the announcement because the
-    /// call room does not carry them, so without them the receiving side
-    /// projects a call with none (bead mimid-1wgh.114.11).
-    pub media: Vec<String>,
-    /// The call's subject, for the same reason.
-    pub subject: String,
 }
 
 impl CallOptions {
-    /// A call among `among`, with no media kinds or subject given.
+    /// A call among `among`.
     #[must_use]
     pub fn among(among: Option<&[String]>) -> Self {
         Self {
             among: among.map(<[String]>::to_vec),
-            ..Self::default()
         }
     }
 }
@@ -460,20 +452,20 @@ impl Store {
             .await
     }
 
-    /// [`Store::start_call`] with the call's media kinds and subject, and
-    /// which it announces in the parent chat (bead mimid-1wgh.114.1).
+    /// [`Store::start_call`] taking its options as a struct.
     ///
-    /// The announcement is an ordinary message in the PARENT whose text
-    /// any client renders, carrying the private-use extension of
-    /// [`crate::call`] (decision mimid-1wgh.128). It is sent AFTER the
-    /// call room exists and its people are invited, and a failure to send
-    /// it does not fail the call: the room is there and the invite is the
-    /// thing that lets someone in, so an unannounced call is a quiet call
-    /// rather than a broken one. The failure is a WARN.
+    /// NOTHING IS ANNOUNCED. Starting a call used to post a message into
+    /// the parent chat, carrying the call room's URI, media kinds and
+    /// subject in a private-use mimi-content extension, so that a client
+    /// with no VTC surface learned a call had happened (bead
+    /// mimid-1wgh.114.1, decision mimid-1wgh.128). Mark removed it
+    /// 2026-11-25 as machinery out of proportion to its job. So the only
+    /// trace of a call outside its own room is the MLS invite into that
+    /// room, which a client that cannot hold a call cannot read as one.
     ///
     /// # Errors
     ///
-    /// Those of [`Store::start_call`]. Not those of announcing.
+    /// Those of [`Store::start_call`].
     pub async fn start_call_with(
         &self,
         key: Key,
@@ -510,78 +502,7 @@ impl Store {
                 &invite,
             )
             .await?;
-        let announcement = crate::call::Announcement {
-            room: call.uri.clone(),
-            media: options.media.clone(),
-            subject: options.subject.clone(),
-            ended: false,
-        };
-        self.announce(&parent_room.key, &announcement).await;
         Ok(call)
-    }
-
-    /// Announces that the call in `room` is over, in the chat it is under
-    /// (decisions mimid-1wgh.124, mimid-1wgh.117).
-    ///
-    /// A NEW message rather than an edit of the start: an edit is only
-    /// the sender's to make, and whoever ends a call need not be whoever
-    /// started it. The marker is ADVISORY -- a client that crashes never
-    /// sends it, so its absence means "not known" and never "still
-    /// going" -- so this answers nothing and fails nothing.
-    pub async fn announce_call_ended(&self, room: &str) {
-        let (uri, parent) = {
-            let state = self.state();
-            let Some(call) = state.rooms.get(room) else {
-                return;
-            };
-            let Some(parent_uri) = call.parent.clone() else {
-                return;
-            };
-            let parent = state
-                .rooms
-                .values()
-                .find(|candidate| candidate.uri == parent_uri)
-                .map(|candidate| candidate.key.clone());
-            (call.uri.clone(), parent)
-        };
-        let Some(parent) = parent else {
-            // The chat is not in this store, so there is nowhere to say
-            // it. Not an error: the call room's members already know.
-            return;
-        };
-        self.announce(&parent, &crate::call::Announcement::ended(uri))
-            .await;
-    }
-
-    /// Sends `announcement` into the chat `parent`. Best-effort: see
-    /// [`Store::start_call_with`].
-    async fn announce(&self, parent: &str, announcement: &crate::call::Announcement) {
-        let Some(content) = announcement.content_options() else {
-            tracing::warn!(
-                name: "agent_call_announcement_unsendable",
-                room = announcement.room,
-                "the call announcement is past a limit of crate::call and was not sent"
-            );
-            return;
-        };
-        let mut options = SendOptions::new();
-        options.extensions = content.extensions;
-        // No name: the sender is the message's own, and a client that
-        // shows it beside the text would print it twice.
-        let text = announcement.text(None);
-        if let Err(error) = self
-            .send_message(self.new_key(), parent, &text, &[], &options)
-            .await
-        {
-            tracing::warn!(
-                name: "agent_call_not_announced",
-                room = announcement.room,
-                chat = parent,
-                ended = announcement.ended,
-                error = &error as &dyn std::error::Error,
-                "the call was not announced in its chat; it is still joinable"
-            );
-        }
     }
 
     /// Sends one call signal in the call room `key`: an SDP offer or

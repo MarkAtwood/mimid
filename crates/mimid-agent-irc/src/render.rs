@@ -536,20 +536,6 @@ impl Session {
         // sentence as an ordinary message would offer something that
         // silently does nothing. Decision mimid-1wgh.117: a chat event,
         // never a live badge.
-        if let Some(call) = mimid_agent_store::call::in_record(&m.record.extensions) {
-            let nick = m.sender.as_ref().map_or("someone", |s| s.nick.as_str());
-            lines.extend(self.text_lines(
-                &self.shared.server.clone(),
-                "NOTICE",
-                &m.target,
-                &call_notice(&call, nick),
-                "",
-                tags,
-                every,
-                time,
-            ));
-            return lines;
-        }
         match &m.sender {
             Some(sender) => {
                 let mask = sender.mask();
@@ -877,23 +863,6 @@ pub(crate) fn shown_now(record: &Message) -> ShownMessage {
 /// shown when it is shown now.
 fn latest_ref(record: &Message) -> Option<mimid_agent_store::convert::MessageRef> {
     record.latest_mimi_id().map(|id| id.reference())
-}
-
-/// The NOTICE text for a keyed call `call` announced by `nick`
-/// (bead mimid-1wgh.114.6).
-///
-/// It says this client cannot join, because that is the honest rendering
-/// for a front end with no media stack, and says it only for a call that
-/// started: an ended call has nothing to join, so repeating it there
-/// would be noise. Decision mimid-1wgh.117 is why the line reads as a
-/// past event and claims nothing about whether the call is still going.
-fn call_notice(call: &mimid_agent_store::call::Announcement, nick: &str) -> String {
-    let what = call.text(Some(nick));
-    if call.ended {
-        what
-    } else {
-        format!("{what} \u{2014} this client cannot join it")
-    }
 }
 
 #[cfg(test)]

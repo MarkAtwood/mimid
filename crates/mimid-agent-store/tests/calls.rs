@@ -20,7 +20,6 @@ use std::time::Duration;
 use mimid_agent_core::SignalKind;
 use mimid_agent_core::{Agent, AgentConfig};
 use mimid_agent_store::action::{ActionError, CallOptions};
-use mimid_agent_store::call::Announcement;
 use mimid_agent_store::{Change, InvitePolicy, Store};
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::directory;
@@ -329,91 +328,6 @@ async fn a_call_signal_arrives_as_a_change_and_not_as_a_message() {
     );
 }
 
-/// The announcement a call sends into its parent chat (bead
-/// mimid-1wgh.114.1; decision mimid-1wgh.128): an ordinary message in
-/// the CHAT, whose text any client renders and whose extension names the
-/// call room, its media kinds and its subject.
-///
-/// Oracle: decision mimid-1wgh.128's map, read back through
-/// `mimid_agent_store::call::in_record`, which is the receiving side a
-/// front end uses. The point under test is that it reaches BOB: alice
-/// knowing what she sent proves nothing.
-#[tokio::test]
-async fn a_call_is_announced_in_the_parent_chat() {
-    let dir = tempfile::tempdir().unwrap();
-    let (alice, bob, _chat_uri, chat_key, bob_chat) = alice_and_bob(dir.path()).await;
-
-    let options = CallOptions {
-        among: None,
-        media: vec!["audio".to_owned(), "video".to_owned()],
-        subject: "standup".to_owned(),
-    };
-    let call = alice
-        .start_call_with(alice.new_key(), &chat_key, &options)
-        .await
-        .unwrap();
-    alice.save().await.unwrap();
-
-    // It is in the CHAT, not in the call room: a client that is not in
-    // the call has to be able to see it.
-    until_store(&bob, |store| announced(store, &bob_chat).is_some()).await;
-    let (text, found) = announced(&bob, &bob_chat).expect("bob has the announcement");
-
-    assert_eq!(found.room, call.uri, "it names the call room to join");
-    assert_eq!(found.media, ["audio", "video"]);
-    assert_eq!(found.subject, "standup");
-    assert!(!found.ended, "a call that just started is not an ended one");
-
-    // The text is what a client with no knowledge of the key shows. It
-    // does not name alice: she is already the message's sender.
-    assert_eq!(text, "started a video call: standup");
-
-    // And nothing was announced in the call room itself.
-    let bob_call = bob.state().room_of_uri(&call.uri).cloned();
-    if let Some(bob_call) = bob_call {
-        assert!(
-            announced(&bob, &bob_call).is_none(),
-            "the announcement belongs in the chat, not in the call"
-        );
-    }
-
-    // Ending it is a NEW message rather than an edit of the first
-    // (decision mimid-1wgh.124), so bob ends up with two.
-    alice.announce_call_ended(&call.key).await;
-    alice.save().await.unwrap();
-    until_store(&bob, |store| {
-        announcements(store, &bob_chat).iter().any(|(_, a)| a.ended)
-    })
-    .await;
-    let all = announcements(&bob, &bob_chat);
-    assert_eq!(all.len(), 2, "a new message, not an edit: {all:?}");
-    assert_eq!(all[1].1, Announcement::ended(call.uri.clone()));
-    assert_eq!(all[1].0, "ended the call");
-    assert_eq!(all[0].1.room, all[1].1.room, "both name the same call room");
-}
-
-/// Every call announcement in `room` of `store`, oldest first, with the
-/// message's text.
-fn announcements(store: &Store, room: &str) -> Vec<(String, Announcement)> {
-    let state = store.state();
-    let mut found: Vec<(u64, String, Announcement)> = state
-        .messages
-        .values()
-        .filter(|message| message.room == room)
-        .filter_map(|message| {
-            mimid_agent_store::call::in_record(&message.extensions)
-                .map(|a| (message.received_at, message.body.clone(), a))
-        })
-        .collect();
-    found.sort_by_key(|(at, _, _)| *at);
-    found.into_iter().map(|(_, text, a)| (text, a)).collect()
-}
-
-/// The one call announcement in `room`, if there is exactly one so far.
-fn announced(store: &Store, room: &str) -> Option<(String, Announcement)> {
-    announcements(store, room).into_iter().next()
-}
-
 /// A call room's invite is joined whatever the invite policy says, and
 /// no invite is shown for it; a chat's invite still waits (decision on
 /// bead mimid-1wgh.114.16, Mark 2026-11-25).
@@ -578,92 +492,5 @@ async fn a_call_under_a_one_to_one_chat_holds_two() {
         2,
         "and it does hold two: {:?}",
         room.participants
-    );
-}
-
-/// A call among a named subset of a group chat holds only those people,
-/// and hangs under the chat it was started from (decision on bead
-/// mimid-1wgh.131, Mark 2026-11-25).
-///
-/// Oracles:
-///
-/// - room-policy-04 §5: a parent-dependent room's participants are a
-///   subset of its parent's, which the hub enforces at creation, so a
-///   call among two of three is a room the hub agrees to host.
-/// - The ceiling of decision mimid-1wgh.114.15 counts the NAMED set, so
-///   naming one other person in a chat of three is within it while the
-///   chat itself is not.
-///
-/// The point of naming them is the parent: this call is announced in the
-/// chat it was started from, which is what a call in the DM with that
-/// person cannot do. So the test checks the parent as well as the
-/// membership.
-#[tokio::test]
-async fn a_call_among_named_people_holds_only_them() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = server(dir.path(), &[ALICE, BOB, CAROL]).await;
-    let alice = Store::new(agent(&server, ALICE, dir.path()).await, InvitePolicy::Any);
-    alice.open_database().unwrap();
-    let bob = Store::new(agent(&server, BOB, dir.path()).await, InvitePolicy::Any);
-    bob.open_database().unwrap();
-    let carol = Store::new(agent(&server, CAROL, dir.path()).await, InvitePolicy::Any);
-    carol.open_database().unwrap();
-    for store in [&alice, &bob, &carol] {
-        store
-            .agent()
-            .lock()
-            .await
-            .publish_key_packages(4)
-            .await
-            .unwrap();
-    }
-
-    // A chat of three.
-    let chat = alice
-        .create_room(
-            alice.new_key(),
-            "planning",
-            &[BOB.to_owned(), CAROL.to_owned()],
-        )
-        .await
-        .unwrap();
-    alice.save().await.unwrap();
-    for store in [&bob, &carol] {
-        until_store(store, |s| s.state().room_of_uri(&chat.uri).is_some()).await;
-    }
-    let in_chat = {
-        let state = alice.state();
-        state.rooms[&chat.key].others(ALICE).len()
-    };
-    assert_eq!(in_chat, 2, "alice and two others");
-
-    // A call among alice and bob only.
-    let call = alice
-        .start_call(alice.new_key(), &chat.key, Some(&[BOB.to_owned()]))
-        .await
-        .unwrap();
-    alice.save().await.unwrap();
-    until_store(&bob, |s| s.state().room_of_uri(&call.uri).is_some()).await;
-
-    let state = alice.state();
-    let room = state
-        .rooms
-        .values()
-        .find(|r| r.uri == call.uri)
-        .expect("the call room");
-    let mut people: Vec<&str> = room.others(ALICE);
-    people.sort_unstable();
-    assert_eq!(people, vec![BOB], "carol is not on the call");
-    assert_eq!(
-        1 + people.len(),
-        2,
-        "two people, which is the ceiling: {:?}",
-        room.participants
-    );
-    assert_eq!(
-        room.parent.as_deref(),
-        Some(chat.uri.as_str()),
-        "and it hangs under the chat it was started from, which is why \
-         naming people beats calling in the DM: the chat sees it"
     );
 }

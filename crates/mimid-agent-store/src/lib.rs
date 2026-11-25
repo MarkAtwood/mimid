@@ -41,7 +41,6 @@
 
 pub mod action;
 pub mod blobs;
-pub mod call;
 mod change;
 pub mod content;
 pub mod convert;
