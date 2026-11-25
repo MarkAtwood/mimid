@@ -184,6 +184,25 @@ pub const CAPABILITIES: [&str; 4] = [
     crate::app_password::CAPABILITY,
 ];
 
+/// The `using` URIs this endpoint accepts: [`CAPABILITIES`], and the VTC
+/// one as well when `[jmap] vtc` turned that surface on (bead
+/// mimid-1wgh.114.2).
+///
+/// It has to be a list built at start rather than a constant, because a
+/// client naming a capability the endpoint does not serve must get RFC
+/// 8620 §3.3's request-level `unknownCapability`. That is the right
+/// answer for a surface that is off (decision mimid-1wgh.119): it says
+/// the capability is absent, where a method-level refusal would have the
+/// client guess whether it is policy or a missing feature.
+#[must_use]
+pub fn allowed_capabilities(vtc: bool) -> Vec<&'static str> {
+    let mut allowed = CAPABILITIES.to_vec();
+    if vtc {
+        allowed.push(mimid_agent_jmap::vtc::CAPABILITY);
+    }
+    allowed
+}
+
 /// `maxSizeRequest`: RFC 8620 §2's suggested minimum.
 pub const MAX_SIZE_REQUEST: usize = 10_000_000;
 
@@ -304,6 +323,8 @@ pub(crate) struct Jmap {
     /// The Session, `state` included.
     pub(crate) session: Value,
     pub(crate) session_state: String,
+    /// What a request may name in `using` ([`allowed_capabilities`]).
+    pub(crate) capabilities: Vec<&'static str>,
 }
 
 /// The CA setup page and its two downloads, built once at start so the
@@ -456,6 +477,7 @@ pub(crate) fn session(
     base: &str,
     user_uri: &str,
     account: &Id,
+    vtc: Option<&mimid_agent_jmap::VtcOptions>,
 ) -> Result<(Value, String), serde_json::Error> {
     // ChatCapability is #[non_exhaustive]: built through serde (AGENTS.md),
     // which checks the fields. What mimid-agent-jmap accepts with a blob
@@ -527,6 +549,21 @@ pub(crate) fn session(
         // draft-atwood-jmap-chat-00 L258, as mimid-server.
         "ownerUserId": user_uri,
     });
+    // The VTC surface, with `[jmap] vtc` (draft-atwood-jmap-vtc-00;
+    // beads mimid-1wgh.114, mimid-1wgh.114.2). Off by default and then
+    // absent from the Session entirely, not advertised as false, which
+    // is what decision mimid-1wgh.119 asked for: a client sees no
+    // capability rather than one that refuses. The properties are
+    // account-level, as the draft puts them, and the top-level entry is
+    // the empty object RFC 8620 §2 wants for a capability whose settings
+    // are all per account.
+    if let Some(options) = vtc.filter(|options| options.enabled) {
+        let capability = serde_json::to_value(mimid_agent_jmap::vtc::capability(options))?;
+        session["capabilities"][mimid_agent_jmap::vtc::CAPABILITY] = json!({});
+        let id: &str = account;
+        session["accounts"][id]["accountCapabilities"][mimid_agent_jmap::vtc::CAPABILITY] =
+            capability;
+    }
     let digest = Sha256::digest(serde_json::to_vec(&session)?);
     let state: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
     session["state"] = json!(state);
@@ -1242,7 +1279,7 @@ async fn post_api(
         Ok(request) => request,
         Err(error) => return problem(error),
     };
-    if let Err(error) = check_known_capabilities(&request, &CAPABILITIES) {
+    if let Err(error) = check_known_capabilities(&request, &jmap.capabilities) {
         return problem(error);
     }
     let sends = request
@@ -1875,13 +1912,84 @@ mod tests {
         assert!(HeaderValue::from_str(&content_disposition("x\r\nSet-Cookie: a=b")).is_ok());
     }
 
+    /// Oracle: decision mimid-1wgh.119 and draft-atwood-jmap-vtc-00
+    /// §Account-Level Capability Object. The VTC surface is opt-in, and
+    /// when off the Session must not name the capability at all —
+    /// advertising it as `false` would have a client believe the surface
+    /// is there and refusing. When on, the properties are account-level
+    /// and say what this agent can actually do: room calls keyed from
+    /// the call room's MLS group, and nothing that needs a media plane.
+    #[test]
+    fn the_vtc_capability_is_absent_until_it_is_switched_on() {
+        let account = account_id("mimi://a.example/u/alice");
+        let url = "http://127.0.0.1:1";
+        let user = "mimi://a.example/u/alice";
+        let vtc = mimid_agent_jmap::vtc::CAPABILITY;
+
+        let id = account.to_string();
+        let id = id.as_str();
+
+        // Off, and off explicitly: both leave it out entirely.
+        for options in [None, Some(mimid_agent_jmap::VtcOptions::default())] {
+            let (doc, _) = session(url, user, &account, options.as_ref()).unwrap();
+            assert!(
+                doc["capabilities"].get(vtc).is_none(),
+                "{options:?} must not advertise the capability"
+            );
+            assert!(
+                doc["accounts"][id]["accountCapabilities"]
+                    .get(vtc)
+                    .is_none(),
+                "{options:?}"
+            );
+        }
+
+        let on = mimid_agent_jmap::VtcOptions::enabled();
+        let (doc, state) = session(url, user, &account, Some(&on)).unwrap();
+        // RFC 8620 §2: the server-level entry is the empty object when
+        // every setting is per account.
+        assert_eq!(doc["capabilities"][vtc], json!({}));
+        let account_level = &doc["accounts"][id]["accountCapabilities"][vtc];
+        assert_eq!(account_level["mayCreateCall"], json!(true));
+        assert_eq!(account_level["supportsRoomCalls"], json!(true));
+        // The two that say mimid hosts and keys the call's own MIMI room.
+        assert_eq!(account_level["supportsMimiCalls"], json!(true));
+        assert_eq!(account_level["supportsMimiKeyedCalls"], json!(true));
+        // Everything needing a media plane of the server's own is off,
+        // because mimid has none (decision mimid-1wgh.38).
+        for absent in [
+            "supportsRingCalls",
+            "supportsScheduledCalls",
+            "supportsRecording",
+            "supportsLivestream",
+            "supportsLobby",
+            "supportsBreakoutRooms",
+        ] {
+            assert_eq!(account_level[absent], json!(false), "{absent}");
+        }
+        assert!(
+            !account_level["iceServers"].as_array().unwrap().is_empty(),
+            "the relays a client needs to gather candidates"
+        );
+        // The capability is inside the digest, so turning it on moves
+        // the Session state and a client refetches.
+        assert_eq!(doc["state"], json!(state));
+        let (_, off_state) = session(url, user, &account, None).unwrap();
+        assert_ne!(state, off_state, "the state must move when it is on");
+    }
+
     #[test]
     fn the_session_names_one_chat_account() {
         let account = account_id("mimi://a.example/u/alice");
         assert_eq!(account, account_id("mimi://a.example/u/alice"));
         assert_ne!(account, account_id("mimi://a.example/u/bob"));
-        let (session, state) =
-            session("http://127.0.0.1:1", "mimi://a.example/u/alice", &account).unwrap();
+        let (session, state) = session(
+            "http://127.0.0.1:1",
+            "mimi://a.example/u/alice",
+            &account,
+            None,
+        )
+        .unwrap();
         assert_eq!(session["state"], json!(state));
         assert_eq!(
             session["primaryAccounts"][CHAT_CAPABILITY],

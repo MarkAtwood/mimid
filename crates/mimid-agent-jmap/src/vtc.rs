@@ -59,6 +59,11 @@ pub fn demo_ice_servers() -> Vec<VtcIceServer> {
     ]
 }
 
+/// The Session capability this surface is advertised under
+/// (draft-atwood-jmap-vtc-00 §Account-Level Capability Object). Absent
+/// from the Session when the surface is off (decision mimid-1wgh.119).
+pub const CAPABILITY: &str = jmap_vtc_types::JMAP_VTC_URI;
+
 /// How the agent's VTC surface is configured.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VtcOptions {
@@ -137,6 +142,14 @@ pub fn capability(options: &VtcOptions) -> jmap_vtc_types::VtcCapability {
         // signals it through that room's messages, which is what
         // supportsMimiCalls says (draft-atwood-jmap-vtc-00 §Capability).
         "supportsMimiCalls": true,
+        // And it exports that room's per-epoch secret as input keying
+        // material, which is what supportsMimiKeyedCalls says
+        // (draft-atwood-jmap-vtc-00 §Account-Level Capability Object, the
+        // addition of jmap-chat-spec fb05ead). A server advertising
+        // false, or omitting it, offers neither VTCCall/signal nor
+        // VTCCall/exportMediaSecret; this agent offers both, over the
+        // call room's own MLS group (`VtcBackend::export_media_secret`).
+        "supportsMimiKeyedCalls": true,
     }))
     .expect("a VtcCapability of our own making")
 }

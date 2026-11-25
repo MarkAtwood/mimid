@@ -307,6 +307,18 @@ pub struct JmapSetting {
     /// IRC front end, in the agent's own database.
     #[serde(default = "yes")]
     pub webpush: bool,
+    /// Whether the agent offers the VTC surface: `VTCCall` and its
+    /// signalling, and `VTCCall/exportMediaSecret`, which hands a client
+    /// the call room's per-epoch secret as input keying material
+    /// (draft-atwood-jmap-vtc-00; beads mimid-1wgh.114, mimid-1wgh.114.2).
+    ///
+    /// **Off by default** (decision mimid-1wgh.119), unlike every other
+    /// JMAP capability here: this one hands out key material, and nothing
+    /// implements the extension yet. When off, the capability is absent
+    /// from the Session and no VTC method is registered, so a client is
+    /// told the method is unknown rather than finding it refuse.
+    #[serde(default)]
+    pub vtc: bool,
 }
 
 impl Default for JmapSetting {
@@ -315,6 +327,7 @@ impl Default for JmapSetting {
             enabled: true,
             listen_tls: None,
             webpush: true,
+            vtc: false,
         }
     }
 }

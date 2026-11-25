@@ -96,8 +96,19 @@ The JMAP Chat front end. On by default.
 | `enabled` | boolean | `true` | Serve JMAP Chat at `listen`. With `false`, the HTTP listener, if `listen` is set, still serves the did:webvh log endpoint and answers `404` on the JMAP paths after the Host and credential checks. |
 | `listen_tls` | socket address | none | Where the endpoint also listens with HTTPS, on any address: a tailnet or WireGuard address is the safe choice. Needs `[tls]` and `enabled = true`. Off by default. An address that may be reachable from the internet is allowed, with a WARN at start. |
 | `webpush` | boolean | `true` | Whether a JMAP client may register for Web Push (`chatPush`). See [Push](#push-what-the-push-service-sees). |
+| `vtc` | boolean | `false` | Whether the agent offers calls: `VTCCall` and its signalling, and `VTCCall/exportMediaSecret`. **Off by default**, unlike everything else here. See below. |
 
 With `[jmap] enabled = false` and no `[irc]`, the agent would serve nothing, and the configuration is refused.
+
+#### `[jmap] vtc`: calls, and why it is off
+
+With `vtc = true` the Session advertises `urn:ietf:params:jmap:vtc` and a JMAP client can start a call in a chat, learn that one is running, exchange SDP offers, answers and ICE candidates, and fetch the call's media secret. The agent hosts the call's own MIMI room under the chat's room and carries the signalling as messages in it, so the signalling is authenticated and end-to-end encrypted like any other message. **mimid ships no media stack**: the client does the audio and video itself.
+
+`VTCCall/exportMediaSecret` hands the client the call room's MLS exporter secret for the epoch the group is in. That is **input keying material** for the client's own media key schedule, never a media key: the client derives afresh for each epoch, and a membership change rekeys the call because it rekeys the room. Ask with the epoch you believe the call is in and you get `stateMismatch` with the current one rather than a secret nobody else is using.
+
+It is off by default because it is the one capability here that hands out key material, and because nothing implements the extension yet. While it is off the capability is absent from the Session and a request naming it in `using` gets `unknownCapability` (HTTP 400), so a client can tell "no calls here" from "calls refused".
+
+Receiving signals needs the JMAP WebSocket at `/jmap/ws`, which the Session advertises: a call signal is an ephemeral event and the EventSource carries only "these types changed, re-fetch", which a signal is not. A client sends `VTCStreamEnable` on the socket and the agent pushes each `VTCCallSignal` as it arrives.
 
 `listen` itself stays loopback only, because it is plaintext; `listen_tls` is how a client on another device reaches the endpoint. Its Session is its own: `apiUrl`, `uploadUrl`, `downloadUrl`, `eventSourceUrl` and the WebSocket URL all name the first `[tls] names` entry over `https:` (`wss:` for the socket), so a client is given URLs it can reach and whose certificate matches. With no configured name the address itself is used. One certificate serves every front end, each on its own port; there is no HTTP/2.
 

@@ -265,8 +265,15 @@ impl Daemon {
         // mimid-e13m.6).
         let account = http::account_id(&config.user_uri);
         let chat = if config.jmap.enabled && listener.is_some() {
-            let mut chat =
-                AgentChat::over(Arc::clone(&store), account.clone(), Options::default())?;
+            // `[jmap] vtc`: off by default, because this capability hands
+            // out key material (decision mimid-1wgh.119). Off, the VTC
+            // methods are not registered at all and the Session does not
+            // name the capability.
+            let mut options = Options::default();
+            if config.jmap.vtc {
+                options.vtc = mimid_agent_jmap::VtcOptions::enabled();
+            }
+            let mut chat = AgentChat::over(Arc::clone(&store), account.clone(), options)?;
             // One subscription store for every front end that pushes: the
             // rows are keyed by front end, and the VAPID key is the
             // agent's (bead mimid-1wgh.99).
@@ -292,12 +299,14 @@ impl Daemon {
         let endpoint_for = |base: &str, port: u16, names: Vec<String>| {
             let jmap = match &chat {
                 Some(chat) => {
-                    let (session, session_state) = http::session(base, &config.user_uri, &account)?;
+                    let (session, session_state) =
+                        http::session(base, &config.user_uri, &account, Some(chat.vtc_options()))?;
                     Some(Jmap {
                         dispatcher: http::dispatcher(chat, &credentials, &account),
                         chat: Arc::clone(chat),
                         session,
                         session_state,
+                        capabilities: http::allowed_capabilities(chat.vtc_options().enabled),
                     })
                 }
                 None => None,
