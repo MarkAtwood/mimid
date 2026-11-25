@@ -2,22 +2,23 @@
   "id": "mimid-1wgh.114.16",
   "title": "Decide what a front end does with a pending invite to a call room",
   "design": "Step 3 of bead mimid-1wgh.130, split out because it is a decision and\nnot the plumbing. Steps 1 and 2 shipped: Agent::invite_details and\nrecord::Invite now carry the parent room, so a front end CAN tell an\ninvite to a call from an invite to a chat. What it should DO with that\nis open.\n\nWHAT HAPPENS NOW, with a policy stricter than the default\ninvites = \"any\". A call is its own parent-dependent room and\nStore::start_call invites the chat's people into it (decision\nmimid-1wgh.113), so each of them gets a pending invite. On IRC,\nRenderer::show_invites sends the user a raw INVITE to\nnames.invite_channel(\u0026invite) -- a channel that does not exist and that\ngets no channel even once joined (bead mimid-1wgh.114.6). The user\naccepts and nothing appears to happen.\n\nTHE OPTIONS, as bead mimid-1wgh.130 framed them:\n\n1. Accept a call's invite the way invites = \"any\" does, whatever the\n   policy says. The argument: the call is already confined to the\n   parent's people by room-policy-04 §5 and the hub enforces that, so\n   the invite opens the user to nobody the chat has not already let in,\n   and the policy's purpose is to stop strangers opening rooms. The\n   argument against: a policy that says \"never\" meaning never is a\n   policy the user set, and a call is still a room someone else made\n   the user a member of.\n2. Keep it pending but say what it is: the front end shows \"a call in\n   \u003cchat\u003e\" rather than an invite to a room with no name. Honest, and it\n   still asks a question the user may not be able to act on in time --\n   a call is live for minutes.\n3. Drop it: do not show a call's invite at all under a strict policy,\n   and let the announcement of bead mimid-1wgh.114.1 in the parent chat\n   be the only thing the user sees. The call is then unjoinable for\n   them, which is the status quo for a client with no VTC surface and\n   is at least not confusing.\n\nWhichever is chosen, IRC needs its own answer, because its INVITE\nto a channel that will not exist is actively misleading, not merely\nuninformative (bead mimid-1wgh.114.6 chose a NOTICE for the parallel\ncase of a keyed call starting elsewhere, which argues for option 2 or 3\nhere by consistency).\n\nNOT URGENT. Nothing is visible with the default policy. It matters the\nfirst time someone runs a stricter one.",
+  "notes": "DECIDED by Mark 2026-11-25: join a call room's invite whatever the\ninvite policy says, and show no invite for it anywhere. Option 1.\n\nSo Store::sync's invite handling joins an invite whose\nrecord::Invite::parent names a room this user is in, before the policy\nis consulted, and no Change::InvitePending is recorded for it. The\nannouncement of bead mimid-1wgh.114.1 in the parent chat stays the only\nthing the user sees, which is what it was for.\n\nWHY: a call room is confined to the parent chat's people by\nroom-policy-04 §5 and the hub enforces that at creation, so joining\nadmits nobody the chat has not already admitted. The invite policy\nexists to stop strangers opening rooms, and this is not that. It also\nmakes calls work under a strict policy, where today they silently\ncannot.\n\nTHE COST MARK ACCEPTED: a user who set invites = \"never\" meant never,\nand this overrides them for one case. Narrowly: only for a room whose\nparent they are already in, which room-policy §5 guarantees for a call.\n\nThis also removes the IRC trap of bead mimid-1wgh.114.6: no INVITE to a\nchannel that will never exist, because there is no invite.\n\nNOT chosen: labelling the pending invite \"a call in \u003cchat\u003e\". Honest and\nconsistent with .114.6's NOTICE, but a call is live for minutes, so by\nthe time the user notices and accepts, it is over -- truthful about\nsomething they cannot act on.\n\nIMPLEMENTATION NOTE: the parent check must be \"a room this user is in\",\nnot merely \"parent is Some\". A call room whose parent this agent does\nnot hold would otherwise be auto-joined on a peer's word.",
   "status": "open",
   "priority": 2,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-25T16:32:28.222503728Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-25T16:32:28.222503728Z",
+  "updated_at": "2026-11-25T19:16:41.726940314Z",
   "labels": [
     "human"
   ],
   "dependencies": [
     {
       "issue_id": "mimid-1wgh.114.16",
-      "depends_on_id": "mimid-1wgh.114",
+      "depends_on_id": "mimid-1wgh",
       "type": "parent-child",
-      "created_at": "2026-11-25T16:32:28.261678567Z",
+      "created_at": "2026-11-25T19:17:32.804513473Z",
       "created_by": "Mark Atwood",
       "metadata": "{}"
     }

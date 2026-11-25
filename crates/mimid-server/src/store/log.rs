@@ -158,6 +158,46 @@ impl Store {
         Ok(found.is_some())
     }
 
+    /// The window of `room_id`'s fanout sequences catch-up could serve:
+    /// the oldest still held and the highest assigned
+    /// (docs/design/mimi-catchup.md §5, §6). `None` for the oldest when
+    /// the room has no event left with a sequence.
+    ///
+    /// The oldest is read from the events the hub still holds, not from
+    /// a stored cutoff, so it follows retention exactly
+    /// (`crate::store::retention`, the operator's
+    /// `message_retention_secs`): shortening retention shortens
+    /// catch-up and the two cannot drift apart. The highest is the
+    /// counter, so it counts a fanout whose events have since been
+    /// pruned.
+    ///
+    /// An event from before the sequence existed (`fanout_seq` 0,
+    /// migration 0018) is not part of the window: it was delivered
+    /// without a sequence and catch-up cannot name it.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlx`] if a query fails and
+    /// [`StoreError::OutOfRange`] if a stored sequence is negative.
+    pub async fn fanout_window(&self, room_id: &str) -> Result<(Option<u64>, u64), StoreError> {
+        let oldest: Option<i64> = sqlx::query_scalar(
+            "SELECT MIN(fanout_seq) FROM room_event WHERE room_id = ? AND fanout_seq > 0",
+        )
+        .bind(room_id)
+        .fetch_one(&self.reader)
+        .await?;
+        let next: Option<i64> =
+            sqlx::query_scalar("SELECT next_fanout_seq FROM room WHERE room_id = ?")
+                .bind(room_id)
+                .fetch_optional(&self.reader)
+                .await?;
+        let highest = match next {
+            Some(next) => from_sql_int(next)?.saturating_sub(1),
+            None => 0,
+        };
+        Ok((oldest.map(from_sql_int).transpose()?, highest))
+    }
+
     /// Appends the proposal `event` to its room's log, stores every message
     /// in `proposals` as a pending proposal of `event.epoch` accepted at
     /// `event.accepted_at`, in order, and enqueues `outbox`, all in one
@@ -742,6 +782,68 @@ mod tests {
                 "d was never a destination: {seq}"
             );
         }
+    }
+
+    /// Oracle: docs/design/mimi-catchup.md §5 and §6. The answer must
+    /// carry the hub's current highest sequence so the follower knows
+    /// whether to ask again, and catch-up reaches exactly as far back as
+    /// the events the hub still holds -- mimid offers it over
+    /// `message_retention_secs`, so shortening retention shortens
+    /// catch-up and the two cannot drift.
+    ///
+    /// That is why the oldest is read from the surviving events and not
+    /// from a stored cutoff: a prune moves it with no second write. The
+    /// highest comes from the counter instead, so it still counts a
+    /// fanout whose events are gone -- which is what makes §5.1's
+    /// distinct out-of-window answer possible rather than a short one.
+    #[tokio::test]
+    async fn the_fanout_window_follows_retention_and_the_counter() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_room(&dir).await;
+        let one = "mimi://a.example/r/one";
+        assert_eq!(
+            store.fanout_window(one).await.unwrap(),
+            (None, 0),
+            "a room with no fanout has nothing to serve and nothing to name"
+        );
+
+        for hash in [&b"h1"[..], &b"h2"[..], &b"h3"[..]] {
+            store
+                .append_event(&at(hash, b"m", one, 1), &ONE_ROW)
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.fanout_window(one).await.unwrap(), (Some(1), 3));
+
+        // Retention prunes the oldest two events. The window shortens
+        // from the front; the highest does not move, because the hub
+        // did assign 3 fanouts.
+        sqlx::query("DELETE FROM room_event WHERE fanout_seq <= 2")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.fanout_window(one).await.unwrap(),
+            (Some(3), 3),
+            "catch-up reaches back exactly as far as the events held"
+        );
+
+        // Everything pruned: nothing to serve, and the highest still
+        // says what the follower is missing.
+        sqlx::query("DELETE FROM room_event")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(store.fanout_window(one).await.unwrap(), (None, 3));
+
+        assert_eq!(
+            store
+                .fanout_window("mimi://a.example/r/absent")
+                .await
+                .unwrap(),
+            (None, 0),
+            "a room this hub does not host"
+        );
     }
 
     #[tokio::test]

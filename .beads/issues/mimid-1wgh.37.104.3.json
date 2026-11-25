@@ -2,14 +2,14 @@
   "id": "mimid-1wgh.37.104.3",
   "title": "catch-up 3: serve the catchUp primitive, bounded by retention and entitlement",
   "description": "docs/design/mimi-catchup.md §5, §5.1, §6. Serve catchUp for a room: take the sequence the requester holds and a limit (mimid asks for 256, INVENTED; a hub may return fewer), answer with fanouts in hub order each carrying its sequence, plus the hub's current highest so the requester knows whether to ask again.\n\nPublish the template in the directory beside notify, update, reportAbuse and proxyDownload (directory.rs): a provider that does not publish it does not support it, which is what makes this safe to add without version negotiation.\n\nBound the answer by catch-up 2's entitlement and by retention: mimid offers catch-up over exactly message_retention_secs (7 days by default) so that shortening retention shortens catch-up and the two cannot drift. A request older than the window MUST be answered DISTINCTLY and not with the oldest still held, which would look complete and hide the loss.\n\nAuthenticate with the provider auth that already exists (epic mimid-75nk). Tests: an in-window request returns the exact range; an out-of-window request is refused distinctly; limit is honoured; an unauthenticated or unentitled request is refused.",
-  "notes": "Bound by two windows: retention (§6, message_retention_secs) and the requester's participation window (§8, a SHOULD per decision mimid-1wgh.107). The MUST that remains is §5.1: an out-of-window request MUST be answered distinctly, never by returning the oldest fanout still held, because that looks like a complete answer and hides the loss. That one is observable by the requester and belongs in a test.",
+  "notes": "2026-11-25: the store half is DONE, the wire half is blocked.\n\nDONE, and committed:\n\n* Store::fanout_window(room) -\u003e (oldest still held, highest assigned).\n  The oldest is read from the surviving room_event rows, not from a\n  stored cutoff, so it follows retention exactly (§6: mimid offers\n  catch-up over message_retention_secs, and the two cannot drift). The\n  highest comes from room.next_fanout_seq, so it still names a fanout\n  whose events have been pruned -- which is what makes §5.1's DISTINCT\n  out-of-window answer possible instead of a short one.\n  Test: the_fanout_window_follows_retention_and_the_counter.\n* Store::serves(room, domain, seq), the §8 entitlement bound, with five\n  tests (bead mimid-1wgh.37.104.2).\n\nBLOCKED on bead mimid-1wgh.37.104.6: where a catch-up answer carries\nits sequences. Decision mimid-1wgh.104 put the sequence beside the\nmessage, which bead mimid-1wgh.37.104.1 implemented as a header -- fine\nfor /notify, which carries exactly one fanout, but a catch-up answer\ncarries many (§5: \"fanouts in hub order, each with its sequence\") and\none header cannot pair them. That is wire format for the protocol-08\ntext of decision mimid-1wgh.105, so it is Mark's call.\n\nAND THE DIRECTORY TEMPLATE IS DELIBERATELY NOT PUBLISHED. §5 makes\npublishing it the whole of the capability negotiation -- \"a provider\nthat does not publish the template does not support it\" -- so it must\nappear in directory.rs only when the operation works, in the same\ncommit. It goes in Directory::unknown, not as a new typed field: the\nfield is not in protocol-07 §5.1 and `unknown` exists to round-trip\nexactly this, so no protocol-07 wire type changes.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-23T01:12:49.413447072Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-23T01:29:17.80873934Z",
+  "updated_at": "2026-11-25T18:57:46.170519723Z",
   "labels": [
     "wg"
   ],
@@ -27,6 +27,14 @@
       "depends_on_id": "mimid-1wgh.37.104.2",
       "type": "blocks",
       "created_at": "2026-11-23T01:13:16.050594161Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.37.104.3",
+      "depends_on_id": "mimid-1wgh.37.104.6",
+      "type": "blocks",
+      "created_at": "2026-11-25T18:57:35.178089206Z",
       "created_by": "Mark Atwood",
       "metadata": "{}"
     }

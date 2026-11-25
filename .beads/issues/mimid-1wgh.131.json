@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.131",
+  "title": "VTCCall/set cannot say who to call, so with a ceiling of two there are no calls in a group chat",
+  "design": "Found 2026-11-25 while deciding bead mimid-1wgh.114.15. Mark saw this as\nan option there and chose the smaller change, so it is its own item.\n\nWHAT IS MISSING. Store::start_call_with already takes\nCallOptions::among: Option\u003cVec\u003cString\u003e\u003e -- \"who to invite: everyone in\nthe parent when None, and otherwise a subset of the parent's people\".\ncrates/mimid-agent-jmap/src/vtc_backend.rs create_call hardcodes\n`among: None`, so a call started over JMAP always invites the whole\nparent chat.\n\nWHY IT MATTERS NOW. Decision mimid-1wgh.114.15 sets\nmaxParticipantsPerCall to 2 and refuses a call whose room would hold\nmore. Combined with `among: None` that means NO CALLS AT ALL in any\nchat of three or more people, even though the store can already host a\ntwo-person call under a twelve-person chat and the hub would accept it\n(room-policy-04 §5 confines a child's participants to a subset of the\nparent's, and two of twelve is a subset).\n\nSo the ceiling is honest but unusable, and the thing that makes it\nusable is this.\n\nWHAT TO DO. Carry a participant list from VTCCall/set into CallOptions::\namong. The open question is what it is called on the wire, which is why\nthis is labelled human:\n\n* draft-atwood-jmap-vtc-00 has `ringTargets` on a call create, which\n  mimid's VtcBackend::create_call receives as `_ring_targets` and\n  ignores, because the capability advertises supportsRingCalls: false.\n  Reusing it would need that switch turned on and would bring the ring\n  lifecycle with it -- bigger than this.\n* An invented field, which needs a decision bead per AGENTS.md and\n  would not interoperate.\n* Or infer it: in a DIRECT chat (two people) `among: None` is already\n  correct, so the ceiling only bites in group chats. A deployment could\n  be told calls work in direct chats and not group ones, which is\n  cheap, truthful and needs no wire change at all.\n\nThat third reading is worth weighing seriously before the other two: it\nmay be that a two-party-only mimid simply does not need to express who\nto call, and the whole question goes away when the SFU of bead\nmimid-1wgh.114.7 lands.\n\nCHECK FIRST: whether Render::is_call_room's parent, for a direct chat,\ngives a call room with exactly two participants today. If it does,\nreading 3 is free and this bead is a documentation change.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-25T19:19:10.251702076Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-25T19:19:10.251702076Z",
+  "labels": [
+    "feature",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.131",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-25T19:19:10.497818596Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
