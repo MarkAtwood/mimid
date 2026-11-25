@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.128",
+  "title": "Decision needed: the private-use extension key that announces a live call, its CBOR type and its contents",
+  "design": "FOR Mark. Bead mimid-1wgh.114.1 says this is the first thing to decide and\nthat no code should go in before it, so this is the decision bead it asked\nfor. I have not implemented anything against it.\n\nTHE QUESTION. An ordinary message in the PARENT chat announces a live\ncall: text any client renders (\"Alice started a call\"), plus a\nmimi-content-10 §4.3 extension that a client which knows the key turns\ninto a Join affordance. Three parts need settling: the key, the value's\nCBOR type, and what goes in the value.\n\n1. THE KEY: TEXT, not a negative integer.\n\n§4.3 allows `int / tstr .size (1..255)`, and §8.2.1 says \"Negative integer\nand text string keys are only for private use\". Two implementations\npicking private negative integers will collide; two picking text strings\nneed not. The key is also on the wire where a reader benefits from it\nnaming itself. mimi-content already models this:\n`ExtensionKey::Text(String)`, with MAX_EXTENSION_KEY_LEN 255.\n\nWHICH TEXT, three readings:\n\n(a) a bare word, \"liveCall\". Shortest. Gives up the only argument for\n    text over integers, since another implementation may pick the same\n    word and mean something else.\n(b) an implementation prefix, \"mimid:liveCall\". Cannot collide in\n    practice, 15 octets.\n(c) a tag URI, \"tag:reviewcommit.com,2026:mimid:live-call\". Cannot\n    collide at all, names its owner and its year on the wire, and MATCHES\n    THE CONVENTION ALREADY IN THIS CODEBASE: the agent's JMAP capability\n    is `tag:reviewcommit.com,2026:mimid:app-passwords`. 41 octets, once\n    per call, well inside 255.\n\nMY RECOMMENDATION: (c), for the consistency with what mimid already\nspells this way, and because the whole point of the key is to be\nunmistakably ours until IANA gives a registered integer. The cost is\noctets on one message per call.\n\n2. THE CBOR TYPE: a map.\n\n§8.2.1's registry wants a type for each extension and \"encourages a map\ncontaining all the related fields\" for related data. A bare text string\nholding the room URI would work today and have nowhere to put the second\nfield we already know we need (see 3).\n\n3. WHAT GOES IN IT. The call room's URI is the one thing a client cannot\nproceed without. I would add the media kinds, for a concrete reason found\nwhile building bead mimid-1wgh.114.11: the receiving side projects a\nVTCCall from the room, and the room carries no mediaTypes, so that field\nis currently EMPTY on every side but the creator's. The announcement is\nthe only place that information crosses. `subject` has the same problem\nand the same fix.\n\nSo: { room URI, media kinds, optional subject }. Nothing about keys: the\nmedia secret is fetched, never announced (decision mimid-1wgh.119 and\ndraft-atwood-jmap-vtc-00 §VTCCall/exportMediaSecret both forbid putting\nit in anything pushed).\n\nOPEN SUB-QUESTION I would rather Mark settled: integer or text keys\nINSIDE that map. mimi-content's own CDDL is integer-keyed throughout,\nwhich argues integer; but this is a private-use extension whose outer key\nis already self-describing text, which argues text for readability. I\nlean text, weakly.\n\n4. MARK IT PROVISIONAL, as decision mimid-1wgh.112 did for component id\n0xf021: a private-use value, used now, with the draft asking IANA for a\nregistered one. Bead mimid-1wgh.37.111 is where that ask lives — nothing\nin MIMI says a call is live, which is the gap underneath all of this.\n\nAND: no JMAP goes to the MIMI working group (memory\nno-jmap-to-the-mimi-wg). This extension is mimi-content, not JMAP, so it\nis sayable upstream; the VTC surface that consumes it is not.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-25T03:50:34.367711384Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-25T03:50:34.367711384Z",
+  "labels": [
+    "human",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.128",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-25T03:50:34.407592788Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

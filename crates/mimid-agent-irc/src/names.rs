@@ -371,8 +371,18 @@ impl Names {
     /// not a channel (docs/design/client-survey.md §10 S2): it gets no
     /// channel name, gives up any name held for it by its invite, and
     /// keeps only when its query was closed ([`hidden_at`]).
+    ///
+    /// A **call's own room** gets no channel either (bead
+    /// mimid-1wgh.114.6). It is a parent-dependent room
+    /// ([`Room::parent`]) that `Store::start_call` invited this user to,
+    /// and a stock IRC client cannot join the call it carries: it has no
+    /// media stack to give a media secret to and no way to exchange SDP.
+    /// Given a channel it became a trap — an unnamed channel appearing
+    /// for every call, whose signalling messages are not content and
+    /// whose "join" does nothing. The JMAP front end skips these rooms
+    /// for the same reason (`mimid_agent_jmap`'s `Render::is_call_room`).
     pub fn note_room(&mut self, room: &mut Room) {
-        if room.status != RoomStatus::Active {
+        if room.status != RoomStatus::Active || is_call_room(room) {
             self.forget_room(&room.key);
             room.ext.remove(EXT_KEY);
             return;
@@ -576,6 +586,14 @@ pub fn hidden_at(room: &Room) -> Option<u64> {
 pub fn set_hidden_at(room: &mut Room, at: u64) {
     room.ext
         .insert(EXT_KEY.to_owned(), json!({ "hiddenAt": at }));
+}
+
+/// Whether `room` is a call's own room: a parent-dependent room
+/// (room-policy-04 §5 `parent_room`), which is what `Store::start_call`
+/// hosts under the chat the call was started from. The same test
+/// `mimid_agent_jmap`'s `Render::is_call_room` makes.
+fn is_call_room(room: &Room) -> bool {
+    room.parent.is_some()
 }
 
 /// The text kept under `field` in `ext["irc"]`.
@@ -848,6 +866,49 @@ mod tests {
         assert_eq!(names.channel("R4"), Some("#bside"));
         names.forget_invite(2);
         assert_eq!(names.room_of("#bside"), Some(&"R4".to_owned()));
+    }
+
+    /// Oracle: bead mimid-1wgh.114.6: a stock IRC client cannot join a
+    /// keyed call, so the call's own room must not appear as a channel.
+    /// Given one it was a trap: an unnamed channel for every call, whose
+    /// "join" does nothing.
+    #[test]
+    fn a_calls_own_room_is_not_a_channel() {
+        let mut names = Names::new(ME);
+        let chat = "mimi://a.example/r/chat";
+        let mut parent = room("R1", chat, Some("lobby"));
+        names.note_room(&mut parent);
+        assert_eq!(names.channel("R1"), Some("#lobby"));
+
+        // The call's room: active, not direct, and parent-dependent.
+        let mut call: Room = serde_json::from_value(json!({
+            "key": "R2",
+            "uri": "mimi://a.example/r/call",
+            "name": Value::Null,
+            "status": "active",
+            "parent": chat,
+        }))
+        .unwrap();
+        names.note_room(&mut call);
+        assert_eq!(names.channel("R2"), None, "a call room gets no channel");
+        assert!(
+            !call.ext.contains_key(EXT_KEY),
+            "and nothing is kept for it: {:?}",
+            call.ext
+        );
+        // The chat it hangs under is untouched.
+        assert_eq!(names.channel("R1"), Some("#lobby"));
+
+        // A name held for it is given up, as a direct room's is: a room
+        // that becomes parent-dependent must not keep a channel it was
+        // given before.
+        let mut was_a_channel = room("R3", "mimi://a.example/r/three", Some("three"));
+        names.note_room(&mut was_a_channel);
+        assert_eq!(names.channel("R3"), Some("#three"));
+        was_a_channel.parent = Some(chat.to_owned());
+        names.note_room(&mut was_a_channel);
+        assert_eq!(names.channel("R3"), None);
+        assert!(!was_a_channel.ext.contains_key(EXT_KEY));
     }
 
     #[test]
