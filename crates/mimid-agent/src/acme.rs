@@ -31,9 +31,14 @@
 //! write nothing else. §5.2 calls this the one that "turns any provider
 //! into one that works, after one CNAME by hand".
 //!
-//! §5.2 names one more that is not here: an **RFC 2136** dynamic update
-//! with a TSIG key, which is a DNS wire-format implementation of its own
-//! rather than a flag on this module (bead mimid-e13m.8.1).
+//! §5.2 names one more, and it is deliberately not here: an **RFC 2136**
+//! dynamic update with a TSIG key. It is a DNS wire-format
+//! implementation of its own rather than a flag on this module, and a
+//! hook calling `nsupdate` drives the same protocol with a tool that is
+//! already installed and already correct, so it would buy not needing a
+//! three-line hook (bead mimid-e13m.8.1, closed 2026-11-24 — Mark's
+//! call; the design and test plan are on the bead if a user ever needs
+//! it).
 //!
 //! # The order, step by step
 //!
@@ -60,8 +65,10 @@
 //!
 //! # Limitations
 //!
-//! - **No RFC 2136** (bead mimid-e13m.8.1): `hook` and `acme-dns` are the
-//!   methods here.
+//! - **No RFC 2136**, by decision rather than for now (bead
+//!   mimid-e13m.8.1): `hook` and `acme-dns` are the methods, and a hook
+//!   calling `nsupdate` is how an operator with their own nameserver
+//!   does what RFC 2136 would have done.
 //! - **The acme-dns update is not read back either.** A 2xx is taken as
 //!   proof the record is live, as a hook's zero exit is. acme-dns serves
 //!   the record itself, so there is no provider to propagate through, but

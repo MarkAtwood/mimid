@@ -161,13 +161,14 @@
 //! - With `[tls] source = "acme"` the agent orders a publicly trusted
 //!   certificate over DNS-01 and renews it (the [`acme`] module;
 //!   docs/design/frontend-auth.md §5.2 rank 2). The TXT record is
-//!   written by a hook of the operator's or by an acme-dns instance; the
-//!   RFC 2136 method §5.2 also names is not built (bead
-//!   mimid-e13m.8.1). A hook's zero exit, and a 2xx from acme-dns, are
-//!   taken as proof the record is live, with no lookup to confirm;
-//!   renewal is by file age
-//!   against an assumed 90-day lifetime rather than the certificate's own
-//!   `notAfter` or ARI; and nothing revokes a certificate.
+//!   written by a hook of the operator's or by an acme-dns instance. The
+//!   RFC 2136 method §5.2 also names is deliberately not built (bead
+//!   mimid-e13m.8.1, closed 2026-11-24): a hook calling `nsupdate`
+//!   drives the same protocol with a tool that is already installed. A
+//!   hook's zero exit, and a 2xx from acme-dns, are taken as proof the
+//!   record is live, with no lookup to confirm; renewal is at two thirds
+//!   of the certificate's own lifetime but not at the window ARI
+//!   suggests; and nothing revokes a certificate.
 //! - With `[tls] source = "local-ca"` the agent is its own certificate
 //!   authority (the [`local_ca`] module; docs/design/frontend-auth.md
 //!   §5.2 rank 4, §6.6), name-constrained to the `[tls] names`, and
@@ -175,9 +176,8 @@
 //!   mimid-1wgh.127) — on every listener of the endpoint and, with
 //!   `[tls.local-ca] bootstrap`, in the clear on an address of its own
 //!   that answers nothing else, since a device that does not trust the
-//!   authority yet cannot fetch it over TLS. Renewal is by file age
-//!   rather than by reading the certificate back, there is no CRL, and
-//!   the key is ECDSA P-256 with no option for RSA.
+//!   authority yet cannot fetch it over TLS. There is no CRL, and the key
+//!   is ECDSA P-256 with no option for RSA.
 //! - The client is authenticated by the local token alone, not by peer
 //!   credentials on a Unix socket (the AGENTS.md crate map's "agent
 //!   socket" check): any process that can read the token file can act as

@@ -900,7 +900,12 @@ pin. That is the ranking of §5.2.
    `chat.example.org`, pointing at the agent's address, public or
    private: DNS-01 needs no inbound connection, so it works for a
    WireGuard address too. The agent needs a way to write a TXT record:
-   - an RFC 2136 dynamic update with a TSIG key (BIND, Knot, PowerDNS);
+   - an RFC 2136 dynamic update with a TSIG key (BIND, Knot, PowerDNS)
+     — **dropped 2026-11-24** (Mark; bead mimid-e13m.8.1): an operator
+     with their own nameserver writes a hook calling `nsupdate`, which
+     is the same protocol driven by a tool that is already installed,
+     so building it in would buy only not writing the hook, for 400 to
+     600 lines of DNS wire format and TSIG that mimid would then own;
    - acme-dns (a small DNS server for exactly this, reached by a CNAME
      from `_acme-challenge.chat.example.org`), which turns any provider
      into one that works, after one CNAME by hand;
@@ -952,8 +957,9 @@ names = ["host.tailnet.ts.net"]  # what the certificate covers; the first is
 # [tls.acme]
 # directory = "https://acme-v02.api.letsencrypt.org/directory"
 # contact = "mailto:..."         # optional
-# dns = "rfc2136"                # "rfc2136", "acme-dns" or "hook"
-# rfc2136 = { server = "ns1.example.org:53", key_name = "...", key_file = "..." }
+# dns = "acme-dns"              # "acme-dns" or "hook" (rfc2136 dropped,
+#                               # see rank 2 above)
+# acme-dns = { url = "...", username = "...", password = "...", subdomain = "..." }
 # hook = "/usr/local/bin/acme-dns-hook"
 
 # source = "files"
@@ -1291,7 +1297,7 @@ three commits and one child bead of mimid-e13m.
 | 5 | **Management in IRC and setup output.** `/msg mimid passwords`, `password add` (decision A5), `password revoke`; `mimid-agent <config> setup <client> <device>` printing the per-client text and a terminal QR code (§6). | 400 to 600 | IRC v2 |
 | 6 | **JMAP over the network.** `listen_tls` for HTTP, Basic beside Bearer, the `…:mimid:app-passwords` capability with `AppPassword/get` and `/set`. | 400 to 600 | Matrix (it shares the HTTPS listener) |
 | 7 | **Matrix login.** `/login` (GET and POST, `m.login.password`), per-device access tokens, `/logout`, `/logout/all`, `/devices` and `DELETE /devices/{id}` (with the UIA answer of §4.3), `/whoami`, soft logout never, hard logout on revoke, `.well-known/matrix/client`. | 600 to 900 | Matrix |
-| 8 | **ACME DNS-01.** `source = "acme"` with RFC 2136, acme-dns and hook; account key and order state in the state directory; renewal. | 800 to 1,200 | none; after IRC v2 |
+| 8 | **ACME DNS-01.** `source = "acme"` with acme-dns and hook; account key and order state in the state directory; renewal. RFC 2136 was dropped (see rank 2), so this came in under the estimate. | 800 to 1,200 | none; after IRC v2 |
 | 9 | **Local CA.** `source = "local-ca"`, the name-constrained CA, leaf renewal, the setup page serving the CA for iOS and Android with fingerprints (§6.6). | 500 to 800 | none |
 | 10 | **XMPP SASL.** SASL1 SCRAM-SHA-256 and PLAIN; SASL2 with SCRAM-SHA-256; FAST tokens; `tls-exporter` and -PLUS with XEP-0440. | 900 to 1,300 | XMPP |
 | 11 | **IRC SCRAM-SHA-256** (decision A3: with step 4, before IRC v2). | 150 to 250 | IRC v2 |

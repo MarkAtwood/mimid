@@ -202,7 +202,7 @@ From then on the agent posts each challenge value to that instance and it serves
 
 As with the hook, a 2xx is taken as proof the record is live; the CNAME is not checked, so a missing one shows up only as the authority failing the challenge.
 
-**Not here yet:** the third way §5.2 names, an RFC 2136 dynamic update with a TSIG key. If you run your own nameserver, a hook calling `nsupdate` does the same thing today. And if you would rather not configure any of this, `source = "files"` with certbot and a cron line does the whole job.
+**Not built, and not planned:** the third way §5.2 names, an RFC 2136 dynamic update with a TSIG key. If you run your own nameserver, a hook calling `nsupdate` drives the same protocol with a tool you already have, so building it into the agent would buy only not writing the hook. And if you would rather not configure any of this, `source = "files"` with certbot and a cron line does the whole job.
 
 #### `source = "local-ca"`
 
