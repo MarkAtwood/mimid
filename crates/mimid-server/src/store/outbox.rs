@@ -81,6 +81,9 @@ impl Store {
         .bind(fanout_seq)
         .fetch_one(&mut *tx)
         .await?;
+        // As [`Store::append_event`] does: the window records what was
+        // fanned out (docs/design/mimi-catchup.md §8).
+        super::log::record_participation(&mut tx, room_id, domain.as_str(), fanout_seq).await?;
         tx.commit().await?;
         from_sql_int(id)
     }

@@ -309,6 +309,23 @@ what it does not keep is the mapping from those changes to sequences.
 That is the main new state this design needs, and it is the part to
 design carefully before writing code.
 
+**mimid records what was fanned out, not what membership says** (bead
+mimid-1wgh.37.104.2, table `room_provider_range`). A provider is a
+destination of a fanout exactly when it had a member in the room, so the
+ranges are written from the destination set in the same transaction that
+records the fanout. Two things follow, and both are why this is better
+than mapping the membership changes:
+
+- The ranges and the deliveries cannot disagree. Catch-up can never
+  serve a provider a sequence it was not originally sent, which is the
+  property §8 is really about. Re-deriving the window from Commits would
+  be a second answer to the same question, free to drift from the first.
+- Presence is runs of *consecutive* sequences, because between joining
+  and leaving every fanout of the room reaches the provider. So a run is
+  extended exactly when it ends at the previous sequence, and a provider
+  that left and rejoined gets two runs rather than a widened one. A
+  single first/last pair per provider would quietly serve the gap.
+
 ## 9. Privacy
 
 A catch-up request tells the hub which rooms a provider follows and
