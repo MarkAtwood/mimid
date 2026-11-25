@@ -508,3 +508,75 @@ async fn a_call_invite_is_joined_whatever_the_policy_says() {
          chat is what the user sees"
     );
 }
+
+/// A call under a one-to-one chat holds exactly two people, which is
+/// what the ceiling allows (bead mimid-1wgh.131's CHECK FIRST).
+///
+/// Oracle: the ceiling `VTCCall/set` enforces is `1 + parent.others()`
+/// against `mimid_agent_jmap::vtc::MAX_PARTICIPANTS`, which is 2
+/// (decision on bead mimid-1wgh.114.15). A direct room is
+/// `HostOptions::direct()` with one invitee, so that sum is 2 and a
+/// call in a DM is permitted with no way to name who to call. The gap
+/// is group chats, and only group chats.
+///
+/// This is the store's half: that the room really does hold two, and
+/// that `start_call` under it invites exactly that person. The refusal
+/// itself is tested in crates/mimid-agent/tests/vtc.rs.
+#[tokio::test]
+async fn a_call_under_a_one_to_one_chat_holds_two() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Store::new(agent(&server, ALICE, dir.path()).await, InvitePolicy::Any);
+    alice.open_database().unwrap();
+    let bob = Store::new(agent(&server, BOB, dir.path()).await, InvitePolicy::Any);
+    bob.open_database().unwrap();
+    for store in [&alice, &bob] {
+        store
+            .agent()
+            .lock()
+            .await
+            .publish_key_packages(4)
+            .await
+            .unwrap();
+    }
+
+    let (direct, made) = alice.open_direct(alice.new_key(), BOB).await.unwrap();
+    assert!(made, "a new one-to-one room");
+    alice.save().await.unwrap();
+
+    let others = {
+        let state = alice.state();
+        let room = &state.rooms[&direct.key];
+        assert!(
+            room.direct,
+            "room-policy-04 §5 fixed_membership, max_users 2"
+        );
+        room.others(ALICE).len()
+    };
+    assert_eq!(others, 1, "a one-to-one chat has the user and one other");
+    assert_eq!(
+        1 + others,
+        2,
+        "so the call room would hold two, which is the ceiling"
+    );
+
+    let call = alice
+        .start_call_with(alice.new_key(), &direct.key, &CallOptions::default())
+        .await
+        .unwrap();
+    alice.save().await.unwrap();
+    until_store(&bob, |s| s.state().room_of_uri(&call.uri).is_some()).await;
+
+    let state = alice.state();
+    let room = state
+        .rooms
+        .values()
+        .find(|r| r.uri == call.uri)
+        .expect("the call room");
+    assert_eq!(
+        1 + room.others(ALICE).len(),
+        2,
+        "and it does hold two: {:?}",
+        room.participants
+    );
+}
