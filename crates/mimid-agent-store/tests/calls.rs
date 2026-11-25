@@ -414,33 +414,34 @@ fn announced(store: &Store, room: &str) -> Option<(String, Announcement)> {
     announcements(store, room).into_iter().next()
 }
 
-/// A pending invite to a call's own room names the chat it is under, and
-/// a pending invite to a chat names nothing (bead mimid-1wgh.130).
+/// A call room's invite is joined whatever the invite policy says, and
+/// no invite is shown for it; a chat's invite still waits (decision on
+/// bead mimid-1wgh.114.16, Mark 2026-11-25).
 ///
-/// Why it matters only here: with the default `invites = "any"` a call's
-/// invite is joined and never shown, so nothing is visible. Under a
-/// stricter policy it is a pending invite to a room the user cannot
-/// usefully enter -- on IRC it gets no channel even once joined (bead
-/// mimid-1wgh.114.6) -- and a front end that cannot tell it from a chat
-/// invite asks the user a question they cannot answer.
+/// Why the override is safe: room-policy-04 §5 confines a
+/// parent-dependent room's participants to the parent's, and the hub
+/// enforces that at creation, so joining admits nobody the parent chat
+/// has not already admitted. The invite policy exists to stop strangers
+/// opening rooms, and this is not that. It also makes calls work under a
+/// strict policy, where today they silently cannot: a call is live for
+/// minutes, so a pending invite the user must notice and accept is over
+/// before they act on it.
 ///
-/// Oracle: room-policy-04 §5. The Welcome carries the room's
-/// `base_room_policy`, so `parent_room` is knowable before joining
-/// (`Agent::invite_details`), and it is the same value the joined room
-/// reports. This test holds both ends of that: the invite's parent and
-/// the record's parent after accepting agree.
-///
-/// The announcement of bead mimid-1wgh.114.1 is not an answer to this:
-/// it is a message in the PARENT chat, on its own path, and it may
-/// arrive first, later or not at all.
+/// NOT COVERED HERE, and the code guards it anyway: a call-room invite
+/// whose parent this agent is not in. It cannot be built through this
+/// harness, because `Store::start_call` invites only the parent's people
+/// and the hub refuses a parent-dependent room holding anyone outside
+/// the parent (§5). So the check in `sync` is defence in depth against a
+/// peer's hub that does not enforce §5, which AGENTS.md requires the
+/// agent to assume ("treats everything a server or peer sends as
+/// untrusted"), and the honest statement is that no test reaches it.
 #[tokio::test]
-async fn a_pending_invite_to_a_call_room_names_the_chat() {
+async fn a_call_invite_is_joined_whatever_the_policy_says() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
     let alice = Store::new(agent(&server, ALICE, dir.path()).await, InvitePolicy::Any);
     alice.open_database().unwrap();
-    // bob joins nothing on his own, so every invite waits as the record
-    // a front end would show.
+    // bob joins nothing on his own.
     let bob = Store::new(agent(&server, BOB, dir.path()).await, InvitePolicy::Never);
     bob.open_database().unwrap();
     for store in [&alice, &bob] {
@@ -453,28 +454,9 @@ async fn a_pending_invite_to_a_call_room_names_the_chat() {
             .unwrap();
     }
 
+    // The chat's own invite waits, as the policy says.
     let chat = alice
         .create_room(alice.new_key(), "planning", &[BOB.to_owned()])
-        .await
-        .unwrap();
-    alice.save().await.unwrap();
-
-    // The chat's invite waits, and names no parent.
-    until_store(&bob, |s| !s.state().invites.is_empty()).await;
-    let waiting = {
-        let state = bob.state();
-        let invite = &state.invites[0];
-        assert_eq!(invite.room.as_deref(), Some(chat.uri.as_str()));
-        assert_eq!(invite.inviter.as_deref(), Some(ALICE));
-        assert_eq!(invite.parent, None, "a chat's invite names no parent");
-        invite.number
-    };
-    bob.accept_invite(waiting).await.unwrap();
-    bob.save().await.unwrap();
-
-    // The call under it, which bob does not join either.
-    let call = alice
-        .start_call_with(alice.new_key(), &chat.key, &CallOptions::default())
         .await
         .unwrap();
     alice.save().await.unwrap();
@@ -482,7 +464,7 @@ async fn a_pending_invite_to_a_call_room_names_the_chat() {
         s.state()
             .invites
             .iter()
-            .any(|i| i.room.as_deref() == Some(call.uri.as_str()))
+            .any(|i| i.room.as_deref() == Some(chat.uri.as_str()))
     })
     .await;
     let waiting = {
@@ -490,23 +472,39 @@ async fn a_pending_invite_to_a_call_room_names_the_chat() {
         let invite = state
             .invites
             .iter()
-            .find(|i| i.room.as_deref() == Some(call.uri.as_str()))
-            .expect("the call's invite");
-        assert_eq!(
-            invite.parent.as_deref(),
-            Some(chat.uri.as_str()),
-            "a call room's invite names the chat it is under"
-        );
+            .find(|i| i.room.as_deref() == Some(chat.uri.as_str()))
+            .expect("the chat's invite waits under invites = never");
+        // The field this rests on, on a record a front end can see: an
+        // ordinary room's invite names no parent, so it is not a call
+        // and the policy decides it (bead mimid-1wgh.130).
+        assert_eq!(invite.parent, None);
         assert_eq!(invite.inviter.as_deref(), Some(ALICE));
         invite.number
     };
-
-    // What the invite said is what the room says once joined, so a front
-    // end that acted on the invite was not misled.
     bob.accept_invite(waiting).await.unwrap();
     bob.save().await.unwrap();
+
+    // A call under that chat is joined without waiting.
+    let call = alice
+        .start_call_with(alice.new_key(), &chat.key, &CallOptions::default())
+        .await
+        .unwrap();
+    alice.save().await.unwrap();
     until_store(&bob, |s| s.state().room_of_uri(&call.uri).is_some()).await;
+
     let state = bob.state();
-    let key = state.room_of_uri(&call.uri).expect("the call room");
-    assert_eq!(state.rooms[key].parent.as_deref(), Some(chat.uri.as_str()));
+    let key = state.room_of_uri(&call.uri).expect("the call room, joined");
+    assert_eq!(
+        state.rooms[key].parent.as_deref(),
+        Some(chat.uri.as_str()),
+        "joined as the call room it is"
+    );
+    assert!(
+        !state
+            .invites
+            .iter()
+            .any(|i| i.room.as_deref() == Some(call.uri.as_str())),
+        "and no invite is shown for it: the announcement in the parent \
+         chat is what the user sees"
+    );
 }

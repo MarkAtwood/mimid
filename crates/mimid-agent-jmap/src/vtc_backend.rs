@@ -374,6 +374,35 @@ impl VtcBackend for AgentChat {
                  room under that chat's room",
             ));
         };
+        // Refused BEFORE the room is hosted, so a refused create leaves
+        // no call room behind and announces nothing: an announcement for
+        // a call nobody can join is worse than a refusal that says why
+        // (decision on bead mimid-1wgh.114.15).
+        //
+        // The parent chat's participants are what `start_call_with`
+        // invites, since `among` is None here (bead mimid-1wgh.131), so
+        // they are what the call room would hold.
+        let would_hold = {
+            let state = self.store().state();
+            let Some(parent) = state.rooms.get(chat.as_ref()) else {
+                return Err(refuse(
+                    SetErrorType::InvalidProperties,
+                    "this chat is not a room this agent is in",
+                ));
+            };
+            1 + parent.others(self.store().user()).len() as u64
+        };
+        if would_hold > crate::vtc::MAX_PARTICIPANTS {
+            return Err(refuse(
+                SetErrorType::InvalidProperties,
+                format!(
+                    "a call here is between two people, and this chat has \
+                     {would_hold}: mimid carries a call's signalling to \
+                     every member of its room with no way to address one \
+                     peer, so a call of three or more cannot connect"
+                ),
+            ));
+        }
         // The media kinds and the subject travel in the announcement,
         // because the call room carries neither and the receiving side
         // projects the call from the room (bead mimid-1wgh.114.11;

@@ -723,3 +723,102 @@ async fn a_stored_call_that_is_not_a_call_does_not_stop_the_agent() {
 
     restarted.stop().await;
 }
+
+/// The capability says a call here is between two people, and a call in
+/// a chat of more than two is refused rather than created
+/// (decision on bead mimid-1wgh.114.15, Mark 2026-11-25).
+///
+/// Oracles:
+///
+/// - draft-atwood-jmap-vtc-00 §`maxParticipantsPerCall`: "`null` means
+///   no server-imposed limit". mimid has one, because a signal reaches
+///   every member of the call's room and nothing in it says which peer
+///   it is for, so three or more cannot complete negotiation. Saying
+///   `null` told a client the opposite of the truth.
+/// - The refusal happens BEFORE the call room is hosted, so a refused
+///   create leaves no room behind and posts no announcement. An
+///   announcement for a call nobody can join is worse than a refusal
+///   that says why.
+///
+/// The chat's participant list is what the ceiling reads, and what
+/// `Store::start_call` invites (`among` is `None` from here, bead
+/// mimid-1wgh.131), so the test sets that list rather than standing up
+/// two more daemons.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_call_in_a_chat_of_more_than_two_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_vtc(dir.path(), &server)).await;
+    let client = alice.client().await;
+    let vtc = mimid_agent_jmap::vtc::CAPABILITY;
+
+    // Per account, as RFC 8620 §2 puts a capability's settings
+    // (`the_switch_advertises_the_capability_and_reaches_the_methods`).
+    let advertised = &client.session["accounts"][&client.account]["accountCapabilities"][vtc];
+    assert_eq!(
+        advertised["maxParticipantsPerCall"],
+        json!(2),
+        "the ceiling is advertised, not left as null: {advertised}"
+    );
+
+    let chat = alice
+        .store
+        .create_room(alice.store.new_key(), "planning", &[])
+        .await
+        .unwrap();
+    alice.store.save().await.unwrap();
+
+    // Two more people in the chat, so the call room would hold three.
+    {
+        let mut state = alice.store.state();
+        let room = state.rooms.get_mut(&chat.key).expect("the chat");
+        for user in ["mimi://a.example/u/carol", "mimi://a.example/u/dave"] {
+            room.participants
+                .push(mimid_agent_store::record::Participant {
+                    user: user.to_owned(),
+                    role: None,
+                });
+        }
+    }
+
+    let (status, answer) = client
+        .post(&json!({
+            "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:chat", vtc],
+            "methodCalls": [[
+                "VTCCall/set",
+                {"accountId": client.account, "create": {"k": {
+                    "callType": "room",
+                    "mediaTypes": ["audio"],
+                    "chatId": chat.key,
+                }}},
+                "c0",
+            ]],
+        }))
+        .await;
+    assert_eq!(status, 200, "{answer}");
+    let refusal = &answer["methodResponses"][0][1]["notCreated"]["k"];
+    assert_eq!(refusal["type"], json!("invalidProperties"), "{answer}");
+    let why = refusal["description"].as_str().unwrap_or_default();
+    assert!(
+        why.contains("two"),
+        "the refusal should say a call here is between two: {answer}"
+    );
+
+    // Nothing was left behind: no call room, and no announcement in the
+    // chat for a call that does not exist.
+    let (call_rooms, messages) = {
+        let state = alice.store.state();
+        (
+            state.rooms.values().filter(|r| r.parent.is_some()).count(),
+            state
+                .messages
+                .values()
+                .filter(|m| m.room == chat.key)
+                .count(),
+        )
+    };
+    assert_eq!(call_rooms, 0, "a refused call hosts no room");
+    assert_eq!(messages, 0, "and announces nothing");
+
+    alice.stop().await;
+}

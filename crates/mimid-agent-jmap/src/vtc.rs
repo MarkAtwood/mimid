@@ -13,7 +13,8 @@
 //!
 //! # Limitations
 //!
-//! - TWO PARTIES. A call of three or more cannot complete negotiation:
+//! - TWO PARTIES ([`MAX_PARTICIPANTS`]). A call of three or more
+//!   cannot complete negotiation:
 //!   a signal reaches every member of the call's room, because that is
 //!   the granularity at which its MLS group encrypts, and nothing in
 //!   the signal says which peer it is for
@@ -24,10 +25,14 @@
 //!   is what a two-party call wants, and what a call through a
 //!   selective forwarding unit that is itself a participant wants. That
 //!   unit is bead mimid-1wgh.114.7 and does not exist yet, so until it
-//!   does a call here is between two. [`capability`] still advertises
-//!   `maxParticipantsPerCall` as null, "no server-imposed limit", and
-//!   [`mimid_agent_store::Store::start_call`] still invites the whole
-//!   parent chat: bead mimid-1wgh.114.15 is what to do about that.
+//!   does a call here is between two, which [`capability`] advertises
+//!   and `VtcBackend::create_call` refuses to exceed.
+//! - And so there are no calls in a chat of three or more at all,
+//!   because `VTCCall/set` cannot say WHO to call and the agent invites
+//!   the whole parent chat. The store can already host a two-person
+//!   call under a larger chat ([`mimid_agent_store::action::
+//!   CallOptions`]'s `among`); reaching it from here is bead
+//!   mimid-1wgh.131.
 //! - NAT traversal is the one part of a call no amount of MLS makes
 //!   peer-to-peer. A relay learns the addresses of the clients that use
 //!   it and that encrypted bytes flow between them; it never learns the
@@ -41,6 +46,20 @@
 //!   deployment that minds configures its own.
 
 use jmap_vtc_types::VtcIceServer;
+
+/// The most participants mimid will host in one call, which is two
+/// (decision on bead mimid-1wgh.114.15, Mark 2026-11-25).
+///
+/// INVENTED, NOT FROM SPEC as a value, though
+/// draft-atwood-jmap-vtc-00 defines the field: it is what mimid's
+/// signalling can actually connect, not a policy. A signal reaches
+/// every member of the call's room, because that is the granularity at
+/// which the room's MLS group encrypts, and nothing in a signal says
+/// which peer it is for, so a mesh among three or more cannot pair an
+/// offer with an answer. The shape that scales is a selective
+/// forwarding unit that joins the call as a participant (bead
+/// mimid-1wgh.114.7), and mimid has none yet.
+pub const MAX_PARTICIPANTS: u64 = 2;
 
 /// The STUN and TURN servers a deployment offers its clients when it
 /// configures none, taken from MarkAtwood/ParlorVTC's `web/webrtc.js` so
@@ -150,7 +169,12 @@ pub fn capability(options: &VtcOptions) -> jmap_vtc_types::VtcCapability {
         "supportsLobby": false,
         "supportsBreakoutRooms": false,
         "supportedMediaTypes": ["audio", "video", "screen"],
-        "maxParticipantsPerCall": serde_json::Value::Null,
+        // mimid has a ceiling, so it says so rather than claiming
+        // "no server-imposed limit" (decision on bead
+        // mimid-1wgh.114.15): a call of three or more cannot complete
+        // negotiation, because a signal reaches every member of the
+        // call's room and nothing in it says which peer it is for.
+        "maxParticipantsPerCall": MAX_PARTICIPANTS,
         "maxConcurrentCalls": serde_json::Value::Null,
         "iceServers": options.ice_servers,
         // The agent keys a call from the call room's MLS group and

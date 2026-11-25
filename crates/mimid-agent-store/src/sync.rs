@@ -344,19 +344,55 @@ impl Store {
             // mimid-br6m), and its parent when it has one, which says
             // the invite is to a call (bead mimid-1wgh.130).
             let details = agent.invite_details(invite.number);
-            let accept = match self.invites {
-                InvitePolicy::Any => true,
-                InvitePolicy::Never => false,
-                InvitePolicy::FromAllowed => match &details {
-                    Ok(details) => allowed.contains(&details.inviter),
-                    Err(e) => {
-                        report
-                            .problems
-                            .push(format!("invite {}: {e}", invite.number));
-                        false
-                    }
-                },
-            };
+            // A call's own room is joined whatever the policy says
+            // (decision on bead mimid-1wgh.114.16, Mark 2026-11-25).
+            // room-policy-04 §5 confines a parent-dependent room's
+            // participants to the parent's and the hub enforces that at
+            // creation, so joining admits nobody the parent chat has
+            // not already admitted; the policy is for strangers opening
+            // rooms, and this is not that. A call is live for minutes,
+            // so an invite the user has to notice and accept is over
+            // before they can act on it.
+            //
+            // The parent must be a room this user is IN, not merely one
+            // the invite names. A peer's hub that does not enforce §5
+            // could otherwise have itself joined by asserting any
+            // parent it liked, and the agent treats what a server or
+            // peer sends as untrusted (AGENTS.md). No test reaches this
+            // case: Store::start_call invites only the parent's people
+            // and our own hub refuses the rest, so it guards against
+            // another provider's.
+            //
+            // Asked of the AGENT and not of the store's records, which
+            // lag by a pass: invites are handled before the records are
+            // refreshed below, so on the very sync that first joins a
+            // chat its call would be measured against a state without
+            // it and wait a sync longer. The agent knows its groups as
+            // soon as a join returns.
+            let under_a_room_we_are_in = details
+                .as_ref()
+                .ok()
+                .and_then(|d| d.parent.as_deref())
+                .is_some_and(|parent| {
+                    agent
+                        .rooms()
+                        .iter()
+                        .any(|room| room.uri == parent && room.status == RoomStatus::Active)
+                });
+            let accept = under_a_room_we_are_in
+                || match self.invites {
+                    InvitePolicy::Any => true,
+                    InvitePolicy::Never => false,
+                    InvitePolicy::FromAllowed => match &details {
+                        Ok(details) => allowed.contains(&details.inviter),
+                        Err(e) => {
+                            report
+                                .problems
+                                .push(format!("invite {}: {e}", invite.number));
+                            false
+                        }
+                    },
+                };
             if !accept {
                 report.pending_invites.push(invite.number);
                 let details = details.ok();

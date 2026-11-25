@@ -265,7 +265,10 @@ pub struct InviteDetails {
     /// A call's own room is such a room, with the chat it belongs to as
     /// its parent ([`HostOptions::child_of`]), which is how a caller
     /// tells an invite to a call from an invite to a chat WITHOUT
-    /// joining it (bead mimid-1wgh.130).
+    /// joining it (bead mimid-1wgh.130). An embedder that holds its own
+    /// call state decides what to do with that; mimid's store joins
+    /// such an invite whatever its invite policy says, when the parent
+    /// is a room this user is in.
     pub parent: Option<String>,
 }
 

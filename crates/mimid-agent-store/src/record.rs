@@ -805,11 +805,16 @@ pub struct Invite {
     /// from the Welcome before joining (`Agent::invite_details`).
     ///
     /// A call's own room is such a room, with the chat it belongs to as
-    /// its parent ([`Store::start_call`](crate::Store::start_call)), so
-    /// this is how a front end tells an invite to a call from an invite
-    /// to a chat and says which it is asking about (bead
-    /// mimid-1wgh.130). `None` for an ordinary room, and for an invite
-    /// whose Welcome could not be read.
+    /// its parent ([`Store::start_call`](crate::Store::start_call)).
+    /// `None` for an ordinary room, and for an invite whose Welcome
+    /// could not be read.
+    ///
+    /// [`crate::Store::sync`] joins an invite whose parent is a room
+    /// this user is in whatever the invite policy says (decision on bead
+    /// mimid-1wgh.114.16), so in practice a PENDING invite's parent is
+    /// `None`: a call's is joined before it is shown. It is not `None`
+    /// for a call room whose parent this agent is not in, which is the
+    /// case the policy still decides.
     pub parent: Option<String>,
     /// The invite policy refused it.
     pub refused: bool,
