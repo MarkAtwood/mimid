@@ -124,9 +124,28 @@ message. The same `MLSMessage` fanned out to five followers is one
 message at one sequence, and if it were ever re-sent the sequence would
 be the thing that said so.
 
-Whether the envelope carries it as an HTTP header or as a wrapper object
-is left to the implementation (bead mimid-1wgh.37.104.1), and turns on
-whether franking has to cover it.
+**An HTTP header, `mimi-fanout-sequence`** (bead mimid-1wgh.37.104.1).
+The note left this turning on whether franking has to cover the
+sequence, and that question dissolves: the frank is inside
+`FanoutMessage`, and reading (2) puts the sequence outside it, so
+neither a header nor a wrapper is franked. What can cover it is the RFC
+9421 signature mimid already puts on every peer request, and a header
+can go in that signature's covered components. A wrapper object would be
+covered by `content-digest` for free, but it would change the
+concatenated-FanoutMessages body of §5.5 — the exact cost reading (2)
+was chosen to avoid.
+
+So mimid signs the header when the request carries it
+(`provider_auth::RequestSigner`), and a proxy that strips or rewrites a
+sequence fails the signature rather than silently renumbering a room.
+The component is added per request and not to the standing list,
+because RFC 9421 §2.5 makes a covered field that is absent an error and
+every other endpoint's request has no sequence.
+
+One value per request is enough, which §5.5's "concatenated
+FanoutMessages" hides: the hub writes one outbox row per (event,
+destination) and sends one row per request, so a `/notify` carries one
+fanout.
 
 ## 5. The catch-up primitive
 

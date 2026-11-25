@@ -469,3 +469,41 @@ async fn retryable_statuses_keep_the_row() {
         assert_eq!(heads[0].attempts, 1, "{status}");
     }
 }
+
+/// Each `/notify` carries its fanout's per-room sequence beside the
+/// message, and the body is unchanged by it
+/// (docs/design/mimi-catchup.md §4; decision mimid-1wgh.104; bead
+/// mimid-1wgh.37.104.1).
+///
+/// Oracles:
+///
+/// - §4: the sequence starts at 1 for a room's first fanout and
+///   increases by one. Three fanouts of one room arrive as 1, 2, 3.
+/// - Decision mimid-1wgh.104 chose "beside the message" so that a
+///   structure other implementations already parse stays unchanged. So
+///   every body here must still decode as a `NotifyRequest` and be
+///   byte-identical to what was enqueued, which `assert_request`
+///   already checks. If the sequence had gone inside `FanoutMessage`
+///   instead, that is the assertion that would break.
+#[tokio::test]
+async fn each_notify_carries_its_fanout_sequence_beside_the_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, _hub) = hub_with_room(&dir.path().join("db")).await;
+    let follower = Follower::start(&[]).await;
+    let sent = enqueue(&store, "b.example", 3, &commit_message()).await;
+    let clock = ManualClock::new(T);
+    let local = RecordingLocal::default();
+    let mut worker = fanout(&store, &[("b.example", &follower.base)], &local, &clock);
+
+    assert_eq!(worker.deliver_due().await.unwrap(), None);
+    let received = follower.received();
+    assert_eq!(received.len(), 3, "three fanouts delivered");
+    for (index, got) in received.iter().enumerate() {
+        assert_request(got, "b.example", &sent[index]);
+        assert_eq!(
+            got.fanout_sequence,
+            vec![(index + 1).to_string()],
+            "the room's fanouts are numbered from 1, by one"
+        );
+    }
+}

@@ -22,6 +22,12 @@ pub struct OutboxRow {
     pub attempts: u64,
     /// Earliest time of the next attempt, milliseconds since the UNIX epoch.
     pub next_attempt_at: u64,
+    /// The room's fanout sequence for this delivery
+    /// (docs/design/mimi-catchup.md §4; bead mimid-1wgh.37.104.1), or 0
+    /// for a row enqueued before sequences existed. Carried on the row
+    /// rather than looked up from it, so a delivery after a restart
+    /// sends the same number without matching a body back to an event.
+    pub fanout_seq: u64,
 }
 
 /// Omits the body: it is MLS ciphertext and handshake data that must not
@@ -35,13 +41,20 @@ impl std::fmt::Debug for OutboxRow {
             .field("body_len", &self.body.len())
             .field("attempts", &self.attempts)
             .field("next_attempt_at", &self.next_attempt_at)
+            .field("fanout_seq", &self.fanout_seq)
             .finish()
     }
 }
 
 impl Store {
     /// Appends a fanout request for `domain` in the room `room_id`, due at
-    /// `now_ms`, and returns its row ID.
+    /// `now_ms`, at the room's next fanout sequence, and returns its row
+    /// ID.
+    ///
+    /// [`Store::append_event`] is the usual path and numbers the event
+    /// and its outbox rows together; this one is for a fanout with no
+    /// event of its own, and takes a sequence of the same counter so the
+    /// two cannot collide.
     ///
     /// # Errors
     ///
@@ -55,16 +68,20 @@ impl Store {
         body: &[u8],
         now_ms: u64,
     ) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let fanout_seq = super::log::next_fanout_seq(&mut tx, room_id).await?;
         let id: i64 = sqlx::query_scalar(
-            "INSERT INTO outbox (room_id, domain, body, next_attempt_at) \
-             VALUES (?, ?, ?, ?) RETURNING id",
+            "INSERT INTO outbox (room_id, domain, body, next_attempt_at, fanout_seq) \
+             VALUES (?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(room_id)
         .bind(domain.as_str())
         .bind(body)
         .bind(to_sql_int(now_ms)?)
-        .fetch_one(&self.pool)
+        .bind(fanout_seq)
+        .fetch_one(&mut *tx)
         .await?;
+        tx.commit().await?;
         from_sql_int(id)
     }
 
@@ -83,7 +100,8 @@ impl Store {
     /// [`StoreError::Corrupt`] if a stored domain is not a valid domain.
     pub async fn outbox_heads(&self) -> Result<Vec<OutboxRow>, StoreError> {
         let rows: Vec<OutboxSqlRow> = sqlx::query_as(
-            "SELECT id, room_id, domain, body, attempts, next_attempt_at FROM outbox \
+            "SELECT id, room_id, domain, body, attempts, next_attempt_at, fanout_seq \
+             FROM outbox \
              WHERE id IN (SELECT MIN(id) FROM outbox GROUP BY room_id, domain) \
              ORDER BY id",
         )
@@ -97,6 +115,7 @@ impl Store {
                     domain: Domain::try_from(row.domain)
                         .map_err(|_| StoreError::Corrupt("outbox domain"))?,
                     body: row.body,
+                    fanout_seq: from_sql_int(row.fanout_seq)?,
                     attempts: from_sql_int(row.attempts)?,
                     next_attempt_at: from_sql_int(row.next_attempt_at)?,
                 })
@@ -160,4 +179,5 @@ struct OutboxSqlRow {
     body: Vec<u8>,
     attempts: i64,
     next_attempt_at: i64,
+    fanout_seq: i64,
 }

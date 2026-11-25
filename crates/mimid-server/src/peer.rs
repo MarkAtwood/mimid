@@ -51,7 +51,9 @@ use mimi_protocol::{
     SubmitResponseCode, UpdateRequest, UpdateResponseCode, UpdateRoomResponse, UriTemplate,
     WireProfile,
 };
-use reqwest::header::{CONTENT_TYPE, DATE, FROM, HOST, HeaderMap, HeaderValue, RETRY_AFTER};
+use reqwest::header::{
+    CONTENT_TYPE, DATE, FROM, HOST, HeaderMap, HeaderName, HeaderValue, RETRY_AFTER,
+};
 use reqwest::{StatusCode, redirect};
 
 use crate::config::{BaseUrl, Domain};
@@ -59,6 +61,21 @@ use crate::directory::DIRECTORY_PATH;
 use crate::http::{MAX_BODY_LEN, PROTOCOL_CONTENT_TYPE};
 use crate::hub::assets::{ASSET_TIMEOUT, MAX_ASSET_LEN};
 use crate::peer_clock::PeerClocks;
+
+/// The request header carrying a fanout's per-room sequence on
+/// `POST /notify/{roomId}` (docs/design/mimi-catchup.md §4; decision
+/// mimid-1wgh.104 put the sequence beside the message rather than inside
+/// `FanoutMessage`).
+///
+/// INVENTED, NOT FROM SPEC: protocol-07 has no follower catch-up and so
+/// names no such header. Proposing one is bead mimid-1wgh.37.104, and
+/// this name is mimid's until that lands. A peer that does not know it
+/// ignores it, and nothing here depends on a peer echoing it.
+///
+/// [`crate::provider_auth::RequestSigner`] covers it when the request
+/// carries it, so a proxy that strips or rewrites the sequence fails the
+/// signature rather than silently renumbering a room.
+pub const FANOUT_SEQUENCE_HEADER: &str = "mimi-fanout-sequence";
 
 /// The longest directory document accepted, in bytes. INVENTED, NOT FROM
 /// SPEC: protocol-07 §5.1 sets no limit, and a ten-entry document of
@@ -422,8 +439,10 @@ impl PeerClient {
     }
 
     /// protocol-07 §5.5 `POST /notify/{roomId}`: sends `body`, the
-    /// concatenated FanoutMessages, for the room `room_id` to `domain`.
-    /// Only a `201` response counts as accepted; its body is not read.
+    /// concatenated FanoutMessages, for the room `room_id` to `domain`,
+    /// at the room's fanout `sequence` ([`FANOUT_SEQUENCE_HEADER`]; 0
+    /// sends no header). Only a `201` response counts as accepted; its
+    /// body is not read.
     ///
     /// # Errors
     ///
@@ -448,15 +467,26 @@ impl PeerClient {
         domain: &Domain,
         room_id: &str,
         body: Vec<u8>,
+        sequence: u64,
     ) -> Result<(), PeerError> {
+        // The sequence goes BESIDE the message, not inside FanoutMessage
+        // (decision mimid-1wgh.104): a structure other implementations
+        // already parse stays unchanged, a proxy cannot strip the
+        // sequence without its absence being visible, and the number
+        // models the delivery rather than the content.
+        let extra = (sequence > 0)
+            .then(|| HeaderValue::from_str(&sequence.to_string()).ok())
+            .flatten()
+            .map(|value| (FANOUT_SEQUENCE_HEADER, value));
         // protocol-07 §5.5; decision mimid-1wgh.5.15
-        self.call(
+        self.call_with(
             domain,
             Endpoint::Notify,
             room_id,
             body,
             &[StatusCode::CREATED],
             false,
+            extra,
         )
         .await
         .map(drop)
@@ -818,6 +848,24 @@ impl PeerClient {
         expect: &[StatusCode],
         read_body: bool,
     ) -> Result<Vec<u8>, PeerError> {
+        self.call_with(domain, endpoint, value, body, expect, read_body, None)
+            .await
+    }
+
+    /// [`PeerClient::call`] with one more request header, set before the
+    /// request is signed so the signature covers it
+    /// ([`crate::provider_auth::RequestSigner`]).
+    #[allow(clippy::too_many_arguments)]
+    async fn call_with(
+        &self,
+        domain: &Domain,
+        endpoint: Endpoint,
+        value: &str,
+        body: Vec<u8>,
+        expect: &[StatusCode],
+        read_body: bool,
+        extra: Option<(&'static str, HeaderValue)>,
+    ) -> Result<Vec<u8>, PeerError> {
         let started = Instant::now();
         // A peer whose directory cannot be fetched is as unreachable as one
         // whose endpoint does not answer.
@@ -836,6 +884,9 @@ impl PeerClient {
             })?;
         let request_len = body.len();
         let mut headers = self.headers(domain, &url)?;
+        if let Some((name, value)) = extra {
+            headers.insert(HeaderName::from_static(name), value);
+        }
         if let Some(signer) = &self.signer {
             let uri = url
                 .parse::<axum::http::Uri>()

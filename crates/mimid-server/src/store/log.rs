@@ -234,17 +234,20 @@ impl Store {
     }
 }
 
-/// Inserts `event` and its `outbox` rows in `tx`. Each outbox row is due at
-/// `event.accepted_at`. Returns the event's sequence number.
+/// Inserts `event` and its `outbox` rows in `tx`, at the room's next
+/// fanout sequence. Each outbox row is due at `event.accepted_at`.
+/// Returns the event's sequence number (`room_event.seq`, which is not
+/// the fanout sequence: see [`next_fanout_seq`]).
 async fn insert_event(
     tx: &mut Transaction<'_, Sqlite>,
     event: &NewEvent<'_>,
     outbox: &[OutboxEntry<'_>],
 ) -> Result<u64, StoreError> {
     let accepted_at = to_sql_int(event.accepted_at)?;
+    let fanout_seq = next_fanout_seq(tx, event.room_id).await?;
     let seq: i64 = sqlx::query_scalar(
-        "INSERT INTO room_event (room_id, epoch, accepted_at, kind, bytes, hash) \
-         VALUES (?, ?, ?, ?, ?, ?) RETURNING seq",
+        "INSERT INTO room_event (room_id, epoch, accepted_at, kind, bytes, hash, fanout_seq) \
+         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING seq",
     )
     .bind(event.room_id)
     .bind(to_sql_int(event.epoch)?)
@@ -252,20 +255,52 @@ async fn insert_event(
     .bind(event.kind.as_sql())
     .bind(event.bytes)
     .bind(event.hash)
+    .bind(fanout_seq)
     .fetch_one(&mut **tx)
     .await?;
     for entry in outbox {
+        // Every row of one fanout carries the same sequence: it numbers
+        // the delivery, and the same message to five followers is one
+        // fanout at one sequence (decision mimid-1wgh.104).
         sqlx::query(
-            "INSERT INTO outbox (room_id, domain, body, next_attempt_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO outbox (room_id, domain, body, next_attempt_at, fanout_seq) \
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(event.room_id)
         .bind(entry.domain)
         .bind(entry.body)
         .bind(accepted_at)
+        .bind(fanout_seq)
         .execute(&mut **tx)
         .await?;
     }
     from_sql_int(seq)
+}
+
+/// Takes the room's next fanout sequence and advances the counter, in
+/// `tx`, so a crash cannot leave a gap or a duplicate
+/// (docs/design/mimi-catchup.md §4; bead mimid-1wgh.37.104.1).
+///
+/// Per room, from 1, by one, never reused or renumbered. The counter is
+/// `room.next_fanout_seq` and not `MAX(room_event.fanout_seq)` because
+/// retention deletes event rows (`crate::store::retention`), and after a
+/// prune the maximum would hand out a number a follower already has.
+///
+/// `room_event.seq` is the wrong thing to use for this: it is a global
+/// `AUTOINCREMENT` (`migrations/0002_hub.sql`), so within one room it
+/// skips every time another room is written.
+pub(super) async fn next_fanout_seq(
+    tx: &mut Transaction<'_, Sqlite>,
+    room_id: &str,
+) -> Result<i64, StoreError> {
+    sqlx::query_scalar(
+        "UPDATE room SET next_fanout_seq = next_fanout_seq + 1 \
+         WHERE room_id = ? RETURNING next_fanout_seq - 1",
+    )
+    .bind(room_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(StoreError::from)
 }
 
 #[cfg(test)]
@@ -314,6 +349,160 @@ mod tests {
             bytes,
             hash,
         }
+    }
+
+    /// The room `name` in the same store, so a sequence can be shown to
+    /// be per room.
+    async fn add_room(store: &Store, name: &str) {
+        store
+            .insert_room(&RoomSnapshot {
+                room_id: format!("mimi://a.example/r/{name}"),
+                group_id: name.as_bytes().to_vec(),
+                epoch: 1,
+                group_info: vec![1],
+                ratchet_tree: vec![2],
+                created_at: 0,
+            })
+            .await
+            .unwrap();
+    }
+
+    /// `room`'s fanout sequences in event order, and the sequences its
+    /// outbox rows carry.
+    async fn fanout_seqs(store: &Store, room: &str) -> (Vec<i64>, Vec<i64>) {
+        let events =
+            sqlx::query_scalar("SELECT fanout_seq FROM room_event WHERE room_id = ? ORDER BY seq")
+                .bind(format!("mimi://a.example/r/{room}"))
+                .fetch_all(&store.pool)
+                .await
+                .unwrap();
+        let outbox =
+            sqlx::query_scalar("SELECT fanout_seq FROM outbox WHERE room_id = ? ORDER BY id")
+                .bind(format!("mimi://a.example/r/{room}"))
+                .fetch_all(&store.pool)
+                .await
+                .unwrap();
+        (events, outbox)
+    }
+
+    fn at<'a>(hash: &'a [u8], bytes: &'a [u8], room: &'a str, accepted_at: u64) -> NewEvent<'a> {
+        NewEvent {
+            room_id: room,
+            epoch: 1,
+            accepted_at,
+            kind: EventKind::Application,
+            bytes,
+            hash,
+        }
+    }
+
+    const ONE_ROW: [OutboxEntry<'static>; 1] = [OutboxEntry {
+        domain: "b.example",
+        body: b"body",
+    }];
+
+    /// Oracle: docs/design/mimi-catchup.md §4 -- the sequence starts at 1
+    /// for a room's first fanout, increases by one, and is PER ROOM. The
+    /// wrong thing to reach for is room_event.seq, which
+    /// migrations/0002_hub.sql makes a global AUTOINCREMENT: it would be
+    /// 1, 2, 3 here and 4 in the second room.
+    ///
+    /// Every outbox row of one fanout carries that fanout's sequence,
+    /// because the sequence numbers the DELIVERY and the same message to
+    /// five followers is one fanout at one sequence (decision
+    /// mimid-1wgh.104).
+    #[tokio::test]
+    async fn a_fanout_sequence_is_per_room_and_starts_at_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_room(&dir).await;
+        add_room(&store, "two").await;
+        let one = "mimi://a.example/r/one";
+        let two = "mimi://a.example/r/two";
+
+        store
+            .append_event(&at(b"h1", b"m", one, 1), &ONE_ROW)
+            .await
+            .unwrap();
+        store
+            .append_event(&at(b"h2", b"m", one, 2), &ONE_ROW)
+            .await
+            .unwrap();
+        store
+            .append_event(&at(b"h3", b"m", two, 3), &ONE_ROW)
+            .await
+            .unwrap();
+
+        assert_eq!(fanout_seqs(&store, "one").await, (vec![1, 2], vec![1, 2]));
+        assert_eq!(fanout_seqs(&store, "two").await, (vec![1], vec![1]));
+    }
+
+    /// Oracle: §4, "never reused or renumbered", across the two things
+    /// that could renumber it.
+    ///
+    /// A RESTART: the counter is durable, so the next fanout after one is
+    /// 3 and not 1. A PRUNE: retention deletes room_event rows
+    /// (migrations/0014_retention.sql), and the sequence after a prune
+    /// must still be 3 -- which is why the counter is a column on `room`
+    /// and not MAX(room_event.fanout_seq). Deriving it from the events
+    /// would hand out 1 again here and deliver a number a follower has
+    /// already seen.
+    #[tokio::test]
+    async fn a_restart_and_a_prune_do_not_renumber_the_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mimid.sqlite");
+        let one = "mimi://a.example/r/one";
+        let domain = Domain::try_from("a.example".to_owned()).unwrap();
+        {
+            let store = store_with_room(&dir).await;
+            store
+                .append_event(&at(b"h1", b"m", one, 1), &ONE_ROW)
+                .await
+                .unwrap();
+            store
+                .append_event(&at(b"h2", b"m", one, 2), &ONE_ROW)
+                .await
+                .unwrap();
+            assert_eq!(fanout_seqs(&store, "one").await.0, vec![1, 2]);
+        }
+
+        let store = Store::open(&path, &domain).await.unwrap();
+        sqlx::query("DELETE FROM room_event")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        store
+            .append_event(&at(b"h3", b"m", one, 3), &ONE_ROW)
+            .await
+            .unwrap();
+        assert_eq!(
+            fanout_seqs(&store, "one").await.0,
+            vec![3],
+            "a restart and a prune leave the counter where it was"
+        );
+    }
+
+    /// Oracle: §4 -- the sequence is "not a timestamp". `accepted_at` is
+    /// milliseconds, so two fanouts can share one, and it is also not
+    /// monotonic across a clock adjustment. The sequence must be distinct
+    /// and increasing whatever the clock did, which is tested here with
+    /// the same millisecond and then with one that goes BACKWARDS.
+    #[tokio::test]
+    async fn the_clock_does_not_decide_the_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_room(&dir).await;
+        let one = "mimi://a.example/r/one";
+        for (hash, accepted_at) in [(&b"h1"[..], 500), (&b"h2"[..], 500), (&b"h3"[..], 100)] {
+            store
+                .append_event(&at(hash, b"m", one, accepted_at), &ONE_ROW)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            fanout_seqs(&store, "one").await.0,
+            vec![1, 2, 3],
+            "two fanouts in one millisecond, and a clock that went back, \
+             still get distinct increasing sequences"
+        );
     }
 
     #[tokio::test]

@@ -795,3 +795,70 @@ async fn the_403_body_carries_the_reason() {
     let json = body(refuse(None)).await;
     assert_eq!(json.get("reason"), None, "{json}");
 }
+
+/// A header mimid sends, mimid signs: the fanout sequence is covered
+/// when the request carries it, and is not named when it does not (bead
+/// mimid-1wgh.37.104.1).
+///
+/// Oracle: RFC 9421 §2.5 — a signature protects exactly the components
+/// its `Signature-Input` lists. So a proxy that strips or rewrites the
+/// sequence must break the signature rather than silently renumber a
+/// room, which means the component has to be listed. And the list
+/// cannot name it unconditionally: §2.5 makes a covered field that is
+/// absent an error, so every other endpoint's request would fail to
+/// sign (`httpsig::Error::MissingField`).
+#[test]
+fn the_fanout_sequence_is_covered_when_it_is_there() {
+    let covered = |sequence: Option<&str>| {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::FROM, HeaderValue::from_static("mimi@b.example"));
+        if let Some(sequence) = sequence {
+            headers.insert(
+                header::HeaderName::from_static(crate::peer::FANOUT_SEQUENCE_HEADER),
+                HeaderValue::from_str(sequence).unwrap(),
+            );
+        }
+        signer(3, "s1")
+            .sign(
+                &Method::POST,
+                &URI.parse().unwrap(),
+                &mut headers,
+                b"m",
+                NOW,
+            )
+            .expect("the request signs");
+        let (_, params) = httpsig::signatures(&headers).unwrap().remove(0);
+        (params.components, headers)
+    };
+
+    let (components, headers) = covered(Some("7"));
+    assert!(
+        components
+            .iter()
+            .any(|c| c == crate::peer::FANOUT_SEQUENCE_HEADER),
+        "a request carrying the sequence covers it: {components:?}"
+    );
+    // And the signature really is over that value: rewriting it to 8, as
+    // a proxy renumbering a room would, no longer verifies.
+    let mut rewritten = headers.clone();
+    rewritten.insert(
+        header::HeaderName::from_static(crate::peer::FANOUT_SEQUENCE_HEADER),
+        HeaderValue::from_static("8"),
+    );
+    let b = signer(3, "s1");
+    let auth = auth(&config_trusting(&b));
+    assert!(check_with(&auth, &headers, b"m", "b.example").is_ok());
+    assert!(
+        check_with(&auth, &rewritten, b"m", "b.example").is_err(),
+        "a rewritten sequence must fail the signature"
+    );
+
+    let (components, _) = covered(None);
+    assert!(
+        !components
+            .iter()
+            .any(|c| c == crate::peer::FANOUT_SEQUENCE_HEADER),
+        "a request without it does not name it, or no other endpoint \
+         could sign at all: {components:?}"
+    );
+}

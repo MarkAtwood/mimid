@@ -108,6 +108,10 @@ pub struct Received {
     pub host: Vec<String>,
     pub content_type: Vec<String>,
     pub body: Vec<u8>,
+    /// The fanout sequence beside the message
+    /// (`mimid_server::peer::FANOUT_SEQUENCE_HEADER`; bead
+    /// mimid-1wgh.37.104.1). Empty when the request carried none.
+    pub fanout_sequence: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -225,6 +229,10 @@ async fn notify(
         room_id,
         from: values(&headers, header::FROM),
         host: values(&headers, header::HOST),
+        fanout_sequence: values(
+            &headers,
+            header::HeaderName::from_static(mimid_server::peer::FANOUT_SEQUENCE_HEADER),
+        ),
         content_type: values(&headers, header::CONTENT_TYPE),
         body: body.to_vec(),
     });

@@ -210,6 +210,7 @@ impl<L: LocalDelivery> Fanout<L> {
             domain,
             body,
             attempts,
+            fanout_seq,
             ..
         } = row;
         let result: Result<(), Failure> = if domain == self.own_domain {
@@ -219,7 +220,7 @@ impl<L: LocalDelivery> Fanout<L> {
                 .map_err(|error| (Box::new(error) as _, None, false))
         } else {
             self.peers
-                .notify(&domain, &room_id, body)
+                .notify(&domain, &room_id, body, fanout_seq)
                 .await
                 .map_err(|error| {
                     let (retry_after, refused) = match &error {

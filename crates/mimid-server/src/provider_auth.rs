@@ -1109,8 +1109,20 @@ impl RequestSigner {
         nonce: Option<&str>,
     ) -> Result<(), httpsig::Error> {
         headers.insert(httpsig::CONTENT_DIGEST, httpsig::content_digest(body));
+        // A header mimid sends, mimid signs. The fanout sequence is the
+        // only one of these so far: it rides beside the message on
+        // `/notify` (decision mimid-1wgh.104), and covering it means a
+        // proxy that strips or rewrites it fails the signature instead
+        // of silently renumbering a room. It cannot go in
+        // SIGNED_COMPONENTS unconditionally, because every other
+        // endpoint's request lacks it and `httpsig::sign` refuses to
+        // cover a field that is not there.
+        let mut components = SIGNED_COMPONENTS.map(str::to_owned).to_vec();
+        if headers.contains_key(crate::peer::FANOUT_SEQUENCE_HEADER) {
+            components.push(crate::peer::FANOUT_SEQUENCE_HEADER.to_owned());
+        }
         let params = SignatureParams {
-            components: SIGNED_COMPONENTS.map(str::to_owned).to_vec(),
+            components,
             created: Some(now),
             nonce: nonce.map(str::to_owned),
             keyid: Some(self.selector.clone()),
