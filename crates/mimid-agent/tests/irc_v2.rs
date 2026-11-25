@@ -1055,3 +1055,149 @@ async fn redaction_and_the_tags_goguma_sends() {
     alice.stop().await;
     bob.stop().await;
 }
+
+/// A keyed call announced in a chat reaches IRC as a server NOTICE
+/// saying this client cannot join, and NOT as a joinable thing
+/// (bead mimid-1wgh.114.6 item 1; decision mimid-1wgh.117).
+///
+/// Oracle: the bead's own statement of the two ways IRC can be wrong
+/// about a call it cannot join. A stock IRC client has no media stack and
+/// no way to exchange SDP, so showing the announcement as an ordinary
+/// message would offer something that silently does nothing, and showing
+/// nothing would leave the user wondering. The notice is the honest
+/// third thing. The call's own room gets no channel at all, which is the
+/// other half and is already held down by
+/// `mimid_agent_irc::names`'s own test.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_keyed_call_is_a_notice_that_irc_cannot_join_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let config = with_irc(config(&server, ALICE, dir.path(), "from-allowed"));
+    let alice = Running::start(&config).await;
+    let mut irc = register(&alice, &CAPS).await;
+
+    // A chat, which IRC gives a channel.
+    let chat = alice
+        .store
+        .create_room(alice.store.new_key(), "planning", &[])
+        .await
+        .unwrap();
+    alice.store.save().await.unwrap();
+    let channel = irc
+        .until("a JOIN of the chat's channel", |m| m.command == "JOIN")
+        .await
+        .params[0]
+        .clone();
+
+    // The call, announced in that chat.
+    let options = mimid_agent_store::action::CallOptions {
+        among: None,
+        media: vec!["audio".to_owned(), "video".to_owned()],
+        subject: "standup".to_owned(),
+    };
+    let call = alice
+        .store
+        .start_call_with(alice.store.new_key(), &chat.key, &options)
+        .await
+        .unwrap();
+    alice.store.save().await.unwrap();
+
+    let notice = irc
+        .until("a NOTICE about the call", |m| {
+            m.command == "NOTICE" && m.text().contains("call")
+        })
+        .await;
+    assert_eq!(
+        notice.params[0], channel,
+        "it belongs in the chat: {}",
+        notice.raw
+    );
+    assert!(
+        notice.text().contains("cannot join"),
+        "the notice must say this client cannot join: {}",
+        notice.raw
+    );
+    assert!(
+        notice.text().contains("video call"),
+        "and what kind of call it is: {}",
+        notice.raw
+    );
+    assert!(
+        notice.text().contains("standup"),
+        "and its subject: {}",
+        notice.raw
+    );
+    // The notice IS the rendering of that message rather than an extra
+    // line beside a PRIVMSG of it: the message's tags are on the first
+    // line of its rendering, so a `msgid` here means no PRIVMSG carried
+    // them. Asserting the absence of a PRIVMSG directly would need a
+    // negative wait; this is the same fact, positively.
+    assert!(
+        notice.tags.contains_key("msgid"),
+        "the notice must be the message's own rendering: {}",
+        notice.raw
+    );
+    let in_store = alice
+        .store
+        .state()
+        .messages
+        .values()
+        .find(|m| m.room == chat.key)
+        .cloned()
+        .expect("the announcement is a message in the chat");
+    assert_eq!(
+        notice.tags.get("msgid"),
+        Some(&in_store.sender_msg_id),
+        "and that message's: {}",
+        notice.raw
+    );
+    assert!(
+        mimid_agent_store::call::in_record(&in_store.extensions).is_some(),
+        "which is the one carrying the announcement"
+    );
+
+    // The call's own room is not a channel, so there is nothing to join
+    // by mistake.
+    assert!(
+        !alice
+            .store
+            .state()
+            .rooms
+            .get(&call.key)
+            .is_some_and(|room| room.ext.contains_key("irc")),
+        "a call room must have no IRC channel"
+    );
+
+    alice.stop().await;
+}
+
+/// `call` without a URL says a URL is required and why, rather than only
+/// showing the syntax: a user who typed it meaning "start a call" learns
+/// that IRC cannot host one (bead mimid-1wgh.114.6 item 2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn call_without_a_url_says_irc_cannot_host_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let config = with_irc(config(&server, ALICE, dir.path(), "from-allowed"));
+    let alice = Running::start(&config).await;
+    let mut irc = register(&alice, &CAPS).await;
+
+    irc.send("PRIVMSG mimid :call #planning").await;
+    let answer = irc
+        .until("the service's answer", |m| {
+            m.command == "NOTICE" && m.text().contains("usage: call")
+        })
+        .await;
+    assert!(
+        answer.text().contains("a URL is required"),
+        "{}",
+        answer.raw
+    );
+    assert!(
+        answer.text().contains("cannot host one itself"),
+        "it must say why: {}",
+        answer.raw
+    );
+
+    alice.stop().await;
+}

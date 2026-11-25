@@ -52,6 +52,15 @@ use mimid_agent_store::record::{Call, Invite, MessageExpiry, RoomStatus};
 /// lasting key. INVENTED VALUE, NOT FROM SPEC.
 pub const LINK_LIFETIME: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
+/// The answer to `call` without a URL. It says a URL is REQUIRED rather
+/// than only showing the syntax, because a user who typed `call #chat`
+/// meaning "start a call" needs to learn that this front end cannot host
+/// one: a stock IRC client has no media stack and no way to exchange
+/// SDP, so a keyed call started from here would be a room nobody on IRC
+/// could join (bead mimid-1wgh.114.6 item 2). The link kind of call,
+/// which is what this command sends, needs somewhere to point.
+const CALL_USAGE: &str = "usage: call #channel <url> [<description>] \u{2014} a URL is required:      IRC can send a link to a call hosted elsewhere, but cannot host one itself";
+
 /// The help text, one NOTICE a line.
 const HELP: &[&str] = &[
     "mimid service commands:",
@@ -367,14 +376,14 @@ impl Session {
             }
             ("call", Some(channel)) => {
                 let Some(url) = words.next() else {
-                    self.service_says("usage: call #channel <url> [<description>]");
+                    self.service_says(CALL_USAGE);
                     return;
                 };
                 // The description is the rest of the line, spaces kept.
                 let description = after_words(text, 3).trim_end();
                 self.call(channel, url, description).await;
             }
-            ("call", None) => self.service_says("usage: call #channel <url> [<description>]"),
+            ("call", None) => self.service_says(CALL_USAGE),
             ("expire", None) => {
                 self.service_says("usage: expire #channel [<duration> or off]");
             }

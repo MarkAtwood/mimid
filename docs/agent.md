@@ -127,6 +127,8 @@ The IRC front end. Absent means no IRC. An empty `[irc]` table turns it on with 
 | `server_name` | string | `"mimid.invalid"` | The name the IRC server gives itself: at most 63 characters, letters, digits, `-` and `.`, with at least one dot and no empty label. |
 | `webpush` | boolean | `true` | Whether IRC clients may register for Web Push (the `soju.im/webpush` capability). See [Push](#push-what-the-push-service-sees). |
 
+**Calls on IRC.** A stock IRC client has no media stack and no way to exchange SDP, so it cannot join a call mimid keys. It is told about one anyway: a call started elsewhere appears in the chat's channel as a server notice — *"alice started a video call: standup — this client cannot join it"* — rather than as an ordinary message, which would look like something to act on. The call's own room gets no channel, so there is nothing to join by mistake, and `call` without a URL answers that a URL is required because IRC can send a link to a call hosted elsewhere but cannot host one itself. The `call` command still works for that link kind.
+
 The client logs in with a credential (the token in `<state_dir>/agent-token`, or an app password) by SASL PLAIN, SASL SCRAM-SHA-256 or as its server password (`PASS`). If both SASL and PASS come, SASL decides. A client that turned on the `sasl` capability and sent no credential gets `FAIL * ACCOUNT_REQUIRED`; others get 464.
 
 Failed logins are never locked out, but after 5 failures from one address in 10 minutes (20 from loopback; IPv6 counted per /64) each further failure is answered after a delay, 1 second doubling to 30, until a login from that address succeeds. At most 32 connections that have not logged in are open at once, 8 per address, and each must log in within 30 seconds.

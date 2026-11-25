@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.130",
+  "title": "An invite to a call room cannot be told apart from any other invite: record::Invite has no parent",
+  "design": "Found 2026-11-24 while finishing bead mimid-1wgh.114.6 (the IRC notice),\nand recorded there first. Split out because fixing it is work in\nmimid-agent-core, not in a front end.\n\nWHAT IS MISSING. crates/mimid-agent-store/src/record.rs's Invite has no\nparent field, because Agent::invite_details does not surface the\nWelcome's parent_room (room-policy-04 §5). So a front end cannot tell an\ninvite to a CALL room from an invite to any other room.\n\nWHY IT MATTERS. A call is its own parent-dependent room and\nStore::start_call invites the chat's people into it (decision\nmimid-1wgh.113). With the default `invites = \"any\"` the invite is\naccepted and never shown, so nothing is wrong today. With a stricter\ninvite policy it becomes a pending invite to a room the user cannot\nusefully enter:\n\n  - on IRC, to a room that gets no channel even once joined\n    (mimid-agent-irc::names, bead mimid-1wgh.114.6), so accepting it\n    appears to do nothing;\n  - on any front end, with no way to say \"this is a call\" in the prompt,\n    so the user is asked a question they cannot answer sensibly.\n\nThe announcement of bead mimid-1wgh.114.1 does not help: it is a message\nin the PARENT chat, and the invite arrives on its own path, possibly\nbefore or without it.\n\nWHAT TO DO, in order:\n\n1. mimid-agent-core: carry parent_room out of the Welcome's room policy\n   into Agent::invite_details. The information is already there -- the\n   joining side reads the parent from the policy, which is how\n   Store::start_call's room is recognised as a call after joining\n   (tests/calls.rs reads Room::parent on bob's side). It is not kept on\n   the INVITE.\n2. mimid-agent-store: Invite gains the parent room's URI, and the record\n   migration that goes with it.\n3. Front ends decide what to do with it. The honest default is to accept\n   a call invite the way `invites = \"any\"` does regardless of policy,\n   since the call is already confined to the parent's people and the\n   policy's purpose is to stop strangers opening rooms -- but that is a\n   decision and belongs in its own bead if it is taken.\n\nNOT URGENT: with the default policy nothing is visible. It matters the\nfirst time someone runs a stricter one, and it will look like a bug in\ncalls rather than in invites.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-25T07:59:53.398633493Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-25T07:59:53.398633493Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.130",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-25T07:59:53.441174126Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.130",
+      "depends_on_id": "mimid-1wgh.114.6",
+      "type": "discovered-from",
+      "created_at": "2026-11-25T07:59:56.97476526Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
