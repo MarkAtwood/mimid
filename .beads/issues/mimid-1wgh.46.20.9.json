@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.46.20.9",
+  "title": "Interop day: ask Jason which TLS client-certificate mode his hub runs, and why it differs from our copy",
+  "design": "ASK AT THE INTEROP DAY (Mark, 2026-11-25). A question, not a bug report:\nwe have ruled out both halves being Haven defects (bead mimid-7yn7.9's\nrule).\n\nTHE DISCREPANCY. Two observations of Haven on the same day, 2026-11-22,\ndisagreeing:\n\n  our copy of mimi-hubd at 34eae7e, no client certificate\n    -\u003e the TLS handshake itself fails. It REQUIRES one.\n    (bead mimid-1wgh.46.6.17)\n\n  Jason's PUBLIC hub, no client certificate\n    -\u003e HTTP 200, handle resolved. It ASKS and does not require.\n    Exactly one CertificateRequest in the handshake.\n    (bead mimid-75nk.14)\n\nWHAT TO ASK:\n\n1. Which revision does the public hub run, and does it require or merely\n   request a client certificate? Our copy at 34eae7e requires one; his\n   did not on 2026-11-22. Different revision, or different TLS\n   configuration?\n2. Which mode does he intend for the interop day? It decides whether\n   mimid needs [peer_tls.identity] configured at all, and if it does,\n   which peers get client_certificate = true (bead mimid-75nk.14's\n   per-peer setting). The requiring mode has no signature-only fallback,\n   so it moves the client certificate from optional to required for us.\n3. If he requires one: whose CA does he trust for it? We have a\n   certificate and root ready at /etc/mimid/identity/ on the live host\n   (root fingerprint in bead mimid-75nk.14), deliberately presented to\n   nobody until a peer confirms it trusts that root.\n4. Would he consider sending the TLS certificate_authorities extension in\n   the CertificateRequest? It is optional in TLS 1.3 and his hub sends\n   none, so a peer cannot tell whether its issuer is acceptable and has\n   to be told out of band -- which is what question 3 is. This is the\n   same question bead mimid-75nk.15 raises for provider-auth -01, so his\n   answer feeds the draft.\n\nWHAT NOT TO SAY. Neither behaviour is a bug. Rejecting an untrusted\nclient certificate when one is offered is what a mainstream TLS stack\ndoes: the fake peer in crates/mimid-server/tests/peer_client_tls.rs is\nrustls with WebPkiClientVerifier::builder(...).allow_unauthenticated(),\nthe standard \"request but do not require\" mode, and it answers an\nuntrusted certificate with the identical AlertReceived(UnknownCA). The\nbug in that episode was mimid's, fixed in d909bb1b. Requiring a\ncertificate in the handshake is arguably MORE conformant to protocol-07\n§4.1's \"MUST be mutually authenticated\" than not.\n\nThe one thing worth saying as feedback rather than a question: a\nhandshake refusal carries no reason, so a peer whose certificate is\nmissing, expired or from the wrong CA learns only that TLS failed. That\ncosts hours on an interop day. mimid answers 403 with a reason member\nnaming the peer's own record, signature or certificate (mimid-75nk.12).\nThat point is already made in bead mimid-1wgh.46.6.17.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-25T02:32:21.863959002Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-25T02:32:21.863959002Z",
+  "labels": [
+    "interop",
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.46.20.9",
+      "depends_on_id": "mimid-1wgh.46.20",
+      "type": "parent-child",
+      "created_at": "2026-11-25T02:32:21.903777123Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
