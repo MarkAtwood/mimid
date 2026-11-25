@@ -169,3 +169,42 @@ fn a_component_exports_once_in_an_epoch() {
         .expect("another component in the same epoch");
     assert_ne!(first, other);
 }
+
+/// The puncture is in the store, not only in the loaded group: a member
+/// reloaded from its store gets no second secret for a component already
+/// exported in that epoch.
+///
+/// This is §4.4's deletion MUST -- "the MLS implementation MUST regard
+/// that component's exported secret as 'consumed', and delete any source
+/// key material" -- as a storage question rather than a crypto one. If the
+/// Exporter Tree were punctured only in memory, a restart would hand the
+/// secret out again and the forward security §4.4 exists for would be
+/// gone.
+///
+/// An in-memory store is enough: [`Member::load`] reads the group back
+/// through the same storage provider a restart would, so what this shows
+/// is that the write happened. Whether SQLite then survives a power cut is
+/// `openmls_sqlite_storage`'s business, not mimid's.
+#[test]
+fn the_puncture_survives_reloading_the_member() {
+    let (alice, mut alice_group, _bob, _bob_group) = pair();
+    let group_id = alice_group.group_id().to_vec();
+
+    let first = alice_group
+        .safe_export_secret(&alice, MEDIA)
+        .expect("the first export of the epoch");
+    drop(alice_group);
+
+    let mut reloaded = Member::load(&alice, &group_id).expect("reload alice's group");
+    assert!(
+        reloaded.safe_export_secret(&alice, MEDIA).is_err(),
+        "a reload must not restore a consumed secret"
+    );
+
+    // And the reload is sound rather than merely broken: another
+    // component's leaf is still there, and the epoch is the same one.
+    let other = reloaded
+        .safe_export_secret(&alice, OTHER)
+        .expect("another component after the reload");
+    assert_ne!(first, other);
+}

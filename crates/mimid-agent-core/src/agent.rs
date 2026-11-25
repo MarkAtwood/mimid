@@ -3972,9 +3972,12 @@ impl Agent {
     ///
     /// [`AgentError::NoSuchRoom`] if the agent holds no group for `room`,
     /// and [`AgentError::Mls`] if the export fails: in a room the agent
-    /// has been removed from, or one whose group does not carry the
-    /// Exporter Tree extension, which a room made by another
-    /// implementation may not.
+    /// has been removed from, one whose group does not carry the Exporter
+    /// Tree extension, which a room made by another implementation may
+    /// not, or one whose secret for this epoch this agent already read
+    /// and no longer holds. The last is what a restart inside an epoch
+    /// leaves behind, since the puncture is in the store and the secret
+    /// was not (bead mimid-1wgh.129).
     pub fn media_secret(&mut self, room: &str) -> Result<MediaSecret, AgentError> {
         let member = self
             .members

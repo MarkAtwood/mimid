@@ -95,6 +95,50 @@ async fn a_call_room_keys_itself_from_its_own_group() {
     assert_ne!(chat_secret.expose_secret(), hers.expose_secret());
 }
 
+/// An agent that restarts inside an epoch cannot get that epoch's media
+/// secret back: §4.4's leaf was punctured and the puncture is in the
+/// store, while the secret itself was only ever in memory. The call's
+/// media cannot be keyed again until the epoch moves.
+///
+/// Oracle: mls-extensions-11 §4.4's deletion MUST, which is the whole
+/// point of the forward-secure exporter -- a restart that could re-derive
+/// the secret would mean the source key material had not been deleted.
+/// This test pins the consequence rather than wishing it away: it is the
+/// behaviour, it is what §4.4 asks for, and what a call should do about it
+/// is bead mimid-1wgh.129.
+#[tokio::test]
+async fn an_agent_that_restarts_inside_an_epoch_loses_the_media_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let mut alice = device(&server, ALICE, dir.path(), "alice").await;
+
+    let chat = alice
+        .host_room(&HostOptions::named("planning"))
+        .await
+        .unwrap();
+    let call = alice
+        .host_room(&HostOptions::child_of(&chat, ""))
+        .await
+        .unwrap();
+    let before = alice.media_secret(&call).unwrap();
+    let epoch = before.epoch();
+    drop(before);
+    drop(alice);
+
+    // The same state directory, as after a crash or an upgrade.
+    let mut restarted = device(&server, ALICE, dir.path(), "alice").await;
+    let error = restarted.media_secret(&call).unwrap_err();
+    assert!(
+        matches!(error, AgentError::Mls { .. }),
+        "the exporter is consumed for this epoch, so this must fail: {error:?}"
+    );
+
+    // The epoch has not moved, so there is nothing else to read; another
+    // room's group is untouched, which shows the failure is this
+    // component's leaf in this group and not a broken reload.
+    assert_eq!(restarted.media_secret(&chat).unwrap().epoch(), epoch);
+}
+
 /// The hub refuses a parent-dependent room whose parent it does not host,
 /// which §5 forbids: "A parent-dependent room is always hosted on the
 /// same Hub as the parent room."
