@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.114.13",
   "title": "A call signal's participantId carried a user URI, which is not a JMAP Id, and the failure was swallowed by .ok()",
   "design": "FOUND 2026-11-25 by bead mimid-1wgh.114.10's test, after the two bugs\nabove it were fixed. The third of three in one path, and the one the\nbead predicted when it said a browser demo \"reports no audio\" where this\ntest \"reports which one\".\n\nWHAT HAPPENED. vtc_stream::signal_of built the VTCCallSignal with\n\n    \"participantId\": sender,\n\nwhere `sender` is the authenticated MLS sender's USER URI, e.g.\nmimi://a.example/u/alice. VtcCallSignal::participant_id is a\njmap_types::Id, and RFC 8620 §1.2 allows no `:` or `/` in an Id, so\nserde_json::from_value refused the object every time.\n\nAND NOTHING SAID SO, because the function ended in\n\n    .ok()\n\nwhich turned the refusal into `None`, which the pump treats as \"this\nsubscription does not cover this signal\" and skips with `continue`. A\nsignal that could not be built was indistinguishable from one the client\nhad filtered out. Three different causes — no projected call, a refused\nsubscription, an unbuildable event — all looked identical from outside:\nsilence.\n\nTHE FIX, two parts.\n\n1. `participantId` is the Id a client already has for that person: the\n   account's own id when the sender is this user, else the person's store\n   key, which is exactly what ChatMember.id carries\n   (`render::Render::known_id`). A client correlates a signal to a chat\n   member by it. A sender this agent has no person record for yields\n   None, which is a signal from someone it has never seen in a room.\n2. The `.ok()` becomes a match that logs at ERROR\n   (`agent_call_signal_undeliverable`). An event that will not build is a\n   call that does not connect, and the operator should not have to guess.\n\nNOTE FOR THE DRAFT, not a change: draft-atwood-jmap-vtc-wss-00\n§VTCCallSignal says participantId is \"The participant that sent it\",\nwhich reads naturally as a VTCParticipant id. mimid serves no\nVTCParticipant records yet, so it uses the person id its own clients\nalready see. If VTCParticipant records are ever projected, this should\nmove to their ids and the two must not disagree. Worth a sentence in the\ndraft about which id it is.",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-25T03:33:27.913833335Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-25T03:33:27.913833335Z",
+  "updated_at": "2026-11-25T03:48:21.708595781Z",
+  "closed_at": "2026-11-25T03:48:21.708595781Z",
+  "close_reason": "Fixed in the commit above; the regression test is tests/vtc_negotiation.rs (bead mimid-1wgh.114.10), which failed on each of the three in turn.",
   "labels": [
     "agent",
     "human"

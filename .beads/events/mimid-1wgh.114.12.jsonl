@@ -1,3 +1,4 @@
 {"id":"01a210c3-bd06-789b-bc4d-0639f1439a81","issue_id":"mimid-1wgh.114.12","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-25T03:33:13.094565212Z"}
 {"id":"01a210c3-bd0a-7d3e-9dde-1928367d44da","issue_id":"mimid-1wgh.114.12","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: agent","created_at":"2026-11-25T03:33:13.098869131Z"}
 {"id":"01a210c3-bd0e-7cdf-9e57-e281182b7645","issue_id":"mimid-1wgh.114.12","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: human","created_at":"2026-11-25T03:33:13.102844952Z"}
+{"id":"01a210d1-99d1-7817-937d-7aa280b169ce","issue_id":"mimid-1wgh.114.12","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Fixed in the commit above; the regression test is tests/vtc_negotiation.rs (bead mimid-1wgh.114.10), which failed on each of the three in turn.","created_at":"2026-11-25T03:48:21.585531382Z"}
