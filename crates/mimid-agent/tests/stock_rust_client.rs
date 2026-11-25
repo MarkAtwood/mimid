@@ -27,6 +27,46 @@ mod common;
 use std::time::Duration;
 
 use common::{ALICE, BOB, PATIENCE, Running, config, server};
+
+/// One SSE frame named for a timeout message: a `StateChange` with the
+/// types it carries, or an `Unknown` with its `event:` field.
+///
+/// A wait that times out has to say WHICH failure it is (bead
+/// mimid-gn1w). No frame at all means the stream never delivered
+/// anything. Frames that are all keepalives mean the stream is alive and
+/// the state change it wanted was never sent -- for a stream opened just
+/// before the write that causes it, that is a change published before
+/// the subscribe completed, which the EventSource does not replay, so
+/// waiting longer cannot help. A `StateChange` for other types means the
+/// write landed but not for the type under test.
+fn describe(event: &SseEvent) -> String {
+    match event {
+        SseEvent::StateChange(change) => {
+            let types: Vec<&str> = change
+                .changed
+                .values()
+                .flat_map(|types| types.keys().map(String::as_str))
+                .collect();
+            format!("StateChange({})", types.join("+"))
+        }
+        SseEvent::Unknown { event_type, .. } if event_type.is_empty() => {
+            "Unknown(no event: field)".to_owned()
+        }
+        SseEvent::Unknown { event_type, .. } => format!("Unknown({event_type})"),
+        // SseEvent is #[non_exhaustive]: a variant crate-jmap adds
+        // later should still show up in a timeout message.
+        other => format!("{other:?}"),
+    }
+}
+
+/// What a wait saw, for its timeout message.
+fn seen_report(seen: &[String]) -> String {
+    if seen.is_empty() {
+        "no frames arrived at all".to_owned()
+    } else {
+        format!("{} frame(s): {}", seen.len(), seen.join(", "))
+    }
+}
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use jmap_base_client::{
@@ -168,26 +208,35 @@ impl Events {
     /// Reads frames until a StateChange naming `type_name` for this
     /// account. Panics after [`PATIENCE`].
     async fn until_changed(&mut self, type_name: &str) {
-        tokio::time::timeout(PATIENCE, async {
+        let account = self.account.clone();
+        let stream = &mut self.stream;
+        let mut seen: Vec<String> = Vec::new();
+        let waited = tokio::time::timeout(PATIENCE, async {
             loop {
-                let frame = self
-                    .stream
+                let frame = stream
                     .next()
                     .await
                     .expect("the stream stays open")
                     .expect("a well-formed frame");
+                seen.push(describe(&frame.event));
                 if let SseEvent::StateChange(change) = frame.event
                     && change
                         .changed
-                        .get(&self.account)
+                        .get(&account)
                         .is_some_and(|types| types.contains_key(type_name))
                 {
                     return;
                 }
             }
         })
-        .await
-        .unwrap_or_else(|_| panic!("no StateChange naming {type_name}"));
+        .await;
+        // As the reconnecting-stream wait does: say which failure this
+        // is rather than only that it timed out (bead mimid-gn1w).
+        assert!(
+            waited.is_ok(),
+            "no StateChange naming {type_name} in {PATIENCE:?}; {}",
+            seen_report(&seen)
+        );
     }
 
     /// Whether the stream ends within [`PATIENCE`].
@@ -334,16 +383,23 @@ async fn stock_rust_client_chats_through_two_daemons() {
         Default::default(),
     );
     b.post(&chat_b, "one more").await;
-    let frame = tokio::time::timeout(PATIENCE, async {
+    let mut seen: Vec<String> = Vec::new();
+    let waited = tokio::time::timeout(PATIENCE, async {
         loop {
             let frame = again.next().await.expect("open").expect("a frame");
+            seen.push(describe(&frame.event));
             if matches!(frame.event, SseEvent::StateChange(_)) {
                 return frame;
             }
         }
     })
-    .await
-    .expect("a StateChange on the reconnecting stream");
+    .await;
+    let frame = waited.unwrap_or_else(|_| {
+        panic!(
+            "no StateChange on the reconnecting stream in {PATIENCE:?}; {}",
+            seen_report(&seen)
+        )
+    });
     drop(frame);
     drop(again);
 
