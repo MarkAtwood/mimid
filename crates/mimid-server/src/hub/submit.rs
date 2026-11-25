@@ -140,7 +140,6 @@ pub(super) async fn submit_message(
                 epoch: accepted.epoch,
                 accepted_at: accepted.accepted_at,
                 kind: EventKind::Application,
-                bytes: decoded.app_message.as_bytes(),
                 hash: &hash,
             },
             &outbox,

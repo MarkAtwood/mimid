@@ -1,0 +1,19 @@
+-- The hub log stops keeping the message as received (Mark 2026-11-25,
+-- on bead mimid-1wgh.37.104.7).
+--
+-- Nothing in production ever read room_event.bytes: the hub wrote it and
+-- the only SELECT of it was in a test. What a reader needs is the fanout
+-- AS DELIVERED, not the bare MLSMessage, because a catch-up answer
+-- differs per destination -- the joiner of a room gets a Welcome and the
+-- other providers get the Commit, one event, different bytes. So the
+-- delivered-fanout table of that decision is what replaces this column,
+-- and keeping both would store every message twice.
+--
+-- room_event keeps what identifies and orders an event: its sequence,
+-- room, epoch, acceptance time, kind, fanout sequence, and the hash of
+-- the request as received, which is what deduplicates a retry.
+--
+-- Safe to drop in SQLite: `bytes` is in no index, no PRIMARY KEY, no
+-- UNIQUE constraint, no CHECK and no trigger. room_event has no triggers
+-- at all; the ones in 0014_retention.sql are on follower_event.
+ALTER TABLE room_event DROP COLUMN bytes;

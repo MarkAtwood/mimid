@@ -42,10 +42,14 @@ pub struct NewEvent<'a> {
     pub accepted_at: u64,
     /// What the message is.
     pub kind: EventKind,
-    /// The message exactly as received.
-    pub bytes: &'a [u8],
     /// Hash of the request as received, for retry deduplication. Unique
     /// across the log.
+    ///
+    /// The message itself is NOT kept here (Mark 2026-11-25, on bead
+    /// mimid-1wgh.37.104.7): what a reader needs is the fanout as
+    /// delivered, which differs per destination, so it belongs with the
+    /// delivered fanouts rather than in the log. Nothing ever read the
+    /// column this replaces.
     pub hash: &'a [u8],
 }
 
@@ -121,6 +125,49 @@ impl Store {
         .await?;
         rows.into_iter()
             .map(|(first, last)| Ok((from_sql_int(first)?, from_sql_int(last)?)))
+            .collect()
+    }
+
+    /// The fanouts of `room_id` that went to `domain` after
+    /// `from`, in hub order, at most `limit` of them: the entries of a
+    /// catch-up answer (docs/design/mimi-catchup.md §5).
+    ///
+    /// A row exists for a (sequence, domain) exactly when that provider
+    /// was a destination of that fanout, so this cannot return a
+    /// sequence the provider was not sent. That is §8's bound without
+    /// re-deriving it; [`Store::provider_ranges`] is for saying what
+    /// window a provider could ask about, which is what §5.1's refusal
+    /// needs.
+    ///
+    /// Bounded by retention as the hub log is, because a fanout is
+    /// deleted with its event by a trigger rather than by a second
+    /// sweep (`migrations/0021_room_fanout.sql`).
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlx`] if the query fails,
+    /// [`StoreError::OutOfRange`] if `from` exceeds `i64::MAX` or a
+    /// stored sequence is negative.
+    pub async fn fanout_since(
+        &self,
+        room_id: &str,
+        domain: &str,
+        from: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Vec<u8>)>, StoreError> {
+        let rows: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+            "SELECT fanout_seq, bytes FROM room_fanout \
+             WHERE room_id = ? AND domain = ? AND fanout_seq > ? \
+             ORDER BY fanout_seq LIMIT ?",
+        )
+        .bind(room_id)
+        .bind(domain)
+        .bind(to_sql_int(from)?)
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .fetch_all(&self.reader)
+        .await?;
+        rows.into_iter()
+            .map(|(seq, bytes)| Ok((from_sql_int(seq)?, bytes)))
             .collect()
     }
 
@@ -353,14 +400,13 @@ async fn insert_event(
     let accepted_at = to_sql_int(event.accepted_at)?;
     let fanout_seq = next_fanout_seq(tx, event.room_id).await?;
     let seq: i64 = sqlx::query_scalar(
-        "INSERT INTO room_event (room_id, epoch, accepted_at, kind, bytes, hash, fanout_seq) \
-         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING seq",
+        "INSERT INTO room_event (room_id, epoch, accepted_at, kind, hash, fanout_seq) \
+         VALUES (?, ?, ?, ?, ?, ?) RETURNING seq",
     )
     .bind(event.room_id)
     .bind(to_sql_int(event.epoch)?)
     .bind(accepted_at)
     .bind(event.kind.as_sql())
-    .bind(event.bytes)
     .bind(event.hash)
     .bind(fanout_seq)
     .fetch_one(&mut **tx)
@@ -384,8 +430,41 @@ async fn insert_event(
         // window and the deliveries cannot disagree
         // (docs/design/mimi-catchup.md §8).
         record_participation(tx, event.room_id, entry.domain, fanout_seq).await?;
+        keep_fanout(tx, event.room_id, entry.domain, fanout_seq, entry.body).await?;
     }
     from_sql_int(seq)
+}
+
+/// Keeps the fanout `bytes` that went to `domain` at `fanout_seq`, which
+/// is what a catch-up answer is made of (decision on bead
+/// mimid-1wgh.37.104.7).
+///
+/// Per destination, because a handshake's fanout differs by who gets it:
+/// the joiner receives a Welcome and the other providers receive the
+/// Commit, one event, different bytes. The bytes are kept exactly as
+/// delivered, so catch-up returns what was really sent and no
+/// re-encoding sits between a follower and the frank it checks.
+///
+/// `INSERT OR IGNORE`, so a replayed fanout does not fail the
+/// transaction; the first bytes for a (room, sequence, domain) stand.
+pub(super) async fn keep_fanout(
+    tx: &mut Transaction<'_, Sqlite>,
+    room_id: &str,
+    domain: &str,
+    fanout_seq: i64,
+    bytes: &[u8],
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO room_fanout (room_id, fanout_seq, domain, bytes) \
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(room_id)
+    .bind(fanout_seq)
+    .bind(domain)
+    .bind(bytes)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// Notes that `domain` was a destination of `room_id`'s fanout at
@@ -495,13 +574,12 @@ mod tests {
         (events, outbox)
     }
 
-    fn event<'a>(hash: &'a [u8], bytes: &'a [u8]) -> NewEvent<'a> {
+    fn event(hash: &[u8]) -> NewEvent<'_> {
         NewEvent {
             room_id: "mimi://a.example/r/one",
             epoch: 1,
             accepted_at: 42,
             kind: EventKind::Application,
-            bytes,
             hash,
         }
     }
@@ -540,13 +618,12 @@ mod tests {
         (events, outbox)
     }
 
-    fn at<'a>(hash: &'a [u8], bytes: &'a [u8], room: &'a str, accepted_at: u64) -> NewEvent<'a> {
+    fn at<'a>(hash: &'a [u8], room: &'a str, accepted_at: u64) -> NewEvent<'a> {
         NewEvent {
             room_id: room,
             epoch: 1,
             accepted_at,
             kind: EventKind::Application,
-            bytes,
             hash,
         }
     }
@@ -575,15 +652,15 @@ mod tests {
         let two = "mimi://a.example/r/two";
 
         store
-            .append_event(&at(b"h1", b"m", one, 1), &ONE_ROW)
+            .append_event(&at(b"h1", one, 1), &ONE_ROW)
             .await
             .unwrap();
         store
-            .append_event(&at(b"h2", b"m", one, 2), &ONE_ROW)
+            .append_event(&at(b"h2", one, 2), &ONE_ROW)
             .await
             .unwrap();
         store
-            .append_event(&at(b"h3", b"m", two, 3), &ONE_ROW)
+            .append_event(&at(b"h3", two, 3), &ONE_ROW)
             .await
             .unwrap();
 
@@ -610,11 +687,11 @@ mod tests {
         {
             let store = store_with_room(&dir).await;
             store
-                .append_event(&at(b"h1", b"m", one, 1), &ONE_ROW)
+                .append_event(&at(b"h1", one, 1), &ONE_ROW)
                 .await
                 .unwrap();
             store
-                .append_event(&at(b"h2", b"m", one, 2), &ONE_ROW)
+                .append_event(&at(b"h2", one, 2), &ONE_ROW)
                 .await
                 .unwrap();
             assert_eq!(fanout_seqs(&store, "one").await.0, vec![1, 2]);
@@ -626,7 +703,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .append_event(&at(b"h3", b"m", one, 3), &ONE_ROW)
+            .append_event(&at(b"h3", one, 3), &ONE_ROW)
             .await
             .unwrap();
         assert_eq!(
@@ -648,7 +725,7 @@ mod tests {
         let one = "mimi://a.example/r/one";
         for (hash, accepted_at) in [(&b"h1"[..], 500), (&b"h2"[..], 500), (&b"h3"[..], 100)] {
             store
-                .append_event(&at(hash, b"m", one, accepted_at), &ONE_ROW)
+                .append_event(&at(hash, one, accepted_at), &ONE_ROW)
                 .await
                 .unwrap();
         }
@@ -690,7 +767,7 @@ mod tests {
                 })
                 .collect();
             store
-                .append_event(&at(hash, b"m", one, 1), &outbox)
+                .append_event(&at(hash, one, 1), &outbox)
                 .await
                 .unwrap();
         }
@@ -809,7 +886,7 @@ mod tests {
 
         for hash in [&b"h1"[..], &b"h2"[..], &b"h3"[..]] {
             store
-                .append_event(&at(hash, b"m", one, 1), &ONE_ROW)
+                .append_event(&at(hash, one, 1), &ONE_ROW)
                 .await
                 .unwrap();
         }
@@ -846,6 +923,151 @@ mod tests {
         );
     }
 
+    /// Oracle: the decision on bead mimid-1wgh.37.104.7. A catch-up
+    /// answer is made of the fanouts a hub delivered, and they differ by
+    /// destination: a handshake sends the joiner a Welcome and everyone
+    /// else the Commit, one event, different bytes. So the rows are per
+    /// destination and hold the bytes as delivered, which is what lets
+    /// catch-up return only what was really sent, with no re-encoding
+    /// between a follower and the frank it checks.
+    #[tokio::test]
+    async fn a_fanout_is_kept_for_each_destination_as_delivered() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_room(&dir).await;
+        let one = "mimi://a.example/r/one";
+        // One event whose destinations get DIFFERENT bytes, as a
+        // handshake's do.
+        store
+            .append_event(
+                &at(b"h1", one, 1),
+                &[
+                    OutboxEntry {
+                        domain: "b.example",
+                        body: b"the commit",
+                    },
+                    OutboxEntry {
+                        domain: "c.example",
+                        body: b"the welcome",
+                    },
+                ],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.fanout_since(one, "b.example", 0, 10).await.unwrap(),
+            vec![(1, b"the commit".to_vec())]
+        );
+        assert_eq!(
+            store.fanout_since(one, "c.example", 0, 10).await.unwrap(),
+            vec![(1, b"the welcome".to_vec())],
+            "the same event, different bytes per destination"
+        );
+        assert_eq!(
+            store.fanout_since(one, "d.example", 0, 10).await.unwrap(),
+            Vec::<(u64, Vec<u8>)>::new(),
+            "a provider that was not a destination is sent nothing, which \
+             is §8's bound without re-deriving it"
+        );
+    }
+
+    /// Oracle: §5 -- the answer is fanouts in hub order, after the
+    /// sequence the follower holds, no more than it asked for.
+    #[tokio::test]
+    async fn fanouts_come_back_in_order_after_the_sequence_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_room(&dir).await;
+        let one = "mimi://a.example/r/one";
+        for (hash, body) in [
+            (&b"h1"[..], &b"one"[..]),
+            (&b"h2"[..], &b"two"[..]),
+            (&b"h3"[..], &b"three"[..]),
+        ] {
+            store
+                .append_event(
+                    &at(hash, one, 1),
+                    &[OutboxEntry {
+                        domain: "b.example",
+                        body,
+                    }],
+                )
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(
+            store.fanout_since(one, "b.example", 0, 10).await.unwrap(),
+            vec![
+                (1, b"one".to_vec()),
+                (2, b"two".to_vec()),
+                (3, b"three".to_vec())
+            ]
+        );
+        assert_eq!(
+            store.fanout_since(one, "b.example", 1, 10).await.unwrap(),
+            vec![(2, b"two".to_vec()), (3, b"three".to_vec())],
+            "after the sequence the follower holds, not including it"
+        );
+        assert_eq!(
+            store.fanout_since(one, "b.example", 0, 2).await.unwrap(),
+            vec![(1, b"one".to_vec()), (2, b"two".to_vec())],
+            "no more than asked for"
+        );
+        assert_eq!(
+            store.fanout_since(one, "b.example", 3, 10).await.unwrap(),
+            Vec::<(u64, Vec<u8>)>::new(),
+            "a follower that is current gets nothing"
+        );
+    }
+
+    /// Oracle: §6 -- catch-up reaches exactly as far back as the hub log,
+    /// with nothing to keep in step. A fanout goes when its event goes,
+    /// which a trigger does rather than a second sweep, so it holds for
+    /// the sweep of `crate::store::retention` and for an operator
+    /// deleting rows with the sqlite3 CLI alike (decision
+    /// mimid-1wgh.83).
+    #[tokio::test]
+    async fn a_pruned_event_takes_its_fanouts_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_room(&dir).await;
+        let one = "mimi://a.example/r/one";
+        for hash in [&b"h1"[..], &b"h2"[..]] {
+            store
+                .append_event(
+                    &at(hash, one, 1),
+                    &[OutboxEntry {
+                        domain: "b.example",
+                        body: b"body",
+                    }],
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            store
+                .fanout_since(one, "b.example", 0, 10)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+
+        sqlx::query("DELETE FROM room_event WHERE fanout_seq = 1")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.fanout_since(one, "b.example", 0, 10).await.unwrap(),
+            vec![(2, b"body".to_vec())],
+            "the pruned event's fanout went with it"
+        );
+        assert_eq!(
+            store.fanout_window(one).await.unwrap(),
+            (Some(2), 2),
+            "and the window agrees, because both read the same rows"
+        );
+    }
+
     #[tokio::test]
     async fn append_writes_event_and_outbox_together() {
         let dir = tempfile::tempdir().unwrap();
@@ -860,19 +1082,20 @@ mod tests {
                 body: b"body",
             },
         ];
-        let seq = store
-            .append_event(&event(b"h1", b"msg"), &outbox)
-            .await
-            .unwrap();
+        let seq = store.append_event(&event(b"h1"), &outbox).await.unwrap();
         assert_eq!(counts(&store).await, (1, 2));
 
-        let row: (i64, String, i64, String, Vec<u8>) = sqlx::query_as(
-            "SELECT seq, room_id, accepted_at, kind, bytes FROM room_event WHERE hash = ?",
-        )
-        .bind(&b"h1"[..])
-        .fetch_one(&store.pool)
-        .await
-        .unwrap();
+        // No `bytes`: the hub log keeps what identifies and orders an
+        // event, not the message (Mark 2026-11-25, on bead
+        // mimid-1wgh.37.104.7). `hash` is what deduplicates a retry, and
+        // the fanout as delivered belongs with the delivered fanouts,
+        // because it differs per destination.
+        let row: (i64, String, i64, String) =
+            sqlx::query_as("SELECT seq, room_id, accepted_at, kind FROM room_event WHERE hash = ?")
+                .bind(&b"h1"[..])
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
         assert_eq!(
             row,
             (
@@ -880,8 +1103,16 @@ mod tests {
                 "mimi://a.example/r/one".to_owned(),
                 42,
                 "application".to_owned(),
-                b"msg".to_vec()
             )
+        );
+        // And the column really is gone, so nothing can quietly start
+        // writing it again.
+        assert!(
+            sqlx::query_scalar::<_, i64>("SELECT count(bytes) FROM room_event")
+                .fetch_one(&store.pool)
+                .await
+                .is_err(),
+            "room_event has no bytes column"
         );
         let rows: Vec<(String, Vec<u8>, i64, i64)> = sqlx::query_as(
             "SELECT domain, body, attempts, next_attempt_at FROM outbox ORDER BY id",
@@ -925,20 +1156,12 @@ mod tests {
             domain: "b.example",
             body: b"body",
         }];
-        store
-            .append_event(&event(b"h1", b"msg"), &outbox)
-            .await
-            .unwrap();
+        store.append_event(&event(b"h1"), &outbox).await.unwrap();
         // A duplicate hash fails the event insert, before any outbox row.
-        assert!(
-            store
-                .append_event(&event(b"h1", b"other"), &outbox)
-                .await
-                .is_err()
-        );
+        assert!(store.append_event(&event(b"h1"), &outbox).await.is_err());
         assert_eq!(counts(&store).await, (1, 1));
         // An unknown room fails the event insert's foreign key.
-        let mut unknown = event(b"h3", b"msg");
+        let mut unknown = event(b"h3");
         unknown.room_id = "mimi://a.example/r/none";
         assert!(store.append_event(&unknown, &outbox).await.is_err());
         assert_eq!(counts(&store).await, (1, 1));
@@ -958,12 +1181,7 @@ mod tests {
             domain: "b.example",
             body: b"body",
         }];
-        assert!(
-            store
-                .append_event(&event(b"h1", b"msg"), &outbox)
-                .await
-                .is_err()
-        );
+        assert!(store.append_event(&event(b"h1"), &outbox).await.is_err());
         let events: i64 = sqlx::query_scalar("SELECT count(*) FROM room_event")
             .fetch_one(&store.pool)
             .await

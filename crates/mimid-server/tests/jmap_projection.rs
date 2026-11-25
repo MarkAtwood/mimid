@@ -2353,7 +2353,6 @@ async fn the_sweep_deletes_expired_messages_in_batches() {
                     epoch: 1,
                     accepted_at,
                     kind: EventKind::Application,
-                    bytes: b"message",
                     hash,
                 },
                 &[],

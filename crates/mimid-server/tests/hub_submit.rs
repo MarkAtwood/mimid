@@ -135,12 +135,15 @@ async fn accepted_message_is_franked_logged_and_enqueued_verbatim() {
     f.verify_frank(&frank, &tag, ALICE, accepted_timestamp)
         .await;
 
-    let events: Vec<(String, i64, i64, String, Vec<u8>)> = sqlx::query_as(
-        "SELECT room_id, epoch, accepted_at, kind, bytes FROM room_event ORDER BY seq",
-    )
-    .fetch_all(&f.db)
-    .await
-    .unwrap();
+    // The log keeps what identifies and orders the event. It no longer
+    // keeps the message: what a reader needs is the fanout as delivered,
+    // which is asserted against the outbox below (Mark 2026-11-25, on
+    // bead mimid-1wgh.37.104.7).
+    let events: Vec<(String, i64, i64, String)> =
+        sqlx::query_as("SELECT room_id, epoch, accepted_at, kind FROM room_event ORDER BY seq")
+            .fetch_all(&f.db)
+            .await
+            .unwrap();
     assert_eq!(
         events,
         [(
@@ -148,7 +151,6 @@ async fn accepted_message_is_franked_logged_and_enqueued_verbatim() {
             1,
             i64::try_from(accepted_timestamp).unwrap(),
             "application".to_owned(),
-            message.clone()
         )]
     );
 
@@ -163,6 +165,26 @@ async fn accepted_message_is_franked_logged_and_enqueued_verbatim() {
         .collect();
     // alice's and bob's providers; the origin a.example is alice's.
     assert_eq!(domains, ["a.example", "b.example"]);
+
+    // And what was enqueued is what is kept for catch-up, byte for byte
+    // and per destination: this is the assertion the dropped
+    // room_event.bytes used to make, now about the thing a catch-up
+    // answer is actually made of.
+    let kept: Vec<(String, Vec<u8>)> =
+        sqlx::query_as("SELECT domain, bytes FROM room_fanout ORDER BY domain")
+            .fetch_all(&f.db)
+            .await
+            .unwrap();
+    let enqueued: Vec<(String, Vec<u8>)> = outbox
+        .iter()
+        .map(|(_, domain, body)| (domain.clone(), body.clone()))
+        .collect();
+    assert_eq!(kept, enqueued, "the fanout is kept exactly as delivered");
+    assert!(
+        kept.iter().all(|(_, bytes)| bytes.ends_with(&message)
+            || bytes.windows(message.len()).any(|w| w == message)),
+        "and it carries the message it was built from"
+    );
     for (room_id, _, body) in &outbox {
         assert_eq!(room_id, ROOM_ID);
         let fanout = FanoutMessage::tls_deserialize_exact(body).unwrap();

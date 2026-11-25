@@ -245,7 +245,6 @@ pub(super) async fn update(
         epoch: accepted.epoch,
         accepted_at: accepted.accepted_at,
         kind,
-        bytes: accepted.message.as_bytes(),
         hash: &hash,
     };
     let written = match &accepted.write {
@@ -534,8 +533,6 @@ struct Accepted {
     /// The epoch the message was accepted in.
     epoch: u64,
     accepted_at: u64,
-    /// The `proposalOrCommit` message, logged as received.
-    message: MLSMessage,
     /// (destination domain, FanoutMessage) pairs, in enqueue order.
     outbox: Vec<(String, Vec<u8>)>,
     write: Write,
@@ -979,7 +976,6 @@ fn stage_commit(
     Ok(Outcome::Accept(Box::new(Accepted {
         epoch,
         accepted_at,
-        message: commit.clone(),
         outbox,
         write: Write::Commit {
             new_epoch,
@@ -1132,7 +1128,6 @@ fn stage_proposals(
     Ok(Outcome::Accept(Box::new(Accepted {
         epoch,
         accepted_at,
-        message: proposal.clone(),
         outbox: destinations
             .into_iter()
             .map(|domain| (domain, body.clone()))
