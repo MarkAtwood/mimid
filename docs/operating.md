@@ -244,20 +244,29 @@ OpenTelemetry export over OTLP/HTTP with protobuf bodies. Off when the table is 
 | `endpoint` | string | required in the table | The collector's OTLP/HTTP base URL, such as `http://127.0.0.1:4318`. `/v1/traces`, `/v1/logs` and `/v1/metrics` are appended. It is not checked when the file is parsed; an endpoint the exporter cannot use stops `mimid` at startup ("starting telemetry"). |
 | `service_name` | string | `"mimid"` | The `service.name` resource attribute. `service.instance.id` is always this provider's domain. |
 | `traces` | boolean | `true` | Export spans. |
+| `span_level` | string | the log's own filter | The filter the exported spans follow, in `RUST_LOG` syntax (`"debug"`, `"info,mimid_server=debug"`). Set it to send the collector spans the terminal log does not print. A value that is not a filter stops `mimid` at startup ("[telemetry] span_level is not a filter"). It does not affect the log records, which always follow `RUST_LOG`. |
 | `logs` | boolean | `true` | Export the log events that `RUST_LOG` keeps, as log records. |
 | `metrics` | boolean | `true` | Export metrics. |
 | `metrics_interval_secs` | integer, seconds | `60` | How often metrics are exported. |
 
 No trace context is sent to or accepted from peers. If telemetry cannot be flushed at shutdown, `mimid` logs `telemetry_flush_failed`.
 
-**Which spans you get depends on `RUST_LOG`,** because `traces = true` exports the spans the log filter keeps and nothing more. With `RUST_LOG` unset the filter is `info`, and the spans at INFO are:
+**Which spans you get depends on the span filter:** `span_level` when it is set, and otherwise `RUST_LOG`. With neither set the filter is `info`, and the spans at INFO are:
 
 | Span | Opened for | Fields |
 |---|---|---|
 | `provider_auth` | every `/v1/` request carrying a `From` header | `peer`, `endpoint`, `outcome` (`authenticated`, `refused` or `observed`), then `mechanism` or `reason` |
 | `protocol_request` | every `/v1/` request that reaches its handler | `endpoint`, `peer`, and the path value under its own key (`room_id`, `target_user`, …) |
 
-`http_request`, which carries `method`, `route`, `status` and `elapsed_ms`, is at DEBUG, so a collector sees it only with `RUST_LOG=debug` (or `RUST_LOG=info,mimid_server=debug`). A request refused by provider authentication never reaches a handler, so its only span is `provider_auth`; that span is why a refusal is visible in a trace at all.
+`http_request`, which carries `method`, `route`, `status` and `elapsed_ms`, is at DEBUG, to keep the terminal log quiet. To send it to the collector without making the log noisy, set `span_level` rather than `RUST_LOG`:
+
+```toml
+[telemetry]
+endpoint   = "http://127.0.0.1:4318"
+span_level = "info,mimid_server=debug"
+```
+
+A request refused by provider authentication never reaches a handler, so its only span is `provider_auth`; that span is why a refusal is visible in a trace at all.
 
 ### `[did_webvh]`
 

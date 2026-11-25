@@ -13,6 +13,14 @@
 //!   `RUST_LOG` as OTel log records: an event's `name` becomes the record's
 //!   event name and its fields attributes.
 //!
+//! Both layers carry their own filter rather than sharing one with the text
+//! log, which is what lets `[telemetry] span_level` ask the collector for
+//! spans the terminal does not print (decision mimid-1wgh.46.20.1.2). A
+//! shared filter cannot do it: span creation is gated before any layer
+//! sees the span, so a `debug_span!` is never built at all while the
+//! filter says `info`. The log records keep following `RUST_LOG`, because
+//! asking for verbose traces is not asking for verbose logs.
+//!
 //! **Metrics** are mimid's first metrics facility ([`metrics`]); the meter
 //! provider is set as the global one, so the instruments are no-ops until
 //! telemetry is configured.
@@ -43,9 +51,9 @@ use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use serde::Deserialize;
 use tracing::Subscriber;
-use tracing_subscriber::Layer;
-use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::filter::{FilterExt, filter_fn};
 use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::{EnvFilter, Layer};
 
 /// `[telemetry]` in the configuration file.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -67,6 +75,19 @@ pub struct TelemetryConfig {
     /// Export metrics.
     #[serde(default = "default_true")]
     pub metrics: bool,
+    /// The filter the exported spans follow, as `RUST_LOG` directives
+    /// (`"debug"`, or `"info,mimid_server=debug"`). Unset means the text
+    /// log's own filter, which is what every deployment had before this
+    /// setting existed.
+    ///
+    /// It exists because the two uses of a span's level came apart once
+    /// spans could go to a collector instead of to standard output:
+    /// `http_request` is at DEBUG to keep the terminal log quiet, and an
+    /// operator who configures a collector wants it anyway
+    /// (decision mimid-1wgh.46.20.1.2). This asks for the spans without
+    /// the log lines.
+    #[serde(default)]
+    pub span_level: Option<String>,
     /// How often metrics are exported, in seconds.
     #[serde(default = "default_interval")]
     pub metrics_interval_secs: u64,
@@ -97,6 +118,15 @@ pub enum TelemetryError {
         #[source]
         source: opentelemetry_otlp::ExporterBuildError,
     },
+    /// `[telemetry] span_level` is not a filter.
+    #[error("[telemetry] span_level is not a filter: {value:?}")]
+    SpanLevel {
+        /// What was configured.
+        value: String,
+        /// What the filter parser said.
+        #[source]
+        source: tracing_subscriber::filter::ParseError,
+    },
 }
 
 /// The configured OpenTelemetry providers; all `None` when telemetry is off.
@@ -105,6 +135,9 @@ pub struct Telemetry {
     tracer: Option<SdkTracerProvider>,
     logger: Option<SdkLoggerProvider>,
     meter: Option<SdkMeterProvider>,
+    /// `[telemetry] span_level`, parsed once at startup so a bad value
+    /// stops mimid rather than being ignored.
+    span_level: Option<String>,
 }
 
 impl Telemetry {
@@ -114,11 +147,20 @@ impl Telemetry {
     ///
     /// # Errors
     ///
-    /// [`TelemetryError::Exporter`] if an exporter cannot be built.
+    /// [`TelemetryError::Exporter`] if an exporter cannot be built, and
+    /// [`TelemetryError::SpanLevel`] if `span_level` is not a filter.
     pub fn new(config: Option<&TelemetryConfig>, domain: &str) -> Result<Self, TelemetryError> {
         let Some(config) = config else {
             return Ok(Self::default());
         };
+        // Parsed here and thrown away, so a typo stops startup instead of
+        // quietly leaving the collector on the log's filter.
+        if let Some(value) = &config.span_level {
+            EnvFilter::try_new(value).map_err(|source| TelemetryError::SpanLevel {
+                value: value.clone(),
+                source,
+            })?;
+        }
         let resource = Resource::builder()
             .with_service_name(config.service_name.clone())
             .with_attribute(KeyValue::new("service.instance.id", domain.to_owned()))
@@ -185,6 +227,7 @@ impl Telemetry {
             tracer,
             logger,
             meter,
+            span_level: config.span_level.clone(),
         })
     }
 
@@ -199,7 +242,17 @@ impl Telemetry {
             tracer,
             logger,
             meter,
+            span_level: None,
         }
+    }
+
+    /// `[telemetry] span_level`, for tests; [`Telemetry::new`] takes it
+    /// from the configuration and validates it.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_span_level(mut self, directives: &str) -> Self {
+        self.span_level = Some(directives.to_owned());
+        self
     }
 
     /// Whether anything is exported.
@@ -209,19 +262,36 @@ impl Telemetry {
 
     /// The tracing layers that export spans and events, for a subscriber
     /// `S`; a no-op layer for each signal that is off.
-    pub fn layers<S>(&self) -> impl Layer<S> + Send + Sync + 'static
+    ///
+    /// `log_directives` is the text log's filter, as `RUST_LOG` spells it.
+    /// Each layer carries its own filter built from it, so the subscriber
+    /// must not also carry a global one: a global filter decides whether a
+    /// span is created at all, and `[telemetry] span_level` can only ask
+    /// for a span the log does not print if nothing has already refused
+    /// it (decision mimid-1wgh.46.20.1.2).
+    ///
+    /// The spans follow `span_level` when it is set and `log_directives`
+    /// otherwise. The log records always follow `log_directives`, and
+    /// additionally only mimid's own targets, as `exported` decides.
+    pub fn layers<S>(&self, log_directives: &str) -> impl Layer<S> + Send + Sync + 'static
     where
         S: Subscriber + for<'a> LookupSpan<'a> + Send + Sync,
     {
-        let traces = self
-            .tracer
-            .as_ref()
-            .map(|provider| tracing_opentelemetry::layer().with_tracer(provider.tracer("mimid")));
+        let span_directives = self.span_level.as_deref().unwrap_or(log_directives);
+        let traces = self.tracer.as_ref().map(|provider| {
+            tracing_opentelemetry::layer()
+                .with_tracer(provider.tracer("mimid"))
+                .with_filter(EnvFilter::new(span_directives))
+        });
         let logs = self
             .logger
             .as_ref()
             .map(opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new)
-            .map(|bridge| bridge.with_filter(filter_fn(|metadata| exported(metadata.target()))));
+            .map(|bridge| {
+                bridge.with_filter(EnvFilter::new(log_directives).and(filter_fn(
+                    |metadata: &tracing::Metadata<'_>| exported(metadata.target()),
+                )))
+            });
         Layer::and_then(traces, logs)
     }
 

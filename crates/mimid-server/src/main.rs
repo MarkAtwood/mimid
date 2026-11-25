@@ -92,9 +92,9 @@ use mimid_server::store::Store;
 use mimid_server::telemetry::Telemetry;
 use mimid_server::tls::ProxyPolicy;
 use tokio::signal::unix::{Signal, SignalKind, signal};
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer as _};
 
 /// How long after SIGINT or SIGTERM the requests in flight, the local
 /// control listener and the database get to finish before `mimid` exits
@@ -129,17 +129,26 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::load(&config_path)?;
     let telemetry = Telemetry::new(config.telemetry.as_ref(), config.domain.as_str())
         .context("starting telemetry")?;
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    // Kept as directives, not as one `EnvFilter`, because each layer
+    // needs its own: `[telemetry] span_level` asks the collector for
+    // spans the text log does not print, and a filter on the subscriber
+    // would refuse them before any layer saw them (decision
+    // mimid-1wgh.46.20.1.2). An unparsable `RUST_LOG` falls back to
+    // `info`, as it did when `try_from_default_env` chose it.
+    let log_directives = match std::env::var("RUST_LOG") {
+        Ok(value) if EnvFilter::try_new(&value).is_ok() => value,
+        _ => "info".to_owned(),
+    };
+    let filter = EnvFilter::new(&log_directives);
     match format {
         LogFormat::Json => json_subscriber(filter, std::io::stdout)
-            .with(telemetry.layers())
+            .with(telemetry.layers(&log_directives))
             .init(),
-        // A registry rather than `fmt()`'s subscriber: the telemetry log
-        // layer has a filter of its own, which only a registry supports.
+        // A registry rather than `fmt()`'s subscriber: every layer here
+        // has a filter of its own, which only a registry supports.
         _ => tracing_subscriber::registry()
-            .with(filter)
-            .with(tracing_subscriber::fmt::layer())
-            .with(telemetry.layers())
+            .with(tracing_subscriber::fmt::layer().with_filter(filter))
+            .with(telemetry.layers(&log_directives))
             .init(),
     }
     // Before any other startup work, so a signal from here on shuts down
@@ -152,6 +161,9 @@ async fn main() -> anyhow::Result<()> {
             traces = telemetry_config.traces,
             logs = telemetry_config.logs,
             metrics = telemetry_config.metrics,
+            // Which spans the collector gets, which is not always what
+            // the log prints (decision mimid-1wgh.46.20.1.2).
+            span_level = telemetry_config.span_level.as_deref().unwrap_or(&log_directives),
             "OpenTelemetry export configured"
         );
     }

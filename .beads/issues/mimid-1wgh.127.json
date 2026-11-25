@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.127",
   "title": "Decision: the CA setup page needs no credential, and its bootstrap listener serves nothing else",
   "description": "For bead mimid-e13m.9 (docs/design/frontend-auth.md §6.6), which adds GET /mimid/ca and an optional plain-HTTP bootstrap listener for it. Both sit outside AGENTS.md's \"a credential on every path but an attachment link's\".\n\nDECIDED: no credential on that path, and the bootstrap listener serves that one path only.\n\nWHY NO CREDENTIAL. The page's content is the CA certificate, which the TLS listener already sends to anyone who opens a connection: it is in the leaf's chain. There is nothing to withhold, and requiring a credential would make the page useless, since a device that does not yet trust the CA cannot complete the TLS handshake to send one. The bootstrap listener exists for exactly that chicken and egg: the CA is fetched over plain HTTP, and the SHA-256 fingerprint `setup` prints is what the user compares, so the transport is not what is trusted.\n\nWHY THE BOOTSTRAP LISTENER SERVES NOTHING ELSE. It is plain HTTP on an address the operator names, so everything on it is readable by anyone on that network. It therefore answers GET /mimid/ca and its two downloads and 404s every other path, rather than sharing the JMAP router. Off by default (`[tls.local-ca] bootstrap`).\n\nWHAT STILL HOLDS. The fingerprint is shown on the page and printed by setup, so a page served over plain HTTP cannot pass off another CA; the CA is name-constrained to the configured names, so a phone that trusts it trusts nothing else it might sign; and the JMAP, IRC and attachment boundaries are unchanged.",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-24T17:39:43.061149987Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-24T17:39:43.061149987Z",
+  "updated_at": "2026-11-25T06:58:09.446231674Z",
+  "closed_at": "2026-11-25T06:58:09.446231674Z",
+  "close_reason": "Decided and implemented. The bead it was written for, mimid-e13m.9, is closed: http.rs serves /mimid/ca and its two downloads with no credential as a guard exception so the Host check still applies, and daemon.rs's bootstrap listener answers those three paths and 404s everything else. AGENTS.md and crates/mimid-agent/src/lib.rs both cite this decision as settled. Closed to match the convention that a decided decision bead is a closed one.",
   "labels": [
     "auth"
   ],

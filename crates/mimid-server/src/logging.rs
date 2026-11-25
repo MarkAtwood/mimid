@@ -41,11 +41,11 @@ use std::fmt;
 use serde_json::{Map, Value};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::{JsonFields, Writer};
 use tracing_subscriber::fmt::time::{FormatTime, SystemTime};
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormattedFields, MakeWriter};
 use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::{EnvFilter, Layer as _};
 
 /// The environment variable that selects the log output format.
 pub const LOG_FORMAT_VAR: &str = "MIMID_LOG_FORMAT";
@@ -98,6 +98,12 @@ pub struct LogFormatError {
 /// `writer`, keeping the events and spans `filter` enables. It is a
 /// [`tracing_subscriber::Registry`], so more layers, including ones with
 /// their own filters, can be added to it.
+///
+/// `filter` is the writing layer's own filter, not the subscriber's. A
+/// layer added afterwards therefore gets what its own filter asks for and
+/// not what this one allows, which is what `[telemetry] span_level` needs:
+/// a global filter decides whether a span is created at all, before any
+/// layer is consulted (decision mimid-1wgh.46.20.1.2).
 pub fn json_subscriber<W>(
     filter: EnvFilter,
     writer: W,
@@ -106,11 +112,12 @@ where
     W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
 {
     use tracing_subscriber::layer::SubscriberExt as _;
-    tracing_subscriber::registry().with(filter).with(
+    tracing_subscriber::registry().with(
         tracing_subscriber::fmt::layer()
             .with_writer(writer)
             .fmt_fields(JsonFields::new())
-            .event_format(JsonEvents),
+            .event_format(JsonEvents)
+            .with_filter(filter),
     )
 }
 
