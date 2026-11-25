@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.104.7",
+  "title": "Decide where a catch-up answer gets its FanoutMessages: the hub stores the MLSMessage, not the fanout",
+  "design": "Found 2026-11-25 starting the serving side of bead mimid-1wgh.37.104.3,\nafter its wire format was settled by mimid-1wgh.37.104.6. It blocks that\nserving side. The codec and the two bounds are done and do not depend on\nit.\n\nTHE GAP. §5 says the answer is \"fanouts in hub order, each with its\nsequence\", which assumes the hub has the fanouts. IT DOES NOT.\n\n* room_event.bytes is \"the message exactly as received\" -- the\n  MLSMessage, not the FanoutMessage. No frank, no timestamp framing,\n  no Welcome's ratchet tree.\n* The encoded FanoutMessage exists as hub::submit's\n  Accepted::fanout_body, which goes to the OUTBOX and is deleted on\n  delivery.\n* follower_event.bytes is \"One FanoutMessage exactly as received\", which\n  is what catch-up wants -- but it is the provider's FOLLOWER role, and\n  it only has a row when the hub fanned out to its own domain.\n  hub::state::member_domains is the members' domains plus the sender, so\n  A ROOM HUBBED HERE WHOSE MEMBERS ARE ALL REMOTE never delivers to this\n  provider and has nothing in that log. Checked, not assumed. So the\n  follower log cannot be the source in general, which removes the\n  cheapest option.\n\nTHE READINGS:\n\n1. KEEP THE FANOUT BODY PER EVENT: a room_event.fanout_bytes column,\n   written in the transaction that already writes the event and its\n   outbox rows and its sequence.\n   For: byte-identical to what was delivered by construction, which is\n   the property bead mimid-1wgh.37.104.2's ranges also give -- catch-up\n   can only return what was really sent. Keyed directly by the fanout\n   sequence catch-up 1 introduced. No new failure mode.\n   Against: roughly doubles the hub's stored bytes per message, since\n   the MLSMessage sits in both room_event.bytes and the fanout body.\n   Bounded by retention (message_retention_secs, 7 days by default), so\n   it is a constant factor on a window, not unbounded growth.\n\n2. KEEP ONLY THE FRANK and rebuild the FanoutMessage at serve time from\n   accepted_at, kind, bytes and the frank.\n   For: about 39 bytes an event instead of a second copy of the message.\n   Against: it re-encodes. AGENTS.md says to sign and hash the exact\n   bytes as received and never re-encode before verifying, and a\n   follower checks the frank over the bytes it is given. A rebuild that\n   differs by one byte from what was delivered is a franking failure at\n   the follower, and the hub would have no way to know. It also has to\n   reproduce a Welcome's ratchet_tree option and a commit's\n   externalProposals, which room_event does not keep at all.\n\n3. STORE THE FANOUT INSTEAD OF THE MLSMessage: room_event.bytes becomes\n   the FanoutMessage and the MLSMessage is read out of it where needed.\n   For: no duplication.\n   Against: changes what the hub's log holds for every existing reader\n   (store::retention, the catch-up window, anything that replays), and\n   the hub does need the bare MLSMessage for its own checks.\n\nMY READ, not a decision: reading 1. The duplication is a constant factor\non a retention window that the operator already sets, and byte-identity\nis the property catch-up exists to provide. Reading 2 trades a storage\nsaving for a failure that surfaces at the other end as a franking error,\nwhich is the worst place for it.\n\nWORTH NOTING FOR THE DRAFT: whichever is chosen, §5 should say that a\nhub serving catch-up has to keep the fanout as delivered, not merely the\nmessage. The note does not say it, and an implementer reading §5 would\ndiscover this the same way I did.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-25T20:41:26.601522073Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-25T20:41:26.601522073Z",
+  "labels": [
+    "human",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.104.7",
+      "depends_on_id": "mimid-1wgh.37.104",
+      "type": "parent-child",
+      "created_at": "2026-11-25T20:41:26.801020874Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

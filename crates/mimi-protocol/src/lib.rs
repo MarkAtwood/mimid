@@ -165,6 +165,7 @@
 #![forbid(unsafe_code)]
 
 mod abuse;
+mod catchup;
 mod component;
 pub mod components;
 mod consent;
@@ -184,6 +185,9 @@ mod wire_profile;
 pub use abuse::{
     AbuseReport, AbuseType, AbusiveMessage, MAX_UNVERIFIED_ABUSIVE_MESSAGES,
     UnverifiedAbusiveMessage, UnverifiedAbusiveMessages,
+};
+pub use catchup::{
+    CATCH_UP_LIMIT, CatchUpEntry, CatchUpRequest, CatchUpResponse, MAX_CATCH_UP_ENTRIES,
 };
 pub use component::{
     ParticipantListData, ParticipantListUpdate, RichDescription, RoomMetaData, RoomMetaUpdate, Uri,
