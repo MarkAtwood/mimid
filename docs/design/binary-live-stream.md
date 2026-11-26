@@ -161,8 +161,9 @@ for the user to hubs. So these parts of Agora do not apply:
 - proof-of-work admission (`AdmissionChallenge`, `AdmissionProof`); the
   bearer token is the admission;
 - `PinInstruction` (retention is the provider's own policy);
-- `PushRegister` and the push proxy (§11.7); mimid has no push
-  (decision mimid-1wgh.12.30);
+- `PushRegister` and the push proxy (§11.7); mimid's push is the
+  agent's own Web Push to its IRC clients (agent-frontends.md §7.35),
+  not a provider push proxy (decision mimid-1wgh.12.30);
 - relay federation and gossip; providers federate with protocol-07.
 
 ## 5. Version 1

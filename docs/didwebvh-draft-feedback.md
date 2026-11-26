@@ -1,6 +1,6 @@
 # Feedback on draft-atwood-mls-didwebvh-credential-00 from implementing it in mimid
 
-mimid is the first implementation of draft-atwood-mls-didwebvh-credential-00.
+mimid implements draft-atwood-mls-didwebvh-credential-00.
 This file lists what implementing it showed to be ambiguous, underspecified or
 wrong, for -01 (IETF-xgzc). Each item gives the draft section, what is unclear,
 the reading mimid chose and why, and the decision bead that records it.
@@ -55,8 +55,9 @@ with no blank lines and nothing after the last LF".
 
 In the DIF did:webvh test suite (commit 703f97f), the logs written by the
 dart and java implementations have no final LF. Python, Rust, TypeScript and
-java-eecc conform. Under -00, every log the dart and java implementations
-produce is invalid as a credential, although those logs are valid did:webvh.
+java-eecc conform. Under -00, the logs those two
+implementations contribute to that suite are invalid as credentials,
+although they are valid did:webvh.
 
 **mimid:** refuses them, as written. Decision mimid-1wgh.4.81.11.
 

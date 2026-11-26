@@ -76,7 +76,6 @@ Value forms used below:
 | `max_description_octets` | integer, octets | `4096` | The longest description accepted: role descriptions, room descriptions and abuse report notes. |
 | `max_uri_octets` | integer, octets | `2048` | The longest URI accepted: participant list users, room metadata URIs, a base policy's `parent_room`, and the URIs in identifierQuery, consent and keyMaterial requests. |
 | `blob_lifetime_secs` | integer, seconds, at least 3600 | `2592000` (30 days) | How long an uploaded attachment is kept. Every upload is deleted this long after it was uploaded, whether or not anyone fetched it, because the server cannot read the messages that refer to it. The JMAP Session reports it as `assetLifetime`. A value under 3600 is refused. |
-
 | `message_retention_secs` | integer, seconds, at least 3600, or `"unlimited"` | `604800` (7 days) | How long a message is kept after the hub accepted it. See [Message retention](#message-retention). A value under 3600 is refused. |
 | `client_idle_unbind_secs` | integer, seconds, at least 86400, or `"unlimited"` | `7776000` (90 days) | How long a client's signature key may be idle before it is unbound from its account. See [Idle clients](#idle-clients). A value under 86400 is refused. |
 

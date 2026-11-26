@@ -174,12 +174,9 @@ replay would restore it.
 
 ### Storage
 
-Superseded by §7.10 (step 4): the store is an SQLite database, not a JSON
-file, and nothing reads the old `chat.json`. The write order stays: store,
-save, then acknowledge (sync.rs:187-192).
-
-The blob store moves unchanged (blobs.rs). The referenced set comes from
-the store's attachment records, not from JMAP JSON.
+The store is an SQLite database (§7.10). The write order is: store, save,
+then acknowledge. The blob store is unchanged (blobs.rs), and the
+referenced set comes from the store's attachment records.
 
 ### The JMAP projection
 
@@ -1160,64 +1157,11 @@ code, not with this note.
 
 ## 6. Open questions for Mark
 
-1. **What PART and JOIN mean.** Leaving a MIMI room removes every device
-   of the user, and only a new invite brings them back
-   (crates/mimid-agent-core/src/lib.rs:71-78). Many IRC clients send PART
-   when the user closes a window. If PART means leave, closing a window
-   leaves the room for good. Likewise, if JOIN of an unknown name hosts a
-   new room, a typo makes a room on the hub. Recommendation: PART only
-   hides the channel from IRC (kept in `ext["irc"]`, undone by JOIN);
-   leaving is `/msg mimid leave #c`. JOIN of an unknown channel is 403;
-   a new room is `/msg mimid create <name>`.
-
-2. **1:1 rooms as queries.** MIMI has no marker for a one-to-one room,
-   and the JMAP front end refuses direct Chats today
-   (crates/mimid-agent-jmap/src/lib.rs:133). IRC users expect `/msg bob`
-   to just work. Recommendation: a local `direct` flag on the room. It is
-   set when the user sends a PRIVMSG to a nick with no direct room yet:
-   the store hosts an unnamed room and invites that user, which the hub
-   sees as a new room. A room joined from an invite is direct when it is
-   unnamed and has exactly two participants. JMAP keeps showing all of
-   them as group Chats for now.
-
-3. **Domain suffix on other providers' nicks.** With bare local parts for
-   everyone, whoever is seen first gets `bob`, so a stranger on another
-   provider can take the nick of a contact the user meets later.
-   Recommendation: bare nicks only for users on the user's own provider;
-   everyone else is always `<local>-<label>`. Nicks are longer, but a
-   nick never moves between people.
-
-4. **Attachment links for IRC.** IRC clients cannot send the bearer
-   header the download route needs (http.rs:31-33). Putting the token in
-   the URL would put full access in every chat log. The other way is a
-   link per blob, `/irc/blob/<HMAC of the blob id>/<name>`, keyed by a
-   second 0600 secret, read only, behind the same Host check and download
-   headers (http.rs:660-676). That is a second way to authorize at the
-   agent boundary, which AGENTS.md says has one. Anyone who can read the
-   chat log can fetch the file while the daemon runs, but the log already
-   holds the plaintext. Recommendation: allow these links, downloads only,
-   and add the row to the AGENTS.md table. If not: v1 shows file name and
-   size only.
-
-5. **Consent and invites from IRC.** Today consent decisions are made
-   outside JMAP, and which invites are joined is fixed in the config
-   (crates/mimid-agent/src/lib.rs:97-100). IRC can do better: show
-   refused invites as INVITE lines, accept one by JOIN, and allow or deny
-   users through the `mimid` service nick. Recommendation: yes. The IRC
-   user holds the same token as a JMAP client, so this gives no one new
-   power, and it is the only way an IRC-only user can accept anyone.
-
-6. **chathistory in v1.** draft/chathistory needs `batch` and a complete
-   `labeled-response` (irc-lessons.md). The store has the history, so the
-   work is all on the IRC side. Recommendation: not in v1. v1 plays back
-   up to 200 unseen messages per channel on connect, with server-time and
-   msgid. Add chathistory in a second step, keyed by room and account,
-   not by nick.
+All answered in §7, which overrides the recommendations that were here.
 
 ## 7. Mark's decisions (2026-11-20)
 
-These answer §6 and override the recommendations there and anything in
-§4 that disagrees.
+These override anything in §4 that disagrees.
 
 1. **PART and JOIN.** PART leaves the room for real: every device of the
    user leaves, and only a new invite brings them back. JOIN of a channel
@@ -1242,26 +1186,10 @@ These answer §6 and override the recommendations there and anything in
 
 Added on 2026-11-20:
 
-7. **A ChatContact that is gone.** Superseded by §7.10: there is no
-   format-1 reader; what remains is the run-time rule in §3 step 4.
-
-   When the format-1 reader meets a
-   Message, a Chat member or a ChatBan naming a ChatContact that is not
-   in the file (JMAP clients may destroy ChatContacts), it keeps the item
-   with the user marked unknown and logs a warning, instead of refusing
-   the whole file. The warning is one per file conversion and gives the
-   count, not one per item. In the records an unknown user is
-   `Sender::Unknown`, or `None` as a participant, a banned user or a
-   banner; the JMAP id the item named stays in its `ext["jmap"]`.
-8. **A Chat that is gone.** Superseded by §7.10: there is no format-1
-   reader or format-2 file; what remains is the run-time rule in §3
-   step 4.
-
-   The same rule for Chats. crate-jmap's
-   Chat/set destroy keeps the Chat's Messages and ChatBans, so the
-   format-1 reader keeps a Message, ChatBan or ReadPosition naming a Chat
-   not in the file, with its room marked unknown, and logs one warning per
-   file with the count. Format 2 must keep them the same way (step 4).
+7. **A ChatContact or Chat that is gone.** Superseded by §7.10: there is
+   no format-1 reader and no format-2 file. What remains is the run-time
+   rule in §3 step 4: an item naming a user or room the store does not
+   have is kept with that field marked unknown, not refused.
 
 9. **Deleting a chat deletes its local data (Mark, 2026-11-20).** When a
    front end deletes a chat, the store deletes everything it keeps of
@@ -2020,16 +1948,12 @@ Added on 2026-11-20:
       one-to-one room with a user (the oldest by key if several);
       `Store::open_direct` returns it, or hosts a new one
       (`HostOptions::direct`) and adds the user in its first Commit.
-    - **PART and destroy: open for Mark.** §5 lets a user "remove all
+    - **PART and destroy on a fixed room.** §5 lets a user "remove all
       its clients from the associated MLS group" but not leave the
-      participant list, so §7.1 ("PART leaves the room for real: every
-      device of the user leaves, and only a new invite brings them back")
-      cannot hold as written: no one can invite them back (they are still
-      a participant, and nobody can add a user), and they can come back
-      on their own (`canAddOwnClient`). Until Mark decides, `Agent::leave`
-      refuses a fixed room, so IRC PART and JMAP Chat destroy of a direct
-      Chat fail with that error and change nothing.
-      Mark decided on 2026-11-22 (bead mimid-2vcw): option B. PART and
+      participant list, so §7.1's "PART leaves the room for real" cannot
+      hold for one: nobody can invite them back, and they can return on
+      their own (`canAddOwnClient`). Decided 2026-11-22 (bead
+      mimid-2vcw): option B. PART and
       JMAP Chat destroy on a direct room hide it locally, the devices
       stay, and the next message brings it back; option A (remove all
       the user's own devices, staying a participant) may come later as a
@@ -2066,7 +1990,7 @@ Added on 2026-11-20:
     mimid-1wgh.88).** For front ends whose clients cannot send the
     bearer header JMAP download needs (IRC v2, Matrix, XMPP): a URL on
     the agent's HTTP listener that gives one attachment's plaintext.
-    This is §6 question 4's per-blob link, with an expiry; it adds the
+    This is a per-blob link with an expiry; it adds the
     route and the second authorization at the agent boundary that §7.4
     left out of IRC v1. IRC v1 still shows no attachments.
     - **Form.** `GET /attachment/<blobId>/<expires>/<mac>/<name>`:
@@ -2096,7 +2020,7 @@ Added on 2026-11-20:
     - **What it gives away.** Whoever reads a link (a chat log, a
       client's link preview) can fetch the file from a loopback address
       until it expires; the log holds the plaintext of the message
-      anyway (§6 question 4). docs/agent.md says so.
+      anyway. docs/agent.md says so.
     - Tests: mimid-agent-store `links::tests`; mimid-agent
       `tests/groundwork.rs` `attachment_links_give_one_file_until_they_expire`.
 

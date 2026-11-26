@@ -1,6 +1,6 @@
 # Running mimid-agent
 
-`mimid-agent` runs for one user on one device. It holds the user's MLS keys, talks to the user's mimid server, and serves the user's rooms in plaintext on loopback only: as a JMAP Chat endpoint (on by default) and as an IRC server (off by default). A standard JMAP Chat client or a stock IRC client connects to it. The server's operator guide is [operating.md](operating.md).
+`mimid-agent` runs for one user on one device. It holds the user's MLS keys, talks to the user's mimid server, and serves the user's rooms in plaintext: as a JMAP Chat endpoint (on by default, loopback for plain HTTP and any address with `listen_tls`) and as an IRC server (off by default, loopback by default but any address if you say so). A standard JMAP Chat client or a stock IRC client connects to it. The server's operator guide is [operating.md](operating.md).
 
 ## Before the first start
 
@@ -108,7 +108,7 @@ With `vtc = true` the Session advertises `urn:ietf:params:jmap:vtc` and a JMAP c
 
 It is off by default because it is the one capability here that hands out key material, and because nothing implements the extension yet. While it is off the capability is absent from the Session and a request naming it in `using` gets `unknownCapability` (HTTP 400), so a client can tell "no calls here" from "calls refused".
 
-**Nothing announces a call outside its own room.** A client that cannot join a call learns nothing about it: the only signal a call exists is the MLS invite into its own room, which a client with no VTC surface cannot interpret as a call. There is no message in the parent chat and no marker for a call having ended (removed 2026-11-25). The `mediaTypes` and `subject` a client sets on `VTCCall/set` go no further than its own object, because the call room carries neither, so a client that joins a call it did not start learns neither; the SDP is what says which media a call carries.
+**Nothing announces a call outside its own room.** A client that cannot join a call learns nothing about it: the only signal a call exists is the MLS invite into its own room, which a client with no VTC surface cannot interpret as a call. There is no message in the parent chat and no marker for a call having ended. The `mediaTypes` and `subject` a client sets on `VTCCall/set` go no further than its own object, because the call room carries neither, so a client that joins a call it did not start learns neither; the SDP is what says which media a call carries.
 
 Receiving signals needs the JMAP WebSocket at `/jmap/ws`, which the Session advertises: a call signal is an ephemeral event and the EventSource carries only "these types changed, re-fetch", which a signal is not. A client sends `VTCStreamEnable` on the socket and the agent pushes each `VTCCallSignal` as it arrives.
 
@@ -120,7 +120,7 @@ The IRC front end. Absent means no IRC. An empty `[irc]` table turns it on with 
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `listen` | socket address, loopback | `127.0.0.1:6667` | Where the IRC server listens, without TLS. It must be a loopback address. Browsers refuse to connect to port 6667, which blocks web pages from sending HTTP to it. |
+| `listen` | socket address | `127.0.0.1:6667` | Where the IRC server listens, without TLS. Any address, not only loopback (decision mimid-1wgh.92). Off loopback the traffic is cleartext: message bodies, and the credential itself with `PASS` or SASL PLAIN, though not with SASL SCRAM-SHA-256. Keeping it off the wrong network is yours to do, with a firewall or a proxy. A credential is required on every listener. Browsers refuse to connect to port 6667, which blocks web pages from sending HTTP to it. |
 | `listen_tls` | socket address | none | Where the IRC server also listens with TLS, on any address: a tailnet or WireGuard address is the safe choice. Needs `[tls]`. Off by default. An address that may be reachable from the internet is allowed, with a WARN at start. |
 | `server_name` | string | `"mimid.invalid"` | The name the IRC server gives itself: at most 63 characters, letters, digits, `-` and `.`, with at least one dot and no empty label. |
 | `webpush` | boolean | `true` | Whether IRC clients may register for Web Push (the `soju.im/webpush` capability). See [Push](#push-what-the-push-service-sees). |
@@ -156,7 +156,7 @@ The agent reads tailscaled's `status` at start and **refuses to start** if it ca
 
 **Why not JMAP.** With no `Authorization` header a request would be authorized by where it comes from, and a web page open in a browser on your laptop comes from your laptop — so any site you visit could POST JMAP calls to the agent. CORS stops such a page reading the answer, not the call happening. So JMAP keeps its credential.
 
-With `tailscale cert` as the `[tls] source`, this is the least-friction phone setup there is: nothing to install but Tailscale, which the phone needs anyway to reach the agent, and nothing to type but the server name.
+With `tailscale cert` as the `[tls] source`, a phone needs only Tailscale installed, which it needs anyway to reach the agent, and the server name typed.
 
 Linux only: macOS's App Store Tailscale exposes the LocalAPI differently.
 
@@ -177,7 +177,7 @@ Where the certificate of the TLS listeners comes from (docs/design/frontend-auth
 
 A renewal that works logs `agent_certificate_renewed` at INFO with the new `not_after`; one that fails logs `agent_certificate_renewal_failed` at WARN, or at ERROR once the certificate in use is within 3 days of expiry, and the old certificate stays in use either way.
 
-**The agent warns before the certificate expires.** Whatever `source` it came from, the agent reads the certificate's own `notAfter` and logs `agent_certificate_expiring` at WARN from 14 days before, at ERROR from 3 days before, and `agent_certificate_expired` at ERROR every hour once it has expired. Each carries `names`, `source`, `not_after` (RFC 3339) and `days_left`. An expired certificate keeps being served rather than closing the listener: clients will refuse it, and the log says why. With `source = "files"` this is the only sign you get that your own certbot or `tailscale cert` timer has stopped working, so it is worth alerting on. A certificate the agent cannot parse is served with no expiry check, which it says once at DEBUG.
+**The agent warns before the certificate expires.** Whatever `source` it came from, the agent reads the certificate's own `notAfter` and logs `agent_certificate_expiring` at WARN from 14 days before, at ERROR from 3 days before, and `agent_certificate_expired` at ERROR every hour once it has expired. Each carries `names`, `source`, `not_after` (RFC 3339) and `days_left`. An expired certificate keeps being served rather than closing the listener: clients will refuse it, and the log says why. With `source = "files"` this is the only sign you get that your own certbot or `tailscale cert` timer has stopped working. A certificate the agent cannot parse is served with no expiry check, which it says once at DEBUG.
 
 #### `source = "acme"`
 
@@ -207,21 +207,21 @@ In the state directory: `acme-account.json` (0600), the account, so the same one
 
 ##### `dns = "acme-dns"`
 
-[acme-dns](https://github.com/joohoi/acme-dns) is a small DNS server made for this one job, and it turns any DNS provider into one that works. Register once at an instance (your own, or the public `auth.acme-dns.io`), which gives you a username, a password and a subdomain; then put a CNAME in your zone, by hand, once:
+[acme-dns](https://github.com/joohoi/acme-dns) is a DNS server for this one job: it serves the `_acme-challenge` records for a subdomain you CNAME to it, so your own provider needs no API. Register once at an instance (your own, or the public `auth.acme-dns.io`), which gives you a username, a password and a subdomain; then put a CNAME in your zone, by hand, once:
 
 ```
 _acme-challenge.chat.example.org.  CNAME  <subdomain>.auth.acme-dns.io.
 ```
 
-From then on the agent posts each challenge value to that instance and it serves the record. **The agent never touches your real zone**, and the credentials it holds can write nothing but that one subdomain — which is why this ranks above a hook with full DNS access. The password is a secret: it is redacted wherever the configuration is printed and never logged.
+From then on the agent posts each challenge value to that instance and it serves the record. **The agent never touches your real zone**, and the credentials it holds can write nothing but that one subdomain, unlike a hook with full DNS access. The password is a secret: it is redacted wherever the configuration is printed and never logged.
 
 As with the hook, a 2xx is taken as proof the record is live; the CNAME is not checked, so a missing one shows up only as the authority failing the challenge.
 
-**Not built, and not planned:** the third way §5.2 names, an RFC 2136 dynamic update with a TSIG key. If you run your own nameserver, a hook calling `nsupdate` drives the same protocol with a tool you already have, so building it into the agent would buy only not writing the hook. And if you would rather not configure any of this, `source = "files"` with certbot and a cron line does the whole job.
+**Not built, and not planned:** the third way §5.2 names, an RFC 2136 dynamic update with a TSIG key. A hook calling `nsupdate` drives the same protocol with a tool you already have.
 
 #### `source = "local-ca"`
 
-For a user with neither a domain nor a tailnet. The agent makes its own certificate authority, signs a certificate for the `[tls] names` with it, and you install the authority on each device; after that your clients trust it with no warning. This is the last resort of the four, and the most work for you, which is why it is last — but the alternative is a self-signed certificate that Element X, Monal and Dino refuse outright and that warns on every other client, every time.
+For a user with neither a domain nor a tailnet. The agent makes its own certificate authority, signs a certificate for the `[tls] names` with it, and you install the authority on each device; after that your clients trust it with no warning. This is the most work of the four. The alternative is a self-signed certificate, which many clients refuse outright and the rest warn about on every connection.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -240,7 +240,7 @@ A device that does not trust the authority yet cannot open that page over TLS, w
 
 Per-device steps are on the page: on iOS, install the profile and then turn it on in Certificate Trust Settings (it is not trusted until that second step); on Android, install the `.crt` and accept the warning, though Goguma and Conversations do not need it; on a computer, add the `.crt` to the system store or point the client at it.
 
-There is no revocation: a certificate expires rather than being revoked, which for one listener on one host is all there is to want.
+There is no revocation: a certificate expires rather than being revoked.
 
 ### `[did_webvh]`
 

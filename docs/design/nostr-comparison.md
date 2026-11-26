@@ -241,8 +241,8 @@ Agora (agora-spec `spec/05-messaging.md` §5.1.1) sits between them: a
 Space may name a sequencer that stamps Commits into a log, which then
 decides like a hub; without one, members take the Commit with the
 lowest envelope id among those seen within 5 s, which can split the
-group. Marmot's rule is the most worked-out of the three for the
-no-orderer case.
+group. Of the three, only Marmot's rule excludes transport
+metadata from the tie-break.
 
 ### 2.3 Can a MIMI room and a Marmot group be one MLS group?
 
@@ -415,7 +415,9 @@ groups, two orderings; nothing crosses at the MLS level.
   More work (key and leaf management for every puppet), and a step
   further from what members think they see.
 
-Relay mode first; puppets only if someone asks.
+Relay mode is built first; puppet mode is designed alongside it, so
+the relay code does not have to be rewritten for it (decision 12,
+marmot-bridge.md §3.3).
 
 **Consent.**
 
@@ -672,7 +674,7 @@ and nothing for history.
 **Proposed text.** None now. Copying history between a user's devices
 is a client matter that could ride on the self-group idea in Air and
 Agora as well. Worth a bead when multi-device work resumes; Marmot's
-documents are the most detailed public design I know of.
+documents are unusually detailed.
 
 ### N7. mimi-content cannot say "sent on behalf of"
 
@@ -753,5 +755,5 @@ N1 to #mimi, independently of any of this.
   spec text only.
 - White Noise's read receipts (iOS README: "read state") were not
   traced to a wire format.
-- The Marmot spec changes daily (`changes.md` has entries on
+- The Marmot spec is under active change (`changes.md` has entries on
   2026-11-19 and 2026-11-21); this note is a snapshot at `36757fe`.

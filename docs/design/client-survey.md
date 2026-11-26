@@ -94,8 +94,9 @@ Three things decide most of the cost, whatever the protocol.
 
 ### 1.1 Embedded on the phone or a bouncer
 
-The agent listens on loopback only today (agent.md; config.rs refuses
-anything else). There are two ways a phone can use it.
+The agent's plain HTTP listener is loopback only; its plain IRC
+listener takes any address (decision mimid-1wgh.92), and both front ends
+have a TLS listener (`listen_tls`). There are two ways a phone can use it.
 
 - **Embedded.** The agent runs on the phone and the chat app connects
   to `127.0.0.1`. On **iOS this is not realistic**: a second app cannot
@@ -158,28 +159,28 @@ privacy story the relay must never see message text: Goguma's Web Push
 is the best case, Matrix with `event_id_only` is next, Palaver with
 previews on is the worst.
 
-### 1.3 What the store lacks today
+### 1.3 What the store lacked, and where each was closed
 
-Every richer client wants things the store does not yet model. Most are
-already on marmot-bridge.md's list (its §9 steps 1 to 3):
+Every richer client wants things the store did not model when this note
+was written. All five are now built; the list is kept because it is why
+they were built, and because the client families named are the reason
+each took the shape it did.
 
-- **Replies on send.** `Agent::send_message` takes no `inReplyTo`
-  (agent-frontends.md §4, "Sending"). Every family below has replies.
-- **Reactions.** The store models none (agent-frontends.md §4, the
-  mapping table). Goguma, Halloy, Matrix, XMPP, Delta Chat, Zulip and
-  Mattermost all show them.
-- **One-to-one rooms.** MIMI has no marker for them, and Mark decided
-  IRC v1 has no queries (agent-frontends.md §7.2). Goguma's DM list,
+- **Replies on send.** Every family below has replies. Built: a
+  message's `in_reply_to` through the store and both front ends.
+- **Reactions.** Goguma, Halloy, Matrix, XMPP, Delta Chat, Zulip and
+  Mattermost all show them. Built: reaction records in the store.
+- **One-to-one rooms.** MIMI has no marker for them. Goguma's DM list,
   Matrix's `m.direct`, XMPP 1:1 chats and Delta Chat's 1:1 chats all
-  assume them. Some local "direct" flag, as §6 question 2 of that note
-  proposed, would serve every front end.
-- **Attachments outside JMAP.** IRC v1 shows none (§7.4). Goguma
-  uploads through `soju.im/FILEHOST`; Matrix and XMPP need upload and
-  download URLs. Each is a way to fetch decrypted blobs over HTTP,
-  which is the authorization question §6 question 4 raised.
-- **History for clients that ask.** IRC v1 has no replay (§7.6). Goguma
-  needs `draft/chathistory`; Matrix and XMPP are built on history
-  queries (`/messages`, MAM).
+  assume them. Built: a `fixed_membership` room, agent-frontends.md
+  §7.29.
+- **Attachments outside JMAP.** Goguma uploads through
+  `soju.im/FILEHOST`; Matrix and XMPP need upload and download URLs.
+  Built: HMAC-signed attachment links (`mimid-agent-store`'s `links`),
+  agent-frontends.md §7.30.
+- **History for clients that ask.** Goguma needs `draft/chathistory`;
+  Matrix and XMPP are built on history queries (`/messages`, MAM).
+  Built: `chathistory` in the IRC front end.
 
 ## 2. IRC and IRCv3
 
@@ -589,46 +590,9 @@ mode would share. Skip XMPP and Delta Chat as front ends, the
 vendor-push systems of §6, and everything in §7 except as one-user
 bridges someone asks for.
 
-## 10. Open questions for Mark
+## 10. Decisions (Mark, 2026-11-21)
 
-1. **A listener that is not loopback.** Bouncer mode, and so every
-   iPhone, needs the agent reachable from the network, which agent.md
-   and AGENTS.md rule out today. Recommendation: allow a TLS listener
-   on an address the user names, off by default, with the same token
-   and a refusal to start without TLS; document WireGuard or Tailscale
-   binding as the narrow form.
-2. **Queries and history in IRC.** Decisions §7.2 (no queries) and
-   §7.6 (no history) were for v1. Goguma's DM list and background sync
-   need both. Recommendation: lift both for a v2, with a store-level
-   "direct" flag that Matrix and XMPP reuse.
-3. **SASL in the IRC front end.** irc-lessons.md says to skip SASL,
-   but Goguma shows no password field without SASL PLAIN.
-   Recommendation: offer PLAIN only, carrying the same token, and keep
-   PASS.
-4. **Push through vendor relays.** Web Push to pushgarden, Matrix
-   pushes to matrix.org: each sends metadata (timing, at least) to a
-   third party. Recommendation: allow it per front end, off by
-   default, with Matrix fixed to `event_id_only` and Palaver fixed to
-   `private: true`, and say in agent.md what each relay sees.
-5. **Which second front end.** Matrix (larger reach, simpler push, an
-   API that moves) or XMPP (stable XEPs, s2s needed for push, OMEMO
-   friction). Recommendation: Matrix, without Element X at first.
-6. **Gateways and the multi-user host.** Should mimid grow a host that
-   runs many virtual users, which XMPP and Matrix gateways and
-   Marmot's puppet mode all need? Recommendation (superseded by S6
-   below): not before the Marmot relay bridge has been used; then
-   design the host once, for XMPP first. Mark decided to design it once
-   now, in marmot-bridge.md's puppet-mode section (§3.3.6), shaped so
-   an XMPP gateway fits, and to build it after relay mode works
-   (marmot-bridge.md §3.3.7, §9 step 13).
-7. **Marking gatewayed members.** A gateway's virtual users look like
-   any MIMI user, though their messages are not end to end.
-   Recommendation: take it to #mimi together with N7 (on-behalf-of) as
-   one finding, before building any puppet gateway.
-
-### Decisions (Mark, 2026-11-21)
-
-These answer the questions above. Epics: mimid-i0id (IRC v2),
+Epics: mimid-i0id (IRC v2),
 mimid-rvqk (Matrix), mimid-wmdj (XMPP), mimid-qqtk (store groundwork).
 
 - **S1. A listener that is not loopback: yes.** The agent may open a TLS

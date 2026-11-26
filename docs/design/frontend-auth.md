@@ -18,8 +18,12 @@ address the user names, off by default, the same token, no start
 without TLS) and S3 (SASL PLAIN and PASS in IRC), both on branch
 `store-groundwork`, not yet on main. Values marked INVENTED are mine and
 open to change. Sizes marked *estimate* are guesses against
-mimid-agent-irc (about 4,200 lines). Nothing here was built, run
-against a client, or posted anywhere.
+mimid-agent-irc (about 4,200 lines). Most of this is now built: the credential table and SCRAM verifiers
+(`mimid-agent-store/src/credentials/`), the TLS core, ACME DNS-01, the
+local CA and tailnet identity (`mimid-agent/src/{tls,acme,local_ca,tailnet}.rs`),
+with tests in `mimid-agent/tests/`. Epic mimid-e13m records which step
+each section became; §9's step plan is kept as the record of the plan,
+not as work outstanding. Nothing here was posted anywhere.
 
 ## Sources
 
@@ -1218,7 +1222,7 @@ text (people paste passwords there), the SASL payload, or an
 a SCRAM exchange, an HTTP Basic login, a Matrix login and a FAST token,
 each checked absent from captured output at TRACE.
 
-## 8. Threat model, in plain words
+## 8. Threat model
 
 What someone gets by logging in: everything. They read every room in
 plaintext, send as the user, accept invites, leave rooms, and make
@@ -1313,73 +1317,10 @@ certificate it trusts, to an agent on the user's tailnet. Steps 6 and 7
 go with Matrix, step 10 with XMPP. Steps 8 and 9 widen who can get a
 trusted certificate and can go in any order after step 3.
 
-## 10. Open questions for Mark
+## 10. Decisions (Mark, 2026-11-21)
 
-1. **The credential model.** One named app password per device, 16
-   lowercase letters in four groups (75 bits), made by the agent, shown
-   once, good on every front end; the agent token kept as one more
-   credential. Recommendation: yes.
-2. **SCRAM verifiers instead of argon2id.** The agent must keep SCRAM
-   keys for XMPP, and those set how hard the stored data is to attack,
-   so an argon2id hash beside them adds cost to every login and no
-   protection. Recommendation: store SCRAM-SHA-1 and SCRAM-SHA-256
-   verifiers only, 4,096 iterations, and check plain logins against
-   them.
-3. **SCRAM in IRC.** No IRC client needs it; Goguma, Halloy and The
-   Lounge cannot do it. Recommendation: PLAIN and PASS only, as S3 said;
-   add SCRAM-SHA-256 (step 11, small, the verifiers exist) only if a
-   user asks.
-4. **User-chosen passwords through registration.** XMPP preauth URIs
-   and in-band registration would let Conversations, Monal and Siskin
-   set up from one QR code, with the user choosing the password.
-   Recommendation: not in the first XMPP release; app passwords typed
-   by hand first. If added later, a chosen password is allowed only
-   through a one-time preauth token, becomes an ordinary credential, and
-   needs at least 12 characters (INVENTED).
-5. **Adding an app password from IRC.** The new secret arrives in a
-   NOTICE, and IRC clients log to disk. Recommendation: allow it; the
-   same logs already hold every message in plaintext, and a phone-only
-   user has no CLI. The NOTICE says the line may be in the client's
-   log.
-6. **`tailscale cert` puts the names in public CT logs.** The tailnet
-   name and the machine name become public. Recommendation: make it the
-   first choice anyway and say so in agent.md; a user who minds uses
-   their own domain or the local CA.
-7. **Tailnet identity (§4.6).** Choices that are Mark's:
-   (a) off or on by default when the listener is on a tailnet address;
-   (b) the default `owners` (the owner of the agent's node) and the
-   three exclusions (tagged, self, routers);
-   (c) the fixed word `tailnet` for XMPP SCRAM and Matrix, versus
-   letting those clients use an app password;
-   (d) JMAP staying on tokens, because over HTTP the source address is
-   ambient authority any web page can use.
-   Recommendation: (a) off by default, with `setup` offering it when it
-   sees a tailnet listener and the `tailscale` certificate source;
-   (b) yes; (c) yes, the word is no secret and says so; (d) yes, and
-   Matrix uses it only at `/login`.
-8. **Port 443 for Matrix.** Matrix clients turn a typed name into
-   `https://name` on 443; any other port means typing it. Recommendation:
-   default the Matrix (and JMAP) HTTPS listener to 443 on the tailnet
-   address when `[tls] source = "tailscale"` (an unprivileged process
-   needs `CAP_NET_BIND_SERVICE` or a sysctl for that; the docs say how),
-   else 8448, and print the full URL either way.
-9. **A listener on a public address.** S1 allows any address the user
-   names. Recommendation: keep allowing it, never as a default; log a
-   WARN at start naming the address as public, and point the docs at
-   tailnet and WireGuard addresses.
-10. **The Matrix and XMPP domain.** XMPP clients check the certificate
-    against the JID domain, so XMPP addresses must use the TLS name
-    (`alice@host.tailnet.ts.net`), not the MIMI domain. Matrix does not
-    force it, but using the TLS name in `@alice:host.tailnet.ts.net`
-    lets well-known discovery work. Recommendation: use the TLS name in
-    both, and show the MIMI URI in profiles and WHOIS-like places, as
-    the IRC front end does.
-
-### Decisions (Mark, 2026-11-21)
-
-These answer the questions above, in the same order. Where an answer
-differs from the recommendation, the body of this note has been changed
-to match.
+The body of this note follows these. Where an answer differs from what
+the note first recommended, the item says so.
 
 - **A1. The credential model: as proposed.** One named app password per
   device, 16 lowercase letters shown in four groups of four, made by the

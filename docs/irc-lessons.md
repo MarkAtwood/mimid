@@ -236,8 +236,8 @@ read for what it sends and expects. Details are in agent-frontends.md
 
 - SASL beyond PLAIN and SCRAM-SHA-256: EXTERNAL, OAUTHBEARER, GitHub
   and OIDC flows. The claims in meshIRCd's
-  GITHUB.md about which clients support OAUTHBEARER are unverified and
-  likely wrong.
+  GITHUB.md about which clients support OAUTHBEARER are unverified;
+  check them before relying on any of them.
 - METADATA, DID tags and IDENTITY CHALLENGE.
 - WATCH (keep MONITOR at most).
 - Cloaking: use a fixed synthetic host.

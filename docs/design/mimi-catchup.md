@@ -12,8 +12,10 @@ MIMI has no equivalent at all. The conclusion of that comparison is in
 writer per room. The question it exposed is real even so, and this note
 is about that question.
 
-Values marked INVENTED are mine. Nothing here is implemented; nothing
-has been proposed to the working group.
+Values marked INVENTED are mine. Both halves are now implemented and
+tested between two providers (§10); nothing has been proposed to the
+working group, and it has never run against another implementation.
+draft-atwood-mimi-catchup is written and unsubmitted.
 
 ## Sources
 
@@ -379,8 +381,8 @@ Follower side:
 - The sequence is per room. A provider following a thousand rooms asks a
   thousand times; there is no cross-room catch-up, deliberately, because
   entitlement (§8) is per room.
-- Not written, not proposed, not implemented. No interoperability claim
-  of any kind is made.
+- Only ever run between two instances of mimid. No interoperability
+  claim of any kind is made.
 
 ## 12. The four questions, and Mark's answers
 
@@ -418,7 +420,6 @@ All answered 2026-11-22. Each is a closed decision bead.
    signs a hash-chain entry alongside the sequence (§7.1), without which
    a peer-served fanout's position cannot be verified.
 
-All four are answered. The remaining open choice is an implementation
-one, on bead mimid-1wgh.37.104.1: whether the envelope carries the
-sequence as an HTTP header or as a wrapper object, which turns on
-whether franking has to cover it.
+The header-versus-wrapper choice that was open here is settled in §4:
+an HTTP header, `mimi-fanout-sequence`, covered by the RFC 9421
+signature.
