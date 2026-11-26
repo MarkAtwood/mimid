@@ -3,20 +3,15 @@
 Design note, 2026-11-21 and 2026-11-22, for Mark's review. Epic
 mimid-s4oy: step 1 (bead mimid-s4oy.1, §1), step 2 (bead mimid-s4oy.2,
 §2, decided by Mark in §3) and step 3 (bead mimid-s4oy.3, the design,
-§5 to §15). Mark answered the design's open questions on 2026-11-22
-(§14, decisions PQ1 to PQ12).
+§5 to §13). Mark answered the design's open questions on 2026-11-22
+(§3, decisions PQ1 to PQ12).
 
 The plugin lets Pidgin, and the other programs built on libpurple
-(BitlBee, Spectrum2), use MIMI rooms through mimid. Step 2 asked what the
-plugin talks to. Mark chose option (b): the plugin embeds the agent's
-engine and is itself an MLS client of the user (§3). frontend-auth.md
-§2.4 and §6.5 assumed JMAP Chat to the agent; that no longer applies to
-purple-mimi (§12.2).
-
-Two things were fixed by earlier notes when §1 and §2 were written. The
-second is changed by Mark's decision: purple-mimi, like the mobile app
-of decision mimid-1wgh.39, holds keys and plaintext in its own process
-(§12.1).
+(BitlBee, Spectrum2), use MIMI rooms through mimid. The plugin embeds the agent's engine and is itself an MLS client of the
+user (decision P1, §3), so it holds keys and plaintext in its own
+process, as the mobile app of decision mimid-1wgh.39 does (§12.1).
+frontend-auth.md §2.4 and §6.5 assumed JMAP Chat to the agent, which
+does not apply here (§12.2).
 
 - The CBOR live stream (binary-live-stream.md) is between the agent and
   its provider. It is not a local client protocol. The agent's local
@@ -56,7 +51,7 @@ Read on 2026-11-21.
 | lurch (OMEMO); carbons | `f4a886c` 2024-10-27; `2fa542d` 2020-12-25 |
 | bitlbee-discord | `607f988`, 2021-09-28 |
 | Spectrum2 | `d07c06c`, pushed 2026-10-24 |
-| mimid | main at `7b0d496a` (§1, §2); at `c060c22e` for §5 to §15 |
+| mimid | main at `7b0d496a` (§1, §2); at `c060c22e` for §5 to §13 |
 | libpurple 2 source | 2.14.12-1 `libpurple/account.c` and `libpurple/connection.c` from sources.debian.org, read 2026-11-22 |
 | Debian 12 packages | `finch` 2.14.12-1, `libpurple0` 2.14.12-1 and `bitlbee-libpurple` 3.6-1.3, downloaded with `apt-get download` 2026-11-22, not installed |
 
@@ -83,9 +78,8 @@ today.
   library with a C ABI, under thin C glue for libpurple 2.14 and for
   libpurple 3, both from the start. Separate repository
   MarkAtwood/purple-mimi under GPL-3.0-or-later. Linux and Homebrew
-  macOS first, Windows later. My recommendation in §2.9 was option (a)
-  and was not taken.
-- **Design (§5 to §15):** the library embeds mimid-agent-core and
+  macOS first, Windows later.
+- **Design (§5 to §13):** the library embeds mimid-agent-core and
   mimid-agent-store and runs tokio on its own threads; the glue drains
   one event queue on the GLib main loop. About 50 C functions, no
   callbacks into C. A state lock per account with a takeover handshake
@@ -486,11 +480,11 @@ that changes slowly; (d) moves with nothing of ours.
 
 ### 2.9 Recommendation
 
-**Mark chose (b) on 2026-11-22 (§3).** What follows is the
+**Not taken: Mark chose (b) (decision P1, §3).** What follows is the
 recommendation I made in step 2. It was not taken, and is kept as the
 record of what was weighed. The costs it names for (b) (keys inside
 Pidgin, a device per Pidgin, the binary size, the `unsafe` code, a
-plugin that moves with agent-core) are the costs §5 to §15 design for.
+plugin that moves with agent-core) are the costs §5 to §13 design for.
 
 My recommendation was **(a), in C, against libpurple 2.14, with (d)
 documented now.**
@@ -523,8 +517,10 @@ thread hand-off for every event, and vendoring.
 
 ## 3. Decisions (Mark, 2026-11-22)
 
-Recorded in a comment on bead mimid-s4oy.2, which is closed with them.
-They replace the seven open questions of step 2.
+P1 to P7 are recorded on bead mimid-s4oy.2 and PQ1 to PQ12 on
+mimid-s4oy.3, both closed with them. P1 to P7 replaced the seven open
+questions of step 2; PQ1 to PQ12 the twelve of the design, and each but
+PQ7 is the recommendation its question made.
 
 - **P1. Option (b), embedded core.** The plugin embeds mimid-agent-core
   through a C ABI and is the MLS client: each Pidgin profile is a new
@@ -545,6 +541,38 @@ They replace the seven open questions of step 2.
 - **P7. Linux and Homebrew macOS first.** The Windows i686 DLL is a
   step of its own, later.
 
+- **PQ1. Embed both mimid-agent-core and mimid-agent-store** (§5.1).
+- **PQ2. The state lock lives in mimid-agent-core's `StateDir`**
+  (§6.2), so the daemon and every embedder take it. The takeover
+  handshake (§6.3) is purple-mimi's.
+- **PQ3. The token is kept in `<state>/provider-token` (0600)**, and
+  libpurple's remembered password is cleared, on libpurple 2 and 3
+  alike (§12.3).
+- **PQ4. The account username is the handle `alice@a.example`**; a full
+  `mimi://` URI is accepted too. The Provider URL defaults to
+  `https://<domain>`, with an account option to override it (§8.1).
+- **PQ5. `[n]` message numbers on libpurple 2**, on by default, with an
+  account option to hide them (§8.7).
+- **PQ6. Invites follow the daemon's default** (join invites from
+  allowed users, ask for the rest), with an account option (§8.1,
+  §8.11).
+- **PQ7. Token listing and revocation are built in mimid-server before
+  purple-mimi, as a prerequisite** (bead mimid-v9co, step 3p in §13;
+  §12.5). The question had proposed a bead outside the epic with no
+  order, and one token per Pidgin in the README meanwhile; there is no
+  meanwhile now.
+- **PQ8. CMake calling cargo directly** (§10.1), so a distro build
+  needs no network.
+- **PQ9. A taken-over Pidgin 3 refuses its own automatic reconnect** and
+  takes the account back only by an account action (§6.6).
+- **PQ10. BasicCredential first**; a `did_webvh` log file as an account
+  option in a later step (§5.7, §8.13).
+- **PQ11. Shared BitlBee hosts are allowed**, and the README says what
+  that means for the keys; purple-mimi does not try to detect them
+  (§12.1).
+- **PQ12. purple-mimi pins mimid by git revision**, with vendored source
+  tarballs; crates.io is decided when a distro packager asks (§5.2).
+
 ## 4. Uncertainties
 
 - keep.imfreedom.org refused every request (HTTP 418, lockdown), so
@@ -560,13 +588,28 @@ They replace the seven open questions of step 2.
   does (§12.3).
 - Every line count and binary size is an estimate. The libpurple 3
   findings hold for 2.98.0 and may change with each monthly alpha.
+  mappings are designs; the libpurple 3 parts hold for 2.98.0.
+- *From memory*, not checked: std's file lock is `flock(2)` on Unix;
+  `flock` over NFS on Linux; Pidgin 2's single-instance check and `-m`;
+  Pidgin 2's reconnect delays; libpurple 2's user directory mode;
+  `PURPLE_MESSAGE_SEND` on received lines; the `purple-3` pkg-config
+  name; Homebrew's libpurple loading `.so` plugins on macOS; GLib
+  versions in Debian 12 and 13; libpurple 2 on Windows watching only
+  sockets.
+- Not checked in libpurple 3 (2.98.0): whether the conversation view
+  redraws an edited `PurpleMessage`; whether closing a tab calls
+  `leave_conversation_async`; where `purple_data_dir()` points; whether
+  a message can be removed from a conversation's view.
+- The mimid GitHub URL in §5.2 is a guess.
+- Every line count, size and timing marked INVENTED or *estimate* is a
+  guess. The takeover timings (1 s watch, 10 s grace, 30 s wait,
+  100 ms poll) are untested.
 
 ## 5. Architecture
 
-Sections 5 to 15 are the design of step 3 (bead mimid-s4oy.3). Values
+Sections 5 to 13 are the design of step 3 (bead mimid-s4oy.3). Values
 marked INVENTED are mine; line counts are *estimates*; statements marked
-*from memory* were not checked against a source on 2026-11-22. Nothing
-here was built.
+*from memory* were not checked against a source on 2026-11-22.
 
 ### 5.1 What the library embeds
 
@@ -1706,60 +1749,3 @@ Total about 13,000 to 19,000 lines (*estimate*). §2.3 guessed 4,000 to
 difference is the libpurple 3 glue, the takeover, and tests in three
 harnesses.
 
-## 14. Decisions (Mark, 2026-11-22)
-
-Recorded in a comment on bead mimid-s4oy.3, which is closed with them.
-They replace the twelve open questions of the design. Each but PQ7 is
-the recommendation the question made.
-
-- **PQ1. Embed both mimid-agent-core and mimid-agent-store** (§5.1).
-- **PQ2. The state lock lives in mimid-agent-core's `StateDir`**
-  (§6.2), so the daemon and every embedder take it. The takeover
-  handshake (§6.3) is purple-mimi's.
-- **PQ3. The token is kept in `<state>/provider-token` (0600)**, and
-  libpurple's remembered password is cleared, on libpurple 2 and 3
-  alike (§12.3).
-- **PQ4. The account username is the handle `alice@a.example`**; a full
-  `mimi://` URI is accepted too. The Provider URL defaults to
-  `https://<domain>`, with an account option to override it (§8.1).
-- **PQ5. `[n]` message numbers on libpurple 2**, on by default, with an
-  account option to hide them (§8.7).
-- **PQ6. Invites follow the daemon's default** (join invites from
-  allowed users, ask for the rest), with an account option (§8.1,
-  §8.11).
-- **PQ7. Token listing and revocation are built in mimid-server before
-  purple-mimi, as a prerequisite** (bead mimid-v9co, step 3p in §13;
-  §12.5). The question had proposed a bead outside the epic with no
-  order, and one token per Pidgin in the README meanwhile; there is no
-  meanwhile now.
-- **PQ8. CMake calling cargo directly** (§10.1), so a distro build
-  needs no network.
-- **PQ9. A taken-over Pidgin 3 refuses its own automatic reconnect** and
-  takes the account back only by an account action (§6.6).
-- **PQ10. BasicCredential first**; a `did_webvh` log file as an account
-  option in a later step (§5.7, §8.13).
-- **PQ11. Shared BitlBee hosts are allowed**, and the README says what
-  that means for the keys; purple-mimi does not try to detect them
-  (§12.1).
-- **PQ12. purple-mimi pins mimid by git revision**, with vendored source
-  tarballs; crates.io is decided when a distro packager asks (§5.2).
-
-## 15. Uncertainties in §5 to §14
-
-- Nothing in §5 to §14 was built. The ABI, the event set and the glue
-  mappings are designs; the libpurple 3 parts hold for 2.98.0.
-- *From memory*, not checked: std's file lock is `flock(2)` on Unix;
-  `flock` over NFS on Linux; Pidgin 2's single-instance check and `-m`;
-  Pidgin 2's reconnect delays; libpurple 2's user directory mode;
-  `PURPLE_MESSAGE_SEND` on received lines; the `purple-3` pkg-config
-  name; Homebrew's libpurple loading `.so` plugins on macOS; GLib
-  versions in Debian 12 and 13; libpurple 2 on Windows watching only
-  sockets.
-- Not checked in libpurple 3 (2.98.0): whether the conversation view
-  redraws an edited `PurpleMessage`; whether closing a tab calls
-  `leave_conversation_async`; where `purple_data_dir()` points; whether
-  a message can be removed from a conversation's view.
-- The mimid GitHub URL in §5.2 is a guess.
-- Every line count, size and timing marked INVENTED or *estimate* is a
-  guess. The takeover timings (1 s watch, 10 s grace, 30 s wait,
-  100 ms poll) are untested.

@@ -68,51 +68,23 @@ today.
 
 ## Summary
 
-- **One credential model.** Each device gets a named **app password**:
-  16 lowercase letters shown as four groups of four
-  (`kqzv-trwm-hpaf-dnye`), 75 bits, the form Google and Apple already
-  use. Any app password works on every front end. The existing
-  `agent-token` becomes one more credential. Credentials are listed and
-  revoked from a CLI, from `/msg mimid`, and over JMAP. Revoking one
-  closes its open sessions and logs out its Matrix devices.
-- **Stored as SCRAM verifiers.** XMPP clients want SCRAM, and SCRAM
-  needs salted keys, not a password hash. So the agent keeps a
-  SCRAM-SHA-256 verifier for every credential, made when the password
-  is made, and checks plain logins (SASL PLAIN, PASS, HTTP Basic and
-  Bearer, Matrix password login, IMAP LOGIN) against the same verifier.
-  No SCRAM-SHA-1 and no argon2id (decision A2): clients that know only
-  SCRAM-SHA-1, such as Dino, use PLAIN over TLS.
-- **Per protocol.** IRC: SASL PLAIN, SASL SCRAM-SHA-256 and PASS, with
-  `soju.im/account-required` (decision A3). JMAP: Bearer and Basic.
-  Matrix: `m.login.password` issuing a per-device access token, no
-  refresh tokens, never a soft logout. XMPP: SCRAM-SHA-256 and PLAIN
-  over TLS, on SASL1 and on SASL2 (Monal uses SCRAM only over SASL2);
-  FAST tokens; -PLUS with `tls-exporter` and `tls-server-end-point`
-  later, and once offered, never withdrawn.
-- **TLS, ranked.** (1) `tailscale cert` when the listener is on a
-  tailnet, used only after setup has asked the user and explained that
-  the names go into public Certificate Transparency logs (decision A6);
-  (2) ACME DNS-01, or certificate files the user already has,
-  when the user has a domain; (3) a local CA the agent makes,
-  name-constrained, with a setup page, as a last resort. No self-signed
-  certificate with warnings by default.
-- **Tailnet identity** (Mark, 2026-11-21, from tailircd). On a tailnet
-  listener the agent MAY ask tailscaled who is connecting (LocalAPI
-  `whois`) and let the owner's own devices in with no password: IRC with
-  the password left empty, XMPP and Matrix with a fixed word. Off by
-  default; setup offers it (decision A7). JMAP keeps
-  its token, because ambient authority over HTTP lets any web page the
-  owner opens make calls. With `tailscale cert` this is the least
-  friction for a phone: install Tailscale, type the server name (§4.6).
-- **Onboarding.** `mimid-agent <config> setup <client> <device>` makes
-  an app password and prints what that client needs: an `ircs://` URL,
-  a Matrix homeserver URL, an XMPP address, a JMAP Session URL, with a
-  QR code where the client can read one.
-- **Before IRC v2** (mimid-i0id): steps 1 to 5 and 11 of §9
-  (credential store, TLS core with files and tailscale, IRC SASL PLAIN
-  and SCRAM-SHA-256, IRC and CLI management, setup output). **Before
-  Matrix** (mimid-rvqk): step 7
-  (Matrix login and devices) and JMAP over the network (step 6).
+- **One credential model** (§3): a named app password per device, 16
+  lowercase letters in four groups, good on every front end, with the
+  agent token as one more credential.
+- **Stored as SCRAM-SHA-256 verifiers** (§3.3), because XMPP clients
+  want SCRAM and SCRAM needs salted keys; plain logins check against the
+  same verifier.
+- **Per protocol** (§4): IRC SASL PLAIN, SCRAM-SHA-256 and PASS; JMAP
+  Bearer and Basic; Matrix `m.login.password`; XMPP SCRAM and PLAIN on
+  SASL1 and SASL2.
+- **TLS, ranked by friction** (§5.2): `tailscale cert`, then ACME DNS-01
+  or the user's own files, then a name-constrained local CA. No
+  self-signed certificate by default.
+- **Tailnet identity** (§4.6): on a tailnet listener the agent MAY let
+  the owner's own devices in by their Tailscale node. Off by default,
+  IRC and the other front ends only; JMAP keeps its credential.
+- **Onboarding** (§6): `setup <client> <device>` makes an app password
+  and prints what that client needs, with a QR code where one is useful.
 
 ## 1. Today
 
@@ -365,7 +337,7 @@ Other forms considered:
 
 | Form | Entropy | Typed length | Against it |
 |---|---|---|---|
-| 4×4 letters (chosen) | 75.2 bits | 16 | none worth naming |
+| 4×4 letters (chosen) | 75.2 bits | 16 | |
 | 4×4 Crockford base32 | 80 bits | 16 | digits mean switching keyboards on a phone |
 | 6 words, EFF long list (7,776 words) | 77.5 bits | about 40 | long; phones capitalise and autocorrect words, though password fields usually turn that off |
 | 7 words, EFF short list (1,296 words) | 72.4 bits | about 35 | same |
@@ -375,9 +347,9 @@ Other forms considered:
 §7, and past offline guessing against the stored verifiers at 4,096
 PBKDF2 iterations (about 2^87 HMAC operations; *estimate*).
 
-**User-chosen passwords: none.** The agent makes every secret. That is
-what lets the storage in §3.3 be simple, and no one reuses a password
-they never chose.
+**User-chosen passwords: none.** The agent makes every secret
+(decision A4 allows user-chosen ones later, through a one-time preauth
+token).
 
 ### 3.3 Storage
 
@@ -856,11 +828,6 @@ accept it without a warning.
 | Delta Chat | works | works | "accept invalid certificates" setting, no pinning |
 | jmap-chat-js (browser) | works | works if the browser trusts it | browser warning page |
 
-A publicly trusted certificate works in every client with no step on
-the phone. A CA the user installs works in most, with the iOS steps of
-§6.6 and gaps on Android. Self-signed works only in the clients that
-pin. That is the ranking of §5.2.
-
 ### 5.2 Where the certificate comes from, ranked
 
 1. **`tailscale cert`, when the listener is on a tailnet.** Tailscale's
@@ -1172,8 +1139,7 @@ An account lockout lets anyone who can reach the port lock the user out
 of their own chat, and with 75-bit generated secrets it buys nothing:
 no rate the agent allows makes online guessing work. So:
 
-- **No account lockout, ever.** A credential is never disabled because
-  of failed logins.
+- A credential is never disabled because of failed logins.
 - **Per source address, a slowdown.** After 5 failed logins from one
   address in 10 minutes (INVENTED), each further failure from it is
   answered after a delay starting at 1 second and doubling to 30
@@ -1181,7 +1147,7 @@ no rate the agent allows makes online guessing work. So:
   counted per /64 (INVENTED). Loopback is counted like any other
   address, with a higher threshold of 20 (INVENTED), so a local script
   in a loop does not slow the user's own clients for long.
-- **Why a slowdown at all.** Log noise and CPU: each failed plain login
+- **The slowdown is for log noise and CPU, not for guessing:** each failed plain login
   may run the SCRAM-SHA-256 derivation once per unrevoked credential (§3.3).
   It also tames WeeChat's default `sasl_fail = reconnect`, which retries
   a wrong password forever (§2.1).
@@ -1289,8 +1255,10 @@ listener is allowed, with a WARN at start (decision A9).
 
 ## 9. Step plan and effort
 
-Sizes are lines of Rust with tests (*estimate*). Each step is one to
-three commits and one child bead of mimid-e13m.
+Steps 1 to 6, 8, 9, 11 and 12 are built (epic mimid-e13m, which has a
+child bead per step). Steps 7 and 10 wait on the Matrix and XMPP front
+ends, which do not exist. The sizes were estimates made before the work
+and are kept only for the two steps still to come.
 
 | Step | What | Size | Needed before |
 |---|---|---|---|
@@ -1306,16 +1274,6 @@ three commits and one child bead of mimid-e13m.
 | 10 | **XMPP SASL.** SASL1 SCRAM-SHA-256 and PLAIN; SASL2 with SCRAM-SHA-256; FAST tokens; `tls-exporter` and -PLUS with XEP-0440. | 900 to 1,300 | XMPP |
 | 11 | **IRC SCRAM-SHA-256** (decision A3: with step 4, before IRC v2). | 150 to 250 | IRC v2 |
 | 12 | **Tailnet identity.** LocalAPI client (`whois`, `status`) over the Unix socket, the `[tailnet]` table and matching rules with the three exclusions, the hooks in IRC (no `account-required` for matched peers), XMPP (the fixed SCRAM word) and Matrix `/login` (tokens bound to the node), the recheck timer, `/msg mimid tailnet` and `deny`, setup output. | 600 to 900 | none, but best with IRC v2 for Goguma; needs steps 1 and 3 |
-
-Step 12 is not required by anything, but with step 3's tailscale source
-it gives Goguma the easiest setup there is, so it is worth doing with
-IRC v2; it is off by default and setup offers it (decision A7).
-
-Steps 1 to 5 and 11 (about 2,750 to 4,050 lines) are the part IRC v2 needs:
-with them Goguma on either phone logs in with an app password, over a
-certificate it trusts, to an agent on the user's tailnet. Steps 6 and 7
-go with Matrix, step 10 with XMPP. Steps 8 and 9 widen who can get a
-trusted certificate and can go in any order after step 3.
 
 ## 10. Decisions (Mark, 2026-11-21)
 
