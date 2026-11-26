@@ -145,6 +145,12 @@ mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat cl
   `agent-frontends.md` alone, most with an empty design field, so cutting
   a design note to "it is in the bead" destroys the only copy. Check which
   way a given decision is recorded before moving it.
+- **Answering another note's open question means editing that note.** A
+  design note's `Uncertainties` section is a claim about what is not
+  known. When later work settles one of its entries, say so there in the
+  same commit; otherwise the oldest note keeps asking a question the
+  newest has answered, and a reader who starts at the wrong file gets the
+  wrong answer.
 - **Break a bead into sub-issues only when it is next on the critical path**, unless a spec fixes its content. Mark approves each plan before its sub-issues are filed.
 - **Commits:**
   - ask before committing, except inside a review loop;

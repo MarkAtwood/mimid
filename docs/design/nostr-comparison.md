@@ -385,10 +385,9 @@ groups, two orderings; nothing crosses at the MLS level.
    `timeline_list` to fill gaps; `integrations/custom-client.md`).
    wn-agent keeps the Nostr key, MLS state, relays and media. The
    bridge is then glue between `Store` and the socket. Medium: 3,000
-   to 5,000 lines. Whether the control API covers sending edits,
-   reactions and attachments I did not trace (it has
-   `invalid_edit_target` and attachment calls in
-   `crates/agent-control/src/lib.rs`).
+   to 5,000 lines. The control API covers edits, reactions and
+   attachments (`edit_message`, `send_reaction`, `send_media`); the
+   whole API is traced in marmot-bridge.md §0.
 2. Link MDK into mimid-agent. Large, and awkward: MDK pins OpenMLS git
    rev `6100df3`, mimid pins the MarkAtwood fork at `f1680d9`, and the
    two target mls-extensions -10 and -11. Two OpenMLS copies in one
@@ -747,8 +746,8 @@ N1 to #mimi, independently of any of this.
 - The NIP-29 client landscape in option (a) is from memory, not
   checked.
 - wn-agent's control API was read from its client guide and one
-  source file; whether it sends edits, reactions and attachments was
-  not traced.
+  source file here; it was traced in full afterwards, in
+  marmot-bridge.md §0.
 - mls-extensions -10 against -11 was not compared for wire changes
   that would matter to a mixed implementation.
 - MDK's formal models and simulator were not read; §2.1 is from the

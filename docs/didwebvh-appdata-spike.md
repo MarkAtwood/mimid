@@ -158,8 +158,10 @@ revocation test.
 - **Groups must use `app_data_dictionary` and AppDataUpdate.** Every MIMI
   room does. A plain MLS deployment without mls-extensions cannot use the
   component form; the extension form could be kept as an alternative, at
-  the cost of two ways to do one thing. Not checked: whether mls-rs
-  implements AppDataUpdate.
+  the cost of two ways to do one thing. mls-rs has no AppDataUpdate, and its
+  custom-proposal API cannot carry one, so a second implementation
+  cannot follow the component form without a change to mls-rs
+  (didwebvh-mls-rs.md).
 - **New spec text:** the component's update semantics (a short paragraph),
   and the rule that a `remove` is invalid.
 - **The first Commit that records a `did_webvh` user** in a room that does
@@ -293,8 +295,9 @@ Component Types" registry (mls-extensions-11 §7.5): Value TBD2, Name
 - **External senders.** Whether the draft should forbid record updates
   from external senders. They cannot change the outcome, so the spike
   allows them.
-- **mls-rs.** Not checked whether mls-rs supports AppDataUpdate, so not
-  checked whether a second implementation could follow.
+- **mls-rs.** Answered since: stock mls-rs has no AppDataUpdate and
+  its custom-proposal API cannot carry one, so a second implementation
+  cannot follow without a change to mls-rs (didwebvh-mls-rs.md).
 - **Agents.** The agent's fallback logic (bead mimid-1wgh.4.81.28) was not
   rerun in component form; the mimi-mls test of the fallback stands in
   for it. A pending GCE cannot reach a mimid agent through a mimid hub
