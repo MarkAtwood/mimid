@@ -10,7 +10,7 @@
   "created_by": "Mark Atwood",
   "updated_at": "2026-11-26T17:49:00.83906657Z",
   "closed_at": "2026-11-26T17:49:00.83906657Z",
-  "close_reason": "Fixed in 5186bc67. CLAUDE.md's managed block removed with bd setup claude --remove (the documented mechanism; a hand edit inside a hashed block would be regenerated), so the git pull --rebase that AGENTS.md forbids is gone, as are the three profiles and the duplicate load. CLAUDE.md is seven lines pointing at AGENTS.md; AGENTS.md's own generated Beads section carries the guidance and no git policy, so pull --rebase appears once in the repo, in the rule forbidding it. The citations of ~/.claude/CLAUDE.md and ~/.claude/standards/rust.md are dropped: neither exists anywhere under the home directory, so an agent was told about rules it could not read. If global rules are wanted they have to be created and named.",
+  "close_reason": "Fixed in 230c1b4e. CLAUDE.md's managed block removed with bd setup claude --remove (the documented mechanism; a hand edit inside a hashed block would be regenerated), so the git pull --rebase that AGENTS.md forbids is gone, as are the three profiles and the duplicate load. CLAUDE.md is seven lines pointing at AGENTS.md; AGENTS.md's own generated Beads section carries the guidance and no git policy, so pull --rebase appears once in the repo, in the rule forbidding it. The citations of ~/.claude/CLAUDE.md and ~/.claude/standards/rust.md are dropped: neither exists anywhere under the home directory, so an agent was told about rules it could not read. If global rules are wanted they have to be created and named.",
   "labels": [
     "human"
   ]

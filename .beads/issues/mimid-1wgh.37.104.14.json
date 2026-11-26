@@ -10,7 +10,7 @@
   "created_by": "Mark Atwood",
   "updated_at": "2026-11-26T17:44:20.412236448Z",
   "closed_at": "2026-11-26T17:44:20.412236448Z",
-  "close_reason": "Done in de9a99c0. CatchUpResponse carries a CatchUpResponseCode (success/outOfWindow/notAuthorized/noSuchRoom) with a select, following UpdateRoomResponse's pattern; names from GroupInfoCode, success at 0 from the majority. The hub answers 200 with a code instead of erroring, HubError::CatchUpOutOfWindow and CatchUpNotEntitled are deleted, and the follower reads the code. 30 tests, including two hand-encoded wire fixtures for the new arms and one that an undefined code is refused.",
+  "close_reason": "Done in 40d54f4f. CatchUpResponse carries a CatchUpResponseCode (success/outOfWindow/notAuthorized/noSuchRoom) with a select, following UpdateRoomResponse's pattern; names from GroupInfoCode, success at 0 from the majority. The hub answers 200 with a code instead of erroring, HubError::CatchUpOutOfWindow and CatchUpNotEntitled are deleted, and the follower reads the code. 30 tests, including two hand-encoded wire fixtures for the new arms and one that an undefined code is refused.",
   "labels": [
     "wg"
   ],

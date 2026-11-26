@@ -12,7 +12,7 @@
   "updated_at": "2026-11-26T04:57:33.087436506Z",
   "started_at": "2026-11-26T04:09:19.004292587Z",
   "closed_at": "2026-11-26T04:57:33.087436506Z",
-  "close_reason": "Done in 670dd315. Two real provider stacks, real HTTP, real hub sequence numbering, catchUp from the hub's published directory, and the follower's automatic fill: one test recovers what a hub gave up on, one has retention prune it first so the hub answers a real 410 and the follower moves the gone count instead. Oracle is outbox_capture, taken outside the catch-up code. NOT run against another implementation: still only mimid talking to mimid.",
+  "close_reason": "Done in 33de78f9. Two real provider stacks, real HTTP, real hub sequence numbering, catchUp from the hub's published directory, and the follower's automatic fill: one test recovers what a hub gave up on, one has retention prune it first so the hub answers a real 410 and the follower moves the gone count instead. Oracle is outbox_capture, taken outside the catch-up code. NOT run against another implementation: still only mimid talking to mimid.",
   "labels": [
     "wg"
   ],

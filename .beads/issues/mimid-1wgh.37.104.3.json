@@ -11,7 +11,7 @@
   "created_by": "Mark Atwood",
   "updated_at": "2026-11-26T04:57:28.598731419Z",
   "closed_at": "2026-11-26T04:57:28.598731419Z",
-  "close_reason": "Done in bf92e38d, closed late. hub/catchup.rs serves POST /catchUp/{roomId}: §5.1's checks in order (room exists, window, entitlement), answers fanouts in hub order each carrying its sequence plus the hub's highest, and the template is published in directory.rs so a provider that does not publish it does not support it. An out-of-window request gets a distinct 410, never the oldest still held. 6 tests in hub_catchup.rs, including that a served fanout is byte-identical to what was delivered.",
+  "close_reason": "Done in 4e6d517d, closed late. hub/catchup.rs serves POST /catchUp/{roomId}: §5.1's checks in order (room exists, window, entitlement), answers fanouts in hub order each carrying its sequence plus the hub's highest, and the template is published in directory.rs so a provider that does not publish it does not support it. An out-of-window request gets a distinct 410, never the oldest still held. 6 tests in hub_catchup.rs, including that a served fanout is byte-identical to what was delivered.",
   "labels": [
     "wg"
   ],
