@@ -52,6 +52,19 @@ openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = 
 openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
 openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
 
+# Line tables instead of full DWARF. A panic still names the file and
+# line, which is what a failing test needs, but a debugger can no longer
+# inspect variables: use `RUSTFLAGS="-C debuginfo=2"` or override this
+# for a session that needs one.
+#
+# The workspace builds dozens of integration-test binaries under
+# `--all-features --all-targets`, and with full debug info each ran to
+# about 650 MB. The gate wrote hundreds of gigabytes per run, which on
+# one machine took the CPU to 83% iowait and left `target` at 211 GB.
+# The bytes, not the compiling, were the cost.
+[profile.dev]
+debug = "line-tables-only"
+
 # PBKDF2 of the agent's SCRAM verifiers (mimid-agent-store credentials,
 # 4,096 HMAC-SHA-256 rounds per login) takes about 0.2 s unoptimised;
 # the tests log in hundreds of times.
