@@ -2,13 +2,15 @@
   "id": "mimid-xxsc",
   "title": "Two defects in the instruction files themselves (CLAUDE.md, AGENTS.md)",
   "description": "Found by the prose review of 2026-11-26 and verified directly. Left for\nMark: these are the files the agents operate under, and one is machine\ngenerated, so I did not edit either.\n\n## 1. CLAUDE.md tells agents to run a command AGENTS.md forbids\n\nCLAUDE.md line 48, inside the managed Beads block, under\n\"Team-maintainer opt-in only\":\n\n    git pull --rebase\n\nAGENTS.md line 147: \"Never `pull --rebase`, reset or force-push.\"\n\nSo an agent reading both files is instructed to do the thing the\nrepository prohibits. Verified by reading both lines.\n\nThe block looks machine-generated (it carries a `profile:minimal`\nmarker), so a hand edit would be regenerated away. The fix belongs\nwherever `bd` generates it, or in a repo-side override.\n\n## 2. AGENTS.md cites a ruleset that does not exist\n\nAGENTS.md line 3: \"Mark's global rules in `~/.claude/CLAUDE.md` and\n`~/.claude/standards/rust.md` also apply\".\nAGENTS.md line 105: \"## Rust conventions (in addition to rust.md)\".\n\nNeither file exists. `~/.claude/` holds backups, cache, feedback,\nfile-history, history.jsonl, paste-cache and projects, and no CLAUDE.md\nand no standards/ directory.\n\nSo \"also apply\" has been unfollowable, and the five bullets under \"Rust\nconventions\" are silently the whole Rust standard rather than an\naddition to one. Either restore the files or stop citing them.\n\n## 3. CLAUDE.md is mostly a second copy of AGENTS.md\n\nCLAUDE.md ends with `@AGENTS.md`, and its own first 58 lines restate the\nBeads block that AGENTS.md already carries -- one pair\n(\"**Architecture in one line:**\") byte-identical. A session therefore\nreads the same rules twice. Two of its three \"Agent Context Profiles\"\ncannot apply here (nothing opts into team-maintainer; \"minimal\" is\ndefined as keeping instruction files as pointers, which this file is\nnot), and the marker says `profile:minimal` while the prose declares\n\"Conservative (default)\".\n\nSuggestion from the review: CLAUDE.md should be a pointer to `bd prime`\nplus `@AGENTS.md`. Again, machine-generated, so fix it at the source.",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-26T07:25:01.30348103Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-26T07:25:01.30348103Z",
+  "updated_at": "2026-11-26T17:49:00.83906657Z",
+  "closed_at": "2026-11-26T17:49:00.83906657Z",
+  "close_reason": "Fixed in 5186bc67. CLAUDE.md's managed block removed with bd setup claude --remove (the documented mechanism; a hand edit inside a hashed block would be regenerated), so the git pull --rebase that AGENTS.md forbids is gone, as are the three profiles and the duplicate load. CLAUDE.md is seven lines pointing at AGENTS.md; AGENTS.md's own generated Beads section carries the guidance and no git policy, so pull --rebase appears once in the repo, in the rule forbidding it. The citations of ~/.claude/CLAUDE.md and ~/.claude/standards/rust.md are dropped: neither exists anywhere under the home directory, so an agent was told about rules it could not read. If global rules are wanted they have to be created and named.",
   "labels": [
     "human"
   ]
