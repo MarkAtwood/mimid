@@ -15,6 +15,10 @@ use mimi_mls::wire::{
     ContentType, KeyForExternalReceiver, MAX_EXTERNAL_RECEIVERS, SemiPrivateMessage,
     SemiPrivateMessageContent,
 };
+use mimi_mls::wire::{
+    EXTERNAL_RECEIVERS_COMPONENT, ExternalReceiver, ExternalReceivers,
+    MAX_LISTED_EXTERNAL_RECEIVERS,
+};
 
 /// Decode, compare the length, re-encode, and require the bytes back.
 fn round_trip<T: Deserialize + Serialize + Size>(bytes: &[u8]) -> T {
@@ -302,5 +306,73 @@ fn the_content_type_picks_the_arm() {
     assert!(
         SemiPrivateMessageContent::decode(REMOVE_PROPOSAL_CONTENT, ContentType::Commit).is_err(),
         "proposal bytes must not decode as a commit"
+    );
+}
+
+// --- external_receivers (§3), carried as a component ---
+
+/// One `ExternalReceiver`: an HPKE public key and a BasicCredential.
+///
+/// RFC 9420 §5.1.1 makes `HPKEPublicKey` an `opaque<V>`, and §5.3 a
+/// `Credential` a `uint16 credential_type` with the `basic(1)` arm
+/// carrying `opaque identity<V>`.
+const ONE_RECEIVER: &[u8] = &[
+    0x04, 0x01, 0x02, 0x03, 0x04, // external_receiver_public_key<V>
+    0x00, 0x01, //                   credential_type: basic(1)
+    0x03, 0x68, 0x75, 0x62, //       identity<V>: "hub"
+];
+
+#[test]
+fn an_external_receiver_round_trips() {
+    let receiver = round_trip::<ExternalReceiver>(ONE_RECEIVER);
+    assert_eq!(
+        receiver.external_receiver_public_key.as_bytes(),
+        [0x04, 0x01, 0x02, 0x03, 0x04],
+        "the key keeps its own encoding, length prefix included"
+    );
+}
+
+#[test]
+fn the_component_list_round_trips() {
+    let mut wire = vec![u8::try_from(ONE_RECEIVER.len()).expect("short")];
+    wire.extend_from_slice(ONE_RECEIVER);
+    let list = round_trip::<ExternalReceivers>(&wire);
+    assert_eq!(list.as_slice().len(), 1);
+
+    // A group with no external receivers: the list is empty, not absent.
+    let empty = round_trip::<ExternalReceivers>(&[0x00]);
+    assert!(empty.as_slice().is_empty());
+}
+
+/// Oracle: the component id. semiprivatemessage-08 §5.2 registers 0x0007
+/// as a component type, which is the reading decision mimid-1wgh.4.79.4
+/// takes; as an extension type 0x0007 is mls-extensions-11's
+/// `supported_wire_formats`, so only the component reading leaves the
+/// author's codepoint usable.
+#[test]
+fn the_component_id_is_the_registered_one() {
+    assert_eq!(EXTERNAL_RECEIVERS_COMPONENT, 0x0007);
+}
+
+/// The listed-receivers cap, for the same reason as the per-message one:
+/// the draft bounds the list not at all.
+#[test]
+fn more_listed_receivers_than_the_cap_are_refused() {
+    fn list_of(count: usize) -> Vec<u8> {
+        let body: Vec<u8> = (0..count).flat_map(|_| ONE_RECEIVER.to_vec()).collect();
+        let mut v = Vec::new();
+        assert!(body.len() < 16_384, "stays inside a two-octet prefix");
+        v.push(0x40 | u8::try_from(body.len() >> 8).expect("six bits"));
+        v.push(u8::try_from(body.len() & 0xff).expect("one octet"));
+        v.extend_from_slice(&body);
+        v
+    }
+    assert!(
+        ExternalReceivers::decode(&list_of(MAX_LISTED_EXTERNAL_RECEIVERS)).is_ok(),
+        "the cap itself decodes"
+    );
+    assert!(
+        ExternalReceivers::decode(&list_of(MAX_LISTED_EXTERNAL_RECEIVERS + 1)).is_err(),
+        "one past the cap is refused"
     );
 }

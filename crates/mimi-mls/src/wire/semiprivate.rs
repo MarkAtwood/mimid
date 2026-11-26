@@ -30,7 +30,7 @@ use openmls::framing::FramedContentAuthData;
 use openmls::messages::CommitIn;
 use openmls::messages::proposals_in::ProposalIn;
 
-use super::rfc9420::{ContentType, HPKECiphertext};
+use super::rfc9420::{ContentType, Credential, HPKECiphertext, HPKEPublicKey};
 
 /// The most external receivers one message may carry.
 ///
@@ -410,5 +410,119 @@ impl SemiPrivateMessageContent {
             ));
         }
         Ok(content)
+    }
+}
+
+/// The component id `external_receivers` is carried under.
+///
+/// semiprivatemessage-08 §5.2 registers 0x0007 as an MLS Component Type,
+/// which is what decision mimid-1wgh.4.79.4 follows. The draft's prose
+/// also calls it a GroupContext extension; as an extension type 0x0007
+/// collides with mls-extensions-11's `supported_wire_formats`, so only
+/// the component reading leaves the author's own codepoint usable.
+pub const EXTERNAL_RECEIVERS_COMPONENT: u16 = 0x0007;
+
+/// The most external receivers a group may list.
+///
+/// INVENTED, NOT FROM SPEC, and the same reasoning as
+/// [`MAX_EXTERNAL_RECEIVERS`]: the draft bounds the list not at all.
+/// This bounds what a group may agree to; `MAX_EXTERNAL_RECEIVERS`
+/// bounds what one message may carry. They are equal and separate
+/// because a message naming more receivers than the group has is already
+/// wrong for a different reason.
+pub const MAX_LISTED_EXTERNAL_RECEIVERS: usize = MAX_EXTERNAL_RECEIVERS;
+
+/// semiprivatemessage-08 §3: `ExternalReceiver`.
+///
+/// ~~~text
+/// struct {
+///   HPKEPublicKey external_receiver_public_key;
+///   Credential credential;
+/// } ExternalReceiver;
+/// ~~~
+///
+/// The syntax mirrors RFC 9420's `external_senders`, which is the
+/// comparison §3 draws.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ExternalReceiver {
+    /// The key a sender seals this receiver's copy of the per-message
+    /// keys to.
+    pub external_receiver_public_key: HPKEPublicKey,
+    /// Who the receiver is. Nothing here checks it.
+    pub credential: Credential,
+}
+
+impl Size for ExternalReceiver {
+    fn tls_serialized_len(&self) -> usize {
+        self.external_receiver_public_key.tls_serialized_len()
+            + self.credential.tls_serialized_len()
+    }
+}
+
+impl Serialize for ExternalReceiver {
+    fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
+        Ok(self.external_receiver_public_key.tls_serialize(writer)?
+            + self.credential.tls_serialize(writer)?)
+    }
+}
+
+impl Deserialize for ExternalReceiver {
+    fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
+        Ok(Self {
+            external_receiver_public_key: HPKEPublicKey::tls_deserialize(bytes)?,
+            credential: Credential::tls_deserialize(bytes)?,
+        })
+    }
+}
+
+/// The `external_receivers` component's data: the list every member of
+/// the epoch agrees on (§3).
+///
+/// Carried as an `app_data_dictionary` entry under
+/// [`EXTERNAL_RECEIVERS_COMPONENT`] and changed by AppDataUpdate, not by
+/// a GroupContextExtensions proposal (decision mimid-1wgh.4.79.4).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub struct ExternalReceivers(Vec<ExternalReceiver>);
+
+impl ExternalReceivers {
+    /// The receivers, in the order the group agreed them.
+    #[must_use]
+    pub fn as_slice(&self) -> &[ExternalReceiver] {
+        &self.0
+    }
+
+    /// Decodes the component's data, which must be exactly `bytes`.
+    ///
+    /// # Errors
+    ///
+    /// [`tls_codec::Error`] if `bytes` is short, has trailing bytes, or
+    /// lists more than [`MAX_LISTED_EXTERNAL_RECEIVERS`] receivers.
+    pub fn decode(bytes: &[u8]) -> Result<Self, tls_codec::Error> {
+        Self::tls_deserialize_exact(bytes)
+    }
+}
+
+impl Size for ExternalReceivers {
+    fn tls_serialized_len(&self) -> usize {
+        self.0.tls_serialized_len()
+    }
+}
+
+impl Serialize for ExternalReceivers {
+    fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
+        self.0.tls_serialize(writer)
+    }
+}
+
+impl Deserialize for ExternalReceivers {
+    fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
+        let list = Vec::<ExternalReceiver>::tls_deserialize(bytes)?;
+        if list.len() > MAX_LISTED_EXTERNAL_RECEIVERS {
+            return Err(tls_codec::Error::DecodingError(format!(
+                "{} external receivers listed, more than {MAX_LISTED_EXTERNAL_RECEIVERS}",
+                list.len()
+            )));
+        }
+        Ok(Self(list))
     }
 }
