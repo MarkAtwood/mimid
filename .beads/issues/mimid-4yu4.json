@@ -2,13 +2,15 @@
   "id": "mimid-4yu4",
   "title": "decision: rewrite the day's commit messages and force-push, once",
   "description": "Mark, 2026-11-26, after the commit-message review. Recorded because it\noverrides a standing rule in AGENTS.md.\n\n## The rule it overrides\n\nAGENTS.md: \"Push only with Mark's explicit OK. If a push is rejected,\nstop and report it. Never `pull --rebase`, reset or force-push.\"\n\nMark asked for the rewrite knowing it is a history rewrite, was shown\nthe costs, and chose the full scope. The rule stands for every other\ncase; this is one authorised exception, not a new practice.\n\n## What was done\n\nAll 32 commits of 2026-11-25/26 (a0c92bc2..HEAD) had their messages\nrewritten, under one rule in Mark's words: \"commit messages do not need\nto explain what the code does, the code explains what the code does.\"\nSo anything the diff shows was cut, and what survives is why, what it\ncosts, a constraint from outside the code, and a bug the diff does not\nreveal.\n\nMechanism: `git filter-branch --msg-filter`, keyed on the original\ncommit hash. `git rebase -i` is unavailable in this environment, and\nfilter-repo is not installed. A backup branch\n`backup/pre-message-rewrite-20261126-1009` holds the pre-rewrite\nhistory.\n\n## The costs accepted\n\n- 25 of the 32 were already pushed to a public repository, so main was\n  force-pushed. Anyone holding a clone or fork of those 25 has a\n  history that no longer matches.\n- Commit hashes changed, so bead citations of the form \"Done in\n  \u003chash\u003e\" had to be rewritten. 14 beads cited the pushed commits and 3\n  cited the unpushed ones.\n\n## Why not the narrower option\n\nRewriting only the 7 unpushed commits would have needed no force-push\nand broken nothing, and the three habits are already rules in AGENTS.md\nso new messages come out clean either way. Mark chose the full scope\nanyway: the 25 pushed messages are the ones the review found worst, and\nthe repository is his.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-26T18:10:20.523469427Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-26T18:10:20.523469427Z",
+  "updated_at": "2026-11-26T20:34:45.908391071Z",
+  "closed_at": "2026-11-26T20:34:45.908391071Z",
+  "close_reason": "Recorded. The rewrite and force-push were done 2026-11-26 and the bead is the record of the AGENTS.md exception.",
   "labels": [
     "decision"
   ]
