@@ -710,13 +710,6 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
         }
         // Decision mimid-1wgh.57.
         HubError::ReportNotAllowed => (StatusCode::FORBIDDEN, "report-not-allowed"),
-        // docs/design/mimi-catchup.md §5.1, a MUST: distinct, and never
-        // a short answer. 410 Gone says the range existed and does not
-        // any more, which is exactly the follower's situation and tells
-        // it to surface a gap rather than retry.
-        HubError::CatchUpOutOfWindow { .. } => (StatusCode::GONE, "catch-up-out-of-window"),
-        // §8: not a destination of this room's fanout.
-        HubError::CatchUpNotEntitled => (StatusCode::FORBIDDEN, "catch-up-not-entitled"),
         // Decision mimid-1wgh.6.65.
         HubError::UnverifiedAbusiveMessage { .. } => (
             StatusCode::UNPROCESSABLE_ENTITY,

@@ -56,8 +56,8 @@ fn peers(other: &Provider) -> BTreeMap<Domain, BaseUrl> {
 /// not interchangeable: `append_event` writes the `room_event` row too,
 /// and that is what `Store::fanout_window` reads to decide what the hub
 /// still holds. Enqueuing without it leaves a hub that serves nothing
-/// and answers every catch-up with the `410` of §5.1 -- which is what
-/// this test found when it took the shortcut.
+/// and refuses every catch-up with the `outOfWindow` of §5.1 -- which
+/// is what this test found when it took the shortcut.
 async fn accept(store: &Store, to: &Domain, body: &[u8], n: u8) -> u64 {
     let mut hash = [0u8; 32];
     hash[0] = n;
@@ -294,8 +294,8 @@ fn timestamp_of(bytes: &Vec<u8>) -> u64 {
 /// what a hub keeps. What it can promise is that the loss is never
 /// silent.
 ///
-/// Oracle: the hub's own answer (a `410`, which only a hub that has
-/// pruned the range gives) and the `gone` count a JMAP client's state is
+/// Oracle: the hub's own answer (`outOfWindow`, which only a hub that
+/// has pruned the range gives) and the `gone` count a client's state is
 /// compared against, which moving means `/changes` cannot be followed
 /// and the client must resync (RFC 8620 §5.6).
 #[tokio::test]

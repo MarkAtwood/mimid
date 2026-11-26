@@ -40,8 +40,11 @@
 //!   expected and is not a protocol error. §5.1's refusal is what says
 //!   a request cannot be filled at all.
 
-use tls_codec::{Deserialize, Serialize, TlsDeserialize, TlsSerialize, TlsSize};
+use std::io::{Read, Write};
 
+use tls_codec::{Deserialize, Serialize, Size, TlsDeserialize, TlsSerialize, TlsSize};
+
+use crate::Utf8String;
 use crate::notify::FanoutMessage;
 
 /// The most fanouts mimid asks for in one catch-up.
@@ -137,56 +140,227 @@ pub struct CatchUpEntry {
     pub message: FanoutMessage,
 }
 
+/// `CatchUpResponseCode` (INVENTED, NOT FROM SPEC;
+/// `docs/design/mimi-catchup.md` §5; bead mimid-1wgh.37.104.14).
+///
+/// The names and their values follow protocol-07's `GroupInfoCode`,
+/// which carries the same pair of refusals and the same problem: a hub
+/// that will not reveal whether a room exists to a requester with no
+/// participants in it answers `notAuthorized` for both. The value of
+/// `success` follows the four response code enums that put it at 0
+/// rather than `GroupInfoCode`, which alone reserves 0.
+///
+/// `OutOfWindow` has no protocol-07 counterpart: no operation there can
+/// run out of history to serve.
+///
+/// Decoding rejects the undefined values 4 to 255 with
+/// [`tls_codec::Error::UnknownValue`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TlsSerialize, TlsDeserialize, TlsSize)]
+#[repr(u8)]
+pub enum CatchUpResponseCode {
+    /// `success(0)`: the answer carries what the hub holds and may
+    /// serve.
+    Success = 0,
+    /// `outOfWindow(1)`: the range asked for is older than the hub
+    /// holds, so it cannot be supplied -- not now and not later (§5.1).
+    OutOfWindow = 1,
+    /// `notAuthorized(2)`: the requester may not be served this room.
+    NotAuthorized = 2,
+    /// `noSuchRoom(3)`: the room does not exist. A hub that will not
+    /// reveal that answers `NotAuthorized` instead.
+    NoSuchRoom = 3,
+}
+
+/// The `select (responseCode)` arms of a [`CatchUpResponse`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum CatchUpResult {
+    /// `case success`.
+    Success {
+        /// `uint64 highestSequence`: the highest sequence the hub has
+        /// assigned in this room.
+        ///
+        /// It is the counter and not the last entry served, so it still
+        /// names a fanout the hub no longer holds. That is what lets a
+        /// follower tell "caught up" from "there is more I cannot have".
+        highest_sequence: u64,
+        /// `CatchUpEntry entries<V>`: the fanouts, in hub order, by
+        /// increasing sequence. May be shorter than the request's
+        /// `limit`, and may skip sequences the hub does not serve:
+        /// retention (§6) and the requester's own participation (§8)
+        /// both bound it.
+        entries: Vec<CatchUpEntry>,
+    },
+    /// `case outOfWindow`.
+    OutOfWindow {
+        /// `uint64 oldestHeld`: the oldest sequence the hub still holds
+        /// for the room, or 0 if it holds none.
+        oldest_held: u64,
+    },
+    /// `notAuthorized`, which has no arm and carries nothing.
+    NotAuthorized,
+    /// `noSuchRoom`, which has no arm and carries nothing.
+    NoSuchRoom,
+}
+
+impl CatchUpResult {
+    /// The `responseCode` this arm belongs to.
+    #[must_use]
+    pub fn response_code(&self) -> CatchUpResponseCode {
+        match self {
+            Self::Success { .. } => CatchUpResponseCode::Success,
+            Self::OutOfWindow { .. } => CatchUpResponseCode::OutOfWindow,
+            Self::NotAuthorized => CatchUpResponseCode::NotAuthorized,
+            Self::NoSuchRoom => CatchUpResponseCode::NoSuchRoom,
+        }
+    }
+}
+
 /// `CatchUpResponse` (INVENTED, NOT FROM SPEC;
-/// `docs/design/mimi-catchup.md` §5): fanouts in hub order, each with its
-/// sequence, and the hub's current highest so the follower knows whether
-/// it is caught up.
+/// `docs/design/mimi-catchup.md` §5).
 ///
 /// ~~~text
 /// struct {
-///     uint64 highest_sequence;
-///     CatchUpEntry entries<V>;
+///     CatchUpResponseCode responseCode;
+///     UTF8String errorDescription;
+///     select (responseCode) {
+///       case success:
+///         uint64 highestSequence;
+///         CatchUpEntry entries<V>;
+///       case outOfWindow:
+///         uint64 oldestHeld;
+///     };
 /// } CatchUpResponse;
 /// ~~~
-#[derive(Debug, Clone, PartialEq, Eq, Hash, TlsSerialize, TlsDeserialize, TlsSize)]
+///
+/// A refusal is a response code and NOT an HTTP status, so that it
+/// cannot be confused with a status produced by something other than
+/// the hub -- a proxy, a gateway, a cache. An out-of-window answer
+/// makes a follower record a permanent loss and tell its users history
+/// is missing, which is not a thing to do on an intermediary's word
+/// (bead mimid-1wgh.37.104.14).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CatchUpResponse {
-    /// The highest sequence the hub has assigned in this room. A
-    /// follower whose last entry is lower than this asks again; one
-    /// whose is equal is caught up.
-    ///
-    /// It is the counter and not the last entry served, so it still
-    /// names a fanout the hub no longer holds. That is what lets a
-    /// follower tell "caught up" from "there is more I cannot have".
-    pub highest_sequence: u64,
-    /// The fanouts, in hub order, by increasing sequence. May be shorter
-    /// than the request's `limit`, and may skip sequences the hub does
-    /// not serve: retention (§6) and the requester's own participation
-    /// (§8) both bound it.
-    pub entries: Vec<CatchUpEntry>,
+    /// `UTF8String errorDescription` (a [`Utf8String`], decision
+    /// mimid-1wgh.5.20).
+    pub error_description: Utf8String,
+    /// `responseCode` and its arm.
+    pub result: CatchUpResult,
+}
+
+impl Size for CatchUpResponse {
+    fn tls_serialized_len(&self) -> usize {
+        1 + self.error_description.tls_serialized_len()
+            + match &self.result {
+                CatchUpResult::Success {
+                    entries,
+                    highest_sequence: _,
+                } => 8 + entries.tls_serialized_len(),
+                CatchUpResult::OutOfWindow { .. } => 8,
+                CatchUpResult::NotAuthorized | CatchUpResult::NoSuchRoom => 0,
+            }
+    }
+}
+
+impl Serialize for CatchUpResponse {
+    fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
+        let mut written = self.result.response_code().tls_serialize(writer)?;
+        written += self.error_description.tls_serialize(writer)?;
+        written += match &self.result {
+            CatchUpResult::Success {
+                highest_sequence,
+                entries,
+            } => highest_sequence.tls_serialize(writer)? + entries.tls_serialize(writer)?,
+            CatchUpResult::OutOfWindow { oldest_held } => oldest_held.tls_serialize(writer)?,
+            CatchUpResult::NotAuthorized | CatchUpResult::NoSuchRoom => 0,
+        };
+        Ok(written)
+    }
+}
+
+impl Deserialize for CatchUpResponse {
+    fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
+        let response_code = CatchUpResponseCode::tls_deserialize(bytes)?;
+        let error_description = Utf8String::tls_deserialize(bytes)?;
+        let result = match response_code {
+            CatchUpResponseCode::Success => CatchUpResult::Success {
+                highest_sequence: u64::tls_deserialize(bytes)?,
+                entries: Vec::<CatchUpEntry>::tls_deserialize(bytes)?,
+            },
+            CatchUpResponseCode::OutOfWindow => CatchUpResult::OutOfWindow {
+                oldest_held: u64::tls_deserialize(bytes)?,
+            },
+            CatchUpResponseCode::NotAuthorized => CatchUpResult::NotAuthorized,
+            CatchUpResponseCode::NoSuchRoom => CatchUpResult::NoSuchRoom,
+        };
+        Ok(Self {
+            error_description,
+            result,
+        })
+    }
 }
 
 impl CatchUpResponse {
+    /// A successful answer.
+    #[must_use]
+    pub fn served(highest_sequence: u64, entries: Vec<CatchUpEntry>) -> Self {
+        Self {
+            error_description: Utf8String::default(),
+            result: CatchUpResult::Success {
+                highest_sequence,
+                entries,
+            },
+        }
+    }
+
+    /// The §5.1 refusal: the range asked for is older than the hub
+    /// holds. `oldest_held` is the oldest sequence it still has, or 0.
+    #[must_use]
+    pub fn out_of_window(oldest_held: u64) -> Self {
+        Self {
+            error_description: Utf8String::default(),
+            result: CatchUpResult::OutOfWindow { oldest_held },
+        }
+    }
+
+    /// The entries served, empty for any answer but a successful one.
+    #[must_use]
+    pub fn entries(&self) -> &[CatchUpEntry] {
+        match &self.result {
+            CatchUpResult::Success { entries, .. } => entries,
+            _ => &[],
+        }
+    }
+
     /// Decodes a response body, which must be exactly one
     /// `CatchUpResponse`.
     ///
     /// # Errors
     ///
     /// [`tls_codec::Error`] if the body is short, has trailing bytes,
-    /// carries more than [`MAX_CATCH_UP_ENTRIES`] entries, carries an
-    /// entry whose sequence is zero, or carries entries out of
-    /// increasing order. The order matters: a follower applies them in
-    /// the order given, and the hub's order is the room's order
-    /// (protocol-07 §5.5).
+    /// carries an unknown response code, or -- for a successful answer
+    /// -- carries more than [`MAX_CATCH_UP_ENTRIES`] entries, an entry
+    /// whose sequence is zero, entries out of increasing order, or an
+    /// entry above the stated highest. The order matters: a follower
+    /// applies them in the order given, and the hub's order is the
+    /// room's order (protocol-07 §5.5).
     pub fn decode(body: &[u8]) -> Result<Self, tls_codec::Error> {
         let response = Self::tls_deserialize_exact(body)?;
-        if response.entries.len() > MAX_CATCH_UP_ENTRIES {
+        let CatchUpResult::Success {
+            highest_sequence,
+            entries,
+        } = &response.result
+        else {
+            return Ok(response);
+        };
+        if entries.len() > MAX_CATCH_UP_ENTRIES {
             return Err(tls_codec::Error::DecodingError(format!(
                 "catchUp answer has {} entries, more than {MAX_CATCH_UP_ENTRIES}",
-                response.entries.len()
+                entries.len()
             )));
         }
         let mut previous = 0u64;
-        for entry in &response.entries {
+        for entry in entries {
             if entry.sequence == 0 {
                 return Err(tls_codec::Error::DecodingError(
                     "catchUp entry has sequence 0".to_owned(),
@@ -200,10 +374,9 @@ impl CatchUpResponse {
             }
             previous = entry.sequence;
         }
-        if previous > response.highest_sequence {
+        if previous > *highest_sequence {
             return Err(tls_codec::Error::DecodingError(format!(
-                "catchUp served {previous} above its highest {}",
-                response.highest_sequence
+                "catchUp served {previous} above its highest {highest_sequence}"
             )));
         }
         Ok(response)
@@ -222,8 +395,16 @@ impl CatchUpResponse {
     /// this answer's last entry carries.
     #[must_use]
     pub fn caught_up(&self) -> bool {
-        self.entries
-            .last()
-            .is_none_or(|entry| entry.sequence >= self.highest_sequence)
+        match &self.result {
+            CatchUpResult::Success {
+                highest_sequence,
+                entries,
+            } => entries
+                .last()
+                .is_none_or(|entry| entry.sequence >= *highest_sequence),
+            // Nothing more will come, so there is nothing to ask again
+            // for.
+            _ => true,
+        }
     }
 }

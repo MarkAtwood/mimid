@@ -24,7 +24,17 @@ mod submit;
 
 use common::*;
 use mimi_protocol::tls_codec::Serialize;
-use mimi_protocol::{CatchUpRequest, CatchUpResponse};
+use mimi_protocol::{CatchUpRequest, CatchUpResponse, CatchUpResult};
+
+/// The `highestSequence` of a successful answer.
+fn highest(response: &CatchUpResponse) -> u64 {
+    match &response.result {
+        CatchUpResult::Success {
+            highest_sequence, ..
+        } => *highest_sequence,
+        other => panic!("not a served answer: {other:?}"),
+    }
+}
 use mimid_server::config::Domain;
 use mimid_server::hub::{Hub, HubError};
 use mimid_server::store::Store;
@@ -82,13 +92,13 @@ async fn an_in_window_request_returns_the_range_after_what_the_follower_holds() 
             .await
             .unwrap(),
     );
-    let sequences: Vec<u64> = all.entries.iter().map(|e| e.sequence).collect();
+    let sequences: Vec<u64> = all.entries().iter().map(|e| e.sequence).collect();
     assert!(
         sequences.windows(2).all(|w| w[0] < w[1]),
         "in hub order: {sequences:?}"
     );
     assert_eq!(
-        all.highest_sequence,
+        highest(&all),
         *sequences.last().expect("some fanout"),
         "caught up: the last entry is the highest it may know about"
     );
@@ -102,7 +112,10 @@ async fn an_in_window_request_returns_the_range_after_what_the_follower_holds() 
             .unwrap(),
     );
     assert_eq!(
-        rest.entries.iter().map(|e| e.sequence).collect::<Vec<_>>(),
+        rest.entries()
+            .iter()
+            .map(|e| e.sequence)
+            .collect::<Vec<_>>(),
         sequences[1..].to_vec(),
         "after what it holds, not including it"
     );
@@ -120,12 +133,12 @@ async fn the_limit_is_honoured_and_the_answer_says_there_is_more() {
             .await
             .unwrap(),
     );
-    assert_eq!(one.entries.len(), 1, "no more than asked for");
+    assert_eq!(one.entries().len(), 1, "no more than asked for");
     assert!(
         !one.caught_up(),
         "and it knows to ask again: {} is below {}",
-        one.entries[0].sequence,
-        one.highest_sequence
+        one.entries()[0].sequence,
+        highest(&one)
     );
 }
 
@@ -151,20 +164,30 @@ async fn an_out_of_window_request_is_refused_and_not_served_short() {
     let oldest = oldest.expect("the sweep left some fanout");
     assert!(oldest > 1, "the sweep moved the window: {oldest}");
 
-    let refused = hub
-        .catch_up(ROOM_ID, &from("b.example"), &ask(0, 256))
-        .await
-        .expect_err("asking from 0 reaches before what is held");
-    match refused {
-        HubError::CatchUpOutOfWindow { wanted, oldest: o } => {
-            assert_eq!(wanted, 1, "it asked for everything after 0");
+    // A refusal is an ANSWER carrying a response code, not an error: an
+    // HTTP status can be produced by something that is not the hub, and
+    // this answer makes a follower tell its users history is
+    // permanently missing (bead mimid-1wgh.37.104.14).
+    let refused = answer(
+        &hub.catch_up(ROOM_ID, &from("b.example"), &ask(0, 256))
+            .await
+            .expect("a refusal is an answer, not an error"),
+    );
+    match refused.result {
+        CatchUpResult::OutOfWindow { oldest_held } => {
             assert!(
-                o.is_some_and(|o| o > wanted),
-                "and is told what the hub does hold: {o:?}"
+                oldest_held > 1,
+                "it asked for everything after 0 and is told what the hub \
+                 does hold: {oldest_held}"
             );
+            assert_eq!(oldest_held, oldest, "which is the window's oldest");
         }
         other => panic!("not the distinct refusal: {other:?}"),
     }
+    assert!(
+        refused.entries().is_empty(),
+        "and it serves nothing: a short answer would look complete"
+    );
 
     // The same request one sequence later is in window and is served,
     // so the refusal is about the range and not the requester.
@@ -173,7 +196,7 @@ async fn an_out_of_window_request_is_refused_and_not_served_short() {
             .await
             .unwrap(),
     );
-    assert!(!served.entries.is_empty(), "in window, so served");
+    assert!(!served.entries().is_empty(), "in window, so served");
     assert!(assigned > 0);
 }
 
@@ -185,29 +208,45 @@ async fn a_provider_that_was_never_a_destination_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let (_store, hub) = hub_with_messages(&dir, 2).await;
 
-    let refused = hub
-        .catch_up(ROOM_ID, &from("z.example"), &ask(0, 256))
-        .await
-        .expect_err("z.example was never in this room");
-    assert!(
-        matches!(refused, HubError::CatchUpNotEntitled),
-        "not the entitlement refusal: {refused:?}"
+    let refused = answer(
+        &hub.catch_up(ROOM_ID, &from("z.example"), &ask(0, 256))
+            .await
+            .expect("a refusal is an answer, not an error"),
     );
+    assert!(
+        matches!(refused.result, CatchUpResult::NotAuthorized),
+        "not the entitlement refusal: {:?}",
+        refused.result
+    );
+    assert!(refused.entries().is_empty());
 }
 
-/// A room this hub does not host is not a catch-up it can answer, and a
-/// body that does not decode is a bad request rather than a refusal.
+/// A room this hub does not host is refused in the body; a body that
+/// does not decode is a transport-level error.
+///
+/// The split is the point: a request this hub cannot PARSE has no
+/// response code to carry, so it stays an error, while a request it
+/// parsed and declined is an answer.
 #[tokio::test]
-async fn an_unknown_room_or_a_bad_body_is_an_error() {
+async fn an_unknown_room_is_refused_and_a_bad_body_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let (_store, hub) = hub_with_messages(&dir, 1).await;
 
-    assert!(matches!(
-        hub.catch_up("mimi://a.example/r/nope", &from("b.example"), &ask(0, 1))
+    // An unknown room is an ANSWER carrying noSuchRoom, not an error:
+    // the refusal belongs in the body so that only the hub can say it
+    // (bead mimid-1wgh.37.104.14). A hub that does not wish to reveal
+    // whether a room exists answers notAuthorized here instead.
+    let unknown = answer(
+        &hub.catch_up("mimi://a.example/r/nope", &from("b.example"), &ask(0, 1))
             .await
-            .expect_err("no such room"),
-        HubError::NoSuchRoom
-    ));
+            .expect("a refusal is an answer"),
+    );
+    assert!(
+        matches!(unknown.result, CatchUpResult::NoSuchRoom),
+        "not the no-such-room refusal: {:?}",
+        unknown.result
+    );
+    assert!(unknown.entries().is_empty());
     assert!(matches!(
         hub.catch_up(ROOM_ID, &from("b.example"), b"short")
             .await
@@ -248,8 +287,8 @@ async fn a_served_fanout_is_byte_identical_to_what_was_delivered() {
             .await
             .unwrap(),
     );
-    assert!(!served.entries.is_empty());
-    for entry in &served.entries {
+    assert!(!served.entries().is_empty());
+    for entry in served.entries() {
         let delivered = store
             .fanout_since(ROOM_ID, "b.example", entry.sequence - 1, 1)
             .await

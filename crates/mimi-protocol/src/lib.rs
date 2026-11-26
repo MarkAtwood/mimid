@@ -187,7 +187,8 @@ pub use abuse::{
     UnverifiedAbusiveMessage, UnverifiedAbusiveMessages,
 };
 pub use catchup::{
-    CATCH_UP_LIMIT, CatchUpEntry, CatchUpRequest, CatchUpResponse, MAX_CATCH_UP_ENTRIES,
+    CATCH_UP_LIMIT, CatchUpEntry, CatchUpRequest, CatchUpResponse, CatchUpResponseCode,
+    CatchUpResult, MAX_CATCH_UP_ENTRIES,
 };
 pub use component::{
     ParticipantListData, ParticipantListUpdate, RichDescription, RoomMetaData, RoomMetaUpdate, Uri,

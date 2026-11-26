@@ -119,7 +119,13 @@ async fn serve_catch_up(State(state): State<HubState>, body: axum::body::Bytes) 
     };
     match answer {
         Some(answer) => answer.to_body().unwrap().into_response(),
-        None => axum::http::StatusCode::GONE.into_response(),
+        // The §5.1 refusal is a response code in a 200, not an HTTP
+        // status (bead mimid-1wgh.37.104.14), so the mock answers as a
+        // hub does.
+        None => CatchUpResponse::out_of_window(0)
+            .to_body()
+            .unwrap()
+            .into_response(),
     }
 }
 
@@ -169,10 +175,7 @@ async fn with_a_gap(p: &Provider) {
 /// applied so the follower holds it.
 #[tokio::test]
 async fn a_follower_fills_its_gap_from_the_hub() {
-    let answer = CatchUpResponse {
-        highest_sequence: 3,
-        entries: vec![entry(2, &application_fanout(T2, APPLICATION_2))],
-    };
+    let answer = CatchUpResponse::served(3, vec![entry(2, &application_fanout(T2, APPLICATION_2))]);
     let hub = MockHub::start(true, vec![answer]).await;
     let p = follower_of(&hub).await;
     with_a_gap(&p).await;
@@ -261,17 +264,14 @@ async fn a_wide_gap_takes_several_answers() {
     let hub = MockHub::start(
         true,
         vec![
-            CatchUpResponse {
-                highest_sequence: 5,
-                entries: vec![entry(4, &commit_fanout(T2, COMMIT_CAROL))],
-            },
-            CatchUpResponse {
-                highest_sequence: 5,
-                entries: vec![
+            CatchUpResponse::served(5, vec![entry(4, &commit_fanout(T2, COMMIT_CAROL))]),
+            CatchUpResponse::served(
+                5,
+                vec![
                     entry(2, &application_fanout(T2, APPLICATION_2)),
                     entry(3, &application_fanout(T3, APPLICATION_1)),
                 ],
-            },
+            ),
         ],
     )
     .await;
@@ -324,15 +324,16 @@ async fn a_wide_gap_takes_several_answers() {
 }
 
 /// Oracle: §5.1. A hub that no longer holds the missing range answers
-/// `410`, which is an ANSWER and not a failure: the fanout is gone for
-/// good, retrying cannot help, so it is recorded against the room
-/// instead of returned as an error.
+/// `outOfWindow`, which is an ANSWER and not a failure: the fanout is
+/// gone for good, retrying cannot help, so it is recorded against the
+/// room instead of returned as an error. It is a response code inside a
+/// `200` rather than an HTTP status, so that only the hub can say it.
 ///
 /// This is the case the whole design exists for. Before it, a follower
 /// that missed a `/notify` lost that ciphertext and nobody was told.
 #[tokio::test]
 async fn an_unfillable_gap_is_recorded_rather_than_retried() {
-    // No scripted answers, so the mock serves 410.
+    // No scripted answers, so the mock refuses with outOfWindow.
     let hub = MockHub::start(true, Vec::new()).await;
     let p = follower_of(&hub).await;
     with_a_gap(&p).await;
@@ -402,10 +403,10 @@ async fn an_unfillable_gap_moves_what_clients_follow() {
 async fn a_probe_finds_a_tail_no_jump_would_reveal() {
     let hub = MockHub::start(
         true,
-        vec![CatchUpResponse {
-            highest_sequence: 2,
-            entries: vec![entry(2, &application_fanout(T2, APPLICATION_2))],
-        }],
+        vec![CatchUpResponse::served(
+            2,
+            vec![entry(2, &application_fanout(T2, APPLICATION_2))],
+        )],
     )
     .await;
     let p = follower_of(&hub).await;
@@ -488,7 +489,7 @@ async fn an_unfillable_room_is_not_probed_or_refilled() {
     let p = follower_of(&hub).await;
     with_a_gap(&p).await;
     p.follower.fill_gap(ROOM).await.unwrap();
-    assert_eq!(hub.asked(), vec![1], "asked once, and told 410");
+    assert_eq!(hub.asked(), vec![1], "asked once, and refused");
     assert!(
         p.store
             .follower_position(ROOM)
@@ -519,10 +520,10 @@ async fn an_unfillable_room_is_not_probed_or_refilled() {
 /// same question forever, applying the same fanout in a tight loop.
 #[tokio::test]
 async fn a_hub_that_does_not_advance_does_not_spin() {
-    let hub = MockHub::start_repeating(CatchUpResponse {
-        highest_sequence: 100,
-        entries: vec![entry(1, &application_fanout(T1, APPLICATION_1))],
-    })
+    let hub = MockHub::start_repeating(CatchUpResponse::served(
+        100,
+        vec![entry(1, &application_fanout(T1, APPLICATION_1))],
+    ))
     .await;
     let p = follower_of(&hub).await;
     // A wide gap, so neither the target nor caught_up stops the loop.

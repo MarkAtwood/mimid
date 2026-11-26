@@ -14,7 +14,8 @@ use std::time::Duration;
 use mimi_mls::tls_codec::{self, Deserialize, Serialize};
 use mimi_mls::wire::{MLSMessage, Welcome};
 use mimi_protocol::{
-    CATCH_UP_LIMIT, CatchUpRequest, CatchUpResponse, FanoutEvent, FanoutMessage, IdentifierUri,
+    CATCH_UP_LIMIT, CatchUpRequest, CatchUpResponse, CatchUpResponseCode, CatchUpResult,
+    FanoutEvent, FanoutMessage, IdentifierUri,
 };
 use sha2::{Digest, Sha256};
 
@@ -23,7 +24,6 @@ use crate::config::Domain;
 use crate::http::MAX_BODY_LEN;
 use crate::hub::fanout::LocalDelivery;
 use crate::hub::room_uri_domain;
-use crate::peer::PeerError;
 use crate::store::{FanoutKind, NewFanout};
 
 /// RFC 9420 §6: the MLSMessage header of a Welcome, `version` mls10
@@ -342,33 +342,48 @@ impl Follower {
             }
             .to_body()
             .map_err(FollowerError::Encode)?;
-            let asked = match peers.catch_up(&hub, room_id, request).await {
-                Ok(asked) => asked,
-                // §5.1: the range is older than the hub holds, so it
-                // cannot be filled. An answer, not a failure: retrying
-                // cannot help, and the fanout is gone for good. Record
-                // it and stop, keeping whatever earlier answers gave.
-                Err(PeerError::Rejected { status: 410, .. }) => {
-                    if self.store.mark_gap_unfillable(room_id).await? {
-                        tracing::warn!(
-                            name: "catch_up_gap_unfillable",
-                            room_id,
-                            hub = %hub,
-                            gap_from,
-                            "the room's hub no longer holds the fanout this \
-                             provider missed, so its users will never see it"
-                        );
-                    }
-                    return Ok(recovered);
-                }
-                Err(error) => return Err(FollowerError::Peer(Box::new(error))),
-            };
+            let asked = peers
+                .catch_up(&hub, room_id, request)
+                .await
+                .map_err(|e| FollowerError::Peer(Box::new(e)))?;
             let Some(body) = asked else {
                 return Ok(recovered);
             };
             let answer = CatchUpResponse::decode(&body).map_err(FollowerError::InvalidRequest)?;
-            let last = answer.entries.last().map(|entry| entry.sequence);
-            for entry in &answer.entries {
+            // §5.1, carried as a response code and not an HTTP status, so
+            // that only the hub can say it (bead mimid-1wgh.37.104.14).
+            // An answer, not a failure: retrying cannot help, and the
+            // fanout is gone for good. Record it and stop, keeping
+            // whatever earlier answers gave.
+            if matches!(answer.result, CatchUpResult::OutOfWindow { .. }) {
+                if self.store.mark_gap_unfillable(room_id).await? {
+                    tracing::warn!(
+                        name: "catch_up_gap_unfillable",
+                        room_id,
+                        hub = %hub,
+                        gap_from,
+                        "the room's hub no longer holds the fanout this \
+                         provider missed, so its users will never see it"
+                    );
+                }
+                return Ok(recovered);
+            }
+            // Any other refusal is not a permanent loss: a room this
+            // hub will not serve us, or does not have, says nothing
+            // about what we are missing, so the gap stays as it is and
+            // the next attempt asks again.
+            if answer.result.response_code() != CatchUpResponseCode::Success {
+                tracing::warn!(
+                    name: "catch_up_refused",
+                    room_id,
+                    hub = %hub,
+                    code = ?answer.result.response_code(),
+                    "the room's hub refused catch-up"
+                );
+                return Ok(recovered);
+            }
+            let last = answer.entries().last().map(|entry| entry.sequence);
+            for entry in answer.entries() {
                 let bytes = entry
                     .message
                     .tls_serialize_detached()
@@ -511,21 +526,24 @@ impl Follower {
         }
         .to_body()
         .map_err(FollowerError::Encode)?;
-        let asked = match peers.catch_up(&hub, room_id, request).await {
-            Ok(asked) => asked,
-            // Nothing to record: a probe asks from what this provider
-            // HOLDS, so a 410 means the hub has pruned past our own
-            // position, which the next live fanout will reveal as a gap
-            // in the ordinary way.
-            Err(PeerError::Rejected { status: 410, .. }) => return Ok(0),
-            Err(error) => return Err(FollowerError::Peer(Box::new(error))),
-        };
+        let asked = peers
+            .catch_up(&hub, room_id, request)
+            .await
+            .map_err(|error| FollowerError::Peer(Box::new(error)))?;
         let Some(body) = asked else {
             return Ok(0);
         };
         let answer = CatchUpResponse::decode(&body).map_err(FollowerError::InvalidRequest)?;
+        // A refusal records nothing. A probe asks from what this
+        // provider HOLDS, so out-of-window means the hub has pruned past
+        // our own position, which the next live fanout reveals as a gap
+        // in the ordinary way; and the other refusals say nothing about
+        // what we are missing.
+        if answer.result.response_code() != CatchUpResponseCode::Success {
+            return Ok(0);
+        }
         let mut recovered = 0usize;
-        for entry in &answer.entries {
+        for entry in answer.entries() {
             let bytes = entry
                 .message
                 .tls_serialize_detached()

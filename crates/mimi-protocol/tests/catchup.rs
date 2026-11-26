@@ -16,7 +16,10 @@
 #![forbid(unsafe_code)]
 
 use mimi_protocol::tls_codec::{Deserialize, Serialize, Size};
-use mimi_protocol::{CatchUpEntry, CatchUpRequest, CatchUpResponse, FanoutEvent, FanoutMessage};
+use mimi_protocol::{
+    CatchUpEntry, CatchUpRequest, CatchUpResponse, CatchUpResponseCode, CatchUpResult, FanoutEvent,
+    FanoutMessage, Utf8String,
+};
 
 /// RFC 9420 §6 MLSMessage carrying a §6.3 PrivateMessage with an
 /// application message, as `update_notify.rs` has it. Ciphertext fields
@@ -97,7 +100,13 @@ fn entry(sequence: u64) -> CatchUpEntry {
 /// `CatchUpResponse`: `uint64 highest_sequence` then `entries<V>`.
 fn response_wire(highest: u64, sequences: &[u64]) -> Vec<u8> {
     let entries: Vec<u8> = sequences.iter().flat_map(|s| entry_wire(*s)).collect();
-    cat(&[&highest.to_be_bytes(), &vlen(entries.len()), &entries])
+    cat(&[
+        &[0x00],                // responseCode: success(0)
+        &[0x00],                // errorDescription<V>: empty
+        &highest.to_be_bytes(), // highestSequence
+        &vlen(entries.len()),
+        &entries,
+    ])
 }
 
 /// Decode, compare to `expected`, re-encode, require byte-identical
@@ -134,15 +143,12 @@ fn a_response_round_trips_with_each_sequence_beside_its_message() {
     let wire = response_wire(912, &[841, 845]);
     check_fixture(
         &wire,
-        &CatchUpResponse {
-            highest_sequence: 912,
-            entries: vec![entry(841), entry(845)],
-        },
+        &CatchUpResponse::served(912, vec![entry(841), entry(845)]),
     );
     let decoded = CatchUpResponse::decode(&wire).expect("decodes");
     assert_eq!(
         decoded
-            .entries
+            .entries()
             .iter()
             .map(|e| e.sequence)
             .collect::<Vec<_>>(),
@@ -160,7 +166,7 @@ fn a_response_round_trips_with_each_sequence_beside_its_message() {
 fn an_empty_answer_says_whether_there_is_more() {
     let nothing_held = response_wire(912, &[]);
     let decoded = CatchUpResponse::decode(&nothing_held).expect("decodes");
-    assert!(decoded.entries.is_empty());
+    assert!(decoded.entries().is_empty());
     assert!(
         decoded.caught_up(),
         "an answer with no entries cannot say the follower is behind: \
@@ -253,5 +259,61 @@ fn a_limit_past_the_cap_is_bounded_and_not_refused() {
         request.bounded_limit(),
         mimi_protocol::MAX_CATCH_UP_ENTRIES,
         "and served no more than the cap"
+    );
+}
+
+/// The §5.1 refusal on the wire, byte by byte, hand-encoded from the
+/// presentation-language text (bead mimid-1wgh.37.104.14).
+///
+/// The refusal is a response code and not an HTTP status, so it has
+/// wire bytes of its own and needs a fixture like any other arm. Its
+/// shape follows `UpdateRoomResponse`: the code, the
+/// `errorDescription`, then the arm.
+#[test]
+fn the_out_of_window_refusal_round_trips() {
+    let wire = [
+        0x01, // responseCode: outOfWindow(1)
+        0x00, // errorDescription<V>: empty
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x49, // oldestHeld: 841
+    ];
+    check_fixture(&wire, &CatchUpResponse::out_of_window(841));
+
+    let decoded = CatchUpResponse::decode(&wire).expect("decodes");
+    assert_eq!(
+        decoded.result.response_code(),
+        CatchUpResponseCode::OutOfWindow
+    );
+    assert!(
+        decoded.entries().is_empty(),
+        "a refusal carries no fanout, so entries() is empty rather than absent"
+    );
+    assert!(
+        decoded.caught_up(),
+        "nothing more will come, so there is nothing to ask again for"
+    );
+}
+
+/// The two refusals that carry nothing, and an unknown code.
+#[test]
+fn the_empty_refusals_round_trip_and_an_unknown_code_is_refused() {
+    for (byte, result) in [
+        (0x02u8, CatchUpResult::NotAuthorized),
+        (0x03, CatchUpResult::NoSuchRoom),
+    ] {
+        let wire = [byte, 0x00];
+        check_fixture(
+            &wire,
+            &CatchUpResponse {
+                error_description: Utf8String::new("").expect("no nulls"),
+                result: result.clone(),
+            },
+        );
+    }
+    // 4 is not a defined code, and a follower must not guess at one: a
+    // code it does not know could mean anything, including that the gap
+    // is permanent.
+    assert!(
+        CatchUpResponse::decode(&[0x04, 0x00]).is_err(),
+        "an undefined response code is refused"
     );
 }

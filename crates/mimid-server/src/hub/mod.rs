@@ -977,11 +977,18 @@ impl Hub {
     ///
     /// # Errors
     ///
-    /// [`HubError::InvalidRequest`] if the body does not decode,
-    /// [`HubError::NoSuchRoom`] if the room is not hosted here,
-    /// [`HubError::CatchUpOutOfWindow`] if the request reaches further
-    /// back than the hub holds, and [`HubError::CatchUpNotEntitled`] if
-    /// `from` was never a destination of this room's fanout.
+    /// [`HubError::InvalidRequest`] if the body does not decode and
+    /// [`HubError::CatchUpCorrupt`] if a fanout this hub stored cannot
+    /// be read back.
+    ///
+    /// A REFUSAL IS NOT AN ERROR HERE. An unknown room, a requester that
+    /// may not be served, and a range older than this hub holds are all
+    /// `Ok` answers carrying a
+    /// [`CatchUpResponseCode`](mimi_protocol::CatchUpResponseCode),
+    /// because an HTTP status can be produced by something that is not
+    /// the hub and an out-of-window answer makes a follower tell its
+    /// users history is permanently missing (bead
+    /// mimid-1wgh.37.104.14).
     pub async fn catch_up(
         &self,
         room_id: &str,
@@ -1302,35 +1309,10 @@ pub enum HubError {
     /// not the `From` domain (decision mimid-1wgh.57).
     #[error("the reporter may not report abuse in this room")]
     ReportNotAllowed,
-    /// A catch-up request reaches further back than the hub still holds
-    /// (docs/design/mimi-catchup.md §5.1, a MUST).
-    ///
-    /// This is answered DISTINCTLY and never by serving the oldest still
-    /// held: a short answer looks complete and hides the loss, and the
-    /// follower's whole reason to ask was to find out whether it has a
-    /// gap. It is a MUST where §8's participation bound is a SHOULD
-    /// because the difference is observable by the requester, which
-    /// §8.1 is the test for.
-    #[error("catch-up from {wanted} is older than the {oldest:?} this hub holds")]
-    CatchUpOutOfWindow {
-        /// The first sequence the requester asked for.
-        wanted: u64,
-        /// The oldest the hub still holds, or `None` when it holds none.
-        oldest: Option<u64>,
-    },
     /// A fanout this hub stored does not decode, so it cannot be served
     /// (`room_fanout`). This hub's own corruption and not the
     /// requester's fault, so it is an internal error rather than a
     /// refusal.
     #[error("a stored fanout does not decode")]
     CatchUpCorrupt(#[source] mimi_protocol::tls_codec::Error),
-    /// The requester was never a destination of this room's fanout, so
-    /// there is nothing of it they may be served (§8).
-    ///
-    /// A refusal rather than an empty answer, because an empty answer
-    /// carries the hub's highest sequence and would tell a provider that
-    /// was never in the room how much traffic it has, which §8.2 names
-    /// as what a loose bound leaks.
-    #[error("the requester was not a destination of this room's fanout")]
-    CatchUpNotEntitled,
 }

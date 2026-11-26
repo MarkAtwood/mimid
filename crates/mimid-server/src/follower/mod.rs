@@ -641,11 +641,14 @@ pub enum FollowerError {
     /// The database failed.
     #[error("database error")]
     Store(#[from] StoreError),
-    /// A request to the room's hub failed or was refused.
+    /// A request to the room's hub failed or was refused at the
+    /// transport.
     ///
-    /// Carries the `410` of docs/design/mimi-catchup.md §5.1, which says
-    /// a catch-up range is older than the hub holds, so a caller tells
-    /// that apart from a transport failure by the status.
+    /// A catch-up REFUSAL does not come this way: §5.1's out-of-window
+    /// answer is a response code inside a `200`, so that only the hub
+    /// can say it (bead mimid-1wgh.37.104.14). This variant is the
+    /// request not arriving or not being answered, which says nothing
+    /// about whether a gap can be filled and is retried.
     #[error("the room's hub refused or failed a request")]
     Peer(#[source] Box<crate::peer::PeerError>),
     /// The endpoint is not implemented yet.

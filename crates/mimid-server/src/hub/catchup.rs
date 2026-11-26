@@ -42,7 +42,9 @@
 //! the failure §5.1 exists to prevent is a short answer that looks whole.
 
 use mimi_protocol::tls_codec::Deserialize;
-use mimi_protocol::{CatchUpEntry, CatchUpRequest, CatchUpResponse, FanoutMessage};
+use mimi_protocol::{
+    CatchUpEntry, CatchUpRequest, CatchUpResponse, CatchUpResult, FanoutMessage, Utf8String,
+};
 
 use crate::config::Domain;
 use crate::hub::{Hub, HubError};
@@ -58,7 +60,12 @@ pub(super) async fn catch_up(
     {
         let rooms = hub.rooms.lock().await;
         if !rooms.contains_key(room_id) {
-            return Err(HubError::NoSuchRoom);
+            // A response code, not HubError::NoSuchRoom, because the
+            // refusal is part of the answer and not a transport failure
+            // (bead mimid-1wgh.37.104.14). A hub that does not wish to
+            // reveal whether a room exists answers NotAuthorized here
+            // instead, as the draft's §4.3 says it SHOULD.
+            return refuse(CatchUpResult::NoSuchRoom);
         }
     }
 
@@ -72,16 +79,23 @@ pub(super) async fn catch_up(
     // separates "I no longer have what you want" from "you are asking
     // for something that never happened", and only the first is a gap.
     if wanted <= assigned && room_oldest.is_none_or(|oldest| wanted < oldest) {
-        return Err(HubError::CatchUpOutOfWindow {
+        tracing::info!(
+            name: "catch_up_out_of_window",
+            room_id,
+            %from,
             wanted,
-            oldest: room_oldest,
+            oldest = room_oldest,
+            "refusing catch-up: the range asked for is older than this hub holds"
+        );
+        return refuse(CatchUpResult::OutOfWindow {
+            oldest_held: room_oldest.unwrap_or(0),
         });
     }
 
     // §8: what this requester was a destination of, read off the
     // deliveries themselves.
     let Some((_, entitled_to)) = hub.store.fanout_window_for(room_id, from.as_str()).await? else {
-        return Err(HubError::CatchUpNotEntitled);
+        return refuse(CatchUpResult::NotAuthorized);
     };
 
     let served = hub
@@ -111,9 +125,23 @@ pub(super) async fn catch_up(
     // in the room they are the same, because every fanout reaches it,
     // and for one that has left the room's would say the conversation
     // continued without it, which §8 says it should not learn.
+    CatchUpResponse::served(entitled_to, entries)
+        .to_body()
+        .map_err(HubError::Encode)
+}
+
+/// A refusal, encoded as an answer.
+///
+/// Every catch-up refusal is a `200` carrying a response code, not an
+/// HTTP status: a status can be produced by something that is not the
+/// hub -- a proxy, a gateway, a cache -- and an out-of-window answer
+/// makes a follower record a permanent loss and tell its users history
+/// is missing. That is not a thing to do on an intermediary's word
+/// (bead mimid-1wgh.37.104.14).
+fn refuse(result: CatchUpResult) -> Result<Vec<u8>, HubError> {
     CatchUpResponse {
-        highest_sequence: entitled_to,
-        entries,
+        error_description: Utf8String::default(),
+        result,
     }
     .to_body()
     .map_err(HubError::Encode)
