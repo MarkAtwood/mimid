@@ -8,18 +8,12 @@ mimid-1wgh.4.13), with no patches to mls-rs. The tests are in
 
 **Short answer.** Yes, until a Commit has to change the `did_webvh_heads`
 record. The mls-rs application must implement an `IdentityProvider` for
-credential type 0x0008 that gives each device its own identity, and must
-list the record component in its leaf. mls-rs has no AppDataUpdate
-(mls-extensions-11 §4.7), and mimid changes the record only by
-AppDataUpdate (decisions mimid-1wgh.4.81.33, .34). RFC 9420 §12.2 requires
-every member to support every proposal type in a Commit, except, per
-mls-extensions-11 §4.7, members the Commit removes. So mimid's Commit that
-changes the record (a new `did_webvh` user, a device with a newer log, a
-revocation) also removes the mls-rs member (bead mimid-4lp4.3, decision
-mimid-1wgh.4.81.37). The mls-rs member cannot parse that Commit; it stays in
-the old epoch and can be added again afterwards. If the mls-rs member
-claims AppDataUpdate support anyway, it is not removed, and it cannot parse
-the Commit either.
+credential type 0x0008 that gives each device its own identity, and list
+the record component in its leaf. mls-rs has no AppDataUpdate, which is
+the only way mimid changes the record, so a Commit that changes it also
+removes the mls-rs member (bead mimid-4lp4.3, decision
+mimid-1wgh.4.81.37); it can be added again afterwards. "A Commit that
+changes the record removes the mls-rs member" below has why.
 
 ## Why two BasicCredential devices fail and two did:webvh devices do not
 

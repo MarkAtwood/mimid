@@ -305,9 +305,7 @@ Commits for joins.
 
 **For -01:** mention the MIMI consequence under Open Issue 1.
 
-**Status:** closed in mimid by carrying the record as an
-`app_data_dictionary` component, the only form since bead mimid-1wgh.4.81.34
-(Mark, 2026-11-18; item 29). An external Commit carries the AppDataUpdate
+**Status:** closed by the component form (item 29). An external Commit carries the AppDataUpdate
 that sets the joiner's entry (decision mimid-1wgh.4.81.33), which departs
 from §Rules as written.
 
@@ -323,9 +321,7 @@ proposal from someone else.
 **mimid:** refuses a record-changing Commit while a GCE proposal is pending
 (decision mimid-1wgh.4.81.17).
 
-**Status:** closed in mimid by carrying the record as an
-`app_data_dictionary` component, the only form since bead mimid-1wgh.4.81.34
-(Mark, 2026-11-18; item 29). A record change is AppDataUpdate proposals,
+**Status:** closed by the component form (item 29). A record change is AppDataUpdate proposals,
 which a Commit holds next to another party's GroupContextExtensions proposal;
 `PendingGroupContextExtensions` is gone.
 
@@ -408,9 +404,7 @@ listing as part of a record change (decision mimid-1wgh.4.81.22).
 need to list other extensions the group carries, so implementations do not
 read "lists `did_webvh_heads` and `did_webvh`" as "lists only those".
 
-**Status:** closed in mimid by carrying the record as an
-`app_data_dictionary` component, the only form since bead mimid-1wgh.4.81.34
-(Mark, 2026-11-18; item 29). No GroupContextExtensions proposal and no
+**Status:** closed by the component form (item 29). No GroupContextExtensions proposal and no
 `required_capabilities` are written for the record, so the workaround is
 gone. (OpenMLS's stricter check still applies to any GroupContextExtensions
 proposal, which mimid's hub refuses anyway.)
@@ -431,9 +425,7 @@ mimid-1wgh.4.81.22). This is also an argument for Open Issue 1: as an
 `app_data_dictionary` component the record would travel in an AppDataUpdate,
 which MIMI hubs already handle per component.
 
-**Status:** closed in mimid by carrying the record as an
-`app_data_dictionary` component, the only form since bead mimid-1wgh.4.81.34
-(Mark, 2026-11-18; item 29). The hub again refuses every
+**Status:** closed by the component form (item 29). The hub again refuses every
 GroupContextExtensions proposal (decision mimid-1wgh.6.2); decision
 mimid-1wgh.4.81.22 and `ProposalKind::DidWebvhRecord` are gone. Room policy
 treats the record like any component it does not track.
