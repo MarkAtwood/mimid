@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.37.104.4",
   "title": "catch-up 4: the follower asks, applies, and reports an unfillable gap",
   "description": "docs/design/mimi-catchup.md §10, follower side.\n\nPersist the highest sequence held per room. Notice a gap two ways: a sequence jump in live fanout, and at startup after downtime. Then ask the hub (discovering catchUp from its directory, and doing nothing if the hub does not publish it), apply in hub order, and stop once caught up.\n\nWhen the hub says the gap cannot be filled (§5.1), record it against the room and surface it, so the agent and its front ends can tell the user rather than showing a conversation with a silent hole. mimid already has the shape internally: the store's feed answers TooOld and the front ends redraw instead of pretending (MIMI_EV_RESYNC in purple-mimi). The same honesty is owed across providers, and this is the whole point of the work: silent loss is what is being removed.\n\nTests: a follower that missed a range catches up and its users see the messages; a jump in live fanout triggers a catch-up; an out-of-window gap is recorded and surfaced, not swallowed; a hub without the template is left alone.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-23T01:13:06.257386342Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-23T01:13:06.257386342Z",
+  "updated_at": "2026-11-26T03:42:06.038672843Z",
+  "closed_at": "2026-11-26T03:42:06.038672843Z",
+  "close_reason": "Done and committed (f4a1b9c6), gates green: 2177 tests pass. The follower records its position per room, reads a jump as a gap, asks the hub via POST /catchUp/{roomId} discovered from its directory's unknown members, applies recovered fanout through the same path a live /notify uses, and on a 410 records an unfillable gap that counts once against follower_room.gone so clients resync (decision .8). Driven by three decisions: fill on detection, guarded per room (.9); never re-ask an unfillable gap (.10); probe every room at startup and every 15 min, because the gap in the fanout missed MOST RECENTLY has no later fanout to reveal it (.11). Also fixed a false gap on rejoining (.12) and a loop a hub could spin by answering without advancing. NOT tested against another implementation: bead .104.5 is the two-provider test.",
   "labels": [
     "wg"
   ],
