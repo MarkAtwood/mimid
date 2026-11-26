@@ -945,12 +945,17 @@ src/service.rs   the `mimid` service nick
 
 ### Loopback and authentication
 
-- The listen address must be loopback, or the daemon refuses to start, as
-  for the HTTP endpoint (crates/mimid-agent/src/config.rs:60-63).
+- The listen address is loopback by default and may be any address
+  (decision mimid-1wgh.92, which amends S1 for IRC); off loopback the
+  traffic is cleartext and keeping it off the wrong network is the
+  operator's. A credential is required on every listener, and `listen_tls`
+  serves IRC over TLS. §7.25 and docs/design/frontend-auth.md have the
+  credential model.
 - The default port is 6667. Browsers refuse to connect to it (it is on the
   Fetch standard's bad-port list), which shuts out the old HTTP-to-IRC
   cross-protocol trick from web pages.
-- The client presents the agent's local token with `PASS <token>`, before
+- The client presents a credential -- the agent's local token or an app
+  password -- by SASL PLAIN, SASL SCRAM-SHA-256 or `PASS`, before
   registration ends. The check is `LocalToken::matches`, constant time
   (crates/mimid-agent/src/token.rs:99-101). A wrong or missing token gets
   464, then `ERROR :Closing Link`, and the connection closes. Before a good
@@ -958,13 +963,10 @@ src/service.rs   the `mimid` service nick
   that looks like HTTP (`GET `, `POST `) closes the connection.
 - The PASS line is never logged. The `no_token_in_logs.rs` canary gains an
   IRC connection.
-- No SASL. docs/irc-lessons.md ("No SASL", "Skip") says clients that see
-  `sasl` try it, and the user is already authenticated out of band. SASL
-  PLAIN would only carry the same token in a form fewer clients set up.
-  Every client has a server password field: irssi `/connect -password`,
-  WeeChat `irc.server.<name>.password`, HexChat's server password. The
-  token is 43 base64url characters with no spaces, so it fits one PASS
-  parameter.
+- `PASS` is kept alongside SASL, because every client has a server
+  password field: irssi `/connect -password`, WeeChat
+  `irc.server.<name>.password`, HexChat's server password. The token is 43
+  base64url characters with no spaces, so it fits one PASS parameter.
 - After registration send 900 with the user's nick as the account name
   and the user URI in the text, and 330 in WHOIS, which gives the user
   URI as the account (§7.15).
@@ -1711,13 +1713,12 @@ Added on 2026-11-20:
     §10, "Decisions (Mark, 2026-11-21)", S1 to S7. For this note: S2
     lifts §7.2 and §7.6 for IRC v2 (queries are one-to-one rooms with a
     store-level `direct` flag; chathistory comes from the store), and S3
-    lifts "No SASL" in §4 for IRC v2 (SASL PLAIN with the agent token,
-    PASS kept). v1 stays as decided above until IRC v2 is built
-    (epic mimid-i0id); the store groundwork for it is epic mimid-qqtk.
-    The SASL part is built (epic mimid-e13m, docs/design/frontend-auth.md
-    §4.1): SASL PLAIN and SCRAM-SHA-256 (decision A3) and PASS, against
-    app passwords and the agent token, on loopback and on the TLS
-    listener; "No SASL" in §4 no longer holds.
+    adds SASL for IRC v2. v1 stays as decided above until IRC v2 is
+    built (epic mimid-i0id); the store groundwork for it is epic
+    mimid-qqtk. The SASL part is built (epic mimid-e13m,
+    docs/design/frontend-auth.md §4.1): SASL PLAIN and SCRAM-SHA-256
+    (decision A3) and PASS, against app passwords and the agent token,
+    on loopback and on the TLS listener. §4 is updated to match.
 
 26. **Replies (epic mimid-qqtk, bead mimid-qqtk.1; marmot-bridge.md §5
     P1).** mimi-content-10 §5.2: a reply's `inReplyTo` is the message ID

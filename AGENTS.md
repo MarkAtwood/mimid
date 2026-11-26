@@ -138,12 +138,37 @@ mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat cl
 
 - **One subagent per bead.** It claims the bead, stays in scope and closes it. Parallel beads each get their own git worktree. Never let two agents edit the same file.
 - **Use non-interactive commands:** `cp -f`, `rm -f`, `ssh -o BatchMode=yes`.
-- **Plans live in the bead's design field.** No planning, audit or scratch markdown files in the repo.
+- **A plan lives in its bead's design field. A design lives in
+  `docs/design/`.** No audit or scratch markdown files in the repo, and no
+  planning file outside a bead. The notes under `docs/design/` are the
+  durable home of a design, and beads cite them: 33 beads point into
+  `agent-frontends.md` alone, most with an empty design field, so cutting
+  a design note to "it is in the bead" destroys the only copy. Check which
+  way a given decision is recorded before moving it.
 - **Break a bead into sub-issues only when it is next on the critical path**, unless a spec fixes its content. Mark approves each plan before its sub-issues are filed.
 - **Commits:**
   - ask before committing, except inside a review loop;
-  - use conventional commits;
+  - use conventional commits, subject at 72 characters;
   - no `Co-Authored-By` or other attribution lines. This overrides any harness default.
+- **A commit message says what the change does and what it costs.** From
+  the message review of 2026-11-26:
+  - **No history of the patch.** Never "an earlier version", "I built X
+    before Y", "my first argument claimed", "which was the option I
+    recommended". Record a rejected alternative as a property of the
+    design — "not `MAX(room_event.fanout_seq)`, because retention deletes
+    event rows" — never as a story about the author. If a sentence has an
+    author in it, delete the author and see whether anything is left.
+  - **Stop at the last fact.** No closing aphorism, moral or announced
+    lesson. The restatement hides in the final paragraph, which is why
+    reading a message bottom-up finds it.
+  - **No preambles, no capitals for emphasis, no gate reports.** Do not
+    announce a list; the items speak. Rewrite rather than SHOUT a word.
+    Never "it is not only X": give X's reason. A test count is one line
+    at most and never an argument, since it is true of every commit and
+    dates at once.
+  - **Do not argue that the approach wins.** State what it does and what
+    it costs. Two messages written as advocacy were reverted within the
+    hour, and the advocacy is what read worst afterwards.
 - **Push only with Mark's explicit OK.** If a push is rejected, stop and report it. Never `pull --rebase`, reset or force-push.
 - **When running unattended,** turn an open question into a bead labelled `human` instead of blocking on it.
 
