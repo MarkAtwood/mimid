@@ -545,10 +545,25 @@ pub struct ProjectionCursor {
     pub seq: u64,
     /// The user's highest `follower_member` id, or 0.
     pub member: u64,
-    /// How many events of the rooms the user was ever in were deleted
-    /// (`follower_room.gone`; decisions mimid-1wgh.82, mimid-1wgh.83). A
-    /// state with another count cannot be followed by `/changes`: what it
-    /// knew may be gone, and `seq` may have gone back.
+    /// How many events of the rooms the user was ever in this provider
+    /// will never serve (`follower_room.gone`; decisions mimid-1wgh.82,
+    /// mimid-1wgh.83). A state with another count cannot be followed by
+    /// `/changes`: what it knew may be gone, and `seq` may have gone
+    /// back.
+    ///
+    /// Two things count here, because to a client they are one fact --
+    /// events it will never see -- and both make `/changes`
+    /// inexpressible:
+    ///
+    /// - an event deleted by retention, the original case;
+    /// - a room's unfillable catch-up gap, one per room, counted when
+    ///   the hub says the missing range is older than it holds
+    ///   (docs/design/mimi-catchup.md §5.1; decision
+    ///   mimid-1wgh.37.104.8;
+    ///   [`Store::mark_gap_unfillable`](super::Store::mark_gap_unfillable)).
+    ///
+    /// Only the count's CHANGING is read, never its magnitude, so it is
+    /// a resync signal and not a number of anything.
     pub gone: u64,
 }
 

@@ -255,6 +255,24 @@ async fn group_info(
     }
 }
 
+/// The room's fanout sequence for this delivery, from the
+/// [`FANOUT_SEQUENCE_HEADER`](crate::peer::FANOUT_SEQUENCE_HEADER), or 0
+/// when the request carries none (docs/design/mimi-catchup.md §4).
+///
+/// Zero for a hub that does not number its fanout, which is every
+/// implementation but this one today, and the follower treats it as
+/// "nothing to compare against" rather than as a gap. A value that is
+/// not a number is also 0: a header this hub cannot read says nothing
+/// about the follower's position, and refusing the delivery over it
+/// would stall a peer's queue for good (decision mimid-1wgh.6.19).
+fn fanout_sequence(headers: &HeaderMap) -> u64 {
+    headers
+        .get(crate::peer::FANOUT_SEQUENCE_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(0)
+}
+
 /// `POST /catchUp/{roomId}`: the fanout the `From` provider missed
 /// (docs/design/mimi-catchup.md §5; INVENTED, NOT FROM SPEC, bead
 /// mimid-1wgh.37.104).
@@ -405,12 +423,17 @@ async fn notify(
     body: Bytes,
 ) -> Response {
     match source_domain(&headers) {
-        Some(from) => respond_follower(
-            follower
-                .accept_fanout(&room_id, &from, &body)
-                .await
-                .map(|()| StatusCode::CREATED.into_response()),
-        ),
+        Some(from) => {
+            let accepted = follower
+                .accept_fanout_at(&room_id, &from, &body, fanout_sequence(&headers))
+                .await;
+            // Decision mimid-1wgh.37.104.9: a delivery that revealed a
+            // gap starts a fill, after the answer rather than before it.
+            if let Ok(Some(_)) = &accepted {
+                follower.spawn_fill(&room_id);
+            }
+            respond_follower(accepted.map(|_| StatusCode::CREATED.into_response()))
+        }
         None => bad_from(),
     }
 }
@@ -621,6 +644,11 @@ fn respond_follower(result: Result<Response, FollowerError>) -> Response {
         // Decision mimid-1wgh.7.40.
         FollowerError::PathNotThisProvider => (StatusCode::BAD_REQUEST, "path-not-this-provider"),
         FollowerError::BodyTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "body-too-large"),
+        // Catch-up is this provider asking a hub, never a request
+        // arriving here, so no inbound route can produce it. Mapped
+        // rather than left to the catch-all so that adding such a route
+        // later cannot turn it into a 500 unnoticed.
+        FollowerError::Peer(_) => (StatusCode::BAD_GATEWAY, "peer-provider-failed"),
         // Decisions mimid-1wgh.7.4, mimid-1wgh.7.41. A correct refusal of
         // the source's input: DEBUG (it was WARN before bead mimid-bfzm).
         FollowerError::NotAPeer => {

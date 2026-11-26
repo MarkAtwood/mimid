@@ -351,6 +351,18 @@ async fn own_domain_goes_to_local_delivery_in_order() {
         assert_eq!(room_id, ROOM_ID);
         assert_eq!(body, want, "body byte-identical");
     }
+    // The room's fanout sequence travels with each local delivery, so a
+    // hub tracks its own position exactly as a remote follower does
+    // (docs/design/mimi-catchup.md §4; bead mimid-1wgh.37.104.4).
+    //
+    // A RETRY carries the same number, which is what keeps a redelivery
+    // from reading as a jump: the second 1 here is the first row's
+    // second attempt.
+    assert_eq!(
+        local.sequences(),
+        vec![1, 1, 2],
+        "each delivery carries its row's sequence, a retry included"
+    );
     assert!(heads(&store).await.is_empty());
 }
 

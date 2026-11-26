@@ -69,13 +69,15 @@ pub trait LocalDelivery: Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Accepts `body`, the concatenated FanoutMessages of a `/notify`
-    /// request (protocol-07 §5.5), for the room `room_id`. Returning `Ok`
-    /// has the meaning of a `201` response. The same body may be delivered
-    /// more than once.
+    /// request (protocol-07 §5.5), for the room `room_id`, at the room's
+    /// `fanout_seq` (docs/design/mimi-catchup.md §4; 0 when the fanout
+    /// has none). Returning `Ok` has the meaning of a `201` response.
+    /// The same body may be delivered more than once.
     fn deliver(
         &self,
         room_id: &str,
         body: &[u8],
+        fanout_seq: u64,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
@@ -215,7 +217,7 @@ impl<L: LocalDelivery> Fanout<L> {
         } = row;
         let result: Result<(), Failure> = if domain == self.own_domain {
             self.local
-                .deliver(&room_id, &body)
+                .deliver(&room_id, &body, fanout_seq)
                 .await
                 .map_err(|error| (Box::new(error) as _, None, false))
         } else {

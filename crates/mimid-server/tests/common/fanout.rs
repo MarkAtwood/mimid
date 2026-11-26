@@ -257,6 +257,9 @@ pub type Attempt = (String, Vec<u8>);
 #[derive(Clone, Default)]
 pub struct RecordingLocal {
     attempts: Arc<Mutex<Vec<Attempt>>>,
+    /// The fanout sequence of each delivery, in order
+    /// (docs/design/mimi-catchup.md §4).
+    sequences: Arc<Mutex<Vec<u64>>>,
     failures: Arc<AtomicUsize>,
 }
 
@@ -272,16 +275,30 @@ impl RecordingLocal {
     pub fn attempts(&self) -> Vec<Attempt> {
         self.attempts.lock().unwrap().clone()
     }
+
+    /// The fanout sequence of each delivery, in order.
+    pub fn sequences(&self) -> Vec<u64> {
+        self.sequences.lock().unwrap().clone()
+    }
 }
 
 impl LocalDelivery for RecordingLocal {
     type Error = std::io::Error;
 
-    async fn deliver(&self, room_id: &str, body: &[u8]) -> Result<(), Self::Error> {
+    async fn deliver(
+        &self,
+        room_id: &str,
+        body: &[u8],
+        fanout_seq: u64,
+    ) -> Result<(), Self::Error> {
         self.attempts
             .lock()
             .unwrap()
             .push((room_id.to_owned(), body.to_vec()));
+        // Recorded separately so the existing attempts assertions do
+        // not change shape: the sequence the hub passed its own
+        // follower (docs/design/mimi-catchup.md §4).
+        self.sequences.lock().unwrap().push(fanout_seq);
         let failed = self
             .failures
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))

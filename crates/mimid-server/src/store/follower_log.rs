@@ -87,6 +87,25 @@ pub struct AppendedFanout {
     /// The room's MLS group ID as stored after the append: the first one a
     /// message revealed.
     pub group_id: Option<Vec<u8>>,
+    /// The first sequence now known to be missing, when this delivery
+    /// revealed a gap (docs/design/mimi-catchup.md §10). `None` when the
+    /// fanout followed the one before it, when the hub numbers no
+    /// fanout, or when a gap was already recorded.
+    pub gap_from: Option<u64>,
+}
+
+/// What a follower holds of one room's fanout
+/// (docs/design/mimi-catchup.md §10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FollowerPosition {
+    /// The highest fanout sequence held; 0 when there is nothing to
+    /// compare against.
+    pub highest: u64,
+    /// The first sequence known missing, when a gap has been noticed.
+    pub gap_from: Option<u64>,
+    /// Whether the hub has said that gap cannot be filled (§5.1).
+    pub unfillable: bool,
 }
 
 /// A stored FanoutMessage of a followed room.
@@ -169,6 +188,30 @@ impl Store {
         received_at: u64,
         messages: &[NewFanout<'_>],
     ) -> Result<AppendedFanout, StoreError> {
+        self.append_fanout_at(room_id, hub_domain, received_at, messages, 0)
+            .await
+    }
+
+    /// [`Store::append_fanout`] for a delivery that carries the room's
+    /// fanout sequence (docs/design/mimi-catchup.md §4), which moves the
+    /// follower's recorded position and can reveal a gap
+    /// ([`AppendedFanout::gap_from`]).
+    ///
+    /// `fanout_seq` 0 means the delivery says nothing about position:
+    /// a hub that numbers no fanout, or a replay of something already
+    /// stored. [`Store::append_fanout`] is that case by name.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::append_fanout`].
+    pub async fn append_fanout_at(
+        &self,
+        room_id: &str,
+        hub_domain: &Domain,
+        received_at: u64,
+        messages: &[NewFanout<'_>],
+        fanout_seq: u64,
+    ) -> Result<AppendedFanout, StoreError> {
         let received_at = to_sql_int(received_at)?;
         let mut tx = self.pool.begin().await?;
         sqlx::query(
@@ -189,6 +232,7 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         }
+        let gap = note_position(&mut tx, room_id, fanout_seq).await?;
         let mut new_seqs = Vec::new();
         for message in messages {
             if let Some(seq) = insert_fanout(&mut tx, room_id, received_at, message).await? {
@@ -201,7 +245,125 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await?;
         tx.commit().await?;
-        Ok(AppendedFanout { new_seqs, group_id })
+        Ok(AppendedFanout {
+            new_seqs,
+            group_id,
+            gap_from: gap,
+        })
+    }
+
+    /// Every followed room whose fanout this provider could probe, with
+    /// the highest sequence held, for the probe of decision
+    /// mimid-1wgh.37.104.11.
+    ///
+    /// Rooms whose highest is 0 ARE LEFT OUT, and that is the point. A
+    /// hub that does not number its fanout -- every implementation but
+    /// this one today -- leaves every room at 0, and a probe from 0 asks
+    /// for the room's whole retained history. So a 0 means "nothing to
+    /// ask about", exactly as it does everywhere else this column is
+    /// read.
+    ///
+    /// A room with an unfillable gap is left out too: nothing a probe
+    /// learns could change it (decision mimid-1wgh.37.104.10).
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlx`] if the query fails and
+    /// [`StoreError::OutOfRange`] if a stored value is negative.
+    pub async fn probeable_rooms(&self) -> Result<Vec<(String, u64)>, StoreError> {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT room_id, highest_fanout_seq FROM follower_room \
+             WHERE highest_fanout_seq > 0 AND gap_unfillable = 0 \
+             ORDER BY room_id",
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        rows.into_iter()
+            .map(|(room_id, highest)| Ok((room_id, from_sql_int(highest)?)))
+            .collect()
+    }
+
+    /// What this follower holds of `room_id`'s fanout: the highest
+    /// sequence it has, and the gap it knows about
+    /// (docs/design/mimi-catchup.md §10).
+    ///
+    /// A highest of 0 means nothing to compare against: no fanout seen,
+    /// or a hub that numbers none. `None` for a room this follower does
+    /// not follow.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlx`] if the query fails and
+    /// [`StoreError::OutOfRange`] if a stored value is negative.
+    pub async fn follower_position(
+        &self,
+        room_id: &str,
+    ) -> Result<Option<FollowerPosition>, StoreError> {
+        let row: Option<(i64, Option<i64>, i64)> = sqlx::query_as(
+            "SELECT highest_fanout_seq, gap_from, gap_unfillable \
+             FROM follower_room WHERE room_id = ?",
+        )
+        .bind(room_id)
+        .fetch_optional(&self.reader)
+        .await?;
+        let Some((highest, gap_from, unfillable)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(FollowerPosition {
+            highest: from_sql_int(highest)?,
+            gap_from: gap_from.map(from_sql_int).transpose()?,
+            unfillable: unfillable != 0,
+        }))
+    }
+
+    /// Records that `room_id`'s known gap cannot be filled: the hub has
+    /// said the range is older than it holds (§5.1). Returns whether
+    /// this marked it, as against finding it already marked.
+    ///
+    /// Kept rather than retried, because retrying cannot help: the
+    /// fanout is gone. Surfacing it is the point of the design, since
+    /// silent loss is what it exists to remove.
+    ///
+    /// Also counts one against the room's `gone`, which is what carries
+    /// it to clients: a change in that count means a JMAP `/changes`
+    /// cannot be followed from the state before it
+    /// ([`ProjectionCursor::gone`](super::ProjectionCursor::gone)), so
+    /// the client resyncs instead of believing it is current. RFC 8620
+    /// §5.6's `cannotCalculateChanges` is that answer, and an
+    /// unfillable gap is exactly a hole `/changes` cannot express
+    /// (decision mimid-1wgh.37.104.8).
+    ///
+    /// ONLY ON THE FIRST MARK, which is why this reports it: counting
+    /// one per attempt would move the cursor every time anything
+    /// retried and make every client resync forever.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlx`] if the write fails.
+    pub async fn mark_gap_unfillable(&self, room_id: &str) -> Result<bool, StoreError> {
+        let marked = sqlx::query(
+            "UPDATE follower_room SET gap_unfillable = 1, gone = gone + 1 \
+             WHERE room_id = ? AND gap_unfillable = 0",
+        )
+        .bind(room_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(marked.rows_affected() > 0)
+    }
+
+    /// Clears `room_id`'s known gap, having filled it.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlx`] if the write fails.
+    pub async fn clear_gap(&self, room_id: &str) -> Result<(), StoreError> {
+        sqlx::query(
+            "UPDATE follower_room SET gap_from = NULL, gap_unfillable = 0 WHERE room_id = ?",
+        )
+        .bind(room_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     /// The seq the next event appended to the follower log, in any room,
@@ -284,6 +446,7 @@ impl Store {
         user_uri: &str,
         now: u64,
     ) -> Result<bool, StoreError> {
+        let mut tx = self.pool.begin().await?;
         let left = sqlx::query(
             "UPDATE follower_member SET left_at = ?, \
              left_seq = (SELECT COALESCE(MAX(seq), 0) + 1 FROM follower_event), \
@@ -293,9 +456,37 @@ impl Store {
         .bind(to_sql_int(now)?)
         .bind(room_id)
         .bind(user_uri)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
+        // With the last local member gone, this provider is no longer a
+        // destination for the room's fanout, so its position is not
+        // "behind" -- it is nothing. Clearing it is what keeps a REJOIN
+        // from reading as a gap: the room's sequence is per room, so a
+        // provider out of it misses numbers legitimately, and continuing
+        // from the old highest would call a range missing that it was
+        // never entitled to (docs/design/mimi-catchup.md §8; bead
+        // mimid-1wgh.37.104.12). Cleared here, the rejoin's first fanout
+        // is the first again, and "a first fanout is never a gap" does
+        // the rest.
+        //
+        // `gone` is deliberately NOT cleared: it is a cumulative resync
+        // signal, and moving it back would make a client's state look
+        // newer than the provider's.
+        if left == 1 {
+            sqlx::query(
+                "UPDATE follower_room SET highest_fanout_seq = 0, gap_from = NULL, \
+                 gap_unfillable = 0 \
+                 WHERE room_id = ? AND NOT EXISTS (\
+                     SELECT 1 FROM follower_member \
+                     WHERE room_id = ? AND left_at IS NULL)",
+            )
+            .bind(room_id)
+            .bind(room_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
         Ok(left == 1)
     }
 
@@ -387,6 +578,63 @@ impl Store {
             })
             .collect()
     }
+}
+
+/// Records that the follower now holds `fanout_seq` of `room_id`, and
+/// returns the first sequence newly known to be missing
+/// (docs/design/mimi-catchup.md §10).
+///
+/// A jump in live fanout is the only thing a follower can detect from
+/// its own state: it knows its own highest and nothing about the hub's,
+/// which is why nothing is asked at startup.
+///
+/// Three cases are not gaps:
+///
+/// - `fanout_seq` 0, a hub that numbers no fanout. That is every
+///   implementation but this one today, so a follower must not read a
+///   stream of zeroes as a stream of gaps.
+/// - a held highest of 0, the first fanout seen for the room: there is
+///   no previous sequence for it to follow.
+/// - a `fanout_seq` at or below the highest held, a duplicate or a
+///   reordering.
+///
+/// A gap already recorded is left alone: the earliest missing sequence
+/// is the one worth asking from, and a later gap does not move it.
+async fn note_position(
+    tx: &mut Transaction<'_, Sqlite>,
+    room_id: &str,
+    fanout_seq: u64,
+) -> Result<Option<u64>, StoreError> {
+    if fanout_seq == 0 {
+        return Ok(None);
+    }
+    let seq = to_sql_int(fanout_seq)?;
+    let held: Option<(i64, Option<i64>)> =
+        sqlx::query_as("SELECT highest_fanout_seq, gap_from FROM follower_room WHERE room_id = ?")
+            .bind(room_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let (highest, recorded) = held.unwrap_or((0, None));
+    let gap = (highest > 0 && seq > highest + 1 && recorded.is_none())
+        .then(|| from_sql_int(highest + 1))
+        .transpose()?;
+    if let Some(from) = gap {
+        sqlx::query("UPDATE follower_room SET gap_from = ? WHERE room_id = ?")
+            .bind(to_sql_int(from)?)
+            .bind(room_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    sqlx::query(
+        "UPDATE follower_room SET highest_fanout_seq = ? \
+         WHERE room_id = ? AND highest_fanout_seq < ?",
+    )
+    .bind(seq)
+    .bind(room_id)
+    .bind(seq)
+    .execute(&mut **tx)
+    .await?;
+    Ok(gap)
 }
 
 /// Inserts `message` in `tx` unless the room has its inner message or its
@@ -758,5 +1006,94 @@ mod tests {
         assert!(matches!(err, StoreError::OutOfRange), "{err:?}");
         assert!(followed_rooms(&store).await.is_empty());
         store.close().await;
+    }
+
+    /// A provider that rejoins a room does not record a false gap
+    /// (bead mimid-1wgh.37.104.12).
+    ///
+    /// The fanout sequence is per room, so a provider out of the room
+    /// misses numbers legitimately: in to 10, out while the room runs to
+    /// 49, back in at 50. Continuing from 10 would call 11..49 missing,
+    /// but it was never entitled to them (mimi-catchup.md §8), so the
+    /// gap could never be filled and every one of its clients would
+    /// resync for data it should never have had.
+    ///
+    /// Leaving clears the position, so the rejoin's first fanout is the
+    /// first again and the existing "first fanout is never a gap" rule
+    /// does the rest.
+    #[tokio::test]
+    async fn rejoining_a_room_records_no_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("mimid.sqlite"), &domain("b.example"))
+            .await
+            .unwrap();
+        let room = "mimi://a.example/r/rejoin";
+        let hub = domain("a.example");
+        let bob = "mimi://b.example/u/bob";
+        store
+            .add_follower_member(room, &hub, bob, 1, 1000)
+            .await
+            .unwrap();
+
+        // In the room to sequence 10.
+        let first = [fanout(b"body-1", 1)];
+        store
+            .append_fanout_at(room, &hub, 1000, &first, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .follower_position(room)
+                .await
+                .unwrap()
+                .unwrap()
+                .highest,
+            10
+        );
+
+        // One of two members leaving is not this provider leaving: the
+        // room's fanout still comes here, so the position must survive.
+        let carol = "mimi://b.example/u/carol";
+        store
+            .add_follower_member(room, &hub, carol, 2, 1000)
+            .await
+            .unwrap();
+        assert!(store.leave_follower_room(room, carol, 1500).await.unwrap());
+        assert_eq!(
+            store
+                .follower_position(room)
+                .await
+                .unwrap()
+                .unwrap()
+                .highest,
+            10,
+            "still in the room through bob, so still at 10"
+        );
+
+        // Its last member leaves; the room runs on without it.
+        assert!(store.leave_follower_room(room, bob, 2000).await.unwrap());
+        let at = store.follower_position(room).await.unwrap().unwrap();
+        assert_eq!(
+            (at.highest, at.gap_from),
+            (0, None),
+            "no longer in the room, so there is no position to be behind"
+        );
+
+        // Back in, at 50.
+        store
+            .add_follower_member(room, &hub, bob, 2, 3000)
+            .await
+            .unwrap();
+        let again = [fanout(b"body-2", 2)];
+        let appended = store
+            .append_fanout_at(room, &hub, 3000, &again, 50)
+            .await
+            .unwrap();
+        assert_eq!(
+            appended.gap_from, None,
+            "50 is the first fanout since rejoining, not a gap of 39"
+        );
+        let at = store.follower_position(room).await.unwrap().unwrap();
+        assert_eq!((at.highest, at.gap_from), (50, None));
     }
 }

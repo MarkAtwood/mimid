@@ -326,8 +326,8 @@ async fn local_delivery_stores_like_http() {
     let remote = Provider::start(FOLLOWER_DOMAIN).await;
     let body = history().concat();
 
-    local.follower.deliver(ROOM, &body).await.unwrap();
-    local.follower.deliver(ROOM, &body).await.unwrap();
+    local.follower.deliver(ROOM, &body, 0).await.unwrap();
+    local.follower.deliver(ROOM, &body, 0).await.unwrap();
     assert_eq!(
         remote.notify(ROOM_ENCODED, A, body).await.0,
         StatusCode::CREATED
@@ -347,7 +347,7 @@ async fn local_delivery_of_a_foreign_room_is_refused() {
     let p = Provider::start(FOLLOWER_DOMAIN).await;
     let error = p
         .follower
-        .deliver(ROOM, &commit_fanout(T1, COMMIT_CAROL))
+        .deliver(ROOM, &commit_fanout(T1, COMMIT_CAROL), 0)
         .await
         .unwrap_err();
     assert!(matches!(error, FollowerError::NotRoomHub), "{error:?}");
@@ -384,4 +384,102 @@ async fn logs_never_contain_bodies() {
         // The last 32 bytes alone, as a logged slice of ciphertext.
         assert_secret_absent(&text, &bytes[bytes.len() - 32..], name);
     }
+}
+
+// --- the follower's own position in a room's fanout (§10) ---
+
+/// A follower records the highest fanout sequence it holds, and notices
+/// a jump as a gap (docs/design/mimi-catchup.md §10; bead
+/// mimid-1wgh.37.104.4).
+///
+/// Oracle: §10. A jump in live fanout is the only thing a follower can
+/// detect from its own state -- it knows its own highest and nothing
+/// about the hub's -- which is also why nothing is asked at startup.
+///
+/// The three non-gaps matter as much as the gap, and each is a way a
+/// correct hub would otherwise look broken:
+///
+/// - a sequence of 0, which is a hub that numbers no fanout. That is
+///   every implementation but this one today, so a follower must not
+///   read a stream of zeroes as a stream of gaps.
+/// - the first fanout seen for a room: there is no previous sequence
+///   for it to follow, so arriving at 7 is not a gap of six.
+/// - a sequence at or below the highest held: a duplicate or a
+///   reordering, which §5.5 says a follower must accept.
+#[tokio::test]
+async fn a_follower_tracks_its_position_and_notices_a_jump() {
+    let p = Provider::start(FOLLOWER_DOMAIN).await;
+
+    // A hub that numbers no fanout leaves nothing to compare against.
+    p.follower
+        .accept_fanout_at(
+            ROOM,
+            &domain_of("a.example"),
+            &application_fanout(T1, APPLICATION_1),
+            0,
+        )
+        .await
+        .unwrap();
+    let at = p.store.follower_position(ROOM).await.unwrap().unwrap();
+    assert_eq!(at.highest, 0, "no sequence, so no position");
+    assert_eq!(at.gap_from, None);
+
+    // The first numbered fanout is not a gap, however high.
+    p.follower
+        .accept_fanout_at(
+            ROOM,
+            &domain_of("a.example"),
+            &application_fanout(T2, APPLICATION_2),
+            7,
+        )
+        .await
+        .unwrap();
+    let at = p.store.follower_position(ROOM).await.unwrap().unwrap();
+    assert_eq!(at.highest, 7);
+    assert_eq!(
+        at.gap_from, None,
+        "nothing preceded it, so 7 is not a gap of six"
+    );
+
+    // The next in sequence is not a gap either.
+    p.follower
+        .accept_fanout_at(
+            ROOM,
+            &domain_of("a.example"),
+            &commit_fanout(T1, COMMIT_CAROL),
+            8,
+        )
+        .await
+        .unwrap();
+    let at = p.store.follower_position(ROOM).await.unwrap().unwrap();
+    assert_eq!((at.highest, at.gap_from), (8, None));
+
+    // A jump is. 9 is missing, so that is where to ask from.
+    p.follower
+        .accept_fanout_at(
+            ROOM,
+            &domain_of("a.example"),
+            &application_fanout(T3, APPLICATION_1),
+            10,
+        )
+        .await
+        .unwrap();
+    let at = p.store.follower_position(ROOM).await.unwrap().unwrap();
+    assert_eq!(at.highest, 10);
+    assert_eq!(at.gap_from, Some(9), "the earliest missing sequence");
+    assert!(!at.unfillable, "nobody has said it cannot be filled");
+
+    // A later jump does not move the gap: the earliest missing sequence
+    // is the one worth asking from.
+    p.follower
+        .accept_fanout_at(
+            ROOM,
+            &domain_of("a.example"),
+            &commit_fanout(T3, COMMIT_CAROL),
+            20,
+        )
+        .await
+        .unwrap();
+    let at = p.store.follower_position(ROOM).await.unwrap().unwrap();
+    assert_eq!((at.highest, at.gap_from), (20, Some(9)));
 }

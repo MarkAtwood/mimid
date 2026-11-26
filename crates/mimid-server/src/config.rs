@@ -9,6 +9,7 @@
 //! live_stream = false      # optional; serve the live stream at /mimid/live
 //! reuse_last_resort_key_packages = false  # optional; true serves a last-resort KeyPackage again
 //! blob_lifetime_secs = 2592000  # optional; uploads are deleted this long after upload (at least 3600)
+//! catch_up_probe_secs = 900       # optional; ask each room's hub for fanout missed
 //! message_retention_secs = 604800  # optional; messages are deleted this long after the hub
 //!                                  # accepted them (at least 3600), or "unlimited"
 //! client_idle_unbind_secs = 7776000  # optional; a signature key idle this long is unbound
@@ -228,6 +229,22 @@ pub struct Config {
     /// `messageRetention`, and leave that out when it is unlimited.
     #[serde(default)]
     pub message_retention_secs: crate::retention::MessageRetention,
+    /// How often this provider asks each followed room's hub whether
+    /// anything followed the fanout it holds, in seconds, or 0 to never
+    /// ask (decision mimid-1wgh.37.104.11;
+    /// [`crate::follower::DEFAULT_CATCH_UP_PROBE_SECS`]).
+    ///
+    /// A follower notices most gaps from a jump in live fanout, but not
+    /// one in the fanout it missed MOST RECENTLY: with no later fanout
+    /// to arrive, nothing reveals it. The probe asks rather than infers.
+    ///
+    /// Minutes, not seconds, is the right scale: a client resyncs when
+    /// the gap is recorded regardless, so nothing waits on it. Costs one
+    /// request per followed room per interval, almost always returning
+    /// nothing. 0 turns it off and leaves jump detection alone, which is
+    /// what a provider following no rooms wants.
+    #[serde(default = "default_catch_up_probe_secs")]
+    pub catch_up_probe_secs: u64,
     /// How long a client's signature key may be idle, in seconds, before
     /// it is unbound from its account, or `"unlimited"` (clean-room
     /// finding C6; [`crate::client_idle`]). Defaults to 90 days
@@ -322,6 +339,10 @@ fn default_max_uri_octets() -> usize {
 
 fn default_require_room_policy() -> bool {
     true
+}
+
+fn default_catch_up_probe_secs() -> u64 {
+    crate::follower::DEFAULT_CATCH_UP_PROBE_SECS
 }
 
 fn default_blob_lifetime_secs() -> u64 {
@@ -621,6 +642,7 @@ mod tests {
             did_webvh: mimi_mls::mls_didwebvh::CodePoints::DEFAULT,
             blob_lifetime_secs: 30 * 24 * 3600,
             message_retention_secs: crate::retention::MessageRetention::default(),
+            catch_up_probe_secs: crate::follower::DEFAULT_CATCH_UP_PROBE_SECS,
             client_idle_unbind_secs: crate::client_idle::ClientIdle::default(),
             key_material_rate: default_key_material_rate(),
         };

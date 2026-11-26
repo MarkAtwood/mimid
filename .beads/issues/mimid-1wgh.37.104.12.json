@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.104.12",
+  "title": "A provider that rejoins a room records a false gap",
+  "description": "Found while answering whether jump detection belongs in an I-D\n(2026-11-25).\n\n## Why jump detection is sound at all\n\nThe fanout sequence is per ROOM and one per event\n(store/log.rs::next_fanout_seq, \"every row of one fanout carries the\nsame sequence\"), while delivery is per DESTINATION (room_fanout is keyed\non domain, because a handshake fanout's BYTES differ per destination).\n\nSo a destination's numbers are contiguous only because every fanout of a\nroom goes to every provider then in it: hub/update.rs builds\n`destinations` as the union of the domains before and after, plus the\nsender, and hub/submit.rs as every member domain. The bytes differ per\ndestination; the set of destinations does not.\n\nThat is an accident of the implementation, not a stated rule. See the\nI-D note below.\n\n## The bug\n\nA provider that leaves a room and rejoins later sees a legitimate jump:\n\n- it is in the room to sequence 10, so highest_fanout_seq = 10;\n- it leaves; the room runs on to 49 without it;\n- it rejoins and receives sequence 50.\n\n50 \u003e 10 + 1, so note_position records gap_from = 11. But 11..49 is not\nmissing: this provider was not in the room and is not entitled to it\n(docs/design/mimi-catchup.md §8). fill_gap then asks, the hub's §8 bound\nserves nothing, the gap never clears, and a 410 would mark it unfillable\nand resync every client of that provider for data it should never have\nhad.\n\n\"First fanout is never a gap\" does not cover this: it is not the first\nfanout for the room, only the first since rejoining.\n\n## Fix, roughly\n\nOn being added to a room again, the follower's position should be reset\nrather than continued -- its highest should become the sequence at which\nit rejoined, with no gap. The join is already visible on the follower\nside (`follower_member`, and Follower::accept_fanout's membership\nhandling), so the information is there.\n\nNeeds a test: leave at 10, rejoin at 50, assert no gap is recorded.\n\n## For the I-D\n\nTwo properties that catch-up's local half depends on, which a draft must\nstate or another implementation can break silently:\n\n1. every fanout of a room goes to every provider then in the room, so a\n   destination's received sequences are contiguous. Without it, jump\n   detection produces false gaps on every implementation that fans out\n   to a subset.\n2. a hub serves catch-up contiguously from `from`, for that requester.\n   Follower::fill_gap relies on this to know the gap is closed (its\n   `target`), and the reliance is documented in its rustdoc.\n\nJump detection and the fill loop themselves are local policy and should\nNOT be normative: a follower may notice a gap however it likes, or only\nprobe (decision mimid-1wgh.37.104.11).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T01:46:42.993512151Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T01:46:42.993512151Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.104.12",
+      "depends_on_id": "mimid-1wgh.37.104",
+      "type": "parent-child",
+      "created_at": "2026-11-26T01:46:43.128458802Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

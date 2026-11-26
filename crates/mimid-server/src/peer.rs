@@ -62,6 +62,14 @@ use crate::http::{MAX_BODY_LEN, PROTOCOL_CONTENT_TYPE};
 use crate::hub::assets::{ASSET_TIMEOUT, MAX_ASSET_LEN};
 use crate::peer_clock::PeerClocks;
 
+/// The directory member naming a hub's catchUp endpoint.
+///
+/// INVENTED, NOT FROM SPEC: protocol-07 §5.1 names ten members and this
+/// is not one, so it travels in the directory's unknown members, which
+/// round-trip unchanged. Publishing it is the whole of catch-up's
+/// capability negotiation (docs/design/mimi-catchup.md §5).
+pub const CATCH_UP_ENDPOINT: &str = "catchUp";
+
 /// The request header carrying a fanout's per-room sequence on
 /// `POST /notify/{roomId}` (docs/design/mimi-catchup.md §4; decision
 /// mimid-1wgh.104 put the sequence beside the message rather than inside
@@ -123,6 +131,15 @@ enum Endpoint {
     ReportAbuse,
     /// §5.10.2 `GET /proxyDownload/{downloadUrl}` (bead mimid-1wgh.14).
     ProxyDownload,
+    /// `POST /catchUp/{roomId}`: the fanout a follower missed.
+    ///
+    /// INVENTED, NOT FROM SPEC (docs/design/mimi-catchup.md §5, bead
+    /// mimid-1wgh.37.104). protocol-07 §5.1 defines ten endpoints and
+    /// this is not one of them, so its template comes from the
+    /// directory's unknown members rather than a typed field. A hub
+    /// that publishes none does not support catch-up, which is the
+    /// whole of the negotiation.
+    CatchUp,
 }
 
 impl Endpoint {
@@ -139,6 +156,7 @@ impl Endpoint {
             Self::IdentifierQuery => "identifierQuery",
             Self::ReportAbuse => "reportAbuse",
             Self::ProxyDownload => "proxyDownload",
+            Self::CatchUp => CATCH_UP_ENDPOINT,
         }
     }
 
@@ -183,6 +201,7 @@ impl Endpoint {
             Self::UpdateConsent => "requesterDomain",
             Self::IdentifierQuery => "domain",
             Self::ProxyDownload => "downloadUrl",
+            Self::CatchUp => "roomId",
         }
     }
 
@@ -210,28 +229,43 @@ impl Endpoint {
             Self::IdentifierQuery => IdentifierResponse::tls_deserialize_exact(body)
                 .ok()
                 .map(|response| ErrorResponse::IdentifierQuery(Box::new(response))),
+            // catchUp's refusals are RFC 9457 problem details and its
+            // success is a CatchUpResponse, so there is no
+            // protocol-07 result code to read here.
             Self::Notify
             | Self::RequestConsent
             | Self::UpdateConsent
             | Self::ReportAbuse
-            | Self::ProxyDownload => None,
+            | Self::ProxyDownload
+            | Self::CatchUp => None,
         }
     }
 
     /// The endpoint's URL template in `directory`, or `None` if the peer
     /// does not offer it (decision mimid-1wgh.5.75).
-    fn template(self, directory: &Directory) -> Option<&UriTemplate> {
+    /// Owned rather than borrowed because [`Endpoint::CatchUp`]'s
+    /// template is not a field: it is parsed out of the directory's
+    /// unknown members, which protocol-07 §5.1 keeps for exactly this.
+    fn template(self, directory: &Directory) -> Option<UriTemplate> {
         match self {
-            Self::KeyMaterial => directory.key_material.as_ref(),
-            Self::Update => directory.update.as_ref(),
-            Self::SubmitMessage => directory.submit_message.as_ref(),
-            Self::Notify => directory.notify.as_ref(),
-            Self::GroupInfo => directory.group_info.as_ref(),
-            Self::RequestConsent => directory.request_consent.as_ref(),
-            Self::UpdateConsent => directory.update_consent.as_ref(),
-            Self::IdentifierQuery => directory.identifier_query.as_ref(),
-            Self::ReportAbuse => directory.report_abuse.as_ref(),
-            Self::ProxyDownload => directory.proxy_download.as_ref(),
+            Self::KeyMaterial => directory.key_material.clone(),
+            Self::Update => directory.update.clone(),
+            Self::SubmitMessage => directory.submit_message.clone(),
+            Self::Notify => directory.notify.clone(),
+            Self::GroupInfo => directory.group_info.clone(),
+            Self::RequestConsent => directory.request_consent.clone(),
+            Self::UpdateConsent => directory.update_consent.clone(),
+            Self::IdentifierQuery => directory.identifier_query.clone(),
+            Self::ReportAbuse => directory.report_abuse.clone(),
+            Self::ProxyDownload => directory.proxy_download.clone(),
+            // A malformed template is the same as none: this hub does
+            // not offer catch-up we can use, and a request we cannot
+            // build is not worth an error of its own.
+            Self::CatchUp => directory
+                .unknown
+                .get(CATCH_UP_ENDPOINT)
+                .and_then(serde_json::Value::as_str)
+                .and_then(|text| UriTemplate::new(text).ok()),
         }
     }
 }
@@ -490,6 +524,63 @@ impl PeerClient {
         )
         .await
         .map(drop)
+    }
+
+    /// `POST /catchUp/{roomId}`: asks `domain` for the fanout of
+    /// `room_id` this provider missed, and returns the answer's body.
+    ///
+    /// INVENTED, NOT FROM SPEC (docs/design/mimi-catchup.md §5; bead
+    /// mimid-1wgh.37.104).
+    ///
+    /// `Ok(None)` when the hub publishes no `catchUp` template, which is
+    /// the whole of the capability negotiation: a provider that does not
+    /// publish it does not support catch-up, the requester learns that
+    /// without a failed request, and nothing needs a version number. A
+    /// caller treats it as "this hub cannot help" and does not retry,
+    /// because nothing will change until the hub's directory does.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::UnknownPeer`] if `domain` is not a configured peer,
+    /// any error from fetching its directory, [`PeerError::Url`] if the
+    /// template cannot be expanded, [`PeerError::Http`] if the request
+    /// fails, and [`PeerError::Rejected`] for any status but `200` --
+    /// including the `410` that says the range is older than the hub
+    /// holds (§5.1), which a caller tells apart by its status.
+    #[tracing::instrument(
+        name = "peer_call",
+        level = "debug",
+        skip_all,
+        fields(
+            peer = %domain,
+            endpoint = CATCH_UP_ENDPOINT,
+            room_id = room_id,
+        )
+    )]
+    pub async fn catch_up(
+        &self,
+        domain: &Domain,
+        room_id: &str,
+        body: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, PeerError> {
+        // Asked before the call so that a hub without the template
+        // costs one cached directory read and no request at all.
+        if Endpoint::CatchUp
+            .template(&self.directory(domain).await?)
+            .is_none()
+        {
+            return Ok(None);
+        }
+        self.call(
+            domain,
+            Endpoint::CatchUp,
+            room_id,
+            body,
+            &[StatusCode::OK],
+            true,
+        )
+        .await
+        .map(Some)
     }
 
     /// protocol-07 §5.7 `POST /requestConsent/{targetDomain}`: sends `body`,

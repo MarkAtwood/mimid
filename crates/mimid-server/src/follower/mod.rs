@@ -114,6 +114,18 @@ pub const MAX_EVENTS_PER_PAGE: u32 = 1_000;
 pub const SUBSCRIBE_CAPACITY: usize = 1_024;
 
 /// The follower role of the provider for `domain`.
+/// How often a follower probes each room's hub by default: 15 minutes
+/// (decision mimid-1wgh.37.104.11).
+///
+/// Minutes rather than seconds because the probe is about noticing, not
+/// latency: a client resyncs when a gap is recorded regardless, so no
+/// user is waiting on it. Long enough that a provider with many rooms
+/// is not making requests constantly, short enough that a quiet room's
+/// missing tail is found while its hub still holds it -- retention's
+/// floor is an hour
+/// ([`MIN_MESSAGE_RETENTION_SECS`](crate::retention::MIN_MESSAGE_RETENTION_SECS)).
+pub const DEFAULT_CATCH_UP_PROBE_SECS: u64 = 15 * 60;
+
 pub struct Follower {
     domain: Domain,
     store: Store,
@@ -136,6 +148,13 @@ pub struct Follower {
     relay: OnceLock<Relay>,
     /// Size limits on fields received (bead mimid-1wgh.52.2).
     limits: crate::limits::FieldLimits,
+    /// The rooms a catch-up fill is running for, so two triggers do not
+    /// ask for and apply the same fanout twice (decision
+    /// mimid-1wgh.37.104.9).
+    ///
+    /// A `std::sync::Mutex` and not tokio's: it is only ever held to
+    /// insert or remove a room id, never across an await.
+    filling: std::sync::Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl std::fmt::Debug for Follower {
@@ -166,6 +185,7 @@ impl Follower {
             consent,
             relay: OnceLock::new(),
             limits: crate::limits::FieldLimits::default(),
+            filling: std::sync::Mutex::default(),
         }
     }
 
@@ -621,6 +641,13 @@ pub enum FollowerError {
     /// The database failed.
     #[error("database error")]
     Store(#[from] StoreError),
+    /// A request to the room's hub failed or was refused.
+    ///
+    /// Carries the `410` of docs/design/mimi-catchup.md §5.1, which says
+    /// a catch-up range is older than the hub holds, so a caller tells
+    /// that apart from a transport failure by the status.
+    #[error("the room's hub refused or failed a request")]
+    Peer(#[source] Box<crate::peer::PeerError>),
     /// The endpoint is not implemented yet.
     #[error("{0} is not implemented")]
     NotImplemented(&'static str),

@@ -46,7 +46,9 @@ pub use blobs::{
 pub use clients::{ClientBinding, ClientChanges, ClientRow};
 pub use consent::{ConsentDecision, ConsentKey, ConsentRow, ReceivedConsent};
 pub use consent_record::{ConsentChanges, ConsentPatch, ConsentRecord};
-pub use follower_log::{AppendedFanout, FanoutKind, FollowerEvent, NewFanout, RoomAccess};
+pub use follower_log::{
+    AppendedFanout, FanoutKind, FollowerEvent, FollowerPosition, NewFanout, RoomAccess,
+};
 pub use jmap::{
     BearerToken, ChatRow, HubRow, IssuedToken, JmapStoreError, LAST_USED_GRANULARITY_MS,
     MAX_TOKEN_NAME_CHARS, MalformedToken, MessageChanges, MessageRow, MetadataUpdate,
@@ -283,7 +285,7 @@ mod tests {
         assert_eq!(
             applied,
             [
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23
             ]
         );
 

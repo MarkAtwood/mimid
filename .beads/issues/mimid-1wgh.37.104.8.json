@@ -1,0 +1,28 @@
+{
+  "id": "mimid-1wgh.37.104.8",
+  "title": "decision: an unfillable catch-up gap counts against follower_room.gone",
+  "description": "INVENTED, NOT FROM SPEC. Extends an existing field's meaning, so recorded\nrather than resolved silently (AGENTS.md).\n\n## The question\n\ndocs/design/mimi-catchup.md §5.1 has a hub answer 410 when the range a\nfollower asks for is older than it holds. The follower must surface that\n-- silent loss is the thing the design exists to remove -- but mimid-server\nhad no way for the follower role to tell its own JMAP clients anything.\n\n## The readings\n\n1. A new counter in ProjectionCursor, e.g. `lost`, beside `gone`.\n   Honest, but it is a fourth component in the cursor string\n   (\"{seq}.{member}.{gone}\"), so every existing client's state fails to\n   parse on upgrade and resyncs once for nothing.\n\n2. Count it against follower_room.gone, the counter retention already\n   bumps when it deletes an event. Chosen.\n\n3. A notice or synthetic message in the room. Rejected: it would be\n   content the hub never sent, in a room whose other content is\n   authenticated, and the agent treats what a provider sends as\n   untrusted precisely so a provider cannot inject into a room.\n\n## Why 2\n\n`gone`'s contract is already exactly what is needed: ProjectionCursor\ndocuments that a state with another count cannot be followed by\n/changes, because what it knew may be gone and seq may have gone back.\nAn unfillable gap is a hole in the middle of a room's history, which is\nthe thing /changes cannot express, and RFC 8620 §5.6\ncannotCalculateChanges is its answer. To a client, \"deleted by\nretention\" and \"never received and never will be\" are one fact: events\nit will never see.\n\nOnly the count's CHANGING is read, never its magnitude (store/jmap.rs\ncompares `since.gone != current.gone` and `since.gone \u003e current.gone`),\nso it is a resync signal and not a number of anything. That is what\nmakes one-per-room sound even though nobody knows how many fanouts were\nmissed.\n\n## Consequences\n\n- ProjectionCursor::gone is redocumented to cover both, since its name\n  and doc said \"deleted\" and now would have been a lie.\n- Store::mark_gap_unfillable counts only on the FIRST mark, and returns\n  whether it marked, so a retry does not move the cursor again. Counting\n  per attempt would make every client resync forever. Tested\n  (an_unfillable_gap_moves_what_clients_follow).\n- Decisions mimid-1wgh.82 and mimid-1wgh.83 are about the retention\n  case and are unaffected; this adds a second contributor to the same\n  counter.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T01:33:33.59203266Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T01:33:40.700261896Z",
+  "closed_at": "2026-11-26T01:33:40.700261896Z",
+  "close_reason": "Decided and implemented: an unfillable gap counts once against follower_room.gone, so a client's /changes refuses and it resyncs. Code points at this bead.",
+  "labels": [
+    "decision",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.104.8",
+      "depends_on_id": "mimid-1wgh.37.104",
+      "type": "parent-child",
+      "created_at": "2026-11-26T01:33:33.658345852Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -436,9 +436,9 @@ async fn inner_message_dedup_is_per_room_on_both_paths() {
     let other = "mimi://a.example/r/two";
     let first = application_fanout(common_notify::T2, APPLICATION_1);
     let again = application_fanout(OTHER_TIME, APPLICATION_1);
-    p.follower.deliver(ROOM, &first).await.unwrap();
-    p.follower.deliver(ROOM, &again).await.unwrap();
-    p.follower.deliver(other, &again).await.unwrap();
+    p.follower.deliver(ROOM, &first, 0).await.unwrap();
+    p.follower.deliver(ROOM, &again, 0).await.unwrap();
+    p.follower.deliver(other, &again, 0).await.unwrap();
     let rows: Vec<(String, Vec<u8>)> =
         sqlx::query_as("SELECT room_id, bytes FROM follower_event ORDER BY seq")
             .fetch_all(&p.db)

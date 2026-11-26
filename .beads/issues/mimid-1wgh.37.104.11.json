@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.104.11",
+  "title": "decision: a follower probes each room's hub at startup and on a timer",
+  "description": "INVENTED, NOT FROM SPEC. Mark decided 2026-11-25.\n\n## The question\n\nA follower notices a gap only when a later fanout arrives and the\nsequence jumps. If the fanouts it missed are the MOST RECENT ones and\nthe room then goes quiet, there is no jump: it believes it is current\nwhile its users silently miss messages.\n\nThat is exactly the loss this whole design exists to remove, and jump\ndetection alone does not cover it. The case: a hub cannot reach a\nprovider, gives up on those fanouts, the room goes quiet, the provider\ncomes back holding sequence 4 while the hub holds 10, and nobody says\nanything.\n\n## The readings\n\n1. Probe each followed room at startup: ask catchUp with from = our own\n   highest. An empty answer means current.\n2. The same probe at startup AND on a timer. Chosen.\n3. Document it as a limitation and leave detection jump-only.\n\n## Why 2\n\nA probe needs no gap to have been noticed, which is the point: it asks a\nquestion whose answer the follower cannot work out from its own state.\nReading 1 leaves a follower that never restarts unable to tell, and\n\"restart to find out whether you are missing messages\" is not an\noperational answer.\n\nThe cost is one request per followed room per interval, almost always\nreturning nothing. That is the price of the guarantee, and a quiet room\nis cheap to ask about.\n\n## Consequences\n\n- The probe subsumes jump detection: a follower that asks \"anything\n  after my highest?\" never needs to notice a jump. Jump detection is\n  kept anyway because it is free and instant, and the probe's interval\n  is not.\n- A probe is a different entry point from fill_gap: there is no recorded\n  gap, so it asks from `highest` rather than from `gap_from - 1`, and\n  applies whatever comes back.\n- Both depend on the hub numbering its fanout. A hub that does not\n  leaves `highest` at 0, where a probe would ask for the room's whole\n  retained history -- so a probe must not run for a room whose highest\n  is 0. See the note on this in the implementation bead.\n- The interval needs a configuration key and a default, and the default\n  should be minutes rather than seconds: the client resyncs when the\n  gap is recorded regardless, so the probe is about noticing, not about\n  latency.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T01:42:57.702682899Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T01:42:57.702682899Z",
+  "labels": [
+    "decision",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.104.11",
+      "depends_on_id": "mimid-1wgh.37.104",
+      "type": "parent-child",
+      "created_at": "2026-11-26T01:42:57.950094297Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

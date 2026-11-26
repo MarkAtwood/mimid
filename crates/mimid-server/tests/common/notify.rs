@@ -103,6 +103,20 @@ pub struct Provider {
 
 impl Provider {
     pub async fn start(own_domain: &str) -> Self {
+        let base = |url: &str| BaseUrl::try_from(url.to_owned()).unwrap();
+        Self::start_with_peers(
+            own_domain,
+            BTreeMap::from([
+                (domain_of("a.example"), base("https://mimi.a.example")),
+                (domain_of("c.example"), base("https://mimi.c.example")),
+            ]),
+        )
+        .await
+    }
+
+    /// [`Provider::start`] with `peers` as its peer map, so a test can
+    /// point a hub domain at a local server.
+    pub async fn start_with_peers(own_domain: &str, peers: BTreeMap<Domain, BaseUrl>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mimid.sqlite");
         let own = domain_of(own_domain);
@@ -111,11 +125,6 @@ impl Provider {
         let hub = Hub::open(store.clone(), own.clone(), clock.clone())
             .await
             .unwrap();
-        let base = |url: &str| BaseUrl::try_from(url.to_owned()).unwrap();
-        let peers = BTreeMap::from([
-            (domain_of("a.example"), base("https://mimi.a.example")),
-            (domain_of("c.example"), base("https://mimi.c.example")),
-        ]);
         let follower = Follower::new(own.clone(), store.clone(), clock)
             .with_peers(PeerClient::new(&own, peers).unwrap());
         let db = connect(&path).await;

@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.104.10",
+  "title": "decision: an unfillable gap is not asked about again",
+  "description": "INVENTED, NOT FROM SPEC. Mark decided 2026-11-25.\n\n## The question\n\nA hub answers 410 when the range asked for is older than it holds\n(docs/design/mimi-catchup.md §5.1). Stage C recorded that, but fill_gap\ndid not read the flag, so the next fill asked again and got 410 again.\n\n## The readings\n\n1. Return at once for a gap already known unfillable, keeping both the\n   flag and which sequence is missing. Chosen.\n2. Clear gap_from as well: the gap is resolved by giving up, so the room\n   is no longer \"behind by a known amount\".\n3. Keep asking.\n\n## Why 1\n\nRetention only ever deletes. A range a hub has dropped cannot come back,\nso a repeat request cannot succeed -- not now and not later. Asking\nagain is a request that is known in advance to fail.\n\nReading 2 was rejected because which sequence is missing is the useful\npart of the record: an operator asking why a room's clients resynced\nwants the hole's position, and nothing else keeps it. The room being\npermanently \"behind by a known amount\" is not misleading, it is true.\n\n## Consequences\n\n- Store::follower_position's `unfillable` is read before anything is\n  asked, so the flag is load-bearing and not only a diagnostic.\n- A hub that restored history from a backup would not be picked up.\n  Accepted: that is not a thing retention does.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T01:42:43.405633094Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T01:42:43.405633094Z",
+  "labels": [
+    "decision",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.104.10",
+      "depends_on_id": "mimid-1wgh.37.104",
+      "type": "parent-child",
+      "created_at": "2026-11-26T01:42:44.09183746Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

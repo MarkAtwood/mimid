@@ -1,0 +1,4 @@
+{"id":"01a2157c-8c1f-7734-baff-5c9640d1c74f","issue_id":"mimid-1wgh.37.104.8","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-26T01:33:33.599473039Z"}
+{"id":"01a2157c-8c25-7e46-b64a-b9a6b41c1816","issue_id":"mimid-1wgh.37.104.8","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: decision","created_at":"2026-11-26T01:33:33.605936371Z"}
+{"id":"01a2157c-8c2c-7e1c-b53e-ffc769276098","issue_id":"mimid-1wgh.37.104.8","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: wg","created_at":"2026-11-26T01:33:33.612925934Z"}
+{"id":"01a2157c-a7e4-7da4-8fb2-a91a4cddee16","issue_id":"mimid-1wgh.37.104.8","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Decided and implemented: an unfillable gap counts once against follower_room.gone, so a client's /changes refuses and it resyncs. Code points at this bead.","created_at":"2026-11-26T01:33:40.708894563Z"}

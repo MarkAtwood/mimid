@@ -2055,6 +2055,7 @@ async fn a_pushed_message_state_already_shows_the_message() {
         .deliver(
             common::ROOM_ID,
             &common_notify::application_fanout(common_notify::T2, common_notify::APPLICATION_1),
+            0,
         )
         .await
         .unwrap();

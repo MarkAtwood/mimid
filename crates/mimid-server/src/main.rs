@@ -297,6 +297,13 @@ async fn main() -> anyhow::Result<()> {
         )
         .spawn()
     });
+    // Decision mimid-1wgh.37.104.11: a follower cannot tell from its own
+    // state that it missed a room's MOST RECENT fanout, because nothing
+    // later arrives to reveal the jump. The probe asks. It runs once at
+    // once, for a provider that was down, and then on its interval, for
+    // one that never restarts.
+    let _catch_up_probe = (config.catch_up_probe_secs > 0)
+        .then(|| follower.spawn_probe(Duration::from_secs(config.catch_up_probe_secs)));
     // Clean-room finding C6: idle signature keys are unbound; the sweep
     // runs until exit.
     let _idle_client_sweep = config.client_idle_unbind_secs.seconds().map(|seconds| {
