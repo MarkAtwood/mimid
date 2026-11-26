@@ -19,6 +19,8 @@ pub(crate) struct HubSigningKey {
     pair: label::SignatureKeyPair,
     public: [u8; 32],
     hub_key: HubKey,
+    hpke_private: label::HpkePrivateKey,
+    hpke_public: Vec<u8>,
 }
 
 impl HubSigningKey {
@@ -42,11 +44,41 @@ impl HubSigningKey {
             &stored.signature_public_key,
         )
         .map_err(|_| HubError::CorruptHubSecret)?;
+        // The HPKE pair for reading SemiPrivateMessage handshakes as an
+        // external receiver (semiprivatemessage-08 §3). One pair for the
+        // whole hub, in the same row (decision mimid-1wgh.4.79.7); its
+        // columns are nullable, so a hub that started before migration
+        // 0024 gets one here on its next start.
+        let hpke = store
+            .hub_hpke_key_or_insert(|| {
+                let (private, public) =
+                    label::HpkePrivateKey::generate().map_err(|_| HubError::KeyGeneration)?;
+                Ok::<_, HubError>(crate::store::StoredHpkeKey {
+                    private_key: <[u8; 32]>::try_from(private.expose_private_key())
+                        .map_err(|_| HubError::CorruptHubSecret)?,
+                    public_key: public,
+                })
+            })
+            .await?;
         Ok(Self {
             pair,
             public: stored.signature_public_key,
             hub_key: HubKey::new(stored.hub_key),
+            hpke_private: label::HpkePrivateKey::from_raw(&hpke.private_key),
+            hpke_public: hpke.public_key,
         })
+    }
+
+    /// The hub's HPKE public key, which a room's `external_receivers`
+    /// must name for the hub to read its SemiPrivateMessage handshakes.
+    pub(crate) fn hpke_public(&self) -> &[u8] {
+        &self.hpke_public
+    }
+
+    /// The hub's HPKE private key, for unsealing its copy of a message's
+    /// per-message keys (§3.3).
+    pub(crate) fn hpke_private(&self) -> &label::HpkePrivateKey {
+        &self.hpke_private
     }
 
     /// The 32-byte Ed25519 public key.
@@ -162,6 +194,8 @@ mod tests {
             .unwrap(),
             public: secret.signature_public_key,
             hub_key: HubKey::new(secret.hub_key),
+            hpke_private: label::HpkePrivateKey::from_raw(&[0x5a; 32]),
+            hpke_public: vec![0xa5; 32],
         };
         for text in [format!("{key:?}"), format!("{secret:?}")] {
             let private = format!("{:?}", secret.signature_private_key);

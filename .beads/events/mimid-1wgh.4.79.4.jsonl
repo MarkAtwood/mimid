@@ -1,3 +1,4 @@
 {"id":"01a219ee-d387-71c0-a9f8-1cd72abd5aa7","issue_id":"mimid-1wgh.4.79.4","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-26T22:16:51.847115501Z"}
 {"id":"01a219ee-d389-7bbf-98d0-f15bcf83f84a","issue_id":"mimid-1wgh.4.79.4","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: decision","created_at":"2026-11-26T22:16:51.849770345Z"}
 {"id":"01a219ee-d38c-72b7-aedc-3fc9b7555aaa","issue_id":"mimid-1wgh.4.79.4","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: feature","created_at":"2026-11-26T22:16:51.852178608Z"}
+{"id":"01a21a2d-98ab-7a2c-90d9-3b1bf4235dde","issue_id":"mimid-1wgh.4.79.4","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Closed","created_at":"2026-11-26T23:25:25.547667879Z"}

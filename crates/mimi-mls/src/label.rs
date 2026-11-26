@@ -238,6 +238,13 @@ impl HpkePrivateKey {
 
     /// The 32-byte X25519 private key `private_key`. It is not checked
     /// here: a malformed key fails at decryption.
+    /// The X25519 private key, for storing the pair so
+    /// [`HpkePrivateKey::from_raw`] can load it again. Nothing else needs
+    /// it: decrypt with [`HpkePrivateKey::decrypt_with_label`].
+    pub fn expose_private_key(&self) -> &[u8] {
+        &self.private_key
+    }
+
     pub fn from_raw(private_key: &[u8]) -> Self {
         Self {
             private_key: Zeroizing::new(private_key.to_vec()),

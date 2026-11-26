@@ -1,0 +1,28 @@
+{
+  "id": "mimid-1wgh.4.79.8",
+  "title": "a semiprivate room needs component 0x0007 listed and supported",
+  "description": "Found while testing the hub's external_receivers check (bead\nmimid-1wgh.4.79.2), 2026-11-26. Two red runs in a row, each a different\nhalf of the same rule.\n\nBecause `external_receivers` is a component (decision mimid-1wgh.4.79.4)\nrather than a GroupContext extension, mls-extensions-11 §5 applies to it\nin full. A room that uses SemiPrivateMessage handshakes therefore needs\nboth of:\n\n1. `0x0007` in the group's `app_components` list, or the component\n   carries no data -- `ComponentNotListed(7)`.\n2. `0x0007` in the `app_components` capability of every member's leaf,\n   including every leaf added later, or the Commit is invalid --\n   `MissingAppComponent(7)`.\n\nNeither is a rule mimid invented; both fall out of §5, and mimid's own\ncomponent machinery enforces them already. What is worth writing down is\nthe consequence, which the draft does not mention: a room cannot turn\nsemiprivate handshakes on later without every member first updating its\nleaf to declare the component. The members have to support it before the\nroom can list it.\n\nThat ordering is a deployment constraint on anyone using this draft, and\na candidate for item 8 of bead mimid-1wgh.44.22: the draft says how to\nsend and read a SemiPrivateMessage and never says that the component\nitself has to be negotiated first.\n\nThe hub does not need to check either one. A group that fails them\ncannot produce a valid Commit, so the state never reaches the hub.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T23:25:19.086087058Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T23:25:25.896108401Z",
+  "closed_at": "2026-11-26T23:25:25.896108401Z",
+  "close_reason": "Closed",
+  "labels": [
+    "decision",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.79.8",
+      "depends_on_id": "mimid-1wgh.4.79",
+      "type": "parent-child",
+      "created_at": "2026-11-26T23:25:19.144923198Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -91,7 +91,7 @@ pub use semiprivate::{
     EXTERNAL_RECEIVERS_COMPONENT, ExternalReceiver, ExternalReceiverRef, ExternalReceivers,
     KeyForExternalReceiver, MAX_EXTERNAL_RECEIVERS, MAX_LISTED_EXTERNAL_RECEIVERS,
     PerMessageKeyAndNonces, RECEIVER_LABEL, SemiPrivateContentAAD, SemiPrivateMessage,
-    SemiPrivateMessageContent, SemiPrivateMessageContext,
+    SemiPrivateMessageContent, SemiPrivateMessageContext, UnsealError,
 };
 
 /// A reader that keeps a copy of every byte read through it.

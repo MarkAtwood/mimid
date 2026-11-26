@@ -209,6 +209,10 @@ pub struct GroupSpec {
     /// The encoded `safe_aad` component (a `ComponentsList` of the required
     /// Safe AAD components), if any.
     pub safe_aad: Option<Vec<u8>>,
+    /// The encoded `external_receivers` component
+    /// (semiprivatemessage-08 §3), if any. `None` is a room whose
+    /// members send ordinary handshakes, which is every room today.
+    pub external_receivers: Option<Vec<u8>>,
 }
 
 impl GroupSpec {
@@ -222,6 +226,9 @@ impl GroupSpec {
             participant_list: Some(participant_list(&[ALICE, BOB])),
             base_room_policy: Some(base_room_policy()),
             safe_aad: Some(FRANK_AAD_ONLY.to_vec()),
+            // No external_receivers: every room today sends ordinary
+            // handshakes (semiprivatemessage-08 is bead mimid-1wgh.4.79).
+            external_receivers: None,
         }
     }
 }
@@ -237,8 +244,23 @@ pub struct BuiltGroup {
 /// alice creates `group_id` per `spec` and commits an Add of bob, giving
 /// the GroupInfo and tree of epoch 1.
 pub fn build_group(spec: &GroupSpec, group_id: &[u8]) -> BuiltGroup {
-    let alice = Identity::generate(ALICE, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
-    let bob = Identity::generate(BOB, mimi_mls::Store::open_in_memory().unwrap()).unwrap();
+    // Every leaf must declare support for each component the group lists
+    // (mls-extensions-11 §5), so a room with external_receivers needs its
+    // members to support 0x0007 as well.
+    let extra: &[u16] = if spec.external_receivers.is_some() {
+        &[mimi_mls::wire::EXTERNAL_RECEIVERS_COMPONENT]
+    } else {
+        &[]
+    };
+    let alice = Identity::generate_with_components(
+        ALICE,
+        mimi_mls::Store::open_in_memory().unwrap(),
+        extra,
+    )
+    .unwrap();
+    let bob =
+        Identity::generate_with_components(BOB, mimi_mls::Store::open_in_memory().unwrap(), extra)
+            .unwrap();
     let senders: Vec<_> = spec
         .external_senders
         .iter()
@@ -248,7 +270,18 @@ pub fn build_group(spec: &GroupSpec, group_id: &[u8]) -> BuiltGroup {
         })
         .collect();
     // The room lists its components (mls-extensions-11 §5).
-    let mut components = vec![(APP_COMPONENTS, ROOM_APP_COMPONENTS.to_vec())];
+    // mls-extensions-11 §5: a component may carry data only if the group
+    // lists it, so a room with external_receivers declares 0x0007 too.
+    let app_components = if spec.external_receivers.is_some() {
+        let mut ids = ROOM_APP_COMPONENTS[1..].to_vec();
+        ids.extend(mimi_mls::wire::EXTERNAL_RECEIVERS_COMPONENT.to_be_bytes());
+        let mut listed = vec![u8::try_from(ids.len()).unwrap()];
+        listed.extend(ids);
+        listed
+    } else {
+        ROOM_APP_COMPONENTS.to_vec()
+    };
+    let mut components = vec![(APP_COMPONENTS, app_components)];
     if let Some(data) = &spec.safe_aad {
         components.push((SAFE_AAD, data.clone()));
     }
@@ -260,6 +293,9 @@ pub fn build_group(spec: &GroupSpec, group_id: &[u8]) -> BuiltGroup {
     }
     if let Some(data) = &spec.base_room_policy {
         components.push((BASE_ROOM_POLICY, data.clone()));
+    }
+    if let Some(data) = &spec.external_receivers {
+        components.push((mimi_mls::wire::EXTERNAL_RECEIVERS_COMPONENT, data.clone()));
     }
     let mut group = Member::create(&alice, group_id, &senders, &components).unwrap();
     let key_package = bob.key_package(KeyPackageKind::OneTime).unwrap();

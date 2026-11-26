@@ -88,6 +88,99 @@ impl Store {
     }
 }
 
+/// The hub's HPKE key pair, for reading SemiPrivateMessage handshakes as
+/// an external receiver (semiprivatemessage-08 §3).
+///
+/// One pair for the whole hub (decision mimid-1wgh.4.79.7). `Debug`
+/// prints only the public key.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StoredHpkeKey {
+    /// The X25519 private key.
+    pub private_key: [u8; 32],
+    /// The X25519 public key, which goes in a room's
+    /// `external_receivers`.
+    pub public_key: Vec<u8>,
+}
+
+impl std::fmt::Debug for StoredHpkeKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredHpkeKey")
+            .field("public_key", &self.public_key)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Store {
+    /// Returns the hub's HPKE key pair, storing `generate()`'s result
+    /// first if there is none.
+    ///
+    /// Kept apart from [`Store::hub_secret`] rather than added to
+    /// [`StoredHubSecret`] because the columns are nullable: a row
+    /// written before migration 0024 has the signature and franking keys
+    /// and no HPKE pair, and every existing caller of `hub_secret` would
+    /// otherwise have to carry an `Option` it has no use for.
+    ///
+    /// # Errors
+    ///
+    /// Returns `generate`'s error, [`StoreError::Sqlx`] if a query fails,
+    /// and [`StoreError::Corrupt`] if a stored key has the wrong length.
+    pub async fn hub_hpke_key_or_insert<E>(
+        &self,
+        generate: impl FnOnce() -> Result<StoredHpkeKey, E>,
+    ) -> Result<StoredHpkeKey, E>
+    where
+        E: From<StoreError>,
+    {
+        if let Some(stored) = self.hub_hpke_key().await? {
+            return Ok(stored);
+        }
+        let fresh = generate()?;
+        // The row exists whenever the hub has started once, so this is an
+        // UPDATE of its null columns rather than an insert. The WHERE
+        // keeps a concurrent first start from overwriting the pair that
+        // won: whichever UPDATE runs second changes nothing, and both
+        // read the winner back below.
+        sqlx::query(
+            "UPDATE hub_secret SET hpke_private_key = ?, hpke_public_key = ? \
+             WHERE id = 1 AND hpke_private_key IS NULL",
+        )
+        .bind(fresh.private_key.as_slice())
+        .bind(fresh.public_key.as_slice())
+        .execute(&self.pool)
+        .await
+        .map_err(StoreError::from)?;
+        Ok(self.hub_hpke_key().await?.ok_or(StoreError::Corrupt(
+            "hub_secret has no row for the HPKE key",
+        ))?)
+    }
+
+    /// Returns the hub's HPKE key pair, if one is stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Sqlx`] if the query fails, and
+    /// [`StoreError::Corrupt`] if the stored private key is not 32 bytes.
+    pub async fn hub_hpke_key(&self) -> Result<Option<StoredHpkeKey>, StoreError> {
+        // Both columns are null together or set together, so the WHERE
+        // does the unwrapping: a row here is a stored pair.
+        let row: Option<(Vec<u8>, Vec<u8>)> = sqlx::query_as(
+            "SELECT hpke_private_key, hpke_public_key FROM hub_secret \
+             WHERE id = 1 AND hpke_private_key IS NOT NULL \
+             AND hpke_public_key IS NOT NULL",
+        )
+        .fetch_optional(&self.reader)
+        .await?;
+        let Some((private, public)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(StoredHpkeKey {
+            private_key: <[u8; 32]>::try_from(private)
+                .map_err(|_| StoreError::Corrupt("hpke_private_key is not 32 bytes"))?,
+            public_key: public,
+        }))
+    }
+}
+
 impl Store {
     /// Returns this server's request-signing seed (bead mimid-75nk.1),
     /// storing `generate()`'s result first if there is none.
@@ -129,5 +222,106 @@ impl Store {
         Ok(read(self.clone()).await?.ok_or(StoreError::Corrupt(
             "provider_signing_key row missing after insert",
         ))?)
+    }
+}
+
+#[cfg(test)]
+mod hpke_tests {
+    use super::*;
+    use crate::config::Domain;
+
+    async fn store() -> (Store, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let domain = Domain::try_from("a.example".to_owned()).unwrap();
+        let store = Store::open(&dir.path().join("mimid.sqlite"), &domain)
+            .await
+            .unwrap();
+        (store, dir)
+    }
+
+    fn pair(byte: u8) -> StoredHpkeKey {
+        StoredHpkeKey {
+            private_key: [byte; 32],
+            public_key: vec![byte ^ 0xff; 32],
+        }
+    }
+
+    /// The pair is generated once and read back after that: a second
+    /// call must not mint a new one, or the key in every room's
+    /// external_receivers would stop matching what the hub holds.
+    #[tokio::test]
+    async fn the_hpke_pair_is_generated_once_and_kept() {
+        let (store, _dir) = store().await;
+        // The row has to exist: the HPKE columns are nullable additions
+        // to it, not a row of their own.
+        store
+            .hub_secret_or_insert(|| {
+                Ok::<_, StoreError>(StoredHubSecret {
+                    signature_private_key: [1; 32],
+                    signature_public_key: [2; 32],
+                    hub_key: [3; 32],
+                })
+            })
+            .await
+            .unwrap();
+
+        let first = store
+            .hub_hpke_key_or_insert(|| Ok::<_, StoreError>(pair(0xaa)))
+            .await
+            .unwrap();
+        assert_eq!(first.private_key, [0xaa; 32]);
+
+        let second = store
+            .hub_hpke_key_or_insert(|| -> Result<StoredHpkeKey, StoreError> {
+                panic!("generate must not run again")
+            })
+            .await
+            .unwrap();
+        assert_eq!(second, first, "the stored pair is read back");
+    }
+
+    /// A hub that started before migration 0024 has the row, with the
+    /// HPKE columns null. That is the case this accessor exists for, and
+    /// filling them must not disturb the secrets already there.
+    #[tokio::test]
+    async fn a_row_from_before_the_migration_is_filled_in_place() {
+        let (store, _dir) = store().await;
+        let before = store
+            .hub_secret_or_insert(|| {
+                Ok::<_, StoreError>(StoredHubSecret {
+                    signature_private_key: [7; 32],
+                    signature_public_key: [8; 32],
+                    hub_key: [9; 32],
+                })
+            })
+            .await
+            .unwrap();
+        assert!(
+            store.hub_hpke_key().await.unwrap().is_none(),
+            "no pair until one is asked for"
+        );
+
+        store
+            .hub_hpke_key_or_insert(|| Ok::<_, StoreError>(pair(0xbb)))
+            .await
+            .unwrap();
+
+        let after = store.hub_secret().await.unwrap().expect("still there");
+        assert_eq!(after, before, "the other secrets are untouched");
+    }
+
+    /// Debug must not print the private key: `store::keys` is the one
+    /// module whose whole content is secret material.
+    #[test]
+    fn debug_redacts_the_private_key() {
+        let printed = format!("{:?}", pair(0x5a));
+        assert!(
+            !printed.contains("90, 90"),
+            "the private key must not appear: {printed}"
+        );
+        assert!(
+            printed.contains("public_key"),
+            "the public key may: {printed}"
+        );
     }
 }

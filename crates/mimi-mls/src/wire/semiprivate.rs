@@ -683,3 +683,91 @@ impl SemiPrivateMessage {
             .find(|key| key.external_receiver_ref.as_slice() == reference)
     }
 }
+
+/// Why an external receiver could not read a [`SemiPrivateMessage`].
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum UnsealError {
+    /// The message carries no entry for this receiver. A sender is free
+    /// to leave one out; the receiver simply cannot read the message.
+    #[error("the message has no entry for this receiver")]
+    NotAddressed,
+    /// The HPKE decryption failed: the wrong private key, or a
+    /// ciphertext built under a different context.
+    #[error("the sealed keys did not decrypt")]
+    Decrypt,
+    /// The sealed payload is not a `PerMessageKeyAndNonces`.
+    #[error("the sealed keys are malformed")]
+    Malformed(#[source] tls_codec::Error),
+    /// `partial_context_hash` in the frame does not match the hash of
+    /// the keys that came out of it (semiprivatemessage-08 §3.1;
+    /// decision mimid-1wgh.4.79.6).
+    ///
+    /// The frame's copy is what builds the HPKE context, so a sender
+    /// cannot change it without the decryption failing. This catches the
+    /// remaining case: a sender whose sealed `sender_leaf_index` or
+    /// `nonce` disagrees with the hash it committed to.
+    #[error("partial_context_hash does not match the sealed keys")]
+    ContextHashMismatch,
+}
+
+impl ExternalReceiver {
+    /// `ExternalReceiverRef = hash(ExternalReceiver)`
+    /// (semiprivatemessage-08 §3), over this entry's TLS encoding with
+    /// the group's ciphersuite hash.
+    ///
+    /// # Errors
+    ///
+    /// [`tls_codec::Error`] if the entry cannot be encoded or the hash
+    /// fails.
+    pub fn reference(&self) -> Result<Vec<u8>, tls_codec::Error> {
+        let encoded = self.tls_serialize_detached()?;
+        crate::label::hash(&encoded)
+            .map_err(|_| tls_codec::Error::EncodingError("the ciphersuite hash failed".to_owned()))
+    }
+}
+
+impl SemiPrivateMessage {
+    /// Unseals this message's per-message keys for the external receiver
+    /// `reference`, whose private key is `private_key`
+    /// (semiprivatemessage-08 §3.1).
+    ///
+    /// The keys returned open [`SemiPrivateMessage::ciphertext`]; the
+    /// nonce to use is [`PerMessageKeyAndNonces::guarded_nonce`].
+    ///
+    /// # Errors
+    ///
+    /// See [`UnsealError`]. A failure is never a reason to treat the
+    /// group as broken: a member may address a message to a different
+    /// set of receivers.
+    pub fn unseal_keys(
+        &self,
+        reference: &[u8],
+        private_key: &crate::label::HpkePrivateKey,
+    ) -> Result<PerMessageKeyAndNonces, UnsealError> {
+        let entry = self.key_for(reference).ok_or(UnsealError::NotAddressed)?;
+        let context = self
+            .context()
+            .tls_serialize_detached()
+            .map_err(UnsealError::Malformed)?;
+        let (kem_output, ciphertext) = entry
+            .encrypted_keys_and_nonces
+            .parts()
+            .map_err(UnsealError::Malformed)?;
+        let opened = private_key
+            .decrypt_with_label(RECEIVER_LABEL, &context, &kem_output, &ciphertext)
+            .map_err(|_| UnsealError::Decrypt)?;
+        let keys = PerMessageKeyAndNonces::tls_deserialize_exact(&opened)
+            .map_err(UnsealError::Malformed)?;
+        // The frame's partial_context_hash built the context above, so it
+        // is already authenticated. What is not is whether the sealed
+        // index and nonce are the ones it hashes to.
+        let recomputed = keys
+            .partial_context_hash()
+            .map_err(UnsealError::Malformed)?;
+        if recomputed != self.partial_context_hash.as_slice() {
+            return Err(UnsealError::ContextHashMismatch);
+        }
+        Ok(keys)
+    }
+}

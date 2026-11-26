@@ -1,0 +1,28 @@
+{
+  "id": "mimid-1wgh.4.79.7",
+  "title": "decision: one HPKE external-receiver key per hub, not per room",
+  "description": "Mark 2026-11-26. For bead mimid-1wgh.4.79.2: the hub publishes an HPKE\npublic key in each room's external_receivers (semiprivatemessage-08 §3),\nand that key has to come from somewhere.\n\n## The readings\n\n1. One key pair per hub, stored beside the signature key and the\n   franking key in `hub_secret`. Chosen.\n2. One key pair per room, stored in the `room` row.\n\n## Why per hub\n\nThe hub is one party with one identity. Its entry in a room's\nexternal_receivers is `{ HPKEPublicKey, Credential }`, and the Credential\nis the hub's; a different public key per room under the same Credential\nsays nothing new about who is reading.\n\nThe compartment per-room keys would buy is illusory here. Every private\nkey lives unencrypted in the same SQLite file -- `store::keys` says so\nin its own Limitations -- so a leak that exposes one room's key exposes\nthem all. Per-room keys would be compartments inside one box, paid for\nwith a key pair, a column and an AppDataUpdate per room.\n\nPer hub also matches what is already there: one signature key pair and\none franking HMAC key for the whole hub, in one row.\n\n## What this gives up, stated\n\nA single key for every room means one compromise reads every room's\nhandshakes rather than one room's. That is the same exposure the\nfranking key already has, and the same exposure the signature key has,\nso it does not widen the blast radius of a hub compromise -- a hub that\nleaks its database has lost its rooms anyway.\n\nIf per-room keys are ever wanted, the migration is additive: a nullable\ncolumn on `room`, with the hub key as the fallback for rooms that have\nnone.\n\n## Consequences\n\n- `hub_secret` gains `hpke_private_key` and `hpke_public_key`, generated\n  with the other secrets on first use.\n- `StoredHubSecret`'s Debug keeps printing only public material.\n- Rotating the key means an AppDataUpdate per room, which is work this\n  decision does not do and bead mimid-1wgh.4.79.2 does not need.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T23:04:44.862979241Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T23:25:25.819297246Z",
+  "closed_at": "2026-11-26T23:25:25.819297246Z",
+  "close_reason": "Closed",
+  "labels": [
+    "decision",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.79.7",
+      "depends_on_id": "mimid-1wgh.4.79",
+      "type": "parent-child",
+      "created_at": "2026-11-26T23:04:44.923533917Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

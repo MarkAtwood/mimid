@@ -582,6 +582,54 @@ impl Hub {
         self.signing_key.public()
     }
 
+    /// The hub's HPKE public key, which a room's `external_receivers`
+    /// must name for the hub to read its SemiPrivateMessage handshakes
+    /// (semiprivatemessage-08 §3).
+    ///
+    /// The hub does not put itself there; the creating client does, from
+    /// this key.
+    pub fn hpke_public_key(&self) -> &[u8] {
+        self.signing_key.hpke_public()
+    }
+
+    /// The hub's own `ExternalReceiverRef`: the hash of its
+    /// `ExternalReceiver` entry (semiprivatemessage-08 §3), which is how
+    /// a sender names the hub's copy of a message's keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HubError::Encode`] if the entry cannot be encoded.
+    pub fn external_receiver_ref(&self) -> Result<Vec<u8>, HubError> {
+        room::hub_receiver_entry(self.signing_key.hpke_public(), &self.domain)?
+            .reference()
+            .map_err(HubError::Encode)
+    }
+
+    /// Unseals the hub's copy of a SemiPrivateMessage's per-message keys
+    /// (semiprivatemessage-08 §3.1).
+    ///
+    /// The keys open the message's `ciphertext`; the nonce to use is
+    /// `PerMessageKeyAndNonces::guarded_nonce`. Verifying
+    /// `framed_content_tbs_hash` and the signature against the hub's
+    /// GroupContext (decision mimid-1wgh.4.79.5) is bead
+    /// mimid-1wgh.4.79.2's remaining half.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HubError::Encode`] if the hub's own entry cannot be
+    /// encoded, and [`HubError::Unseal`] if the message is not addressed
+    /// to the hub or does not decrypt. Neither is a reason to treat the
+    /// group as broken: a member may address a message elsewhere.
+    pub fn unseal_semiprivate(
+        &self,
+        message: &mimi_mls::wire::SemiPrivateMessage,
+    ) -> Result<mimi_mls::wire::PerMessageKeyAndNonces, HubError> {
+        let reference = self.external_receiver_ref()?;
+        message
+            .unseal_keys(&reference, self.signing_key.hpke_private())
+            .map_err(HubError::Unseal)
+    }
+
     /// The hub's TLS-encoded `ExternalSender` (RFC 9420 §12.1.8.1): its
     /// `SignaturePublicKey` followed by the BasicCredential whose identity
     /// is `mimi://<hub domain>` (decisions mimid-1wgh.6.35,
@@ -678,6 +726,7 @@ impl Hub {
         room::check_group(
             &observer,
             self.signing_key.public(),
+            self.signing_key.hpke_public(),
             &self.domain,
             creator,
             self.requirements,
@@ -1187,6 +1236,18 @@ pub enum HubError {
     /// mimid-1wgh.6.35).
     #[error("external_senders is not exactly the hub")]
     WrongExternalSenders,
+    /// `external_receivers` is present but malformed, or names anyone but
+    /// the hub (semiprivatemessage-08 §3; decision mimid-1wgh.4.79.4 for
+    /// why it is a component).
+    ///
+    /// A second external receiver would read every handshake of the room
+    /// with nothing in the room's policy saying who it is.
+    #[error("external_receivers is not exactly the hub")]
+    WrongExternalReceivers,
+    /// The hub could not read its copy of a SemiPrivateMessage's keys
+    /// (semiprivatemessage-08 §3.1).
+    #[error("the hub could not unseal the message's keys")]
+    Unseal(#[source] mimi_mls::wire::UnsealError),
     /// The group has no `franking_agent` component (decision
     /// mimid-1wgh.6.3).
     #[error("no franking_agent component")]

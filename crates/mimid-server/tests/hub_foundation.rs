@@ -822,3 +822,74 @@ async fn http_body_cap_is_enforced() {
     drop(hub);
     store.close().await;
 }
+
+/// A room may list the hub as an external receiver
+/// (semiprivatemessage-08 §3), and must list nobody else: a second
+/// receiver would read every handshake with nothing in the room's policy
+/// saying who it is.
+#[tokio::test]
+async fn create_room_checks_external_receivers() {
+    use mimi_mls::tls_codec::{Serialize as _, VLBytes};
+
+    fn receivers(entries: &[(Vec<u8>, &[u8])]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for (key, identity) in entries {
+            body.extend(VLBytes::new(key.clone()).tls_serialize_detached().unwrap());
+            // A BasicCredential, as hub_sender builds it.
+            body.extend([0x00, 0x01]);
+            body.extend(
+                VLBytes::new(identity.to_vec())
+                    .tls_serialize_detached()
+                    .unwrap(),
+            );
+        }
+        let mut out = VLBytes::new(body).tls_serialize_detached().unwrap();
+        // The component is the list alone; VLBytes gave it the <V> prefix
+        // an ExternalReceiver<V> vector carries.
+        out.truncate(out.len());
+        out
+    }
+
+    // The hub's own key and credential: accepted.
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let hub_key = hub.hpke_public_key().to_vec();
+    let group = build_group(
+        &GroupSpec {
+            external_receivers: Some(receivers(&[(hub_key.clone(), HUB_IDENTITY)])),
+            ..GroupSpec::valid_for(&hub)
+        },
+        b"group-receivers",
+    );
+    hub.create_room(ROOM_ID, ALICE, &group.group_info, &group.ratchet_tree)
+        .await
+        .expect("the hub as the only external receiver is allowed");
+    close_hub(store, hub).await;
+
+    // Someone else's key: refused.
+    for entries in [
+        vec![(vec![0x42; 32], HUB_IDENTITY)],
+        // The hub's key under another credential.
+        vec![(hub_key.clone(), &b"mimi://b.example"[..])],
+        // The hub plus a second receiver.
+        vec![
+            (hub_key.clone(), HUB_IDENTITY),
+            (vec![0x42; 32], HUB_IDENTITY),
+        ],
+        // Empty: a component that says nothing.
+        vec![],
+    ] {
+        let err = rejected(
+            |hub| GroupSpec {
+                external_receivers: Some(receivers(&entries)),
+                ..GroupSpec::valid_for(hub)
+            },
+            ALICE,
+        )
+        .await;
+        assert!(
+            matches!(err, HubError::WrongExternalReceivers),
+            "{entries:?} -> {err:?}"
+        );
+    }
+}

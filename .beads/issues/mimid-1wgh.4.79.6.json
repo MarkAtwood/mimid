@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.4.79.6",
   "title": "decision: partial_context_hash concatenates the TLS encodings, length prefix included",
   "description": "Mark 2026-11-26: guess the Right Thing and go with it. Item 5 of bead\nmimid-1wgh.44.22, held for posting to the author.\n\n## The ambiguity\n\nsemiprivatemessage-08 §3.1 L236:\n\n  partial_context_hash = hash(sender_leaf_index || nonce)\n\nBoth fields come from PerMessageKeyAndNonces, where they are\n`uint32 sender_leaf_index` and `opaque nonce\u003cV\u003e`. The draft does not say\nhow the concatenation is encoded. Two readings:\n\n1. The TLS encoding of each field: the index big-endian over four\n   octets, the nonce with its `\u003cV\u003e` length prefix.\n2. The raw values: the index big-endian over four octets, the nonce's\n   bytes alone.\n\n## Chosen: reading 1, the TLS encodings\n\nThe hash binds a decryption context, so it has to be injective over\n(index, nonce) pairs. Reading 2 is not: with the nonce's length dropped,\nthe input is a flat byte string, and a different (index, nonce) pair can\nproduce the same bytes whenever a nonce absorbs what looked like part of\nthe index -- the index is fixed-width here, so the collision needs a\ncrafted nonce, but nothing in the draft fixes the nonce's length, and a\ncontext hash that depends on no field being resizable is a sharp edge\nfor no gain.\n\nReading 1 is also what \"||\" over fields of a TLS struct conventionally\nmeans elsewhere in MLS: the encoded form, which is self-delimiting.\n\n## What mimid does\n\n`partial_context_hash` is `hash(PerMessageKeyAndNonces.sender_leaf_index\n|| PerMessageKeyAndNonces.nonce)` with each field serialized as\ntls_codec writes it: four octets big-endian, then the nonce's length\nprefix and its bytes. The hash is the group's ciphersuite hash, since\n§3.1 names no other and every other hash in the draft is the\nciphersuite's.\n\nAn external receiver that computes it the other way simply fails to\nverify, which is a visible failure rather than a silent one, so a wrong\nguess here costs interop and not security.\n\n## Still to put to the author\n\nBead mimid-1wgh.44.22 item 5 stays open: the draft should state the\nencoding. It should also say which hash, though the ciphersuite's is the\nonly reading that makes sense.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-26T22:43:32.584842563Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-26T22:43:32.584842563Z",
+  "updated_at": "2026-11-26T23:25:25.721506297Z",
+  "closed_at": "2026-11-26T23:25:25.721506297Z",
+  "close_reason": "Closed",
   "labels": [
     "decision",
     "feature"

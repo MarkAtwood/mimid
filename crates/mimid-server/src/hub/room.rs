@@ -61,6 +61,76 @@ pub(super) fn check_no_embedded_tree(group_info: &[u8]) -> Result<(), HubError> 
 /// BasicCredential (§5.3) whose identity is `mimi://<hub domain>`
 /// (decision mimid-1wgh.6.35). Concatenated, they are the hub's
 /// `ExternalSender` (§12.1.8.1).
+/// The hub's own entry in a room's `external_receivers`: its HPKE public
+/// key and its BasicCredential, encoded as semiprivatemessage-08 §3's
+/// `ExternalReceiver`.
+///
+/// The credential is the same one [`hub_sender`] builds, because it is
+/// the same party.
+pub(super) fn hub_receiver(
+    hub_hpke_public_key: &[u8],
+    domain: &Domain,
+) -> Result<Vec<u8>, HubError> {
+    let mut entry = VLBytes::new(hub_hpke_public_key.to_vec())
+        .tls_serialize_detached()
+        .map_err(HubError::Encode)?;
+    entry.extend(BASIC_CREDENTIAL_TYPE);
+    entry.extend(
+        VLBytes::new(format!("{MIMI_SCHEME_PREFIX}{domain}").into_bytes())
+            .tls_serialize_detached()
+            .map_err(HubError::Encode)?,
+    );
+    Ok(entry)
+}
+
+/// The hub's own `ExternalReceiver`, as the typed struct.
+///
+/// [`hub_receiver`] builds the same thing as bytes, for comparing against
+/// what a room lists; this is for taking its reference.
+pub(super) fn hub_receiver_entry(
+    hub_hpke_public_key: &[u8],
+    domain: &Domain,
+) -> Result<mimi_mls::wire::ExternalReceiver, HubError> {
+    let encoded = hub_receiver(hub_hpke_public_key, domain)?;
+    mimi_mls::wire::ExternalReceiver::tls_deserialize_exact(&encoded).map_err(HubError::Encode)
+}
+
+/// Checks a room's `external_receivers`, if it has one: the hub must be
+/// the only entry (semiprivatemessage-08 §3).
+///
+/// The hub does NOT put itself there. It is not a member of the group, so
+/// it cannot add a component; the creating client lists the hub's key,
+/// which it reads from the directory. This is the same shape as
+/// `external_senders`, where the hub also only checks that the creator
+/// named it.
+///
+/// Only the hub is allowed, because a second external receiver would read
+/// every handshake of the room without the hub knowing who it is, and
+/// nothing in the room's policy would say so. A room that wants one can
+/// say so when the draft says how.
+///
+/// A room with no `external_receivers` component is fine here: it is a
+/// room whose members send ordinary handshakes. Requiring the component
+/// when `mls_semiprivate_message` is in `required_wire_formats` (§3
+/// L173-179) needs the wire-format lists, which is bead
+/// mimid-1wgh.4.79.3.
+fn check_external_receivers(
+    observer: &Observer,
+    hub_hpke_public_key: &[u8],
+    domain: &Domain,
+) -> Result<(), HubError> {
+    let Some(bytes) = observer.component(mimi_mls::wire::EXTERNAL_RECEIVERS_COMPONENT) else {
+        return Ok(());
+    };
+    let receivers = mimi_mls::wire::ExternalReceivers::decode(bytes)
+        .map_err(|_| HubError::WrongExternalReceivers)?;
+    let expected = hub_receiver(hub_hpke_public_key, domain)?;
+    match receivers.as_slice() {
+        [only] if only.tls_serialize_detached().ok() == Some(expected) => Ok(()),
+        _ => Err(HubError::WrongExternalReceivers),
+    }
+}
+
 pub(super) fn hub_sender(
     hub_public_key: &[u8; 32],
     domain: &Domain,
@@ -113,6 +183,7 @@ pub(super) fn is_franked(observer: &Observer) -> Result<bool, HubError> {
 pub(super) fn check_group(
     observer: &Observer,
     hub_public_key: &[u8; 32],
+    hub_hpke_public_key: &[u8],
     domain: &Domain,
     creator: &[u8],
     requirements: HubRequirements,
@@ -133,6 +204,8 @@ pub(super) fn check_group(
     }
     let (key, credential) = hub_sender(hub_public_key, domain)?;
     let hub_sender = [key.as_slice(), credential.as_slice()].concat();
+
+    check_external_receivers(observer, hub_hpke_public_key, domain)?;
 
     let senders = observer
         .external_senders()

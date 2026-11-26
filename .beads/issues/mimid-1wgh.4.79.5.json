@@ -2,13 +2,15 @@
   "id": "mimid-1wgh.4.79.5",
   "title": "decision: the framed_content_tbs_hash check needs the GroupContext, like the signature",
   "description": "Mark 2026-11-26: guess the Right Thing and go with it. Item 2 of bead\nmimid-1wgh.44.22, which is held for posting to the author.\n\n## The ambiguity\n\nsemiprivatemessage-08 §3.3 L379-385, for an external receiver:\n\n  It verifies the padding consists of the appropriate number of zero\n  bytes, and verifies that the framed_content_tbs_hash is correct. If\n  the external receiver has a copy of the GroupContext, it verifies that\n  the signature in the FramedContentAuthData is valid.\n\nSo the hash check is unconditional and the signature check is\nconditional on holding the GroupContext. But FramedContentTBS embeds the\nGroupContext for a member sender (RFC 9420 §6.1), so\nhash(FramedContentTBS) cannot be computed without it either. As written\nthe first sentence asks for something the second sentence says you may\nnot be able to do.\n\n## Chosen: both checks are conditional on the GroupContext\n\nThe only self-consistent reading. A receiver without the GroupContext\ncan decrypt the content and check the padding, and can do neither hash\nnor signature; a receiver with it does all four.\n\nTaking the sentence literally instead -- hash always, signature\nsometimes -- would mean either that FramedContentTBS is to be hashed\nwithout its GroupContext, which is not the structure RFC 9420 §6.1\ndefines, or that an external receiver must always hold the GroupContext,\nwhich would make the signature sentence's condition dead text.\n\n## What mimid does\n\nThe hub holds group_info and the ratchet tree per room (`NewEvent`), so\nit can reconstruct the GroupContext and is never the receiver without\none. mimid therefore checks both the hash and the signature, always, and\na failure of either is a refusal and not a warning: §3.3's hash is the\nwhole mechanism that stops a sender encrypting one thing to the group\nand another to the hub, so a hub that skipped it would hold content the\nmembers never agreed to.\n\nThe conditional path is implemented and tested anyway, because the type\nis public and a caller that is not the hub may have no GroupContext.\n\n## Still to put to the author\n\nBead mimid-1wgh.44.22 item 2 stays open: §3.3 should make the hash check\nconditional in the same breath as the signature, or say that an external\nreceiver MUST hold the GroupContext and drop the condition from the\nsignature. Either fixes it; the current text cannot be followed as\nwritten.",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-26T22:17:07.11896945Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-26T22:17:07.11896945Z",
+  "updated_at": "2026-11-26T23:25:25.618049407Z",
+  "closed_at": "2026-11-26T23:25:25.618049407Z",
+  "close_reason": "Closed",
   "labels": [
     "decision",
     "feature"

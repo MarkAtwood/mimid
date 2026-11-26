@@ -112,6 +112,30 @@ opaque_wire_type! {
     HPKECiphertext => openmls::prelude::HpkeCiphertext
 }
 
+impl HPKECiphertext {
+    /// The `kem_output` and `ciphertext` of RFC 9420 §7.6, split out of
+    /// the verbatim encoding this type keeps.
+    ///
+    /// The type stores the bytes as received, because a signature or a
+    /// hash may cover them; this reads the two fields back out for the
+    /// HPKE call that needs them separately.
+    ///
+    /// # Errors
+    ///
+    /// [`tls_codec::Error`] if the stored bytes are not two `opaque <V>`
+    /// fields, which [`tls_codec::Deserialize`] has already ruled out
+    /// for a value that was decoded rather than built.
+    pub fn parts(&self) -> Result<(Vec<u8>, Vec<u8>), tls_codec::Error> {
+        let mut reader = self.as_bytes();
+        let kem_output = VLBytes::tls_deserialize(&mut reader)?;
+        let ciphertext = VLBytes::tls_deserialize(&mut reader)?;
+        if !reader.is_empty() {
+            return Err(tls_codec::Error::TrailingData);
+        }
+        Ok((kem_output.into(), ciphertext.into()))
+    }
+}
+
 opaque_wire_type! {
     /// RFC 9420 §7.2: `Capabilities`.
     Capabilities => openmls::prelude::Capabilities
