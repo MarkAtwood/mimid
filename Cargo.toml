@@ -41,16 +41,19 @@ toml = "1.1.8"
 # extension fix (decision mimid-1wgh.4.11) and a PublicGroup leaf-lifetime
 # opt-out, LeafNodeLifetimePolicy::Skip (decision mimid-1wgh.4.38), and
 # MlsGroup::set_leaf_node_lifetime_policy so members can use it too
-# (decision mimid-1wgh.4.56). Every openmls-family crate comes from the same
-# commit so they share one openmls_traits; all but openmls are unchanged.
+# (decision mimid-1wgh.4.56), and CommitIn and FramedContentAuthData exported
+# so a consumer can decode a structure that embeds a Commit it did not build
+# (semiprivatemessage-08 §3.1's SemiPrivateMessageContent; bead
+# mimid-1wgh.4.79.1). Every openmls-family crate comes from the same commit
+# so they share one openmls_traits; all but openmls are unchanged.
 [patch.crates-io]
-openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
-openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
-openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
-openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
-openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
-openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
-openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "f1680d98fa8879ba257dd4a80a6bacabab24a4d0" }
+openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
+openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
+openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
+openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
+openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
+openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
+openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
 
 # Line tables instead of full DWARF. A panic still names the file and
 # line, which is what a failing test needs, but a debugger can no longer

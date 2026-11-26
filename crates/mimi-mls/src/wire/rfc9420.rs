@@ -602,6 +602,37 @@ pub enum ContentType {
     Commit,
 }
 
+impl Size for ContentType {
+    fn tls_serialized_len(&self) -> usize {
+        1
+    }
+}
+
+impl Serialize for ContentType {
+    fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
+        let value: u8 = match self {
+            Self::Application => 1,
+            Self::Proposal => 2,
+            Self::Commit => 3,
+        };
+        value.tls_serialize(writer)
+    }
+}
+
+impl Deserialize for ContentType {
+    /// Decoding rejects `reserved(0)` and every value above `commit(3)`
+    /// with [`tls_codec::Error::UnknownValue`], since RFC 9420 §6 defines
+    /// no others and a sender using one is not speaking this protocol.
+    fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
+        match u8::tls_deserialize(bytes)? {
+            1 => Ok(Self::Application),
+            2 => Ok(Self::Proposal),
+            3 => Ok(Self::Commit),
+            other => Err(tls_codec::Error::UnknownValue(u64::from(other))),
+        }
+    }
+}
+
 impl From<openmls::framing::ContentType> for ContentType {
     fn from(content_type: openmls::framing::ContentType) -> Self {
         match content_type {

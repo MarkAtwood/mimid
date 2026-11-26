@@ -71,6 +71,7 @@
 mod app_data;
 mod ratchet_tree_options;
 mod rfc9420;
+mod semiprivate;
 
 use std::io::{self, Read, Write};
 
@@ -85,6 +86,10 @@ pub use rfc9420::{
     HPKEPublicKey, KeyPackage, KeyPackageError, KeyPackageRef, MAX_KEY_PACKAGE_LIFETIME_SECONDS,
     MLSMessage, ProposalRef, RequiredCapabilities, SignaturePublicKey, VerifiedKeyPackageInfo,
     Welcome, WireFormat,
+};
+pub use semiprivate::{
+    ExternalReceiverRef, KeyForExternalReceiver, MAX_EXTERNAL_RECEIVERS, SemiPrivateContentAAD,
+    SemiPrivateMessage, SemiPrivateMessageContent,
 };
 
 /// A reader that keeps a copy of every byte read through it.
