@@ -90,7 +90,8 @@ pub use rfc9420::{
 pub use semiprivate::{
     EXTERNAL_RECEIVERS_COMPONENT, ExternalReceiver, ExternalReceiverRef, ExternalReceivers,
     KeyForExternalReceiver, MAX_EXTERNAL_RECEIVERS, MAX_LISTED_EXTERNAL_RECEIVERS,
-    SemiPrivateContentAAD, SemiPrivateMessage, SemiPrivateMessageContent,
+    PerMessageKeyAndNonces, RECEIVER_LABEL, SemiPrivateContentAAD, SemiPrivateMessage,
+    SemiPrivateMessageContent, SemiPrivateMessageContext,
 };
 
 /// A reader that keeps a copy of every byte read through it.

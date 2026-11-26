@@ -526,3 +526,160 @@ impl Deserialize for ExternalReceivers {
         Ok(Self(list))
     }
 }
+
+/// semiprivatemessage-08 §3.1: `PerMessageKeyAndNonces`, the payload a
+/// sender seals to each external receiver.
+///
+/// ~~~text
+/// struct {
+///   opaque key<V>;
+///   opaque nonce<V>;
+///   opaque reuse_guard[4];
+///   uint32 sender_leaf_index;
+/// } PerMessageKeyAndNonces;
+/// ~~~
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PerMessageKeyAndNonces {
+    /// The AEAD key for this message's ciphertext.
+    pub key: VLBytes,
+    /// The AEAD nonce, before the `reuse_guard` is applied.
+    pub nonce: VLBytes,
+    /// Four octets XORed into the nonce's first four, as RFC 9420
+    /// §6.3.2 does for a PrivateMessage.
+    pub reuse_guard: [u8; 4],
+    /// Which leaf sent the message.
+    pub sender_leaf_index: u32,
+}
+
+impl PerMessageKeyAndNonces {
+    /// `hash(sender_leaf_index || nonce)` of §3.1, over the TLS
+    /// encodings of both fields.
+    ///
+    /// The draft does not say how the concatenation is encoded; decision
+    /// mimid-1wgh.4.79.6 takes the encoded form, length prefix included,
+    /// because a context hash has to be injective over (index, nonce)
+    /// pairs and the raw form is not.
+    ///
+    /// # Errors
+    ///
+    /// [`tls_codec::Error`] if either field cannot be encoded.
+    pub fn partial_context_hash(&self) -> Result<Vec<u8>, tls_codec::Error> {
+        let mut input = self.sender_leaf_index.tls_serialize_detached()?;
+        input.extend_from_slice(&self.nonce.tls_serialize_detached()?);
+        crate::label::hash(&input)
+            .map_err(|_| tls_codec::Error::EncodingError("the ciphersuite hash failed".to_owned()))
+    }
+
+    /// The nonce with the `reuse_guard` XORed into its first four
+    /// octets, which is what decrypts the ciphertext (RFC 9420 §6.3.2).
+    #[must_use]
+    pub fn guarded_nonce(&self) -> Vec<u8> {
+        let mut nonce = self.nonce.as_slice().to_vec();
+        for (byte, guard) in nonce.iter_mut().zip(self.reuse_guard) {
+            *byte ^= guard;
+        }
+        nonce
+    }
+}
+
+impl Size for PerMessageKeyAndNonces {
+    fn tls_serialized_len(&self) -> usize {
+        self.key.tls_serialized_len() + self.nonce.tls_serialized_len() + 4 + 4
+    }
+}
+
+impl Serialize for PerMessageKeyAndNonces {
+    fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
+        let mut written = self.key.tls_serialize(writer)? + self.nonce.tls_serialize(writer)?;
+        writer.write_all(&self.reuse_guard)?;
+        written += 4;
+        written += self.sender_leaf_index.tls_serialize(writer)?;
+        Ok(written)
+    }
+}
+
+impl Deserialize for PerMessageKeyAndNonces {
+    fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
+        let key = VLBytes::tls_deserialize(bytes)?;
+        let nonce = VLBytes::tls_deserialize(bytes)?;
+        let mut reuse_guard = [0u8; 4];
+        bytes.read_exact(&mut reuse_guard)?;
+        Ok(Self {
+            key,
+            nonce,
+            reuse_guard,
+            sender_leaf_index: u32::tls_deserialize(bytes)?,
+        })
+    }
+}
+
+/// semiprivatemessage-08 §3.1: `SemiPrivateMessageContext`, the HPKE
+/// context the per-message keys are sealed under.
+///
+/// ~~~text
+/// struct {
+///   opaque group_id<V>;
+///   uint64 epoch;
+///   opaque partial_context_hash<V>;
+/// } SemiPrivateMessageContext;
+/// ~~~
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SemiPrivateMessageContext {
+    /// The group.
+    pub group_id: VLBytes,
+    /// The epoch.
+    pub epoch: u64,
+    /// The hash of §3.1, which the frame also carries so a receiver can
+    /// build this context before decrypting anything.
+    pub partial_context_hash: VLBytes,
+}
+
+impl Size for SemiPrivateMessageContext {
+    fn tls_serialized_len(&self) -> usize {
+        self.group_id.tls_serialized_len()
+            + self.epoch.tls_serialized_len()
+            + self.partial_context_hash.tls_serialized_len()
+    }
+}
+
+impl Serialize for SemiPrivateMessageContext {
+    fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
+        Ok(self.group_id.tls_serialize(writer)?
+            + self.epoch.tls_serialize(writer)?
+            + self.partial_context_hash.tls_serialize(writer)?)
+    }
+}
+
+impl Deserialize for SemiPrivateMessageContext {
+    fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
+        Ok(Self {
+            group_id: VLBytes::tls_deserialize(bytes)?,
+            epoch: u64::tls_deserialize(bytes)?,
+            partial_context_hash: VLBytes::tls_deserialize(bytes)?,
+        })
+    }
+}
+
+/// The HPKE label §3.1 seals an external receiver's keys under.
+pub const RECEIVER_LABEL: &str = "SemiPrivateMessageReceiver";
+
+impl SemiPrivateMessage {
+    /// The HPKE context for this message, as §3.1 builds it.
+    #[must_use]
+    pub fn context(&self) -> SemiPrivateMessageContext {
+        SemiPrivateMessageContext {
+            group_id: self.group_id.clone(),
+            epoch: self.epoch,
+            partial_context_hash: self.partial_context_hash.clone(),
+        }
+    }
+
+    /// This message's entry for the external receiver `reference`, or
+    /// `None` if it carries none.
+    #[must_use]
+    pub fn key_for(&self, reference: &[u8]) -> Option<&KeyForExternalReceiver> {
+        self.keys_for_external_receivers
+            .iter()
+            .find(|key| key.external_receiver_ref.as_slice() == reference)
+    }
+}

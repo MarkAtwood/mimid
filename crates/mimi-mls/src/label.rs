@@ -269,6 +269,24 @@ impl std::fmt::Debug for HpkePrivateKey {
     }
 }
 
+/// The group ciphersuite's hash of `data`.
+///
+/// Used for the hashes draft-mahy-mls-semiprivatemessage names without
+/// saying which function: §3.1's `partial_context_hash` and
+/// `framed_content_tbs_hash`. The ciphersuite's is the only reading that
+/// makes sense, since every other hash in MLS is the ciphersuite's.
+///
+/// # Errors
+///
+/// Returns [`Error::Random`] if the provider's hash fails, which it does
+/// not for a supported ciphersuite.
+pub fn hash(data: &[u8]) -> Result<Vec<u8>, Error> {
+    use openmls_traits::crypto::OpenMlsCrypto;
+    RustCrypto::default()
+        .hash(CIPHERSUITE.hash_algorithm(), data)
+        .map_err(|e| Error::Random(e.into()))
+}
+
 /// Returns `N` bytes from OpenMLS's cryptographically secure random number
 /// generator, for example the 32 bytes of the hub's `hub_key`
 /// (protocol-07 §5.4.1.2).

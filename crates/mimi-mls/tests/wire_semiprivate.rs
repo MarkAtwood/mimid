@@ -10,6 +10,7 @@
 
 #![forbid(unsafe_code)]
 
+use mimi_mls::label::HpkePrivateKey;
 use mimi_mls::tls_codec::{Deserialize, Serialize, Size};
 use mimi_mls::wire::{
     ContentType, KeyForExternalReceiver, MAX_EXTERNAL_RECEIVERS, SemiPrivateMessage,
@@ -17,7 +18,8 @@ use mimi_mls::wire::{
 };
 use mimi_mls::wire::{
     EXTERNAL_RECEIVERS_COMPONENT, ExternalReceiver, ExternalReceivers,
-    MAX_LISTED_EXTERNAL_RECEIVERS,
+    MAX_LISTED_EXTERNAL_RECEIVERS, PerMessageKeyAndNonces, RECEIVER_LABEL,
+    SemiPrivateMessageContext,
 };
 
 /// Decode, compare the length, re-encode, and require the bytes back.
@@ -374,5 +376,169 @@ fn more_listed_receivers_than_the_cap_are_refused() {
     assert!(
         ExternalReceivers::decode(&list_of(MAX_LISTED_EXTERNAL_RECEIVERS + 1)).is_err(),
         "one past the cap is refused"
+    );
+}
+
+// --- the external receiver's unseal (§3.1, §3.3) ---
+
+/// A sender seals `PerMessageKeyAndNonces` to the receiver's key under
+/// the `SemiPrivateMessageReceiver` label and the message's context; the
+/// receiver gets the same bytes back.
+///
+/// This is real HPKE, not a fixture: the only way to show the context is
+/// built the same way on both sides is to seal with one and open with
+/// the other.
+#[test]
+fn an_external_receiver_unseals_the_per_message_keys() {
+    let (private, public) = HpkePrivateKey::generate().expect("a key pair");
+
+    let keys = PerMessageKeyAndNonces {
+        key: vec![0x11; 32].into(),
+        nonce: vec![0x22; 12].into(),
+        reuse_guard: [0xaa, 0xbb, 0xcc, 0xdd],
+        sender_leaf_index: 3,
+    };
+    let context = SemiPrivateMessageContext {
+        group_id: b"gid".to_vec().into(),
+        epoch: 7,
+        partial_context_hash: keys.partial_context_hash().expect("hashes").into(),
+    };
+
+    let sealed = mimi_mls::label::encrypt_with_label(
+        &public,
+        RECEIVER_LABEL,
+        &context.tls_serialize_detached().expect("context encodes"),
+        &keys.tls_serialize_detached().expect("keys encode"),
+    )
+    .expect("seals");
+
+    let opened = private
+        .decrypt_with_label(
+            RECEIVER_LABEL,
+            &context.tls_serialize_detached().expect("context encodes"),
+            &sealed.kem_output,
+            &sealed.ciphertext,
+        )
+        .expect("opens");
+    let recovered =
+        PerMessageKeyAndNonces::tls_deserialize_exact(&opened).expect("the payload decodes");
+    assert_eq!(recovered, keys, "the receiver recovers what was sealed");
+}
+
+/// Oracle: the label and the context both bind the ciphertext. A
+/// receiver using either the wrong label or a context from a different
+/// epoch must fail, or the seal would not be tied to this message.
+#[test]
+fn the_label_and_the_context_both_bind() {
+    let (private, public) = HpkePrivateKey::generate().expect("a key pair");
+    let keys = PerMessageKeyAndNonces {
+        key: vec![0x11; 32].into(),
+        nonce: vec![0x22; 12].into(),
+        reuse_guard: [0; 4],
+        sender_leaf_index: 1,
+    };
+    let context = SemiPrivateMessageContext {
+        group_id: b"gid".to_vec().into(),
+        epoch: 7,
+        partial_context_hash: keys.partial_context_hash().expect("hashes").into(),
+    };
+    let encoded = context.tls_serialize_detached().expect("encodes");
+    let sealed = mimi_mls::label::encrypt_with_label(
+        &public,
+        RECEIVER_LABEL,
+        &encoded,
+        &keys.tls_serialize_detached().expect("encodes"),
+    )
+    .expect("seals");
+
+    assert!(
+        private
+            .decrypt_with_label(
+                "SomeOtherLabel",
+                &encoded,
+                &sealed.kem_output,
+                &sealed.ciphertext
+            )
+            .is_err(),
+        "a different label must not open it"
+    );
+
+    let other_epoch = SemiPrivateMessageContext {
+        epoch: 8,
+        ..context
+    };
+    assert!(
+        private
+            .decrypt_with_label(
+                RECEIVER_LABEL,
+                &other_epoch.tls_serialize_detached().expect("encodes"),
+                &sealed.kem_output,
+                &sealed.ciphertext,
+            )
+            .is_err(),
+        "a context from another epoch must not open it"
+    );
+}
+
+/// The `reuse_guard` is XORed into the nonce's first four octets and the
+/// rest is untouched, as RFC 9420 §6.3.2 does for a PrivateMessage.
+#[test]
+fn the_reuse_guard_covers_four_octets() {
+    let keys = PerMessageKeyAndNonces {
+        key: vec![0; 32].into(),
+        nonce: vec![0xff; 12].into(),
+        reuse_guard: [0x0f, 0xf0, 0x00, 0xff],
+        sender_leaf_index: 0,
+    };
+    let guarded = keys.guarded_nonce();
+    assert_eq!(
+        &guarded[..4],
+        &[0xf0, 0x0f, 0xff, 0x00],
+        "the first four are XORed"
+    );
+    assert_eq!(&guarded[4..], &[0xff; 8], "the rest is unchanged");
+}
+
+/// Oracle: decision mimid-1wgh.4.79.6. The hash is over the TLS
+/// encodings, so the nonce's length is part of the input and a different
+/// split of the same bytes gives a different hash. Were the raw form
+/// used, these two would collide.
+#[test]
+fn the_context_hash_includes_the_nonce_length() {
+    let a = PerMessageKeyAndNonces {
+        key: vec![0; 32].into(),
+        nonce: vec![0x01, 0x02].into(),
+        reuse_guard: [0; 4],
+        sender_leaf_index: 0,
+    };
+    let b = PerMessageKeyAndNonces {
+        nonce: vec![0x01, 0x02, 0x03].into(),
+        ..a.clone()
+    };
+    assert_ne!(
+        a.partial_context_hash().expect("hashes"),
+        b.partial_context_hash().expect("hashes"),
+        "a longer nonce must hash differently"
+    );
+}
+
+/// A message's entry is found by the receiver's own reference, and a
+/// receiver not named in it gets nothing.
+#[test]
+fn a_receiver_finds_only_its_own_entry() {
+    let wire = message_wire(0x02);
+    let message = SemiPrivateMessage::decode(&wire).expect("decodes");
+    assert!(
+        message.key_for(&[0xaa, 0xbb, 0xcc, 0xdd]).is_some(),
+        "the named receiver finds its entry"
+    );
+    assert!(
+        message.key_for(&[0x00, 0x00, 0x00, 0x00]).is_none(),
+        "a receiver not named gets nothing"
+    );
+    assert_eq!(
+        message.context().partial_context_hash.as_slice(),
+        [0xbe, 0xef],
+        "the context takes the hash from the frame"
     );
 }
