@@ -493,87 +493,20 @@ one (`Agent::devices`, `Agent::forget_device`, `Store::devices`,
 they share; the IRC service has `devices` and `forget-device <id>`.
 The JMAP Chat front end has no notion of devices.
 
-### A6. The caught-up point is implicit
+### Nothing proposed (A6 to A12)
 
-**Gap.** Air sends `QueueEmpty` after the backlog, so a client can
-process a batch and show "up to date". JMAP has this already:
-`Message/changes` with `hasMoreChanges: false`. mimid's stream has the
-`Subscribe` `Ack`.
+Recorded so the list is complete: Air has a mechanism, and nothing in
+the draft or in mimid changes because of it.
 
-**Proposed text.** No change.
-
-### A7. One listener per client, and what ends a listen
-
-**Gap.** Air's `Listen` defines its endings: half-close then `OK`
-means acks are durable; a newer listener evicts the older with
-`ABORTED`; shutdown is `UNAVAILABLE`. The draft's push is EventSource,
-where the client keeps its position and nothing is acked, so there is
-nothing to make durable.
-
-**Proposed text.** No change for JMAP. Worth copying in a gRPC binding
-(§6).
-
-### A8. Client software version policy
-
-**Gap.** Air refuses expired client versions and warns in advance
-(`VersionStatus.expires_at`). The draft versions the protocol by
-capability URN only.
-
-**Proposed text.** No change. Which client builds a provider accepts
-is product policy, and a client-reported version is not a security
-check.
-
-### A9. Metadata the provider sees
-
-**Gap.** Air's DS stores per member only a sealed queue reference and
-a domain; the QS knows queues by random ids unrelated to the AS user;
-group state is encrypted at rest under a key only members hold; logs
-use per-process pseudonyms (`backend/src/pseudonym.rs`). In the draft
-the provider knows the account's `userUri`, every room each account is
-in, and stores GroupInfo in the clear as hub.
-
-**Draft.** §Security Considerations already states what a provider
-sees.
-
-**Proposed text.** No change. MIMI's hub must answer other providers'
-GroupInfo requests and enforce room policy on user URIs without a
-member present, so Air's EAR-key and sealed-reference design does not
-carry over to a MIMI hub. Worth a sentence in a later version if
-someone asks why.
-
-### A10. Ephemeral data between a user's devices
-
-**Gap.** Air's `Listen` relays a small encrypted state blob between a
-user's listening devices (`ReportClientStateListenRequest`,
-`SiblingClientState`) and has an unused ephemeral payload event
-(`QueueEventPayload`). The draft has `privateMetadata` (F6) for state
-that must persist, and nothing ephemeral for MLS rooms.
-
-**Proposed text.** No change. Air does not use the ephemeral event
-yet, and typing indicators in an encrypted room are a MIMI content
-question.
-
-### A11. Registration gating, usernames, device linking, Privacy Pass
-
-**Gap.** Air has invitation codes, a push-delivered admission
-challenge, hashed usernames with expiry, a device-linking relay, and
-Privacy Pass tokens that pay for username operations and connection
-package fetches.
-
-**Proposed text.** No change. Account creation and discovery are out
-of scope for the draft, and a new device joins by external commit with
-the account's credentials. Privacy Pass as a rate limit for
-`KeyMaterial/fetch` from other providers would be a MIMI protocol
-matter.
-
-### A12. Group deletion and targeted messages
-
-**Gap.** Air can close a group with a tombstone (`DeleteGroup`,
-`GROUP_CLOSED`) and send to one member (`TargetedMessage`, a stopgap
-"until we implement MLS's targeted message feature").
-
-**Proposed text.** No change. MIMI has neither; both would start in
-MIMI protocol or room policy, not here.
+| | Finding | Air's mechanism, and why nothing changes |
+|---|---|---|
+| A6 | The caught-up point is implicit | Air sends `QueueEmpty` after the backlog, so a client can process a batch and show "up to date". JMAP has this already: `Message/changes` with `hasMoreChanges: false`. mimid's stream has the `Subscribe` `Ack`. |
+| A7 | One listener per client, and what ends a listen | Air's `Listen` defines its endings: half-close then `OK` means acks are durable; a newer listener evicts the older with `ABORTED`; shutdown is `UNAVAILABLE`. The draft's push is EventSource, where the client keeps its position and nothing is acked, so there is nothing to make durable. No change for JMAP. Worth copying in a gRPC binding (§6). |
+| A8 | Client software version policy | Air refuses expired client versions and warns in advance (`VersionStatus.expires_at`). The draft versions the protocol by capability URN only. No change. Which client builds a provider accepts is product policy, and a client-reported version is not a security check. |
+| A9 | Metadata the provider sees | Air's DS stores per member only a sealed queue reference and a domain; the QS knows queues by random ids unrelated to the AS user; group state is encrypted at rest under a key only members hold; logs use per-process pseudonyms (`backend/src/pseudonym.rs`). In the draft the provider knows the account's `userUri`, every room each account is in, and stores GroupInfo in the clear as hub. **Draft.** §Security Considerations already states what a provider sees. No change. MIMI's hub must answer other providers' GroupInfo requests and enforce room policy on user URIs without a member present, so Air's EAR-key and sealed-reference design does not carry over to a MIMI hub. Worth a sentence in a later version if someone asks why. |
+| A10 | Ephemeral data between a user's devices | Air's `Listen` relays a small encrypted state blob between a user's listening devices (`ReportClientStateListenRequest`, `SiblingClientState`) and has an unused ephemeral payload event (`QueueEventPayload`). The draft has `privateMetadata` (F6) for state that must persist, and nothing ephemeral for MLS rooms. No change. Air does not use the ephemeral event yet, and typing indicators in an encrypted room are a MIMI content question. |
+| A11 | Registration gating, usernames, device linking, Privacy Pass | Air has invitation codes, a push-delivered admission challenge, hashed usernames with expiry, a device-linking relay, and Privacy Pass tokens that pay for username operations and connection package fetches. No change. Account creation and discovery are out of scope for the draft, and a new device joins by external commit with the account's credentials. Privacy Pass as a rate limit for `KeyMaterial/fetch` from other providers would be a MIMI protocol matter. |
+| A12 | Group deletion and targeted messages | Air can close a group with a tombstone (`DeleteGroup`, `GROUP_CLOSED`) and send to one member (`TargetedMessage`, a stopgap "until we implement MLS's targeted message feature"). No change. MIMI has neither; both would start in MIMI protocol or room policy, not here. |
 
 ## 4. What the draft has that Air lacks
 

@@ -16,7 +16,7 @@ operations**: CBOR messages over one WebSocket. Its purpose is to find
 gaps in draft-atwood-jmap-chat-mimi-00. Writing every operation again
 without JMAP's conventions (Session, `/get` and `/changes`, state strings,
 base64url in JSON, SetErrors) shows what the draft leaves to JMAP and
-what it does not say at all. It is not a transport upgrade:
+what it does not say at all. It is a second binding, not a faster one:
 
 - JMAP stays the standard and the agent's default. The stream sits
   behind a configuration switch on the server and on the agent (§5.2).
@@ -71,9 +71,9 @@ How the agent hears of new messages now:
 
 ## 2. Alternatives
 
-Kept from the first version of this note, which asked whether a stream
-was worth building as a transport. Mark answered that it is built now,
-for the purpose of §1 (§9 question 1).
+What else could have served §1's purpose. CBOR over WebSocket was
+chosen as the smallest binding that is not JMAP and the closest to
+MIMI's own encodings (§9 question 1).
 
 - **JMAP + EventSource.** This exists today on the server. The agent
   could follow `eventSourceUrl` and run `Message/changes` on each
@@ -95,10 +95,6 @@ for the purpose of §1 (§9 question 1).
   TLS-encoded MLS bytes as opaque byte strings. WebSocket runs over the
   same TLS listener and HTTP stack as JMAP, so the token check can stay
   where it is.
-
-For finding gaps the choice matters less than for speed: any binding
-that is not JMAP will do. CBOR over WebSocket is the smallest one and
-the one closest to MIMI's own encodings.
 
 ## 3. Taken from Agora as is
 
@@ -187,7 +183,7 @@ request may name it in `using` while it is listed.
 
 The stream does not depend on it: a client that knows `server_url` opens
 the stream without reading JMAP, and once connected it needs nothing from
-JMAP, which is how the stream shows that it stands on its own. What the
+JMAP. What the
 Session's mimi capability says (userUri, roomIdPrefix, hubSender, ...)
 the `ProviderHello` says (§5.11).
 
@@ -428,8 +424,7 @@ Each JMAP method of the draft in mimid-server becomes two layers:
 
 The stream handler calls the same core function and writes the result as
 CBOR; an error's `type` becomes the `Error` `code` of the same name.
-So the bindings cannot differ in what they check or do, only in how
-they say it. Where the JMAP layer itself refuses something (a body
+Where the JMAP layer itself refuses something (a body
 over `maxSizeRequest`, a bad `accountId`), the stream has its own
 check, listed in §5.8 and §5.3.
 
@@ -585,7 +580,7 @@ Agora, Welcomes do travel on this stream (compare Agora §11, opening).
 
 ## 6. Later, if needed
 
-Each item waits for a concrete need, and each gets a version bump or new
+Each gets a version bump or new
 `t` values negotiated in the hello.
 
 - **WebTransport.** One bidirectional stream carrying a CBOR sequence
@@ -665,45 +660,36 @@ boundary table.
 
 ## 9. Questions answered by Mark
 
-All six answered by Mark on 2026-11-20. Each answer is a decision bead
-under mimid-1wgh (§8 step 1); the recommendation text is kept below each
-answer. On the same day Mark set the purpose of §1, which moved every
-"later" item of the first version (sends, room creation, KeyPackages,
-key material, consent, notices) into version 1.
+All six answered by Mark on 2026-11-20, each a decision bead under
+mimid-1wgh (§8 step 1). Where the answer differed from what this note
+recommended, it says so. On the same day Mark set the purpose of §1,
+which moved every "later" item of the first version (sends, room
+creation, KeyPackages, key material, consent, notices) into version 1.
 
-1. **Build it now, or wait for a concrete need?** ANSWERED: build the
-   stream now, not the EventSource step first. Recommendation was: wait.
-   First make the agent follow the server's EventSource and run
-   `Message/changes` on each StateChange. That is a small change to code
-   that exists, and it removes the poll delay. Build the stream when
-   something shows the remaining costs matter: measured round-trip
-   latency, base64 cost on large Commits or Welcomes, a mobile client, or
-   a second client implementation that wants it.
-2. **Token in the hello, or on the upgrade header?** ANSWERED: in the
+1. **Build it now, or wait for a concrete need?** Build the stream now,
+   not the EventSource step first. This differs from the
+   recommendation, which was to make the agent follow the server's
+   EventSource and run `Message/changes` on each StateChange, as a small
+   change to code that exists, and to build the stream only once
+   something showed the remaining costs mattered: measured round-trip
+   latency, base64 cost on large Commits or Welcomes, a mobile client,
+   or a second implementation that wanted it.
+2. **Token in the hello, or on the upgrade header?** In the
    `ClientHello`, checked by the same code as the JMAP `Account`
-   extractor. Recommendation was: in
-   the hello, as you asked, checked by the same code as the JMAP
    extractor. The header form needs no new check code but shuts out
    browser clients.
-3. **Is the hub's answer on a later `Send` synchronous?** ANSWERED: a
-   `Send` is answered once the hub answers, with one `Ack` carrying
-   `acceptedAt` and `frank`, or one `Error` carrying the refusal; other
-   traffic flows meanwhile. §5.4 applies the same rule to every request
-   that goes to a hub. Recommendation was: one
-   `Ack` per request, sent when the hub answers, as
-   `Room/send` waits today. Other requests and `Deliver`s flow in the
-   meantime, so nothing blocks behind a slow hub.
-4. **Position as the JMAP Message state string?** ANSWERED: yes.
-   Recommendation was: yes.
-   The agent keeps no new state, and catch-up and stream meet at one
-   value. Whether it holds up is recorded in the findings log.
-5. **Strict CBOR decoding?** ANSWERED: strict. Reject duplicate keys,
-   indefinite lengths, non-shortest integers and trailing bytes; accept
-   any key order. Recommendation was: reject duplicate keys,
-   indefinite lengths, non-shortest integers and trailing bytes; allow
-   any key order.
-6. **Does this ever become an Internet-Draft?** ANSWERED: not now.
-   Recommendation was: not now.
-   Keep it mimid's own until a second implementation wants it. If it
-   does, it would be a companion to draft-atwood-jmap-chat-mimi, and
-   Agora would be cited once it is CC-BY.
+3. **Is the hub's answer on a later `Send` synchronous?** A `Send` is
+   answered once the hub answers, with one `Ack` carrying `acceptedAt`
+   and `frank`, or one `Error` carrying the refusal; other traffic flows
+   meanwhile, so nothing blocks behind a slow hub. §5.4 applies the same
+   rule to every request that goes to a hub.
+4. **Position as the JMAP Message state string?** Yes. The agent keeps
+   no new state, and catch-up and stream meet at one value. Whether it
+   holds up is recorded in the findings log.
+5. **Strict CBOR decoding?** Strict: reject duplicate keys, indefinite
+   lengths, non-shortest integers and trailing bytes; accept any key
+   order.
+6. **Does this ever become an Internet-Draft?** Not now. Keep it
+   mimid's own until a second implementation wants it. If one does, it
+   would be a companion to draft-atwood-jmap-chat-mimi, and Agora would
+   be cited once it is CC-BY.
