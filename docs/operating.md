@@ -1,6 +1,6 @@
 # Running the mimid server
 
-This is the operator's guide to `mimid`, the provider server. It covers starting and stopping it, every configuration key, the admin commands, and the files it keeps. The agent, `mimid-agent`, has its own guide in [agent.md](agent.md).
+This is the operator's guide to `mimid`, the provider server.
 
 mimid is a work in progress and not ready for production use. Read "Known weaknesses" in the [README](../README.md) before you federate with anyone.
 
@@ -265,7 +265,7 @@ endpoint   = "http://127.0.0.1:4318"
 span_level = "info,mimid_server=debug"
 ```
 
-A request refused by provider authentication never reaches a handler, so its only span is `provider_auth`; that span is why a refusal is visible in a trace at all.
+A request refused by provider authentication never reaches a handler, so its only span is `provider_auth`.
 
 ### `[did_webvh]`
 
@@ -301,8 +301,6 @@ message_retention_secs = 604800       # the default, 7 days
 ```
 
 The JMAP Session and the live stream's `ProviderHello` report the value as `messageRetention`, and leave it out when it is unlimited. A sweep runs every 10 minutes and deletes expired rows 500 at a time, so a large backlog never holds the database for long; each sweep that deletes anything logs `message_sweep`.
-
-What this means for users and operators:
 
 - The server cannot read messages, so it cannot keep some and drop others: every message, Commit and Welcome is deleted on the same schedule.
 - A device that is offline longer than the retention misses messages, and the Commits among them, for good. `mimid-agent` then rejoins its rooms by external Commit, where room policy lets it, and the messages sent while it was away are lost to that device.

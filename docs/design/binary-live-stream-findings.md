@@ -80,6 +80,9 @@ types promises anything about the order of `created`, which RFC 8620
 
 **Decision.** Take as proposed. (Mark, 2026-11-20.)
 
+Built: nothing to build; the proposal is draft text about what a
+Message state means.
+
 ## F2. Nothing promises the order in which a client sees a room's Messages
 
 **Gap.** An MLS client must process a room's handshake messages in the
@@ -236,6 +239,9 @@ message, INVENTED, NOT FROM SPEC.
 
 **Decision.** Take: the `privateMetadata` MAY text. (Mark, 2026-11-20.)
 
+Built: nothing to build; the text is a MAY and mimid does not use
+`privateMetadata`.
+
 ## F7. Attachment upload and fetch have no error vocabulary
 
 **Gap.** Every method of the draft says which error a client gets.
@@ -269,6 +275,9 @@ function (`fetch_asset_core`).
 > reached with 502. It MAY add an RFC 9457 problem body.
 
 **Decision.** Take as proposed. (Mark, 2026-11-20.)
+
+Built: already so; `jmap/blobs.rs` answers 403 and 404 with RFC 9457
+problem bodies on both the upload and the fetch paths.
 
 ## F8. Room/reportAbuse's "refused" says nothing
 
@@ -481,6 +490,9 @@ both because it pushes the objects, not states.
 
 **Decision.** Take as proposed. (Mark, 2026-11-20.)
 
+Built: nothing to build; the draft text describes what storing a
+Message already does.
+
 ### F14. Nothing on resuming after a lost push connection
 
 **Gap.** A client whose EventSource connection drops misses the events
@@ -510,6 +522,9 @@ lost because the provider reads the store, not a buffer.
 > `Last-Event-ID`.
 
 **Decision.** Take as proposed. (Mark, 2026-11-20.)
+
+Built: already so; the agent sends `Last-Event-ID` on reconnect and
+drives `Message/changes` from its saved state (`agent-core`'s `push`).
 
 ### F15. Only KeyPackage and Consent are tied to StateChange
 

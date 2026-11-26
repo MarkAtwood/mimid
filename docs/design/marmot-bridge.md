@@ -4,8 +4,7 @@ Design note, 2026-11-21. It works out option (b) of
 nostr-comparison.md: a bridge between a MIMI room and a Marmot group
 (the protocol behind the White Noise app), driving MDK's `wn-agent`
 over its control socket. Mark answered its twelve open questions the
-same day; his decisions are in §10, and the body follows them where
-they differ from what the first version of this note recommended.
+same day (§10).
 The step plan of §9 is filed as beads under epic mimid-kiy1.
 
 Sources read, with the version of each:
@@ -640,18 +639,11 @@ reuses it without change; it is built only after relay mode works
 
 #### 3.3.7 Order of work
 
-1. Relay mode in mimid-agent, steps 1 to 12 of §9, including personal
-   bridges and NIP-05 on the server. Used in real rooms before step 13.
-2. The multi-user host (step 13), designed once in §3.3.6 for both
-   Marmot puppets and the XMPP gateway, and built only after relay mode
-   works, with the relay bridge moved onto it as the host's first full
-   identity. A dedicated bridge then runs
-   either as a mimid-agent front end or on the host; personal bridges
-   stay in the person's agent.
-3. Puppet identities and keys (step 14), then puppet consent and
-   mapping (step 15), then docs and a manual round trip (step 16).
-4. Gateways from client-survey.md, each its own design, on the same
-   host.
+§9 has the steps. The one ordering that is a design constraint rather
+than a preference: the multi-user host (step 13) is built only after
+relay mode works in real rooms, and the relay bridge then moves onto it
+as the host's first full identity. Personal bridges stay in the
+person's own agent either way.
 
 ## 4. Linking and consent
 
@@ -748,18 +740,13 @@ list members.
 Personal mode adds the sentence of §2.5; puppet mode the sentences of
 §3.3.4.
 
-**The security consequence, stated plainly.** Once linked, the
-end-to-end encryption of both rooms ends at the bridge's host: the
-bridge's mimid-agent holds every message in plaintext in its store and
-blob directory, and wn-agent holds the Marmot side's plaintext and
-keys, so the operator, anyone who controls that machine, and any
-process that can use wn-agent's socket or token can read both rooms
-and can post in either one under any name in the "(via bridge)"
-prefix. With a personal bridge that machine is the person's own, and
-they can post in the MIMI room under their own name text that seems to
-come from a White Noise member. MIMI members also cannot see who the
-Marmot members are, only how many. Members of each room should treat
-the bridge's host as one more device that reads all their messages.
+Beyond what the notice says: wn-agent holds the Marmot side's
+plaintext and keys, so anything that can use its socket or token can
+post in either room under any name behind the "(via bridge)" prefix.
+With a personal bridge that machine is the person's own, so they can
+post in the MIMI room, under their own name, text that seems to come
+from a White Noise member. MIMI members cannot see who the Marmot
+members are, only how many.
 
 ## 5. Message mapping
 
