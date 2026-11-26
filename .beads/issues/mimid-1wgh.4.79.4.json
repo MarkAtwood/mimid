@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.4.79.4",
+  "title": "decision: external_receivers is a component, not a GroupContext extension",
+  "description": "Mark 2026-11-26: guess the Right Thing and go with it. Item 1 of bead\nmimid-1wgh.44.22, which is held for posting to the author.\n\n## The ambiguity\n\ndraft-mahy-mls-semiprivatemessage-08 says both things:\n\n- §1 L123-124 and §3 L150 call external_receivers \"the external_receivers\n  GroupContext extension\", and say its construction \"mirrors the syntax\n  of the external_senders extension in [RFC9420]\".\n- §5.2 L418 registers it as an \"MLS Component Type\", though with the\n  Extension Types template (\"Message(s): GC\", L427). The author's own\n  coordination gist lists component 0x0007 external_receivers.\n\nThe two readings differ in how the list changes: a component is changed\nby AppDataUpdate, an extension by GroupContextExtensions\n(mls-extensions-11 §4.7).\n\n## Chosen: a component\n\nThree reasons, the third decisive for mimid.\n\n1. The author's IANA section and his coordination gist both say\n   component. The prose calling it a \"GroupContext extension\" reads as\n   language predating mls-extensions' component model, since §3's\n   comparison is to external_senders, which is an RFC 9420 extension\n   because RFC 9420 has no components.\n\n2. The suggested codepoint only works as a component. 0x0007 is free in\n   the component registry, and as an extension type it collides with\n   mls-extensions-11's supported_wire_formats (0x0007 suggested, -11 txt\n   L1620). A reading that makes the author's own codepoint unusable is\n   the wrong reading.\n\n3. As an extension, external_receivers could never be changed in a mimid\n   room. Decision mimid-1wgh.6.2 has the hub refuse every\n   GroupContextExtensions proposal, so the list would be fixed at room\n   creation for ever. As a component it is changed by AppDataUpdate,\n   which is the path mimid already uses for did_webvh_heads (decisions\n   mimid-1wgh.4.81.33, .34) and which the hub already accepts.\n\n## Consequences\n\n- mimi-mls reads and writes external_receivers as an app_data_dictionary\n  component, not a GroupContext extension.\n- Adding or removing an external receiver is an AppDataUpdate proposal,\n  so it rides in a Commit the hub accepts, and the two implementations\n  that cannot parse AppDataUpdate (stock mls-rs, didwebvh-mls-rs.md) are\n  removed by such a Commit exactly as they are for a record change.\n- If the WG settles on the extension form instead, this is a codepoint\n  and a proposal type to change, not a design: the ExternalReceiver\n  struct and the decryption path are the same either way.\n\n## Still to put to the author\n\nBead mimid-1wgh.44.22 item 1 stays open: the draft should say one thing,\nand the 0x0007 collision is worth telling him about whichever way he\ngoes. This decision is what mimid does meanwhile, not a claim about what\nthe draft means.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T22:16:51.844166309Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T22:16:51.844166309Z",
+  "labels": [
+    "decision",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.79.4",
+      "depends_on_id": "mimid-1wgh.4.79",
+      "type": "parent-child",
+      "created_at": "2026-11-26T22:16:51.88638119Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
