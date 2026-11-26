@@ -21,8 +21,8 @@ mimid to a gateway, and §8 builds on it.
 
 Values and sizes marked *estimate* are mine. Sizes compare with what
 exists: mimid-agent-irc is about 4,200 lines of Rust, mimid-agent-jmap
-about 4,400 (nostr-comparison.md §4). Nothing in this note is measured
-by building or running a client. Nothing here was posted anywhere.
+about 4,400 (nostr-comparison.md §4). Nothing here is measured by building or running a
+client, and nothing was posted anywhere.
 
 ## Sources
 
@@ -90,7 +90,6 @@ shapes.
 
 ## 1. What every front end shares
 
-Three things decide most of the cost, whatever the protocol.
 
 ### 1.1 Embedded on the phone or a bouncer
 
@@ -151,11 +150,11 @@ APNs or FCM credentials. What the relay sees differs a lot:
 | Zulip | Zulip's push bouncer | Encrypted payloads from server 12 on | Registered servers only |
 | Mattermost | TPNS or HPNS | Message preview unless set to ids only | TPNS free, HPNS licensed |
 
-Two consequences. First, a front end whose push relay checks who the
+A front end whose push relay checks who the
 sender is (Zulip, Mattermost, Rocket.Chat, Tinode) needs the vendor's
 consent to register a server that is not theirs, and that is a terms of
-service question before it is a code question. Second, for mimid's
-privacy story the relay must never see message text: Goguma's Web Push
+service question before it is a code question. And for mimid's privacy
+story the relay must never see message text: Goguma's Web Push
 is the best case, Matrix with `event_id_only` is next, Palaver with
 previews on is the worst.
 

@@ -45,6 +45,30 @@ from Mark Atwood's two IRC servers in Go:
   a real client across providers (`acceptance_fixture --two-providers
   --irc` serves for that).
 
+## The two servers
+
+- **meshIRCd:**
+  - **Design:** a federated, TLS-only daemon, mostly one 3200-line
+    main.go. Each client has read and write goroutines (a 256-slot write
+    queue that drops when full), and each channel is an actor goroutine.
+  - **State:** maps keyed by `strings.ToLower`, with in-memory ring-buffer
+    history.
+  - **Federation:** S2S is JSON-LD over mutual TLS with Lamport clocks.
+    Peers are found through a GitHub servers.json.
+  - **Accounts:** from SASL (PLAIN, EXTERNAL as did:key, OAUTHBEARER,
+    GitHub, OIDC).
+  - **MIMI:** bead ircd-atjq already points at mimid-agent's local IRC
+    interface as the E2EE route.
+- **tailircd:**
+  - **Design:** a stripped fork of about 6000 lines, listening via tsnet on
+    the tailnet only, with no TLS of its own.
+  - **Identity:** the connection is the identity (`WhoIs(remoteAddr)`).
+    The nick is forced to `login_tailnet`, +r is set, and 001 goes out
+    with no handshake.
+  - **Devices:** a second device takes over with KILL.
+  - **Storage and federation:** channels persist to JSON. Federation is
+    meshIRCd's envelopes over WebSocket through Funnel, with remote users
+    shown as synthetic JOIN, PART and PRIVMSG lines.
 ## What IRC v2 changed (epic mimid-i0id, 2026-11-22)
 
 IRC v1 was channels only, with no history (agent-frontends.md §7.2,
@@ -248,27 +272,3 @@ read for what it sends and expects. Details are in agent-frontends.md
 - Oper commands and KILL.
 - LIST beyond a plain 322 list ending in 323.
 
-## The two servers
-
-- **meshIRCd:**
-  - **Design:** a federated, TLS-only daemon, mostly one 3200-line
-    main.go. Each client has read and write goroutines (a 256-slot write
-    queue that drops when full), and each channel is an actor goroutine.
-  - **State:** maps keyed by `strings.ToLower`, with in-memory ring-buffer
-    history.
-  - **Federation:** S2S is JSON-LD over mutual TLS with Lamport clocks.
-    Peers are found through a GitHub servers.json.
-  - **Accounts:** from SASL (PLAIN, EXTERNAL as did:key, OAUTHBEARER,
-    GitHub, OIDC).
-  - **MIMI:** bead ircd-atjq already points at mimid-agent's local IRC
-    interface as the E2EE route.
-- **tailircd:**
-  - **Design:** a stripped fork of about 6000 lines, listening via tsnet on
-    the tailnet only, with no TLS of its own.
-  - **Identity:** the connection is the identity (`WhoIs(remoteAddr)`).
-    The nick is forced to `login_tailnet`, +r is set, and 001 goes out
-    with no handshake.
-  - **Devices:** a second device takes over with KILL.
-  - **Storage and federation:** channels persist to JSON. Federation is
-    meshIRCd's envelopes over WebSocket through Funnel, with remote users
-    shown as synthetic JOIN, PART and PRIVMSG lines.
