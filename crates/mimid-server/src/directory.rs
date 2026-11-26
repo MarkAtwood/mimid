@@ -41,7 +41,23 @@ pub fn directory(base: &BaseUrl) -> Directory {
         identifier_query: url("identifierQuery/{domain}"),
         report_abuse: url("reportAbuse/{roomId}"),
         proxy_download: url("proxyDownload/{downloadUrl}"),
-        unknown: Default::default(),
+        // INVENTED, NOT FROM SPEC: protocol-07 §5.1 defines ten
+        // endpoints and catchUp is not one of them, so it goes in
+        // `unknown`, which exists to round-trip exactly this. No
+        // protocol-07 wire type changes.
+        //
+        // Publishing it IS the capability negotiation
+        // (docs/design/mimi-catchup.md §5): a provider that does not
+        // publish the template does not support it, a requester learns
+        // that without a failed request, and nothing needs a version
+        // number. So this line and a working operation belong in the
+        // same commit.
+        unknown: [(
+            "catchUp".to_owned(),
+            serde_json::Value::String(format!("{base}/v1/catchUp/{{roomId}}")),
+        )]
+        .into_iter()
+        .collect(),
     }
 }
 
@@ -108,7 +124,13 @@ mod tests {
         );
         let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
         let actual: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        let expected: serde_json::Value = serde_json::from_str(SPEC_EXAMPLE).unwrap();
+        let mut expected: serde_json::Value = serde_json::from_str(SPEC_EXAMPLE).unwrap();
+        // The ten of §5.1 exactly as the draft has them, plus the one
+        // non-spec template this server adds. Publishing catchUp is the
+        // whole of catch-up's capability negotiation
+        // (docs/design/mimi-catchup.md §5), so a test that let it
+        // appear or vanish unnoticed would be the wrong test.
+        expected["catchUp"] = serde_json::json!("https://mimi.example.com/v1/catchUp/{roomId}");
         assert_eq!(actual, expected);
     }
 

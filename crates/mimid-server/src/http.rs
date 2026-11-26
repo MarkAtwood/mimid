@@ -124,6 +124,7 @@ pub fn router(directory: Directory, hub: Arc<Hub>, follower: Arc<Follower>) -> R
         .route("/v1/submitMessage/{roomId}", post(submit_message))
         .route("/v1/groupInfo/{roomId}", post(group_info))
         .route("/v1/reportAbuse/{roomId}", post(report_abuse))
+        .route("/v1/catchUp/{roomId}", post(catch_up))
         .route("/v1/keyMaterial/{targetUser}", post(key_material))
         .route("/v1/notify/{roomId}", post(notify))
         .route("/v1/requestConsent/{targetDomain}", post(request_consent))
@@ -250,6 +251,30 @@ async fn group_info(
 ) -> Response {
     match source_domain(&headers) {
         Some(from) => respond(hub.group_info(&room_id, &from, &body).await),
+        None => bad_from(),
+    }
+}
+
+/// `POST /catchUp/{roomId}`: the fanout the `From` provider missed
+/// (docs/design/mimi-catchup.md §5; INVENTED, NOT FROM SPEC, bead
+/// mimid-1wgh.37.104).
+#[tracing::instrument(
+    name = "protocol_request",
+    skip_all,
+    fields(
+        endpoint = "catchUp",
+        room_id = room_id.as_str(),
+        peer = tracing::field::Empty,
+    )
+)]
+async fn catch_up(
+    State(hub): State<Arc<Hub>>,
+    Path(room_id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    match source_domain(&headers) {
+        Some(from) => respond(hub.catch_up(&room_id, &from, &body).await),
         None => bad_from(),
     }
 }
@@ -657,6 +682,13 @@ fn respond(result: Result<Vec<u8>, HubError>) -> Response {
         }
         // Decision mimid-1wgh.57.
         HubError::ReportNotAllowed => (StatusCode::FORBIDDEN, "report-not-allowed"),
+        // docs/design/mimi-catchup.md §5.1, a MUST: distinct, and never
+        // a short answer. 410 Gone says the range existed and does not
+        // any more, which is exactly the follower's situation and tells
+        // it to surface a gap rather than retry.
+        HubError::CatchUpOutOfWindow { .. } => (StatusCode::GONE, "catch-up-out-of-window"),
+        // §8: not a destination of this room's fanout.
+        HubError::CatchUpNotEntitled => (StatusCode::FORBIDDEN, "catch-up-not-entitled"),
         // Decision mimid-1wgh.6.65.
         HubError::UnverifiedAbusiveMessage { .. } => (
             StatusCode::UNPROCESSABLE_ENTITY,
