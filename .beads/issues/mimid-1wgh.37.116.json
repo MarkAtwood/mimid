@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.116",
+  "title": "wg: tier provider-auth and calls, and extract the replacement text as PRs",
+  "description": "Mark asked (2026-11-26) to run the SHOULD/MAY tiering lens over\ndraft-atwood-mimi-provider-auth and draft-atwood-mimi-calls, as bead\nmimid-1wgh.37.104.15 did for catch-up. Both read for this.\n\n## The pattern Mark already has\n\nBoth existing drafts carry a section of paste-ready text for a WG\ndocument:\n\n- provider-auth §\"Replacement Text for the MIMI Protocol\": replaces\n  protocol-07 §4.1's \"The TLS connection ... MUST be mutually\n  authenticated\" paragraph.\n- calls §\"Replacement Text for MIMI Content\": text to add to\n  mimi-content §5.10 after the sentence putting calling out of scope.\n\nSo the tiering was already being done by hand, inside each draft. The\nmove is to EXTRACT those sections and propose them as small PRs, which\nshrinks each draft to the mechanism it actually defines.\n\ndraft-atwood-mimi-catchup has no such section. That is a gap in it, not\na difference in kind: it should get one for protocol-07 §5.5, carrying\ntier 1 of mimid-1wgh.37.104.15.\n\n## provider-auth: least dissolvable, MUST stay a draft\n\nNeeds a document, and this is a hard constraint, not a preference:\n\n- It defines a DNS TXT record format: the `_mimi` owner name, ABNF,\n  `v=MIMI1` with k and p tags. That is a new format, not guidance.\n- It requests TWO IANA registrations in registries MIMI does not own,\n  each needing a stable reference: `_mimi` in the Underscored and\n  Globally Scoped DNS Node Names registry (RFC 8552), and the `mimi`\n  service name (RFC 6335). A PR against protocol-07 cannot carry these\n  unless protocol-07 itself defines the record.\n- The RFC 9421 signing and verifying profile is substantial.\n\nBut two pieces come out as PRs, and the first is the valuable one:\n\n1. §4.1's replacement text. protocol-07 currently MANDATES mutually\n   authenticated TLS. That mandate is the actual problem: it is why\n   mimid cannot claim conformance (AGENTS.md) and why coland interop\n   uses RFC 9421 signatures instead (bead mimid-1wgh.46.11.2). Landing\n   only the softening -- the target authenticates the source by one of\n   several mechanisms, which it accepts being local policy -- removes a\n   false mandate for EVERY implementation, with no obligation to adopt\n   the DNS-key mechanism at all. Highest value per word of any of this.\n2. RFC 6125 -\u003e RFC 9525. protocol-07 cites an obsoleted RFC. That is an\n   erratum, uncontroversial, and free. Worth sending on its own so it\n   cannot be held up by anything else.\n\nNo meaningful tier 2.\n\n## calls: most dissolvable, may not need to be a draft\n\n- NO NEW WIRE AT ALL. The media secret is derived with\n  mls-extensions SafeExportSecret under a component id and a label. No\n  new structs, no new fields; it is a computation rule plus rekeying\n  rules plus the analysis of when it is safe.\n- Its one IANA ask is an entry in the MIMI App Component registry, which\n  protocol-07 §10 establishes -- a registry MIMI owns. Unlike `_mimi`,\n  this can be registered BY protocol-07 itself, so it needs no separate\n  referenceable document.\n- Its §5.10 replacement text is already written.\n\nSo calls could plausibly become two PRs: the mimi-content §5.10 text,\nand a registration of media_keys in protocol-07 §10 carrying the\nderivation and rekeying rules, with §\"Why the Group Secret Is Not Always\nthe Call Secret\" folded in as a security consideration.\n\nAgainst dissolving it: a registration plus a derivation plus rekeying\nplus the subset-call analysis is a document's worth of text even with no\nnew bytes, and the WG may prefer a short draft to a large PR. But of the\nthree this is the one where \"not a draft\" is a real option, which\nconfirms the guess in mimid-1wgh.37.14 -- now from the content and not\nfrom the size.\n\n## The order this suggests\n\nSmallest and most separable first, so nothing valuable waits on\nanything contested:\n\n1. RFC 6125 -\u003e RFC 9525 in protocol-07. Free.\n2. provider-auth §4.1 softening. Unblocks implementations that do not\n   do mTLS, including mimid.\n3. catch-up tier 1 (mimid-1wgh.37.104.15): the honesty requirement and\n   the fanout-to-every-provider clarification in §5.5.\n4. calls: the mimi-content §5.10 text.\n5. Then the mechanisms, as drafts: provider-auth (must be), catchUp\n   (the endpoint), and calls only if the PRs do not carry it.\n\nNothing upstream without Mark's OK (memory: dont-flood-upstream), and no\nJMAP in any of it (AGENTS.md).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T05:24:16.178506302Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T05:24:16.178506302Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.116",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-26T05:24:16.226203556Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

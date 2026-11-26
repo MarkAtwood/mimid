@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.118",
+  "title": "wg: is GroupInfoCode's reserved(0)/success(1) deliberate? (issue, not a PR)",
+  "description": "Found while writing draft-atwood-mimi-catchup's response code enum\n(2026-11-26). Held: do not send without Mark's OK.\n\n## The observation\n\nEvery response code enum in protocol-07 except one puts success at 0:\n\n  KeyMaterialUserCode    success(0), partialSuccess(1), ...\n  KeyMaterialClientCode  success(0), keyMaterialExhausted(1), ...\n  UpdateResponseCode     success(0), wrongEpoch(1), notAllowed(2), ...\n  SubmitResponseCode     accepted(0), notAllowed(1), epochTooOld(2)\n  IdentifierQueryCode    success(0), notFound(1), ambiguous(2), ...\n  GroupInfoCode          reserved(0), success(1), notAuthorized(2),\n                         noSuchRoom(3)\n\nGroupInfoCode is the only one that reserves 0, and it sits in the\ndocument among REPRESENTATION enums that legitimately reserve 0\n(GroupInfoRepresentation: reserved(0), full(1), partial(2)), which is a\nplausible origin for it.\n\n## Why this is an issue and not a PR\n\nChanging it would change the wire. A response of 0 means success to\nfive endpoints and \"reserved\" to one; an implementation that normalized\nit would be non-conforming against anything that did not. So it is a\nquestion for the WG, phrased as a question:\n\n  Is GroupInfoCode's reserved(0) with success(1) deliberate? Every\n  other response code enum in the document uses 0 for success, and\n  GroupInfoCode sits beside representation enums that reserve 0, so it\n  reads as though it may have picked the convention up from its\n  neighbours. If it is deliberate, a sentence saying so would help; if\n  not, it is cheaper to change now than after there are deployments.\n\n## What was NOT worth raising, having looked properly\n\nAn earlier reading of this had two further findings. Both dissolved on\nchecking, and they are recorded so they are not raised again:\n\n1. \"Several enums declare both reserved(0) and success(0).\" FALSE. That\n   was an artifact of an awk range expression merging adjacent enums.\n   No enum does this.\n\n2. \"Three names for one concept: notAllowed, notAuthorized, forbidden.\"\n   WEAK. The prose gives each a different scope:\n   - notAllowed: policy OR authorization prevented accepting a write\n     (UpdateResponseCode, SubmitResponseCode)\n   - notAuthorized: the requester was not authorized to read a\n     GroupInfo (GroupInfoCode)\n   - forbidden: use of the ENDPOINT is not allowed, or an unspecified\n     field or combination of fields is not allowed (IdentifierQueryCode)\n   Three scopes, not three synonyms. Normalizing them would lose\n   meaning, so no PR.\n\nThe one editorial inconsistency that did survive is SubmitResponseCode's\naccepted(0) where the other four say success(0), with word-for-word\nidentical prose. That is prepared as a PR on branch\nsubmit-response-success in ~/PROJECT/IETF-wg/mimi-protocol, commit\nfd140d3, based on upstream/main (2d8cc65). Not pushed.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T05:59:04.531198766Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T05:59:04.531198766Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.118",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-26T05:59:04.569701071Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

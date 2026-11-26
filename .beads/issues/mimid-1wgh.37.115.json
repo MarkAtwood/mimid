@@ -1,0 +1,26 @@
+{
+  "id": "mimid-1wgh.37.115",
+  "title": "decision: sequence the personal MIMI drafts, do not merge them",
+  "description": "Mark asked (2026-11-26) whether to merge or consolidate his personal\nMIMI I-Ds. Recorded so the question is not reopened.\n\n## What exists\n\n- ~/PROJECT/ietf-mimi-provider-auth, draft-atwood-mimi-provider-auth\n  (780 md lines): DNS-key RFC 9421 signatures, DANE, PKIX mTLS, trust\n  lists, DID manifests. protocol-07 §4 material.\n- ~/PROJECT/ietf-mimi-catchup, draft-atwood-mimi-catchup (16 pages,\n  written 2026-11-26): the fanout sequence, catchUp, and the\n  requirement that unrecoverable loss be reported. protocol-07 §5\n  material.\n- ~/PROJECT/ietf-mimi-calls, draft-atwood-mimi-calls (328 md lines):\n  where a MIMI-backed call's media keys come from. mimi-content and\n  mls-extensions material.\n\ndraft-atwood-mls-didwebvh-credential targets MLS, not MIMI, so it is\nnot part of this question.\n\n## Decided: keep them separate, and sequence them\n\n### Why not merge\n\n1. Adoption is per-document. A WG adopts a draft by saying yes to its\n   subject, so three mechanisms in one document must be accepted\n   together and the least ready sets the ceiling for the rest.\n2. They share no subject. Authentication, media keys and fanout\n   reliability have in common only that mimid needed them. A document\n   whose subject is \"what one implementer found missing\" has no natural\n   reviewer and no shepherd.\n3. They land in different documents. provider-auth and catchup are\n   protocol material, calls is content material, so a merged draft\n   would have to be split again to land.\n\n### The real problem, which merging does not fix\n\nThree drafts from one author compete for the same WG attention and read\nas volume rather than signal. 64 open `wg` beads say the same. The\nanswer is sequencing: push one, let the others sit as written and\navailable.\n\n### The order\n\ncatchUp first. It closes a correctness hole rather than adding a\nfeature, which is an easier yes, and it carries the implementation\nevidence the chairs have wanted since the 2026-01-13 chair message\n(f4a1b9c6, 670dd315, and a two-provider test).\n\nThen provider-auth, which is substantial and already has an epic behind\nit (mimid-75nk). calls last, or not as a draft at all -- see below.\n\n## Open, not decided here\n\nWhether draft-atwood-mimi-calls should be a draft at all. If it is\nessentially \"which component keys the media\", a PR or issue against\nmimi-content may land more easily and takes a document off the pile\nwithout merging anything. Needs someone to actually read it; the\njudgement above is from its size and subject, not its content.\n\nNothing is sent upstream without Mark's OK (memory:\ndont-flood-upstream).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T05:07:59.011779869Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T05:07:59.011779869Z",
+  "labels": [
+    "decision",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.115",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-26T05:07:59.076693144Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

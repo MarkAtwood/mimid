@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.104.15",
+  "title": "wg: land catch-up as tiers, PR first and draft last (how much can be SHOULD/MAY)",
+  "description": "Mark asked (2026-11-26) how much of his drafts could be SHOULDs and MAYs\nin the EXISTING drafts instead of new documents. For catch-up the answer\nsplits cleanly into three tiers, and the tiering is better tactics than\nproposing the whole draft at once (bead mimid-1wgh.37.14).\n\n## The insertion point already exists\n\nprotocol-07 §5.5 \"Fanout Messages and Room Events\" already says:\n\n  If the hub server does not contain an HTTP 201 response code, then it\n  SHOULD retry the request, respecting any guidance provided by the\n  server in HTTP header fields such as Retry-After.\n\nSo the document already discusses retry. What it does not say is what\nhappens when a hub STOPS retrying, which is where the message is lost\nand nobody is told. Tier 1 is a few sentences in a paragraph that is\nalready about this.\n\n## Tier 1: SHOULD/MAY text in protocol-07 §5.5, no new wire at all\n\n1. A hub MUST (or SHOULD, if the WG prefers) fan each accepted event out\n   to every provider with a participant in the room at acceptance. This\n   is probably already the intent, so it is a clarification -- but it is\n   also the prerequisite for any sequence to be contiguous per\n   destination, so getting it stated is worth doing first and cheaply.\n2. A hub SHOULD state the window for which it retains a room's fanout,\n   so a follower can know what it could ever recover.\n3. A follower that knows it is missing part of a room's history MUST NOT\n   present that room to its users as complete. No new bytes: a\n   prohibition on lying.\n4. NEW IDEA, not in draft-atwood-mimi-catchup: a hub that abandons a\n   delivery SHOULD make that fact available to the follower.\n\n   Point 4 is worth its own thought. The whole draft is follower-side\n   detection, but the party that KNOWS a delivery was lost is the hub --\n   it is the one that gave up. A hub could keep a per (room, follower)\n   \"deliveries abandoned\" marker and surface it on next contact. That is\n   far cheaper than retaining the fanout itself, and it buys the honesty\n   requirement with no sequence numbering and no catchUp endpoint.\n   It buys detection and NOT recovery, which may be the right trade for\n   an implementation that does not want catch-up at all.\n\n## Tier 2: one small addition, most of the value\n\nThe sequence header alone, as a MAY in §5.5:\n\n  A hub MAY include a mimi-fanout-sequence header field in a /notify\n  request. If it does, the value MUST be per-room, begin at 1, and\n  increase by exactly one per fanout of that room, and MUST NOT be\n  reused or renumbered.\n\nThat alone lets a follower DETECT a gap, with no new endpoint, no\nretention obligation and no catch-up. Detection without recovery is\nstill an enormous improvement over silence, because it is what makes\ntier 1 point 3 implementable rather than vacuous.\n\n## Tier 3: needs the draft\n\ncatchUp itself -- the operation, CatchUpRequest, CatchUpResponse and its\nresponse codes, and the directory member. Recovery needs a new\noperation; nothing softer gets it. This is what\ndraft-atwood-mimi-catchup should narrow to if tiers 1 and 2 land\nseparately.\n\n## The tactic\n\nPropose tier 1 as a PR or issue against protocol-07: small, mostly\nclarifying, and it puts the PROBLEM in the WG's own document. Then tier\n2 as a second small one. Then the draft, which by that point defines\nonly the mechanism and can cite the document's own text for why it is\nneeded.\n\nEach step is independently useful, and a WG that says no to the draft\ncan still have said yes to the honesty requirement, which is the part\nthat actually matters.\n\n## Not assessed\n\nThe same lens should be run over draft-atwood-mimi-provider-auth and\ndraft-atwood-mimi-calls: which of their requirements need new bytes and\nwhich are guidance that could be SHOULD/MAY text in protocol-07 or\nmimi-content. Neither has been read for this; judging them needs that\nfirst.\n\nNothing upstream without Mark's OK (memory: dont-flood-upstream), and no\nJMAP in any of it (AGENTS.md).",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T05:09:34.664676134Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T05:09:34.664676134Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.104.15",
+      "depends_on_id": "mimid-1wgh.37.104",
+      "type": "parent-child",
+      "created_at": "2026-11-26T05:09:34.719012182Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

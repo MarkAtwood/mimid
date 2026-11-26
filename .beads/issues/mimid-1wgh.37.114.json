@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.114",
+  "title": "wg: protocol-07 has no registry for provider directory members",
+  "description": "Found while writing draft-atwood-mimi-catchup's IANA section (bead\nmimid-1wgh.37.104.13).\n\n## The gap\n\nprotocol-07 §5.1 defines ten directory members (keyMaterial, update,\nsubmitMessage, notify, groupInfo, requestConsent, updateConsent,\nidentifierQuery, reportAbuse, proxyDownload) in its own prose. There is\nno IANA registry for them, so there is no defined way to add an\neleventh.\n\nThis matters because the directory is protocol-07's extension point in\npractice. Publishing a member IS the capability negotiation: a provider\nthat does not publish it does not support it, a requester learns that\nfrom a directory it already fetches, and nothing needs a version\nnumber. That is how reportAbuse and proxyDownload were added, and it is\nwhat makes catchUp safe to add. But with no registry, two independent\nextensions can pick the same member name and neither is wrong.\n\n## What a draft can do today\n\ndraft-atwood-mimi-catchup registers its header field\n(mimi-fanout-sequence) in the HTTP Field Name Registry, which exists,\nand says of the directory member:\n\n  If the MIMI working group creates a registry of provider directory\n  members, this document asks that catchUp be registered in it. No such\n  registry exists at the time of writing.\n\nThat is the honest form, and it is also a nudge.\n\n## The ask\n\nRaise with the WG: protocol should create an IANA registry of provider\ndirectory members, with a registration policy (Specification Required\nwould fit), so that the extension point it already relies on has a\ncollision rule.\n\nCheap to add, and it is the difference between an extension point and a\nconvention.\n\nHold for Mark: do not post without his OK (memory:\ndont-flood-upstream). Keep it short if it goes -- and no JMAP\n(AGENTS.md).",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T05:06:21.99079375Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T05:06:21.99079375Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.114",
+      "depends_on_id": "mimid-1wgh.37",
+      "type": "parent-child",
+      "created_at": "2026-11-26T05:06:22.041059937Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
