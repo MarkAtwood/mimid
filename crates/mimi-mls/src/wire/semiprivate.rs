@@ -380,8 +380,27 @@ impl SemiPrivateMessageContent {
     /// `content_type` is [`ContentType::Application`], which §3.1 does
     /// not define for this structure, or if the padding is not zero.
     pub fn decode(bytes: &[u8], content_type: ContentType) -> Result<Self, tls_codec::Error> {
+        Self::decode_parts(bytes, content_type).map(|(content, _)| content)
+    }
+
+    /// As [`SemiPrivateMessageContent::decode`], also returning the
+    /// spans of the `content` field and of the signature, exactly as
+    /// they arrived.
+    ///
+    /// `framed_content_tbs_hash` covers a FramedContent holding these
+    /// bytes, and re-encoding a decoded Proposal or Commit is not
+    /// guaranteed to reproduce them, so the hash is taken over the
+    /// received span.
+    ///
+    /// # Errors
+    ///
+    /// As [`SemiPrivateMessageContent::decode`].
+    pub fn decode_parts(
+        bytes: &[u8],
+        content_type: ContentType,
+    ) -> Result<(Self, ContentSpans<'_>), tls_codec::Error> {
         let mut reader = bytes;
-        let content = match content_type {
+        let (content, content_len) = match content_type {
             ContentType::Application => {
                 return Err(tls_codec::Error::DecodingError(
                     "a SemiPrivateMessageContent is a proposal or a commit".to_owned(),
@@ -389,19 +408,23 @@ impl SemiPrivateMessageContent {
             }
             ContentType::Proposal => {
                 let proposal = Box::new(ProposalIn::tls_deserialize(&mut reader)?);
+                // The content field ends here; the auth data follows it
+                // and is not part of the FramedContent.
+                let content_len = bytes.len() - reader.len();
                 let auth = FramedContentAuthData::deserialize(
                     &mut reader,
                     openmls::framing::ContentType::Proposal,
                 )?;
-                Self::Proposal { proposal, auth }
+                (Self::Proposal { proposal, auth }, content_len)
             }
             ContentType::Commit => {
                 let commit = Box::new(CommitIn::tls_deserialize(&mut reader)?);
+                let content_len = bytes.len() - reader.len();
                 let auth = FramedContentAuthData::deserialize(
                     &mut reader,
                     openmls::framing::ContentType::Commit,
                 )?;
-                Self::Commit { commit, auth }
+                (Self::Commit { commit, auth }, content_len)
             }
         };
         if reader.iter().any(|byte| *byte != 0) {
@@ -409,7 +432,8 @@ impl SemiPrivateMessageContent {
                 "the padding of a SemiPrivateMessageContent is not zero".to_owned(),
             ));
         }
-        Ok(content)
+        let spans = ContentSpans::new(bytes, content_len)?;
+        Ok((content, spans))
     }
 }
 
@@ -709,6 +733,17 @@ pub enum UnsealError {
     /// `nonce` disagrees with the hash it committed to.
     #[error("partial_context_hash does not match the sealed keys")]
     ContextHashMismatch,
+    /// `framed_content_tbs_hash` does not match the content that came
+    /// out of the ciphertext (semiprivatemessage-08 §3.1).
+    ///
+    /// This is the check that keeps a sender from encrypting one thing
+    /// to the members and another to the external receivers.
+    #[error("framed_content_tbs_hash does not match the content")]
+    ContentHashMismatch,
+    /// The signature in the `FramedContentAuthData` does not verify
+    /// against the sender's leaf (RFC 9420 §6.1).
+    #[error("the handshake's signature does not verify")]
+    Signature,
 }
 
 impl ExternalReceiver {
@@ -769,5 +804,212 @@ impl SemiPrivateMessage {
             return Err(UnsealError::ContextHashMismatch);
         }
         Ok(keys)
+    }
+}
+
+/// The `WireFormat` value for a SemiPrivateMessage
+/// (semiprivatemessage-08 §5.1: TBD1, suggested 0x0011).
+///
+/// This is the value that goes in the `FramedContentTBS` the signature
+/// and `framed_content_tbs_hash` cover, not `mls_private_message`
+/// (decision mimid-1wgh.4.79.9): RFC 9420 §6.1 includes the wire format
+/// so the signature binds the framing, and a signature that did not
+/// distinguish the two would let a SemiPrivateMessage be repackaged as a
+/// PrivateMessage with its external receivers stripped off.
+pub const SEMIPRIVATE_WIRE_FORMAT: u16 = 0x0011;
+
+/// RFC 9420 §6.1 `ProtocolVersion.mls10`.
+const MLS10: u16 = 0x0001;
+
+/// `Sender.sender_type` for a member (RFC 9420 §6).
+const SENDER_TYPE_MEMBER: u8 = 1;
+
+impl SemiPrivateMessage {
+    /// Rebuilds the `FramedContentTBS` (RFC 9420 §6.1) this message's
+    /// `framed_content_tbs_hash` covers, for an external receiver.
+    ///
+    /// `content` is the span [`SemiPrivateMessageContent::decode_parts`]
+    /// returns, `sender_leaf_index` comes from the unsealed
+    /// [`PerMessageKeyAndNonces`] -- the frame does not carry the sender
+    /// in the clear, and an external receiver cannot read the
+    /// `SenderData` that would give it -- and `group_context` is the
+    /// receiver's own copy, which §3.3 makes the condition for checking
+    /// the signature at all.
+    ///
+    /// # Errors
+    ///
+    /// [`tls_codec::Error`] if a field cannot be encoded.
+    pub fn framed_content_tbs(
+        &self,
+        content: &[u8],
+        sender_leaf_index: u32,
+        group_context: &[u8],
+    ) -> Result<Vec<u8>, tls_codec::Error> {
+        let mut out = MLS10.tls_serialize_detached()?;
+        out.extend(SEMIPRIVATE_WIRE_FORMAT.tls_serialize_detached()?);
+        // FramedContent.
+        out.extend(self.group_id.tls_serialize_detached()?);
+        out.extend(self.epoch.tls_serialize_detached()?);
+        out.push(SENDER_TYPE_MEMBER);
+        out.extend(sender_leaf_index.tls_serialize_detached()?);
+        out.extend(self.authenticated_data.tls_serialize_detached()?);
+        out.extend(self.content_type.tls_serialize_detached()?);
+        out.extend(content);
+        // sender_type is member, so the GroupContext follows (§6.1).
+        out.extend(group_context);
+        Ok(out)
+    }
+
+    /// Checks `framed_content_tbs_hash` against the content that came
+    /// out of the ciphertext (semiprivatemessage-08 §3.1, §3.3).
+    ///
+    /// Takes the same arguments as
+    /// [`SemiPrivateMessage::framed_content_tbs`] and returns the bytes
+    /// it built, which are also what the signature is verified over.
+    ///
+    /// # Errors
+    ///
+    /// [`UnsealError::Malformed`] if a field cannot be encoded, and
+    /// [`UnsealError::ContentHashMismatch`] if the hash does not match.
+    pub fn check_framed_content_tbs(
+        &self,
+        content: &[u8],
+        sender_leaf_index: u32,
+        group_context: &[u8],
+    ) -> Result<Vec<u8>, UnsealError> {
+        let tbs = self
+            .framed_content_tbs(content, sender_leaf_index, group_context)
+            .map_err(UnsealError::Malformed)?;
+        let hashed = crate::label::hash(&tbs).map_err(|_| UnsealError::Decrypt)?;
+        if hashed != self.framed_content_tbs_hash.as_slice() {
+            return Err(UnsealError::ContentHashMismatch);
+        }
+        Ok(tbs)
+    }
+}
+
+/// Where a decoded [`SemiPrivateMessageContent`]'s signed material sits
+/// in the bytes it was decoded from.
+///
+/// Both are the received bytes, not a re-encoding:
+/// `framed_content_tbs_hash` covers a FramedContent holding `content`,
+/// and the signature is verified over the FramedContentTBS built from
+/// it, so neither may be rebuilt from the decoded structures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContentSpans<'a> {
+    /// The `content` field of RFC 9420 §6.1's FramedContent: the encoded
+    /// Proposal or Commit alone, without the
+    /// `FramedContentAuthData` after it or the padding after that.
+    pub content: &'a [u8],
+    /// The `signature` of the `FramedContentAuthData` (RFC 9420 §6.1),
+    /// which signs the FramedContentTBS under the label
+    /// `"FramedContentTBS"`.
+    ///
+    /// Read from the bytes rather than from OpenMLS's
+    /// `FramedContentAuthData`, whose fields are private.
+    pub signature: &'a [u8],
+}
+
+impl<'a> ContentSpans<'a> {
+    /// Splits `bytes` at `content_len`, the end of the `content` field,
+    /// and reads the signature that follows it.
+    fn new(bytes: &'a [u8], content_len: usize) -> Result<Self, tls_codec::Error> {
+        let content = bytes
+            .get(..content_len)
+            .ok_or_else(|| tls_codec::Error::DecodingError("short content".to_owned()))?;
+        let mut auth = bytes
+            .get(content_len..)
+            .ok_or_else(|| tls_codec::Error::DecodingError("no auth data".to_owned()))?;
+        // FramedContentAuthData starts with `opaque signature<V>`; a
+        // commit's confirmation_tag follows it and is not signed.
+        let start = auth;
+        let signature = VLBytes::tls_deserialize(&mut auth)?;
+        let offset = start.len() - auth.len() - signature.as_slice().len();
+        let signature = start
+            .get(offset..offset + signature.as_slice().len())
+            .ok_or_else(|| tls_codec::Error::DecodingError("short signature".to_owned()))?;
+        Ok(Self { content, signature })
+    }
+}
+
+/// RFC 9420 §6.1: the label the FramedContentTBS signature uses.
+const FRAMED_CONTENT_TBS_LABEL: &str = "FramedContentTBS";
+
+/// What an external receiver recovered from a [`SemiPrivateMessage`].
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct Opened {
+    /// The handshake: a Proposal or a Commit.
+    pub content: SemiPrivateMessageContent,
+    /// Which leaf sent it, from the sealed keys. The frame does not
+    /// carry the sender in the clear.
+    pub sender_leaf_index: u32,
+}
+
+impl SemiPrivateMessage {
+    /// The external receiver's whole path through
+    /// semiprivatemessage-08 §3.3: unseal the per-message keys, verify
+    /// `partial_context_hash`, open the ciphertext with the guarded
+    /// nonce, check the padding, check `framed_content_tbs_hash`, and
+    /// verify the signature.
+    ///
+    /// `group_context` is the receiver's own copy of the GroupContext
+    /// and `sender_signature_key` the signature key of the leaf the
+    /// sealed keys name. §3.3 makes the signature check conditional on
+    /// having a GroupContext; mimid's hub always has one, so it always
+    /// checks, and a failure is a refusal (decision mimid-1wgh.4.79.5).
+    ///
+    /// The caller must take `sender_signature_key` from the leaf at the
+    /// returned `sender_leaf_index` in its own ratchet tree, never from
+    /// anything the message carries.
+    ///
+    /// # Errors
+    ///
+    /// See [`UnsealError`]. Every failure means the message is not one
+    /// this receiver can act on; none of them means the group is broken.
+    pub fn open_as_external_receiver(
+        &self,
+        reference: &[u8],
+        private_key: &crate::label::HpkePrivateKey,
+        group_context: &[u8],
+        sender_signature_key: &[u8],
+    ) -> Result<Opened, UnsealError> {
+        let keys = self.unseal_keys(reference, private_key)?;
+        let aad = SemiPrivateContentAAD {
+            group_id: self.group_id.clone(),
+            epoch: self.epoch,
+            content_type: self.content_type,
+            authenticated_data: self.authenticated_data.clone(),
+            partial_context_hash: self.partial_context_hash.clone(),
+            keys_for_external_receivers: self.keys_for_external_receivers.clone(),
+            framed_content_tbs_hash: self.framed_content_tbs_hash.clone(),
+        }
+        .tls_serialize_detached()
+        .map_err(UnsealError::Malformed)?;
+        let plaintext = crate::label::aead_open(
+            keys.key.as_slice(),
+            &keys.guarded_nonce(),
+            &aad,
+            self.ciphertext.as_slice(),
+        )
+        .map_err(|_| UnsealError::Decrypt)?;
+        // decode_parts checks the padding is zero and gives back the
+        // received spans the hash and the signature cover.
+        let (content, spans) =
+            SemiPrivateMessageContent::decode_parts(&plaintext, self.content_type)
+                .map_err(UnsealError::Malformed)?;
+        let tbs =
+            self.check_framed_content_tbs(spans.content, keys.sender_leaf_index, group_context)?;
+        crate::label::verify_with_label(
+            sender_signature_key,
+            FRAMED_CONTENT_TBS_LABEL,
+            &tbs,
+            spans.signature,
+        )
+        .map_err(|_| UnsealError::Signature)?;
+        Ok(Opened {
+            content,
+            sender_leaf_index: keys.sender_leaf_index,
+        })
     }
 }

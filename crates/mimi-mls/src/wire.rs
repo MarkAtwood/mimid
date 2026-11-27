@@ -88,10 +88,11 @@ pub use rfc9420::{
     Welcome, WireFormat,
 };
 pub use semiprivate::{
-    EXTERNAL_RECEIVERS_COMPONENT, ExternalReceiver, ExternalReceiverRef, ExternalReceivers,
-    KeyForExternalReceiver, MAX_EXTERNAL_RECEIVERS, MAX_LISTED_EXTERNAL_RECEIVERS,
-    PerMessageKeyAndNonces, RECEIVER_LABEL, SemiPrivateContentAAD, SemiPrivateMessage,
-    SemiPrivateMessageContent, SemiPrivateMessageContext, UnsealError,
+    ContentSpans, EXTERNAL_RECEIVERS_COMPONENT, ExternalReceiver, ExternalReceiverRef,
+    ExternalReceivers, KeyForExternalReceiver, MAX_EXTERNAL_RECEIVERS,
+    MAX_LISTED_EXTERNAL_RECEIVERS, Opened, PerMessageKeyAndNonces, RECEIVER_LABEL,
+    SEMIPRIVATE_WIRE_FORMAT, SemiPrivateContentAAD, SemiPrivateMessage, SemiPrivateMessageContent,
+    SemiPrivateMessageContext, UnsealError,
 };
 
 /// A reader that keeps a copy of every byte read through it.

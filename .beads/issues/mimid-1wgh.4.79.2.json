@@ -2,13 +2,14 @@
   "id": "mimid-1wgh.4.79.2",
   "title": "Hub as external receiver: HPKE key in the room's external_receivers, decrypt and verify",
   "description": "§3, §3.3: publish the hub's HPKE public key in external_receivers; on receipt decrypt key_and_nonces, verify partial_context_hash, framed_content_tbs_hash and the signature against the hub's GroupContext; then validate as for a PublicMessage handshake.",
+  "design": "## State, 2026-11-26\n\nDone, in mimi-mls:\n- SemiPrivateMessage::unseal_keys: the entry lookup, the HPKE context,\n  DecryptWithLabel, and the partial_context_hash check.\n- framed_content_tbs / check_framed_content_tbs: the FramedContentTBS an\n  external receiver rebuilds, with the semiprivate wire format of\n  decision mimid-1wgh.4.79.9 and the sender leaf from the sealed keys.\n- decode_parts and ContentSpans: the received spans of the content and\n  of the signature, because the hash and the signature cover the bytes\n  as they arrived and re-encoding a decoded ProposalIn need not\n  reproduce them.\n- label::aead_open and label::hash.\n- open_as_external_receiver: the whole of §3.3 in order.\n\nDone, in mimid-server:\n- The hub HPKE pair in hub_secret (migration 0024), one per hub.\n- check_external_receivers in check_group: the component, if present,\n  names the hub and nobody else.\n- Hub::external_receiver_ref, Hub::unseal_semiprivate.\n\nNot done, and why:\n- No end-to-end test with a real sender yet. Each piece has its own\n  test, but nothing in mimid BUILDS a SemiPrivateMessage (that is bead\n  mimid-1wgh.4.79.3), so the AEAD open, the two hashes and the signature\n  have not been shown to agree on their inputs. A disagreement between\n  them would pass every test written so far. A test that stands in for\n  the sender is the next thing to write; it needs label::aead_seal.\n- The hub does not yet call open_as_external_receiver from its message\n  intake. It needs the sender leaf's signature key out of the ratchet\n  tree at the index the sealed keys name, which the Observer has.",
   "status": "open",
   "priority": 2,
   "issue_type": "task",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-16T02:31:20.207800062Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-21T01:20:12.336339855Z",
+  "updated_at": "2026-11-26T23:52:41.572707099Z",
   "labels": [
     "feature"
   ],

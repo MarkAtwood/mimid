@@ -11,10 +11,10 @@
 #![forbid(unsafe_code)]
 
 use mimi_mls::label::HpkePrivateKey;
-use mimi_mls::tls_codec::{Deserialize, Serialize, Size};
+use mimi_mls::tls_codec::{Deserialize, Serialize, Size, VLBytes};
 use mimi_mls::wire::{
     ContentType, KeyForExternalReceiver, MAX_EXTERNAL_RECEIVERS, SemiPrivateMessage,
-    SemiPrivateMessageContent,
+    SemiPrivateMessageContent, UnsealError,
 };
 use mimi_mls::wire::{
     EXTERNAL_RECEIVERS_COMPONENT, ExternalReceiver, ExternalReceivers,
@@ -541,4 +541,306 @@ fn a_receiver_finds_only_its_own_entry() {
         [0xbe, 0xef],
         "the context takes the hash from the frame"
     );
+}
+
+// --- framed_content_tbs_hash (§3.1, §3.3) ---
+
+/// The FramedContentTBS an external receiver rebuilds, field by field
+/// (RFC 9420 §6.1), with the semiprivate wire format of decision
+/// mimid-1wgh.4.79.9.
+#[test]
+fn the_framed_content_tbs_is_rebuilt_field_by_field() {
+    let message = SemiPrivateMessage::decode(&message_wire(0x02)).expect("decodes");
+    let tbs = message
+        .framed_content_tbs(&[0xde, 0xad], 7, &[0xc0, 0xde])
+        .expect("builds");
+
+    #[rustfmt::skip]
+    let expected: Vec<u8> = vec![
+        0x00, 0x01,             // ProtocolVersion mls10
+        0x00, 0x11,             // WireFormat mls_semiprivate_message
+        0x03, b'g', b'i', b'd', // FramedContent group_id<V> = "gid"
+        0, 0, 0, 0, 0, 0, 0, 7, // epoch = 7
+        0x01,                   // Sender.sender_type = member
+        0x00, 0x00, 0x00, 0x07, // leaf_index = 7
+        0x02, 0xde, 0xad,       // authenticated_data<V>, the frame's own
+        0x02,                   // ContentType proposal
+        0xde, 0xad,             // the content span, verbatim
+        0xc0, 0xde,             // the GroupContext
+    ];
+    assert_eq!(tbs, expected);
+}
+
+/// Oracle: the hash is what stops a sender encrypting one thing to the
+/// members and another to the external receivers. Content that does not
+/// hash to the frame's committed value is refused.
+#[test]
+fn content_that_does_not_match_the_hash_is_refused() {
+    let message = SemiPrivateMessage::decode(&message_wire(0x02)).expect("decodes");
+    // The fixture's framed_content_tbs_hash is 0xfeed, which is not the
+    // hash of anything, so every input mismatches.
+    let err = message
+        .check_framed_content_tbs(&[0xde, 0xad], 7, &[0xc0, 0xde])
+        .expect_err("must not match");
+    assert!(
+        matches!(err, mimi_mls::wire::UnsealError::ContentHashMismatch),
+        "{err:?}"
+    );
+}
+
+/// Each input to the hash changes it: the content, the sender's leaf and
+/// the GroupContext. A hash that ignored any of them would let that part
+/// be swapped after the fact.
+#[test]
+fn every_input_changes_the_hash() {
+    let message = SemiPrivateMessage::decode(&message_wire(0x02)).expect("decodes");
+    let base = message
+        .framed_content_tbs(&[0xde, 0xad], 7, &[0xc0, 0xde])
+        .expect("builds");
+    for (label, other) in [
+        (
+            "content",
+            message.framed_content_tbs(&[0xde, 0xae], 7, &[0xc0, 0xde]),
+        ),
+        (
+            "sender leaf",
+            message.framed_content_tbs(&[0xde, 0xad], 8, &[0xc0, 0xde]),
+        ),
+        (
+            "group context",
+            message.framed_content_tbs(&[0xde, 0xad], 7, &[0xc0, 0xdf]),
+        ),
+    ] {
+        assert_ne!(base, other.expect("builds"), "{label} must change the TBS");
+    }
+}
+
+/// `decode_parts` hands back the content's bytes as they arrived, not a
+/// re-encoding: the hash covers the received span.
+#[test]
+fn decode_parts_returns_the_received_content_span() {
+    let (_, spans) =
+        SemiPrivateMessageContent::decode_parts(REMOVE_PROPOSAL_CONTENT, ContentType::Proposal)
+            .expect("decodes");
+    let content = spans.content;
+    // The fixture is a Remove proposal, then the auth data, then zero
+    // padding. The span stops at the proposal's last byte.
+    assert_eq!(
+        content,
+        &REMOVE_PROPOSAL_CONTENT[..content.len()],
+        "the span is a prefix of the received bytes"
+    );
+    assert!(
+        content.len() < REMOVE_PROPOSAL_CONTENT.len(),
+        "the auth data and padding are excluded"
+    );
+}
+
+/// The signature span is the signature's own bytes, without the `<V>`
+/// length prefix: it is handed straight to the verifier.
+#[test]
+fn the_signature_span_excludes_its_length_prefix() {
+    let (_, spans) =
+        SemiPrivateMessageContent::decode_parts(REMOVE_PROPOSAL_CONTENT, ContentType::Proposal)
+            .expect("decodes");
+    // The auth data follows the content, and starts with signature<V>.
+    let auth = &REMOVE_PROPOSAL_CONTENT[spans.content.len()..];
+    let length = usize::from(auth[0]);
+    assert_eq!(
+        spans.signature.len(),
+        length,
+        "the span is exactly the declared length"
+    );
+    assert_eq!(
+        spans.signature,
+        &auth[1..=length],
+        "and starts after the prefix"
+    );
+}
+
+// --- the whole external-receiver path (§3.3) ---
+
+/// Builds a SemiPrivateMessage the way a sender would and reads it back
+/// as the external receiver, with real HPKE, real AEAD, real Ed25519 and
+/// the real hashes.
+///
+/// Nothing in mimid builds a SemiPrivateMessage yet -- that is the
+/// sender side, bead mimid-1wgh.4.79.3 -- so this test stands in for the
+/// sender. It is the only check that the AEAD, the two hashes and the
+/// signature all agree on their inputs: each piece has its own test, but
+/// a disagreement between them would pass every one of those.
+#[test]
+fn a_semiprivate_message_built_as_a_sender_reads_back() {
+    use mimi_mls::label;
+    use mimi_mls::wire::SemiPrivateContentAAD;
+
+    let (receiver_private, receiver_public) = HpkePrivateKey::generate().expect("a key pair");
+    let sender = label::SignatureKeyPair::generate().expect("a signing pair");
+
+    // The receiver's entry, and the reference a sender names it by.
+    // The receiver's entry is built from its wire form: its two fields
+    // are opaque wire types with private contents.
+    let mut entry_wire = VLBytes::new(receiver_public.clone())
+        .tls_serialize_detached()
+        .unwrap();
+    entry_wire.extend([0x00, 0x01]); // credential_type: basic
+    entry_wire.extend(
+        VLBytes::new(b"hub".to_vec())
+            .tls_serialize_detached()
+            .unwrap(),
+    );
+    let entry = ExternalReceiver::tls_deserialize_exact(&entry_wire).expect("an ExternalReceiver");
+    let reference = entry.reference().expect("hashes");
+
+    // The handshake: the Remove proposal fixture, which is a real
+    // encoded Proposal, and a signature over its FramedContentTBS.
+    let group_id = b"gid".to_vec();
+    let epoch = 7u64;
+    let authenticated_data = vec![0xde, 0xad];
+    let sender_leaf_index = 3u32;
+    let group_context = b"a group context".to_vec();
+    // The Remove proposal alone, without the auth data the fixture
+    // appends: FramedContent's content field is the proposal.
+    let proposal: &[u8] = &[
+        0x00, 0x03, //             proposal_type: remove(3)
+        0x00, 0x00, 0x00, 0x02, // Remove.removed: leaf index 2
+    ];
+
+    let keys = PerMessageKeyAndNonces {
+        // Ciphersuite 1 is AES-128-GCM: a 16-byte key, a 12-byte nonce.
+        key: vec![0x11; 16].into(),
+        nonce: vec![0x22; 12].into(),
+        reuse_guard: [0xaa, 0xbb, 0xcc, 0xdd],
+        sender_leaf_index,
+    };
+    let partial_context_hash = keys.partial_context_hash().expect("hashes");
+
+    // FramedContentTBS, as both sides build it.
+    let mut tbs = vec![0x00, 0x01, 0x00, 0x11];
+    tbs.extend(
+        VLBytes::new(group_id.clone())
+            .tls_serialize_detached()
+            .unwrap(),
+    );
+    tbs.extend(epoch.tls_serialize_detached().unwrap());
+    tbs.push(0x01);
+    tbs.extend(sender_leaf_index.tls_serialize_detached().unwrap());
+    tbs.extend(
+        VLBytes::new(authenticated_data.clone())
+            .tls_serialize_detached()
+            .unwrap(),
+    );
+    tbs.push(0x02); // ContentType proposal
+    tbs.extend(proposal);
+    tbs.extend(&group_context);
+    let framed_content_tbs_hash = label::hash(&tbs).expect("hashes");
+
+    let signature = sender
+        .sign_with_label("FramedContentTBS", &tbs)
+        .expect("signs");
+
+    // SemiPrivateMessageContent: the proposal, its auth data, padding.
+    let mut content = proposal.to_vec();
+    content.extend(VLBytes::new(signature).tls_serialize_detached().unwrap());
+    content.extend([0u8; 4]); // zero padding
+
+    // The sealed keys, then the AAD, then the ciphertext.
+    let context = SemiPrivateMessageContext {
+        group_id: group_id.clone().into(),
+        epoch,
+        partial_context_hash: partial_context_hash.clone().into(),
+    };
+    let sealed = label::encrypt_with_label(
+        &receiver_public,
+        RECEIVER_LABEL,
+        &context.tls_serialize_detached().unwrap(),
+        &keys.tls_serialize_detached().unwrap(),
+    )
+    .expect("seals");
+    let mut hpke_ciphertext = VLBytes::new(sealed.kem_output.clone())
+        .tls_serialize_detached()
+        .unwrap();
+    hpke_ciphertext.extend(
+        VLBytes::new(sealed.ciphertext.clone())
+            .tls_serialize_detached()
+            .unwrap(),
+    );
+    // Built from bytes: ExternalReceiverRef wraps a private VLBytes.
+    let mut key_entry_wire = VLBytes::new(reference.clone())
+        .tls_serialize_detached()
+        .unwrap();
+    key_entry_wire.extend(&hpke_ciphertext);
+    let key_entry =
+        KeyForExternalReceiver::tls_deserialize_exact(&key_entry_wire).expect("an entry");
+
+    let aad = SemiPrivateContentAAD {
+        group_id: group_id.clone().into(),
+        epoch,
+        content_type: ContentType::Proposal,
+        authenticated_data: authenticated_data.clone().into(),
+        partial_context_hash: partial_context_hash.clone().into(),
+        keys_for_external_receivers: vec![key_entry.clone()],
+        framed_content_tbs_hash: framed_content_tbs_hash.clone().into(),
+    }
+    .tls_serialize_detached()
+    .expect("encodes");
+    let ciphertext = label::aead_seal(keys.key.as_slice(), &keys.guarded_nonce(), &aad, &content)
+        .expect("seals the content");
+
+    let message = SemiPrivateMessage {
+        group_id: group_id.clone().into(),
+        epoch,
+        content_type: ContentType::Proposal,
+        authenticated_data: authenticated_data.into(),
+        partial_context_hash: partial_context_hash.into(),
+        keys_for_external_receivers: vec![key_entry],
+        framed_content_tbs_hash: framed_content_tbs_hash.into(),
+        encrypted_sender_data: vec![0x00; 8].into(),
+        ciphertext: ciphertext.into(),
+    };
+
+    // The frame survives a round trip through the wire, as a hub would
+    // receive it.
+    let wire = message.tls_serialize_detached().expect("encodes");
+    let received = SemiPrivateMessage::decode(&wire).expect("decodes");
+    assert_eq!(received, message);
+
+    let opened = received
+        .open_as_external_receiver(
+            &reference,
+            &receiver_private,
+            &group_context,
+            sender.verification_key(),
+        )
+        .expect("the external receiver reads the handshake");
+    assert_eq!(opened.sender_leaf_index, sender_leaf_index);
+    assert!(
+        matches!(opened.content, SemiPrivateMessageContent::Proposal { .. }),
+        "a Remove proposal came back"
+    );
+
+    // Oracle: the signature is checked against the leaf the caller
+    // supplies, so another key must not verify.
+    let other = label::SignatureKeyPair::generate().expect("a pair");
+    let err = received
+        .open_as_external_receiver(
+            &reference,
+            &receiver_private,
+            &group_context,
+            other.verification_key(),
+        )
+        .expect_err("a different signer must be refused");
+    assert!(matches!(err, UnsealError::Signature), "{err:?}");
+
+    // Oracle: the GroupContext is hashed in, so a receiver with the
+    // wrong one refuses rather than accepting.
+    let err = received
+        .open_as_external_receiver(
+            &reference,
+            &receiver_private,
+            b"another group context",
+            sender.verification_key(),
+        )
+        .expect_err("a wrong GroupContext must be refused");
+    assert!(matches!(err, UnsealError::ContentHashMismatch), "{err:?}");
 }

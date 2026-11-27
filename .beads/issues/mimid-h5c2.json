@@ -1,0 +1,12 @@
+{
+  "id": "mimid-h5c2",
+  "title": "flake: a call in a chat of more than two was created, not refused",
+  "description": "Seen once in a full `cargo test --workspace --all-features` run on\n2026-11-26, in crates/mimid-agent/tests/vtc.rs:685\n(a_call_in_a_chat_of_more_than_two_is_refused). Passes 3 of 3 alone and\n2 of 2 as a whole test file, so it only shows under the parallel\nworkspace run.\n\n## What happened\n\nThe test pushes carol and dave into the chat's `participants`, so a call\nwould hold three, then creates a VTCCall and expects `notCreated` with\n`invalidProperties`. The run got a created call instead:\n`\"created\":{\"k\":{...,\"activeParticipantCount\":1,...}}` and\n`\"notCreated\":null`.\n\nSo the serving path saw a chat with two participants or fewer at the\nmoment it checked.\n\n## The two readings, neither ruled out\n\n1. Test: the mutation through `alice.store.state()` is not durably\n   visible to the serving path by the time the POST is handled, and the\n   test only usually wins that race.\n2. Product: the VTC create path reads a participant list captured\n   earlier -- a snapshot or a cache -- rather than the current one, and\n   under load the stale copy is what it checks.\n\nReading 2 is why this is P1 rather than a test annoyance. The assertion\nis a policy refusal: a call in a group chat being allowed because the\nparticipant count read low is a real defect, and the same stale read\nwould affect any other check over `participants`.\n\n## Next step\n\nFind what the create path reads `participants` from and whether it can\nbe older than the last committed write. If it reads through the same\nstore handle the test writes to, the race is the test's and the fix is\nto make the write observable before the POST. If it reads a cached\nsnapshot, the bead is a product bug and needs a regression test that\nfails before the fix.\n\nDo not \"fix\" this by raising a timeout or retrying the assertion: both\nreadings would stay.\n\nRelated: bead mimid-gn1w is a different flake in the same full-workspace\nruns (an SSE subscribe that does not establish). Same trigger --\nparallel load -- different mechanism.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T00:02:23.751644947Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T00:02:23.751644947Z"
+}

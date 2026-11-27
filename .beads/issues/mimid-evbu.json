@@ -1,0 +1,12 @@
+{
+  "id": "mimid-evbu",
+  "title": "Delete the pre-message-rewrite backup branch once the rewrite is settled",
+  "description": "Local branch backup/pre-message-rewrite-20261126-1009 holds main as it\nwas before the commit-message rewrite of 2026-11-26 (bead mimid-4yu4).\nIt is local only and has no upstream.\n\nKeep it until the rewritten history has been pushed and nobody wants a\nmessage restored from the old copy. Then delete it.\n\nMark's call, not an agent's: it is the only copy of the pre-rewrite\nmessages. Deleting it is unrecoverable once main is force-pushed over\nthe old history.\n\n    git branch -D backup/pre-message-rewrite-20261126-1009",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "chore",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T00:09:50.85626172Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T00:09:50.85626172Z"
+}

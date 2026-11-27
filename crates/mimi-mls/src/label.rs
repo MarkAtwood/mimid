@@ -276,6 +276,44 @@ impl std::fmt::Debug for HpkePrivateKey {
     }
 }
 
+/// Seals `plaintext` with the group's ciphersuite AEAD.
+///
+/// The counterpart of [`aead_open`], for the sender's side of a
+/// SemiPrivateMessage (semiprivatemessage-08 §3.1).
+///
+/// # Errors
+///
+/// Returns [`Error::Encrypt`] if the key or nonce has the wrong length
+/// for the ciphersuite.
+pub fn aead_seal(key: &[u8], nonce: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, Error> {
+    use openmls_traits::crypto::OpenMlsCrypto;
+    RustCrypto::default()
+        .aead_encrypt(CIPHERSUITE.aead_algorithm(), key, plaintext, nonce, aad)
+        .map_err(|e| Error::Encrypt(e.into()))
+}
+
+/// Opens an AEAD ciphertext with the group's ciphersuite
+/// (RFC 9420 §6.3.2's `ciphertext` and anything framed like it).
+///
+/// `nonce` is the nonce after the `reuse_guard` has been applied; see
+/// `PerMessageKeyAndNonces::guarded_nonce`.
+///
+/// # Errors
+///
+/// Returns [`Error::Decrypt`] if the key, nonce or AAD is wrong, or the
+/// ciphertext has been altered.
+pub fn aead_open(
+    key: &[u8],
+    nonce: &[u8],
+    aad: &[u8],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, Error> {
+    use openmls_traits::crypto::OpenMlsCrypto;
+    RustCrypto::default()
+        .aead_decrypt(CIPHERSUITE.aead_algorithm(), key, ciphertext, nonce, aad)
+        .map_err(|_| Error::Decrypt)
+}
+
 /// The group ciphersuite's hash of `data`.
 ///
 /// Used for the hashes draft-mahy-mls-semiprivatemessage names without

@@ -1,0 +1,12 @@
+{
+  "id": "mimid-6gqb",
+  "title": "Track openmls PR #2351 (export CommitIn and FramedContentAuthData)",
+  "description": "Opened 2026-11-26 against openmls/openmls from branch\nexport-commitin-and-authdata: makes `CommitIn` and\n`FramedContentAuthData` public (fields stay private) plus a CHANGELOG\nentry. mimid needs both to decode a SemiPrivateMessageContent\n(bead mimid-1wgh.4.79.1).\n\nUntil it lands, Cargo.toml pins the openmls git rev\n64f9eab2fad09ed2ec42d0facab183082b6b458c on mimid's own branch\nmimid-0.9.2, which carries the same two commits.\n\n## What to watch for\n\n- Review comments asking for a different shape. A likely one: expose an\n  accessor rather than the type, since mimid only needs to deserialize.\n  mimid reads the signature out of the received bytes\n  (`wire::ContentSpans`) rather than from FramedContentAuthData, so an\n  accessor-only answer would still work for the signature but not for\n  decoding the content.\n- If it is rejected, the pin stays on mimid-0.9.2 indefinitely and that\n  becomes a maintenance cost to record, not a blocker.\n\n## Done when\n\nThe PR is merged and Cargo.toml points at an upstream rev or release\ninstead of mimid-0.9.2, or the PR is closed and this bead records why\nwith the pin made deliberate.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T00:09:45.044744751Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T00:09:45.044744751Z"
+}

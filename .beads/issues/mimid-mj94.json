@@ -1,0 +1,12 @@
+{
+  "id": "mimid-mj94",
+  "title": "Move off the openmls git pin when 0.10.x is released",
+  "description": "Cargo.toml pins openmls to a git rev on mimid's branch mimid-0.9.2 in\nseven places, because mimid needs types 0.9.x does not export (bead for\nPR #2351) and draft features that are opt-in upstream.\n\n## Estimate, as of 2026-11-26\n\n0.10.0-rc.1 was tagged 2026-11-23. 0.9.0 took 22 days and 4 release\ncandidates from its first rc, which would put 0.10.0 around mid-December\n2026. Not a commitment by the openmls maintainers, just the shape of the\nlast release.\n\nThey are NOT waiting on IETF work: every draft feature in the tree is\nbehind an opt-in feature flag with none in `default`, so a draft that\nmoves does not hold the release.\n\n## Done when\n\nCargo.toml depends on a published openmls 0.10.x from crates.io, with\nthe mimid-0.9.2 patches either upstream or carried as a documented\n`[patch]` with a reason.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T00:09:45.104516326Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T00:09:45.104516326Z"
+}

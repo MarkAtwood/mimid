@@ -1,0 +1,28 @@
+{
+  "id": "mimid-1wgh.4.79.9",
+  "title": "decision: FramedContentTBS carries the semiprivate wire format, not PrivateMessage's",
+  "description": "Mark 2026-11-26. semiprivatemessage-08 §3.1 says\n`framed_content_tbs_hash = hash(FramedContentTBS)`, and RFC 9420 §6.1's\nFramedContentTBS has a `WireFormat wire_format` field. The draft never\nsays which value goes in it for a SemiPrivateMessage, and it has to,\nbecause the hash and the signature both cover it.\n\n## The readings\n\n1. `mls_semiprivate_message` (TBD1, suggested 0x0011), the format the\n   message is actually in. Chosen.\n2. `mls_private_message` (0x0003), on the grounds that §3 describes\n   SemiPrivateMessage as extending PrivateMessage and §3.2 says the\n   member's path works \"just as for a PrivateMessage\".\n\n## Why the message's own format\n\nRFC 9420 §6.1 puts wire_format in FramedContentTBS so the signature\nbinds the framing. Reading 2 breaks that: a SemiPrivateMessage and a\nPrivateMessage carrying the same FramedContent would have the same\nsignature, so either could be repackaged as the other and still verify.\nThe draft adds a wire format precisely so a group can require\nSemiPrivateMessage (§3 L173-179); a signature that does not distinguish\nit from PrivateMessage would let a sender satisfy that requirement with\na message the external receivers cannot read, and let anyone strip the\nexternal receivers back off.\n\nReading 2's textual support is about the key schedule and the sender\ndata, which genuinely are PrivateMessage's. It says nothing about the\nsignature's inputs.\n\n## Cost if this is wrong\n\nInterop, not security. A sender using the other value produces a\nsignature and a hash that mimid rejects, visibly, on the first\nhandshake. Reading 1 is also the stricter of the two, so a mimid that\nguesses wrong refuses messages rather than accepting forged ones.\n\n## Also unstated, and recorded here\n\nAn external receiver has to reconstruct FramedContent to recompute the\nhash, and FramedContent carries the sender. The frame does not give it\nin the clear: a member reads it from the decrypted SenderData, which an\nexternal receiver has no key for. The sender_leaf_index inside\nPerMessageKeyAndNonces is what fills that gap, which is presumably why\nthe field is there -- the draft does not say so, and §3.3 mentions it\nonly as an input to partial_context_hash.\n\nBoth points are items 9 and 10 for bead mimid-1wgh.44.22.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-26T23:37:00.217789303Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-26T23:39:02.048286155Z",
+  "closed_at": "2026-11-26T23:39:02.048286155Z",
+  "close_reason": "Closed",
+  "labels": [
+    "decision",
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.79.9",
+      "depends_on_id": "mimid-1wgh.4.79",
+      "type": "parent-child",
+      "created_at": "2026-11-26T23:37:00.257365596Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

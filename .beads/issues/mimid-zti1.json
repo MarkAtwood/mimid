@@ -1,0 +1,12 @@
+{
+  "id": "mimid-zti1",
+  "title": "provider-auth: the directory-key alternative names the wrong provider's certificate",
+  "description": "draft-atwood-mimi-provider-auth.md, the \"Keys could also be published in\nthe directory document instead of DNS\" bullet near line 749. Verified\n2026-11-26, not just suspected.\n\n## The text\n\n  That would rest their trust on the target's TLS server certificate,\n  which is to say on the Web PKI [...]\n\n## Why it is wrong\n\nThe draft's own model has the SOURCE provider publish its key under its\nown domain and the target fetch it to verify a signed request:\n\n- L116: \"publishes a public key in DNS under its own domain and signs\n  each [request]\"\n- L273 table: \"DNS keys | RFC 9421 request signature | DNS, under the\n  source domain\"\n\nSo a directory document carrying those keys would be the source's\ndirectory, fetched by the target. The trust would rest on the SOURCE's\nTLS server certificate. \"The target's\" has the direction backwards.\n\n## The fix\n\nReplace \"the target's TLS server certificate\" with \"the source\nprovider's TLS server certificate\". The rest of the bullet, including\nthe Web PKI argument, stands: the point is that a directory-published\nkey inherits Web PKI trust, and that is true whichever provider serves\nit.\n\nWorth a sweep of the neighbouring Security Considerations bullets for\nthe same source/target inversion while the file is open.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T00:09:28.730813829Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T00:09:28.730813829Z"
+}
