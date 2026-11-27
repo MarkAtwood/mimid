@@ -87,6 +87,12 @@ pub use rfc9420::{
     MLSMessage, ProposalRef, RequiredCapabilities, SignaturePublicKey, VerifiedKeyPackageInfo,
     Welcome, WireFormat,
 };
+mod wire_formats;
+pub use wire_formats::{
+    MAX_WIRE_FORMATS, REQUIRED_WIRE_FORMATS_EXTENSION, SUPPORTED_WIRE_FORMATS_EXTENSION,
+    WireFormats,
+};
+
 pub use semiprivate::{
     ContentSpans, EXTERNAL_RECEIVERS_COMPONENT, ExternalReceiver, ExternalReceiverRef,
     ExternalReceivers, KeyForExternalReceiver, MAX_EXTERNAL_RECEIVERS,

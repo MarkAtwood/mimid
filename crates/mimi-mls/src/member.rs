@@ -630,6 +630,27 @@ impl Member {
         external_senders: &[ExternalSender],
         components: &[(ComponentId, Vec<u8>)],
     ) -> Result<Self, MemberError> {
+        Self::create_requiring(identity, group_id, external_senders, components, &[])
+    }
+
+    /// As [`Member::create`], with `required_wire_formats` in the
+    /// GroupContext (mls-extensions-11 §7.1.3): the non-default wire
+    /// formats every member of the group must support.
+    ///
+    /// An empty slice leaves the extension out, which is a group using
+    /// only RFC 9420's own formats.
+    ///
+    /// # Errors
+    ///
+    /// As [`Member::create`], and [`MemberError::Create`] if the list
+    /// cannot be encoded.
+    pub fn create_requiring(
+        identity: &Identity,
+        group_id: &[u8],
+        external_senders: &[ExternalSender],
+        components: &[(ComponentId, Vec<u8>)],
+        required_wire_formats: &[u16],
+    ) -> Result<Self, MemberError> {
         let provider = &identity.provider();
         let rand = provider.rand();
 
@@ -658,6 +679,15 @@ impl Member {
             }
             extensions.push(Extension::AppDataDictionary(
                 AppDataDictionaryExtension::new(dictionary),
+            ));
+        }
+        if !required_wire_formats.is_empty() {
+            let formats = crate::wire::WireFormats::from_slice(required_wire_formats)
+                .tls_serialize_detached()
+                .map_err(|e| MemberError::Create(e.into()))?;
+            extensions.push(Extension::Unknown(
+                crate::wire::REQUIRED_WIRE_FORMATS_EXTENSION,
+                openmls::extensions::UnknownExtension(formats),
             ));
         }
         let mut extensions =

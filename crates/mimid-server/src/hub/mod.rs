@@ -1287,6 +1287,14 @@ pub enum HubError {
     /// with nothing in the room's policy saying who it is.
     #[error("external_receivers is not exactly the hub")]
     WrongExternalReceivers,
+    /// The group requires the semiprivate wire format but lists no
+    /// external receiver (semiprivatemessage-08 §3).
+    ///
+    /// Both are needed for SemiPrivateMessage to be used. With no
+    /// receiver the format would carry handshakes nobody outside the
+    /// group can read, which is what PrivateMessage already does.
+    #[error("required_wire_formats requires SemiPrivateMessage but no external receiver is listed")]
+    MissingExternalReceivers,
     /// The hub could not read its copy of a SemiPrivateMessage's keys
     /// (semiprivatemessage-08 §3.1).
     #[error("the hub could not unseal the message's keys")]

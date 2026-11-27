@@ -91,7 +91,7 @@ use crate::member::{
 use crate::store::Provider;
 use crate::wire::{
     ExternalSender, GroupInfo, KeyPackageRef, PartialGroupInfo, ProposalRef, RatchetTreePresence,
-    check_safe_aad,
+    WireFormats, check_safe_aad,
 };
 use crate::{ErrorSource, Store, label};
 
@@ -1170,6 +1170,41 @@ impl Observer {
                 || Ok(Vec::new()),
                 |senders| senders.iter().map(to_wire).collect(),
             )
+    }
+
+    /// The current GroupContext's `required_wire_formats`
+    /// (mls-extensions-11 §7.1.3): the non-default wire formats every
+    /// member of this group must support.
+    ///
+    /// `None` when the extension is absent, which is a group using only
+    /// RFC 9420's own wire formats. That is distinct from an extension
+    /// present but empty, which says the same thing explicitly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError::Decode`] if the extension is present but
+    /// malformed, or lists more formats than
+    /// [`mimi_mls::wire::MAX_WIRE_FORMATS`](crate::wire::MAX_WIRE_FORMATS).
+    pub fn required_wire_formats(&self) -> Result<Option<WireFormats>, ObserverError> {
+        let Some(bytes) = self
+            .group
+            .group_context()
+            .extensions()
+            .iter()
+            .find_map(|extension| match extension {
+                Extension::Unknown(id, data)
+                    if *id == crate::wire::REQUIRED_WIRE_FORMATS_EXTENSION =>
+                {
+                    Some(&data.0)
+                }
+                _ => None,
+            })
+        else {
+            return Ok(None);
+        };
+        WireFormats::decode(bytes)
+            .map(Some)
+            .map_err(|e| ObserverError::Decode(e.into()))
     }
 
     /// The TLS-encoded GroupContext (RFC 9420 §8.1) of the current epoch.

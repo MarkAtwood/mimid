@@ -213,6 +213,9 @@ pub struct GroupSpec {
     /// (semiprivatemessage-08 §3), if any. `None` is a room whose
     /// members send ordinary handshakes, which is every room today.
     pub external_receivers: Option<Vec<u8>>,
+    /// The GroupContext's `required_wire_formats` (mls-extensions-11
+    /// §7.1.3). Empty leaves the extension out.
+    pub required_wire_formats: Vec<u16>,
 }
 
 impl GroupSpec {
@@ -229,6 +232,7 @@ impl GroupSpec {
             // No external_receivers: every room today sends ordinary
             // handshakes (semiprivatemessage-08 is bead mimid-1wgh.4.79).
             external_receivers: None,
+            required_wire_formats: Vec::new(),
         }
     }
 }
@@ -300,7 +304,14 @@ pub fn build_group(spec: &GroupSpec, group_id: &[u8]) -> BuiltGroup {
     if let Some(data) = &spec.external_receivers {
         components.push((mimi_mls::wire::EXTERNAL_RECEIVERS_COMPONENT, data.clone()));
     }
-    let mut group = Member::create(&alice, group_id, &senders, &components).unwrap();
+    let mut group = Member::create_requiring(
+        &alice,
+        group_id,
+        &senders,
+        &components,
+        &spec.required_wire_formats,
+    )
+    .unwrap();
     let key_package = bob.key_package(KeyPackageKind::OneTime).unwrap();
     let bundle = group
         .commit(&alice, &[&key_package], &[], &[], no_components)

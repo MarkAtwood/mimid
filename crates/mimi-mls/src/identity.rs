@@ -536,6 +536,15 @@ pub(crate) fn leaf_capabilities(
     let mut credentials = vec![CredentialType::Basic];
     let extensions = vec![
         ExtensionType::AppDataDictionary,
+        // mls-extensions-11 §7.1.3: a group may only require a wire
+        // format if every leaf supports this extension type, so a leaf
+        // that does not advertise it can never join such a room. mimid
+        // reads and enforces the extension, so saying so is truthful.
+        // It is not a claim about any particular format: that is
+        // supported_wire_formats, which mimid does not yet send because
+        // it cannot yet produce a SemiPrivateMessage (bead
+        // mimid-1wgh.4.79.3).
+        ExtensionType::Unknown(crate::wire::REQUIRED_WIRE_FORMATS_EXTENSION),
         ExtensionType::Grease(grease_extension),
     ];
     if let Some(code_points) = did_webvh {

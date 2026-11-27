@@ -109,18 +109,29 @@ pub(super) fn hub_receiver_entry(
 /// nothing in the room's policy would say so. A room that wants one can
 /// say so when the draft says how.
 ///
-/// A room with no `external_receivers` component is fine here: it is a
-/// room whose members send ordinary handshakes. Requiring the component
-/// when `mls_semiprivate_message` is in `required_wire_formats` (§3
-/// L173-179) needs the wire-format lists, which is bead
-/// mimid-1wgh.4.79.3.
+/// A room with no `external_receivers` component is fine unless the
+/// group requires the semiprivate wire format. §3 L173-179 makes both
+/// conditions necessary for SemiPrivateMessage to be used: the format in
+/// `required_wire_formats`, and at least one entry in
+/// `external_receivers`. A room that requires the format and lists no
+/// receiver could only send handshakes nobody outside the group can
+/// read, which is what a PrivateMessage already is, so the combination
+/// is refused rather than quietly treated as one or the other.
 fn check_external_receivers(
     observer: &Observer,
     hub_hpke_public_key: &[u8],
     domain: &Domain,
 ) -> Result<(), HubError> {
+    let requires_semiprivate = observer
+        .required_wire_formats()
+        .map_err(HubError::Mls)?
+        .is_some_and(|formats| formats.contains(mimi_mls::wire::SEMIPRIVATE_WIRE_FORMAT));
     let Some(bytes) = observer.component(mimi_mls::wire::EXTERNAL_RECEIVERS_COMPONENT) else {
-        return Ok(());
+        return if requires_semiprivate {
+            Err(HubError::MissingExternalReceivers)
+        } else {
+            Ok(())
+        };
     };
     let receivers = mimi_mls::wire::ExternalReceivers::decode(bytes)
         .map_err(|_| HubError::WrongExternalReceivers)?;

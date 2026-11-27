@@ -1092,3 +1092,66 @@ async fn the_hub_reads_a_semiprivate_handshake() {
 
     close_hub(store, hub).await;
 }
+
+/// semiprivatemessage-08 §3 L173-179 needs both conditions for
+/// SemiPrivateMessage to be used: the wire format in
+/// `required_wire_formats` and at least one entry in
+/// `external_receivers`. A room with the first and not the second is
+/// refused.
+#[tokio::test]
+async fn a_room_requiring_semiprivate_must_list_a_receiver() {
+    use mimi_mls::tls_codec::{Serialize as _, VLBytes};
+    use mimi_mls::wire::SEMIPRIVATE_WIRE_FORMAT;
+
+    // Requires the format, lists no receiver: refused.
+    let err = rejected(
+        |_hub| GroupSpec {
+            required_wire_formats: vec![SEMIPRIVATE_WIRE_FORMAT],
+            ..GroupSpec::valid_for(_hub)
+        },
+        ALICE,
+    )
+    .await;
+    assert!(matches!(err, HubError::MissingExternalReceivers), "{err:?}");
+
+    // Requires the format and lists the hub: accepted.
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let mut entry = VLBytes::new(hub.hpke_public_key().to_vec())
+        .tls_serialize_detached()
+        .unwrap();
+    entry.extend([0x00, 0x01]);
+    entry.extend(
+        VLBytes::new(HUB_IDENTITY.to_vec())
+            .tls_serialize_detached()
+            .unwrap(),
+    );
+    let group = build_group(
+        &GroupSpec {
+            required_wire_formats: vec![SEMIPRIVATE_WIRE_FORMAT],
+            external_receivers: Some(VLBytes::new(entry).tls_serialize_detached().unwrap()),
+            ..GroupSpec::valid_for(&hub)
+        },
+        b"group-requires-sp",
+    );
+    hub.create_room(ROOM_ID, ALICE, &group.group_info, &group.ratchet_tree)
+        .await
+        .expect("both conditions met");
+    close_hub(store, hub).await;
+
+    // A room requiring some other non-default format, with no receiver,
+    // is untouched by this rule.
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let group = build_group(
+        &GroupSpec {
+            required_wire_formats: vec![0x0001],
+            ..GroupSpec::valid_for(&hub)
+        },
+        b"group-other-format",
+    );
+    hub.create_room(ROOM_ID, ALICE, &group.group_info, &group.ratchet_tree)
+        .await
+        .expect("another required format is not this rule's business");
+    close_hub(store, hub).await;
+}
