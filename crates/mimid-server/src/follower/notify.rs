@@ -249,6 +249,9 @@ impl Follower {
             // An error only means nobody is subscribed.
             let _ = self.appended.send((room_id.to_owned(), seq));
         }
+        if appended.gap_from.is_some() {
+            self.announce_position(room_id);
+        }
         Ok(appended.gap_from)
     }
 
@@ -295,6 +298,17 @@ impl Follower {
     /// mimid-1wgh.37.104.4's own next step turns into a recorded
     /// unfillable gap rather than an error.
     pub async fn fill_gap(&self, room_id: &str) -> Result<usize, FollowerError> {
+        let filled = self.fill_gap_inner(room_id).await;
+        // Whatever the attempt did, the position is worth looking at
+        // again: it closed the gap, moved part of the way, or found the
+        // hub no longer holds it, and a caller following the position
+        // has to be told even when it did not move
+        // ([`Follower::subscribe_positions`]).
+        self.announce_position(room_id);
+        filled
+    }
+
+    async fn fill_gap_inner(&self, room_id: &str) -> Result<usize, FollowerError> {
         let Some(at) = self.store.follower_position(room_id).await? else {
             return Ok(0);
         };

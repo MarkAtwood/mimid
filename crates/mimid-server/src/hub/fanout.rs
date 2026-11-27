@@ -157,6 +157,8 @@ impl<L: LocalDelivery> Fanout<L> {
     pub fn spawn(mut self) -> FanoutHandle {
         let wake = Arc::new(Notify::new());
         let notified = Arc::clone(&wake);
+        let passed = Arc::new(Notify::new());
+        let each_pass = Arc::clone(&passed);
         let task = tokio::spawn(async move {
             loop {
                 let wait_ms = match self.deliver_due().await {
@@ -172,6 +174,9 @@ impl<L: LocalDelivery> Fanout<L> {
                         Some(STORE_RETRY_MS)
                     }
                 };
+                // The pass is over, whatever it did: a caller following
+                // delivery can look at the outbox now.
+                each_pass.notify_waiters();
                 match wait_ms {
                     // Never sleep longer than MAX_BACKOFF_MS, so a clock
                     // change is noticed.
@@ -186,7 +191,7 @@ impl<L: LocalDelivery> Fanout<L> {
                 }
             }
         });
-        FanoutHandle { wake, task }
+        FanoutHandle { wake, task, passed }
     }
 
     fn park(&mut self, row: &OutboxRow) {
@@ -308,6 +313,7 @@ impl<L: LocalDelivery> Fanout<L> {
 pub struct FanoutHandle {
     wake: Arc<Notify>,
     task: JoinHandle<()>,
+    passed: Arc<Notify>,
 }
 
 impl FanoutHandle {
@@ -315,6 +321,18 @@ impl FanoutHandle {
     /// enqueued. A wake while the worker is busy is kept, not lost.
     pub fn wake(&self) {
         self.wake.notify_one();
+    }
+
+    /// Notified after each pass over the outbox, whatever that pass did.
+    ///
+    /// For a caller following delivery rather than asking about it: the
+    /// outbox is worth looking at once a pass has ended, and not before.
+    /// `Notify::notified` only hears a notification made after it is
+    /// registered, so register the waiter, then look, then await it; a
+    /// pass that ends in between is then waiting rather than missed.
+    #[must_use]
+    pub fn passed(&self) -> &Arc<Notify> {
+        &self.passed
     }
 
     /// Stops the worker. A request in flight is abandoned, and its row is

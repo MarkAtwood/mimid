@@ -20,10 +20,13 @@
 //!   service says it is gone; one whose device is lost stays until then.
 //! - Every call reads or writes the database at once, under one lock;
 //!   front ends call it rarely (a registration, a push).
+//! - [`PushSubscriptions::changed`] fires for the writes made through
+//!   that handle. A write by another process holding the same file is
+//!   not seen, because SQLite does not report one.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
@@ -143,6 +146,9 @@ impl std::fmt::Debug for Subscription {
 pub struct PushSubscriptions {
     path: PathBuf,
     connection: Mutex<Connection>,
+    /// Notified after each row added or dropped, for a front end that
+    /// follows its subscriptions rather than asking for them.
+    changed: Arc<tokio::sync::Notify>,
 }
 
 impl std::fmt::Debug for PushSubscriptions {
@@ -225,6 +231,7 @@ impl PushSubscriptions {
         Ok(Self {
             path: path.to_owned(),
             connection: Mutex::new(connection),
+            changed: Arc::new(tokio::sync::Notify::new()),
         })
     }
 
@@ -308,6 +315,7 @@ impl PushSubscriptions {
         )
         .map_err(|e| self.database(e))?;
         tx.commit().map_err(|e| self.database(e))?;
+        self.changed.notify_waiters();
         Ok(())
     }
 
@@ -325,7 +333,23 @@ impl PushSubscriptions {
                 params![front_end, endpoint],
             )
             .map_err(|e| self.database(e))?;
+        if removed > 0 {
+            self.changed.notify_waiters();
+        }
         Ok(removed > 0)
+    }
+
+    /// Notified after each subscription added or dropped.
+    ///
+    /// One handle's writes only: these tables are in a file another
+    /// process may also have open, and SQLite has nothing to say about
+    /// a write made through another connection. A front end that shares
+    /// this handle with whatever registers for it -- which is how the
+    /// daemon wires them (`Daemon::start`) -- learns of every change it
+    /// could have caused.
+    #[must_use]
+    pub fn changed(&self) -> &Arc<tokio::sync::Notify> {
+        &self.changed
     }
 
     /// The subscriptions of `front_end`, by endpoint.

@@ -462,6 +462,17 @@ impl Hub {
         self
     }
 
+    /// The running fanout worker's handle, if [`Hub::with_fanout`] gave
+    /// it one.
+    ///
+    /// For a caller following delivery through
+    /// [`FanoutHandle::passed`](fanout::FanoutHandle::passed) rather
+    /// than asking the outbox over and over.
+    #[must_use]
+    pub fn fanout(&self) -> Option<&FanoutHandle> {
+        self.fanout.as_ref()
+    }
+
     /// Gives the hub the client it forwards keyMaterial requests through
     /// (decision mimid-1wgh.6.20).
     #[must_use]

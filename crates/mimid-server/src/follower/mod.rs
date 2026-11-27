@@ -142,6 +142,9 @@ pub struct Follower {
     /// Announces each local user whose Consent records changed (bead
     /// mimid-1wgh.12.43).
     consent: broadcast::Sender<String>,
+    /// Announces each room whose follower position may have moved: a
+    /// gap recorded, filled, or found unfillable.
+    positions: broadcast::Sender<String>,
     /// The relay to rooms' hubs, once [`Follower::set_relay`] gave it.
     /// Set after construction: the relay holds this provider's hub, whose
     /// fanout worker holds the follower.
@@ -174,6 +177,7 @@ impl Follower {
         let (appended, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
         let (membership, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
         let (consent, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
+        let (positions, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
         Self {
             domain,
             store,
@@ -183,6 +187,7 @@ impl Follower {
             membership,
             key_packages: None,
             consent,
+            positions,
             relay: OnceLock::new(),
             limits: crate::limits::FieldLimits::default(),
             filling: std::sync::Mutex::default(),
@@ -562,6 +567,35 @@ impl Follower {
     /// mimid-1wgh.12.43), as user URIs.
     pub fn subscribe_consent(&self) -> broadcast::Receiver<String> {
         self.consent.subscribe()
+    }
+
+    /// Announces each room whose follower position may have moved, as
+    /// room IDs: a delivery that recorded a gap, and every attempt to
+    /// fill one, whether it closed the gap, failed, or found the hub no
+    /// longer holds it ([`Store::follower_position`]).
+    ///
+    /// For a caller following the position rather than reading it over
+    /// and over. An announcement means "look again", not "it moved": a
+    /// fill that recovered nothing is announced too, because a caller
+    /// waiting for the position to settle has to be told when it will
+    /// not move further. A receiver more than [`SUBSCRIBE_CAPACITY`]
+    /// announcements behind gets
+    /// [`broadcast::error::RecvError::Lagged`] and should re-read.
+    pub fn subscribe_positions(&self) -> broadcast::Receiver<String> {
+        self.positions.subscribe()
+    }
+
+    /// The sending side of [`Follower::subscribe`], so a caller can
+    /// take a receiver at the moment it needs one rather than keeping
+    /// one alive and falling behind.
+    #[must_use]
+    pub fn appended_sender(&self) -> broadcast::Sender<(String, u64)> {
+        self.appended.clone()
+    }
+
+    fn announce_position(&self, room_id: &str) {
+        // An error only means nobody is subscribed.
+        let _ = self.positions.send(room_id.to_owned());
     }
 
     fn announce_consent(&self, user_uri: &str) {

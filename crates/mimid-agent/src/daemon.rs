@@ -67,6 +67,9 @@ pub struct Daemon {
     server_url: String,
     /// The watch of `[did_webvh].log_file`, when set.
     log_watch: Option<LogWatch>,
+    /// The Web Push subscriptions the pushing front ends share, with
+    /// `[jmap] webpush` or `[irc] webpush`.
+    pushes: Option<Arc<PushSubscriptions>>,
 }
 
 /// The HTTP endpoint: its listener and what its routes share.
@@ -467,6 +470,7 @@ impl Daemon {
                 .log_file
                 .clone()
                 .map(|log| LogWatch::new(log, config.did_webvh.witness_file.clone())),
+            pushes,
         })
     }
 
@@ -504,6 +508,17 @@ impl Daemon {
     /// serves.
     pub fn store(&self) -> &Arc<Store> {
         &self.store
+    }
+
+    /// The Web Push subscriptions its pushing front ends share; `None`
+    /// with neither `[jmap] webpush` nor `[irc] webpush`.
+    ///
+    /// The handle, so a caller can follow
+    /// [`PushSubscriptions::changed`]: a subscription a push service
+    /// says is gone is dropped through this one.
+    #[must_use]
+    pub fn push_subscriptions(&self) -> Option<&Arc<PushSubscriptions>> {
+        self.pushes.as_ref()
     }
 
     /// Serves the front ends and runs the sync loop until `shutdown`
