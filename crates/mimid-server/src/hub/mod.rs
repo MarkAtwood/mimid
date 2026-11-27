@@ -644,6 +644,8 @@ impl Hub {
     /// # Errors
     ///
     /// Returns [`HubError::NoSuchRoom`] if the room is unknown,
+    /// [`HubError::WrongGroup`] or [`HubError::WrongEpoch`] if the frame
+    /// names another group or epoch (RFC 9420 §6),
     /// [`HubError::Encode`] if the hub's own entry cannot be encoded,
     /// [`HubError::Mls`] if the hub's group state cannot produce a
     /// GroupContext, and [`HubError::Unseal`] if the message is not
@@ -657,6 +659,22 @@ impl Hub {
         let reference = self.external_receiver_ref()?;
         let rooms = self.rooms.lock().await;
         let room = rooms.get(room_id).ok_or(HubError::NoSuchRoom)?;
+        // RFC 9420 §6 makes these receiver checks a MUST, and the frame
+        // carries both in the clear. Without them the hub accepts a
+        // member's handshake whatever group and epoch it names. The
+        // signature still binds it to this room, because the hub's own
+        // GroupContext goes into the FramedContentTBS, but a mismatch
+        // would surface as a content-hash failure and `Opened` carries
+        // neither field for a caller to check afterwards.
+        if message.group_id.as_slice() != room.observer.group_id() {
+            return Err(HubError::WrongGroup);
+        }
+        if message.epoch != room.observer.epoch() {
+            return Err(HubError::WrongEpoch {
+                expected: room.observer.epoch(),
+                found: message.epoch,
+            });
+        }
         let group_context = room.observer.group_context().map_err(HubError::Mls)?;
         let keys = room.observer.member_signature_keys();
         message
@@ -1295,6 +1313,19 @@ pub enum HubError {
     /// group can read, which is what PrivateMessage already does.
     #[error("required_wire_formats requires SemiPrivateMessage but no external receiver is listed")]
     MissingExternalReceivers,
+    /// A SemiPrivateMessage names a group other than the room's
+    /// (RFC 9420 §6).
+    #[error("the message names another group")]
+    WrongGroup,
+    /// A SemiPrivateMessage names an epoch other than the room's current
+    /// one (RFC 9420 §6).
+    #[error("the message names epoch {found}, the room is at {expected}")]
+    WrongEpoch {
+        /// The room's current epoch.
+        expected: u64,
+        /// The epoch the message names.
+        found: u64,
+    },
     /// The hub could not read its copy of a SemiPrivateMessage's keys
     /// (semiprivatemessage-08 §3.1).
     #[error("the hub could not unseal the message's keys")]

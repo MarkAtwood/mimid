@@ -57,10 +57,6 @@ pub(super) fn check_no_embedded_tree(group_info: &[u8]) -> Result<(), HubError> 
     }
 }
 
-/// The hub's encoded `SignaturePublicKey` (RFC 9420 §5.1.1) and
-/// BasicCredential (§5.3) whose identity is `mimi://<hub domain>`
-/// (decision mimid-1wgh.6.35). Concatenated, they are the hub's
-/// `ExternalSender` (§12.1.8.1).
 /// The hub's own entry in a room's `external_receivers`: its HPKE public
 /// key and its BasicCredential, encoded as semiprivatemessage-08 §3's
 /// `ExternalReceiver`.
@@ -142,6 +138,10 @@ fn check_external_receivers(
     }
 }
 
+/// The hub's encoded `SignaturePublicKey` (RFC 9420 §5.1.1) and
+/// BasicCredential (§5.3) whose identity is `mimi://<hub domain>`
+/// (decision mimid-1wgh.6.35). Concatenated, they are the hub's
+/// `ExternalSender` (§12.1.8.1).
 pub(super) fn hub_sender(
     hub_public_key: &[u8; 32],
     domain: &Domain,
@@ -171,6 +171,9 @@ pub(super) fn is_franked(observer: &Observer) -> Result<bool, HubError> {
 /// Checks a new room's group, already verified by
 /// [`Observer::from_group_info`], against the hub's rules:
 ///
+/// - `external_receivers`, if present, is exactly the hub, and is
+///   present whenever `required_wire_formats` names the semiprivate
+///   format (semiprivatemessage-08 §3).
 /// - `external_senders` is exactly the hub (protocol-07 §7.4; decision
 ///   mimid-1wgh.4.21);
 /// - a room that requires `frank_aad` as a Safe AAD component is a franked

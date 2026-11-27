@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.4.79.12",
+  "title": "external_receivers cannot actually be changed, so the hub's HPKE key cannot rotate",
+  "description": "Found by code review, 2026-11-26, and verified.\n\n## The contradiction\n\nThe `ExternalReceivers` doc in mimi-mls says the list is \"changed by\nAppDataUpdate, not by a GroupContextExtensions proposal (decision\nmimid-1wgh.4.79.4)\". Decision mimid-1wgh.4.79.7 leans on the same\nassumption: \"Rotating the key means an AppDataUpdate per room, which is\nwork this decision does not do.\"\n\nNeither is true today:\n\n- `mimi_protocol::components::is_known_component` (components.rs:329)\n  covers the policy components, `room_metadata`, `franking_agent` and\n  `MLS_BUILT_IN` = [0x0001, 0x0002, 0x0003]. 0x0007 is in none of them.\n- So update.rs refuses any AppDataUpdate naming 0x0007.\n- GroupContextExtensions proposals are refused outright (decision\n  mimid-1wgh.6.2).\n\n`external_receivers` is therefore immutable for a room's lifetime: it\ncan only be set at creation. With one HPKE pair per hub (decision\nmimid-1wgh.4.79.7), a hub that has to replace its pair -- compromise,\nor a ciphersuite change -- cannot do it for any existing room. Every\nsuch room would have to be recreated.\n\n## What to decide\n\nWhether 0x0007 becomes a known component, so an AppDataUpdate can change\nit. That is not automatic: `apply_commit_op` defines the §4.7\napplication logic per component, and external_receivers would need its\nown -- full replacement is the obvious reading, but who may propose it is\na policy question the room policy does not currently answer. An\nexternal receiver list a member can rewrite is a list a member can point\nat itself.\n\nUntil that is decided, fix the two places that claim otherwise: the\n`ExternalReceivers` doc and decision mimid-1wgh.4.79.7's consequences\nsection. A doc that describes a capability the code refuses is worse\nthan one that admits the limitation.\n\n## Not urgent, and why\n\nNo room requires the semiprivate format yet, and mimid members cannot\nsend one (bead mimid-1wgh.4.79.3). The first deployment that uses it is\nthe point at which rotation has to work, so this is ahead of need -- but\nthe two misleading claims should go now.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T03:02:07.554017883Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T03:02:07.554017883Z",
+  "labels": [
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.79.12",
+      "depends_on_id": "mimid-1wgh.4.79",
+      "type": "parent-child",
+      "created_at": "2026-11-27T03:02:07.610339866Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

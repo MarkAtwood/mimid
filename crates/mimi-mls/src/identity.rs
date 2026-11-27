@@ -520,8 +520,10 @@ fn read_signature_key_pair<S: StorageProvider>(
 /// The LeafNode capabilities every mimid client advertises, in KeyPackages
 /// and as a group creator: ciphersuite 1, BasicCredential, the
 /// `app_data_dictionary` extension (mls-extensions-11 §4.6), the
-/// `AppDataUpdate` proposal (mls-extensions-11 §4.7) and the extension type
-/// `grease_extension`, plus random GREASE values (RFC 9420 §13.5).
+/// `required_wire_formats` extension (§7.1.3, so a room may require a
+/// wire format at all; decision mimid-1wgh.4.79.10), the `AppDataUpdate`
+/// proposal (§4.7) and the extension type `grease_extension`, plus
+/// random GREASE values (RFC 9420 §13.5).
 ///
 /// A `did_webvh` identity (`did_webvh` is `Some`) also lists the
 /// `did_webvh` credential type. What §The Heads Extension asks of a client

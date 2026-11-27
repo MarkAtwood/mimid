@@ -54,9 +54,21 @@ impl WireFormats {
     }
 
     /// A list of wire formats, for building an extension.
-    #[must_use]
-    pub fn from_slice(wire_formats: &[u16]) -> Self {
-        Self(wire_formats.to_vec())
+    ///
+    /// # Errors
+    ///
+    /// Returns [`tls_codec::Error`] if more than
+    /// [`MAX_WIRE_FORMATS`] are given. The cap is enforced here as well
+    /// as in [`WireFormats::decode`], because a list built past it would
+    /// go into a GroupContext that no reader of this type could then
+    /// read back.
+    pub fn from_slice(wire_formats: &[u16]) -> Result<Self, tls_codec::Error> {
+        if wire_formats.len() > MAX_WIRE_FORMATS {
+            return Err(tls_codec::Error::EncodingError(format!(
+                "more than {MAX_WIRE_FORMATS} wire formats"
+            )));
+        }
+        Ok(Self(wire_formats.to_vec()))
     }
 
     /// Decodes an extension's body.

@@ -503,8 +503,17 @@ impl Deserialize for ExternalReceiver {
 /// the epoch agrees on (§3).
 ///
 /// Carried as an `app_data_dictionary` entry under
-/// [`EXTERNAL_RECEIVERS_COMPONENT`] and changed by AppDataUpdate, not by
-/// a GroupContextExtensions proposal (decision mimid-1wgh.4.79.4).
+/// [`EXTERNAL_RECEIVERS_COMPONENT`], a component rather than a
+/// GroupContext extension (decision mimid-1wgh.4.79.4).
+///
+/// In mimid the list is set when a room is created and cannot be
+/// changed afterwards: `mimi_protocol`'s `is_known_component` does not
+/// cover this id, so an AppDataUpdate naming it is refused, and
+/// GroupContextExtensions proposals are refused outright. Changing it
+/// would need the §4.7 application logic for this component and a
+/// policy rule for who may propose it, since a list a member can
+/// rewrite is a list a member can point at itself. Bead
+/// mimid-1wgh.4.79.12.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct ExternalReceivers(Vec<ExternalReceiver>);
 
@@ -887,7 +896,11 @@ impl SemiPrivateMessage {
         let tbs = self
             .framed_content_tbs(content, sender_leaf_index, group_context)
             .map_err(UnsealError::Malformed)?;
-        let hashed = crate::label::hash(&tbs).map_err(|_| UnsealError::Decrypt)?;
+        let hashed = crate::label::hash(&tbs).map_err(|_| {
+            UnsealError::Malformed(tls_codec::Error::EncodingError(
+                "the ciphersuite hash failed".to_owned(),
+            ))
+        })?;
         if hashed != self.framed_content_tbs_hash.as_slice() {
             return Err(UnsealError::ContentHashMismatch);
         }
@@ -984,17 +997,13 @@ impl SemiPrivateMessage {
         sender_key: impl FnOnce(u32) -> Option<Vec<u8>>,
     ) -> Result<Opened, UnsealError> {
         let keys = self.unseal_keys(reference, private_key)?;
-        let aad = SemiPrivateContentAAD {
-            group_id: self.group_id.clone(),
-            epoch: self.epoch,
-            content_type: self.content_type,
-            authenticated_data: self.authenticated_data.clone(),
-            partial_context_hash: self.partial_context_hash.clone(),
-            keys_for_external_receivers: self.keys_for_external_receivers.clone(),
-            framed_content_tbs_hash: self.framed_content_tbs_hash.clone(),
-        }
-        .tls_serialize_detached()
-        .map_err(UnsealError::Malformed)?;
+        // Through content_aad, not rebuilt here: this is the one place
+        // the AAD is security-critical, and a second copy of its
+        // construction would let the two drift apart silently.
+        let aad = self
+            .content_aad()
+            .tls_serialize_detached()
+            .map_err(UnsealError::Malformed)?;
         let plaintext = crate::label::aead_open(
             keys.key.as_slice(),
             &keys.guarded_nonce(),

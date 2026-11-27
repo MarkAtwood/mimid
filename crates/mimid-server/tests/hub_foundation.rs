@@ -843,11 +843,9 @@ async fn create_room_checks_external_receivers() {
                     .unwrap(),
             );
         }
-        let mut out = VLBytes::new(body).tls_serialize_detached().unwrap();
-        // The component is the list alone; VLBytes gave it the <V> prefix
-        // an ExternalReceiver<V> vector carries.
-        out.truncate(out.len());
-        out
+        // The component is the list alone; VLBytes gives it the <V>
+        // prefix an ExternalReceiver<V> vector carries.
+        VLBytes::new(body).tls_serialize_detached().unwrap()
     }
 
     // The hub's own key and credential: accepted.
@@ -1067,6 +1065,34 @@ async fn the_hub_reads_a_semiprivate_handshake() {
         .expect_err("alice must not sign as bob");
     assert!(
         matches!(err, HubError::Unseal(UnsealError::Signature)),
+        "{err:?}"
+    );
+
+    // Oracle: RFC 9420 §6 makes these receiver checks a MUST. The frame
+    // carries both in the clear, and a member is free to put anything
+    // there, so the hub compares them with the room's own.
+    let mut wrong_group = build(0);
+    wrong_group.group_id = b"some-other-group".to_vec().into();
+    let err = hub
+        .read_semiprivate(ROOM_ID, &wrong_group)
+        .await
+        .expect_err("another group");
+    assert!(matches!(err, HubError::WrongGroup), "{err:?}");
+
+    let mut wrong_epoch = build(0);
+    wrong_epoch.epoch = 9;
+    let err = hub
+        .read_semiprivate(ROOM_ID, &wrong_epoch)
+        .await
+        .expect_err("another epoch");
+    assert!(
+        matches!(
+            err,
+            HubError::WrongEpoch {
+                expected: 1,
+                found: 9
+            }
+        ),
         "{err:?}"
     );
 

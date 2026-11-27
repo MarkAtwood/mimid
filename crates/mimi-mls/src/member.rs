@@ -683,7 +683,7 @@ impl Member {
         }
         if !required_wire_formats.is_empty() {
             let formats = crate::wire::WireFormats::from_slice(required_wire_formats)
-                .tls_serialize_detached()
+                .and_then(|formats| formats.tls_serialize_detached())
                 .map_err(|e| MemberError::Create(e.into()))?;
             extensions.push(Extension::Unknown(
                 crate::wire::REQUIRED_WIRE_FORMATS_EXTENSION,
