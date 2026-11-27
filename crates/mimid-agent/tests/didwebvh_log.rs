@@ -120,7 +120,7 @@ async fn post_log(daemon: &Running, log: &DidLog) -> (u16, Value) {
 
 /// Waits until `client`'s account has `n` Chats; their ids.
 async fn chats(client: &Client, n: usize) -> Vec<Value> {
-    tokio::time::timeout(PATIENCE, async {
+    tokio::time::timeout(*PATIENCE, async {
         loop {
             let chats = client.get("Chat", None).await;
             if chats.len() >= n {
@@ -207,7 +207,7 @@ async fn a_running_daemon_takes_a_newer_log_from_its_endpoint_and_its_file() {
     assert_eq!(answer["failed"], json!([]));
 
     // d2, still running, finds itself out of the room.
-    tokio::time::timeout(PATIENCE, async {
+    tokio::time::timeout(*PATIENCE, async {
         loop {
             let chat = c2.get("Chat", None).await[0].clone();
             if !has_member(&chat, &c2.account) {
@@ -260,7 +260,7 @@ async fn a_running_daemon_takes_a_newer_log_from_its_endpoint_and_its_file() {
     log.append(&time(3), &Parameters::default(), &signer, &[k1])
         .unwrap();
     write_log(&file1, &log);
-    tokio::time::timeout(PATIENCE, async {
+    tokio::time::timeout(*PATIENCE, async {
         loop {
             let (status, _) = post_log(&d1, &v2).await;
             if status == 422 {

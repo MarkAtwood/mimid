@@ -55,4 +55,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # A full-suite run competes with itself for the runner, and two
+      # tests have timed out waiting on an event that arrives in a fifth
+      # of the time when run alone (beads mimid-gn1w, mimid-zr08). The
+      # deadline is a backstop around an await, so raising it costs
+      # nothing when things work: a wait that is never satisfied still
+      # fails.
       - run: cargo test --locked --workspace --all-features
+        env:
+          MIMID_TEST_PATIENCE_SECS: 60

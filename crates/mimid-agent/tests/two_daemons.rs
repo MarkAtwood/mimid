@@ -195,7 +195,7 @@ async fn two_daemons_chat_over_http() {
         json!({"chatId": chat_b, "body": "hi alice", "sentAt": SENT_AT}),
     )
     .await;
-    let got = tokio::time::timeout(common::PATIENCE, async {
+    let got = tokio::time::timeout(*common::PATIENCE, async {
         loop {
             a_events.until_changed("Message").await;
             let got = a.messages(&chat_a).await;

@@ -56,7 +56,7 @@ async fn chat(a: &Client, b: &Client) -> (String, String) {
         )
         .await;
     let chat_a = created["id"].as_str().unwrap().to_owned();
-    let chat_b = tokio::time::timeout(PATIENCE, async {
+    let chat_b = tokio::time::timeout(*PATIENCE, async {
         loop {
             if let Some(chat) = b.get("Chat", None).await.first() {
                 return chat["id"].as_str().unwrap().to_owned();
@@ -89,7 +89,7 @@ async fn has(client: &Client, chat: &str, body: &str) -> bool {
 /// Waits until `client` shows a Message `body` in `chat`; panics after
 /// [`PATIENCE`].
 async fn arrives(client: &Client, chat: &str, body: &str) {
-    tokio::time::timeout(PATIENCE, async {
+    tokio::time::timeout(*PATIENCE, async {
         while !has(client, chat, body).await {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }

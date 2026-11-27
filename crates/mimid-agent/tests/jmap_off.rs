@@ -30,7 +30,7 @@ const TEXT: &str = "hello bob, over a store without JMAP";
 /// Waits until `store` holds a message from alice; its room's URI and the
 /// message's text.
 async fn alices_message(store: &Arc<Store>) -> (String, String) {
-    tokio::time::timeout(PATIENCE, async {
+    tokio::time::timeout(*PATIENCE, async {
         loop {
             {
                 let state = store.state();
@@ -148,7 +148,7 @@ async fn with_jmap_off_the_store_still_syncs_and_jmap_paths_are_404() {
     );
 
     stop.send(()).unwrap();
-    tokio::time::timeout(PATIENCE, bob_task)
+    tokio::time::timeout(*PATIENCE, bob_task)
         .await
         .expect("bob's daemon stops")
         .unwrap()

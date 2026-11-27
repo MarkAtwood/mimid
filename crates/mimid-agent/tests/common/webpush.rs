@@ -90,7 +90,7 @@ impl FakePushService {
 
     /// The next request, within [`super::PATIENCE`].
     pub async fn next(&mut self) -> Pushed {
-        tokio::time::timeout(super::PATIENCE, self.received.recv())
+        tokio::time::timeout(*super::PATIENCE, self.received.recv())
             .await
             .expect("a push in time")
             .expect("the service runs")

@@ -224,7 +224,7 @@ async fn the_tls_listener_serves_tls_and_refuses_plaintext() {
         .await
         .unwrap();
     let mut answer = Vec::new();
-    tokio::time::timeout(common::PATIENCE, plain.read_to_end(&mut answer))
+    tokio::time::timeout(*common::PATIENCE, plain.read_to_end(&mut answer))
         .await
         .expect("the TLS listener closes a plaintext client")
         .ok();

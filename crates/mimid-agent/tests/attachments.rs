@@ -371,7 +371,7 @@ async fn a_file_sent_by_one_daemon_arrives_at_another() {
     assert_eq!(mine[0]["attachments"], json!([attachment]));
 
     // bob's daemon stores the message with the file.
-    let got = tokio::time::timeout(common::PATIENCE, async {
+    let got = tokio::time::timeout(*common::PATIENCE, async {
         loop {
             b_events.until_changed("Message").await;
             let got = b.messages(&chat_b).await;
@@ -421,7 +421,7 @@ async fn a_file_sent_by_one_daemon_arrives_at_another() {
         }]}),
     )
     .await;
-    let got = tokio::time::timeout(common::PATIENCE, async {
+    let got = tokio::time::timeout(*common::PATIENCE, async {
         loop {
             b_events.until_changed("Message").await;
             let got = b.messages(&chat_b).await;

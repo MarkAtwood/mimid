@@ -441,7 +441,7 @@ async fn a_burn_on_read_line_across_providers() {
             .values()
             .any(|m| m.body == "read once")
     };
-    tokio::time::timeout(common::PATIENCE, async {
+    tokio::time::timeout(*common::PATIENCE, async {
         while holds(&bob.store) {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }

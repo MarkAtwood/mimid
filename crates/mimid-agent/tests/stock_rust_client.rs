@@ -211,7 +211,7 @@ impl Events {
         let account = self.account.clone();
         let stream = &mut self.stream;
         let mut seen: Vec<String> = Vec::new();
-        let waited = tokio::time::timeout(PATIENCE, async {
+        let waited = tokio::time::timeout(*PATIENCE, async {
             loop {
                 let frame = stream
                     .next()
@@ -241,7 +241,7 @@ impl Events {
 
     /// Whether the stream ends within [`PATIENCE`].
     async fn ends(mut self) -> bool {
-        tokio::time::timeout(PATIENCE, async {
+        tokio::time::timeout(*PATIENCE, async {
             while let Some(Ok(_)) = self.stream.next().await {}
         })
         .await
@@ -353,7 +353,7 @@ async fn stock_rust_client_chats_through_two_daemons() {
 
     // bob answers; alice's client reads it after a StateChange.
     b.post(&chat_b, "hi alice").await;
-    let got = tokio::time::timeout(PATIENCE, async {
+    let got = tokio::time::timeout(*PATIENCE, async {
         loop {
             a_events.until_changed("Message").await;
             let got = a.messages(&chat_a).await;
@@ -384,7 +384,7 @@ async fn stock_rust_client_chats_through_two_daemons() {
     );
     b.post(&chat_b, "one more").await;
     let mut seen: Vec<String> = Vec::new();
-    let waited = tokio::time::timeout(PATIENCE, async {
+    let waited = tokio::time::timeout(*PATIENCE, async {
         loop {
             let frame = again.next().await.expect("open").expect("a frame");
             seen.push(describe(&frame.event));

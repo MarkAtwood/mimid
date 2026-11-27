@@ -82,7 +82,7 @@ impl Served {
 
     async fn stop(self) {
         self.stop.send(()).unwrap();
-        tokio::time::timeout(PATIENCE, self.task)
+        tokio::time::timeout(*PATIENCE, self.task)
             .await
             .expect("the daemon stops")
             .unwrap()
@@ -974,7 +974,7 @@ async fn until_record(
     what: &str,
     ready: impl Fn(&(RoomStatus, Vec<String>)) -> bool,
 ) -> (RoomStatus, Vec<String>) {
-    let deadline = tokio::time::Instant::now() + PATIENCE;
+    let deadline = tokio::time::Instant::now() + *PATIENCE;
     loop {
         let record = room_record(store, uri);
         if let Some(record) = record.filter(&ready) {
@@ -1305,7 +1305,7 @@ fn holds(store: &Store, body: &str) -> bool {
 
 /// Waits until `store` no longer holds a message with `body`.
 async fn until_gone(store: &Store, body: &str) {
-    tokio::time::timeout(PATIENCE, async {
+    tokio::time::timeout(*PATIENCE, async {
         while holds(store, body) {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }

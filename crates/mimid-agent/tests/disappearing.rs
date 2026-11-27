@@ -54,7 +54,7 @@ where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Option<T>>,
 {
-    tokio::time::timeout(PATIENCE, async {
+    tokio::time::timeout(*PATIENCE, async {
         loop {
             if let Some(found) = probe().await {
                 return found;

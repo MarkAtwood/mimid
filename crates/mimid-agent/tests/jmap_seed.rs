@@ -88,7 +88,7 @@ impl Bob {
 
     async fn stop(self) {
         self.stop.send(()).unwrap();
-        tokio::time::timeout(PATIENCE, self.task)
+        tokio::time::timeout(*PATIENCE, self.task)
             .await
             .expect("bob's daemon stops")
             .unwrap()
@@ -98,7 +98,7 @@ impl Bob {
 
 /// Polls `done` every 50 ms until it holds, failing after [`PATIENCE`].
 async fn until<F: Fn() -> bool>(what: &str, done: F) {
-    tokio::time::timeout(PATIENCE, async {
+    tokio::time::timeout(*PATIENCE, async {
         while !done() {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
@@ -268,7 +268,7 @@ async fn with_jmap_on() -> (Snapshot, String) {
     let bob = Bob::start(&config(&server, BOB, dir.path(), "any")).await;
     let alice = alice_acts(&server, dir.path(), &bob.store).await;
     let b = bob.client().await;
-    let seen = tokio::time::timeout(PATIENCE, async {
+    let seen = tokio::time::timeout(*PATIENCE, async {
         loop {
             let seen = snapshot(&b).await;
             if shows_everything(&seen) {
@@ -397,7 +397,7 @@ async fn records_kept_with_jmap_off_are_shown_when_jmap_is_on_again() {
         json!({"chatId": alice_chat, "body": THIRD, "sentAt": "2026-11-20T12:00:02Z"}),
     )
     .await;
-    let created = tokio::time::timeout(PATIENCE, async {
+    let created = tokio::time::timeout(*PATIENCE, async {
         loop {
             let changes = b
                 .call("Message/changes", json!({"sinceState": states["Message"]}))

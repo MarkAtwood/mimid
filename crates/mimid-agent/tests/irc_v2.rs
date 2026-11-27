@@ -905,7 +905,7 @@ async fn web_push_reaches_a_fake_push_service() {
     let start = std::time::Instant::now();
     while !subscriptions.list("irc").unwrap().is_empty() {
         assert!(
-            start.elapsed() < common::PATIENCE,
+            start.elapsed() < *common::PATIENCE,
             "the subscription is dropped"
         );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

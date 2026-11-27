@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -37,7 +38,24 @@ pub const BOB: &str = "mimi://a.example/u/bob";
 pub const BOB_B: &str = "mimi://b.example/u/bob";
 
 /// How long a test waits for something that should happen.
-pub const PATIENCE: Duration = Duration::from_secs(15);
+///
+/// 15 seconds when a test runs on its own, which is about five times
+/// what the slowest of them needs. Under the whole suite that margin
+/// has not been enough twice (beads mimid-gn1w, mimid-zr08), so
+/// `MIMID_TEST_PATIENCE_SECS` raises it for a full-suite run without
+/// slowing a single test's failure down.
+///
+/// This is a deadline, not a poll interval: every use wraps an await
+/// that finishes the moment its event arrives, so a longer value costs
+/// nothing when things work and hides nothing when they do not. A wait
+/// that would never be satisfied still fails.
+pub static PATIENCE: LazyLock<Duration> = LazyLock::new(|| {
+    let seconds = std::env::var("MIMID_TEST_PATIENCE_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(15);
+    Duration::from_secs(seconds)
+});
 
 /// A running mimid server: its domain, its base URL, a bearer token per
 /// user, and the switch on its EventSource.
@@ -96,7 +114,7 @@ impl PushControl {
     /// Waits until `count` returns at least `n`; panics after
     /// [`PATIENCE`].
     pub async fn until(&self, what: &str, n: usize, count: impl Fn(&Self) -> usize) {
-        tokio::time::timeout(PATIENCE, async {
+        tokio::time::timeout(*PATIENCE, async {
             while count(self) < n {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
@@ -400,7 +418,7 @@ impl Running {
     /// than [`PATIENCE`].
     pub async fn stop(self) {
         self.stop.send(()).unwrap();
-        tokio::time::timeout(PATIENCE, self.task)
+        tokio::time::timeout(*PATIENCE, self.task)
             .await
             .expect("the daemon stops")
             .unwrap()
@@ -562,7 +580,7 @@ impl Events {
     /// `type_name` for this account; returns its data. Panics after
     /// [`PATIENCE`].
     pub async fn until_changed(&mut self, type_name: &str) -> Value {
-        tokio::time::timeout(PATIENCE, async {
+        tokio::time::timeout(*PATIENCE, async {
             loop {
                 while let Some(end) = self.buffer.find("\n\n") {
                     let block: String = self.buffer.drain(..end + 2).collect();
@@ -599,7 +617,7 @@ impl Events {
 
     /// Whether the stream ends within [`PATIENCE`].
     pub async fn ends(mut self) -> bool {
-        tokio::time::timeout(PATIENCE, async {
+        tokio::time::timeout(*PATIENCE, async {
             while let Ok(Some(_)) = self.response.chunk().await {}
         })
         .await

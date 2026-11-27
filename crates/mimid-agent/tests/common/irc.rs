@@ -114,7 +114,7 @@ impl Irc {
     /// [`PATIENCE`].
     pub async fn next(&mut self) -> Option<Msg> {
         let mut line = String::new();
-        let Ok(read) = tokio::time::timeout(PATIENCE, self.read.read_line(&mut line)).await else {
+        let Ok(read) = tokio::time::timeout(*PATIENCE, self.read.read_line(&mut line)).await else {
             panic!("no line from the server in time; seen {:#?}", self.seen);
         };
         let read = read.unwrap_or(0);
