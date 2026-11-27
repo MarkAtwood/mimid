@@ -51,13 +51,13 @@ toml = "1.1.8"
 # PR openmls/openmls#2352). Every openmls-family crate comes from the same
 # commit so they share one openmls_traits; all but openmls are unchanged.
 [patch.crates-io]
-openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
-openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
-openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
-openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
-openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
-openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
-openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
+openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "983ba32c7aa3f63dbf7a47222a56167e5b56e3ec" }
+openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "983ba32c7aa3f63dbf7a47222a56167e5b56e3ec" }
+openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "983ba32c7aa3f63dbf7a47222a56167e5b56e3ec" }
+openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "983ba32c7aa3f63dbf7a47222a56167e5b56e3ec" }
+openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "983ba32c7aa3f63dbf7a47222a56167e5b56e3ec" }
+openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "983ba32c7aa3f63dbf7a47222a56167e5b56e3ec" }
+openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "983ba32c7aa3f63dbf7a47222a56167e5b56e3ec" }
 
 # Line tables instead of full DWARF. A panic still names the file and
 # line, which is what a failing test needs, but a debugger can no longer

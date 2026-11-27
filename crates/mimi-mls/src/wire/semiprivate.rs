@@ -970,6 +970,17 @@ impl SemiPrivateMessage {
     }
 }
 
+impl SemiPrivateMessageContent {
+    /// The `signature` of this content's `FramedContentAuthData`
+    /// (RFC 9420 §6.1), which signs the FramedContentTBS under the
+    /// label `"FramedContentTBS"`.
+    #[must_use]
+    pub fn signature(&self) -> &[u8] {
+        let (Self::Proposal { auth, .. } | Self::Commit { auth, .. }) = self;
+        auth.signature().as_slice()
+    }
+}
+
 /// Where a decoded [`SemiPrivateMessageContent`]'s signed material sits
 /// in the bytes it was decoded from.
 ///
@@ -977,25 +988,20 @@ impl SemiPrivateMessage {
 /// covers a FramedContent holding `content`, and re-encoding a decoded
 /// `ProposalIn` or `CommitIn` need not reproduce the sender's bytes.
 ///
-/// Both are the received bytes, and the signature is here rather than
-/// taken from OpenMLS's `FramedContentAuthData` because that type's
-/// `signature` accessor returns a `&Signature` with no public way to
-/// read its bytes.
+/// The bytes as received, which is what `framed_content_tbs_hash`
+/// covers: re-encoding a decoded `ProposalIn` or `CommitIn` need not
+/// reproduce the sender's bytes.
+///
+/// The signature is not here. It is opaque bytes with nothing to
+/// preserve, so [`SemiPrivateMessageContent::signature`] reads it from
+/// OpenMLS's `FramedContentAuthData` rather than this type tracking an
+/// offset into the buffer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContentSpans<'a> {
     /// The `content` field of RFC 9420 §6.1's FramedContent: the encoded
     /// Proposal or Commit alone, without the
     /// `FramedContentAuthData` after it or the padding after that.
     pub content: &'a [u8],
-    /// The `signature` of the `FramedContentAuthData` (RFC 9420 §6.1),
-    /// which signs the FramedContentTBS under the label
-    /// `"FramedContentTBS"`.
-    ///
-    /// Read from the bytes. OpenMLS's
-    /// `FramedContentAuthData::signature` returns a `&Signature`, whose
-    /// own `as_slice` is `pub(crate)`, so there is no public way to get
-    /// the bytes out of it.
-    pub signature: &'a [u8],
 }
 
 impl<'a> ContentSpans<'a> {
@@ -1005,18 +1011,7 @@ impl<'a> ContentSpans<'a> {
         let content = bytes
             .get(..content_len)
             .ok_or_else(|| tls_codec::Error::DecodingError("short content".to_owned()))?;
-        let mut auth = bytes
-            .get(content_len..)
-            .ok_or_else(|| tls_codec::Error::DecodingError("no auth data".to_owned()))?;
-        // FramedContentAuthData starts with `opaque signature<V>`; a
-        // commit's confirmation_tag follows it and is not signed.
-        let start = auth;
-        let signature = VLBytes::tls_deserialize(&mut auth)?;
-        let offset = start.len() - auth.len() - signature.as_slice().len();
-        let signature = start
-            .get(offset..offset + signature.as_slice().len())
-            .ok_or_else(|| tls_codec::Error::DecodingError("short signature".to_owned()))?;
-        Ok(Self { content, signature })
+        Ok(Self { content })
     }
 }
 
@@ -1088,7 +1083,7 @@ impl SemiPrivateMessage {
             self.check_framed_content_tbs(spans.content, keys.sender_leaf_index, group_context)?;
         let key = sender_key(keys.sender_leaf_index)
             .ok_or(UnsealError::UnknownSender(keys.sender_leaf_index))?;
-        crate::label::verify_with_label(&key, FRAMED_CONTENT_TBS_LABEL, &tbs, spans.signature)
+        crate::label::verify_with_label(&key, FRAMED_CONTENT_TBS_LABEL, &tbs, content.signature())
             .map_err(|_| UnsealError::Signature)?;
         Ok(Opened {
             content,

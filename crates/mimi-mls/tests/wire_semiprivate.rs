@@ -636,25 +636,32 @@ fn decode_parts_returns_the_received_content_span() {
     );
 }
 
-/// The signature span is the signature's own bytes, without the `<V>`
-/// length prefix: it is handed straight to the verifier.
+/// `SemiPrivateMessageContent::signature` gives the signature's own
+/// bytes, without the `<V>` length prefix, and they are the bytes the
+/// buffer carried.
+///
+/// The value comes from OpenMLS's `FramedContentAuthData`, so this
+/// checks that accessor against the wire rather than trusting it: the
+/// signature is what the FramedContentTBS is verified against, and a
+/// prefix left on or stripped twice would make every verification fail
+/// in a way no other test here distinguishes.
 #[test]
-fn the_signature_span_excludes_its_length_prefix() {
-    let (_, spans) =
+fn the_signature_is_the_bytes_the_wire_carried() {
+    let (content, spans) =
         SemiPrivateMessageContent::decode_parts(REMOVE_PROPOSAL_CONTENT, ContentType::Proposal)
             .expect("decodes");
     // The auth data follows the content, and starts with signature<V>.
     let auth = &REMOVE_PROPOSAL_CONTENT[spans.content.len()..];
     let length = usize::from(auth[0]);
     assert_eq!(
-        spans.signature.len(),
+        content.signature().len(),
         length,
-        "the span is exactly the declared length"
+        "exactly the declared length"
     );
     assert_eq!(
-        spans.signature,
+        content.signature(),
         &auth[1..=length],
-        "and starts after the prefix"
+        "the bytes after the prefix"
     );
 }
 
