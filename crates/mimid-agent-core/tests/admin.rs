@@ -26,8 +26,8 @@ use common::{
 use mimid_agent_core::{Agent, AgentError, Event, HostOptions};
 
 /// `agent` joins `room` from the invite it got.
-async fn accept(agent: &mut Agent, room: &str) {
-    let number = poll_until(agent, |e| match e {
+async fn accept(agent: &mut Agent, server: &Server, room: &str) {
+    let number = poll_until(agent, server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -54,8 +54,8 @@ fn list(entries: &[(&str, u32)]) -> Vec<(String, u32)> {
 }
 
 /// `agent` reads Commits until it is out of `room`.
-async fn left(agent: &mut Agent, room: &str) {
-    poll_until(agent, |e| match e {
+async fn left(agent: &mut Agent, server: &Server, room: &str) {
+    poll_until(agent, server, |e| match e {
         Event::Left { room: r } if r == room => Some(()),
         _ => None,
     })
@@ -82,10 +82,10 @@ async fn room_of_three(server: &Server, dir: &std::path::Path) -> (String, Agent
         .await
         .unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    accept(&mut bob, &room).await;
+    accept(&mut bob, server, &room).await;
     alice.invite(&room, CAROL).await.unwrap();
-    accept(&mut carol, &room).await;
-    catch_up(&mut bob, &alice, &room).await;
+    accept(&mut carol, server, &room).await;
+    catch_up(&mut bob, &alice, server, &room).await;
     assert_eq!(
         hub_list(server, &room).await,
         list(&[(ALICE, 3), (BOB, 2), (CAROL, 2)])
@@ -130,8 +130,8 @@ async fn an_admin_kicks_and_removes() {
 
     // A kick removes carol's client and keeps her in the list.
     alice.kick(&room, CAROL).await.unwrap();
-    left(&mut carol, &room).await;
-    catch_up(&mut bob, &alice, &room).await;
+    left(&mut carol, &server, &room).await;
+    catch_up(&mut bob, &alice, &server, &room).await;
     assert_eq!(
         hub_list(&server, &room).await,
         list(&[(ALICE, 3), (BOB, 2), (CAROL, 2)])
@@ -149,7 +149,7 @@ async fn an_admin_kicks_and_removes() {
 
     // A removal takes bob out of the list and the group.
     alice.remove(&room, BOB).await.unwrap();
-    left(&mut bob, &room).await;
+    left(&mut bob, &server, &room).await;
     assert_eq!(
         hub_list(&server, &room).await,
         list(&[(ALICE, 3), (CAROL, 2)])
@@ -158,9 +158,17 @@ async fn an_admin_kicks_and_removes() {
 
     // A removed user can be invited again.
     alice.invite(&room, BOB).await.unwrap();
-    accept(&mut bob, &room).await;
+    accept(&mut bob, &server, &room).await;
     assert_agreement(&room, &alice, &bob);
-    sends(&mut alice, &room, "welcome back", ALICE, &mut [&mut bob]).await;
+    sends(
+        &mut alice,
+        &server,
+        &room,
+        "welcome back",
+        ALICE,
+        &mut [&mut bob],
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -170,8 +178,8 @@ async fn an_admin_bans_unbans_and_changes_roles() {
     let (room, mut alice, mut bob, mut carol) = room_of_three(&server, dir.path()).await;
 
     alice.ban(&room, CAROL).await.unwrap();
-    left(&mut carol, &room).await;
-    catch_up(&mut bob, &alice, &room).await;
+    left(&mut carol, &server, &room).await;
+    catch_up(&mut bob, &alice, &server, &room).await;
     assert_eq!(
         hub_list(&server, &room).await,
         list(&[(ALICE, 3), (BOB, 2), (CAROL, 1)])
@@ -196,9 +204,9 @@ async fn an_admin_bans_unbans_and_changes_roles() {
 
     // alice makes bob an admin; bob, now holding canUnban, unbans carol.
     alice.change_role(&room, BOB, 3).await.unwrap();
-    catch_up(&mut bob, &alice, &room).await;
+    catch_up(&mut bob, &alice, &server, &room).await;
     bob.unban(&room, CAROL).await.unwrap();
-    catch_up(&mut alice, &bob, &room).await;
+    catch_up(&mut alice, &bob, &server, &room).await;
     assert_eq!(
         hub_list(&server, &room).await,
         list(&[(ALICE, 3), (BOB, 3), (CAROL, 2)])
@@ -207,11 +215,12 @@ async fn an_admin_bans_unbans_and_changes_roles() {
     // invited again, she is back.
     bob.remove(&room, CAROL).await.unwrap();
     bob.invite(&room, CAROL).await.unwrap();
-    catch_up(&mut alice, &bob, &room).await;
-    accept(&mut carol, &room).await;
+    catch_up(&mut alice, &bob, &server, &room).await;
+    accept(&mut carol, &server, &room).await;
     assert_agreement(&room, &alice, &carol);
     sends(
         &mut carol,
+        &server,
         &room,
         "back",
         CAROL,

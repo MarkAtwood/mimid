@@ -24,7 +24,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use mimid_agent_core::mls_didwebvh::PublicKey;
 use mimid_agent_core::mls_didwebvh::controller::{DidLog, Parameters, UpdateKey};
@@ -47,6 +46,41 @@ const BOB: &str = "mimi://a.example/u/bob";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// Wakes once per thing the server stored that an agent could then
+    /// fetch; what [`poll_until`] waits on.
+    changed: tokio::sync::broadcast::Sender<()>,
+}
+
+/// Merges the follower's announcements into one wake-up: an event
+/// stored in any room, a membership added or ended, a local user's
+/// Consent. One task each, ending when the follower drops its sender.
+fn merge_announcements(follower: &Follower) -> tokio::sync::broadcast::Sender<()> {
+    use tokio::sync::broadcast;
+    let (sender, _) = broadcast::channel(1024);
+    {
+        let mut source = follower.subscribe_consent();
+        let sender = sender.clone();
+        tokio::spawn(async move {
+            while let Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) = source.recv().await {
+                let _ = sender.send(());
+            }
+        });
+    }
+    let mut events = follower.subscribe();
+    let events_sender = sender.clone();
+    tokio::spawn(async move {
+        while let Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) = events.recv().await {
+            let _ = events_sender.send(());
+        }
+    });
+    let mut membership = follower.subscribe_membership();
+    let membership_sender = sender.clone();
+    tokio::spawn(async move {
+        while let Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) = membership.recv().await {
+            let _ = membership_sender.send(());
+        }
+    });
+    sender
 }
 
 /// a.example's stack as `main.rs` wires it, with the hub enforcing the
@@ -104,11 +138,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changed = merge_announcements(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changed,
     }
 }
 
@@ -134,11 +170,32 @@ async fn agent(
     .unwrap()
 }
 
-/// Polls `agent` until `found` picks an event, for up to ten seconds.
-/// Problems fail the test.
-async fn poll_until<T>(agent: &mut Agent, mut found: impl FnMut(&Event) -> Option<T>) -> T {
-    for _ in 0..100 {
-        for event in agent.poll().await.unwrap() {
+/// Polls `agent` until `found` picks an event, woken between polls by
+/// `server`. Problems fail the test.
+///
+/// A poll is a request, so something has to say when to make one. The
+/// server's merged announcements are that something: they fire when it
+/// has stored anything an agent could fetch. Fanout to local users is
+/// asynchronous, so the first poll often finds nothing and the wake-up
+/// is what carries the test.
+///
+/// The receiver is taken before the first poll, so a change made while
+/// a poll is in flight waits in the channel instead of being missed. A
+/// poll that read anything is followed by another at once, because one
+/// change at the server can take an agent several polls.
+/// There is no deadline: an event that never comes hangs the test and
+/// prints whose poll it is (beads mimid-gn1w, mimid-zr08).
+async fn poll_until<T>(
+    agent: &mut Agent,
+    server: &Server,
+    mut found: impl FnMut(&Event) -> Option<T>,
+) -> T {
+    let mut changed = server.changed.subscribe();
+    let mut waits = 0u64;
+    loop {
+        let events = agent.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             if let Event::Problem { room, description } = &event {
                 panic!("{}: problem in {room:?}: {description}", agent.user());
             }
@@ -146,9 +203,27 @@ async fn poll_until<T>(agent: &mut Agent, mut found: impl FnMut(&Event) -> Optio
                 return value;
             }
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A poll that read something may have more to read: one change
+        // at the server can take an agent several polls (a Commit, then
+        // the message after it), and waiting for a change that has
+        // already happened would hang.
+        if progressed {
+            continue;
+        }
+        if waits.is_multiple_of(32) {
+            eprintln!(
+                "{}: waiting for an event; the server has changed {waits} times",
+                agent.user()
+            );
+        }
+        waits += 1;
+        match changed.recv().await {
+            Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                panic!("{}: the server stopped before the event", agent.user())
+            }
+        }
     }
-    panic!("{}: the expected event never came", agent.user());
 }
 
 fn assert_agreement(room: &str, a: &Agent, b: &Agent) {
@@ -262,7 +337,7 @@ async fn a_did_webvh_user_with_two_devices_and_a_basic_user_share_a_room_and_rev
     );
 
     for device in [&mut a1, &mut a2] {
-        let number = poll_until(device, |e| match e {
+        let number = poll_until(device, &server, |e| match e {
             Event::InviteArrived { number } => Some(*number),
             _ => None,
         })
@@ -276,7 +351,7 @@ async fn a_did_webvh_user_with_two_devices_and_a_basic_user_share_a_room_and_rev
 
     // Messages flow both ways; a did_webvh sender is known by its URI.
     let sent = a1.send_text(&room, "hello from a1").await.unwrap();
-    let got = poll_until(&mut bob, |e| match e {
+    let got = poll_until(&mut bob, &server, |e| match e {
         Event::Message(m) => Some(m.clone()),
         _ => None,
     })
@@ -289,7 +364,7 @@ async fn a_did_webvh_user_with_two_devices_and_a_basic_user_share_a_room_and_rev
     assert_eq!(frank.context.sender_uri.as_str(), ALICE);
     let sent = bob.send_text(&room, "hi alice").await.unwrap();
     for device in [&mut a1, &mut a2] {
-        let got = poll_until(device, |e| match e {
+        let got = poll_until(device, &server, |e| match e {
             Event::Message(m) if m.sender == BOB => Some(m.clone()),
             _ => None,
         })
@@ -309,7 +384,7 @@ async fn a_did_webvh_user_with_two_devices_and_a_basic_user_share_a_room_and_rev
         .await
         .unwrap();
     assert_eq!(a1.epoch(&room).unwrap(), epoch + 1);
-    let changed = poll_until(&mut bob, |e| match e {
+    let changed = poll_until(&mut bob, &server, |e| match e {
         Event::MembersChanged { epoch, .. } => Some(*epoch),
         _ => None,
     })
@@ -327,7 +402,7 @@ async fn a_did_webvh_user_with_two_devices_and_a_basic_user_share_a_room_and_rev
         "{refused:?}"
     );
     // Once it reads the Commit, a2 knows it is out.
-    poll_until(&mut a2, |e| match e {
+    poll_until(&mut a2, &server, |e| match e {
         Event::Left { room: left } if *left == room => Some(()),
         _ => None,
     })
@@ -335,7 +410,7 @@ async fn a_did_webvh_user_with_two_devices_and_a_basic_user_share_a_room_and_rev
 
     // The room goes on between a1 and bob.
     let sent = bob.send_text(&room, "bye a2").await.unwrap();
-    let got = poll_until(&mut a1, |e| match e {
+    let got = poll_until(&mut a1, &server, |e| match e {
         Event::Message(m) if m.sender == BOB => Some(m.clone()),
         _ => None,
     })

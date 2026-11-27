@@ -16,8 +16,6 @@
 
 mod common;
 
-use std::time::Duration;
-
 use common::{ALICE, BOB, Server, assert_agreement, poll_until, server_with};
 use futures_util::{SinkExt, StreamExt};
 use mimid_agent_core::{
@@ -108,7 +106,7 @@ async fn scenario(a: Binding, b: Binding) -> Record {
         alice.participants(&room).unwrap()
     ));
 
-    let number = poll_until(&mut bob, |e| match e {
+    let number = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -134,7 +132,7 @@ async fn scenario(a: Binding, b: Binding) -> Record {
             (&mut bob, &mut alice, "hi alice")
         };
         let sent = from.send_text(&room, text).await.unwrap();
-        let got = poll_until(to, |e| match e {
+        let got = poll_until(to, &server, |e| match e {
             Event::Message(m) => Some(m.clone()),
             _ => None,
         })
@@ -176,21 +174,29 @@ async fn scenario(a: Binding, b: Binding) -> Record {
         .await
         .unwrap()
         .message_id;
-    let mut delivered = false;
-    for _ in 0..100 {
+    let mut changed = server.changed();
+    loop {
         let (events, receipt) = bob.receive().await.unwrap();
         if events
             .iter()
             .any(|e| matches!(e, Event::Message(m) if m.message_id == sent))
         {
             drop(receipt);
-            delivered = true;
             break;
         }
+        let progressed = !events.is_empty();
         bob.acknowledge(receipt).unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        if progressed {
+            continue;
+        }
+        let stream = bob.stream_wake();
+        common::look_again(
+            "the message bob must not lose",
+            &mut changed,
+            stream.as_ref(),
+        )
+        .await;
     }
-    assert!(delivered);
     drop(bob);
     let mut bob = device(&server, BOB, dir.path(), b).await;
     let (events, receipt) = bob.receive().await.unwrap();
@@ -198,13 +204,13 @@ async fn scenario(a: Binding, b: Binding) -> Record {
     bob.acknowledge(receipt).unwrap();
 
     alice.leave(&room).await.unwrap();
-    let after = poll_until(&mut bob, |e| match e {
+    let after = poll_until(&mut bob, &server, |e| match e {
         Event::MembersChanged { participants, .. } => Some(participants.clone()),
         _ => None,
     })
     .await;
     record.note(format!("after alice left {after:?}"));
-    poll_until(&mut alice, |e| match e {
+    poll_until(&mut alice, &server, |e| match e {
         Event::Left { room: left } if *left == room => Some(()),
         _ => None,
     })
@@ -293,7 +299,7 @@ async fn no_gap_and_no_duplicate_across_reconnects() {
     bob.publish_key_packages(1).await.unwrap();
     let room = alice.host_room(&HostOptions::named("r")).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    let number = poll_until(&mut bob, |e| match e {
+    let number = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -307,12 +313,19 @@ async fn no_gap_and_no_duplicate_across_reconnects() {
     }
     let mut bob = device(&server, BOB, dir.path(), Binding::Stream).await;
     let mut got = Vec::new();
-    for _ in 0..100 {
-        got.extend(texts(&bob.poll().await.unwrap()));
+    let mut changed = server.changed();
+    while got.len() < 3 {
+        let events = bob.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        got.extend(texts(&events));
         if got.len() >= 3 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        if progressed {
+            continue;
+        }
+        let stream = bob.stream_wake();
+        common::look_again("all three messages", &mut changed, stream.as_ref()).await;
     }
     assert_eq!(
         got,
@@ -324,29 +337,44 @@ async fn no_gap_and_no_duplicate_across_reconnects() {
     // same state resubscribes from the saved position and gets it again,
     // once.
     alice.send_text(&room, "four").await.unwrap();
-    let mut seen = false;
-    for _ in 0..100 {
+    let mut changed = server.changed();
+    loop {
         let (events, receipt) = bob.receive().await.unwrap();
         if texts(&events).contains(&Some("four".to_owned())) {
             drop(receipt);
-            seen = true;
             break;
         }
+        let progressed = !events.is_empty();
         bob.acknowledge(receipt).unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        if progressed {
+            continue;
+        }
+        let stream = bob.stream_wake();
+        common::look_again("the fourth message", &mut changed, stream.as_ref()).await;
     }
-    assert!(seen);
     drop(bob);
     let mut bob = device(&server, BOB, dir.path(), Binding::Stream).await;
     assert_eq!(texts(&bob.poll().await.unwrap()), [Some("four".to_owned())]);
     alice.send_text(&room, "five").await.unwrap();
     let mut later = Vec::new();
-    for _ in 0..100 {
-        later.extend(texts(&bob.poll().await.unwrap()));
+    let mut changed = server.changed();
+    while later.is_empty() {
+        let events = bob.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        later.extend(texts(&events));
         if !later.is_empty() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        if progressed {
+            continue;
+        }
+        let stream = bob.stream_wake();
+        common::look_again(
+            "the message after the restart",
+            &mut changed,
+            stream.as_ref(),
+        )
+        .await;
     }
     assert_eq!(later, [Some("five".to_owned())]);
 }
@@ -354,13 +382,13 @@ async fn no_gap_and_no_duplicate_across_reconnects() {
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+/// The socket is the event: `next` is an await on the connection, so
+/// the reactor wakes this when a frame arrives. No deadline, so a
+/// provider that never answers hangs the test rather than failing it on
+/// a loaded machine.
 async fn next(socket: &mut Socket, kind: Option<OpKind>) -> ProviderMessage {
     loop {
-        let frame = tokio::time::timeout(Duration::from_secs(10), socket.next())
-            .await
-            .expect("in time")
-            .expect("open")
-            .unwrap();
+        let frame = socket.next().await.expect("open").unwrap();
         if let Message::Binary(bytes) = frame {
             return ProviderMessage::decode(&bytes, |_| kind).unwrap();
         }
@@ -518,14 +546,14 @@ async fn a_lost_message_state_resumes_after_the_last_handled_message() {
         bob.publish_key_packages(1).await.unwrap();
         let room = alice.host_room(&HostOptions::named("r")).await.unwrap();
         alice.invite(&room, BOB).await.unwrap();
-        let number = poll_until(&mut bob, |e| match e {
+        let number = poll_until(&mut bob, &server, |e| match e {
             Event::InviteArrived { number } => Some(*number),
             _ => None,
         })
         .await;
         bob.join(number).unwrap();
         alice.send_text(&room, "before").await.unwrap();
-        poll_until(&mut bob, |e| match e {
+        poll_until(&mut bob, &server, |e| match e {
             Event::Message(m) if m.text.as_deref() == Some("before") => Some(()),
             _ => None,
         })
@@ -547,18 +575,29 @@ async fn a_lost_message_state_resumes_after_the_last_handled_message() {
         alice.send_text(&room, "after").await.unwrap();
         let mut bob = device(&server, BOB, dir.path(), binding).await;
         let mut got = Vec::new();
-        for _ in 0..100 {
+        let mut woken = server.changed();
+        while got.is_empty() {
             let events = bob.poll().await.unwrap();
             for event in &events {
                 if let Event::Problem { description, .. } = event {
                     panic!("{binding:?}: {description}");
                 }
             }
+            let progressed = !events.is_empty();
             got.extend(texts(&events));
             if !got.is_empty() {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            if progressed {
+                continue;
+            }
+            let stream = bob.stream_wake();
+            common::look_again(
+                &format!("{binding:?}: the message after the gap"),
+                &mut woken,
+                stream.as_ref(),
+            )
+            .await;
         }
         assert_eq!(got, [Some("after".to_owned())], "{binding:?}");
     }

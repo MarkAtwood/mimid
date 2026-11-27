@@ -111,8 +111,9 @@ const UNTRUSTED_SPKI_SHA256: &str =
 /// TLSA 2 0 1 data for `tls/ca.pem` (openssl).
 const CA_SHA256: &str = "bb95af8387a45662ae338174ef803406bbf75d29e7475143016ea3e3fbfba9c2";
 
-/// How long a wait may take: fanout retries back off, and the tests run
-/// in parallel.
+/// The bound on the one wait in this file that has nothing to wait on
+/// (`Jmap::next`, bead mimid-67e0.2). Generous: fanout retries use the
+/// real backoff (1 s, then 2 s), and this test runs two binaries.
 const WAIT: Duration = Duration::from_secs(60);
 
 /// The log message of a successful provider authentication.
@@ -229,6 +230,9 @@ async fn post_json(url: &str, body: &Value) -> (u16, Value) {
 struct Mimid {
     child: Child,
     logs: Arc<Mutex<Vec<Value>>>,
+    /// Notified as each log line is read, so a test waits for one
+    /// instead of looking at the sink again every so often.
+    logged: Arc<tokio::sync::Notify>,
     /// The local control listener's base URL.
     local: String,
 }
@@ -273,32 +277,35 @@ impl Mimid {
             .unwrap();
         let stdout = child.stdout.take().unwrap();
         let logs = Arc::new(Mutex::new(Vec::new()));
+        let logged = Arc::new(tokio::sync::Notify::new());
         let sink = Arc::clone(&logs);
+        let arrived = Arc::clone(&logged);
         std::thread::spawn(move || {
             for line in std::io::BufReader::new(stdout).lines() {
                 let Ok(line) = line else { break };
                 let value = serde_json::from_str(&line)
                     .unwrap_or_else(|_| panic!("not a JSON log line: {line}"));
                 sink.lock().unwrap().push(value);
+                arrived.notify_waiters();
             }
         });
-        let mut mimid = Self {
+        let mimid = Self {
             child,
             logs,
+            logged,
             local: format!("http://{local}/local/v1"),
         };
+        // The binary logs its local listener's bind, so the first line
+        // of that name says the socket is there to connect to. One
+        // request then confirms it answers; a process that died says so
+        // instead, because the reader stops and `wait` returns.
+        eprintln!("waiting for {domain}'s local listener");
+        mimid.await_events("local control listener on", 1).await;
         let http = reqwest::Client::new();
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while http
-            .get(format!("{}/users", mimid.local))
+        http.get(format!("{}/users", mimid.local))
             .send()
             .await
-            .is_err()
-        {
-            assert!(mimid.child.try_wait().unwrap().is_none(), "{domain} exited");
-            assert!(Instant::now() < deadline, "{domain} did not start");
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+            .unwrap_or_else(|e| panic!("{domain}'s local listener answers: {e}"));
         // The local listener is bound first, the protocol listener after
         // other startup work (`main.rs`), so the local one answering says
         // nothing of the other (bead mimid-fchx). Its log line comes
@@ -321,15 +328,27 @@ impl Mimid {
             .collect()
     }
 
-    /// Waits until `count` events with `message` are logged; their fields.
+    /// Waits until `count` events with `message` are logged; their
+    /// fields.
+    ///
+    /// Woken by the log reader, which notifies as each line arrives.
+    /// The waiter is registered before the look, so a line that lands
+    /// in between is waiting rather than missed. No deadline: an event
+    /// that never comes hangs the test and names the message, where a
+    /// guessed one returned too few events and failed at the caller's
+    /// assertion instead.
     async fn await_events(&self, message: &str, count: usize) -> Vec<Value> {
-        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
+            let logged = self.logged.notified();
             let events = self.events(message);
-            if events.len() >= count || Instant::now() > deadline {
+            if events.len() >= count {
                 return events;
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            eprintln!(
+                "waiting for {count} {message:?} events, have {}",
+                events.len()
+            );
+            logged.await;
         }
     }
 
@@ -546,6 +565,13 @@ impl Jmap {
         }
     }
 
+    /// The next FanoutMessage stored for this account.
+    ///
+    /// The one wait in this file with nothing to wait on: the providers
+    /// are separate processes, and storing a fanout logs nothing at the
+    /// `info` level they run at, so there is no line to follow and no
+    /// in-process signal to subscribe to. Bead mimid-67e0.2 is to add
+    /// that event; until then this reads on a bound ([`WAIT`]).
     async fn next(&mut self) -> FanoutMessage {
         let deadline = Instant::now() + WAIT;
         loop {

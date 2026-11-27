@@ -18,7 +18,7 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{ALICE, BOB, PATIENCE, Running, config, server};
+use common::{ALICE, BOB, Running, config, server};
 use mimid_agent::Daemon;
 use mimid_agent_store::Store;
 use mimid_agent_store::record::Sender;
@@ -30,24 +30,24 @@ const TEXT: &str = "hello bob, over a store without JMAP";
 /// Waits until `store` holds a message from alice; its room's URI and the
 /// message's text.
 async fn alices_message(store: &Arc<Store>) -> (String, String) {
-    tokio::time::timeout(*PATIENCE, async {
-        loop {
-            {
-                let state = store.state();
-                if let Some(message) = state
-                    .messages
-                    .values()
-                    .find(|m| m.sender == Sender::User(ALICE.to_owned()))
-                {
-                    let room = state.rooms[&message.room].uri.clone();
-                    return (room, message.body.clone());
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
+    // The change feed says when a message lands, so look again then
+    // rather than on a timer. The guard is taken and dropped inside the
+    // closure, so the store is not locked while this waits.
+    common::until_store("alice's message to reach bob's store", store, |store| {
+        store
+            .state()
+            .messages
+            .values()
+            .any(|m| m.sender == Sender::User(ALICE.to_owned()))
     })
-    .await
-    .expect("alice's message reaches bob's store")
+    .await;
+    let state = store.state();
+    let message = state
+        .messages
+        .values()
+        .find(|m| m.sender == Sender::User(ALICE.to_owned()))
+        .expect("it was there a moment ago");
+    (state.rooms[&message.room].uri.clone(), message.body.clone())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -148,10 +148,10 @@ async fn with_jmap_off_the_store_still_syncs_and_jmap_paths_are_404() {
     );
 
     stop.send(()).unwrap();
-    tokio::time::timeout(*PATIENCE, bob_task)
-        .await
-        .expect("bob's daemon stops")
-        .unwrap()
-        .unwrap();
+    // The task ending is the event, so awaiting it is the assertion: a
+    // daemon that never stops hangs here and says so, where a deadline
+    // would have blamed the machine.
+    eprintln!("waiting for bob's daemon to stop");
+    bob_task.await.unwrap().unwrap();
     alice.stop().await;
 }

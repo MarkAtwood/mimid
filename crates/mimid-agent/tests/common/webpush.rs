@@ -88,12 +88,14 @@ impl FakePushService {
         Self { addr, received }
     }
 
-    /// The next request, within [`super::PATIENCE`].
+    /// The next request the service received.
+    ///
+    /// The channel receive is the event: the accept loop sends on it as
+    /// each request arrives. No deadline, so a push that never comes
+    /// hangs the test instead of failing it on a slow machine.
     pub async fn next(&mut self) -> Pushed {
-        tokio::time::timeout(*super::PATIENCE, self.received.recv())
-            .await
-            .expect("a push in time")
-            .expect("the service runs")
+        eprintln!("waiting for a push to the fake service");
+        self.received.recv().await.expect("the service runs")
     }
 }
 

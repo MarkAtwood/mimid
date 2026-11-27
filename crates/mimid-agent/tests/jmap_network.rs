@@ -195,16 +195,15 @@ async fn basic_credentials_log_in_and_only_basic_is_challenged_back() {
     // daemon's bearer cache with its recheck (§3.6, §3.7): a request
     // whose secret is cached takes no database read, which is why this
     // waits rather than asserting at once.
+    // The cache's own clock is the event here: an entry is rechecked
+    // `CREDENTIAL_RECHECK` after it was cached, and nothing publishes
+    // when it falls due. One sleep past that, then one request, rather
+    // than a request every hundred milliseconds until a deadline: the
+    // assertion is on the answer after the recheck is due.
     alice.store_credentials().revoke("pidgin", "cli").unwrap();
-    let deadline = tokio::time::Instant::now() + mimid_agent::CREDENTIAL_RECHECK * 5;
-    let mut refused = 200;
-    while tokio::time::Instant::now() < deadline {
-        refused = get(basic("alice", &shown)).await.status().as_u16();
-        if refused == 401 {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
+    tokio::time::sleep(mimid_agent::CREDENTIAL_RECHECK + std::time::Duration::from_millis(100))
+        .await;
+    let refused = get(basic("alice", &shown)).await.status().as_u16();
     assert_eq!(refused, 401, "the revoked password is refused under Basic");
     alice.stop().await;
 }

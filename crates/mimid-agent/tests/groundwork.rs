@@ -98,23 +98,21 @@ async fn privmsg(irc: &mut Irc, mask: &str, text: &str) -> Msg {
 
 /// The Message of `client`'s only Chat whose body is `body`, waiting for
 /// it.
-async fn message_with_body(client: &common::Client, body: &str) -> Value {
-    for _ in 0..100 {
+async fn message_with_body(
+    client: &common::Client,
+    store: &mimid_agent_store::Store,
+    body: &str,
+) -> Value {
+    common::until_probe(&format!("the message {body:?}"), store, || async {
         let chats = client.get("Chat", None).await;
-        if let Some(chat) = chats.first() {
-            let chat = chat["id"].as_str().unwrap().to_owned();
-            if let Some(m) = client
-                .messages(&chat)
-                .await
-                .into_iter()
-                .find(|m| m["body"] == json!(body))
-            {
-                return m;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    panic!("no Message {body:?}");
+        let chat = chats.first()?["id"].as_str()?.to_owned();
+        client
+            .messages(&chat)
+            .await
+            .into_iter()
+            .find(|m| m["body"] == json!(body))
+    })
+    .await
 }
 
 /// Oracle: draft-atwood-jmap-chat-00 §Message `replyTo` ("the
@@ -127,7 +125,7 @@ async fn replies_through_jmap_and_irc() {
     p.b.send("PRIVMSG #lobby :question?").await;
     let asked = privmsg(&mut p.a, BOB_MASK, "question?").await;
     let jmap = p.alice.client().await;
-    let question = message_with_body(&jmap, "question?").await;
+    let question = message_with_body(&jmap, &p.alice.store, "question?").await;
     assert_eq!(question["senderMsgId"], json!(asked.tags["msgid"]));
 
     // JMAP replyTo goes out as inReplyTo; bob's IRC sees it addressed to
@@ -157,7 +155,7 @@ async fn replies_through_jmap_and_irc() {
     .await;
     let thanks = privmsg(&mut p.a, BOB_MASK, &format!("{ALICE_NICK}: thanks")).await;
     assert_eq!(thanks.tags["+draft/reply"], target);
-    let thanks = message_with_body(&jmap, &format!("{ALICE_NICK}: thanks")).await;
+    let thanks = message_with_body(&jmap, &p.alice.store, &format!("{ALICE_NICK}: thanks")).await;
     assert_eq!(thanks["replyTo"], created["id"]);
 
     // A replyTo naming no Message of the Chat is refused, and nothing is
@@ -173,18 +171,18 @@ async fn replies_through_jmap_and_irc() {
     p.stop().await;
 }
 
-/// Polls `client`'s Message `id` until `done` holds for it.
-async fn until_message(client: &common::Client, id: &str, done: impl Fn(&Value) -> bool) -> Value {
-    for _ in 0..100 {
+/// Waits until `done` holds of `client`'s Message `id`.
+async fn until_message(
+    client: &common::Client,
+    store: &mimid_agent_store::Store,
+    id: &str,
+    done: impl Fn(&Value) -> bool,
+) -> Value {
+    common::until_probe(&format!("Message {id}"), store, || async {
         let got = client.get("Message", Some(vec![id])).await;
-        if let Some(m) = got.first()
-            && done(m)
-        {
-            return m.clone();
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    panic!("Message {id} never got there");
+        got.first().filter(|m| done(m)).cloned()
+    })
+    .await
 }
 
 /// Oracle: draft-atwood-jmap-chat-00 §Reaction and §Adding and Removing
@@ -229,9 +227,9 @@ async fn reactions_through_jmap_and_irc() {
 
     // alice's JMAP client sees it, and reacts and takes it back.
     let jmap = p.alice.client().await;
-    let message = message_with_body(&jmap, "vote").await;
+    let message = message_with_body(&jmap, &p.alice.store, "vote").await;
     let id = message["id"].as_str().unwrap().to_owned();
-    let seen = until_message(&jmap, &id, |m| {
+    let seen = until_message(&jmap, &p.alice.store, &id, |m| {
         m["reactions"].as_object().is_some_and(|r| r.len() == 1)
     })
     .await;
@@ -295,7 +293,7 @@ async fn reactions_through_jmap_and_irc() {
             &format!("\x01ACTION took back 👍 from {ALICE_NICK}\x01")
         ]
     );
-    until_message(&jmap, &id, |m| {
+    until_message(&jmap, &p.alice.store, &id, |m| {
         m["reactions"].as_object().is_none_or(|r| r.is_empty())
     })
     .await;
@@ -354,7 +352,7 @@ async fn on_behalf_of_through_jmap_and_irc() {
     .await;
     privmsg(&mut p.a, BOB_MASK, "Bob (npub1x, via bridge): prefixed").await;
     let jmap = p.alice.client().await;
-    let message = message_with_body(&jmap, "sounds good").await;
+    let message = message_with_body(&jmap, &p.alice.store, "sounds good").await;
     assert_eq!(
         message["mimid.invalid:onBehalfOf"],
         json!({"uri": "nostr:npub1x", "name": "Bob", "src": "abcd"})
@@ -396,19 +394,13 @@ async fn direct_chats_over_jmap() {
     assert_eq!(again["notCreated"]["k"]["existingId"], json!(id));
 
     // bob's daemon joins it (invites = "any") and shows it direct too.
-    let mut seen = None;
-    for _ in 0..100 {
-        seen = bob
-            .get("Chat", None)
+    let seen = common::until_probe("bob's Chat of the room", &p.bob.store, || async {
+        bob.get("Chat", None)
             .await
             .into_iter()
-            .find(|c| c["roomId"] == chat[0]["roomId"]);
-        if seen.is_some() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    let seen = seen.expect("bob has the Chat");
+            .find(|c| c["roomId"] == chat[0]["roomId"])
+    })
+    .await;
     assert_eq!(seen["kind"], json!("direct"));
     let alice_contact = bob
         .get("ChatContact", None)
@@ -445,21 +437,14 @@ async fn destroying_a_direct_chat_hides_it_until_the_next_message() {
         .unwrap()
         .to_owned();
     let room = alice.get("Chat", Some(vec![&id])).await[0]["roomId"].clone();
-    let bob_chat = async || {
-        for _ in 0..100 {
-            if let Some(chat) = bob
-                .get("Chat", None)
-                .await
-                .into_iter()
-                .find(|c| c["roomId"] == room)
-            {
-                return chat["id"].as_str().unwrap().to_owned();
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-        panic!("bob never had the Chat");
-    };
-    let bob_id = bob_chat().await;
+    let bob_id = common::until_probe("bob's Chat of the room", &p.bob.store, || async {
+        bob.get("Chat", None)
+            .await
+            .into_iter()
+            .find(|c| c["roomId"] == room)
+            .map(|chat| chat["id"].as_str().unwrap().to_owned())
+    })
+    .await;
     let say = async |body: &str| {
         bob.create(
             "Message",
@@ -468,30 +453,64 @@ async fn destroying_a_direct_chat_hides_it_until_the_next_message() {
         .await;
     };
     let alice_chat = async |body: &str| {
-        for _ in 0..100 {
-            for chat in alice.get("Chat", None).await {
-                if chat["roomId"] == room
-                    && let Some(id) = chat["id"].as_str()
-                    && alice
-                        .messages(id)
-                        .await
-                        .iter()
-                        .any(|m| m["body"] == json!(body))
-                {
-                    return id.to_owned();
+        common::until_probe(
+            &format!("alice's Chat holding {body:?}"),
+            &p.alice.store,
+            || async {
+                for chat in alice.get("Chat", None).await {
+                    if chat["roomId"] == room
+                        && let Some(id) = chat["id"].as_str()
+                        && alice
+                            .messages(id)
+                            .await
+                            .iter()
+                            .any(|m| m["body"] == json!(body))
+                    {
+                        return Some(id.to_owned());
+                    }
                 }
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-        panic!("alice never saw {body}");
+                None
+            },
+        )
+        .await
     };
     say("before").await;
     assert_eq!(alice_chat("before").await, id);
 
     let destroyed = alice.call("Chat/set", json!({"destroy": [id]})).await;
     assert_eq!(destroyed["destroyed"], json!([id]), "{destroyed}");
-    // Several of the daemon's syncs (every 100 ms) bring nothing back.
-    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    // A barrier, not a sleep: bob says something in another room, and
+    // alice's daemon storing that message proves her sync loop has run
+    // since the destroy. If the hidden Chat were coming back, it would
+    // have come back by then.
+    let elsewhere = alice
+        .create(
+            "Chat",
+            json!({"kind": "group", "name": "elsewhere", "memberIds": []}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    alice
+        .create(
+            "Message",
+            json!({"chatId": elsewhere, "body": "a later write",
+                   "sentAt": "2026-11-22T12:00:01Z"}),
+        )
+        .await;
+    common::until_store(
+        "alice's later write to be stored",
+        &p.alice.store,
+        |store| {
+            store
+                .state()
+                .messages
+                .values()
+                .any(|m| m.body == "a later write")
+        },
+    )
+    .await;
     assert!(
         alice
             .get("Chat", None)

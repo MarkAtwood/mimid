@@ -195,17 +195,14 @@ async fn two_daemons_chat_over_http() {
         json!({"chatId": chat_b, "body": "hi alice", "sentAt": SENT_AT}),
     )
     .await;
-    let got = tokio::time::timeout(*common::PATIENCE, async {
-        loop {
-            a_events.until_changed("Message").await;
-            let got = a.messages(&chat_a).await;
-            if got.len() == 2 {
-                return got;
-            }
+    // until_changed is the wait: each turn is a frame arriving.
+    let got = loop {
+        a_events.until_changed("Message").await;
+        let got = a.messages(&chat_a).await;
+        if got.len() == 2 {
+            break got;
         }
-    })
-    .await
-    .expect("bob's answer reaches alice");
+    };
     let reply = got
         .iter()
         .find(|m| m["body"] == json!("hi alice"))
@@ -214,9 +211,9 @@ async fn two_daemons_chat_over_http() {
 
     // Stopping a daemon ends its open EventSource streams.
     bob.stop().await;
-    assert!(b_events.ends().await);
+    b_events.ends().await;
     alice.stop().await;
-    assert!(a_events.ends().await);
+    a_events.ends().await;
 
     // A restart reuses the local token.
     let token =

@@ -11,6 +11,7 @@
 
 #[allow(dead_code, reason = "shared helpers; this test binary uses a subset")]
 mod common;
+#[allow(dead_code, reason = "shared helpers; this test binary uses a subset")]
 #[path = "common/fanout.rs"]
 mod common_fanout;
 

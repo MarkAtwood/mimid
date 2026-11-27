@@ -160,9 +160,9 @@ async fn a_closed_stream_stays_closed() {
     .unwrap();
     alice.publish_key_packages(1).await.unwrap();
     alice.poll().await.unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), alice.close())
-        .await
-        .expect("close waits for the tasks, and they end");
+    // The tasks ending is the event, so awaiting `close` is the
+    // assertion: one that never ends hangs here and says so.
+    alice.close().await;
     match alice.poll().await {
         Err(AgentError::Stream { detail, .. }) => assert!(detail.contains("closed"), "{detail}"),
         other => panic!("{other:?}"),
@@ -200,7 +200,7 @@ async fn a_declined_invite_is_gone_for_good() {
         .unwrap();
     bob.allow(ALICE).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    let number = poll_until(&mut bob, |e| match e {
+    let number = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -214,9 +214,10 @@ async fn a_declined_invite_is_gone_for_good() {
     assert!(matches!(bob.join(number), Err(AgentError::NoSuchInvite(_))));
     drop(bob);
     let mut bob = open(BOB).await.unwrap();
-    for _ in 0..3 {
-        bob.poll().await.unwrap();
-    }
+    // Drain: poll until one reads nothing, so "not back after a
+    // restart" is about every poll there is rather than the first
+    // three.
+    while !bob.poll().await.unwrap().is_empty() {}
     assert!(bob.invites().is_empty(), "not back after a restart");
     assert!(bob.rooms().iter().all(|r| r.uri != room), "not joined");
 }

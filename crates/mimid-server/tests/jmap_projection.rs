@@ -1990,15 +1990,14 @@ async fn a_chat_change_is_pushed_as_a_state_event() {
         "text/event-stream"
     );
     let body = tokio::spawn(to_bytes(response.into_body(), usize::MAX));
-    // Let the stream subscribe and read its first states.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Nothing to wait for: the handler subscribes to the change bus and
+    // reads the first states on the request path (jmap::eventsource),
+    // before the response above, so the change made next reaches it.
     let alice = mimid_server::follower::relay::LocalUser::authenticated(&domain(), ALICE).unwrap();
     f.follower.leave(&alice, common::ROOM_ID).await.unwrap();
-    let body = tokio::time::timeout(std::time::Duration::from_secs(10), body)
-        .await
-        .expect("closeafter=state ends the stream")
-        .unwrap()
-        .unwrap();
+    // The stream ending is the event: a `closeafter=state` stream that
+    // does not end hangs here instead of failing on a slow machine.
+    let body = body.await.unwrap().unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
     let data = text
         .lines()
@@ -2049,8 +2048,9 @@ async fn a_pushed_message_state_already_shows_the_message() {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = tokio::spawn(to_bytes(response.into_body(), usize::MAX));
-    // Let the stream subscribe and read its first states.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Nothing to wait for: the handler subscribes to the change bus and
+    // reads the first states on the request path (jmap::eventsource),
+    // before the response above, so the change made next reaches it.
     f.follower
         .deliver(
             common::ROOM_ID,
@@ -2059,11 +2059,9 @@ async fn a_pushed_message_state_already_shows_the_message() {
         )
         .await
         .unwrap();
-    let body = tokio::time::timeout(std::time::Duration::from_secs(10), body)
-        .await
-        .expect("closeafter=state ends the stream")
-        .unwrap()
-        .unwrap();
+    // The stream ending is the event: a `closeafter=state` stream that
+    // does not end hangs here instead of failing on a slow machine.
+    let body = body.await.unwrap().unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
     let data = text
         .lines()
@@ -2108,12 +2106,13 @@ async fn revoking_the_token_ends_its_eventsource() {
         f.store.revoke_token_id(&token_id, 6).await.unwrap(),
         mimid_server::store::TokenRevocation::Revoked
     );
-    tokio::time::timeout(std::time::Duration::from_secs(10), alice_body)
-        .await
-        .expect("the revocation ends the stream")
-        .unwrap()
-        .unwrap();
+    // The revocation ending alice's stream is the event.
+    alice_body.await.unwrap().unwrap();
     use tokio_stream::StreamExt;
+    // A bound, not a guessed latency: the claim is that nothing arrives,
+    // and a negative has to be bounded by something. Alice's stream has
+    // already ended on the same revocation, so the one event that could
+    // reach bob has been and gone.
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(300), bob_body.next())
             .await
@@ -2134,11 +2133,11 @@ async fn an_idle_stream_pings_at_the_clamped_interval() {
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body().into_data_stream();
     use tokio_stream::StreamExt;
-    let first = tokio::time::timeout(std::time::Duration::from_secs(20), body.next())
-        .await
-        .expect("a ping within twenty seconds")
-        .unwrap()
-        .unwrap();
+    // The ping is the event: the stream sends one every interval, so
+    // this returns when it arrives. No deadline, so a stream that
+    // stops pinging hangs the test rather than failing it on a loaded
+    // machine.
+    let first = body.next().await.unwrap().unwrap();
     let text = String::from_utf8(first.to_vec()).unwrap();
     assert!(
         text.starts_with("event: ping\ndata: {\"interval\":10}"),

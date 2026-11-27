@@ -7,7 +7,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use mimi_room_policy::{
     BANNED_ROLE_INDEX, Capability, Role, RoleData, SingleSourceRoleChangeTargets,
@@ -24,6 +23,7 @@ use mimid_server::hub::{Clock, Hub, SystemClock};
 use mimid_server::jmap::{self, JmapOptions};
 use mimid_server::peer::PeerClient;
 use mimid_server::store::Store;
+use tokio::sync::broadcast;
 
 pub const ALICE: &str = "mimi://a.example/u/alice";
 pub const BOB: &str = "mimi://a.example/u/bob";
@@ -36,6 +36,69 @@ pub struct Server {
     pub tokens: BTreeMap<&'static str, String>,
     pub hub: Arc<Hub>,
     pub store: Store,
+    /// The follower, whose announcements feed [`Server::changed`].
+    pub follower: Arc<Follower>,
+    changed: broadcast::Sender<()>,
+}
+
+impl Server {
+    /// Wakes once for each thing the server stores that an agent could
+    /// then fetch: an event in any room, a membership added or ended, a
+    /// local user's Consent.
+    ///
+    /// The signal a poll waits on, and the in-process stand-in for the
+    /// EventSource that wakes the daemon's sync loop in production. The
+    /// three announcements are merged because what a test waits for is
+    /// "the server has something for me", and which of the three
+    /// carried it is the implementation's business.
+    ///
+    /// Subscribe before the poll that might miss the change, not after:
+    /// a `broadcast` receiver keeps what is published from its
+    /// subscription on, so an announcement made while a poll is in
+    /// flight is waiting rather than lost.
+    #[must_use]
+    pub fn changed(&self) -> broadcast::Receiver<()> {
+        self.changed.subscribe()
+    }
+}
+
+/// Merges the follower's three announcements into one wake-up.
+///
+/// One task per announcement, each ending when the follower drops its
+/// sender, which is when the server is gone.
+fn merge_announcements(follower: &Follower) -> broadcast::Sender<()> {
+    let (sender, _) = broadcast::channel(1024);
+    let mut events = follower.subscribe();
+    let mut membership = follower.subscribe_membership();
+    let mut consent = follower.subscribe_consent();
+    macro_rules! forward {
+        ($source:expr) => {{
+            let sender = sender.clone();
+            let mut source = $source;
+            tokio::spawn(async move {
+                loop {
+                    match source.recv().await {
+                        // A lag is still a change, and the receiver only
+                        // needs to know there was one.
+                        Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                            let _ = sender.send(());
+                        }
+                        Err(broadcast::error::RecvError::Closed) => return,
+                    }
+                }
+            });
+        }};
+    }
+    forward!(std::mem::replace(&mut events, follower.subscribe()));
+    forward!(std::mem::replace(
+        &mut membership,
+        follower.subscribe_membership()
+    ));
+    forward!(std::mem::replace(
+        &mut consent,
+        follower.subscribe_consent()
+    ));
+    sender
 }
 
 /// a.example's stack as `main.rs` wires it (hub, follower, fanout with
@@ -113,13 +176,16 @@ pub async fn server_limited(
         options,
     )
     .unwrap();
-    let app = router(directory(&base), Arc::clone(&hub), follower).merge(jmap);
+    let app = router(directory(&base), Arc::clone(&hub), Arc::clone(&follower)).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let changed = merge_announcements(&follower);
     Server {
         base: base_text,
         tokens,
         hub,
         store,
+        follower,
+        changed,
     }
 }
 
@@ -150,11 +216,75 @@ pub async fn device_with(
     .unwrap()
 }
 
-/// Polls `agent` until `found` picks an event, for up to ten seconds
-/// (fanout to local users is asynchronous). Problems fail the test.
-pub async fn poll_until<T>(agent: &mut Agent, mut found: impl FnMut(&Event) -> Option<T>) -> T {
-    for _ in 0..100 {
-        for event in agent.poll().await.unwrap() {
+/// Waits for a reason to look at `agent` again: the server changed, or
+/// the agent's own live stream received something.
+///
+/// Both, because the two bindings deliver differently. A JMAP-bound
+/// agent is asked, so a server change is what makes the next ask worth
+/// making. A stream-bound agent is pushed to, so a change the server
+/// made before this wait subscribed reaches the agent as a stream
+/// wake-up and never as a server announcement -- and waiting on the
+/// server alone hangs. `Agent::stream_wake` is a `Notify` the stream
+/// signals with `notify_one`, which keeps a permit when nobody is
+/// waiting, so a push that happened before this call still wakes it.
+///
+/// `stream` is `None` on JMAP, and then only the server wakes this.
+pub async fn look_again(
+    what: &str,
+    changed: &mut tokio::sync::broadcast::Receiver<()>,
+    stream: Option<&std::sync::Arc<tokio::sync::Notify>>,
+) {
+    eprintln!("waiting for {what}");
+    let pushed = async {
+        match stream {
+            Some(wake) => wake.notified().await,
+            // No stream: only the server can wake this.
+            None => std::future::pending().await,
+        }
+    };
+    tokio::select! {
+        received = changed.recv() => {
+            if matches!(
+                received,
+                Err(tokio::sync::broadcast::error::RecvError::Closed)
+            ) {
+                panic!("the server stopped before {what}");
+            }
+        }
+        () = pushed => {}
+    }
+}
+
+/// Polls `agent` until `found` picks an event, woken between polls by
+/// `server`. Problems fail the test.
+///
+/// A poll is a request, so something has to say when to make one.
+/// [`Server::changed`] is that something: the server wakes it when it
+/// has stored anything an agent could fetch, which is the moment a poll
+/// is worth making. Fanout to local users is asynchronous, so the first
+/// poll often finds nothing and the wake-up is what carries the test.
+///
+/// The receiver is taken before the first poll, so a change the server
+/// makes while a poll is in flight waits in the channel instead of
+/// being missed. A poll that read anything is followed by another at
+/// once, because one change at the server can take an agent several
+/// polls to work through. A poll that found nothing waits for either
+/// the server or the agent's own stream ([`look_again`]).
+///
+/// There is no deadline. An event that never comes hangs the test and
+/// prints whose poll it is, where a count of tries would have failed on
+/// a loaded machine instead (beads mimid-gn1w, mimid-zr08).
+pub async fn poll_until<T>(
+    agent: &mut Agent,
+    server: &Server,
+    mut found: impl FnMut(&Event) -> Option<T>,
+) -> T {
+    let mut changed = server.changed();
+    let mut waits = 0u64;
+    loop {
+        let events = agent.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             if let Event::Problem { room, description } = &event {
                 panic!("{}: problem in {room:?}: {description}", agent.user());
             }
@@ -162,18 +292,35 @@ pub async fn poll_until<T>(agent: &mut Agent, mut found: impl FnMut(&Event) -> O
                 return value;
             }
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A poll that read something may have more to read: one change
+        // at the server can take an agent several polls (a Commit, then
+        // the message after it), and waiting for a change that has
+        // already happened would hang. Only a poll that found nothing
+        // at all has to wait for the server.
+        if progressed {
+            continue;
+        }
+        if waits.is_multiple_of(32) {
+            eprintln!("{}: {waits} waits so far", agent.user());
+        }
+        waits += 1;
+        let stream = agent.stream_wake();
+        look_again(
+            &format!("an event for {}", agent.user()),
+            &mut changed,
+            stream.as_ref(),
+        )
+        .await;
     }
-    panic!("{}: the expected event never came", agent.user());
 }
 
 /// Polls `agent` until it reports `room` at `epoch` (a Commit it read or
 /// made), then checks it agrees with `with` on epoch and epoch
 /// authenticator (RFC 9420 §8.7).
-pub async fn catch_up(agent: &mut Agent, with: &Agent, room: &str) {
+pub async fn catch_up(agent: &mut Agent, with: &Agent, server: &Server, room: &str) {
     let epoch = with.epoch(room).unwrap();
     if agent.epoch(room).ok() != Some(epoch) {
-        poll_until(agent, |e| match e {
+        poll_until(agent, server, |e| match e {
             Event::MembersChanged {
                 room: r, epoch: e, ..
             } if r == room && *e == epoch => Some(()),
@@ -216,6 +363,7 @@ pub fn leaves(agent: &Agent, room: &str) -> Vec<(String, Option<String>)> {
 /// `from` under the same message ID.
 pub async fn sends(
     sender: &mut Agent,
+    server: &Server,
     room: &str,
     text: &str,
     from: &str,
@@ -223,7 +371,7 @@ pub async fn sends(
 ) {
     let sent = sender.send_text(room, text).await.unwrap();
     for receiver in receivers.iter_mut() {
-        let got = poll_until(receiver, |e| match e {
+        let got = poll_until(receiver, server, |e| match e {
             Event::Message(m) if m.text.as_deref() == Some(text) => Some(m.clone()),
             _ => None,
         })

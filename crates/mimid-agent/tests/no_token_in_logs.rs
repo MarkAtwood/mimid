@@ -211,8 +211,20 @@ async fn no_token_reaches_the_log() {
         .push
         .until("stream reopened", 2, |p| p.opened())
         .await;
-    // Let the sync loop run a few rounds.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // A barrier, not a sleep: one more message through the reopened
+    // stream, waited for in the store. The sync loop has then run with
+    // the token in hand, over the stream and the database, which is
+    // what this canary is about -- and it ran because there was work,
+    // not because half a second passed.
+    irc.send("PRIVMSG #canary :after the stream reopened").await;
+    common::until_store("the message after the reopening", &alice.store, |store| {
+        store
+            .state()
+            .messages
+            .values()
+            .any(|m| m.body == "after the stream reopened")
+    })
+    .await;
     let addr = alice.addr;
     alice.stop().await;
 

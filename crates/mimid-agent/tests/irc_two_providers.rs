@@ -441,13 +441,10 @@ async fn a_burn_on_read_line_across_providers() {
             .values()
             .any(|m| m.body == "read once")
     };
-    tokio::time::timeout(*common::PATIENCE, async {
-        while holds(&bob.store) {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
+    common::until_store("bob's copy to be deleted once read", &bob.store, |_| {
+        !holds(&bob.store)
     })
-    .await
-    .expect("bob's copy is deleted once read");
+    .await;
     assert!(holds(&alice.store));
     drop((ai, bi));
     bob.stop().await;

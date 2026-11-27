@@ -291,8 +291,10 @@ impl Fixture {
             let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
             String::from_utf8(body.to_vec()).unwrap()
         });
-        // Let the stream subscribe and read its first states.
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // Nothing to wait for: the handler subscribes to the change
+        // bus and reads the first states on the request path
+        // (jmap::eventsource), before the response this just took, so
+        // every later change reaches the stream.
         task
     }
 }
@@ -309,10 +311,10 @@ fn state_change(text: &str) -> Value {
 }
 
 async fn finished(task: tokio::task::JoinHandle<String>) -> String {
-    tokio::time::timeout(std::time::Duration::from_secs(10), task)
-        .await
-        .expect("closeafter=state ends the stream")
-        .unwrap()
+    // The stream ending is the event, so awaiting the body is the
+    // assertion: a `closeafter=state` stream that does not end hangs
+    // here, where a deadline would have blamed the machine.
+    task.await.unwrap()
 }
 
 /// Bead mimid-1wgh.12.40: a KeyPackage create pushes the new KeyPackage

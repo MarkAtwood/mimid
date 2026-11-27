@@ -16,13 +16,14 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use jmap_server::{Dispatcher, Id, JmapRequest, State};
 use mimid_agent_core::{Agent, AgentConfig};
@@ -51,6 +52,8 @@ const TYPES: [&str; 5] = ["Chat", "ChatContact", "ChatBan", "Message", "ReadPosi
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// Starts a.example's stack as `main.rs` wires it, with accounts for
@@ -108,11 +111,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -123,6 +128,8 @@ struct Client {
     dispatcher: Dispatcher<Id>,
     /// Set, every save fails.
     saves: Arc<FailingSaves>,
+    /// The server's change signal, which wakes the waits below.
+    changes: common::Changes,
 }
 
 impl Client {
@@ -156,6 +163,7 @@ impl Client {
             chat,
             dispatcher,
             saves,
+            changes: server.changes.clone(),
         }
     }
 
@@ -242,18 +250,22 @@ impl Client {
             .collect()
     }
 
-    /// Syncs until the Messages hold `body`, for up to ten seconds; the
-    /// result of the sync that brought it.
+    /// Syncs until the Messages hold `body`; the result of the sync
+    /// that brought it.
+    ///
+    /// Woken between syncs by the server or by what the last sync
+    /// wrote.
     async fn sync_until_body(&self, body: &str) -> Result<(), SyncError> {
-        for _ in 0..100 {
+        let mut watch = self.changes.watch(self.chat.store());
+        let what = format!("the body {body:?}");
+        loop {
             let result = self.chat.sync().await.map(|_| ());
             if self.bodies().await.iter().any(|b| b == body) {
                 return result;
             }
             result.unwrap();
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch.again(&what).await;
         }
-        panic!("{body:?} never came");
     }
 }
 
@@ -270,14 +282,14 @@ async fn chat_of_two(server: &Server, dir: &Path) -> (Client, Client, String) {
             json!({"kind": "group", "name": "kept", "memberIds": [contact]}),
         )
         .await;
-    for _ in 0..100 {
+    let mut watch = bob.changes.watch(bob.chat.store());
+    loop {
         bob.chat.sync().await.unwrap();
         if !bob.all("Chat").await.is_empty() {
             return (alice, bob, chat);
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("bob to join").await;
     }
-    panic!("bob never joined");
 }
 
 async fn send(alice: &Client, chat: &str, body: &str) -> String {
@@ -329,13 +341,14 @@ async fn a_restart_shows_every_object_as_it_was() {
     alice
         .update("Message", &retracted, json!({"deletedForAll": true}))
         .await;
-    for _ in 0..100 {
+    let mut watch = bob.changes.watch(bob.chat.store());
+    loop {
         bob.chat.sync().await.unwrap();
         let bodies = bob.bodies().await;
         if bodies.contains(&"after".to_owned()) && bodies.contains(&String::new()) {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("the edit and the retraction").await;
     }
 
     // bob's own writes, with dates written as a client may write them.

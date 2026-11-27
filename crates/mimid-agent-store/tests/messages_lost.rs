@@ -9,6 +9,8 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -36,6 +38,8 @@ const CAROL: &str = "mimi://a.example/u/carol";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as mimid-server's `main.rs` wires it, on
@@ -94,11 +98,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -154,16 +160,14 @@ async fn one_notice_for_messages_lost_while_away() {
     let room = alice.host_room(&HostOptions::named("r")).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
     alice.send_text(&room, "before").await.unwrap();
-    let mut seen = false;
-    for _ in 0..100 {
+    let mut watch = server.changes.watch(&bob);
+    while !bob.state().messages.values().any(|m| m.body == "before") {
         bob.sync().await.unwrap();
         if bob.state().messages.values().any(|m| m.body == "before") {
-            seen = true;
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("bob to join and read").await;
     }
-    assert!(seen, "bob joined and read");
     bob.save().await.unwrap();
     drop(bob);
 
@@ -183,18 +187,27 @@ async fn one_notice_for_messages_lost_while_away() {
     alice.send_text(&room, "after the gap").await.unwrap();
 
     let bob = open_bob(&server, dir.path()).await;
-    for _ in 0..100 {
+    let mut watch = server.changes.watch(&bob);
+    loop {
         bob.sync().await.unwrap();
         if !lost_notices(&bob).is_empty() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("the notice that messages were lost").await;
     }
     let notices = lost_notices(&bob);
     assert_eq!(notices.len(), 1, "{notices:?}");
     assert!(notices[0].starts_with("Notice from your mimid agent: messages from "));
-    for _ in 0..3 {
+    // Drain: sync until one makes no difference to the store, so what
+    // follows is what bob has after the gap rather than what three
+    // tries happened to reach.
+    let mut feed = bob.subscribe();
+    loop {
+        while feed.try_recv().is_ok() {}
         bob.sync().await.unwrap();
+        if feed.try_recv().is_err() {
+            break;
+        }
     }
     bob.save().await.unwrap();
     drop(bob);

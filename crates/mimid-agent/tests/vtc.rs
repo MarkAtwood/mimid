@@ -629,6 +629,13 @@ async fn starting_a_call_makes_one_under_its_rooms_key() {
 /// `Store::start_call` invites (`among` is `None` from here, bead
 /// mimid-1wgh.131), so the test sets that list rather than standing up
 /// two more daemons.
+///
+/// That shortcut races `Store::sync`, which owns `room.participants`
+/// and rebuilds it from the MLS group, so the test checks the list is
+/// still what it set before reading the refusal. Without that check a
+/// lost race reads as a missing refusal, which is what it looked like
+/// the once it happened (bead mimid-h5c2). Carol and dave as real
+/// members would remove the race; this only makes losing it say so.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_call_in_a_chat_of_more_than_two_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -681,6 +688,27 @@ async fn a_call_in_a_chat_of_more_than_two_is_refused() {
         }))
         .await;
     assert_eq!(status, 200, "{answer}");
+
+    // Store::sync owns room.participants and rebuilds it from the MLS
+    // group (mimid-agent-store sync.rs), so a sync tick between the
+    // push above and this request drops carol and dave and the call is
+    // allowed. That is this test passing the wrong way, so say so
+    // rather than leave a confusing refusal assertion to fail:
+    // whichever way the race went, the message names the cause (bead
+    // mimid-h5c2).
+    let others = {
+        let state = alice.store.state();
+        let room = state.rooms.get(&chat.key).expect("the chat");
+        room.others(alice.store.user()).len()
+    };
+    assert_eq!(
+        others, 2,
+        "the chat should still list carol and dave, so the call would \
+         hold three with alice: a sync rebuilt room.participants from \
+         the group between the push and the request, so the ceiling was \
+         read against the wrong list"
+    );
+
     let refusal = &answer["methodResponses"][0][1]["notCreated"]["k"];
     assert_eq!(refusal["type"], json!("invalidProperties"), "{answer}");
     let why = refusal["description"].as_str().unwrap_or_default();

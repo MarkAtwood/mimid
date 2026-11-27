@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use common::{ALICE, BOB, Client, PATIENCE, Running, Server, config, server};
+use common::{ALICE, BOB, Client, Running, Server, config, server};
 use mimid_agent::{Config, Daemon};
 use mimid_agent_store::Store;
 use mimid_agent_store::convert::parse_utc_date;
@@ -88,23 +88,9 @@ impl Bob {
 
     async fn stop(self) {
         self.stop.send(()).unwrap();
-        tokio::time::timeout(*PATIENCE, self.task)
-            .await
-            .expect("bob's daemon stops")
-            .unwrap()
-            .unwrap();
+        eprintln!("waiting for bob's daemon to stop");
+        self.task.await.unwrap().unwrap();
     }
-}
-
-/// Polls `done` every 50 ms until it holds, failing after [`PATIENCE`].
-async fn until<F: Fn() -> bool>(what: &str, done: F) {
-    tokio::time::timeout(*PATIENCE, async {
-        while !done() {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("{what}"));
 }
 
 /// Whether bob's records hold the whole scenario: alice's two messages,
@@ -256,7 +242,7 @@ async fn alice_acts(server: &Server, dir: &std::path::Path, bob: &Store) -> Runn
         json!({"chatId": chat, "userId": contacts[1], "reason": "spam"}),
     )
     .await;
-    until("bob's records hold the scenario", || has_everything(bob)).await;
+    common::until_store("bob's records hold the scenario", bob, has_everything).await;
     alice
 }
 
@@ -268,17 +254,14 @@ async fn with_jmap_on() -> (Snapshot, String) {
     let bob = Bob::start(&config(&server, BOB, dir.path(), "any")).await;
     let alice = alice_acts(&server, dir.path(), &bob.store).await;
     let b = bob.client().await;
-    let seen = tokio::time::timeout(*PATIENCE, async {
-        loop {
-            let seen = snapshot(&b).await;
-            if shows_everything(&seen) {
-                return seen;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .expect("bob's JMAP shows the scenario");
+    // `alice_acts` returned, so bob's records already hold the whole
+    // scenario, and JMAP is a view over those records: one snapshot
+    // shows it or the view is wrong. Polling here would hide that.
+    let seen = snapshot(&b).await;
+    assert!(
+        shows_everything(&seen),
+        "bob's JMAP shows the scenario: {seen:#?}"
+    );
     bob.stop().await;
     carol.stop().await;
     alice.stop().await;
@@ -397,19 +380,22 @@ async fn records_kept_with_jmap_off_are_shown_when_jmap_is_on_again() {
         json!({"chatId": alice_chat, "body": THIRD, "sentAt": "2026-11-20T12:00:02Z"}),
     )
     .await;
-    let created = tokio::time::timeout(*PATIENCE, async {
-        loop {
-            let changes = b
-                .call("Message/changes", json!({"sinceState": states["Message"]}))
-                .await;
-            if !changes["created"].as_array().unwrap().is_empty() {
-                return changes;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .expect("bob gets alice's next message");
+    // The change feed says when the message is in bob's records; the
+    // JMAP view is made from them, so one `/changes` call then names it.
+    common::until_store(
+        "alice's third message in bob's records",
+        &bob.store,
+        |store| store.state().messages.values().any(|m| m.body == THIRD),
+    )
+    .await;
+    let created = b
+        .call("Message/changes", json!({"sinceState": states["Message"]}))
+        .await;
+    assert_eq!(
+        created["created"].as_array().unwrap().len(),
+        1,
+        "bob gets alice's next message: {created}"
+    );
     assert_eq!(created["updated"], json!([]), "{created}");
     assert_eq!(created["destroyed"], json!([]), "{created}");
     let [new] = &created["created"].as_array().unwrap()[..] else {

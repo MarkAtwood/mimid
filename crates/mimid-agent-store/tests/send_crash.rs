@@ -34,10 +34,11 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use mimid_agent_core::{Agent, AgentConfig, Event, FailPoint, HostOptions, RoomStatus};
 use mimid_agent_store::{InvitePolicy, Store, record};
@@ -60,6 +61,8 @@ const CAROL: &str = "mimi://a.example/u/carol";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as mimid-server's `main.rs` wires it, on
@@ -118,11 +121,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -169,16 +174,18 @@ fn stored(store: &Store, text: &str) -> usize {
         .count()
 }
 
-/// Syncs alice's store until `text` is stored, for up to ten seconds.
-async fn sync_until_stored(store: &Store, text: &str) {
-    for _ in 0..100 {
+/// Syncs `store` until `text` is stored, woken between syncs by
+/// `server` or by what the last sync wrote ([`common::Watch::again`]).
+async fn sync_until_stored(store: &Store, server: &Server, text: &str) {
+    let mut watch = server.changes.watch(store);
+    let what = format!("the message {text:?} stored");
+    loop {
         store.sync().await.unwrap();
         if stored(store, text) > 0 {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again(&what).await;
     }
-    panic!("{text:?} was never stored");
 }
 
 /// What bob's agent has received: message texts, in order, and the
@@ -190,21 +197,31 @@ struct Received {
 }
 
 impl Received {
-    /// Polls bob until `text` arrived, for up to ten seconds; a Problem
-    /// fails the test.
-    async fn until(&mut self, bob: &mut Agent, text: &str) {
-        for _ in 0..100 {
-            self.poll(bob).await;
+    /// Polls bob until `text` arrived, woken between polls by `server`;
+    /// a Problem fails the test.
+    ///
+    /// A poll that read anything is followed by another at once: one
+    /// change at the server can take an agent several polls.
+    async fn until(&mut self, bob: &mut Agent, server: &Server, text: &str) {
+        let mut watch = server.changes.watch_server();
+        let what = format!("bob to receive {text:?}");
+        loop {
+            let progressed = self.poll(bob).await;
             if self.texts.iter().any(|t| t == text) {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            if progressed {
+                continue;
+            }
+            watch.next(&what).await;
         }
-        panic!("bob never received {text:?}");
     }
 
-    async fn poll(&mut self, bob: &mut Agent) {
-        for event in bob.poll().await.unwrap() {
+    /// Polls bob once; whether the poll read anything.
+    async fn poll(&mut self, bob: &mut Agent) -> bool {
+        let events = bob.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             match event {
                 Event::Message(message) => self.texts.push(message.text.unwrap_or_default()),
                 Event::MembersChanged { epoch, .. } => self.epochs.push(epoch),
@@ -212,6 +229,7 @@ impl Received {
                 _ => {}
             }
         }
+        progressed
     }
 }
 
@@ -228,13 +246,17 @@ async fn a_crash_around_sending_loses_and_repeats_nothing() {
         room
     };
     let mut received = Received::default();
-    for _ in 0..100 {
-        received.poll(&mut bob).await;
+    let mut watch = server.changes.watch_server();
+    loop {
+        let progressed = received.poll(&mut bob).await;
         if let Some(invite) = bob.invites().first() {
             bob.join(invite.number).unwrap();
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        if progressed {
+            continue;
+        }
+        watch.next("bob's invite").await;
     }
     assert_eq!(bob.rooms().len(), 1, "bob joined");
     let mut alice = open_alice(&server, dir.path()).await;
@@ -264,8 +286,8 @@ async fn a_crash_around_sending_loses_and_repeats_nothing() {
             drop(alice);
             alice = open_alice(&server, dir.path()).await;
         }
-        sync_until_stored(&alice, text).await;
-        received.until(&mut bob, text).await;
+        sync_until_stored(&alice, &server, text).await;
+        received.until(&mut bob, &server, text).await;
     }
 
     // 3: the send succeeds, and alice stops before her store saved it; in
@@ -278,9 +300,9 @@ async fn a_crash_around_sending_loses_and_repeats_nothing() {
             alice = open_alice(&server, dir.path()).await;
             assert_eq!(stored(&alice, text), 0, "{text}: not saved");
         }
-        sync_until_stored(&alice, text).await;
+        sync_until_stored(&alice, &server, text).await;
         alice.sync().await.unwrap();
-        received.until(&mut bob, text).await;
+        received.until(&mut bob, &server, text).await;
     }
 
     // A Commit: inviting carol fails at each boundary; the next sync
@@ -308,7 +330,7 @@ async fn a_crash_around_sending_loses_and_repeats_nothing() {
         assert_eq!(after, before + 1, "{point:?}: merged once");
         let new_key = alice.new_key();
         alice.send(new_key, &key, text, &[]).await.unwrap();
-        received.until(&mut bob, text).await;
+        received.until(&mut bob, &server, text).await;
         assert_eq!(bob.epoch(&room).unwrap(), after, "{point:?}: bob in step");
         assert_eq!(received.epochs.last(), Some(&after), "{point:?}");
         if point == FailPoint::BeforeSend {
@@ -359,9 +381,13 @@ async fn standing(store: &Store, room: &str) -> (Option<RoomStatus>, Option<reco
 
 /// Polls `agent` until it is at `epoch` in `room`, for up to ten
 /// seconds; a Problem fails the test.
-async fn until_epoch(agent: &mut Agent, room: &str, epoch: u64, who: &str) {
-    for _ in 0..100 {
-        for event in agent.poll().await.unwrap() {
+async fn until_epoch(agent: &mut Agent, server: &Server, room: &str, epoch: u64, who: &str) {
+    let mut watch = server.changes.watch_server();
+    let what = format!("{who} at epoch {epoch}");
+    loop {
+        let events = agent.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             if let Event::Problem { description, .. } = event {
                 panic!("{who}: {description}");
             }
@@ -369,22 +395,27 @@ async fn until_epoch(agent: &mut Agent, room: &str, epoch: u64, who: &str) {
         if agent.epoch(room).ok() == Some(epoch) {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        if progressed {
+            continue;
+        }
+        watch.next(&what).await;
     }
-    panic!("{who} never reached epoch {epoch}");
 }
 
 /// bob joins `room` from alice's invite.
-async fn bob_joins(bob: &mut Agent, received: &mut Received, room: &str) {
-    for _ in 0..100 {
-        received.poll(bob).await;
+async fn bob_joins(bob: &mut Agent, server: &Server, received: &mut Received, room: &str) {
+    let mut watch = server.changes.watch_server();
+    loop {
+        let progressed = received.poll(bob).await;
         if let Some(invite) = bob.invites().first() {
             assert_eq!(bob.join(invite.number).unwrap(), room);
             return;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        if progressed {
+            continue;
+        }
+        watch.next("bob's invite").await;
     }
-    panic!("bob never got the invite");
 }
 
 /// The boundaries of a Room/update: before it is sent, and after the hub
@@ -422,7 +453,7 @@ async fn a_crash_around_leaving_loses_and_repeats_nothing() {
             room
         };
         let mut received = Received::default();
-        bob_joins(&mut bob, &mut received, &room).await;
+        bob_joins(&mut bob, &server, &mut received, &room).await;
         alice.sync().await.unwrap();
         let key = alice.state().room_of_uri(&room).cloned().unwrap();
 
@@ -445,21 +476,26 @@ async fn a_crash_around_leaving_loses_and_repeats_nothing() {
         );
 
         // bob, the one member left, commits the leave.
-        for _ in 0..100 {
-            received.poll(&mut bob).await;
+        let mut watch = server.changes.watch_server();
+        while bob.participants(&room).unwrap() != [BOB] {
+            let progressed = received.poll(&mut bob).await;
             if bob.participants(&room).unwrap() == [BOB] {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            if progressed {
+                continue;
+            }
+            watch.next("bob alone in the room").await;
         }
         assert_eq!(bob.participants(&room).unwrap(), [BOB], "{point:?}");
         assert_eq!(bob.clients(&room).unwrap().len(), 1, "{point:?}: one leaf");
-        for _ in 0..100 {
+        let mut watch = server.changes.watch(&alice);
+        loop {
             alice.sync().await.unwrap();
             if standing(&alice, &room).await.1 == Some(record::RoomStatus::Left) {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch.again("alice's record to say she left").await;
         }
         assert_eq!(
             standing(&alice, &room).await,
@@ -492,7 +528,7 @@ async fn a_crash_around_an_external_join_loses_and_repeats_nothing() {
         let room = a1.host_room(&HostOptions::named("join")).await.unwrap();
         a1.invite(&room, BOB).await.unwrap();
         let mut received = Received::default();
-        bob_joins(&mut bob, &mut received, &room).await;
+        bob_joins(&mut bob, &server, &mut received, &room).await;
         // Records that alice accepted the room (decision mimid-1wgh.63).
         a1.join_own_rooms().await.unwrap();
 
@@ -508,12 +544,13 @@ async fn a_crash_around_an_external_join_loses_and_repeats_nothing() {
             drop(a2);
             a2 = open_a2(&server, dir.path()).await;
         }
-        for _ in 0..100 {
+        let mut watch = server.changes.watch(&a2);
+        loop {
             a2.sync().await.unwrap();
             if standing(&a2, &room).await.1 == Some(record::RoomStatus::Active) {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch.again("a2's record to say it joined").await;
         }
         assert_eq!(
             standing(&a2, &room).await,
@@ -527,8 +564,8 @@ async fn a_crash_around_an_external_join_loses_and_repeats_nothing() {
                 agent.epoch_authenticator(&room).unwrap(),
             )
         };
-        until_epoch(&mut a1, &room, epoch, "a1").await;
-        until_epoch(&mut bob, &room, epoch, "bob").await;
+        until_epoch(&mut a1, &server, &room, epoch, "a1").await;
+        until_epoch(&mut bob, &server, &room, epoch, "bob").await;
         assert_eq!(a1.epoch_authenticator(&room).unwrap(), authenticator);
         assert_eq!(bob.epoch_authenticator(&room).unwrap(), authenticator);
         let clients = bob.clients(&room).unwrap();
@@ -540,10 +577,10 @@ async fn a_crash_around_an_external_join_loses_and_repeats_nothing() {
         );
 
         bob.send_text(&room, "from bob").await.unwrap();
-        sync_until_stored(&a2, "from bob").await;
+        sync_until_stored(&a2, &server, "from bob").await;
         let key = a2.state().room_of_uri(&room).cloned().unwrap();
         let new_key = a2.new_key();
         a2.send(new_key, &key, "from a2", &[]).await.unwrap();
-        received.until(&mut bob, "from a2").await;
+        received.until(&mut bob, &server, "from a2").await;
     }
 }

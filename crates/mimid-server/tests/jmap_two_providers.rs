@@ -49,7 +49,6 @@ mod providers;
 mod update;
 
 use std::collections::{BTreeMap, VecDeque};
-use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -70,7 +69,7 @@ use mimi_room_policy::component_id::{BASE_ROOM_POLICY, ROLES_LIST};
 use mimi_room_policy::{Capability, Role, RoleData, SingleSourceRoleChangeTargets};
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::hub::Hub;
-use providers::{Provider, WAIT};
+use providers::Provider;
 use serde_json::{Value, json};
 
 /// Role 2: listed users may add participants and their own clients,
@@ -263,6 +262,9 @@ struct Jmap {
     state: Option<String>,
     /// FanoutMessages read but not yet taken.
     queue: VecDeque<FanoutMessage>,
+    /// The provider's announcement of each event it stores, which is
+    /// what [`Jmap::next`] waits on.
+    appended: tokio::sync::broadcast::Sender<(String, u64)>,
 }
 
 impl Jmap {
@@ -284,6 +286,7 @@ impl Jmap {
             account,
             state: None,
             queue: VecDeque::new(),
+            appended: provider.follower().appended_sender(),
         }
     }
 
@@ -380,19 +383,27 @@ impl Jmap {
         }
     }
 
-    /// The next FanoutMessage stored for this account, waiting up to
-    /// [`WAIT`] for fanout.
+    /// The next FanoutMessage stored for this account, waiting for
+    /// fanout to bring one.
+    ///
+    /// Woken by the provider's follower, which announces each event it
+    /// stores. The receiver is taken before the read, so an event
+    /// stored while the read is in flight waits in the channel rather
+    /// than being missed. No deadline: a message that never arrives
+    /// hangs the test, where a guessed one could not tell that from a
+    /// loaded machine.
     async fn next(&mut self) -> FanoutMessage {
-        let deadline = Instant::now() + WAIT;
         loop {
             if let Some(message) = self.queue.pop_front() {
                 return message;
             }
-            assert!(Instant::now() < deadline, "nothing arrived");
+            let mut appended = self.appended.subscribe();
             self.read().await;
-            if self.queue.is_empty() {
-                tokio::time::sleep(Duration::from_millis(20)).await;
+            if !self.queue.is_empty() {
+                continue;
             }
+            eprintln!("waiting for fanout to reach {}", self.account);
+            let _ = appended.recv().await;
         }
     }
 

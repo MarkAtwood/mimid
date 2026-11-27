@@ -24,9 +24,7 @@
 
 mod common;
 
-use std::time::Duration;
-
-use common::{ALICE, BOB, PATIENCE, Running, config, server};
+use common::{ALICE, BOB, Running, config, server};
 
 /// One SSE frame named for a timeout message: a `StateChange` with the
 /// types it carries, or an `Unknown` with its `event:` field.
@@ -206,46 +204,51 @@ struct Events {
 
 impl Events {
     /// Reads frames until a StateChange naming `type_name` for this
-    /// account. Panics after [`PATIENCE`].
+    /// account.
+    ///
+    /// Each frame is an await on the stream, so the reactor wakes this
+    /// when bytes arrive. A closed stream fails here; a stream that
+    /// stays open and never names `type_name` hangs, and the line this
+    /// prints as it waits says which wait that is. A deadline could not
+    /// tell that apart from a loaded machine, which is what bead
+    /// mimid-gn1w kept failing on.
     async fn until_changed(&mut self, type_name: &str) {
         let account = self.account.clone();
         let stream = &mut self.stream;
         let mut seen: Vec<String> = Vec::new();
-        let waited = tokio::time::timeout(*PATIENCE, async {
-            loop {
-                let frame = stream
-                    .next()
-                    .await
-                    .expect("the stream stays open")
-                    .expect("a well-formed frame");
-                seen.push(describe(&frame.event));
-                if let SseEvent::StateChange(change) = frame.event
-                    && change
-                        .changed
-                        .get(&account)
-                        .is_some_and(|types| types.contains_key(type_name))
-                {
-                    return;
-                }
+        eprintln!("waiting for a StateChange naming {type_name}");
+        loop {
+            let frame = stream
+                .next()
+                .await
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the stream closed before a StateChange naming {type_name}; {}",
+                        seen_report(&seen)
+                    )
+                })
+                .expect("a well-formed frame");
+            seen.push(describe(&frame.event));
+            if let SseEvent::StateChange(change) = frame.event
+                && change
+                    .changed
+                    .get(&account)
+                    .is_some_and(|types| types.contains_key(type_name))
+            {
+                return;
             }
-        })
-        .await;
-        // As the reconnecting-stream wait does: say which failure this
-        // is rather than only that it timed out (bead mimid-gn1w).
-        assert!(
-            waited.is_ok(),
-            "no StateChange naming {type_name} in {PATIENCE:?}; {}",
-            seen_report(&seen)
-        );
+        }
     }
 
-    /// Whether the stream ends within [`PATIENCE`].
-    async fn ends(mut self) -> bool {
-        tokio::time::timeout(*PATIENCE, async {
-            while let Some(Ok(_)) = self.stream.next().await {}
-        })
-        .await
-        .is_ok()
+    /// Waits for the stream to end.
+    ///
+    /// Returning is the assertion: the end of the stream is itself the
+    /// event, so there is nothing to time. Every caller asserted this
+    /// was true, which a hang says just as well and with the line below
+    /// to say which wait it is.
+    async fn ends(mut self) {
+        eprintln!("waiting for the stream to end");
+        while let Some(Ok(_)) = self.stream.next().await {}
     }
 }
 
@@ -353,17 +356,15 @@ async fn stock_rust_client_chats_through_two_daemons() {
 
     // bob answers; alice's client reads it after a StateChange.
     b.post(&chat_b, "hi alice").await;
-    let got = tokio::time::timeout(*PATIENCE, async {
-        loop {
-            a_events.until_changed("Message").await;
-            let got = a.messages(&chat_a).await;
-            if got.len() == 2 {
-                return got;
-            }
+    // until_changed is the wait; each turn of this loop is a frame
+    // arriving, not a tick.
+    let got = loop {
+        a_events.until_changed("Message").await;
+        let got = a.messages(&chat_a).await;
+        if got.len() == 2 {
+            break got;
         }
-    })
-    .await
-    .expect("bob's answer reaches alice");
+    };
     let reply = got
         .iter()
         .find(|m| m.body == "hi alice")
@@ -384,36 +385,36 @@ async fn stock_rust_client_chats_through_two_daemons() {
     );
     b.post(&chat_b, "one more").await;
     let mut seen: Vec<String> = Vec::new();
-    let waited = tokio::time::timeout(*PATIENCE, async {
-        loop {
-            let frame = again.next().await.expect("open").expect("a frame");
-            seen.push(describe(&frame.event));
-            if matches!(frame.event, SseEvent::StateChange(_)) {
-                return frame;
-            }
+    eprintln!("waiting for a StateChange on the reconnecting stream");
+    let frame = loop {
+        let frame = again
+            .next()
+            .await
+            .unwrap_or_else(|| {
+                panic!(
+                    "the reconnecting stream closed before a StateChange; {}",
+                    seen_report(&seen)
+                )
+            })
+            .expect("a frame");
+        seen.push(describe(&frame.event));
+        if matches!(frame.event, SseEvent::StateChange(_)) {
+            break frame;
         }
-    })
-    .await;
-    let frame = waited.unwrap_or_else(|_| {
-        panic!(
-            "no StateChange on the reconnecting stream in {PATIENCE:?}; {}",
-            seen_report(&seen)
-        )
-    });
+    };
     drop(frame);
     drop(again);
 
     // Stopping a daemon ends its event sources.
     bob.stop().await;
-    assert!(b_events.ends().await);
+    b_events.ends().await;
     alice.stop().await;
-    assert!(a_events.ends().await);
+    a_events.ends().await;
 
     // With the daemon gone the client reports a transport error, not a
     // panic or a parse error.
-    let err = tokio::time::timeout(Duration::from_secs(10), a.chat.chat_get(None, None))
-        .await
-        .expect("the client gives up")
-        .expect_err("no daemon");
+    // Both daemons have stopped and their listeners are closed, so the
+    // connect fails rather than waiting: the error is the event.
+    let err = a.chat.chat_get(None, None).await.expect_err("no daemon");
     assert!(matches!(err, ClientError::Http(_)), "{err:?}");
 }

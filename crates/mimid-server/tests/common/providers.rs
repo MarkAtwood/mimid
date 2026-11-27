@@ -7,7 +7,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
@@ -30,11 +29,6 @@ use mimid_server::store::Store;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqliteConnectOptions;
 use tower::ServiceExt;
-
-/// How long any wait in the end-to-end test may take. Fanout retries use
-/// the real backoff (1 s, then 2 s), and the test may run under heavy
-/// parallel load.
-pub const WAIT: Duration = Duration::from_secs(60);
 
 /// A scripted answer to one `/notify` request reaching the front.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,15 +261,32 @@ impl Provider {
     }
 
     /// Waits until this provider's outbox is empty: every row delivered.
+    ///
+    /// Woken by the fanout worker, which notifies after each pass over
+    /// the outbox: that is when the outbox is worth looking at, and the
+    /// waiter is registered before the look, so a pass that ends in
+    /// between is waiting rather than missed. A row that never leaves
+    /// hangs the test and says so, where a deadline would have blamed
+    /// the machine.
     pub async fn drained(&self) {
-        let store = &self.stack().store;
-        tokio::time::timeout(WAIT, async {
-            while !store.outbox_heads().await.unwrap().is_empty() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
+        let stack = self.stack();
+        let passed = stack
+            .hub
+            .fanout()
+            .expect("the stack gave its hub the fanout worker")
+            .passed()
+            .clone();
+        eprintln!(
+            "waiting for every fanout row of {} to be delivered",
+            self.domain
+        );
+        loop {
+            let next_pass = passed.notified();
+            if stack.store.outbox_heads().await.unwrap().is_empty() {
+                return;
             }
-        })
-        .await
-        .expect("every fanout row delivered");
+            next_pass.await;
+        }
     }
 }
 
@@ -331,26 +342,28 @@ impl Inbox {
     }
 
     /// The next event the user may see, waiting for it to arrive.
+    ///
+    /// Woken by the follower's announcement of each event it stores. No
+    /// deadline: an event that never comes hangs the test and names the
+    /// user, where a guessed one could not tell that from a loaded
+    /// machine.
     pub async fn next(&mut self, provider: &Provider) -> FanoutMessage {
         let follower = provider.follower();
-        let event = tokio::time::timeout(WAIT, async {
-            loop {
-                // Subscribed before reading, so an event stored in between
-                // is announced.
-                let mut announced = follower.subscribe();
-                let events = follower
-                    .events(&self.user, self.room_id, self.after, 1)
-                    .await
-                    .unwrap();
-                if let Some(event) = events.into_iter().next() {
-                    return event;
-                }
-                // Lagged or closed: read again.
-                let _ = announced.recv().await;
+        eprintln!("waiting for an event to reach {}", self.user.as_str());
+        let event = loop {
+            // Subscribed before reading, so an event stored in between
+            // is announced.
+            let mut announced = follower.subscribe();
+            let events = follower
+                .events(&self.user, self.room_id, self.after, 1)
+                .await
+                .unwrap();
+            if let Some(event) = events.into_iter().next() {
+                break event;
             }
-        })
-        .await
-        .unwrap_or_else(|_| panic!("an event reaches {}", self.user.as_str()));
+            // Lagged or closed: read again.
+            let _ = announced.recv().await;
+        };
         self.after = event.seq;
         self.read.push(event.seq);
         FanoutMessage::tls_deserialize_exact(&event.bytes).unwrap()

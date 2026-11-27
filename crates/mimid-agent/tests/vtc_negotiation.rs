@@ -34,10 +34,6 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 
-/// How long a pushed event is waited for before the test fails. Generous:
-/// a signal crosses two daemons' sync loops and a provider.
-const PATIENCE: std::time::Duration = std::time::Duration::from_secs(15);
-
 /// alice's or bob's configuration with the VTC surface on.
 fn with_vtc(
     server: &common::Server,
@@ -96,20 +92,21 @@ impl Socket {
         self.send(&json!({"@type": "VTCStreamEnable"})).await;
     }
 
-    /// The next frame whose `@type` is `want` and that `accept` likes,
-    /// within [`PATIENCE`].
+    /// The next frame whose `@type` is `want` and that `accept` likes.
     ///
     /// Frames of other types are skipped rather than failed on: the
     /// socket also carries whatever else the connection says, and a test
     /// that broke on an unrelated frame would be testing frame order.
+    ///
+    /// The socket is the event: `next` is an await on the connection, so
+    /// the reactor wakes this when a frame arrives. No deadline, so a
+    /// frame that never comes hangs the test and names what it was
+    /// waiting for, where a guess could not tell that from a slow
+    /// machine.
     async fn until(&mut self, want: &str, accept: impl Fn(&Value) -> bool) -> Value {
-        let deadline = tokio::time::Instant::now() + PATIENCE;
+        eprintln!("waiting for a {want} frame");
         loop {
-            let frame = tokio::time::timeout_at(deadline, self.0.next())
-                .await
-                .unwrap_or_else(|_| panic!("no {want} within {PATIENCE:?}"))
-                .expect("the socket closed")
-                .unwrap();
+            let frame = self.0.next().await.expect("the socket closed").unwrap();
             let Message::Text(text) = frame else {
                 continue;
             };

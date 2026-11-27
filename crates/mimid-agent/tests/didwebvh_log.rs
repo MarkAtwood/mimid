@@ -18,9 +18,8 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use common::{ALICE, BOB, Client, PATIENCE, Running, Server, server};
+use common::{ALICE, BOB, Client, Running, Server, server};
 use mimid_agent::Config;
 use mimid_agent::didwebvh::DID_WEBVH_LOG_PATH;
 use mimid_agent_core::mls_didwebvh::PublicKey;
@@ -120,17 +119,16 @@ async fn post_log(daemon: &Running, log: &DidLog) -> (u16, Value) {
 
 /// Waits until `client`'s account has `n` Chats; their ids.
 async fn chats(client: &Client, n: usize) -> Vec<Value> {
-    tokio::time::timeout(*PATIENCE, async {
-        loop {
-            let chats = client.get("Chat", None).await;
-            if chats.len() >= n {
-                return chats;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+    // The daemon says when a Chat moves, so wait for that rather than
+    // asking again on a timer.
+    let mut events = client.events().await;
+    loop {
+        let chats = client.get("Chat", None).await;
+        if chats.len() >= n {
+            return chats;
         }
-    })
-    .await
-    .expect("the Chat comes")
+        events.until_changed("Chat").await;
+    }
 }
 
 fn has_member(chat: &Value, id: &str) -> bool {
@@ -207,17 +205,16 @@ async fn a_running_daemon_takes_a_newer_log_from_its_endpoint_and_its_file() {
     assert_eq!(answer["failed"], json!([]));
 
     // d2, still running, finds itself out of the room.
-    tokio::time::timeout(*PATIENCE, async {
+    {
+        let mut events = c2.events().await;
         loop {
             let chat = c2.get("Chat", None).await[0].clone();
             if !has_member(&chat, &c2.account) {
-                return;
+                break;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            events.until_changed("Chat").await;
         }
-    })
-    .await
-    .expect("d2 sees its removal");
+    }
 
     // The same log again changes nothing.
     let (status, answer) = post_log(&d1, &v2).await;
@@ -260,17 +257,15 @@ async fn a_running_daemon_takes_a_newer_log_from_its_endpoint_and_its_file() {
     log.append(&time(3), &Parameters::default(), &signer, &[k1])
         .unwrap();
     write_log(&file1, &log);
-    tokio::time::timeout(*PATIENCE, async {
-        loop {
-            let (status, _) = post_log(&d1, &v2).await;
-            if status == 422 {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+    // Taking a log notifies `sync_wanted`, whose sync saves, so d1's
+    // change feed is what says the watch has run. The watch itself
+    // still looks at the file once per sync turn (bead mimid-67e0.1),
+    // which is why this waits for a write rather than for the file.
+    common::until_probe("d1 to take the file's log", &d1.store, || async {
+        let (status, _) = post_log(&d1, &v2).await;
+        (status == 422).then_some(())
     })
-    .await
-    .expect("d1 takes the file's log");
+    .await;
     let (status, answer) = post_log(&d1, &log).await;
     assert_eq!((status, answer["unchanged"].clone()), (200, json!(true)));
 

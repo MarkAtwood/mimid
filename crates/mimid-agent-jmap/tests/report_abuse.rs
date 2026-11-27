@@ -43,10 +43,11 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 
 use axum::extract::Request;
 use axum::middleware::{self, Next};
@@ -136,6 +137,8 @@ struct Server {
     hub: Arc<Hub>,
     tokens: BTreeMap<&'static str, String>,
     seen: Seen,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// Starts `bound`'s stack as `main.rs` wires it, with `peers` as its peer
@@ -204,6 +207,7 @@ async fn serve(
     )
     .unwrap();
     let seen = Seen::default();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), Arc::clone(&hub), follower)
         .merge(jmap)
         .layer(middleware::from_fn_with_state(
@@ -216,6 +220,7 @@ async fn serve(
         hub,
         tokens,
         seen,
+        changes,
     }
 }
 
@@ -237,6 +242,8 @@ async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
 struct Client {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<Id>,
+    /// The server's change signal, which wakes the waits below.
+    changes: common::Changes,
 }
 
 impl Client {
@@ -251,7 +258,11 @@ impl Client {
         let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();
         AgentChat::register(&chat, &mut dispatcher);
-        Self { chat, dispatcher }
+        Self {
+            chat,
+            dispatcher,
+            changes: server.changes.clone(),
+        }
     }
 
     /// One method call: the response's name and arguments.
@@ -295,22 +306,28 @@ impl Client {
     }
 
     /// The Chat of `room`, after syncing until it exists.
+    ///
+    /// Woken between syncs by the server or by what the last sync
+    /// wrote.
     async fn chat_of(&self, room: &str) -> String {
-        for _ in 0..200 {
+        let mut watch = self.changes.watch(self.chat.store());
+        let what = format!("bob to join {room}");
+        loop {
             let report = self.chat.sync().await.unwrap();
             assert!(report.problems.is_empty(), "{report:?}");
             if let Some(chat) = self.chat.chat_of_room(room) {
                 return chat.as_ref().to_owned();
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            watch.again(&what).await;
         }
-        panic!("bob never joined {room}");
     }
 
     /// The id of the Message in `chat` whose body is `body`, after syncing
     /// until it arrives.
     async fn message(&self, chat: &str, body: &str) -> String {
-        for _ in 0..200 {
+        let mut watch = self.changes.watch(self.chat.store());
+        let what = format!("the message {body:?}");
+        loop {
             let report = self.chat.sync().await.unwrap();
             assert!(report.problems.is_empty(), "{report:?}");
             let (_, query) = self
@@ -325,9 +342,8 @@ impl Client {
             {
                 return found["id"].as_str().unwrap().to_owned();
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            watch.again(&what).await;
         }
-        panic!("{body:?} never arrived");
     }
 }
 

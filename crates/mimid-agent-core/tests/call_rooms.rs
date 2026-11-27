@@ -38,7 +38,7 @@ async fn a_call_room_keys_itself_from_its_own_group() {
         .await
         .unwrap();
     alice.invite(&chat, BOB).await.unwrap();
-    let invite = poll_until(&mut bob, |e| match e {
+    let invite = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -58,7 +58,7 @@ async fn a_call_room_keys_itself_from_its_own_group() {
     );
     assert_eq!(alice.parent_room(&chat).unwrap(), None);
     alice.invite(&call, BOB).await.unwrap();
-    let invite = poll_until(&mut bob, |e| match e {
+    let invite = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -272,7 +272,7 @@ async fn a_fixed_call_room_may_hold_the_same_pair_as_its_direct_room() {
     // The DM: fixed_membership with max_users 2, alice and bob.
     let dm = alice.host_room(&HostOptions::direct()).await.unwrap();
     alice.invite(&dm, BOB).await.unwrap();
-    let invite = poll_until(&mut bob, |e| match e {
+    let invite = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -340,7 +340,7 @@ async fn an_invite_to_a_call_room_names_the_chat_it_is_under() {
         .await
         .unwrap();
     alice.invite(&chat, BOB).await.unwrap();
-    let invite = poll_until(&mut bob, |e| match e {
+    let invite = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -359,7 +359,7 @@ async fn an_invite_to_a_call_room_names_the_chat_it_is_under() {
         .await
         .unwrap();
     alice.invite(&call, BOB).await.unwrap();
-    let invite = poll_until(&mut bob, |e| match e {
+    let invite = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })

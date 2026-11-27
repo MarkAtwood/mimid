@@ -24,11 +24,12 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use jmap_server::{Dispatcher, Id, JmapRequest, State};
 use mimi_content::{Disposition, Extensions, MessageId, MimiContent, NestedPart, Part};
@@ -55,6 +56,8 @@ const SENT_AT: &str = "2026-11-16T12:00:00Z";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as `main.rs` wires it, as in two_accounts.rs.
@@ -111,11 +114,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -139,6 +144,8 @@ async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
 struct Client {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<Id>,
+    /// The server's change signal, which wakes the waits below.
+    changes: common::Changes,
 }
 
 impl Client {
@@ -153,7 +160,11 @@ impl Client {
         let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();
         AgentChat::register(&chat, &mut dispatcher);
-        Self { chat, dispatcher }
+        Self {
+            chat,
+            dispatcher,
+            changes: server.changes.clone(),
+        }
     }
 
     async fn call(&self, method: &str, mut args: Value) -> Value {
@@ -216,22 +227,22 @@ impl Client {
             .clone()
     }
 
-    /// Syncs until `done` holds, for up to ten seconds; returns every
-    /// report.
+    /// Syncs until `done` holds, woken between syncs by the server or
+    /// by what the last sync wrote; returns every report.
     async fn sync_until<F, Fut>(&self, mut done: F) -> Vec<SyncReport>
     where
         F: FnMut(Vec<Value>) -> Fut,
         Fut: Future<Output = bool>,
     {
         let mut reports = Vec::new();
-        for _ in 0..100 {
+        let mut watch = self.changes.watch(self.chat.store());
+        loop {
             reports.push(self.chat.sync().await.unwrap());
             if done(self.messages().await).await {
                 return reports;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch.again("the expected state").await;
         }
-        panic!("the expected state never came: {reports:?}");
     }
 }
 
@@ -239,12 +250,15 @@ impl Client {
 /// every invite.
 async fn carol_until(
     carol: &mut Agent,
+    server: &Server,
     seen: &mut Vec<ReceivedMessage>,
     done: impl Fn(&Agent, &[ReceivedMessage]) -> bool,
 ) {
-    for _ in 0..100 {
+    let mut watch = server.changes.watch_server();
+    loop {
         let (events, receipt) = carol.receive().await.unwrap();
         carol.acknowledge(receipt).unwrap();
+        let progressed = !events.is_empty();
         for event in events {
             if let Event::Message(message) = event {
                 seen.push(*message);
@@ -256,9 +270,12 @@ async fn carol_until(
         if done(carol, seen) {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A receive that read something may have more to read.
+        if progressed {
+            continue;
+        }
+        watch.next("carol to get there").await;
     }
-    panic!("carol never got there: {seen:?}");
 }
 
 /// carol's reply `text` to the message with ID `to`.
@@ -314,7 +331,7 @@ async fn edits_and_retractions_reach_jmap_and_only_from_the_sender() {
             .iter()
             .any(|r| r.uri == room && r.status == RoomStatus::Active)
     };
-    carol_until(&mut carol, &mut seen, |c, _| in_room(c, &room)).await;
+    carol_until(&mut carol, &server, &mut seen, |c, _| in_room(c, &room)).await;
     bob.sync_until(|_| async { true }).await;
 
     // alice posts, and bob has it.
@@ -354,7 +371,7 @@ async fn edits_and_retractions_reach_jmap_and_only_from_the_sender() {
     );
 
     // carol sees the MIMI edit: replaces names the first message.
-    carol_until(&mut carol, &mut seen, |_, s| s.len() >= 2).await;
+    carol_until(&mut carol, &server, &mut seen, |_, s| s.len() >= 2).await;
     let original = seen[0].message_id;
     assert_eq!(seen[0].text.as_deref(), Some("hi bob"));
     assert_eq!(seen[1].content.replaces, Some(original));
@@ -385,12 +402,13 @@ async fn edits_and_retractions_reach_jmap_and_only_from_the_sender() {
         .await
         .unwrap();
     let mut reports: Vec<SyncReport> = Vec::new();
-    for _ in 0..100 {
+    let mut watch = bob.changes.watch(bob.chat.store());
+    loop {
         reports.push(bob.chat.sync().await.unwrap());
         if reports.iter().any(|r| !r.skipped.is_empty()) {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("bob to skip what is not his").await;
     }
     let problems: Vec<&String> = reports.iter().flat_map(|r| &r.problems).collect();
     assert_eq!(problems.len(), 2, "{reports:?}");
@@ -449,7 +467,7 @@ async fn edits_and_retractions_reach_jmap_and_only_from_the_sender() {
     assert!(gone.get("editHistory").is_none(), "{gone}");
 
     // carol sees the MIMI retraction: replaces the first, a NullPart.
-    carol_until(&mut carol, &mut seen, |_, s| {
+    carol_until(&mut carol, &server, &mut seen, |_, s| {
         s.iter()
             .any(|m| matches!(m.content.nested_part.part, Part::Null))
     })

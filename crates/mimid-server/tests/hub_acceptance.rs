@@ -51,7 +51,6 @@ mod update;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
@@ -440,19 +439,31 @@ impl Streams {
         (messages, collapsed)
     }
 
-    /// Waits up to ten seconds until `destination` has `count` messages.
+    /// Waits until `destination` has `count` messages.
+    ///
+    /// Woken by whichever side records a delivery: the local recorder
+    /// and each mock follower notify as one lands. All four waiters are
+    /// registered before the look, so a delivery in between is waiting
+    /// rather than missed. No deadline: a message that never arrives
+    /// hangs the test and names the destination.
     async fn wait(&self, destination: &str, count: usize) -> Vec<FanoutMessage> {
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                let (messages, _) = self.delivered(destination);
-                if messages.len() >= count {
-                    return messages;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
+        eprintln!("waiting for {count} fanout messages to reach {destination}");
+        loop {
+            let local = self.local.attempted().notified();
+            let b = self.b.arrived().notified();
+            let c = self.c.arrived().notified();
+            let d = self.d.arrived().notified();
+            let (messages, _) = self.delivered(destination);
+            if messages.len() >= count {
+                return messages;
             }
-        })
-        .await
-        .unwrap_or_else(|_| panic!("{count} fanout messages reach {destination}"))
+            tokio::select! {
+                () = local => {}
+                () = b => {}
+                () = c => {}
+                () = d => {}
+            }
+        }
     }
 
     /// The next message on a client's own reading position.
@@ -762,14 +773,21 @@ fn assert_stream(destination: &str, delivered: &[FanoutMessage], expected: &[Vec
 }
 
 /// Waits until the outbox is empty: every row was delivered.
-async fn drained(store: &Store) {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while !store.outbox_heads().await.unwrap().is_empty() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+///
+/// Woken by the fanout worker, which notifies after each pass over the
+/// outbox: that is when the outbox is worth looking at. The waiter is
+/// registered before the look, so a pass that ends in between is
+/// waiting rather than missed.
+async fn drained(store: &Store, worker: &FanoutHandle) {
+    eprintln!("waiting for every fanout row to be delivered");
+    let passed = worker.passed().clone();
+    loop {
+        let next_pass = passed.notified();
+        if store.outbox_heads().await.unwrap().is_empty() {
+            return;
         }
-    })
-    .await
-    .expect("every fanout row delivered");
+        next_pass.await;
+    }
 }
 
 #[tokio::test]
@@ -1239,21 +1257,22 @@ async fn room_lifecycle_across_restart() {
     // The worker logs the failure only after the attempt is committed, and
     // stopping it aborts the task, so also wait for the warning the canary
     // below requires; nothing logs it after the restart.
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while !provider
+    let passed = provider.worker.passed().clone();
+    eprintln!("waiting for c.example's failed attempt to be recorded and logged");
+    loop {
+        let next_pass = passed.notified();
+        let recorded = provider
             .store
             .outbox_heads()
             .await
             .unwrap()
             .iter()
-            .any(|head| head.domain.as_str() == "c.example" && head.attempts != 0)
-            || !logs.contents().contains("fanout delivery failed")
-        {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            .any(|head| head.domain.as_str() == "c.example" && head.attempts != 0);
+        if recorded && logs.contents().contains("fanout delivery failed") {
+            break;
         }
-    })
-    .await
-    .expect("c.example delivery attempt recorded and logged within 10 s");
+        next_pass.await;
+    }
     let heads = provider.store.outbox_heads().await.unwrap();
     assert_eq!(heads.len(), 1, "{heads:?}");
     assert_eq!(heads[0].domain.as_str(), "c.example");
@@ -1411,7 +1430,7 @@ async fn room_lifecycle_across_restart() {
     }
 
     // Every provider received exactly its predicted stream.
-    drained(&provider.store).await;
+    drained(&provider.store, &provider.worker).await;
     for destination in [DOMAIN, "b.example", "c.example", "d.example"] {
         let (delivered, collapsed) = streams.delivered(destination);
         assert_stream(destination, &delivered, &expected[destination]);

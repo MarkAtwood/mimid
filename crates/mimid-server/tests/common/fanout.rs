@@ -5,7 +5,6 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
@@ -184,19 +183,30 @@ impl Follower {
         self.state.directory_gets.load(Ordering::SeqCst)
     }
 
-    /// Waits up to ten seconds until at least `count` requests arrived.
+    /// Notified as each request arrives, for a caller waiting on
+    /// several followers at once.
+    ///
+    /// `Notify::notified` only hears a notification made after it is
+    /// registered, so register the waiter, then look, then await it.
+    #[must_use]
+    pub fn arrived(&self) -> &Arc<Notify> {
+        &self.state.arrived
+    }
+
+    /// Waits until at least `count` requests arrived.
+    ///
+    /// Woken by the handler, which notifies as each request arrives. No
+    /// deadline: a request that never comes hangs the test, where a
+    /// guessed one could not tell that from a loaded machine.
     pub async fn wait_for(&self, count: usize) {
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                let arrived = self.state.arrived.notified();
-                if self.state.received.lock().unwrap().len() >= count {
-                    return;
-                }
-                arrived.await;
+        eprintln!("waiting for {count} follower requests");
+        loop {
+            let arrived = self.state.arrived.notified();
+            if self.state.received.lock().unwrap().len() >= count {
+                return;
             }
-        })
-        .await
-        .expect("follower requests arrive");
+            arrived.await;
+        }
     }
 }
 
@@ -261,6 +271,9 @@ pub struct RecordingLocal {
     /// (docs/design/mimi-catchup.md §4).
     sequences: Arc<Mutex<Vec<u64>>>,
     failures: Arc<AtomicUsize>,
+    /// Notified after each attempt is recorded, so a test waits for one
+    /// instead of looking again every so often.
+    attempted: Arc<tokio::sync::Notify>,
 }
 
 impl RecordingLocal {
@@ -279,6 +292,29 @@ impl RecordingLocal {
     /// The fanout sequence of each delivery, in order.
     pub fn sequences(&self) -> Vec<u64> {
         self.sequences.lock().unwrap().clone()
+    }
+
+    /// Notified as each attempt is recorded, for a caller waiting on
+    /// several sources at once ([`Follower::arrived`]).
+    #[must_use]
+    pub fn attempted(&self) -> &Arc<tokio::sync::Notify> {
+        &self.attempted
+    }
+
+    /// Waits until at least `count` attempts have been recorded.
+    ///
+    /// `Notify::notified` only hears a notification made after it is
+    /// registered, so the waiter is taken before the look: an attempt
+    /// recorded in between is then waiting rather than missed.
+    pub async fn wait_for(&self, count: usize) {
+        eprintln!("waiting for {count} local delivery attempts");
+        loop {
+            let attempted = self.attempted.notified();
+            if self.attempts.lock().unwrap().len() >= count {
+                return;
+            }
+            attempted.await;
+        }
     }
 }
 
@@ -299,6 +335,7 @@ impl LocalDelivery for RecordingLocal {
         // not change shape: the sequence the hub passed its own
         // follower (docs/design/mimi-catchup.md §4).
         self.sequences.lock().unwrap().push(fanout_seq);
+        self.attempted.notify_waiters();
         let failed = self
             .failures
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))

@@ -1,0 +1,22 @@
+{
+  "id": "mimid-604m.1",
+  "title": "The agent logs nothing across a stall: no subscriber in the test harness",
+  "description": "The agent daemon logged nothing across a multi-minute stall, and the\ntest harness that started it installs no `tracing` subscriber, so even\nthe daemon's own events went nowhere. Characterising bead mimid-604m\ntook three runs of the same test because of this: the only timeline\navailable came from the test's own wait helpers, which can say what\nthey are waiting for but not what the daemon is doing.\n\n## Two halves\n\n1. **The harness.** `crates/mimid-agent/tests/common/mod.rs` builds the\n   daemon in-process and never calls `tracing_subscriber`. Install one\n   per test process, writing to the captured test output, honouring\n   `RUST_LOG`, defaulting to a level that is quiet on a passing run.\n   `tracing_subscriber::fmt().with_test_writer()` with\n   `EnvFilter::from_default_env()` is the shape; the subscriber is\n   global, so it goes behind a `OnceLock`/`LazyLock` and tolerates a\n   second call.\n\n2. **The daemon.** Find what the first-DM path does between the user's\n   action and the reply, and make sure each step that can block says so\n   at a level a stalled user's log would show: the sync, the KeyPackage\n   fetch, the Welcome, each SQLite transaction. A step that takes\n   seconds and logs nothing is the defect; the fix is a span around it,\n   not a println.\n\n## Constraint\n\nAGENTS.md: secrets never reach logs, secret-bearing types redact\n`Debug`, and the canary test that captures `tracing` output and proves\nno secret appears in it must still pass with the new events in place.\nRun it after adding any field.\n\n## Why it is worth doing first\n\nThe other two children of mimid-604m are searches for where time goes.\nBoth are much cheaper once the daemon says what it is doing.\n",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T15:00:20.631410296Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T15:00:20.631410296Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-604m.1",
+      "depends_on_id": "mimid-604m",
+      "type": "parent-child",
+      "created_at": "2026-11-27T15:00:20.667942781Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

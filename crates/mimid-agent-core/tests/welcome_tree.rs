@@ -27,7 +27,6 @@
 mod common;
 
 use std::path::Path;
-use std::time::Duration;
 
 use common::{
     ALICE, BOB, Server, assert_agreement, poll_until, roles_without_add_own_client, sends,
@@ -109,7 +108,11 @@ async fn scene(limit: Option<usize>) -> Scene {
 
 /// The Welcome FanoutMessage bob's provider stored for `room`, as stored.
 async fn stored_welcome(server: &Server, room: &str) -> Vec<u8> {
-    for _ in 0..100 {
+    // The follower announces each event it stores, which is the only
+    // way a Welcome gets here. The receiver is taken before the look,
+    // so one stored in between waits rather than being missed.
+    let mut appended = server.follower.subscribe();
+    loop {
         let events = server
             .store
             .follower_events(BOB, room, 0, 100)
@@ -118,9 +121,9 @@ async fn stored_welcome(server: &Server, room: &str) -> Vec<u8> {
         if let Some(welcome) = events.into_iter().find(|e| e.kind == FanoutKind::Welcome) {
             return welcome.bytes;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        eprintln!("waiting for a Welcome stored for bob");
+        let _ = appended.recv().await;
     }
-    panic!("no Welcome stored for bob");
 }
 
 #[tokio::test]
@@ -182,7 +185,7 @@ async fn oversized_welcome_is_joined_with_the_fetched_tree() {
     assert_eq!(as_full.len(), full_len, "the same lengths as the first run");
 
     for bob in &mut bobs {
-        let number = poll_until(bob, |e| match e {
+        let number = poll_until(bob, &server, |e| match e {
             Event::InviteArrived { number } => Some(*number),
             _ => None,
         })
@@ -197,6 +200,7 @@ async fn oversized_welcome_is_joined_with_the_fetched_tree() {
     };
     sends(
         &mut alice,
+        &server,
         &room,
         "to every device",
         ALICE,
@@ -205,6 +209,7 @@ async fn oversized_welcome_is_joined_with_the_fetched_tree() {
     .await;
     sends(
         b1,
+        &server,
         &room,
         "from bob1",
         BOB,
@@ -213,6 +218,7 @@ async fn oversized_welcome_is_joined_with_the_fetched_tree() {
     .await;
     sends(
         b2,
+        &server,
         &room,
         "from bob2 on the stream",
         BOB,
@@ -221,6 +227,7 @@ async fn oversized_welcome_is_joined_with_the_fetched_tree() {
     .await;
     sends(
         b3,
+        &server,
         &room,
         "from bob3",
         BOB,

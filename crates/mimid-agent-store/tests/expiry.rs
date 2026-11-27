@@ -16,6 +16,8 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
@@ -51,6 +53,8 @@ const BOB: &str = "mimi://a.example/u/bob";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as mimid-server's `main.rs` wires it, on
@@ -109,11 +113,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -173,6 +179,8 @@ struct Pair {
     bob_saves: Arc<FailingSaves>,
     room_a: Key,
     room_b: Key,
+    /// What the waits below are woken by.
+    changes: common::Changes,
 }
 
 async fn pair(server: &Server, dir: &Path) -> Pair {
@@ -187,12 +195,13 @@ async fn pair(server: &Server, dir: &Path) -> Pair {
         .await
         .unwrap();
     alice.save().await.unwrap();
-    for _ in 0..100 {
+    let mut watch = server.changes.watch(&bob);
+    while bob.state().room_of_uri(&room.uri).is_none() {
         bob.sync().await.unwrap();
         if bob.state().room_of_uri(&room.uri).is_some() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("bob to join the room").await;
     }
     let room_b = bob
         .state()
@@ -205,6 +214,7 @@ async fn pair(server: &Server, dir: &Path) -> Pair {
         bob_saves,
         room_a: room.key,
         room_b,
+        changes: server.changes.clone(),
     }
 }
 
@@ -218,29 +228,34 @@ fn key_of(store: &Store, text: &str) -> Option<Key> {
         .map(|m| m.key.clone())
 }
 
-/// Syncs until `text` is stored, for up to ten seconds; its key.
-async fn sync_until_stored(store: &Store, text: &str) -> Key {
-    for _ in 0..100 {
+/// Syncs until `text` is stored; its key.
+///
+/// Woken between syncs by `changes` or by what the last sync wrote
+/// ([`common::Watch::again`]).
+async fn sync_until_stored(store: &Store, changes: &common::Changes, text: &str) -> Key {
+    let mut watch = changes.watch(store);
+    let wanted = format!("the message {text:?} stored");
+    loop {
         store.sync().await.unwrap();
         if let Some(key) = key_of(store, text) {
             return key;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again(&wanted).await;
     }
-    panic!("{text:?} was never stored");
 }
 
-/// Syncs until a sync reports `what` among its skipped messages, for up
-/// to ten seconds.
-async fn sync_until_skipped(store: &Store, what: &str) {
-    for _ in 0..100 {
+/// Syncs until a sync reports `what` among its skipped messages, as
+/// [`sync_until_stored`].
+async fn sync_until_skipped(store: &Store, changes: &common::Changes, what: &str) {
+    let mut watch = changes.watch(store);
+    let wanted = format!("a sync that skipped {what:?}");
+    loop {
         let report = store.sync().await.unwrap();
         if report.skipped.iter().any(|s| s.contains(what)) {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again(&wanted).await;
     }
-    panic!("no sync skipped {what:?}");
 }
 
 /// Sends `text` from alice with `expiry`, saved; its key.
@@ -314,7 +329,7 @@ async fn the_senders_time_deletes_every_copy_and_its_blobs() {
         at(expected),
         "the sender's copy keeps the whole second sent"
     );
-    let key_b = sync_until_stored(&pair.bob, "timed").await;
+    let key_b = sync_until_stored(&pair.bob, &pair.changes, "timed").await;
     let (bob_blob, bob_expiry) = {
         let state = pair.bob.state();
         let m = &state.messages[&key_b];
@@ -363,14 +378,14 @@ async fn edits_and_retractions_keep_the_expiry() {
     let pair = pair(&server, dir.path()).await;
     let expected = (now_ms() + 120_000) / 1000 * 1000;
     let key_a = send(&pair, "v1", at(expected)).await;
-    let key_b = sync_until_stored(&pair.bob, "v1").await;
+    let key_b = sync_until_stored(&pair.bob, &pair.changes, "v1").await;
 
     pair.alice
         .edit(&key_a, "v2", BodyType::Plain)
         .await
         .unwrap();
     pair.alice.save().await.unwrap();
-    sync_until_stored(&pair.bob, "v2").await;
+    sync_until_stored(&pair.bob, &pair.changes, "v2").await;
     // An edit carrying another expiry, sent past the store.
     let (uri, first) = {
         let state = pair.alice.state();
@@ -391,18 +406,19 @@ async fn edits_and_retractions_keep_the_expiry() {
         .send_edit_with(&uri, &first, "v3", &other, false)
         .await
         .unwrap();
-    sync_until_stored(&pair.bob, "v3").await;
+    sync_until_stored(&pair.bob, &pair.changes, "v3").await;
     assert_eq!(pair.bob.state().messages[&key_b].expiry, at(expected));
     assert_eq!(pair.alice.state().messages[&key_a].expiry, at(expected));
 
     pair.alice.retract(&key_a).await.unwrap();
     pair.alice.save().await.unwrap();
-    for _ in 0..100 {
+    let mut watch = pair.changes.watch(&pair.bob);
+    loop {
         pair.bob.sync().await.unwrap();
         if pair.bob.state().messages[&key_b].deleted.is_some() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("the retraction to reach bob").await;
     }
     {
         let state = pair.bob.state();
@@ -414,7 +430,7 @@ async fn edits_and_retractions_keep_the_expiry() {
 
     // Gone at bob first (his policy, say), then edited by alice.
     let key_a = send(&pair, "w1", at(expected)).await;
-    let key_b = sync_until_stored(&pair.bob, "w1").await;
+    let key_b = sync_until_stored(&pair.bob, &pair.changes, "w1").await;
     assert!(pair.bob.expire(&key_b));
     pair.bob.save().await.unwrap();
     pair.alice
@@ -422,7 +438,7 @@ async fn edits_and_retractions_keep_the_expiry() {
         .await
         .unwrap();
     pair.alice.save().await.unwrap();
-    sync_until_skipped(&pair.bob, "not stored here").await;
+    sync_until_skipped(&pair.bob, &pair.changes, "not stored here").await;
     assert_eq!(key_of(&pair.bob, "w2"), None);
 }
 
@@ -437,9 +453,13 @@ async fn a_message_past_its_time_is_not_stored_or_restored() {
     let server = server(dir.path(), &[ALICE, BOB]).await;
     let pair = pair(&server, dir.path()).await;
 
-    send(&pair, "late", at(now_ms() + 1_200)).await;
-    tokio::time::sleep(Duration::from_millis(1_500)).await;
-    sync_until_skipped(&pair.bob, "expiry had passed").await;
+    // The clock is the event here: the message is due 1.2 seconds from
+    // now, and the point is that its time has passed when bob syncs.
+    // One sleep to past that time, not a loop around it.
+    let due = now_ms() + 1_200;
+    send(&pair, "late", at(due)).await;
+    tokio::time::sleep(Duration::from_millis(due.saturating_sub(now_ms()) + 1)).await;
+    sync_until_skipped(&pair.bob, &pair.changes, "expiry had passed").await;
     assert_eq!(key_of(&pair.bob, "late"), None);
 
     // The acknowledgement fails, so the journal delivers it again; it was
@@ -451,18 +471,14 @@ async fn a_message_past_its_time_is_not_stored_or_restored() {
         .await
         .fail_next(FailPoint::Acknowledge);
     send(&pair, "gone", at(far)).await;
-    let mut failed = false;
-    for _ in 0..100 {
+    let mut watch = pair.changes.watch(&pair.bob);
+    loop {
         match pair.bob.sync().await {
-            Err(SyncError::Save(FileError::Acknowledge(_))) => {
-                failed = true;
-                break;
-            }
+            Err(SyncError::Save(FileError::Acknowledge(_))) => break,
             Err(e) => panic!("{e:?}"),
-            Ok(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+            Ok(_) => watch.again("the acknowledgement to fail").await,
         }
     }
-    assert!(failed, "the acknowledgement failed");
     let key_b = key_of(&pair.bob, "gone").expect("in memory");
     assert_eq!(pair.bob.expire_due(far), [key_b]);
     pair.bob.sync().await.unwrap();
@@ -517,9 +533,9 @@ async fn read_rules_delete_the_receivers_copy_only() {
     let burn_a = send(&pair, "burn", burn).await;
     let after_a = send(&pair, "after", after).await;
     let plain_a = send(&pair, "plain", MessageExpiry::default()).await;
-    let burn_b = sync_until_stored(&pair.bob, "burn").await;
-    let after_b = sync_until_stored(&pair.bob, "after").await;
-    let plain_b = sync_until_stored(&pair.bob, "plain").await;
+    let burn_b = sync_until_stored(&pair.bob, &pair.changes, "burn").await;
+    let after_b = sync_until_stored(&pair.bob, &pair.changes, "after").await;
+    let plain_b = sync_until_stored(&pair.bob, &pair.changes, "plain").await;
     assert_eq!(pair.bob.state().messages[&burn_b].expiry, burn);
     assert_eq!(pair.bob.state().messages[&after_b].expiry, after);
     assert_eq!(pair.bob.next_expiry(), None, "nothing read yet");
@@ -607,8 +623,10 @@ async fn read_rules_go_in_the_standard_expires_on_the_wire() {
 
     // Bob's agent, past his store: what arrives is not acknowledged.
     let mut wire: BTreeMap<String, MimiContent> = BTreeMap::new();
-    for _ in 0..100 {
+    let mut watch = pair.changes.watch_server();
+    while wire.len() < 3 {
         let (events, _receipt) = pair.bob.agent().lock().await.receive().await.unwrap();
+        let progressed = !events.is_empty();
         for event in events {
             if let Event::Message(m) = event {
                 let content = MimiContent::decode(&m.application_data).unwrap();
@@ -618,7 +636,11 @@ async fn read_rules_go_in_the_standard_expires_on_the_wire() {
         if wire.len() >= 3 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A receive that read something may have more to read.
+        if progressed {
+            continue;
+        }
+        watch.next("bob's agent to read all three").await;
     }
     let key = ExtensionKey::Text(READ_EXPIRY_KEY.to_owned());
     assert_eq!(wire["burn"].expires, Some(Expiration::Relative(0)));
@@ -644,7 +666,7 @@ async fn a_rooms_policy_deletes_older_messages_here_only() {
     let server = server(dir.path(), &[ALICE, BOB]).await;
     let pair = pair(&server, dir.path()).await;
     let key_a = send(&pair, "kept for ten seconds", MessageExpiry::default()).await;
-    let key_b = sync_until_stored(&pair.bob, "kept for ten seconds").await;
+    let key_b = sync_until_stored(&pair.bob, &pair.changes, "kept for ten seconds").await;
     let arrived = pair.bob.state().messages[&key_b].received_at;
     let seq = pair.bob.last_seq();
     assert!(pair.bob.set_message_expiry(&pair.room_b, Some(10)));
@@ -687,6 +709,7 @@ async fn deletions_survive_a_restart_and_a_failed_save() {
         bob,
         bob_saves,
         room_a,
+        changes,
         ..
     } = pair(&server, dir.path()).await;
     let soon = (now_ms() + 2_000) / 1000 * 1000;
@@ -698,14 +721,14 @@ async fn deletions_survive_a_restart_and_a_failed_save() {
             .unwrap();
     }
     alice.save().await.unwrap();
-    sync_until_stored(&bob, "soon").await;
-    sync_until_stored(&bob, "later").await;
+    sync_until_stored(&bob, &changes, "soon").await;
+    sync_until_stored(&bob, &changes, "later").await;
     drop((bob, bob_saves));
 
-    // Stopped past "soon".
-    while now_ms() <= soon {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    // Stopped past "soon". Here the clock is the event: bob's store is
+    // dropped, so nothing will be published until it opens again. One
+    // sleep to the deadline, not a loop around it.
+    tokio::time::sleep(Duration::from_millis(soon.saturating_sub(now_ms()) + 1)).await;
     let (bob, saves) = open(&server, BOB, dir.path()).await;
     assert!(key_of(&bob, "soon").is_some(), "nothing ran while stopped");
     assert!(bob.next_expiry().is_some_and(|at| at <= now_ms()));

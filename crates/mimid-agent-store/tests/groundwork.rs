@@ -10,6 +10,8 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -40,6 +42,8 @@ const CAROL: &str = "mimi://a.example/u/carol";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as mimid-server's `main.rs` wires it, on
@@ -96,11 +100,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         options
     })
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -123,39 +129,51 @@ async fn device(server: &Server, user: &'static str, dir: &Path, name: &str) -> 
     .unwrap()
 }
 
-/// Polls `agent` until a message for which `wanted` holds arrives.
+/// Polls `agent` until a message for which `wanted` holds arrives,
+/// woken between polls by `changes`.
+///
+/// A poll that read anything is followed by another at once: one change
+/// at the server can take an agent several polls, and waiting for a
+/// second change that will not come would hang.
 async fn until_message(
     agent: &mut Agent,
+    changes: &common::Changes,
     wanted: impl Fn(&ReceivedMessage) -> bool,
 ) -> ReceivedMessage {
-    for _ in 0..100 {
-        for event in agent.poll().await.unwrap() {
+    let mut watch = changes.watch_server();
+    loop {
+        let events = agent.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             if let Event::Message(m) = event
                 && wanted(&m)
             {
                 return *m;
             }
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        if progressed {
+            continue;
+        }
+        watch.next("the message").await;
     }
-    panic!("the message never arrived");
 }
 
-/// Syncs `store` until `done` holds.
-async fn until_store(store: &Store, done: impl Fn(&Store) -> bool) {
-    for _ in 0..100 {
+/// Syncs `store` until `done` holds, woken between syncs by `changes`
+/// or by what the last sync wrote ([`common::Watch::again`]).
+async fn until_store(store: &Store, changes: &common::Changes, done: impl Fn(&Store) -> bool) {
+    let mut watch = changes.watch(store);
+    loop {
         store.sync().await.unwrap();
         if done(store) {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("the store to get there").await;
     }
-    panic!("the store never got there");
 }
 
 /// alice as a plain agent and bob as a store, in one room alice hosts;
 /// the room's URI and its key in bob's store.
-async fn alice_and_bob(dir: &Path) -> (Agent, Store, String, String) {
+async fn alice_and_bob(dir: &Path) -> (Agent, Store, String, String, common::Changes) {
     let server = server(dir, &[ALICE, BOB]).await;
     let mut alice = agent(&server, ALICE, dir).await;
     let bob = Store::new(agent(&server, BOB, dir).await, InvitePolicy::Any);
@@ -168,9 +186,10 @@ async fn alice_and_bob(dir: &Path) -> (Agent, Store, String, String) {
         .unwrap();
     let room = alice.host_room(&HostOptions::named("r")).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    until_store(&bob, |s| s.state().room_of_uri(&room).is_some()).await;
+    let changes = server.changes.clone();
+    until_store(&bob, &changes, |s| s.state().room_of_uri(&room).is_some()).await;
     let key = bob.state().room_of_uri(&room).cloned().unwrap();
-    (alice, bob, room, key)
+    (alice, bob, room, key, changes)
 }
 
 /// The key of the message in `store` whose body is `body`.
@@ -190,9 +209,9 @@ fn key_of(store: &Store, body: &str) -> Option<String> {
 #[tokio::test]
 async fn replies_are_sent_kept_and_edited_with_their_target() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut alice, bob, room, room_key) = alice_and_bob(dir.path()).await;
+    let (mut alice, bob, room, room_key, changes) = alice_and_bob(dir.path()).await;
     let first = alice.send_text(&room, "question?").await.unwrap();
-    until_store(&bob, |s| key_of(s, "question?").is_some()).await;
+    until_store(&bob, &changes, |s| key_of(s, "question?").is_some()).await;
     let target = key_of(&bob, "question?").unwrap();
 
     // Received: kept exactly, and resolved to the stored message.
@@ -204,14 +223,20 @@ async fn replies_are_sent_kept_and_edited_with_their_target() {
         .unwrap();
     assert_eq!(sent.in_reply_to, Some(Reply::Message(target.clone())));
     assert_eq!(sent.in_reply_to_id, Some(Octets(first.message_id.0)));
-    let got = until_message(&mut alice, |m| m.text.as_deref() == Some("answer")).await;
+    let got = until_message(&mut alice, &changes, |m| {
+        m.text.as_deref() == Some("answer")
+    })
+    .await;
     assert_eq!(got.content.in_reply_to, Some(first.message_id));
 
     // An edit of the reply carries the same inReplyTo.
     bob.edit(&sent.key, "answer, edited", BodyType::Plain)
         .await
         .unwrap();
-    let edit = until_message(&mut alice, |m| m.text.as_deref() == Some("answer, edited")).await;
+    let edit = until_message(&mut alice, &changes, |m| {
+        m.text.as_deref() == Some("answer, edited")
+    })
+    .await;
     assert!(edit.content.replaces.is_some());
     assert_eq!(edit.content.in_reply_to, Some(first.message_id));
 
@@ -228,7 +253,7 @@ async fn replies_are_sent_kept_and_edited_with_their_target() {
             .await
             .unwrap();
     }
-    until_store(&bob, |s| key_of(s, "re unknown").is_some()).await;
+    until_store(&bob, &changes, |s| key_of(s, "re unknown").is_some()).await;
     let re_key = key_of(&bob, "re").unwrap();
     let re = bob.state().messages[&re_key].clone();
     assert_eq!(re.in_reply_to, Some(Reply::Message(target)));
@@ -253,9 +278,9 @@ fn counts(store: &Store, key: &str) -> Vec<(String, Vec<String>)> {
 #[tokio::test]
 async fn reactions_are_sent_kept_added_up_and_taken_back() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut alice, bob, room, _) = alice_and_bob(dir.path()).await;
+    let (mut alice, bob, room, _, changes) = alice_and_bob(dir.path()).await;
     let first = alice.send_text(&room, "pick one").await.unwrap();
-    until_store(&bob, |s| key_of(s, "pick one").is_some()).await;
+    until_store(&bob, &changes, |s| key_of(s, "pick one").is_some()).await;
     let target = key_of(&bob, "pick one").unwrap();
 
     // bob's reaction, as alice's agent decodes it.
@@ -263,7 +288,7 @@ async fn reactions_are_sent_kept_added_up_and_taken_back() {
     let reacted = bob.react(mine.clone(), &target, None, "👍").await.unwrap();
     assert_eq!(reacted.reactions.len(), 1);
     assert_eq!(reacted.reactions[0].key, mine);
-    let got = until_message(&mut alice, |m| m.text.as_deref() == Some("👍")).await;
+    let got = until_message(&mut alice, &changes, |m| m.text.as_deref() == Some("👍")).await;
     assert_eq!(got.content.in_reply_to, Some(first.message_id));
     assert_eq!(
         got.content.nested_part.disposition,
@@ -281,7 +306,10 @@ async fn reactions_are_sent_kept_added_up_and_taken_back() {
         .send_reaction(&room, &first.message_id, "👍")
         .await
         .unwrap();
-    until_store(&bob, |s| s.state().messages[&target].reactions.len() == 3).await;
+    until_store(&bob, &changes, |s| {
+        s.state().messages[&target].reactions.len() == 3
+    })
+    .await;
     assert_eq!(
         counts(&bob, &target),
         [
@@ -300,7 +328,7 @@ async fn reactions_are_sent_kept_added_up_and_taken_back() {
         .await
         .unwrap();
     alice.send_text(&room, "marker").await.unwrap();
-    until_store(&bob, |s| key_of(s, "marker").is_some()).await;
+    until_store(&bob, &changes, |s| key_of(s, "marker").is_some()).await;
     assert_eq!(
         counts(&bob, &target),
         [("👍".to_owned(), vec![BOB.to_owned(), ALICE.to_owned()])]
@@ -309,7 +337,10 @@ async fn reactions_are_sent_kept_added_up_and_taken_back() {
     // bob takes his back: alice's agent decodes the §5.7 shape.
     let after = bob.unreact(&target, &mine).await.unwrap();
     assert_eq!(after.reactions.len(), 1);
-    let unlike = until_message(&mut alice, |m| m.content.replaces == Some(bobs_reaction)).await;
+    let unlike = until_message(&mut alice, &changes, |m| {
+        m.content.replaces == Some(bobs_reaction)
+    })
+    .await;
     assert_eq!(unlike.content.in_reply_to, Some(first.message_id));
     assert_eq!(
         unlike.content.nested_part.disposition,
@@ -332,7 +363,7 @@ async fn reactions_are_sent_kept_added_up_and_taken_back() {
         .await
         .unwrap();
     alice.send_text(&room, "end").await.unwrap();
-    until_store(&bob, |s| key_of(s, "end").is_some()).await;
+    until_store(&bob, &changes, |s| key_of(s, "end").is_some()).await;
     assert!(key_of(&bob, "🙃").is_none() && key_of(&bob, "👍").is_none());
 }
 
@@ -348,6 +379,7 @@ async fn reactions_are_sent_kept_added_up_and_taken_back() {
 async fn replies_and_reactions_name_the_latest_version() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB, CAROL]).await;
+    let changes = server.changes.clone();
     let mut alice = agent(&server, ALICE, dir.path()).await;
     let mut stores = Vec::new();
     for user in [BOB, CAROL] {
@@ -368,7 +400,7 @@ async fn replies_and_reactions_name_the_latest_version() {
     alice.invite(&room, CAROL).await.unwrap();
     let first = alice.send_text(&room, "draft").await.unwrap();
     for store in [bob, carol] {
-        until_store(store, |s| key_of(s, "draft").is_some()).await;
+        until_store(store, &changes, |s| key_of(s, "draft").is_some()).await;
     }
     let room_key = bob.state().room_of_uri(&room).cloned().unwrap();
     let target = key_of(bob, "draft").unwrap();
@@ -381,9 +413,9 @@ async fn replies_and_reactions_name_the_latest_version() {
         .unwrap();
     {
         let mut agent = carol.agent().lock().await;
-        until_message(&mut agent, |m| m.content.replaces.is_some()).await;
+        until_message(&mut agent, &changes, |m| m.content.replaces.is_some()).await;
     }
-    until_store(bob, |s| key_of(s, "final").is_some()).await;
+    until_store(bob, &changes, |s| key_of(s, "final").is_some()).await;
     let record = bob.state().messages[&target].clone();
     assert_eq!(record.mimi_id, Some(Octets(first.message_id.0)));
     assert_eq!(record.aliases, [Octets(edit.message_id.0)]);
@@ -399,17 +431,23 @@ async fn replies_and_reactions_name_the_latest_version() {
         .unwrap();
     assert_eq!(reply.in_reply_to, Some(Reply::Message(target.clone())));
     assert_eq!(reply.in_reply_to_id, Some(Octets(edit.message_id.0)));
-    let got = until_message(&mut alice, |m| m.text.as_deref() == Some("agreed")).await;
+    let got = until_message(&mut alice, &changes, |m| {
+        m.text.as_deref() == Some("agreed")
+    })
+    .await;
     assert_eq!(got.content.in_reply_to, Some(edit.message_id));
 
     let mine = bob.new_key();
     let reacted = bob.react(mine.clone(), &target, None, "👍").await.unwrap();
     assert_eq!(reacted.reactions[0].in_reply_to, Octets(edit.message_id.0));
-    let got = until_message(&mut alice, |m| m.text.as_deref() == Some("👍")).await;
+    let got = until_message(&mut alice, &changes, |m| m.text.as_deref() == Some("👍")).await;
     assert_eq!(got.content.in_reply_to, Some(edit.message_id));
     let reaction_id = got.message_id;
     bob.unreact(&target, &mine).await.unwrap();
-    let unlike = until_message(&mut alice, |m| m.content.replaces == Some(reaction_id)).await;
+    let unlike = until_message(&mut alice, &changes, |m| {
+        m.content.replaces == Some(reaction_id)
+    })
+    .await;
     assert_eq!(unlike.content.in_reply_to, Some(edit.message_id));
 
     // A reply naming the version the user saw (IRC: the latest shown),
@@ -435,7 +473,7 @@ async fn replies_and_reactions_name_the_latest_version() {
             .await
             .unwrap();
     }
-    until_store(bob, |s| key_of(s, "to v2").is_some()).await;
+    until_store(bob, &changes, |s| key_of(s, "to v2").is_some()).await;
     for text in ["to v1", "to v2"] {
         let key = key_of(bob, text).unwrap();
         let message = bob.state().messages[&key].clone();
@@ -446,7 +484,7 @@ async fn replies_and_reactions_name_the_latest_version() {
     // exactly; the later version's reference octets name nothing she
     // stored, so it stays a reference. The reply to the first version
     // resolves. The reaction to the later version is not kept.
-    until_store(carol, |s| key_of(s, "to v2").is_some()).await;
+    until_store(carol, &changes, |s| key_of(s, "to v2").is_some()).await;
     let carols = key_of(carol, "draft").unwrap();
     let mut v2 = [0u8; 10];
     v2.copy_from_slice(&edit.message_id.0[1..11]);
@@ -478,7 +516,7 @@ async fn extensions_are_kept_sent_and_edited() {
     use mimi_content::{ExtensionKey, RawValue};
     use mimid_agent_store::record::{ExtensionName, ON_BEHALF_OF_KEY};
     let dir = tempfile::tempdir().unwrap();
-    let (mut alice, bob, room, room_key) = alice_and_bob(dir.path()).await;
+    let (mut alice, bob, room, room_key, changes) = alice_and_bob(dir.path()).await;
     let on_behalf_of = RawValue::new(&ON_BEHALF_OF).unwrap();
     let mut options = mimid_agent_core::ContentOptions::new();
     options.extensions.insert(
@@ -492,7 +530,7 @@ async fn extensions_are_kept_sent_and_edited() {
         .send_message_with(&room, "relayed", &[], &options)
         .await
         .unwrap();
-    until_store(&bob, |s| key_of(s, "relayed").is_some()).await;
+    until_store(&bob, &changes, |s| key_of(s, "relayed").is_some()).await;
     let key = key_of(&bob, "relayed").unwrap();
     let relayed = bob.state().messages[&key].clone();
     let names: Vec<&ExtensionName> = relayed.extensions.iter().map(|e| &e.name).collect();
@@ -520,7 +558,10 @@ async fn extensions_are_kept_sent_and_edited() {
         .await
         .unwrap();
     assert!(sent.on_behalf_of().is_some());
-    let got = until_message(&mut alice, |m| m.text.as_deref() == Some("copied")).await;
+    let got = until_message(&mut alice, &changes, |m| {
+        m.text.as_deref() == Some("copied")
+    })
+    .await;
     let key = ExtensionKey::Text(ON_BEHALF_OF_KEY.to_owned());
     assert_eq!(
         got.content.mimi_extensions.other.get(&key),
@@ -529,7 +570,10 @@ async fn extensions_are_kept_sent_and_edited() {
     bob.edit(&sent.key, "copied, edited", BodyType::Plain)
         .await
         .unwrap();
-    let edit = until_message(&mut alice, |m| m.text.as_deref() == Some("copied, edited")).await;
+    let edit = until_message(&mut alice, &changes, |m| {
+        m.text.as_deref() == Some("copied, edited")
+    })
+    .await;
     assert_eq!(
         edit.content.mimi_extensions.other.get(&key),
         Some(&on_behalf_of)
@@ -546,7 +590,7 @@ async fn extensions_are_kept_sent_and_edited() {
 #[tokio::test]
 async fn one_to_one_rooms_are_made_once_and_recognised() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut alice, bob, _, lobby) = alice_and_bob(dir.path()).await;
+    let (mut alice, bob, _, lobby, changes) = alice_and_bob(dir.path()).await;
     assert!(!bob.state().rooms[&lobby].direct, "an ordinary room");
     assert_eq!(bob.direct_room(ALICE), None);
 
@@ -563,13 +607,18 @@ async fn one_to_one_rooms_are_made_once_and_recognised() {
     // alice got the Welcome of bob's first Commit; joined, her agent sees
     // a fixed-membership room of two with max_users 2.
     let mut invite = None;
-    for _ in 0..100 {
-        alice.poll().await.unwrap();
+    let mut watch = changes.watch_server();
+    while invite.is_none() {
+        let progressed = !alice.poll().await.unwrap().is_empty();
         invite = alice.invites().first().map(|i| i.number);
         if invite.is_some() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A poll that read something may have more to read.
+        if progressed {
+            continue;
+        }
+        watch.next("bob's invite to reach alice").await;
     }
     let joined = alice.join(invite.expect("bob's invite")).unwrap();
     assert_eq!(joined, made.uri);
@@ -591,7 +640,7 @@ async fn one_to_one_rooms_are_made_once_and_recognised() {
     // An unnamed ordinary room of the two is not direct at bob's.
     let theirs = alice.host_room(&HostOptions::named("")).await.unwrap();
     alice.invite(&theirs, BOB).await.unwrap();
-    until_store(&bob, |s| s.state().room_of_uri(&theirs).is_some()).await;
+    until_store(&bob, &changes, |s| s.state().room_of_uri(&theirs).is_some()).await;
     let key = bob.state().room_of_uri(&theirs).cloned().unwrap();
     assert!(!bob.state().rooms[&key].direct);
     assert_eq!(bob.direct_room(ALICE), Some(made.key.clone()));
@@ -610,12 +659,12 @@ fn bodies(page: &mimid_agent_store::Page) -> Vec<&str> {
 async fn history_pages_in_hub_order() {
     use mimid_agent_store::{Direction, Point};
     let dir = tempfile::tempdir().unwrap();
-    let (mut alice, bob, room, room_key) = alice_and_bob(dir.path()).await;
+    let (mut alice, bob, room, room_key, changes) = alice_and_bob(dir.path()).await;
     let mut sent = Vec::new();
     for n in 1..=6 {
         sent.push(alice.send_text(&room, &format!("m{n}")).await.unwrap());
     }
-    until_store(&bob, |s| key_of(s, "m6").is_some()).await;
+    until_store(&bob, &changes, |s| key_of(s, "m6").is_some()).await;
     let key = |body: &str| key_of(&bob, body).unwrap();
     let page =
         |point: Point, direction, limit| bob.history(&room_key, &point, direction, limit).unwrap();
@@ -644,7 +693,7 @@ async fn history_pages_in_hub_order() {
         .send_retraction(&room, &sent[4].message_id, false)
         .await
         .unwrap();
-    until_store(&bob, |s| {
+    until_store(&bob, &changes, |s| {
         s.state()
             .messages
             .values()
@@ -664,6 +713,8 @@ async fn history_pages_in_hub_order() {
     );
 
     // Due under the room's expiry, though not yet deleted: left out.
+    // The clock is the event: the expiry is one second, and nothing
+    // publishes when a message merely becomes due. One sleep past it.
     bob.set_message_expiry(&room_key, Some(1));
     tokio::time::sleep(Duration::from_millis(1_100)).await;
     assert!(
@@ -680,6 +731,7 @@ async fn history_pages_in_hub_order() {
 async fn a_pending_invite_is_declined() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
+    let changes = server.changes.clone();
     let mut alice = agent(&server, ALICE, dir.path()).await;
     let bob = Store::new(agent(&server, BOB, dir.path()).await, InvitePolicy::Never);
     bob.open_database().unwrap();
@@ -691,7 +743,7 @@ async fn a_pending_invite_is_declined() {
         .unwrap();
     let room = alice.host_room(&HostOptions::named("no")).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    until_store(&bob, |s| !s.state().invites.is_empty()).await;
+    until_store(&bob, &changes, |s| !s.state().invites.is_empty()).await;
     let number = bob.state().invites[0].number;
     let seq = bob.last_seq();
 
@@ -716,7 +768,34 @@ async fn a_pending_invite_is_declined() {
 /// signal.
 #[tokio::test]
 async fn the_runner_syncs_tops_up_and_stops() {
-    use mimid_agent_store::runner::{Runner, RunnerHooks, RunnerOptions};
+    use std::future::Future;
+    use std::pin::Pin;
+
+    use mimid_agent_store::runner::{AfterSync, Runner, RunnerHooks, RunnerOptions};
+    use mimid_agent_store::{SyncError, SyncReport};
+
+    /// A hook that says when a turn of the sync loop has ended.
+    ///
+    /// The KeyPackage top-up runs in the sync loop just after this hook
+    /// (`runner::sync_loop`), and it writes through the agent rather
+    /// than the store, so no record changes and the store's change feed
+    /// says nothing about it. The turn is the only event there is, and
+    /// the turn after a notification is one that has topped up.
+    struct Turn(Arc<tokio::sync::Notify>);
+
+    impl AfterSync for Turn {
+        fn after_sync<'a>(
+            &'a mut self,
+            _store: &'a Store,
+            _outcome: Result<&'a SyncReport, &'a SyncError>,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+            let turned = Arc::clone(&self.0);
+            Box::pin(async move {
+                turned.notify_waiters();
+            })
+        }
+    }
+
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
     let mut alice = agent(&server, ALICE, dir.path()).await;
@@ -726,44 +805,44 @@ async fn the_runner_syncs_tops_up_and_stops() {
         InvitePolicy::Any,
     ));
     bob.open_database().unwrap();
+    let turned = Arc::new(tokio::sync::Notify::new());
     let (stop, stopped) = tokio::sync::watch::channel(false);
     let runner = Runner::start(
         &bob,
         RunnerOptions::new(Duration::from_millis(50), 3),
         &stopped,
-        RunnerHooks::new(),
+        RunnerHooks::new().after(Box::new(Turn(Arc::clone(&turned)))),
     );
-    for _ in 0..100 {
-        if bob.agent().lock().await.key_packages_outstanding() == 3 {
-            break;
+    // Each wait registers before it looks, because `notify_waiters`
+    // only reaches a waiter already there, and takes no lock across the
+    // await: the sync loop needs the agent and the state itself.
+    let topped_up = async || {
+        loop {
+            let next_turn = turned.notified();
+            if bob.agent().lock().await.key_packages_outstanding() == 3 {
+                return;
+            }
+            eprintln!("waiting for a turn that tops the KeyPackages up");
+            next_turn.await;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert_eq!(bob.agent().lock().await.key_packages_outstanding(), 3);
+    };
+    topped_up().await;
     let room = alice.host_room(&HostOptions::named("run")).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    for _ in 0..100 {
+    loop {
+        let next_turn = turned.notified();
         if bob.state().room_of_uri(&room).is_some() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        eprintln!("waiting for the sync loop to join bob to the room");
+        next_turn.await;
     }
-    assert!(
-        bob.state().room_of_uri(&room).is_some(),
-        "joined by the sync loop"
-    );
     // The handed-out KeyPackage is replaced after the sync.
-    for _ in 0..100 {
-        if bob.agent().lock().await.key_packages_outstanding() == 3 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert_eq!(bob.agent().lock().await.key_packages_outstanding(), 3);
+    topped_up().await;
     stop.send_replace(true);
-    tokio::time::timeout(Duration::from_secs(10), runner.join())
-        .await
-        .expect("every loop ends on the stop signal");
+    // The loops ending is the event, so awaiting the join is the
+    // assertion: a loop that ignores the stop signal hangs here.
+    runner.join().await;
 }
 
 /// `join_within` waits the grace period out and then aborts the loops
@@ -811,16 +890,14 @@ async fn a_loop_past_the_grace_period_is_aborted_and_named() {
         &stopped,
         RunnerHooks::new().before(Box::new(Stuck(Arc::clone(&entered)))),
     );
-    tokio::time::timeout(Duration::from_secs(10), entered.notified())
-        .await
-        .expect("the sync loop reaches the hook");
+    // The hook's own notification, so this returns the moment the loop
+    // is inside it.
+    entered.notified().await;
     stop.send_replace(true);
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(10),
-        runner.join_within(Duration::from_millis(200)),
-    )
-    .await
-    .expect("join_within returns after the grace period, it does not wait forever");
+    // `join_within` is what is under test: it waits its grace period
+    // out and then aborts, so it returns on its own and needs no outer
+    // deadline.
+    let outcome = runner.join_within(Duration::from_millis(200)).await;
     assert_eq!(
         outcome.aborted,
         vec!["sync loop"],
@@ -840,12 +917,7 @@ async fn a_loop_past_the_grace_period_is_aborted_and_named() {
         RunnerHooks::new(),
     );
     stop.send_replace(true);
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(10),
-        runner.join_within(Duration::from_secs(5)),
-    )
-    .await
-    .expect("every loop ends on the stop signal");
+    let outcome = runner.join_within(Duration::from_secs(5)).await;
     assert!(outcome.clean(), "{outcome:?}");
 }
 
@@ -866,7 +938,7 @@ async fn the_runner_reports_each_sync_outcome_to_the_hook() {
     /// Each outcome the hook saw: the messages stored, or the failure.
     type Seen = Arc<Mutex<Vec<Result<usize, String>>>>;
 
-    struct Watcher(Seen);
+    struct Watcher(Seen, Arc<tokio::sync::Notify>);
 
     impl AfterSync for Watcher {
         fn after_sync<'a>(
@@ -876,8 +948,12 @@ async fn the_runner_reports_each_sync_outcome_to_the_hook() {
         ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
             let entry = outcome.map(|r| r.messages).map_err(ToString::to_string);
             let seen = Arc::clone(&self.0);
+            let pushed = Arc::clone(&self.1);
             Box::pin(async move {
                 seen.lock().unwrap().push(entry);
+                // The test waits on this rather than looking again every
+                // so often: a turn of the loop is the event.
+                pushed.notify_waiters();
             })
         }
     }
@@ -914,12 +990,13 @@ async fn the_runner_reports_each_sync_outcome_to_the_hook() {
     let fail = Arc::new(AtomicBool::new(false));
     bob.add_frontend(Arc::new(Fussy(Arc::clone(&fail))));
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let pushed = Arc::new(tokio::sync::Notify::new());
     let (stop, stopped) = tokio::sync::watch::channel(false);
     let runner = Runner::start(
         &bob,
         RunnerOptions::new(Duration::from_millis(50), 1),
         &stopped,
-        RunnerHooks::new().after(Box::new(Watcher(Arc::clone(&seen)))),
+        RunnerHooks::new().after(Box::new(Watcher(Arc::clone(&seen), Arc::clone(&pushed)))),
     );
 
     // Never hold the lock across a format argument: `assert!` keeps the
@@ -929,14 +1006,18 @@ async fn the_runner_reports_each_sync_outcome_to_the_hook() {
         let seen = Arc::clone(&seen);
         move || seen.lock().unwrap().clone()
     };
+    // Woken by the hook, which notifies after each turn it records, so
+    // this returns as soon as the turn the test is waiting for has run.
+    // Registering the waiter before looking, because a turn between the
+    // look and the wait would otherwise be missed.
     let wait_for = async |wanted: fn(&Result<usize, String>) -> bool| {
-        for _ in 0..200 {
+        loop {
+            let next = pushed.notified();
             if snapshot().iter().any(wanted) {
                 return true;
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            next.await;
         }
-        false
     };
 
     // A pass that succeeds is reported as one.
@@ -971,9 +1052,9 @@ async fn the_runner_reports_each_sync_outcome_to_the_hook() {
     );
 
     stop.send_replace(true);
-    tokio::time::timeout(Duration::from_secs(10), runner.join())
-        .await
-        .expect("every loop ends on the stop signal");
+    // The loops ending is the event: a loop that ignores the stop
+    // signal hangs here and says which test it was.
+    runner.join().await;
 }
 
 /// purple-mimi §6.2 and §6.3 item 10: the store holds the state lock as
@@ -1018,24 +1099,29 @@ async fn the_store_holds_the_state_lock_until_dropped() {
 #[tokio::test]
 async fn a_hidden_direct_room_comes_back_with_its_next_message() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut alice, bob, _, lobby) = alice_and_bob(dir.path()).await;
+    let (mut alice, bob, _, lobby, changes) = alice_and_bob(dir.path()).await;
     assert!(matches!(
         bob.hide_room(&lobby).await,
         Err(mimid_agent_store::ActionError::NotDirect)
     ));
     let (direct, _) = bob.open_direct(bob.new_key(), ALICE).await.unwrap();
     let mut invite = None;
-    for _ in 0..100 {
-        alice.poll().await.unwrap();
+    let mut watch = changes.watch_server();
+    while invite.is_none() {
+        let progressed = !alice.poll().await.unwrap().is_empty();
         invite = alice.invites().first().map(|i| i.number);
         if invite.is_some() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A poll that read something may have more to read.
+        if progressed {
+            continue;
+        }
+        watch.next("bob's invite to reach alice").await;
     }
     alice.join(invite.expect("bob's invite")).unwrap();
     alice.send_text(&direct.uri, "before").await.unwrap();
-    until_store(&bob, |s| key_of(s, "before").is_some()).await;
+    until_store(&bob, &changes, |s| key_of(s, "before").is_some()).await;
 
     let seq = bob.last_seq();
     let hidden = bob.hide_room(&direct.key).await.unwrap();
@@ -1043,8 +1129,15 @@ async fn a_hidden_direct_room_comes_back_with_its_next_message() {
     assert!(!bob.state().rooms.contains_key(&direct.key));
     assert!(key_of(&bob, "before").is_none(), "its messages go");
     assert_eq!(bob.direct_room(ALICE), None);
-    for _ in 0..3 {
+    // Drain: sync until one makes no difference, so "no sync brings it
+    // back" is about every sync there is rather than the first three.
+    let mut feed = bob.subscribe();
+    loop {
+        while feed.try_recv().is_ok() {}
         bob.sync().await.unwrap();
+        if feed.try_recv().is_err() {
+            break;
+        }
     }
     assert!(
         bob.state().room_of_uri(&direct.uri).is_none(),
@@ -1066,7 +1159,7 @@ async fn a_hidden_direct_room_comes_back_with_its_next_message() {
     );
 
     alice.send_text(&direct.uri, "after").await.unwrap();
-    until_store(&bob, |s| key_of(s, "after").is_some()).await;
+    until_store(&bob, &changes, |s| key_of(s, "after").is_some()).await;
     let back = bob.state().room_of_uri(&direct.uri).cloned().unwrap();
     assert_ne!(back, direct.key, "a new record");
     assert!(bob.state().rooms[&back].direct);

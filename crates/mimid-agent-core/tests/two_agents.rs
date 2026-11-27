@@ -21,7 +21,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use mimid_agent_core::{Agent, AgentConfig, AgentError, Event, HostOptions, RoomStatus};
 use mimid_server::config::{BaseUrl, Domain};
@@ -48,6 +47,41 @@ struct Server {
     updates: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
     /// The hub, to read what it holds.
     hub: Arc<Hub>,
+    /// Wakes once per thing the server stored that an agent could then
+    /// fetch; what [`poll_until`] waits on.
+    changed: tokio::sync::broadcast::Sender<()>,
+}
+
+/// Merges the follower's announcements into one wake-up: an event
+/// stored in any room, a membership added or ended, a local user's
+/// Consent. One task each, ending when the follower drops its sender.
+fn merge_announcements(follower: &Follower) -> tokio::sync::broadcast::Sender<()> {
+    use tokio::sync::broadcast;
+    let (sender, _) = broadcast::channel(1024);
+    {
+        let mut source = follower.subscribe_consent();
+        let sender = sender.clone();
+        tokio::spawn(async move {
+            while let Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) = source.recv().await {
+                let _ = sender.send(());
+            }
+        });
+    }
+    let mut events = follower.subscribe();
+    let events_sender = sender.clone();
+    tokio::spawn(async move {
+        while let Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) = events.recv().await {
+            let _ = events_sender.send(());
+        }
+    });
+    let mut membership = follower.subscribe_membership();
+    let membership_sender = sender.clone();
+    tokio::spawn(async move {
+        while let Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) = membership.recv().await {
+            let _ = membership_sender.send(());
+        }
+    });
+    sender
 }
 
 /// Records the UpdateRequest of each Room/update call into `updates`
@@ -140,6 +174,7 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
     )
     .unwrap();
     let updates = Arc::default();
+    let changed = merge_announcements(&follower);
     let app = router(directory(&base), Arc::clone(&hub), follower)
         .merge(jmap)
         .layer(axum::middleware::from_fn_with_state(
@@ -152,6 +187,7 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         tokens,
         updates,
         hub,
+        changed,
     }
 }
 
@@ -169,11 +205,32 @@ async fn agent(server: &Server, user: &'static str, dir: &Path) -> Agent {
     .unwrap()
 }
 
-/// Polls `agent` until `found` picks an event, for up to ten seconds
-/// (fanout to local users is asynchronous). Problems fail the test.
-async fn poll_until<T>(agent: &mut Agent, mut found: impl FnMut(&Event) -> Option<T>) -> T {
-    for _ in 0..100 {
-        for event in agent.poll().await.unwrap() {
+/// Polls `agent` until `found` picks an event, woken between polls by
+/// `server`. Problems fail the test.
+///
+/// A poll is a request, so something has to say when to make one. The
+/// server's merged announcements are that something: they fire when it
+/// has stored anything an agent could fetch. Fanout to local users is
+/// asynchronous, so the first poll often finds nothing and the wake-up
+/// is what carries the test.
+///
+/// The receiver is taken before the first poll, so a change made while
+/// a poll is in flight waits in the channel instead of being missed. A
+/// poll that read anything is followed by another at once, because one
+/// change at the server can take an agent several polls.
+/// There is no deadline: an event that never comes hangs the test and
+/// prints whose poll it is (beads mimid-gn1w, mimid-zr08).
+async fn poll_until<T>(
+    agent: &mut Agent,
+    server: &Server,
+    mut found: impl FnMut(&Event) -> Option<T>,
+) -> T {
+    let mut changed = server.changed.subscribe();
+    let mut waits = 0u64;
+    loop {
+        let events = agent.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             if let Event::Problem { room, description } = &event {
                 panic!("{}: problem in {room:?}: {description}", agent.user());
             }
@@ -181,9 +238,27 @@ async fn poll_until<T>(agent: &mut Agent, mut found: impl FnMut(&Event) -> Optio
                 return value;
             }
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A poll that read something may have more to read: one change
+        // at the server can take an agent several polls (a Commit, then
+        // the message after it), and waiting for a change that has
+        // already happened would hang.
+        if progressed {
+            continue;
+        }
+        if waits.is_multiple_of(32) {
+            eprintln!(
+                "{}: waiting for an event; the server has changed {waits} times",
+                agent.user()
+            );
+        }
+        waits += 1;
+        match changed.recv().await {
+            Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                panic!("{}: the server stopped before the event", agent.user())
+            }
+        }
     }
-    panic!("{}: the expected event never came", agent.user());
 }
 
 fn assert_agreement(room: &str, a: &Agent, b: &Agent) {
@@ -233,7 +308,7 @@ async fn two_agents_chat_through_their_server() {
     alice.invite(&room, BOB).await.unwrap();
     assert_eq!(alice.participants(&room).unwrap(), [ALICE, BOB]);
 
-    let number = poll_until(&mut bob, |e| match e {
+    let number = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -275,7 +350,7 @@ async fn two_agents_chat_through_their_server() {
     assert_agreement(&room, &alice, &bob);
 
     let sent = alice.send_text(&room, "hello bob").await.unwrap();
-    let got = poll_until(&mut bob, |e| match e {
+    let got = poll_until(&mut bob, &server, |e| match e {
         Event::Message(m) => Some(m.clone()),
         _ => None,
     })
@@ -306,7 +381,7 @@ async fn two_agents_chat_through_their_server() {
     );
 
     let sent = bob.send_text(&room, "hi alice").await.unwrap().message_id;
-    let got = poll_until(&mut alice, |e| match e {
+    let got = poll_until(&mut alice, &server, |e| match e {
         Event::Message(m) => Some(m.clone()),
         _ => None,
     })
@@ -341,7 +416,7 @@ async fn two_agents_chat_through_their_server() {
         .await
         .unwrap()
         .message_id;
-    let got = poll_until(&mut bob, |e| match e {
+    let got = poll_until(&mut bob, &server, |e| match e {
         Event::Message(m) => Some(m.clone()),
         _ => None,
     })
@@ -359,21 +434,26 @@ async fn two_agents_chat_through_their_server() {
         .await
         .unwrap()
         .message_id;
-    let mut delivered = false;
-    for _ in 0..100 {
+    let mut changed = server.changed.subscribe();
+    loop {
         let (events, receipt) = bob.receive().await.unwrap();
         if events
             .iter()
             .any(|e| matches!(e, Event::Message(m) if m.message_id == sent))
         {
             drop(receipt);
-            delivered = true;
             break;
         }
+        let progressed = !events.is_empty();
         bob.acknowledge(receipt).unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A receive that read something may have more to read; one that
+        // found nothing waits for the server.
+        if progressed {
+            continue;
+        }
+        eprintln!("waiting for the message bob must not lose");
+        let _ = changed.recv().await;
     }
-    assert!(delivered, "bob never received the message");
     drop(bob);
     let mut bob = agent(&server, BOB, dir.path()).await;
     let (events, receipt) = bob.receive().await.unwrap();
@@ -403,13 +483,13 @@ async fn two_agents_chat_through_their_server() {
         RoomStatus::Leaving,
         "leaving until a member commits"
     );
-    let after = poll_until(&mut bob, |e| match e {
+    let after = poll_until(&mut bob, &server, |e| match e {
         Event::MembersChanged { participants, .. } => Some(participants.clone()),
         _ => None,
     })
     .await;
     assert_eq!(after, [BOB]);
-    poll_until(&mut alice, |e| match e {
+    poll_until(&mut alice, &server, |e| match e {
         Event::Left { room: left } if *left == room => Some(()),
         _ => None,
     })
@@ -479,7 +559,7 @@ async fn a_welcome_without_room_metadata_joins_by_the_chats_room_id() {
     assert_eq!(alice.room_name(&room).unwrap(), None);
     alice.invite(&room, BOB).await.unwrap();
 
-    let number = poll_until(&mut bob, |e| match e {
+    let number = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -493,7 +573,7 @@ async fn a_welcome_without_room_metadata_joins_by_the_chats_room_id() {
     assert_eq!(bob.participants(&room).unwrap(), [ALICE, BOB]);
 
     alice.send_text(&room, "no metadata").await.unwrap();
-    let got = poll_until(&mut bob, |e| match e {
+    let got = poll_until(&mut bob, &server, |e| match e {
         Event::Message(m) => Some(m.clone()),
         _ => None,
     })
@@ -606,7 +686,7 @@ async fn full_tree_hubs_get_the_next_epochs_tree_with_each_commit() {
     let room = alice.host_room(&HostOptions::named("trees")).await.unwrap();
     bob.allow(ALICE).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    let number = poll_until(&mut bob, |e| match e {
+    let number = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -625,7 +705,7 @@ async fn full_tree_hubs_get_the_next_epochs_tree_with_each_commit() {
     );
 
     alice.leave(&room).await.unwrap();
-    poll_until(&mut bob, |e| match e {
+    poll_until(&mut bob, &server, |e| match e {
         Event::MembersChanged { participants, .. } => Some(participants.clone()),
         _ => None,
     })

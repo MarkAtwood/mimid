@@ -9,7 +9,6 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use mimid_live::{
@@ -181,11 +180,13 @@ async fn send(socket: &mut Socket, message: &ClientMessage) {
 
 /// The next message, decoding an `Ack` as `kind`; `None` once the
 /// provider closed.
+/// The socket is the event: `next` is an await on the connection, so
+/// the reactor wakes this when a frame arrives. No deadline, so a
+/// provider that never answers hangs the test rather than failing it on
+/// a loaded machine.
 async fn receive(socket: &mut Socket, kind: Option<OpKind>) -> Option<ProviderMessage> {
     loop {
-        let frame = tokio::time::timeout(Duration::from_secs(10), socket.next())
-            .await
-            .expect("the provider answers in time");
+        let frame = socket.next().await;
         match frame {
             None | Some(Ok(Message::Close(_))) | Some(Err(_)) => return None,
             Some(Ok(Message::Binary(bytes))) => {

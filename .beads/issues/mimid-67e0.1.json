@@ -1,0 +1,22 @@
+{
+  "id": "mimid-67e0.1",
+  "title": "The did:webvh log watch stats its files once per sync turn; use inotify",
+  "description": "`[did_webvh].log_file` and `witness_file` are watched by comparing their\nlength and modification time once per turn of the sync loop\n(`crates/mimid-agent/src/didwebvh.rs`, `LogWatch::check`, run as\n`BeforeSync`). The module's own Limitations say so: \"The watch polls on\nthe sync interval\".\n\nMark 2026-11-27: \"i dont like poll loops\"; \"we spent 50 years putting\nevents in *nix. use it\".\n\n## What it costs now\n\n- A controller that writes the log waits up to one sync interval for the\n  agent to notice, for no reason: the kernel knew at the write.\n- Every turn of the sync loop stats two files whether or not anything\n  changed.\n- A write in place can be read half-written, which is refused and taken\n  at the next change (already documented).\n\n## What to do\n\nWatch the files with inotify (`IN_CLOSE_WRITE`, `IN_MOVED_TO`) and wake\nthe sync loop on an event, keeping the stat-and-digest comparison as the\ncheck that the contents really changed. The `notify` crate wraps this\nper platform; mimid supports Linux, so raw `inotify` is also an option\nand is one fewer dependency.\n\nKeep the turn-by-turn look as a fallback, not as the mechanism: a watch\ncan be lost (the file replaced, the directory moved, the queue\noverflowed with `IN_Q_OVERFLOW`), and a watch that silently stopped\nworking is worse than a slow one. On overflow or error, re-add the watch\nand compare at once.\n\n## Where it is written down\n\nThe Limitations list in `crates/mimid-agent/src/didwebvh.rs` says the\nwatch polls. That line is the claim this bead changes, so it changes in\nthe same commit.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T15:48:44.413363558Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T15:48:44.413363558Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-67e0.1",
+      "depends_on_id": "mimid-67e0",
+      "type": "parent-child",
+      "created_at": "2026-11-27T15:48:44.467277926Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

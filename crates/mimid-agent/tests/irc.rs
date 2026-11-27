@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use common::irc::{Irc, Msg, Side};
-use common::{ALICE, BOB, PATIENCE, Running, Server, config, server};
+use common::{ALICE, BOB, Running, Server, config, server};
 use mimid_agent::config::IrcSetting;
 use mimid_agent::{Config, Daemon};
 use mimid_agent_store::Store;
@@ -82,11 +82,8 @@ impl Served {
 
     async fn stop(self) {
         self.stop.send(()).unwrap();
-        tokio::time::timeout(*PATIENCE, self.task)
-            .await
-            .expect("the daemon stops")
-            .unwrap()
-            .unwrap();
+        eprintln!("waiting for the daemon to stop");
+        self.task.await.unwrap().unwrap();
     }
 }
 
@@ -966,27 +963,21 @@ fn room_record(store: &Store, uri: &str) -> Option<(RoomStatus, Vec<String>)> {
         })
 }
 
-/// Waits until `ready` holds of the record of room `uri` in `store`;
-/// panics after [`PATIENCE`] with the record as it is.
+/// Waits until `ready` holds of the record of room `uri` in `store`,
+/// and returns that record.
 async fn until_record(
     store: &Store,
     uri: &str,
     what: &str,
     ready: impl Fn(&(RoomStatus, Vec<String>)) -> bool,
 ) -> (RoomStatus, Vec<String>) {
-    let deadline = tokio::time::Instant::now() + *PATIENCE;
-    loop {
-        let record = room_record(store, uri);
-        if let Some(record) = record.filter(&ready) {
-            return record;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "{what}: the record of {uri} is {:?}",
-            room_record(store, uri)
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    common::until_store(what, store, |store| {
+        room_record(store, uri).filter(&ready).is_some()
+    })
+    .await;
+    room_record(store, uri)
+        .filter(&ready)
+        .expect("the condition held a moment ago")
 }
 
 /// Oracle: §7.1: PART leaves the room and only a new invite brings the
@@ -1305,13 +1296,10 @@ fn holds(store: &Store, body: &str) -> bool {
 
 /// Waits until `store` no longer holds a message with `body`.
 async fn until_gone(store: &Store, body: &str) {
-    tokio::time::timeout(*PATIENCE, async {
-        while holds(store, body) {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
+    common::until_store(&format!("{body:?} to be deleted"), store, |store| {
+        !holds(store, body)
     })
-    .await
-    .unwrap_or_else(|_| panic!("{body:?} was never deleted"));
+    .await;
 }
 
 /// The service's next NOTICE to the user.

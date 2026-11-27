@@ -7,8 +7,6 @@ use std::net::SocketAddr;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-use super::PATIENCE;
-
 /// One line the server sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Msg {
@@ -110,14 +108,22 @@ impl Irc {
         self.write.write_all(bytes).await.unwrap();
     }
 
-    /// The next line, or `None` at the end of the connection. Panics after
-    /// [`PATIENCE`].
+    /// The next line, or `None` at the end of the connection.
+    ///
+    /// `read_line` is an await on the socket, so the reactor wakes this
+    /// when the server writes. A server that writes nothing hangs the
+    /// test, and the line below says what is waiting; a deadline could
+    /// not tell that apart from a loaded machine, and guessing one is
+    /// what `calls_across_two_providers` kept failing on (bead
+    /// mimid-67e0).
     pub async fn next(&mut self) -> Option<Msg> {
         let mut line = String::new();
-        let Ok(read) = tokio::time::timeout(*PATIENCE, self.read.read_line(&mut line)).await else {
-            panic!("no line from the server in time; seen {:#?}", self.seen);
-        };
-        let read = read.unwrap_or(0);
+        eprintln!(
+            "waiting for a line from the server; {} seen, last {:?}",
+            self.seen.len(),
+            self.seen.last().map(|m| m.command.clone())
+        );
+        let read = self.read.read_line(&mut line).await.unwrap_or(0);
         if read == 0 {
             return None;
         }

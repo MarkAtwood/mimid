@@ -48,10 +48,11 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -111,6 +112,8 @@ struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
     hub: Arc<Hub>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as `main.rs` wires it, with the hub enforcing the
@@ -168,12 +171,14 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), Arc::clone(&hub), follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
         hub,
+        changes,
     }
 }
 
@@ -199,11 +204,26 @@ fn time(s: u32) -> String {
     format!("2026-11-20T12:00:{s:02}Z")
 }
 
-/// Polls `agent` until `found` picks an event, for up to ten seconds.
-/// Problems fail the test.
-async fn poll_until<T>(agent: &mut Agent, mut found: impl FnMut(&Event) -> Option<T>) -> T {
-    for _ in 0..100 {
-        for event in agent.poll().await.unwrap() {
+/// Polls `agent` until `found` picks an event, woken between polls by
+/// the server. Problems fail the test.
+///
+/// A poll that read anything is followed by another at once: one change
+/// at the server can take an agent several polls, and waiting for a
+/// second change that will not come would hang. A poll that found
+/// nothing waits for the server, with no deadline, so a loaded machine
+/// makes this slower rather than failing (beads mimid-gn1w,
+/// mimid-zr08).
+async fn poll_until<T>(
+    agent: &mut Agent,
+    server: &Server,
+    mut found: impl FnMut(&Event) -> Option<T>,
+) -> T {
+    let mut watch = server.changes.watch_server();
+    let what = format!("{}: the expected event", agent.user());
+    loop {
+        let events = agent.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             if let Event::Problem { room, description } = &event {
                 panic!("{}: problem in {room:?}: {description}", agent.user());
             }
@@ -211,25 +231,33 @@ async fn poll_until<T>(agent: &mut Agent, mut found: impl FnMut(&Event) -> Optio
                 return value;
             }
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        if progressed {
+            continue;
+        }
+        watch.next(&what).await;
     }
-    panic!("{}: the expected event never came", agent.user());
 }
 
-/// Polls `agent` until it is at `epoch` in `room`.
-async fn poll_to_epoch(agent: &mut Agent, room: &str, epoch: u64) {
-    for _ in 0..100 {
+/// Polls `agent` until it is at `epoch` in `room`, as [`poll_until`].
+async fn poll_to_epoch(agent: &mut Agent, server: &Server, room: &str, epoch: u64) {
+    let mut watch = server.changes.watch_server();
+    let what = format!("{}: epoch {epoch}", agent.user());
+    loop {
         if agent.epoch(room).unwrap() == epoch {
             return;
         }
-        for event in agent.poll().await.unwrap() {
+        let events = agent.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             if let Event::Problem { room, description } = &event {
                 panic!("{}: problem in {room:?}: {description}", agent.user());
             }
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        if progressed {
+            continue;
+        }
+        watch.next(&what).await;
     }
-    panic!("{}: never reached epoch {epoch}", agent.user());
 }
 
 /// bob's JMAP account over his agent, with the agent's state and its
@@ -237,6 +265,8 @@ async fn poll_to_epoch(agent: &mut Agent, room: &str, epoch: u64) {
 struct Bob {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<Id>,
+    /// The server's change signal, which wakes the waits below.
+    changes: common::Changes,
 }
 
 impl Bob {
@@ -252,7 +282,11 @@ impl Bob {
         let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();
         AgentChat::register(&chat, &mut dispatcher);
-        Self { chat, dispatcher }
+        Self {
+            chat,
+            dispatcher,
+            changes: server.changes.clone(),
+        }
     }
 
     async fn call(&self, method: &str, mut args: Value) -> Value {
@@ -292,16 +326,18 @@ impl Bob {
         assert!(report.problems.is_empty(), "{report:?}");
     }
 
-    /// Syncs until bob's agent is at `epoch` in `room`.
+    /// Syncs until bob's agent is at `epoch` in `room`, woken between
+    /// syncs by the server or by what the last sync wrote.
     async fn sync_to_epoch(&self, room: &str, epoch: u64) {
-        for _ in 0..100 {
+        let mut watch = self.changes.watch(self.chat.store());
+        let what = format!("bob at epoch {epoch}");
+        loop {
             self.sync().await;
             if self.chat.agent().lock().await.epoch(room).unwrap() == epoch {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch.again(&what).await;
         }
-        panic!("bob never reached epoch {epoch}");
     }
 }
 
@@ -686,7 +722,7 @@ async fn hosted(dir: &Path) -> Hosted {
     };
     bob.sync().await;
     for device in [&mut a1, &mut a2, &mut e1] {
-        let number = poll_until(device, |e| match e {
+        let number = poll_until(device, &server, |e| match e {
             Event::InviteArrived { number } => Some(*number),
             _ => None,
         })
@@ -739,7 +775,7 @@ async fn a_revocation_that_removes_a_client_without_app_data_update_posts_one_no
     // The mimid agents take the external Commit.
     bob.sync_to_epoch(&room, epoch + 1).await;
     assert_eq!(erin_clients(&*bob.chat.agent().lock().await, &room), 2);
-    poll_to_epoch(&mut a1, &room, epoch + 1).await;
+    poll_to_epoch(&mut a1, &server, &room, epoch + 1).await;
     assert!(
         bob.messages(&room).await.is_empty(),
         "no notice before the revocation"
@@ -773,13 +809,17 @@ async fn a_revocation_that_removes_a_client_without_app_data_update_posts_one_no
     let found = {
         let mut agent = agent(&server, BOB, dir.path(), "bob").await;
         let mut found = Vec::new();
-        for _ in 0..100 {
+        let mut watch = server.changes.watch_server();
+        while found.is_empty() {
             let (events, _receipt) = agent.receive().await.unwrap();
             found = removals(&events);
             if !found.is_empty() {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            if !events.is_empty() {
+                continue;
+            }
+            watch.next("bob's agent to read the removal").await;
         }
         assert_eq!(erin_clients(&agent, &room), 1);
         found
@@ -1157,7 +1197,7 @@ async fn a_revocation_removes_an_mls_rs_client_through_a_hub_and_posts_one_notic
             "bob and mls-rs disagree"
         );
     }
-    poll_to_epoch(&mut a1, &room, epoch + 1).await;
+    poll_to_epoch(&mut a1, &server, &room, epoch + 1).await;
     assert_eq!(
         a1.epoch_authenticator(&room).unwrap(),
         group.epoch_authenticator().unwrap().as_bytes(),
@@ -1209,13 +1249,14 @@ async fn a_revocation_removes_an_mls_rs_client_through_a_hub_and_posts_one_notic
     // RFC 9420 §2.1.2 reserves. It stays in the old epoch and never sees
     // its removal.
     let mut commits = Vec::new();
-    for _ in 0..100 {
+    let mut watch = server.changes.watch_server();
+    while commits.is_empty() {
         commits.extend(new_commits(&erin_jmap, &mut seen).await);
         commits.retain(|c| *c != commit);
         if !commits.is_empty() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.next("the revocation Commit to reach erin").await;
     }
     assert_eq!(commits.len(), 1, "the revocation Commit");
     let result = mls_rs::MlsMessage::from_bytes(&commits[0]);

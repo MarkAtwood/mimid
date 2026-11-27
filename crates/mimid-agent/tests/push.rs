@@ -3,8 +3,7 @@
 //! in-process mimid server, driven over HTTP by JMAP Chat clients.
 //!
 //! - With the poll interval an hour, a room's Welcome and each message
-//!   still reach the other daemon within [`common::PATIENCE`]: only the
-//!   push can have woken it.
+//!   still reach the other daemon: only the push can have woken it.
 //! - A stream the server ends is opened again, and messages flow through
 //!   the new one; a message sent while the stream is refused arrives
 //!   once it opens again (the sync at each opening), and not before.
@@ -22,9 +21,7 @@
 
 mod common;
 
-use std::time::Duration;
-
-use common::{ALICE, BOB, Client, PATIENCE, Running, Server, config, server};
+use common::{ALICE, BOB, Client, Running, Server, config, server};
 use serde_json::json;
 
 /// A poll interval no test waits out.
@@ -56,16 +53,15 @@ async fn chat(a: &Client, b: &Client) -> (String, String) {
         )
         .await;
     let chat_a = created["id"].as_str().unwrap().to_owned();
-    let chat_b = tokio::time::timeout(*PATIENCE, async {
+    let chat_b = {
+        let mut events = b.events().await;
         loop {
             if let Some(chat) = b.get("Chat", None).await.first() {
-                return chat["id"].as_str().unwrap().to_owned();
+                break chat["id"].as_str().unwrap().to_owned();
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            events.until_changed("Chat").await;
         }
-    })
-    .await
-    .expect("bob's daemon joins alice's room");
+    };
     (chat_a, chat_b)
 }
 
@@ -86,16 +82,15 @@ async fn has(client: &Client, chat: &str, body: &str) -> bool {
         .any(|m| m["body"] == body)
 }
 
-/// Waits until `client` shows a Message `body` in `chat`; panics after
-/// [`PATIENCE`].
+/// Waits until `client` shows a Message `body` in `chat`.
+///
+/// Woken by the daemon's own StateChange for Message, so this asks
+/// again when something moved rather than on a timer.
 async fn arrives(client: &Client, chat: &str, body: &str) {
-    tokio::time::timeout(*PATIENCE, async {
-        while !has(client, chat, body).await {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("{body:?} does not arrive"));
+    let mut events = client.events().await;
+    while !has(client, chat, body).await {
+        events.until_changed("Message").await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -147,7 +142,14 @@ async fn a_lost_stream_is_opened_again() {
         .until("reopening refused", 2, |p| p.refused())
         .await;
     post(&a, &chat_a, "while down").await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // The barrier for a negative: the provider tries to push this to
+    // bob and is refused, so once the refusal count moves the attempt
+    // has been made and lost. Waiting a while instead would only say
+    // that nothing arrived yet.
+    server
+        .push
+        .until("the push for this message refused", 3, |p| p.refused())
+        .await;
     assert!(
         !has(&b, &chat_b, "while down").await,
         "bob's daemon synced with no push and no poll due"

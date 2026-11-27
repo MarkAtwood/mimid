@@ -24,41 +24,32 @@
 
 mod common;
 
-use std::time::Duration;
-
 use common::{ALICE, BOB_B, Client, Running, config, two_providers};
 use serde_json::{Value, json};
 
 /// The ChatContact id of `user` at `client`'s, once it is there.
-async fn contact(client: &Client, user: &str) -> Value {
-    for _ in 0..150 {
-        if let Some(c) = client
+async fn contact(client: &Client, store: &mimid_agent_store::Store, user: &str) -> Value {
+    common::until_probe(&format!("the ChatContact for {user}"), store, || async {
+        client
             .get("ChatContact", None)
             .await
             .into_iter()
             .find(|c| c["identity"] == json!(user))
-        {
-            return c["id"].clone();
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("no ChatContact for {user}");
+            .map(|c| c["id"].clone())
+    })
+    .await
 }
 
 /// The Chat bound to `room` at `client`'s, once it is there.
-async fn chat_of(client: &Client, room: &Value) -> Value {
-    for _ in 0..150 {
-        if let Some(chat) = client
+async fn chat_of(client: &Client, store: &mimid_agent_store::Store, room: &Value) -> Value {
+    common::until_probe(&format!("the Chat for {room}"), store, || async {
+        client
             .get("Chat", None)
             .await
             .into_iter()
             .find(|c| c["roomId"] == *room)
-        {
-            return chat;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("no Chat for {room}");
+    })
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -86,9 +77,9 @@ async fn a_direct_room_across_two_providers() {
 
     // bob's daemon joins from the Welcome of alice's first Commit, and
     // shows the room as a direct Chat with alice.
-    let seen = chat_of(&bc, &room).await;
+    let seen = chat_of(&bc, &bob.store, &room).await;
     assert_eq!(seen["kind"], json!("direct"));
-    let alice_contact = contact(&bc, ALICE).await;
+    let alice_contact = contact(&bc, &bob.store, ALICE).await;
     assert_eq!(seen["contactId"], alice_contact);
 
     // §5, one room per pair: both are told it exists already.
@@ -111,11 +102,12 @@ async fn a_direct_room_across_two_providers() {
     }
 
     // A message each way.
-    for (from, to, chat, text) in [
-        (&ac, &bc, &id, "hi bob"),
+    for (from, to, to_store, chat, text) in [
+        (&ac, &bc, &bob.store, &id, "hi bob"),
         (
             &bc,
             &ac,
+            &alice.store,
             &seen["id"].as_str().unwrap().to_owned(),
             "hi alice",
         ),
@@ -125,22 +117,15 @@ async fn a_direct_room_across_two_providers() {
             json!({"chatId": chat, "body": text, "sentAt": "2026-11-21T00:00:00Z"}),
         )
         .await;
-        let room_chat = chat_of(to, &room).await;
+        let room_chat = chat_of(to, to_store, &room).await;
         let chat_id = room_chat["id"].as_str().unwrap().to_owned();
-        let mut got = false;
-        for _ in 0..150 {
-            if to
-                .messages(&chat_id)
+        common::until_probe(&format!("the message {text:?}"), to_store, || async {
+            to.messages(&chat_id)
                 .await
-                .iter()
-                .any(|m| m["body"] == json!(text))
-            {
-                got = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        assert!(got, "{text} never arrived");
+                .into_iter()
+                .find(|m| m["body"] == json!(text))
+        })
+        .await;
     }
 
     // §5: neither can leave. Destroying the direct Chat hides it at
@@ -154,7 +139,7 @@ async fn a_direct_room_across_two_providers() {
         json!({"chatId": seen["id"], "body": "still here", "sentAt": "2026-11-21T00:01:00Z"}),
     )
     .await;
-    let back = chat_of(&ac, &room).await;
+    let back = chat_of(&ac, &alice.store, &room).await;
     assert_ne!(back["id"], json!(id), "a new Chat");
     assert_eq!(back["kind"], json!("direct"));
     let bodies: Vec<Value> = ac

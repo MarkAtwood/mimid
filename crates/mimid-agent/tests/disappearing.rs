@@ -17,7 +17,8 @@ mod common;
 
 use std::time::Duration;
 
-use common::{ALICE, BOB, BOB_B, Client, PATIENCE, Running, config, server, two_providers};
+use common::{ALICE, BOB, BOB_B, Client, Running, config, server, two_providers};
+use mimid_agent_store::Store;
 use mimid_agent_store::convert::utc_date;
 use mimid_agent_store::sync::now_ms;
 use serde_json::{Value, json};
@@ -28,7 +29,7 @@ const SENT_AT: &str = "2026-11-21T12:00:00Z";
 /// alice's Chat with bob: alice's client makes a contact for `bob_user`
 /// and a group Chat with him; bob's daemon joins it. The Chat ids at
 /// alice's and at bob's.
-async fn chat(a: &Client, b: &Client, bob_user: &str) -> (String, String) {
+async fn chat(a: &Client, b: &Client, bob_store: &Store, bob_user: &str) -> (String, String) {
     let contact = a.create("ChatContact", json!({"identity": bob_user})).await["id"]
         .as_str()
         .unwrap()
@@ -40,35 +41,16 @@ async fn chat(a: &Client, b: &Client, bob_user: &str) -> (String, String) {
         )
         .await;
     let chat_a = created["id"].as_str().unwrap().to_owned();
-    let chat_b = until("bob's Chat", || async {
+    let chat_b = common::until_probe("bob's Chat", bob_store, || async {
         b.get("Chat", None).await.first().map(|c| c["id"].clone())
     })
     .await;
     (chat_a, chat_b.as_str().unwrap().to_owned())
 }
 
-/// Polls `probe` every 100 ms until it gives something, for up to
-/// [`PATIENCE`].
-async fn until<T, F, Fut>(what: &str, probe: F) -> T
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Option<T>>,
-{
-    tokio::time::timeout(*PATIENCE, async {
-        loop {
-            if let Some(found) = probe().await {
-                return found;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("never: {what}"))
-}
-
 /// The Message with `body` in `chat`, once there.
-async fn message(client: &Client, chat: &str, body: &str) -> Value {
-    until(body, || async {
+async fn message(client: &Client, store: &Store, chat: &str, body: &str) -> Value {
+    common::until_probe(body, store, || async {
         client
             .messages(chat)
             .await
@@ -79,8 +61,8 @@ async fn message(client: &Client, chat: &str, body: &str) -> Value {
 }
 
 /// Waits until Message `id` is gone: `notFound` in `Message/get`.
-async fn gone(client: &Client, id: &str) {
-    until(&format!("{id} gone"), || async {
+async fn gone(client: &Client, store: &Store, id: &str) {
+    common::until_probe(&format!("{id} gone"), store, || async {
         let answer = client.call("Message/get", json!({"ids": [id]})).await;
         answer["notFound"]
             .as_array()
@@ -134,7 +116,7 @@ async fn senders_time_read_rules_and_policy_over_jmap() {
     let alice = Running::start(&config(&server, ALICE, dir.path(), "any")).await;
     let bob = Running::start(&config(&server, BOB, dir.path(), "any")).await;
     let (a, b) = (alice.client().await, bob.client().await);
-    let (chat_a, chat_b) = chat(&a, &b, BOB).await;
+    let (chat_a, chat_b) = chat(&a, &b, &bob.store, BOB).await;
 
     // A time in the past is refused, as the draft says.
     let refused = a
@@ -172,9 +154,9 @@ async fn senders_time_read_rules_and_policy_over_jmap() {
     let burn_a = post(&a, &chat_a, "burn", json!({"burnOnRead": true})).await;
     let after_a = post(&a, &chat_a, "after", json!({"expiresAfterReadSeconds": 1})).await;
 
-    let timed_b = message(&b, &chat_b, "timed").await;
-    let burn_b = message(&b, &chat_b, "burn").await;
-    let after_b = message(&b, &chat_b, "after").await;
+    let timed_b = message(&b, &bob.store, &chat_b, "timed").await;
+    let burn_b = message(&b, &bob.store, &chat_b, "burn").await;
+    let after_b = message(&b, &bob.store, &chat_b, "after").await;
     assert_eq!(timed_b["senderExpiresAt"], json!(timed_at), "{timed_b}");
     assert_eq!(burn_b["burnOnRead"], json!(true), "{burn_b}");
     assert_eq!(after_b["expiresAfterReadSeconds"], json!(1), "{after_b}");
@@ -200,12 +182,12 @@ async fn senders_time_read_rules_and_policy_over_jmap() {
         json!({"update": {id(&after_b): {"readAt": utc_date(now_ms())}}}),
     )
     .await;
-    gone(&b, &id(&after_b)).await;
+    gone(&b, &bob.store, &id(&after_b)).await;
     assert!(there(&a, &id(&burn_a)).await && there(&a, &id(&after_a)).await);
 
     // The sender's time: both copies go.
-    gone(&b, &id(&timed_b)).await;
-    gone(&a, &id(&timed_a)).await;
+    gone(&b, &bob.store, &id(&timed_b)).await;
+    gone(&a, &alice.store, &id(&timed_a)).await;
     assert!(
         now_ms() >= mimid_agent_store::convert::parse_utc_date(&timed_at).unwrap(),
         "not before its time"
@@ -232,8 +214,8 @@ async fn senders_time_read_rules_and_policy_over_jmap() {
         Some(1)
     );
     post(&a, &chat_a, "policy", json!({})).await;
-    let policy_b = message(&b, &chat_b, "policy").await;
-    gone(&b, &id(&policy_b)).await;
+    let policy_b = message(&b, &bob.store, &chat_b, "policy").await;
+    gone(&b, &bob.store, &id(&policy_b)).await;
     let chats = b.get("Chat", Some(vec![&chat_b])).await;
     assert_eq!(chats[0]["messageExpirySeconds"], json!(1));
     let messages_a = a.messages(&chat_a).await;
@@ -258,21 +240,22 @@ async fn a_deletion_due_while_stopped_happens_at_start() {
     let bob_config = config(&server, BOB, dir.path(), "any");
     let bob = Running::start(&bob_config).await;
     let (a, b) = (alice.client().await, bob.client().await);
-    let (chat_a, chat_b) = chat(&a, &b, BOB).await;
+    let (chat_a, chat_b) = chat(&a, &b, &bob.store, BOB).await;
     let at = from_now(4_000);
     post(&a, &chat_a, "while away", json!({"senderExpiresAt": at})).await;
     post(&a, &chat_a, "kept", json!({})).await;
-    let away = message(&b, &chat_b, "while away").await;
-    message(&b, &chat_b, "kept").await;
+    let away = message(&b, &bob.store, &chat_b, "while away").await;
+    message(&b, &bob.store, &chat_b, "kept").await;
     bob.stop().await;
+    // Here the clock is the event: the message is due at `at`, and
+    // bob's daemon is stopped, so nothing will be published until it
+    // starts again. One sleep to the deadline, not a loop around it.
     let deadline = mimid_agent_store::convert::parse_utc_date(&at).unwrap();
-    while now_ms() <= deadline {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    tokio::time::sleep(Duration::from_millis(deadline.saturating_sub(now_ms()) + 1)).await;
 
     let bob = Running::start(&bob_config).await;
     let b = bob.client().await;
-    gone(&b, away["id"].as_str().unwrap()).await;
+    gone(&b, &bob.store, away["id"].as_str().unwrap()).await;
     let left: Vec<Value> = b.messages(&chat_b).await;
     assert_eq!(left.len(), 1, "{left:#?}");
     assert_eq!(left[0]["body"], json!("kept"));
@@ -288,12 +271,12 @@ async fn across_two_providers() {
     let alice = Running::start(&config(&a_server, ALICE, dir.path(), "any")).await;
     let bob = Running::start(&config(&b_server, BOB_B, dir.path(), "any")).await;
     let (a, b) = (alice.client().await, bob.client().await);
-    let (chat_a, chat_b) = chat(&a, &b, BOB_B).await;
+    let (chat_a, chat_b) = chat(&a, &b, &bob.store, BOB_B).await;
     let at = from_now(5_000);
     let timed_a = post(&a, &chat_a, "timed", json!({"senderExpiresAt": at})).await;
     let burn_a = post(&a, &chat_a, "burn", json!({"burnOnRead": true})).await;
-    let timed_b = message(&b, &chat_b, "timed").await;
-    let burn_b = message(&b, &chat_b, "burn").await;
+    let timed_b = message(&b, &bob.store, &chat_b, "timed").await;
+    let burn_b = message(&b, &bob.store, &chat_b, "burn").await;
     assert_eq!(timed_b["senderExpiresAt"], json!(at));
     assert_eq!(burn_b["burnOnRead"], json!(true));
     b.call(
@@ -303,8 +286,8 @@ async fn across_two_providers() {
     .await;
     assert!(!there(&b, burn_b["id"].as_str().unwrap()).await);
     assert!(there(&a, burn_a["id"].as_str().unwrap()).await);
-    gone(&b, timed_b["id"].as_str().unwrap()).await;
-    gone(&a, timed_a["id"].as_str().unwrap()).await;
+    gone(&b, &bob.store, timed_b["id"].as_str().unwrap()).await;
+    gone(&a, &alice.store, timed_a["id"].as_str().unwrap()).await;
     alice.stop().await;
     bob.stop().await;
 }

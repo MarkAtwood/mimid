@@ -29,13 +29,14 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use mimid_agent_core::{Agent, AgentConfig, FailPoint, HostOptions};
 use mimid_agent_store::{Change, FileError, Frontend, InvitePolicy, Store, SyncError};
@@ -57,6 +58,8 @@ const BOB: &str = "mimi://a.example/u/bob";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as mimid-server's `main.rs` wires it, on
@@ -115,11 +118,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -209,26 +214,30 @@ fn committed(store: &Store, text: &str) -> (i64, i64) {
 
 /// Syncs until `text` is stored, for up to ten seconds (fanout to local
 /// users is asynchronous); every sync must succeed.
-async fn sync_until_stored(store: &Store, text: &str) {
-    for _ in 0..100 {
+async fn sync_until_stored(store: &Store, server: &Server, text: &str) {
+    let mut watch = server.changes.watch(store);
+    let what = format!("the message {text:?} stored");
+    loop {
         store.sync().await.unwrap();
         if stored(store, text) > 0 {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again(&what).await;
     }
-    panic!("{text:?} was never stored");
 }
 
-/// Syncs until one fails, for up to ten seconds, and returns its error.
-async fn sync_until_failed(store: &Store) -> SyncError {
-    for _ in 0..100 {
+/// Syncs until one fails, and returns its error.
+///
+/// Woken between syncs by `server` or by what the last sync wrote
+/// ([`common::Watch::again`]).
+async fn sync_until_failed(store: &Store, server: &Server) -> SyncError {
+    let mut watch = server.changes.watch(store);
+    loop {
         if let Err(error) = store.sync().await {
             return error;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("a sync that fails").await;
     }
-    panic!("no sync failed");
 }
 
 #[tokio::test]
@@ -243,16 +252,16 @@ async fn a_crash_between_decrypting_and_storing_loses_and_repeats_nothing() {
     let (mut bob, mut saves) = open_bob(&server, dir.path()).await;
     let room = alice.host_room(&HostOptions::named("crash")).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    for _ in 0..100 {
+    let mut watch = server.changes.watch(&bob);
+    while bob.state().room_of_uri(&room).is_none() {
         bob.sync().await.unwrap();
         if bob.state().room_of_uri(&room).is_some() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("bob to join the room").await;
     }
-    assert!(bob.state().room_of_uri(&room).is_some(), "bob never joined");
     alice.send_text(&room, "msg-W").await.unwrap();
-    sync_until_stored(&bob, "msg-W").await;
+    sync_until_stored(&bob, &server, "msg-W").await;
 
     // 1. Inside the agent's transaction, after decrypting: nothing of it
     // commits, and the message is decrypted again, after a restart and
@@ -260,7 +269,7 @@ async fn a_crash_between_decrypting_and_storing_loses_and_repeats_nothing() {
     for (text, restart) in [("msg-A1", true), ("msg-A2", false)] {
         bob.agent().lock().await.fail_next(FailPoint::BeforeJournal);
         alice.send_text(&room, text).await.unwrap();
-        let error = sync_until_failed(&bob).await;
+        let error = sync_until_failed(&bob, &server).await;
         assert!(matches!(error, SyncError::Agent(_)), "{error:?}");
         assert_eq!(stored(&bob, text), 0);
         assert_eq!(committed(&bob, text), (0, 0), "{text}: nothing committed");
@@ -268,7 +277,7 @@ async fn a_crash_between_decrypting_and_storing_loses_and_repeats_nothing() {
             drop(bob);
             (bob, saves) = open_bob(&server, dir.path()).await;
         }
-        sync_until_stored(&bob, text).await;
+        sync_until_stored(&bob, &server, text).await;
         assert_eq!(stored(&bob, text), 1, "{text}");
     }
 
@@ -277,7 +286,7 @@ async fn a_crash_between_decrypting_and_storing_loses_and_repeats_nothing() {
     for (text, restart) in [("msg-B1", true), ("msg-B2", false)] {
         saves.0.store(true, Ordering::SeqCst);
         alice.send_text(&room, text).await.unwrap();
-        let error = sync_until_failed(&bob).await;
+        let error = sync_until_failed(&bob, &server).await;
         assert!(
             matches!(error, SyncError::Save(FileError::Frontend(_))),
             "{error:?}"
@@ -290,7 +299,7 @@ async fn a_crash_between_decrypting_and_storing_loses_and_repeats_nothing() {
             drop(bob);
             (bob, saves) = open_bob(&server, dir.path()).await;
         }
-        sync_until_stored(&bob, text).await;
+        sync_until_stored(&bob, &server, text).await;
         assert_eq!(stored(&bob, text), 1, "{text}");
     }
 
@@ -301,7 +310,7 @@ async fn a_crash_between_decrypting_and_storing_loses_and_repeats_nothing() {
     for (text, restart) in [("msg-C1", true), ("msg-C2", false)] {
         bob.agent().lock().await.fail_next(FailPoint::Acknowledge);
         alice.send_text(&room, text).await.unwrap();
-        let error = sync_until_failed(&bob).await;
+        let error = sync_until_failed(&bob, &server).await;
         assert!(
             matches!(error, SyncError::Save(FileError::Acknowledge(_))),
             "{error:?}"
@@ -313,7 +322,7 @@ async fn a_crash_between_decrypting_and_storing_loses_and_repeats_nothing() {
             drop(bob);
             bob = open_bob(&server, dir.path()).await.0;
             assert_eq!(stored(&bob, text), 0, "{text}");
-            sync_until_stored(&bob, text).await;
+            sync_until_stored(&bob, &server, text).await;
         } else {
             assert_eq!(stored(&bob, text), 1, "{text}: in memory");
             bob.sync().await.unwrap();

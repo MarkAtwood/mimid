@@ -32,7 +32,7 @@
 mod common;
 
 use common::{
-    ALICE, BOB, assert_agreement, catch_up, device, device_with, leaves, poll_until,
+    ALICE, BOB, Server, assert_agreement, catch_up, device, device_with, leaves, poll_until,
     roles_without_add_own_client, sends, server,
 };
 use mimid_agent_core::mls_didwebvh::PublicKey;
@@ -40,8 +40,8 @@ use mimid_agent_core::mls_didwebvh::controller::{DidLog, Parameters, UpdateKey};
 use mimid_agent_core::{Agent, DidWebvhConfig, Event, HostOptions, RoomStatus};
 
 /// bob joins `room` from the invite alice sent him.
-async fn accept(bob: &mut Agent, room: &str) {
-    let number = poll_until(bob, |e| match e {
+async fn accept(bob: &mut Agent, server: &Server, room: &str) {
+    let number = poll_until(bob, server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -60,9 +60,10 @@ async fn a_new_device_joins_its_users_room_and_talks() {
 
     let room = a1.host_room(&HostOptions::named("planning")).await.unwrap();
     a1.invite(&room, BOB).await.unwrap();
-    accept(&mut bob, &room).await;
+    accept(&mut bob, &server, &room).await;
     sends(
         &mut a1,
+        &server,
         &room,
         "before the new device",
         ALICE,
@@ -75,7 +76,7 @@ async fn a_new_device_joins_its_users_room_and_talks() {
     // records the room a1 made as accepted.
     let pending = bob.host_room(&HostOptions::named("pending")).await.unwrap();
     bob.invite(&pending, ALICE).await.unwrap();
-    let invite = poll_until(&mut a1, |e| match e {
+    let invite = poll_until(&mut a1, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -126,7 +127,7 @@ async fn a_new_device_joins_its_users_room_and_talks() {
             .all(|r| r.uri == room && r.status == RoomStatus::Active)
     );
     // a2 reports the room it joined; nothing it held is a problem.
-    poll_until(&mut a2, |e| match e {
+    poll_until(&mut a2, &server, |e| match e {
         Event::MembersChanged {
             room: r, epoch: e, ..
         } if *r == room => Some(*e),
@@ -136,7 +137,7 @@ async fn a_new_device_joins_its_users_room_and_talks() {
 
     // bob reads a2's external Commit with the joiner as its committer
     // (bead mimid-cqof).
-    let committer = poll_until(&mut bob, |e| match e {
+    let committer = poll_until(&mut bob, &server, |e| match e {
         Event::MembersChanged {
             room: r,
             epoch: e,
@@ -147,8 +148,8 @@ async fn a_new_device_joins_its_users_room_and_talks() {
     })
     .await;
     assert_eq!(committer.as_deref(), Some(ALICE));
-    catch_up(&mut bob, &a2, &room).await;
-    catch_up(&mut a1, &a2, &room).await;
+    catch_up(&mut bob, &a2, &server, &room).await;
+    catch_up(&mut a1, &a2, &server, &room).await;
     assert_agreement(&room, &a1, &bob);
     let two_alices = [
         (ALICE.to_owned(), None),
@@ -162,15 +163,25 @@ async fn a_new_device_joins_its_users_room_and_talks() {
 
     sends(
         &mut a2,
+        &server,
         &room,
         "from the new device",
         ALICE,
         &mut [&mut bob, &mut a1],
     )
     .await;
-    sends(&mut bob, &room, "hi both", BOB, &mut [&mut a1, &mut a2]).await;
+    sends(
+        &mut bob,
+        &server,
+        &room,
+        "hi both",
+        BOB,
+        &mut [&mut a1, &mut a2],
+    )
+    .await;
     sends(
         &mut a1,
+        &server,
         &room,
         "from the old device",
         ALICE,
@@ -187,7 +198,7 @@ async fn a_new_device_joins_its_users_room_and_talks() {
 
     // a1 accepts the second room; its next call records it, and a2 joins.
     assert_eq!(a1.join(invite).unwrap(), pending);
-    catch_up(&mut bob, &a1, &pending).await;
+    catch_up(&mut bob, &a1, &server, &pending).await;
     let own = a1.join_own_rooms().await.unwrap();
     assert!(own.skipped.is_empty() && own.joined.is_empty(), "{own:?}");
     let mut both = vec![room.clone(), pending.clone()];
@@ -200,10 +211,11 @@ async fn a_new_device_joins_its_users_room_and_talks() {
         "{:?}",
         outcome.failed
     );
-    catch_up(&mut bob, &a2, &pending).await;
-    catch_up(&mut a1, &a2, &pending).await;
+    catch_up(&mut bob, &a2, &server, &pending).await;
+    catch_up(&mut a1, &a2, &server, &pending).await;
     sends(
         &mut bob,
+        &server,
         &pending,
         "now both of you",
         BOB,
@@ -221,6 +233,7 @@ async fn a_new_device_joins_its_users_room_and_talks() {
     assert_agreement(&room, &a2, &bob);
     sends(
         &mut bob,
+        &server,
         &room,
         "after the restart",
         BOB,
@@ -245,18 +258,18 @@ async fn leaving_removes_every_device_of_the_user() {
     bob.publish_key_packages(1).await.unwrap();
     let room = a1.host_room(&HostOptions::named("leaving")).await.unwrap();
     a1.invite(&room, BOB).await.unwrap();
-    accept(&mut bob, &room).await;
+    accept(&mut bob, &server, &room).await;
     assert_eq!(a1.join_own_rooms().await.unwrap(), Default::default());
     let mut a2 = device(&server, ALICE, dir.path(), "a2").await;
     let joined = a2.join_own_rooms().await.unwrap();
     assert_eq!(joined.joined, std::slice::from_ref(&room), "{joined:?}");
-    catch_up(&mut bob, &a2, &room).await;
-    catch_up(&mut a1, &a2, &room).await;
+    catch_up(&mut bob, &a2, &server, &room).await;
+    catch_up(&mut a1, &a2, &server, &room).await;
     let epoch = bob.epoch(&room).unwrap();
 
     a1.leave(&room).await.unwrap();
     // bob, the only member of another user, commits the leave.
-    let (participants, committer) = poll_until(&mut bob, |e| match e {
+    let (participants, committer) = poll_until(&mut bob, &server, |e| match e {
         Event::MembersChanged {
             room: r,
             participants,
@@ -272,7 +285,7 @@ async fn leaving_removes_every_device_of_the_user() {
     assert_eq!(bob.epoch(&room).unwrap(), epoch + 1);
     assert_eq!(leaves(&bob, &room), [(BOB.to_owned(), None)]);
     for alice in [&mut a1, &mut a2] {
-        poll_until(alice, |e| match e {
+        poll_until(alice, &server, |e| match e {
             Event::Left { room: r } if *r == room => Some(()),
             _ => None,
         })
@@ -284,7 +297,7 @@ async fn leaving_removes_every_device_of_the_user() {
                 .all(|r| r.uri != room || r.status == RoomStatus::Left)
         );
     }
-    sends(&mut bob, &room, "alone now", BOB, &mut []).await;
+    sends(&mut bob, &server, &room, "alone now", BOB, &mut []).await;
 
     // a1 withdraws alice's acceptance; a third device does not join.
     a1.join_own_rooms().await.unwrap();
@@ -418,7 +431,7 @@ async fn a_device_the_log_adds_joins_a_did_webvh_room() {
 
     let room = bob.host_room(&HostOptions::named("mixed")).await.unwrap();
     bob.invite(&room, ALICE).await.unwrap();
-    accept(&mut a1, &room).await;
+    accept(&mut a1, &server, &room).await;
     assert_agreement(&room, &a1, &bob);
     // Records the accepted room.
     assert_eq!(a1.join_own_rooms().await.unwrap(), Default::default());
@@ -443,13 +456,29 @@ async fn a_device_the_log_adds_joins_a_did_webvh_room() {
         outcome.failed
     );
 
-    catch_up(&mut bob, &a3, &room).await;
-    catch_up(&mut a1, &a3, &room).await;
+    catch_up(&mut bob, &a3, &server, &room).await;
+    catch_up(&mut a1, &a3, &server, &room).await;
     let alice_leaf = (ALICE.to_owned(), Some(scid.clone()));
     assert_eq!(
         leaves(&bob, &room),
         [alice_leaf.clone(), alice_leaf, (BOB.to_owned(), None)]
     );
-    sends(&mut a3, &room, "from a3", ALICE, &mut [&mut bob, &mut a1]).await;
-    sends(&mut bob, &room, "hi a3", BOB, &mut [&mut a3, &mut a1]).await;
+    sends(
+        &mut a3,
+        &server,
+        &room,
+        "from a3",
+        ALICE,
+        &mut [&mut bob, &mut a1],
+    )
+    .await;
+    sends(
+        &mut bob,
+        &server,
+        &room,
+        "hi a3",
+        BOB,
+        &mut [&mut a3, &mut a1],
+    )
+    .await;
 }

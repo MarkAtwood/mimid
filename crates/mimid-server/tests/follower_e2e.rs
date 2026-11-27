@@ -108,7 +108,7 @@ use mls_rs::{
     CipherSuite, CipherSuiteProvider, Client, CryptoProvider, Extension, ExtensionList, MlsMessage,
 };
 use mls_rs_crypto_rustcrypto::RustCryptoProvider;
-use providers::{Fault, Inbox, Provider, WAIT};
+use providers::{Fault, Inbox, Provider};
 
 const CATHY: &[u8] = b"mimi://c.example/u/cathy";
 /// A user of b.example whose client is an mls-rs client.
@@ -817,20 +817,29 @@ async fn three_providers_end_to_end() {
         ALICE,
         &data,
     );
-    tokio::time::timeout(WAIT, async {
-        loop {
-            let heads = a.stack().store.outbox_heads().await.unwrap();
-            if heads
-                .iter()
-                .any(|head| head.domain.as_str() == "b.example" && head.attempts != 0)
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+    // The fanout worker announces each pass over the outbox, which is
+    // when a failed attempt has been counted: the waiter is registered
+    // before the look, so a pass that ends in between is waiting rather
+    // than missed.
+    let passed = a
+        .stack()
+        .hub
+        .fanout()
+        .expect("the stack gave its hub the fanout worker")
+        .passed()
+        .clone();
+    eprintln!("waiting for a's delivery to b to fail while b is down");
+    loop {
+        let next_pass = passed.notified();
+        let heads = a.stack().store.outbox_heads().await.unwrap();
+        if heads
+            .iter()
+            .any(|head| head.domain.as_str() == "b.example" && head.attempts != 0)
+        {
+            break;
         }
-    })
-    .await
-    .expect("a's delivery to b fails while b is down");
+        next_pass.await;
+    }
     b.boot(&b_peers).await;
     assert_decrypts(
         &bob,

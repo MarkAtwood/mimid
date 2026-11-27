@@ -50,7 +50,7 @@ async fn a_lost_device_is_forgotten(binding: Binding) {
     bob.publish_key_packages(1).await.unwrap();
     let room = a1.host_room(&HostOptions::named("r")).await.unwrap();
     a1.invite(&room, BOB).await.unwrap();
-    let number = poll_until(&mut bob, |e| match e {
+    let number = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -64,8 +64,8 @@ async fn a_lost_device_is_forgotten(binding: Binding) {
     a2.poll().await.unwrap();
     let joined = a2.join_own_rooms().await.unwrap();
     assert_eq!(joined.joined, std::slice::from_ref(&room), "{joined:?}");
-    catch_up(&mut a1, &a2, &room).await;
-    catch_up(&mut bob, &a2, &room).await;
+    catch_up(&mut a1, &a2, &server, &room).await;
+    catch_up(&mut bob, &a2, &server, &room).await;
     let devices = a1.devices().await.unwrap();
     assert_eq!(devices.len(), 2, "{devices:?}");
     let own = devices.iter().find(|d| d.this_device).unwrap();
@@ -90,7 +90,7 @@ async fn a_lost_device_is_forgotten(binding: Binding) {
         .map(|d| d.id)
         .collect();
     assert_eq!(ids, std::slice::from_ref(&own.id));
-    catch_up(&mut bob, &a1, &room).await;
+    catch_up(&mut bob, &a1, &server, &room).await;
     assert_agreement(&room, &a1, &bob);
     // alice is still a participant, with one leaf: a1's.
     let leaves = bob.clients(&room).unwrap();

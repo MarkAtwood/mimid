@@ -13,7 +13,6 @@ mod update;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use common::*;
 use common_fanout::RecordingLocal;
@@ -356,28 +355,29 @@ async fn welcome_goes_to_added_users_domains_with_full_tree() {
     let state = hub.public_state(ROOM_ID).await.unwrap();
     assert_eq!(state.ratchet_tree, tree);
 
-    // The own-domain Commit row is delivered without waiting for a timer.
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while local.attempts().is_empty() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("fanout worker woken");
+    // The own-domain Commit row is delivered without waiting for a
+    // timer: the recorder notifies as each attempt lands.
+    local.wait_for(1).await;
     let (room_id, body) = &local.attempts()[0];
     assert_eq!(room_id, ROOM_ID);
     assert!(matches!(fanout(body).event, FanoutEvent::Commit { .. }));
 
-    // The worker deletes the own-domain row only after `deliver` returns,
-    // so wait for that before reading the outbox.
+    // The worker deletes the own-domain row only after `deliver`
+    // returns, so wait for a pass to end before reading the outbox.
     let db = connect(&path).await;
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while outbox(&db).await.iter().any(|(d, _)| d == DOMAIN) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+    let passed = hub
+        .fanout()
+        .expect("the test gave the hub its fanout worker")
+        .passed()
+        .clone();
+    eprintln!("waiting for the own-domain outbox row to be delivered");
+    loop {
+        let next_pass = passed.notified();
+        if !outbox(&db).await.iter().any(|(d, _)| d == DOMAIN) {
+            break;
         }
-    })
-    .await
-    .expect("own-domain outbox row delivered");
+        next_pass.await;
+    }
 
     // Rows for unconfigured peers stay queued (parked).
     let rows = outbox(&db).await;

@@ -19,10 +19,11 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use jmap_server::{Dispatcher, Id, JmapRequest, State};
 use mimid_agent_core::mls_didwebvh::PublicKey;
@@ -49,6 +50,8 @@ const CAROL: &str = "mimi://a.example/u/carol";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as `main.rs` wires it.
@@ -105,11 +108,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -155,6 +160,8 @@ fn controller(seed: u8, device: &Agent) -> (DidLog, UpdateKey) {
 struct Bob {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<Id>,
+    /// The server's change signal, which wakes [`Bob::sync_until`].
+    changes: common::Changes,
 }
 
 impl Bob {
@@ -198,17 +205,18 @@ impl Bob {
             .clone()
     }
 
-    /// Syncs until `done` holds, for up to ten seconds.
+    /// Syncs until `done` holds, woken between syncs by the server or
+    /// by what the last sync wrote ([`common::Watch::again`]).
     async fn sync_until(&self, mut done: impl FnMut(&Self) -> bool) {
-        for _ in 0..100 {
+        let mut watch = self.changes.watch(self.chat.store());
+        loop {
             let report = self.chat.sync().await.unwrap();
             assert!(report.problems.is_empty(), "{report:?}");
             if done(self) {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch.again("bob: the expected state").await;
         }
-        panic!("bob: the expected state never came");
     }
 }
 
@@ -236,7 +244,11 @@ async fn a_contact_s_did_is_shown_and_a_changed_scid_posts_one_notice() {
     ));
     let mut dispatcher = Dispatcher::new();
     AgentChat::register(&chat, &mut dispatcher);
-    let bob = Bob { chat, dispatcher };
+    let bob = Bob {
+        chat,
+        dispatcher,
+        changes: server.changes.clone(),
+    };
 
     // bob's room with alice (did_webvh) and carol (BasicCredential).
     let first_room = {
@@ -306,12 +318,13 @@ async fn a_contact_s_did_is_shown_and_a_changed_scid_posts_one_notice() {
         .await
         .unwrap();
     assert_eq!(new.epoch(&second_room).unwrap(), epoch + 1);
-    for _ in 0..100 {
+    let mut watch = server.changes.watch(bob.chat.store());
+    loop {
         bob.chat.sync().await.unwrap();
         if bob.chat.agent().lock().await.epoch(&second_room).unwrap() == epoch + 1 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("bob to reach the next epoch").await;
     }
     assert_eq!(
         bob.chat.agent().lock().await.epoch(&second_room).unwrap(),

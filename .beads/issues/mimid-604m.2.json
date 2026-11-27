@@ -1,0 +1,31 @@
+{
+  "id": "mimid-604m.2",
+  "title": "A first private message is I/O-sensitive by 30x: find its write and fsync count",
+  "description": "`private_queries_are_one_to_one_rooms` (crates/mimid-agent/tests/irc_v2.rs)\nran 349.61s, 375.65s and 11.77s on the same code. The two slow runs\nfollowed a `cargo clean`: cold page cache, a full rebuild competing for\nthe disk, and 178 GiB freed on the filesystem underneath. The fast run\nwas a warm build with nothing competing. So the path is not slow; it is\nI/O-sensitive by three orders of magnitude, which is the same thing to\na user on a loaded phone.\n\n## What to find\n\nWhat a first private message does between the `PRIVMSG` and the line\ncoming back. The pieces, from the crate map: `Store::action` creates the\none-to-one room, the agent fetches a KeyPackage, creates the MLS group,\nsends a Welcome, and `Store::sync` reads the journal back. Each of those\ntouches `mimid.sqlite` and OpenMLS's state in the same database.\n\nThe question to answer with numbers, not reading: how many write\ntransactions and how many fsyncs does one private query cost? A path\nthat commits per MLS operation rather than per user action multiplies\nevery disk stall by that count, and that multiplier is what turns 11s\ninto 350s.\n\n## Method\n\nDepends on bead mimid-604m.1 (the daemon logs nothing). With a\nsubscriber installed, a span per step and `sqlx`'s slow-statement\nwarning already at 1s, one slow run names the step. Reproduce the\npressure deliberately rather than waiting for another `cargo clean`:\nrun the test while a second process writes to the same filesystem.\n\n## Not a fix for the test\n\nThe test is correct and its wait has no deadline any more, so it\nmeasures rather than fails. Do not make it wait differently.\n",
+  "notes": "2026-11-27 07:30: the pressure is identified. load average 80.55 on 18 cores, with 81 cargo-mutants processes running a mutation campaign on PKIX out of /data/tmp/cargo-mutants-PKIX-*. That is what both slow runs (349.61s, 375.65s) and the 2.4s PRAGMA were measured under, and it is still running: mimid-agent-core's own lib unit tests (frank::tests, agent::didwebvh_tests, which no sweep touched) each take over 60 seconds right now against seconds when the machine is idle. So the 30x figure in this bead's title is a measurement under a 4.5x CPU oversubscription, not a property of the first-DM path alone. Re-measure deliberately: run the test alone, then again under a known load, rather than waiting to be surprised. The bug in mimid-604m still stands -- the agent says nothing while it waits -- and bead mimid-604m.1 is what makes the next measurement readable.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T15:00:50.099584551Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T15:30:18.382970983Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-604m.2",
+      "depends_on_id": "mimid-604m",
+      "type": "parent-child",
+      "created_at": "2026-11-27T15:00:50.134758456Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-604m.2",
+      "depends_on_id": "mimid-604m.1",
+      "type": "blocks",
+      "created_at": "2026-11-27T15:00:55.11249305Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

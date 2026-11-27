@@ -583,7 +583,23 @@ async fn goguma_catches_up_after_a_reconnect() {
         a.send(&format!("PRIVMSG {BOB_NICK} :{text} (dm)")).await;
     }
     a.sync().await;
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // The barrier before bob connects: his store holds all four, two
+    // in the channel and two as DMs. Settling for a while instead would
+    // only say that nothing had arrived yet.
+    common::until_store(
+        "the away messages to reach bob's store",
+        &bob.store,
+        |store| {
+            store
+                .state()
+                .messages
+                .values()
+                .filter(|m| m.body.starts_with("while away"))
+                .count()
+                == 4
+        },
+    )
+    .await;
 
     let (mut g, burst) = goguma(&bob, "bob").await;
     let acked: Vec<String> = burst
@@ -866,6 +882,10 @@ async fn web_push_reaches_a_fake_push_service() {
     );
     a.send(&format!("PRIVMSG {BOB_NICK} :no push")).await;
     privmsg_from(&mut b, ALICE_MASK).await;
+    // A bound, not a guessed latency: the claim is that no push is
+    // made, and a negative has to be bounded by something. bob's
+    // connection has already shown the line, so the push, if it were
+    // coming, would be made from the same delivery.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     assert!(service.received.try_recv().is_err());
 
@@ -898,17 +918,21 @@ async fn web_push_reaches_a_fake_push_service() {
     b.until_command("WEBPUSH").await;
     a.send(&format!("PRIVMSG {BOB_NICK} :once")).await;
     gone.next().await;
-    let subscriptions = mimid_agent_store::push::PushSubscriptions::open(
-        &bob.state_dir.join(mimid_agent_core::DATABASE_FILE),
-    )
-    .unwrap();
-    let start = std::time::Instant::now();
+    // The daemon's own handle, so its `changed` fires when the push
+    // loop drops the subscription the service called gone. Registering
+    // the waiter before the first look, because the drop may already
+    // have happened: `Notify::notified` only hears later wake-ups.
+    let subscriptions = bob
+        .pushes
+        .as_ref()
+        .expect("the IRC front end pushes, so the daemon has subscriptions");
+    eprintln!("waiting for the subscription a push service called gone to be dropped");
     while !subscriptions.list("irc").unwrap().is_empty() {
-        assert!(
-            start.elapsed() < *common::PATIENCE,
-            "the subscription is dropped"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let dropped = subscriptions.changed().notified();
+        if subscriptions.list("irc").unwrap().is_empty() {
+            break;
+        }
+        dropped.await;
     }
 
     alice.stop().await;

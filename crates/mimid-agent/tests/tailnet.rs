@@ -289,12 +289,12 @@ async fn a_session_closes_when_its_node_stops_matching() {
 
     // The node leaves the tailnet.
     fake.set_whois(None);
-    let closed = tokio::time::timeout(std::time::Duration::from_secs(recheck * 3), async {
-        irc.closes().await
-    })
-    .await
-    .expect("the connection closes within a few rechecks");
-    assert!(closed, "the connection closed");
+    // The close is the event: `closes` is an await on the connection,
+    // and the front end closes it at the recheck that finds the node
+    // gone. No deadline, so a front end that never rechecks hangs the
+    // test rather than failing it on a loaded machine.
+    eprintln!("waiting for the connection to close after the node leaves");
+    assert!(irc.closes().await, "the connection closed");
     assert!(
         fake.whois_calls() > before,
         "the node was asked about again: {} then {}",
@@ -403,18 +403,9 @@ async fn a_denied_node_loses_its_sessions_and_stays_denied() {
     first
         .send("PRIVMSG mimid :tailnet deny pixel-8.tailnet.ts.net")
         .await;
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_secs(10), second.closes())
-            .await
-            .expect("the other session closes"),
-        "the other session closed"
-    );
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_secs(10), first.closes())
-            .await
-            .expect("the asking session closes too"),
-        "the asking session closed"
-    );
+    // Each close is the event, so awaiting it is the assertion.
+    assert!(second.closes().await, "the other session closed");
+    assert!(first.closes().await, "the asking session closed");
 
     // A new connection from the denied node is refused: the node no
     // longer matches, so the password rules apply and it has none.

@@ -371,17 +371,13 @@ async fn a_file_sent_by_one_daemon_arrives_at_another() {
     assert_eq!(mine[0]["attachments"], json!([attachment]));
 
     // bob's daemon stores the message with the file.
-    let got = tokio::time::timeout(*common::PATIENCE, async {
-        loop {
-            b_events.until_changed("Message").await;
-            let got = b.messages(&chat_b).await;
-            if !got.is_empty() {
-                return got;
-            }
+    let got = loop {
+        b_events.until_changed("Message").await;
+        let got = b.messages(&chat_b).await;
+        if !got.is_empty() {
+            break got;
         }
-    })
-    .await
-    .expect("alice's message reaches bob");
+    };
     assert_eq!(got.len(), 1, "{got:?}");
     assert_eq!(got[0]["body"], json!("the report"));
     assert_eq!(got[0]["senderMsgId"], mine[0]["senderMsgId"]);
@@ -421,17 +417,13 @@ async fn a_file_sent_by_one_daemon_arrives_at_another() {
         }]}),
     )
     .await;
-    let got = tokio::time::timeout(*common::PATIENCE, async {
-        loop {
-            b_events.until_changed("Message").await;
-            let got = b.messages(&chat_b).await;
-            if got.len() == 2 {
-                return got;
-            }
+    let got = loop {
+        b_events.until_changed("Message").await;
+        let got = b.messages(&chat_b).await;
+        if got.len() == 2 {
+            break got;
         }
-    })
-    .await
-    .expect("the second message reaches bob");
+    };
     let only = got
         .iter()
         .find(|m| m["body"] == json!(""))

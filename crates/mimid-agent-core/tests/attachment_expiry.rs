@@ -47,7 +47,7 @@ async fn sent_expiry(options: JmapOptions) -> (u32, u64, u64) {
     }
     let room = alice.host_room(&HostOptions::named("files")).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    let number = poll_until(&mut bob, |e| match e {
+    let number = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -65,7 +65,7 @@ async fn sent_expiry(options: JmapOptions) -> (u32, u64, u64) {
         .await
         .unwrap();
     let after = now();
-    let got = poll_until(&mut bob, |e| match e {
+    let got = poll_until(&mut bob, &server, |e| match e {
         Event::Message(m) if m.room == room => Some(m.clone()),
         _ => None,
     })

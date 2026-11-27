@@ -1,0 +1,22 @@
+{
+  "id": "mimid-67e0.2",
+  "title": "A request that never completes logs nothing: no request-start event",
+  "description": "`crates/mimid-server/src/http.rs` turns the trace layer's request event\noff (`.on_request(())`) and logs only on response, at `debug`:\n\n    .on_response(|response, latency, span| { ... tracing::debug!(status, elapsed_ms, \"request completed\") })\n\nSo a request that never completes logs nothing at all. There is no line\nsaying the server took it, no line saying what it is waiting for, and\nthe response event cannot fire.\n\nMark 2026-11-27: \"nothing ever should hang, lock up, or go silent when\nsent something to process. ever. thats always a bug.\"\n\n## What it blocks\n\nTwo waits could not be converted in the event sweep and still sleep on a\nguess, each marked in the code with this bead's id:\n\n- `crates/mimid-server/tests/binary_smoke.rs`, the shutdown grace-period\n  test: sleeps 500 ms to let the server start a request that never\n  finishes, because nothing says when it has.\n- `crates/mimid-server/tests/mtls_binaries.rs`, `Jmap::next`: the\n  providers are separate processes whose only observable is their JSON\n  log, and storing a fanout logs nothing at the `info` level they run\n  at.\n\nIt also blocks the operator's side of the same question, which is the\nreason to do it rather than a test's convenience: a provider that has\ngone quiet under load gives nobody a way to see which requests are in\nflight.\n\n## What to do\n\nEmit an event when a request starts, inside the `http_request` span so\nit carries the method and route already recorded there. `debug` is the\nlevel for it: one line per request, off in production by default, on\nwhen someone is looking.\n\nDecide the target deliberately. The binary's own events are target\n`mimid`, mimid-server's are `mimid_server`, and the tests' filters say\n`mimid=info`, so a new event in `http.rs` needs `mimid_server=debug` to\nappear. Whichever is chosen, the tests that wait on the line set that\nfilter.\n\nThen also consider a `fanout accepted` event at `info` rather than\n`debug` (`crates/mimid-server/src/follower/notify.rs`), which is what\n`mtls_binaries` would follow: a delivery stored is a fact an operator\nwants, and it is one line per fanout, not per message.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T15:48:59.507206656Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T15:48:59.507206656Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-67e0.2",
+      "depends_on_id": "mimid-67e0",
+      "type": "parent-child",
+      "created_at": "2026-11-27T15:49:00.598526738Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

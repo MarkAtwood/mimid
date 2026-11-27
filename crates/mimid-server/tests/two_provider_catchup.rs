@@ -31,7 +31,6 @@ mod providers;
 mod update;
 
 use std::collections::BTreeMap;
-use std::time::Duration;
 
 use common::{ALICE, GroupSpec, ROOM_ID, build_group, capture_logs};
 use mimi_mls::tls_codec::Deserialize;
@@ -41,7 +40,7 @@ use mimid_server::hub::SystemClock;
 use mimid_server::hub::fanout::Fanout;
 use mimid_server::peer::PeerClient;
 use mimid_server::store::{EventKind, NewEvent, OutboxEntry, Store};
-use providers::{Provider, WAIT};
+use providers::Provider;
 use std::sync::Arc;
 
 /// The peer map naming `other`.
@@ -121,27 +120,41 @@ async fn follower_side_log_len(provider: &Provider) -> usize {
 }
 
 /// Waits until `provider` holds `want` as its highest fanout sequence
-/// with no gap outstanding, or says what it saw when it gives up.
+/// with no gap outstanding.
+///
+/// Woken by the follower: it announces each event it stores and each
+/// attempt at a gap, which are the two ways the position moves. The
+/// receiver is taken before the first look, so a change in between
+/// waits in the channel rather than being missed. No deadline: a
+/// position that never arrives hangs the test and says what it last
+/// saw, where a guessed one could not tell that from a loaded machine.
 async fn wait_until_whole(provider: &Provider, want: u64) {
-    let deadline = tokio::time::Instant::now() + WAIT;
-    let mut seen = None;
-    while tokio::time::Instant::now() < deadline {
+    let follower = provider.follower();
+    let mut positions = follower.subscribe_positions();
+    let mut appended = follower.subscribe();
+    let mut waits = 0u64;
+    loop {
         let at = provider
             .stack()
             .store
             .follower_position(ROOM_ID)
             .await
             .unwrap();
-        seen = at;
         if let Some(at) = at
             && at.highest >= want
             && at.gap_from.is_none()
         {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        if waits.is_multiple_of(32) {
+            eprintln!("waiting for sequence {want} with no gap; saw {at:?}");
+        }
+        waits += 1;
+        tokio::select! {
+            _ = positions.recv() => {}
+            _ = appended.recv() => {}
+        }
     }
-    panic!("never reached sequence {want} with no gap; last saw {seen:?}");
 }
 
 /// A follower that missed fanout its hub then gave up on recovers it
@@ -363,22 +376,23 @@ async fn a_gap_outside_retention_is_reported_not_hidden() {
 
     // The follower records that the gap cannot be filled, and says so to
     // its clients by moving the count their state is compared against.
-    let deadline = tokio::time::Instant::now() + WAIT;
-    let mut seen = None;
-    while tokio::time::Instant::now() < deadline {
+    // The follower announces each attempt at the gap, so this waits for
+    // the attempt that records the hub cannot fill it rather than
+    // reading the row over and over.
+    let mut positions = follower_side.follower().subscribe_positions();
+    let at = loop {
         let at = follower_side
             .stack()
             .store
             .follower_position(ROOM_ID)
             .await
             .unwrap();
-        seen = at;
         if at.is_some_and(|at| at.unfillable) {
-            break;
+            break at.expect("the room is followed");
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    let at = seen.expect("the room is followed");
+        eprintln!("waiting for the gap to be recorded unfillable; saw {at:?}");
+        let _ = positions.recv().await;
+    };
     assert!(
         at.unfillable,
         "the hub said it cannot be filled, and that is recorded; saw {at:?}"

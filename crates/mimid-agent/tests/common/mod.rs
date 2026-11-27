@@ -12,9 +12,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
 
 use mimid_agent::{Config, Daemon};
 use mimid_server::config::{BaseUrl, Domain};
@@ -37,25 +35,87 @@ pub const BOB: &str = "mimi://a.example/u/bob";
 /// bob on the second provider, for the two-provider tests.
 pub const BOB_B: &str = "mimi://b.example/u/bob";
 
-/// How long a test waits for something that should happen.
+/// Waits until `ready` holds of the store, woken by the change feed.
 ///
-/// 15 seconds when a test runs on its own, which is about five times
-/// what the slowest of them needs. Under the whole suite that margin
-/// has not been enough twice (beads mimid-gn1w, mimid-zr08), so
-/// `MIMID_TEST_PATIENCE_SECS` raises it for a full-suite run without
-/// slowing a single test's failure down.
+/// `Store::subscribe` is a broadcast of the sequence number published at
+/// each save, which is the same signal the front ends follow, so a test
+/// learns of a write when a front end would. Nothing here sleeps and
+/// there is no deadline: a condition that never holds hangs the test,
+/// and no timeout could tell that apart from a slow machine.
 ///
-/// This is a deadline, not a poll interval: every use wraps an await
-/// that finishes the moment its event arrives, so a longer value costs
-/// nothing when things work and hides nothing when they do not. A wait
-/// that would never be satisfied still fails.
-pub static PATIENCE: LazyLock<Duration> = LazyLock::new(|| {
-    let seconds = std::env::var("MIMID_TEST_PATIENCE_SECS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(15);
-    Duration::from_secs(seconds)
-});
+/// `ready` is re-checked before the first wait, so a condition that
+/// already holds returns at once, and re-checked after each wake. It is
+/// called between awaits and never across one, so the store's lock is
+/// not held while this waits.
+///
+/// `what` names the condition in the line this prints while waiting, so
+/// a test that hangs says which wait it is in.
+pub async fn until_store(
+    what: &str,
+    store: &mimid_agent_store::Store,
+    ready: impl Fn(&mimid_agent_store::Store) -> bool,
+) {
+    let mut changes = store.subscribe();
+    let mut woken = 0u64;
+    while !ready(store) {
+        // A hang here is the honest outcome, so say what is being
+        // waited for and how often the feed has moved. Without this a
+        // stuck test is silent, which is the one thing a deadline was
+        // buying.
+        if woken.is_multiple_of(32) {
+            eprintln!("waiting for {what}: the change feed has moved {woken} times");
+        }
+        woken += 1;
+        match changes.recv().await {
+            Ok(_) => {}
+            // The store dropped its sender, so no further change is
+            // coming and the condition will not start holding.
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                assert!(ready(store), "the store closed before {what}");
+                return;
+            }
+            // Fell behind the log. The condition is about the store as
+            // it is now, so look again rather than replay.
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+        }
+    }
+}
+
+/// Waits until `probe` gives something, woken by `store`'s change feed.
+///
+/// The asynchronous counterpart of [`until_store`], for a condition a
+/// test can only read by asking the daemon -- over HTTP as a client
+/// would. The wake signal is still the daemon's own: `Store::subscribe`
+/// publishes a sequence number at each save, so the probe runs again
+/// whenever the daemon has written something. It runs once before the
+/// first wait, so a condition that already holds returns at once.
+///
+/// There is no deadline. A condition that never holds hangs the test
+/// and prints which one it was, where a guessed deadline could not tell
+/// that apart from a loaded machine (bead mimid-gn1w).
+pub async fn until_probe<T, F, Fut>(what: &str, store: &mimid_agent_store::Store, probe: F) -> T
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Option<T>>,
+{
+    let mut changes = store.subscribe();
+    let mut woken = 0u64;
+    loop {
+        if let Some(found) = probe().await {
+            return found;
+        }
+        if woken.is_multiple_of(32) {
+            eprintln!("waiting for {what}: the change feed has moved {woken} times");
+        }
+        woken += 1;
+        match changes.recv().await {
+            Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                panic!("the store closed before {what}")
+            }
+        }
+    }
+}
 
 /// A running mimid server: its domain, its base URL, a bearer token per
 /// user, and the switch on its EventSource.
@@ -77,6 +137,9 @@ pub struct PushControl {
     opened: Arc<AtomicUsize>,
     refused: Arc<AtomicUsize>,
     cut: Arc<watch::Sender<u64>>,
+    /// Woken whenever a count moves, so [`PushControl::until`] awaits
+    /// instead of sleeping between looks.
+    moved: Arc<tokio::sync::Notify>,
 }
 
 impl Default for PushControl {
@@ -86,6 +149,7 @@ impl Default for PushControl {
             opened: Arc::default(),
             refused: Arc::default(),
             cut: Arc::new(watch::channel(0).0),
+            moved: Arc::default(),
         }
     }
 }
@@ -111,16 +175,28 @@ impl PushControl {
         self.refused.load(Ordering::SeqCst)
     }
 
-    /// Waits until `count` returns at least `n`; panics after
-    /// [`PATIENCE`].
+    /// Waits until `count` returns at least `n`.
+    ///
+    /// Woken by the counter moving, not by a clock: the request layer
+    /// signals after every change, so this neither sleeps nor needs a
+    /// deadline to guess at. A count that never reaches `n` hangs the
+    /// test, which says the same thing a timeout would and does not
+    /// depend on how loaded the machine is.
     pub async fn until(&self, what: &str, n: usize, count: impl Fn(&Self) -> usize) {
-        tokio::time::timeout(*PATIENCE, async {
-            while count(self) < n {
-                tokio::time::sleep(Duration::from_millis(20)).await;
+        let mut woken = 0u64;
+        while count(self) < n {
+            if woken.is_multiple_of(32) {
+                eprintln!("waiting for {what}: {} of {n} so far", count(self));
             }
-        })
-        .await
-        .unwrap_or_else(|_| panic!("{what}: {} is not {n}", count(self)));
+            woken += 1;
+            // Registered before the re-check, so a change between the
+            // two still wakes this.
+            let moved = self.moved.notified();
+            if count(self) >= n {
+                break;
+            }
+            moved.await;
+        }
     }
 
     async fn layer(
@@ -135,6 +211,7 @@ impl PushControl {
         }
         if control.refuse.load(Ordering::SeqCst) {
             control.refused.fetch_add(1, Ordering::SeqCst);
+            control.moved.notify_waiters();
             return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
         let mut cut = control.cut.subscribe();
@@ -144,6 +221,7 @@ impl PushControl {
             return response;
         }
         control.opened.fetch_add(1, Ordering::SeqCst);
+        control.moved.notify_waiters();
         let (parts, body) = response.into_parts();
         let body = body.into_data_stream().take_until(async move {
             let _ = cut.changed().await;
@@ -350,6 +428,8 @@ pub struct Running {
     pub state_dir: PathBuf,
     /// The daemon's store.
     pub store: Arc<mimid_agent_store::Store>,
+    /// The daemon's push subscriptions, with a front end that pushes.
+    pub pushes: Option<Arc<mimid_agent_store::push::PushSubscriptions>>,
     stop: oneshot::Sender<()>,
     task: JoinHandle<std::io::Result<()>>,
 }
@@ -364,6 +444,7 @@ impl Running {
         let https = daemon.https_addr();
         let ca_bootstrap = daemon.ca_bootstrap_addr();
         let store = Arc::clone(daemon.store());
+        let pushes = daemon.push_subscriptions().map(Arc::clone);
         let (stop, stopped) = oneshot::channel::<()>();
         let task = tokio::spawn(daemon.serve(async move {
             let _ = stopped.await;
@@ -376,6 +457,7 @@ impl Running {
             ca_bootstrap,
             state_dir: config.state_dir.clone(),
             store,
+            pushes,
             stop,
             task,
         }
@@ -414,15 +496,14 @@ impl Running {
         Client::connect(&self.base(), &self.token()).await
     }
 
-    /// Stops the daemon and waits for it, failing if that takes longer
-    /// than [`PATIENCE`].
+    /// Stops the daemon and waits for it.
+    ///
+    /// The task finishing is the event; a daemon that will not stop
+    /// hangs here, which is what it is.
     pub async fn stop(self) {
         self.stop.send(()).unwrap();
-        tokio::time::timeout(*PATIENCE, self.task)
-            .await
-            .expect("the daemon stops")
-            .unwrap()
-            .unwrap();
+        eprintln!("waiting for the daemon to stop");
+        self.task.await.unwrap().unwrap();
     }
 }
 
@@ -576,52 +657,55 @@ pub struct Events {
 }
 
 impl Events {
-    /// Reads events until a `state` event whose StateChange names
-    /// `type_name` for this account; returns its data. Panics after
-    /// [`PATIENCE`].
+    /// Waits for the next `StateChange` naming `type_name` for this
+    /// account, and returns it.
+    ///
+    /// Woken by the stream: `chunk` is an await on the response body, so
+    /// the reactor wakes this when bytes arrive. A stream that closes
+    /// fails below with "the stream stays open"; a stream that stays
+    /// open and never names `type_name` hangs the test, which a
+    /// guessed deadline could not tell apart from a loaded machine --
+    /// that guess is what bead mimid-gn1w kept failing on.
     pub async fn until_changed(&mut self, type_name: &str) -> Value {
-        tokio::time::timeout(*PATIENCE, async {
-            loop {
-                while let Some(end) = self.buffer.find("\n\n") {
-                    let block: String = self.buffer.drain(..end + 2).collect();
-                    let mut event = None;
-                    let mut data = String::new();
-                    for line in block.lines() {
-                        if let Some(name) = line.strip_prefix("event:") {
-                            event = Some(name.trim().to_owned());
-                        } else if let Some(text) = line.strip_prefix("data:") {
-                            data.push_str(text.trim_start());
-                        }
-                    }
-                    if event.as_deref() != Some("state") {
-                        continue;
-                    }
-                    let change: Value = serde_json::from_str(&data).unwrap();
-                    assert_eq!(change["@type"], json!("StateChange"), "{change}");
-                    if change["changed"][&self.account].get(type_name).is_some() {
-                        return change;
+        eprintln!("waiting for a StateChange naming {type_name}");
+        loop {
+            while let Some(end) = self.buffer.find("\n\n") {
+                let block: String = self.buffer.drain(..end + 2).collect();
+                let mut event = None;
+                let mut data = String::new();
+                for line in block.lines() {
+                    if let Some(name) = line.strip_prefix("event:") {
+                        event = Some(name.trim().to_owned());
+                    } else if let Some(text) = line.strip_prefix("data:") {
+                        data.push_str(text.trim_start());
                     }
                 }
-                let chunk = self
-                    .response
-                    .chunk()
-                    .await
-                    .unwrap()
-                    .expect("the stream stays open");
-                self.buffer.push_str(std::str::from_utf8(&chunk).unwrap());
+                if event.as_deref() != Some("state") {
+                    continue;
+                }
+                let change: Value = serde_json::from_str(&data).unwrap();
+                assert_eq!(change["@type"], json!("StateChange"), "{change}");
+                if change["changed"][&self.account].get(type_name).is_some() {
+                    return change;
+                }
             }
-        })
-        .await
-        .unwrap_or_else(|_| panic!("no StateChange naming {type_name}"))
+            let chunk = self
+                .response
+                .chunk()
+                .await
+                .unwrap()
+                .expect("the stream stays open");
+            self.buffer.push_str(std::str::from_utf8(&chunk).unwrap());
+        }
     }
 
-    /// Whether the stream ends within [`PATIENCE`].
-    pub async fn ends(mut self) -> bool {
-        tokio::time::timeout(*PATIENCE, async {
-            while let Ok(Some(_)) = self.response.chunk().await {}
-        })
-        .await
-        .is_ok()
+    /// Waits for the stream to end.
+    ///
+    /// The end of the stream is the event, so returning is the
+    /// assertion.
+    pub async fn ends(mut self) {
+        eprintln!("waiting for the event stream to end");
+        while let Ok(Some(_)) = self.response.chunk().await {}
     }
 }
 

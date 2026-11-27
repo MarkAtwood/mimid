@@ -24,13 +24,14 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use jmap_server::{Dispatcher, Id, JmapRequest, State};
 use mimid_agent_core::{Agent, AgentConfig, RoomStatus};
@@ -60,6 +61,8 @@ const CONTENT: &[u8] = b"the attachment of a chat that goes";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What [`Client::sync_until`] waits on.
+    changes: common::Changes,
 }
 
 /// Starts a.example's stack as `main.rs` wires it, with accounts for
@@ -117,11 +120,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -132,6 +137,8 @@ struct Client {
     dispatcher: Dispatcher<Id>,
     /// Set, every save fails.
     saves: Arc<FailingSaves>,
+    /// The server's change signal, for [`Client::sync_until`].
+    changes: common::Changes,
 }
 
 impl Client {
@@ -168,6 +175,7 @@ impl Client {
             chat,
             dispatcher,
             saves,
+            changes: server.changes.clone(),
         }
     }
 
@@ -269,10 +277,18 @@ impl Client {
         contact["id"].as_str().unwrap().to_owned()
     }
 
-    /// Syncs until `done` holds, for up to ten seconds; sync failures are
-    /// let pass when `failing`.
+    /// Syncs until `done` holds, woken between syncs by the server;
+    /// sync failures are let pass when `failing`.
+    ///
+    /// A sync is a request, so something has to say when to make one.
+    /// The server's change signal is that something: it wakes this when
+    /// the server has stored anything this client could fetch. The
+    /// watch is taken before the first sync, so a change made while a
+    /// sync is in flight waits in the channel instead of being missed.
     async fn sync_until(&self, failing: bool, mut done: impl AsyncFnMut(&Self) -> bool) {
-        for _ in 0..100 {
+        let mut watch = self.changes.watch(self.chat.store());
+        let what = format!("{}: the expected state", self.chat.account_id());
+        loop {
             let result = self.chat.sync().await;
             if !failing {
                 result.unwrap();
@@ -280,9 +296,8 @@ impl Client {
             if done(self).await {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch.again(&what).await;
         }
-        panic!("{}: the expected state never came", self.chat.account_id());
     }
 }
 

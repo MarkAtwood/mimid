@@ -19,11 +19,13 @@ mod common_notify;
 #[path = "common/key_packages.rs"]
 mod key_packages;
 
-use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
+
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::io::AsyncBufReadExt;
+use tokio::process::{Child, Command};
 
 use common::problem_kind;
 use common_notify::{COMMIT_CAROL, ROOM, ROOM_ENCODED, T1, commit_fanout};
@@ -35,7 +37,27 @@ const CAROL_ENCODED: &str = "mimi%3A%2F%2Fb.example%2Fu%2Fcarol";
 const ALICE: &str = "mimi://a.example/u/alice";
 
 /// Lines a stream of the server wrote.
-type Lines = Arc<Mutex<Vec<String>>>;
+/// The lines a stream has produced, and a signal for each arrival.
+///
+/// The signal is what makes waiting for a line an await rather than a
+/// poll: a reader thread pushes a line and wakes whoever is waiting,
+/// and wakes them once more when its stream closes, so a waiter also
+/// learns that no further line is coming.
+#[derive(Clone, Default)]
+struct Lines {
+    seen: Arc<Mutex<Vec<String>>>,
+    arrived: Arc<tokio::sync::Notify>,
+}
+
+impl Lines {
+    fn joined(&self) -> String {
+        self.seen.lock().unwrap().join("\n")
+    }
+
+    fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.seen.lock().unwrap())
+    }
+}
 
 /// The `mimid` process, with what it wrote to standard output and
 /// standard error. Kills the server if the test fails before stopping it.
@@ -43,15 +65,12 @@ struct Server {
     child: Child,
     stdout: Lines,
     stderr: Lines,
-    readers: Vec<std::thread::JoinHandle<()>>,
+    readers: Vec<tokio::task::JoinHandle<()>>,
 }
 
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
+// No Drop: the command sets kill_on_drop, so the runtime signals the
+// child and reaps it. A Drop could only start the kill, never await the
+// exit, and would leave a zombie for the runtime to collect anyway.
 
 /// The loopback addresses of one start of the server: its listener and
 /// its local control listener.
@@ -74,16 +93,26 @@ impl Addrs {
 }
 
 /// Copies `stream` into `lines`, one line at a time, until it closes.
+/// Reads `stream` into `lines`, waking a waiter on every line.
+///
+/// The pipe is registered with the reactor, so the task is woken by
+/// epoll when the kernel says there is something to read. Nothing here
+/// polls or sleeps, and there is no thread per stream.
 fn read_lines(
-    stream: impl std::io::Read + Send + 'static,
+    stream: impl tokio::io::AsyncRead + Unpin + Send + 'static,
     lines: &Lines,
-) -> std::thread::JoinHandle<()> {
-    let lines = Arc::clone(lines);
-    std::thread::spawn(move || {
-        for line in BufReader::new(stream).lines() {
-            let Ok(line) = line else { break };
-            lines.lock().unwrap().push(line);
+) -> tokio::task::JoinHandle<()> {
+    let lines = lines.clone();
+    tokio::spawn(async move {
+        let mut reader = tokio::io::BufReader::new(stream).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            lines.seen.lock().unwrap().push(line);
+            lines.arrived.notify_waiters();
         }
+        // End of stream: the process is finishing or gone. Wake the
+        // waiter to look again, or it would wait for a line that is
+        // never coming.
+        lines.arrived.notify_waiters();
     })
 }
 
@@ -117,6 +146,7 @@ impl Server {
             let path = dir.join("mimid.toml");
             std::fs::write(&path, config(&addrs)).unwrap();
             let mut child = Command::new(env!("CARGO_BIN_EXE_mimid"))
+                .kill_on_drop(true)
                 .arg(&path)
                 .envs(env.iter().copied())
                 .stdout(Stdio::piped())
@@ -150,63 +180,81 @@ impl Server {
         panic!("five starts found a port taken");
     }
 
-    /// Waits up to 30 seconds for a line containing `line` from the
-    /// binary, checking every millisecond. For `mimid listening`, which it
-    /// logs after binding its listener and, before that, its local control
-    /// listener, [`Server::start`] then waits for an answer to one request:
-    /// waiting for one listener to answer says nothing of the other, since
-    /// the binary binds them one after another with other startup work
-    /// between them (`main.rs`; bead mimid-fchx); and only this process's
-    /// own line shows that the port is not another process's. An error
-    /// holds what the server wrote, if it exited first.
+    /// Waits for a line containing `line` from the binary. For
+    /// `mimid listening`, which it logs after binding its listener and,
+    /// before that, its local control listener, [`Server::start`] then
+    /// waits for an answer to one request: waiting for one listener to
+    /// answer says nothing of the other, since the binary binds them one
+    /// after another with other startup work between them (`main.rs`;
+    /// bead mimid-fchx); and only this process's own line shows that the
+    /// port is not another process's. An error holds what the server
+    /// wrote, if it exited first.
+    ///
+    /// Both outcomes are events: a line arriving wakes the reader task
+    /// through epoll, and the process exiting wakes `Child::wait`
+    /// through SIGCHLD. So there is no deadline to pick and nothing to
+    /// poll. A binary that neither logs nor exits hangs the test, which
+    /// is what it is: no timeout here could tell that apart from a
+    /// loaded machine, and guessing one is what made this test fail at
+    /// 30 seconds while a passing run of it took 81 (bead mimid-zr08).
     async fn wait_for(&mut self, line: &str) -> Result<(), String> {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while !self.logs().contains(line) {
-            if self.child.try_wait().unwrap().is_some() {
-                for reader in self.readers.drain(..) {
-                    reader.join().unwrap();
-                }
-                return Err(self.logs());
+        loop {
+            if self.logs().contains(line) {
+                return Ok(());
             }
-            assert!(
-                Instant::now() < deadline,
-                "the server did not start:\n{}",
-                self.logs()
-            );
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            // Registered before the check below, so a line that arrives
+            // between the two still wakes this.
+            let arrived = self.stdout.arrived.notified();
+            let also = self.stderr.arrived.notified();
+            tokio::select! {
+                status = self.child.wait() => {
+                    status.unwrap();
+                    return Err(self.logs());
+                }
+                () = arrived => {}
+                () = also => {}
+            }
         }
-        Ok(())
     }
 
-    /// Sends SIGINT and waits up to `limit` for the process to exit.
-    async fn interrupt(&mut self, limit: Duration) -> std::process::ExitStatus {
-        let pid = self.child.id().to_string();
-        let killed = Command::new("kill").args(["-INT", &pid]).status().unwrap();
+    /// Sends SIGINT and waits for the process to exit.
+    async fn interrupt(&mut self) -> std::process::ExitStatus {
+        self.signal_number("-INT").await
+    }
+
+    /// Sends `signal` by name and waits for the exit.
+    ///
+    /// SIGCHLD, through tokio: `wait` returns when the child exits, so
+    /// a server that ignores the signal hangs the test and says which
+    /// signal it was, where a deadline would have blamed the machine.
+    /// The grace-period tests measure how long the exit took and assert
+    /// on that themselves.
+    async fn signal_number(&mut self, signal: &str) -> std::process::ExitStatus {
+        let pid = self.child.id().expect("the child is running").to_string();
+        let killed = std::process::Command::new("kill")
+            .args([signal, &pid])
+            .status()
+            .unwrap();
         assert!(killed.success());
-        let deadline = Instant::now() + limit;
-        loop {
-            if let Some(exit) = self.child.try_wait().unwrap() {
-                return exit;
-            }
-            assert!(Instant::now() < deadline, "server did not stop");
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        eprintln!("waiting for the server to exit on {signal}");
+        self.child.wait().await.unwrap()
     }
 
     /// Everything the server wrote so far: standard output, then standard
     /// error.
     fn logs(&self) -> String {
-        let stdout = self.stdout.lock().unwrap().join("\n");
-        let stderr = self.stderr.lock().unwrap().join("\n");
-        format!("{stdout}\n{stderr}")
+        format!("{}\n{}", self.stdout.joined(), self.stderr.joined())
     }
 
     /// Standard output once the server has exited: all of it.
-    fn exited_stdout(&mut self) -> Vec<String> {
+    ///
+    /// Awaits the reader tasks, so every line the kernel had buffered
+    /// has been drained before this reads them.
+    async fn exited_stdout(&mut self) -> Vec<String> {
         for reader in self.readers.drain(..) {
-            reader.join().unwrap();
+            reader.await.unwrap();
         }
-        self.stdout.lock().unwrap().clone()
+        self.stdout.take()
     }
 }
 
@@ -309,17 +357,17 @@ async fn binary_serves_with_two_peers_and_stops_on_sigint() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, no_consent(CAROL));
 
-    let pid = server.child.id().to_string();
-    let killed = Command::new("kill").args(["-INT", &pid]).status().unwrap();
+    let pid = server.child.id().expect("the child is running").to_string();
+    let killed = std::process::Command::new("kill")
+        .args(["-INT", &pid])
+        .status()
+        .unwrap();
     assert!(killed.success());
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let exit = loop {
-        if let Some(exit) = server.child.try_wait().unwrap() {
-            break exit;
-        }
-        assert!(Instant::now() < deadline, "server did not stop");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+    // SIGCHLD, through tokio: `wait` returns when the child exits, so a
+    // server that ignores SIGINT hangs here rather than failing on a
+    // loaded machine.
+    eprintln!("waiting for the server to stop on SIGINT");
+    let exit = server.child.wait().await.unwrap();
     assert!(exit.success(), "{exit:?}");
 
     let db = sqlx::SqlitePool::connect_with(
@@ -366,21 +414,17 @@ async fn json_log_format_writes_named_events() {
         config,
     )
     .await;
-    let pid = server.child.id().to_string();
+    let pid = server.child.id().expect("the child is running").to_string();
     assert!(
-        Command::new("kill")
+        std::process::Command::new("kill")
             .args(["-INT", &pid])
             .status()
             .unwrap()
             .success()
     );
-    let status = tokio::task::spawn_blocking(move || {
-        let status = server.child.wait().unwrap();
-        (status, server.exited_stdout())
-    })
-    .await
-    .unwrap();
-    let (status, stdout) = status;
+    // SIGCHLD, so no blocking thread parked on waitpid.
+    let status = server.child.wait().await.unwrap();
+    let stdout = server.exited_stdout().await;
     assert!(status.success());
     let text = stdout.join("\n");
 
@@ -416,7 +460,8 @@ async fn json_log_format_writes_named_events() {
 /// with a message naming the variable.
 #[test]
 fn unknown_log_format_stops_startup() {
-    let output = Command::new(env!("CARGO_BIN_EXE_mimid"))
+    // A one-shot run with nothing to wait on, so no reactor is needed.
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_mimid"))
         .arg("unused.toml")
         .env("MIMID_LOG_FORMAT", "yaml")
         .output()
@@ -476,17 +521,15 @@ async fn telemetry_exports_to_the_collector() {
             config,
         )
         .await;
-        let pid = server.child.id().to_string();
+        let pid = server.child.id().expect("the child is running").to_string();
         assert!(
-            Command::new("kill")
+            std::process::Command::new("kill")
                 .args(["-INT", &pid])
                 .status()
                 .unwrap()
                 .success()
         );
-        let status = tokio::task::spawn_blocking(move || server.child.wait().unwrap())
-            .await
-            .unwrap();
+        let status = server.child.wait().await.unwrap();
         assert!(status.success(), "{format}: {status}");
         // Shutdown flushes every signal, so all three have arrived.
         let seen = seen.lock().unwrap().clone();
@@ -546,27 +589,10 @@ async fn alice_token(http: &reqwest::Client, addrs: &Addrs) -> String {
 }
 
 impl Server {
-    /// Sends `signal` (`INT` or `TERM`) and waits up to `limit` for the
-    /// process to exit.
-    async fn signal(&mut self, signal: &str, limit: Duration) -> std::process::ExitStatus {
-        let pid = self.child.id().to_string();
-        let sent = Command::new("kill")
-            .args([&format!("-{signal}"), &pid])
-            .status()
-            .unwrap();
-        assert!(sent.success());
-        let deadline = Instant::now() + limit;
-        loop {
-            if let Some(exit) = self.child.try_wait().unwrap() {
-                return exit;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "server did not stop within {limit:?} of SIG{signal}:\n{}",
-                self.logs()
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+    /// Sends `signal` (`INT` or `TERM`) and waits for the process to
+    /// exit.
+    async fn signal(&mut self, signal: &str) -> std::process::ExitStatus {
+        self.signal_number(&format!("-{signal}")).await
     }
 }
 
@@ -604,14 +630,13 @@ async fn an_open_eventsource_stream_does_not_block(signal: &str) {
     // change or a ping, and neither comes in this test.
     assert_eq!(stream.status(), StatusCode::OK);
 
-    let exit = server.signal(signal, Duration::from_secs(5)).await;
+    let exit = server.signal(signal).await;
     assert!(exit.success(), "{exit:?}");
     assert!(server.logs().contains("mimid stopped"), "{}", server.logs());
-    // The stream ended (cleanly or by the connection closing); a timeout
-    // here would mean it was still open.
-    let end = tokio::time::timeout(Duration::from_secs(5), stream.chunk())
-        .await
-        .expect("the stream ended");
+    // The stream ended (cleanly or by the connection closing), and the
+    // server has already exited above, so nothing can send on it again:
+    // this read ends rather than waiting.
+    let end = stream.chunk().await;
     assert!(!matches!(end, Ok(Some(_))));
 }
 
@@ -669,9 +694,8 @@ async fn an_open_live_stream_does_not_block_sigterm() {
             .send(Message::Binary(message.encode().into()))
             .await
             .unwrap();
-        let frame = tokio::time::timeout(Duration::from_secs(10), socket.next())
-            .await
-            .unwrap();
+        // The socket is the event: `next` is an await on the connection.
+        let frame = socket.next().await;
         let Some(Ok(Message::Binary(bytes))) = frame else {
             panic!("no answer: {frame:?}");
         };
@@ -685,14 +709,13 @@ async fn an_open_live_stream_does_not_block_sigterm() {
         );
     }
 
-    let exit = server.signal("TERM", Duration::from_secs(5)).await;
+    let exit = server.signal("TERM").await;
     assert!(exit.success(), "{exit:?}");
-    // The socket is closed: a close frame, an error or the end, never a
-    // timeout.
+    // The socket is closed: a close frame, an error or the end. The
+    // server has already exited above, so nothing can send on it again
+    // and these reads end rather than waiting.
     loop {
-        let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
-            .await
-            .expect("the live stream ended");
+        let frame = socket.next().await;
         match frame {
             Some(Ok(Message::Binary(_) | Message::Ping(_) | Message::Pong(_))) => {}
             _ => break,
@@ -734,11 +757,19 @@ async fn a_stuck_request_delays_sigterm_only_by_the_grace_period() {
         .await
         .unwrap();
     stuck.flush().await.unwrap();
-    // Let the server read the headers and start the request.
+    // The one wait in this file with nothing to wait on: the server
+    // publishes nothing when it starts a request (http.rs turns the
+    // trace layer's request event off, and its response event cannot
+    // fire for a request that never completes), so there is no line and
+    // no signal that says the request is in flight. Bead mimid-67e0.2
+    // is to add that event; until then this is a bound on reading a
+    // request's headers off loopback, and the assertion below -- that
+    // shutdown took the whole grace period -- fails if it was too
+    // short, rather than passing on a race.
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let started = Instant::now();
-    let exit = server.signal("TERM", Duration::from_secs(20)).await;
+    let exit = server.signal("TERM").await;
     assert!(exit.success(), "{exit:?}");
     assert!(
         started.elapsed() >= Duration::from_secs(9),
@@ -854,8 +885,8 @@ async fn sigint_during_startup_stops_cleanly() {
                 false,
             )
             .await;
-            let exit = server.interrupt(Duration::from_secs(30)).await;
-            let stdout = server.exited_stdout().join("\n");
+            let exit = server.interrupt().await;
+            let stdout = server.exited_stdout().await.join("\n");
             // Another process took the second port after the first line.
             if server.logs().contains("Address already in use") {
                 continue;

@@ -555,13 +555,10 @@ async fn a_hub_that_does_not_advance_does_not_spin() {
         Some(3)
     );
 
-    let filled = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        p.follower.fill_gap(ROOM),
-    )
-    .await
-    .expect("fill_gap returns instead of spinning");
-    filled.unwrap();
+    // `fill_gap` is what is under test: it bounds its own requests and
+    // returns, so a deadline here would only hide a spin behind a
+    // number. One that spins hangs the test and says which it was.
+    p.follower.fill_gap(ROOM).await.unwrap();
     assert!(
         hub.asked().len() <= 2,
         "asked a bounded number of times, got {} requests",

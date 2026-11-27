@@ -12,10 +12,11 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use mimid_agent_core::SignalKind;
 use mimid_agent_core::{Agent, AgentConfig};
@@ -40,6 +41,8 @@ const CAROL: &str = "mimi://a.example/u/carol";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as mimid-server's `main.rs` wires it, on
@@ -96,11 +99,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         options
     })
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -123,22 +128,23 @@ async fn device(server: &Server, user: &'static str, dir: &Path, name: &str) -> 
     .unwrap()
 }
 
-/// Syncs `store` until `done` holds.
-async fn until_store(store: &Store, done: impl Fn(&Store) -> bool) {
-    for _ in 0..100 {
+/// Syncs `store` until `done` holds, woken between syncs by `changes`
+/// or by what the last sync wrote ([`common::Watch::again`]).
+async fn until_store(store: &Store, changes: &common::Changes, done: impl Fn(&Store) -> bool) {
+    let mut watch = changes.watch(store);
+    loop {
         store.sync().await.unwrap();
         if done(store) {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("the store to get there").await;
     }
-    panic!("the store never got there");
 }
 
 /// alice and bob, each a store on one in-process mimid server, in a chat
 /// alice hosts. Returns the two stores, the chat's URI, and its key in
 /// each store.
-async fn alice_and_bob(dir: &Path) -> (Store, Store, String, String, String) {
+async fn alice_and_bob(dir: &Path) -> (Store, Store, String, String, String, common::Changes) {
     let server = server(dir, &[ALICE, BOB]).await;
     let alice = Store::new(agent(&server, ALICE, dir).await, InvitePolicy::Any);
     alice.open_database().unwrap();
@@ -158,9 +164,20 @@ async fn alice_and_bob(dir: &Path) -> (Store, Store, String, String, String) {
         .await
         .unwrap();
     alice.save().await.unwrap();
-    until_store(&bob, |s| s.state().room_of_uri(&chat.uri).is_some()).await;
+    let changes = server.changes.clone();
+    until_store(&bob, &changes, |s| {
+        s.state().room_of_uri(&chat.uri).is_some()
+    })
+    .await;
     let bob_key = bob.state().room_of_uri(&chat.uri).cloned().unwrap();
-    (alice, bob, chat.uri.clone(), chat.key.clone(), bob_key)
+    (
+        alice,
+        bob,
+        chat.uri.clone(),
+        chat.key.clone(),
+        bob_key,
+        changes,
+    )
 }
 
 /// A call started from a chat is a parent-dependent room of it, among the
@@ -168,7 +185,7 @@ async fn alice_and_bob(dir: &Path) -> (Store, Store, String, String, String) {
 #[tokio::test]
 async fn a_call_started_from_a_chat_keys_itself_among_its_people() {
     let dir = tempfile::tempdir().unwrap();
-    let (alice, bob, chat_uri, chat_key, bob_chat) = alice_and_bob(dir.path()).await;
+    let (alice, bob, chat_uri, chat_key, bob_chat, changes) = alice_and_bob(dir.path()).await;
 
     // No `among`: everyone in the chat, the caller aside.
     let call = alice
@@ -188,7 +205,10 @@ async fn a_call_started_from_a_chat_keys_itself_among_its_people() {
 
     // bob's store joins the call and reads the same parent from its
     // policy, which is how a front end tells a call from a chat.
-    until_store(&bob, |s| s.state().room_of_uri(&call.uri).is_some()).await;
+    until_store(&bob, &changes, |s| {
+        s.state().room_of_uri(&call.uri).is_some()
+    })
+    .await;
     let bob_call = bob.state().room_of_uri(&call.uri).cloned().unwrap();
     assert_eq!(
         bob.state().rooms[&bob_call].parent.as_deref(),
@@ -215,7 +235,7 @@ async fn a_call_started_from_a_chat_keys_itself_among_its_people() {
 #[tokio::test]
 async fn a_call_stays_inside_the_chat_it_is_started_from() {
     let dir = tempfile::tempdir().unwrap();
-    let (alice, _bob, chat_uri, chat_key, _bob_chat) = alice_and_bob(dir.path()).await;
+    let (alice, _bob, chat_uri, chat_key, _bob_chat, _changes) = alice_and_bob(dir.path()).await;
     let rooms_before = alice.state().rooms.len();
 
     let refused = alice
@@ -252,7 +272,7 @@ async fn a_call_stays_inside_the_chat_it_is_started_from() {
 #[tokio::test]
 async fn a_call_needs_a_chat() {
     let dir = tempfile::tempdir().unwrap();
-    let (alice, _bob, _chat_uri, _chat_key, _bob_chat) = alice_and_bob(dir.path()).await;
+    let (alice, _bob, _chat_uri, _chat_key, _bob_chat, _changes) = alice_and_bob(dir.path()).await;
     let refused = alice.start_call(alice.new_key(), "nope", None).await;
     assert!(
         matches!(&refused, Err(ActionError::NoSuchRoom(key)) if key == "nope"),
@@ -266,13 +286,16 @@ async fn a_call_needs_a_chat() {
 #[tokio::test]
 async fn a_call_signal_arrives_as_a_change_and_not_as_a_message() {
     let dir = tempfile::tempdir().unwrap();
-    let (alice, bob, _chat_uri, chat_key, _bob_chat) = alice_and_bob(dir.path()).await;
+    let (alice, bob, _chat_uri, chat_key, _bob_chat, changes) = alice_and_bob(dir.path()).await;
     let call = alice
         .start_call(alice.new_key(), &chat_key, None)
         .await
         .unwrap();
     alice.save().await.unwrap();
-    until_store(&bob, |s| s.state().room_of_uri(&call.uri).is_some()).await;
+    until_store(&bob, &changes, |s| {
+        s.state().room_of_uri(&call.uri).is_some()
+    })
+    .await;
     let bob_call = bob.state().room_of_uri(&call.uri).cloned().unwrap();
     let messages_before = bob.state().messages.len();
 
@@ -286,7 +309,8 @@ async fn a_call_signal_arrives_as_a_change_and_not_as_a_message() {
     // bob's store sees it as a change, not a message.
     let mut from = bob.last_seq();
     let mut signals: Vec<Change> = Vec::new();
-    for _ in 0..100 {
+    let mut watch = changes.watch(&bob);
+    loop {
         bob.sync().await.unwrap();
         bob.save().await.unwrap();
         let batch = bob.changes_since(from).unwrap();
@@ -302,7 +326,7 @@ async fn a_call_signal_arrives_as_a_change_and_not_as_a_message() {
         if !signals.is_empty() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("the call signal to reach bob").await;
     }
 
     let [
@@ -353,6 +377,7 @@ async fn a_call_signal_arrives_as_a_change_and_not_as_a_message() {
 async fn a_call_invite_is_joined_whatever_the_policy_says() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
+    let changes = server.changes.clone();
     let alice = Store::new(agent(&server, ALICE, dir.path()).await, InvitePolicy::Any);
     alice.open_database().unwrap();
     // bob joins nothing on his own.
@@ -374,7 +399,7 @@ async fn a_call_invite_is_joined_whatever_the_policy_says() {
         .await
         .unwrap();
     alice.save().await.unwrap();
-    until_store(&bob, |s| {
+    until_store(&bob, &changes, |s| {
         s.state()
             .invites
             .iter()
@@ -404,7 +429,10 @@ async fn a_call_invite_is_joined_whatever_the_policy_says() {
         .await
         .unwrap();
     alice.save().await.unwrap();
-    until_store(&bob, |s| s.state().room_of_uri(&call.uri).is_some()).await;
+    until_store(&bob, &changes, |s| {
+        s.state().room_of_uri(&call.uri).is_some()
+    })
+    .await;
 
     let state = bob.state();
     let key = state.room_of_uri(&call.uri).expect("the call room, joined");
@@ -440,6 +468,7 @@ async fn a_call_invite_is_joined_whatever_the_policy_says() {
 async fn a_call_under_a_one_to_one_chat_holds_two() {
     let dir = tempfile::tempdir().unwrap();
     let server = server(dir.path(), &[ALICE, BOB]).await;
+    let changes = server.changes.clone();
     let alice = Store::new(agent(&server, ALICE, dir.path()).await, InvitePolicy::Any);
     alice.open_database().unwrap();
     let bob = Store::new(agent(&server, BOB, dir.path()).await, InvitePolicy::Any);
@@ -479,7 +508,10 @@ async fn a_call_under_a_one_to_one_chat_holds_two() {
         .await
         .unwrap();
     alice.save().await.unwrap();
-    until_store(&bob, |s| s.state().room_of_uri(&call.uri).is_some()).await;
+    until_store(&bob, &changes, |s| {
+        s.state().room_of_uri(&call.uri).is_some()
+    })
+    .await;
 
     let state = alice.state();
     let room = state

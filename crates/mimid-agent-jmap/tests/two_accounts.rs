@@ -20,11 +20,12 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use axum::extract::Request;
 use axum::middleware::{self, Next};
@@ -55,6 +56,8 @@ const SENT_AT: &str = "2026-11-16T12:00:00Z";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a client's waits are woken by.
+    changes: common::Changes,
 }
 
 /// Starts a.example's stack as `main.rs` wires it, as
@@ -202,6 +205,7 @@ async fn server_with(dir: &Path, users: &[&'static str], assets: Option<Assets>)
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let mut app = router(directory(&base), hub, follower).merge(jmap);
     if let Some(assets) = assets {
         app = axum::Router::new()
@@ -215,6 +219,7 @@ async fn server_with(dir: &Path, users: &[&'static str], assets: Option<Assets>)
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -223,6 +228,8 @@ async fn server_with(dir: &Path, users: &[&'static str], assets: Option<Assets>)
 struct Client {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<Id>,
+    /// The server's change signal, which wakes every wait below.
+    changes: common::Changes,
 }
 
 impl Client {
@@ -286,7 +293,11 @@ impl Client {
         let chat = Arc::new(chat);
         let mut dispatcher = Dispatcher::new();
         AgentChat::register(&chat, &mut dispatcher);
-        Self { chat, dispatcher }
+        Self {
+            chat,
+            dispatcher,
+            changes: server.changes.clone(),
+        }
     }
 
     fn account(&self) -> &str {
@@ -372,33 +383,44 @@ impl Client {
 
     /// Syncs until `done` holds, for up to ten seconds (fanout to local
     /// users is asynchronous). Agent problems fail the test.
+    /// Syncs until `done` picks a report, woken between syncs by the
+    /// server.
+    ///
+    /// A sync is a request, so something has to say when to make one.
+    /// The server's change signal is that something; the watch is taken
+    /// before the first sync, so a change made while a sync is in
+    /// flight waits in the channel instead of being missed.
     async fn sync_until<F, Fut>(&self, mut done: F) -> SyncReport
     where
         F: FnMut(SyncReport) -> Fut,
         Fut: Future<Output = Option<SyncReport>>,
     {
-        for _ in 0..100 {
+        let mut watch = self.changes.watch(self.chat.store());
+        let what = format!("{}: the expected state", self.account());
+        loop {
             let report = self.chat.sync().await.unwrap();
             assert!(report.problems.is_empty(), "{report:?}");
             if let Some(report) = done(report).await {
                 return report;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch.again(&what).await;
         }
-        panic!("{}: the expected state never came", self.account());
     }
 
+    /// Syncs until `chat` holds `n` messages or more, woken between
+    /// syncs by the server.
     async fn sync_until_messages(&self, chat: &str, n: usize) -> Vec<Value> {
-        for _ in 0..100 {
+        let mut watch = self.changes.watch(self.chat.store());
+        let what = format!("{}: {n} messages", self.account());
+        loop {
             let report = self.chat.sync().await.unwrap();
             assert!(report.problems.is_empty(), "{report:?}");
             let messages = self.messages(chat).await;
             if messages.len() >= n {
                 return messages;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch.again(&what).await;
         }
-        panic!("{}: {n} messages never came", self.account());
     }
 }
 
@@ -917,15 +939,15 @@ async fn attachments_travel_sealed_and_arrive_whole() {
     // Uploads are numbered in order: the third is the second attachment.
     assets.tamper(&ids[2], |octets| octets[0] ^= 1);
     let mut problems = Vec::new();
-    let mut got = Vec::new();
-    for _ in 0..100 {
+    let mut watch = bob.changes.watch(bob.chat.store());
+    let got = loop {
         problems.extend(bob.chat.sync().await.unwrap().problems);
-        got = bob.messages(&chat_b).await;
+        let got = bob.messages(&chat_b).await;
         if got.len() == 2 {
-            break;
+            break got;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+        watch.again("bob's two attachments").await;
+    };
     assert_eq!(got.len(), 2, "{got:?}");
     let only = got.iter().find(|m| m["body"] == json!("")).unwrap();
     assert_eq!(
@@ -1084,16 +1106,19 @@ async fn a_failed_attachment_fetch_is_retried_until_it_arrives() {
 
 /// Syncs `client` until `chat` has `n` Messages, whatever problems the
 /// syncs report; returns the reports.
+///
+/// Woken between syncs by the server's change signal.
 async fn sync_to(client: &Client, chat: &str, n: usize) -> Vec<SyncReport> {
     let mut reports = Vec::new();
-    for _ in 0..100 {
+    let mut watch = client.changes.watch(client.chat.store());
+    let what = format!("{n} messages for {}", client.account());
+    loop {
         reports.push(client.chat.sync().await.unwrap());
         if client.messages(chat).await.len() >= n {
             return reports;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        watch.again(&what).await;
     }
-    panic!("{n} messages never arrived");
 }
 
 /// Decision mimid-1wgh.66 (bead mimid-s2qc): the store records no outbound
@@ -1221,12 +1246,13 @@ async fn a_call_room_is_not_a_chat() {
     );
 
     // bob joins the call room and likewise sees no second Chat.
-    for _ in 0..50 {
+    let mut watch = bob.changes.watch(bob.chat.store());
+    while bob.chat.store().state().room_of_uri(&call.uri).is_none() {
         bob.chat.sync().await.unwrap();
         if bob.chat.store().state().room_of_uri(&call.uri).is_some() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("bob to join the call room").await;
     }
     let bob_call = bob
         .chat
@@ -1258,12 +1284,13 @@ async fn a_call_room_is_not_a_chat() {
         .await
         .unwrap();
     alice.chat.store().save().await.unwrap();
-    for _ in 0..50 {
+    let mut watch = bob.changes.watch(bob.chat.store());
+    loop {
         let report = bob.chat.sync().await.unwrap();
         if report.signals > 0 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("a signal to reach bob").await;
     }
     assert_eq!(
         (

@@ -21,10 +21,11 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use jmap_server::{Dispatcher, Id, JmapRequest, State};
 use mimid_agent_core::{Agent, AgentConfig, RoomStatus};
@@ -50,6 +51,8 @@ struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
     hub: Arc<Hub>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as `main.rs` wires it, with accounts for `users`.
@@ -106,12 +109,14 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         JmapOptions::default(),
     )
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), Arc::clone(&hub), follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
         hub,
+        changes,
     }
 }
 
@@ -119,6 +124,8 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
 struct Client {
     chat: Arc<AgentChat>,
     dispatcher: Dispatcher<Id>,
+    /// The server's change signal, which wakes the waits below.
+    changes: common::Changes,
 }
 
 impl Client {
@@ -139,7 +146,11 @@ impl Client {
         let chat = Arc::new(AgentChat::new(agent, Id::from(name), Options::default()));
         let mut dispatcher = Dispatcher::new();
         AgentChat::register(&chat, &mut dispatcher);
-        Self { chat, dispatcher }
+        Self {
+            chat,
+            dispatcher,
+            changes: server.changes.clone(),
+        }
     }
 
     fn account(&self) -> &str {
@@ -237,10 +248,10 @@ impl Client {
             .map(|(id, role)| ((*id).to_owned(), (*role).to_owned()))
             .collect();
         wanted.sort();
-        let mut seen = Vec::new();
-        for _ in 0..100 {
+        let mut watch = self.changes.watch(self.chat.store());
+        loop {
             let chat = self.chat_of(room).await;
-            seen = chat["members"]
+            let mut seen = chat["members"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -255,22 +266,27 @@ impl Client {
             if seen == wanted {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch
+                .again(&format!(
+                    "{}: members {wanted:?}, not {seen:?}",
+                    self.account()
+                ))
+                .await;
         }
-        panic!("{}: members {seen:?}, not {wanted:?}", self.account());
     }
 
     /// Syncs until this device is at `other`'s epoch of `room`.
     async fn catch_up(&self, other: &Client, room: &str) {
         let epoch = other.chat.agent().lock().await.epoch(room).unwrap();
-        for _ in 0..100 {
+        let mut watch = self.changes.watch(self.chat.store());
+        let what = format!("{}: epoch {epoch} of {room}", self.account());
+        loop {
             self.chat.sync().await.unwrap();
             if self.chat.agent().lock().await.epoch(room).unwrap() == epoch {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            watch.again(&what).await;
         }
-        panic!("{}: never reached epoch {epoch} of {room}", self.account());
     }
 
     /// The ChatContact id of user URI `user`.
@@ -477,7 +493,8 @@ async fn an_admin_moderates_through_jmap_and_a_member_is_refused() {
         bob.bans().await,
         vec![(chat_b.clone(), carol_at_bob.clone(), alice_at_bob.clone())]
     );
-    for _ in 0..100 {
+    let mut watch = carol.changes.watch(carol.chat.store());
+    loop {
         carol.chat.sync().await.unwrap();
         let left = carol
             .chat
@@ -490,7 +507,7 @@ async fn an_admin_moderates_through_jmap_and_a_member_is_refused() {
         if left {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("carol to be out of the room").await;
     }
 
     // While the ban lasts carol cannot be added; its reason changes only

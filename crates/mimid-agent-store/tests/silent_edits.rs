@@ -11,10 +11,11 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use mimid_agent_core::{Agent, AgentConfig, Binding, Event, FailPoint, HostOptions};
 use mimid_agent_store::content::BodyType;
@@ -37,6 +38,8 @@ const BOB: &str = "mimi://a.example/u/bob";
 struct Server {
     base: String,
     tokens: BTreeMap<&'static str, String>,
+    /// What a wait is woken by.
+    changes: common::Changes,
 }
 
 /// a.example's stack as mimid-server's `main.rs` wires it, on
@@ -93,11 +96,13 @@ async fn server(dir: &Path, users: &[&'static str]) -> Server {
         options
     })
     .unwrap();
+    let changes = common::Changes::of(&follower);
     let app = router(directory(&base), hub, follower).merge(jmap);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: base_text,
         tokens,
+        changes,
     }
 }
 
@@ -136,19 +141,30 @@ fn outbox_silent(dir: &Path, user: &str) -> Vec<i64> {
         .collect()
 }
 
-/// Polls `agent` until a message with `text` arrives.
-async fn until_text(agent: &mut Agent, text: &str) {
-    for _ in 0..100 {
-        for event in agent.poll().await.unwrap() {
+/// Polls `agent` until a message with `text` arrives, woken between
+/// polls by `server`.
+///
+/// A poll that read anything is followed by another at once: one change
+/// at the server can take an agent several polls, and waiting for a
+/// second change that will not come would hang.
+async fn until_text(agent: &mut Agent, server: &Server, text: &str) {
+    let mut watch = server.changes.watch_server();
+    let what = format!("the message {text:?}");
+    loop {
+        let events = agent.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             if let Event::Message(m) = event
                 && m.text.as_deref() == Some(text)
             {
                 return;
             }
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        if progressed {
+            continue;
+        }
+        watch.next(&what).await;
     }
-    panic!("{text:?} never arrived");
 }
 
 #[tokio::test]
@@ -187,13 +203,14 @@ async fn edits_go_silent_as_the_store_says(binding: Binding) {
     let room = alice.host_room(&HostOptions::named("r")).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
     let mut key = None;
-    for _ in 0..100 {
+    let mut watch = server.changes.watch(&bob);
+    while key.is_none() {
         bob.sync().await.unwrap();
         key = bob.state().room_of_uri(&room).cloned();
         if key.is_some() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        watch.again("bob to join the room").await;
     }
     let room_key = key.expect("bob joined");
     assert!(bob.silent_edits(), "on by default");
@@ -202,7 +219,7 @@ async fn edits_go_silent_as_the_store_says(binding: Binding) {
     bob.send(first.clone(), &room_key, "first", &[])
         .await
         .unwrap();
-    until_text(&mut alice, "first").await;
+    until_text(&mut alice, &server, "first").await;
 
     // A plain message is not silent.
     bob.agent().lock().await.fail_next(FailPoint::BeforeSend);
@@ -210,7 +227,7 @@ async fn edits_go_silent_as_the_store_says(binding: Binding) {
     assert!(bob.send(plain, &room_key, "plain", &[]).await.is_err());
     assert_eq!(outbox_silent(dir.path(), BOB), [0]);
     bob.sync().await.unwrap();
-    until_text(&mut alice, "plain").await;
+    until_text(&mut alice, &server, "plain").await;
     assert!(outbox_silent(dir.path(), BOB).is_empty());
 
     // An edit is, and stays so when it is sent again.
@@ -218,7 +235,7 @@ async fn edits_go_silent_as_the_store_says(binding: Binding) {
     assert!(bob.edit(&first, "second", BodyType::Plain).await.is_err());
     assert_eq!(outbox_silent(dir.path(), BOB), [1]);
     bob.sync().await.unwrap();
-    until_text(&mut alice, "second").await;
+    until_text(&mut alice, &server, "second").await;
 
     // Switched off, an edit is not.
     bob.set_silent_edits(false);
@@ -226,5 +243,5 @@ async fn edits_go_silent_as_the_store_says(binding: Binding) {
     assert!(bob.edit(&first, "third", BodyType::Plain).await.is_err());
     assert_eq!(outbox_silent(dir.path(), BOB), [0]);
     bob.sync().await.unwrap();
-    until_text(&mut alice, "third").await;
+    until_text(&mut alice, &server, "third").await;
 }

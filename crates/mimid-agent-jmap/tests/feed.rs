@@ -188,6 +188,11 @@ impl Bob {
     }
 
     /// Whether the sync loop was woken since it last waited.
+    ///
+    /// A bound, not a guessed latency: this answers a yes-or-no
+    /// question about a `Notify`, and "no" has no event of its own. The
+    /// positive cases are asserted on, so a wake that is merely slow
+    /// fails here rather than passing quietly.
     async fn sync_was_wanted(&self) -> bool {
         tokio::time::timeout(
             Duration::from_millis(100),

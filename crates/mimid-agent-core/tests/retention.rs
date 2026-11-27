@@ -79,9 +79,16 @@ enum Loss {
 
 /// Polls `agent` until it reports lost messages in `room`; any other
 /// problem fails the test.
-async fn lost(agent: &mut Agent, room: &str) -> (Option<u64>, u64) {
-    for _ in 0..100 {
-        for event in agent.poll().await.unwrap() {
+///
+/// Woken between polls by `server`. A poll that read anything is
+/// followed by another at once: one change at the server can take an
+/// agent several polls.
+async fn lost(agent: &mut Agent, server: &Server, room: &str) -> (Option<u64>, u64) {
+    let mut changed = server.changed();
+    loop {
+        let events = agent.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             match event {
                 Event::MessagesLost {
                     room: r, from, to, ..
@@ -92,9 +99,17 @@ async fn lost(agent: &mut Agent, room: &str) -> (Option<u64>, u64) {
                 _ => {}
             }
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        if progressed {
+            continue;
+        }
+        let stream = agent.stream_wake();
+        common::look_again(
+            &format!("MessagesLost in {room}"),
+            &mut changed,
+            stream.as_ref(),
+        )
+        .await;
     }
-    panic!("no MessagesLost for {room}");
 }
 
 async fn away_past_retention(binding: Binding, loss: Loss) {
@@ -111,14 +126,14 @@ async fn away_past_retention(binding: Binding, loss: Loss) {
         .await
         .unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    let number = poll_until(&mut bob, |e| match e {
+    let number = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
     .await;
     bob.join(number).unwrap();
     alice.send_text(&room, "before").await.unwrap();
-    let before = poll_until(&mut bob, |e| match e {
+    let before = poll_until(&mut bob, &server, |e| match e {
         Event::Message(m) => Some(m.accepted_at),
         _ => None,
     })
@@ -134,6 +149,9 @@ async fn away_past_retention(binding: Binding, loss: Loss) {
     alice.send_text(&room, "missed").await.unwrap();
     match loss {
         Loss::Sweep => {
+            // The clock is the event: the sweeper deletes what is older
+            // than the retention, so the test has to be past it before
+            // sweeping. One sleep, not a loop.
             tokio::time::sleep(RETENTION).await;
             let swept =
                 MessageSweeper::new(server.store.clone(), Arc::new(SystemClock), RETENTION / 2)
@@ -161,7 +179,7 @@ async fn away_past_retention(binding: Binding, loss: Loss) {
     // is behind, so he rejoins.
     alice.send_text(&room, "after the gap").await.unwrap();
     let mut bob = device(&server, BOB, dir.path(), binding).await;
-    let (from, to) = lost(&mut bob, &room).await;
+    let (from, to) = lost(&mut bob, &server, &room).await;
     assert!(from.is_some_and(|from| from >= before), "{from:?} {before}");
     assert!(to >= from.unwrap_or(0));
     assert!(
@@ -175,7 +193,7 @@ async fn away_past_retention(binding: Binding, loss: Loss) {
     );
     // alice takes in bob's external Commit.
     let target = bob.epoch(&room).unwrap();
-    poll_until(&mut alice, |e| match e {
+    poll_until(&mut alice, &server, |e| match e {
         Event::MembersChanged { epoch, .. } if *epoch == target => Some(()),
         _ => None,
     })
@@ -184,14 +202,14 @@ async fn away_past_retention(binding: Binding, loss: Loss) {
 
     // And they talk again, both ways.
     alice.send_text(&room, "welcome back").await.unwrap();
-    let got = poll_until(&mut bob, |e| match e {
+    let got = poll_until(&mut bob, &server, |e| match e {
         Event::Message(m) => m.text.clone(),
         _ => None,
     })
     .await;
     assert_eq!(got, "welcome back");
     bob.send_text(&room, "glad to be").await.unwrap();
-    let got = poll_until(&mut alice, |e| match e {
+    let got = poll_until(&mut alice, &server, |e| match e {
         Event::Message(m) => m.text.clone(),
         _ => None,
     })
@@ -246,7 +264,7 @@ async fn a_room_that_refuses_the_rejoin_is_left_for_a_new_invite() {
     };
     let room = alice.host_room(&options).await.unwrap();
     alice.invite(&room, BOB).await.unwrap();
-    let number = poll_until(&mut bob, |e| match e {
+    let number = poll_until(&mut bob, &server, |e| match e {
         Event::InviteArrived { number } => Some(*number),
         _ => None,
     })
@@ -267,8 +285,11 @@ async fn a_room_that_refuses_the_rejoin_is_left_for_a_new_invite() {
 
     let mut bob = device(&server, BOB, dir.path(), Binding::Jmap).await;
     let (mut problems, mut lost, mut left) = (Vec::new(), 0, false);
-    for _ in 0..100 {
-        for event in bob.poll().await.unwrap() {
+    let mut changed = server.changed();
+    while !left {
+        let events = bob.poll().await.unwrap();
+        let progressed = !events.is_empty();
+        for event in events {
             match event {
                 Event::Problem { description, .. } => problems.push(description),
                 Event::MessagesLost { .. } => lost += 1,
@@ -279,9 +300,17 @@ async fn a_room_that_refuses_the_rejoin_is_left_for_a_new_invite() {
         if left {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        if progressed {
+            continue;
+        }
+        let stream = bob.stream_wake();
+        common::look_again(
+            &format!("bob to be told he is out of {room}"),
+            &mut changed,
+            stream.as_ref(),
+        )
+        .await;
     }
-    assert!(left, "{problems:?}");
     assert_eq!(lost, 1);
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert!(problems[0].contains("needs a new invite"), "{problems:?}");
