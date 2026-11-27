@@ -880,8 +880,13 @@ impl SemiPrivateMessage {
     }
 }
 
-/// The `WireFormat` value for a SemiPrivateMessage
-/// (semiprivatemessage-08 §5.1: TBD1, suggested 0x0011).
+/// The `WireFormat` value for a SemiPrivateMessage.
+///
+/// Not assigned by IANA. semiprivatemessage-08 §5.1 requests TBD1 and
+/// suggests 0x0011, which is what this uses until a value is assigned,
+/// so a peer built against a later draft may disagree. That is an
+/// interop question, not a security one: a frame under another value
+/// does not decode as this one.
 ///
 /// This is the value that goes in the `FramedContentTBS` the signature
 /// and `framed_content_tbs_hash` cover, not `mls_private_message`
@@ -968,10 +973,14 @@ impl SemiPrivateMessage {
 /// Where a decoded [`SemiPrivateMessageContent`]'s signed material sits
 /// in the bytes it was decoded from.
 ///
-/// Both are the received bytes, not a re-encoding:
-/// `framed_content_tbs_hash` covers a FramedContent holding `content`,
-/// and the signature is verified over the FramedContentTBS built from
-/// it, so neither may be rebuilt from the decoded structures.
+/// The received bytes, not a re-encoding: `framed_content_tbs_hash`
+/// covers a FramedContent holding `content`, and re-encoding a decoded
+/// `ProposalIn` or `CommitIn` need not reproduce the sender's bytes.
+///
+/// Both are the received bytes, and the signature is here rather than
+/// taken from OpenMLS's `FramedContentAuthData` because that type's
+/// `signature` accessor returns a `&Signature` with no public way to
+/// read its bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContentSpans<'a> {
     /// The `content` field of RFC 9420 §6.1's FramedContent: the encoded
@@ -982,8 +991,10 @@ pub struct ContentSpans<'a> {
     /// which signs the FramedContentTBS under the label
     /// `"FramedContentTBS"`.
     ///
-    /// Read from the bytes rather than from OpenMLS's
-    /// `FramedContentAuthData`, whose fields are private.
+    /// Read from the bytes. OpenMLS's
+    /// `FramedContentAuthData::signature` returns a `&Signature`, whose
+    /// own `as_slice` is `pub(crate)`, so there is no public way to get
+    /// the bytes out of it.
     pub signature: &'a [u8],
 }
 

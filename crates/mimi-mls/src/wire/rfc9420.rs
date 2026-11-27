@@ -625,8 +625,10 @@ pub enum WireFormat {
     MlsGroupInfo,
     /// `mls_key_package(5)`.
     MlsKeyPackage,
-    /// `mls_semiprivate_message(0x0011)`
-    /// (semiprivatemessage-08 §5.1).
+    /// `mls_semiprivate_message`, provisionally 0x0011.
+    ///
+    /// semiprivatemessage-08 §5.1 requests TBD1 and suggests this
+    /// value; IANA has assigned none.
     MlsSemiPrivateMessage,
 }
 

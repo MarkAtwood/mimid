@@ -8,7 +8,7 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 # Exact pins: OpenMLS's extensions-draft API changes between releases.
-openmls = { version = "=0.9.2", features = ["extensions-draft"] }
+openmls = { version = "=0.9.2", features = ["extensions-draft", "semiprivate-message-draft"] }
 openmls_rust_crypto = { version = "=0.6.0", features = ["extensions-draft"] }
 openmls_sqlite_storage = { version = "=0.3.0", features = ["extensions-draft"] }
 openmls_traits = "=0.6.0"
@@ -44,16 +44,20 @@ toml = "1.1.8"
 # (decision mimid-1wgh.4.56), and CommitIn and FramedContentAuthData exported
 # so a consumer can decode a structure that embeds a Commit it did not build
 # (semiprivatemessage-08 §3.1's SemiPrivateMessageContent; bead
-# mimid-1wgh.4.79.1). Every openmls-family crate comes from the same commit
-# so they share one openmls_traits; all but openmls are unchanged.
+# mimid-1wgh.4.79.1) with accessors so a consumer need not read their
+# fields out of the bytes, and the mls_semiprivate_message wire format
+# 0x0011 behind the semiprivate-message-draft feature, so that MLSMessage can
+# carry a SemiPrivateMessage at all (semiprivatemessage-08 §5.1; upstream
+# PR openmls/openmls#2352). Every openmls-family crate comes from the same
+# commit so they share one openmls_traits; all but openmls are unchanged.
 [patch.crates-io]
-openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
-openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
-openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
-openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
-openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
-openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
-openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "64f9eab2fad09ed2ec42d0facab183082b6b458c" }
+openmls = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
+openmls_traits = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
+openmls_rust_crypto = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
+openmls_basic_credential = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
+openmls_sqlite_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
+openmls_memory_storage = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
+openmls_serialization_helpers = { git = "https://github.com/MarkAtwood/openmls", rev = "270b8c24f04cd3b953cd01296a9b0f2418d61a15" }
 
 # Line tables instead of full DWARF. A panic still names the file and
 # line, which is what a failing test needs, but a debugger can no longer
