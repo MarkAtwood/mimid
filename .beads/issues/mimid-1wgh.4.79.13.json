@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.4.79.13",
+  "title": "The hub can read a semiprivate handshake but cannot apply it to its group state",
+  "description": "Found 2026-11-26 while wiring Hub::read_semiprivate into the request\npath, which is the last step of bead mimid-1wgh.4.79.3. The step does\nnot work, and the reason is structural rather than a missing line.\n\n## What happens today\n\n`stage_commit` hands the raw MLSMessage bytes to\n`Observer::process`, which goes through OpenMLS's `process_message` and\nreturns `UnexpectedMessage` for anything but a PublicMessage proposal or\nCommit. OpenMLS has no SemiPrivateMessage processing: PR\nopenmls/openmls#2352 adds the frame and says so in its own description.\n\n## Why re-framing cannot be the answer\n\nThe obvious workaround is for the hub to read the handshake as an\nexternal receiver, then rebuild it as a PublicMessage and feed that to\nthe Observer. That cannot verify.\n\nRFC 9420 §6.1's FramedContentTBS is\n`version || wire_format || FramedContent || GroupContext`, and the\nsignature covers it. A SemiPrivateMessage's signature is over a TBS\nholding wire_format 0x0011 (decision mimid-1wgh.4.79.9); a PublicMessage\nbuilt from the same FramedContent has wire_format 1, so OpenMLS would\ncompute a different TBS and the signature would fail. The wire format is\nin the TBS precisely so this substitution is impossible, which is the\nproperty decision mimid-1wgh.4.79.9 chose it for. It cuts both ways.\n\n## So what the hub can and cannot do\n\nCan: verify a semiprivate handshake end to end -- unseal its keys,\ncheck both hashes, check the signature against the sender's leaf in its\nown tree -- and see the Proposal or Commit inside. That is\nHub::read_semiprivate, and it is enough to relay a message to other\nproviders and to refuse a malformed one.\n\nCannot: advance its own Observer. So it cannot pick the winning Commit\nper epoch, cannot serve an updated group_info or ratchet_tree, and\ncannot apply room policy to the new state. A room whose members commit\nas SemiPrivateMessage would leave the hub's state stuck at the epoch\nbefore the first such Commit.\n\nThat makes the feature unusable for Commits, and usable for Proposals\nonly insofar as the hub does not need to stage them.\n\n## What would fix it\n\nOne of:\n\n1. OpenMLS processes a SemiPrivateMessage natively, given the external\n   receiver's private key. This is the crypto half left out of #2352.\n   Receiving does NOT need the sender's handshake ratchet -- the\n   external receiver has the per-message keys -- so it is a smaller\n   change than sending, and does not require exposing secret-tree\n   material.\n2. OpenMLS accepts pre-verified handshake content, so a caller that has\n   already checked the signature can advance the group state. A wider\n   and more dangerous API: it moves a verification duty to the caller.\n\nOption 1 is the one to propose. It is a natural follow-up to #2352 and\ncan cite this bead as the motivation.\n\n## Consequence for bead mimid-1wgh.4.79.3\n\nIts remaining step is blocked on upstream work, not on mimid. What is\ndone and useful stands: the frame decodes, the protocol accepts the\nframing, and the hub verifies and reads one. Do not wire\nread_semiprivate into stage_commit until processing exists, because the\nresult would be a handshake the hub validates and then cannot act on.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T03:46:41.752576019Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T03:46:41.752576019Z",
+  "labels": [
+    "feature"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.4.79.13",
+      "depends_on_id": "mimid-1wgh.4.79",
+      "type": "parent-child",
+      "created_at": "2026-11-27T03:46:41.839790645Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

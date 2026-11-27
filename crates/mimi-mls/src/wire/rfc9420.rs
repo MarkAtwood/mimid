@@ -113,6 +113,18 @@ opaque_wire_type! {
 }
 
 impl HPKECiphertext {
+    /// This value as OpenMLS's type, rebuilt from the bytes it keeps.
+    ///
+    /// # Panics
+    ///
+    /// Never: the stored bytes decoded as an `HpkeCiphertext` to get
+    /// here, so they decode again.
+    pub(crate) fn as_openmls(&self) -> openmls_traits::types::HpkeCiphertext {
+        let mut reader = self.as_bytes();
+        openmls_traits::types::HpkeCiphertext::tls_deserialize(&mut reader)
+            .unwrap_or_else(|_| unreachable!("the stored bytes decoded once already"))
+    }
+
     /// The `kem_output` and `ciphertext` of RFC 9420 §7.6, split out of
     /// the verbatim encoding this type keeps.
     ///
@@ -613,6 +625,9 @@ pub enum WireFormat {
     MlsGroupInfo,
     /// `mls_key_package(5)`.
     MlsKeyPackage,
+    /// `mls_semiprivate_message(0x0011)`
+    /// (semiprivatemessage-08 §5.1).
+    MlsSemiPrivateMessage,
 }
 
 /// RFC 9420 §6: `ContentType`.
@@ -653,6 +668,16 @@ impl Deserialize for ContentType {
             2 => Ok(Self::Proposal),
             3 => Ok(Self::Commit),
             other => Err(tls_codec::Error::UnknownValue(u64::from(other))),
+        }
+    }
+}
+
+impl From<ContentType> for openmls::framing::ContentType {
+    fn from(content_type: ContentType) -> Self {
+        match content_type {
+            ContentType::Application => Self::Application,
+            ContentType::Proposal => Self::Proposal,
+            ContentType::Commit => Self::Commit,
         }
     }
 }
@@ -864,6 +889,13 @@ impl Deserialize for MLSMessage {
             MlsMessageBodyIn::Welcome(_) => message.wire_format = WireFormat::MlsWelcome,
             MlsMessageBodyIn::GroupInfo(_) => message.wire_format = WireFormat::MlsGroupInfo,
             MlsMessageBodyIn::KeyPackage(_) => message.wire_format = WireFormat::MlsKeyPackage,
+            MlsMessageBodyIn::SemiPrivateMessage(m) => {
+                message.wire_format = WireFormat::MlsSemiPrivateMessage;
+                message.content_type = Some(m.content_type().into());
+                message.group_id = Some(m.group_id().as_slice().to_vec());
+                message.epoch = Some(m.epoch().as_u64());
+                message.authenticated_data = Some(m.authenticated_data().to_vec());
+            }
         }
         Ok(message)
     }

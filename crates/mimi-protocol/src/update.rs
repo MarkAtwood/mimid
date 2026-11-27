@@ -16,16 +16,27 @@ fn decoding_error(message: &str) -> tls_codec::Error {
 }
 
 /// Returns the content type of a handshake message, which must be a
-/// PublicMessage carrying a proposal or a commit.
+/// PublicMessage or a SemiPrivateMessage carrying a proposal or a
+/// commit.
 ///
-/// protocol-07 §5.3 also allows a SemiPrivateMessage, which
-/// [`MLSMessage`] cannot decode, so it never reaches this check (decision
-/// mimid-1wgh.4.12).
+/// protocol-07 L1518-1519 allows either for `proposalOrCommit`, and
+/// L1528-1529 for each of `moreProposals`. A SemiPrivateMessage is
+/// "encrypted for the members and the hub provider as the sole
+/// external_receiver" (L1582), so the other providers in the room see
+/// neither its contents nor its sender.
+///
+/// The hub reads one with `Hub::read_semiprivate`; this only says the
+/// framing is allowed here.
 pub(crate) fn handshake_content_type(
     message: &MLSMessage,
 ) -> Result<ContentType, tls_codec::Error> {
-    if message.wire_format() != WireFormat::MlsPublicMessage {
-        return Err(decoding_error("handshake message is not a PublicMessage"));
+    if !matches!(
+        message.wire_format(),
+        WireFormat::MlsPublicMessage | WireFormat::MlsSemiPrivateMessage
+    ) {
+        return Err(decoding_error(
+            "handshake message is not a PublicMessage or a SemiPrivateMessage",
+        ));
     }
     match message.content_type() {
         Some(content_type @ (ContentType::Proposal | ContentType::Commit)) => Ok(content_type),
@@ -36,8 +47,8 @@ pub(crate) fn handshake_content_type(
 }
 
 /// Checks that every message in a `moreProposals` or `externalProposals`
-/// list is a PublicMessage carrying a proposal (protocol-07 §5.3, §5.5).
-/// An empty list passes.
+/// list is a PublicMessage or a SemiPrivateMessage carrying a proposal
+/// (protocol-07 §5.3, §5.5). An empty list passes.
 pub(crate) fn check_proposals(proposals: &[MLSMessage]) -> Result<(), tls_codec::Error> {
     // protocol-07 §5.3, §5.5; decision mimid-1wgh.5.51 (entries), decision
     // mimid-1wgh.5.49 (empty list accepted)

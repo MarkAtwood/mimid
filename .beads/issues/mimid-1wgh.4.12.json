@@ -1,14 +1,14 @@
 {
   "id": "mimid-1wgh.4.12",
   "title": "Defer SemiPrivateMessage",
-  "description": "protocol-06 L1468 allows PublicMessage handshakes; providers see group changes, never content. Fork-scale OpenMLS work deferred.",
+  "description": "protocol-06 L1468 allows PublicMessage handshakes; providers see group changes, never content. Fork-scale OpenMLS work deferred.\n\n## 2026-11-26: the premise changed\n\nThis bead deferred SemiPrivateMessage because the work was \"fork-scale\nOpenMLS work\". Part of that is now done and the rest is smaller than it\nlooked.\n\nDone: openmls carries the wire format (commit 67623907f on mimid-0.9.2,\nupstream PR openmls/openmls#2352), mimi-mls decodes the frame through\nopenmls's codec, mimi_protocol accepts the framing wherever\nprotocol-07 allows it (L1518-1519, L1528-1529), and the hub verifies and\nreads one as the sole external receiver (L1582) with\nHub::read_semiprivate.\n\nStill deferred, and now for a precise reason rather than scale: openmls\ncannot PROCESS a SemiPrivateMessage, so the hub cannot advance its group\nstate from one, and re-framing it as a PublicMessage cannot verify\nbecause the signature binds the wire format. Bead mimid-1wgh.4.79.13.",
   "status": "closed",
   "priority": 2,
   "issue_type": "decision",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-10-17T18:05:33.09759808Z",
   "created_by": "agent",
-  "updated_at": "2026-10-17T18:05:33.142142716Z",
+  "updated_at": "2026-11-27T03:52:01.246830763Z",
   "closed_at": "2026-10-17T18:05:33.142142716Z",
   "close_reason": "Approved by Mark 2026-10-17",
   "dependencies": [

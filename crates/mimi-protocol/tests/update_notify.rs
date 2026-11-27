@@ -44,6 +44,27 @@ const PROPOSAL: &[u8] = mlswg!("public_message_proposal");
 const PUBLIC_APPLICATION: &[u8] = mlswg!("public_message_application");
 /// 480 bytes: a PrivateMessage with content_type proposal (2).
 const PRIVATE_PROPOSAL: &[u8] = mlswg!("private_message");
+/// An mls_semiprivate_message MLSMessage carrying a proposal
+/// (semiprivatemessage-08 §3.1, §5.1), hand-encoded: protocol-07
+/// L1518-1519 allows one as `proposalOrCommit`.
+#[rustfmt::skip]
+const SEMIPRIVATE_PROPOSAL: &[u8] = &[
+    0x00, 0x01,                         // ProtocolVersion mls10
+    0x00, 0x11,                         // WireFormat mls_semiprivate_message
+    0x03, b'g', b'i', b'd',             // group_id<V>
+    0, 0, 0, 0, 0, 0, 0, 7,             // epoch = 7
+    0x02,                               // content_type: proposal(2)
+    0x02, 0xde, 0xad,                   // authenticated_data<V>
+    0x02, 0xbe, 0xef,                   // partial_context_hash<V>
+    0x0b,                               // keys_for_external_receivers<V>: 11 bytes
+      0x04, 0xaa, 0xbb, 0xcc, 0xdd,     //   external_receiver_ref<V>
+      0x02, 0x11, 0x22,                 //   kem_output<V>
+      0x02, 0x33, 0x44,                 //   ciphertext<V>
+    0x02, 0xfe, 0xed,                   // framed_content_tbs_hash<V>
+    0x01, 0x99,                         // encrypted_sender_data<V>
+    0x03, 0x01, 0x02, 0x03,             // ciphertext<V>
+];
+
 /// 420 bytes: an mls_welcome MLSMessage.
 const WELCOME_MESSAGE: &[u8] = mlswg!("mls_welcome");
 /// 424 bytes: an mls_group_info MLSMessage.
@@ -243,6 +264,32 @@ fn update_request_truncation_and_trailing() {
     check_truncation_and_trailing::<UpdateRequest>(&commit_full_wire());
     check_truncation_and_trailing::<UpdateRequest>(&commit_partial_wire());
     check_truncation_and_trailing::<UpdateRequest>(&proposal_wire());
+}
+
+/// protocol-07 L1518-1519 allows a SemiPrivateMessage as
+/// `proposalOrCommit`, and L1528-1529 inside `moreProposals`. Before
+/// the wire format existed, MLSMessage could not decode one, so it never
+/// reached the check (decision mimid-1wgh.4.12, whose premise this
+/// changes).
+#[test]
+fn update_request_accepts_a_semiprivate_handshake() {
+    assert_eq!(
+        SEMIPRIVATE_PROPOSAL.len(),
+        44,
+        "the fixture's length, which the <V> prefix below states"
+    );
+    let wire = cat(&[
+        SEMIPRIVATE_PROPOSAL,
+        &[0x2c], // moreProposals<V>: 44 bytes
+        SEMIPRIVATE_PROPOSAL,
+    ]);
+    let expected = UpdateRequest {
+        bundle: HandshakeBundle::Proposal {
+            proposal_or_commit: mls(SEMIPRIVATE_PROPOSAL),
+            more_proposals: vec![mls(SEMIPRIVATE_PROPOSAL)],
+        },
+    };
+    check_fixture(&wire, &expected);
 }
 
 #[test]

@@ -30,6 +30,9 @@ use openmls::framing::FramedContentAuthData;
 use openmls::messages::CommitIn;
 use openmls::messages::proposals_in::ProposalIn;
 
+use openmls::group::GroupId;
+use openmls::semiprivate_message::SemiPrivateMessage as OpenMlsFrame;
+
 use super::rfc9420::{ContentType, Credential, HPKECiphertext, HPKEPublicKey};
 
 /// The most external receivers one message may carry.
@@ -190,94 +193,87 @@ impl SemiPrivateMessage {
     }
 }
 
+// The codec is openmls's, not a second one: mimid used to hand-encode
+// this frame, and two codecs for one wire structure can each pass their
+// own tests while disagreeing. openmls owns the frame
+// (openmls::semiprivate_message, upstream PR openmls/openmls#2352) and
+// this type is a projection of it that carries mimid's crypto and
+// mimid's stricter parse. wire_semiprivate_cross_codec proves the
+// projection is faithful.
+
 impl Size for SemiPrivateMessage {
     fn tls_serialized_len(&self) -> usize {
-        self.group_id.tls_serialized_len()
-            + self.epoch.tls_serialized_len()
-            + self.content_type.tls_serialized_len()
-            + self.authenticated_data.tls_serialized_len()
-            + self.partial_context_hash.tls_serialized_len()
-            + self.keys_for_external_receivers.tls_serialized_len()
-            + self.framed_content_tbs_hash.tls_serialized_len()
-            + self.encrypted_sender_data.tls_serialized_len()
-            + self.ciphertext.tls_serialized_len()
+        self.to_openmls().tls_serialized_len()
     }
 }
 
 impl Serialize for SemiPrivateMessage {
     fn tls_serialize<W: Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
-        Ok(self.group_id.tls_serialize(writer)?
-            + self.epoch.tls_serialize(writer)?
-            + self.content_type.tls_serialize(writer)?
-            + self.authenticated_data.tls_serialize(writer)?
-            + self.partial_context_hash.tls_serialize(writer)?
-            + self.keys_for_external_receivers.tls_serialize(writer)?
-            + self.framed_content_tbs_hash.tls_serialize(writer)?
-            + self.encrypted_sender_data.tls_serialize(writer)?
-            + self.ciphertext.tls_serialize(writer)?)
+        self.to_openmls().tls_serialize(writer)
     }
 }
 
 impl Deserialize for SemiPrivateMessage {
     fn tls_deserialize<R: Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
-        let group_id = VLBytes::tls_deserialize(bytes)?;
-        let epoch = u64::tls_deserialize(bytes)?;
-        let content_type = ContentType::tls_deserialize(bytes)?;
-        if content_type == ContentType::Application {
-            return Err(tls_codec::Error::DecodingError(
-                "a SemiPrivateMessage carries a proposal or a commit, not an application message"
-                    .to_owned(),
-            ));
-        }
-        Ok(Self {
-            group_id,
-            epoch,
-            content_type,
-            authenticated_data: VLBytes::tls_deserialize(bytes)?,
-            partial_context_hash: VLBytes::tls_deserialize(bytes)?,
-            keys_for_external_receivers: read_receivers(bytes)?,
-            framed_content_tbs_hash: VLBytes::tls_deserialize(bytes)?,
-            encrypted_sender_data: VLBytes::tls_deserialize(bytes)?,
-            ciphertext: VLBytes::tls_deserialize(bytes)?,
-        })
+        Self::from_openmls(OpenMlsFrame::tls_deserialize(bytes)?)
     }
 }
 
-/// semiprivatemessage-08 §3.1: `SemiPrivateContentAAD`.
-///
-/// ~~~text
-/// struct {
-///     opaque group_id<V>;
-///     uint64 epoch;
-///     ContentType content_type;
-///     opaque authenticated_data<V>;
-///     opaque partial_context_hash<V>;
-///     KeyForExternalReceiver keys_for_external_receivers<V>;
-///     opaque framed_content_tbs_hash<V>;
-/// } SemiPrivateContentAAD;
-///
-/// ~~~
-///
-/// The same fields as [`SemiPrivateMessage`] without the two ciphertexts,
-/// so it is built from a received message rather than decoded on its own
-/// ([`SemiPrivateMessage::content_aad`]). It is still [`Deserialize`], so
-/// a fixture can hold one.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, TlsSize)]
-pub struct SemiPrivateContentAAD {
-    /// As [`SemiPrivateMessage::group_id`].
-    pub group_id: VLBytes,
-    /// As [`SemiPrivateMessage::epoch`].
-    pub epoch: u64,
-    /// As [`SemiPrivateMessage::content_type`].
-    pub content_type: ContentType,
-    /// As [`SemiPrivateMessage::authenticated_data`].
-    pub authenticated_data: VLBytes,
-    /// As [`SemiPrivateMessage::partial_context_hash`].
-    pub partial_context_hash: VLBytes,
-    /// As [`SemiPrivateMessage::keys_for_external_receivers`].
-    pub keys_for_external_receivers: Vec<KeyForExternalReceiver>,
-    /// As [`SemiPrivateMessage::framed_content_tbs_hash`].
-    pub framed_content_tbs_hash: VLBytes,
+impl SemiPrivateMessage {
+    /// This frame as openmls's type, which owns the codec.
+    fn to_openmls(&self) -> OpenMlsFrame {
+        OpenMlsFrame::new(
+            GroupId::from_slice(self.group_id.as_slice()),
+            self.epoch.into(),
+            self.content_type.into(),
+            self.authenticated_data.clone(),
+            self.partial_context_hash.clone(),
+            self.keys_for_external_receivers
+                .iter()
+                .map(KeyForExternalReceiver::to_openmls)
+                .collect(),
+            self.framed_content_tbs_hash.clone(),
+            self.encrypted_sender_data.clone(),
+            self.ciphertext.clone(),
+        )
+    }
+
+    /// mimid's view of an openmls frame, with the two checks mimid makes
+    /// and openmls's codec does not.
+    ///
+    /// openmls accepts any `ContentType` and rejects the application
+    /// case in `validate`, keeping draft semantics out of its codec.
+    /// mimid refuses it while decoding, so no caller of this type can
+    /// hold one. The external-receiver cap is mimid's own
+    /// ([`MAX_EXTERNAL_RECEIVERS`], INVENTED).
+    fn from_openmls(frame: OpenMlsFrame) -> Result<Self, tls_codec::Error> {
+        frame.validate().map_err(|_| {
+            tls_codec::Error::DecodingError(
+                "a SemiPrivateMessage carries a proposal or a commit, not an application message"
+                    .to_owned(),
+            )
+        })?;
+        let receivers = frame.keys_for_external_receivers();
+        if receivers.len() > MAX_EXTERNAL_RECEIVERS {
+            return Err(tls_codec::Error::DecodingError(format!(
+                "more than {MAX_EXTERNAL_RECEIVERS} external receivers"
+            )));
+        }
+        Ok(Self {
+            group_id: frame.group_id().as_slice().to_vec().into(),
+            epoch: frame.epoch().as_u64(),
+            content_type: frame.content_type().into(),
+            authenticated_data: frame.authenticated_data().to_vec().into(),
+            partial_context_hash: frame.partial_context_hash().to_vec().into(),
+            keys_for_external_receivers: receivers
+                .iter()
+                .map(KeyForExternalReceiver::from_openmls)
+                .collect::<Result<_, _>>()?,
+            framed_content_tbs_hash: frame.framed_content_tbs_hash().to_vec().into(),
+            encrypted_sender_data: frame.encrypted_sender_data().to_vec().into(),
+            ciphertext: frame.ciphertext().to_vec().into(),
+        })
+    }
 }
 
 impl SemiPrivateMessage {
@@ -557,6 +553,67 @@ impl Deserialize for ExternalReceivers {
             )));
         }
         Ok(Self(list))
+    }
+}
+
+/// semiprivatemessage-08 §3.1: `SemiPrivateContentAAD`.
+///
+/// ~~~text
+/// struct {
+///     opaque group_id<V>;
+///     uint64 epoch;
+///     ContentType content_type;
+///     opaque authenticated_data<V>;
+///     opaque partial_context_hash<V>;
+///     KeyForExternalReceiver keys_for_external_receivers<V>;
+///     opaque framed_content_tbs_hash<V>;
+/// } SemiPrivateContentAAD;
+///
+/// ~~~
+///
+/// The same fields as [`SemiPrivateMessage`] without the two ciphertexts,
+/// so it is built from a received message rather than decoded on its own
+/// ([`SemiPrivateMessage::content_aad`]). It is still [`Deserialize`], so
+/// a fixture can hold one.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, TlsSize)]
+pub struct SemiPrivateContentAAD {
+    /// As [`SemiPrivateMessage::group_id`].
+    pub group_id: VLBytes,
+    /// As [`SemiPrivateMessage::epoch`].
+    pub epoch: u64,
+    /// As [`SemiPrivateMessage::content_type`].
+    pub content_type: ContentType,
+    /// As [`SemiPrivateMessage::authenticated_data`].
+    pub authenticated_data: VLBytes,
+    /// As [`SemiPrivateMessage::partial_context_hash`].
+    pub partial_context_hash: VLBytes,
+    /// As [`SemiPrivateMessage::keys_for_external_receivers`].
+    pub keys_for_external_receivers: Vec<KeyForExternalReceiver>,
+    /// As [`SemiPrivateMessage::framed_content_tbs_hash`].
+    pub framed_content_tbs_hash: VLBytes,
+}
+
+impl KeyForExternalReceiver {
+    /// This entry as openmls's type.
+    fn to_openmls(&self) -> openmls::semiprivate_message::KeyForExternalReceiver {
+        openmls::semiprivate_message::KeyForExternalReceiver {
+            external_receiver_ref: self.external_receiver_ref.as_slice().to_vec().into(),
+            encrypted_keys_and_nonces: self.encrypted_keys_and_nonces.as_openmls(),
+        }
+    }
+
+    /// mimid's view of one of openmls's entries.
+    fn from_openmls(
+        entry: &openmls::semiprivate_message::KeyForExternalReceiver,
+    ) -> Result<Self, tls_codec::Error> {
+        Ok(Self {
+            external_receiver_ref: ExternalReceiverRef(
+                entry.external_receiver_ref.as_slice().to_vec().into(),
+            ),
+            encrypted_keys_and_nonces: HPKECiphertext::tls_deserialize_exact(
+                &entry.encrypted_keys_and_nonces.tls_serialize_detached()?,
+            )?,
+        })
     }
 }
 
