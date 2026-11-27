@@ -22,7 +22,7 @@ pub(super) struct RoomCall {
 }
 
 pub(crate) fn invalid(method: &'static str, why: &str) -> JmapError {
-    tracing::debug!(method, why, "room method refused");
+    tracing::debug!(method, reason = why, "room method refused");
     JmapError::invalid_arguments(why)
 }
 

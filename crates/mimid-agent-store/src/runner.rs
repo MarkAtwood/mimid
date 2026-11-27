@@ -408,7 +408,7 @@ async fn follow_stream(store: Arc<Store>, wake: Arc<Notify>, mut stop: watch::Re
 
 fn log_report(report: &SyncReport) {
     for room in &report.joined {
-        tracing::info!(name: "agent_room_joined", room = %room, "joined a room");
+        tracing::info!(name: "agent_room_joined", room_id = %room, "joined a room");
     }
     for problem in &report.problems {
         tracing::warn!(name: "agent_sync_problem", problem = %problem, "the agent reported a problem");

@@ -77,7 +77,7 @@ impl JmapHandler<Id> for Handler {
 
 fn invalid(why: impl Into<String>) -> JmapError {
     let why = why.into();
-    tracing::debug!(method = METHOD, why, "abuse report refused");
+    tracing::debug!(method = METHOD, reason = why, "abuse report refused");
     JmapError::invalid_arguments(why)
 }
 
@@ -134,7 +134,7 @@ impl AgentChat {
         };
         tracing::info!(
             name: "abuse_report_sent",
-            room = reported.room,
+            room_id = reported.room,
             messages = keys.len(),
             outcome = code,
             "abuse report sent"

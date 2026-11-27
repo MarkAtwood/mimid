@@ -1,0 +1,15 @@
+{
+  "id": "mimid-c90r",
+  "title": "The agent's event names are unreadable: no JSON format, no OTel",
+  "description": "mimid-agent names its INFO, WARN and ERROR events for programmatic\nconsumption, the same policy mimid-server documents, and then emits\nthem in the one format that cannot show a name.\n\n- `crates/mimid-agent/src/main.rs:47` installs\n  `tracing_subscriber::fmt()` with an `EnvFilter` and nothing else.\n- `crates/mimid-agent/src/lib.rs` states the policy (\"INFO, WARN and\n  ERROR events have stable names ... as in mimid-server\") and, further\n  down, the limitation: \"The log is text only: mimid-server's\n  `MIMID_LOG_FORMAT=json` output lives in that crate, which this one\n  does not depend on.\"\n- `crates/mimid-server/src/logging.rs` says of its own text format:\n  \"The text format does not show event names; select `json` to see\n  them.\"\n\nSo every `agent_*` name is inert. An operator cannot alert on\n`agent_sync_failed`, and nothing correlates an agent's log with its\nprovider's.\n\n## What else is missing with it\n\nNo OpenTelemetry at all: `telemetry.rs` is mimid-server's, so the\nagent exports no spans, no log records and no metrics. The sync loop,\nthe front ends and the outbox are unobservable except as text on\nstandard output.\n\nThis is also what makes bead mimid-604m hard to pursue: an agent that\nstalls says nothing an operator can query.\n\n## The shape of the fix\n\nThe formatter and the exporters are not server-specific; only their\ncurrent home is. Three options, in increasing order of work:\n\n1. A new crate both binaries depend on, holding `logging` (the JSON\n   formatter) and `telemetry` (the OTLP layers and the metrics\n   instruments). The crate map's rule is that dependencies point down,\n   and a leaf crate under both binaries obeys it. `mimid-live` is the\n   precedent for a small shared crate.\n2. Move them into `mimid-agent-core`, which the agent already depends\n   on and the server does not. The server would then depend on\n   mimid-agent-core, which inverts the map. Rejected unless the map\n   changes.\n3. Duplicate the formatter in mimid-agent. Cheapest now, two copies to\n   keep in step afterwards, and the JSON shape is a contract an\n   operator parses.\n\nOption 1 is the one to cost. It needs Mark's approval, since it adds a\ncrate.\n\n## What it costs\n\nA new crate in the workspace, a feature-powerset entry for it, and the\nagent's `Cargo.toml` gaining the OTel dependencies, which are not\nsmall. The agent is also what runs on a user's machine, so exporting\ntelemetry from it must stay off by default and must never carry\nmessage content or a token; the metrics-label rule in telemetry.rs's\nLimitations (\"Nothing is labelled by a domain an unauthenticated\nrequest names\") applies with more force here.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T17:52:41.222181667Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T17:52:41.222181667Z",
+  "labels": [
+    "human"
+  ]
+}

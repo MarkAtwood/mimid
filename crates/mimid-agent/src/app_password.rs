@@ -169,7 +169,7 @@ fn state_of(infos: &[CredentialInfo]) -> String {
 
 fn invalid(method: &str, why: impl Into<String>) -> JmapError {
     let why = why.into();
-    tracing::debug!(method, why, "app password call refused");
+    tracing::debug!(method, reason = why, "app password call refused");
     JmapError::invalid_arguments(why)
 }
 

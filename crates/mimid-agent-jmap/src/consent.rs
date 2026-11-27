@@ -101,13 +101,14 @@ impl JmapHandler<Id> for Handler {
 
 fn invalid(method: &str, why: impl Into<String>) -> JmapError {
     let why = why.into();
-    tracing::debug!(method, why, "consent call refused");
+    tracing::debug!(method, reason = why, "consent call refused");
     JmapError::invalid_arguments(why)
 }
 
 /// The agent could not reach the provider, which holds consent.
 fn unavailable(method: &str, error: &ActionError) -> JmapError {
     tracing::warn!(
+        name: "agent_consent_unavailable",
         method,
         error = error as &dyn std::error::Error,
         "consent could not be read or written at the provider"
@@ -345,6 +346,7 @@ impl AgentChat {
         };
         outcome.map_err(|error| {
             tracing::warn!(
+                name: "agent_consent_refused",
                 method = SET,
                 error = &error as &dyn std::error::Error,
                 "a consent decision was refused"

@@ -381,7 +381,14 @@ impl Store {
             if let Err(e) = agent.invite(&uri, user).await {
                 // Do not keep a room the caller is told was not made.
                 if let Err(leave) = agent.leave(&uri).await {
-                    tracing::warn!(room = %uri, error = %leave, "leaving a half-made room");
+                    // The leave failed, so the room stays; the caller
+                    // is still told the room was not made.
+                    tracing::warn!(
+                        name: "agent_half_made_room_kept",
+                        room_id = %uri,
+                        error = %leave,
+                        "a half-made room could not be left"
+                    );
                 }
                 return Err(e.into());
             }
@@ -845,7 +852,7 @@ impl Store {
             bans: forgotten.removed.bans.clone(),
         }]);
         self.delete_blobs_after_save(forgotten.clone());
-        tracing::debug!(room = %forgotten.removed.room.uri, "a one-to-one room was hidden here");
+        tracing::debug!(room_id = %forgotten.removed.room.uri, "a one-to-one room was hidden here");
         Ok(forgotten)
     }
 

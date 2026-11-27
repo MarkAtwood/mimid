@@ -411,6 +411,7 @@ async fn propose_cascade(hub: &Hub, parent_id: &str, cascade: Vec<(String, Vec<V
                 .await
             {
                 tracing::warn!(
+                    name: "parent_dependent_removal_failed",
                     room_id = %child,
                     parent_id,
                     error = &error as &dyn std::error::Error,

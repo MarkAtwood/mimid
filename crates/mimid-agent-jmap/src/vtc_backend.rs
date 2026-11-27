@@ -313,7 +313,7 @@ impl VtcBackend for AgentChat {
             )) => {
                 tracing::info!(
                     name: "agent_call_rekeyed_after_restart",
-                    room = room,
+                    room_id = room,
                     lost_epoch = lost,
                     "this epoch's media secret was already read and is no longer held; \
                      moving the call to a new epoch so every member rekeys"

@@ -578,7 +578,7 @@ fn refused(status: StatusCode, kind: &str, why: &str) -> Refused {
     tracing::debug!(
         status = status.as_u16(),
         kind,
-        why,
+        reason = why,
         "jmap asset fetch refused"
     );
     Refused::new(crate::http::problem(status, kind), code_of(status)).with_detail(why)

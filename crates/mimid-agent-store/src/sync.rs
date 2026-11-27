@@ -977,7 +977,7 @@ impl Store {
                 .state()
                 .reveal_hidden_room(&received.room, received.accepted_at)
         {
-            tracing::debug!(room = %received.room, "a new message brings a hidden room back");
+            tracing::debug!(room_id = %received.room, "a new message brings a hidden room back");
         }
         let Some(room) = self.room_for(agent, &received.room, changes) else {
             return;
@@ -1035,7 +1035,7 @@ impl Store {
             crate::expiry::Received::Discard(why) => {
                 tracing::warn!(
                     name: "agent_message_discarded",
-                    room = %received.room,
+                    room_id = %received.room,
                     reason = %why,
                     "a received message was discarded"
                 );

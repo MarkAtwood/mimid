@@ -22,10 +22,14 @@
 //! ```
 //!
 //! `event` is the event's stable name. Every INFO, WARN and ERROR event of
-//! this crate has one (`name: "..."` at the call site, lower snake case);
-//! DEBUG and TRACE events have none. An error field holds the error's
-//! message, and `<field>.sources` the messages of its source chain, as the
-//! text format shows them.
+//! this crate has one (`name: "..."` at the call site, lower snake case).
+//! A DEBUG or TRACE event has none, with one exception: a sweep that found
+//! nothing to do carries the name of the INFO event it would otherwise
+//! have been (`blob_sweep`, `message_sweep`, `client_idle_sweep`), so that
+//! one query over the name shows every sweep and not only the sweeps that
+//! deleted something. An error field holds the error's message, and
+//! `<field>.sources` the messages of its source chain, as the text format
+//! shows them.
 //!
 //! # Limitations
 //!

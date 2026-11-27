@@ -90,7 +90,7 @@ impl JmapHandler<Account> for Handler {
 }
 
 fn invalid(why: &str) -> JmapError {
-    tracing::debug!(why, "Room/create refused");
+    tracing::debug!(reason = why, "Room/create refused");
     JmapError::invalid_arguments(why)
 }
 

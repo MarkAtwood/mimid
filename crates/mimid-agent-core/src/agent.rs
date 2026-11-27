@@ -2131,7 +2131,7 @@ impl Agent {
                 Ok(()) => {
                     tracing::info!(
                         name: "own_room_joined",
-                        room = room.as_str(),
+                        room_id = room.as_str(),
                         "joined a room of this user by external Commit"
                     );
                     outcome.joined.push(room);
@@ -2139,9 +2139,9 @@ impl Agent {
                 Err((error, why)) => {
                     tracing::info!(
                         name: "own_room_not_joined",
-                        room = room.as_str(),
+                        room_id = room.as_str(),
                         error = &error as &dyn std::error::Error,
-                        why = ?why,
+                        reason = ?why,
                         "a room of this user not joined by external Commit"
                     );
                     if why != NotJoined::Later {
@@ -2192,14 +2192,14 @@ impl Agent {
             match self.provider.set_accepted(&chat.id, accepted).await {
                 Ok(()) => tracing::info!(
                     name: "room_acceptance_recorded",
-                    room = chat.room.as_str(),
+                    room_id = chat.room.as_str(),
                     accepted,
                     "recorded whether this user accepted a room"
                 ),
                 Err(error) => {
                     tracing::warn!(
                         name: "room_acceptance_not_recorded",
-                        room = chat.room.as_str(),
+                        room_id = chat.room.as_str(),
                         accepted,
                         error = &error as &dyn std::error::Error,
                         "could not record whether this user accepted a room; trying again later"
@@ -2375,13 +2375,13 @@ impl Agent {
             {
                 Ok(()) => tracing::info!(
                     name: "room_rejoined",
-                    room = room.as_str(),
+                    room_id = room.as_str(),
                     "rejoined a room whose group fell behind, by external Commit"
                 ),
                 Err((error, NotJoined::Later)) if !matches!(error, AgentError::Refused { .. }) => {
                     tracing::info!(
                         name: "room_rejoin_deferred",
-                        room = room.as_str(),
+                        room_id = room.as_str(),
                         error = &error as &dyn std::error::Error,
                         "a room whose group fell behind is not rejoined yet; trying again later"
                     );
@@ -2389,7 +2389,7 @@ impl Agent {
                 Err((error, _)) => {
                     tracing::warn!(
                         name: "room_rejoin_failed",
-                        room = room.as_str(),
+                        room_id = room.as_str(),
                         error = &error as &dyn std::error::Error,
                         "a room whose group fell behind cannot be rejoined; it needs a new invite"
                     );
@@ -4133,7 +4133,7 @@ impl Agent {
             Ok(state) => self.state = state,
             Err(why) => tracing::error!(
                 name: "agent_state_not_reread",
-                why,
+                reason = why,
                 "after a rollback the agent state could not be read again"
             ),
         }
@@ -4394,7 +4394,7 @@ impl Agent {
             }
             tracing::info!(
                 name: "agent_outbox_finished",
-                room = entry.room,
+                room_id = entry.room,
                 "a message, Commit or proposals left by an earlier attempt was sent again"
             );
         }
@@ -4555,8 +4555,8 @@ impl Agent {
     fn give_up(&mut self, entry: i64, room: &str, why: &str) -> Result<(), AgentError> {
         tracing::warn!(
             name: "agent_outbox_given_up",
-            room,
-            why,
+            room_id = room,
+            reason = why,
             "a message or Commit left by an earlier attempt is given up"
         );
         self.deliver(vec![Event::Problem {
@@ -4944,7 +4944,6 @@ impl Agent {
         ) && epoch < joined
         {
             tracing::debug!(
-                name: "message_before_join_skipped",
                 epoch,
                 joined,
                 "skipping a message from before this device joined the room"

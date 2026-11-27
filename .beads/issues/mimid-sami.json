@@ -1,0 +1,15 @@
+{
+  "id": "mimid-sami",
+  "title": "Per-item refusal events let a sender set the log's size",
+  "description": "Several WARN and INFO events fire once per item on a path whose volume\na sender controls, so a hostile or broken peer sets the log's size.\n\n| event | level | per | site |\n|---|---|---|---|\n| `agent_message_discarded` | warn | received message | mimid-agent-store/src/sync.rs:1036 |\n| `live_stream_frame_refused` | warn | stream frame | mimid-agent-core/src/stream.rs:301 |\n| `fanout_delivery_refused` | warn | delivery | mimid-server/src/hub/fanout.rs:265 |\n| `catch_up_refused` | warn | catch-up answer | mimid-server/src/follower/notify.rs:390 |\n| `agent_jmap_push_too_large` | warn | push | mimid-agent-jmap/src/push_deliver.rs:225 |\n| `group_info_too_large` | info | request | mimid-server/src/hub/group_info.rs:133 |\n| `welcome_too_large` | info | Commit | mimid-server/src/hub/update.rs:945 |\n\nA sender that submits ten thousand messages with a past `expires`\nwrites ten thousand WARN lines, at the level an operator watches.\n\n## Not simply a level to lower\n\nEach of these is worth knowing. A discarded message is one the user\nwill never see, and `agent_message_discarded` already pushes the same\nfact into `report.problems`, so the front end tells the user\nregardless. The question is which channel carries the per-item detail\nand which carries the fact that it is happening at all.\n\n## What the answer probably is\n\nmimid has a metrics facility now (`telemetry::metrics`, bead\nmimid-ndov), which did not exist when these events were written. A\ncounter per refusal reason answers \"how often\" without a line each,\nand a periodic summary answers \"is this happening now\" for an operator\nreading the log. Keep the per-item event at DEBUG for the operator who\nis looking at one sender.\n\nPer event, decide: a counter, a periodic summary, a DEBUG event, or\nsome pair of those. Do not lower a level without putting the fact\nsomewhere an operator still sees it.\n\n## Why this is a decision and not a cleanup\n\nLowering a WARN an operator may already alert on is a visible change,\nand `welcome_too_large` is named in docs/operating.md as an example of\nwhat to alert on. Whatever is decided goes in that document too.\n\nThe metrics-label rule in telemetry.rs's Limitations binds the answer:\na counter must not be labelled by anything an unauthenticated sender\nchooses, so \"refusal reason\" has to come from a fixed set.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T17:52:57.224792829Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T17:52:57.224792829Z",
+  "labels": [
+    "human"
+  ]
+}

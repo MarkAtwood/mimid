@@ -140,13 +140,26 @@ impl IdleClientSweeper {
     /// Unbinds every client idle for the period, and logs how many: one
     /// event per sweep besides one per client.
     ///
+    /// A sweep that unbound a client is INFO, because a client losing
+    /// its binding is visible to it; one that found none is DEBUG,
+    /// since nothing changed. Both carry the name, as `blob_sweep` and
+    /// `message_sweep` do, so one query shows every sweep.
+    ///
     /// # Errors
     ///
     /// Returns the store's error, already logged; the next sweep goes on.
     pub async fn sweep(&self) -> Result<u64, StoreError> {
         match self.key_packages.unbind_idle_clients(self.period).await {
+            Ok(0) => {
+                tracing::debug!(name: "client_idle_sweep", unbound = 0, "no idle clients");
+                Ok(0)
+            }
             Ok(count) => {
-                tracing::debug!(name: "client_idle_sweep", unbound = count, "idle clients swept");
+                tracing::info!(
+                    name: "client_idle_sweep",
+                    unbound = count,
+                    "idle clients unbound"
+                );
                 Ok(count)
             }
             Err(error) => {

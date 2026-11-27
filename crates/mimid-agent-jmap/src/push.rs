@@ -275,6 +275,7 @@ impl PushSubscriptionBackend for AgentChat {
         // failure is logged.
         let rows = self.push_rows().unwrap_or_else(|error| {
             tracing::warn!(
+                name: "agent_push_subscriptions_unreadable",
                 error = &error as &dyn std::error::Error,
                 "the push subscriptions could not be read"
             );
