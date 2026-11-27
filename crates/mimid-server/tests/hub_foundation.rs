@@ -893,3 +893,202 @@ async fn create_room_checks_external_receivers() {
         );
     }
 }
+
+/// The hub reads a member's handshake sent as a SemiPrivateMessage
+/// (semiprivatemessage-08 §3.3), taking the GroupContext and the
+/// sender's signature key from its own view of the group.
+///
+/// The crypto itself is proven in mimi-mls's wire_semiprivate tests.
+/// What this covers is the hub's wiring: that it derives its own
+/// external_receiver_ref the way a sender does, hands over the
+/// GroupContext its group state produces, and finds the sender's key at
+/// the leaf the sealed keys name.
+#[tokio::test]
+async fn the_hub_reads_a_semiprivate_handshake() {
+    use mimi_mls::label::{self, LabelSigner};
+    use mimi_mls::tls_codec::{Deserialize as _, Serialize as _, VLBytes};
+    use mimi_mls::wire::{
+        ContentType, KeyForExternalReceiver, PerMessageKeyAndNonces, RECEIVER_LABEL,
+        SemiPrivateContentAAD, SemiPrivateMessage, SemiPrivateMessageContext, UnsealError,
+    };
+
+    const GROUP_ID: &[u8] = b"group-semiprivate";
+
+    let dir = tempfile::tempdir().unwrap();
+    let (store, hub) = open_hub(&dir.path().join("mimid.sqlite")).await;
+    let hub_key = hub.hpke_public_key().to_vec();
+
+    // A room that lists the hub as its external receiver.
+    let mut entry_wire = VLBytes::new(hub_key.clone())
+        .tls_serialize_detached()
+        .unwrap();
+    entry_wire.extend([0x00, 0x01]);
+    entry_wire.extend(
+        VLBytes::new(HUB_IDENTITY.to_vec())
+            .tls_serialize_detached()
+            .unwrap(),
+    );
+    let receivers = VLBytes::new(entry_wire).tls_serialize_detached().unwrap();
+    let group = build_group(
+        &GroupSpec {
+            external_receivers: Some(receivers),
+            ..GroupSpec::valid_for(&hub)
+        },
+        GROUP_ID,
+    );
+    hub.create_room(ROOM_ID, ALICE, &group.group_info, &group.ratchet_tree)
+        .await
+        .expect("the room is created");
+
+    let group_context = hub
+        .public_state(ROOM_ID)
+        .await
+        .expect("the room's state")
+        .group_context;
+    let reference = hub.external_receiver_ref().expect("the hub's reference");
+
+    // alice proposes removing leaf 1, framed as a SemiPrivateMessage
+    // sealed to the hub and signed as `claimed_leaf`.
+    let build = |claimed_leaf: u32| {
+        let proposal: &[u8] = &[0x00, 0x03, 0x00, 0x00, 0x00, 0x01];
+        let keys = PerMessageKeyAndNonces {
+            key: vec![0x33; 16].into(),
+            nonce: vec![0x44; 12].into(),
+            reuse_guard: [1, 2, 3, 4],
+            sender_leaf_index: claimed_leaf,
+        };
+        let partial_context_hash = keys.partial_context_hash().unwrap();
+
+        let mut tbs = vec![0x00, 0x01, 0x00, 0x11];
+        tbs.extend(
+            VLBytes::new(GROUP_ID.to_vec())
+                .tls_serialize_detached()
+                .unwrap(),
+        );
+        tbs.extend(1u64.tls_serialize_detached().unwrap());
+        tbs.push(0x01);
+        tbs.extend(claimed_leaf.tls_serialize_detached().unwrap());
+        tbs.extend(VLBytes::new(Vec::new()).tls_serialize_detached().unwrap());
+        tbs.push(0x02);
+        tbs.extend(proposal);
+        tbs.extend(&group_context);
+        let framed_content_tbs_hash = label::hash(&tbs).unwrap();
+        let signature = group
+            .creator
+            .sign_with_label("FramedContentTBS", &tbs)
+            .expect("alice signs");
+
+        let mut content = proposal.to_vec();
+        content.extend(VLBytes::new(signature).tls_serialize_detached().unwrap());
+
+        let context = SemiPrivateMessageContext {
+            group_id: GROUP_ID.to_vec().into(),
+            epoch: 1,
+            partial_context_hash: partial_context_hash.clone().into(),
+        };
+        let sealed = label::encrypt_with_label(
+            &hub_key,
+            RECEIVER_LABEL,
+            &context.tls_serialize_detached().unwrap(),
+            &keys.tls_serialize_detached().unwrap(),
+        )
+        .unwrap();
+        let mut entry = VLBytes::new(reference.clone())
+            .tls_serialize_detached()
+            .unwrap();
+        entry.extend(
+            VLBytes::new(sealed.kem_output)
+                .tls_serialize_detached()
+                .unwrap(),
+        );
+        entry.extend(
+            VLBytes::new(sealed.ciphertext)
+                .tls_serialize_detached()
+                .unwrap(),
+        );
+        let key_entry = KeyForExternalReceiver::tls_deserialize(&mut &entry[..]).expect("an entry");
+
+        let aad = SemiPrivateContentAAD {
+            group_id: GROUP_ID.to_vec().into(),
+            epoch: 1,
+            content_type: ContentType::Proposal,
+            authenticated_data: Vec::new().into(),
+            partial_context_hash: partial_context_hash.clone().into(),
+            keys_for_external_receivers: vec![key_entry.clone()],
+            framed_content_tbs_hash: framed_content_tbs_hash.clone().into(),
+        };
+        let ciphertext = label::aead_seal(
+            keys.key.as_slice(),
+            &keys.guarded_nonce(),
+            &aad.tls_serialize_detached().unwrap(),
+            &content,
+        )
+        .unwrap();
+
+        SemiPrivateMessage {
+            group_id: GROUP_ID.to_vec().into(),
+            epoch: 1,
+            content_type: ContentType::Proposal,
+            authenticated_data: Vec::new().into(),
+            partial_context_hash: partial_context_hash.into(),
+            keys_for_external_receivers: vec![key_entry],
+            framed_content_tbs_hash: framed_content_tbs_hash.into(),
+            encrypted_sender_data: vec![0; 8].into(),
+            ciphertext: ciphertext.into(),
+        }
+    };
+
+    let opened = hub
+        .read_semiprivate(ROOM_ID, &build(0))
+        .await
+        .expect("the hub reads alice's proposal");
+    assert_eq!(opened.sender_leaf_index, 0, "alice is leaf 0");
+
+    // Oracle: the hub looks the sender up in its own tree, so a message
+    // claiming a leaf the room does not have is refused -- and refused
+    // as an unknown sender, not as a bad signature.
+    let err = hub
+        .read_semiprivate(ROOM_ID, &build(99))
+        .await
+        .expect_err("leaf 99 is not in this room");
+    assert!(
+        matches!(err, HubError::Unseal(UnsealError::UnknownSender(99))),
+        "{err:?}"
+    );
+
+    // Oracle: the one that matters. alice signs, but claims bob's leaf.
+    // The lookup succeeds -- leaf 1 exists -- so the hub gets bob's key
+    // and alice's signature, and must refuse. This is the invariant that
+    // the sender is the authenticated MLS sender and not whoever a field
+    // says it is.
+    let err = hub
+        .read_semiprivate(ROOM_ID, &build(1))
+        .await
+        .expect_err("alice must not sign as bob");
+    assert!(
+        matches!(err, HubError::Unseal(UnsealError::Signature)),
+        "{err:?}"
+    );
+
+    // Oracle: a message addressed to some other external receiver is not
+    // the hub's to read.
+    let mut elsewhere = build(0);
+    elsewhere.keys_for_external_receivers.clear();
+    let err = hub
+        .read_semiprivate(ROOM_ID, &elsewhere)
+        .await
+        .expect_err("not addressed to the hub");
+    assert!(
+        matches!(err, HubError::Unseal(UnsealError::NotAddressed)),
+        "{err:?}"
+    );
+
+    // Oracle: an unknown room is refused before any crypto runs.
+    let err = hub
+        .read_semiprivate("mimi://a.example/r/absent", &build(0))
+        .await
+        .expect_err("an unknown room");
+    assert!(matches!(err, HubError::NoSuchRoom), "{err:?}");
+
+    close_hub(store, hub).await;
+}

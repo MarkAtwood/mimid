@@ -806,12 +806,10 @@ fn a_semiprivate_message_built_as_a_sender_reads_back() {
     assert_eq!(received, message);
 
     let opened = received
-        .open_as_external_receiver(
-            &reference,
-            &receiver_private,
-            &group_context,
-            sender.verification_key(),
-        )
+        .open_as_external_receiver(&reference, &receiver_private, &group_context, |leaf| {
+            assert_eq!(leaf, sender_leaf_index, "asked for the sealed leaf");
+            Some(sender.verification_key().to_vec())
+        })
         .expect("the external receiver reads the handshake");
     assert_eq!(opened.sender_leaf_index, sender_leaf_index);
     assert!(
@@ -823,14 +821,21 @@ fn a_semiprivate_message_built_as_a_sender_reads_back() {
     // supplies, so another key must not verify.
     let other = label::SignatureKeyPair::generate().expect("a pair");
     let err = received
-        .open_as_external_receiver(
-            &reference,
-            &receiver_private,
-            &group_context,
-            other.verification_key(),
-        )
+        .open_as_external_receiver(&reference, &receiver_private, &group_context, |_| {
+            Some(other.verification_key().to_vec())
+        })
         .expect_err("a different signer must be refused");
     assert!(matches!(err, UnsealError::Signature), "{err:?}");
+
+    // Oracle: a sender naming a leaf the receiver does not have is told
+    // apart from one that fails to prove it owns a leaf.
+    let err = received
+        .open_as_external_receiver(&reference, &receiver_private, &group_context, |_| None)
+        .expect_err("an unknown leaf must be refused");
+    assert!(
+        matches!(err, UnsealError::UnknownSender(leaf) if leaf == sender_leaf_index),
+        "{err:?}"
+    );
 
     // Oracle: the GroupContext is hashed in, so a receiver with the
     // wrong one refuses rather than accepting.
@@ -839,7 +844,7 @@ fn a_semiprivate_message_built_as_a_sender_reads_back() {
             &reference,
             &receiver_private,
             b"another group context",
-            sender.verification_key(),
+            |_| Some(sender.verification_key().to_vec()),
         )
         .expect_err("a wrong GroupContext must be refused");
     assert!(matches!(err, UnsealError::ContentHashMismatch), "{err:?}");

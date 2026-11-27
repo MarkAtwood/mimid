@@ -239,6 +239,9 @@ pub struct BuiltGroup {
     pub group_info: Vec<u8>,
     /// The epoch-1 ratchet tree, as alice's Member exports it.
     pub ratchet_tree: Vec<u8>,
+    /// alice, the creator, for a test that needs to sign as a member.
+    /// She is leaf 0.
+    pub creator: Identity,
 }
 
 /// alice creates `group_id` per `spec` and commits an Add of bob, giving
@@ -306,6 +309,7 @@ pub fn build_group(spec: &GroupSpec, group_id: &[u8]) -> BuiltGroup {
     BuiltGroup {
         group_info: bundle.group_info,
         ratchet_tree: group.ratchet_tree().unwrap(),
+        creator: alice,
     }
 }
 

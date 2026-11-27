@@ -744,6 +744,13 @@ pub enum UnsealError {
     /// against the sender's leaf (RFC 9420 §6.1).
     #[error("the handshake's signature does not verify")]
     Signature,
+    /// The sealed keys name a leaf the receiver's own ratchet tree does
+    /// not have, or one that is blank.
+    ///
+    /// Distinct from [`UnsealError::Signature`]: the sender named a leaf
+    /// that does not exist, rather than failing to prove it owns one.
+    #[error("the sealed keys name leaf {0}, which this receiver does not have")]
+    UnknownSender(u32),
 }
 
 impl ExternalReceiver {
@@ -953,15 +960,17 @@ impl SemiPrivateMessage {
     /// nonce, check the padding, check `framed_content_tbs_hash`, and
     /// verify the signature.
     ///
-    /// `group_context` is the receiver's own copy of the GroupContext
-    /// and `sender_signature_key` the signature key of the leaf the
-    /// sealed keys name. §3.3 makes the signature check conditional on
-    /// having a GroupContext; mimid's hub always has one, so it always
-    /// checks, and a failure is a refusal (decision mimid-1wgh.4.79.5).
+    /// `group_context` is the receiver's own copy of the GroupContext.
+    /// §3.3 makes the signature check conditional on having one;
+    /// mimid's hub always does, so it always checks, and a failure is a
+    /// refusal (decision mimid-1wgh.4.79.5).
     ///
-    /// The caller must take `sender_signature_key` from the leaf at the
-    /// returned `sender_leaf_index` in its own ratchet tree, never from
-    /// anything the message carries.
+    /// `sender_key` is asked for the signature key of a leaf, and must
+    /// answer from the receiver's own ratchet tree: the leaf index comes
+    /// from the sealed keys, so the caller cannot know it before this
+    /// call, and nothing the message carries may be trusted for it. It
+    /// returns `None` for a blank or out-of-range leaf, which is
+    /// [`UnsealError::UnknownSender`].
     ///
     /// # Errors
     ///
@@ -972,7 +981,7 @@ impl SemiPrivateMessage {
         reference: &[u8],
         private_key: &crate::label::HpkePrivateKey,
         group_context: &[u8],
-        sender_signature_key: &[u8],
+        sender_key: impl FnOnce(u32) -> Option<Vec<u8>>,
     ) -> Result<Opened, UnsealError> {
         let keys = self.unseal_keys(reference, private_key)?;
         let aad = SemiPrivateContentAAD {
@@ -1000,13 +1009,10 @@ impl SemiPrivateMessage {
                 .map_err(UnsealError::Malformed)?;
         let tbs =
             self.check_framed_content_tbs(spans.content, keys.sender_leaf_index, group_context)?;
-        crate::label::verify_with_label(
-            sender_signature_key,
-            FRAMED_CONTENT_TBS_LABEL,
-            &tbs,
-            spans.signature,
-        )
-        .map_err(|_| UnsealError::Signature)?;
+        let key = sender_key(keys.sender_leaf_index)
+            .ok_or(UnsealError::UnknownSender(keys.sender_leaf_index))?;
+        crate::label::verify_with_label(&key, FRAMED_CONTENT_TBS_LABEL, &tbs, spans.signature)
+            .map_err(|_| UnsealError::Signature)?;
         Ok(Opened {
             content,
             sender_leaf_index: keys.sender_leaf_index,

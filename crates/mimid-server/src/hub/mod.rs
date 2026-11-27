@@ -609,10 +609,8 @@ impl Hub {
     /// (semiprivatemessage-08 §3.1).
     ///
     /// The keys open the message's `ciphertext`; the nonce to use is
-    /// `PerMessageKeyAndNonces::guarded_nonce`. Verifying
-    /// `framed_content_tbs_hash` and the signature against the hub's
-    /// GroupContext (decision mimid-1wgh.4.79.5) is bead
-    /// mimid-1wgh.4.79.2's remaining half.
+    /// `PerMessageKeyAndNonces::guarded_nonce`. Most callers want
+    /// [`Hub::read_semiprivate`], which does the whole of §3.3.
     ///
     /// # Errors
     ///
@@ -627,6 +625,51 @@ impl Hub {
         let reference = self.external_receiver_ref()?;
         message
             .unseal_keys(&reference, self.signing_key.hpke_private())
+            .map_err(HubError::Unseal)
+    }
+
+    /// Reads a SemiPrivateMessage handshake sent to the room
+    /// `room_id`, as the room's external receiver
+    /// (semiprivatemessage-08 §3.3).
+    ///
+    /// The GroupContext and the sender's signature key both come from
+    /// the hub's own view of the group, never from the message: the
+    /// sealed keys name a leaf index, and this looks that leaf up in the
+    /// ratchet tree the hub holds.
+    ///
+    /// What comes back is a Proposal or a Commit to be validated exactly
+    /// as a PublicMessage handshake would be, the hub having learned
+    /// nothing else from the frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HubError::NoSuchRoom`] if the room is unknown,
+    /// [`HubError::Encode`] if the hub's own entry cannot be encoded,
+    /// [`HubError::Mls`] if the hub's group state cannot produce a
+    /// GroupContext, and [`HubError::Unseal`] if the message is not
+    /// addressed to the hub, does not decrypt, fails either hash, or
+    /// carries a signature that does not verify.
+    pub async fn read_semiprivate(
+        &self,
+        room_id: &str,
+        message: &mimi_mls::wire::SemiPrivateMessage,
+    ) -> Result<mimi_mls::wire::Opened, HubError> {
+        let reference = self.external_receiver_ref()?;
+        let rooms = self.rooms.lock().await;
+        let room = rooms.get(room_id).ok_or(HubError::NoSuchRoom)?;
+        let group_context = room.observer.group_context().map_err(HubError::Mls)?;
+        let keys = room.observer.member_signature_keys();
+        message
+            .open_as_external_receiver(
+                &reference,
+                self.signing_key.hpke_private(),
+                &group_context,
+                |leaf| {
+                    keys.iter()
+                        .find(|(index, _)| *index == leaf)
+                        .map(|(_, key)| key.clone())
+                },
+            )
             .map_err(HubError::Unseal)
     }
 
