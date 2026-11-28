@@ -15,7 +15,9 @@ the CBOR live stream:
 - **Decision:** Mark's answer to the proposed text, and what mimid
   does about it (branch findings-impl).
 
-File references are to the live-stream branch.
+A file reference names the item it points at — a function, a constant, a
+macro, a module's documentation or a test — beside its path, rather than a
+line number, so it survives later edits to the file.
 
 ## F1. A Message state is not a point in what was delivered
 
@@ -38,20 +40,21 @@ Chat starts, or whether Messages stored between the hub's acceptance
 and the binding belong to it.
 
 **JMAP binding.** mimid keeps one follower log for the provider and
-derives each account's Messages from its memberships
-(crates/mimid-server/src/store/jmap.rs:302-316). A join relayed for the
+derives each account's Messages from its memberships (the `visible!`
+macro, crates/mimid-server/src/store/jmap.rs). A join relayed for the
 account starts its membership at the next log `seq` before the hub
-answers (crates/mimid-server/src/store/follower_log.rs:221-262), so
-events the fanout stores in that window become visible only when the
-membership row is written, with `seq` values below the account's
-current high-water mark. The Message state is therefore `s.m`, the
-highest visible `seq` and the highest membership id
-(crates/mimid-server/src/jmap/projection.rs:26-31), and
-`Message/changes` from `s.m` returns first the Messages that a
-membership newer than `m` reveals, then those above `s`
-(crates/mimid-server/src/store/jmap.rs:715-772). States are only
-comparable as pairs; between two Messages of one `/changes` answer
-there is no state at all.
+answers (`Store::add_follower_member`,
+crates/mimid-server/src/store/follower_log.rs), so events the fanout
+stores in that window become visible only when the membership row is
+written, with `seq` values below the account's current high-water mark.
+The Message state is therefore `s.m`, the highest visible `seq` and the
+highest membership id (`message_state`,
+crates/mimid-server/src/jmap/projection.rs), and `Message/changes` from
+`s.m` returns first the Messages that a membership newer than `m`
+reveals, then those above `s` (`Store::projection_message_changes`,
+crates/mimid-server/src/store/jmap.rs). States are only comparable as
+pairs; between two Messages of one `/changes` answer there is no state
+at all.
 
 **Stream.** A `Deliver` cannot carry its own position. The provider
 sends a `Position` (or the `Subscribe` `Ack`) after a run of
@@ -99,12 +102,14 @@ millisecond resolution, so two Messages stored in one millisecond have
 no order unless the server makes the random part monotonic).
 
 **JMAP binding.** mimid answers `Message/get` in log order
-(`ORDER BY e.seq`, crates/mimid-server/src/store/jmap.rs:622-672) and mints Message ids that
+(`ORDER BY e.seq` in `Store::projection_messages`,
+crates/mimid-server/src/store/jmap.rs) and mints Message ids that
 increase with the log `seq` even when the clock goes back (decision
-mimid-1wgh.12.31; crates/mimid-server/src/store/follower_log.rs:454-475).
-The agent handles Messages in the order `Message/get` lists them
-(crates/mimid-agent-core/src/agent.rs:2529-2531), so it relies on mimid's
-choice, not on the draft.
+mimid-1wgh.12.31; `next_message_id`,
+crates/mimid-server/src/store/follower_log.rs). The agent handles
+Messages in the order `Message/get` lists them (`Agent::receive`,
+crates/mimid-agent-core/src/agent.rs), so it relies on mimid's choice,
+not on the draft.
 
 **Stream.** `Deliver`s come in the order `Message/get` lists them,
 which the stream makes part of its contract: a `Deliver` is never sent
@@ -134,8 +139,9 @@ client gets it only by reading back its own stored Message.
 MUST store ... a Message ... with ... `frank` copied from the response
 when present".
 
-**JMAP binding.** crates/mimid-server/src/jmap/methods/room_send.rs:96-109
-writes `responseCode` and `acceptedAt` or `currentEpoch`; the frank in
+**JMAP binding.** `send`
+(crates/mimid-server/src/jmap/methods/room_send.rs) writes
+`responseCode` and `acceptedAt` or `currentEpoch`; the frank in
 `SubmitResult::Accepted` is dropped.
 
 **Stream.** The `Send` `Ack` carries `acceptedAt` and, when the hub
@@ -164,9 +170,9 @@ Messages. The server stores no further FanoutMessage in it, and
 `KeyMaterial/fetch` and `Room/send` treat it as if no Chat in the
 account had that `roomId`".
 
-**JMAP binding.** "Unbinding is invisible on the Chat"
-(crates/mimid-server/src/jmap/projection.rs:13). The store knows
-(`ChatRow::bound`, crates/mimid-server/src/store/jmap.rs:329).
+**JMAP binding.** "Unbinding is invisible on the Chat" (the `projection`
+module doc, crates/mimid-server/src/jmap/projection.rs). The store knows
+(`ChatRow::bound`, crates/mimid-server/src/store/jmap.rs).
 
 **Stream.** `ListChats` gives `bound` for each Chat. The agent does not
 use it yet.
@@ -195,9 +201,11 @@ arguments, decoded from the KeyMaterialResponse: ... `clients`
 MUST NOT re-encode these octets, because clients sign some of them and
 verify signatures over others."
 
-**JMAP binding.** crates/mimid-server/src/jmap/methods/key_material.rs:213-222
-writes the fields; the agent rebuilds a `KeyMaterialResponse` with
-`Protocol::Mls10` assumed (crates/mimid-agent-core/src/client.rs:470-554).
+**JMAP binding.** `fetch`
+(crates/mimid-server/src/jmap/methods/key_material.rs) writes the
+fields; the agent rebuilds a `KeyMaterialResponse` with
+`Protocol::Mls10` assumed (`Jmap::key_material`,
+crates/mimid-agent-core/src/client.rs).
 
 **Stream.** The `FetchKeyMaterial` `Ack` carries the KeyMaterialResponse
 as received (`response`, bstr), as `GroupInfo/fetch` already does in the
@@ -226,7 +234,7 @@ covers a per-user, per-room flag.
 **JMAP binding.** mimid uses the JMAP metadata extension's
 `privateMetadata` on the Chat, under its own namespace
 (`ACCEPTED_NAMESPACE`, `Jmap::chats` and `Jmap::set_accepted`; decision
-mimid-1wgh.63; crates/mimid-agent-core/src/client.rs:431-447), which a
+mimid-1wgh.63; crates/mimid-agent-core/src/client.rs), which a
 server without draft-ietf-jmap-metadata cannot hold.
 
 **Stream.** `SetChatAccepted` and `accepted` in `ListChats`: a mimid
@@ -264,12 +272,13 @@ and quota, not about MIMI.
 **JMAP binding.** mimid answers with its own RFC 9457 problem types
 (`no-such-room` 404, `no-such-asset` 404, `asset-refused` 403,
 `asset-provider-failed` and `peer-provider-failed` 502;
-crates/mimid-server/src/jmap/blobs.rs:456-580).
+`fetch_asset_core`, `hub_failed` and `peer_failed`,
+crates/mimid-server/src/jmap/blobs.rs).
 
 **Stream.** The same refusals, each with a stream code chosen for its
 status (`notFound`, `forbidden`, `serverUnavailable`, `serverFail`;
-`code_of`, blobs.rs:525). Both bindings take the reasons from one
-function (`fetch_asset_core`).
+`code_of`, crates/mimid-server/src/jmap/blobs.rs). Both bindings take
+the reasons from one function (`fetch_asset_core`).
 
 **Proposed text.** In §Account-Level Capability Object, after
 `assetDownloadUrl`:
@@ -296,15 +305,16 @@ is answered as `"refused"`."
 
 **JMAP binding.** mimid adds `status`, the other provider's HTTP status
 (INVENTED, decision mimid-1wgh.58;
-crates/mimid-server/src/jmap/methods/room_report_abuse.rs:88-93), and
-the agent reads it when it is there and takes it as optional
-(`Jmap::report_abuse`, crates/mimid-agent-core/src/client.rs:746-751),
-so a client of the draft alone meets a field the draft does not define
-on mimid's `refused` answer and has to ignore it, and the agent, against
-a server that follows the draft, gets a `refused` whose reason it cannot
+`report`, crates/mimid-server/src/jmap/methods/room_report_abuse.rs),
+and the agent reads it when it is there and takes it as optional
+(`Jmap::report_abuse`, crates/mimid-agent-core/src/client.rs), so a
+client of the draft alone meets a field the draft does not define on
+mimid's `refused` answer and has to ignore it, and the agent, against a
+server that follows the draft, gets a `refused` whose reason it cannot
 name.
 
-**Stream.** `Error` `refused` with `status` (crates/mimid-server/src/jmap/live.rs:750).
+**Stream.** `Error` `refused` with `status` (`run`'s `Op::ReportAbuse`
+arm, crates/mimid-server/src/jmap/live.rs).
 
 **Proposed text.** In §Room/reportAbuse, after `responseCode`:
 
@@ -329,9 +339,9 @@ new state for the KeyPackage type, so a client that receives the
 `KeyPackage/get` and `KeyPackage/set`. §IANA: "Can Use for State
 Change: Yes".
 
-**JMAP binding.** No `KeyPackage/changes`
-(crates/mimid-server/src/jmap/methods/key_package.rs:29-31); the state
-is a digest of the stored KeyPackageRefs.
+**JMAP binding.** No `KeyPackage/changes` (the `key_package` module doc,
+crates/mimid-server/src/jmap/methods/key_package.rs); the state is a
+digest of the stored KeyPackageRefs.
 
 **Stream.** `Changed` `KeyPackage`, then `ListKeyPackages`, the same
 read-all-and-compare. Neither binding can say which client's KeyPackage
@@ -361,9 +371,9 @@ unpadded base64url encoding". §Room/create takes `groupInfo` and
 section mentions a size.
 
 **JMAP binding.** `maxSizeRequest` is sized so that a 4 MiB MLS object
-fits after base64url (crates/mimid-server/src/jmap/api.rs:59), the
-largest body mimid takes on the protocol routes
-(crates/mimid-server/src/http.rs:90).
+fits after base64url (`MAX_SIZE_REQUEST`,
+crates/mimid-server/src/jmap/api.rs), the largest body mimid takes on
+the protocol routes (`MAX_BODY_LEN`, crates/mimid-server/src/http.rs).
 
 **Stream.** `maxRequestBytes`, stated in `ProviderHello`, 4 MiB + 64 KiB
 of raw bytes (decision mimid-1wgh.78). Counting raw bytes rather than
@@ -431,8 +441,9 @@ to `/get`." The mimi draft adds nothing for `application/mimi-fanout`.
 
 **JMAP binding.** mimid answers `cannotCalculateChanges` only for a state
 it never gave (crates/mimid-server/src/jmap/projection.rs, `message_changes_since`).
-The agent then reads every Message (crates/mimid-agent-core/src/client.rs:616-620)
-and hands each to MLS again, which yields Problems for the old ones.
+The agent then reads every Message (`Jmap::messages_since`,
+crates/mimid-agent-core/src/client.rs) and hands each to MLS again,
+which yields Problems for the old ones.
 
 **Stream.** `cannotResume`, then `Subscribe` without `since`: the same
 replay of everything (note §5.5).
@@ -482,7 +493,7 @@ a Message". None of these mention state.
 **JMAP binding.** mimid moves both: every stored event is published on
 the change bus (crates/mimid-server/src/jmap/bus.rs, `Change::RoomEvent`,
 `Change::Membership`), and the Chat state includes the membership
-counter (crates/mimid-server/src/jmap/projection.rs:26-35).
+counter (`chat_state`, crates/mimid-server/src/jmap/projection.rs).
 
 **Stream.** Every stored Message reaches the client as a `Deliver`;
 a binding change reaches it as `Changed` `Chat`. The stream names both
@@ -547,9 +558,9 @@ client that watches the Consent type in `StateChange` events learns of
 requests the owner receives." §Chat.roomId says when a Chat is bound or
 unbound, but not that its state changes.
 
-**JMAP binding.** Unbinding is invisible on the Chat
-(crates/mimid-server/src/jmap/projection.rs:13), so it moves no Chat
-state; binding moves it through the membership counter.
+**JMAP binding.** Unbinding is invisible on the Chat (the `projection`
+module doc, crates/mimid-server/src/jmap/projection.rs), so it moves no
+Chat state; binding moves it through the membership counter.
 
 **Stream.** `Changed` names `Chat`, `KeyPackage` and `Consent` alike,
 computed as the EventSource computes its `StateChange`
