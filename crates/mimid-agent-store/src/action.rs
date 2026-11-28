@@ -369,6 +369,22 @@ impl Store {
     }
 
     /// [`Store::create_room`] with `options`.
+    ///
+    /// The span opens before the agent is taken, as
+    /// [`Store::sync`]'s does, so a room that waited for a sync shows the
+    /// wait here. It is the hop a first private message spends most of
+    /// itself in: the MLS group, the first Commit, the Welcome and the
+    /// transactions they commit (bead mimid-604m.2).
+    #[tracing::instrument(
+        level = "debug",
+        name = "store_host_room",
+        skip_all,
+        fields(
+            user = %self.user,
+            invited = invite.len(),
+            room = tracing::field::Empty
+        )
+    )]
     async fn host(
         &self,
         key: Key,
@@ -377,6 +393,7 @@ impl Store {
     ) -> Result<Room, ActionError> {
         let mut agent = self.agent.lock().await;
         let uri = agent.host_room(options).await?;
+        tracing::Span::current().record("room", uri.as_str());
         for user in invite {
             if let Err(e) = agent.invite(&uri, user).await {
                 // Do not keep a room the caller is told was not made.

@@ -1573,6 +1573,12 @@ impl Agent {
     ///
     /// [`AgentError::Invalid`] for a name of more than 255 octets, the
     /// errors of building the group, and the server's refusal.
+    #[tracing::instrument(
+        level = "debug",
+        name = "agent_host_room",
+        skip_all,
+        fields(room = tracing::field::Empty)
+    )]
     pub async fn host_room(&mut self, options: &HostOptions) -> Result<String, AgentError> {
         if options.name.len() > 255 {
             return Err(AgentError::Invalid(
@@ -1708,6 +1714,7 @@ impl Agent {
                 format!("answered roomId {hosted}, not {room}"),
             ));
         }
+        tracing::Span::current().record("room", room.as_str());
         self.state
             .group_rooms
             .insert(hex::encode(&group_id), room.clone());
@@ -1734,6 +1741,12 @@ impl Agent {
     /// [`AgentError::NoKeyMaterial`] if the user has not consented or has
     /// no usable KeyPackage, [`AgentError::Refused`] if the hub refuses the
     /// Commit, and the errors of building it.
+    #[tracing::instrument(
+        level = "debug",
+        name = "agent_invite",
+        skip_all,
+        fields(room = %room, user = %user)
+    )]
     pub async fn invite(&mut self, room: &str, user: &str) -> Result<(), AgentError> {
         if user_uri_domain(user).is_none() {
             return Err(AgentError::Invalid(format!("{user} is not a user URI")));
